@@ -1,4 +1,5 @@
-export const HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
+const DEFAULT_HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
+export const HLS_EDGE_BASE_URL = String(import.meta.env?.VITE_STREAM_EDGE_BASE_URL || DEFAULT_HLS_EDGE_BASE_URL).trim().replace(/\/+$/, '')
 
 const HLS_EDGE_URL_PREFIX = `${HLS_EDGE_BASE_URL}/`
 const activePlayers = new WeakMap()
@@ -18,10 +19,12 @@ export function isAllowedHlsPlaybackUrl(value = '') {
   if (!candidate.startsWith(HLS_EDGE_URL_PREFIX)) return false
   try {
     const parsed = new URL(candidate)
-    return parsed.protocol === 'https:'
-      && parsed.hostname === 'stream.melogicrecords.studio'
-      && parsed.port === ''
-      && /^\/live\/[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname)
+    const allowedBase = new URL(`${HLS_EDGE_BASE_URL}/`)
+    const expectedPathPrefix = allowedBase.pathname.endsWith('/') ? allowedBase.pathname : `${allowedBase.pathname}/`
+    return parsed.protocol === allowedBase.protocol
+      && parsed.host === allowedBase.host
+      && parsed.pathname.startsWith(expectedPathPrefix)
+      && /^[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname.slice(expectedPathPrefix.length))
       && parsed.search === ''
       && parsed.hash === ''
   } catch {

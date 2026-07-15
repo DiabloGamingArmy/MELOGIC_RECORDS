@@ -1,4 +1,5 @@
 export const STREAM_PROVIDERS = Object.freeze({
+  hlsEdge: 'hlsEdge',
   bufferedBroadcast: 'bufferedBroadcast',
   nativeWeb: 'nativeWeb',
   webrtc: 'webrtc',
@@ -6,6 +7,16 @@ export const STREAM_PROVIDERS = Object.freeze({
   nativeStreaming: 'nativeStreaming',
   livekit: 'livekit',
   antMedia: 'antMedia'
+})
+
+export const STREAM_INGEST_METHODS = Object.freeze({
+  browserWebrtc: 'browserWebrtc',
+  obsRtmp: 'obsRtmp'
+})
+
+export const STREAM_INGEST_PROTOCOLS = Object.freeze({
+  webrtc: 'webrtc',
+  rtmp: 'rtmp'
 })
 
 export const INGEST_MODES = Object.freeze({
@@ -31,17 +42,21 @@ export function firebaseSegmentStreamingEnabled() {
 }
 
 export function normalizeProviderId(value = '') {
-  if (value === STREAM_PROVIDERS.bufferedBroadcast) return STREAM_PROVIDERS.bufferedBroadcast
+  if ([STREAM_PROVIDERS.hlsEdge, STREAM_PROVIDERS.bufferedBroadcast].includes(value)) return STREAM_PROVIDERS.hlsEdge
   if ([STREAM_PROVIDERS.nativeWeb, STREAM_PROVIDERS.webrtc, STREAM_PROVIDERS.livekit].includes(value)) return STREAM_PROVIDERS.nativeWeb
   if ([STREAM_PROVIDERS.firebaseSegments, STREAM_PROVIDERS.nativeStreaming].includes(value)) {
     return STREAM_PROVIDERS.firebaseSegments
   }
   if (value === STREAM_PROVIDERS.antMedia) return STREAM_PROVIDERS.antMedia
-  return STREAM_PROVIDERS.bufferedBroadcast
+  return STREAM_PROVIDERS.hlsEdge
 }
 
 export function isBufferedBroadcastProvider(value = '') {
-  return normalizeProviderId(value) === STREAM_PROVIDERS.bufferedBroadcast
+  return normalizeProviderId(value) === STREAM_PROVIDERS.hlsEdge
+}
+
+export function isHlsEdgeProvider(value = '') {
+  return normalizeProviderId(value) === STREAM_PROVIDERS.hlsEdge
 }
 
 export function isWebrtcProvider(value = '') {
@@ -56,7 +71,23 @@ export function normalizePlaybackMode(value = '', fallback = PLAYBACK_MODES.webr
   return Object.values(PLAYBACK_MODES).includes(value) ? value : fallback
 }
 
-export function providerCapabilities(provider = STREAM_PROVIDERS.bufferedBroadcast) {
+export function normalizeIngestMethod(value = '', provider = '') {
+  if ([STREAM_INGEST_METHODS.browserWebrtc, INGEST_MODES.browserWebrtc, INGEST_MODES.livekitWebrtc].includes(value)) {
+    return STREAM_INGEST_METHODS.browserWebrtc
+  }
+  if ([STREAM_INGEST_METHODS.obsRtmp, INGEST_MODES.rtmpObs, INGEST_MODES.rtmp].includes(value)) {
+    return STREAM_INGEST_METHODS.obsRtmp
+  }
+  return isWebrtcProvider(provider) ? STREAM_INGEST_METHODS.browserWebrtc : STREAM_INGEST_METHODS.obsRtmp
+}
+
+export function ingestProtocolForMethod(value = '') {
+  return normalizeIngestMethod(value) === STREAM_INGEST_METHODS.browserWebrtc
+    ? STREAM_INGEST_PROTOCOLS.webrtc
+    : STREAM_INGEST_PROTOCOLS.rtmp
+}
+
+export function providerCapabilities(provider = STREAM_PROVIDERS.hlsEdge) {
   const normalizedProvider = normalizeProviderId(provider)
   if (normalizedProvider === STREAM_PROVIDERS.firebaseSegments) {
     return {
@@ -70,7 +101,7 @@ export function providerCapabilities(provider = STREAM_PROVIDERS.bufferedBroadca
       supportsLowLatencyPlayback: false
     }
   }
-  if (normalizedProvider === STREAM_PROVIDERS.bufferedBroadcast) {
+  if (normalizedProvider === STREAM_PROVIDERS.hlsEdge) {
     return {
       provider: normalizedProvider,
       transportProvider: 'hls-edge',

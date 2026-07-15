@@ -2,10 +2,10 @@ import { createAntMediaProvider } from './antMediaProvider'
 import { createBufferedBroadcastProvider } from './bufferedBroadcastProvider'
 import { createLiveKitProvider } from './livekitProvider'
 import { createNativeStreamingProvider } from './nativeStreamingProvider'
-import { firebaseSegmentStreamingEnabled, normalizeProviderId, STREAM_PROVIDERS } from './streamingProviderTypes'
+import { normalizeProviderId, STREAM_INGEST_METHODS, STREAM_PROVIDERS } from './streamingProviderTypes'
 
 const providerFactories = {
-  [STREAM_PROVIDERS.bufferedBroadcast]: createBufferedBroadcastProvider,
+  [STREAM_PROVIDERS.hlsEdge]: createBufferedBroadcastProvider,
   [STREAM_PROVIDERS.firebaseSegments]: createNativeStreamingProvider,
   [STREAM_PROVIDERS.nativeWeb]: createLiveKitProvider,
   [STREAM_PROVIDERS.antMedia]: createAntMediaProvider
@@ -14,7 +14,7 @@ const providerFactories = {
 let providerCache = null
 
 export function preferredStreamingProviderId() {
-  return STREAM_PROVIDERS.bufferedBroadcast
+  return STREAM_PROVIDERS.hlsEdge
 }
 
 export function getStreamingProviders() {
@@ -28,27 +28,28 @@ export function getStreamingProviders() {
 
 export function getStreamingProvider(id = preferredStreamingProviderId()) {
   const providers = getStreamingProviders()
-  return providers[normalizeProviderId(id)] || providers[STREAM_PROVIDERS.bufferedBroadcast]
+  return providers[normalizeProviderId(id)] || providers[STREAM_PROVIDERS.hlsEdge]
 }
 
 export function listStreamingProviderOptions() {
-  const ids = firebaseSegmentStreamingEnabled()
-    ? [STREAM_PROVIDERS.bufferedBroadcast, STREAM_PROVIDERS.nativeWeb, STREAM_PROVIDERS.firebaseSegments]
-    : [STREAM_PROVIDERS.bufferedBroadcast, STREAM_PROVIDERS.nativeWeb]
-  return ids.map((id) => {
-    const provider = getStreamingProviders()[id]
-    return {
-      id: provider.id,
-      label: provider.label,
-      description: provider.description || '',
-      transportProvider: provider.transportProvider || provider.capabilities?.transportProvider || '',
-      ingestMode: provider.ingestMode || provider.capabilities?.ingestMode || '',
-      playbackMode: provider.playbackMode || provider.capabilities?.playbackMode || '',
-      latencyProfile: provider.latencyProfile || provider.capabilities?.latencyProfile || '',
-      defaultPublicPlayback: provider.defaultPublicPlayback === true,
-      experimental: provider.experimental === true,
-      configured: provider.configured !== false,
-      capabilities: provider.capabilities
+  return [
+    {
+      id: STREAM_INGEST_METHODS.browserWebrtc,
+      label: 'Stream From Browser',
+      description: "Use Melogic Studio's built-in audio/video engine. Viewers watch through buffered HLS.",
+      ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
+      ingestProtocol: 'webrtc',
+      transportProvider: 'hls-edge',
+      playbackMode: 'hls'
+    },
+    {
+      id: STREAM_INGEST_METHODS.obsRtmp,
+      label: 'Stream From OBS / Encoder',
+      description: 'Use OBS, hardware encoder, or another RTMP app. Viewers watch through buffered HLS.',
+      ingestMethod: STREAM_INGEST_METHODS.obsRtmp,
+      ingestProtocol: 'rtmp',
+      transportProvider: 'hls-edge',
+      playbackMode: 'hls'
     }
-  })
+  ]
 }

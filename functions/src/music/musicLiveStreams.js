@@ -14,7 +14,8 @@ const ALLOWED_CATEGORIES = new Set(['music', 'podcast', 'radio', 'interview', 'l
 const ALLOWED_VISIBILITIES = new Set(['public', 'unlisted', 'private'])
 const ALLOWED_ACCESS_MODES = new Set(['public', 'unlisted', 'private', 'password'])
 const ALLOWED_AUDIO_MODES = new Set(['music', 'voice'])
-const ALLOWED_PROVIDERS = new Set(['bufferedBroadcast', 'nativeWeb', 'webrtc', 'firebaseSegments', 'nativeStreaming', 'livekit'])
+const ALLOWED_PROVIDERS = new Set(['hlsEdge', 'bufferedBroadcast', 'nativeWeb', 'webrtc', 'firebaseSegments', 'nativeStreaming', 'livekit'])
+const ALLOWED_INGEST_METHODS = new Set(['browserWebrtc', 'obsRtmp'])
 const ALLOWED_INGEST_MODES = new Set(['browser-media-recorder', 'livekit-webrtc', 'browser-webrtc', 'rtmp-obs', 'rtmp', 'srt', 'none'])
 const ALLOWED_PLAYBACK_MODES = new Set(['firebaseSegments', 'webrtc', 'hls', 'llhls', 'none'])
 const ALLOWED_REACTIONS = new Set(['like', 'dislike', 'none'])
@@ -72,11 +73,14 @@ function sanitizeHlsPlaybackUrl(value = '') {
 
 function bufferedBroadcastFields(data = {}, existing = {}) {
   const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
+  const ingestMethod = normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode)
   return {
-    provider: 'bufferedBroadcast',
-    providerLabel: 'Buffered Broadcast',
+    provider: 'hlsEdge',
+    providerLabel: 'Melogic Edge',
     transportProvider: 'hls-edge',
-    ingestMode: 'rtmp-obs',
+    ingestMethod,
+    ingestProtocol: ingestMethod === 'browserWebrtc' ? 'webrtc' : 'rtmp',
+    ingestMode: ingestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs',
     playbackMode: 'hls',
     latencyProfile: 'buffered',
     streamKey,
@@ -98,34 +102,40 @@ function normalizeInputSource(value) {
 }
 
 function normalizeProvider(value) {
-  if (value === 'bufferedBroadcast') return 'bufferedBroadcast'
+  if (value === 'hlsEdge' || value === 'bufferedBroadcast') return 'hlsEdge'
   if (value === 'nativeWeb' || value === 'webrtc' || value === 'livekit') return 'nativeWeb'
   if (value === 'firebaseSegments' || value === 'nativeStreaming') return 'firebaseSegments'
-  return 'bufferedBroadcast'
+  return 'hlsEdge'
+}
+
+function normalizeIngestMethod(value) {
+  if (value === 'browserWebrtc' || value === 'browser-webrtc' || value === 'livekit-webrtc') return 'browserWebrtc'
+  if (value === 'obsRtmp' || value === 'rtmp-obs' || value === 'rtmp') return 'obsRtmp'
+  return ALLOWED_INGEST_METHODS.has(value) ? value : 'obsRtmp'
 }
 
 function normalizeIngestMode(value) {
   return ALLOWED_INGEST_MODES.has(value) ? value : 'browser-webrtc'
 }
 
-function normalizePlaybackMode(value, provider = 'bufferedBroadcast') {
+function normalizePlaybackMode(value, provider = 'hlsEdge') {
   if (provider === 'firebaseSegments') return 'firebaseSegments'
   if (provider === 'nativeWeb') return 'webrtc'
-  if (provider === 'bufferedBroadcast') return 'hls'
+  if (provider === 'hlsEdge') return 'hls'
   if (ALLOWED_PLAYBACK_MODES.has(value)) return value
   return 'hls'
 }
 
-function providerLabel(provider = 'bufferedBroadcast') {
+function providerLabel(provider = 'hlsEdge') {
   if (provider === 'nativeWeb') return 'Website Live'
   if (provider === 'firebaseSegments') return 'Firebase Segments'
-  return 'Buffered Broadcast'
+  return 'Melogic Edge'
 }
 
-function normalizeIngestModeForProvider(value, provider = 'bufferedBroadcast') {
+function normalizeIngestModeForProvider(value, provider = 'hlsEdge', ingestMethod = 'obsRtmp') {
   if (provider === 'nativeWeb') return 'browser-webrtc'
   if (provider === 'firebaseSegments') return 'browser-media-recorder'
-  return 'rtmp-obs'
+  return ingestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs'
 }
 
 function nullableNumber(value) {
@@ -155,7 +165,7 @@ function nativeStreamingDefaults(existing = {}) {
 }
 
 function isStreamPublishing(stream = {}) {
-  return normalizeProvider(stream.provider) === 'bufferedBroadcast'
+  return normalizeProvider(stream.provider) === 'hlsEdge'
     || stream.audioPublished === true
     || stream.videoPublished === true
     || stream.programHasAudio === true
@@ -164,16 +174,20 @@ function isStreamPublishing(stream = {}) {
 
 function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource = 'browser', defaultAudioPublished = false } = {}) {
   const provider = normalizeProvider(data.provider || existing.provider)
-  const streamKey = provider === 'bufferedBroadcast'
+  const ingestMethod = provider === 'hlsEdge'
+    ? normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode)
+    : ''
+  const streamKey = provider === 'hlsEdge'
     ? sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
     : ''
-  const hlsPlaybackUrl = provider === 'bufferedBroadcast'
+  const hlsPlaybackUrl = provider === 'hlsEdge'
     ? buildHlsPlaybackUrl(streamKey)
     : ''
   const audioEnabled = data.audioEnabled === false ? false : data.audioEnabled === true ? true : existing.audioEnabled !== false
   const videoEnabled = data.videoEnabled === true ? true : data.videoEnabled === false ? false : existing.videoEnabled === true
-  const audioPublished = Boolean(provider !== 'bufferedBroadcast' && audioEnabled && (data.audioPublished === true || (defaultAudioPublished && data.audioPublished !== false)))
-  const videoPublished = Boolean(provider !== 'bufferedBroadcast' && videoEnabled && data.videoPublished === true)
+  const canPublishBrowserMedia = provider !== 'hlsEdge' || ingestMethod === 'browserWebrtc'
+  const audioPublished = Boolean(canPublishBrowserMedia && audioEnabled && (data.audioPublished === true || (defaultAudioPublished && data.audioPublished !== false)))
+  const videoPublished = Boolean(canPublishBrowserMedia && videoEnabled && data.videoPublished === true)
   const programHasAudio = Boolean(audioEnabled && (data.programHasAudio === true || (data.programHasAudio !== false && audioPublished)))
   const programHasVideo = Boolean(videoEnabled && (data.programHasVideo === true || videoPublished))
   const activeAudioSources = data.activeAudioSources && typeof data.activeAudioSources === 'object'
@@ -222,10 +236,12 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
   return {
     provider,
     providerLabel: providerLabel(provider),
-    transportProvider: provider === 'bufferedBroadcast' ? 'hls-edge' : provider === 'nativeWeb' ? 'livekit' : 'firebase',
-    ingestMode: normalizeIngestModeForProvider(data.ingestMode || existing.ingestMode, provider),
+    transportProvider: provider === 'hlsEdge' ? 'hls-edge' : provider === 'nativeWeb' ? 'livekit' : 'firebase',
+    ingestMethod,
+    ingestProtocol: provider === 'hlsEdge' ? (ingestMethod === 'browserWebrtc' ? 'webrtc' : 'rtmp') : '',
+    ingestMode: normalizeIngestModeForProvider(data.ingestMode || existing.ingestMode, provider, ingestMethod),
     playbackMode: normalizePlaybackMode(data.playbackMode || existing.playbackMode, provider),
-    latencyProfile: provider === 'bufferedBroadcast' ? 'buffered' : 'realtime',
+    latencyProfile: provider === 'hlsEdge' ? 'buffered' : 'realtime',
     streamKey,
     hlsPlaybackUrl,
     nativeStreaming: nativeStreamingDefaults({
@@ -285,7 +301,7 @@ function isAdminAuth(auth = null) {
   return auth?.token?.admin === true || ['owner', 'admin'].includes(cleanString(auth?.token?.adminRole, 40))
 }
 
-function markLiveValidationDetails({ streamId = '', provider = 'bufferedBroadcast', stream = {}, requestData = {}, targetStatus = 'live' } = {}) {
+function markLiveValidationDetails({ streamId = '', provider = 'hlsEdge', stream = {}, requestData = {}, targetStatus = 'live' } = {}) {
   const validationBranch = provider
   const broadcastState = cleanString(requestData.broadcastState || (validationBranch === 'firebaseSegments' ? 'liveIdleNoListeners' : stream.broadcastState) || '', 80)
   const nativeStatus = cleanString(requestData.nativeStreaming?.status || (validationBranch === 'firebaseSegments' ? 'idleNoListeners' : stream.nativeStreaming?.status) || '', 80)
@@ -297,7 +313,7 @@ function markLiveValidationDetails({ streamId = '', provider = 'bufferedBroadcas
   const failedConditions = []
   if (!streamId) missingRequiredFields.push('streamId')
   if (!stream.hostUid) missingRequiredFields.push('hostUid')
-  if (!['bufferedBroadcast', 'nativeWeb', 'firebaseSegments'].includes(provider)) failedConditions.push(`unsupported provider: ${provider}`)
+  if (!['hlsEdge', 'nativeWeb', 'firebaseSegments'].includes(provider)) failedConditions.push(`unsupported provider: ${provider}`)
   if (targetStatus !== 'live') failedConditions.push(`targetStatus must be live, got ${targetStatus}`)
   if (validationBranch === 'firebaseSegments') {
     if (!hostSessionId) missingRequiredFields.push('hostSessionId')
@@ -305,7 +321,7 @@ function markLiveValidationDetails({ streamId = '', provider = 'bufferedBroadcas
     if (nativeStatus && nativeStatus !== 'idleNoListeners') failedConditions.push(`nativeStreaming.status must be idleNoListeners, got ${nativeStatus}`)
   }
   if (validationBranch === 'nativeWeb' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
-  if (validationBranch === 'bufferedBroadcast') {
+  if (validationBranch === 'hlsEdge') {
     const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || 'mystream') || 'mystream'
     const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
     if (!streamKey) missingRequiredFields.push('streamKey')
@@ -750,7 +766,9 @@ const startMusicLiveStream = onCall(
         coverStoragePath: coverArtPath,
         coverArtSource,
         status: 'starting',
-        connectionStatus: 'starting',
+        connectionStatus: selectedProvider === 'hlsEdge'
+          ? programOutputState.ingestMethod === 'browserWebrtc' ? 'connectingIngest' : 'waitingForIngest'
+          : 'starting',
         broadcastState: selectedProvider === 'firebaseSegments' ? 'idleNoListeners' : 'connecting',
         visibility,
         accessMode,
@@ -760,7 +778,7 @@ const startMusicLiveStream = onCall(
         selectedSequenceId,
         audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
         ...programOutputState,
-        ...(selectedProvider === 'bufferedBroadcast' ? bufferedBroadcastFields(request.data || {}, previousStream) : {}),
+        ...(selectedProvider === 'hlsEdge' ? bufferedBroadcastFields(request.data || {}, previousStream) : {}),
         audioPublished: false,
         videoPublished: false,
         programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
@@ -784,8 +802,8 @@ const startMusicLiveStream = onCall(
         selectedProviderUpdatedBy: uid,
         archiveNote: selectedProvider === 'firebaseSegments'
           ? 'Firebase Segments records short browser MediaRecorder chunks for experimental playback.'
-          : selectedProvider === 'bufferedBroadcast'
-            ? 'Buffered Broadcast uses OBS RTMP ingest and public playback through the Melogic HLS edge network.'
+          : selectedProvider === 'hlsEdge'
+            ? 'Melogic Edge packages browser WebRTC or OBS RTMP ingest for buffered HLS playback.'
             : 'Live audio uses WebRTC Opus compression. Future high-quality replays should use LiveKit Egress, a server recording pipeline, or a separate mastered upload.',
         archiveTrackPath: '',
         archiveTrackURL: '',
@@ -815,8 +833,8 @@ const startMusicLiveStream = onCall(
         livekitRoomName: roomName,
         hostToken,
         url: config?.url || '',
-        streamKey: selectedProvider === 'bufferedBroadcast' ? programOutputState.streamKey : '',
-        hlsPlaybackUrl: selectedProvider === 'bufferedBroadcast' ? programOutputState.hlsPlaybackUrl : '',
+        streamKey: selectedProvider === 'hlsEdge' ? programOutputState.streamKey : '',
+        hlsPlaybackUrl: selectedProvider === 'hlsEdge' ? programOutputState.hlsPlaybackUrl : '',
         listenerURL: `/music/live/${streamId}`
       }
     } catch (error) {
@@ -897,7 +915,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     selectedSequenceId,
     audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
     ...programOutputState,
-    ...(programOutputState.provider === 'bufferedBroadcast' ? bufferedBroadcastFields(request.data || {}, snap.data() || {}) : {}),
+    ...(programOutputState.provider === 'hlsEdge' ? bufferedBroadcastFields(request.data || {}, snap.data() || {}) : {}),
     audioPublished: false,
     videoPublished: false,
     programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
@@ -970,7 +988,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   })
   const canMarkLive = requestedProvider === 'firebaseSegments'
     ? nativeStartAllowed
-    : requestedProvider === 'bufferedBroadcast'
+    : requestedProvider === 'hlsEdge'
       ? allowedBufferedStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
       : allowedWebRtcStatuses.has(stream.status || '') && diagnostics.missingRequiredFields.length === 0 && diagnostics.failedConditions.length === 0
   if (!canMarkLive) {
@@ -996,7 +1014,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
-  const bufferedState = requestedProvider === 'bufferedBroadcast'
+  const bufferedState = requestedProvider === 'hlsEdge'
     ? bufferedBroadcastFields(request.data || {}, stream)
     : {}
   const safeLiveTitle = cleanString(request.data?.title || stream.title || 'Untitled live stream', 90)
@@ -1014,7 +1032,9 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     passwordProtected: safeLiveAccessMode === 'password',
     ...programOutputState,
     ...bufferedState,
-    connectionStatus: 'live',
+    connectionStatus: requestedProvider === 'hlsEdge'
+      ? cleanString(request.data?.connectionStatus || (programOutputState.ingestMethod === 'browserWebrtc' ? 'live' : 'waitingForIngest'), 80)
+      : 'live',
     broadcastState: requestedProvider === 'firebaseSegments' ? 'liveIdleNoListeners' : 'liveBroadcasting',
     hostConnected: true,
     provider: requestedProvider,
@@ -1047,7 +1067,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     ok: true,
     streamId,
     status: 'live',
-    ...(requestedProvider === 'bufferedBroadcast' ? bufferedState : {})
+    ...(requestedProvider === 'hlsEdge' ? bufferedState : {})
   }
 })
 
@@ -1069,11 +1089,14 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
-  const bufferedState = programOutputState.provider === 'bufferedBroadcast'
+  const bufferedState = programOutputState.provider === 'hlsEdge'
     ? bufferedBroadcastFields(request.data || {}, stream)
     : {}
+  const requestedConnectionStatus = cleanString(request.data?.connectionStatus || stream.connectionStatus || '', 80)
   await streamRef.set({
-    connectionStatus: request.data?.connectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
+    connectionStatus: programOutputState.provider === 'hlsEdge' && programOutputState.ingestMethod === 'obsRtmp'
+      ? (requestedConnectionStatus === 'live' ? 'live' : 'waitingForIngest')
+      : requestedConnectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
     broadcastState: programOutputState.provider === 'firebaseSegments'
       ? cleanString(request.data?.broadcastState || stream.broadcastState || 'idleNoListeners', 80)
       : 'liveBroadcasting',
@@ -1134,7 +1157,7 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
       existing: stream,
       selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource)
     }),
-    ...(normalizeProvider(request.data?.provider || stream.provider) === 'bufferedBroadcast'
+    ...(normalizeProvider(request.data?.provider || stream.provider) === 'hlsEdge'
       ? bufferedBroadcastFields(request.data || {}, stream)
       : {}),
     selectedProviderUpdatedAt: now,
@@ -1197,7 +1220,7 @@ const joinMusicLiveStream = onCall(
     if (accessMode === 'private' || stream.visibility === 'private') throw new HttpsError('permission-denied', 'This stream is private.')
     const provider = normalizeProvider(stream.provider)
     const isFirebaseSegments = provider === 'firebaseSegments'
-    const isBufferedBroadcast = provider === 'bufferedBroadcast'
+    const isBufferedBroadcast = provider === 'hlsEdge'
     if (stream.hostConnected !== true || (!isFirebaseSegments && !isBufferedBroadcast && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)) {
       await streamRef.set({
         status: 'ended',
@@ -1256,7 +1279,7 @@ const joinMusicLiveStream = onCall(
       streamId,
       roomName,
       provider,
-      playbackMode: provider === 'firebaseSegments' ? 'firebaseSegments' : provider === 'bufferedBroadcast' ? 'hls' : 'webrtc',
+      playbackMode: provider === 'firebaseSegments' ? 'firebaseSegments' : provider === 'hlsEdge' ? 'hls' : 'webrtc',
       streamKey: sanitizeStreamKey(stream.streamKey || ''),
       hlsPlaybackUrl: sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || '') || buildHlsPlaybackUrl(stream.streamKey || ''),
       nativeStreaming: stream.nativeStreaming || nativeStreamingDefaults(),

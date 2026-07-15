@@ -4,7 +4,7 @@ import { normalizeProviderId, PLAYBACK_MODES, STREAM_PROVIDERS } from './streami
 
 export function getPublicPlaybackInfo(stream = {}) {
   const provider = normalizeProviderId(stream.provider)
-  if (provider === STREAM_PROVIDERS.bufferedBroadcast) {
+  if (provider === STREAM_PROVIDERS.hlsEdge || stream.playbackMode === PLAYBACK_MODES.hls) {
     const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
     const configuredUrlAllowed = isAllowedHlsPlaybackUrl(configuredUrl)
     const keyUrl = buildHlsPlaybackUrl(stream.streamKey)
@@ -15,7 +15,7 @@ export function getPublicPlaybackInfo(stream = {}) {
         ? 'This stream is missing an HLS stream key.'
         : 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
     return {
-      provider: STREAM_PROVIDERS.bufferedBroadcast,
+      provider: STREAM_PROVIDERS.hlsEdge,
       transportProvider: 'hls-edge',
       playbackMode: PLAYBACK_MODES.hls,
       latencyProfile: 'buffered',
@@ -81,7 +81,7 @@ export function isPublicStreamPlayable(stream = {}) {
     && info.playable
     && (
       info.provider === STREAM_PROVIDERS.firebaseSegments
-      || info.provider === STREAM_PROVIDERS.bufferedBroadcast
+      || info.provider === STREAM_PROVIDERS.hlsEdge
       || stream.programHasAudio === true
       || stream.programHasVideo === true
       || stream.audioPublished === true

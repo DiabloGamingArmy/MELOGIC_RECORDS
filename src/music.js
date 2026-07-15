@@ -1759,7 +1759,7 @@ function ensureLiveKitListenerAudioMounted() {
 }
 
 function isBufferedHlsStream(stream = state.liveStream) {
-  return Boolean(stream && isBufferedBroadcastProvider(stream.provider))
+  return Boolean(stream && (isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls'))
 }
 
 function currentHlsPlaybackMode() {
@@ -1771,7 +1771,7 @@ function hlsMediaDiagnostics(eventName = '') {
   const diagnostics = state.hlsDiagnostics || {}
   state.hlsDiagnostics = {
     ...diagnostics,
-    provider: STREAM_PROVIDERS.bufferedBroadcast,
+    provider: STREAM_PROVIDERS.hlsEdge,
     playbackMode: state.liveStream?.playbackMode || 'hls',
     streamKey: state.liveStream?.streamKey || '',
     hlsUrl: state.hlsAttachedUrl || diagnostics.hlsUrl || '',
@@ -1951,7 +1951,7 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
   state.liveError = ''
   state.nativeViewerSessionId = state.nativeViewerSessionId || nativeViewerSessionId(state.liveStream.id)
   state.hlsDiagnostics = {
-    provider: STREAM_PROVIDERS.bufferedBroadcast,
+    provider: STREAM_PROVIDERS.hlsEdge,
     playbackMode: 'hls',
     streamKey: state.liveStream.streamKey || '',
     hlsUrl: playbackInfo.url,
@@ -3243,7 +3243,7 @@ function renderHlsDiagnostics() {
   const media = state.hlsMediaElement
   const shouldShowResume = Boolean(media && media.paused && isLiveListeningStatus())
   const rows = [
-    ['provider', diagnostics.provider || STREAM_PROVIDERS.bufferedBroadcast],
+    ['provider', diagnostics.provider || STREAM_PROVIDERS.hlsEdge],
     ['playbackMode', diagnostics.playbackMode || 'hls'],
     ['streamKey', diagnostics.streamKey || state.liveStream?.streamKey || 'none'],
     ['hlsUrl', diagnostics.hlsUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
@@ -4363,7 +4363,7 @@ async function joinLiveListener(options = {}) {
   }
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
-  if (playbackInfo.provider === STREAM_PROVIDERS.bufferedBroadcast) {
+  if (playbackInfo.provider === STREAM_PROVIDERS.hlsEdge) {
     await startHlsListenerPlayback(playbackInfo)
     return
   }

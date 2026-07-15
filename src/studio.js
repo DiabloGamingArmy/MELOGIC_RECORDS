@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/studio.css'
-import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack, createLocalVideoTrack } from 'livekit-client'
+import { AudioPresets, Track, createLocalAudioTrack, createLocalVideoTrack } from 'livekit-client'
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
@@ -35,13 +35,14 @@ import {
   firebaseSegmentStreamingEnabled,
   isBufferedBroadcastProvider,
   isFirebaseSegmentProvider,
-  isWebrtcProvider,
+  ingestProtocolForMethod,
+  normalizeIngestMethod,
   normalizeProviderId,
+  STREAM_INGEST_METHODS,
   STREAM_PROVIDERS
 } from './data/streaming/streamingProviderTypes'
 import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './data/streaming/hlsEdgePlayer'
-import { validateLiveKitConnectionConfig } from './data/streaming/livekitProvider'
-import { fallbackStreamingProviderStatus, getStreamingProviderStatus } from './data/streaming/providerStatusService'
+import { isBrowserWebrtcIngestConfigured, startBrowserWebrtcIngest, stopBrowserWebrtcIngest } from './data/streaming/browserWebrtcIngest'
 import {
   getNativeHostPresence,
   nativeHostSessionId,
@@ -252,9 +253,9 @@ const state = {
     videoSource: 'browser',
     videoTransition: 'cut',
     providerId: preferredStreamingProviderId(),
+    ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
+    browserIngestActive: false,
     providerDiagnostics: {},
-    providerStatus: null,
-    providerStatusLoading: false,
     advancedStreamingOpen: false,
     programMixer: {
       loading: false,
@@ -1299,7 +1300,6 @@ function renderListenerPreviewPanel() {
 
 function renderStreamDetailsPanel() {
   const live = liveState()
-  if (!live.providerStatus) live.providerStatus = fallbackStreamingProviderStatus()
   const form = live.streamForm
   const isBufferedProvider = isBufferedBroadcastProvider(live.providerId)
   const link = publicLiveLink()
@@ -1372,140 +1372,56 @@ function renderStreamDetailsPanel() {
 function renderAdvancedStreamingSettings() {
   const live = liveState()
   const options = listStreamingProviderOptions()
-  const providerRows = live.providerStatus?.providers || {}
-  const nativeStatus = providerRows.firebaseSegments || providerRows.nativeStreaming || {}
-  const livekitStatus = providerRows.nativeWeb || providerRows.webrtc || providerRows.livekit || {}
-  const current = options.find((option) => option.id === live.providerId) || options[0]
+  const current = options.find((option) => option.id === live.ingestMethod) || options[0]
   const diagnostics = live.providerDiagnostics || {}
-  const showNativeDebug = firebaseSegmentStreamingEnabled()
   const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
   const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
-  const ingestServer = String(import.meta.env?.VITE_BUFFERED_BROADCAST_INGEST_SERVER || '').trim()
-  const isBuffered = isBufferedBroadcastProvider(live.providerId)
-  const isWebrtc = isWebrtcProvider(live.providerId)
+  const ingestServer = String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
+  const isObs = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+  const browserIngestConfigured = isBrowserWebrtcIngestConfigured()
   return `
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
       <summary>Advanced Streaming Settings</summary>
       <div class="studio-live-advanced-grid">
         <label>Streaming Method
-          <select name="provider" data-streaming-method ${live.streamId ? 'disabled' : ''}>
-            ${options.map((option) => {
-              const unavailableWebrtc = option.id === STREAM_PROVIDERS.nativeWeb && livekitStatus.configured !== true
-              return `<option value="${esc(option.id)}" ${option.id === live.providerId ? 'selected' : ''}>${esc(option.label)}${unavailableWebrtc ? ' (not available yet)' : ''}</option>`
-            }).join('')}
+          <select name="ingestMethod" data-streaming-method ${live.streamId ? 'disabled' : ''}>
+            ${options.map((option) => `<option value="${esc(option.id)}" ${option.id === live.ingestMethod ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}
           </select>
         </label>
         <div class="studio-live-provider-status">
-          <strong>${esc(current?.label || 'Native Streaming')}</strong>
-          <span>${esc(live.providerStatusLoading ? 'Checking provider status...' : (providerRows[live.providerId]?.configured === false ? 'Not available yet' : 'Ready'))}</span>
+          <strong>${esc(current?.label || 'Stream From Browser')}</strong>
+          <span>${esc(isObs || browserIngestConfigured ? 'Ready' : 'WebRTC ingest endpoint required')}</span>
           <small>${esc(current?.description || '')}</small>
           <small>${esc(live.streamId ? 'Streaming method is locked for the active stream.' : 'The selected method is saved to the stream draft.')}</small>
         </div>
       </div>
       <div class="studio-live-provider-copy">
         <article>
-          <h2>Buffered Broadcast</h2>
-          <p>Use OBS/RTMP. Smooth HLS playback with a 20-30 second delay.</p>
+          <h2>${isObs ? 'Stream From OBS / Encoder' : 'Stream From Browser'}</h2>
+          <p>${esc(current?.description || '')}</p>
           <ul>
-            <li>Server: ${esc(ingestServer || 'Set VITE_BUFFERED_BROADCAST_INGEST_SERVER')}</li>
+            ${isObs ? `<li>Server: ${esc(ingestServer || 'Set VITE_STREAM_RTMP_INGEST_SERVER')}</li>` : `<li>Browser ingest: ${browserIngestConfigured ? 'Configured' : 'Set VITE_STREAM_WEBRTC_INGEST_URL'}</li>`}
             <li>Stream Key: ${esc(streamKey || 'missing')}</li>
             <li>Playback URL: ${esc(hlsPlaybackUrl || 'missing')}</li>
-            <li>Latency profile: buffered</li>
+            <li>Public playback: Buffered HLS from Melogic Edge</li>
           </ul>
         </article>
-        ${showNativeDebug ? `<article>
-          <h2>Firebase Segments</h2>
-          <p>Firebase segment streaming is experimental and may stall.</p>
-          <ul>
-            <li>Target listener latency: ${Number(nativeStatus.targetLatencyMs || 30000) / 1000} seconds</li>
-            <li>Segment duration: ${Number(nativeStatus.segmentDurationMs || 4000) / 1000} seconds</li>
-            <li>Idle when no listeners: On</li>
-            <li>Audio-first MVP: On</li>
-            <li>Video segments: Coming later / Experimental</li>
-          </ul>
-        </article>` : ''}
         <article>
-          <h2>Website Live</h2>
-          <p>Stream directly from this browser. Requires WebRTC provider setup and never uses the OBS/HLS playback path.</p>
+          <h2>Streaming Diagnostics</h2>
           <ul>
-            <li>Status: ${livekitStatus.configured ? 'Available' : 'Not available yet - LiveKit is not configured'}</li>
-            <li>Playback mode: WebRTC</li>
-            <li>Latency: low-latency realtime</li>
-          </ul>
-        </article>
-        ${isBuffered ? `<article>
-          <h2>Buffered Broadcast Diagnostics</h2>
-          <ul>
-            <li>Provider: bufferedBroadcast</li>
+            <li>Provider: hlsEdge</li>
             <li>Transport provider: hls-edge</li>
             <li>Playback mode: hls</li>
-            <li>Ingest mode: rtmp-obs</li>
+            <li>Ingest method: ${esc(live.ingestMethod)}</li>
+            <li>Ingest protocol: ${esc(ingestProtocolForMethod(live.ingestMethod))}</li>
             <li>Stream key: ${esc(diagnostics.streamKey || streamKey)}</li>
             <li>Playback URL: ${esc(diagnostics.hlsPlaybackUrl || hlsPlaybackUrl)}</li>
             <li>Stream document status: ${esc(diagnostics.streamDocStatus || live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
-            <li>No LiveKit attempted: ${diagnostics.noLiveKitAttempted === false ? 'no' : 'yes'}</li>
-          </ul>
-        </article>` : isWebrtc ? `<article>
-          <h2>Website Live Diagnostics</h2>
-          <ul>
-            <li>Provider: ${esc(live.providerId || STREAM_PROVIDERS.bufferedBroadcast)}</li>
-            <li>Room state: ${esc(live.room?.state || live.room?.connectionState || 'disconnected')}</li>
-            <li>LiveKit URL present: ${diagnostics.livekitUrlPresent ? 'yes' : 'unknown'}</li>
-            <li>LiveKit URL valid: ${diagnostics.livekitUrlValid ? 'yes' : 'no'}</li>
-            <li>Stream ID: ${esc(live.streamId || live.draftStreamId || live.stream?.id || 'none')}</li>
-            <li>Room name: ${esc(diagnostics.roomName || live.stream?.livekitRoomName || live.stream?.roomName || 'none')}</li>
-            <li>Publish token received: ${diagnostics.publishTokenReceived ? 'yes' : 'unknown'}</li>
-            <li>Configuration error: ${esc(diagnostics.livekitConfigError || 'none')}</li>
-            <li>Broadcast track state: ${esc(diagnostics.broadcastTrackReadyState || live.programAudioTrack?.readyState || 'unknown')}</li>
-            <li>Broadcast track enabled: ${diagnostics.broadcastTrackEnabled ? 'yes' : 'no'}</li>
-            <li>Publication SID: ${esc(diagnostics.livekitPublishedTrackSid || 'none')}</li>
-            <li>Publication name: ${esc(diagnostics.livekitPublishedTrackName || 'none')}</li>
-            <li>Audio published: ${live.audioPublishedToProvider ? 'yes' : 'no'}</li>
-            <li>Program RMS / peak: ${diagnostics.analyserRms ?? 0} / ${diagnostics.analyserPeak ?? 0}</li>
-            <li>Selected input: ${esc(live.inputSource || 'browser')}</li>
-            <li>Sequence playing: ${live.activePlayers.length ? 'yes' : 'no'}</li>
-            <li>Monitor enabled: ${live.monitorEnabled ? 'yes' : 'no'}</li>
-            <li>RTDB demand count: ${Number(live.nativePlaybackDemandCount || 0)}</li>
-          </ul>
-        </article>` : ''}
-      </div>
-      <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Buffered Broadcast uses OBS and the Melogic HLS edge. Website Live uses LiveKit WebRTC only when configured.</p>
-      ${showNativeDebug ? `<div class="studio-live-provider-copy">
-        <article>
-          <h2>Native Diagnostics</h2>
-          <ul>
-            <li>streamId: ${esc(live.stream?.streamId || live.stream?.id || 'none')}</li>
-            <li>live.streamId: ${esc(live.streamId || 'none')}</li>
-            <li>Status: ${esc(live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
-            <li>Broadcast state: ${esc(live.stream?.broadcastState || 'none')}</li>
-            <li>Demand count: ${Number(live.nativePlaybackDemandCount || 0)}</li>
-            <li>Listener count: ${liveHostViewerCount()}</li>
-            <li>Demand path: ${live.streamId ? `livePresence/${esc(live.streamId)}/playbackDemand` : 'none'}</li>
-            <li>Last demand: ${esc(live.nativeLastDemandChangeAt || 'none')}</li>
-            <li>Demand observe/write: ${live.streamId ? 'observing playbackDemand' : 'inactive'}</li>
-            <li>Native status: ${esc(live.nativeStreamingStatus || live.stream?.nativeStreaming?.status || 'idleNoListeners')}</li>
-            <li>Host session: ${esc(live.nativeHostSessionId || 'none')}</li>
-            <li>Host heartbeat: ${esc(live.streamId ? 'active' : live.nativeInterruptedStreamId ? 'interrupted' : 'inactive')}</li>
-            <li>Recorder: ${esc(diagnostics.recorderState || (live.nativeRecorderRunning ? 'recording' : 'idle'))}</li>
-            <li>Recorder running: ${live.nativeRecorderRunning ? 'yes' : 'no'}</li>
-            <li>Recorder start: ${esc(live.nativeRecorderStartReason || 'none')}</li>
-            <li>Recorder stop: ${esc(live.nativeRecorderStopReason || 'none')}</li>
-            <li>MIME: ${esc(diagnostics.selectedMimeType || 'none')}</li>
-            <li>Media stream tracks: ${diagnostics.mediaStreamTrackCount ?? diagnostics.trackCount ?? 'unknown'}</li>
-            <li>Live track count: ${diagnostics.trackCount ?? 'unknown'}</li>
-            <li>Audio track state: ${esc(diagnostics.audioTrackReadyState || 'unknown')}</li>
-            <li>Segment duration: ${diagnostics.segmentDurationMs ?? 4000} ms</li>
-            <li>Last dataavailable: ${esc(diagnostics.lastDataAvailableAt || 'none')}</li>
-            <li>Segment index: ${diagnostics.segmentIndex ?? 'none'}</li>
-            <li>Last blob: ${diagnostics.lastBlobSize ?? 0} bytes</li>
-            <li>Last upload: ${esc(diagnostics.lastUploadPath || 'none')}</li>
-            <li>Upload error: ${esc(diagnostics.lastUploadError || 'none')}</li>
-            <li>Newest available: ${diagnostics.newestAvailableSegmentIndex ?? live.stream?.nativeStreaming?.newestAvailableSegmentIndex ?? 'none'}</li>
-            <li>Ready segment writes: ${diagnostics.readySegmentWriteCount ?? 0}</li>
-            <li>Playable segments: ${diagnostics.hasPlayableSegments || live.stream?.nativeStreaming?.hasPlayableSegments ? 'yes' : 'no'}</li>
+            <li>Ingest connection: ${esc(diagnostics.ingestConnectionState || (isObs ? 'external encoder' : live.browserIngestActive ? 'connected' : 'idle'))}</li>
           </ul>
         </article>
-      </div>` : ''}
+      </div>
+      <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Both streaming methods use buffered HLS for public playback.</p>
     </details>
   `
 }
@@ -1821,7 +1737,6 @@ function ensureProgramMixerData() {
     if (!mixer.sources.some((source) => source.sourceId === mixer.selectedSourceId)) mixer.selectedSourceId = ''
     mixer.loaded = true
     mixer.loading = false
-    refreshStreamingProviderStatus().catch(() => {})
     ensureGuestInviteSubscription()
     renderShell()
   }).catch((error) => {
@@ -1859,24 +1774,6 @@ function ensureGuestInviteSubscription() {
   })
 }
 
-async function refreshStreamingProviderStatus() {
-  const live = liveState()
-  if (live.providerStatusLoading) return
-  live.providerStatusLoading = true
-  try {
-    live.providerStatus = await getStreamingProviderStatus()
-  } catch (error) {
-    live.providerStatus = fallbackStreamingProviderStatus(error)
-  } finally {
-    live.providerStatusLoading = false
-    if (currentStudioSection() === 'live') renderShell()
-  }
-}
-
-function livekitStatusConfigured(live = liveState()) {
-  return (live.providerStatus?.providers?.nativeWeb || live.providerStatus?.providers?.webrtc || live.providerStatus?.providers?.livekit)?.configured === true
-}
-
 function liveProgramOutputState() {
   const live = liveState()
   const mixer = live.programMixer || {}
@@ -1884,9 +1781,8 @@ function liveProgramOutputState() {
   const diagnostics = live.providerDiagnostics || {}
   const providerId = normalizeProviderId(live.providerId)
   live.providerId = providerId
-  const provider = getStreamingProvider(providerId)
-  const isBuffered = isBufferedBroadcastProvider(providerId)
-  const isWebrtc = isWebrtcProvider(providerId)
+  const ingestMethod = normalizeIngestMethod(live.ingestMethod, providerId)
+  live.ingestMethod = ingestMethod
   const isFirebaseSegments = isFirebaseSegmentProvider(providerId)
   const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
   const programScene = (mixer.scenes || []).find((scene) => scene.sceneId === mixer.programSceneId)
@@ -1906,14 +1802,16 @@ function liveProgramOutputState() {
   )))
   const programHasVideo = Boolean(live.videoEnabled && hasEnabledVideoSource && programScene)
   return {
-    provider: providerId,
-    providerLabel: isBuffered ? 'Buffered Broadcast' : isWebrtc ? 'Website Live' : 'Firebase Segments',
-    transportProvider: isBuffered ? 'hls-edge' : isWebrtc ? 'livekit' : 'firebase',
-    ingestMode: isBuffered ? 'rtmp-obs' : isWebrtc ? 'browser-webrtc' : 'browser-media-recorder',
-    playbackMode: isBuffered ? 'hls' : isWebrtc ? 'webrtc' : 'firebaseSegments',
-    latencyProfile: isBuffered ? 'buffered' : 'realtime',
-    streamKey: isBuffered ? streamKey : '',
-    hlsPlaybackUrl: isBuffered ? buildHlsPlaybackUrl(streamKey) : '',
+    provider: isFirebaseSegments ? STREAM_PROVIDERS.firebaseSegments : STREAM_PROVIDERS.hlsEdge,
+    providerLabel: isFirebaseSegments ? 'Firebase Segments' : 'Melogic Edge',
+    transportProvider: isFirebaseSegments ? 'firebase' : 'hls-edge',
+    ingestMethod: isFirebaseSegments ? '' : ingestMethod,
+    ingestProtocol: isFirebaseSegments ? '' : ingestProtocolForMethod(ingestMethod),
+    ingestMode: isFirebaseSegments ? 'browser-media-recorder' : ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
+    playbackMode: isFirebaseSegments ? 'firebaseSegments' : 'hls',
+    latencyProfile: isFirebaseSegments ? 'realtime' : 'buffered',
+    streamKey: isFirebaseSegments ? '' : streamKey,
+    hlsPlaybackUrl: isFirebaseSegments ? '' : buildHlsPlaybackUrl(streamKey),
     nativeStreaming: {
       enabled: isFirebaseSegments,
       targetLatencyMs: 30000,
@@ -2721,6 +2619,7 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
   const restoredProviderId = normalizeProviderId(stream.provider)
   live.providerId = restoredProviderId
+  live.ingestMethod = normalizeIngestMethod(stream.ingestMethod || stream.ingestMode, stream.provider)
   live.nativeStreamingStatus = stream.nativeStreaming?.status || live.nativeStreamingStatus || 'idleNoListeners'
   live.audioEnabled = stream.audioEnabled !== false
   live.videoEnabled = stream.videoEnabled === true
@@ -3185,8 +3084,13 @@ async function nativeProgramMediaStream() {
   }
   if (live.videoEnabled) {
     const mixer = ensureStudioProgramMixer()
+    mixer.attachCanvas(app.querySelector('[data-program-program-canvas]') || app.querySelector('[data-program-preview-canvas]'))
+    mixer.enableVideo()
     const videoTrack = mixer.getVideoTrack()
-    if (videoTrack) stream.addTrack(videoTrack)
+    if (videoTrack) {
+      live.programVideoTrack = videoTrack
+      stream.addTrack(videoTrack)
+    }
   }
   return stream
 }
@@ -4188,8 +4092,8 @@ function updateLiveStreamFormFromElement(formEl) {
   form.visibility = String(data.get('visibility') || 'public')
   form.accessMode = String(data.get('accessMode') || form.visibility)
   form.password = String(data.get('password') || '')
-  const provider = String(data.get('provider') || liveState().providerId || STREAM_PROVIDERS.bufferedBroadcast)
-  liveState().providerId = normalizeProviderId(provider)
+  liveState().providerId = STREAM_PROVIDERS.hlsEdge
+  liveState().ingestMethod = normalizeIngestMethod(data.get('ingestMethod') || liveState().ingestMethod)
   const rawStreamKey = data.has('streamKey') ? data.get('streamKey') : (form.streamKey ?? 'mystream')
   form.streamKey = sanitizeHlsStreamKey(rawStreamKey)
   const nextCoverURL = String(data.get('coverArtURL') || '').trim()
@@ -4225,8 +4129,9 @@ function liveStreamPayload() {
   const form = live.streamForm
   const providerId = normalizeProviderId(live.providerId)
   live.providerId = providerId
-  const isBuffered = isBufferedBroadcastProvider(providerId)
-  const isWebrtc = isWebrtcProvider(providerId)
+  const isFirebaseSegments = isFirebaseSegmentProvider(providerId)
+  const ingestMethod = normalizeIngestMethod(live.ingestMethod, providerId)
+  live.ingestMethod = ingestMethod
   const streamKey = sanitizeHlsStreamKey(form.streamKey || 'mystream')
   return {
     streamId: live.streamId || live.draftStreamId || '',
@@ -4241,16 +4146,18 @@ function liveStreamPayload() {
     coverArtSource: form.coverArtSource || (form.coverArtURL ? 'url' : 'fallback'),
     tags: form.tags,
     audioMode: form.audioMode,
-    provider: providerId,
-    providerLabel: isBuffered ? 'Buffered Broadcast' : isWebrtc ? 'Website Live' : 'Firebase Segments',
-    transportProvider: isBuffered ? 'hls-edge' : isWebrtc ? 'livekit' : 'firebase',
-    ingestMode: isBuffered ? 'rtmp-obs' : isWebrtc ? 'browser-webrtc' : 'browser-media-recorder',
-    playbackMode: isBuffered ? 'hls' : isWebrtc ? 'webrtc' : 'firebaseSegments',
-    latencyProfile: isBuffered ? 'buffered' : 'realtime',
-    streamKey: isBuffered ? streamKey : '',
-    hlsPlaybackUrl: isBuffered ? buildHlsPlaybackUrl(streamKey) : '',
+    provider: isFirebaseSegments ? STREAM_PROVIDERS.firebaseSegments : STREAM_PROVIDERS.hlsEdge,
+    providerLabel: isFirebaseSegments ? 'Firebase Segments' : 'Melogic Edge',
+    transportProvider: isFirebaseSegments ? 'firebase' : 'hls-edge',
+    ingestMethod: isFirebaseSegments ? '' : ingestMethod,
+    ingestProtocol: isFirebaseSegments ? '' : ingestProtocolForMethod(ingestMethod),
+    ingestMode: isFirebaseSegments ? 'browser-media-recorder' : ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
+    playbackMode: isFirebaseSegments ? 'firebaseSegments' : 'hls',
+    latencyProfile: isFirebaseSegments ? 'realtime' : 'buffered',
+    streamKey: isFirebaseSegments ? '' : streamKey,
+    hlsPlaybackUrl: isFirebaseSegments ? '' : buildHlsPlaybackUrl(streamKey),
     nativeStreaming: {
-      enabled: isFirebaseSegmentProvider(providerId),
+      enabled: isFirebaseSegments,
       targetLatencyMs: 30000,
       segmentDurationMs: 4000,
       audioFirst: true,
@@ -4322,9 +4229,9 @@ async function saveLiveStreamInfo() {
   live.savingInfo = true
   renderShell()
   try {
-    if (isBufferedBroadcastProvider(live.providerId)) {
+    if (!isFirebaseSegmentProvider(live.providerId)) {
       const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
-      if (!streamKey) throw new Error('Buffered Broadcast requires a stream key.')
+      if (!streamKey) throw new Error('Streaming requires a stream key.')
       live.streamForm.streamKey = streamKey
     }
     const payload = liveStreamPayload()
@@ -4365,25 +4272,21 @@ function scheduleLiveStudioDraftSave() {
 async function startLiveStudioStream() {
   const live = liveState()
   if (!state.user?.uid || live.starting || live.streamId) return
-  live.providerId = normalizeProviderId(live.providerId)
+  live.providerId = STREAM_PROVIDERS.hlsEdge
+  live.ingestMethod = normalizeIngestMethod(live.ingestMethod)
   live.starting = true
   live.error = ''
   live.outputStatus = 'Creating Melogic Music live stream...'
   renderShell()
   let pendingStreamId = ''
+  let browserIngestStarted = false
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
-    if (isBufferedBroadcastProvider(live.providerId)) {
-      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
-      if (!streamKey) throw new Error('Buffered Broadcast requires a stream key.')
-      live.streamForm.streamKey = streamKey
-    }
-    if (isWebrtcProvider(live.providerId) && !livekitStatusConfigured(live)) {
-      throw new Error('Website Live requires WebRTC/LiveKit configuration. Use Buffered Broadcast with OBS for now.')
-    }
-    const programTrack = isWebrtcProvider(live.providerId) && live.audioEnabled ? await getLivePublishTrack() : null
-    if (isWebrtcProvider(live.providerId) && (!programTrack || programTrack.readyState !== 'live')) {
-      throw new Error('Live program audio track is not available.')
+    const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
+    if (!streamKey) throw new Error('Streaming requires a stream key.')
+    live.streamForm.streamKey = streamKey
+    if (live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc && !isBrowserWebrtcIngestConfigured()) {
+      throw new Error('Browser streaming requires a WebRTC ingest endpoint on the streaming server. Use Stream From OBS / Encoder for now.')
     }
     live.outputStatus = 'Saving Live Studio stream details...'
     renderShell()
@@ -4409,31 +4312,65 @@ async function startLiveStudioStream() {
     if (!pendingStreamId) throw new Error('The live stream service did not return a stream id.')
     live.nativeHostSessionId = live.nativeHostSessionId || nativeHostSessionId(pendingStreamId)
     if (isBufferedBroadcastProvider(live.providerId)) {
-      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
       const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+      const isBrowserIngest = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+      let browserIngestResult = null
       live.providerDiagnostics = {
-        providerId: STREAM_PROVIDERS.bufferedBroadcast,
+        providerId: STREAM_PROVIDERS.hlsEdge,
         transportProvider: 'hls-edge',
         playbackMode: 'hls',
-        ingestMode: 'rtmp-obs',
+        ingestMethod: live.ingestMethod,
+        ingestProtocol: ingestProtocolForMethod(live.ingestMethod),
         streamKey,
         hlsPlaybackUrl,
         streamDocStatus: 'starting',
         noLiveKitAttempted: true
+      }
+      if (isBrowserIngest) {
+        live.outputStatus = 'Connecting Studio Program output to Melogic Edge...'
+        renderShell()
+        const mediaStream = await nativeProgramMediaStream()
+        browserIngestResult = await startBrowserWebrtcIngest({
+          streamKey,
+          mediaStream,
+          onStatus: ({ status, connectionState }) => {
+            live.providerDiagnostics = {
+              ...(live.providerDiagnostics || {}),
+              ingestConnectionState: connectionState || status || 'connecting'
+            }
+          },
+          onError: (error) => {
+            live.providerDiagnostics = {
+              ...(live.providerDiagnostics || {}),
+              ingestConnectionState: 'error',
+              ingestError: error?.message || String(error)
+            }
+          }
+        })
+        browserIngestStarted = true
+        live.browserIngestActive = true
+        live.audioPublishedToProvider = browserIngestResult.audioPublished === true
+        live.videoPublishedToProvider = browserIngestResult.videoPublished === true
       }
       live.streamId = pendingStreamId
       await markMusicLiveStreamOnAir(pendingStreamId, {
         ...liveStreamPayload(),
         ...liveProgramOutputState(),
         streamId: pendingStreamId,
-        provider: STREAM_PROVIDERS.bufferedBroadcast,
+        provider: STREAM_PROVIDERS.hlsEdge,
         transportProvider: 'hls-edge',
-        ingestMode: 'rtmp-obs',
+        ingestMethod: live.ingestMethod,
+        ingestProtocol: ingestProtocolForMethod(live.ingestMethod),
+        ingestMode: isBrowserIngest ? 'browser-webrtc' : 'rtmp-obs',
         playbackMode: 'hls',
         streamKey,
         hlsPlaybackUrl,
         hostSessionId: live.nativeHostSessionId,
         hostActive: true,
+        connectionStatus: isBrowserIngest ? 'live' : 'waitingForIngest',
+        audioPublished: browserIngestResult?.audioPublished === true,
+        videoPublished: browserIngestResult?.videoPublished === true,
+        programHasAudio: browserIngestResult?.audioPublished === true,
         broadcastState: 'liveBroadcasting'
       })
       live.draftStreamId = pendingStreamId
@@ -4442,7 +4379,10 @@ async function startLiveStudioStream() {
       if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
       live.heartbeatTimer = window.setInterval(() => {
         if (!live.streamId) return
-        heartbeatMusicLiveStream(live.streamId, { ...liveProgramOutputState(), connectionStatus: 'live' }).catch(() => {})
+        heartbeatMusicLiveStream(live.streamId, {
+          ...liveProgramOutputState(),
+          connectionStatus: live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'live' : 'waitingForIngest'
+        }).catch(() => {})
         writeNativeHostPresence({
           streamId: live.streamId,
           uid: state.user.uid,
@@ -4459,7 +4399,7 @@ async function startLiveStudioStream() {
         broadcasting: true,
         hostSessionId: live.nativeHostSessionId
       }).catch((error) => {
-        console.warn('[studio-live] Buffered Broadcast host presence write failed after stream was marked live.', {
+        console.warn('[studio-live] HLS Edge host presence write failed after stream was marked live.', {
           streamId: pendingStreamId,
           message: error?.message || String(error)
         })
@@ -4469,106 +4409,12 @@ async function startLiveStudioStream() {
         streamDocStatus: 'live',
         noLiveKitAttempted: true
       }
-      live.outputStatus = 'On air. Waiting for the OBS feed at the Melogic HLS edge.'
+      live.outputStatus = isBrowserIngest
+        ? 'On air. Studio Program is publishing to Melogic Edge; viewers receive buffered HLS.'
+        : 'On air. Waiting for the OBS / encoder feed at Melogic Edge.'
       return
     }
-    const livekitConnection = validateLiveKitConnectionConfig({
-      url: response.url,
-      token: response.hostToken
-    })
-    updateLiveProgramAudioDiagnostics({
-      livekitUrlPresent: livekitConnection.urlPresent,
-      livekitUrlValid: livekitConnection.urlValid,
-      publishTokenReceived: livekitConnection.tokenPresent,
-      livekitConfigError: livekitConnection.errorMessage,
-      noLiveKitAttempted: Boolean(livekitConnection.errorMessage)
-    })
-    if (livekitConnection.errorMessage) throw new Error(livekitConnection.errorMessage)
-    const room = new Room({ adaptiveStream: false, dynacast: false })
-    live.room = room
-    live.streamId = pendingStreamId
-    live.outputStatus = 'Connecting Live Studio host room...'
-    room.on(RoomEvent.Connected, () => {
-      live.outputStatus = live.inputSource === 'sequence'
-        ? 'Host room connected. Publishing Sequence Software output...'
-        : 'Host room connected. Publishing browser input source...'
-      renderShell()
-    })
-    room.on(RoomEvent.Reconnecting, () => {
-      live.outputStatus = 'Reconnecting Live Studio host room...'
-      renderShell()
-    })
-    room.on(RoomEvent.Disconnected, () => {
-      live.outputStatus = live.ending ? 'Live Studio disconnected.' : 'Live Studio disconnected unexpectedly.'
-      live.room = null
-      live.localTrack = null
-      live.localVideoTrack = live.videoPreviewActive ? live.localVideoTrack : null
-      live.programVideoTrack = null
-      live.audioPublishedToProvider = false
-      live.videoPublishedToProvider = false
-      if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
-      live.heartbeatTimer = 0
-      renderShell()
-    })
-    await room.connect(livekitConnection.url, livekitConnection.token)
-    live.localTrack = programTrack
-    live.programAudioTrack = programTrack
-    live.audioPublishedToProvider = false
-    live.videoPublishedToProvider = false
-    if (programTrack) {
-      const publication = await room.localParticipant.publishTrack(programTrack, {
-        ...publishOptionsForLiveSource(),
-        name: 'melogic-program-audio'
-      })
-      live.livekitAudioPublication = publication || null
-      live.audioPublishedToProvider = true
-      updateLiveProgramAudioDiagnostics({
-        livekitUrlPresent: Boolean(response.url),
-        livekitUrlValid: livekitConnection.urlValid,
-        publishTokenReceived: Boolean(response.hostToken),
-        livekitConfigError: '',
-        noLiveKitAttempted: false,
-        roomName: response.roomName || response.livekitRoomName || '',
-        livekitPublishedTrackSid: publication?.trackSid || publication?.sid || '',
-        livekitPublishedTrackName: publication?.trackName || publication?.track?.name || 'melogic-program-audio'
-      })
-    }
-    if (live.videoEnabled) await publishLiveVideoTrackIfNeeded()
-    await markMusicLiveStreamOnAir(pendingStreamId, liveProgramOutputState())
-    live.draftStreamId = pendingStreamId
-    subscribeLiveStudioStream(pendingStreamId)
-    subscribeLiveStudioChat(pendingStreamId)
-    if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
-    live.heartbeatTimer = window.setInterval(() => {
-      if (!live.streamId) return
-      heartbeatMusicLiveStream(live.streamId, {
-        ...liveProgramOutputState(),
-        connectionStatus: 'live'
-      }).catch(() => {})
-      writeNativeHostPresence({
-        streamId: live.streamId,
-        uid: state.user.uid,
-        state: 'online',
-        broadcasting: true,
-        hostSessionId: live.nativeHostSessionId
-      }).catch(() => {})
-    }, 15000)
-    heartbeatLiveProgramState().catch(() => {})
-    await writeNativeHostPresence({
-      streamId: pendingStreamId,
-      uid: state.user.uid,
-      state: 'online',
-      broadcasting: true,
-      hostSessionId: live.nativeHostSessionId
-    }).catch((error) => {
-      console.warn('[studio-live] WebRTC host presence write failed after stream was marked live.', {
-        streamId: pendingStreamId,
-        message: error?.message || String(error)
-      })
-    })
-    live.outputStatus = live.inputSource === 'sequence'
-      ? 'On air. Sequence Software output is publishing to Melogic Music.'
-      : 'On air. Browser input source is publishing to Melogic Music.'
+    throw new Error('Unsupported Studio streaming method.')
   } catch (error) {
     const firebaseDetails = firebaseErrorDetails(error)
     console.error('[studio-live] start stream failed', {
@@ -4587,6 +4433,8 @@ async function startLiveStudioStream() {
       callableDetails: firebaseDetails.details || firebaseDetails.customData || null,
       functionName: 'startLiveStudioStream'
     })
+    if (browserIngestStarted || live.browserIngestActive) await stopBrowserWebrtcIngest().catch(() => {})
+    live.browserIngestActive = false
     if (pendingStreamId) await endMusicLiveStream(pendingStreamId).catch(() => {})
     live.streamId = ''
     live.draftStreamId = ''
@@ -4621,6 +4469,14 @@ async function endLiveStudioStream() {
   try {
     if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
     live.heartbeatTimer = 0
+    if (live.browserIngestActive || live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc) {
+      await stopBrowserWebrtcIngest().catch((error) => {
+        live.nativeStopWarning = error?.message || 'Browser ingest cleanup failed.'
+      })
+      live.browserIngestActive = false
+      studioProgramMixer?.releaseVideoCapture?.()
+      live.programVideoTrack = null
+    }
     if (isFirebaseSegmentProvider(live.providerId) && firebaseSegmentStreamingEnabled()) {
       stopNativeSegmentRecorder({ status: 'ended' })
       live.nativeDemandUnsubscribe?.()
@@ -4763,6 +4619,7 @@ function clearEndedLiveHostState(streamId = '') {
   live.nativeRecorderStopReason = ''
   live.nativeLastDemandChangeAt = ''
   live.providerDiagnostics = {}
+  live.browserIngestActive = false
   live.room = null
   live.localTrack = null
   live.programAudioTrack = null
@@ -5033,17 +4890,14 @@ function bindLiveStudioControls() {
       renderShell()
       return
     }
-    const requestedProvider = normalizeProviderId(e.currentTarget.value)
-    live.providerId = requestedProvider
-    const provider = getStreamingProvider(live.providerId)
-    live.providerDiagnostics = provider.getDiagnostics?.() || {}
-    live.outputStatus = isBufferedBroadcastProvider(live.providerId)
-      ? 'Buffered Broadcast selected. Configure OBS with the stream key below.'
-      : isWebrtcProvider(live.providerId)
-        ? (livekitStatusConfigured(live)
-            ? 'Website Live selected. Browser media will use LiveKit WebRTC.'
-            : 'Website Live selected, but WebRTC/LiveKit is not configured yet.')
-        : 'Firebase segment streaming is experimental and may stall.'
+    live.providerId = STREAM_PROVIDERS.hlsEdge
+    live.ingestMethod = normalizeIngestMethod(e.currentTarget.value)
+    live.providerDiagnostics = {}
+    live.outputStatus = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+      ? 'Stream From OBS / Encoder selected. Configure your encoder with the stream key below.'
+      : isBrowserWebrtcIngestConfigured()
+        ? 'Stream From Browser selected. Studio Program will publish to Melogic Edge.'
+        : 'Browser streaming requires a WebRTC ingest endpoint on the streaming server.'
     scheduleLiveStudioDraftSave()
     renderShell()
   })

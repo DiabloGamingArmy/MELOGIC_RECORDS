@@ -31,8 +31,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
   const id = explicitId || dataOrSnap.id || raw.streamId || ''
   const category = LIVE_CATEGORIES.includes(raw.category) ? raw.category : 'music'
   const provider = normalizeProviderId(raw.provider)
-  const providerDefaults = provider === STREAM_PROVIDERS.bufferedBroadcast
-    ? { label: 'Buffered Broadcast', ingestMode: 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
+  const providerDefaults = provider === STREAM_PROVIDERS.hlsEdge
+    ? { label: 'Melogic Edge', ingestMode: 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
     : provider === STREAM_PROVIDERS.nativeWeb
       ? { label: 'Website Live', ingestMode: 'browser-webrtc', playbackMode: 'webrtc', transportProvider: 'livekit' }
       : { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: 'firebaseSegments', transportProvider: 'firebase' }
@@ -67,7 +67,9 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     transportProvider: String(raw.transportProvider || providerDefaults.transportProvider),
     ingestMode: String(raw.ingestMode || providerDefaults.ingestMode),
     playbackMode: String(raw.playbackMode || providerDefaults.playbackMode),
-    latencyProfile: String(raw.latencyProfile || (provider === STREAM_PROVIDERS.bufferedBroadcast ? 'buffered' : 'realtime')),
+    latencyProfile: String(raw.latencyProfile || (provider === STREAM_PROVIDERS.hlsEdge ? 'buffered' : 'realtime')),
+    ingestMethod: String(raw.ingestMethod || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : provider === STREAM_PROVIDERS.hlsEdge ? 'obsRtmp' : '')),
+    ingestProtocol: String(raw.ingestProtocol || (raw.ingestMethod === 'browserWebrtc' ? 'webrtc' : raw.ingestMethod === 'obsRtmp' ? 'rtmp' : '')),
     streamKey: String(raw.streamKey || ''),
     hlsPlaybackUrl: String(raw.hlsPlaybackUrl || ''),
     audioOnlyHlsUrl: String(raw.audioOnlyHlsUrl || ''),

@@ -147,10 +147,13 @@ export class ProgramMixer {
   }
   disableVideo() {
     this.videoEnabled = false
-    this.captureStream?.getVideoTracks?.().forEach((track) => track.stop())
-    this.captureStream = null
+    this.releaseVideoCapture()
     this.stopRenderLoop()
     this.drawPlaceholder()
+  }
+  releaseVideoCapture() {
+    this.captureStream?.getVideoTracks?.().forEach((track) => track.stop())
+    this.captureStream = null
   }
   setScene(sceneId, scene = null) {
     this.activeSceneId = sceneId || this.activeSceneId
