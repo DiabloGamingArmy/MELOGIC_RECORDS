@@ -144,6 +144,15 @@ const state = {
   nativePlaybackTimer: 0,
   nativePlaybackQueue: [],
   nativePlaybackNextIndex: null,
+  nativeMediaSource: null,
+  nativeMediaSourceUrl: '',
+  nativeMediaSourceStreamId: '',
+  nativeSourceBuffer: null,
+  nativeAppendQueue: [],
+  nativeQueuedSegmentIndexes: new Set(),
+  nativeAppendedSegmentIndexes: new Set(),
+  nativeSegmentFetches: new Set(),
+  nativeSelectedSourceBufferMime: '',
   nativeListenerDiagnostics: {},
   listenerPresenceTimer: 0,
   liveMonitor: {
@@ -1250,7 +1259,15 @@ function updateNativeAudioDiagnostics(eventName = '') {
     audioMuted: audio ? audio.muted === true : null,
     audioVolume: audio ? Number(audio.volume || 0) : null,
     audioReadyState: audio ? Number(audio.readyState || 0) : null,
-    audioCurrentSrc: audio?.currentSrc || audio?.src || ''
+    audioCurrentSrc: audio?.currentSrc || audio?.src || '',
+    audioErrorCode: audio?.error?.code ?? null,
+    audioErrorMessage: audio?.error?.message || '',
+    currentSrcIsMediaSourceBlob: Boolean((audio?.currentSrc || audio?.src || '').startsWith('blob:') && state.nativeMediaSourceUrl && (audio?.currentSrc || audio?.src || '') === state.nativeMediaSourceUrl),
+    mediaSourceReadyState: state.nativeMediaSource?.readyState || '',
+    sourceBufferUpdating: state.nativeSourceBuffer ? state.nativeSourceBuffer.updating === true : null,
+    appendQueueLength: state.nativeAppendQueue?.length || 0,
+    appendedSegmentIndexes: Array.from(state.nativeAppendedSegmentIndexes || []),
+    selectedSourceBufferMime: state.nativeSelectedSourceBufferMime || ''
   }
 }
 
@@ -1303,8 +1320,263 @@ function ensureNativeListenerAudioElement() {
   return audio
 }
 
+function getMediaSourceConstructor() {
+  return window.MediaSource || window.ManagedMediaSource || null
+}
+
+function nativeSourceBufferMimeCandidates(segment = {}) {
+  return [
+    segment.mimeType,
+    'audio/webm;codecs=opus',
+    'audio/webm; codecs="opus"',
+    'audio/webm'
+  ].filter(Boolean).map((value) => String(value).trim()).filter((value, index, list) => list.indexOf(value) === index)
+}
+
+function selectNativeSourceBufferMime(segment = {}) {
+  const MediaSourceClass = getMediaSourceConstructor()
+  if (!MediaSourceClass?.isTypeSupported) return ''
+  return nativeSourceBufferMimeCandidates(segment).find((mimeType) => MediaSourceClass.isTypeSupported(mimeType)) || ''
+}
+
+function cleanupNativeMediaSourcePipeline() {
+  if (state.nativeSourceBuffer) {
+    try {
+      state.nativeSourceBuffer.removeEventListener?.('updateend', pumpNativeAppendQueue)
+      state.nativeSourceBuffer.removeEventListener?.('error', handleNativeSourceBufferError)
+    } catch {}
+  }
+  if (state.nativeMediaSourceUrl) {
+    try { URL.revokeObjectURL(state.nativeMediaSourceUrl) } catch {}
+  }
+  state.nativeMediaSource = null
+  state.nativeMediaSourceUrl = ''
+  state.nativeMediaSourceStreamId = ''
+  state.nativeSourceBuffer = null
+  state.nativeAppendQueue = []
+  state.nativeQueuedSegmentIndexes = new Set()
+  state.nativeAppendedSegmentIndexes = new Set()
+  state.nativeSegmentFetches = new Set()
+  state.nativeSelectedSourceBufferMime = ''
+}
+
+function handleNativeSourceBufferError(event = {}) {
+  const error = event?.error || event?.target?.error || {}
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    lastAppendErrorName: error?.name || 'SourceBufferError',
+    lastAppendErrorMessage: error?.message || 'SourceBuffer append failed.'
+  }
+  updateNativeAudioDiagnostics('sourcebuffer-error')
+  state.liveError = 'Native Streaming playback failed while appending audio chunks.'
+  updateLiveListenerControls()
+}
+
+function ensureNativeMediaSourcePipeline(streamId = '', segmentHint = {}) {
+  const audio = ensureNativeListenerAudioElement()
+  const MediaSourceClass = getMediaSourceConstructor()
+  const mediaSourceSupported = Boolean(MediaSourceClass?.isTypeSupported)
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    mediaSourceSupported
+  }
+  if (!mediaSourceSupported) {
+    state.liveError = 'This browser cannot play Native Streaming chunks yet. Try Chrome/Edge.'
+    updateNativeAudioDiagnostics()
+    return false
+  }
+  const selectedMime = selectNativeSourceBufferMime(segmentHint)
+  state.nativeSelectedSourceBufferMime = selectedMime
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    selectedSourceBufferMime: selectedMime,
+    sourceBufferCreated: selectedMime ? state.nativeListenerDiagnostics.sourceBufferCreated : false
+  }
+  if (!selectedMime) {
+    state.liveError = 'This browser cannot play Native Streaming chunks yet. Try Chrome/Edge.'
+    updateNativeAudioDiagnostics()
+    return false
+  }
+  if (state.nativeMediaSource && state.nativeMediaSourceStreamId === streamId) {
+    updateNativeAudioDiagnostics()
+    return true
+  }
+  cleanupNativeMediaSourcePipeline()
+  const mediaSource = new MediaSourceClass()
+  const mediaSourceUrl = URL.createObjectURL(mediaSource)
+  state.nativeMediaSource = mediaSource
+  state.nativeMediaSourceUrl = mediaSourceUrl
+  state.nativeMediaSourceStreamId = streamId
+  audio.src = mediaSourceUrl
+  try { audio.load() } catch {}
+  mediaSource.addEventListener('sourceopen', () => {
+    state.nativeSelectedSourceBufferMime = selectedMime
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      sourceOpenAt: new Date().toISOString(),
+      selectedSourceBufferMime: selectedMime,
+      mediaSourceReadyState: mediaSource.readyState
+    }
+    if (!selectedMime) {
+      state.nativeListenerDiagnostics.sourceBufferCreated = false
+      state.liveError = 'This browser cannot play Native Streaming chunks yet. Try Chrome/Edge.'
+      updateNativeAudioDiagnostics('sourceopen')
+      updateLiveListenerControls()
+      return
+    }
+    try {
+      const sourceBuffer = mediaSource.addSourceBuffer(selectedMime)
+      sourceBuffer.mode = 'sequence'
+      sourceBuffer.addEventListener('updateend', pumpNativeAppendQueue)
+      sourceBuffer.addEventListener('error', handleNativeSourceBufferError)
+      state.nativeSourceBuffer = sourceBuffer
+      state.nativeListenerDiagnostics = {
+        ...(state.nativeListenerDiagnostics || {}),
+        sourceBufferCreated: true,
+        sourceBufferUpdating: sourceBuffer.updating === true,
+        selectedSourceBufferMime: selectedMime
+      }
+      updateNativeAudioDiagnostics('sourceopen')
+      pumpNativeAppendQueue()
+    } catch (error) {
+      state.nativeListenerDiagnostics = {
+        ...(state.nativeListenerDiagnostics || {}),
+        sourceBufferCreated: false,
+        lastAppendErrorName: error?.name || '',
+        lastAppendErrorMessage: error?.message || ''
+      }
+      state.liveError = `Native Streaming playback setup failed: ${error?.message || 'SourceBuffer could not be created.'}`
+      updateNativeAudioDiagnostics('sourceopen-error')
+      updateLiveListenerControls()
+    }
+  }, { once: true })
+  updateNativeAudioDiagnostics()
+  return true
+}
+
+function pumpNativeAppendQueue() {
+  const sourceBuffer = state.nativeSourceBuffer
+  if (!sourceBuffer || sourceBuffer.updating || !state.nativeAppendQueue.length) {
+    updateNativeAudioDiagnostics()
+    return
+  }
+  const next = state.nativeAppendQueue.shift()
+  state.nativeQueuedSegmentIndexes.delete(next.index)
+  try {
+    sourceBuffer.appendBuffer(next.buffer)
+    state.nativeAppendedSegmentIndexes.add(next.index)
+    state.nativePlaybackNextIndex = next.index + 1
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      sourceBufferUpdating: sourceBuffer.updating === true,
+      appendQueueLength: state.nativeAppendQueue.length,
+      appendedSegmentIndexes: Array.from(state.nativeAppendedSegmentIndexes),
+      lastAppendIndex: next.index,
+      lastAppendByteLength: Number(next.buffer?.byteLength || 0),
+      lastAppendErrorName: '',
+      lastAppendErrorMessage: '',
+      currentSegmentIndex: next.index
+    }
+  } catch (error) {
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      lastAppendErrorName: error?.name || '',
+      lastAppendErrorMessage: error?.message || ''
+    }
+    state.liveError = `Native Streaming append failed: ${error?.message || 'Could not append audio chunk.'}`
+  }
+  updateNativeAudioDiagnostics()
+}
+
+async function enqueueNativeMediaSourceSegments(segments = []) {
+  if (!state.nativeSourceBuffer) {
+    updateNativeAudioDiagnostics()
+    return
+  }
+  const ordered = segments
+    .filter((segment) => segment?.downloadURL)
+    .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))
+  for (const segment of ordered) {
+    const index = Number(segment.index ?? 0)
+    if (state.nativeAppendedSegmentIndexes.has(index) || state.nativeQueuedSegmentIndexes.has(index) || state.nativeSegmentFetches.has(index)) continue
+    state.nativeSegmentFetches.add(index)
+    try {
+      const response = await fetch(segment.downloadURL)
+      if (!response.ok) throw new Error(`Segment fetch failed with HTTP ${response.status}`)
+      const buffer = await response.arrayBuffer()
+      state.nativeAppendQueue.push({ index, buffer, segmentId: segment.segmentId || '', mimeType: segment.mimeType || '' })
+      state.nativeQueuedSegmentIndexes.add(index)
+      state.nativeListenerDiagnostics = {
+        ...(state.nativeListenerDiagnostics || {}),
+        appendQueueLength: state.nativeAppendQueue.length,
+        lastFetchedSegmentIndex: index,
+        lastFetchedSegmentByteLength: Number(buffer.byteLength || 0)
+      }
+      pumpNativeAppendQueue()
+    } catch (error) {
+      state.nativeListenerDiagnostics = {
+        ...(state.nativeListenerDiagnostics || {}),
+        lastAppendErrorName: error?.name || '',
+        lastAppendErrorMessage: error?.message || ''
+      }
+      state.liveError = `Native Streaming segment fetch failed: ${error?.message || 'Could not load audio chunk.'}`
+      updateLiveListenerControls()
+    } finally {
+      state.nativeSegmentFetches.delete(index)
+    }
+  }
+  updateNativeAudioDiagnostics()
+}
+
+async function playNativeMediaSourceAudio({ userGesture = false } = {}) {
+  const audio = ensureNativeListenerAudioElement()
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    ...(userGesture ? { userGestureUnlockAttempted: true } : {}),
+    lastPlayAttemptAt: new Date().toISOString(),
+    lastPlayErrorName: '',
+    lastPlayErrorMessage: ''
+  }
+  try {
+    await audio.play()
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      ...(userGesture ? { userGestureUnlockSucceeded: true } : {}),
+      lastPlayResolvedAt: new Date().toISOString(),
+      lastPlayErrorName: '',
+      lastPlayErrorMessage: ''
+    }
+    updateNativeAudioDiagnostics()
+    state.liveError = isNativeRealSegmentAudioPlaying() ? '' : 'Playback unlocked. Waiting for audio chunks...'
+    updateLiveListenerControls()
+    return true
+  } catch (error) {
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      ...(userGesture ? { userGestureUnlockSucceeded: false } : {}),
+      lastPlayRejectedAt: new Date().toISOString(),
+      lastPlayErrorName: error?.name || '',
+      lastPlayErrorMessage: error?.message || ''
+    }
+    updateNativeAudioDiagnostics()
+    state.liveError = error?.name === 'NotAllowedError'
+      ? 'Playback was blocked. Press Play again.'
+      : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim()
+    updateLiveListenerControls()
+    rerender()
+    return false
+  }
+}
+
 function unlockNativeAudioFromGesture() {
   const audio = ensureNativeListenerAudioElement()
+  const streamId = state.liveStream?.id || state.nativeListenerDiagnostics?.streamId || ''
+  const mediaSourceReady = ensureNativeMediaSourcePipeline(streamId)
+  if (!mediaSourceReady) {
+    state.liveStatus = 'waiting'
+    updateLiveListenerControls()
+    return audio
+  }
   state.nativeListenerDiagnostics = {
     ...(state.nativeListenerDiagnostics || {}),
     userGestureUnlockAttempted: true,
@@ -1316,83 +1588,21 @@ function unlockNativeAudioFromGesture() {
   state.liveStatus = 'buffering'
   state.liveError = 'Playback unlocked. Waiting for audio chunks...'
   try { audio.load() } catch {}
-  const playPromise = audio.play()
-  if (playPromise?.then) {
-    playPromise.then(() => {
-      state.nativeListenerDiagnostics = {
-        ...(state.nativeListenerDiagnostics || {}),
-        userGestureUnlockSucceeded: true,
-        lastPlayResolvedAt: new Date().toISOString(),
-        lastPlayErrorName: '',
-        lastPlayErrorMessage: ''
-      }
-      updateNativeAudioDiagnostics()
-      state.liveError = 'Playback unlocked. Waiting for audio chunks...'
-      updateLiveListenerControls()
-    }).catch((error) => {
-      state.nativeListenerDiagnostics = {
-        ...(state.nativeListenerDiagnostics || {}),
-        userGestureUnlockSucceeded: false,
-        lastPlayRejectedAt: new Date().toISOString(),
-        lastPlayErrorName: error?.name || '',
-        lastPlayErrorMessage: error?.message || ''
-      }
-      updateNativeAudioDiagnostics()
-      state.liveError = error?.name === 'NotAllowedError'
-        ? 'Playback was blocked. Press Play again.'
-        : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim()
-      updateLiveListenerControls()
-      rerender()
-    })
-  }
+  playNativeMediaSourceAudio({ userGesture: true })
   return audio
 }
 
 function resumeNativeAudioFromGesture() {
-  const audio = ensureNativeListenerAudioElement()
-  const nextSegment = state.nativePlaybackQueue
-    .filter((segment) => segment.downloadURL)
-    .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))
-    .find((segment) => Number(segment.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0)) ||
-    state.nativePlaybackQueue.find((segment) => segment.downloadURL)
-  if (nextSegment?.downloadURL && (audio.currentSrc || audio.src || '') !== nextSegment.downloadURL) {
-    const currentIndex = Number(nextSegment.index ?? 0)
-    state.nativeListenerDiagnostics.currentSegmentIndex = currentIndex
-    state.nativePlaybackNextIndex = currentIndex + 1
-    audio.src = nextSegment.downloadURL
-    try { audio.load() } catch {}
-  }
-  state.nativeListenerDiagnostics = {
-    ...(state.nativeListenerDiagnostics || {}),
-    lastPlayAttemptAt: new Date().toISOString(),
-    lastPlayErrorName: '',
-    lastPlayErrorMessage: ''
-  }
-  audio.play().then(() => {
-    state.nativeListenerDiagnostics = {
-      ...(state.nativeListenerDiagnostics || {}),
-      lastPlayResolvedAt: new Date().toISOString(),
-      userGestureUnlockSucceeded: true,
-      lastPlayErrorName: '',
-      lastPlayErrorMessage: ''
-    }
-    updateNativeAudioDiagnostics()
-    state.liveError = isNativeRealSegmentAudioPlaying() ? '' : 'Playback unlocked. Waiting for audio chunks...'
+  const streamId = state.liveStream?.id || state.nativeListenerDiagnostics?.streamId || ''
+  const firstSegment = state.nativePlaybackQueue.find((segment) => segment?.downloadURL) || {}
+  const mediaSourceReady = ensureNativeMediaSourcePipeline(streamId, firstSegment)
+  if (!mediaSourceReady) {
+    state.liveStatus = 'waiting'
     updateLiveListenerControls()
-  }).catch((error) => {
-    state.nativeListenerDiagnostics = {
-      ...(state.nativeListenerDiagnostics || {}),
-      lastPlayRejectedAt: new Date().toISOString(),
-      lastPlayErrorName: error?.name || '',
-      lastPlayErrorMessage: error?.message || ''
-    }
-    updateNativeAudioDiagnostics()
-    state.liveError = error?.name === 'NotAllowedError'
-      ? 'Playback was blocked. Press Play again.'
-      : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim()
-    updateLiveListenerControls()
-    rerender()
-  })
+    return
+  }
+  enqueueNativeMediaSourceSegments(state.nativePlaybackQueue).catch(() => {})
+  playNativeMediaSourceAudio({ userGesture: true })
 }
 
 function nowPlayingDisplay(stream = {}) {
@@ -2611,7 +2821,20 @@ function renderNativeReceiverAudioDebug() {
     ['audio volume', String(diagnostics.audioVolume ?? audio?.volume ?? 'unknown')],
     ['audio readyState', String(diagnostics.audioReadyState ?? audio?.readyState ?? 'unknown')],
     ['audio currentSrc', diagnostics.audioCurrentSrc || audio?.currentSrc || 'none'],
+    ['audio error', diagnostics.audioErrorCode ? `${diagnostics.audioErrorCode}: ${diagnostics.audioErrorMessage || ''}` : 'none'],
+    ['currentSrc is MediaSource blob', diagnostics.currentSrcIsMediaSourceBlob === true ? 'yes' : 'no'],
     ['last audio event', diagnostics.lastAudioEvent || 'none'],
+    ['mediaSourceSupported', diagnostics.mediaSourceSupported === true ? 'yes' : diagnostics.mediaSourceSupported === false ? 'no' : 'unknown'],
+    ['selectedSourceBufferMime', diagnostics.selectedSourceBufferMime || 'none'],
+    ['sourceOpenAt', diagnostics.sourceOpenAt || 'none'],
+    ['sourceBufferCreated', diagnostics.sourceBufferCreated === true ? 'yes' : diagnostics.sourceBufferCreated === false ? 'no' : 'unknown'],
+    ['sourceBufferUpdating', String(diagnostics.sourceBufferUpdating ?? 'unknown')],
+    ['appendQueueLength', String(diagnostics.appendQueueLength ?? 0)],
+    ['appendedSegmentIndexes', Array.isArray(diagnostics.appendedSegmentIndexes) ? diagnostics.appendedSegmentIndexes.join(', ') : 'none'],
+    ['lastAppendIndex', String(diagnostics.lastAppendIndex ?? 'none')],
+    ['lastAppendByteLength', String(diagnostics.lastAppendByteLength ?? 'none')],
+    ['lastAppendError', diagnostics.lastAppendErrorName ? `${diagnostics.lastAppendErrorName}: ${diagnostics.lastAppendErrorMessage || ''}` : 'none'],
+    ['mediaSourceReadyState', diagnostics.mediaSourceReadyState || 'none'],
     ['readySegmentCount', String(diagnostics.readySegmentCount ?? 0)],
     ['currentSegmentIndex', String(diagnostics.currentSegmentIndex ?? 'none')]
   ]
@@ -3424,6 +3647,7 @@ function disconnectLiveListener() {
   state.nativeListenerDiagnostics = {}
   state.nativePlaybackQueue = []
   state.nativePlaybackNextIndex = null
+  cleanupNativeMediaSourcePipeline()
   if (state.liveStream?.id && state.listenerPresenceId) {
     leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
   }
@@ -3510,65 +3734,6 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
     if (changed) rerender()
     else updateLiveListenerControls()
   }
-  const playSegment = async (segment) => {
-    if (!segment?.downloadURL) return false
-    const audio = ensureNativeListenerAudioElement()
-    audio.controls = true
-    audio.muted = monitorMode ? state.liveMonitor.muted : false
-    audio.volume = monitorMode ? state.player.volume : 1
-    const currentIndex = Number(segment.index ?? 0)
-    state.nativeListenerDiagnostics.currentSegmentIndex = currentIndex
-    state.nativePlaybackNextIndex = currentIndex + 1
-    audio.onended = () => {
-      const next = state.nativePlaybackQueue
-        .filter((entry) => entry.downloadURL)
-        .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))
-        .find((entry) => Number(entry.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0))
-      if (next?.downloadURL) playSegment(next).catch(() => {})
-      else {
-        state.liveStatus = state.liveStream?.status === 'live' ? 'buffering' : 'ended'
-        updateLiveListenerControls()
-      }
-    }
-    audio.onerror = () => {
-      updateNativeListenerStatus(state.liveStream?.status === 'live' ? 'buffering' : 'ended', state.liveStream?.status === 'live' ? 'Segment playback failed; waiting for the next segment.' : 'Stream ended.')
-    }
-    if (audio.src !== segment.downloadURL && audio.currentSrc !== segment.downloadURL) {
-      audio.src = segment.downloadURL
-      try { audio.load() } catch {}
-    }
-    state.nativeListenerDiagnostics.lastPlayAttemptAt = new Date().toISOString()
-    try {
-      await audio.play()
-      updateNativeAudioDiagnostics()
-    } catch (error) {
-      state.nativeListenerDiagnostics.lastPlayRejectedAt = new Date().toISOString()
-      state.nativeListenerDiagnostics.lastPlayErrorName = error?.name || ''
-      state.nativeListenerDiagnostics.lastPlayErrorMessage = error?.message || ''
-      updateNativeAudioDiagnostics()
-      updateNativeListenerStatus('waiting', error?.name === 'NotAllowedError'
-        ? 'Playback was blocked. Press Play again.'
-        : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim())
-      return false
-    }
-    if (audio.paused) {
-      updateNativeListenerStatus('waiting', 'Playback was blocked. Press Play again.')
-      return false
-    }
-    return new Promise((resolve) => {
-      const realSegmentPlaying = state.nativeListenerDiagnostics.lastAudioEvent === 'playing' &&
-        (audio.currentSrc || audio.src || '') !== SILENT_AUDIO_UNLOCK_SRC
-      if (realSegmentPlaying) {
-        resolve(true)
-        return
-      }
-      const timeout = window.setTimeout(() => resolve(false), 2000)
-      audio.addEventListener('playing', () => {
-        window.clearTimeout(timeout)
-        resolve(true)
-      }, { once: true })
-    })
-  }
   const poll = async () => {
     const native = credentials.nativeStreaming || state.liveStream?.nativeStreaming || {}
     const queue = await getNativePlaybackQueue(streamId, native).catch((error) => {
@@ -3602,28 +3767,37 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       updateNativeListenerStatus('waitingForHost', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
       return
     }
+    const mediaSourceReady = ensureNativeMediaSourcePipeline(streamId, playable[0] || {})
+    if (!mediaSourceReady) {
+      updateNativeListenerStatus('waiting', 'This browser cannot play Native Streaming chunks yet. Try Chrome/Edge.')
+      return
+    }
+    await enqueueNativeMediaSourceSegments(playable)
+    const appendedCount = state.nativeAppendedSegmentIndexes.size
+    state.nativeListenerDiagnostics = {
+      ...state.nativeListenerDiagnostics,
+      appendQueueLength: state.nativeAppendQueue.length,
+      appendedSegmentIndexes: Array.from(state.nativeAppendedSegmentIndexes),
+      appendedSegmentCount: appendedCount,
+      mediaSourceReadyState: state.nativeMediaSource?.readyState || ''
+    }
     if (playable.length < minSegments) {
       updateNativeListenerStatus(playable.length ? 'buffering' : 'waitingForSegments', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
       return
     }
-    if (!isNativeRealSegmentAudioPlaying()) {
-      const next = playable.find((segment) => Number(segment.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0)) || playable[0]
-      const started = await playSegment(next)
+    if (appendedCount < minSegments) {
+      updateNativeListenerStatus('buffering', 'Buffering audio chunks...')
+      return
+    }
+    if (!isNativeRealSegmentAudioPlaying() && state.listenerAudioElement?.paused === true) {
+      const started = await playNativeMediaSourceAudio()
       if (!started) {
         updateNativeListenerStatus('waiting', 'Ready to play — press Resume Audio.')
         return
       }
-    } else if (state.liveStatus === 'buffering') {
-      const next = playable.find((segment) => Number(segment.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0))
-      if (next) {
-        const started = await playSegment(next)
-        if (!started) {
-          updateNativeListenerStatus('waiting', 'Ready to play — press Resume Audio.')
-          return
-        }
-      }
     }
     if (!isNativeRealSegmentAudioPlaying()) {
+      updateNativeListenerStatus('buffering', 'Ready to play — press Resume Audio.')
       updateLiveListenerControls()
       return
     }

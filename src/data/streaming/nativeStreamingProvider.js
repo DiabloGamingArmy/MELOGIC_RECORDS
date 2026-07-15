@@ -259,8 +259,11 @@ export async function writeSegmentMetadata(segmentDoc = {}) {
     index: Number(payload.index ?? 0),
     ready: payload.ready === true,
     type: payload.type || '',
+    mimeType: payload.mimeType || '',
+    sizeBytes: Number(payload.sizeBytes || 0),
     downloadURLPresent: Boolean(payload.downloadURL),
     storagePath: payload.storagePath || '',
+    uploadPath: payload.storagePath || '',
     newestAvailableSegmentIndex: Number(payload.index ?? 0)
   })
   return { ok: true, segmentId: docRef.id, ...payload }
