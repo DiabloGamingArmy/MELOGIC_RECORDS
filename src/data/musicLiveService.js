@@ -30,7 +30,21 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
   const raw = typeof dataOrSnap.data === 'function' ? dataOrSnap.data() || {} : dataOrSnap || {}
   const id = explicitId || dataOrSnap.id || raw.streamId || ''
   const category = LIVE_CATEGORIES.includes(raw.category) ? raw.category : 'music'
-  const provider = normalizeProviderId(raw.provider)
+  const hasHlsRoute = raw.provider === STREAM_PROVIDERS.hlsEdge
+    || raw.provider === STREAM_PROVIDERS.bufferedBroadcast
+    || raw.transportProvider === 'hls-edge'
+    || raw.playbackMode === 'hls'
+    || Boolean(String(raw.hlsPlaybackUrl || '').trim())
+    || Boolean(String(raw.streamKey || '').trim())
+    || ['obsRtmp', 'browserWebrtc'].includes(raw.ingestMethod)
+    || ['rtmp-obs', 'browser-webrtc'].includes(raw.ingestMode)
+  const explicitlyFirebaseSegments = [STREAM_PROVIDERS.firebaseSegments, STREAM_PROVIDERS.nativeStreaming].includes(raw.provider)
+    || raw.playbackMode === 'firebaseSegments'
+  const provider = hasHlsRoute
+    ? STREAM_PROVIDERS.hlsEdge
+    : explicitlyFirebaseSegments
+      ? STREAM_PROVIDERS.firebaseSegments
+      : normalizeProviderId(raw.provider)
   const hlsIngestMethod = raw.ingestMethod
     || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : raw.ingestMode === 'rtmp-obs' ? 'obsRtmp' : '')
     || (raw.provider === STREAM_PROVIDERS.bufferedBroadcast ? 'obsRtmp' : 'browserWebrtc')
@@ -38,7 +52,9 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     ? { label: 'Melogic Edge', ingestMode: hlsIngestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
     : provider === STREAM_PROVIDERS.nativeWeb
       ? { label: 'Website Live', ingestMode: 'browser-webrtc', playbackMode: 'webrtc', transportProvider: 'livekit' }
-      : { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: 'firebaseSegments', transportProvider: 'firebase' }
+      : provider === STREAM_PROVIDERS.firebaseSegments
+        ? { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: 'firebaseSegments', transportProvider: 'firebase' }
+        : { label: 'Ant Media', ingestMode: String(raw.ingestMode || ''), playbackMode: String(raw.playbackMode || 'webrtc'), transportProvider: String(raw.transportProvider || 'antmedia') }
   return {
     id,
     streamId: id,

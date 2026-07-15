@@ -2,20 +2,40 @@ import { antMediaPlaybackUrls } from './antMediaProvider'
 import { buildHlsPlaybackUrl, isAllowedHlsPlaybackUrl } from './hlsEdgePlayer'
 import { normalizeProviderId, PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
 
+export function selectPublicPlaybackPlayer(stream = {}) {
+  const declaredProvider = String(stream.provider || '')
+  const hasHlsRoute = declaredProvider === STREAM_PROVIDERS.hlsEdge
+    || declaredProvider === STREAM_PROVIDERS.bufferedBroadcast
+    || stream.transportProvider === 'hls-edge'
+    || stream.playbackMode === PLAYBACK_MODES.hls
+    || Boolean(String(stream.hlsPlaybackUrl || '').trim())
+    || Boolean(String(stream.streamKey || '').trim())
+    || ['obsRtmp', 'browserWebrtc'].includes(stream.ingestMethod)
+    || ['rtmp-obs', 'browser-webrtc'].includes(stream.ingestMode)
+  if (hasHlsRoute) return 'hls'
+
+  const explicitlyFirebaseSegments = [STREAM_PROVIDERS.firebaseSegments, STREAM_PROVIDERS.nativeStreaming].includes(declaredProvider)
+    || stream.playbackMode === PLAYBACK_MODES.firebaseSegments
+  if (explicitlyFirebaseSegments) return 'firebaseSegments'
+  if (normalizeProviderId(declaredProvider) === STREAM_PROVIDERS.antMedia) return 'antMedia'
+  return 'webrtc'
+}
+
 export function getPublicPlaybackInfo(stream = {}) {
-  const provider = normalizeProviderId(stream.provider)
-  if (provider === STREAM_PROVIDERS.hlsEdge || stream.playbackMode === PLAYBACK_MODES.hls) {
+  const selectedPlayer = selectPublicPlaybackPlayer(stream)
+  if (selectedPlayer === 'hls') {
     const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
     const configuredUrlAllowed = isAllowedHlsPlaybackUrl(configuredUrl)
     const keyUrl = buildHlsPlaybackUrl(stream.streamKey)
     const url = configuredUrlAllowed ? configuredUrl : keyUrl
     const message = url
       ? ''
-      : !stream.streamKey
-        ? 'This stream is missing an HLS stream key.'
-        : 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
+      : configuredUrl
+        ? 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
+        : 'This stream is missing an HLS stream key.'
     return {
       provider: STREAM_PROVIDERS.hlsEdge,
+      selectedPlayer,
       transportProvider: 'hls-edge',
       playbackMode: PLAYBACK_MODES.hls,
       latencyProfile: 'buffered',
@@ -24,11 +44,12 @@ export function getPublicPlaybackInfo(stream = {}) {
       message
     }
   }
-  if (provider === STREAM_PROVIDERS.firebaseSegments) {
+  if (selectedPlayer === 'firebaseSegments') {
     const native = stream.nativeStreaming || {}
     const status = native.status || stream.broadcastState || (native.hasPlayableSegments ? 'broadcasting' : 'idleNoListeners')
     return {
-      provider,
+      provider: STREAM_PROVIDERS.firebaseSegments,
+      selectedPlayer,
       playbackMode: PLAYBACK_MODES.firebaseSegments,
       playable: Boolean(stream.status === 'live' && stream.hostConnected),
       hasPlayableSegments: native.hasPlayableSegments === true,
@@ -39,7 +60,7 @@ export function getPublicPlaybackInfo(stream = {}) {
       message: native.hasPlayableSegments ? '' : 'Starting stream buffer...'
     }
   }
-  if (provider === STREAM_PROVIDERS.antMedia) {
+  if (selectedPlayer === 'antMedia') {
     const urls = antMediaPlaybackUrls({
       baseUrl: stream.antMediaBaseUrl || stream.publicPlaybackBaseUrl || '',
       appName: stream.antMediaAppName || 'live',
@@ -53,7 +74,8 @@ export function getPublicPlaybackInfo(stream = {}) {
     const playbackMode = stream.playbackMode || PLAYBACK_MODES.hls
     const url = playbackMode === PLAYBACK_MODES.llhls ? resolvedUrls.llhlsUrl : playbackMode === PLAYBACK_MODES.webrtc ? resolvedUrls.webRtcPlaybackUrl : resolvedUrls.hlsUrl
     return {
-      provider,
+      provider: STREAM_PROVIDERS.antMedia,
+      selectedPlayer,
       playbackMode,
       playable: Boolean(stream.status === 'live' && url),
       url,
@@ -62,6 +84,7 @@ export function getPublicPlaybackInfo(stream = {}) {
   }
   return {
     provider: STREAM_PROVIDERS.nativeWeb,
+    selectedPlayer,
     playbackMode: PLAYBACK_MODES.webrtc,
     playable: Boolean(stream.status === 'live'
       && stream.hostConnected

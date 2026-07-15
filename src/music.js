@@ -1121,6 +1121,7 @@ function renderReleaseDetailPage() {
 }
 
 function liveStatusLabel(stream = {}) {
+  const playbackInfo = getPublicPlaybackInfo(stream)
   if (state.liveStatus === 'live') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'playing') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'requestingPlayback') return 'Requesting playback...'
@@ -1131,7 +1132,7 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'readyToPlay') return 'Ready to play - press Resume Audio.'
   if (state.liveStatus === 'playbackBlocked') return 'Press Resume Audio.'
   if (state.liveStatus === 'stalled') return 'Live stream stalled. Reconnecting...'
-  if (state.liveStatus === 'error') return isBufferedBroadcastProvider(stream.provider) ? 'Live stream error.' : 'Live audio error.'
+  if (state.liveStatus === 'error') return playbackInfo.provider === STREAM_PROVIDERS.hlsEdge ? 'Live stream error.' : 'Live audio error.'
   if (state.liveStatus === 'waitingForHost') return 'Host is not currently broadcasting.'
   if (state.liveStatus === 'waitingForSegments') return 'Connected to host. Waiting for audio chunks...'
   if (state.liveStatus === 'interrupted') return 'Stream interrupted.'
@@ -1140,7 +1141,7 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'connecting') return 'Connecting to stream...'
   if (state.liveStatus === 'buffering') return 'Starting stream buffer...'
   if (state.liveStatus === 'ended' || stream.status !== 'live') return 'Stream ended.'
-  if (isFirebaseSegmentProvider(stream.provider)) {
+  if (playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments) {
     const status = stream.nativeStreaming?.status || ''
     if (status === 'idleNoListeners' || status === 'idle_no_listeners') return 'Waiting for listeners.'
     if (status === 'warmingBuffer') return 'Buffering.'
@@ -1148,7 +1149,7 @@ function liveStatusLabel(stream = {}) {
     if (status === 'error') return 'Stream error.'
     return 'Live.'
   }
-  if (isBufferedBroadcastProvider(stream.provider)) return 'Click Play to begin. Sound never autoplays.'
+  if (playbackInfo.provider === STREAM_PROVIDERS.hlsEdge) return 'Click Play to begin. Sound never autoplays.'
   return 'Click Listen to join. Audio never autoplays.'
 }
 
@@ -1172,7 +1173,7 @@ function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
 }
 
 function nativeLiveStatusLabel(stream = {}) {
-  if (!isFirebaseSegmentProvider(stream.provider)) return 'LIVE'
+  if (getPublicPlaybackInfo(stream).provider !== STREAM_PROVIDERS.firebaseSegments) return 'LIVE'
   const status = stream.nativeStreaming?.status || ''
   if (status === 'idleNoListeners' || status === 'idle_no_listeners') return 'Waiting for listeners'
   if (status === 'warmingBuffer') return 'Buffering'
@@ -1759,7 +1760,7 @@ function ensureLiveKitListenerAudioMounted() {
 }
 
 function isBufferedHlsStream(stream = state.liveStream) {
-  return Boolean(stream && (isBufferedBroadcastProvider(stream.provider) || stream.playbackMode === 'hls'))
+  return Boolean(stream && getPublicPlaybackInfo(stream).provider === STREAM_PROVIDERS.hlsEdge)
 }
 
 function currentHlsPlaybackMode() {
@@ -3177,9 +3178,9 @@ function renderLiveDetailPage() {
     renderAppShell(emptyState('Live stream unavailable', 'This stream may have ended, been removed, or never existed.', `<a class="button button-accent" href="${ROUTES.musicLive}">Back to Live Streams</a>`))
     return
   }
-  const isNativeStream = isFirebaseSegmentProvider(stream.provider)
-  const isBufferedStream = isBufferedHlsStream(stream)
   const playbackInfo = getPublicPlaybackInfo(stream)
+  const isNativeStream = playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments
+  const isBufferedStream = playbackInfo.provider === STREAM_PROVIDERS.hlsEdge
   const canListen = isNativeStream
     ? stream.status === 'live' && !['removed', 'blocked'].includes(stream.moderationStatus) && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
     : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
@@ -3197,8 +3198,8 @@ function renderLiveDetailPage() {
         ${!isBufferedStream && hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
       </div>
       <div class="music-live-detail-copy">
-        ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge ${isFirebaseSegmentProvider(stream.provider) ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
-        ${hasVideo ? '' : `<span class="music-live-badge ${isFirebaseSegmentProvider(stream.provider) ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>`}
+        ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge ${isNativeStream ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
+        ${hasVideo ? '' : `<span class="music-live-badge ${isNativeStream ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>`}
         <h1>${escapeHtml(stream.title)}</h1>
         <p>${escapeHtml(stream.description || 'Live stream on Melogic Music.')}</p>
         <div class="music-live-host">
@@ -4383,6 +4384,15 @@ async function joinLiveListener(options = {}) {
   }
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
+  console.log('[Live Receiver] playback route', {
+    provider: state.liveStream.provider || '',
+    transportProvider: state.liveStream.transportProvider || '',
+    playbackMode: state.liveStream.playbackMode || '',
+    ingestMethod: state.liveStream.ingestMethod || '',
+    streamKey: state.liveStream.streamKey || '',
+    hlsPlaybackUrl: state.liveStream.hlsPlaybackUrl || '',
+    selectedPlayer: playbackInfo.selectedPlayer || playbackInfo.provider || ''
+  })
   if (playbackInfo.provider === STREAM_PROVIDERS.hlsEdge) {
     await startHlsListenerPlayback(playbackInfo)
     return
