@@ -1338,7 +1338,7 @@ function renderStreamDetailsPanel() {
             <label>Password<input name="password" type="password" autocomplete="new-password" value="${esc(form.password)}" placeholder="${form.accessMode === 'password' ? 'Required for new password streams' : 'Only used for password access'}" /></label>
           </div>
           <label>Tags<input name="tags" value="${esc(form.tags)}" placeholder="radio, release party, talk" /></label>
-          ${isBufferedProvider ? `<label>HLS stream key<input name="streamKey" maxlength="160" value="${esc(form.streamKey || 'mystream')}" pattern="[A-Za-z0-9_-]+" autocomplete="off" /></label>` : ''}
+          ${isBufferedProvider ? `<label>Stream Key<input name="streamKey" maxlength="160" required value="${esc(form.streamKey ?? 'mystream')}" pattern="[A-Za-z0-9_-]+" autocomplete="off" /></label>` : ''}
           <div class="studio-live-cover-tools">
             <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
             <div class="studio-live-action-bar">
@@ -4187,7 +4187,8 @@ function updateLiveStreamFormFromElement(formEl) {
   form.password = String(data.get('password') || '')
   const provider = String(data.get('provider') || liveState().providerId || STREAM_PROVIDERS.bufferedBroadcast)
   liveState().providerId = normalizeProviderId(provider)
-  form.streamKey = sanitizeHlsStreamKey(data.get('streamKey') || form.streamKey || 'mystream')
+  const rawStreamKey = data.has('streamKey') ? data.get('streamKey') : (form.streamKey ?? 'mystream')
+  form.streamKey = sanitizeHlsStreamKey(rawStreamKey)
   const nextCoverURL = String(data.get('coverArtURL') || '').trim()
   if (nextCoverURL !== form.coverArtURL && form.coverArtSource === 'upload') {
     const oldPath = form.coverArtPath
@@ -4318,6 +4319,11 @@ async function saveLiveStreamInfo() {
   live.savingInfo = true
   renderShell()
   try {
+    if (isBufferedBroadcastProvider(live.providerId)) {
+      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
+      if (!streamKey) throw new Error('Buffered Broadcast requires a stream key.')
+      live.streamForm.streamKey = streamKey
+    }
     const payload = liveStreamPayload()
     if (live.streamId) {
       await updateMusicLiveStreamInfo(payload)
@@ -4364,6 +4370,11 @@ async function startLiveStudioStream() {
   let pendingStreamId = ''
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
+    if (isBufferedBroadcastProvider(live.providerId)) {
+      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
+      if (!streamKey) throw new Error('Buffered Broadcast requires a stream key.')
+      live.streamForm.streamKey = streamKey
+    }
     if (isWebrtcProvider(live.providerId) && live.providerStatus?.providers?.webrtc?.configured === false) {
       throw new Error('WebRTC Live is not configured. Missing LiveKit server URL. Use Buffered Broadcast for OBS/HLS streaming.')
     }
@@ -4395,7 +4406,7 @@ async function startLiveStudioStream() {
     if (!pendingStreamId) throw new Error('The live stream service did not return a stream id.')
     live.nativeHostSessionId = live.nativeHostSessionId || nativeHostSessionId(pendingStreamId)
     if (isBufferedBroadcastProvider(live.providerId)) {
-      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
+      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
       const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
       live.providerDiagnostics = {
         providerId: STREAM_PROVIDERS.bufferedBroadcast,
@@ -4412,6 +4423,12 @@ async function startLiveStudioStream() {
         ...liveStreamPayload(),
         ...liveProgramOutputState(),
         streamId: pendingStreamId,
+        provider: STREAM_PROVIDERS.bufferedBroadcast,
+        transportProvider: 'hls-edge',
+        ingestMode: 'rtmp-obs',
+        playbackMode: 'hls',
+        streamKey,
+        hlsPlaybackUrl,
         hostSessionId: live.nativeHostSessionId,
         hostActive: true,
         broadcastState: 'liveBroadcasting'

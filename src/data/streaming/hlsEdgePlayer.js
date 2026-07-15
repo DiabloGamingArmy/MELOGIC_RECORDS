@@ -21,8 +21,9 @@ export function isAllowedHlsPlaybackUrl(value = '') {
     return parsed.protocol === 'https:'
       && parsed.hostname === 'stream.melogicrecords.studio'
       && parsed.port === ''
-      && parsed.pathname.startsWith('/live/')
-      && parsed.pathname.endsWith('.m3u8')
+      && /^\/live\/[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname)
+      && parsed.search === ''
+      && parsed.hash === ''
   } catch {
     return false
   }

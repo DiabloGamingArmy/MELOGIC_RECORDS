@@ -61,11 +61,26 @@ function sanitizeHlsPlaybackUrl(value = '') {
     const valid = parsed.protocol === 'https:'
       && parsed.hostname === 'stream.melogicrecords.studio'
       && parsed.port === ''
-      && parsed.pathname.startsWith('/live/')
-      && parsed.pathname.endsWith('.m3u8')
+      && /^\/live\/[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname)
+      && parsed.search === ''
+      && parsed.hash === ''
     return valid ? parsed.toString() : ''
   } catch {
     return ''
+  }
+}
+
+function bufferedBroadcastFields(data = {}, existing = {}) {
+  const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
+  return {
+    provider: 'bufferedBroadcast',
+    providerLabel: 'Buffered Broadcast',
+    transportProvider: 'hls-edge',
+    ingestMode: 'rtmp-obs',
+    playbackMode: 'hls',
+    latencyProfile: 'buffered',
+    streamKey,
+    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey)
   }
 }
 
@@ -150,9 +165,8 @@ function isStreamPublishing(stream = {}) {
 function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource = 'browser', defaultAudioPublished = false } = {}) {
   const provider = normalizeProvider(data.provider || existing.provider)
   const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || (provider === 'bufferedBroadcast' ? 'mystream' : ''))
-  const requestedHlsUrl = cleanString(data.hlsPlaybackUrl || existing.hlsPlaybackUrl || '', 1000)
   const hlsPlaybackUrl = provider === 'bufferedBroadcast'
-    ? sanitizeHlsPlaybackUrl(requestedHlsUrl) || buildHlsPlaybackUrl(streamKey)
+    ? buildHlsPlaybackUrl(streamKey)
     : ''
   const audioEnabled = data.audioEnabled === false ? false : data.audioEnabled === true ? true : existing.audioEnabled !== false
   const videoEnabled = data.videoEnabled === true ? true : data.videoEnabled === false ? false : existing.videoEnabled === true
@@ -290,8 +304,8 @@ function markLiveValidationDetails({ streamId = '', provider = 'bufferedBroadcas
   }
   if (validationBranch === 'webrtc' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
   if (validationBranch === 'bufferedBroadcast') {
-    const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || '')
-    const hlsPlaybackUrl = sanitizeHlsPlaybackUrl(requestData.hlsPlaybackUrl || stream.hlsPlaybackUrl || '') || buildHlsPlaybackUrl(streamKey)
+    const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || 'mystream') || 'mystream'
+    const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
     if (!streamKey) missingRequiredFields.push('streamKey')
     if (!hlsPlaybackUrl) missingRequiredFields.push('hlsPlaybackUrl')
   }
@@ -743,6 +757,7 @@ const startMusicLiveStream = onCall(
         selectedSequenceId,
         audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
         ...programOutputState,
+        ...(selectedProvider === 'bufferedBroadcast' ? bufferedBroadcastFields(request.data || {}, previousStream) : {}),
         audioPublished: false,
         videoPublished: false,
         programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
@@ -797,6 +812,8 @@ const startMusicLiveStream = onCall(
         livekitRoomName: roomName,
         hostToken,
         url: config?.url || '',
+        streamKey: selectedProvider === 'bufferedBroadcast' ? programOutputState.streamKey : '',
+        hlsPlaybackUrl: selectedProvider === 'bufferedBroadcast' ? programOutputState.hlsPlaybackUrl : '',
         listenerURL: `/music/live/${streamId}`
       }
     } catch (error) {
@@ -877,6 +894,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     selectedSequenceId,
     audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
     ...programOutputState,
+    ...(programOutputState.provider === 'bufferedBroadcast' ? bufferedBroadcastFields(request.data || {}, snap.data() || {}) : {}),
     audioPublished: false,
     videoPublished: false,
     programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
@@ -975,6 +993,9 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
+  const bufferedState = requestedProvider === 'bufferedBroadcast'
+    ? bufferedBroadcastFields(request.data || {}, stream)
+    : {}
   const safeLiveTitle = cleanString(request.data?.title || stream.title || 'Untitled live stream', 90)
   const safeLiveVisibility = ALLOWED_VISIBILITIES.has(request.data?.visibility)
     ? request.data.visibility
@@ -989,6 +1010,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     accessMode: safeLiveAccessMode,
     passwordProtected: safeLiveAccessMode === 'password',
     ...programOutputState,
+    ...bufferedState,
     connectionStatus: 'live',
     broadcastState: requestedProvider === 'firebaseSegments' ? 'liveIdleNoListeners' : 'liveBroadcasting',
     hostConnected: true,
@@ -1018,7 +1040,12 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   }, { merge: true })
 
   liveLog('stream marked live', { uid, streamId, provider: requestedProvider, validationBranch: diagnostics.validationBranch, broadcastState: request.data?.broadcastState || 'liveIdleNoListeners' })
-  return { ok: true, streamId, status: 'live' }
+  return {
+    ok: true,
+    streamId,
+    status: 'live',
+    ...(requestedProvider === 'bufferedBroadcast' ? bufferedState : {})
+  }
 })
 
 const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (request) => {
@@ -1039,6 +1066,9 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
+  const bufferedState = programOutputState.provider === 'bufferedBroadcast'
+    ? bufferedBroadcastFields(request.data || {}, stream)
+    : {}
   await streamRef.set({
     connectionStatus: request.data?.connectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
     broadcastState: programOutputState.provider === 'firebaseSegments'
@@ -1048,6 +1078,7 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
     hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || stream.hostSessionId || '', 120),
     hostConnected: true,
     ...programOutputState,
+    ...bufferedState,
     lastHostHeartbeatAt: now,
     updatedAt: now
   }, { merge: true })
@@ -1100,6 +1131,9 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
       existing: stream,
       selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource)
     }),
+    ...(normalizeProvider(request.data?.provider || stream.provider) === 'bufferedBroadcast'
+      ? bufferedBroadcastFields(request.data || {}, stream)
+      : {}),
     selectedProviderUpdatedAt: now,
     selectedProviderUpdatedBy: uid,
     updatedAt: now,

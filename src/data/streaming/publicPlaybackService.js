@@ -6,15 +6,14 @@ export function getPublicPlaybackInfo(stream = {}) {
   const provider = normalizeProviderId(stream.provider)
   if (provider === STREAM_PROVIDERS.bufferedBroadcast || stream.playbackMode === PLAYBACK_MODES.hls) {
     const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
-    const invalidConfiguredUrl = Boolean(configuredUrl && !isAllowedHlsPlaybackUrl(configuredUrl))
-    const url = invalidConfiguredUrl ? '' : configuredUrl || buildHlsPlaybackUrl(stream.streamKey)
-    const message = invalidConfiguredUrl
-      ? 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
-      : !stream.streamKey && !configuredUrl
+    const configuredUrlAllowed = isAllowedHlsPlaybackUrl(configuredUrl)
+    const keyUrl = buildHlsPlaybackUrl(stream.streamKey)
+    const url = configuredUrlAllowed ? configuredUrl : keyUrl
+    const message = url
+      ? ''
+      : !stream.streamKey
         ? 'This stream is missing an HLS stream key.'
-        : !url
-          ? 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
-          : ''
+        : 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
     return {
       provider: STREAM_PROVIDERS.bufferedBroadcast,
       transportProvider: 'hls-edge',
