@@ -563,7 +563,7 @@
     "rules": "storage.rules"
   },
   "database": {
-    "rules": "realtimedb.rules"
+    "rules": "realtimedb.rules.json"
   },
   "firestore": {
     "rules": "firestore.rules",
