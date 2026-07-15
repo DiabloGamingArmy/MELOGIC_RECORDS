@@ -28,6 +28,7 @@ const MAX_ACTIVE_LIVE_STREAMS_PER_HOST = 3
 const STAFF_ACTIVE_LIVE_STREAMS_PER_HOST = 10
 const MAX_CONFIGURED_LIVE_STREAMS_PER_HOST = 25
 const HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
+const RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
 
 function db() {
   return admin.firestore()
@@ -85,7 +86,8 @@ function bufferedBroadcastFields(data = {}, existing = {}) {
     playbackMode: 'hls',
     latencyProfile: 'buffered',
     streamKey,
-    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey)
+    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
+    rtmpIngestServer: ingestMethod === 'obsRtmp' ? RTMP_INGEST_SERVER : ''
   }
 }
 
@@ -245,6 +247,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
     latencyProfile: provider === 'hlsEdge' ? 'buffered' : 'realtime',
     streamKey,
     hlsPlaybackUrl,
+    rtmpIngestServer: provider === 'hlsEdge' && ingestMethod === 'obsRtmp' ? RTMP_INGEST_SERVER : '',
     nativeStreaming: nativeStreamingDefaults({
       ...(existing.nativeStreaming || {}),
       ...(data.nativeStreaming || {}),
@@ -664,6 +667,7 @@ const startMusicLiveStream = onCall(
       await Promise.all([
         ...staleLive.map((docSnap) => docSnap.ref.set({
           status: 'ended',
+          isLive: false,
           connectionStatus: 'stale',
           hostConnected: false,
           audioPublished: false,
@@ -678,6 +682,7 @@ const startMusicLiveStream = onCall(
         }, { merge: true })),
         ...staleStarting.map((docSnap) => docSnap.ref.set({
           status: 'error',
+          isLive: false,
           connectionStatus: 'error',
           errorReason: 'starting_timeout',
           updatedAt: cleanupNow
@@ -767,6 +772,7 @@ const startMusicLiveStream = onCall(
         coverStoragePath: coverArtPath,
         coverArtSource,
         status: 'starting',
+        isLive: false,
         connectionStatus: selectedProvider === 'hlsEdge'
           ? programOutputState.ingestMethod === 'browserWebrtc' ? 'connectingIngest' : 'waitingForIngest'
           : 'starting',
@@ -848,6 +854,7 @@ const startMusicLiveStream = onCall(
       if (streamRef) {
         await streamRef.set({
           status: 'error',
+          isLive: false,
           connectionStatus: 'error',
           errorStage: stage,
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -906,6 +913,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     coverStoragePath: metadata.coverStoragePath,
     coverArtSource: metadata.coverArtSource,
     status: 'draft',
+    isLive: false,
     connectionStatus: 'draft',
     broadcastState: programOutputState.provider === 'firebaseSegments' ? 'idleNoListeners' : 'draft',
     visibility: metadata.visibility,
@@ -1027,6 +1035,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     : ALLOWED_ACCESS_MODES.has(stream.accessMode) ? stream.accessMode : safeLiveVisibility
   await streamRef.set({
     status: 'live',
+    isLive: true,
     title: safeLiveTitle,
     visibility: safeLiveVisibility,
     accessMode: safeLiveAccessMode,
@@ -1182,6 +1191,7 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
   const now = admin.firestore.FieldValue.serverTimestamp()
   await streamRef.set({
     status: 'ended',
+    isLive: false,
     connectionStatus: reason === 'host_unload' || reason === 'host_pagehide' ? 'host_disconnected' : 'ended',
     broadcastState: 'ended',
     hostActive: false,
@@ -1225,6 +1235,7 @@ const joinMusicLiveStream = onCall(
     if (stream.hostConnected !== true || (!isFirebaseSegments && !isBufferedBroadcast && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)) {
       await streamRef.set({
         status: 'ended',
+        isLive: false,
         connectionStatus: 'stale',
         hostConnected: false,
         audioPublished: false,
@@ -1603,6 +1614,7 @@ async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
     if (!stale) return false
     await docSnap.ref.set({
       status: 'ended',
+      isLive: false,
       connectionStatus: 'stale',
       hostConnected: false,
       audioPublished: false,
@@ -1622,6 +1634,7 @@ async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
     if (updatedAt && Date.now() - updatedAt < STARTING_TIMEOUT_MS) return false
     await docSnap.ref.set({
       status: 'error',
+      isLive: false,
       connectionStatus: 'error',
       hostConnected: false,
       audioPublished: false,

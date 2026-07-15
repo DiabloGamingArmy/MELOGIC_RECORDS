@@ -1858,10 +1858,16 @@ function handleHlsStatus(payload = {}) {
     hlsJsSupported: payload.native === true ? false : payload.native === false ? true : state.hlsDiagnostics?.hlsJsSupported ?? null,
     lastHlsErrorType: status === 'error' ? String(payload.type || '') : state.hlsDiagnostics?.lastHlsErrorType || '',
     lastHlsErrorDetails: status === 'error' ? String(payload.details || '') : state.hlsDiagnostics?.lastHlsErrorDetails || '',
-    lastHlsErrorFatal: status === 'error' ? payload.fatal === true : state.hlsDiagnostics?.lastHlsErrorFatal ?? null
+    lastHlsErrorFatal: status === 'error' ? payload.fatal === true : state.hlsDiagnostics?.lastHlsErrorFatal ?? null,
+    lastHlsResponseCode: status === 'error' ? payload.responseCode ?? null : state.hlsDiagnostics?.lastHlsResponseCode ?? null,
+    lastHlsResponseUrl: status === 'error' ? String(payload.responseUrl || '') : state.hlsDiagnostics?.lastHlsResponseUrl || ''
   }
   if (status === 'loading') state.liveStatus = 'loadingManifest'
   if (status === 'manifestParsed' && state.liveStatus !== 'playing') state.liveStatus = 'ready'
+  if (status === 'canplay' && state.liveStatus !== 'playing') {
+    state.liveStatus = 'ready'
+    state.liveError = ''
+  }
   if (status === 'playing') {
     state.liveStatus = 'playing'
     state.liveError = ''
@@ -1887,15 +1893,19 @@ function handleHlsStatus(payload = {}) {
 function handleHlsError(error = {}) {
   const details = String(error.details || '')
   const type = String(error.type || '')
+  const responseCode = Number(error.responseCode || 0) || null
   state.hlsDiagnostics = {
     ...(state.hlsDiagnostics || {}),
     lastHlsErrorType: type,
     lastHlsErrorDetails: details,
-    lastHlsErrorFatal: error.fatal === true
+    lastHlsErrorFatal: error.fatal === true,
+    lastHlsResponseCode: responseCode,
+    lastHlsResponseUrl: String(error.responseUrl || '')
   }
-  state.liveStatus = 'error'
-  state.liveError = /manifest/i.test(details) || Number(state.hlsMediaElement?.readyState || 0) === 0
-    ? 'Could not load the live stream playlist.'
+  const playlistNotReady = responseCode === 404 || /manifest/i.test(details) || Number(state.hlsMediaElement?.readyState || 0) === 0
+  state.liveStatus = playlistNotReady ? 'loadingManifest' : 'error'
+  state.liveError = playlistNotReady
+    ? 'The live feed is not available yet. The stream may still be starting.'
     : `HLS playback error${type || details ? `: ${[type, details].filter(Boolean).join(' / ')}` : '.'}`
   hlsMediaDiagnostics('error')
   updateLiveListenerControls()
@@ -3271,7 +3281,9 @@ function renderHlsDiagnostics() {
     ['lastMediaEvent', diagnostics.lastMediaEvent],
     ['lastHlsErrorType', diagnostics.lastHlsErrorType],
     ['lastHlsErrorDetails', diagnostics.lastHlsErrorDetails],
-    ['lastHlsErrorFatal', diagnostics.lastHlsErrorFatal]
+    ['lastHlsErrorFatal', diagnostics.lastHlsErrorFatal],
+    ['lastHlsResponseCode', diagnostics.lastHlsResponseCode],
+    ['lastHlsResponseUrl', diagnostics.lastHlsResponseUrl]
   ]
   return `
     <details class="music-live-native-debug">

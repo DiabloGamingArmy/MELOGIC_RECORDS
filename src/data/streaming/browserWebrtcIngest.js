@@ -115,7 +115,7 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
   const endpoint = buildBrowserWebrtcIngestUrl(streamKey)
   const safeEndpoint = stripEndpointSecrets(endpoint)
   const peerConnection = new RTCPeerConnection()
-  const session = { peerConnection, mediaStream, resourceUrl: '', endpoint, stopped: false }
+  const session = { peerConnection, mediaStream, resourceUrl: '', endpoint, stopped: false, connected: false }
   activeSession = session
   mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream))
   const emitStatus = (status, extra = {}) => onStatus({
@@ -124,7 +124,15 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
     ingestEndpointURL: safeEndpoint,
     ...connectionDiagnostics(peerConnection, mediaStream, extra)
   })
-  const emitCurrentState = () => emitStatus(peerConnection.connectionState)
+  const emitCurrentState = () => {
+    emitStatus(peerConnection.connectionState)
+    if (session.connected && peerConnection.connectionState === 'failed' && activeSession === session) {
+      session.connected = false
+      const error = new Error('Browser WebRTC ingest connection failed.')
+      onError(error, connectionDiagnostics(peerConnection, mediaStream, { lastIngestError: error.message }))
+      void stopBrowserWebrtcIngest()
+    }
+  }
   session.emitStatus = emitStatus
   peerConnection.addEventListener('connectionstatechange', emitCurrentState)
   peerConnection.addEventListener('iceconnectionstatechange', emitCurrentState)
@@ -153,6 +161,7 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
     emitStatus('connecting', { localOfferCreated: true, remoteAnswerSet: true })
     await waitForConnection(peerConnection, mediaStream, emitStatus)
     if (session.stopped || activeSession !== session) throw new Error('Browser WebRTC ingest was stopped.')
+    session.connected = true
     const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
       localOfferCreated: true,
       remoteAnswerSet: true,

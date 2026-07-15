@@ -1404,7 +1404,7 @@ function renderAdvancedStreamingSettings() {
           <ul>
             ${isObs ? `<li>Server: ${esc(ingestServer || 'Set VITE_STREAM_RTMP_INGEST_SERVER')}</li>` : `<li>${esc(browserIngestConfigured ? 'Browser WebRTC ingest endpoint configured.' : 'Browser streaming needs the server WebRTC ingest URL configured.')}</li>`}
             <li>Stream Key: ${esc(streamKey || 'missing')}</li>
-            <li>Playback URL: ${esc(hlsPlaybackUrl || 'missing')}</li>
+            <li>Playback: ${esc(hlsPlaybackUrl || 'missing')}</li>
             <li>Public playback: Buffered HLS from Melogic Edge</li>
           </ul>
         </article>
@@ -1798,6 +1798,7 @@ function liveProgramOutputState() {
   const ingestMethod = normalizeIngestMethod(live.ingestMethod, providerId)
   live.ingestMethod = ingestMethod
   const isFirebaseSegments = isFirebaseSegmentProvider(providerId)
+  const isBrowserIngest = !isFirebaseSegments && ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
   const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
   const programScene = (mixer.scenes || []).find((scene) => scene.sceneId === mixer.programSceneId)
   const programSourceIds = new Set(Array.isArray(programScene?.sources) ? programScene.sources : [])
@@ -1826,6 +1827,9 @@ function liveProgramOutputState() {
     latencyProfile: isFirebaseSegments ? 'realtime' : 'buffered',
     streamKey: isFirebaseSegments ? '' : streamKey,
     hlsPlaybackUrl: isFirebaseSegments ? '' : buildHlsPlaybackUrl(streamKey),
+    rtmpIngestServer: !isFirebaseSegments && ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+      ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
+      : '',
     nativeStreaming: {
       enabled: isFirebaseSegments,
       targetLatencyMs: 30000,
@@ -1855,8 +1859,8 @@ function liveProgramOutputState() {
     activeVideoSource: live.videoEnabled ? live.videoSource : '',
     programHasAudio,
     programHasVideo,
-    audioPublished: Boolean(!isBuffered && live.audioPublishedToProvider && programHasAudio),
-    videoPublished: Boolean(!isBuffered && live.videoPublishedToProvider && live.videoEnabled && live.programVideoTrack),
+    audioPublished: Boolean(isBrowserIngest && live.audioPublishedToProvider && programHasAudio),
+    videoPublished: Boolean(isBrowserIngest && live.videoPublishedToProvider && live.videoEnabled && live.programVideoTrack),
     programState: {
       previewSceneId: mixer.previewSceneId || '',
       programSceneId: mixer.programSceneId || '',
@@ -1867,7 +1871,7 @@ function liveProgramOutputState() {
       mode: mixer.mode || 'program'
     },
     providerDiagnostics: {
-      ...(provider.getDiagnostics?.() || {}),
+      ...(isFirebaseSegments ? getStreamingProvider(STREAM_PROVIDERS.firebaseSegments).getDiagnostics?.() || {} : {}),
       ...(live.providerDiagnostics || {})
     }
   }
@@ -4160,6 +4164,9 @@ function liveStreamPayload() {
   const ingestMethod = normalizeIngestMethod(live.ingestMethod, providerId)
   live.ingestMethod = ingestMethod
   const streamKey = sanitizeHlsStreamKey(form.streamKey || 'mystream')
+  const rtmpIngestServer = !isFirebaseSegments && ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+    ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
+    : ''
   return {
     streamId: live.streamId || live.draftStreamId || '',
     title: form.title,
@@ -4183,6 +4190,8 @@ function liveStreamPayload() {
     latencyProfile: isFirebaseSegments ? 'realtime' : 'buffered',
     streamKey: isFirebaseSegments ? '' : streamKey,
     hlsPlaybackUrl: isFirebaseSegments ? '' : buildHlsPlaybackUrl(streamKey),
+    rtmpIngestServer,
+    isLive: live.stream?.status === 'live' || Boolean(live.streamId),
     nativeStreaming: {
       enabled: isFirebaseSegments,
       targetLatencyMs: 30000,
@@ -4406,6 +4415,8 @@ async function startLiveStudioStream() {
         playbackMode: 'hls',
         streamKey,
         hlsPlaybackUrl,
+        rtmpIngestServer: isBrowserIngest ? '' : String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim(),
+        isLive: true,
         hostSessionId: live.nativeHostSessionId,
         hostActive: true,
         connectionStatus: isBrowserIngest ? 'live' : 'waitingForIngest',

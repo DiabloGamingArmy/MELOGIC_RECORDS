@@ -78,7 +78,7 @@ export async function attachHlsStream({
     console.info('[hls-edge] status', { status, mode, src })
     onStatus({ status, mode, src, mediaEl, hls })
   }
-  ;['playing', 'waiting', 'stalled', 'ended'].forEach((eventName) => listen(eventName, () => emitMediaStatus(eventName)))
+  ;['canplay', 'playing', 'waiting', 'stalled', 'ended'].forEach((eventName) => listen(eventName, () => emitMediaStatus(eventName)))
   listen('error', () => {
     const error = mediaEl.error
     const payload = {
@@ -141,7 +141,9 @@ export async function attachHlsStream({
       status: 'error',
       type: String(data.type || ''),
       details: String(data.details || ''),
-      fatal: data.fatal === true
+      fatal: data.fatal === true,
+      responseCode: Number(data.response?.code || data.networkDetails?.status || 0) || null,
+      responseUrl: String(data.response?.url || data.networkDetails?.responseURL || '')
     }
     console.error('[hls-edge] playback error', payload)
     onStatus({ ...payload, mode, src, mediaEl, hls })
