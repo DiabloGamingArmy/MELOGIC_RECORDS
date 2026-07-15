@@ -21,8 +21,13 @@ export const PLAYBACK_MODES = Object.freeze({
   none: 'none'
 })
 
+export function firebaseSegmentStreamingEnabled() {
+  return import.meta.env?.VITE_ENABLE_FIREBASE_SEGMENT_STREAMING === 'true'
+}
+
 export function normalizeProviderId(value = '') {
-  return value === STREAM_PROVIDERS.livekit ? STREAM_PROVIDERS.livekit : STREAM_PROVIDERS.nativeStreaming
+  if (value === STREAM_PROVIDERS.nativeStreaming && firebaseSegmentStreamingEnabled()) return STREAM_PROVIDERS.nativeStreaming
+  return STREAM_PROVIDERS.livekit
 }
 
 export function normalizePlaybackMode(value = '', fallback = PLAYBACK_MODES.webrtc) {
@@ -56,7 +61,7 @@ export function providerCapabilities(provider = STREAM_PROVIDERS.livekit) {
   }
   return {
     provider: STREAM_PROVIDERS.livekit,
-    ingestMode: INGEST_MODES.livekitWebrtc,
+    ingestMode: INGEST_MODES.browserWebrtc,
     playbackMode: PLAYBACK_MODES.webrtc,
     supportsAudio: true,
     supportsVideo: true,

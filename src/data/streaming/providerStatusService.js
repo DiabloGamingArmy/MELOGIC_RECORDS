@@ -25,7 +25,7 @@ export function fallbackStreamingProviderStatus(error = null) {
         provider: 'livekit',
         label: 'LiveKit',
         configured: false,
-        ingestMode: 'livekit-webrtc',
+        ingestMode: 'browser-webrtc',
         playbackMode: 'webrtc',
         missingConfigKeys: ['Provider status function unavailable']
       }

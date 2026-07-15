@@ -1,12 +1,14 @@
 import { antMediaPlaybackUrls } from './antMediaProvider'
-import { PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
+import { firebaseSegmentStreamingEnabled, PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
 
 export function getPublicPlaybackInfo(stream = {}) {
   const provider = stream.provider === STREAM_PROVIDERS.livekit
     ? STREAM_PROVIDERS.livekit
     : stream.provider === STREAM_PROVIDERS.antMedia
       ? STREAM_PROVIDERS.antMedia
-      : STREAM_PROVIDERS.nativeStreaming
+      : stream.provider === STREAM_PROVIDERS.nativeStreaming && firebaseSegmentStreamingEnabled()
+        ? STREAM_PROVIDERS.nativeStreaming
+        : STREAM_PROVIDERS.livekit
   if (provider === STREAM_PROVIDERS.nativeStreaming) {
     const native = stream.nativeStreaming || {}
     const status = native.status || stream.broadcastState || (native.hasPlayableSegments ? 'broadcasting' : 'idleNoListeners')

@@ -57,7 +57,7 @@ function normalizeInputSource(value) {
 }
 
 function normalizeProvider(value) {
-  return value === 'livekit' ? 'livekit' : 'nativeStreaming'
+  return value === 'nativeStreaming' ? 'nativeStreaming' : 'livekit'
 }
 
 function normalizeIngestMode(value) {
@@ -71,12 +71,12 @@ function normalizePlaybackMode(value, provider = 'livekit') {
   return provider === 'livekit' ? 'webrtc' : 'firebaseSegments'
 }
 
-function providerLabel(provider = 'nativeStreaming') {
+function providerLabel(provider = 'livekit') {
   return provider === 'livekit' ? 'LiveKit' : 'Native Streaming'
 }
 
-function normalizeIngestModeForProvider(value, provider = 'nativeStreaming') {
-  return provider === 'livekit' ? 'livekit-webrtc' : 'browser-media-recorder'
+function normalizeIngestModeForProvider(value, provider = 'livekit') {
+  return provider === 'livekit' ? 'browser-webrtc' : 'browser-media-recorder'
 }
 
 function nullableNumber(value) {
@@ -87,7 +87,7 @@ function nullableNumber(value) {
 
 function nativeStreamingDefaults(existing = {}) {
   return {
-    enabled: true,
+    enabled: existing.enabled === true,
     targetLatencyMs: Number(existing.targetLatencyMs || 30000),
     segmentDurationMs: Number(existing.segmentDurationMs || 4000),
     audioFirst: existing.audioFirst !== false,
@@ -168,6 +168,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
     nativeStreaming: nativeStreamingDefaults({
       ...(existing.nativeStreaming || {}),
       ...(data.nativeStreaming || {}),
+      enabled: provider === 'nativeStreaming',
       videoEnabled
     }),
     livekit: {
@@ -926,7 +927,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     passwordProtected: safeLiveAccessMode === 'password',
     ...programOutputState,
     connectionStatus: 'live',
-    broadcastState: requestedProvider === 'nativeStreaming' ? 'liveIdleNoListeners' : 'broadcasting',
+    broadcastState: requestedProvider === 'nativeStreaming' ? 'liveIdleNoListeners' : 'liveBroadcasting',
     hostConnected: true,
     provider: requestedProvider,
     ingestMode: requestedProvider === 'nativeStreaming' ? 'browser-media-recorder' : programOutputState.ingestMode,
@@ -936,6 +937,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     nativeStreaming: nativeStreamingDefaults({
       ...(stream.nativeStreaming || {}),
       ...(request.data?.nativeStreaming || {}),
+      enabled: requestedProvider === 'nativeStreaming',
       status: requestedProvider === 'nativeStreaming'
         ? 'idleNoListeners'
         : stream.nativeStreaming?.status,
@@ -978,7 +980,7 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
     connectionStatus: request.data?.connectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
     broadcastState: programOutputState.provider === 'nativeStreaming'
       ? cleanString(request.data?.broadcastState || stream.broadcastState || 'idleNoListeners', 80)
-      : 'broadcasting',
+      : 'liveBroadcasting',
     hostActive: true,
     hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || stream.hostSessionId || '', 120),
     hostConnected: true,

@@ -59,7 +59,7 @@ import {
   updatePlaybackDemandState,
   writePlaybackDemand
 } from './data/streaming/nativeStreamingPresence'
-import { STREAM_PROVIDERS } from './data/streaming/streamingProviderTypes'
+import { firebaseSegmentStreamingEnabled, STREAM_PROVIDERS } from './data/streaming/streamingProviderTypes'
 import {
   subscribeMyLiveStudioGuestInvite,
   updateLiveStudioGuestInviteStatus
@@ -1097,6 +1097,11 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'live') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'playing') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'requestingPlayback') return 'Requesting playback...'
+  if (state.liveStatus === 'connectingTransport') return 'Connecting to live audio...'
+  if (state.liveStatus === 'waitingForRemoteAudio') return 'Waiting for host audio track...'
+  if (state.liveStatus === 'readyToPlay') return 'Ready to play - press Resume Audio.'
+  if (state.liveStatus === 'playbackBlocked') return 'Press Resume Audio.'
+  if (state.liveStatus === 'error') return 'Live audio error.'
   if (state.liveStatus === 'waitingForHost') return 'Host is not currently broadcasting.'
   if (state.liveStatus === 'waitingForSegments') return 'Connected to host. Waiting for audio chunks...'
   if (state.liveStatus === 'interrupted') return 'Stream interrupted.'
@@ -1117,7 +1122,7 @@ function liveStatusLabel(stream = {}) {
 }
 
 function isLiveListeningStatus(status = state.liveStatus) {
-  return ['live', 'playing', 'waiting', 'buffering', 'requestingPlayback', 'waitingForHost', 'waitingForSegments', 'connecting', 'reconnecting'].includes(status)
+  return ['live', 'playing', 'waiting', 'buffering', 'requestingPlayback', 'connectingTransport', 'waitingForRemoteAudio', 'readyToPlay', 'playbackBlocked', 'waitingForHost', 'waitingForSegments', 'connecting', 'reconnecting'].includes(status)
 }
 
 function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
@@ -1603,6 +1608,123 @@ function resumeNativeAudioFromGesture() {
   }
   enqueueNativeMediaSourceSegments(state.nativePlaybackQueue).catch(() => {})
   playNativeMediaSourceAudio({ userGesture: true })
+}
+
+function updateLiveKitListenerDiagnostics(eventName = '') {
+  const audio = state.listenerAudioElement
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    provider: STREAM_PROVIDERS.livekit,
+    ...(eventName ? { lastAudioEvent: eventName } : {}),
+    audioElementExists: Boolean(audio),
+    audioPaused: audio ? audio.paused === true : null,
+    audioMuted: audio ? audio.muted === true : null,
+    audioVolume: audio ? Number(audio.volume || 0) : null,
+    audioReadyState: audio ? Number(audio.readyState || 0) : null,
+    lastPlayErrorName: eventName === 'playing' ? '' : state.nativeListenerDiagnostics?.lastPlayErrorName || '',
+    lastPlayErrorMessage: eventName === 'playing' ? '' : state.nativeListenerDiagnostics?.lastPlayErrorMessage || ''
+  }
+}
+
+function attachLiveKitAudioDiagnostics(audio) {
+  if (!audio || audio.dataset.melogicLivekitDiagnostics === 'true') return
+  audio.dataset.melogicLivekitDiagnostics = 'true'
+  ;['play', 'playing', 'waiting', 'stalled', 'pause', 'error'].forEach((eventName) => {
+    audio.addEventListener(eventName, () => {
+      updateLiveKitListenerDiagnostics(eventName)
+      if (eventName === 'playing') {
+        state.liveStatus = 'playing'
+        state.liveError = ''
+        state.nativeListenerDiagnostics.lastPlayResolvedAt = state.nativeListenerDiagnostics.lastPlayResolvedAt || new Date().toISOString()
+        if (state.liveStream?.id && state.nativeViewerSessionId) {
+          updatePlaybackDemandState({
+            streamId: state.liveStream.id,
+            viewerSessionId: state.nativeViewerSessionId,
+            uid: state.currentUser?.uid || null,
+            state: 'listening',
+            tabId: state.nativeViewerSessionId
+          }).catch(() => {})
+        }
+        updateLiveMediaSession(state.liveStream)
+        updateLiveListenerControls()
+        rerender()
+      } else if (eventName === 'error') {
+        state.liveStatus = 'error'
+        state.liveError = audio.error?.message || 'Live audio element failed.'
+        state.nativeListenerDiagnostics.lastPlayErrorName = 'MediaError'
+        state.nativeListenerDiagnostics.lastPlayErrorMessage = audio.error?.message || 'Audio element error.'
+        updateLiveListenerControls()
+      }
+    })
+  })
+}
+
+async function playLiveKitListenerAudio({ userGesture = false } = {}) {
+  const audio = state.listenerAudioElement
+  if (!audio) return false
+  state.nativeListenerDiagnostics = {
+    ...(state.nativeListenerDiagnostics || {}),
+    provider: STREAM_PROVIDERS.livekit,
+    ...(userGesture ? { userGestureUnlockAttempted: true } : {}),
+    lastPlayAttemptAt: new Date().toISOString(),
+    lastPlayErrorName: '',
+    lastPlayErrorMessage: ''
+  }
+  updateLiveKitListenerDiagnostics()
+  try {
+    await audio.play()
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      ...(userGesture ? { userGestureUnlockSucceeded: true } : {}),
+      lastPlayResolvedAt: new Date().toISOString(),
+      lastPlayResult: 'resolved',
+      lastPlayErrorName: '',
+      lastPlayErrorMessage: ''
+    }
+    updateLiveKitListenerDiagnostics()
+    if (state.nativeListenerDiagnostics.lastAudioEvent !== 'playing') {
+      state.liveStatus = 'readyToPlay'
+      state.liveError = 'Ready to play - press Resume Audio.'
+    }
+    updateLiveListenerControls()
+    return true
+  } catch (error) {
+    state.nativeListenerDiagnostics = {
+      ...(state.nativeListenerDiagnostics || {}),
+      ...(userGesture ? { userGestureUnlockSucceeded: false } : {}),
+      lastPlayRejectedAt: new Date().toISOString(),
+      lastPlayResult: 'rejected',
+      lastPlayErrorName: error?.name || '',
+      lastPlayErrorMessage: error?.message || ''
+    }
+    updateLiveKitListenerDiagnostics()
+    state.liveStatus = error?.name === 'NotAllowedError' ? 'playbackBlocked' : 'error'
+    state.liveError = error?.name === 'NotAllowedError'
+      ? 'Playback was blocked. Press Resume Audio.'
+      : `Playback failed: ${error?.name || 'Error'} ${error?.message || ''}`.trim()
+    updateLiveListenerControls()
+    rerender()
+    return false
+  }
+}
+
+function resumeLiveKitAudioFromGesture() {
+  playLiveKitListenerAudio({ userGesture: true }).catch(() => {})
+}
+
+function ensureLiveKitListenerAudioMounted() {
+  const audio = state.listenerAudioElement
+  if (!audio || state.liveStream?.provider === STREAM_PROVIDERS.nativeStreaming) return
+  audio.controls = true
+  audio.muted = false
+  audio.volume = 1
+  audio.playsInline = true
+  audio.style.display = 'block'
+  audio.style.width = 'min(100%, 520px)'
+  audio.style.margin = '12px 0'
+  const mount = app.querySelector('[data-livekit-audio-mount]')
+  if (mount && audio.parentElement !== mount) mount.appendChild(audio)
+  updateLiveKitListenerDiagnostics()
 }
 
 function nowPlayingDisplay(stream = {}) {
@@ -2790,7 +2912,7 @@ function renderLiveDetailPage() {
           <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${isLiveListeningStatus() ? 'Pause / Leave' : 'Listen'}</button>
           <label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>
         </div>
-        ${isNativeStream ? renderNativeReceiverAudioDebug() : ''}
+        ${isNativeStream ? renderNativeReceiverAudioDebug() : renderLiveKitReceiverAudioDebug()}
         ${renderLiveActions(stream)}
         ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : 'This stream has ended or is no longer public.')}</p>`}
       </div>
@@ -2798,7 +2920,48 @@ function renderLiveDetailPage() {
     ${renderLiveGuestInvitePrompt(stream)}
     ${renderLiveChatPanel(stream.id)}
   `)
-  if (state.listenerAudioElement) ensureNativeListenerAudioElement()
+  if (isNativeStream && state.listenerAudioElement) ensureNativeListenerAudioElement()
+  if (!isNativeStream && state.listenerAudioElement) ensureLiveKitListenerAudioMounted()
+}
+
+function renderLiveKitReceiverAudioDebug() {
+  const diagnostics = state.nativeListenerDiagnostics || {}
+  const audio = state.listenerAudioElement
+  const shouldShowResume = Boolean(
+    diagnostics.lastPlayErrorName === 'NotAllowedError' ||
+    state.liveStatus === 'playbackBlocked' ||
+    state.liveStatus === 'readyToPlay' ||
+    (audio && audio.paused === true && isLiveListeningStatus())
+  )
+  const rows = [
+    ['provider', diagnostics.provider || STREAM_PROVIDERS.livekit],
+    ['room connection state', diagnostics.roomConnectionState || state.listenerRoom?.state || state.listenerRoom?.connectionState || 'disconnected'],
+    ['token received', diagnostics.tokenReceived === true ? 'yes' : diagnostics.tokenReceived === false ? 'no' : 'unknown'],
+    ['playbackDemand write succeeded', diagnostics.demandWriteSucceeded === true ? 'yes' : diagnostics.demandWriteSucceeded === false ? 'no' : 'unknown'],
+    ['viewerSessionId', diagnostics.demandSessionId || state.nativeViewerSessionId || 'none'],
+    ['subscribed audio track', diagnostics.subscribedAudioTrack === true ? 'yes' : 'no'],
+    ['remote participant', diagnostics.remoteParticipantIdentity || 'none'],
+    ['remote track', diagnostics.remoteTrackSid ? `${diagnostics.remoteTrackName || 'audio'} (${diagnostics.remoteTrackSid})` : 'none'],
+    ['remote kind', diagnostics.remoteTrackKind || 'none'],
+    ['audio element exists', audio ? 'yes' : 'no'],
+    ['audio paused', String(diagnostics.audioPaused ?? audio?.paused ?? 'unknown')],
+    ['audio muted', String(diagnostics.audioMuted ?? audio?.muted ?? 'unknown')],
+    ['audio volume', String(diagnostics.audioVolume ?? audio?.volume ?? 'unknown')],
+    ['audio readyState', String(diagnostics.audioReadyState ?? audio?.readyState ?? 'unknown')],
+    ['last play result', diagnostics.lastPlayResult || 'none'],
+    ['last play error', diagnostics.lastPlayErrorName ? `${diagnostics.lastPlayErrorName}: ${diagnostics.lastPlayErrorMessage || ''}` : 'none'],
+    ['last audio event', diagnostics.lastAudioEvent || 'none']
+  ]
+  return `
+    <div class="music-live-native-audio-debug">
+      <div data-livekit-audio-mount></div>
+      ${shouldShowResume ? '<button type="button" class="button button-muted" data-livekit-audio-resume>Resume Audio</button>' : ''}
+      <details>
+        <summary>LiveKit receiver diagnostics</summary>
+        <ul>${rows.map(([label, value]) => `<li><strong>${escapeHtml(label)}:</strong> ${escapeHtml(value)}</li>`).join('')}</ul>
+      </details>
+    </div>
+  `
 }
 
 function renderNativeReceiverAudioDebug() {
@@ -3831,6 +3994,12 @@ async function joinLiveListener(options = {}) {
   if (!monitorMode) clearPlayer()
   const playbackInfo = getPublicPlaybackInfo(state.liveStream)
   if (playbackInfo.provider === STREAM_PROVIDERS.nativeStreaming) {
+    if (!firebaseSegmentStreamingEnabled()) {
+      state.liveStatus = 'idle'
+      state.liveError = 'Firebase segment streaming is disabled. LiveKit/WebRTC is the production live audio transport.'
+      rerender()
+      return
+    }
     if (!monitorMode) unlockNativeAudioFromGesture()
     if (state.liveStream.accessMode === 'password' || state.liveStream.passwordProtected) {
       state.liveStatus = 'idle'
@@ -3865,23 +4034,43 @@ async function joinLiveListener(options = {}) {
     rerender()
     return
   }
-  state.liveStatus = 'connecting'
+  state.liveStatus = 'connectingTransport'
   state.liveError = ''
+  state.nativeViewerSessionId = nativeViewerSessionId(state.liveStream.id)
+  state.nativeListenerDiagnostics = {
+    provider: STREAM_PROVIDERS.livekit,
+    listenerState: 'requestingPlayback',
+    demandSessionId: state.nativeViewerSessionId,
+    demandWriteSucceeded: false,
+    tokenReceived: false,
+    subscribedAudioTrack: false
+  }
   rerender()
   try {
     const presenceId = monitorMode ? `${livePresenceId(state.liveStream.id)}-monitor` : livePresenceId(state.liveStream.id)
+    const demandResult = await writePlaybackDemand({
+      streamId: state.liveStream.id,
+      viewerSessionId: state.nativeViewerSessionId,
+      uid: state.currentUser?.uid || null,
+      state: 'connectingTransport',
+      tabId: state.nativeViewerSessionId
+    })
+    state.nativeListenerDiagnostics.demandWriteSucceeded = demandResult?.ok === true
     const credentials = await joinMusicLiveStream(state.liveStream.id, {
       password: state.livePassword,
       presenceId,
       anonId: listenerAnonId()
     })
+    state.nativeListenerDiagnostics.tokenReceived = Boolean(credentials.listenerToken || credentials.token)
     state.listenerPresenceId = credentials.presenceId || presenceId
     startListenerPresenceHeartbeat(state.liveStream.id, state.listenerPresenceId)
     // LiveKit/WebRTC keeps audio interactive and handles jitter/reconnects internally.
     // It does not expose a normal browser-side setting for a large intentional radio buffer.
     const room = new Room({ adaptiveStream: true, dynacast: true })
     state.listenerRoom = room
-    room.on(RoomEvent.TrackSubscribed, (track) => {
+    state.liveStatus = 'waitingForRemoteAudio'
+    state.liveError = ''
+    room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       const element = track.attach()
       if (track.kind === 'video') {
         if (state.listenerVideoElement) state.listenerVideoElement.remove()
@@ -3898,20 +4087,31 @@ async function joinLiveListener(options = {}) {
       }
       if (track.kind !== 'audio') return
       if (state.listenerAudioElement) state.listenerAudioElement.remove()
-      element.controls = false
-      element.autoplay = monitorMode
+      element.controls = true
+      element.autoplay = false
       element.muted = monitorMode ? state.liveMonitor.muted : false
-      element.volume = monitorMode ? state.player.volume : state.player.volume
-      element.style.display = 'none'
+      element.volume = monitorMode ? state.player.volume : 1
+      element.playsInline = true
+      element.style.display = 'block'
+      element.style.width = 'min(100%, 520px)'
+      element.style.margin = '12px 0'
       element.dataset.musicLiveAudio = 'true'
-      document.body.appendChild(element)
+      const mount = app.querySelector('[data-livekit-audio-mount]')
+      ;(mount || document.body).appendChild(element)
       state.listenerAudioElement = element
-      element.play().catch(() => {
-        state.liveStatus = 'waiting'
-        updateLiveListenerControls()
-      })
-      state.liveStatus = 'live'
-      updateLiveMediaSession(state.liveStream)
+      state.nativeListenerDiagnostics = {
+        ...(state.nativeListenerDiagnostics || {}),
+        provider: STREAM_PROVIDERS.livekit,
+        subscribedAudioTrack: true,
+        remoteParticipantIdentity: participant?.identity || '',
+        remoteTrackSid: publication?.trackSid || publication?.sid || '',
+        remoteTrackName: publication?.trackName || track.name || 'melogic-program-audio',
+        remoteTrackKind: track.kind || 'audio'
+      }
+      attachLiveKitAudioDiagnostics(element)
+      state.liveStatus = 'readyToPlay'
+      state.liveError = ''
+      playLiveKitListenerAudio().catch(() => {})
       updateLiveListenerControls()
       if (state.route.mode === 'liveMonitor') startMusicLiveMonitorVisualizer()
     })
@@ -3934,23 +4134,27 @@ async function joinLiveListener(options = {}) {
     })
     room.on(RoomEvent.Reconnecting, () => {
       state.liveStatus = 'reconnecting'
+      state.nativeListenerDiagnostics.roomConnectionState = 'reconnecting'
       updateLiveListenerControls()
     })
     room.on(RoomEvent.Reconnected, () => {
-      state.liveStatus = state.listenerAudioElement ? 'live' : 'waiting'
+      state.nativeListenerDiagnostics.roomConnectionState = 'connected'
+      state.liveStatus = state.nativeListenerDiagnostics.lastAudioEvent === 'playing' ? 'playing' : 'waitingForRemoteAudio'
       updateLiveListenerControls()
     })
     room.on(RoomEvent.Disconnected, () => {
       state.liveStatus = state.liveStream?.status === 'live' ? 'ended' : 'idle'
+      state.nativeListenerDiagnostics.roomConnectionState = 'disconnected'
       stopListenerPresenceHeartbeat()
       updateLiveListenerControls()
     })
     await room.connect(credentials.url, credentials.listenerToken || credentials.token)
+    state.nativeListenerDiagnostics.roomConnectionState = room.state || room.connectionState || 'connected'
     if (!state.listenerAudioElement && state.listenerVideoElement) {
-      state.liveStatus = 'live'
+      state.liveStatus = state.liveStream?.programHasAudio === true ? 'waitingForRemoteAudio' : 'playing'
       updateLiveListenerControls()
     } else if (!state.listenerAudioElement) {
-      state.liveStatus = 'waiting'
+      state.liveStatus = 'waitingForRemoteAudio'
       updateLiveListenerControls()
     }
   } catch (error) {
@@ -3964,9 +4168,10 @@ function updateLiveListenerControls() {
   const button = app.querySelector('[data-live-listen]')
   const status = app.querySelector('[data-live-status]')
   if (state.listenerAudioElement && app.querySelector('[data-native-audio-mount]')) ensureNativeListenerAudioElement()
+  if (state.listenerAudioElement && app.querySelector('[data-livekit-audio-mount]')) ensureLiveKitListenerAudioMounted()
   if (button) button.textContent = isLiveListeningStatus()
     ? 'Pause / Leave'
-    : state.liveStatus === 'connecting' || state.liveStatus === 'reconnecting'
+    : state.liveStatus === 'connecting' || state.liveStatus === 'connectingTransport' || state.liveStatus === 'reconnecting'
       ? 'Connecting...'
       : 'Listen'
   if (status) status.textContent = liveStatusLabel(state.liveStream || {})
@@ -4196,6 +4401,9 @@ function bindMusicEvents() {
   })
   app.querySelector('[data-native-audio-resume]')?.addEventListener('click', () => {
     resumeNativeAudioFromGesture()
+  })
+  app.querySelector('[data-livekit-audio-resume]')?.addEventListener('click', () => {
+    resumeLiveKitAudioFromGesture()
   })
   app.querySelector('[data-live-video-hero]')?.addEventListener('click', () => {
     if (!isLiveListeningStatus()) {

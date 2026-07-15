@@ -24,6 +24,8 @@ let diagnostics = buildProviderDiagnostics({
 })
 let playbackQueryDiagnostics = {}
 
+const firebaseSegmentsEnabled = () => import.meta.env?.VITE_ENABLE_FIREBASE_SEGMENT_STREAMING === 'true'
+
 function emitDiagnostics(callback = null) {
   if (typeof callback === 'function') callback(diagnostics)
 }
@@ -90,6 +92,11 @@ export function observePlaybackDemand(streamId = '', onNext = () => {}) {
 }
 
 export function startSegmentRecorder(programMediaStream, options = {}) {
+  if (!firebaseSegmentsEnabled()) {
+    diagnostics = buildProviderDiagnostics({ ...diagnostics, connectionState: 'disabled', recorderState: 'disabled', lastMediaEvent: 'firebase-segment-streaming-disabled' })
+    emitDiagnostics(options.onDiagnostics)
+    return { ok: false, disabled: true, error: 'Firebase segment streaming is disabled. LiveKit/WebRTC is the default live transport.', diagnostics }
+  }
   const streamId = cleanId(options.streamId)
   const mediaStreamTrackCount = programMediaStream?.getTracks?.().length || 0
   const trackCount = programMediaStream?.getTracks?.().filter((track) => track.readyState === 'live').length || 0
@@ -202,6 +209,7 @@ export function stopSegmentRecorder() {
 }
 
 export async function uploadSegment(segmentBlob, metadata = {}) {
+  if (!firebaseSegmentsEnabled()) throw new Error('Firebase segment streaming is disabled.')
   if (!storage || !db) throw new Error('Firebase Storage or Firestore is not available.')
   const streamId = cleanId(metadata.streamId)
   if (!streamId) throw new Error('A stream id is required to upload a segment.')
@@ -240,6 +248,7 @@ export async function uploadSegment(segmentBlob, metadata = {}) {
 }
 
 export async function writeSegmentMetadata(segmentDoc = {}) {
+  if (!firebaseSegmentsEnabled()) throw new Error('Firebase segment streaming is disabled.')
   const streamId = cleanId(segmentDoc.streamId)
   if (!db || !streamId) throw new Error('Cannot write segment metadata without Firestore and stream id.')
   const { streamId: _streamId, ...payload } = segmentDoc
@@ -270,6 +279,17 @@ export async function writeSegmentMetadata(segmentDoc = {}) {
 }
 
 export async function getNativePlaybackQueue(streamId = '', options = {}) {
+  if (!firebaseSegmentsEnabled()) {
+    playbackQueryDiagnostics = {
+      streamId: cleanId(streamId),
+      queryPath: '',
+      queryFilters: [],
+      snapshotSize: 0,
+      readySegmentCount: 0,
+      lastSegmentError: 'Firebase segment streaming is disabled. LiveKit/WebRTC is the default live transport.'
+    }
+    return []
+  }
   if (!db || !streamId) return []
   const minBufferMs = Number(options.minPlaybackBufferMs || DEFAULT_NATIVE_OPTIONS.minPlaybackBufferMs)
   const minSegments = Math.max(1, Math.ceil(minBufferMs / Number(options.segmentDurationMs || DEFAULT_NATIVE_OPTIONS.segmentDurationMs)))
