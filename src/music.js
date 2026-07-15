@@ -51,7 +51,7 @@ import {
   updateMusicLiveStreamInfo
 } from './data/musicLiveService'
 import { getPublicPlaybackInfo, isPublicStreamPlayable } from './data/streaming/publicPlaybackService'
-import { getNativePlaybackQueue } from './data/streaming/nativeStreamingProvider'
+import { getNativePlaybackQueue, getNativePlaybackQueueDiagnostics } from './data/streaming/nativeStreamingProvider'
 import {
   clearPlaybackDemand,
   nativeViewerSessionId,
@@ -3325,13 +3325,13 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       document.body.appendChild(audio)
       state.listenerAudioElement = audio
     }
-    const currentIndex = Number(segment.index || 0)
+    const currentIndex = Number(segment.index ?? 0)
     state.nativePlaybackNextIndex = currentIndex + 1
     audio.onended = () => {
       const next = state.nativePlaybackQueue
         .filter((entry) => entry.downloadURL)
-        .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
-        .find((entry) => Number(entry.index || 0) >= Number(state.nativePlaybackNextIndex || 0))
+        .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))
+        .find((entry) => Number(entry.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0))
       if (next?.downloadURL) playSegment(next).catch(() => {})
       else {
         state.liveStatus = state.liveStream?.status === 'live' ? 'buffering' : 'ended'
@@ -3353,19 +3353,31 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
   const poll = async () => {
     const native = credentials.nativeStreaming || state.liveStream?.nativeStreaming || {}
     const queue = await getNativePlaybackQueue(streamId, native).catch((error) => {
-      state.nativeListenerDiagnostics.lastSegmentError = error?.message || 'Segment lookup failed.'
+      const queryDiagnostics = getNativePlaybackQueueDiagnostics()
+      state.nativeListenerDiagnostics = {
+        ...state.nativeListenerDiagnostics,
+        ...queryDiagnostics,
+        lastSegmentError: queryDiagnostics.lastSegmentError || `${error?.code || 'segment-query-error'}: ${error?.message || 'Segment lookup failed.'}`
+      }
       return []
     })
+    const queryDiagnostics = queue.diagnostics || getNativePlaybackQueueDiagnostics()
     state.nativePlaybackQueue = queue
     const segmentDurationMs = Number(native.segmentDurationMs || 4000)
     const minPlaybackBufferMs = Number(native.minPlaybackBufferMs || 20000)
     const minSegments = Math.max(1, Math.ceil(minPlaybackBufferMs / segmentDurationMs))
     const playable = queue
       .filter((segment) => segment.downloadURL)
-      .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
-    state.nativeListenerDiagnostics.readySegmentCount = playable.length
-    state.nativeListenerDiagnostics.newestAvailableSegmentIndex = playable.length ? Number(playable[playable.length - 1].index || 0) : native.newestAvailableSegmentIndex ?? null
-    state.nativeListenerDiagnostics.minBufferSegments = minSegments
+      .sort((a, b) => Number(a.index ?? 0) - Number(b.index ?? 0))
+    state.nativeListenerDiagnostics = {
+      ...state.nativeListenerDiagnostics,
+      ...queryDiagnostics,
+      readySegmentCount: Number(queryDiagnostics.readySegmentCount ?? queue.length),
+      playableSegmentCount: playable.length,
+      newestAvailableSegmentIndex: queryDiagnostics.newestAvailableSegmentIndex ?? native.newestAvailableSegmentIndex ?? null,
+      minBufferSegments: minSegments,
+      lastSegmentError: queryDiagnostics.lastSegmentError || state.nativeListenerDiagnostics.lastSegmentError || ''
+    }
     console.info('[music-live] Native listener diagnostics', state.nativeListenerDiagnostics)
     if (state.nativeListenerDiagnostics.hostHeartbeatFresh !== true) {
       updateNativeListenerStatus('waitingForHost', nativePlaybackWaitMessage(state.liveStream || {}, Date.now() - startedAt))
@@ -3380,7 +3392,7 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
       const started = await playSegment(first)
       if (!started) return
     } else if (state.liveStatus === 'buffering') {
-      const next = playable.find((segment) => Number(segment.index || 0) >= Number(state.nativePlaybackNextIndex || 0))
+      const next = playable.find((segment) => Number(segment.index ?? 0) >= Number(state.nativePlaybackNextIndex ?? 0))
       if (next) await playSegment(next)
     }
     state.liveStatus = 'playing'

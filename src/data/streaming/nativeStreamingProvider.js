@@ -22,6 +22,7 @@ let diagnostics = buildProviderDiagnostics({
   connectionState: 'idle',
   lastMediaEvent: 'native-streaming-ready'
 })
+let playbackQueryDiagnostics = {}
 
 function emitDiagnostics(callback = null) {
   if (typeof callback === 'function') callback(diagnostics)
@@ -38,7 +39,7 @@ function supportedAudioMimeType() {
 }
 
 function segmentPath({ streamId = '', type = 'audio', index = 0 } = {}) {
-  return `liveSegments/${cleanId(streamId)}/${type}/${Number(index || 0)}.webm`
+  return `liveSegments/${cleanId(streamId)}/${type}/${Number(index ?? 0)}.webm`
 }
 
 function segmentCollection(streamId = '') {
@@ -205,7 +206,7 @@ export async function uploadSegment(segmentBlob, metadata = {}) {
   const streamId = cleanId(metadata.streamId)
   if (!streamId) throw new Error('A stream id is required to upload a segment.')
   const type = ['audio', 'video', 'av'].includes(metadata.type) ? metadata.type : 'audio'
-  const index = Number(metadata.index || 0)
+  const index = Number(metadata.index ?? 0)
   const path = segmentPath({ streamId, type, index })
   const uploadStartedAt = serverTimestamp()
   const upload = await uploadBytes(storageRef(storage, path), segmentBlob, {
@@ -247,11 +248,21 @@ export async function writeSegmentMetadata(segmentDoc = {}) {
     broadcastState: 'liveBroadcasting',
     'nativeStreaming.status': 'broadcasting',
     'nativeStreaming.hasPlayableSegments': true,
-    'nativeStreaming.newestAvailableSegmentIndex': Number(payload.index || 0),
-    'nativeStreaming.currentSegmentIndex': Number(payload.index || 0),
+    'nativeStreaming.newestAvailableSegmentIndex': Number(payload.index ?? 0),
+    'nativeStreaming.currentSegmentIndex': Number(payload.index ?? 0),
     'nativeStreaming.lastSegmentAt': serverTimestamp(),
     updatedAt: serverTimestamp()
   }, { merge: true }).catch(() => {})
+  console.info('[native-streaming] segment metadata written', {
+    streamId,
+    segmentDocId: docRef.id,
+    index: Number(payload.index ?? 0),
+    ready: payload.ready === true,
+    type: payload.type || '',
+    downloadURLPresent: Boolean(payload.downloadURL),
+    storagePath: payload.storagePath || '',
+    newestAvailableSegmentIndex: Number(payload.index ?? 0)
+  })
   return { ok: true, segmentId: docRef.id, ...payload }
 }
 
@@ -259,14 +270,75 @@ export async function getNativePlaybackQueue(streamId = '', options = {}) {
   if (!db || !streamId) return []
   const minBufferMs = Number(options.minPlaybackBufferMs || DEFAULT_NATIVE_OPTIONS.minPlaybackBufferMs)
   const minSegments = Math.max(1, Math.ceil(minBufferMs / Number(options.segmentDurationMs || DEFAULT_NATIVE_OPTIONS.segmentDurationMs)))
-  const snapshot = await getDocs(query(
-    segmentCollection(streamId),
-    where('provider', '==', STREAM_PROVIDERS.nativeStreaming),
-    where('ready', '==', true),
-    orderBy('index', 'asc'),
-    limit(Math.max(minSegments, 8))
-  )).catch(() => null)
-  return snapshot?.docs?.map((docSnap) => ({ segmentId: docSnap.id, ...(docSnap.data() || {}) })) || []
+  const cleanStreamId = cleanId(streamId)
+  const queryPath = `musicLiveStreams/${cleanStreamId}/segments`
+  const queryFilters = ['ready == true', 'type == audio', 'orderBy index asc', `limit ${Math.max(20, minSegments)}`]
+  try {
+    const snapshot = await getDocs(query(
+      segmentCollection(cleanStreamId),
+      where('ready', '==', true),
+      where('type', '==', 'audio'),
+      orderBy('index', 'asc'),
+      limit(Math.max(20, minSegments))
+    ))
+    const queue = await Promise.all(snapshot.docs.map(async (docSnap) => {
+      const segment = { segmentId: docSnap.id, ...(docSnap.data() || {}) }
+      if (!segment.downloadURL && segment.storagePath) {
+        try {
+          segment.downloadURL = await getDownloadURL(storageRef(storage, segment.storagePath))
+        } catch (error) {
+          segment.downloadURLError = `${error?.code || 'storage-url-error'}: ${error?.message || 'Could not resolve segment storage URL.'}`
+        }
+      }
+      return segment
+    }))
+    const first = queue[0] || {}
+    const firstDownloadUrlError = first.downloadURLError || ''
+    playbackQueryDiagnostics = {
+      streamId: cleanStreamId,
+      queryPath,
+      queryFilters,
+      snapshotSize: snapshot.size,
+      firstSegmentId: first.segmentId || '',
+      firstSegmentIndex: Number.isFinite(Number(first.index)) ? Number(first.index) : null,
+      firstSegmentReady: first.ready === true,
+      firstSegmentType: first.type || '',
+      firstSegmentDownloadURLPresent: Boolean(first.downloadURL),
+      firstSegmentStoragePathPresent: Boolean(first.storagePath),
+      firstSegmentDownloadURLError: firstDownloadUrlError,
+      newestAvailableSegmentIndex: queue.length ? Number(queue[queue.length - 1].index ?? 0) : options.newestAvailableSegmentIndex ?? null,
+      readySegmentCount: queue.length,
+      lastSegmentError: firstDownloadUrlError
+    }
+    console.info('[native-streaming] segment query diagnostics', playbackQueryDiagnostics)
+    Object.defineProperty(queue, 'diagnostics', { value: playbackQueryDiagnostics, enumerable: false })
+    return queue
+  } catch (error) {
+    playbackQueryDiagnostics = {
+      streamId: cleanStreamId,
+      queryPath,
+      queryFilters,
+      snapshotSize: 0,
+      firstSegmentId: '',
+      firstSegmentIndex: null,
+      firstSegmentReady: false,
+      firstSegmentType: '',
+      firstSegmentDownloadURLPresent: false,
+      firstSegmentStoragePathPresent: false,
+      firstSegmentDownloadURLError: '',
+      newestAvailableSegmentIndex: options.newestAvailableSegmentIndex ?? null,
+      readySegmentCount: 0,
+      lastSegmentError: `${error?.code || 'segment-query-error'}: ${error?.message || 'Segment query failed.'}`,
+      errorCode: error?.code || '',
+      errorMessage: error?.message || ''
+    }
+    console.error('[native-streaming] segment query failed', playbackQueryDiagnostics)
+    throw error
+  }
+}
+
+export function getNativePlaybackQueueDiagnostics() {
+  return playbackQueryDiagnostics
 }
 
 export async function cleanupOldSegments(streamId = '', options = {}) {
@@ -293,6 +365,7 @@ export function createNativeStreamingProvider() {
     uploadSegment,
     writeSegmentMetadata,
     getNativePlaybackQueue,
+    getNativePlaybackQueueDiagnostics,
     cleanupOldSegments,
     getDiagnostics
   }
