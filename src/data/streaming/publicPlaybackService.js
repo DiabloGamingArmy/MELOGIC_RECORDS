@@ -4,17 +4,21 @@ import { PLAYBACK_MODES, STREAM_PROVIDERS } from './streamingProviderTypes'
 
 export function hasHlsPlaybackRoute(stream = {}) {
   const declaredProvider = String(stream.provider || '')
-  return declaredProvider === STREAM_PROVIDERS.hlsEdge
+  return stream.streamingProtocol === 'hls'
+    || declaredProvider === STREAM_PROVIDERS.hlsEdge
     || declaredProvider === STREAM_PROVIDERS.bufferedBroadcast
     || stream.transportProvider === 'hls-edge'
     || stream.playbackMode === PLAYBACK_MODES.hls
     || Boolean(String(stream.hlsPlaybackUrl || '').trim())
-    || Boolean(String(stream.streamKey || '').trim())
+    || Boolean(String(stream.hlsUrl || '').trim())
+    || (Boolean(String(stream.streamKey || '').trim()) && stream.transportProvider === 'hls-edge')
 }
 
 export function isExplicitFirebaseSegmentsPlayback(stream = {}) {
   const declaredProvider = String(stream.provider || '')
-  return declaredProvider === STREAM_PROVIDERS.firebaseSegments
+  return stream.streamingProtocol === 'nativeStreaming'
+    || declaredProvider === STREAM_PROVIDERS.nativeStreaming
+    || declaredProvider === STREAM_PROVIDERS.firebaseSegments
     || declaredProvider === 'firebase-segments'
     || stream.playbackMode === PLAYBACK_MODES.firebaseSegments
     || stream.transportProvider === 'firebase-segments'
@@ -22,8 +26,9 @@ export function isExplicitFirebaseSegmentsPlayback(stream = {}) {
 
 export function selectPublicPlaybackPlayer(stream = {}) {
   const declaredProvider = String(stream.provider || '')
-  if (hasHlsPlaybackRoute(stream)) return 'hls'
+  if (stream.streamingProtocol === 'hls') return 'hls'
   if (isExplicitFirebaseSegmentsPlayback(stream)) return 'firebaseSegments'
+  if (hasHlsPlaybackRoute(stream)) return 'hls'
   if (declaredProvider === STREAM_PROVIDERS.antMedia) return 'antMedia'
   return 'hls'
 }

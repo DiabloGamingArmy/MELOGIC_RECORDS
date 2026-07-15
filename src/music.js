@@ -31,9 +31,6 @@ import {
   getMusicLiveStream,
   getMusicLiveViewerState,
   heartbeatMusicLiveStream,
-  HLS_EDGE_PROVIDER,
-  HLS_EDGE_TRANSPORT,
-  HLS_PLAYBACK_MODE,
   DEFAULT_HLS_EDGE_BASE_URL,
   DEFAULT_RTMP_INGEST_SERVER,
   isLiveStreamFresh,
@@ -41,6 +38,7 @@ import {
   leaveMusicLiveStream,
   listPublicLiveStreams,
   markMusicLiveStreamOnAir,
+  normalizeMusicLiveTransportPayload,
   prepareMusicLiveStreamDraft,
   sendMusicLiveChatMessage,
   sendMusicLiveUnloadBeacon,
@@ -119,26 +117,10 @@ function getRtmpIngestServer() {
 }
 
 function normalizeHlsLivePayload(payload = {}) {
-  console.log('[Live Writer] payload before save', payload)
-  const rawMethod = String(payload.streamingMethod || payload.ingestMethod || payload.ingestMode || 'obsRtmp')
-  const ingestMethod = /obs|rtmp|encoder/i.test(rawMethod) ? 'obsRtmp' : 'browserWebrtc'
-  const streamKey = sanitizeHlsStreamKey(payload.streamKey || payload.hlsStreamKey || state.goLive.form.streamKey || 'obsfix1')
-  const hlsPlaybackUrl = `${getHlsEdgeBaseUrl()}/${streamKey}.m3u8`
-  const normalizedPayload = {
+  return normalizeMusicLiveTransportPayload({
     ...payload,
-    provider: HLS_EDGE_PROVIDER,
-    transportProvider: HLS_EDGE_TRANSPORT,
-    playbackMode: HLS_PLAYBACK_MODE,
-    ingestMode: ingestMethod === 'obsRtmp' ? 'obs-rtmp' : 'browser-webrtc',
-    ingestMethod,
-    ingestProtocol: ingestMethod === 'obsRtmp' ? 'rtmp' : 'webrtc',
-    streamKey,
-    hlsPlaybackUrl,
-    hlsUrl: hlsPlaybackUrl,
-    rtmpIngestServer: ingestMethod === 'obsRtmp' ? getRtmpIngestServer() : payload.rtmpIngestServer || ''
-  }
-  console.log('[Live Writer] HLS normalized payload', normalizedPayload)
-  return normalizedPayload
+    streamingProtocol: payload.streamingProtocol || state.goLive.form.streamingProtocol || 'hls'
+  })
 }
 
 function storedHlsPlaybackMode() {
@@ -276,6 +258,7 @@ const state = {
       coverArtSource: 'fallback',
       tags: '',
       visibility: 'public',
+      streamingProtocol: 'hls',
       streamingMethod: 'obsRtmp',
       streamKey: 'obsfix1',
       rightsAccepted: false,
@@ -3749,6 +3732,7 @@ function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) 
     coverArtSource: nextCoverURL ? (previousCoverSource === 'upload' && nextCoverURL === previousCoverURL ? 'upload' : 'url') : 'fallback',
     tags: String(read('tags', state.goLive.form.tags) || '').slice(0, 500),
     visibility: String(read('visibility', state.goLive.form.visibility) || 'public'),
+    streamingProtocol: String(read('streamingProtocol', state.goLive.form.streamingProtocol) || 'hls'),
     streamingMethod: String(read('streamingMethod', state.goLive.form.streamingMethod) || 'obsRtmp'),
     streamKey: String(read('streamKey', state.goLive.form.streamKey) || 'obsfix1'),
     rightsAccepted: hasControl('rightsAccepted') ? read('rightsAccepted') === 'on' : state.goLive.form.rightsAccepted,
@@ -3811,11 +3795,11 @@ function startHostHeartbeat(streamId) {
     const isObs = state.goLive.form.streamingMethod !== 'browserWebrtc'
     const payload = normalizeHlsLivePayload({
       streamId,
-      audioPublished: isObs ? false : Boolean(state.goLive.localTrack),
-      programHasAudio: isObs ? false : Boolean(state.goLive.localTrack),
+      audioPublished: isObs ? true : Boolean(state.goLive.localTrack),
+      programHasAudio: isObs ? true : Boolean(state.goLive.localTrack),
       streamingMethod: state.goLive.form.streamingMethod || 'obsRtmp',
       streamKey: state.goLive.form.streamKey || 'obsfix1',
-      connectionStatus: isObs ? 'waitingForIngest' : state.goLive.connectionStatus === 'Reconnecting...' ? 'reconnecting' : 'live'
+      connectionStatus: state.goLive.connectionStatus === 'Reconnecting...' ? 'reconnecting' : 'live'
     })
     heartbeatMusicLiveStream(streamId, payload).catch((error) => {
       console.warn('[music] heartbeatMusicLiveStream failed', error?.message || error)
@@ -4223,11 +4207,11 @@ async function startHostBroadcast(form) {
       streamKey: response.streamKey || payload.streamKey,
       hostActive: true,
       hostConnected: true,
-      connectionStatus: isObs ? 'waitingForIngest' : 'live',
+      connectionStatus: 'live',
       broadcastState: 'liveBroadcasting',
-      audioPublished: ingestResult.audioPublished === true,
+      audioPublished: isObs ? true : ingestResult.audioPublished === true,
       videoPublished: ingestResult.videoPublished === true,
-      programHasAudio: ingestResult.audioPublished === true
+      programHasAudio: isObs ? true : ingestResult.audioPublished === true
     }))
     startHostHeartbeat(pendingStreamId)
     startLiveChatSubscription(pendingStreamId)

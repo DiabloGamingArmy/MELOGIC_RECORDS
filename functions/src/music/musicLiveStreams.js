@@ -16,7 +16,7 @@ const ALLOWED_ACCESS_MODES = new Set(['public', 'unlisted', 'private', 'password
 const ALLOWED_AUDIO_MODES = new Set(['music', 'voice'])
 const ALLOWED_PROVIDERS = new Set(['hlsEdge', 'bufferedBroadcast', 'nativeWeb', 'webrtc', 'firebaseSegments', 'nativeStreaming', 'livekit'])
 const ALLOWED_INGEST_METHODS = new Set(['browserWebrtc', 'obsRtmp'])
-const ALLOWED_INGEST_MODES = new Set(['browser-media-recorder', 'livekit-webrtc', 'browser-webrtc', 'rtmp-obs', 'rtmp', 'srt', 'none'])
+const ALLOWED_INGEST_MODES = new Set(['browser-media-recorder', 'livekit-webrtc', 'browser-webrtc', 'obs-rtmp', 'rtmp-obs', 'rtmp', 'srt', 'none'])
 const ALLOWED_PLAYBACK_MODES = new Set(['firebaseSegments', 'webrtc', 'hls', 'llhls', 'none'])
 const ALLOWED_REACTIONS = new Set(['like', 'dislike', 'none'])
 const ELIGIBLE_ROLES = new Set(['creator', 'artist', 'founder', 'staff', 'admin', 'owner'])
@@ -47,7 +47,10 @@ function cleanId(value, max = 160) {
 }
 
 function sanitizeStreamKey(value = '') {
-  return cleanString(value, 160).replace(/[^A-Za-z0-9_-]/g, '')
+  return cleanString(value, 160)
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
 }
 
 function buildHlsPlaybackUrl(streamKey = '') {
@@ -79,15 +82,20 @@ function bufferedBroadcastFields(data = {}, existing = {}) {
   return {
     provider: 'hlsEdge',
     providerLabel: 'Melogic Edge',
+    streamingProtocol: 'hls',
     transportProvider: 'hls-edge',
     ingestMethod,
     ingestProtocol: ingestMethod === 'browserWebrtc' ? 'webrtc' : 'rtmp',
-    ingestMode: ingestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs',
+    ingestMode: ingestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'obs-rtmp',
     playbackMode: 'hls',
     latencyProfile: 'buffered',
     streamKey,
     hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
-    rtmpIngestServer: ingestMethod === 'obsRtmp' ? RTMP_INGEST_SERVER : ''
+    hlsUrl: buildHlsPlaybackUrl(streamKey),
+    llhlsUrl: '',
+    rtmpIngestServer: ingestMethod === 'obsRtmp' ? RTMP_INGEST_SERVER : '',
+    nativeStreaming: { ...nativeStreamingDefaults(existing.nativeStreaming || {}), enabled: false, status: 'disabled' },
+    archiveNote: 'HLS Edge streams publish through the Melogic streaming server and play through the HLS edge.'
   }
 }
 
@@ -113,7 +121,7 @@ function normalizeProvider(value) {
 
 function normalizeIngestMethod(value) {
   if (value === 'browserWebrtc' || value === 'browser-webrtc' || value === 'livekit-webrtc') return 'browserWebrtc'
-  if (value === 'obsRtmp' || value === 'rtmp-obs' || value === 'rtmp') return 'obsRtmp'
+  if (value === 'obsRtmp' || value === 'obs-rtmp' || value === 'rtmp-obs' || value === 'rtmp') return 'obsRtmp'
   return ALLOWED_INGEST_METHODS.has(value) ? value : 'browserWebrtc'
 }
 
@@ -131,14 +139,23 @@ function normalizePlaybackMode(value, provider = 'hlsEdge') {
 
 function providerLabel(provider = 'hlsEdge') {
   if (provider === 'nativeWeb') return 'Website Live'
-  if (provider === 'firebaseSegments') return 'Firebase Segments'
+  if (provider === 'firebaseSegments' || provider === 'nativeStreaming') return 'Native Streaming'
   return 'Melogic Edge'
 }
 
 function normalizeIngestModeForProvider(value, provider = 'hlsEdge', ingestMethod = 'obsRtmp') {
   if (provider === 'nativeWeb') return 'browser-webrtc'
   if (provider === 'firebaseSegments') return 'browser-media-recorder'
-  return ingestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs'
+  return ingestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'obs-rtmp'
+}
+
+function normalizeStreamingProtocol(data = {}, existing = {}) {
+  const requested = cleanString(data.streamingProtocol || '', 40)
+  if (requested === 'nativeStreaming') return 'nativeStreaming'
+  if (requested === 'hls') return 'hls'
+  const existingProtocol = cleanString(existing.streamingProtocol || '', 40)
+  if (existingProtocol === 'nativeStreaming' || existingProtocol === 'hls') return existingProtocol
+  return 'hls'
 }
 
 function nullableNumber(value) {
@@ -176,15 +193,19 @@ function isStreamPublishing(stream = {}) {
 }
 
 function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource = 'browser', defaultAudioPublished = false } = {}) {
-  const provider = 'hlsEdge'
-  const ingestMethod = normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode || 'browserWebrtc')
-  const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
-  const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+  const streamingProtocol = normalizeStreamingProtocol(data, existing)
+  const nativeProtocol = streamingProtocol === 'nativeStreaming'
+  const provider = nativeProtocol ? 'nativeStreaming' : 'hlsEdge'
+  const ingestMethod = nativeProtocol
+    ? 'browserMediaRecorder'
+    : normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode || 'browserWebrtc')
+  const streamKey = nativeProtocol ? '' : sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
+  const hlsPlaybackUrl = nativeProtocol ? '' : buildHlsPlaybackUrl(streamKey)
   const audioEnabled = data.audioEnabled === false ? false : data.audioEnabled === true ? true : existing.audioEnabled !== false
   const videoEnabled = data.videoEnabled === true ? true : data.videoEnabled === false ? false : existing.videoEnabled === true
-  const canPublishBrowserMedia = ingestMethod === 'browserWebrtc'
-  const audioPublished = Boolean(canPublishBrowserMedia && audioEnabled && (data.audioPublished === true || (defaultAudioPublished && data.audioPublished !== false)))
-  const videoPublished = Boolean(canPublishBrowserMedia && videoEnabled && data.videoPublished === true)
+  const canPublishEdgeMedia = !nativeProtocol && ['browserWebrtc', 'obsRtmp'].includes(ingestMethod)
+  const audioPublished = Boolean(canPublishEdgeMedia && audioEnabled && (data.audioPublished === true || (defaultAudioPublished && data.audioPublished !== false)))
+  const videoPublished = Boolean(canPublishEdgeMedia && videoEnabled && (data.videoPublished === true || (defaultAudioPublished && data.videoPublished !== false)))
   const programHasAudio = Boolean(audioEnabled && (data.programHasAudio === true || (data.programHasAudio !== false && audioPublished)))
   const programHasVideo = Boolean(videoEnabled && (data.programHasVideo === true || videoPublished))
   const activeAudioSources = data.activeAudioSources && typeof data.activeAudioSources === 'object'
@@ -232,21 +253,22 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
     : existing.providerDiagnostics || {}
   return {
     provider,
-    providerLabel: providerLabel(provider),
-    transportProvider: 'hls-edge',
+    providerLabel: nativeProtocol ? 'Native Streaming' : providerLabel(provider),
+    streamingProtocol,
+    transportProvider: nativeProtocol ? 'firebase' : 'hls-edge',
     ingestMethod,
-    ingestProtocol: ingestMethod === 'browserWebrtc' ? 'webrtc' : 'rtmp',
-    ingestMode: normalizeIngestModeForProvider(data.ingestMode || existing.ingestMode, provider, ingestMethod),
-    playbackMode: 'hls',
-    latencyProfile: 'buffered',
+    ingestProtocol: nativeProtocol ? 'firebase' : ingestMethod === 'browserWebrtc' ? 'webrtc' : 'rtmp',
+    ingestMode: nativeProtocol ? 'browser-media-recorder' : normalizeIngestModeForProvider(data.ingestMode || existing.ingestMode, provider, ingestMethod),
+    playbackMode: nativeProtocol ? 'firebaseSegments' : 'hls',
+    latencyProfile: nativeProtocol ? 'buffered-native' : 'buffered',
     streamKey,
     hlsPlaybackUrl,
-    rtmpIngestServer: ingestMethod === 'obsRtmp' ? RTMP_INGEST_SERVER : '',
+    rtmpIngestServer: !nativeProtocol && ingestMethod === 'obsRtmp' ? RTMP_INGEST_SERVER : '',
     antMediaStreamId: cleanId(data.antMediaStreamId || existing.antMediaStreamId || '', 160),
     antMediaAppName: cleanString(data.antMediaAppName || existing.antMediaAppName || '', 120).replace(/^\/+|\/+$/g, ''),
     antMediaBaseUrl: sanitizeCoverArtURL(data.antMediaBaseUrl || existing.antMediaBaseUrl || ''),
-    hlsUrl: sanitizeCoverArtURL(data.hlsUrl || existing.hlsUrl || ''),
-    llhlsUrl: sanitizeCoverArtURL(data.llhlsUrl || existing.llhlsUrl || ''),
+    hlsUrl: hlsPlaybackUrl,
+    llhlsUrl: '',
     webRtcPlaybackUrl: sanitizeCoverArtURL(data.webRtcPlaybackUrl || existing.webRtcPlaybackUrl || ''),
     audioEnabled,
     videoEnabled,
@@ -259,6 +281,12 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
     audioOnly: !programHasVideo,
     hostActive: data.hostActive === true || existing.hostActive === true,
     hostSessionId: cleanString(data.hostSessionId || existing.hostSessionId || '', 120),
+    nativeStreaming: nativeProtocol
+      ? { ...nativeStreamingDefaults(existing.nativeStreaming || {}), ...(data.nativeStreaming || {}), enabled: true, status: cleanString(data.nativeStreaming?.status || existing.nativeStreaming?.status || 'idleNoListeners', 40) }
+      : { ...nativeStreamingDefaults(existing.nativeStreaming || {}), enabled: false, status: 'disabled' },
+    archiveNote: nativeProtocol
+      ? cleanString(data.archiveNote || existing.archiveNote || 'Native Streaming legacy/debug transport.', 300)
+      : 'HLS Edge streams publish through the Melogic streaming server and play through the HLS edge.',
     programState,
     providerDiagnostics
   }
@@ -444,14 +472,18 @@ function liveWarn(stage, extra = {}) {
 }
 
 function liveWriterLog(streamId = '', payload = {}) {
-  console.log('[Live Writer] saving stream transport', {
+  console.log('[Music Live Writer] normalized transport payload', {
     provider: payload.provider || '',
+    providerLabel: payload.providerLabel || '',
+    streamingProtocol: payload.streamingProtocol || '',
     transportProvider: payload.transportProvider || '',
     playbackMode: payload.playbackMode || '',
     ingestMethod: payload.ingestMethod || '',
     ingestProtocol: payload.ingestProtocol || '',
     streamKey: payload.streamKey || '',
     hlsPlaybackUrl: payload.hlsPlaybackUrl || '',
+    hlsUrl: payload.hlsUrl || '',
+    nativeStreamingEnabled: payload.nativeStreaming?.enabled === true,
     streamId
   })
 }
@@ -804,7 +836,7 @@ const startMusicLiveStream = onCall(
         streamMethodLockedAtStart: true,
         selectedProviderUpdatedAt: now,
         selectedProviderUpdatedBy: uid,
-        archiveNote: 'Melogic Edge packages browser WebRTC or OBS RTMP ingest for buffered HLS playback.',
+        archiveNote: programOutputState.archiveNote,
         archiveTrackPath: '',
         archiveTrackURL: '',
         moderationStatus: 'clear',
@@ -970,7 +1002,8 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
   const stream = snap.data() || {}
   if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can mark this stream live.')
-  const requestedProvider = 'hlsEdge'
+  const requestedProtocol = normalizeStreamingProtocol(request.data || {}, stream)
+  const requestedProvider = requestedProtocol === 'nativeStreaming' ? 'firebaseSegments' : 'hlsEdge'
   const diagnostics = markLiveValidationDetails({ streamId, provider: requestedProvider, stream, requestData: request.data || {} })
   const allowedBufferedStatuses = new Set(['draft', 'setup', 'starting', 'error', 'live'])
   const canMarkLive = allowedBufferedStatuses.has(stream.status || '')
@@ -998,7 +1031,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
-  const bufferedState = requestedProvider === 'hlsEdge'
+  const bufferedState = requestedProtocol === 'hls'
     ? bufferedBroadcastFields(request.data || {}, stream)
     : {}
   const safeLiveTitle = cleanString(request.data?.title || stream.title || 'Untitled live stream', 90)
@@ -1018,12 +1051,10 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     passwordProtected: safeLiveAccessMode === 'password',
     ...programOutputState,
     ...bufferedState,
-    connectionStatus: requestedProvider === 'hlsEdge'
-      ? cleanString(request.data?.connectionStatus || (programOutputState.ingestMethod === 'browserWebrtc' ? 'live' : 'waitingForIngest'), 80)
-      : 'live',
-    broadcastState: 'liveBroadcasting',
+    connectionStatus: 'live',
+    broadcastState: requestedProtocol === 'nativeStreaming' ? 'liveIdleNoListeners' : 'liveBroadcasting',
     hostConnected: true,
-    provider: requestedProvider,
+    provider: programOutputState.provider,
     ingestMode: programOutputState.ingestMode,
     playbackMode: programOutputState.playbackMode,
     hostActive: true,
@@ -1037,12 +1068,12 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     lastHostHeartbeatAt: now
   }, { merge: true })
 
-  liveLog('stream marked live', { uid, streamId, provider: requestedProvider, validationBranch: diagnostics.validationBranch, broadcastState: 'liveBroadcasting' })
+  liveLog('stream marked live', { uid, streamId, provider: programOutputState.provider, streamingProtocol: requestedProtocol, validationBranch: diagnostics.validationBranch, broadcastState: requestedProtocol === 'nativeStreaming' ? 'liveIdleNoListeners' : 'liveBroadcasting' })
   return {
     ok: true,
     streamId,
     status: 'live',
-    ...(requestedProvider === 'hlsEdge' ? bufferedState : {})
+    ...(requestedProtocol === 'hls' ? bufferedState : {})
   }
 })
 
@@ -1070,10 +1101,10 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
   const requestedConnectionStatus = cleanString(request.data?.connectionStatus || stream.connectionStatus || '', 80)
   liveWriterLog(streamId, { ...programOutputState, ...bufferedState })
   await streamRef.set({
-    connectionStatus: programOutputState.provider === 'hlsEdge' && programOutputState.ingestMethod === 'obsRtmp'
-      ? (requestedConnectionStatus === 'live' ? 'live' : 'waitingForIngest')
-      : requestedConnectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
-    broadcastState: 'liveBroadcasting',
+    connectionStatus: requestedConnectionStatus === 'reconnecting' ? 'reconnecting' : 'live',
+    broadcastState: programOutputState.streamingProtocol === 'nativeStreaming'
+      ? cleanString(request.data?.broadcastState || stream.broadcastState || 'liveIdleNoListeners', 80)
+      : 'liveBroadcasting',
     hostActive: true,
     hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || stream.hostSessionId || '', 120),
     hostConnected: true,
@@ -1127,7 +1158,7 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
     existing: stream,
     selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource)
   })
-  const bufferedState = bufferedBroadcastFields(request.data || {}, stream)
+  const bufferedState = programOutputState.streamingProtocol === 'hls' ? bufferedBroadcastFields(request.data || {}, stream) : {}
   liveWriterLog(streamId, { ...programOutputState, ...bufferedState })
   await streamRef.set({
     ...metadata,

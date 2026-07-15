@@ -13,6 +13,8 @@ import {
   heartbeatMusicLiveStream,
   listHostMusicLiveStreams,
   markMusicLiveStreamOnAir,
+  normalizeMusicLiveTransportPayload,
+  DEFAULT_RTMP_INGEST_SERVER,
   prepareMusicLiveStreamDraft,
   sendMusicLiveChatMessage,
   setMusicLiveNowPlaying,
@@ -231,7 +233,7 @@ const state = {
     nativeNoDemandTimer: 0,
     nativeRecorderRunning: false,
     nativePlaybackDemandCount: 0,
-    nativeStreamingStatus: 'idleNoListeners',
+    nativeStreamingStatus: 'disabled',
     nativeInterruptedStreamId: '',
     nativeHostSessionId: '',
     nativeLastDemandChangeAt: '',
@@ -252,6 +254,7 @@ const state = {
     videoSource: 'browser',
     videoTransition: 'cut',
     providerId: preferredStreamingProviderId(),
+    streamingProtocol: 'hls',
     ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
     browserIngestActive: false,
     providerDiagnostics: {},
@@ -1375,8 +1378,9 @@ function renderAdvancedStreamingSettings() {
   const diagnostics = live.providerDiagnostics || {}
   const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
   const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
-  const ingestServer = String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
+  const ingestServer = String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).replace(/\/+$/, '')
   const isObs = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+  const isNativeProtocol = live.streamingProtocol === 'nativeStreaming'
   const browserIngestConfigured = isBrowserWebrtcIngestConfigured()
   return `
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
@@ -1388,11 +1392,17 @@ function renderAdvancedStreamingSettings() {
           <div class="studio-live-method-options" role="radiogroup" aria-label="Streaming Method">
             ${options.map((option) => `<button type="button" class="studio-live-method-option ${option.id === live.ingestMethod ? 'is-active' : ''}" role="radio" aria-checked="${option.id === live.ingestMethod}" data-streaming-method="${esc(option.id)}" ${live.streamId ? 'disabled' : ''}><strong>${esc(option.label)}</strong><small>${esc(option.description)}</small></button>`).join('')}
           </div>
+          <label>Streaming Protocol
+            <select name="streamingProtocol" data-streaming-protocol ${live.streamId ? 'disabled' : ''}>
+              <option value="hls" ${isNativeProtocol ? '' : 'selected'}>HLS</option>
+              <option value="nativeStreaming" ${isNativeProtocol ? 'selected' : ''}>Native Streaming — legacy/debug only</option>
+            </select>
+          </label>
         </fieldset>
         <div class="studio-live-provider-status">
-          <strong>${esc(current?.label || 'Stream From Browser')}</strong>
-          <span>${esc(isObs || browserIngestConfigured ? 'Ready' : 'Browser streaming needs the server WebRTC ingest URL configured.')}</span>
-          <small>${esc(current?.description || '')}</small>
+          <strong>${esc(isNativeProtocol ? 'Native Streaming — legacy/debug only' : current?.label || 'Stream From Browser')}</strong>
+          <span>${esc(isNativeProtocol || isObs || browserIngestConfigured ? 'Ready' : 'Browser streaming needs the server WebRTC ingest URL configured.')}</span>
+          <small>${esc(isNativeProtocol ? 'Legacy Firebase segment transport for debugging only. HLS is the public default.' : current?.description || '')}</small>
           <small>${esc(live.streamId ? 'Streaming method is locked for the active stream.' : 'The selected method is saved to the stream draft.')}</small>
         </div>
       </div>
@@ -1410,10 +1420,11 @@ function renderAdvancedStreamingSettings() {
         <article>
           <h2>Streaming Diagnostics</h2>
           <ul>
-            <li>Provider: hlsEdge</li>
+            <li>Provider: ${isNativeProtocol ? 'nativeStreaming' : 'hlsEdge'}</li>
+            <li>Streaming protocol: ${esc(live.streamingProtocol || 'hls')}</li>
             <li>Streaming method: ${esc(live.ingestMethod)}</li>
-            <li>Transport provider: hls-edge</li>
-            <li>Playback mode: hls</li>
+            <li>Transport provider: ${isNativeProtocol ? 'firebase' : 'hls-edge'}</li>
+            <li>Playback mode: ${isNativeProtocol ? 'firebaseSegments' : 'hls'}</li>
             <li>Ingest method: ${esc(live.ingestMethod)}</li>
             <li>Ingest protocol: ${esc(ingestProtocolForMethod(live.ingestMethod))}</li>
             <li>Stream key: ${esc(diagnostics.streamKey || streamKey)}</li>
@@ -1792,11 +1803,12 @@ function liveProgramOutputState() {
   const mixer = live.programMixer || {}
   const streamNative = live.stream?.nativeStreaming || {}
   const diagnostics = live.providerDiagnostics || {}
-  live.providerId = STREAM_PROVIDERS.hlsEdge
+  const streamingProtocol = live.streamingProtocol === 'nativeStreaming' ? 'nativeStreaming' : 'hls'
+  live.providerId = streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
   const ingestMethod = normalizeIngestMethod(live.ingestMethod, STREAM_PROVIDERS.hlsEdge)
   live.ingestMethod = ingestMethod
   const isBrowserIngest = ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
-  const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
+  const streamKey = streamingProtocol === 'hls' ? ensureLiveStreamKey() : ''
   const programScene = (mixer.scenes || []).find((scene) => scene.sceneId === mixer.programSceneId)
   const programSourceIds = new Set(Array.isArray(programScene?.sources) ? programScene.sources : [])
   const programSources = (mixer.sources || []).filter((source) => programSourceIds.has(source.sourceId))
@@ -1813,22 +1825,12 @@ function liveProgramOutputState() {
     ((live.sequenceInputEnabled || live.inputSource === 'sequence') && !live.mixer.sequenceMuted)
   )))
   const programHasVideo = Boolean(live.videoEnabled && hasEnabledVideoSource && programScene)
-  return {
-    provider: STREAM_PROVIDERS.hlsEdge,
-    providerLabel: 'Melogic Edge',
-    transportProvider: 'hls-edge',
-    ingestMethod,
-    ingestProtocol: ingestProtocolForMethod(ingestMethod),
-    ingestMode: ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
-    playbackMode: 'hls',
-    latencyProfile: 'buffered',
+  return normalizeMusicLiveTransportPayload({
+    streamingProtocol,
+    streamingMethod: ingestMethod,
     streamKey,
-    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
-    rtmpIngestServer: ingestMethod === STREAM_INGEST_METHODS.obsRtmp
-      ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
-      : '',
     nativeStreaming: {
-      enabled: false,
+      enabled: streamingProtocol === 'nativeStreaming',
       targetLatencyMs: 30000,
       segmentDurationMs: 4000,
       audioFirst: true,
@@ -1837,7 +1839,7 @@ function liveProgramOutputState() {
       minPlaybackBufferMs: 20000,
       maxPlaybackBufferMs: 60000,
       rollingRetentionMs: 300000,
-      status: live.nativeStreamingStatus || 'idleNoListeners',
+      status: streamingProtocol === 'nativeStreaming' ? live.nativeStreamingStatus || 'idleNoListeners' : 'disabled',
       hasPlayableSegments: Boolean(diagnostics.hasPlayableSegments || streamNative.hasPlayableSegments),
       oldestAvailableSegmentIndex: streamNative.oldestAvailableSegmentIndex ?? null,
       newestAvailableSegmentIndex: diagnostics.newestAvailableSegmentIndex ?? streamNative.newestAvailableSegmentIndex ?? null,
@@ -1854,10 +1856,10 @@ function liveProgramOutputState() {
       sequence: Boolean(live.sequenceInputEnabled || live.inputSource === 'sequence')
     },
     activeVideoSource: live.videoEnabled ? live.videoSource : '',
-    programHasAudio,
+    programHasAudio: streamingProtocol === 'hls' && !isBrowserIngest && live.streamId ? true : programHasAudio,
     programHasVideo,
-    audioPublished: Boolean(isBrowserIngest && live.audioPublishedToProvider && programHasAudio),
-    videoPublished: Boolean(isBrowserIngest && live.videoPublishedToProvider && live.videoEnabled && live.programVideoTrack),
+    audioPublished: Boolean(streamingProtocol === 'hls' && (isBrowserIngest ? live.audioPublishedToProvider && programHasAudio : live.streamId)),
+    videoPublished: Boolean(streamingProtocol === 'hls' && (isBrowserIngest ? live.videoPublishedToProvider && live.videoEnabled && live.programVideoTrack : live.streamId && live.videoEnabled)),
     programState: {
       previewSceneId: mixer.previewSceneId || '',
       programSceneId: mixer.programSceneId || '',
@@ -1870,7 +1872,7 @@ function liveProgramOutputState() {
     providerDiagnostics: {
       ...(live.providerDiagnostics || {})
     }
-  }
+  })
 }
 
 async function heartbeatLiveProgramState(extra = {}) {
@@ -2631,9 +2633,14 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.nativeHostSessionId = sameRuntimeNativeSession ? localHostSessionId : stream.hostSessionId || live.nativeHostSessionId || ''
   live.draftStreamId = streamId || live.draftStreamId || ''
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
-  live.providerId = STREAM_PROVIDERS.hlsEdge
-  live.ingestMethod = normalizeIngestMethod(stream.ingestMethod || stream.ingestMode, STREAM_PROVIDERS.hlsEdge)
-  live.nativeStreamingStatus = stream.nativeStreaming?.status || live.nativeStreamingStatus || 'idleNoListeners'
+  live.streamingProtocol = stream.streamingProtocol === 'nativeStreaming' || isFirebaseSegmentProvider(stream.provider) ? 'nativeStreaming' : 'hls'
+  live.providerId = live.streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
+  live.ingestMethod = live.streamingProtocol === 'nativeStreaming'
+    ? STREAM_INGEST_METHODS.browserWebrtc
+    : normalizeIngestMethod(stream.ingestMethod || stream.ingestMode, STREAM_PROVIDERS.hlsEdge)
+  live.nativeStreamingStatus = live.streamingProtocol === 'nativeStreaming'
+    ? stream.nativeStreaming?.status || live.nativeStreamingStatus || 'idleNoListeners'
+    : 'disabled'
   live.audioEnabled = stream.audioEnabled !== false
   live.videoEnabled = stream.videoEnabled === true
   live.audioPublishedToProvider = stream.audioPublished === true
@@ -4138,10 +4145,11 @@ function updateLiveStreamFormFromElement(formEl) {
   form.visibility = String(data.get('visibility') || 'public')
   form.accessMode = String(data.get('accessMode') || form.visibility)
   form.password = String(data.get('password') || '')
-  liveState().providerId = STREAM_PROVIDERS.hlsEdge
+  liveState().streamingProtocol = String(data.get('streamingProtocol') || liveState().streamingProtocol || 'hls') === 'nativeStreaming' ? 'nativeStreaming' : 'hls'
+  liveState().providerId = liveState().streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
   liveState().ingestMethod = normalizeIngestMethod(data.get('ingestMethod') || liveState().ingestMethod)
   const rawStreamKey = data.has('streamKey') ? data.get('streamKey') : (form.streamKey ?? 'mystream')
-  form.streamKey = sanitizeHlsStreamKey(rawStreamKey)
+  form.streamKey = sanitizeHlsStreamKey(rawStreamKey) || (liveState().streamingProtocol === 'hls' ? generateLiveStreamKey() : '')
   const nextCoverURL = String(data.get('coverArtURL') || '').trim()
   if (nextCoverURL !== form.coverArtURL && form.coverArtSource === 'upload') {
     const oldPath = form.coverArtPath
@@ -4186,14 +4194,12 @@ function ensureLiveStreamKey() {
 function liveStreamPayload() {
   const live = liveState()
   const form = live.streamForm
-  live.providerId = STREAM_PROVIDERS.hlsEdge
+  const streamingProtocol = live.streamingProtocol === 'nativeStreaming' ? 'nativeStreaming' : 'hls'
+  live.providerId = streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
   const ingestMethod = normalizeIngestMethod(live.ingestMethod, STREAM_PROVIDERS.hlsEdge)
   live.ingestMethod = ingestMethod
-  const streamKey = sanitizeHlsStreamKey(form.streamKey || 'mystream')
-  const rtmpIngestServer = ingestMethod === STREAM_INGEST_METHODS.obsRtmp
-    ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim()
-    : ''
-  return {
+  const streamKey = streamingProtocol === 'hls' ? ensureLiveStreamKey() : ''
+  return normalizeMusicLiveTransportPayload({
     streamId: live.streamId || live.draftStreamId || '',
     title: form.title,
     description: form.description,
@@ -4206,20 +4212,12 @@ function liveStreamPayload() {
     coverArtSource: form.coverArtSource || (form.coverArtURL ? 'url' : 'fallback'),
     tags: form.tags,
     audioMode: form.audioMode,
-    provider: STREAM_PROVIDERS.hlsEdge,
-    providerLabel: 'Melogic Edge',
-    transportProvider: 'hls-edge',
-    ingestMethod,
-    ingestProtocol: ingestProtocolForMethod(ingestMethod),
-    ingestMode: ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'browser-webrtc' : 'rtmp-obs',
-    playbackMode: 'hls',
-    latencyProfile: 'buffered',
+    streamingProtocol,
+    streamingMethod: ingestMethod,
     streamKey,
-    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
-    rtmpIngestServer,
     isLive: live.stream?.status === 'live' || Boolean(live.streamId),
     nativeStreaming: {
-      enabled: false,
+      enabled: streamingProtocol === 'nativeStreaming',
       targetLatencyMs: 30000,
       segmentDurationMs: 4000,
       audioFirst: true,
@@ -4228,7 +4226,7 @@ function liveStreamPayload() {
       minPlaybackBufferMs: 20000,
       maxPlaybackBufferMs: 60000,
       rollingRetentionMs: 300000,
-      status: live.nativeStreamingStatus || 'idleNoListeners',
+      status: streamingProtocol === 'nativeStreaming' ? live.nativeStreamingStatus || 'idleNoListeners' : 'disabled',
       hasPlayableSegments: false,
       oldestAvailableSegmentIndex: null,
       newestAvailableSegmentIndex: null,
@@ -4240,7 +4238,7 @@ function liveStreamPayload() {
     sequenceId: live.activeSequence?.sequenceId || '',
     selectedSequenceId: live.activeSequence?.sequenceId || '',
     ...liveProgramOutputState()
-  }
+  })
 }
 
 function jsonSafeCopy(value) {
@@ -4308,7 +4306,7 @@ function scheduleLiveStudioDraftSave() {
 async function startLiveStudioStream() {
   const live = liveState()
   if (!state.user?.uid || live.starting || live.streamId) return
-  live.providerId = STREAM_PROVIDERS.hlsEdge
+  live.providerId = live.streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
   live.ingestMethod = normalizeIngestMethod(live.ingestMethod)
   live.starting = true
   live.error = ''
@@ -4318,8 +4316,8 @@ async function startLiveStudioStream() {
   let browserIngestStarted = false
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
-    const streamKey = ensureLiveStreamKey()
-    if (live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc && !isBrowserWebrtcIngestConfigured()) {
+    const streamKey = live.streamingProtocol === 'hls' ? ensureLiveStreamKey() : ''
+    if (live.streamingProtocol === 'hls' && live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc && !isBrowserWebrtcIngestConfigured()) {
       throw new Error('Browser streaming needs the server WebRTC ingest URL configured.')
     }
     live.outputStatus = 'Saving Live Studio stream details...'
@@ -4400,21 +4398,25 @@ async function startLiveStudioStream() {
         ...liveProgramOutputState(),
         streamId: pendingStreamId,
         provider: STREAM_PROVIDERS.hlsEdge,
+        streamingProtocol: 'hls',
         transportProvider: 'hls-edge',
         ingestMethod: live.ingestMethod,
         ingestProtocol: ingestProtocolForMethod(live.ingestMethod),
-        ingestMode: isBrowserIngest ? 'browser-webrtc' : 'rtmp-obs',
+        ingestMode: isBrowserIngest ? 'browser-webrtc' : 'obs-rtmp',
         playbackMode: 'hls',
         streamKey,
         hlsPlaybackUrl,
-        rtmpIngestServer: isBrowserIngest ? '' : String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || '').trim(),
+        hlsUrl: hlsPlaybackUrl,
+        llhlsUrl: '',
+        rtmpIngestServer: isBrowserIngest ? '' : String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).replace(/\/+$/, ''),
+        nativeStreaming: { enabled: false, status: 'disabled' },
         isLive: true,
         hostSessionId: live.nativeHostSessionId,
         hostActive: true,
-        connectionStatus: isBrowserIngest ? 'live' : 'waitingForIngest',
-        audioPublished: browserIngestResult?.audioPublished === true,
-        videoPublished: browserIngestResult?.videoPublished === true,
-        programHasAudio: browserIngestResult?.audioPublished === true,
+        connectionStatus: 'live',
+        audioPublished: isBrowserIngest ? browserIngestResult?.audioPublished === true : true,
+        videoPublished: isBrowserIngest ? browserIngestResult?.videoPublished === true : live.videoEnabled === true,
+        programHasAudio: isBrowserIngest ? browserIngestResult?.audioPublished === true : true,
         broadcastState: 'liveBroadcasting'
       })
       live.draftStreamId = pendingStreamId
@@ -4425,7 +4427,7 @@ async function startLiveStudioStream() {
         if (!live.streamId) return
         heartbeatMusicLiveStream(live.streamId, {
           ...liveProgramOutputState(),
-          connectionStatus: live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'live' : 'waitingForIngest'
+          connectionStatus: 'live'
         }).catch(() => {})
         writeNativeHostPresence({
           streamId: live.streamId,
@@ -4456,6 +4458,25 @@ async function startLiveStudioStream() {
       live.outputStatus = isBrowserIngest
         ? 'On air. Studio Program is publishing to Melogic Edge; viewers receive buffered HLS.'
         : 'On air. Waiting for the OBS / encoder feed at Melogic Edge.'
+      return
+    }
+    if (isFirebaseSegmentProvider(live.providerId)) {
+      live.streamId = pendingStreamId
+      live.nativeHostSessionId = live.nativeHostSessionId || nativeHostSessionId(pendingStreamId)
+      live.nativeStreamingStatus = 'idleNoListeners'
+      await markMusicLiveStreamOnAir(pendingStreamId, {
+        ...liveStreamPayload(),
+        streamId: pendingStreamId,
+        streamingProtocol: 'nativeStreaming',
+        hostSessionId: live.nativeHostSessionId,
+        hostActive: true,
+        hostConnected: true,
+        connectionStatus: 'live',
+        broadcastState: 'liveIdleNoListeners',
+        nativeStreaming: { enabled: true, status: 'idleNoListeners' }
+      })
+      await activateNativeLiveSession(pendingStreamId)
+      live.outputStatus = 'Native Streaming is live in legacy/debug mode and waits for listener demand.'
       return
     }
     throw new Error('Unsupported Studio streaming method.')
@@ -4919,7 +4940,7 @@ function bindLiveStudioControls() {
       renderShell()
       return
     }
-    live.providerId = STREAM_PROVIDERS.hlsEdge
+    live.providerId = live.streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
     live.ingestMethod = normalizeIngestMethod(e.currentTarget.dataset.streamingMethod)
     live.providerDiagnostics = {}
     live.outputStatus = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
@@ -4930,6 +4951,23 @@ function bindLiveStudioControls() {
     scheduleLiveStudioDraftSave()
     renderShell()
   }))
+  app.querySelector('[data-streaming-protocol]')?.addEventListener('change', (e) => {
+    if (live.streamId) {
+      live.error = 'End the current stream before switching streaming protocol.'
+      renderShell()
+      return
+    }
+    live.streamingProtocol = e.currentTarget.value === 'nativeStreaming' ? 'nativeStreaming' : 'hls'
+    live.providerId = live.streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
+    live.nativeStreamingStatus = live.streamingProtocol === 'nativeStreaming' ? 'idleNoListeners' : 'disabled'
+    if (live.streamingProtocol === 'hls') ensureLiveStreamKey()
+    live.providerDiagnostics = {}
+    live.outputStatus = live.streamingProtocol === 'nativeStreaming'
+      ? 'Native Streaming selected for legacy/debug use. Public streams should normally use HLS.'
+      : 'HLS selected. Draft and live writes will use Melogic Edge playback metadata.'
+    scheduleLiveStudioDraftSave()
+    renderShell()
+  })
   app.querySelectorAll('[data-program-scene]').forEach((el) => el.addEventListener('click', () => {
     live.programMixer.previewSceneId = el.dataset.programScene || ''
     live.programMixer.activeSceneId = live.programMixer.programSceneId || ''
