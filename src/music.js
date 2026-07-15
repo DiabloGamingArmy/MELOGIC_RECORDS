@@ -1772,8 +1772,10 @@ function hlsMediaDiagnostics(eventName = '') {
   state.hlsDiagnostics = {
     ...diagnostics,
     provider: STREAM_PROVIDERS.hlsEdge,
+    ingestMethod: state.liveStream?.ingestMethod || diagnostics.ingestMethod || 'unknown',
     playbackMode: state.liveStream?.playbackMode || 'hls',
     streamKey: state.liveStream?.streamKey || '',
+    hlsPlaybackUrl: state.liveStream?.hlsPlaybackUrl || diagnostics.hlsPlaybackUrl || '',
     hlsUrl: state.hlsAttachedUrl || diagnostics.hlsUrl || '',
     playbackModeSelected: currentHlsPlaybackMode(),
     nativeHlsSupported: media ? canPlayNativeHls(media) : null,
@@ -1785,7 +1787,8 @@ function hlsMediaDiagnostics(eventName = '') {
     mediaReadyState: media ? Number(media.readyState || 0) : null,
     mediaNetworkState: media ? Number(media.networkState || 0) : null,
     mediaCurrentTime: media && Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null,
-    mediaDuration: media && Number.isFinite(media.duration) ? Number(media.duration.toFixed(2)) : null
+    mediaDuration: media && Number.isFinite(media.duration) ? Number(media.duration.toFixed(2)) : null,
+    mediaPlaying: Boolean(media && !media.paused && !media.ended && media.readyState >= 2)
   }
   updateHlsDiagnosticsDom()
   return state.hlsDiagnostics
@@ -1952,8 +1955,10 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
   state.nativeViewerSessionId = state.nativeViewerSessionId || nativeViewerSessionId(state.liveStream.id)
   state.hlsDiagnostics = {
     provider: STREAM_PROVIDERS.hlsEdge,
+    ingestMethod: state.liveStream.ingestMethod || 'unknown',
     playbackMode: 'hls',
     streamKey: state.liveStream.streamKey || '',
+    hlsPlaybackUrl: state.liveStream.hlsPlaybackUrl || playbackInfo.url,
     hlsUrl: playbackInfo.url,
     playbackModeSelected: mode,
     nativeHlsSupported: canPlayNativeHls(media),
@@ -3244,8 +3249,10 @@ function renderHlsDiagnostics() {
   const shouldShowResume = Boolean(media && media.paused && isLiveListeningStatus())
   const rows = [
     ['provider', diagnostics.provider || STREAM_PROVIDERS.hlsEdge],
+    ['ingestMethod', diagnostics.ingestMethod || state.liveStream?.ingestMethod || 'unknown'],
     ['playbackMode', diagnostics.playbackMode || 'hls'],
     ['streamKey', diagnostics.streamKey || state.liveStream?.streamKey || 'none'],
+    ['hlsPlaybackUrl', diagnostics.hlsPlaybackUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
     ['hlsUrl', diagnostics.hlsUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
     ['playbackModeSelected', diagnostics.playbackModeSelected || currentHlsPlaybackMode()],
     ['nativeHlsSupported', diagnostics.nativeHlsSupported],
@@ -3260,6 +3267,7 @@ function renderHlsDiagnostics() {
     ['mediaNetworkState', diagnostics.mediaNetworkState],
     ['mediaCurrentTime', diagnostics.mediaCurrentTime],
     ['mediaDuration', diagnostics.mediaDuration],
+    ['mediaPlaying', diagnostics.mediaPlaying],
     ['lastMediaEvent', diagnostics.lastMediaEvent],
     ['lastHlsErrorType', diagnostics.lastHlsErrorType],
     ['lastHlsErrorDetails', diagnostics.lastHlsErrorDetails],

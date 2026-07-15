@@ -73,7 +73,8 @@ function sanitizeHlsPlaybackUrl(value = '') {
 
 function bufferedBroadcastFields(data = {}, existing = {}) {
   const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
-  const ingestMethod = normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode)
+  const impliedLegacyMethod = (data.provider || existing.provider) === 'bufferedBroadcast' ? 'obsRtmp' : 'browserWebrtc'
+  const ingestMethod = normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode || impliedLegacyMethod)
   return {
     provider: 'hlsEdge',
     providerLabel: 'Melogic Edge',
@@ -111,7 +112,7 @@ function normalizeProvider(value) {
 function normalizeIngestMethod(value) {
   if (value === 'browserWebrtc' || value === 'browser-webrtc' || value === 'livekit-webrtc') return 'browserWebrtc'
   if (value === 'obsRtmp' || value === 'rtmp-obs' || value === 'rtmp') return 'obsRtmp'
-  return ALLOWED_INGEST_METHODS.has(value) ? value : 'obsRtmp'
+  return ALLOWED_INGEST_METHODS.has(value) ? value : 'browserWebrtc'
 }
 
 function normalizeIngestMode(value) {
@@ -175,7 +176,7 @@ function isStreamPublishing(stream = {}) {
 function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource = 'browser', defaultAudioPublished = false } = {}) {
   const provider = normalizeProvider(data.provider || existing.provider)
   const ingestMethod = provider === 'hlsEdge'
-    ? normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode)
+    ? normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode || ((data.provider || existing.provider) === 'bufferedBroadcast' ? 'obsRtmp' : 'browserWebrtc'))
     : ''
   const streamKey = provider === 'hlsEdge'
     ? sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'

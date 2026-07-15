@@ -31,8 +31,11 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
   const id = explicitId || dataOrSnap.id || raw.streamId || ''
   const category = LIVE_CATEGORIES.includes(raw.category) ? raw.category : 'music'
   const provider = normalizeProviderId(raw.provider)
+  const hlsIngestMethod = raw.ingestMethod
+    || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : raw.ingestMode === 'rtmp-obs' ? 'obsRtmp' : '')
+    || (raw.provider === STREAM_PROVIDERS.bufferedBroadcast ? 'obsRtmp' : 'browserWebrtc')
   const providerDefaults = provider === STREAM_PROVIDERS.hlsEdge
-    ? { label: 'Melogic Edge', ingestMode: 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
+    ? { label: 'Melogic Edge', ingestMode: hlsIngestMethod === 'browserWebrtc' ? 'browser-webrtc' : 'rtmp-obs', playbackMode: 'hls', transportProvider: 'hls-edge' }
     : provider === STREAM_PROVIDERS.nativeWeb
       ? { label: 'Website Live', ingestMode: 'browser-webrtc', playbackMode: 'webrtc', transportProvider: 'livekit' }
       : { label: 'Firebase Segments', ingestMode: 'browser-media-recorder', playbackMode: 'firebaseSegments', transportProvider: 'firebase' }
@@ -68,8 +71,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     ingestMode: String(raw.ingestMode || providerDefaults.ingestMode),
     playbackMode: String(raw.playbackMode || providerDefaults.playbackMode),
     latencyProfile: String(raw.latencyProfile || (provider === STREAM_PROVIDERS.hlsEdge ? 'buffered' : 'realtime')),
-    ingestMethod: String(raw.ingestMethod || (raw.ingestMode === 'browser-webrtc' ? 'browserWebrtc' : provider === STREAM_PROVIDERS.hlsEdge ? 'obsRtmp' : '')),
-    ingestProtocol: String(raw.ingestProtocol || (raw.ingestMethod === 'browserWebrtc' ? 'webrtc' : raw.ingestMethod === 'obsRtmp' ? 'rtmp' : '')),
+    ingestMethod: String(provider === STREAM_PROVIDERS.hlsEdge ? hlsIngestMethod : raw.ingestMethod || ''),
+    ingestProtocol: String(raw.ingestProtocol || (hlsIngestMethod === 'browserWebrtc' ? 'webrtc' : hlsIngestMethod === 'obsRtmp' ? 'rtmp' : '')),
     streamKey: String(raw.streamKey || ''),
     hlsPlaybackUrl: String(raw.hlsPlaybackUrl || ''),
     audioOnlyHlsUrl: String(raw.audioOnlyHlsUrl || ''),

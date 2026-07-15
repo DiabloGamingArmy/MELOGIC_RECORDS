@@ -78,7 +78,9 @@ export function normalizeIngestMethod(value = '', provider = '') {
   if ([STREAM_INGEST_METHODS.obsRtmp, INGEST_MODES.rtmpObs, INGEST_MODES.rtmp].includes(value)) {
     return STREAM_INGEST_METHODS.obsRtmp
   }
-  return isWebrtcProvider(provider) ? STREAM_INGEST_METHODS.browserWebrtc : STREAM_INGEST_METHODS.obsRtmp
+  return provider === STREAM_PROVIDERS.bufferedBroadcast
+    ? STREAM_INGEST_METHODS.obsRtmp
+    : STREAM_INGEST_METHODS.browserWebrtc
 }
 
 export function ingestProtocolForMethod(value = '') {

@@ -1383,14 +1383,16 @@ function renderAdvancedStreamingSettings() {
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
       <summary>Advanced Streaming Settings</summary>
       <div class="studio-live-advanced-grid">
-        <label>Streaming Method
-          <select name="ingestMethod" data-streaming-method ${live.streamId ? 'disabled' : ''}>
-            ${options.map((option) => `<option value="${esc(option.id)}" ${option.id === live.ingestMethod ? 'selected' : ''}>${esc(option.label)}</option>`).join('')}
-          </select>
-        </label>
+        <fieldset class="studio-live-method-fieldset">
+          <legend>Streaming Method</legend>
+          <input type="hidden" name="ingestMethod" value="${esc(live.ingestMethod)}" />
+          <div class="studio-live-method-options" role="radiogroup" aria-label="Streaming Method">
+            ${options.map((option) => `<button type="button" class="studio-live-method-option ${option.id === live.ingestMethod ? 'is-active' : ''}" role="radio" aria-checked="${option.id === live.ingestMethod}" data-streaming-method="${esc(option.id)}" ${live.streamId ? 'disabled' : ''}><strong>${esc(option.label)}</strong><small>${esc(option.description)}</small></button>`).join('')}
+          </div>
+        </fieldset>
         <div class="studio-live-provider-status">
           <strong>${esc(current?.label || 'Stream From Browser')}</strong>
-          <span>${esc(isObs || browserIngestConfigured ? 'Ready' : 'WebRTC ingest endpoint required')}</span>
+          <span>${esc(isObs || browserIngestConfigured ? 'Ready' : 'Browser streaming needs the server WebRTC ingest URL configured.')}</span>
           <small>${esc(current?.description || '')}</small>
           <small>${esc(live.streamId ? 'Streaming method is locked for the active stream.' : 'The selected method is saved to the stream draft.')}</small>
         </div>
@@ -1400,7 +1402,7 @@ function renderAdvancedStreamingSettings() {
           <h2>${isObs ? 'Stream From OBS / Encoder' : 'Stream From Browser'}</h2>
           <p>${esc(current?.description || '')}</p>
           <ul>
-            ${isObs ? `<li>Server: ${esc(ingestServer || 'Set VITE_STREAM_RTMP_INGEST_SERVER')}</li>` : `<li>Browser ingest: ${browserIngestConfigured ? 'Configured' : 'Set VITE_STREAM_WEBRTC_INGEST_URL'}</li>`}
+            ${isObs ? `<li>Server: ${esc(ingestServer || 'Set VITE_STREAM_RTMP_INGEST_SERVER')}</li>` : `<li>${esc(browserIngestConfigured ? 'Browser WebRTC ingest endpoint configured.' : 'Browser streaming needs the server WebRTC ingest URL configured.')}</li>`}
             <li>Stream Key: ${esc(streamKey || 'missing')}</li>
             <li>Playback URL: ${esc(hlsPlaybackUrl || 'missing')}</li>
             <li>Public playback: Buffered HLS from Melogic Edge</li>
@@ -1410,6 +1412,7 @@ function renderAdvancedStreamingSettings() {
           <h2>Streaming Diagnostics</h2>
           <ul>
             <li>Provider: hlsEdge</li>
+            <li>Streaming method: ${esc(live.ingestMethod)}</li>
             <li>Transport provider: hls-edge</li>
             <li>Playback mode: hls</li>
             <li>Ingest method: ${esc(live.ingestMethod)}</li>
@@ -1418,6 +1421,17 @@ function renderAdvancedStreamingSettings() {
             <li>Playback URL: ${esc(diagnostics.hlsPlaybackUrl || hlsPlaybackUrl)}</li>
             <li>Stream document status: ${esc(diagnostics.streamDocStatus || live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
             <li>Ingest connection: ${esc(diagnostics.ingestConnectionState || (isObs ? 'external encoder' : live.browserIngestActive ? 'connected' : 'idle'))}</li>
+            <li>Ingest endpoint configured: ${browserIngestConfigured ? 'yes' : 'no'}</li>
+            <li>Ingest endpoint: ${esc(diagnostics.ingestEndpointURL || (browserIngestConfigured ? 'configured' : 'none'))}</li>
+            <li>Peer connection: ${esc(diagnostics.peerConnectionState || 'none')}</li>
+            <li>ICE connection: ${esc(diagnostics.iceConnectionState || 'none')}</li>
+            <li>Signaling: ${esc(diagnostics.signalingState || 'none')}</li>
+            <li>Local offer created: ${diagnostics.localOfferCreated ? 'yes' : 'no'}</li>
+            <li>Remote answer set: ${diagnostics.remoteAnswerSet ? 'yes' : 'no'}</li>
+            <li>Media tracks: ${diagnostics.mediaStreamTrackCount ?? 0}</li>
+            <li>Audio track: ${esc(diagnostics.audioTrackReadyState || 'none')}</li>
+            <li>Video track: ${esc(diagnostics.videoTrackReadyState || 'none')}</li>
+            <li>Last ingest error: ${esc(diagnostics.lastIngestError || 'none')}</li>
           </ul>
         </article>
       </div>
@@ -4124,6 +4138,19 @@ function updateLiveListenerPreviewDom() {
   }
 }
 
+function generateLiveStreamKey() {
+  const timestamp = Date.now().toString(36).slice(-5)
+  const random = Math.random().toString(36).slice(2, 6)
+  return `stream-${timestamp}${random}`
+}
+
+function ensureLiveStreamKey() {
+  const live = liveState()
+  const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
+  live.streamForm.streamKey = streamKey || generateLiveStreamKey()
+  return live.streamForm.streamKey
+}
+
 function liveStreamPayload() {
   const live = liveState()
   const form = live.streamForm
@@ -4230,9 +4257,7 @@ async function saveLiveStreamInfo() {
   renderShell()
   try {
     if (!isFirebaseSegmentProvider(live.providerId)) {
-      const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
-      if (!streamKey) throw new Error('Streaming requires a stream key.')
-      live.streamForm.streamKey = streamKey
+      ensureLiveStreamKey()
     }
     const payload = liveStreamPayload()
     if (live.streamId) {
@@ -4261,6 +4286,7 @@ function scheduleLiveStudioDraftSave() {
     live.draftSaveTimer = 0
     if (live.streamId || live.starting || live.ending) return
     try {
+      if (!isFirebaseSegmentProvider(live.providerId)) ensureLiveStreamKey()
       const response = await prepareMusicLiveStreamDraft(liveStreamPayload())
       live.draftStreamId = response.streamId || live.draftStreamId
     } catch (error) {
@@ -4282,11 +4308,9 @@ async function startLiveStudioStream() {
   let browserIngestStarted = false
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
-    const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
-    if (!streamKey) throw new Error('Streaming requires a stream key.')
-    live.streamForm.streamKey = streamKey
+    const streamKey = ensureLiveStreamKey()
     if (live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc && !isBrowserWebrtcIngestConfigured()) {
-      throw new Error('Browser streaming requires a WebRTC ingest endpoint on the streaming server. Use Stream From OBS / Encoder for now.')
+      throw new Error('Browser streaming needs the server WebRTC ingest URL configured.')
     }
     live.outputStatus = 'Saving Live Studio stream details...'
     renderShell()
@@ -4317,13 +4341,22 @@ async function startLiveStudioStream() {
       let browserIngestResult = null
       live.providerDiagnostics = {
         providerId: STREAM_PROVIDERS.hlsEdge,
+        streamingMethod: live.ingestMethod,
         transportProvider: 'hls-edge',
         playbackMode: 'hls',
         ingestMethod: live.ingestMethod,
         ingestProtocol: ingestProtocolForMethod(live.ingestMethod),
         streamKey,
         hlsPlaybackUrl,
+        ingestEndpointConfigured: !isBrowserIngest || isBrowserWebrtcIngestConfigured(),
+        ingestEndpointURL: isBrowserIngest ? '' : 'external encoder',
         streamDocStatus: 'starting',
+        peerConnectionState: isBrowserIngest ? 'new' : 'none',
+        iceConnectionState: isBrowserIngest ? 'new' : 'none',
+        signalingState: isBrowserIngest ? 'stable' : 'none',
+        localOfferCreated: false,
+        remoteAnswerSet: false,
+        lastIngestError: '',
         noLiveKitAttempted: true
       }
       if (isBrowserIngest) {
@@ -4333,17 +4366,19 @@ async function startLiveStudioStream() {
         browserIngestResult = await startBrowserWebrtcIngest({
           streamKey,
           mediaStream,
-          onStatus: ({ status, connectionState }) => {
+          onStatus: (ingestStatus = {}) => {
             live.providerDiagnostics = {
               ...(live.providerDiagnostics || {}),
-              ingestConnectionState: connectionState || status || 'connecting'
+              ...ingestStatus,
+              ingestConnectionState: ingestStatus.connectionState || ingestStatus.status || 'connecting'
             }
           },
-          onError: (error) => {
+          onError: (error, ingestDiagnostics = {}) => {
             live.providerDiagnostics = {
               ...(live.providerDiagnostics || {}),
+              ...ingestDiagnostics,
               ingestConnectionState: 'error',
-              ingestError: error?.message || String(error)
+              lastIngestError: error?.message || String(error)
             }
           }
         })
@@ -4351,6 +4386,12 @@ async function startLiveStudioStream() {
         live.browserIngestActive = true
         live.audioPublishedToProvider = browserIngestResult.audioPublished === true
         live.videoPublishedToProvider = browserIngestResult.videoPublished === true
+        live.providerDiagnostics = {
+          ...(live.providerDiagnostics || {}),
+          ...(browserIngestResult.diagnostics || {}),
+          ingestEndpointURL: browserIngestResult.ingestEndpointURL || live.providerDiagnostics?.ingestEndpointURL || '',
+          ingestConnectionState: browserIngestResult.connectionState || 'connected'
+        }
       }
       live.streamId = pendingStreamId
       await markMusicLiveStreamOnAir(pendingStreamId, {
@@ -4884,23 +4925,23 @@ function bindLiveStudioControls() {
   app.querySelector('[data-advanced-streaming-settings]')?.addEventListener('toggle', (e) => {
     live.advancedStreamingOpen = Boolean(e.currentTarget.open)
   })
-  app.querySelector('[data-streaming-method]')?.addEventListener('change', (e) => {
+  app.querySelectorAll('[data-streaming-method]').forEach((el) => el.addEventListener('click', (e) => {
     if (live.streamId) {
       live.error = 'End the current stream before switching streaming method.'
       renderShell()
       return
     }
     live.providerId = STREAM_PROVIDERS.hlsEdge
-    live.ingestMethod = normalizeIngestMethod(e.currentTarget.value)
+    live.ingestMethod = normalizeIngestMethod(e.currentTarget.dataset.streamingMethod)
     live.providerDiagnostics = {}
     live.outputStatus = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
       ? 'Stream From OBS / Encoder selected. Configure your encoder with the stream key below.'
       : isBrowserWebrtcIngestConfigured()
         ? 'Stream From Browser selected. Studio Program will publish to Melogic Edge.'
-        : 'Browser streaming requires a WebRTC ingest endpoint on the streaming server.'
+        : 'Browser streaming needs the server WebRTC ingest URL configured.'
     scheduleLiveStudioDraftSave()
     renderShell()
-  })
+  }))
   app.querySelectorAll('[data-program-scene]').forEach((el) => el.addEventListener('click', () => {
     live.programMixer.previewSceneId = el.dataset.programScene || ''
     live.programMixer.activeSceneId = live.programMixer.programSceneId || ''

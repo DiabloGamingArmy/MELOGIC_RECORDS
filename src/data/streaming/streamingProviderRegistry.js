@@ -36,7 +36,7 @@ export function listStreamingProviderOptions() {
     {
       id: STREAM_INGEST_METHODS.browserWebrtc,
       label: 'Stream From Browser',
-      description: "Use Melogic Studio's built-in audio/video engine. Viewers watch through buffered HLS.",
+      description: "Send Melogic Studio's program output to the streaming server. Viewers watch the buffered HLS feed.",
       ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
       ingestProtocol: 'webrtc',
       transportProvider: 'hls-edge',
@@ -45,7 +45,7 @@ export function listStreamingProviderOptions() {
     {
       id: STREAM_INGEST_METHODS.obsRtmp,
       label: 'Stream From OBS / Encoder',
-      description: 'Use OBS, hardware encoder, or another RTMP app. Viewers watch through buffered HLS.',
+      description: 'Use OBS or a hardware encoder with RTMP.',
       ingestMethod: STREAM_INGEST_METHODS.obsRtmp,
       ingestProtocol: 'rtmp',
       transportProvider: 'hls-edge',
