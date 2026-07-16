@@ -43,7 +43,7 @@ import {
   STREAM_PROVIDERS
 } from './data/streaming/streamingProviderTypes'
 import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './data/streaming/hlsEdgePlayer'
-import { buildBrowserWebrtcIngestUrl, isBrowserWebrtcIngestConfigured, startBrowserWebrtcIngest, stopBrowserWebrtcIngest } from './data/streaming/browserWebrtcIngest'
+import { buildBrowserWebrtcIngestUrl, isBrowserWebrtcIngestConfigured, startBrowserWebrtcIngest, stopBrowserWebrtcIngest, testBrowserWebrtcIngestReachability } from './data/streaming/browserWebrtcIngest'
 import { checkHlsManifest } from './data/streaming/hlsHealth'
 import {
   getNativeHostPresence,
@@ -102,6 +102,7 @@ import { stageTypes, templateCards } from './stage/app/stageState'
 const app = document.querySelector('#app')
 let studioMonitorVisualizerCleanup = null
 let studioProgramMixer = null
+let programCanvasInteraction = null
 const activeNativeHostSessions = new Map()
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
@@ -1396,6 +1397,7 @@ function renderAdvancedStreamingSettings() {
   const isNativeProtocol = live.streamingProtocol === 'nativeStreaming'
   const browserIngestConfigured = isBrowserWebrtcIngestConfigured()
   const browserWhipUrl = buildBrowserWebrtcIngestUrl(streamKey)
+  const showFullWhipUrl = Boolean(import.meta.env?.DEV || new URLSearchParams(window.location.search).get('debugStreaming') === '1')
   let browserWhipHost = 'not configured'
   try { browserWhipHost = new URL(browserWhipUrl).host || browserWhipHost } catch {}
   return `
@@ -1432,6 +1434,7 @@ function renderAdvancedStreamingSettings() {
             <li>Playback: ${esc(hlsPlaybackUrl || 'missing')}</li>
             <li>Public playback: Buffered HLS from Melogic Edge</li>
           </ul>
+          ${!isObs && !isNativeProtocol ? `<div class="studio-live-ingest-test"><button type="button" class="studio-live-button" data-test-browser-ingest ${diagnostics.whipTestRunning ? 'disabled' : ''}>${diagnostics.whipTestRunning ? 'Testing Browser Ingest...' : 'Test Browser Ingest'}</button><small>Safe GET reachability check only; it does not start a broadcast.</small></div>` : ''}
         </article>
         <article>
           <h2>Streaming Diagnostics</h2>
@@ -1453,11 +1456,14 @@ function renderAdvancedStreamingSettings() {
             <li>Ingest connection: ${esc(diagnostics.ingestConnectionState || (isObs ? 'external encoder' : live.browserIngestActive ? 'connected' : 'idle'))}</li>
             <li>Ingest endpoint configured: ${browserIngestConfigured ? 'yes' : 'no'}</li>
             <li>Ingest endpoint: ${esc(diagnostics.ingestEndpointURL || (browserIngestConfigured ? 'configured' : 'none'))}</li>
+            <li>Reachability test: ${esc(diagnostics.whipTestStatus || 'not run')}</li>
             <li>Peer connection: ${esc(diagnostics.peerConnectionState || 'none')}</li>
             <li>ICE connection: ${esc(diagnostics.iceConnectionState || 'none')}</li>
             <li>Signaling: ${esc(diagnostics.signalingState || 'none')}</li>
             <li>Local offer created: ${diagnostics.localOfferCreated ? 'yes' : 'no'}</li>
             <li>Remote answer set: ${diagnostics.remoteAnswerSet ? 'yes' : 'no'}</li>
+            <li>Offer SDP length: ${Number(diagnostics.offerSdpLength || 0)}</li>
+            <li>Answer SDP length: ${Number(diagnostics.answerSdpLength || 0)}</li>
             <li>Media tracks: ${diagnostics.mediaStreamTrackCount ?? 0}</li>
             <li>Audio track: ${esc(diagnostics.audioTrackReadyState || 'none')}</li>
             <li>Video track: ${esc(diagnostics.videoTrackReadyState || 'none')}</li>
@@ -1465,7 +1471,23 @@ function renderAdvancedStreamingSettings() {
           </ul>
         </article>
       </div>
-      ${diagnostics.lastIngestError ? `<details class="studio-live-ingest-debug"><summary>Browser WHIP debug details</summary><dl><div><dt>Ingest host</dt><dd>${esc(diagnostics.ingestUrlHost || 'unknown')}</dd></div><div><dt>HTTP status</dt><dd>${esc(diagnostics.responseStatus ?? 'network failure')}</dd></div><div><dt>ICE state</dt><dd>${esc(diagnostics.iceConnectionState || 'unknown')}</dd></div><div><dt>Peer state</dt><dd>${esc(diagnostics.peerConnectionState || 'unknown')}</dd></div><div><dt>Error</dt><dd>${esc(diagnostics.lastIngestError)}</dd></div><div><dt>Hint</dt><dd>${esc(diagnostics.networkHint || 'Verify SRS WHIP availability, TLS, CORS, and firewall access.')}</dd></div></dl></details>` : ''}
+      ${diagnostics.lastIngestError ? `<details class="studio-live-ingest-debug" open><summary>Browser WHIP debug details</summary><dl>
+        <div><dt>WHIP host</dt><dd>${esc(diagnostics.ingestUrlHost || browserWhipHost || 'unknown')}</dd></div>
+        ${showFullWhipUrl ? `<div><dt>Full WHIP URL</dt><dd>${esc(diagnostics.whipUrl || browserWhipUrl || 'unknown')}</dd></div>` : ''}
+        <div><dt>Fetch error</dt><dd>${esc([diagnostics.fetchErrorName, diagnostics.fetchErrorMessage].filter(Boolean).join(': ') || 'none')}</dd></div>
+        <div><dt>HTTP status</dt><dd>${esc(diagnostics.responseStatus ?? 'no response')}</dd></div>
+        <div><dt>Response type</dt><dd>${esc(diagnostics.responseType || 'none')}</dd></div>
+        <div><dt>Response body</dt><dd>${esc(diagnostics.responseBodyPreview || 'empty')}</dd></div>
+        <div><dt>Offer SDP length</dt><dd>${Number(diagnostics.offerSdpLength || 0)}</dd></div>
+        <div><dt>Answer SDP length</dt><dd>${Number(diagnostics.answerSdpLength || 0)}</dd></div>
+        <div><dt>ICE gathering</dt><dd>${esc(diagnostics.iceGatheringState || 'unknown')}</dd></div>
+        <div><dt>ICE state</dt><dd>${esc(diagnostics.iceConnectionState || 'unknown')}</dd></div>
+        <div><dt>Peer state</dt><dd>${esc(diagnostics.peerConnectionState || 'unknown')}</dd></div>
+        <div><dt>Track count</dt><dd>${Number(diagnostics.mediaStreamTrackCount || 0)}</dd></div>
+        <div><dt>CORS / preflight</dt><dd>${esc(diagnostics.corsPreflightStatus || 'Browser did not expose a preflight result.')}</dd></div>
+        <div><dt>Error</dt><dd>${esc(diagnostics.lastIngestError)}</dd></div>
+        <div><dt>Hint</dt><dd>${esc(diagnostics.networkHint || 'Verify SRS WHIP availability, TLS, CORS, proxy routing, and UDP candidate access.')}</dd></div>
+      </dl></details>` : ''}
       <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Both streaming methods use buffered HLS for public playback.</p>
     </details>
   `
@@ -1990,7 +2012,10 @@ function ensureStudioProgramMixer() {
 function attachProgramMixerPreview() {
   const previewCanvas = app.querySelector('[data-program-preview-canvas]')
   const programCanvas = app.querySelector('[data-program-program-canvas]')
-  if (previewCanvas) drawProgramPreviewCanvas(previewCanvas, 'preview')
+  if (previewCanvas) {
+    drawProgramPreviewCanvas(previewCanvas, 'preview')
+    attachProgramPreviewCanvasInteractions(previewCanvas)
+  }
   const canvas = programCanvas || previewCanvas
   if (!canvas) return
   const mixer = ensureStudioProgramMixer()
@@ -1999,46 +2024,197 @@ function attachProgramMixerPreview() {
   else mixer.drawPlaceholder()
 }
 
-function drawProgramPreviewCanvas(canvas, mode = 'preview') {
-  const live = liveState()
-  const mixer = live.programMixer
-  const context = canvas?.getContext?.('2d')
-  if (!context) return
-  const [width, height] = String(mixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
-  canvas.width = width || 1280
-  canvas.height = height || 720
+function resolvedProgramSourceTransform(source = {}, index = 0, width = 1280, height = 720) {
+  const transform = source.transform || {}
+  return {
+    x: Number(transform.x ?? 48 + index * 36),
+    y: Number(transform.y ?? 48 + index * 30),
+    width: Math.max(48, Number(transform.width ?? (source.type === 'now-playing-card' ? 430 : width - 96))),
+    height: Math.max(36, Number(transform.height ?? (source.type === 'now-playing-card' ? 160 : height - 96))),
+    scale: Math.max(0.05, Number(transform.scale ?? 1)),
+    rotation: Number(transform.rotation ?? 0)
+  }
+}
+
+function drawProgramCanvasEmptyGlyph(context, canvas) {
+  const size = Math.min(canvas.width, canvas.height) * 0.12
+  const centerX = canvas.width / 2
+  const centerY = canvas.height / 2
+  context.strokeStyle = 'rgba(139,230,255,.11)'
+  context.lineWidth = 2
+  context.strokeRect(centerX - size, centerY - size * 0.56, size * 2, size * 1.12)
+  context.beginPath()
+  context.arc(centerX, centerY, size * 0.22, 0, Math.PI * 2)
+  context.stroke()
+}
+
+function programCanvasSources(mode = 'preview') {
+  const mixer = liveState().programMixer
   const sceneId = mode === 'program' ? mixer.programSceneId : mixer.previewSceneId
   const scene = mixer.scenes.find((entry) => entry.sceneId === sceneId)
   const allowedSourceIds = new Set(Array.isArray(scene?.sources) ? scene.sources : [])
   const sources = mixer.sources
     .filter((source) => scene && allowedSourceIds.has(source.sourceId) && source.enabled !== false && source.visible !== false)
     .sort((a, b) => Number(a.zIndex || 0) - Number(b.zIndex || 0))
+  return { mixer, scene, sources }
+}
+
+function drawProgramPreviewCanvas(canvas, mode = 'preview') {
+  const { mixer, scene, sources } = programCanvasSources(mode)
+  const context = canvas?.getContext?.('2d')
+  if (!context) return
+  const [width, height] = String(mixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
+  canvas.width = width || 1280
+  canvas.height = height || 720
   context.fillStyle = '#05080f'
   context.fillRect(0, 0, canvas.width, canvas.height)
   if (!scene || !sources.length) {
-    context.fillStyle = '#9fb0d0'
-    context.font = '700 30px system-ui, sans-serif'
-    context.textAlign = 'center'
-    context.fillText(scene ? 'Scene has no visible sources' : `No ${mode} scene selected`, canvas.width / 2, canvas.height / 2)
+    drawProgramCanvasEmptyGlyph(context, canvas)
     return
   }
   sources.forEach((source, index) => {
-    const x = source.transform?.x ?? 48 + index * 36
-    const y = source.transform?.y ?? 48 + index * 30
-    const boxWidth = source.transform?.width ?? (source.type === 'now-playing-card' ? 430 : canvas.width - 96)
-    const boxHeight = source.transform?.height ?? (source.type === 'now-playing-card' ? 160 : canvas.height - 96)
+    const transform = resolvedProgramSourceTransform(source, index, canvas.width, canvas.height)
+    const centerX = transform.x + transform.width / 2
+    const centerY = transform.y + transform.height / 2
+    context.save()
+    context.translate(centerX, centerY)
+    context.rotate(transform.rotation * Math.PI / 180)
+    context.scale(transform.scale, transform.scale)
     context.globalAlpha = Number(source.opacity ?? 1)
     context.fillStyle = source.type === 'now-playing-card' ? 'rgba(14,20,32,.88)' : 'rgba(22,31,48,.82)'
-    context.fillRect(x, y, boxWidth, boxHeight)
+    context.fillRect(-transform.width / 2, -transform.height / 2, transform.width, transform.height)
     context.strokeStyle = mode === 'program' ? 'rgba(255,87,108,.7)' : 'rgba(103,242,170,.7)'
     context.lineWidth = 2
-    context.strokeRect(x, y, boxWidth, boxHeight)
+    context.strokeRect(-transform.width / 2, -transform.height / 2, transform.width, transform.height)
     context.fillStyle = '#eef4ff'
     context.font = '700 24px system-ui, sans-serif'
     context.textAlign = 'left'
-    context.fillText(source.label || source.type, x + 22, y + 42)
+    context.fillText(source.label || source.type, -transform.width / 2 + 22, -transform.height / 2 + 42)
+    if (mode === 'preview' && source.sourceId === mixer.selectedSourceId) {
+      const handleSize = 14 / transform.scale
+      context.globalAlpha = 1
+      context.strokeStyle = source.locked ? 'rgba(255,209,102,.85)' : '#8be6ff'
+      context.lineWidth = 3 / transform.scale
+      context.strokeRect(-transform.width / 2, -transform.height / 2, transform.width, transform.height)
+      context.fillStyle = source.locked ? '#ffd166' : '#8be6ff'
+      context.fillRect(transform.width / 2 - handleSize / 2, transform.height / 2 - handleSize / 2, handleSize, handleSize)
+      context.beginPath()
+      context.moveTo(0, -transform.height / 2)
+      context.lineTo(0, -transform.height / 2 - 32 / transform.scale)
+      context.stroke()
+      context.beginPath()
+      context.arc(0, -transform.height / 2 - 38 / transform.scale, 7 / transform.scale, 0, Math.PI * 2)
+      context.fill()
+    }
     context.globalAlpha = 1
+    context.restore()
   })
+}
+
+function programCanvasPoint(event, canvas) {
+  const rect = canvas.getBoundingClientRect()
+  return {
+    x: (event.clientX - rect.left) * canvas.width / Math.max(1, rect.width),
+    y: (event.clientY - rect.top) * canvas.height / Math.max(1, rect.height)
+  }
+}
+
+function sourceLocalPoint(point, transform) {
+  const centerX = transform.x + transform.width / 2
+  const centerY = transform.y + transform.height / 2
+  const radians = -transform.rotation * Math.PI / 180
+  const dx = point.x - centerX
+  const dy = point.y - centerY
+  return {
+    x: (dx * Math.cos(radians) - dy * Math.sin(radians)) / transform.scale,
+    y: (dx * Math.sin(radians) + dy * Math.cos(radians)) / transform.scale
+  }
+}
+
+function attachProgramPreviewCanvasInteractions(canvas) {
+  canvas.addEventListener('pointerdown', (event) => {
+    const { mixer, sources } = programCanvasSources('preview')
+    const point = programCanvasPoint(event, canvas)
+    let hit = null
+    let hitIndex = -1
+    for (let index = sources.length - 1; index >= 0; index -= 1) {
+      const source = sources[index]
+      const transform = resolvedProgramSourceTransform(source, index, canvas.width, canvas.height)
+      const local = sourceLocalPoint(point, transform)
+      const rotateDistance = Math.hypot(local.x, local.y + transform.height / 2 + 38 / transform.scale)
+      if (rotateDistance <= 18 / transform.scale || (Math.abs(local.x) <= transform.width / 2 && Math.abs(local.y) <= transform.height / 2)) {
+        hit = { source, transform, local, rotateDistance }
+        hitIndex = index
+        break
+      }
+    }
+    if (!hit) {
+      mixer.selectedSourceId = ''
+      drawProgramPreviewCanvas(canvas, 'preview')
+      renderShell()
+      return
+    }
+    mixer.selectedSourceId = hit.source.sourceId
+    const resizeThreshold = 24 / hit.transform.scale
+    const nearResize = Math.abs(hit.local.x - hit.transform.width / 2) <= resizeThreshold
+      && Math.abs(hit.local.y - hit.transform.height / 2) <= resizeThreshold
+    const action = hit.source.locked
+      ? 'select'
+      : hit.rotateDistance <= 18 / hit.transform.scale
+        ? 'rotate'
+        : nearResize ? 'resize' : 'drag'
+    const center = {
+      x: hit.transform.x + hit.transform.width / 2,
+      y: hit.transform.y + hit.transform.height / 2
+    }
+    programCanvasInteraction = {
+      pointerId: event.pointerId,
+      sourceId: hit.source.sourceId,
+      action,
+      startPoint: point,
+      startTransform: { ...hit.transform },
+      center,
+      startAngle: Math.atan2(point.y - center.y, point.x - center.x),
+      hitIndex
+    }
+    canvas.setPointerCapture?.(event.pointerId)
+    drawProgramPreviewCanvas(canvas, 'preview')
+  })
+  canvas.addEventListener('pointermove', (event) => {
+    const interaction = programCanvasInteraction
+    if (!interaction || interaction.pointerId !== event.pointerId || interaction.action === 'select') return
+    const point = programCanvasPoint(event, canvas)
+    const dx = point.x - interaction.startPoint.x
+    const dy = point.y - interaction.startPoint.y
+    let transform = { ...interaction.startTransform }
+    if (interaction.action === 'drag') {
+      transform.x += dx
+      transform.y += dy
+    } else if (interaction.action === 'resize') {
+      transform.width = Math.max(48, interaction.startTransform.width + dx / interaction.startTransform.scale)
+      transform.height = Math.max(36, interaction.startTransform.height + dy / interaction.startTransform.scale)
+    } else if (interaction.action === 'rotate') {
+      const angle = Math.atan2(point.y - interaction.center.y, point.x - interaction.center.x)
+      transform.rotation = interaction.startTransform.rotation + (angle - interaction.startAngle) * 180 / Math.PI
+    }
+    const live = liveState()
+    live.programMixer.sources = live.programMixer.sources.map((source) => source.sourceId === interaction.sourceId
+      ? { ...source, transform }
+      : source)
+    studioProgramMixer?.setSourceTransform?.(interaction.sourceId, transform)
+    drawProgramPreviewCanvas(canvas, 'preview')
+  })
+  const finish = (event) => {
+    const interaction = programCanvasInteraction
+    if (!interaction || interaction.pointerId !== event.pointerId) return
+    programCanvasInteraction = null
+    const source = liveState().programMixer.sources.find((entry) => entry.sourceId === interaction.sourceId)
+    if (source && interaction.action !== 'select') persistProgramSource(source)
+    heartbeatLiveProgramState().catch(() => {})
+    renderShell()
+  }
+  canvas.addEventListener('pointerup', finish)
+  canvas.addEventListener('pointercancel', finish)
 }
 
 function selectedProgramSource() {
@@ -2273,29 +2449,97 @@ function renderProgramMixerPanel() {
   const previewScene = mixer.scenes.find((scene) => scene.sceneId === mixer.previewSceneId)
   const programScene = mixer.scenes.find((scene) => scene.sceneId === mixer.programSceneId)
   const selectedSource = selectedProgramSource()
+  const previewSources = programCanvasSources('preview').sources
+  const selectedSourceIndex = Math.max(0, previewSources.findIndex((source) => source.sourceId === selectedSource?.sourceId))
+  const [outputWidth, outputHeight] = String(mixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
+  const selectedTransform = selectedSource
+    ? resolvedProgramSourceTransform(selectedSource, selectedSourceIndex, outputWidth || 1280, outputHeight || 720)
+    : null
   const previewSourceIds = new Set(previewScene?.sources || [])
   const audioSources = mixer.sources.filter((source) => ['browser-microphone', 'sequence-audio', 'guest-audio'].includes(source.type))
+  const hlsHealth = live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'not checked'
+  const encoderState = live.providerDiagnostics?.connectionState || live.providerDiagnostics?.ingestConnectionState || 'new'
+  const previewDescription = previewScene
+    ? previewSourceIds.size ? 'Select a source on the canvas to move, scale, or rotate it.' : 'This scene has no sources yet. Add one from the Sources card below.'
+    : 'No preview scene selected. Create a scene, add sources, then select it for Preview.'
+  const programDescription = !live.videoEnabled
+    ? 'Video output disabled. Enable video in Input Source to publish the Program canvas.'
+    : programScene ? 'This is the active broadcast canvas sent to the browser encoder.' : 'No scene is on air. Select a Preview scene, then use a transition.'
   return `
     <section class="studio-live-panel studio-program-panel">
       <header class="studio-live-subheader studio-program-topbar">
-        <div>
+        <div class="studio-program-title-block">
           <p class="eyebrow">Live Studio</p>
           <h1>Program Mixer</h1>
           <p>Preview is local only. Program is the broadcast canvas.</p>
+          ${mixer.notice ? `<p class="studio-live-error">${esc(mixer.notice)}</p>` : ''}
         </div>
+        <aside class="studio-program-output-card" aria-label="Stream output status">
+          <div class="studio-program-output-card-heading"><div><span>Stream Output Status</span><strong>${live.streamId ? 'On air' : 'Ready for browser encoder'}</strong></div><i class="${live.streamId ? 'is-live' : ''}"></i></div>
+          <div class="studio-program-output-pills">
+            <span>${live.streamId ? 'On air' : 'Off air'}</span>
+            <span>Mode: Browser</span>
+            <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
+            <span>WHIP: ${esc(encoderState)}</span>
+            <span>HLS: ${esc(hlsHealth)}</span>
+          </div>
+          <small>${esc(live.streamId ? `Program transport active. Last HLS manifest: ${live.providerDiagnostics?.hlsLastOkAt || 'waiting'}.` : 'Start Stream after preparing at least one program audio or video source.')}</small>
+        </aside>
       </header>
-      <div class="studio-program-status-strip" aria-label="Stream output status">
-        <span class="${live.streamId ? 'is-live' : ''}">${live.streamId ? 'On air' : 'Off air'}</span>
-        <span>Encoder: Browser WHIP</span>
-        <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
-        <span>WHIP: ${esc(live.providerDiagnostics?.connectionState || live.providerDiagnostics?.ingestConnectionState || 'idle')}</span>
-        <span>HLS: ${esc(live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'not checked')}</span>
-      </div>
-      ${mixer.notice ? `<p class="studio-live-error">${esc(mixer.notice)}</p>` : ''}
       <div class="studio-program-workspace">
-        <aside class="studio-program-left">
+        <section class="studio-program-canvas-panel studio-program-preview-panel">
+          <header class="studio-program-canvas-header"><strong>Preview</strong><span>${esc(previewDescription)}</span><b>${esc(previewScene?.name || 'No scene selected')}</b></header>
+          <div class="studio-program-preview-shell">
+            <canvas class="studio-program-preview" width="1280" height="720" data-program-preview-canvas aria-label="Interactive preview canvas"></canvas>
+          </div>
+        </section>
+        <section class="studio-program-canvas-panel studio-program-live-panel">
+          <header class="studio-program-canvas-header"><strong>Program</strong><span>${esc(programDescription)}</span><b>${esc(programScene?.name || 'No scene on air')}</b></header>
+          <div class="studio-program-preview-shell is-program">
+            <canvas class="studio-program-preview" width="1280" height="720" data-program-program-canvas></canvas>
+          </div>
+        </section>
+        <aside class="studio-program-transition-panel" aria-label="Scene transition controls">
+          <header><h2>Transition</h2><span>${previewScene ? 'Preview ready' : 'Waiting for scene'}</span></header>
+          <button type="button" data-program-take ${previewScene ? '' : 'disabled'}>Take</button>
+          <button type="button" data-program-cut ${previewScene ? '' : 'disabled'}>Cut</button>
+          <button type="button" data-program-fade ${previewScene ? '' : 'disabled'}>Fade</button>
+          <label>Fade ms<input type="number" min="0" max="5000" step="50" value="${Number(mixer.transitionDurationMs || 400)}" data-program-transition-duration /></label>
+          <div class="studio-program-transition-state"><i></i><span>${esc(programScene ? `${programScene.name} on air` : 'No active transition')}</span></div>
+        </aside>
+        <aside class="studio-program-inspector">
           <section>
-            <header><h2>Guests</h2></header>
+            <header><h2>Inspector</h2><span>${selectedSource ? 'Source transform' : 'Nothing selected'}</span></header>
+            ${selectedSource ? `
+              <strong>${esc(selectedSource.label)}</strong>
+              <small>${esc(selectedSource.type)} · drag canvas to move · corner to resize · round handle to rotate</small>
+              <div class="studio-program-transform-grid">
+                <label>X<input type="number" step="1" value="${Math.round(selectedTransform.x)}" data-program-source-transform="x" /></label>
+                <label>Y<input type="number" step="1" value="${Math.round(selectedTransform.y)}" data-program-source-transform="y" /></label>
+                <label>Width<input type="number" min="48" step="1" value="${Math.round(selectedTransform.width)}" data-program-source-transform="width" /></label>
+                <label>Height<input type="number" min="36" step="1" value="${Math.round(selectedTransform.height)}" data-program-source-transform="height" /></label>
+                <label>Scale<input type="number" min="0.05" max="8" step="0.05" value="${Number(selectedTransform.scale.toFixed(2))}" data-program-source-transform="scale" /></label>
+                <label>Rotation<input type="number" min="-360" max="360" step="1" value="${Math.round(selectedTransform.rotation)}" data-program-source-transform="rotation" /></label>
+              </div>
+              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="enabled" ${selectedSource.enabled === false ? '' : 'checked'} /> Enabled</label>
+              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="visible" ${selectedSource.visible === false ? '' : 'checked'} /> Visible</label>
+              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="muted" ${selectedSource.muted === true ? 'checked' : ''} /> Muted</label>
+              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="locked" ${selectedSource.locked === true ? 'checked' : ''} /> Locked</label>
+              <label>Opacity<input type="range" min="0" max="1" step="0.01" value="${Number(selectedSource.opacity ?? 1)}" data-program-source-range="opacity" aria-label="Selected source opacity" /></label>
+              <div class="studio-program-mini-actions">
+                <button type="button" data-program-source-action="forward">Bring Forward</button>
+                <button type="button" data-program-source-action="backward">Send Backward</button>
+                <button type="button" data-program-source-action="fit">Fit</button>
+                <button type="button" data-program-source-action="fill">Fill</button>
+                <button type="button" data-program-source-action="center">Center</button>
+                <button type="button" data-program-source-action="reset">Reset</button>
+              </div>
+            ` : '<p class="studio-program-empty">Select a visual source in the Preview canvas or Sources card.</p>'}
+          </section>
+        </aside>
+        <div class="studio-program-tool-row">
+          <section class="studio-program-tool-card studio-program-guests-card">
+            <header><div><h2>Guests</h2><span>Invite and route collaborators</span></div></header>
             <form class="studio-program-guest-search" data-program-guest-search-form>
               <input name="query" value="${esc(live.guestSearchQuery)}" placeholder="Search username or display name" />
               <button type="submit">Search</button>
@@ -2314,8 +2558,8 @@ function renderProgramMixerPanel() {
             </div>
             ${live.guestInviteStatus ? `<p class="studio-muted">${esc(live.guestInviteStatus)}</p>` : ''}
           </section>
-          <section>
-            <header><h2>Scenes</h2><button type="button" data-program-scene-action="create">New</button></header>
+          <section class="studio-program-tool-card studio-program-scenes-card">
+            <header><div><h2>Scenes</h2><span>Build Preview, then transition</span></div><button type="button" data-program-scene-action="create">New</button></header>
             <div class="studio-program-list">
               ${mixer.scenes.length ? mixer.scenes.map((scene) => `<button type="button" class="${scene.sceneId === previewScene?.sceneId ? 'is-active' : ''} ${scene.sceneId === programScene?.sceneId ? 'is-program' : ''}" data-program-scene="${esc(scene.sceneId)}"><strong>${esc(scene.name)}</strong><small>${scene.sceneId === programScene?.sceneId ? 'PROGRAM' : scene.sceneId === previewScene?.sceneId ? 'PREVIEW' : esc(scene.transitionPreference || scene.transition || 'fade')}</small></button>`).join('') : '<p class="studio-program-empty">No scenes yet. Create a scene to start mixing.</p>'}
             </div>
@@ -2325,77 +2569,33 @@ function renderProgramMixerPanel() {
               <button type="button" data-program-scene-action="delete">Delete</button>
             </div>
           </section>
-          <section>
-            <header><h2>Sources</h2><button type="button" data-program-open-source-modal>Add</button></header>
+          <section class="studio-program-tool-card studio-program-sources-card">
+            <header><div><h2>Sources</h2><span>${esc(previewScene?.name ? `Selected scene: ${previewScene.name}` : 'Select a scene first')}</span></div><button type="button" data-program-open-source-modal>Add</button></header>
             <div class="studio-program-list studio-program-source-list">
               ${mixer.sources.length ? mixer.sources.map((source) => `<button type="button" class="${source.sourceId === selectedSource?.sourceId ? 'is-active' : ''}" data-program-source="${esc(source.sourceId)}"><strong>${esc(source.label)}</strong><small>${esc(source.type)} · ${previewSourceIds.has(source.sourceId) ? 'in preview' : 'library'} · ${source.enabled === false ? 'off' : 'on'}</small></button>`).join('') : '<p class="studio-program-empty">No sources. Add one to the selected scene.</p>'}
             </div>
           </section>
-        </aside>
-        <main class="studio-program-center">
-          <div class="studio-program-canvas-grid">
-            <section>
-              <header><strong>Preview</strong><span>${esc(previewScene?.name || 'No scene selected')}</span></header>
-              <div class="studio-program-preview-shell">
-                <canvas class="studio-program-preview" width="1280" height="720" data-program-preview-canvas></canvas>
-                ${previewScene ? '' : '<div class="studio-program-canvas-empty"><strong>No preview scene selected</strong><span>Create a scene, add sources, then select it for Preview.</span></div>'}
-              </div>
-            </section>
-            <section>
-              <header><strong>Program</strong><span>${esc(programScene?.name || 'No scene on air')}</span></header>
-              <div class="studio-program-preview-shell is-program">
-                <canvas class="studio-program-preview" width="1280" height="720" data-program-program-canvas></canvas>
-                ${programScene ? '' : `<div class="studio-program-canvas-empty"><strong>${live.videoEnabled ? 'No scene is on air' : 'Video output is disabled'}</strong><span>${live.videoEnabled ? 'Select a preview scene and use Take, Cut, or Fade.' : 'Enable video in Input Source to publish the Program canvas.'}</span></div>`}
-              </div>
-            </section>
-          </div>
-          <div class="studio-program-toolbar" aria-label="Scene transition controls">
-            <strong>Transition</strong>
-            <button type="button" data-program-take ${previewScene ? '' : 'disabled'}>Take</button>
-            <button type="button" data-program-cut ${previewScene ? '' : 'disabled'}>Cut</button>
-            <button type="button" data-program-fade ${previewScene ? '' : 'disabled'}>Fade</button>
-            <label>Fade ms<input type="number" min="0" max="5000" step="50" value="${Number(mixer.transitionDurationMs || 400)}" data-program-transition-duration /></label>
-          </div>
-          <div class="studio-program-output-note">
-            <div><strong>Stream Output Status</strong><small>${esc(live.streamId ? 'Browser encoder session active' : 'Ready for browser encoder')}</small></div>
-            <span>${esc(live.videoEnabled ? `Program canvas is ready for WHIP. HLS: ${live.providerDiagnostics?.hlsHealth || 'waiting for publish'}.` : 'Audio program bus is available. Video master is off.')}</span>
-          </div>
-        </main>
-        <aside class="studio-program-inspector">
-          <section>
-            <h2>Inspector</h2>
-            ${selectedSource ? `
-              <strong>${esc(selectedSource.label)}</strong>
-              <small>${esc(selectedSource.type)}</small>
-              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="enabled" ${selectedSource.enabled === false ? '' : 'checked'} /> Enabled</label>
-              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="visible" ${selectedSource.visible === false ? '' : 'checked'} /> Visible</label>
-              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="muted" ${selectedSource.muted === true ? 'checked' : ''} /> Muted</label>
-              <label class="studio-live-check"><input type="checkbox" data-program-source-toggle="locked" ${selectedSource.locked === true ? 'checked' : ''} /> Locked</label>
-              <label>Opacity<input type="range" min="0" max="1" step="0.01" value="${Number(selectedSource.opacity ?? 1)}" data-program-source-range="opacity" aria-label="Selected source opacity" /></label>
-              <div class="studio-program-mini-actions">
-                <button type="button" data-program-source-action="forward">Bring Forward</button>
-                <button type="button" data-program-source-action="backward">Send Backward</button>
-                <button type="button" data-program-source-action="fit">Fit</button>
-                <button type="button" data-program-source-action="fill">Fill</button>
-                <button type="button" data-program-source-action="center">Center</button>
-                <button type="button" data-program-source-action="reset">Reset</button>
-              </div>
-            ` : '<p class="studio-program-empty">No source selected.</p>'}
-          </section>
-        </aside>
+        </div>
       </div>
       <section class="studio-program-audio-mixer">
         <header><h2>Audio Mixer</h2><span>Program and monitor sends are separate.</span></header>
-        ${audioSources.length ? audioSources.map((source) => `
-          <article>
-            <strong>${esc(source.label)}</strong>
-            <label><span>Program</span><input type="checkbox" data-program-audio-route="${esc(source.sourceId)}" data-route="program" ${source.programEnabled === false ? '' : 'checked'} /></label>
-            <label><span>Monitor</span><input type="checkbox" data-program-audio-route="${esc(source.sourceId)}" data-route="monitor" ${source.monitorEnabled === true ? 'checked' : ''} /></label>
-            <label><span>Gain</span><input type="range" min="0" max="1.5" step="0.01" value="${Number(source.gain ?? 1)}" data-program-audio-gain="${esc(source.sourceId)}" aria-label="${esc(source.label)} gain" /></label>
-            <meter min="0" max="1" value="${source.enabled === false || source.muted ? 0 : 0.35}"></meter>
+        <div class="studio-program-mixer-strips">
+          ${audioSources.length ? audioSources.map((source) => {
+            const level = source.type === 'browser-microphone' && source.enabled !== false && !source.muted ? Number(live.micLevel || 0) : 0
+            return `<article class="studio-program-channel-strip">
+              <div class="studio-program-channel-name"><strong>${esc(source.label)}</strong><small>${esc(source.type)}</small></div>
+              <div class="studio-program-channel-routes"><label><input type="checkbox" data-program-audio-route="${esc(source.sourceId)}" data-route="program" ${source.programEnabled === false ? '' : 'checked'} /> Program</label><label><input type="checkbox" data-program-audio-route="${esc(source.sourceId)}" data-route="monitor" ${source.monitorEnabled === true ? 'checked' : ''} /> Monitor</label></div>
+              <label class="studio-program-channel-gain"><span>Gain</span><input type="range" min="0" max="1.5" step="0.01" value="${Number(source.gain ?? 1)}" data-program-audio-gain="${esc(source.sourceId)}" aria-label="${esc(source.label)} gain" /></label>
+              <div class="studio-program-channel-meter" aria-label="${esc(source.label)} level"><i style="width:${Math.round(Math.max(0, Math.min(1, level)) * 100)}%"></i></div>
+            </article>`
+          }).join('') : `<article class="studio-program-channel-strip is-empty"><div class="studio-program-channel-name"><strong>No routed sources</strong><small>Add a microphone, sequence, or guest audio source.</small></div><div class="studio-program-channel-meter"><i style="width:0%"></i></div></article>`}
+          <article class="studio-program-channel-strip is-master">
+            <div class="studio-program-channel-name"><strong>Master</strong><small>Program output bus</small></div>
+            <div class="studio-program-channel-routes"><span>${live.audioEnabled ? 'Audio enabled' : 'Audio disabled'}</span><span>Monitor separate</span></div>
+            <label class="studio-program-channel-gain"><span>Gain</span><input type="range" min="0" max="1.25" step="0.01" value="${Number(live.mixer.masterGain || 1)}" data-live-mixer="masterGain" /></label>
+            <div class="studio-program-channel-meter" aria-label="Master output level"><i style="width:${live.audioEnabled ? Math.round(Math.max(0, Math.min(1, Number(live.micLevel || 0))) * 100) : 0}%"></i></div>
           </article>
-        `).join('') : '<p class="studio-program-empty">No audio sources in the mixer.</p>'}
-        <article><strong>Master</strong><label><span>Gain</span><input type="range" min="0" max="1.25" step="0.01" value="${Number(live.mixer.masterGain || 1)}" data-live-mixer="masterGain" /></label><meter min="0" max="1" value="${live.audioEnabled ? 0.42 : 0}"></meter></article>
+        </div>
       </section>
       ${renderProgramSceneModal()}
       ${renderProgramSourceModal()}
@@ -5067,6 +5267,27 @@ function bindLiveStudioControls() {
   app.querySelector('[data-advanced-streaming-settings]')?.addEventListener('toggle', (e) => {
     live.advancedStreamingOpen = Boolean(e.currentTarget.open)
   })
+  app.querySelector('[data-test-browser-ingest]')?.addEventListener('click', async () => {
+    const streamKey = ensureLiveStreamKey()
+    live.providerDiagnostics = {
+      ...(live.providerDiagnostics || {}),
+      whipTestRunning: true,
+      whipTestStatus: 'testing',
+      lastIngestError: ''
+    }
+    live.outputStatus = `Testing browser ingest reachability at ${buildBrowserWebrtcIngestUrl(streamKey)}`
+    renderShell()
+    const diagnostics = await testBrowserWebrtcIngestReachability({ streamKey })
+    live.providerDiagnostics = {
+      ...(live.providerDiagnostics || {}),
+      ...diagnostics,
+      whipTestRunning: false
+    }
+    live.outputStatus = diagnostics.whipReachable
+      ? `Browser ingest endpoint is reachable (HTTP ${diagnostics.responseStatus}). A non-2xx GET is normal for a WHIP POST endpoint.`
+      : `Browser ingest reachability failed: ${diagnostics.lastIngestError || 'network/CORS failure'}`
+    renderShell()
+  })
   app.querySelectorAll('[data-streaming-method]').forEach((el) => el.addEventListener('click', (e) => {
     if (live.streamId) {
       live.error = 'End the current stream before switching streaming method.'
@@ -5240,6 +5461,18 @@ function bindLiveStudioControls() {
     const source = selectedProgramSource()
     if (!source) return
     updateProgramSource(source.sourceId, { [el.dataset.programSourceToggle]: Boolean(e.currentTarget.checked) })
+  }))
+  app.querySelectorAll('[data-program-source-transform]').forEach((el) => el.addEventListener('change', (e) => {
+    const source = selectedProgramSource()
+    if (!source || source.locked) return
+    const field = el.dataset.programSourceTransform || ''
+    let value = Number(e.currentTarget.value)
+    if (!Number.isFinite(value)) return
+    if (field === 'width') value = Math.max(48, value)
+    if (field === 'height') value = Math.max(36, value)
+    if (field === 'scale') value = Math.max(0.05, Math.min(8, value))
+    if (field === 'rotation') value = Math.max(-360, Math.min(360, value))
+    updateProgramSource(source.sourceId, { transform: { ...(source.transform || {}), [field]: value } })
   }))
   app.querySelectorAll('[data-program-source-range]').forEach((el) => el.addEventListener('input', (e) => {
     const source = selectedProgramSource()

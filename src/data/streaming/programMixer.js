@@ -72,15 +72,20 @@ export class ProgramMixer {
     this.animationId = 0
   }
 
-  drawPlaceholder(message = '') {
+  drawPlaceholder() {
     if (!this.context) return
     this.context.clearRect(0, 0, this.width, this.height)
     this.context.fillStyle = '#05080f'
     this.context.fillRect(0, 0, this.width, this.height)
-    this.context.fillStyle = '#9fb0d0'
-    this.context.font = '700 30px system-ui, sans-serif'
-    this.context.textAlign = 'center'
-    this.context.fillText(message || (this.videoEnabled ? 'No program scene selected' : 'Video output disabled'), this.width / 2, this.height / 2)
+    const size = Math.min(this.width, this.height) * 0.12
+    const centerX = this.width / 2
+    const centerY = this.height / 2
+    this.context.strokeStyle = 'rgba(139,230,255,.12)'
+    this.context.lineWidth = 2
+    this.context.strokeRect(centerX - size, centerY - size * 0.56, size * 2, size * 1.12)
+    this.context.beginPath()
+    this.context.arc(centerX, centerY, size * 0.22, 0, Math.PI * 2)
+    this.context.stroke()
   }
 
   drawProgramFrame(scene = null) {
@@ -92,7 +97,7 @@ export class ProgramMixer {
       .filter((source) => source.enabled !== false && source.visible !== false && (!allowedSourceIds || allowedSourceIds.has(source.sourceId)))
       .sort((a, b) => Number(a.zIndex || 0) - Number(b.zIndex || 0))
     if (!activeSources.length) {
-      this.drawPlaceholder(scene ? 'Scene has no visible sources' : 'No program scene selected')
+      this.drawPlaceholder()
       return
     }
     activeSources.forEach((source, index) => {
@@ -100,17 +105,26 @@ export class ProgramMixer {
       const y = source.transform?.y ?? 48 + index * 30
       const width = source.transform?.width ?? (source.type === 'now-playing-card' ? 430 : this.width - 96)
       const height = source.transform?.height ?? (source.type === 'now-playing-card' ? 160 : this.height - 96)
+      const scale = Math.max(0.05, Number(source.transform?.scale ?? 1))
+      const rotation = Number(source.transform?.rotation ?? 0) * Math.PI / 180
+      const centerX = x + width / 2
+      const centerY = y + height / 2
+      this.context.save()
+      this.context.translate(centerX, centerY)
+      this.context.rotate(rotation)
+      this.context.scale(scale, scale)
       this.context.globalAlpha = Number(source.opacity ?? 1)
       this.context.fillStyle = source.type === 'now-playing-card' ? 'rgba(14,20,32,.88)' : 'rgba(22,31,48,.82)'
-      this.context.fillRect(x, y, width, height)
+      this.context.fillRect(-width / 2, -height / 2, width, height)
       this.context.strokeStyle = source.locked ? 'rgba(159,176,208,.24)' : 'rgba(103,242,170,.55)'
       this.context.lineWidth = 2
-      this.context.strokeRect(x, y, width, height)
+      this.context.strokeRect(-width / 2, -height / 2, width, height)
       this.context.fillStyle = '#eef4ff'
       this.context.font = '700 24px system-ui, sans-serif'
       this.context.textAlign = 'left'
-      this.context.fillText(source.label || source.type, x + 22, y + 42)
+      this.context.fillText(source.label || source.type, -width / 2 + 22, -height / 2 + 42)
       this.context.globalAlpha = 1
+      this.context.restore()
     })
   }
 
