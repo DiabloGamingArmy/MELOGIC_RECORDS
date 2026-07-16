@@ -42,6 +42,8 @@ export class ProgramMixer {
     this.sources = new Map()
     this.activeSceneId = ''
     this.activeScene = null
+    this.snapshotVersion = ''
+    this.transition = null
   }
 
   attachCanvas(canvas) {
@@ -88,18 +90,11 @@ export class ProgramMixer {
     this.context.stroke()
   }
 
-  drawProgramFrame(scene = null) {
-    if (!this.context) return
-    this.context.fillStyle = '#05080f'
-    this.context.fillRect(0, 0, this.width, this.height)
+  drawSourceLayer(scene = null, sources = this.sources, alpha = 1) {
     const allowedSourceIds = Array.isArray(scene?.sources) ? new Set(scene.sources) : null
-    const activeSources = Array.from(this.sources.values())
+    const activeSources = Array.from(sources.values())
       .filter((source) => source.enabled !== false && source.visible !== false && (!allowedSourceIds || allowedSourceIds.has(source.sourceId)))
       .sort((a, b) => Number(a.zIndex || 0) - Number(b.zIndex || 0))
-    if (!activeSources.length) {
-      this.drawPlaceholder()
-      return
-    }
     activeSources.forEach((source, index) => {
       const x = source.transform?.x ?? 48 + index * 36
       const y = source.transform?.y ?? 48 + index * 30
@@ -113,7 +108,7 @@ export class ProgramMixer {
       this.context.translate(centerX, centerY)
       this.context.rotate(rotation)
       this.context.scale(scale, scale)
-      this.context.globalAlpha = Number(source.opacity ?? 1)
+      this.context.globalAlpha = Math.max(0, Math.min(1, alpha * Number(source.opacity ?? 1)))
       this.context.fillStyle = source.type === 'now-playing-card' ? 'rgba(14,20,32,.88)' : 'rgba(22,31,48,.82)'
       this.context.fillRect(-width / 2, -height / 2, width, height)
       this.context.strokeStyle = source.locked ? 'rgba(159,176,208,.24)' : 'rgba(103,242,170,.55)'
@@ -123,9 +118,35 @@ export class ProgramMixer {
       this.context.font = '700 24px system-ui, sans-serif'
       this.context.textAlign = 'left'
       this.context.fillText(source.label || source.type, -width / 2 + 22, -height / 2 + 42)
-      this.context.globalAlpha = 1
       this.context.restore()
     })
+    return activeSources.length
+  }
+
+  drawProgramFrame(scene = this.activeScene) {
+    if (!this.context) return
+    this.context.fillStyle = '#05080f'
+    this.context.fillRect(0, 0, this.width, this.height)
+    if (this.transition) {
+      const elapsed = performance.now() - this.transition.startedAt
+      const progress = Math.max(0, Math.min(1, elapsed / this.transition.durationMs))
+      const fromCount = this.drawSourceLayer(this.transition.from.scene, this.transition.from.sources, 1 - progress)
+      const toCount = this.drawSourceLayer(this.transition.to.scene, this.transition.to.sources, progress)
+      if (!fromCount && !toCount) this.drawPlaceholder()
+      if (progress >= 1) {
+        const completed = this.transition
+        this.transition = null
+        this.activeSceneId = completed.to.sceneId
+        this.activeScene = completed.to.scene
+        this.sources = completed.to.sources
+        this.snapshotVersion = completed.to.version
+        completed.resolve?.({ ok: true })
+      }
+      return
+    }
+    if (!this.drawSourceLayer(scene, this.sources, 1)) {
+      this.drawPlaceholder()
+    }
   }
 
   getProgramMediaStream() {
@@ -173,6 +194,45 @@ export class ProgramMixer {
     this.activeSceneId = sceneId || this.activeSceneId
     this.activeScene = scene
   }
+  cutToSnapshot(snapshot = {}) {
+    const version = String(snapshot.version || '')
+    if (version && version === this.snapshotVersion && !this.transition) return
+    this.transition?.resolve?.({ ok: false, interrupted: true })
+    this.transition = null
+    this.activeSceneId = String(snapshot.sceneId || '')
+    this.activeScene = snapshot.scene ? structuredClone(snapshot.scene) : null
+    this.sources = new Map((snapshot.sources || []).map((source) => [source.sourceId, structuredClone(source)]))
+    this.snapshotVersion = version
+    this.drawProgramFrame(this.activeScene)
+  }
+  fadeToSnapshot(snapshot = {}, durationMs = 400) {
+    const duration = Math.max(0, Math.min(5000, Number(durationMs || 0)))
+    if (!duration || !this.videoEnabled) {
+      this.cutToSnapshot(snapshot)
+      return Promise.resolve({ ok: true })
+    }
+    this.transition?.resolve?.({ ok: false, interrupted: true })
+    return new Promise((resolve) => {
+      this.transition = {
+        from: {
+          sceneId: this.activeSceneId,
+          scene: this.activeScene ? structuredClone(this.activeScene) : null,
+          sources: new Map(Array.from(this.sources.entries()).map(([id, source]) => [id, structuredClone(source)])),
+          version: this.snapshotVersion
+        },
+        to: {
+          sceneId: String(snapshot.sceneId || ''),
+          scene: snapshot.scene ? structuredClone(snapshot.scene) : null,
+          sources: new Map((snapshot.sources || []).map((source) => [source.sourceId, structuredClone(source)])),
+          version: String(snapshot.version || '')
+        },
+        durationMs: duration,
+        startedAt: performance.now(),
+        resolve
+      }
+      this.startRenderLoop()
+    })
+  }
   setSourceTransform(sourceId, transform = {}) {
     const source = this.sources.get(sourceId)
     if (source) this.sources.set(sourceId, { ...source, transform: { ...(source.transform || {}), ...transform } })
@@ -182,6 +242,8 @@ export class ProgramMixer {
     if (source) this.sources.set(sourceId, { ...source, gain: Number(gain) })
   }
   destroy() {
+    this.transition?.resolve?.({ ok: false, interrupted: true })
+    this.transition = null
     this.disableVideo()
     this.audioContext?.close?.().catch(() => {})
     this.audioContext = null

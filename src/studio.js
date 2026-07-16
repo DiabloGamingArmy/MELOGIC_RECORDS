@@ -103,6 +103,9 @@ const app = document.querySelector('#app')
 let studioMonitorVisualizerCleanup = null
 let studioProgramMixer = null
 let programCanvasInteraction = null
+const programOutputCanvas = document.createElement('canvas')
+programOutputCanvas.width = 1280
+programOutputCanvas.height = 720
 const activeNativeHostSessions = new Map()
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
@@ -272,9 +275,12 @@ const state = {
       programSceneId: '',
       activeSceneId: '',
       selectedSourceId: '',
+      programSnapshot: { sceneId: '', scene: null, sources: [], version: '' },
       outputResolution: '1280x720',
       fps: 30,
       transitionDurationMs: 400,
+      transitionState: 'idle',
+      saveTimer: 0,
       sceneModal: { open: false, name: '', templateId: 'blank', error: '' },
       sourceModal: { open: false, name: '', type: 'browser-microphone', targetSceneId: '', error: '' },
       mode: 'preview',
@@ -334,6 +340,7 @@ const state = {
       saving: false
     },
     chatDraft: '',
+    chatEnabled: true,
     outputStatus: 'Sequence Software input ready.',
     monitorEnabled: false,
     monitorVolume: 0.85,
@@ -1807,6 +1814,141 @@ function renderLiveAssetEditorModal() {
   `
 }
 
+function cloneProgramSourceState(source = {}) {
+  return {
+    sourceId: String(source.sourceId || ''),
+    type: String(source.type || 'custom'),
+    label: String(source.label || 'Untitled Source'),
+    enabled: source.enabled !== false,
+    muted: source.muted === true,
+    visible: source.visible !== false,
+    locked: source.locked === true,
+    programEnabled: source.programEnabled !== false,
+    monitorEnabled: source.monitorEnabled === true,
+    gain: Number(source.gain ?? 1),
+    zIndex: Number(source.zIndex || 0),
+    opacity: Math.max(0, Math.min(1, Number(source.opacity ?? 1))),
+    objectFit: String(source.objectFit || 'cover'),
+    transform: {
+      ...(source.transform || {}),
+      ...(source.transform?.x == null ? {} : { x: Number(source.transform.x) }),
+      ...(source.transform?.y == null ? {} : { y: Number(source.transform.y) }),
+      ...(source.transform?.width == null ? {} : { width: Number(source.transform.width) }),
+      ...(source.transform?.height == null ? {} : { height: Number(source.transform.height) }),
+      ...(source.transform?.scale == null ? {} : { scale: Number(source.transform.scale) }),
+      ...(source.transform?.rotation == null ? {} : { rotation: Number(source.transform.rotation) })
+    },
+    audio: source.audio && typeof source.audio === 'object' ? { ...source.audio } : {},
+    video: source.video && typeof source.video === 'object' ? { ...source.video } : {}
+  }
+}
+
+function cloneProgramSceneState(scene = {}) {
+  return {
+    sceneId: String(scene.sceneId || ''),
+    name: String(scene.name || 'Untitled Scene'),
+    sources: Array.isArray(scene.sources) ? scene.sources.map((sourceId) => String(sourceId || '')).filter(Boolean) : [],
+    canvasLayout: scene.canvasLayout && typeof scene.canvasLayout === 'object' ? { ...scene.canvasLayout } : {},
+    audioRoutingState: scene.audioRoutingState && typeof scene.audioRoutingState === 'object' ? { ...scene.audioRoutingState } : {},
+    transitionPreference: String(scene.transitionPreference || scene.transition || 'fade')
+  }
+}
+
+function createPreviewProgramSnapshot() {
+  const mixer = liveState().programMixer
+  const scene = mixer.scenes.find((entry) => entry.sceneId === mixer.previewSceneId) || null
+  if (!scene) return { sceneId: '', scene: null, sources: [], version: `program_${Date.now().toString(36)}` }
+  const sourceIds = new Set(scene.sources || [])
+  return {
+    sceneId: scene.sceneId,
+    scene: cloneProgramSceneState(scene),
+    sources: mixer.sources.filter((source) => sourceIds.has(source.sourceId)).map(cloneProgramSourceState),
+    version: `program_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
+  }
+}
+
+function normalizeProgramSnapshot(snapshot = {}) {
+  const scene = snapshot.scene && typeof snapshot.scene === 'object' ? cloneProgramSceneState(snapshot.scene) : null
+  return {
+    sceneId: String(snapshot.sceneId || scene?.sceneId || ''),
+    scene,
+    sources: Array.isArray(snapshot.sources) ? snapshot.sources.map(cloneProgramSourceState) : [],
+    version: String(snapshot.version || (scene ? `restored_${Date.now().toString(36)}` : ''))
+  }
+}
+
+function serializedProgramMixerState() {
+  const mixer = liveState().programMixer
+  return {
+    mixerVersion: 2,
+    scenes: mixer.scenes.map(cloneProgramSceneState),
+    sources: mixer.sources.map(cloneProgramSourceState),
+    previewSceneId: mixer.previewSceneId || '',
+    programSceneId: mixer.programSnapshot?.sceneId || mixer.programSceneId || '',
+    activeSceneId: mixer.programSnapshot?.sceneId || mixer.programSceneId || '',
+    selectedSourceId: mixer.selectedSourceId || '',
+    programSnapshot: normalizeProgramSnapshot(mixer.programSnapshot),
+    outputResolution: mixer.outputResolution || '1280x720',
+    fps: Number(mixer.fps || 30),
+    transitionDurationMs: Number(mixer.transitionDurationMs || 400),
+    mode: 'program'
+  }
+}
+
+function restoreProgramMixerState(programState = {}, streamId = '') {
+  if (!programState || !Array.isArray(programState.scenes) || !Array.isArray(programState.sources)) return false
+  const mixer = liveState().programMixer
+  mixer.scenes = programState.scenes.map(cloneProgramSceneState)
+  mixer.sources = programState.sources.map(cloneProgramSourceState)
+  mixer.previewSceneId = String(programState.previewSceneId || '')
+  mixer.programSnapshot = normalizeProgramSnapshot(programState.programSnapshot || {})
+  mixer.programSceneId = mixer.programSnapshot.sceneId || String(programState.programSceneId || programState.activeSceneId || '')
+  mixer.activeSceneId = mixer.programSceneId
+  mixer.selectedSourceId = String(programState.selectedSourceId || '')
+  mixer.outputResolution = String(programState.outputResolution || mixer.outputResolution || '1280x720')
+  mixer.fps = Math.max(1, Math.min(60, Number(programState.fps || mixer.fps || 30)))
+  mixer.transitionDurationMs = Math.max(0, Math.min(5000, Number(programState.transitionDurationMs || mixer.transitionDurationMs || 400)))
+  if (!mixer.programSnapshot.scene && mixer.programSceneId) {
+    const programScene = mixer.scenes.find((scene) => scene.sceneId === mixer.programSceneId)
+    if (programScene) {
+      const sourceIds = new Set(programScene.sources || [])
+      mixer.programSnapshot = {
+        sceneId: programScene.sceneId,
+        scene: cloneProgramSceneState(programScene),
+        sources: mixer.sources.filter((source) => sourceIds.has(source.sourceId)).map(cloneProgramSourceState),
+        version: `restored_${Date.now().toString(36)}`
+      }
+    }
+  }
+  mixer.loaded = true
+  mixer.loading = false
+  console.log('[Program Mixer] restored state', {
+    streamId,
+    sceneCount: mixer.scenes.length,
+    sourceCount: mixer.sources.length,
+    previewSceneId: mixer.previewSceneId,
+    programSceneId: mixer.programSnapshot.sceneId || mixer.programSceneId
+  })
+  return true
+}
+
+function scheduleProgramMixerStateSave() {
+  const live = liveState()
+  const mixer = live.programMixer
+  if (mixer.saveTimer) window.clearTimeout(mixer.saveTimer)
+  mixer.saveTimer = window.setTimeout(() => {
+    mixer.saveTimer = 0
+    const streamId = live.streamId || live.draftStreamId || ''
+    console.log('[Program Mixer] saved state', {
+      streamId,
+      sceneCount: mixer.scenes.length,
+      sourceCount: mixer.sources.length
+    })
+    if (live.streamId) heartbeatLiveProgramState().catch(() => {})
+    else scheduleLiveStudioDraftSave()
+  }, 650)
+}
+
 function ensureProgramMixerData() {
   const live = liveState()
   const mixer = live.programMixer
@@ -1817,8 +1959,8 @@ function ensureProgramMixerData() {
     listProgramSources(state.user.uid),
     listLiveStudioGuestInvites(liveStudioSessionId())
   ]).then(([scenes, sources, guests]) => {
-    mixer.scenes = scenes
-    mixer.sources = sources
+    if (!mixer.scenes.length) mixer.scenes = scenes.map(cloneProgramSceneState)
+    if (!mixer.sources.length) mixer.sources = sources.map(cloneProgramSourceState)
     live.guests = guests
     if (!mixer.scenes.some((scene) => scene.sceneId === mixer.previewSceneId)) mixer.previewSceneId = ''
     if (!mixer.scenes.some((scene) => scene.sceneId === mixer.programSceneId)) mixer.programSceneId = ''
@@ -1826,6 +1968,18 @@ function ensureProgramMixerData() {
     if (!mixer.sources.some((source) => source.sourceId === mixer.selectedSourceId)) mixer.selectedSourceId = ''
     mixer.loaded = true
     mixer.loading = false
+    if (!mixer.programSnapshot.scene && mixer.programSceneId) {
+      const programScene = mixer.scenes.find((scene) => scene.sceneId === mixer.programSceneId)
+      if (programScene) {
+        const sourceIds = new Set(programScene.sources || [])
+        mixer.programSnapshot = {
+          sceneId: programScene.sceneId,
+          scene: cloneProgramSceneState(programScene),
+          sources: mixer.sources.filter((source) => sourceIds.has(source.sourceId)).map(cloneProgramSourceState),
+          version: `loaded_${Date.now().toString(36)}`
+        }
+      }
+    }
     ensureGuestInviteSubscription()
     renderShell()
   }).catch((error) => {
@@ -1874,9 +2028,9 @@ function liveProgramOutputState() {
   live.ingestMethod = ingestMethod
   const isBrowserIngest = ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
   const streamKey = streamingProtocol === 'hls' ? ensureLiveStreamKey() : ''
-  const programScene = (mixer.scenes || []).find((scene) => scene.sceneId === mixer.programSceneId)
-  const programSourceIds = new Set(Array.isArray(programScene?.sources) ? programScene.sources : [])
-  const programSources = (mixer.sources || []).filter((source) => programSourceIds.has(source.sourceId))
+  const programSnapshot = normalizeProgramSnapshot(mixer.programSnapshot || {})
+  const programScene = programSnapshot.scene
+  const programSources = programSnapshot.sources
   const hasEnabledVideoSource = programSources.some((source) => {
     if (source.enabled === false || source.visible === false) return false
     return ['browser-camera', 'sequence-video', 'now-playing-card', 'image', 'text-lower-third', 'guest-video'].includes(source.type)
@@ -1913,6 +2067,7 @@ function liveProgramOutputState() {
     },
     hostActive: Boolean(live.streamId && !live.nativeInterruptedStreamId),
     hostSessionId: live.nativeHostSessionId || '',
+    chatEnabled: live.chatEnabled !== false,
     audioEnabled: live.audioEnabled,
     videoEnabled: live.videoEnabled,
     audioOnly: !programHasVideo,
@@ -1925,15 +2080,7 @@ function liveProgramOutputState() {
     programHasVideo,
     audioPublished: Boolean(streamingProtocol === 'hls' && (isBrowserIngest ? live.audioPublishedToProvider && programHasAudio : live.streamId)),
     videoPublished: Boolean(streamingProtocol === 'hls' && (isBrowserIngest ? live.videoPublishedToProvider && live.videoEnabled && live.programVideoTrack : live.streamId && live.videoEnabled)),
-    programState: {
-      previewSceneId: mixer.previewSceneId || '',
-      programSceneId: mixer.programSceneId || '',
-      activeSceneId: mixer.programSceneId || mixer.activeSceneId || '',
-      selectedSourceId: mixer.selectedSourceId || '',
-      outputResolution: mixer.outputResolution || '1280x720',
-      fps: Number(mixer.fps || 30),
-      mode: mixer.mode || 'program'
-    },
+    programState: serializedProgramMixerState(),
     providerDiagnostics: {
       ...(live.providerDiagnostics || {})
     }
@@ -1999,9 +2146,9 @@ function ensureStudioProgramMixer() {
   studioProgramMixer.width = width || 1280
   studioProgramMixer.height = height || 720
   studioProgramMixer.fps = Number(live.programMixer.fps || 30)
-  studioProgramMixer.sources = new Map((live.programMixer.sources || []).map((source) => [source.sourceId, { ...source }]))
-  const programScene = live.programMixer.scenes.find((scene) => scene.sceneId === live.programMixer.programSceneId) || null
-  studioProgramMixer.setScene(live.programMixer.programSceneId || '', programScene)
+  studioProgramMixer.attachCanvas(programOutputCanvas)
+  const programSnapshot = normalizeProgramSnapshot(live.programMixer.programSnapshot || {})
+  studioProgramMixer.cutToSnapshot(programSnapshot)
   if (live.audioEnabled) studioProgramMixer.enableAudio()
   else studioProgramMixer.disableAudio()
   if (live.videoEnabled) studioProgramMixer.enableVideo()
@@ -2016,10 +2163,8 @@ function attachProgramMixerPreview() {
     drawProgramPreviewCanvas(previewCanvas, 'preview')
     attachProgramPreviewCanvasInteractions(previewCanvas)
   }
-  const canvas = programCanvas || previewCanvas
-  if (!canvas) return
+  if (programCanvas) drawProgramPreviewCanvas(programCanvas, 'program')
   const mixer = ensureStudioProgramMixer()
-  mixer.attachCanvas(canvas)
   if (liveState().videoEnabled) mixer.startRenderLoop()
   else mixer.drawPlaceholder()
 }
@@ -2050,6 +2195,10 @@ function drawProgramCanvasEmptyGlyph(context, canvas) {
 
 function programCanvasSources(mode = 'preview') {
   const mixer = liveState().programMixer
+  if (mode === 'program') {
+    const snapshot = normalizeProgramSnapshot(mixer.programSnapshot || {})
+    return { mixer, scene: snapshot.scene, sources: snapshot.sources }
+  }
   const sceneId = mode === 'program' ? mixer.programSceneId : mixer.previewSceneId
   const scene = mixer.scenes.find((entry) => entry.sceneId === sceneId)
   const allowedSourceIds = new Set(Array.isArray(scene?.sources) ? scene.sources : [])
@@ -2131,38 +2280,50 @@ function sourceLocalPoint(point, transform) {
   }
 }
 
+function programCanvasHitTest(event, canvas) {
+  const { sources } = programCanvasSources('preview')
+  const point = programCanvasPoint(event, canvas)
+  for (let index = sources.length - 1; index >= 0; index -= 1) {
+    const source = sources[index]
+    const transform = resolvedProgramSourceTransform(source, index, canvas.width, canvas.height)
+    const local = sourceLocalPoint(point, transform)
+    const rotateDistance = Math.hypot(local.x, local.y + transform.height / 2 + 38 / transform.scale)
+    const resizeThreshold = 24 / transform.scale
+    const nearResize = Math.abs(local.x - transform.width / 2) <= resizeThreshold
+      && Math.abs(local.y - transform.height / 2) <= resizeThreshold
+    const inBody = Math.abs(local.x) <= transform.width / 2 && Math.abs(local.y) <= transform.height / 2
+    if (rotateDistance <= 18 / transform.scale || inBody) {
+      return { source, transform, local, rotateDistance, nearResize, point, index }
+    }
+  }
+  return null
+}
+
+function cursorForProgramCanvasHit(hit = null) {
+  if (!hit) return 'default'
+  if (hit.source.locked) return 'not-allowed'
+  if (hit.rotateDistance <= 18 / hit.transform.scale) return 'crosshair'
+  if (hit.nearResize) return 'nwse-resize'
+  return 'grab'
+}
+
 function attachProgramPreviewCanvasInteractions(canvas) {
   canvas.addEventListener('pointerdown', (event) => {
-    const { mixer, sources } = programCanvasSources('preview')
-    const point = programCanvasPoint(event, canvas)
-    let hit = null
-    let hitIndex = -1
-    for (let index = sources.length - 1; index >= 0; index -= 1) {
-      const source = sources[index]
-      const transform = resolvedProgramSourceTransform(source, index, canvas.width, canvas.height)
-      const local = sourceLocalPoint(point, transform)
-      const rotateDistance = Math.hypot(local.x, local.y + transform.height / 2 + 38 / transform.scale)
-      if (rotateDistance <= 18 / transform.scale || (Math.abs(local.x) <= transform.width / 2 && Math.abs(local.y) <= transform.height / 2)) {
-        hit = { source, transform, local, rotateDistance }
-        hitIndex = index
-        break
-      }
-    }
+    const { mixer } = programCanvasSources('preview')
+    const hit = programCanvasHitTest(event, canvas)
     if (!hit) {
       mixer.selectedSourceId = ''
+      canvas.style.cursor = 'default'
       drawProgramPreviewCanvas(canvas, 'preview')
       renderShell()
       return
     }
     mixer.selectedSourceId = hit.source.sourceId
-    const resizeThreshold = 24 / hit.transform.scale
-    const nearResize = Math.abs(hit.local.x - hit.transform.width / 2) <= resizeThreshold
-      && Math.abs(hit.local.y - hit.transform.height / 2) <= resizeThreshold
     const action = hit.source.locked
       ? 'select'
       : hit.rotateDistance <= 18 / hit.transform.scale
         ? 'rotate'
-        : nearResize ? 'resize' : 'drag'
+        : hit.nearResize ? 'resize' : 'drag'
     const center = {
       x: hit.transform.x + hit.transform.width / 2,
       y: hit.transform.y + hit.transform.height / 2
@@ -2171,18 +2332,23 @@ function attachProgramPreviewCanvasInteractions(canvas) {
       pointerId: event.pointerId,
       sourceId: hit.source.sourceId,
       action,
-      startPoint: point,
+      startPoint: hit.point,
       startTransform: { ...hit.transform },
       center,
-      startAngle: Math.atan2(point.y - center.y, point.x - center.x),
-      hitIndex
+      startAngle: Math.atan2(hit.point.y - center.y, hit.point.x - center.x),
+      hitIndex: hit.index
     }
+    canvas.style.cursor = action === 'drag' ? 'grabbing' : cursorForProgramCanvasHit(hit)
     canvas.setPointerCapture?.(event.pointerId)
     drawProgramPreviewCanvas(canvas, 'preview')
   })
   canvas.addEventListener('pointermove', (event) => {
     const interaction = programCanvasInteraction
-    if (!interaction || interaction.pointerId !== event.pointerId || interaction.action === 'select') return
+    if (!interaction) {
+      canvas.style.cursor = cursorForProgramCanvasHit(programCanvasHitTest(event, canvas))
+      return
+    }
+    if (interaction.pointerId !== event.pointerId || interaction.action === 'select') return
     const point = programCanvasPoint(event, canvas)
     const dx = point.x - interaction.startPoint.x
     const dy = point.y - interaction.startPoint.y
@@ -2201,7 +2367,6 @@ function attachProgramPreviewCanvasInteractions(canvas) {
     live.programMixer.sources = live.programMixer.sources.map((source) => source.sourceId === interaction.sourceId
       ? { ...source, transform }
       : source)
-    studioProgramMixer?.setSourceTransform?.(interaction.sourceId, transform)
     drawProgramPreviewCanvas(canvas, 'preview')
   })
   const finish = (event) => {
@@ -2210,11 +2375,22 @@ function attachProgramPreviewCanvasInteractions(canvas) {
     programCanvasInteraction = null
     const source = liveState().programMixer.sources.find((entry) => entry.sourceId === interaction.sourceId)
     if (source && interaction.action !== 'select') persistProgramSource(source)
-    heartbeatLiveProgramState().catch(() => {})
+    console.log('[Program Mixer] preview updated', {
+      sceneId: liveState().programMixer.previewSceneId,
+      sourceCount: programCanvasSources('preview').sources.length
+    })
+    console.log('[Program Mixer] program unchanged while editing', {
+      programSceneId: liveState().programMixer.programSnapshot?.sceneId || ''
+    })
+    scheduleProgramMixerStateSave()
+    canvas.style.cursor = 'default'
     renderShell()
   }
   canvas.addEventListener('pointerup', finish)
   canvas.addEventListener('pointercancel', finish)
+  canvas.addEventListener('pointerleave', () => {
+    if (!programCanvasInteraction) canvas.style.cursor = 'default'
+  })
 }
 
 function selectedProgramSource() {
@@ -2230,7 +2406,7 @@ function persistProgramSource(source = null) {
   })
 }
 
-function updateProgramSource(sourceId = '', patch = {}, { persist = true } = {}) {
+function updateProgramSource(sourceId = '', patch = {}, { persist = true, render = true } = {}) {
   const live = liveState()
   const mixer = live.programMixer
   let updated = null
@@ -2240,10 +2416,16 @@ function updateProgramSource(sourceId = '', patch = {}, { persist = true } = {})
     return updated
   })
   if (!updated) return
-  studioProgramMixer?.sources?.set?.(sourceId, { ...updated })
   if (persist) persistProgramSource(updated)
-  heartbeatLiveProgramState().catch(() => {})
-  renderShell()
+  console.log('[Program Mixer] preview updated', {
+    sceneId: mixer.previewSceneId,
+    sourceCount: programCanvasSources('preview').sources.length
+  })
+  console.log('[Program Mixer] program unchanged while editing', {
+    programSceneId: mixer.programSnapshot?.sceneId || ''
+  })
+  scheduleProgramMixerStateSave()
+  if (render) renderShell()
 }
 
 async function handleProgramSceneAction(action = '') {
@@ -2941,14 +3123,17 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.videoEnabled = stream.videoEnabled === true
   live.audioPublishedToProvider = stream.audioPublished === true
   live.videoPublishedToProvider = stream.videoPublished === true
+  live.chatEnabled = stream.chatEnabled !== false
   live.browserInputEnabled = stream.activeAudioSources?.browser !== false
   live.sequenceInputEnabled = stream.activeAudioSources?.sequence === true || live.inputSource === 'sequence'
   live.videoSource = stream.activeVideoSource === 'sequence' ? 'sequence' : 'browser'
-  live.programMixer.previewSceneId = stream.programState?.previewSceneId || live.programMixer.previewSceneId
-  live.programMixer.programSceneId = stream.programState?.programSceneId || stream.programState?.activeSceneId || live.programMixer.programSceneId
-  live.programMixer.activeSceneId = live.programMixer.programSceneId || live.programMixer.activeSceneId
-  live.programMixer.selectedSourceId = stream.programState?.selectedSourceId || live.programMixer.selectedSourceId
-  live.programMixer.mode = stream.programState?.mode || live.programMixer.mode
+  if (!restoreProgramMixerState(stream.programState || {}, streamId)) {
+    live.programMixer.previewSceneId = stream.programState?.previewSceneId || live.programMixer.previewSceneId
+    live.programMixer.programSceneId = stream.programState?.programSceneId || stream.programState?.activeSceneId || live.programMixer.programSceneId
+    live.programMixer.activeSceneId = live.programMixer.programSceneId || live.programMixer.activeSceneId
+    live.programMixer.selectedSourceId = stream.programState?.selectedSourceId || live.programMixer.selectedSourceId
+    live.programMixer.mode = stream.programState?.mode || live.programMixer.mode
+  }
   live.providerDiagnostics = stream.providerDiagnostics || live.providerDiagnostics
   live.streamForm = {
     ...live.streamForm,
@@ -5007,6 +5192,7 @@ function subscribeLiveStudioStream(streamId = '') {
       live.streamForm.coverArtPath = stream.coverArtPath || ''
       live.streamForm.coverArtSource = stream.coverArtSource || (stream.coverArtURL ? 'url' : 'fallback')
       live.streamForm.streamKey = sanitizeHlsStreamKey(stream.streamKey || live.streamForm.streamKey || 'mystream')
+      live.chatEnabled = stream.chatEnabled !== false
       live.providerDiagnostics = {
         ...(live.providerDiagnostics || {}),
         hlsHealth: stream.hlsHealth || live.providerDiagnostics?.hlsHealth || '',
