@@ -1310,11 +1310,15 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 @media (max-width:1120px){.studio-program-panel{overflow:auto}.studio-program-canvas-grid{grid-template-columns:1fr}.studio-program-workspace{grid-template-columns:1fr}.studio-program-audio-mixer article{grid-template-columns:1fr 1fr}.studio-live-page{height:auto;min-height:100dvh;overflow:auto}}
 
 /* Live Studio viewport and external-encoder hardening */
-.studio-live-page{height:auto;min-height:100dvh;overflow:hidden;padding-bottom:0}
-.studio-live-shell{height:calc(100dvh - var(--nav-offset,4.25rem));min-height:calc(100dvh - var(--nav-offset,4.25rem))}
-.studio-live-rail{height:auto;min-height:0;align-self:stretch;position:relative;top:auto}
-.studio-live-main{padding:14px 14px 16px;min-height:0}
-.studio-live-panel,.studio-live-sequence-panel,.studio-live-chat-panel{min-height:0}
+.studio-live-page{height:100dvh;min-height:100dvh;overflow:hidden;padding-top:var(--nav-offset,4.25rem);padding-bottom:0;box-sizing:border-box}
+.studio-live-shell{height:100%;min-height:0}
+.studio-live-content{height:100%;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.studio-live-rail{height:100%;min-height:0;align-self:stretch;position:relative;top:auto}
+.studio-live-main{flex:1 1 auto;height:auto;min-height:0;display:flex;flex-direction:column;gap:10px;padding:14px;overflow:hidden}
+.studio-live-main>.studio-live-error{flex:0 0 auto}
+.studio-live-main>.studio-live-panel,.studio-live-main>.studio-live-sequence-panel{flex:1 1 0;height:100%;min-height:0;overflow:hidden}
+.studio-live-statusbar{flex:0 0 34px;min-height:34px}
+.studio-live-source-grid,.studio-live-stream-layout,.studio-live-safety-list{min-height:0;overflow:auto;overscroll-behavior:contain}
 .studio-live-chat-log{padding-bottom:12px}
 .studio-live-chat-form{padding:0 2px 8px}
 .studio-live-rail a.is-disabled{opacity:.38;filter:saturate(.35);cursor:not-allowed;border-color:transparent;background:rgba(255,255,255,.025)}
@@ -1357,6 +1361,10 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   .studio-live-page{height:auto;min-height:100dvh;overflow:auto}
   .studio-live-shell{height:auto;min-height:calc(100dvh - var(--nav-offset,4.25rem))}
   .studio-live-rail{min-height:100%}
+  .studio-live-content{height:auto;display:block;overflow:visible}
+  .studio-live-main{height:auto;display:flex;overflow:visible}
+  .studio-live-main>.studio-live-panel,.studio-live-main>.studio-live-sequence-panel{height:auto;flex:auto;overflow:visible}
+  .studio-live-statusbar{min-height:34px}
   .studio-program-panel{height:auto;overflow:visible;grid-template-rows:auto auto auto}
   .studio-program-topbar{grid-template-columns:1fr}
   .studio-program-workspace{grid-template-columns:1fr;grid-template-rows:auto;grid-template-areas:"preview" "program" "transition" "inspector" "tools";overflow:visible}
