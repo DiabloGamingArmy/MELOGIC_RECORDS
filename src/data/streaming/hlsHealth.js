@@ -30,11 +30,12 @@ export async function checkHlsManifest({
   hlsUrl = '',
   previous = {},
   startedAt = '',
+  connectedAt = '',
   timeoutMs = 8000
 } = {}) {
   const checkedAtMs = Date.now()
   const previousLastOkMs = timestampMs(previous.hlsLastOkAt)
-  const startedAtMs = timestampMs(startedAt) || checkedAtMs
+  const startedAtMs = timestampMs(connectedAt || startedAt || previous.hlsStartedAt || previous.whipConnectedAt || previous.startedAt || previous.createdAt) || checkedAtMs
   let responseCode = 0
   let error = ''
   let parsed = { valid: false, hasExtM3u: false, hasMediaSegment: false, sequence: null }
@@ -74,6 +75,7 @@ export async function checkHlsManifest({
   if (manifestHealthy && !sequenceFresh) error = 'HLS media sequence has not advanced within the freshness window.'
   const lastOkMs = healthy && sequenceChanged ? checkedAtMs : previousLastOkMs
   const withinWarmup = checkedAtMs - startedAtMs <= HLS_WARMUP_WINDOW_MS
+  const secondsSinceStart = Math.max(0, Math.floor((checkedAtMs - startedAtMs) / 1000))
   const recentlyHealthy = Boolean(lastOkMs && checkedAtMs - lastOkMs <= HLS_RECENT_OK_WINDOW_MS)
   const health = healthy ? 'healthy' : withinWarmup && !lastOkMs ? 'warming' : recentlyHealthy ? 'stale' : 'offline'
   const diagnostics = {
@@ -88,6 +90,8 @@ export async function checkHlsManifest({
     hlsError: healthy ? '' : error,
     hlsResponseCode: responseCode,
     hlsHasMediaSegments: parsed.hasMediaSegment === true,
+    hlsStartedAt: new Date(startedAtMs).toISOString(),
+    secondsSinceStart,
     healthy
   }
   console.log('[HLS Health] check', {
@@ -97,6 +101,7 @@ export async function checkHlsManifest({
     healthy,
     sequence: parsed.sequence,
     lastOkAt: diagnostics.hlsLastOkAt,
+    secondsSinceStart,
     health,
     error: diagnostics.hlsLastError
   })

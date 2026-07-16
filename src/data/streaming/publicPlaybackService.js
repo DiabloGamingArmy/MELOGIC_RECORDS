@@ -43,7 +43,7 @@ export function getPublicPlaybackInfo(stream = {}) {
     const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
     const configuredUrlAllowed = isAllowedHlsPlaybackUrl(configuredUrl)
     const keyUrl = buildHlsPlaybackUrl(stream.streamKey)
-    const url = configuredUrlAllowed ? configuredUrl : keyUrl
+    const url = keyUrl || (configuredUrlAllowed ? configuredUrl : '')
     const message = url
       ? ''
       : configuredUrl

@@ -57,9 +57,11 @@ import { getPublicPlaybackInfo, isExplicitFirebaseSegmentsPlayback, isPublicStre
 import {
   attachHlsStream,
   canPlayNativeHls,
-  isAllowedHlsPlaybackUrl
+  isAllowedHlsPlaybackUrl,
+  sanitizeHlsStreamKey
 } from './data/streaming/hlsEdgePlayer'
 import { checkHlsManifest, HLS_WARMUP_WINDOW_MS } from './data/streaming/hlsHealth'
+import { createRandomStreamKey, ensureSessionStreamKey, isValidGeneratedStreamKey } from './data/streaming/streamSessionKey'
 import { assertLiveKitConnectionConfig } from './data/streaming/livekitProvider'
 import { startBrowserWebrtcIngest, stopBrowserWebrtcIngest } from './data/streaming/browserWebrtcIngest'
 import { getNativePlaybackQueue, getNativePlaybackQueueDiagnostics } from './data/streaming/nativeStreamingProvider'
@@ -100,15 +102,6 @@ const SILENT_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAA
 const HLS_PLAYBACK_MODE_STORAGE_KEY = 'melogic_live_playback_mode'
 const HLS_PLAYBACK_MODES = new Set(['videoAudio', 'videoOnly', 'audioOnly'])
 
-function sanitizeHlsStreamKey(value = '') {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    || `melogic-${Date.now()}`
-}
-
 function getHlsEdgeBaseUrl() {
   return String(import.meta.env?.VITE_STREAM_EDGE_BASE_URL || DEFAULT_HLS_EDGE_BASE_URL).replace(/\/+$/, '')
 }
@@ -121,6 +114,32 @@ function normalizeHlsLivePayload(payload = {}) {
   return normalizeMusicLiveTransportPayload({
     ...payload,
     streamingProtocol: payload.streamingProtocol || state.goLive.form.streamingProtocol || 'hls'
+  })
+}
+
+function ensureHostSessionStreamKey({ forceNew = false } = {}) {
+  const previousKey = sanitizeHlsStreamKey(state.goLive.form.streamKey || '')
+  if (state.goLive.streamId && previousKey) return previousKey
+  state.goLive.form.streamKey = ensureSessionStreamKey(previousKey, { forceNew })
+  return state.goLive.form.streamKey
+}
+
+function logMusicStreamKeyConsistency({
+  streamId = '',
+  writerStreamKey = '',
+  whipStreamKey = '',
+  hlsHealthStreamKey = '',
+  hlsUrl = '',
+  hlsPlaybackUrl = ''
+} = {}) {
+  console.log('[Stream Key Consistency]', {
+    streamId: streamId || state.liveStream?.streamId || state.liveStream?.id || state.goLive.streamId || state.goLive.draftStreamId || '',
+    firestoreStreamKey: state.liveStream?.streamKey || '',
+    writerStreamKey,
+    whipStreamKey,
+    hlsHealthStreamKey,
+    hlsUrl,
+    hlsPlaybackUrl
   })
 }
 
@@ -263,7 +282,7 @@ const state = {
       visibility: 'public',
       streamingProtocol: 'hls',
       streamingMethod: 'obsRtmp',
-      streamKey: 'obsfix1',
+      streamKey: createRandomStreamKey(),
       rightsAccepted: false,
       archiveRequested: false
     },
@@ -1159,6 +1178,12 @@ function liveStatusLabel(stream = {}) {
   const playbackInfo = getPublicPlaybackInfo(stream)
   if (playbackInfo.provider === STREAM_PROVIDERS.hlsEdge) {
     if (state.liveStatus === 'playing') return 'Playing'
+    if (stream.ingestMethod === 'browserWebrtc'
+      && stream.hostConnected === true
+      && Number(state.hlsDiagnostics?.secondsSinceStart || stream.hlsSecondsSinceStart || 0) > 30
+      && !(state.hlsDiagnostics?.hlsLastOkAt || stream.hlsLastOkAt)) {
+      return 'Browser encoder connected, but no HLS segments are being produced yet.'
+    }
     if (state.hlsDiagnostics?.hlsHealth === 'warming') return 'Waiting for live segments...'
     if (state.liveStatus === 'loadingManifest' || state.liveStatus === 'waiting') return 'Loading HLS stream...'
     if (state.liveStatus === 'ready') return 'Ready. Press Play to start the HLS stream.'
@@ -1836,9 +1861,24 @@ async function refreshHlsHealth(stream = state.liveStream) {
     streamId: stream.id || stream.streamId || '',
     hlsUrl: playbackInfo.url,
     previous: { ...stream, ...(state.hlsDiagnostics || {}) },
-    startedAt: stream.startedAt || stream.updatedAt || new Date().toISOString()
+    startedAt: stream.startedAt || stream.createdAt || '',
+    connectedAt: state.hlsDiagnostics?.whipConnectedAt || state.hlsDiagnostics?.hlsStartedAt || ''
   })
-  state.hlsDiagnostics = { ...(state.hlsDiagnostics || {}), ...health }
+  state.hlsDiagnostics = {
+    ...(state.hlsDiagnostics || {}),
+    ...health,
+    hlsHealthStreamKey: stream.streamKey || '',
+    hlsUrl: playbackInfo.url,
+    hlsPlaybackUrl: stream.hlsPlaybackUrl || playbackInfo.url
+  }
+  logMusicStreamKeyConsistency({
+    streamId: stream.id || stream.streamId || '',
+    writerStreamKey: stream.streamKey || '',
+    whipStreamKey: state.hlsDiagnostics?.whipStreamKey || '',
+    hlsHealthStreamKey: stream.streamKey || '',
+    hlsUrl: playbackInfo.url,
+    hlsPlaybackUrl: stream.hlsPlaybackUrl || playbackInfo.url
+  })
   if (health.hlsHealth === 'warming' && state.liveStatus !== 'playing') {
     state.liveStatus = 'loadingManifest'
     state.liveError = ''
@@ -2126,6 +2166,14 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
     playbackStartedAt: new Date().toISOString(),
     demandWriteSucceeded: false
   }
+  logMusicStreamKeyConsistency({
+    streamId: state.liveStream.id || state.liveStream.streamId || '',
+    writerStreamKey: state.liveStream.streamKey || '',
+    whipStreamKey: state.liveStream.ingestMethod === 'browserWebrtc' ? state.liveStream.streamKey || '' : '',
+    hlsHealthStreamKey: state.liveStream.streamKey || '',
+    hlsUrl: playbackInfo.url,
+    hlsPlaybackUrl: state.liveStream.hlsPlaybackUrl || playbackInfo.url
+  })
   startHlsHealthPolling(state.liveStream)
   updateLiveListenerControls()
 
@@ -3013,8 +3061,8 @@ function renderStreamDetailsControls(form, categories) {
 
 function renderAudioControls(form) {
   const isObs = form.streamingMethod !== 'browserWebrtc'
-  const streamKey = sanitizeHlsStreamKey(form.streamKey || 'obsfix1')
-  const hlsPlaybackUrl = `${getHlsEdgeBaseUrl()}/${streamKey}.m3u8`
+  const streamKey = sanitizeHlsStreamKey(form.streamKey || '')
+  const hlsPlaybackUrl = streamKey ? `${getHlsEdgeBaseUrl()}/${streamKey}.m3u8` : ''
   return `
     <section class="music-host-control-section">
       <div>
@@ -3022,8 +3070,12 @@ function renderAudioControls(form) {
         <h2>Broadcast Source</h2>
       </div>
       <label><span>Streaming Method</span><select name="streamingMethod" data-live-streaming-method ${state.goLive.streamId ? 'disabled' : ''}><option value="obsRtmp" ${isObs ? 'selected' : ''}>OBS / RTMP Encoder</option><option value="browserWebrtc" ${isObs ? '' : 'selected'}>Browser WebRTC Input</option></select></label>
+      <label><span>Stream Key</span><input name="streamKey" maxlength="25" required value="${escapeHtml(streamKey)}" pattern="[A-Za-z0-9]{25}" autocomplete="off" readonly aria-readonly="true" /></label>
+      <div class="music-live-actions">
+        <button type="button" class="button button-muted" data-copy-host-stream-key>Copy Stream Key</button>
+        ${isObs && !state.goLive.streamId ? '<button type="button" class="button button-muted" data-regenerate-host-stream-key>Regenerate Stream Key</button>' : ''}
+      </div>
       ${isObs ? `
-        <label><span>Stream Key</span><input name="streamKey" maxlength="160" required value="${escapeHtml(streamKey)}" pattern="[a-z0-9_-]+" autocomplete="off" /></label>
         <div class="music-host-room">
           <h3>OBS / Encoder Settings</h3>
           <p><strong>RTMP server:</strong> <code>${escapeHtml(getRtmpIngestServer())}</code></p>
@@ -3446,6 +3498,7 @@ function renderHlsDiagnostics() {
     ['hlsManifestSequence', diagnostics.hlsManifestSequence ?? state.liveStream?.hlsLastManifestSequence ?? 'none'],
     ['hlsManifestAgeMs', diagnostics.hlsManifestAgeMs],
     ['hlsResponseCode', diagnostics.hlsResponseCode || state.liveStream?.hlsResponseCode || 'none'],
+    ['secondsSinceStart', diagnostics.secondsSinceStart ?? state.liveStream?.hlsSecondsSinceStart ?? 'none'],
     ['hlsError', diagnostics.hlsError || state.liveStream?.hlsLastError || 'none'],
     ['hlsHasMediaSegments', diagnostics.hlsHasMediaSegments],
     ['streamStatus', diagnostics.streamStatus || state.liveStream?.status || 'unknown'],
@@ -3848,7 +3901,7 @@ function updateGoLiveFormState(form = app.querySelector('[data-go-live-form]')) 
     visibility: String(read('visibility', state.goLive.form.visibility) || 'public'),
     streamingProtocol: String(read('streamingProtocol', state.goLive.form.streamingProtocol) || 'hls'),
     streamingMethod: String(read('streamingMethod', state.goLive.form.streamingMethod) || 'obsRtmp'),
-    streamKey: String(read('streamKey', state.goLive.form.streamKey) || 'obsfix1'),
+    streamKey: String(read('streamKey', state.goLive.form.streamKey) || state.goLive.form.streamKey || ''),
     rightsAccepted: hasControl('rightsAccepted') ? read('rightsAccepted') === 'on' : state.goLive.form.rightsAccepted,
     archiveRequested: hasControl('archiveRequested') ? read('archiveRequested') === 'on' : state.goLive.form.archiveRequested
   }
@@ -3912,7 +3965,7 @@ function startHostHeartbeat(streamId) {
       audioPublished: isObs ? true : Boolean(state.goLive.localTrack),
       programHasAudio: isObs ? true : Boolean(state.goLive.localTrack),
       streamingMethod: state.goLive.form.streamingMethod || 'obsRtmp',
-      streamKey: state.goLive.form.streamKey || 'obsfix1',
+      streamKey: state.goLive.form.streamKey || '',
       connectionStatus: state.goLive.connectionStatus === 'Reconnecting...' ? 'reconnecting' : 'live'
     })
     heartbeatMusicLiveStream(streamId, payload).catch((error) => {
@@ -4022,6 +4075,8 @@ function startHostStreamSubscription(streamId) {
     streamId,
     (stream) => {
       state.liveStream = stream
+      const firestoreStreamKey = sanitizeHlsStreamKey(stream?.streamKey || '')
+      if (firestoreStreamKey) state.goLive.form.streamKey = firestoreStreamKey
       if (stream?.currentNowPlaying) updateLiveMediaSession(stream)
       rerender()
     },
@@ -4056,6 +4111,7 @@ async function ensureHostDraftStream() {
   if (state.goLive.streamId) return state.goLive.streamId
   if (state.goLive.draftStreamId) return state.goLive.draftStreamId
   updateGoLiveFormState()
+  ensureHostSessionStreamKey()
   state.goLive.connectionStatus = 'Preparing draft controls...'
   rerender()
   const response = await prepareMusicLiveStreamDraft(normalizeHlsLivePayload({
@@ -4124,6 +4180,7 @@ async function saveHostLiveMetadata(form) {
 
 async function saveHostDetails() {
   updateGoLiveFormState()
+  ensureHostSessionStreamKey()
   const payload = normalizeHlsLivePayload({
     streamId: activeHostStreamId(),
     ...state.goLive.form
@@ -4246,6 +4303,7 @@ async function setHostNowPlaying(itemId = '') {
 async function startHostBroadcast(form) {
   if (!state.currentUser) return
   updateGoLiveFormState(form)
+  ensureHostSessionStreamKey()
   let pendingStreamId = ''
   state.goLive.starting = true
   state.goLive.formError = ''
@@ -4270,20 +4328,34 @@ async function startHostBroadcast(form) {
       archiveRequested: false,
       audioOnly: true,
       streamingMethod: formState.streamingMethod || 'obsRtmp',
-      streamKey: formState.streamKey || 'obsfix1'
+      streamKey: formState.streamKey || ''
     })
     await refreshHostUnloadToken()
     const response = await startMusicLiveStream(payload)
     pendingStreamId = response.streamId || ''
     if (!pendingStreamId) throw new Error('The live stream service did not return a stream id.')
+    const previousKey = payload.streamKey || ''
+    const sessionKey = sanitizeHlsStreamKey(response.streamKey || '')
+    if (!isValidGeneratedStreamKey(sessionKey)) throw new Error('The live stream service did not return a valid session stream key.')
+    state.goLive.form.streamKey = sessionKey
+    const sessionPayload = normalizeHlsLivePayload({ ...payload, streamKey: sessionKey })
+    console.log('[Stream Key] ensured', {
+      streamId: pendingStreamId,
+      previousKey,
+      nextKey: sessionKey,
+      forceNew: true,
+      status: state.liveStream?.status || 'draft',
+      ingestMethod: sessionPayload.ingestMethod,
+      hlsUrl: sessionPayload.hlsPlaybackUrl
+    })
     state.goLive.streamId = pendingStreamId
     state.goLive.draftStreamId = pendingStreamId
-    const isObs = payload.ingestMethod === 'obsRtmp'
+    const isObs = sessionPayload.ingestMethod === 'obsRtmp'
     let ingestResult = { audioPublished: false, videoPublished: false }
     if (isObs) {
       state.goLive.localTrack = null
       state.goLive.browserIngestActive = false
-      state.goLive.connectionStatus = `Stream is live. Send OBS to ${payload.rtmpIngestServer} with key ${payload.streamKey}.`
+      state.goLive.connectionStatus = `Stream is live. Send OBS to ${sessionPayload.rtmpIngestServer} with key ${sessionKey}.`
       rerender()
     } else {
       state.goLive.connectionStatus = formState.inputSource === 'sequence' ? 'Preparing Sequence Software output...' : 'Preparing selected audio input...'
@@ -4310,7 +4382,7 @@ async function startHostBroadcast(form) {
       rerender()
       ingestResult = await startBrowserWebrtcIngest({
         streamId: pendingStreamId,
-        streamKey: response.streamKey || payload.streamKey,
+        streamKey: sessionKey,
         mediaStream,
         onStatus: (status = {}) => {
           if (status.connectionState === 'connected') state.goLive.connectionStatus = 'Browser stream connected to Melogic Edge.'
@@ -4321,11 +4393,29 @@ async function startHostBroadcast(form) {
         }
       })
       state.goLive.browserIngestActive = true
+      const whipConnectedAt = new Date().toISOString()
+      state.hlsDiagnostics = {
+        ...(state.hlsDiagnostics || {}),
+        ...(ingestResult.diagnostics || {}),
+        whipConnectedAt,
+        whipStreamKey: sessionKey,
+        hlsHealthStreamKey: sessionKey,
+        hlsUrl: sessionPayload.hlsUrl,
+        hlsPlaybackUrl: sessionPayload.hlsPlaybackUrl
+      }
+      refreshHlsHealth({
+        ...(state.liveStream || {}),
+        ...sessionPayload,
+        id: pendingStreamId,
+        streamId: pendingStreamId,
+        status: 'starting',
+        createdAt: whipConnectedAt
+      }).catch(() => {})
     }
     await markMusicLiveStreamOnAir(pendingStreamId, normalizeHlsLivePayload({
-      ...payload,
+      ...sessionPayload,
       streamId: pendingStreamId,
-      streamKey: response.streamKey || payload.streamKey,
+      streamKey: sessionKey,
       hostActive: true,
       hostConnected: true,
       connectionStatus: 'live',
@@ -4339,8 +4429,16 @@ async function startHostBroadcast(form) {
     startHostStreamSubscription(pendingStreamId)
     startLiveSequenceSubscription(pendingStreamId)
     state.goLive.connectionStatus = isObs
-      ? `Waiting for OBS ingest at ${payload.rtmpIngestServer} using key ${payload.streamKey}.`
+      ? `Waiting for OBS ingest at ${sessionPayload.rtmpIngestServer} using key ${sessionKey}.`
       : formState.inputSource === 'sequence' ? 'Sequence Software output live.' : 'Audio published. You are live.'
+    logMusicStreamKeyConsistency({
+      streamId: pendingStreamId,
+      writerStreamKey: sessionKey,
+      whipStreamKey: isObs ? '' : sessionKey,
+      hlsHealthStreamKey: sessionKey,
+      hlsUrl: sessionPayload.hlsUrl,
+      hlsPlaybackUrl: sessionPayload.hlsPlaybackUrl
+    })
   } catch (error) {
     console.warn('[music] startMusicLiveStream failed', {
       functionName: 'startMusicLiveStream',
@@ -4351,6 +4449,8 @@ async function startHostBroadcast(form) {
     if (pendingStreamId) {
       await endMusicLiveStream(pendingStreamId).catch(() => {})
       state.goLive.streamId = ''
+      state.goLive.draftStreamId = ''
+      state.goLive.form.streamKey = createRandomStreamKey()
     }
     if (state.goLive.browserIngestActive) await stopBrowserWebrtcIngest().catch(() => {})
     state.goLive.browserIngestActive = false
@@ -4399,6 +4499,7 @@ async function endHostBroadcast() {
     state.goLive.connectionStatus = 'Stream ended. Save as replay is coming soon.'
     state.goLive.streamId = ''
     state.goLive.draftStreamId = ''
+    state.goLive.form.streamKey = createRandomStreamKey()
     state.goLive.unloadToken = ''
   } catch (error) {
     state.goLive.formError = error?.message || 'Could not end stream.'
@@ -5010,6 +5111,42 @@ function bindMusicEvents() {
     state.goLive.muted = !state.goLive.muted
     if (state.goLive.previewStream) state.goLive.previewStream.getAudioTracks().forEach((track) => { track.enabled = !state.goLive.muted })
     rerender()
+  })
+  app.querySelector('[data-copy-host-stream-key]')?.addEventListener('click', async () => {
+    const streamKey = sanitizeHlsStreamKey(state.goLive.form.streamKey || '')
+    await navigator.clipboard?.writeText?.(streamKey).catch(() => {})
+    state.goLive.connectionStatus = streamKey ? 'Stream key copied.' : 'No stream key is available.'
+    rerender()
+  })
+  app.querySelector('[data-regenerate-host-stream-key]')?.addEventListener('click', async () => {
+    if (state.goLive.streamId || state.goLive.form.streamingMethod === 'browserWebrtc') return
+    updateGoLiveFormState()
+    const previousKey = sanitizeHlsStreamKey(state.goLive.form.streamKey || '')
+    const nextKey = ensureHostSessionStreamKey({ forceNew: true })
+    const hlsUrl = `${getHlsEdgeBaseUrl()}/${nextKey}.m3u8`
+    console.log('[Stream Key] ensured', {
+      streamId: state.goLive.draftStreamId || '',
+      previousKey,
+      nextKey,
+      forceNew: true,
+      status: state.liveStream?.status || 'draft',
+      ingestMethod: state.goLive.form.streamingMethod,
+      hlsUrl
+    })
+    state.goLive.connectionStatus = 'A new OBS stream key was generated for this draft.'
+    rerender()
+    if (state.goLive.draftStreamId) {
+      try {
+        const response = await prepareMusicLiveStreamDraft(normalizeHlsLivePayload({
+          ...state.goLive.form,
+          streamId: state.goLive.draftStreamId
+        }))
+        if (response.streamKey) state.goLive.form.streamKey = response.streamKey
+      } catch (error) {
+        state.goLive.formError = error?.message || 'The regenerated stream key could not be saved.'
+      }
+      rerender()
+    }
   })
   app.querySelector('[data-start-host-broadcast]')?.addEventListener('click', () => {
     startHostBroadcast(app.querySelector('[data-go-live-form]')).catch(() => {})

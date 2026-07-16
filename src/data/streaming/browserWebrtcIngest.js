@@ -27,12 +27,18 @@ function stripEndpointSecrets(value = '') {
 function connectionDiagnostics(peerConnection, mediaStream, extra = {}) {
   const audioTrack = mediaStream?.getAudioTracks?.()[0] || null
   const videoTrack = mediaStream?.getVideoTracks?.()[0] || null
+  const programTrackCount = mediaStream?.getTracks?.().length || 0
+  const audioTrackCount = mediaStream?.getAudioTracks?.().length || 0
+  const videoTrackCount = mediaStream?.getVideoTracks?.().length || 0
   return {
     peerConnectionState: peerConnection?.connectionState || 'closed',
     iceConnectionState: peerConnection?.iceConnectionState || 'closed',
     iceGatheringState: peerConnection?.iceGatheringState || 'complete',
     signalingState: peerConnection?.signalingState || 'closed',
-    mediaStreamTrackCount: mediaStream?.getTracks?.().length || 0,
+    programTrackCount,
+    mediaStreamTrackCount: programTrackCount,
+    audioTrackCount,
+    videoTrackCount,
     audioTrackReadyState: audioTrack?.readyState || 'none',
     videoTrackReadyState: videoTrack?.readyState || 'none',
     ...extra
@@ -112,7 +118,7 @@ export function buildBrowserWebrtcIngestUrl(streamKey = '') {
 }
 
 export function isBrowserWebrtcIngestConfigured() {
-  return Boolean(buildBrowserWebrtcIngestUrl('mystream'))
+  return Boolean(buildBrowserWebrtcIngestUrl('AbCdEfGhIjKlMnOpQrStUvWxY'))
 }
 
 export async function testBrowserWebrtcIngestReachability({ streamKey = '', timeoutMs = 8000 } = {}) {

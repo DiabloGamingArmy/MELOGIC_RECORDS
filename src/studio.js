@@ -45,6 +45,7 @@ import {
 import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './data/streaming/hlsEdgePlayer'
 import { buildBrowserWebrtcIngestUrl, isBrowserWebrtcIngestConfigured, startBrowserWebrtcIngest, stopBrowserWebrtcIngest, testBrowserWebrtcIngestReachability } from './data/streaming/browserWebrtcIngest'
 import { checkHlsManifest } from './data/streaming/hlsHealth'
+import { createRandomStreamKey, ensureSessionStreamKey, isValidGeneratedStreamKey } from './data/streaming/streamSessionKey'
 import {
   getNativeHostPresence,
   nativeHostSessionId,
@@ -322,7 +323,7 @@ const state = {
       coverArtSource: 'fallback',
       rightsAccepted: false,
       audioMode: 'music',
-      streamKey: 'mystream'
+      streamKey: createRandomStreamKey()
     },
     uploadingCover: false,
     savingInfo: false,
@@ -1332,6 +1333,9 @@ function renderStreamDetailsPanel() {
     live.stream?.status === 'live' ||
     ['liveIdleNoListeners', 'liveWarmingBuffer', 'liveBroadcasting'].includes(live.stream?.broadcastState || '')
   )
+  const streamKey = sanitizeHlsStreamKey(form.streamKey || '')
+  const streamKeyLocked = isLiveActive || live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+  const canRegenerateStreamKey = isBufferedProvider && !isLiveActive && live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
   const nativeLiveStatusCopy = isFirebaseSegmentProvider(live.providerId) && firebaseSegmentStreamingEnabled() && isLiveActive
     ? (live.nativePlaybackDemandCount > 0
         ? live.nativeRecorderRunning ? 'Live - broadcasting audio chunks.' : 'Live - warming buffer.'
@@ -1361,7 +1365,7 @@ function renderStreamDetailsPanel() {
             <label>Password<input name="password" type="password" autocomplete="new-password" value="${esc(form.password)}" placeholder="${form.accessMode === 'password' ? 'Required for new password streams' : 'Only used for password access'}" /></label>
           </div>
           <label>Tags<input name="tags" value="${esc(form.tags)}" placeholder="radio, release party, talk" /></label>
-          ${isBufferedProvider ? `<label>Stream Key<div class="studio-live-stream-key-row"><input name="streamKey" maxlength="160" required value="${esc(form.streamKey ?? 'mystream')}" pattern="[A-Za-z0-9_-]+" autocomplete="off" ${live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'readonly aria-readonly="true"' : ''} /><button type="button" class="studio-live-button" data-copy-stream-key="${esc(form.streamKey ?? 'mystream')}">Copy</button></div><small>${live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'Generated automatically for browser WHIP publishing.' : 'Use this exact key in OBS or your encoder.'}</small></label>` : ''}
+          ${isBufferedProvider ? `<label>Stream Key<div class="studio-live-stream-key-row"><input name="streamKey" maxlength="25" required value="${esc(streamKey)}" pattern="[A-Za-z0-9]{25}" autocomplete="off" readonly aria-readonly="true" /><button type="button" class="studio-live-button" data-copy-stream-key="${esc(streamKey)}">Copy</button>${canRegenerateStreamKey ? '<button type="button" class="studio-live-button" data-regenerate-stream-key>Regenerate Stream Key</button>' : ''}</div><small>${streamKeyLocked ? 'This 25-character session key is locked while browser publishing or a live session is active.' : 'Use this exact key in OBS. You may regenerate it before starting.'}</small></label>` : ''}
           <div class="studio-live-cover-tools">
             <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
             <div class="studio-live-action-bar">
@@ -1397,7 +1401,7 @@ function renderAdvancedStreamingSettings() {
   const options = listStreamingProviderOptions()
   const current = options.find((option) => option.id === live.ingestMethod) || options[0]
   const diagnostics = live.providerDiagnostics || {}
-  const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || 'mystream')
+  const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || '')
   const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
   const ingestServer = String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).replace(/\/+$/, '')
   const isObs = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
@@ -1406,7 +1410,12 @@ function renderAdvancedStreamingSettings() {
   const browserWhipUrl = buildBrowserWebrtcIngestUrl(streamKey)
   const showFullWhipUrl = Boolean(import.meta.env?.DEV || new URLSearchParams(window.location.search).get('debugStreaming') === '1')
   let browserWhipHost = 'not configured'
-  try { browserWhipHost = new URL(browserWhipUrl).host || browserWhipHost } catch {}
+  let browserWhipStreamParam = ''
+  try {
+    const parsedWhipUrl = new URL(browserWhipUrl)
+    browserWhipHost = parsedWhipUrl.host || browserWhipHost
+    browserWhipStreamParam = parsedWhipUrl.searchParams.get('stream') || ''
+  } catch {}
   return `
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
       <summary>Advanced Streaming Settings</summary>
@@ -1455,10 +1464,13 @@ function renderAdvancedStreamingSettings() {
             <li>Ingest protocol: ${esc(ingestProtocolForMethod(live.ingestMethod))}</li>
             <li>Stream key: ${esc(diagnostics.streamKey || streamKey)}</li>
             <li>Playback URL: ${esc(diagnostics.hlsPlaybackUrl || hlsPlaybackUrl)}</li>
+            <li>HLS URL: ${esc(diagnostics.hlsUrl || hlsPlaybackUrl || 'missing')}</li>
+            <li>WHIP URL stream param: ${esc(diagnostics.whipStreamKey || browserWhipStreamParam || 'none')}</li>
             <li>HLS health: ${esc(diagnostics.hlsHealth || 'not checked')}</li>
             <li>Last manifest OK: ${esc(diagnostics.hlsLastOkAt || 'none')}</li>
             <li>Manifest sequence: ${esc(diagnostics.hlsManifestSequence ?? diagnostics.hlsLastManifestSequence ?? 'none')}</li>
             <li>Manifest response: ${esc(diagnostics.hlsResponseCode || 'none')}</li>
+            <li>Seconds since start: ${esc(diagnostics.secondsSinceStart ?? 'none')}</li>
             <li>Stream document status: ${esc(diagnostics.streamDocStatus || live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
             <li>Ingest connection: ${esc(diagnostics.ingestConnectionState || (isObs ? 'external encoder' : live.browserIngestActive ? 'connected' : 'idle'))}</li>
             <li>Ingest endpoint configured: ${browserIngestConfigured ? 'yes' : 'no'}</li>
@@ -1471,7 +1483,9 @@ function renderAdvancedStreamingSettings() {
             <li>Remote answer set: ${diagnostics.remoteAnswerSet ? 'yes' : 'no'}</li>
             <li>Offer SDP length: ${Number(diagnostics.offerSdpLength || 0)}</li>
             <li>Answer SDP length: ${Number(diagnostics.answerSdpLength || 0)}</li>
-            <li>Media tracks: ${diagnostics.mediaStreamTrackCount ?? 0}</li>
+            <li>Program track count: ${diagnostics.programTrackCount ?? diagnostics.mediaStreamTrackCount ?? 0}</li>
+            <li>Audio track count: ${diagnostics.audioTrackCount ?? 0}</li>
+            <li>Video track count: ${diagnostics.videoTrackCount ?? 0}</li>
             <li>Audio track: ${esc(diagnostics.audioTrackReadyState || 'none')}</li>
             <li>Video track: ${esc(diagnostics.videoTrackReadyState || 'none')}</li>
             <li>Last ingest error: ${esc(diagnostics.lastIngestError || 'none')}</li>
@@ -2108,17 +2122,39 @@ function stopStudioHlsHealthPolling() {
 async function refreshStudioHlsHealth() {
   const live = liveState()
   if (!live.streamId || live.streamingProtocol !== 'hls') return null
-  const streamKey = ensureLiveStreamKey()
+  const streamKey = currentLiveStreamKey()
+  if (!streamKey) return null
   const hlsUrl = buildHlsPlaybackUrl(streamKey)
   const health = await checkHlsManifest({
     streamId: live.streamId,
     hlsUrl,
     previous: { ...(live.stream || {}), ...(live.providerDiagnostics || {}) },
-    startedAt: live.stream?.startedAt || live.stream?.updatedAt || new Date().toISOString()
+    startedAt: live.stream?.startedAt || live.stream?.createdAt || '',
+    connectedAt: live.providerDiagnostics?.whipConnectedAt || live.providerDiagnostics?.hlsStartedAt || ''
   })
-  live.providerDiagnostics = { ...(live.providerDiagnostics || {}), ...health, hlsUrl, hlsPlaybackUrl: hlsUrl }
+  live.providerDiagnostics = {
+    ...(live.providerDiagnostics || {}),
+    ...health,
+    hlsHealthStreamKey: streamKey,
+    hlsUrl,
+    hlsPlaybackUrl: hlsUrl
+  }
+  logStreamKeyConsistency({
+    streamId: live.streamId,
+    writerStreamKey: live.stream?.streamKey || live.streamForm.streamKey || '',
+    whipStreamKey: live.providerDiagnostics?.whipStreamKey || '',
+    hlsHealthStreamKey: streamKey,
+    hlsUrl,
+    hlsPlaybackUrl: hlsUrl
+  })
+  const browserConnectedWithoutSegments = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+    && ['connected', 'completed'].includes(live.providerDiagnostics?.ingestConnectionState || live.providerDiagnostics?.connectionState || '')
+    && Number(health.secondsSinceStart || 0) > 30
+    && !health.hlsLastOkAt
   live.outputStatus = health.hlsHealth === 'healthy'
     ? 'HLS output is healthy.'
+    : browserConnectedWithoutSegments
+      ? 'Browser encoder connected, but no HLS segments are being produced yet.'
     : health.hlsHealth === 'warming'
       ? 'Waiting for HLS media segments...'
       : health.hlsHealth === 'stale'
@@ -2130,7 +2166,12 @@ async function refreshStudioHlsHealth() {
 
 function startStudioHlsHealthPolling() {
   const live = liveState()
-  const hlsUrl = buildHlsPlaybackUrl(ensureLiveStreamKey())
+  const streamKey = currentLiveStreamKey()
+  const hlsUrl = buildHlsPlaybackUrl(streamKey)
+  if (!streamKey || !hlsUrl) {
+    stopStudioHlsHealthPolling()
+    return
+  }
   if (live.hlsHealthUrl === hlsUrl && live.hlsHealthTimer) return
   stopStudioHlsHealthPolling()
   live.hlsHealthUrl = hlsUrl
@@ -2693,6 +2734,7 @@ function renderProgramMixerPanel() {
   const audioSources = mixer.sources.filter((source) => ['browser-microphone', 'sequence-audio', 'guest-audio'].includes(source.type))
   const hlsHealth = live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'not checked'
   const encoderState = live.providerDiagnostics?.connectionState || live.providerDiagnostics?.ingestConnectionState || 'new'
+  const hlsUrl = buildHlsPlaybackUrl(currentLiveStreamKey()) || live.providerDiagnostics?.hlsUrl || live.stream?.hlsUrl || live.stream?.hlsPlaybackUrl || ''
   const previewDescription = previewScene
     ? previewSourceIds.size ? 'Select a source on the canvas to move, scale, or rotate it.' : 'This scene has no sources yet. Add one from the Sources card below.'
     : 'No preview scene selected. Create a scene, add sources, then select it for Preview.'
@@ -2718,6 +2760,7 @@ function renderProgramMixerPanel() {
             <span>HLS: ${esc(hlsHealth)}</span>
           </div>
           <small>${esc(live.streamId ? `Program transport active. Last HLS manifest: ${live.providerDiagnostics?.hlsLastOkAt || 'waiting'}.` : 'Start Stream after preparing at least one program audio or video source.')}</small>
+          ${hlsUrl ? `<div class="studio-program-output-debug"><a class="studio-live-button" href="${esc(hlsUrl)}" target="_blank" rel="noreferrer">Open HLS URL</a><code title="${esc(hlsUrl)}">${esc(hlsUrl)}</code></div>` : ''}
         </aside>
       </header>
       <div class="studio-program-workspace">
@@ -3201,7 +3244,7 @@ function hydrateLiveStudioFromStream(stream = null) {
     coverArtPath: stream.coverArtPath || '',
     coverArtSource: stream.coverArtSource || (stream.coverArtURL ? 'url' : 'fallback'),
     audioMode: stream.audioMode === 'voice' ? 'voice' : 'music',
-    streamKey: sanitizeHlsStreamKey(stream.streamKey || live.streamForm.streamKey || 'mystream')
+    streamKey: sanitizeHlsStreamKey(stream.streamKey || live.streamForm.streamKey || '')
   }
   if (stream.selectedSequenceId) {
     const sequence = live.sequences.find((entry) => entry.sequenceId === stream.selectedSequenceId)
@@ -3224,7 +3267,7 @@ function hasReusableHlsDraftTransport(stream = null) {
   return ['hlsEdge', 'bufferedBroadcast'].includes(rawProvider)
     && rawTransportProvider === 'hls-edge'
     && rawPlaybackMode === 'hls'
-    && Boolean(streamKey)
+    && isValidGeneratedStreamKey(streamKey)
     && Boolean(hlsPlaybackUrl)
 }
 
@@ -4745,8 +4788,11 @@ function updateLiveStreamFormFromElement(formEl) {
   liveState().streamingProtocol = String(data.get('streamingProtocol') || liveState().streamingProtocol || 'hls') === 'nativeStreaming' ? 'nativeStreaming' : 'hls'
   liveState().providerId = liveState().streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
   liveState().ingestMethod = normalizeIngestMethod(data.get('ingestMethod') || liveState().ingestMethod)
-  const rawStreamKey = data.has('streamKey') ? data.get('streamKey') : (form.streamKey ?? 'mystream')
-  form.streamKey = sanitizeHlsStreamKey(rawStreamKey) || (liveState().streamingProtocol === 'hls' ? generateLiveStreamKey() : '')
+  const rawStreamKey = data.has('streamKey') ? data.get('streamKey') : form.streamKey
+  const sanitizedStreamKey = sanitizeHlsStreamKey(rawStreamKey)
+  form.streamKey = liveState().streamingProtocol === 'hls'
+    ? isValidGeneratedStreamKey(sanitizedStreamKey) ? sanitizedStreamKey : ensureLiveStreamKey()
+    : ''
   const nextCoverURL = String(data.get('coverArtURL') || '').trim()
   if (nextCoverURL !== form.coverArtURL && form.coverArtSource === 'upload') {
     const oldPath = form.coverArtPath
@@ -4775,17 +4821,37 @@ function updateLiveListenerPreviewDom() {
   }
 }
 
-function generateLiveStreamKey() {
-  const timestamp = Date.now().toString(36).slice(-5)
-  const random = Math.random().toString(36).slice(2, 6)
-  return `stream-${timestamp}${random}`
+function ensureLiveStreamKey({ forceNew = false } = {}) {
+  const live = liveState()
+  const previousKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
+  if (live.streamId && previousKey) return previousKey
+  live.streamForm.streamKey = ensureSessionStreamKey(previousKey, { forceNew })
+  return live.streamForm.streamKey
 }
 
-function ensureLiveStreamKey() {
+function currentLiveStreamKey() {
   const live = liveState()
-  const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey)
-  live.streamForm.streamKey = streamKey || generateLiveStreamKey()
-  return live.streamForm.streamKey
+  return sanitizeHlsStreamKey(live.streamForm.streamKey || live.stream?.streamKey || '')
+}
+
+function logStreamKeyConsistency({
+  streamId = '',
+  writerStreamKey = '',
+  whipStreamKey = '',
+  hlsHealthStreamKey = '',
+  hlsUrl = '',
+  hlsPlaybackUrl = ''
+} = {}) {
+  const live = liveState()
+  console.log('[Stream Key Consistency]', {
+    streamId: streamId || live.streamId || live.draftStreamId || '',
+    firestoreStreamKey: live.stream?.streamKey || '',
+    writerStreamKey,
+    whipStreamKey,
+    hlsHealthStreamKey,
+    hlsUrl,
+    hlsPlaybackUrl
+  })
 }
 
 function liveStreamPayload() {
@@ -4913,7 +4979,7 @@ async function startLiveStudioStream() {
   let browserIngestStarted = false
   try {
     if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
-    const streamKey = live.streamingProtocol === 'hls' ? ensureLiveStreamKey() : ''
+    let streamKey = live.streamingProtocol === 'hls' ? ensureLiveStreamKey() : ''
     if (live.streamingProtocol === 'hls' && live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc && !isBrowserWebrtcIngestConfigured()) {
       throw new Error('Browser streaming needs the server WebRTC ingest URL configured.')
     }
@@ -4930,6 +4996,22 @@ async function startLiveStudioStream() {
     })
     pendingStreamId = response.streamId || ''
     if (!pendingStreamId) throw new Error('The live stream service did not return a stream id.')
+    if (live.streamingProtocol === 'hls') {
+      const previousKey = streamKey
+      streamKey = sanitizeHlsStreamKey(response.streamKey || '')
+      if (!isValidGeneratedStreamKey(streamKey)) throw new Error('The live stream service did not return a valid session stream key.')
+      live.streamForm.streamKey = streamKey
+      console.log('[Stream Key] ensured', {
+        streamId: pendingStreamId,
+        previousKey,
+        nextKey: streamKey,
+        forceNew: true,
+        status: live.stream?.status || 'draft',
+        ingestMethod: live.ingestMethod,
+        hlsUrl: buildHlsPlaybackUrl(streamKey)
+      })
+    }
+    live.streamId = pendingStreamId
     live.nativeHostSessionId = live.nativeHostSessionId || nativeHostSessionId(pendingStreamId)
     if (isBufferedBroadcastProvider(live.providerId)) {
       const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
@@ -4944,6 +5026,10 @@ async function startLiveStudioStream() {
         ingestProtocol: ingestProtocolForMethod(live.ingestMethod),
         streamKey,
         hlsPlaybackUrl,
+        hlsUrl: hlsPlaybackUrl,
+        whipStreamKey: isBrowserIngest ? streamKey : '',
+        hlsHealthStreamKey: streamKey,
+        whipUrl: isBrowserIngest ? buildBrowserWebrtcIngestUrl(streamKey) : '',
         ingestEndpointConfigured: !isBrowserIngest || isBrowserWebrtcIngestConfigured(),
         ingestEndpointURL: isBrowserIngest ? '' : 'external encoder',
         streamDocStatus: 'starting',
@@ -4987,10 +5073,15 @@ async function startLiveStudioStream() {
           ...(live.providerDiagnostics || {}),
           ...(browserIngestResult.diagnostics || {}),
           ingestEndpointURL: browserIngestResult.ingestEndpointURL || live.providerDiagnostics?.ingestEndpointURL || '',
-          ingestConnectionState: browserIngestResult.connectionState || 'connected'
+          ingestConnectionState: browserIngestResult.connectionState || 'connected',
+          whipConnectedAt: new Date().toISOString(),
+          whipStreamKey: streamKey,
+          hlsHealthStreamKey: streamKey,
+          hlsUrl: hlsPlaybackUrl,
+          hlsPlaybackUrl
         }
+        startStudioHlsHealthPolling()
       }
-      live.streamId = pendingStreamId
       await markMusicLiveStreamOnAir(pendingStreamId, {
         ...liveStreamPayload(),
         ...liveProgramOutputState(),
@@ -5054,6 +5145,14 @@ async function startLiveStudioStream() {
         noLiveKitAttempted: true
       }
       if (live.streamingProtocol === 'hls') startStudioHlsHealthPolling()
+      logStreamKeyConsistency({
+        streamId: pendingStreamId,
+        writerStreamKey: streamKey,
+        whipStreamKey: isBrowserIngest ? streamKey : '',
+        hlsHealthStreamKey: streamKey,
+        hlsUrl: hlsPlaybackUrl,
+        hlsPlaybackUrl
+      })
       live.outputStatus = isBrowserIngest
         ? 'On air. Studio Program is publishing to Melogic Edge; viewers receive buffered HLS.'
         : 'On air. Waiting for the OBS / encoder feed at Melogic Edge.'
@@ -5285,6 +5384,7 @@ function clearEndedLiveHostState(streamId = '') {
   live.programVideoTrack = null
   live.audioPublishedToProvider = false
   live.videoPublishedToProvider = false
+  live.streamForm.streamKey = createRandomStreamKey()
 }
 
 function subscribeLiveStudioStream(streamId = '') {
@@ -5302,7 +5402,8 @@ function subscribeLiveStudioStream(streamId = '') {
       live.streamForm.coverArtURL = stream.coverArtURL || ''
       live.streamForm.coverArtPath = stream.coverArtPath || ''
       live.streamForm.coverArtSource = stream.coverArtSource || (stream.coverArtURL ? 'url' : 'fallback')
-      live.streamForm.streamKey = sanitizeHlsStreamKey(stream.streamKey || live.streamForm.streamKey || 'mystream')
+      const firestoreStreamKey = sanitizeHlsStreamKey(stream.streamKey || '')
+      if (firestoreStreamKey) live.streamForm.streamKey = firestoreStreamKey
       live.chatEnabled = stream.chatEnabled !== false
       live.providerDiagnostics = {
         ...(live.providerDiagnostics || {}),
@@ -5311,8 +5412,22 @@ function subscribeLiveStudioStream(streamId = '') {
         hlsLastCheckedAt: stream.hlsLastCheckedAt || live.providerDiagnostics?.hlsLastCheckedAt || '',
         hlsLastManifestSequence: stream.hlsLastManifestSequence ?? live.providerDiagnostics?.hlsLastManifestSequence ?? null,
         hlsLastError: stream.hlsLastError || '',
-        hlsResponseCode: stream.hlsResponseCode || 0
+        hlsResponseCode: stream.hlsResponseCode || 0,
+        hlsHasMediaSegments: stream.hlsHasMediaSegments === true,
+        secondsSinceStart: stream.hlsSecondsSinceStart ?? live.providerDiagnostics?.secondsSinceStart ?? 0,
+        hlsHealthStreamKey: firestoreStreamKey || live.providerDiagnostics?.hlsHealthStreamKey || '',
+        hlsUrl: buildHlsPlaybackUrl(firestoreStreamKey) || stream.hlsUrl || stream.hlsPlaybackUrl || live.providerDiagnostics?.hlsUrl || '',
+        hlsPlaybackUrl: buildHlsPlaybackUrl(firestoreStreamKey) || stream.hlsPlaybackUrl || live.providerDiagnostics?.hlsPlaybackUrl || ''
       }
+      const firestoreHlsUrl = buildHlsPlaybackUrl(firestoreStreamKey)
+      logStreamKeyConsistency({
+        streamId,
+        writerStreamKey: firestoreStreamKey,
+        whipStreamKey: live.providerDiagnostics?.whipStreamKey || (stream.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? firestoreStreamKey : ''),
+        hlsHealthStreamKey: firestoreStreamKey,
+        hlsUrl: firestoreHlsUrl || stream.hlsUrl || stream.hlsPlaybackUrl || '',
+        hlsPlaybackUrl: firestoreHlsUrl || stream.hlsPlaybackUrl || ''
+      })
       if (stream.status === 'live' && stream.streamingProtocol === 'hls') startStudioHlsHealthPolling()
     }
     renderShell()
@@ -5534,6 +5649,31 @@ function bindLiveStudioControls() {
     const streamKey = e.currentTarget.dataset.copyStreamKey || live.streamForm.streamKey || ''
     await navigator.clipboard?.writeText?.(streamKey).catch(() => {})
     live.outputStatus = streamKey ? 'Stream key copied.' : 'No stream key is available.'
+    renderShell()
+  })
+  app.querySelector('[data-regenerate-stream-key]')?.addEventListener('click', () => {
+    if (live.streamId || live.ingestMethod !== STREAM_INGEST_METHODS.obsRtmp) return
+    const previousKey = sanitizeHlsStreamKey(live.streamForm.streamKey || '')
+    const nextKey = ensureLiveStreamKey({ forceNew: true })
+    const hlsUrl = buildHlsPlaybackUrl(nextKey)
+    console.log('[Stream Key] ensured', {
+      streamId: live.draftStreamId || '',
+      previousKey,
+      nextKey,
+      forceNew: true,
+      status: live.stream?.status || 'draft',
+      ingestMethod: live.ingestMethod,
+      hlsUrl
+    })
+    live.providerDiagnostics = {
+      ...(live.providerDiagnostics || {}),
+      streamKey: nextKey,
+      hlsHealthStreamKey: nextKey,
+      hlsUrl,
+      hlsPlaybackUrl: hlsUrl
+    }
+    live.outputStatus = 'A new OBS stream key was generated for this draft.'
+    scheduleLiveStudioDraftSave()
     renderShell()
   })
   app.querySelector('[data-live-device-select]')?.addEventListener('change', (e) => {

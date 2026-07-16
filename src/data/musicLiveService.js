@@ -7,6 +7,7 @@ import { STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
 import { selectPublicPlaybackPlayer } from './streaming/publicPlaybackService'
 import { buildHlsPlaybackUrl } from './streaming/hlsEdgePlayer'
 import { isRecentHlsHealth } from './streaming/hlsHealth'
+import { isValidGeneratedStreamKey } from './streaming/streamSessionKey'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
@@ -23,20 +24,19 @@ export const HLS_EDGE_ARCHIVE_NOTE = 'HLS Edge streams publish through the Melog
 export function sanitizeMusicLiveStreamKey(value = '') {
   return String(value || '')
     .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    || `melogic-${Date.now()}`
+    .replace(/[^A-Za-z0-9_-]/g, '')
 }
 
 export function buildMusicLiveHlsUrl(streamKey = '') {
   const base = String(import.meta.env?.VITE_STREAM_EDGE_BASE_URL || DEFAULT_HLS_EDGE_BASE_URL).replace(/\/+$/, '')
-  return `${base}/${sanitizeMusicLiveStreamKey(streamKey)}.m3u8`
+  const cleanKey = sanitizeMusicLiveStreamKey(streamKey)
+  return cleanKey ? `${base}/${cleanKey}.m3u8` : ''
 }
 
 export function buildMusicLiveWhipUrl(streamKey = '') {
   const template = String(import.meta.env?.VITE_BROWSER_WEBRTC_INGEST_URL || DEFAULT_BROWSER_WHIP_INGEST_URL)
   const cleanKey = sanitizeMusicLiveStreamKey(streamKey)
+  if (!cleanKey) return ''
   const expanded = template.includes('{streamKey}') ? template.replaceAll('{streamKey}', encodeURIComponent(cleanKey)) : template
   try {
     const url = new URL(expanded)
@@ -53,7 +53,7 @@ export function normalizeMusicLiveTransportPayload(payload = {}) {
   const streamingProtocol = String(payload.streamingProtocol || HLS_STREAMING_PROTOCOL)
   const rawMethod = String(payload.streamingMethod || payload.ingestMethod || payload.ingestMode || 'obsRtmp')
   const ingestMethod = /obs|rtmp|encoder/i.test(rawMethod) ? 'obsRtmp' : 'browserWebrtc'
-  const streamKey = sanitizeMusicLiveStreamKey(payload.streamKey || payload.hlsStreamKey || payload.rtmpStreamKey || 'mystream')
+  const streamKey = sanitizeMusicLiveStreamKey(payload.streamKey || payload.hlsStreamKey || payload.rtmpStreamKey || '')
   if (streamingProtocol === NATIVE_STREAMING_PROTOCOL) {
     return {
       ...payload,
@@ -117,8 +117,8 @@ function liveWriterPayload(payload = {}) {
   if (normalized.provider === HLS_EDGE_PROVIDER) {
     normalized.transportProvider = HLS_EDGE_TRANSPORT
     normalized.playbackMode = HLS_PLAYBACK_MODE
-    if (!normalized.streamKey) throw new Error('Missing HLS stream key before save.')
-    normalized.hlsPlaybackUrl = normalized.hlsPlaybackUrl || buildMusicLiveHlsUrl(normalized.streamKey)
+    if (!isValidGeneratedStreamKey(normalized.streamKey)) throw new Error('A valid 25-character stream key is required before save.')
+    normalized.hlsPlaybackUrl = buildMusicLiveHlsUrl(normalized.streamKey)
     normalized.hlsUrl = normalized.hlsPlaybackUrl
   }
   console.log('[Music Live Writer] normalized transport payload', {
@@ -198,8 +198,9 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     || (raw.ingestProtocol === 'rtmp' ? 'obsRtmp' : raw.ingestProtocol === 'webrtc' ? 'browserWebrtc' : '')
     || 'obsRtmp'
   const normalizedStreamKey = provider === HLS_EDGE_PROVIDER && rawStreamKey ? sanitizeMusicLiveStreamKey(rawStreamKey) : rawStreamKey
+  const streamKeyHlsUrl = provider === HLS_EDGE_PROVIDER ? buildHlsPlaybackUrl(normalizedStreamKey) : ''
   const normalizedHlsPlaybackUrl = provider === HLS_EDGE_PROVIDER
-    ? rawHlsPlaybackUrl || buildHlsPlaybackUrl(normalizedStreamKey)
+    ? streamKeyHlsUrl || rawHlsPlaybackUrl
     : rawHlsPlaybackUrl
   const normalizationApplied = provider === HLS_EDGE_PROVIDER && (
     rawProvider !== HLS_EDGE_PROVIDER
@@ -276,6 +277,8 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     llhlsUrl: String(raw.llhlsUrl || ''),
     browserWhipIngestUrl: String(raw.browserWhipIngestUrl || (hlsIngestMethod === 'browserWebrtc' ? buildMusicLiveWhipUrl(normalizedStreamKey) : '')),
     hlsHealth: String(raw.hlsHealth || ''),
+    hlsStartedAt: toIsoDate(raw.hlsStartedAt),
+    hlsSecondsSinceStart: toNumber(raw.hlsSecondsSinceStart),
     hlsLastOkAt: toIsoDate(raw.hlsLastOkAt),
     hlsLastCheckedAt: toIsoDate(raw.hlsLastCheckedAt),
     hlsLastManifestSequence: raw.hlsLastManifestSequence == null || raw.hlsLastManifestSequence === ''

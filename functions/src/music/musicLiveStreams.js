@@ -33,6 +33,7 @@ const BROWSER_WHIP_INGEST_BASE_URL = 'https://ingest.melogicrecords.studio/rtc/v
 const HLS_WARMUP_WINDOW_MS = 30 * 1000
 const HLS_RECENT_OK_WINDOW_MS = 90 * 1000
 const HLS_HEALTH_TIMEOUT_MS = 8000
+const STREAM_KEY_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
 function db() {
   return admin.firestore()
@@ -52,9 +53,21 @@ function cleanId(value, max = 160) {
 
 function sanitizeStreamKey(value = '') {
   return cleanString(value, 160)
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[^A-Za-z0-9_-]/g, '')
+}
+
+function createRandomStreamKey(length = 25) {
+  const bytes = crypto.randomBytes(length)
+  return Array.from(bytes, (byte) => STREAM_KEY_ALPHABET[byte % STREAM_KEY_ALPHABET.length]).join('')
+}
+
+function isValidGeneratedStreamKey(value) {
+  return typeof value === 'string' && /^[A-Za-z0-9]{25}$/.test(value)
+}
+
+function ensureSessionStreamKey(existingKey, { forceNew = false } = {}) {
+  if (!forceNew && isValidGeneratedStreamKey(existingKey)) return existingKey
+  return createRandomStreamKey(25)
 }
 
 function buildHlsPlaybackUrl(streamKey = '') {
@@ -106,11 +119,13 @@ function parseHlsManifest(manifest = '') {
 async function checkHlsStreamHealth(streamId = '', stream = {}) {
   const checkedAtMs = Date.now()
   const previousLastOkMs = timestampMillis(stream.hlsLastOkAt)
-  const startedAtMs = timestampMillis(stream.startedAt || stream.updatedAt || stream.createdAt) || checkedAtMs
+  const startedAtMs = timestampMillis(stream.hlsStartedAt || stream.startedAt || stream.createdAt) || checkedAtMs
   const configuredUrl = sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || stream.hlsUrl || '')
-  const hlsUrl = configuredUrl || buildHlsPlaybackUrl(stream.streamKey || '')
+  const streamKeyUrl = buildHlsPlaybackUrl(stream.streamKey || '')
+  const hlsUrl = streamKeyUrl || configuredUrl
   let responseCode = 0
   let sequence = null
+  let hasMediaSegment = false
   let error = ''
   let healthy = false
   const controller = new AbortController()
@@ -129,6 +144,7 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
     const manifest = await response.text()
     const parsed = parseHlsManifest(manifest)
     sequence = parsed.sequence
+    hasMediaSegment = parsed.hasMediaSegment === true
     healthy = response.ok && parsed.valid
     if (!response.ok) error = `HTTP ${response.status}`
     else if (!parsed.valid) error = 'Playlist has no media segments yet.'
@@ -147,16 +163,18 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
   if (manifestHealthy && !sequenceFresh) error = 'HLS media sequence has not advanced within the freshness window.'
   const lastOkMs = healthy && sequenceChanged ? checkedAtMs : previousLastOkMs
   const withinWarmup = checkedAtMs - startedAtMs <= HLS_WARMUP_WINDOW_MS
+  const secondsSinceStart = Math.max(0, Math.floor((checkedAtMs - startedAtMs) / 1000))
   const recentlyHealthy = Boolean(lastOkMs && checkedAtMs - lastOkMs <= HLS_RECENT_OK_WINDOW_MS)
-  let health = healthy ? 'healthy' : withinWarmup && !lastOkMs ? 'warming' : recentlyHealthy ? 'stale' : 'offline'
-  if (health === 'offline' && !previousLastOkMs && !['stale', 'offline'].includes(stream.hlsHealth)) health = 'stale'
+  const health = healthy ? 'healthy' : withinWarmup && !lastOkMs ? 'warming' : recentlyHealthy ? 'stale' : 'offline'
   const result = {
     hlsHealth: health,
     hlsLastCheckedAt: admin.firestore.Timestamp.fromMillis(checkedAtMs),
     hlsLastManifestSequence: sequence,
     hlsLastError: healthy ? '' : cleanString(error, 300),
     hlsResponseCode: responseCode,
-    hlsHasMediaSegments: parsed.hasMediaSegment === true,
+    hlsHasMediaSegments: hasMediaSegment,
+    hlsStartedAt: admin.firestore.Timestamp.fromMillis(startedAtMs),
+    secondsSinceStart,
     hlsLastOkAt: lastOkMs ? admin.firestore.Timestamp.fromMillis(lastOkMs) : null,
     healthy
   }
@@ -167,6 +185,7 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
     healthy,
     sequence,
     lastOkAt: lastOkMs ? new Date(lastOkMs).toISOString() : '',
+    secondsSinceStart,
     health,
     error: result.hlsLastError
   })
@@ -181,7 +200,9 @@ async function refreshHlsHealth(docSnap, stream = docSnap.data() || {}) {
     hlsLastManifestSequence: health.hlsLastManifestSequence,
     hlsLastError: health.hlsLastError,
     hlsResponseCode: health.hlsResponseCode,
-    hlsHasMediaSegments: health.hlsHasMediaSegments === true
+    hlsHasMediaSegments: health.hlsHasMediaSegments === true,
+    hlsStartedAt: health.hlsStartedAt,
+    hlsSecondsSinceStart: health.secondsSinceStart
   }
   if (health.hlsLastOkAt) update.hlsLastOkAt = health.hlsLastOkAt
   await docSnap.ref.set(update, { merge: true })
@@ -206,7 +227,7 @@ function sanitizeHlsPlaybackUrl(value = '') {
 }
 
 function bufferedBroadcastFields(data = {}, existing = {}) {
-  const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
+  const streamKey = sanitizeStreamKey(data.streamKey || existing.streamKey || '')
   const impliedLegacyMethod = (data.provider || existing.provider) === 'bufferedBroadcast' ? 'obsRtmp' : 'browserWebrtc'
   const ingestMethod = normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode || impliedLegacyMethod)
   return {
@@ -388,7 +409,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
   const ingestMethod = nativeProtocol
     ? 'browserMediaRecorder'
     : normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode || 'browserWebrtc')
-  const streamKey = nativeProtocol ? '' : sanitizeStreamKey(data.streamKey || existing.streamKey || 'mystream') || 'mystream'
+  const streamKey = nativeProtocol ? '' : sanitizeStreamKey(data.streamKey || existing.streamKey || '')
   const hlsPlaybackUrl = nativeProtocol ? '' : buildHlsPlaybackUrl(streamKey)
   const audioEnabled = data.audioEnabled === false ? false : data.audioEnabled === true ? true : existing.audioEnabled !== false
   const videoEnabled = data.videoEnabled === true ? true : data.videoEnabled === false ? false : existing.videoEnabled === true
@@ -520,9 +541,9 @@ function markLiveValidationDetails({ streamId = '', provider = 'hlsEdge', stream
   }
   if (validationBranch === 'nativeWeb' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
   if (validationBranch === 'hlsEdge') {
-    const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || 'mystream') || 'mystream'
+    const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || '')
     const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
-    if (!streamKey) missingRequiredFields.push('streamKey')
+    if (!isValidGeneratedStreamKey(streamKey)) missingRequiredFields.push('validGeneratedStreamKey')
     if (!hlsPlaybackUrl) missingRequiredFields.push('hlsPlaybackUrl')
   }
   return {
@@ -669,6 +690,15 @@ function liveWriterLog(streamId = '', payload = {}) {
     hlsUrl: payload.hlsUrl || '',
     nativeStreamingEnabled: payload.nativeStreaming?.enabled === true,
     streamId
+  })
+  console.log('[Stream Key Consistency]', {
+    streamId,
+    firestoreStreamKey: payload.firestoreStreamKey || payload.streamKey || '',
+    writerStreamKey: payload.streamKey || '',
+    whipStreamKey: payload.ingestMethod === 'browserWebrtc' ? payload.streamKey || '' : '',
+    hlsHealthStreamKey: payload.streamKey || '',
+    hlsUrl: payload.hlsUrl || buildHlsPlaybackUrl(payload.streamKey || ''),
+    hlsPlaybackUrl: payload.hlsPlaybackUrl || buildHlsPlaybackUrl(payload.streamKey || '')
   })
 }
 
@@ -851,7 +881,7 @@ const startMusicLiveStream = onCall(
       const audioMode = normalizeAudioMode(request.data?.audioMode)
       const selectedInputSource = normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource)
       const selectedSequenceId = cleanId(request.data?.sequenceId || request.data?.selectedSequenceId, 160)
-      const programOutputState = cleanProgramOutputState(request.data || {}, { selectedInputSource })
+      let programOutputState = cleanProgramOutputState(request.data || {}, { selectedInputSource })
       if (title.length < 3) throw new HttpsError('invalid-argument', 'Stream title must be at least 3 characters.', { stage })
       if (request.data?.rightsAccepted !== true) throw new HttpsError('failed-precondition', 'You must accept the live stream rules before going live.', { stage })
       if (accessMode === 'password' && !cleanString(request.data?.password, 200)) {
@@ -968,6 +998,23 @@ const startMusicLiveStream = onCall(
       const now = admin.firestore.FieldValue.serverTimestamp()
       const previousSnap = await streamRef.get()
       const previousStream = previousSnap.exists ? previousSnap.data() || {} : {}
+      const previousKey = sanitizeStreamKey(request.data?.streamKey || previousStream.streamKey || '')
+      const nextKey = selectedProvider === 'hlsEdge'
+        ? ensureSessionStreamKey(previousKey, { forceNew: true })
+        : ''
+      const sessionData = selectedProvider === 'hlsEdge'
+        ? { ...(request.data || {}), streamKey: nextKey }
+        : request.data || {}
+      programOutputState = cleanProgramOutputState(sessionData, { existing: previousStream, selectedInputSource })
+      console.log('[Stream Key] ensured', {
+        streamId,
+        previousKey,
+        nextKey,
+        forceNew: selectedProvider === 'hlsEdge',
+        status: previousStream.status || 'new',
+        ingestMethod: programOutputState.ingestMethod,
+        hlsUrl: buildHlsPlaybackUrl(nextKey)
+      })
       liveWriterLog(streamId, programOutputState)
       await streamRef.set({
         streamId,
@@ -999,7 +1046,7 @@ const startMusicLiveStream = onCall(
         selectedSequenceId,
         audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
         ...programOutputState,
-        ...(selectedProvider === 'hlsEdge' ? bufferedBroadcastFields(request.data || {}, previousStream) : {}),
+        ...(selectedProvider === 'hlsEdge' ? bufferedBroadcastFields(sessionData, previousStream) : {}),
         audioPublished: false,
         videoPublished: false,
         programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
@@ -1086,8 +1133,9 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   const streamRef = requestedStreamId ? db().collection('musicLiveStreams').doc(requestedStreamId) : db().collection('musicLiveStreams').doc()
   const streamId = streamRef.id
   const snap = await streamRef.get()
+  const existingStream = snap.exists ? snap.data() || {} : {}
   if (snap.exists) {
-    const stream = snap.data() || {}
+    const stream = existingStream
     if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can update this draft stream.')
     if (!['draft', 'setup', 'error'].includes(stream.status || 'draft')) {
       return { ok: true, streamId, status: stream.status || 'live' }
@@ -1098,7 +1146,15 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   const audioMode = normalizeAudioMode(request.data?.audioMode)
   const selectedInputSource = normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource)
   const selectedSequenceId = cleanId(request.data?.sequenceId || request.data?.selectedSequenceId, 160)
-  const programOutputState = cleanProgramOutputState(request.data || {}, { selectedInputSource })
+  const draftProtocol = normalizeStreamingProtocol(request.data || {}, existingStream)
+  const previousKey = sanitizeStreamKey(request.data?.streamKey || existingStream.streamKey || '')
+  const nextKey = draftProtocol === 'hls'
+    ? ensureSessionStreamKey(previousKey)
+    : ''
+  const draftData = draftProtocol === 'hls'
+    ? { ...(request.data || {}), streamKey: nextKey }
+    : request.data || {}
+  const programOutputState = cleanProgramOutputState(draftData, { existing: existingStream, selectedInputSource })
   const now = admin.firestore.FieldValue.serverTimestamp()
   const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
   const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
@@ -1135,7 +1191,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     selectedSequenceId,
     audioProfile: audioMode === 'music' ? 'high_quality_music' : 'podcast_voice',
     ...programOutputState,
-    ...(programOutputState.provider === 'hlsEdge' ? bufferedBroadcastFields(request.data || {}, snap.data() || {}) : {}),
+    ...(programOutputState.provider === 'hlsEdge' ? bufferedBroadcastFields(draftData, existingStream) : {}),
     audioPublished: false,
     videoPublished: false,
     programHasAudio: programOutputState.audioEnabled && programOutputState.programHasAudio,
@@ -1148,7 +1204,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     selectedProviderUpdatedBy: uid,
     startedAt: null,
     endedAt: null,
-    createdAt: snap.exists ? snap.data()?.createdAt || now : now,
+    createdAt: existingStream.createdAt || now,
     updatedAt: now,
     lastHostHeartbeatAt: null,
     listenerCount: 0,
@@ -1174,7 +1230,22 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     }, { merge: true })
   }
 
-  return { ok: true, streamId, status: 'draft' }
+  console.log('[Stream Key] ensured', {
+    streamId,
+    previousKey,
+    nextKey,
+    forceNew: false,
+    status: existingStream.status || 'new',
+    ingestMethod: programOutputState.ingestMethod,
+    hlsUrl: buildHlsPlaybackUrl(nextKey)
+  })
+  return {
+    ok: true,
+    streamId,
+    status: 'draft',
+    streamKey: programOutputState.streamKey,
+    hlsPlaybackUrl: programOutputState.hlsPlaybackUrl
+  }
 })
 
 const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (request) => {
@@ -1189,7 +1260,22 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can mark this stream live.')
   const requestedProtocol = normalizeStreamingProtocol(request.data || {}, stream)
   const requestedProvider = requestedProtocol === 'nativeStreaming' ? 'firebaseSegments' : 'hlsEdge'
-  const diagnostics = markLiveValidationDetails({ streamId, provider: requestedProvider, stream, requestData: request.data || {} })
+  const persistedStreamKey = sanitizeStreamKey(stream.streamKey || '')
+  const requestedStreamKey = sanitizeStreamKey(request.data?.streamKey || '')
+  if (requestedProvider === 'hlsEdge' && (
+    !isValidGeneratedStreamKey(persistedStreamKey)
+    || (requestedStreamKey && requestedStreamKey !== persistedStreamKey)
+  )) {
+    throw new HttpsError('failed-precondition', 'The stream key changed after the stream session was created.', {
+      streamId,
+      persistedStreamKey,
+      requestedStreamKey
+    })
+  }
+  const lockedRequestData = requestedProvider === 'hlsEdge'
+    ? { ...(request.data || {}), streamKey: persistedStreamKey }
+    : request.data || {}
+  const diagnostics = markLiveValidationDetails({ streamId, provider: requestedProvider, stream, requestData: lockedRequestData })
   const allowedBufferedStatuses = new Set(['draft', 'setup', 'starting', 'error', 'live'])
   const canMarkLive = allowedBufferedStatuses.has(stream.status || '')
     && diagnostics.missingRequiredFields.length === 0
@@ -1211,13 +1297,13 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp()
-  const programOutputState = cleanProgramOutputState(request.data || {}, {
+  const programOutputState = cleanProgramOutputState(lockedRequestData, {
     existing: stream,
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
   const bufferedState = requestedProtocol === 'hls'
-    ? bufferedBroadcastFields(request.data || {}, stream)
+    ? bufferedBroadcastFields(lockedRequestData, stream)
     : {}
   const hlsEdgeStream = requestedProtocol === 'hls'
   const safeLiveTitle = cleanString(request.data?.title || stream.title || 'Untitled live stream', 90)
@@ -1256,7 +1342,9 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
       hlsLastCheckedAt: null,
       hlsLastManifestSequence: null,
       hlsLastError: '',
-      hlsResponseCode: 0
+      hlsResponseCode: 0,
+      hlsStartedAt: now,
+      hlsSecondsSinceStart: 0
     } : {}),
     updatedAt: now,
     lastHostHeartbeatAt: now
@@ -1284,13 +1372,16 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
   if (!['starting', 'live'].includes(stream.status)) throw new HttpsError('failed-precondition', 'This stream is no longer active.')
 
   const now = admin.firestore.FieldValue.serverTimestamp()
-  const programOutputState = cleanProgramOutputState(request.data || {}, {
+  const heartbeatData = isHlsEdgeStream(stream)
+    ? { ...(request.data || {}), streamKey: stream.streamKey || '' }
+    : request.data || {}
+  const programOutputState = cleanProgramOutputState(heartbeatData, {
     existing: stream,
     selectedInputSource: stream.selectedInputSource || 'browser',
     defaultAudioPublished: true
   })
   const bufferedState = programOutputState.provider === 'hlsEdge'
-    ? bufferedBroadcastFields(request.data || {}, stream)
+    ? bufferedBroadcastFields(heartbeatData, stream)
     : {}
   const requestedConnectionStatus = cleanString(request.data?.connectionStatus || stream.connectionStatus || '', 80)
   liveWriterLog(streamId, { ...programOutputState, ...bufferedState })
@@ -1348,11 +1439,20 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
   } else {
     await secretRef.delete().catch(() => {})
   }
-  const programOutputState = cleanProgramOutputState(request.data || {}, {
+  const requestedDraftKey = sanitizeStreamKey(request.data?.streamKey || stream.streamKey || '')
+  const updateStreamKey = isHlsEdgeStream(stream)
+    ? stream.status === 'live'
+      ? sanitizeStreamKey(stream.streamKey || '')
+      : ensureSessionStreamKey(requestedDraftKey)
+    : ''
+  const updateData = isHlsEdgeStream(stream)
+    ? { ...(request.data || {}), streamKey: updateStreamKey }
+    : request.data || {}
+  const programOutputState = cleanProgramOutputState(updateData, {
     existing: stream,
     selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource)
   })
-  const bufferedState = programOutputState.streamingProtocol === 'hls' ? bufferedBroadcastFields(request.data || {}, stream) : {}
+  const bufferedState = programOutputState.streamingProtocol === 'hls' ? bufferedBroadcastFields(updateData, stream) : {}
   liveWriterLog(streamId, { ...programOutputState, ...bufferedState })
   await streamRef.set({
     ...metadata,
@@ -1366,7 +1466,13 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
     lastMetadataUpdateAt: now
   }, { merge: true })
 
-  return { ok: true, streamId, ...metadata }
+  return {
+    ok: true,
+    streamId,
+    ...metadata,
+    streamKey: programOutputState.streamKey,
+    hlsPlaybackUrl: programOutputState.hlsPlaybackUrl
+  }
 })
 
 async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
@@ -1497,7 +1603,7 @@ const joinMusicLiveStream = onCall(
       provider,
       playbackMode: provider === 'firebaseSegments' ? 'firebaseSegments' : provider === 'hlsEdge' ? 'hls' : 'webrtc',
       streamKey: sanitizeStreamKey(stream.streamKey || ''),
-      hlsPlaybackUrl: sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || '') || buildHlsPlaybackUrl(stream.streamKey || ''),
+      hlsPlaybackUrl: buildHlsPlaybackUrl(stream.streamKey || '') || sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || ''),
       nativeStreaming: stream.nativeStreaming || nativeStreamingDefaults(),
       audioPublished: stream.audioPublished === true,
       videoPublished: stream.videoPublished === true,

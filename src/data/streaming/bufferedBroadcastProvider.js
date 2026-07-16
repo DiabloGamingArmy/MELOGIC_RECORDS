@@ -20,7 +20,7 @@ export function createBufferedBroadcastProvider() {
     defaultPublicPlayback: true,
     capabilities: providerCapabilities(STREAM_PROVIDERS.hlsEdge),
     createStreamSession(options = {}) {
-      const streamKey = String(options.streamKey || 'mystream')
+      const streamKey = String(options.streamKey || '')
       const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
       diagnostics = buildProviderDiagnostics({
         provider: STREAM_PROVIDERS.hlsEdge,

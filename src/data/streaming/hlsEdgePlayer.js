@@ -33,8 +33,9 @@ export function isAllowedHlsPlaybackUrl(value = '') {
 }
 
 export function resolveHlsPlaybackUrl({ streamKey = '', hlsPlaybackUrl = '' } = {}) {
-  if (isAllowedHlsPlaybackUrl(hlsPlaybackUrl)) return String(hlsPlaybackUrl).trim()
-  return buildHlsPlaybackUrl(streamKey)
+  const keyUrl = buildHlsPlaybackUrl(streamKey)
+  if (keyUrl) return keyUrl
+  return isAllowedHlsPlaybackUrl(hlsPlaybackUrl) ? String(hlsPlaybackUrl).trim() : ''
 }
 
 export function canPlayNativeHls(mediaEl) {
