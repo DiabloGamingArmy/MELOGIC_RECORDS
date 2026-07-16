@@ -43,7 +43,8 @@ import {
   STREAM_PROVIDERS
 } from './data/streaming/streamingProviderTypes'
 import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './data/streaming/hlsEdgePlayer'
-import { isBrowserWebrtcIngestConfigured, startBrowserWebrtcIngest, stopBrowserWebrtcIngest } from './data/streaming/browserWebrtcIngest'
+import { buildBrowserWebrtcIngestUrl, isBrowserWebrtcIngestConfigured, startBrowserWebrtcIngest, stopBrowserWebrtcIngest } from './data/streaming/browserWebrtcIngest'
+import { checkHlsManifest } from './data/streaming/hlsHealth'
 import {
   getNativeHostPresence,
   nativeHostSessionId,
@@ -258,6 +259,8 @@ const state = {
     ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
     browserIngestActive: false,
     providerDiagnostics: {},
+    hlsHealthTimer: 0,
+    hlsHealthUrl: '',
     advancedStreamingOpen: false,
     programMixer: {
       loading: false,
@@ -404,9 +407,15 @@ const livePanels = [
   ['settings', 'Safety']
 ]
 
+function isExternalEncoderSelected() {
+  const live = liveState()
+  return live.streamingProtocol === 'hls' && live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+}
+
 function currentLivePanel() {
   const params = new URLSearchParams(window.location.search || '')
   const raw = params.get('panel') || String(window.location.hash || '').replace(/^#/, '') || liveState().panel || 'stream'
+  if (isExternalEncoderSelected() && ['program', 'sequence'].includes(raw)) return 'input'
   return livePanels.some(([key]) => key === raw) ? raw : 'stream'
 }
 
@@ -425,6 +434,7 @@ function setLivePanel(panel = 'stream', { replace = false } = {}) {
 }
 
 function renderLiveRail(activePanel = 'stream') {
+  const externalEncoder = isExternalEncoderSelected()
   return `
     <aside class="studio-live-rail" aria-label="Live Studio tools">
       <div class="studio-live-rail-brand">
@@ -432,7 +442,10 @@ function renderLiveRail(activePanel = 'stream') {
         <span>${state.live.stream?.status || state.live.streamId ? esc(state.live.stream?.status || 'starting') : 'draft'}</span>
       </div>
       <nav>
-        ${livePanels.map(([key, label]) => `<a class="${activePanel === key ? 'is-active' : ''}" href="${livePanelHref(key)}" data-live-panel="${esc(key)}"><span>${esc(label)}</span></a>`).join('')}
+        ${livePanels.map(([key, label]) => {
+          const disabled = externalEncoder && ['program', 'sequence'].includes(key)
+          return `<a class="${activePanel === key ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}" href="${disabled ? '#' : livePanelHref(key)}" data-live-panel="${esc(key)}" ${disabled ? 'aria-disabled="true" tabindex="-1" title="Disabled while External Encoder is selected."' : ''}><span>${esc(label)}</span></a>`
+        }).join('')}
       </nav>
     </aside>
   `
@@ -1340,7 +1353,7 @@ function renderStreamDetailsPanel() {
             <label>Password<input name="password" type="password" autocomplete="new-password" value="${esc(form.password)}" placeholder="${form.accessMode === 'password' ? 'Required for new password streams' : 'Only used for password access'}" /></label>
           </div>
           <label>Tags<input name="tags" value="${esc(form.tags)}" placeholder="radio, release party, talk" /></label>
-          ${isBufferedProvider ? `<label>Stream Key<input name="streamKey" maxlength="160" required value="${esc(form.streamKey ?? 'mystream')}" pattern="[A-Za-z0-9_-]+" autocomplete="off" /></label>` : ''}
+          ${isBufferedProvider ? `<label>Stream Key<div class="studio-live-stream-key-row"><input name="streamKey" maxlength="160" required value="${esc(form.streamKey ?? 'mystream')}" pattern="[A-Za-z0-9_-]+" autocomplete="off" ${live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'readonly aria-readonly="true"' : ''} /><button type="button" class="studio-live-button" data-copy-stream-key="${esc(form.streamKey ?? 'mystream')}">Copy</button></div><small>${live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? 'Generated automatically for browser WHIP publishing.' : 'Use this exact key in OBS or your encoder.'}</small></label>` : ''}
           <div class="studio-live-cover-tools">
             <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
             <div class="studio-live-action-bar">
@@ -1382,6 +1395,9 @@ function renderAdvancedStreamingSettings() {
   const isObs = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
   const isNativeProtocol = live.streamingProtocol === 'nativeStreaming'
   const browserIngestConfigured = isBrowserWebrtcIngestConfigured()
+  const browserWhipUrl = buildBrowserWebrtcIngestUrl(streamKey)
+  let browserWhipHost = 'not configured'
+  try { browserWhipHost = new URL(browserWhipUrl).host || browserWhipHost } catch {}
   return `
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
       <summary>Advanced Streaming Settings</summary>
@@ -1411,7 +1427,7 @@ function renderAdvancedStreamingSettings() {
           <h2>${isObs ? 'Stream From OBS / Encoder' : 'Stream From Browser'}</h2>
           <p>${esc(current?.description || '')}</p>
           <ul>
-            ${isObs ? `<li>Server: ${esc(ingestServer || 'Set VITE_STREAM_RTMP_INGEST_SERVER')}</li>` : `<li>${esc(browserIngestConfigured ? 'Browser WebRTC ingest endpoint configured.' : 'Browser streaming needs the server WebRTC ingest URL configured.')}</li>`}
+            ${isObs ? `<li>RTMP server: ${esc(ingestServer || 'Set VITE_STREAM_RTMP_INGEST_SERVER')}</li>` : `<li>WHIP host: ${esc(browserWhipHost)}</li>`}
             <li>Stream Key: ${esc(streamKey || 'missing')}</li>
             <li>Playback: ${esc(hlsPlaybackUrl || 'missing')}</li>
             <li>Public playback: Buffered HLS from Melogic Edge</li>
@@ -1429,6 +1445,10 @@ function renderAdvancedStreamingSettings() {
             <li>Ingest protocol: ${esc(ingestProtocolForMethod(live.ingestMethod))}</li>
             <li>Stream key: ${esc(diagnostics.streamKey || streamKey)}</li>
             <li>Playback URL: ${esc(diagnostics.hlsPlaybackUrl || hlsPlaybackUrl)}</li>
+            <li>HLS health: ${esc(diagnostics.hlsHealth || 'not checked')}</li>
+            <li>Last manifest OK: ${esc(diagnostics.hlsLastOkAt || 'none')}</li>
+            <li>Manifest sequence: ${esc(diagnostics.hlsManifestSequence ?? diagnostics.hlsLastManifestSequence ?? 'none')}</li>
+            <li>Manifest response: ${esc(diagnostics.hlsResponseCode || 'none')}</li>
             <li>Stream document status: ${esc(diagnostics.streamDocStatus || live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
             <li>Ingest connection: ${esc(diagnostics.ingestConnectionState || (isObs ? 'external encoder' : live.browserIngestActive ? 'connected' : 'idle'))}</li>
             <li>Ingest endpoint configured: ${browserIngestConfigured ? 'yes' : 'no'}</li>
@@ -1445,6 +1465,7 @@ function renderAdvancedStreamingSettings() {
           </ul>
         </article>
       </div>
+      ${diagnostics.lastIngestError ? `<details class="studio-live-ingest-debug"><summary>Browser WHIP debug details</summary><dl><div><dt>Ingest host</dt><dd>${esc(diagnostics.ingestUrlHost || 'unknown')}</dd></div><div><dt>HTTP status</dt><dd>${esc(diagnostics.responseStatus ?? 'network failure')}</dd></div><div><dt>ICE state</dt><dd>${esc(diagnostics.iceConnectionState || 'unknown')}</dd></div><div><dt>Peer state</dt><dd>${esc(diagnostics.peerConnectionState || 'unknown')}</dd></div><div><dt>Error</dt><dd>${esc(diagnostics.lastIngestError)}</dd></div><div><dt>Hint</dt><dd>${esc(diagnostics.networkHint || 'Verify SRS WHIP availability, TLS, CORS, and firewall access.')}</dd></div></dl></details>` : ''}
       <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Both streaming methods use buffered HLS for public playback.</p>
     </details>
   `
@@ -1452,6 +1473,28 @@ function renderAdvancedStreamingSettings() {
 
 function renderInputSourcePanel() {
   const live = liveState()
+  if (isExternalEncoderSelected()) {
+    const diagnostics = live.providerDiagnostics || {}
+    const health = diagnostics.hlsHealth || live.stream?.hlsHealth || (live.streamId ? 'warming' : 'not started')
+    return `
+      <section class="studio-live-panel studio-live-external-input-panel">
+        <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>External Encoder Input</h1><p>OBS or your encoder controls the media. These controls advertise the stream capabilities without altering the incoming feed.</p></div></header>
+        <div class="studio-live-source-grid studio-live-source-grid--foundation">
+          <article class="studio-live-source-option is-active">
+            <header class="studio-live-source-card-header"><div><h2>Incoming Stream Audio</h2><p>Audio is supplied by the external encoder.</p></div><label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="audio" ${live.audioEnabled ? 'checked' : ''} /><span></span>Advertise Audio</label></header>
+            <div class="studio-live-external-meter" aria-label="External encoder audio meter unavailable"><i style="width:0%"></i></div>
+            <p class="studio-live-source-status">Meter unavailable until listener preview is attached.</p>
+            <dl class="studio-live-external-diagnostics"><div><dt>HLS health</dt><dd>${esc(health)}</dd></div><div><dt>Last manifest OK</dt><dd>${esc(diagnostics.hlsLastOkAt || live.stream?.hlsLastOkAt || 'none')}</dd></div></dl>
+          </article>
+          <article class="studio-live-source-option studio-live-video-input-card is-active">
+            <header class="studio-live-source-card-header"><div><h2>Incoming Stream Video</h2><p>Video is supplied by the external encoder.</p></div><label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="video" ${live.videoEnabled ? 'checked' : ''} /><span></span>Advertise Video</label></header>
+            <div class="studio-live-external-preview"><strong>External encoder video is active.</strong><span>Open the public listener preview to monitor the HLS output.</span></div>
+            <div class="studio-live-action-bar">${publicLiveLink() ? `<a class="studio-live-button" href="${esc(publicLiveLink())}" target="_blank" rel="noreferrer">Open Public Listener Preview</a>` : '<span class="studio-muted">Start the stream to create the listener preview.</span>'}</div>
+          </article>
+        </div>
+      </section>
+    `
+  }
   return `
     <section class="studio-live-panel">
       <header class="studio-live-subheader">
@@ -1885,6 +1928,46 @@ async function heartbeatLiveProgramState(extra = {}) {
   })
 }
 
+function stopStudioHlsHealthPolling() {
+  const live = liveState()
+  if (live.hlsHealthTimer) window.clearInterval(live.hlsHealthTimer)
+  live.hlsHealthTimer = 0
+  live.hlsHealthUrl = ''
+}
+
+async function refreshStudioHlsHealth() {
+  const live = liveState()
+  if (!live.streamId || live.streamingProtocol !== 'hls' || live.ingestMethod !== STREAM_INGEST_METHODS.obsRtmp) return null
+  const streamKey = ensureLiveStreamKey()
+  const hlsUrl = buildHlsPlaybackUrl(streamKey)
+  const health = await checkHlsManifest({
+    streamId: live.streamId,
+    hlsUrl,
+    previous: { ...(live.stream || {}), ...(live.providerDiagnostics || {}) },
+    startedAt: live.stream?.startedAt || live.stream?.updatedAt || new Date().toISOString()
+  })
+  live.providerDiagnostics = { ...(live.providerDiagnostics || {}), ...health, hlsUrl, hlsPlaybackUrl: hlsUrl }
+  live.outputStatus = health.hlsHealth === 'healthy'
+    ? 'External encoder HLS is healthy.'
+    : health.hlsHealth === 'warming'
+      ? 'Waiting for HLS segments from the external encoder...'
+      : health.hlsHealth === 'stale'
+        ? 'External encoder HLS is temporarily stale; the last healthy manifest is still within tolerance.'
+        : 'External encoder manifest is offline. Verify OBS is still streaming.'
+  if (currentStudioSection() === 'live') renderShell()
+  return health
+}
+
+function startStudioHlsHealthPolling() {
+  const live = liveState()
+  const hlsUrl = buildHlsPlaybackUrl(ensureLiveStreamKey())
+  if (live.hlsHealthUrl === hlsUrl && live.hlsHealthTimer) return
+  stopStudioHlsHealthPolling()
+  live.hlsHealthUrl = hlsUrl
+  refreshStudioHlsHealth().catch(() => {})
+  live.hlsHealthTimer = window.setInterval(() => refreshStudioHlsHealth().catch(() => {}), 15000)
+}
+
 function ensureStudioProgramMixer() {
   const live = liveState()
   const [width, height] = String(live.programMixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
@@ -2201,6 +2284,13 @@ function renderProgramMixerPanel() {
           <p>Preview is local only. Program is the broadcast canvas.</p>
         </div>
       </header>
+      <div class="studio-program-status-strip" aria-label="Stream output status">
+        <span class="${live.streamId ? 'is-live' : ''}">${live.streamId ? 'On air' : 'Off air'}</span>
+        <span>Encoder: Browser WHIP</span>
+        <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
+        <span>WHIP: ${esc(live.providerDiagnostics?.connectionState || live.providerDiagnostics?.ingestConnectionState || 'idle')}</span>
+        <span>HLS: ${esc(live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'not checked')}</span>
+      </div>
       ${mixer.notice ? `<p class="studio-live-error">${esc(mixer.notice)}</p>` : ''}
       <div class="studio-program-workspace">
         <aside class="studio-program-left">
@@ -2248,24 +2338,27 @@ function renderProgramMixerPanel() {
               <header><strong>Preview</strong><span>${esc(previewScene?.name || 'No scene selected')}</span></header>
               <div class="studio-program-preview-shell">
                 <canvas class="studio-program-preview" width="1280" height="720" data-program-preview-canvas></canvas>
+                ${previewScene ? '' : '<div class="studio-program-canvas-empty"><strong>No preview scene selected</strong><span>Create a scene, add sources, then select it for Preview.</span></div>'}
               </div>
             </section>
             <section>
               <header><strong>Program</strong><span>${esc(programScene?.name || 'No scene on air')}</span></header>
               <div class="studio-program-preview-shell is-program">
                 <canvas class="studio-program-preview" width="1280" height="720" data-program-program-canvas></canvas>
+                ${programScene ? '' : `<div class="studio-program-canvas-empty"><strong>${live.videoEnabled ? 'No scene is on air' : 'Video output is disabled'}</strong><span>${live.videoEnabled ? 'Select a preview scene and use Take, Cut, or Fade.' : 'Enable video in Input Source to publish the Program canvas.'}</span></div>`}
               </div>
             </section>
           </div>
-          <div class="studio-program-toolbar">
+          <div class="studio-program-toolbar" aria-label="Scene transition controls">
+            <strong>Transition</strong>
             <button type="button" data-program-take ${previewScene ? '' : 'disabled'}>Take</button>
             <button type="button" data-program-cut ${previewScene ? '' : 'disabled'}>Cut</button>
             <button type="button" data-program-fade ${previewScene ? '' : 'disabled'}>Fade</button>
             <label>Fade ms<input type="number" min="0" max="5000" step="50" value="${Number(mixer.transitionDurationMs || 400)}" data-program-transition-duration /></label>
           </div>
           <div class="studio-program-output-note">
-            <strong>Stream Output Status</strong>
-            <span>${esc(live.videoEnabled ? 'Canvas video output can be captured for provider publishing.' : 'Video master is off. No program video track will be published.')}</span>
+            <div><strong>Stream Output Status</strong><small>${esc(live.streamId ? 'Browser encoder session active' : 'Ready for browser encoder')}</small></div>
+            <span>${esc(live.videoEnabled ? `Program canvas is ready for WHIP. HLS: ${live.providerDiagnostics?.hlsHealth || 'waiting for publish'}.` : 'Audio program bus is available. Video master is off.')}</span>
           </div>
         </main>
         <aside class="studio-program-inspector">
@@ -2530,14 +2623,17 @@ function startStudioLiveMonitorVisualizer() {
 function renderLiveStatusBar() {
   const live = liveState()
   const current = liveItemById(live.currentItemId)
+  const externalEncoder = isExternalEncoderSelected()
   const sourceReady = live.inputSource === 'sequence'
     ? Boolean(live.outputTrack || live.destination)
     : Boolean(live.sourceTrack)
   return `
     <div class="studio-live-statusbar">
       <span>${esc(live.streamId ? 'ON AIR' : 'OFF AIR')}</span>
-      <span>Input: ${esc(live.inputSource === 'sequence' ? 'Sequence Output' : 'Browser Input')}</span>
-      <span>Source: ${sourceReady ? 'healthy' : 'not prepared'}</span>
+      <span>Mode: ${externalEncoder ? 'External Encoder' : 'Browser Encoder'}</span>
+      <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
+      <span>Input: ${esc(externalEncoder ? 'OBS / Encoder' : live.inputSource === 'sequence' ? 'Sequence Output' : 'Browser Input')}</span>
+      <span>Source: ${externalEncoder ? esc(live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'waiting') : sourceReady ? 'healthy' : 'not prepared'}</span>
       <span>Monitor: ${live.monitorEnabled ? 'on' : 'off'}</span>
       <span>Decks: ${live.activePlayers.length}</span>
       <span>Now: ${esc(current?.titleSnapshot || 'none')}</span>
@@ -3958,6 +4054,13 @@ async function setLiveAvEnabled(kind = 'audio', enabled = true) {
     renderShell()
     return
   }
+  if (isExternalEncoderSelected()) {
+    live.sourceMessage = `${kind === 'audio' ? 'Audio' : 'Video'} advertisement ${enabled ? 'enabled' : 'disabled'} for the external encoder stream. The incoming OBS media is not modified.`
+    scheduleLiveStudioDraftSave()
+    if (live.streamId) await heartbeatLiveProgramState().catch(() => {})
+    renderShell()
+    return
+  }
   if (kind === 'video' && !live.videoEnabled) {
     live.sourceMessage = 'Video Input is off. Camera/video tracks were removed from program output.'
     await stopLiveVideoInput({ render: false })
@@ -4363,6 +4466,7 @@ async function startLiveStudioStream() {
         renderShell()
         const mediaStream = await nativeProgramMediaStream()
         browserIngestResult = await startBrowserWebrtcIngest({
+          streamId: pendingStreamId,
           streamKey,
           mediaStream,
           onStatus: (ingestStatus = {}) => {
@@ -4455,6 +4559,7 @@ async function startLiveStudioStream() {
         streamDocStatus: 'live',
         noLiveKitAttempted: true
       }
+      if (!isBrowserIngest) startStudioHlsHealthPolling()
       live.outputStatus = isBrowserIngest
         ? 'On air. Studio Program is publishing to Melogic Edge; viewers receive buffered HLS.'
         : 'On air. Waiting for the OBS / encoder feed at Melogic Edge.'
@@ -4481,6 +4586,9 @@ async function startLiveStudioStream() {
     }
     throw new Error('Unsupported Studio streaming method.')
   } catch (error) {
+    if (error?.whipDiagnostics) {
+      live.providerDiagnostics = { ...(live.providerDiagnostics || {}), ...error.whipDiagnostics }
+    }
     const firebaseDetails = firebaseErrorDetails(error)
     console.error('[studio-live] start stream failed', {
       error,
@@ -4516,7 +4624,9 @@ async function startLiveStudioStream() {
     live.livekitAudioPublication = null
     live.audioPublishedToProvider = false
     live.videoPublishedToProvider = false
-    live.error = error?.message || 'Could not start Live Studio stream.'
+    live.error = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+      ? 'Browser streaming could not connect to the Melogic ingest server.'
+      : error?.message || 'Could not start Live Studio stream.'
     live.outputStatus = 'Live stream start failed.'
   } finally {
     live.starting = false
@@ -4534,6 +4644,7 @@ async function endLiveStudioStream() {
   try {
     if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
     live.heartbeatTimer = 0
+    stopStudioHlsHealthPolling()
     if (live.browserIngestActive || live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc) {
       await stopBrowserWebrtcIngest().catch((error) => {
         live.nativeStopWarning = error?.message || 'Browser ingest cleanup failed.'
@@ -4641,6 +4752,7 @@ async function endInterruptedNativeStream() {
 
 function unsubscribeLiveStudioRuntime() {
   const live = liveState()
+  stopStudioHlsHealthPolling()
   live.streamUnsubscribe?.()
   live.chatUnsubscribe?.()
   live.streamUnsubscribe = null
@@ -4695,6 +4807,16 @@ function subscribeLiveStudioStream(streamId = '') {
       live.streamForm.coverArtPath = stream.coverArtPath || ''
       live.streamForm.coverArtSource = stream.coverArtSource || (stream.coverArtURL ? 'url' : 'fallback')
       live.streamForm.streamKey = sanitizeHlsStreamKey(stream.streamKey || live.streamForm.streamKey || 'mystream')
+      live.providerDiagnostics = {
+        ...(live.providerDiagnostics || {}),
+        hlsHealth: stream.hlsHealth || live.providerDiagnostics?.hlsHealth || '',
+        hlsLastOkAt: stream.hlsLastOkAt || live.providerDiagnostics?.hlsLastOkAt || '',
+        hlsLastCheckedAt: stream.hlsLastCheckedAt || live.providerDiagnostics?.hlsLastCheckedAt || '',
+        hlsLastManifestSequence: stream.hlsLastManifestSequence ?? live.providerDiagnostics?.hlsLastManifestSequence ?? null,
+        hlsLastError: stream.hlsLastError || '',
+        hlsResponseCode: stream.hlsResponseCode || 0
+      }
+      if (live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp && stream.status === 'live') startStudioHlsHealthPolling()
     }
     renderShell()
   })
@@ -4859,6 +4981,11 @@ function bindLiveStudioControls() {
   const live = liveState()
   app.querySelectorAll('[data-live-panel]').forEach((el) => el.addEventListener('click', (e) => {
     e.preventDefault()
+    if (el.getAttribute('aria-disabled') === 'true') {
+      live.outputStatus = 'Disabled while External Encoder is selected.'
+      renderShell()
+      return
+    }
     setLivePanel(el.dataset.livePanel || 'stream')
   }))
   app.querySelector('[data-live-stream-form]')?.addEventListener('submit', async (e) => {
@@ -4906,6 +5033,12 @@ function bindLiveStudioControls() {
     live.outputStatus = 'Public listener link copied.'
     renderShell()
   })
+  app.querySelector('[data-copy-stream-key]')?.addEventListener('click', async (e) => {
+    const streamKey = e.currentTarget.dataset.copyStreamKey || live.streamForm.streamKey || ''
+    await navigator.clipboard?.writeText?.(streamKey).catch(() => {})
+    live.outputStatus = streamKey ? 'Stream key copied.' : 'No stream key is available.'
+    renderShell()
+  })
   app.querySelector('[data-live-device-select]')?.addEventListener('change', (e) => {
     stopLiveMicMeter()
     live.sourceTrack?.stop?.()
@@ -4942,6 +5075,10 @@ function bindLiveStudioControls() {
     }
     live.providerId = live.streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
     live.ingestMethod = normalizeIngestMethod(e.currentTarget.dataset.streamingMethod)
+    if (live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp && ['program', 'sequence'].includes(currentLivePanel())) {
+      live.panel = 'input'
+      window.history.replaceState({ livePanel: 'input' }, '', livePanelHref('input'))
+    }
     live.providerDiagnostics = {}
     live.outputStatus = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
       ? 'Stream From OBS / Encoder selected. Configure your encoder with the stream key below.'
@@ -5449,6 +5586,7 @@ window.addEventListener('popstate', () => {
 
 window.addEventListener('beforeunload', (event) => {
   const live = liveState()
+  if (isExternalEncoderSelected()) return
   const activeHostSession = Boolean(
     live.streamId &&
     !live.ending &&

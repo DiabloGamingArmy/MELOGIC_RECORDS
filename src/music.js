@@ -59,6 +59,7 @@ import {
   canPlayNativeHls,
   isAllowedHlsPlaybackUrl
 } from './data/streaming/hlsEdgePlayer'
+import { checkHlsManifest, HLS_WARMUP_WINDOW_MS } from './data/streaming/hlsHealth'
 import { assertLiveKitConnectionConfig } from './data/streaming/livekitProvider'
 import { startBrowserWebrtcIngest, stopBrowserWebrtcIngest } from './data/streaming/browserWebrtcIngest'
 import { getNativePlaybackQueue, getNativePlaybackQueueDiagnostics } from './data/streaming/nativeStreamingProvider'
@@ -194,6 +195,8 @@ const state = {
   hlsAttachedUrl: '',
   hlsPlaybackMode: storedHlsPlaybackMode(),
   hlsDiagnostics: {},
+  hlsHealthTimer: 0,
+  hlsHealthUrl: '',
   nativeViewerSessionId: '',
   nativeHostUnsubscribe: null,
   nativePlaybackTimer: 0,
@@ -1154,6 +1157,14 @@ function renderReleaseDetailPage() {
 
 function liveStatusLabel(stream = {}) {
   const playbackInfo = getPublicPlaybackInfo(stream)
+  if (playbackInfo.provider === STREAM_PROVIDERS.hlsEdge) {
+    if (state.liveStatus === 'playing') return 'Playing'
+    if (state.hlsDiagnostics?.hlsHealth === 'warming') return 'Waiting for live segments...'
+    if (state.liveStatus === 'loadingManifest' || state.liveStatus === 'waiting') return 'Loading HLS stream...'
+    if (state.liveStatus === 'ready') return 'Ready. Press Play to start the HLS stream.'
+    if (state.liveStatus === 'stalled' || state.liveStatus === 'reconnecting' || state.hlsDiagnostics?.hlsHealth === 'stale') return 'Stream temporarily unavailable. Reconnecting...'
+    if (state.liveStatus === 'error' || state.hlsDiagnostics?.hlsHealth === 'offline') return 'Stream temporarily unavailable.'
+  }
   if (state.liveStatus === 'live') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'playing') return streamHasVideoFoundation(stream) ? 'Live stream connected.' : 'Live audio connected.'
   if (state.liveStatus === 'requestingPlayback') return 'Requesting playback...'
@@ -1187,6 +1198,12 @@ function liveStatusLabel(stream = {}) {
 
 function isLiveListeningStatus(status = state.liveStatus) {
   return ['live', 'playing', 'waiting', 'buffering', 'requestingPlayback', 'connectingTransport', 'loadingManifest', 'ready', 'stalled', 'waitingForRemoteAudio', 'readyToPlay', 'playbackBlocked', 'waitingForHost', 'waitingForSegments', 'connecting', 'reconnecting'].includes(status)
+}
+
+function isCurrentLiveListenerActive(stream = state.liveStream) {
+  return getPublicPlaybackInfo(stream || {}).provider === STREAM_PROVIDERS.hlsEdge
+    ? Boolean(state.hlsMediaElement)
+    : isLiveListeningStatus()
 }
 
 function nativePlaybackWaitMessage(stream = {}, elapsedMs = 0) {
@@ -1805,6 +1822,53 @@ function currentHlsPlaybackMode() {
   return HLS_PLAYBACK_MODES.has(state.hlsPlaybackMode) ? state.hlsPlaybackMode : 'videoAudio'
 }
 
+function stopHlsHealthPolling() {
+  if (state.hlsHealthTimer) window.clearInterval(state.hlsHealthTimer)
+  state.hlsHealthTimer = 0
+  state.hlsHealthUrl = ''
+}
+
+async function refreshHlsHealth(stream = state.liveStream) {
+  if (!stream || !isBufferedHlsStream(stream)) return null
+  const playbackInfo = getPublicPlaybackInfo(stream)
+  if (!playbackInfo.url) return null
+  const health = await checkHlsManifest({
+    streamId: stream.id || stream.streamId || '',
+    hlsUrl: playbackInfo.url,
+    previous: { ...stream, ...(state.hlsDiagnostics || {}) },
+    startedAt: stream.startedAt || stream.updatedAt || new Date().toISOString()
+  })
+  state.hlsDiagnostics = { ...(state.hlsDiagnostics || {}), ...health }
+  if (health.hlsHealth === 'warming' && state.liveStatus !== 'playing') {
+    state.liveStatus = 'loadingManifest'
+    state.liveError = ''
+  } else if (health.hlsHealth === 'stale' && state.liveStatus !== 'playing') {
+    state.liveStatus = 'stalled'
+    state.liveError = ''
+  } else if (health.hlsHealth === 'offline' && state.liveStatus !== 'playing') {
+    state.liveStatus = 'error'
+    state.liveError = ''
+  } else if (health.hlsHealth === 'healthy' && !isCurrentLiveListenerActive(stream) && ['error', 'loadingManifest', 'stalled', 'waiting'].includes(state.liveStatus)) {
+    state.liveStatus = 'ready'
+    state.liveError = ''
+  }
+  updateHlsDiagnosticsDom()
+  return health
+}
+
+function startHlsHealthPolling(stream = state.liveStream) {
+  const playbackInfo = getPublicPlaybackInfo(stream || {})
+  if (!stream || playbackInfo.provider !== STREAM_PROVIDERS.hlsEdge || !playbackInfo.url) {
+    stopHlsHealthPolling()
+    return
+  }
+  if (state.hlsHealthUrl === playbackInfo.url && state.hlsHealthTimer) return
+  stopHlsHealthPolling()
+  state.hlsHealthUrl = playbackInfo.url
+  refreshHlsHealth(stream).catch(() => {})
+  state.hlsHealthTimer = window.setInterval(() => refreshHlsHealth(state.liveStream).catch(() => {}), 15000)
+}
+
 function hlsMediaDiagnostics(eventName = '') {
   const media = state.hlsMediaElement
   const diagnostics = state.hlsDiagnostics || {}
@@ -1819,6 +1883,13 @@ function hlsMediaDiagnostics(eventName = '') {
     hlsUrl: state.hlsAttachedUrl || diagnostics.hlsUrl || '',
     selectedPlayer: playbackInfo.selectedPlayer || 'hls',
     computedHlsUrl: playbackInfo.computedHlsUrl || playbackInfo.url || '',
+    hlsHealth: diagnostics.hlsHealth || state.liveStream?.hlsHealth || '',
+    hlsLastOkAt: diagnostics.hlsLastOkAt || state.liveStream?.hlsLastOkAt || '',
+    hlsLastCheckedAt: diagnostics.hlsLastCheckedAt || state.liveStream?.hlsLastCheckedAt || '',
+    hlsManifestSequence: diagnostics.hlsManifestSequence ?? diagnostics.hlsLastManifestSequence ?? state.liveStream?.hlsLastManifestSequence ?? null,
+    hlsManifestAgeMs: diagnostics.hlsManifestAgeMs ?? null,
+    hlsResponseCode: diagnostics.hlsResponseCode || state.liveStream?.hlsResponseCode || 0,
+    hlsError: diagnostics.hlsError || diagnostics.hlsLastError || state.liveStream?.hlsLastError || '',
     normalizationApplied: playbackInfo.normalizationApplied === true,
     rawPlaybackMode: playbackInfo.rawPlaybackMode || state.liveStream?.rawPlaybackMode || '',
     rawProvider: playbackInfo.rawProvider || state.liveStream?.rawProvider || '',
@@ -1918,6 +1989,12 @@ function handleHlsStatus(payload = {}) {
   if (status === 'playing') {
     state.liveStatus = 'playing'
     state.liveError = ''
+    state.hlsDiagnostics = {
+      ...(state.hlsDiagnostics || {}),
+      hlsHealth: 'healthy',
+      hlsLastOkAt: new Date().toISOString(),
+      hlsError: ''
+    }
     if (state.liveStream?.id && state.nativeViewerSessionId) {
       updatePlaybackDemandState({
         streamId: state.liveStream.id,
@@ -1949,11 +2026,17 @@ function handleHlsError(error = {}) {
     lastHlsResponseCode: responseCode,
     lastHlsResponseUrl: String(error.responseUrl || '')
   }
+  const playbackStartedAtMs = new Date(state.hlsDiagnostics?.playbackStartedAt || 0).getTime()
+  const withinWarmup = playbackStartedAtMs && Date.now() - playbackStartedAtMs <= HLS_WARMUP_WINDOW_MS
+  const lastOkAtMs = new Date(state.hlsDiagnostics?.hlsLastOkAt || state.liveStream?.hlsLastOkAt || 0).getTime()
+  const recentlyHealthy = lastOkAtMs && Date.now() - lastOkAtMs <= 90000
   const playlistNotReady = responseCode === 404 || /manifest/i.test(details) || Number(state.hlsMediaElement?.readyState || 0) === 0
-  state.liveStatus = playlistNotReady ? 'loadingManifest' : 'error'
-  state.liveError = playlistNotReady
-    ? 'The live feed is not available yet. The stream may still be starting.'
-    : `HLS playback error${type || details ? `: ${[type, details].filter(Boolean).join(' / ')}` : '.'}`
+  const hlsHealth = withinWarmup && playlistNotReady ? 'warming' : recentlyHealthy ? 'stale' : 'offline'
+  state.hlsDiagnostics.hlsHealth = hlsHealth
+  state.hlsDiagnostics.hlsError = [type, details].filter(Boolean).join(' / ')
+  state.hlsDiagnostics.hlsResponseCode = responseCode || 0
+  state.liveStatus = hlsHealth === 'warming' ? 'loadingManifest' : hlsHealth === 'stale' ? 'stalled' : 'error'
+  state.liveError = ''
   hlsMediaDiagnostics('error')
   updateLiveListenerControls()
 }
@@ -2028,8 +2111,16 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
     nativeHlsSupported: canPlayNativeHls(media),
     hlsJsSupported: null,
     hlsManifestLoaded: false,
+    hlsHealth: state.liveStream.hlsHealth || 'warming',
+    hlsLastOkAt: state.liveStream.hlsLastOkAt || '',
+    hlsLastCheckedAt: state.liveStream.hlsLastCheckedAt || '',
+    hlsManifestSequence: state.liveStream.hlsLastManifestSequence ?? null,
+    hlsResponseCode: state.liveStream.hlsResponseCode || 0,
+    hlsError: state.liveStream.hlsLastError || '',
+    playbackStartedAt: new Date().toISOString(),
     demandWriteSucceeded: false
   }
+  startHlsHealthPolling(state.liveStream)
   updateLiveListenerControls()
 
   writePlaybackDemand({
@@ -2072,6 +2163,7 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
         lastHlsErrorDetails: error?.message || String(error),
         lastHlsErrorFatal: true
       }
+      cleanupHlsPlayback()
       updateLiveListenerControls()
       return
     }
@@ -2127,9 +2219,10 @@ function updateLiveMediaSession(stream = state.liveStream) {
   })
   navigator.mediaSession.playbackState = state.liveStatus === 'ended' || stream.status === 'ended'
     ? 'none'
-    : isLiveListeningStatus() ? 'playing' : 'paused'
+    : isCurrentLiveListenerActive(stream) ? 'playing' : 'paused'
   navigator.mediaSession.setActionHandler('play', () => {
     if (isBufferedHlsStream() && state.hlsMediaElement) playHlsMediaFromGesture().catch(() => {})
+    else if (isBufferedHlsStream()) joinLiveListener().catch(() => {})
     else if (!isLiveListeningStatus()) joinLiveListener().catch(() => {})
     else state.listenerAudioElement?.play?.().catch(() => {})
   })
@@ -3257,6 +3350,7 @@ function renderLiveDetailPage() {
       ? stream.status === 'live' && listenerAccessAllowed
       : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
   const hasVideo = isBufferedStream ? currentHlsPlaybackMode() !== 'audioOnly' : streamHasVideoFoundation(stream)
+  const listenerActive = isCurrentLiveListenerActive(stream)
   const visual = isBufferedStream && hasVideo
     ? '<div class="music-live-visual music-live-hls-video"><div data-hls-player-mount></div></div>'
     : hasVideo
@@ -3281,13 +3375,13 @@ function renderLiveDetailPage() {
         ${renderNowPlaying(stream)}
         <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : `<span>${hasVideo ? 'Live stream' : 'Live audio'}</span>`}</div>
         ${isBufferedStream ? renderHlsPlaybackModeControl() : ''}
-        ${stream.passwordProtected && !isLiveListeningStatus() ? `
+        ${stream.passwordProtected && !listenerActive ? `
           <form class="music-password-form" data-live-password-form>
             <label><span>Stream password</span><input name="password" type="password" value="${escapeHtml(state.livePassword)}" placeholder="Enter password to listen" /></label>
           </form>
         ` : ''}
         <div class="music-live-listener">
-          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${isLiveListeningStatus() ? 'Pause / Leave' : isBufferedStream ? 'Play' : 'Listen'}</button>
+          <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${listenerActive ? 'Pause / Leave' : isBufferedStream ? 'Play' : 'Listen'}</button>
           ${isBufferedStream && currentHlsPlaybackMode() === 'videoOnly' ? '' : `<label class="music-player-volume"><span>Volume</span><input type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-volume /></label>`}
         </div>
         ${isBufferedStream ? renderHlsDiagnostics() : isNativeStream ? renderNativeReceiverAudioDebug() : renderLiveKitReceiverAudioDebug()}
@@ -3329,7 +3423,7 @@ function renderHlsPlaybackModeControl() {
 function renderHlsDiagnostics() {
   const diagnostics = hlsMediaDiagnostics()
   const media = state.hlsMediaElement
-  const shouldShowResume = Boolean(media && media.paused && isLiveListeningStatus())
+  const shouldShowResume = Boolean(media && media.paused && isCurrentLiveListenerActive())
   const rows = [
     ['provider', diagnostics.provider || STREAM_PROVIDERS.hlsEdge],
     ['ingestMethod', diagnostics.ingestMethod || state.liveStream?.ingestMethod || 'unknown'],
@@ -3339,6 +3433,12 @@ function renderHlsDiagnostics() {
     ['hlsUrl', diagnostics.hlsUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
     ['selectedPlayer', diagnostics.selectedPlayer || 'hls'],
     ['computedHlsUrl', diagnostics.computedHlsUrl || getPublicPlaybackInfo(state.liveStream || {}).url || 'none'],
+    ['hlsHealth', diagnostics.hlsHealth || state.liveStream?.hlsHealth || 'unknown'],
+    ['hlsLastOkAt', diagnostics.hlsLastOkAt || state.liveStream?.hlsLastOkAt || 'none'],
+    ['hlsManifestSequence', diagnostics.hlsManifestSequence ?? state.liveStream?.hlsLastManifestSequence ?? 'none'],
+    ['hlsManifestAgeMs', diagnostics.hlsManifestAgeMs],
+    ['hlsResponseCode', diagnostics.hlsResponseCode || state.liveStream?.hlsResponseCode || 'none'],
+    ['hlsError', diagnostics.hlsError || state.liveStream?.hlsLastError || 'none'],
     ['normalizationApplied', diagnostics.normalizationApplied],
     ['rawPlaybackMode', diagnostics.rawPlaybackMode || 'none'],
     ['rawProvider', diagnostics.rawProvider || 'none'],
@@ -3812,6 +3912,7 @@ function startHostHeartbeat(streamId) {
 
 function sendHostUnloadSignal(reason = 'host_unload') {
   if (!state.goLive.streamId) return
+  if (state.goLive.form.streamingMethod === 'obsRtmp' && state.goLive.form.streamingProtocol !== 'nativeStreaming') return
   sendMusicLiveUnloadBeacon({
     streamId: state.goLive.streamId,
     idToken: state.goLive.unloadToken,
@@ -3880,6 +3981,7 @@ function startLiveStreamSubscription(streamId) {
         return
       }
       state.liveStream = stream
+      if (isBufferedStream) startHlsHealthPolling(stream)
       if (state.liveStatus !== 'error' && state.liveStatus !== 'playbackBlocked') state.liveError = ''
       updateLiveMediaSession(stream)
       rerender()
@@ -4189,6 +4291,7 @@ async function startHostBroadcast(form) {
       state.goLive.connectionStatus = 'Connecting browser stream to Melogic Edge...'
       rerender()
       ingestResult = await startBrowserWebrtcIngest({
+        streamId: pendingStreamId,
         streamKey: response.streamKey || payload.streamKey,
         mediaStream,
         onStatus: (status = {}) => {
@@ -4302,6 +4405,7 @@ function disconnectLiveListener() {
   state.nativePlaybackNextIndex = null
   cleanupNativeMediaSourcePipeline()
   cleanupHlsPlayback()
+  stopHlsHealthPolling()
   state.hlsDiagnostics = {}
   if (state.liveStream?.id && state.listenerPresenceId) {
     leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
@@ -4477,14 +4581,14 @@ async function startNativeListenerPlayback(credentials = {}, { monitorMode = fal
 async function joinLiveListener(options = {}) {
   if (!state.liveStream?.id) return
   const monitorMode = options.monitor === true || state.route.mode === 'liveMonitor'
-  if (isLiveListeningStatus()) {
+  const playbackInfo = getPublicPlaybackInfo(state.liveStream)
+  if (isCurrentLiveListenerActive(state.liveStream)) {
     if (monitorMode || options.forceJoin) return
     disconnectLiveListener()
     rerender()
     return
   }
   if (!monitorMode) clearPlayer()
-  const playbackInfo = getPublicPlaybackInfo(state.liveStream)
   console.log('[Live Receiver] selected playback route', {
     provider: state.liveStream.provider || '',
     transportProvider: state.liveStream.transportProvider || '',
@@ -4683,7 +4787,7 @@ function updateLiveListenerControls() {
   if (state.listenerAudioElement && app.querySelector('[data-native-audio-mount]')) ensureNativeListenerAudioElement()
   if (state.listenerAudioElement && app.querySelector('[data-livekit-audio-mount]')) ensureLiveKitListenerAudioMounted()
   if (state.hlsMediaElement && app.querySelector('[data-hls-player-mount]')) ensureHlsMediaMounted()
-  if (button) button.textContent = isLiveListeningStatus()
+  if (button) button.textContent = isCurrentLiveListenerActive(state.liveStream)
     ? 'Pause / Leave'
     : state.liveStatus === 'connecting' || state.liveStatus === 'connectingTransport' || state.liveStatus === 'reconnecting'
       ? 'Connecting...'
@@ -5502,6 +5606,7 @@ window.addEventListener('popstate', () => {
 
 window.addEventListener('beforeunload', (event) => {
   if (!isHostBroadcastActive()) return
+  if (state.goLive.form.streamingMethod === 'obsRtmp' && state.goLive.form.streamingProtocol !== 'nativeStreaming') return
   event.preventDefault()
   event.returnValue = ''
 })

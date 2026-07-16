@@ -123,7 +123,14 @@ export async function attachHlsStream({
     throw new Error('This browser cannot play this HLS stream.')
   }
 
-  hls = new Hls()
+  hls = new Hls({
+    manifestLoadingMaxRetry: 12,
+    manifestLoadingRetryDelay: 2000,
+    manifestLoadingMaxRetryTimeout: 6000,
+    levelLoadingMaxRetry: 8,
+    levelLoadingRetryDelay: 2000,
+    levelLoadingMaxRetryTimeout: 6000
+  })
   hls.on(Hls.Events.MANIFEST_PARSED, (_event, data = {}) => {
     console.info('[hls-edge] status', { status: 'manifestParsed', mode, src, native: false })
     onStatus({

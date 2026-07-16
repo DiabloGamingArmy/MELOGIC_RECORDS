@@ -1308,3 +1308,46 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-live-sequence-panel{height:100%;grid-template-rows:auto 172px minmax(0,1fr) 52px}
 .studio-live-playout,.studio-live-sequence-table,.studio-live-sequence-scroll,.studio-live-library-section,.studio-live-assets{min-height:0}
 @media (max-width:1120px){.studio-program-panel{overflow:auto}.studio-program-canvas-grid{grid-template-columns:1fr}.studio-program-workspace{grid-template-columns:1fr}.studio-program-audio-mixer article{grid-template-columns:1fr 1fr}.studio-live-page{height:auto;min-height:100dvh;overflow:auto}}
+
+/* Live Studio viewport and external-encoder hardening */
+.studio-live-page{height:auto;min-height:100dvh;overflow:hidden;padding-bottom:0}
+.studio-live-shell{height:calc(100dvh - var(--nav-offset,4.25rem));min-height:calc(100dvh - var(--nav-offset,4.25rem))}
+.studio-live-rail{height:auto;min-height:0;align-self:stretch;position:relative;top:auto}
+.studio-live-main{padding:14px 14px 16px;min-height:0}
+.studio-live-panel,.studio-live-sequence-panel,.studio-live-chat-panel{min-height:0}
+.studio-live-chat-log{padding-bottom:12px}
+.studio-live-chat-form{padding:0 2px 8px}
+.studio-live-rail a.is-disabled{opacity:.38;filter:saturate(.35);cursor:not-allowed;border-color:transparent;background:rgba(255,255,255,.025)}
+.studio-live-rail a.is-disabled:hover{color:#9fadca;border-color:transparent;background:rgba(255,255,255,.025)}
+.studio-live-stream-key-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.studio-live-stream-key-row input[readonly]{background:#0b121d;color:#b9c9e4;cursor:copy}
+.studio-live-ingest-debug{border:1px solid rgba(255,183,77,.3);border-radius:7px;background:rgba(255,183,77,.06);padding:9px 10px}
+.studio-live-ingest-debug summary{cursor:pointer;color:#ffd28a;font-weight:900}
+.studio-live-ingest-debug dl,.studio-live-external-diagnostics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:10px 0 0}
+.studio-live-ingest-debug dl div,.studio-live-external-diagnostics div{min-width:0;border:1px solid rgba(130,160,220,.14);border-radius:6px;background:#0b121d;padding:7px}
+.studio-live-ingest-debug dt,.studio-live-external-diagnostics dt{color:#8be6ff;font-size:10px;font-weight:900;text-transform:uppercase}
+.studio-live-ingest-debug dd,.studio-live-external-diagnostics dd{margin:3px 0 0;color:#dfe8fb;overflow-wrap:anywhere}
+.studio-live-external-meter{height:22px;display:flex;align-items:center;border:1px solid rgba(130,160,220,.2);border-radius:5px;background:repeating-linear-gradient(90deg,#172133 0 8px,#0a111c 8px 10px);overflow:hidden;padding:3px}
+.studio-live-external-meter i{height:100%;border-radius:3px;background:linear-gradient(90deg,#67f2aa 0 72%,#ffd166 88%,#ff6b7a 100%);transition:width .2s ease}
+.studio-live-external-preview{min-height:210px;display:grid;place-content:center;gap:8px;text-align:center;border:1px solid rgba(130,160,220,.2);border-radius:8px;background:radial-gradient(circle at 50% 20%,rgba(103,242,170,.08),transparent 45%),#02050a;color:#dfe8fb;padding:18px}
+.studio-live-external-preview span{color:#9fadca}
+
+/* Program Mixer hierarchy inspired by broadcast-console grouping without copying OBS. */
+.studio-program-status-strip span.is-live{border-color:rgba(103,242,170,.5);background:rgba(103,242,170,.1);color:#8ff8bd}
+.studio-program-preview-shell{position:relative}
+.studio-program-canvas-empty{position:absolute;inset:0;display:grid;place-content:center;gap:6px;text-align:center;pointer-events:none;padding:20px;color:#d5def1;background:radial-gradient(circle at center,rgba(35,48,72,.12),transparent 58%)}
+.studio-program-canvas-empty strong{font-size:14px}
+.studio-program-canvas-empty span{max-width:320px;color:#8f9dbb;font-size:12px;line-height:1.4}
+.studio-program-toolbar{border:1px solid rgba(130,160,220,.14);border-radius:7px;background:#0d1420;padding:7px 8px}
+.studio-program-toolbar>strong{margin-right:2px;color:#8be6ff;font-size:11px;text-transform:uppercase}
+.studio-program-output-note{border-left:3px solid #67f2aa;background:linear-gradient(90deg,rgba(103,242,170,.08),#0d1420 34%)}
+.studio-program-output-note>div{display:grid;gap:2px}
+.studio-program-output-note small{color:#8be6ff;font-size:10px;text-transform:uppercase}
+.studio-program-audio-mixer article{min-height:42px;background:rgba(6,11,18,.35);border-radius:5px;padding:7px 8px}
+.studio-program-audio-mixer meter{width:100%;height:12px;accent-color:#67f2aa}
+
+@media (max-width:1120px){
+  .studio-live-page{height:auto;min-height:100dvh;overflow:auto}
+  .studio-live-shell{height:auto;min-height:calc(100dvh - var(--nav-offset,4.25rem))}
+  .studio-live-rail{min-height:100%}
+}

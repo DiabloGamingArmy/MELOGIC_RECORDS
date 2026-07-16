@@ -1,12 +1,12 @@
 import { buildHlsPlaybackUrl as buildEdgePlaybackUrl, sanitizeHlsStreamKey } from './hlsEdgePlayer'
 
-const CONFIG_ERROR = 'Browser streaming needs the server WebRTC ingest URL configured.'
+const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/?app=live&stream={streamKey}&eip=104.197.179.248'
 const CONNECTION_TIMEOUT_MS = 15000
 
 let activeSession = null
 
 function configuredEndpoint() {
-  return String(import.meta.env?.VITE_BROWSER_WEBRTC_INGEST_URL || '').trim()
+  return String(import.meta.env?.VITE_BROWSER_WEBRTC_INGEST_URL || DEFAULT_BROWSER_WHIP_INGEST_URL).trim()
 }
 
 function stripEndpointSecrets(value = '') {
@@ -93,7 +93,9 @@ export function buildBrowserWebrtcIngestUrl(streamKey = '') {
   try {
     const url = new URL(expanded)
     if (!['http:', 'https:'].includes(url.protocol)) return ''
-    if (!hasPlaceholder) url.pathname = `${url.pathname.replace(/\/+$/, '')}/${encodeURIComponent(cleanKey)}`
+    if (!hasPlaceholder) url.searchParams.set('stream', cleanKey)
+    if (!url.searchParams.get('app')) url.searchParams.set('app', 'live')
+    if (!url.searchParams.get('eip')) url.searchParams.set('eip', '104.197.179.248')
     return url.toString()
   } catch {
     return ''
@@ -104,8 +106,8 @@ export function isBrowserWebrtcIngestConfigured() {
   return Boolean(buildBrowserWebrtcIngestUrl('mystream'))
 }
 
-export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatus = () => {}, onError = () => {} } = {}) {
-  if (!configuredEndpoint() || !isBrowserWebrtcIngestConfigured()) throw new Error(CONFIG_ERROR)
+export async function startBrowserWebrtcIngest({ streamId = '', streamKey, mediaStream, onStatus = () => {}, onError = () => {} } = {}) {
+  if (!configuredEndpoint() || !isBrowserWebrtcIngestConfigured()) throw new Error('Browser streaming could not build the Melogic WHIP ingest URL.')
   if (typeof RTCPeerConnection === 'undefined') throw new Error('This browser does not support WebRTC ingest.')
   if (!(mediaStream instanceof MediaStream) || mediaStream.getTracks().length === 0) {
     throw new Error('Browser WebRTC ingest requires the Studio Program media stream.')
@@ -118,6 +120,14 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
   const session = { peerConnection, mediaStream, resourceUrl: '', endpoint, stopped: false, connected: false }
   activeSession = session
   mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream))
+  console.log('[Browser WHIP] starting', {
+    streamId,
+    streamKey: sanitizeStreamKey(streamKey),
+    ingestUrlHost: new URL(endpoint).host,
+    trackCount: mediaStream.getTracks().length,
+    audioTracks: mediaStream.getAudioTracks().length,
+    videoTracks: mediaStream.getVideoTracks().length
+  })
   const emitStatus = (status, extra = {}) => onStatus({
     status,
     connectionState: peerConnection.connectionState,
@@ -125,6 +135,11 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
     ...connectionDiagnostics(peerConnection, mediaStream, extra)
   })
   const emitCurrentState = () => {
+    console.log('[Browser WHIP] state', {
+      iceConnectionState: peerConnection.iceConnectionState,
+      connectionState: peerConnection.connectionState,
+      signalingState: peerConnection.signalingState
+    })
     emitStatus(peerConnection.connectionState)
     if (session.connected && peerConnection.connectionState === 'failed' && activeSession === session) {
       session.connected = false
@@ -144,12 +159,39 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
     await peerConnection.setLocalDescription(offer)
     emitStatus('connecting', { localOfferCreated: true, remoteAnswerSet: false })
     await waitForIceGathering(peerConnection)
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/sdp', Accept: 'application/sdp' },
-      body: peerConnection.localDescription?.sdp || offer.sdp
+    let response
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp', Accept: 'application/sdp' },
+        body: peerConnection.localDescription?.sdp || offer.sdp
+      })
+    } catch (fetchError) {
+      const error = new Error('Browser streaming could not connect to the Melogic ingest server.')
+      error.cause = fetchError
+      error.whipDiagnostics = connectionDiagnostics(peerConnection, mediaStream, {
+        ingestUrlHost: new URL(endpoint).host,
+        responseStatus: null,
+        networkHint: 'Check ingest TLS, CORS, firewall access, and the SRS WHIP listener.',
+        lastIngestError: fetchError?.message || String(fetchError)
+      })
+      throw error
+    }
+    console.log('[Browser WHIP] response', {
+      status: response.status,
+      ok: response.ok,
+      contentType: response.headers.get('content-type')
     })
-    if (!response.ok) throw new Error(`Browser WebRTC ingest negotiation failed (${response.status}).`)
+    if (!response.ok) {
+      const error = new Error('Browser streaming could not connect to the Melogic ingest server.')
+      error.whipDiagnostics = connectionDiagnostics(peerConnection, mediaStream, {
+        ingestUrlHost: new URL(endpoint).host,
+        responseStatus: response.status,
+        responseContentType: response.headers.get('content-type') || '',
+        lastIngestError: `WHIP negotiation returned HTTP ${response.status}.`
+      })
+      throw error
+    }
     const answerSdp = await response.text()
     if (!answerSdp.trim()) throw new Error('Browser WebRTC ingest server returned an empty SDP answer.')
     const location = response.headers.get('Location')
@@ -165,6 +207,9 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
     const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
       localOfferCreated: true,
       remoteAnswerSet: true,
+      ingestUrlHost: new URL(endpoint).host,
+      responseStatus: response.status,
+      responseContentType: response.headers.get('content-type') || '',
       lastIngestError: ''
     })
     emitStatus('connected', diagnostics)
@@ -179,11 +224,15 @@ export async function startBrowserWebrtcIngest({ streamKey, mediaStream, onStatu
       stop: stopBrowserWebrtcIngest
     }
   } catch (error) {
-    const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
-      localOfferCreated: Boolean(peerConnection.localDescription?.sdp),
-      remoteAnswerSet: Boolean(peerConnection.remoteDescription?.sdp),
-      lastIngestError: error?.message || String(error)
-    })
+    const diagnostics = {
+      ...connectionDiagnostics(peerConnection, mediaStream, {
+        localOfferCreated: Boolean(peerConnection.localDescription?.sdp),
+        remoteAnswerSet: Boolean(peerConnection.remoteDescription?.sdp),
+        ingestUrlHost: new URL(endpoint).host,
+        lastIngestError: error?.message || String(error)
+      }),
+      ...(error?.whipDiagnostics || {})
+    }
     emitStatus('failed', diagnostics)
     onError(error, diagnostics)
     if (activeSession === session) activeSession = null

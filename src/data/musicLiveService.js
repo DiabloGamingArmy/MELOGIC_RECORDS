@@ -6,6 +6,7 @@ import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STREAM_PROVIDERS } from './streaming/streamingProviderTypes'
 import { selectPublicPlaybackPlayer } from './streaming/publicPlaybackService'
 import { buildHlsPlaybackUrl } from './streaming/hlsEdgePlayer'
+import { isRecentHlsHealth } from './streaming/hlsHealth'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
@@ -16,6 +17,7 @@ export const HLS_STREAMING_PROTOCOL = 'hls'
 export const NATIVE_STREAMING_PROTOCOL = 'nativeStreaming'
 export const DEFAULT_HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
 export const DEFAULT_RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
+export const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/?app=live&stream={streamKey}&eip=104.197.179.248'
 export const HLS_EDGE_ARCHIVE_NOTE = 'HLS Edge streams publish through the Melogic streaming server and play through the HLS edge.'
 
 export function sanitizeMusicLiveStreamKey(value = '') {
@@ -30,6 +32,21 @@ export function sanitizeMusicLiveStreamKey(value = '') {
 export function buildMusicLiveHlsUrl(streamKey = '') {
   const base = String(import.meta.env?.VITE_STREAM_EDGE_BASE_URL || DEFAULT_HLS_EDGE_BASE_URL).replace(/\/+$/, '')
   return `${base}/${sanitizeMusicLiveStreamKey(streamKey)}.m3u8`
+}
+
+export function buildMusicLiveWhipUrl(streamKey = '') {
+  const template = String(import.meta.env?.VITE_BROWSER_WEBRTC_INGEST_URL || DEFAULT_BROWSER_WHIP_INGEST_URL)
+  const cleanKey = sanitizeMusicLiveStreamKey(streamKey)
+  const expanded = template.includes('{streamKey}') ? template.replaceAll('{streamKey}', encodeURIComponent(cleanKey)) : template
+  try {
+    const url = new URL(expanded)
+    if (!template.includes('{streamKey}')) url.searchParams.set('stream', cleanKey)
+    if (!url.searchParams.get('app')) url.searchParams.set('app', 'live')
+    if (!url.searchParams.get('eip')) url.searchParams.set('eip', '104.197.179.248')
+    return url.toString()
+  } catch {
+    return ''
+  }
 }
 
 export function normalizeMusicLiveTransportPayload(payload = {}) {
@@ -81,6 +98,7 @@ export function normalizeMusicLiveTransportPayload(payload = {}) {
     rtmpIngestServer: ingestMethod === 'obsRtmp'
       ? String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).replace(/\/+$/, '')
       : String(payload.rtmpIngestServer || '').trim(),
+    browserWhipIngestUrl: ingestMethod === 'browserWebrtc' ? buildMusicLiveWhipUrl(streamKey) : '',
     nativeStreaming: {
       ...(payload.nativeStreaming || {}),
       enabled: false,
@@ -255,6 +273,15 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     antMediaBaseUrl: String(raw.antMediaBaseUrl || raw.publicPlaybackBaseUrl || ''),
     hlsUrl: String(provider === HLS_EDGE_PROVIDER ? normalizedHlsPlaybackUrl : raw.hlsUrl || ''),
     llhlsUrl: String(raw.llhlsUrl || ''),
+    browserWhipIngestUrl: String(raw.browserWhipIngestUrl || (hlsIngestMethod === 'browserWebrtc' ? buildMusicLiveWhipUrl(normalizedStreamKey) : '')),
+    hlsHealth: String(raw.hlsHealth || ''),
+    hlsLastOkAt: toIsoDate(raw.hlsLastOkAt),
+    hlsLastCheckedAt: toIsoDate(raw.hlsLastCheckedAt),
+    hlsLastManifestSequence: raw.hlsLastManifestSequence == null || raw.hlsLastManifestSequence === ''
+      ? null
+      : Number.isFinite(Number(raw.hlsLastManifestSequence)) ? Number(raw.hlsLastManifestSequence) : null,
+    hlsLastError: String(raw.hlsLastError || ''),
+    hlsResponseCode: Number(raw.hlsResponseCode || 0),
     webRtcPlaybackUrl: String(raw.webRtcPlaybackUrl || ''),
     videoEnabled: raw.videoEnabled === true,
     audioEnabled: raw.audioEnabled !== false,
@@ -323,10 +350,18 @@ export function isLiveStreamFresh(stream = {}) {
 }
 
 export function isPublicLiveStreamVisible(stream = {}) {
-  return stream.status === 'live'
+  const externalEncoderHls = stream.provider === HLS_EDGE_PROVIDER
+    && stream.streamingProtocol === HLS_STREAMING_PROTOCOL
+    && (stream.ingestMethod === 'obsRtmp' || ['obs-rtmp', 'rtmp-obs', 'rtmp'].includes(stream.ingestMode))
+  const hlsVisible = externalEncoderHls && (
+    stream.status === 'live'
+    || stream.hlsHealth === 'healthy'
+    || isRecentHlsHealth(stream)
+  )
+  return (stream.status === 'live' || hlsVisible)
     && (stream.visibility === 'public' || stream.accessMode === 'password')
-    && stream.hostConnected === true
-    && isLiveStreamFresh(stream)
+    && (externalEncoderHls || stream.hostConnected === true)
+    && (externalEncoderHls || isLiveStreamFresh(stream))
     && !['removed', 'blocked'].includes(stream.moderationStatus)
 }
 
