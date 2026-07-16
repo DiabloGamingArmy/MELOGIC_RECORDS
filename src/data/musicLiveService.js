@@ -427,6 +427,17 @@ export function subscribeMusicLiveStream(streamId = '', onNext = () => {}, onErr
 export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError = () => {}) {
   const id = String(streamId || '').trim()
   if (!db || !id || id.includes('/')) return () => {}
+  const path = `${FIRESTORE_COLLECTIONS.musicLiveStreams}/${id}/chatMessages`
+  console.log('[Live Chat] state', {
+    streamId: id,
+    chatEnabled: true,
+    status: 'subscribing',
+    isLive: true,
+    path,
+    canRead: true,
+    canWrite: null,
+    error: ''
+  })
   const messagesQuery = query(
     collection(db, FIRESTORE_COLLECTIONS.musicLiveStreams, id, 'chatMessages'),
     where('status', '==', 'visible'),
@@ -450,6 +461,16 @@ export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError
           status: String(raw.status || 'visible')
         }
       }).reverse()
+      console.log('[Live Chat] state', {
+        streamId: id,
+        chatEnabled: true,
+        status: 'subscribed',
+        isLive: true,
+        path,
+        canRead: true,
+        canWrite: null,
+        error: ''
+      })
       onNext(messages)
     },
     (error) => {
@@ -458,6 +479,16 @@ export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError
       } else {
         console.warn('[musicLiveService] Live chat subscription failed.', error?.message || error)
       }
+      console.log('[Live Chat] state', {
+        streamId: id,
+        chatEnabled: true,
+        status: 'error',
+        isLive: true,
+        path,
+        canRead: false,
+        canWrite: null,
+        error: error?.message || String(error)
+      })
       onError(error)
     }
   )

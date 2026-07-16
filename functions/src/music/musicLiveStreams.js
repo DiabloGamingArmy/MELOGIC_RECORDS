@@ -30,7 +30,7 @@ const MAX_CONFIGURED_LIVE_STREAMS_PER_HOST = 25
 const HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
 const RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
 const BROWSER_WHIP_INGEST_BASE_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/'
-const HLS_WARMUP_WINDOW_MS = 30 * 1000
+const HLS_WARMUP_WINDOW_MS = 45 * 1000
 const HLS_RECENT_OK_WINDOW_MS = 90 * 1000
 const HLS_HEALTH_TIMEOUT_MS = 8000
 const STREAM_KEY_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
@@ -636,13 +636,13 @@ function verifyPassword(password = '', secret = {}) {
 
 function isPubliclyJoinable(stream = {}) {
   const accessMode = stream.accessMode || stream.visibility || 'private'
-  const externalEncoder = isObsHlsEdgeStream(stream)
+  const hlsEdge = isHlsEdgeStream(stream)
   return stream.status === 'live'
     && ['public', 'unlisted', 'password'].includes(accessMode)
     && stream.visibility !== 'private'
-    && (externalEncoder || stream.hostConnected === true)
-    && (normalizeProvider(stream.provider) === 'firebaseSegments' || isStreamPublishing(stream))
-    && (externalEncoder || isHeartbeatFresh(stream))
+    && (hlsEdge || stream.hostConnected === true)
+    && (hlsEdge || normalizeProvider(stream.provider) === 'firebaseSegments' || isStreamPublishing(stream))
+    && (hlsEdge || isHeartbeatFresh(stream))
 }
 
 async function recomputeListenerCount(streamRef) {
@@ -897,7 +897,7 @@ const startMusicLiveStream = onCall(
       ])
       const freshLive = liveActive.docs.filter((docSnap) => {
         const stream = docSnap.data() || {}
-        return isObsHlsEdgeStream(stream)
+        return isHlsEdgeStream(stream)
           || (stream.hostConnected === true && isStreamPublishing(stream) && isHeartbeatFresh(stream))
       })
       const staleLive = liveActive.docs.filter((docSnap) => !freshLive.includes(docSnap))
@@ -1483,19 +1483,28 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
   if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
   const stream = snap.data() || {}
   if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can end this stream.')
-  console.log('[Live End] ending stream', { streamId: cleanStreamId, uid, reason })
-
-  if (isObsHlsEdgeStream(stream) && (reason === 'host_unload' || reason === 'host_pagehide')) {
+  if (isHlsEdgeStream(stream) && (reason === 'host_unload' || reason === 'host_pagehide')) {
     await streamRef.set({
       hostActive: false,
       hostConnected: false,
-      connectionStatus: 'live',
+      connectionStatus: isObsHlsEdgeStream(stream) ? 'live' : 'temporarily_unavailable',
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true })
-    liveLog('external encoder kept live after browser disconnect', { uid, streamId: cleanStreamId, reason })
-    return { ok: true, streamId: cleanStreamId, status: 'live', externalEncoderActive: true }
+    console.log('[Live Lifecycle] not ending hlsEdge stream', {
+      streamId: cleanStreamId,
+      reason,
+      status: stream.status,
+      isLive: stream.isLive,
+      connectionStatus: stream.connectionStatus,
+      hlsHealth: stream.hlsHealth,
+      lastOkAt: stream.hlsLastOkAt || null,
+      whipConnectionState: stream.providerDiagnostics?.connectionState || stream.providerDiagnostics?.ingestConnectionState || ''
+    })
+    return { ok: true, streamId: cleanStreamId, status: 'live', hlsEdgeActive: true }
   }
 
+  console.log('[Live Lifecycle] ending stream explicitly', { streamId: cleanStreamId, reason })
+  console.log('[Live End] ending stream', { streamId: cleanStreamId, uid, reason })
   const now = admin.firestore.FieldValue.serverTimestamp()
   await streamRef.set({
     status: 'ended',
@@ -1541,8 +1550,7 @@ const joinMusicLiveStream = onCall(
     const provider = normalizeProvider(stream.provider)
     const isFirebaseSegments = provider === 'firebaseSegments'
     const isBufferedBroadcast = provider === 'hlsEdge'
-    const externalEncoder = isObsHlsEdgeStream(stream)
-    if (!externalEncoder && (stream.hostConnected !== true || (!isFirebaseSegments && !isBufferedBroadcast && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream))) {
+    if (!isBufferedBroadcast && (stream.hostConnected !== true || (!isFirebaseSegments && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream))) {
       await streamRef.set({
         status: 'ended',
         isLive: false,
@@ -1894,7 +1902,7 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
   const isFirebaseSegments = normalizeProvider(stream.provider) === 'firebaseSegments'
-  if (!isObsHlsEdgeStream(stream) && (stream.hostConnected !== true || (!isFirebaseSegments && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream))) {
+  if (!isHlsEdgeStream(stream) && (stream.hostConnected !== true || (!isFirebaseSegments && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream))) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
 
@@ -1922,21 +1930,17 @@ async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
   if (stream.status === 'live') {
     if (isHlsEdgeStream(stream)) {
       const health = await refreshHlsHealth(docSnap, stream)
-      if (health.hlsHealth !== 'offline') return false
-      await docSnap.ref.set({
-        status: 'ended',
-        isLive: false,
-        connectionStatus: 'offline',
-        hostConnected: false,
-        audioPublished: false,
-        videoPublished: false,
-        endedAt: now,
-        endReason: 'hls_manifest_offline',
-        cleanupSource: 'scheduled_hls_health',
-        updatedAt: now,
-        listenerCount: 0
-      }, { merge: true })
-      return true
+      console.log('[Live Lifecycle] not ending hlsEdge stream', {
+        streamId: docSnap.id,
+        reason: `scheduled_hls_health_${health.hlsHealth}`,
+        status: stream.status,
+        isLive: stream.isLive,
+        connectionStatus: stream.connectionStatus,
+        hlsHealth: health.hlsHealth,
+        lastOkAt: health.hlsLastOkAt || stream.hlsLastOkAt || null,
+        whipConnectionState: stream.providerDiagnostics?.connectionState || stream.providerDiagnostics?.ingestConnectionState || ''
+      })
+      return false
     }
     const isFirebaseSegments = normalizeProvider(stream.provider) === 'firebaseSegments'
     const stale = stream.hostConnected !== true || (!isFirebaseSegments && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)

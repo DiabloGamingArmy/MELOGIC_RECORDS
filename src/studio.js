@@ -348,10 +348,17 @@ const state = {
     monitorConnected: false,
     micProgramSource: null,
     sequenceMonitorGain: null,
+    programLimiter: null,
+    programInputAnalyser: null,
+    programInputAnalyserData: null,
     programAnalyser: null,
     programAnalyserData: null,
+    programInputPeak: 0,
     programRms: 0,
     programPeak: 0,
+    programClippingDetected: false,
+    programMeterTimer: 0,
+    programAudioLastLogAt: 0,
     micLevel: 0,
     micMeterTimer: 0,
     micMeterContext: null,
@@ -1322,6 +1329,47 @@ function renderListenerPreviewPanel() {
   `
 }
 
+function renderDetailedStreamOutputStatus() {
+  const live = liveState()
+  const diagnostics = live.providerDiagnostics || {}
+  const streamKey = currentLiveStreamKey()
+  const hlsUrl = buildHlsPlaybackUrl(streamKey) || diagnostics.hlsUrl || live.stream?.hlsUrl || live.stream?.hlsPlaybackUrl || ''
+  const whipUrl = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? buildBrowserWebrtcIngestUrl(streamKey) : ''
+  let whipStreamParam = ''
+  try { whipStreamParam = new URL(whipUrl).searchParams.get('stream') || '' } catch {}
+  const encoderState = diagnostics.connectionState || diagnostics.ingestConnectionState || 'new'
+  const hlsHealth = diagnostics.hlsHealth || live.stream?.hlsHealth || 'not checked'
+  const statusMessage = live.streamId
+    ? hlsHealth === 'warming'
+      ? 'Waiting for HLS segments...'
+      : live.outputStatus || 'Program transport is active.'
+    : 'Start Stream after preparing at least one program audio or video source.'
+  return `
+    <section class="studio-program-output-card studio-stream-details-output-card" aria-label="Stream output status">
+      <div class="studio-program-output-card-heading"><div><span>Stream Output Status</span><strong>${live.streamId ? 'On air' : 'Ready for browser encoder'}</strong></div><i class="${live.streamId ? 'is-live' : ''}"></i></div>
+      <div class="studio-program-output-pills">
+        <span>${live.streamId ? 'On air' : 'Off air'}</span>
+        <span>Mode: ${live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp ? 'OBS' : 'Browser'}</span>
+        <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
+        <span>WHIP: ${esc(encoderState)}</span>
+        <span>HLS: ${esc(hlsHealth)}</span>
+      </div>
+      <small>${esc(statusMessage)}</small>
+      ${hlsUrl ? `<div class="studio-program-output-debug"><a class="studio-live-button" href="${esc(hlsUrl)}" target="_blank" rel="noreferrer">Open HLS URL</a><code title="${esc(hlsUrl)}">${esc(hlsUrl)}</code></div>` : ''}
+      <dl class="studio-live-external-diagnostics">
+        <div><dt>HLS URL</dt><dd>${esc(hlsUrl || 'not available')}</dd></div>
+        <div><dt>Stream Key</dt><dd>${esc(streamKey || 'not available')}</dd></div>
+        <div><dt>Ingest Method</dt><dd>${esc(live.ingestMethod || 'not available')}</dd></div>
+        <div><dt>WHIP Stream Param</dt><dd>${esc(whipStreamParam || 'not applicable')}</dd></div>
+        <div><dt>HLS Response</dt><dd>${esc(diagnostics.hlsResponseCode || live.stream?.hlsResponseCode || 'not checked')}</dd></div>
+        <div><dt>HLS Health</dt><dd>${esc(hlsHealth)}</dd></div>
+        <div><dt>Seconds Since Start</dt><dd>${esc(diagnostics.secondsSinceStart ?? live.stream?.hlsSecondsSinceStart ?? 0)}</dd></div>
+        <div><dt>Last OK</dt><dd>${esc(diagnostics.hlsLastOkAt || live.stream?.hlsLastOkAt || 'never')}</dd></div>
+      </dl>
+    </section>
+  `
+}
+
 function renderStreamDetailsPanel() {
   const live = liveState()
   const form = live.streamForm
@@ -1354,7 +1402,8 @@ function renderStreamDetailsPanel() {
           <span>${liveHostViewerCount()} viewers</span>
         </div>
       </header>
-      <div class="studio-live-stream-layout">
+      <div class="studio-live-stream-layout studio-live-stream-layout--details">
+        <div class="studio-live-details-stack">
         <form class="studio-live-details-form" data-live-stream-form>
           <label>Stream title<input name="title" maxlength="90" required value="${esc(form.title)}" /></label>
           <label>Description<textarea name="description" maxlength="1200">${esc(form.description)}</textarea></label>
@@ -1390,6 +1439,8 @@ function renderStreamDetailsPanel() {
             ${link ? `<button type="button" class="studio-live-button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a class="studio-live-button" href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
           </div>
         </form>
+        ${renderDetailedStreamOutputStatus()}
+        </div>
         ${renderListenerPreviewPanel()}
       </div>
     </section>
@@ -1584,18 +1635,18 @@ function renderInputSourcePanel() {
               <option value="browser" ${live.videoSource === 'browser' ? 'selected' : ''}>Browser Video Input</option>
               <option value="sequence" ${live.videoSource === 'sequence' ? 'selected' : ''}>Sequence Video Source</option>
             </select></label>
-            <label>Camera / Screen<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
+            ${live.videoSource === 'browser' ? `<label>Camera / Screen<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
               <option value="">Default camera or screen source</option>
               ${live.videoDevices.map((device) => `<option value="${esc(device.deviceId)}" ${live.selectedVideoDeviceId === device.deviceId ? 'selected' : ''}>${esc(device.label || `Video input ${live.videoDevices.indexOf(device) + 1}`)}</option>`).join('')}
-            </select></label>
+            </select></label>` : ''}
             <label>Transition<select data-live-video-transition><option value="cut" ${live.videoTransition === 'cut' ? 'selected' : ''}>Cut</option><option value="fade" ${live.videoTransition === 'fade' ? 'selected' : ''}>Fade</option></select></label>
             <div class="studio-live-video-preview ${live.videoPreviewActive ? 'is-active' : ''}" data-live-video-preview-mount>
-              <span>${esc(live.videoPreviewError || (live.videoPreviewActive ? 'Video input preview active' : 'No video input preview'))}</span>
+              <span>${esc(live.videoPreviewError || (live.videoSource === 'sequence' ? 'Program output preview is preparing.' : live.videoPreviewActive ? 'Video input preview active' : 'No video input preview'))}</span>
             </div>
-            <p class="studio-live-source-status">${esc(live.videoPreviewError || (live.localVideoTrack ? `Video input ready. Transition: ${live.videoTransition}.` : 'Choose a camera/source and click Use Input to preview and publish while live.'))}</p>
+            <p class="studio-live-source-status">${esc(live.videoPreviewError || (live.videoSource === 'sequence' ? `Program Mixer output is the Sequence Video preview. Transition: ${live.videoTransition}.` : live.localVideoTrack ? `Video input ready. Transition: ${live.videoTransition}.` : 'Choose a camera/source and click Use Input to preview and publish while live.'))}</p>
             <div class="studio-live-action-bar">
-              <button type="button" data-live-use-video-input ${live.videoEnabled ? '' : 'disabled'}>${live.localVideoTrack ? 'Use Input Again' : 'Use Input'}</button>
-              <button type="button" data-live-refresh-video>${live.devicesLoading ? 'Refreshing...' : 'Refresh Video'}</button>
+              <button type="button" data-live-use-video-input ${live.videoEnabled ? '' : 'disabled'}>${live.videoSource === 'sequence' ? 'Preview Program Output' : live.localVideoTrack ? 'Use Input Again' : 'Use Input'}</button>
+              ${live.videoSource === 'browser' ? `<button type="button" data-live-refresh-video>${live.devicesLoading ? 'Refreshing...' : 'Refresh Video'}</button>` : ''}
               <a class="studio-live-button" href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>
             </div>
           </div>
@@ -1705,7 +1756,7 @@ function renderChatPanel() {
   const chatEnabled = live.chatEnabled !== false
   return `
     <section class="studio-live-panel studio-live-chat-panel">
-      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><label class="studio-live-monitor-toggle"><input type="checkbox" data-live-chat-enabled ${chatEnabled ? 'checked' : ''} /> Enable live chat</label><span>${liveHostViewerCount()} viewers</span></div></header>
+      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><label class="studio-live-switch"><input type="checkbox" data-live-chat-enabled ${chatEnabled ? 'checked' : ''} /><span></span>Enable live chat</label><span>${liveHostViewerCount()} viewers</span></div></header>
       <div class="studio-live-chat-log">
         ${!chatEnabled ? '<p class="studio-live-empty">Live chat is disabled by the host.</p>' : live.streamId ? live.chatMessages.map((message) => `<article><strong>${esc(message.displayName)}</strong><span>${esc(message.text)}</span><small>${esc(message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : '')}</small></article>`).join('') || '<p class="studio-live-empty">No chat messages yet.</p>' : '<p class="studio-live-empty">Chat opens after Start Live.</p>'}
       </div>
@@ -2149,7 +2200,7 @@ async function refreshStudioHlsHealth() {
   })
   const browserConnectedWithoutSegments = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
     && ['connected', 'completed'].includes(live.providerDiagnostics?.ingestConnectionState || live.providerDiagnostics?.connectionState || '')
-    && Number(health.secondsSinceStart || 0) > 30
+    && Number(health.secondsSinceStart || 0) > 45
     && !health.hlsLastOkAt
   live.outputStatus = health.hlsHealth === 'healthy'
     ? 'HLS output is healthy.'
@@ -2734,7 +2785,6 @@ function renderProgramMixerPanel() {
   const audioSources = mixer.sources.filter((source) => ['browser-microphone', 'sequence-audio', 'guest-audio'].includes(source.type))
   const hlsHealth = live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'not checked'
   const encoderState = live.providerDiagnostics?.connectionState || live.providerDiagnostics?.ingestConnectionState || 'new'
-  const hlsUrl = buildHlsPlaybackUrl(currentLiveStreamKey()) || live.providerDiagnostics?.hlsUrl || live.stream?.hlsUrl || live.stream?.hlsPlaybackUrl || ''
   const previewDescription = previewScene
     ? previewSourceIds.size ? 'Select a source on the canvas to move, scale, or rotate it.' : 'This scene has no sources yet. Add one from the Sources card below.'
     : 'No preview scene selected. Create a scene, add sources, then select it for Preview.'
@@ -2750,18 +2800,15 @@ function renderProgramMixerPanel() {
           <p>Preview is local only. Program is the broadcast canvas.</p>
           ${mixer.notice ? `<p class="studio-live-error">${esc(mixer.notice)}</p>` : ''}
         </div>
-        <aside class="studio-program-output-card" aria-label="Stream output status">
-          <div class="studio-program-output-card-heading"><div><span>Stream Output Status</span><strong>${live.streamId ? 'On air' : 'Ready for browser encoder'}</strong></div><i class="${live.streamId ? 'is-live' : ''}"></i></div>
+        <div class="studio-program-compact-status" aria-label="Stream output status">
           <div class="studio-program-output-pills">
             <span>${live.streamId ? 'On air' : 'Off air'}</span>
-            <span>Mode: Browser</span>
+            <span>Mode: ${live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp ? 'OBS' : 'Browser'}</span>
             <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
             <span>WHIP: ${esc(encoderState)}</span>
             <span>HLS: ${esc(hlsHealth)}</span>
           </div>
-          <small>${esc(live.streamId ? `Program transport active. Last HLS manifest: ${live.providerDiagnostics?.hlsLastOkAt || 'waiting'}.` : 'Start Stream after preparing at least one program audio or video source.')}</small>
-          ${hlsUrl ? `<div class="studio-program-output-debug"><a class="studio-live-button" href="${esc(hlsUrl)}" target="_blank" rel="noreferrer">Open HLS URL</a><code title="${esc(hlsUrl)}">${esc(hlsUrl)}</code></div>` : ''}
-        </aside>
+        </div>
       </header>
       <div class="studio-program-workspace">
         <section class="studio-program-canvas-panel studio-program-preview-panel">
@@ -2867,9 +2914,12 @@ function renderProgramMixerPanel() {
           }).join('') : `<article class="studio-program-channel-strip is-empty"><div class="studio-program-channel-name"><strong>No routed sources</strong><small>Add a microphone, sequence, or guest audio source.</small></div><div class="studio-program-channel-meter"><i style="width:0%"></i></div></article>`}
           <article class="studio-program-channel-strip is-master">
             <div class="studio-program-channel-name"><strong>Master</strong><small>Program output bus</small></div>
-            <div class="studio-program-channel-routes"><span>${live.audioEnabled ? 'Audio enabled' : 'Audio disabled'}</span><span>Monitor separate</span></div>
+            <div class="studio-program-channel-routes"><span>${live.audioEnabled ? 'Audio enabled' : 'Audio disabled'}</span><span data-program-clipping class="${live.programClippingDetected ? 'is-clipping' : ''}">${live.programClippingDetected ? 'LIMITING' : 'CLEAN'}</span></div>
             <label class="studio-program-channel-gain"><span>Gain</span><input type="range" min="0" max="1.25" step="0.01" value="${Number(live.mixer.masterGain || 1)}" data-live-mixer="masterGain" /></label>
-            <div class="studio-program-channel-meter" aria-label="Master output level"><i style="width:${live.audioEnabled ? Math.round(Math.max(0, Math.min(1, Number(live.micLevel || 0))) * 100) : 0}%"></i></div>
+            <div class="studio-program-master-meters" aria-label="Program bus levels before and after limiting">
+              <label><span>PRE</span><b class="studio-program-channel-meter"><i data-program-meter="input" style="width:${live.audioEnabled ? Math.round(Math.max(0, Math.min(1, Number(live.programInputPeak || 0))) * 100) : 0}%"></i></b></label>
+              <label><span>POST</span><b class="studio-program-channel-meter"><i data-program-meter="output" style="width:${live.audioEnabled ? Math.round(Math.max(0, Math.min(1, Number(live.programPeak || 0))) * 100) : 0}%"></i></b></label>
+            </div>
           </article>
         </div>
       </section>
@@ -3414,16 +3464,42 @@ function ensureLiveAudioGraph() {
   if (live.audioContext && live.masterGain && live.destination) return live
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext
   if (!AudioContextCtor) throw new Error('This browser cannot run Live Studio audio.')
-  const context = new AudioContextCtor()
+  let context
+  try {
+    context = new AudioContextCtor({ sampleRate: 48000, latencyHint: 'interactive' })
+  } catch {
+    context = new AudioContextCtor()
+  }
   const masterGain = context.createGain()
   const micGain = context.createGain()
   const sequenceGain = context.createGain()
   const sequenceMonitorGain = context.createGain()
   const monitorGain = context.createGain()
+  const inputAnalyser = context.createAnalyser()
+  const limiter = context.createDynamicsCompressor()
   const analyser = context.createAnalyser()
   const destination = context.createMediaStreamDestination()
+  ;[masterGain, micGain, sequenceGain, sequenceMonitorGain, monitorGain, inputAnalyser, limiter, analyser].forEach((node) => {
+    try {
+      node.channelCount = 2
+      node.channelCountMode = 'explicit'
+      node.channelInterpretation = 'speakers'
+    } catch {}
+  })
+  try {
+    destination.channelCount = 2
+    destination.channelCountMode = 'explicit'
+    destination.channelInterpretation = 'speakers'
+  } catch {}
+  inputAnalyser.fftSize = 1024
+  inputAnalyser.smoothingTimeConstant = 0.65
   analyser.fftSize = 1024
   analyser.smoothingTimeConstant = 0.65
+  limiter.threshold.value = -3
+  limiter.knee.value = 0
+  limiter.ratio.value = 20
+  limiter.attack.value = 0.003
+  limiter.release.value = 0.12
   masterGain.gain.value = live.audioEnabled ? Number(live.mixer.masterGain ?? 1) : 0
   micGain.gain.value = live.browserInputEnabled && !live.mixer.browserMuted ? Number(live.mixer.browserGain ?? 1) : 0
   sequenceGain.gain.value = 0
@@ -3432,44 +3508,64 @@ function ensureLiveAudioGraph() {
   micGain.connect(masterGain)
   sequenceGain.connect(masterGain)
   sequenceMonitorGain.connect(monitorGain)
-  masterGain.connect(monitorGain)
-  masterGain.connect(analyser)
-  masterGain.connect(destination)
+  masterGain.connect(inputAnalyser)
+  masterGain.connect(limiter)
+  limiter.connect(analyser)
+  limiter.connect(monitorGain)
+  limiter.connect(destination)
   live.audioContext = context
   live.masterGain = masterGain
   live.micGain = micGain
   live.sequenceGain = sequenceGain
   live.sequenceMonitorGain = sequenceMonitorGain
   live.monitorGain = monitorGain
+  live.programLimiter = limiter
   live.destination = destination
   live.broadcastDestination = destination
   live.broadcastStream = destination.stream
   live.outputTrack = destination.stream.getAudioTracks()[0] || null
   live.broadcastTrack = live.outputTrack
   live.programAudioTrack = live.outputTrack
+  live.programInputAnalyser = inputAnalyser
+  live.programInputAnalyserData = new Float32Array(inputAnalyser.fftSize)
   live.programAnalyser = analyser
   live.programAnalyserData = new Float32Array(analyser.fftSize)
+  if (live.programMeterTimer) window.clearInterval(live.programMeterTimer)
+  live.programMeterTimer = window.setInterval(() => {
+    updateLiveProgramAudioDiagnostics()
+    updateLiveProgramMeterDom()
+  }, 120)
   syncLiveMonitorRoute()
+  updateLiveProgramAudioDiagnostics()
   return live
+}
+
+function readLiveAnalyser(analyser, data) {
+  if (!analyser || !data) return { rms: 0, peak: 0 }
+  analyser.getFloatTimeDomainData(data)
+  let sum = 0
+  let peak = 0
+  for (const sample of data) {
+    sum += sample * sample
+    peak = Math.max(peak, Math.abs(sample))
+  }
+  return { rms: Math.sqrt(sum / data.length), peak }
 }
 
 function updateLiveProgramAudioDiagnostics(extra = {}) {
   const live = liveState()
   const graph = live.audioContext ? live : ensureLiveAudioGraph()
-  let rms = 0
-  let peak = 0
-  if (graph.programAnalyser && graph.programAnalyserData) {
-    graph.programAnalyser.getFloatTimeDomainData(graph.programAnalyserData)
-    let sum = 0
-    for (const sample of graph.programAnalyserData) {
-      sum += sample * sample
-      peak = Math.max(peak, Math.abs(sample))
-    }
-    rms = Math.sqrt(sum / graph.programAnalyserData.length)
-  }
+  const inputLevel = readLiveAnalyser(graph.programInputAnalyser, graph.programInputAnalyserData)
+  const outputLevel = readLiveAnalyser(graph.programAnalyser, graph.programAnalyserData)
+  const rms = outputLevel.rms
+  const peak = outputLevel.peak
+  const clippingDetected = inputLevel.peak >= 0.98 || peak >= 0.995
+  live.programInputPeak = inputLevel.peak
   live.programRms = rms
   live.programPeak = peak
+  live.programClippingDetected = clippingDetected
   const broadcastTrack = graph.broadcastTrack || graph.outputTrack || null
+  const sourceCount = Number(Boolean(live.micProgramSource)) + live.activePlayers.length
   live.providerDiagnostics = {
     ...(live.providerDiagnostics || {}),
     provider: live.providerId,
@@ -3478,8 +3574,14 @@ function updateLiveProgramAudioDiagnostics(extra = {}) {
     broadcastTrackReadyState: broadcastTrack?.readyState || '',
     broadcastTrackEnabled: broadcastTrack?.enabled === true,
     broadcastAudioTrackCount: graph.broadcastStream?.getAudioTracks?.().length || 0,
+    audioContextSampleRate: Number(graph.audioContext?.sampleRate || 0),
+    outputChannelCount: Number(broadcastTrack?.getSettings?.().channelCount || graph.destination?.channelCount || 2),
+    sourceCount,
+    programInputPeak: Number(inputLevel.peak.toFixed(5)),
     analyserRms: Number(rms.toFixed(5)),
     analyserPeak: Number(peak.toFixed(5)),
+    peakDb: peak > 0 ? Number((20 * Math.log10(peak)).toFixed(2)) : -Infinity,
+    clippingDetected,
     monitorEnabled: live.monitorEnabled === true,
     selectedInputSource: live.inputSource,
     sequencePlaying: live.activePlayers.length > 0,
@@ -3488,6 +3590,17 @@ function updateLiveProgramAudioDiagnostics(extra = {}) {
     livekitPublishedTrackName: live.livekitAudioPublication?.trackName || live.livekitAudioPublication?.track?.name || 'melogic-program-audio',
     audioPublishedToProvider: live.audioPublishedToProvider === true,
     ...(extra || {})
+  }
+  if (Date.now() - Number(live.programAudioLastLogAt || 0) >= 5000) {
+    live.programAudioLastLogAt = Date.now()
+    console.log('[Browser Encoder Audio] program bus', {
+      audioContextSampleRate: graph.audioContext?.sampleRate || 0,
+      destinationTrackCount: graph.broadcastStream?.getAudioTracks?.().length || 0,
+      outputChannelCount: live.providerDiagnostics.outputChannelCount,
+      sourceCount,
+      peakDb: live.providerDiagnostics.peakDb,
+      clippingDetected
+    })
   }
   return live.providerDiagnostics
 }
@@ -3498,7 +3611,7 @@ function ensureLiveProgramAudioGraph() {
     const analyser = live.audioContext.createAnalyser()
     analyser.fftSize = 1024
     analyser.smoothingTimeConstant = 0.65
-    try { live.masterGain.connect(analyser) } catch {}
+    try { (live.programLimiter || live.masterGain).connect(analyser) } catch {}
     live.programAnalyser = analyser
     live.programAnalyserData = new Float32Array(analyser.fftSize)
   }
@@ -3515,7 +3628,9 @@ function ensureLiveProgramAudioGraph() {
     broadcastDestination: live.broadcastDestination || live.destination,
     broadcastStream: live.broadcastStream || live.destination?.stream,
     broadcastTrack: live.broadcastTrack || live.outputTrack || live.destination?.stream?.getAudioTracks?.()[0] || null,
-    analyser: live.programAnalyser
+    analyser: live.programAnalyser,
+    inputAnalyser: live.programInputAnalyser,
+    limiter: live.programLimiter
   }
 }
 
@@ -3593,6 +3708,7 @@ async function releaseLiveProgramCapture() {
   live.sequenceGain = null
   live.sequenceMonitorGain = null
   live.monitorGain = null
+  live.programLimiter = null
   live.destination = null
   live.broadcastDestination = null
   live.broadcastStream = null
@@ -3600,9 +3716,33 @@ async function releaseLiveProgramCapture() {
   live.outputTrack = null
   live.programAudioTrack = null
   live.programVideoTrack = null
+  live.programInputAnalyser = null
+  live.programInputAnalyserData = null
   live.programAnalyser = null
   live.programAnalyserData = null
+  live.programInputPeak = 0
+  live.programRms = 0
+  live.programPeak = 0
+  live.programClippingDetected = false
+  if (live.programMeterTimer) window.clearInterval(live.programMeterTimer)
+  live.programMeterTimer = 0
   live.monitorConnected = false
+}
+
+function updateLiveProgramMeterDom() {
+  const live = liveState()
+  const inputWidth = `${Math.round(Math.max(0, Math.min(1, Number(live.programInputPeak || 0))) * 100)}%`
+  const outputWidth = `${Math.round(Math.max(0, Math.min(1, Number(live.programPeak || 0))) * 100)}%`
+  app.querySelectorAll('[data-program-meter="input"]').forEach((element) => {
+    element.style.width = inputWidth
+  })
+  app.querySelectorAll('[data-program-meter="output"]').forEach((element) => {
+    element.style.width = outputWidth
+  })
+  app.querySelectorAll('[data-program-clipping]').forEach((element) => {
+    element.textContent = live.programClippingDetected ? 'LIMITING' : 'CLEAN'
+    element.classList.toggle('is-clipping', live.programClippingDetected)
+  })
 }
 
 function updateLiveMicMeterDom() {
@@ -3641,18 +3781,12 @@ function startLiveMicMeter() {
 function audioConstraintsForLiveSource({ relaxed = false } = {}) {
   const live = liveState()
   const base = live.selectedDeviceId ? { deviceId: { exact: live.selectedDeviceId } } : {}
-  if (live.streamForm.audioMode === 'voice' || relaxed) {
-    return {
-      ...base,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true
-    }
-  }
   return {
     ...base,
-    channelCount: { ideal: 2 },
-    sampleRate: { ideal: 48000 },
+    ...(relaxed ? {} : {
+      channelCount: { ideal: 2 },
+      sampleRate: { ideal: 48000 }
+    }),
     echoCancellation: false,
     noiseSuppression: false,
     autoGainControl: false
@@ -4620,7 +4754,34 @@ async function setLiveAvEnabled(kind = 'audio', enabled = true) {
 function attachLiveVideoPreview() {
   const live = liveState()
   const mount = app.querySelector('[data-live-video-preview-mount]')
-  if (!mount || !live.localVideoTrack) return
+  if (!mount) return
+  if (live.videoSource === 'sequence' && live.videoEnabled) {
+    try {
+      const mixer = ensureStudioProgramMixer()
+      mixer.enableVideo()
+      const programTrack = mixer.getVideoTrack()
+      if (!programTrack) throw new Error('Program output video is not available.')
+      live.programVideoTrack = programTrack
+      live.videoPreviewActive = true
+      let video = mount.querySelector('video')
+      if (!video) {
+        mount.innerHTML = ''
+        video = document.createElement('video')
+        video.autoplay = true
+        video.muted = true
+        video.playsInline = true
+        video.controls = false
+        mount.appendChild(video)
+      }
+      const currentTrack = video.srcObject instanceof MediaStream ? video.srcObject.getVideoTracks()[0] : null
+      if (currentTrack?.id !== programTrack.id) video.srcObject = new MediaStream([programTrack])
+      video.play?.().catch(() => {})
+    } catch (error) {
+      live.videoPreviewError = error?.message || 'Program output preview could not attach.'
+    }
+    return
+  }
+  if (!live.localVideoTrack) return
   let video = mount.querySelector('video')
   if (!video) {
     mount.innerHTML = ''
@@ -4652,11 +4813,14 @@ async function useLiveVideoInput() {
     }
     live.localVideoTrack = null
     if (live.videoSource === 'sequence') {
-      const item = liveItemById(live.currentItemId) || liveSelectedItem()
-      if (!item?.videoURLSnapshot && !item?.videoURL) throw new Error('Select or play a sequence video item before using sequence video.')
+      const mixer = ensureStudioProgramMixer()
+      mixer.enableVideo()
+      live.programVideoTrack = mixer.getVideoTrack()
+      if (!live.programVideoTrack) throw new Error('Program output video is not available.')
       live.videoPreviewActive = true
-      live.videoPreviewError = 'Sequence video preview is shown in the Sequence Editor preview.'
+      live.videoPreviewError = ''
       renderShell()
+      attachLiveVideoPreview()
       return
     }
     const constraints = live.selectedVideoDeviceId ? { deviceId: live.selectedVideoDeviceId } : {}
@@ -5055,6 +5219,9 @@ async function startLiveStudioStream() {
               ...ingestStatus,
               ingestConnectionState: ingestStatus.connectionState || ingestStatus.status || 'connecting'
             }
+            if (ingestStatus.connectionState === 'connected') {
+              live.outputStatus = 'Browser encoder connected. Waiting for HLS segments...'
+            }
           },
           onError: (error, ingestDiagnostics = {}) => {
             live.providerDiagnostics = {
@@ -5063,6 +5230,8 @@ async function startLiveStudioStream() {
               ingestConnectionState: 'error',
               lastIngestError: error?.message || String(error)
             }
+            live.outputStatus = 'Browser encoder is temporarily unavailable. The live session remains open.'
+            if (currentStudioSection() === 'live') renderShell()
           }
         })
         browserIngestStarted = true
@@ -5437,11 +5606,31 @@ function subscribeLiveStudioStream(streamId = '') {
 function subscribeLiveStudioChat(streamId = '') {
   const live = liveState()
   live.chatUnsubscribe?.()
+  console.log('[Live Chat] state', {
+    streamId,
+    chatEnabled: live.chatEnabled !== false,
+    status: live.stream?.status || '',
+    isLive: live.stream?.isLive === true,
+    path: `musicLiveStreams/${streamId}/chatMessages`,
+    canRead: true,
+    canWrite: Boolean(state.user),
+    error: ''
+  })
   live.chatUnsubscribe = subscribeMusicLiveChat(streamId, (messages) => {
     live.chatMessages = messages
     if (currentLivePanel() === 'chat') renderShell()
-  }, () => {
-    live.error = 'Chat unavailable.'
+  }, (error) => {
+    live.error = 'Live chat could not be loaded because of a permission or configuration error.'
+    console.log('[Live Chat] state', {
+      streamId,
+      chatEnabled: live.chatEnabled !== false,
+      status: live.stream?.status || '',
+      isLive: live.stream?.isLive === true,
+      path: `musicLiveStreams/${streamId}/chatMessages`,
+      canRead: false,
+      canWrite: Boolean(state.user),
+      error: error?.message || String(error)
+    })
     if (currentLivePanel() === 'chat') renderShell()
   })
 }
@@ -5941,6 +6130,8 @@ function bindLiveStudioControls() {
   }))
   app.querySelector('[data-live-video-source]')?.addEventListener('change', (e) => {
     live.videoSource = e.currentTarget.value === 'sequence' ? 'sequence' : 'browser'
+    live.videoPreviewActive = live.videoSource === 'sequence' && live.videoEnabled
+    live.videoPreviewError = ''
     renderShell()
   })
   app.querySelector('[data-live-video-device]')?.addEventListener('change', (e) => {
@@ -6019,6 +6210,16 @@ function bindLiveStudioControls() {
   })
   app.querySelector('[data-live-chat-enabled]')?.addEventListener('change', async (e) => {
     live.chatEnabled = Boolean(e.currentTarget.checked)
+    console.log('[Live Chat] state', {
+      streamId: live.streamId || live.draftStreamId || '',
+      chatEnabled: live.chatEnabled,
+      status: live.stream?.status || (live.streamId ? 'live' : 'draft'),
+      isLive: live.stream?.isLive === true || Boolean(live.streamId),
+      path: `musicLiveStreams/${live.streamId || live.draftStreamId || '{draft}'}/chatMessages`,
+      canRead: true,
+      canWrite: Boolean(state.user),
+      error: ''
+    })
     try {
       if (live.streamId) await updateMusicLiveStreamInfo(liveStreamPayload())
       else scheduleLiveStudioDraftSave()

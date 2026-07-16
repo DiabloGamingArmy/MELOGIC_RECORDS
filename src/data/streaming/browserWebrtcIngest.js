@@ -3,6 +3,8 @@ import { buildHlsPlaybackUrl as buildEdgePlaybackUrl, sanitizeHlsStreamKey } fro
 const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/?app=live&stream={streamKey}&eip=104.197.179.248'
 const CONNECTION_TIMEOUT_MS = 15000
 const FETCH_TIMEOUT_MS = 15000
+const CONNECTION_FAILURE_GRACE_MS = 30000
+const MUSIC_AUDIO_MAX_BITRATE = 192000
 
 let activeSession = null
 
@@ -87,6 +89,74 @@ function waitForConnection(peerConnection, mediaStream, emitStatus) {
     peerConnection.addEventListener('connectionstatechange', onChange)
     peerConnection.addEventListener('iceconnectionstatechange', onChange)
   })
+}
+
+async function applyMusicAudioSenderParameters(peerConnection, mediaStream, phase = 'after-add-track') {
+  const audioTrack = mediaStream?.getAudioTracks?.()[0] || null
+  const audioSender = peerConnection?.getSenders?.().find((sender) => sender.track?.kind === 'audio') || null
+  if (!audioTrack || !audioSender?.getParameters) return false
+  let applied = false
+  let errorMessage = ''
+  try {
+    const params = audioSender.getParameters() || {}
+    params.encodings = params.encodings?.length ? params.encodings : [{}]
+    params.encodings[0] = {
+      ...(params.encodings[0] || {}),
+      maxBitrate: MUSIC_AUDIO_MAX_BITRATE
+    }
+    if (audioSender.setParameters) {
+      await audioSender.setParameters(params)
+      applied = true
+    }
+  } catch (error) {
+    errorMessage = error?.message || String(error)
+    console.warn('[Browser WHIP] audio sender parameter update failed', { phase, error: errorMessage })
+  }
+  console.log('[Browser WHIP] audio sender parameters', {
+    phase,
+    applied,
+    targetMaxBitrate: MUSIC_AUDIO_MAX_BITRATE,
+    trackId: audioTrack.id,
+    trackLabel: audioTrack.label,
+    settings: audioTrack.getSettings?.(),
+    constraints: audioTrack.getConstraints?.(),
+    params: audioSender.getParameters?.(),
+    error: errorMessage
+  })
+  return applied
+}
+
+function applyMusicOpusSdp(sdp = '') {
+  const text = String(sdp || '')
+  const opusMatch = text.match(/^a=rtpmap:(\d+)\s+opus\/48000(?:\/2)?\s*$/mi)
+  if (!opusMatch) return text
+  const payloadType = opusMatch[1]
+  const fmtpPattern = new RegExp(`^a=fmtp:${payloadType}\\s+(.+)$`, 'mi')
+  const fmtpMatch = text.match(fmtpPattern)
+  const desired = {
+    stereo: '1',
+    'sprop-stereo': '1',
+    maxaveragebitrate: String(MUSIC_AUDIO_MAX_BITRATE),
+    maxplaybackrate: '48000',
+    useinbandfec: '1',
+    usedtx: '0'
+  }
+  if (!fmtpMatch) {
+    return text.replace(opusMatch[0], `${opusMatch[0]}\r\na=fmtp:${payloadType} ${Object.entries(desired).map(([key, value]) => `${key}=${value}`).join(';')}`)
+  }
+  const params = new Map(
+    fmtpMatch[1]
+      .split(';')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [key, ...rest] = entry.split('=')
+        return [key, rest.join('=')]
+      })
+  )
+  Object.entries(desired).forEach(([key, value]) => params.set(key, value))
+  const nextFmtp = `a=fmtp:${payloadType} ${Array.from(params.entries()).map(([key, value]) => value ? `${key}=${value}` : key).join(';')}`
+  return text.replace(fmtpPattern, nextFmtp)
 }
 
 export function sanitizeStreamKey(streamKey = '') {
@@ -209,9 +279,19 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
 
   const safeEndpoint = stripEndpointSecrets(endpoint)
   const peerConnection = new RTCPeerConnection()
-  const session = { peerConnection, mediaStream, resourceUrl: '', endpoint, stopped: false, connected: false }
+  const session = {
+    peerConnection,
+    mediaStream,
+    resourceUrl: '',
+    endpoint,
+    stopped: false,
+    connected: false,
+    failureTimer: 0,
+    failureStartedAt: 0
+  }
   activeSession = session
   mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream))
+  await applyMusicAudioSenderParameters(peerConnection, mediaStream)
   const emitStatus = (status, extra = {}) => onStatus({
     status,
     connectionState: peerConnection.connectionState,
@@ -219,19 +299,63 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     ...connectionDiagnostics(peerConnection, mediaStream, extra)
   })
   const emitCurrentState = (event) => {
+    const connectionState = peerConnection.connectionState
+    const iceConnectionState = peerConnection.iceConnectionState
+    const transportRecovered = connectionState === 'connected'
+      || ['connected', 'completed'].includes(iceConnectionState)
+    const transportInterrupted = ['disconnected', 'failed', 'closed'].includes(connectionState)
+      || ['disconnected', 'failed', 'closed'].includes(iceConnectionState)
     console.log('[Browser WHIP] state', {
       event: event?.type || 'statechange',
       iceGatheringState: peerConnection.iceGatheringState,
-      iceConnectionState: peerConnection.iceConnectionState,
-      connectionState: peerConnection.connectionState,
+      iceConnectionState,
+      connectionState,
       signalingState: peerConnection.signalingState
     })
-    emitStatus(peerConnection.connectionState)
-    if (session.connected && peerConnection.connectionState === 'failed' && activeSession === session) {
-      session.connected = false
-      const error = new Error('Browser WebRTC ingest connection failed.')
-      onError(error, connectionDiagnostics(peerConnection, mediaStream, { lastIngestError: error.message }))
-      void stopBrowserWebrtcIngest()
+    emitStatus(connectionState)
+    if (session.stopped || activeSession !== session) return
+    if (transportRecovered) {
+      if (session.failureTimer) {
+        window.clearTimeout(session.failureTimer)
+        session.failureTimer = 0
+        console.log('[Live Lifecycle] browser WHIP recovered during grace period', {
+          streamId,
+          connectionState,
+          iceConnectionState,
+          graceMs: CONNECTION_FAILURE_GRACE_MS
+        })
+      }
+      session.failureStartedAt = 0
+      return
+    }
+    if (session.connected && transportInterrupted && !session.failureTimer) {
+      session.failureStartedAt = Date.now()
+      console.log('[Live Lifecycle] browser WHIP grace period started', {
+        streamId,
+        connectionState,
+        iceConnectionState,
+        graceMs: CONNECTION_FAILURE_GRACE_MS
+      })
+      session.failureTimer = window.setTimeout(() => {
+        session.failureTimer = 0
+        if (session.stopped || activeSession !== session || whipTransportReady(peerConnection)) return
+        session.connected = false
+        const error = new Error('Browser encoder connection is temporarily unavailable.')
+        const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
+          lastIngestError: error.message,
+          whipFailureGraceExpired: true,
+          whipFailureGraceMs: CONNECTION_FAILURE_GRACE_MS,
+          whipFailureStartedAt: session.failureStartedAt ? new Date(session.failureStartedAt).toISOString() : ''
+        })
+        console.log('[Live Lifecycle] browser WHIP unavailable after grace period', {
+          streamId,
+          connectionState: peerConnection.connectionState,
+          iceConnectionState: peerConnection.iceConnectionState,
+          graceMs: CONNECTION_FAILURE_GRACE_MS
+        })
+        onError(error, diagnostics)
+        void stopBrowserWebrtcIngest()
+      }, CONNECTION_FAILURE_GRACE_MS)
     }
   }
   session.emitStatus = emitStatus
@@ -252,7 +376,16 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
   try {
     emitStatus('new', { localOfferCreated: false, remoteAnswerSet: false })
     const offer = await peerConnection.createOffer()
-    await peerConnection.setLocalDescription(offer)
+    const musicOffer = {
+      type: offer.type,
+      sdp: applyMusicOpusSdp(offer.sdp)
+    }
+    console.log('[Browser WHIP] music Opus offer', {
+      stereoRequested: /stereo=1/i.test(musicOffer.sdp || ''),
+      maxAverageBitrate: MUSIC_AUDIO_MAX_BITRATE,
+      dtxDisabled: /usedtx=0/i.test(musicOffer.sdp || '')
+    })
+    await peerConnection.setLocalDescription(musicOffer)
     emitStatus('connecting', { localOfferCreated: true, remoteAnswerSet: false })
     await waitForIceGathering(peerConnection)
     const localOfferSdp = peerConnection.localDescription?.sdp || offer.sdp || ''
@@ -340,6 +473,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
       ? new RTCSessionDescription({ type: 'answer', sdp: answerSdp })
       : { type: 'answer', sdp: answerSdp }
     await peerConnection.setRemoteDescription(answer)
+    await applyMusicAudioSenderParameters(peerConnection, mediaStream, 'after-answer')
     console.log('[Browser WHIP] remote answer applied', {
       answerLength: answerSdp.length,
       iceConnectionState: peerConnection.iceConnectionState,
@@ -412,6 +546,8 @@ export async function stopBrowserWebrtcIngest() {
   activeSession = null
   if (!session) return
   session.stopped = true
+  if (session.failureTimer) window.clearTimeout(session.failureTimer)
+  session.failureTimer = 0
   session.peerConnection.close()
   session.emitStatus?.('closed')
   if (session.resourceUrl) {

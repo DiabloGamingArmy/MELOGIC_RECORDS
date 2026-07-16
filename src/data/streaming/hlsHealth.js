@@ -1,4 +1,4 @@
-export const HLS_WARMUP_WINDOW_MS = 30 * 1000
+export const HLS_WARMUP_WINDOW_MS = 45 * 1000
 export const HLS_RECENT_OK_WINDOW_MS = 90 * 1000
 
 function timestampMs(value) {

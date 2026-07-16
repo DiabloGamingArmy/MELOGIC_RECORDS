@@ -303,6 +303,11 @@ const state = {
     room: null,
     browserIngestActive: false,
     localTrack: null,
+    programAudioContext: null,
+    programAudioSource: null,
+    programAudioLimiter: null,
+    programAudioDestination: null,
+    programAudioStream: null,
     heartbeatTimer: 0,
     unloadToken: '',
     editOpen: false,
@@ -1180,7 +1185,7 @@ function liveStatusLabel(stream = {}) {
     if (state.liveStatus === 'playing') return 'Playing'
     if (stream.ingestMethod === 'browserWebrtc'
       && stream.hostConnected === true
-      && Number(state.hlsDiagnostics?.secondsSinceStart || stream.hlsSecondsSinceStart || 0) > 30
+      && Number(state.hlsDiagnostics?.secondsSinceStart || stream.hlsSecondsSinceStart || 0) > 45
       && !(state.hlsDiagnostics?.hlsLastOkAt || stream.hlsLastOkAt)) {
       return 'Browser encoder connected, but no HLS segments are being produced yet.'
     }
@@ -1208,7 +1213,8 @@ function liveStatusLabel(stream = {}) {
   if (state.liveStatus === 'reconnecting') return 'Reconnecting...'
   if (state.liveStatus === 'connecting') return 'Connecting to stream...'
   if (state.liveStatus === 'buffering') return 'Starting stream buffer...'
-  if (state.liveStatus === 'ended' || stream.status !== 'live') return 'Stream ended.'
+  if (state.liveStatus === 'ended' || isExplicitlyEndedLiveStream(stream)) return 'Stream ended.'
+  if (stream.status !== 'live') return 'Stream temporarily unavailable.'
   if (playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments) {
     const status = stream.nativeStreaming?.status || ''
     if (status === 'idleNoListeners' || status === 'idle_no_listeners') return 'Waiting for listeners.'
@@ -1261,26 +1267,76 @@ function audioModeLabel(mode = 'music') {
 }
 
 function audioConstraintsForMode({ deviceId = '', relaxed = false } = {}) {
-  const mode = state.goLive.form.audioMode === 'voice' ? 'voice' : 'music'
   const base = deviceId ? { deviceId: { exact: deviceId } } : {}
-  if (relaxed) return deviceId ? { deviceId: { exact: deviceId } } : true
-  if (mode === 'voice') {
-    return {
-      ...base,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      sampleRate: { ideal: 48000 }
-    }
-  }
   return {
     ...base,
-    channelCount: { ideal: 2 },
-    sampleRate: { ideal: 48000 },
+    ...(relaxed ? {} : {
+      channelCount: { ideal: 2 },
+      sampleRate: { ideal: 48000 }
+    }),
     echoCancellation: false,
     noiseSuppression: false,
     autoGainControl: false
   }
+}
+
+async function closeHostProgramAudioBus() {
+  const goLive = state.goLive
+  try { goLive.programAudioSource?.disconnect?.() } catch {}
+  try { goLive.programAudioLimiter?.disconnect?.() } catch {}
+  try { await goLive.programAudioContext?.close?.() } catch {}
+  goLive.programAudioContext = null
+  goLive.programAudioSource = null
+  goLive.programAudioLimiter = null
+  goLive.programAudioDestination = null
+  goLive.programAudioStream = null
+}
+
+async function createHostProgramAudioStream(inputTrack) {
+  const rawTrack = inputTrack?.mediaStreamTrack || inputTrack
+  if (!rawTrack || rawTrack.readyState === 'ended') throw new Error('The browser audio track is not available for streaming.')
+  await closeHostProgramAudioBus()
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextCtor) return new MediaStream([rawTrack])
+  let context
+  try {
+    context = new AudioContextCtor({ sampleRate: 48000, latencyHint: 'interactive' })
+  } catch {
+    context = new AudioContextCtor()
+  }
+  const source = context.createMediaStreamSource(new MediaStream([rawTrack]))
+  const limiter = context.createDynamicsCompressor()
+  const destination = context.createMediaStreamDestination()
+  ;[source, limiter].forEach((node) => {
+    try {
+      node.channelCount = 2
+      node.channelCountMode = 'explicit'
+      node.channelInterpretation = 'speakers'
+    } catch {}
+  })
+  limiter.threshold.value = -3
+  limiter.knee.value = 0
+  limiter.ratio.value = 20
+  limiter.attack.value = 0.003
+  limiter.release.value = 0.12
+  source.connect(limiter)
+  limiter.connect(destination)
+  if (context.state === 'suspended') await context.resume()
+  state.goLive.programAudioContext = context
+  state.goLive.programAudioSource = source
+  state.goLive.programAudioLimiter = limiter
+  state.goLive.programAudioDestination = destination
+  state.goLive.programAudioStream = destination.stream
+  const outputTrack = destination.stream.getAudioTracks()[0] || null
+  console.log('[Browser Encoder Audio] program bus', {
+    audioContextSampleRate: context.sampleRate,
+    destinationTrackCount: destination.stream.getAudioTracks().length,
+    outputChannelCount: outputTrack?.getSettings?.().channelCount || destination.channelCount || 2,
+    sourceCount: 1,
+    peakDb: null,
+    clippingDetected: false
+  })
+  return destination.stream
 }
 
 function publishOptionsForAudioMode() {
@@ -1843,6 +1899,14 @@ function isBufferedHlsStream(stream = state.liveStream) {
   return Boolean(stream && getPublicPlaybackInfo(stream).provider === STREAM_PROVIDERS.hlsEdge)
 }
 
+function isExplicitlyEndedLiveStream(stream = state.liveStream) {
+  return Boolean(stream && (
+    stream.status === 'ended'
+    || stream.broadcastState === 'ended'
+    || (stream.isLive === false && Boolean(stream.endedAt))
+  ))
+}
+
 function currentHlsPlaybackMode() {
   return HLS_PLAYBACK_MODES.has(state.hlsPlaybackMode) ? state.hlsPlaybackMode : 'videoAudio'
 }
@@ -2054,7 +2118,10 @@ function handleHlsStatus(payload = {}) {
   }
   if (status === 'waiting' && state.liveStatus !== 'loadingManifest') state.liveStatus = 'waiting'
   if (status === 'stalled') state.liveStatus = 'stalled'
-  if (status === 'ended') state.liveStatus = 'ended'
+  if (status === 'ended') {
+    state.liveStatus = isExplicitlyEndedLiveStream() ? 'ended' : 'stalled'
+    if (!isExplicitlyEndedLiveStream()) state.liveError = ''
+  }
   if (status === 'error') state.liveStatus = 'error'
   hlsMediaDiagnostics(status)
   updateLiveListenerControls()
@@ -2299,7 +2366,12 @@ function ensureSequenceAudioGraph() {
   if (playback.context && playback.destination && playback.masterGain) return playback
   const AudioContextCtor = window.AudioContext || window.webkitAudioContext
   if (!AudioContextCtor) throw new Error('This browser cannot run Sequence Software audio.')
-  const context = new AudioContextCtor()
+  let context
+  try {
+    context = new AudioContextCtor({ sampleRate: 48000, latencyHint: 'interactive' })
+  } catch {
+    context = new AudioContextCtor()
+  }
   const sequenceMasterGain = context.createGain()
   const destination = context.createMediaStreamDestination()
   sequenceMasterGain.gain.value = 1
@@ -3097,7 +3169,7 @@ function renderAudioControls(form) {
           </div>
         ` : ''}
         <label><span>Audio quality mode</span><select name="audioMode"><option value="music" ${form.audioMode !== 'voice' ? 'selected' : ''}>High Quality Music</option><option value="voice" ${form.audioMode === 'voice' ? 'selected' : ''}>Podcast / Voice</option></select></label>
-        <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps echo cancellation, noise suppression, and auto gain enabled for speech.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
+        <p class="music-quality-note">${form.audioMode === 'voice' ? 'Voice mode keeps the same clean 48 kHz browser capture path without echo cancellation, noise suppression, or automatic gain.' : 'Music mode requests stereo 48 kHz audio when available and disables browser cleanup so your interface or mixer stays natural.'}</p>
         ${form.inputSource === 'sequence' ? '' : `
           <select data-live-device-select>
             <option value="">Browser default</option>
@@ -3416,7 +3488,13 @@ function renderLiveDetailPage() {
     : hasVideo
     ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${isLiveListeningStatus() ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
     : renderLiveArtwork(stream, 'music-live-detail-art')
-  const liveBadge = canListen ? nativeLiveStatusLabel(stream) : 'ENDED'
+  const liveBadge = canListen
+    ? nativeLiveStatusLabel(stream)
+    : isExplicitlyEndedLiveStream(stream)
+      ? 'ENDED'
+      : stream.status === 'live'
+        ? 'WAITING'
+        : 'UNAVAILABLE'
   renderAppShell(`
     <section class="music-live-detail ${hasVideo ? 'has-video-foundation' : ''} ${state.liveVideoExpanded ? 'is-video-expanded' : ''}">
       <div class="music-live-visual-shell">
@@ -3989,7 +4067,17 @@ function sendHostUnloadSignal(reason = 'host_unload') {
 
 function startLiveChatSubscription(streamId) {
   stopLiveChatSubscription()
-  if (!streamId || !state.currentUser || state.liveStream?.chatEnabled === false) return
+  if (!streamId || state.liveStream?.chatEnabled === false) return
+  console.log('[Live Chat] state', {
+    streamId,
+    chatEnabled: state.liveStream?.chatEnabled !== false,
+    status: state.liveStream?.status || '',
+    isLive: state.liveStream?.isLive === true,
+    path: `musicLiveStreams/${streamId}/chatMessages`,
+    canRead: true,
+    canWrite: Boolean(state.currentUser),
+    error: ''
+  })
   state.liveChat.unsubscribe = subscribeMusicLiveChat(
     streamId,
     (messages) => {
@@ -4005,8 +4093,18 @@ function startLiveChatSubscription(streamId) {
         })
       }
     },
-    () => {
-      state.liveChat.error = 'Live chat is unavailable for this stream.'
+    (error) => {
+      state.liveChat.error = 'Live chat could not be loaded because of a permission or configuration error.'
+      console.log('[Live Chat] state', {
+        streamId,
+        chatEnabled: state.liveStream?.chatEnabled !== false,
+        status: state.liveStream?.status || '',
+        isLive: state.liveStream?.isLive === true,
+        path: `musicLiveStreams/${streamId}/chatMessages`,
+        canRead: false,
+        canWrite: Boolean(state.currentUser),
+        error: error?.message || String(error)
+      })
       rerender()
     }
   )
@@ -4035,16 +4133,21 @@ function startLiveStreamSubscription(streamId) {
           state.liveStatus = ['live', 'buffering', 'waiting'].includes(state.liveStatus) ? state.liveStatus : 'idle'
           state.liveError = nativePlaybackWaitMessage(stream)
         } else if (isBufferedStream && stream?.status === 'live') {
-          disconnectLiveListener()
-          state.liveStatus = 'error'
-          state.liveError = getPublicPlaybackInfo(stream).message || 'Could not load the live stream playlist.'
-        } else {
+          state.liveStatus = stream.hlsHealth === 'warming' ? 'loadingManifest' : 'error'
+          state.liveError = ''
+          startHlsHealthPolling(stream)
+          if (stream.chatEnabled === false) stopLiveChatSubscription()
+          else if (!state.liveChat.unsubscribe) startLiveChatSubscription(streamId)
+        } else if (isExplicitlyEndedLiveStream(stream)) {
           console.log('[Live Receiver] stream ended', { streamId, endedAt: stream?.endedAt || '', status: stream?.status || 'missing' })
           disconnectLiveListener()
           stopHlsHealthPolling()
           state.liveStatus = 'ended'
-          state.liveError = stream?.status === 'ended' ? 'This live stream has ended.' : 'This stream has ended or is no longer public.'
+          state.liveError = 'This live stream has ended.'
           stopLiveChatSubscription()
+        } else {
+          state.liveStatus = 'error'
+          state.liveError = 'Stream temporarily unavailable.'
         }
         rerender()
         return
@@ -4052,17 +4155,18 @@ function startLiveStreamSubscription(streamId) {
       state.liveStream = stream
       if (isBufferedStream) startHlsHealthPolling(stream)
       if (stream?.chatEnabled === false) stopLiveChatSubscription()
-      else if (state.currentUser && !state.liveChat.unsubscribe) startLiveChatSubscription(streamId)
+      else if (!state.liveChat.unsubscribe) startLiveChatSubscription(streamId)
       if (state.liveStatus !== 'error' && state.liveStatus !== 'playbackBlocked') state.liveError = ''
       updateLiveMediaSession(stream)
       rerender()
     },
-    () => {
-      disconnectLiveListener()
-      state.liveStream = null
-      state.liveStatus = 'ended'
-      state.liveError = 'This stream has ended or is no longer public.'
-      stopLiveChatSubscription()
+    (error) => {
+      state.liveStatus = 'error'
+      state.liveError = 'Stream temporarily unavailable.'
+      console.warn('[Live Receiver] subscription temporarily unavailable', {
+        streamId,
+        error: error?.message || String(error)
+      })
       rerender()
     }
   )
@@ -4377,7 +4481,7 @@ async function startHostBroadcast(form) {
       state.goLive.localTrack = localTrack
       const mediaStreamTrack = localTrack?.mediaStreamTrack || localTrack
       if (!mediaStreamTrack || mediaStreamTrack.readyState === 'ended') throw new Error('The browser audio track is not available for streaming.')
-      const mediaStream = new MediaStream([mediaStreamTrack])
+      const mediaStream = await createHostProgramAudioStream(mediaStreamTrack)
       state.goLive.connectionStatus = 'Connecting browser stream to Melogic Edge...'
       rerender()
       ingestResult = await startBrowserWebrtcIngest({
@@ -4454,6 +4558,7 @@ async function startHostBroadcast(form) {
     }
     if (state.goLive.browserIngestActive) await stopBrowserWebrtcIngest().catch(() => {})
     state.goLive.browserIngestActive = false
+    await closeHostProgramAudioBus()
     stopHostHeartbeat()
     stopLiveChatSubscription()
     if (state.goLive.localTrack && state.goLive.form.inputSource !== 'sequence') {
@@ -4484,6 +4589,7 @@ async function endHostBroadcast() {
     stopHostHeartbeat()
     if (state.goLive.browserIngestActive) await stopBrowserWebrtcIngest().catch(() => {})
     state.goLive.browserIngestActive = false
+    await closeHostProgramAudioBus()
     if (state.goLive.localTrack && state.goLive.form.inputSource !== 'sequence') {
       state.goLive.localTrack.stop()
     }

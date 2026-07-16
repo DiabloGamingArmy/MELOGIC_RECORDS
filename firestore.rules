@@ -2230,10 +2230,17 @@ service cloud.firestore {
       allow create, delete: if false;
 
       match /chatMessages/{messageId} {
-        allow read: if get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
-          && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
-          && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.chatEnabled != false
-          && resource.data.status == 'visible';
+        allow read: if (
+            get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
+            && (
+              get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
+              || get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.accessMode in ['public', 'unlisted', 'password']
+            )
+            && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.chatEnabled != false
+            && resource.data.status == 'visible'
+          )
+          || (signedIn()
+            && (get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.hostUid == request.auth.uid || isAdminClaim()));
         allow create: if signedIn()
           && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
           && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.visibility in ['public', 'unlisted']
