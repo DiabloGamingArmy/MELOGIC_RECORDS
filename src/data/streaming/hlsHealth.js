@@ -87,6 +87,7 @@ export async function checkHlsManifest({
     hlsLastError: healthy ? '' : error,
     hlsError: healthy ? '' : error,
     hlsResponseCode: responseCode,
+    hlsHasMediaSegments: parsed.hasMediaSegment === true,
     healthy
   }
   console.log('[HLS Health] check', {

@@ -1688,13 +1688,14 @@ function renderManualMetadataPanel() {
 
 function renderChatPanel() {
   const live = liveState()
+  const chatEnabled = live.chatEnabled !== false
   return `
     <section class="studio-live-panel studio-live-chat-panel">
-      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><span>${liveHostViewerCount()} viewers</span></div></header>
+      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><label class="studio-live-monitor-toggle"><input type="checkbox" data-live-chat-enabled ${chatEnabled ? 'checked' : ''} /> Enable live chat</label><span>${liveHostViewerCount()} viewers</span></div></header>
       <div class="studio-live-chat-log">
-        ${live.streamId ? live.chatMessages.map((message) => `<article><strong>${esc(message.displayName)}</strong><span>${esc(message.text)}</span><small>${esc(message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : '')}</small></article>`).join('') || '<p class="studio-live-empty">No chat messages yet.</p>' : '<p class="studio-live-empty">Chat opens after Start Live.</p>'}
+        ${!chatEnabled ? '<p class="studio-live-empty">Live chat is disabled by the host.</p>' : live.streamId ? live.chatMessages.map((message) => `<article><strong>${esc(message.displayName)}</strong><span>${esc(message.text)}</span><small>${esc(message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : '')}</small></article>`).join('') || '<p class="studio-live-empty">No chat messages yet.</p>' : '<p class="studio-live-empty">Chat opens after Start Live.</p>'}
       </div>
-      <form class="studio-live-chat-form" data-live-chat-form><input name="message" value="${esc(live.chatDraft)}" placeholder="Message listeners..." ${live.streamId ? '' : 'disabled'} /><button type="submit" ${live.streamId ? '' : 'disabled'}>Send</button></form>
+      <form class="studio-live-chat-form" data-live-chat-form><input name="message" value="${esc(live.chatDraft)}" placeholder="Message listeners..." ${live.streamId && chatEnabled ? '' : 'disabled'} /><button type="submit" ${live.streamId && chatEnabled ? '' : 'disabled'}>Send</button></form>
     </section>
   `
 }
@@ -2106,7 +2107,7 @@ function stopStudioHlsHealthPolling() {
 
 async function refreshStudioHlsHealth() {
   const live = liveState()
-  if (!live.streamId || live.streamingProtocol !== 'hls' || live.ingestMethod !== STREAM_INGEST_METHODS.obsRtmp) return null
+  if (!live.streamId || live.streamingProtocol !== 'hls') return null
   const streamKey = ensureLiveStreamKey()
   const hlsUrl = buildHlsPlaybackUrl(streamKey)
   const health = await checkHlsManifest({
@@ -2117,12 +2118,12 @@ async function refreshStudioHlsHealth() {
   })
   live.providerDiagnostics = { ...(live.providerDiagnostics || {}), ...health, hlsUrl, hlsPlaybackUrl: hlsUrl }
   live.outputStatus = health.hlsHealth === 'healthy'
-    ? 'External encoder HLS is healthy.'
+    ? 'HLS output is healthy.'
     : health.hlsHealth === 'warming'
-      ? 'Waiting for HLS segments from the external encoder...'
+      ? 'Waiting for HLS media segments...'
       : health.hlsHealth === 'stale'
         ? 'External encoder HLS is temporarily stale; the last healthy manifest is still within tolerance.'
-        : 'External encoder manifest is offline. Verify OBS is still streaming.'
+        : 'HLS manifest is offline. Verify the program encoder is still publishing.'
   if (currentStudioSection() === 'live') renderShell()
   return health
 }
@@ -2137,7 +2138,7 @@ function startStudioHlsHealthPolling() {
   live.hlsHealthTimer = window.setInterval(() => refreshStudioHlsHealth().catch(() => {}), 15000)
 }
 
-function ensureStudioProgramMixer() {
+function ensureStudioProgramMixer({ syncSnapshot = true } = {}) {
   const live = liveState()
   const [width, height] = String(live.programMixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
   if (!studioProgramMixer) {
@@ -2147,11 +2148,13 @@ function ensureStudioProgramMixer() {
   studioProgramMixer.height = height || 720
   studioProgramMixer.fps = Number(live.programMixer.fps || 30)
   studioProgramMixer.attachCanvas(programOutputCanvas)
-  const programSnapshot = normalizeProgramSnapshot(live.programMixer.programSnapshot || {})
-  studioProgramMixer.cutToSnapshot(programSnapshot)
+  if (syncSnapshot) {
+    const programSnapshot = normalizeProgramSnapshot(live.programMixer.programSnapshot || {})
+    studioProgramMixer.cutToSnapshot(programSnapshot)
+  }
   if (live.audioEnabled) studioProgramMixer.enableAudio()
   else studioProgramMixer.disableAudio()
-  if (live.videoEnabled) studioProgramMixer.enableVideo()
+  if (live.videoEnabled || (live.browserIngestActive && live.programVideoTrack?.readyState === 'live')) studioProgramMixer.enableVideo()
   else studioProgramMixer.disableVideo()
   return studioProgramMixer
 }
@@ -2431,7 +2434,7 @@ function updateProgramSource(sourceId = '', patch = {}, { persist = true, render
 async function handleProgramSceneAction(action = '') {
   const live = liveState()
   const mixer = live.programMixer
-  const activeScene = mixer.scenes.find((scene) => scene.sceneId === mixer.previewSceneId || scene.sceneId === mixer.programSceneId) || mixer.scenes[0]
+  const activeScene = mixer.scenes.find((scene) => scene.sceneId === mixer.previewSceneId) || mixer.scenes[0]
   if (action === 'create') {
     mixer.sceneModal = { open: true, name: '', templateId: 'blank', error: '' }
     renderShell()
@@ -2455,13 +2458,13 @@ async function handleProgramSceneAction(action = '') {
     if (!window.confirm(`Delete "${activeScene.name}"?`)) return
     mixer.scenes = mixer.scenes.filter((scene) => scene.sceneId !== activeScene.sceneId)
     if (mixer.previewSceneId === activeScene.sceneId) mixer.previewSceneId = ''
-    if (mixer.programSceneId === activeScene.sceneId) mixer.programSceneId = ''
-    if (mixer.activeSceneId === activeScene.sceneId) mixer.activeSceneId = mixer.programSceneId || ''
+    // Program owns a frozen snapshot, so deleting a Preview scene cannot erase what is on air.
+    if (mixer.activeSceneId === activeScene.sceneId) mixer.activeSceneId = mixer.previewSceneId || ''
     if (state.user?.uid) await deleteProgramScene(state.user.uid, activeScene.sceneId).catch(() => {})
   }
-  studioProgramMixer?.setScene?.(mixer.programSceneId)
   mixer.notice = ''
-  heartbeatLiveProgramState().catch(() => {})
+  console.log('[Program Mixer] preview scene updated; program unchanged', { action, programSceneId: mixer.programSnapshot?.sceneId || '' })
+  scheduleProgramMixerStateSave()
   renderShell()
 }
 
@@ -2503,7 +2506,8 @@ async function createProgramSource({ type = 'browser-microphone', label = '', ta
     if (state.user?.uid) await saveProgramScene(state.user.uid, updatedScene).catch(() => {})
   }
   if (state.user?.uid) await saveProgramSource(state.user.uid, source).catch(() => {})
-  heartbeatLiveProgramState().catch(() => {})
+  console.log('[Program Mixer] preview source added; program unchanged', { sceneId, sourceId: source.sourceId })
+  scheduleProgramMixerStateSave()
   renderShell()
   return source
 }
@@ -2535,6 +2539,8 @@ async function createProgramSceneFromModal(formEl) {
     await saveProgramScene(state.user.uid, scene).catch(() => {})
     await Promise.all(createdSources.map((source) => saveProgramSource(state.user.uid, source).catch(() => {})))
   }
+  console.log('[Program Mixer] preview scene created; program unchanged', { sceneId: scene.sceneId })
+  scheduleProgramMixerStateSave()
   renderShell()
 }
 
@@ -2561,6 +2567,51 @@ function handleProgramSourceAction(action = '') {
   else if (action === 'fit' || action === 'fill') updateProgramSource(source.sourceId, { objectFit: action === 'fit' ? 'contain' : 'cover' })
   else if (action === 'center') updateProgramSource(source.sourceId, { transform: { ...(source.transform || {}), x: 48, y: 48 } })
   else if (action === 'reset') updateProgramSource(source.sourceId, { opacity: 1, objectFit: 'cover', transform: {}, zIndex: source.type === 'now-playing-card' ? 3 : 1 })
+}
+
+function commitPreviewToProgram({ transition = 'cut' } = {}) {
+  const live = liveState()
+  const mixer = live.programMixer
+  const snapshot = createPreviewProgramSnapshot()
+  if (!snapshot.sceneId || !snapshot.scene) return
+  const previousSceneId = mixer.programSnapshot?.sceneId || ''
+  mixer.programSnapshot = snapshot
+  mixer.programSceneId = snapshot.sceneId
+  mixer.activeSceneId = snapshot.sceneId
+  mixer.mode = 'program'
+  mixer.transitionState = transition === 'fade' ? 'fading' : 'idle'
+  console.log(`[Program Mixer] ${transition} to program`, {
+    fromProgramSceneId: previousSceneId,
+    toPreviewSceneId: snapshot.sceneId,
+    durationMs: transition === 'fade' ? Number(mixer.transitionDurationMs || 400) : 0,
+    sourceCount: snapshot.sources.length
+  })
+  return snapshot
+}
+
+async function cutPreviewToProgram() {
+  const live = liveState()
+  const snapshot = commitPreviewToProgram({ transition: 'cut' })
+  if (!snapshot) return
+  ensureStudioProgramMixer().cutToSnapshot(snapshot)
+  live.outputStatus = 'Program Mixer cut to Preview.'
+  scheduleProgramMixerStateSave()
+  await heartbeatLiveProgramState().catch(() => {})
+  renderShell()
+}
+
+async function fadePreviewToProgram() {
+  const live = liveState()
+  const durationMs = Math.max(0, Math.min(5000, Number(live.programMixer.transitionDurationMs || 400)))
+  const snapshot = commitPreviewToProgram({ transition: 'fade' })
+  if (!snapshot) return
+  live.outputStatus = `Program Mixer fading to Preview over ${durationMs}ms.`
+  await ensureStudioProgramMixer({ syncSnapshot: false }).fadeToSnapshot(snapshot, durationMs)
+  live.programMixer.transitionState = 'idle'
+  live.outputStatus = `Program Mixer faded to Preview over ${durationMs}ms.`
+  scheduleProgramMixerStateSave()
+  await heartbeatLiveProgramState().catch(() => {})
+  renderShell()
 }
 
 function renderProgramSceneModal() {
@@ -2629,7 +2680,8 @@ function renderProgramMixerPanel() {
   ensureProgramMixerData()
   const mixer = live.programMixer
   const previewScene = mixer.scenes.find((scene) => scene.sceneId === mixer.previewSceneId)
-  const programScene = mixer.scenes.find((scene) => scene.sceneId === mixer.programSceneId)
+  const programSnapshot = normalizeProgramSnapshot(mixer.programSnapshot || {})
+  const programScene = programSnapshot.scene
   const selectedSource = selectedProgramSource()
   const previewSources = programCanvasSources('preview').sources
   const selectedSourceIndex = Math.max(0, previewSources.findIndex((source) => source.sourceId === selectedSource?.sourceId))
@@ -2683,7 +2735,6 @@ function renderProgramMixerPanel() {
         </section>
         <aside class="studio-program-transition-panel" aria-label="Scene transition controls">
           <header><h2>Transition</h2><span>${previewScene ? 'Preview ready' : 'Waiting for scene'}</span></header>
-          <button type="button" data-program-take ${previewScene ? '' : 'disabled'}>Take</button>
           <button type="button" data-program-cut ${previewScene ? '' : 'disabled'}>Cut</button>
           <button type="button" data-program-fade ${previewScene ? '' : 'disabled'}>Fade</button>
           <label>Fade ms<input type="number" min="0" max="5000" step="50" value="${Number(mixer.transitionDurationMs || 400)}" data-program-transition-duration /></label>
@@ -2740,10 +2791,11 @@ function renderProgramMixerPanel() {
             </div>
             ${live.guestInviteStatus ? `<p class="studio-muted">${esc(live.guestInviteStatus)}</p>` : ''}
           </section>
+          <div class="studio-program-scene-source-stack">
           <section class="studio-program-tool-card studio-program-scenes-card">
             <header><div><h2>Scenes</h2><span>Build Preview, then transition</span></div><button type="button" data-program-scene-action="create">New</button></header>
             <div class="studio-program-list">
-              ${mixer.scenes.length ? mixer.scenes.map((scene) => `<button type="button" class="${scene.sceneId === previewScene?.sceneId ? 'is-active' : ''} ${scene.sceneId === programScene?.sceneId ? 'is-program' : ''}" data-program-scene="${esc(scene.sceneId)}"><strong>${esc(scene.name)}</strong><small>${scene.sceneId === programScene?.sceneId ? 'PROGRAM' : scene.sceneId === previewScene?.sceneId ? 'PREVIEW' : esc(scene.transitionPreference || scene.transition || 'fade')}</small></button>`).join('') : '<p class="studio-program-empty">No scenes yet. Create a scene to start mixing.</p>'}
+              ${mixer.scenes.length ? mixer.scenes.map((scene) => `<button type="button" class="${scene.sceneId === previewScene?.sceneId ? 'is-active' : ''} ${scene.sceneId === programSnapshot.sceneId ? 'is-program' : ''}" data-program-scene="${esc(scene.sceneId)}"><strong>${esc(scene.name)}</strong><small>${scene.sceneId === programSnapshot.sceneId ? 'PROGRAM' : scene.sceneId === previewScene?.sceneId ? 'PREVIEW' : esc(scene.transitionPreference || scene.transition || 'fade')}</small></button>`).join('') : '<p class="studio-program-empty">No scenes yet. Create a scene to start mixing.</p>'}
             </div>
             <div class="studio-program-mini-actions">
               <button type="button" data-program-scene-action="rename">Rename</button>
@@ -2757,8 +2809,7 @@ function renderProgramMixerPanel() {
               ${mixer.sources.length ? mixer.sources.map((source) => `<button type="button" class="${source.sourceId === selectedSource?.sourceId ? 'is-active' : ''}" data-program-source="${esc(source.sourceId)}"><strong>${esc(source.label)}</strong><small>${esc(source.type)} · ${previewSourceIds.has(source.sourceId) ? 'in preview' : 'library'} · ${source.enabled === false ? 'off' : 'on'}</small></button>`).join('') : '<p class="studio-program-empty">No sources. Add one to the selected scene.</p>'}
             </div>
           </section>
-        </div>
-      </div>
+          </div>
       <section class="studio-program-audio-mixer">
         <header><h2>Audio Mixer</h2><span>Program and monitor sends are separate.</span></header>
         <div class="studio-program-mixer-strips">
@@ -2779,6 +2830,8 @@ function renderProgramMixerPanel() {
           </article>
         </div>
       </section>
+        </div>
+      </div>
       ${renderProgramSceneModal()}
       ${renderProgramSourceModal()}
     </section>
@@ -3475,6 +3528,40 @@ function stopLiveMicMeter() {
   live.micLevel = 0
 }
 
+async function releaseLiveProgramCapture() {
+  const live = liveState()
+  console.log('[Live End] releasing local program capture tracks', {
+    sourceTrack: Boolean(live.sourceTrack),
+    programAudioTrack: live.programAudioTrack?.readyState || '',
+    programVideoTrack: live.programVideoTrack?.readyState || ''
+  })
+  stopLiveMicMeter()
+  const sourceTrack = live.sourceTrack?.mediaStreamTrack || live.sourceTrack
+  try { sourceTrack?.stop?.() } catch {}
+  try { live.programAudioTrack?.stop?.() } catch {}
+  try { live.broadcastStream?.getTracks?.().forEach((track) => track.stop?.()) } catch {}
+  try { live.audioContext?.close?.() } catch {}
+  try { studioProgramMixer?.releaseVideoCapture?.() } catch {}
+  live.sourceTrack = null
+  live.micPrepared = false
+  live.audioContext = null
+  live.masterGain = null
+  live.micGain = null
+  live.sequenceGain = null
+  live.sequenceMonitorGain = null
+  live.monitorGain = null
+  live.destination = null
+  live.broadcastDestination = null
+  live.broadcastStream = null
+  live.broadcastTrack = null
+  live.outputTrack = null
+  live.programAudioTrack = null
+  live.programVideoTrack = null
+  live.programAnalyser = null
+  live.programAnalyserData = null
+  live.monitorConnected = false
+}
+
 function updateLiveMicMeterDom() {
   const fill = app.querySelector('[data-live-meter-fill]')
   if (fill) fill.style.width = `${Math.round((liveState().micLevel || 0) * 100)}%`
@@ -3609,22 +3696,44 @@ function nativeHasRecordableAudioSource() {
   return browserReady || sequenceReady
 }
 
-async function nativeProgramMediaStream() {
+async function nativeProgramMediaStream({ ensureCompatibilityVideo = false } = {}) {
   const live = liveState()
   const stream = new MediaStream()
   if (live.audioEnabled) {
     const audioTrack = await getLivePublishTrack()
     if (audioTrack) stream.addTrack(audioTrack)
   }
-  if (live.videoEnabled) {
+  // Browser WHIP feeds HLS.  Supply the persistent Program canvas even for an
+  // audio-only show because the HLS edge may require an A/V program.
+  if (live.videoEnabled || ensureCompatibilityVideo) {
     const mixer = ensureStudioProgramMixer()
-    mixer.attachCanvas(app.querySelector('[data-program-program-canvas]') || app.querySelector('[data-program-preview-canvas]'))
     mixer.enableVideo()
     const videoTrack = mixer.getVideoTrack()
     if (videoTrack) {
       live.programVideoTrack = videoTrack
       stream.addTrack(videoTrack)
     }
+  }
+  const tracks = stream.getTracks()
+  const audioTracks = stream.getAudioTracks()
+  const videoTracks = stream.getVideoTracks()
+  const diagnostics = {
+    mediaStreamTrackCount: tracks.length,
+    trackCount: tracks.filter((track) => track.readyState === 'live').length,
+    audioTrackCount: audioTracks.length,
+    videoTrackCount: videoTracks.length,
+    audioTrackReadyState: audioTracks[0]?.readyState || '',
+    videoTrackReadyState: videoTracks[0]?.readyState || '',
+    compatibilityVideoTrack: Boolean(ensureCompatibilityVideo && !live.videoEnabled && videoTracks.length)
+  }
+  live.providerDiagnostics = { ...(live.providerDiagnostics || {}), ...diagnostics }
+  console.log('[Browser Encoder] program stream before WHIP', {
+    trackCount: tracks.length,
+    audioTracks: audioTracks.map((track) => ({ id: track.id, label: track.label, enabled: track.enabled, muted: track.muted, readyState: track.readyState })),
+    videoTracks: videoTracks.map((track) => ({ id: track.id, label: track.label, enabled: track.enabled, muted: track.muted, readyState: track.readyState }))
+  })
+  if (!tracks.length || !tracks.some((track) => track.readyState === 'live')) {
+    throw new Error('No Program output tracks are available. Enable audio or video before starting browser streaming.')
   }
   return stream
 }
@@ -4849,7 +4958,7 @@ async function startLiveStudioStream() {
       if (isBrowserIngest) {
         live.outputStatus = 'Connecting Studio Program output to Melogic Edge...'
         renderShell()
-        const mediaStream = await nativeProgramMediaStream()
+        const mediaStream = await nativeProgramMediaStream({ ensureCompatibilityVideo: true })
         browserIngestResult = await startBrowserWebrtcIngest({
           streamId: pendingStreamId,
           streamKey,
@@ -4944,7 +5053,7 @@ async function startLiveStudioStream() {
         streamDocStatus: 'live',
         noLiveKitAttempted: true
       }
-      if (!isBrowserIngest) startStudioHlsHealthPolling()
+      if (live.streamingProtocol === 'hls') startStudioHlsHealthPolling()
       live.outputStatus = isBrowserIngest
         ? 'On air. Studio Program is publishing to Melogic Edge; viewers receive buffered HLS.'
         : 'On air. Waiting for the OBS / encoder feed at Melogic Edge.'
@@ -5024,6 +5133,7 @@ async function endLiveStudioStream() {
   if (!live.streamId || live.ending) return
   const streamId = live.streamId
   live.ending = true
+  console.log('[Live End] ending stream', { streamId, provider: live.providerId, ingestMethod: live.ingestMethod })
   live.outputStatus = 'Ending Live Studio stream...'
   renderShell()
   try {
@@ -5038,6 +5148,7 @@ async function endLiveStudioStream() {
       studioProgramMixer?.releaseVideoCapture?.()
       live.programVideoTrack = null
     }
+    await releaseLiveProgramCapture()
     if (isFirebaseSegmentProvider(live.providerId) && firebaseSegmentStreamingEnabled()) {
       stopNativeSegmentRecorder({ status: 'ended' })
       live.nativeDemandUnsubscribe?.()
@@ -5202,7 +5313,7 @@ function subscribeLiveStudioStream(streamId = '') {
         hlsLastError: stream.hlsLastError || '',
         hlsResponseCode: stream.hlsResponseCode || 0
       }
-      if (live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp && stream.status === 'live') startStudioHlsHealthPolling()
+      if (stream.status === 'live' && stream.streamingProtocol === 'hls') startStudioHlsHealthPolling()
     }
     renderShell()
   })
@@ -5514,8 +5625,12 @@ function bindLiveStudioControls() {
   })
   app.querySelectorAll('[data-program-scene]').forEach((el) => el.addEventListener('click', () => {
     live.programMixer.previewSceneId = el.dataset.programScene || ''
-    live.programMixer.activeSceneId = live.programMixer.programSceneId || ''
-    heartbeatLiveProgramState().catch(() => {})
+    live.programMixer.activeSceneId = live.programMixer.previewSceneId || ''
+    console.log('[Program Mixer] Preview scene selected; program unchanged', {
+      previewSceneId: live.programMixer.previewSceneId,
+      programSceneId: live.programMixer.programSnapshot?.sceneId || ''
+    })
+    scheduleProgramMixerStateSave()
     renderShell()
   }))
   app.querySelectorAll('[data-program-scene-action]').forEach((el) => el.addEventListener('click', () => {
@@ -5560,33 +5675,17 @@ function bindLiveStudioControls() {
       renderShell()
     })
   })
-  app.querySelector('[data-program-take]')?.addEventListener('click', () => {
-    if (!live.programMixer.previewSceneId) return
-    live.programMixer.programSceneId = live.programMixer.previewSceneId
-    live.programMixer.activeSceneId = live.programMixer.programSceneId
-    live.programMixer.mode = 'program'
-    live.outputStatus = 'Program Mixer preview taken to program.'
-    heartbeatLiveProgramState().catch(() => {})
+  app.querySelector('[data-program-cut]')?.addEventListener('click', () => cutPreviewToProgram().catch((error) => {
+    live.programMixer.notice = error?.message || 'Could not cut Preview to Program.'
     renderShell()
-  })
-  app.querySelector('[data-program-cut]')?.addEventListener('click', () => {
-    if (!live.programMixer.previewSceneId) return
-    live.programMixer.programSceneId = live.programMixer.previewSceneId
-    live.programMixer.activeSceneId = live.programMixer.programSceneId
-    live.outputStatus = 'Program Mixer cut to preview scene.'
-    heartbeatLiveProgramState().catch(() => {})
+  }))
+  app.querySelector('[data-program-fade]')?.addEventListener('click', () => fadePreviewToProgram().catch((error) => {
+    live.programMixer.notice = error?.message || 'Could not fade Preview to Program.'
     renderShell()
-  })
-  app.querySelector('[data-program-fade]')?.addEventListener('click', () => {
-    if (!live.programMixer.previewSceneId) return
-    live.programMixer.programSceneId = live.programMixer.previewSceneId
-    live.programMixer.activeSceneId = live.programMixer.programSceneId
-    live.outputStatus = `Program Mixer faded to preview scene over ${Number(live.programMixer.transitionDurationMs || 400)}ms.`
-    heartbeatLiveProgramState().catch(() => {})
-    renderShell()
-  })
+  }))
   app.querySelector('[data-program-transition-duration]')?.addEventListener('input', (e) => {
     live.programMixer.transitionDurationMs = Math.max(0, Math.min(5000, Number(e.currentTarget.value || 0)))
+    scheduleProgramMixerStateSave()
   })
   app.querySelector('[data-program-guest-search-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
@@ -5663,7 +5762,8 @@ function bindLiveStudioControls() {
   app.querySelectorAll('[data-program-source-range]').forEach((el) => el.addEventListener('input', (e) => {
     const source = selectedProgramSource()
     if (!source) return
-    updateProgramSource(source.sourceId, { [el.dataset.programSourceRange]: Math.max(0, Math.min(1, Number(e.currentTarget.value || 0))) }, { persist: false })
+    updateProgramSource(source.sourceId, { [el.dataset.programSourceRange]: Math.max(0, Math.min(1, Number(e.currentTarget.value || 0))) }, { persist: false, render: false })
+    drawProgramPreviewCanvas(app.querySelector('[data-program-preview-canvas]'), 'preview')
   }))
   app.querySelectorAll('[data-program-source-range]').forEach((el) => el.addEventListener('change', (e) => {
     const source = selectedProgramSource()
@@ -5677,7 +5777,7 @@ function bindLiveStudioControls() {
     updateProgramSource(sourceId, { [field]: Boolean(e.currentTarget.checked) })
   }))
   app.querySelectorAll('[data-program-audio-gain]').forEach((el) => el.addEventListener('input', (e) => {
-    updateProgramSource(el.dataset.programAudioGain || '', { gain: Math.max(0, Math.min(1.5, Number(e.currentTarget.value || 0))) }, { persist: false })
+    updateProgramSource(el.dataset.programAudioGain || '', { gain: Math.max(0, Math.min(1.5, Number(e.currentTarget.value || 0))) }, { persist: false, render: false })
   }))
   app.querySelectorAll('[data-program-audio-gain]').forEach((el) => el.addEventListener('change', (e) => {
     updateProgramSource(el.dataset.programAudioGain || '', { gain: Math.max(0, Math.min(1.5, Number(e.currentTarget.value || 0))) })
@@ -5768,12 +5868,22 @@ function bindLiveStudioControls() {
   app.querySelector('[data-live-chat-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const text = String(new FormData(e.currentTarget).get('message') || '').trim()
-    if (!text || !live.streamId) return
+    if (!text || !live.streamId || live.chatEnabled === false) return
     try {
       await sendMusicLiveChatMessage(live.streamId, text)
       live.chatDraft = ''
     } catch (error) {
       live.error = error?.message || 'Live chat message could not be sent.'
+    }
+    renderShell()
+  })
+  app.querySelector('[data-live-chat-enabled]')?.addEventListener('change', async (e) => {
+    live.chatEnabled = Boolean(e.currentTarget.checked)
+    try {
+      if (live.streamId) await updateMusicLiveStreamInfo(liveStreamPayload())
+      else scheduleLiveStudioDraftSave()
+    } catch (error) {
+      live.error = error?.message || 'Could not update live chat settings.'
     }
     renderShell()
   })

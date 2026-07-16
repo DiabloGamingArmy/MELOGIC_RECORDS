@@ -81,6 +81,12 @@ function isObsHlsEdgeStream(stream = {}) {
     && (method === 'obsRtmp' || method === 'obs-rtmp' || method === 'rtmp-obs' || method === 'rtmp')
 }
 
+function isHlsEdgeStream(stream = {}) {
+  const provider = normalizeProvider(stream.provider)
+  const protocol = cleanString(stream.streamingProtocol || (provider === 'hlsEdge' ? 'hls' : ''), 40)
+  return provider === 'hlsEdge' && protocol === 'hls'
+}
+
 function parseHlsManifest(manifest = '') {
   const text = String(manifest || '')
   const sequenceMatch = text.match(/^#EXT-X-MEDIA-SEQUENCE\s*:\s*(\d+)/mi)
@@ -92,6 +98,7 @@ function parseHlsManifest(manifest = '') {
     || mediaLines.length > 0
   return {
     valid: /#EXTM3U/i.test(text) && hasMediaSegment,
+    hasMediaSegment,
     sequence: sequenceMatch ? Number(sequenceMatch[1]) : null
   }
 }
@@ -149,6 +156,7 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
     hlsLastManifestSequence: sequence,
     hlsLastError: healthy ? '' : cleanString(error, 300),
     hlsResponseCode: responseCode,
+    hlsHasMediaSegments: parsed.hasMediaSegment === true,
     hlsLastOkAt: lastOkMs ? admin.firestore.Timestamp.fromMillis(lastOkMs) : null,
     healthy
   }
@@ -172,7 +180,8 @@ async function refreshHlsHealth(docSnap, stream = docSnap.data() || {}) {
     hlsLastCheckedAt: health.hlsLastCheckedAt,
     hlsLastManifestSequence: health.hlsLastManifestSequence,
     hlsLastError: health.hlsLastError,
-    hlsResponseCode: health.hlsResponseCode
+    hlsResponseCode: health.hlsResponseCode,
+    hlsHasMediaSegments: health.hlsHasMediaSegments === true
   }
   if (health.hlsLastOkAt) update.hlsLastOkAt = health.hlsLastOkAt
   await docSnap.ref.set(update, { merge: true })
@@ -286,6 +295,64 @@ function nullableNumber(value) {
   return Number.isFinite(number) ? number : null
 }
 
+function cleanProgramTransform(value = {}) {
+  const input = value && typeof value === 'object' ? value : {}
+  const number = (key, fallback = null, min = -10000, max = 10000) => {
+    const parsed = Number(input[key])
+    return Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback
+  }
+  return {
+    x: number('x', 0), y: number('y', 0), width: number('width', null, 1, 10000), height: number('height', null, 1, 10000),
+    scale: number('scale', 1, .05, 8), rotation: number('rotation', 0, -360, 360)
+  }
+}
+
+function cleanProgramSource(value = {}) {
+  const input = value && typeof value === 'object' ? value : {}
+  return {
+    sourceId: cleanId(input.sourceId, 120), type: cleanString(input.type, 80), label: cleanString(input.label, 120),
+    enabled: input.enabled !== false, muted: input.muted === true, visible: input.visible !== false, locked: input.locked === true,
+    programEnabled: input.programEnabled !== false, monitorEnabled: input.monitorEnabled === true,
+    gain: Math.max(0, Math.min(1.5, Number(input.gain ?? 1) || 0)), opacity: Math.max(0, Math.min(1, Number(input.opacity ?? 1) || 0)),
+    zIndex: Math.max(-100, Math.min(100, Number(input.zIndex || 0) || 0)), objectFit: input.objectFit === 'contain' ? 'contain' : 'cover',
+    transform: cleanProgramTransform(input.transform)
+  }
+}
+
+function cleanProgramScene(value = {}) {
+  const input = value && typeof value === 'object' ? value : {}
+  return {
+    sceneId: cleanId(input.sceneId, 120), name: cleanString(input.name || 'Untitled Scene', 120),
+    transitionPreference: input.transitionPreference === 'cut' ? 'cut' : 'fade',
+    sources: Array.isArray(input.sources) ? input.sources.map((id) => cleanId(id, 120)).filter(Boolean).slice(0, 80) : []
+  }
+}
+
+function cleanProgramState(input = {}, existing = {}) {
+  const source = input && typeof input === 'object' ? input : {}
+  const old = existing && typeof existing === 'object' ? existing : {}
+  const scenes = Array.isArray(source.scenes) ? source.scenes.map(cleanProgramScene).filter((scene) => scene.sceneId).slice(0, 40) : Array.isArray(old.scenes) ? old.scenes : []
+  const sources = Array.isArray(source.sources) ? source.sources.map(cleanProgramSource).filter((entry) => entry.sourceId).slice(0, 80) : Array.isArray(old.sources) ? old.sources : []
+  const snapshotInput = source.programSnapshot && typeof source.programSnapshot === 'object' ? source.programSnapshot : old.programSnapshot || {}
+  const snapshotScene = snapshotInput.scene ? cleanProgramScene(snapshotInput.scene) : null
+  return {
+    mixerVersion: Math.max(1, Math.min(2, Number(source.mixerVersion || old.mixerVersion || 2))),
+    previewSceneId: cleanId(source.previewSceneId || old.previewSceneId || '', 120),
+    programSceneId: cleanId(source.programSceneId || snapshotScene?.sceneId || old.programSceneId || 'audio-only', 120),
+    activeSceneId: cleanId(source.activeSceneId || old.activeSceneId || 'audio-only', 120),
+    selectedSourceId: cleanId(source.selectedSourceId || old.selectedSourceId || '', 120),
+    outputResolution: cleanString(source.outputResolution || old.outputResolution || '1280x720', 40),
+    fps: Math.max(1, Math.min(60, Number(source.fps || old.fps || 30))),
+    transitionDurationMs: Math.max(0, Math.min(5000, Number(source.transitionDurationMs || old.transitionDurationMs || 400))),
+    mode: source.mode === 'preview' ? 'preview' : 'program', scenes, sources,
+    programSnapshot: snapshotScene ? {
+      sceneId: cleanId(snapshotInput.sceneId || snapshotScene.sceneId, 120), scene: snapshotScene,
+      sources: Array.isArray(snapshotInput.sources) ? snapshotInput.sources.map(cleanProgramSource).filter((entry) => entry.sourceId).slice(0, 80) : [],
+      version: cleanString(snapshotInput.version, 120)
+    } : null
+  }
+}
+
 function nativeStreamingDefaults(existing = {}) {
   return {
     enabled: existing.enabled === true,
@@ -339,15 +406,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
         browser: selectedInputSource !== 'sequence',
         sequence: selectedInputSource === 'sequence'
       }
-  const programState = data.programState && typeof data.programState === 'object'
-    ? {
-        activeSceneId: cleanId(data.programState.activeSceneId || existing.programState?.activeSceneId || 'audio-only', 120),
-        selectedSourceId: cleanId(data.programState.selectedSourceId || existing.programState?.selectedSourceId || '', 120),
-        outputResolution: cleanString(data.programState.outputResolution || existing.programState?.outputResolution || '1280x720', 40),
-        fps: Math.max(1, Math.min(60, Number(data.programState.fps || existing.programState?.fps || 30))),
-        mode: data.programState.mode === 'preview' ? 'preview' : 'program'
-      }
-    : existing.programState || { activeSceneId: 'audio-only', selectedSourceId: '', outputResolution: '1280x720', fps: 30, mode: 'program' }
+  const programState = cleanProgramState(data.programState, existing.programState)
   const providerDiagnostics = data.providerDiagnostics && typeof data.providerDiagnostics === 'object'
     ? {
         connectionState: cleanString(data.providerDiagnostics.connectionState, 80),
@@ -402,6 +461,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
     audioPublished,
     videoPublished,
     audioOnly: !programHasVideo,
+    chatEnabled: data.chatEnabled === false ? false : data.chatEnabled === true ? true : existing.chatEnabled !== false,
     hostActive: data.hostActive === true || existing.hostActive === true,
     hostSessionId: cleanString(data.hostSessionId || existing.hostSessionId || '', 120),
     nativeStreaming: nativeProtocol
@@ -1159,7 +1219,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
   const bufferedState = requestedProtocol === 'hls'
     ? bufferedBroadcastFields(request.data || {}, stream)
     : {}
-  const externalEncoderHls = requestedProtocol === 'hls' && programOutputState.ingestMethod === 'obsRtmp'
+  const hlsEdgeStream = requestedProtocol === 'hls'
   const safeLiveTitle = cleanString(request.data?.title || stream.title || 'Untitled live stream', 90)
   const safeLiveVisibility = ALLOWED_VISIBILITIES.has(request.data?.visibility)
     ? request.data.visibility
@@ -1190,7 +1250,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     endedAt: null,
     endReason: '',
     cleanupSource: '',
-    ...(externalEncoderHls ? {
+    ...(hlsEdgeStream ? {
       hlsHealth: 'warming',
       hlsLastOkAt: null,
       hlsLastCheckedAt: null,
@@ -1317,6 +1377,7 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
   if (!snap.exists) throw new HttpsError('not-found', 'Live stream not found.')
   const stream = snap.data() || {}
   if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Only the host can end this stream.')
+  console.log('[Live End] ending stream', { streamId: cleanStreamId, uid, reason })
 
   if (isObsHlsEdgeStream(stream) && (reason === 'host_unload' || reason === 'host_pagehide')) {
     await streamRef.set({
@@ -1342,6 +1403,8 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
     videoPublished: false,
     programHasAudio: false,
     programHasVideo: false,
+    hlsHealth: 'ended',
+    hlsLastError: '',
     endedAt: now,
     endReason: cleanString(reason, 80) || 'host_ended',
     cleanupSource: reason === 'host_unload' || reason === 'host_pagehide' ? 'heartbeat' : 'host_end',
@@ -1720,6 +1783,7 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   assertCanChat({ auth: request.auth, user, profile, accountPermissions })
   if (!streamSnap.exists) throw new HttpsError('not-found', 'Live stream not found.')
   const stream = streamSnap.data() || {}
+  if (stream.chatEnabled === false) throw new HttpsError('failed-precondition', 'Live chat is disabled by the host.')
   if (stream.status !== 'live' || !['public', 'unlisted'].includes(stream.visibility)) {
     throw new HttpsError('failed-precondition', 'This live chat is closed.')
   }
@@ -1750,7 +1814,7 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
 async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
   const stream = docSnap.data() || {}
   if (stream.status === 'live') {
-    if (isObsHlsEdgeStream(stream)) {
+    if (isHlsEdgeStream(stream)) {
       const health = await refreshHlsHealth(docSnap, stream)
       if (health.hlsHealth !== 'offline') return false
       await docSnap.ref.set({

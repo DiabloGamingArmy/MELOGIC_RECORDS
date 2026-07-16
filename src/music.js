@@ -1890,6 +1890,12 @@ function hlsMediaDiagnostics(eventName = '') {
     hlsManifestAgeMs: diagnostics.hlsManifestAgeMs ?? null,
     hlsResponseCode: diagnostics.hlsResponseCode || state.liveStream?.hlsResponseCode || 0,
     hlsError: diagnostics.hlsError || diagnostics.hlsLastError || state.liveStream?.hlsLastError || '',
+    hlsHasMediaSegments: diagnostics.hlsHasMediaSegments === true || state.liveStream?.hlsHasMediaSegments === true,
+    streamStatus: state.liveStream?.status || '',
+    streamIsLive: state.liveStream?.isLive === true,
+    chatEnabled: state.liveStream?.chatEnabled !== false,
+    programHasAudio: state.liveStream?.programHasAudio === true,
+    programHasVideo: state.liveStream?.programHasVideo === true,
     normalizationApplied: playbackInfo.normalizationApplied === true,
     rawPlaybackMode: playbackInfo.rawPlaybackMode || state.liveStream?.rawPlaybackMode || '',
     rawProvider: playbackInfo.rawProvider || state.liveStream?.rawProvider || '',
@@ -2719,6 +2725,7 @@ async function uploadSequenceAssetFromFile(file, fields = {}) {
 
 function renderLiveChatPanel(streamId = '') {
   const signedIn = Boolean(state.currentUser)
+  const chatEnabled = state.liveStream?.chatEnabled !== false
   return `
     <aside class="music-panel music-live-chat">
       <div class="music-row-heading">
@@ -2728,7 +2735,8 @@ function renderLiveChatPanel(streamId = '') {
         </div>
       </div>
       <div class="music-live-chat-messages" data-live-chat-messages>
-        ${state.liveChat.messages.length ? state.liveChat.messages.map((message) => `
+        ${chatEnabled ? '' : '<p class="music-muted">Live chat is disabled by the host.</p>'}
+        ${chatEnabled && state.liveChat.messages.length ? state.liveChat.messages.map((message) => `
           <article class="music-live-chat-message">
             ${renderAvatarImage({ src: message.photoURL, name: message.displayName, className: 'music-chat-avatar' })}
             <div>
@@ -2739,15 +2747,15 @@ function renderLiveChatPanel(streamId = '') {
               <p>${escapeHtml(message.text)}</p>
             </div>
           </article>
-        `).join('') : '<p class="music-muted">No messages yet.</p>'}
+        `).join('') : chatEnabled ? '<p class="music-muted">No messages yet.</p>' : ''}
       </div>
       ${state.liveChat.error ? `<p class="music-live-error">${escapeHtml(state.liveChat.error)}</p>` : ''}
-      ${signedIn ? `
+      ${signedIn && chatEnabled ? `
         <form class="music-live-chat-form" data-live-chat-form data-stream-id="${escapeHtml(streamId)}">
           <input name="text" maxlength="500" placeholder="Send a message..." value="${escapeHtml(state.liveChat.text)}" />
           <button class="button button-accent" type="submit" ${state.liveChat.sending ? 'disabled' : ''}>${state.liveChat.sending ? 'Sending...' : 'Send'}</button>
         </form>
-      ` : '<p class="music-muted">Sign in to join live chat.</p>'}
+      ` : chatEnabled ? '<p class="music-muted">Sign in to join live chat.</p>' : ''}
     </aside>
   `
 }
@@ -3345,7 +3353,7 @@ function renderLiveDetailPage() {
   const listenerAccessAllowed = !['removed', 'blocked'].includes(stream.moderationStatus)
     && (stream.visibility === 'public' || stream.accessMode === 'password' || stream.accessMode === 'unlisted')
   const canListen = isBufferedStream
-    ? listenerAccessAllowed && (stream.status === 'live' || Boolean(playbackInfo.url))
+    ? listenerAccessAllowed && stream.status === 'live' && Boolean(playbackInfo.url)
     : isNativeStream
       ? stream.status === 'live' && listenerAccessAllowed
       : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)
@@ -3439,6 +3447,12 @@ function renderHlsDiagnostics() {
     ['hlsManifestAgeMs', diagnostics.hlsManifestAgeMs],
     ['hlsResponseCode', diagnostics.hlsResponseCode || state.liveStream?.hlsResponseCode || 'none'],
     ['hlsError', diagnostics.hlsError || state.liveStream?.hlsLastError || 'none'],
+    ['hlsHasMediaSegments', diagnostics.hlsHasMediaSegments],
+    ['streamStatus', diagnostics.streamStatus || state.liveStream?.status || 'unknown'],
+    ['streamIsLive', diagnostics.streamIsLive],
+    ['chatEnabled', diagnostics.chatEnabled],
+    ['programHasAudio', diagnostics.programHasAudio],
+    ['programHasVideo', diagnostics.programHasVideo],
     ['normalizationApplied', diagnostics.normalizationApplied],
     ['rawPlaybackMode', diagnostics.rawPlaybackMode || 'none'],
     ['rawProvider', diagnostics.rawProvider || 'none'],
@@ -3922,7 +3936,7 @@ function sendHostUnloadSignal(reason = 'host_unload') {
 
 function startLiveChatSubscription(streamId) {
   stopLiveChatSubscription()
-  if (!streamId || !state.currentUser) return
+  if (!streamId || !state.currentUser || state.liveStream?.chatEnabled === false) return
   state.liveChat.unsubscribe = subscribeMusicLiveChat(
     streamId,
     (messages) => {
@@ -3960,7 +3974,7 @@ function startLiveStreamSubscription(streamId) {
       const isNativeStream = playbackInfo.provider === STREAM_PROVIDERS.firebaseSegments
       const isBufferedStream = playbackInfo.provider === STREAM_PROVIDERS.hlsEdge
       const playable = Boolean(stream && (isBufferedStream
-        ? stream.status === 'live' || playbackInfo.url
+        ? stream.status === 'live' && Boolean(playbackInfo.url)
         : stream.hostConnected === true && isLiveStreamFresh(stream) && isPublicStreamPlayable(stream)))
       if (!playable) {
         state.liveStream = stream
@@ -3972,9 +3986,11 @@ function startLiveStreamSubscription(streamId) {
           state.liveStatus = 'error'
           state.liveError = getPublicPlaybackInfo(stream).message || 'Could not load the live stream playlist.'
         } else {
+          console.log('[Live Receiver] stream ended', { streamId, endedAt: stream?.endedAt || '', status: stream?.status || 'missing' })
           disconnectLiveListener()
+          stopHlsHealthPolling()
           state.liveStatus = 'ended'
-          state.liveError = 'This stream has ended or is no longer public.'
+          state.liveError = stream?.status === 'ended' ? 'This live stream has ended.' : 'This stream has ended or is no longer public.'
           stopLiveChatSubscription()
         }
         rerender()
@@ -3982,6 +3998,8 @@ function startLiveStreamSubscription(streamId) {
       }
       state.liveStream = stream
       if (isBufferedStream) startHlsHealthPolling(stream)
+      if (stream?.chatEnabled === false) stopLiveChatSubscription()
+      else if (state.currentUser && !state.liveChat.unsubscribe) startLiveChatSubscription(streamId)
       if (state.liveStatus !== 'error' && state.liveStatus !== 'playbackBlocked') state.liveError = ''
       updateLiveMediaSession(stream)
       rerender()
@@ -5533,7 +5551,7 @@ async function loadMusicPage() {
     if (state.liveStream?.id) {
       startLiveStreamSubscription(state.liveStream.id)
       if (state.route.mode === 'liveDetail') {
-        startLiveChatSubscription(state.liveStream.id)
+        if (state.liveStream.chatEnabled !== false) startLiveChatSubscription(state.liveStream.id)
         startLiveSequenceSubscription(state.liveStream.id)
         await loadViewerState(state.liveStream.id)
         if (state.currentUser?.uid) {
