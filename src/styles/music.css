@@ -19,10 +19,14 @@
 }
 
 .music-sidebar {
-  position: sticky;
+  position: fixed;
   top: var(--nav-offset);
-  align-self: start;
-  min-height: calc(100vh - var(--nav-offset) - 7.8rem);
+  bottom: 0;
+  z-index: 20;
+  width: clamp(220px, 18vw, 270px);
+  height: calc(100dvh - var(--nav-offset));
+  min-height: 0;
+  overflow-y: auto;
   border-right: 1px solid var(--ml-border);
   background: linear-gradient(180deg, rgba(8, 12, 22, 0.96), rgba(5, 9, 17, 0.92));
   box-shadow: none;
@@ -116,6 +120,7 @@
 }
 
 .music-content {
+  grid-column: 2;
   min-width: 0;
   display: grid;
   gap: 1.25rem;
@@ -1619,6 +1624,9 @@
   .music-sidebar {
     display: none;
     position: static;
+    width: auto;
+    height: auto;
+    overflow-y: visible;
     min-height: 0;
     border-right: 0;
     border-bottom: 1px solid var(--ml-border);
@@ -1626,6 +1634,10 @@
 
   .music-sidebar.is-open {
     display: block;
+  }
+
+  .music-content {
+    grid-column: 1;
   }
 
   .music-app-hero,

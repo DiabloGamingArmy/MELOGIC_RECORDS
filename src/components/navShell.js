@@ -24,7 +24,7 @@ export function navShell(options = {}) {
 
         <nav class="main-nav" aria-label="Primary">
           <a href="${ROUTES.home}" data-guide-id="global-nav-home" data-guide-label="Home" data-guide-role="global-nav-link" ${isHome ? 'aria-current="page"' : ''}>Home</a>
-          <a href="${ROUTES.music}" data-guide-id="global-nav-music" data-guide-label="Music" data-guide-role="global-nav-link" ${isMusic ? 'aria-current="page"' : ''}>Music</a>
+          <a href="${ROUTES.music}" data-guide-id="global-nav-streaming" data-guide-label="Streaming" data-guide-role="global-nav-link" ${isMusic ? 'aria-current="page"' : ''}>Streaming</a>
           <a href="${ROUTES.products}" data-guide-id="global-nav-products" data-guide-label="Products" data-guide-role="global-nav-link" ${isProducts ? 'aria-current="page"' : ''}>Products</a>
           <a href="${ROUTES.studio}" data-guide-id="global-nav-studio" data-guide-label="Studio" data-guide-role="global-nav-link" ${isStudio ? 'aria-current="page"' : ''}>Studio</a>
           <a href="${ROUTES.distribution}" data-guide-id="global-nav-distribution" data-guide-label="Distribution" data-guide-role="global-nav-link" ${isDistribution ? 'aria-current="page"' : ''}>Distribution</a>

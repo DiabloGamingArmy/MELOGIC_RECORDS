@@ -1595,7 +1595,7 @@ function renderInputSourcePanel() {
         <div>
           <p class="eyebrow">Live Studio</p>
           <h1>Input Source</h1>
-          <p>Choose what feeds the Melogic Music listener stream.</p>
+          <p>Choose what feeds the Melogic Streaming listener stream.</p>
         </div>
       </header>
       <div class="studio-live-source-grid studio-live-source-grid--foundation">
@@ -3055,7 +3055,7 @@ function renderLiveMonitorPage() {
   const station = snapshot.stream || liveState().stream || liveState().streamForm || {}
   const progress = snapshot.progress || { percent: 0, current: 0, duration: Number(item?.durationMs || 0) / 1000 }
   const title = item?.titleSnapshot || item?.title || station.title || 'Live Studio Broadcast'
-  const artist = item?.artistSnapshot || item?.artist || station.hostDisplayName || 'Melogic Music Live'
+  const artist = item?.artistSnapshot || item?.artist || station.hostDisplayName || 'Melogic Streaming Live'
   const album = item?.albumSnapshot || item?.album || station.category || ''
   const streamer = station.hostDisplayName || state.user?.displayName || 'Streamer Display Name'
   const metaLine = album ? `${artist} - ${album}` : artist
@@ -5137,7 +5137,7 @@ async function startLiveStudioStream() {
   live.ingestMethod = normalizeIngestMethod(live.ingestMethod)
   live.starting = true
   live.error = ''
-  live.outputStatus = 'Creating Melogic Music live stream...'
+  live.outputStatus = 'Creating Melogic Streaming live stream...'
   renderShell()
   let pendingStreamId = ''
   let browserIngestStarted = false

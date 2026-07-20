@@ -1099,7 +1099,7 @@ const startMusicLiveStream = onCall(
         url: config?.url || '',
         streamKey: selectedProvider === 'hlsEdge' ? programOutputState.streamKey : '',
         hlsPlaybackUrl: selectedProvider === 'hlsEdge' ? programOutputState.hlsPlaybackUrl : '',
-        listenerURL: `/music/live/${streamId}`
+        listenerURL: `/streaming/live/${streamId}`
       }
     } catch (error) {
       liveWarn('error stage', {

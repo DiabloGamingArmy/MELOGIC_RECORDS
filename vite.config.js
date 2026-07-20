@@ -4,19 +4,13 @@ import { resolve } from 'node:path'
 
 function htmlRouteFallbackPlugin() {
   const routeEntries = [
-    { prefix: '/music/releases/', html: 'music.html' },
-    { prefix: '/music/live/', html: 'music.html' },
-    { prefix: '/music/live', html: 'music.html' },
-    { prefix: '/music/go-live', html: 'music.html' },
-    { prefix: '/music/sequence/', html: 'music.html' },
-    { prefix: '/music/sequence', html: 'music.html' },
-    { prefix: '/studio/live/', html: 'studio.html' },
+    { prefix: '/streaming', html: 'music.html' },
     { prefix: '/studio/live', html: 'studio.html' }
   ]
 
   function findEntry(url = '') {
     const pathname = String(url || '').split('?')[0]
-    return routeEntries.find((entry) => pathname.startsWith(entry.prefix))
+    return routeEntries.find((entry) => pathname === entry.prefix || pathname.startsWith(`${entry.prefix}/`))
   }
 
   return {

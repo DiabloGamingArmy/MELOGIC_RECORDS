@@ -409,18 +409,18 @@ function formatDuration(seconds = 0) {
 
 function currentRouteMode() {
   const path = window.location.pathname
-  const liveMonitorMatch = path.match(/^\/music\/live\/([^/]+)\/monitor$/)
-  const liveMatch = path.match(/^\/music\/live\/([^/]+)$/)
+  const liveMonitorMatch = path.match(/^\/streaming\/live\/([^/]+)\/monitor$/)
+  const liveMatch = path.match(/^\/streaming\/live\/([^/]+)$/)
   if (liveMonitorMatch) return { mode: 'liveMonitor', id: decodeURIComponent(liveMonitorMatch[1]) }
   if (liveMatch) return { mode: 'liveDetail', id: decodeURIComponent(liveMatch[1]) }
-  if (path === '/music/live') return { mode: 'liveList', id: '' }
-  if (path === '/music/go-live') {
+  if (path === '/streaming/live') return { mode: 'liveList', id: '' }
+  if (path === '/streaming/go-live') {
     window.history.replaceState({}, '', ROUTES.musicLive)
     return { mode: 'liveList', id: '' }
   }
-  const sequenceMatch = path.match(/^\/music\/sequence\/?([^/]*)/)
+  const sequenceMatch = path.match(/^\/streaming\/sequence\/?([^/]*)/)
   if (sequenceMatch) return { mode: 'sequence', id: decodeURIComponent(sequenceMatch[1] || '') }
-  const releaseMatch = path.match(/^\/music\/releases\/([^/]+)/)
+  const releaseMatch = path.match(/^\/streaming\/releases\/([^/]+)/)
   return releaseMatch ? { mode: 'release', id: decodeURIComponent(releaseMatch[1]) } : { mode: 'landing', id: '' }
 }
 
@@ -528,7 +528,7 @@ function releaseCard(release, options = {}) {
           </div>
           <h3>${escapeHtml(release.title)}</h3>
           <p>by ${escapeHtml(release.artistName)}</p>
-          <div class="music-tag-row">${tags.length ? tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Melogic Music</span>'}</div>
+          <div class="music-tag-row">${tags.length ? tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Melogic Streaming</span>'}</div>
         </div>
       </a>
       <div class="music-release-card-actions">
@@ -592,10 +592,10 @@ function renderSidebar() {
   return `
     <aside class="music-sidebar ${state.sidebarOpen ? 'is-open' : ''}" data-music-sidebar>
       <div class="music-sidebar-title">
-        <strong>Melogic Music</strong>
+        <strong>Melogic Streaming</strong>
         <span>Public discovery</span>
       </div>
-      <nav class="music-sidebar-nav" aria-label="Melogic Music sections">
+      <nav class="music-sidebar-nav" aria-label="Melogic Streaming sections">
         <section>
           <p>Browse</p>
           ${navButton('home', 'Home')}
@@ -627,7 +627,7 @@ function renderHero() {
       <div class="music-hero-overlay" aria-hidden="true"></div>
       <div class="music-app-hero-content">
         <p class="music-eyebrow">Melogic Records</p>
-        <h1>Melogic Music</h1>
+        <h1>Melogic Streaming</h1>
         <p>Discover releases from creators on Melogic Records.</p>
         <div class="music-hero-actions">
           <a class="button button-accent" href="#featured-music">Explore Music</a>
@@ -665,7 +665,7 @@ function renderHomeView() {
     })}
     ${carouselRow({ id: 'live-now', eyebrow: 'Live Streams', title: 'On air now', items: state.rows.liveStreams, type: 'live', emptyTitle: 'No live streams right now', emptyBody: 'Live streams started from Studio Live will appear here.' })}
     ${carouselRow({ id: 'featured-music', eyebrow: 'Featured Music', title: 'Featured releases', items: state.rows.featured })}
-    ${carouselRow({ id: 'featured-artists', eyebrow: 'Featured Artists', title: 'Creators to watch', items: state.rows.artists, type: 'artist', emptyTitle: 'Featured artists are coming soon', emptyBody: 'Artist rows will appear as public profiles are marked for Melogic Music.' })}
+    ${carouselRow({ id: 'featured-artists', eyebrow: 'Featured Artists', title: 'Creators to watch', items: state.rows.artists, type: 'artist', emptyTitle: 'Featured artists are coming soon', emptyBody: 'Artist rows will appear as public profiles are featured in Melogic Streaming.' })}
     ${carouselRow({ id: 'new-releases', eyebrow: 'New on Melogic', title: 'Fresh public releases', items: state.rows.newest, emptyTitle: 'No new releases yet', emptyBody: 'New public releases will appear here after approval.' })}
     ${carouselRow({ id: 'staff-picks', eyebrow: 'Staff Picks', title: 'Selected for discovery', items: state.rows.staffPicks })}
     ${carouselRow({ id: 'rising-creators', eyebrow: 'Rising Creators', title: 'Momentum builders', items: state.rows.rising })}
@@ -679,7 +679,7 @@ function renderHomeView() {
       <div class="music-genre-cloud">${(genres.length ? genres : ['Electronic', 'Hip-Hop', 'Pop', 'Rock', 'Cinematic', 'Ambient', 'Bass', 'Indie']).map((genre) => `<button type="button" data-search-genre="${escapeHtml(genre)}">${escapeHtml(genre)}</button>`).join('')}</div>
     </section>
     <section class="music-how-compact">
-      <p class="music-eyebrow">How Melogic Music works</p>
+      <p class="music-eyebrow">How Melogic Streaming works</p>
       <div class="music-how-grid">
         <article><strong>Approved public releases</strong><span>Creators publish music after review.</span></article>
         <article><strong>Prepared stream files</strong><span>Playback uses stream audio, not private masters.</span></article>
@@ -940,7 +940,7 @@ function renderSequenceWorkspacePage() {
       <div>
         <p class="music-eyebrow">Radio automation</p>
         <h1>Sequence Software</h1>
-        <p>Upload normalized account assets, build dense playout logs, and feed sequence output into Melogic Music Live.</p>
+        <p>Upload normalized account assets, build dense playout logs, and feed sequence output into Melogic Streaming Live.</p>
       </div>
       <a class="button button-accent" href="${ROUTES.studioLive}?panel=sequence">Open Live Studio</a>
     </section>
@@ -994,7 +994,7 @@ function renderSearchView() {
   return `
     <section class="music-view-header">
       <p class="music-eyebrow">Search</p>
-      <h1>Search Melogic Music</h1>
+      <h1>Search Melogic Streaming</h1>
       <form class="music-search-form" data-music-search-form>
         <input type="search" name="q" value="${escapeHtml(state.searchQuery)}" placeholder="Search releases, artists, genres, or moods" autocomplete="off" />
         <button class="button button-accent" type="submit">Search</button>
@@ -1003,18 +1003,18 @@ function renderSearchView() {
     ${state.searchLoading ? '<div class="music-card-grid"><article class="music-release-card music-card-skeleton" aria-hidden="true"></article><article class="music-release-card music-card-skeleton" aria-hidden="true"></article></div>' : ''}
     ${state.searchQuery && !state.searchLoading
       ? carouselRow({ id: 'search-results', eyebrow: 'Results', title: `Results for "${state.searchQuery}"`, items: state.searchResults, emptyTitle: 'No matching music yet', emptyBody: 'Try another title, artist, genre, or mood.' })
-      : emptyState('Search is ready', 'Enter a query to search indexed public Melogic Music releases.')}
+      : emptyState('Search is ready', 'Enter a query to search indexed public Melogic Streaming releases.')}
   `
 }
 
-function signInAction(body = 'Sign in to build your Melogic Music library.') {
+function signInAction(body = 'Sign in to build your Melogic Streaming library.') {
   return emptyState('Sign in required', body, `<a class="button button-accent" href="${authRoute({ redirect: ROUTES.music })}">Sign In</a>`)
 }
 
 function renderLibraryView() {
   if (!state.currentUser) return signInAction('Your saved releases, artists, songs, and playlists will live here.')
   if (state.activeView === 'musicVideos') {
-    return emptyState('Music videos are being shaped', 'Video release models will appear here once Melogic Music supports public music videos.')
+    return emptyState('Music videos are being shaped', 'Video release models will appear here once Melogic Streaming supports public music videos.')
   }
   if (state.activeView === 'madeForYou') {
     return emptyState('Made for You is being prepared', 'Personalized mixes will appear after enough listening and save activity exists.')
@@ -1053,7 +1053,7 @@ function renderAppShell(content) {
   app.innerHTML = `
     ${navShell({ currentPage: 'music' })}
     <main class="music-page">
-      <button type="button" class="music-mobile-menu" data-toggle-music-sidebar>${state.sidebarOpen ? 'Close Menu' : 'Music Menu'}</button>
+      <button type="button" class="music-mobile-menu" data-toggle-music-sidebar>${state.sidebarOpen ? 'Close Menu' : 'Streaming Menu'}</button>
       <div class="music-app-shell">
         ${renderSidebar()}
         <section class="music-content" data-music-content>
@@ -1132,9 +1132,9 @@ function renderReleaseDetailContent() {
     return `
       <section class="music-detail-state">
         <p class="music-eyebrow">Release unavailable</p>
-        <h1>This Melogic Music release is not available.</h1>
+        <h1>This Melogic Streaming release is not available.</h1>
         <p>It may still be in review, private, unlisted, or no longer published.</p>
-        <a class="button button-accent" href="${ROUTES.music}">Back to Music</a>
+        <a class="button button-accent" href="${ROUTES.music}">Back to Streaming</a>
       </section>
     `
   }
@@ -1150,7 +1150,7 @@ function renderReleaseDetailContent() {
         <p class="music-detail-artist">${escapeHtml(release.artistName)}</p>
         <p>${escapeHtml(formatDate(release.releaseDate || release.createdAt))}</p>
         <div class="music-tag-row">
-          ${tags.length ? tags.slice(0, 8).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Melogic Music</span>'}
+          ${tags.length ? tags.slice(0, 8).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Melogic Streaming</span>'}
           ${release.explicit ? '<span class="music-explicit-badge">Explicit</span>' : ''}
         </div>
       </div>
@@ -2298,13 +2298,13 @@ function nowPlayingDisplay(stream = {}) {
     ? {
         title: current.title,
         artist: current.artist || stream.hostDisplayName,
-        album: current.album || 'Melogic Music Live',
+        album: current.album || 'Melogic Streaming Live',
         artworkURL: current.artworkURL || stream.coverArtURL
       }
     : {
         title: stream.title,
         artist: stream.hostDisplayName,
-        album: 'Melogic Music Live',
+        album: 'Melogic Streaming Live',
         artworkURL: stream.coverArtURL
       }
 }
@@ -2333,9 +2333,9 @@ function updateLiveMediaSession(stream = state.liveStream) {
   const meta = nowPlayingDisplay(stream)
   const artwork = meta.artworkURL ? [{ src: meta.artworkURL, sizes: '512x512', type: 'image/png' }] : []
   navigator.mediaSession.metadata = new window.MediaMetadata({
-    title: meta.title || 'Melogic Music Live',
+    title: meta.title || 'Melogic Streaming Live',
     artist: meta.artist || stream.hostDisplayName || 'Melogic',
-    album: meta.album || 'Melogic Music Live',
+    album: meta.album || 'Melogic Streaming Live',
     artwork
   })
   navigator.mediaSession.playbackState = state.liveStatus === 'ended' || stream.status === 'ended'
@@ -3234,7 +3234,7 @@ function renderGoLivePage() {
       <div>
         <p class="music-eyebrow">Creator action</p>
         <h1>Go Live</h1>
-        <p>Start an audio-only live stream for listeners inside Melogic Music.</p>
+        <p>Start an audio-only live stream for listeners inside Melogic Streaming.</p>
       </div>
       <a class="button button-muted" href="${ROUTES.musicLive}">Live Streams</a>
     </section>
@@ -3296,7 +3296,7 @@ function renderPublicLiveMonitorPage() {
             <aside class="music-live-monitor-side">
               ${renderStableImage({ src: meta.artworkURL, alt: '', className: 'music-live-monitor-art artwork-square', fallback: 'LIVE', key: `public-monitor-${stream?.id || meta.artworkURL || 'live'}` })}
               <div class="music-live-monitor-copy">
-                <h1>${escapeHtml(meta.title || stream?.title || 'Melogic Music Live')}</h1>
+                <h1>${escapeHtml(meta.title || stream?.title || 'Melogic Streaming Live')}</h1>
                 <p>${escapeHtml(metaLine)}</p>
                 <small>${escapeHtml(stream?.hostDisplayName || 'Streamer Display Name')}</small>
               </div>
@@ -3306,7 +3306,7 @@ function renderPublicLiveMonitorPage() {
           <div class="music-live-monitor-core">
             ${renderStableImage({ src: meta.artworkURL, alt: '', className: 'music-live-monitor-art artwork-square', fallback: 'LIVE', key: `public-monitor-${stream?.id || meta.artworkURL || 'live'}` })}
             <div class="music-live-monitor-copy">
-              <h1>${escapeHtml(meta.title || stream?.title || 'Melogic Music Live')}</h1>
+              <h1>${escapeHtml(meta.title || stream?.title || 'Melogic Streaming Live')}</h1>
               <p>${escapeHtml(metaLine)}</p>
               <small>${escapeHtml(stream?.hostDisplayName || 'Streamer Display Name')}</small>
             </div>
@@ -3505,7 +3505,7 @@ function renderLiveDetailPage() {
         ${hasVideo ? `<div class="music-live-video-identity">${renderLiveArtwork(stream, 'music-live-video-cover')}<div><span class="music-live-badge ${isNativeStream ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span><strong>${escapeHtml(stream.hostDisplayName)}</strong></div></div>` : ''}
         ${hasVideo ? '' : `<span class="music-live-badge ${isNativeStream ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>`}
         <h1>${escapeHtml(stream.title)}</h1>
-        <p>${escapeHtml(stream.description || 'Live stream on Melogic Music.')}</p>
+        <p>${escapeHtml(stream.description || 'Live stream on Melogic Streaming.')}</p>
         <div class="music-live-host">
           ${renderAvatarImage({ src: stream.hostPhotoURL, name: stream.hostDisplayName, className: 'music-live-avatar' })}
           <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${escapeHtml(liveCategoryLabel(stream.category))} · ${escapeHtml(listenerCountLabel(stream.listenerCount))}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
@@ -3756,7 +3756,7 @@ function renderPlayer() {
   if (state.listenerRoom && state.liveStream?.id) {
     const meta = nowPlayingDisplay(state.liveStream)
     return `
-      <aside class="music-player" data-music-player aria-label="Melogic Music live player">
+      <aside class="music-player" data-music-player aria-label="Melogic Streaming live player">
       <div class="music-player-art">
           ${renderStableImage({ src: meta.artworkURL, alt: '', className: 'music-player-stable-art', fallback: 'LIVE', key: `player-live-${state.liveStream.id}` })}
         </div>
@@ -3776,7 +3776,7 @@ function renderPlayer() {
   }
   const track = state.player.track
   return `
-    <aside class="music-player" data-music-player aria-label="Melogic Music player">
+    <aside class="music-player" data-music-player aria-label="Melogic Streaming player">
       <div class="music-player-art">
         ${track?.coverArtURL ? `<img src="${escapeHtml(track.coverArtURL)}" alt="" />` : '<span aria-hidden="true">MR</span>'}
       </div>
@@ -5396,7 +5396,7 @@ function bindMusicEvents() {
   app.querySelector('[data-live-share]')?.addEventListener('click', () => {
     const url = liveShareURL(state.liveStream?.id || state.goLive.streamId)
     if (navigator.share) {
-      navigator.share({ title: state.liveStream?.title || 'Melogic Music Live', url }).catch(() => {})
+      navigator.share({ title: state.liveStream?.title || 'Melogic Streaming Live', url }).catch(() => {})
     } else {
       navigator.clipboard?.writeText(url).then(() => {
         state.liveActionMessage = 'Live stream link copied.'
@@ -5885,7 +5885,7 @@ window.addEventListener('pagehide', () => {
 
 loadMusicPage().catch((error) => {
   state.loading = false
-  state.error = error?.message || 'Melogic Music could not be loaded.'
+  state.error = error?.message || 'Melogic Streaming could not be loaded.'
   console.warn('[music] Page load failed.', error)
   rerender()
 })

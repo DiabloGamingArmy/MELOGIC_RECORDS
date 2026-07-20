@@ -91,7 +91,17 @@
       },
       {
         "source": "/music.html",
-        "destination": "/music",
+        "destination": "/streaming",
+        "type": 301
+      },
+      {
+        "source": "/music",
+        "destination": "/streaming",
+        "type": 301
+      },
+      {
+        "source": "/music/:rest*",
+        "destination": "/streaming/:rest",
         "type": 301
       },
       {
@@ -310,31 +320,31 @@
         "destination": "/index.html"
       },
       {
-        "source": "/music",
+        "source": "/streaming",
         "destination": "/music.html"
       },
       {
-        "source": "/music/live",
+        "source": "/streaming/live",
         "destination": "/music.html"
       },
       {
-        "source": "/music/live/**",
+        "source": "/streaming/live/**",
         "destination": "/music.html"
       },
       {
-        "source": "/music/go-live",
+        "source": "/streaming/go-live",
         "destination": "/music.html"
       },
       {
-        "source": "/music/sequence",
+        "source": "/streaming/sequence",
         "destination": "/music.html"
       },
       {
-        "source": "/music/sequence/**",
+        "source": "/streaming/sequence/**",
         "destination": "/music.html"
       },
       {
-        "source": "/music/releases/**",
+        "source": "/streaming/releases/**",
         "destination": "/music.html"
       },
       {

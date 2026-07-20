@@ -1,9 +1,9 @@
 export const ROUTES = {
   home: '/home',
-  music: '/music',
-  musicLive: '/music/live',
-  musicGoLive: '/music/go-live',
-  musicSequence: '/music/sequence',
+  music: '/streaming',
+  musicLive: '/streaming/live',
+  musicGoLive: '/streaming/go-live',
+  musicSequence: '/streaming/sequence',
   products: '/products',
   productDetail: '/product',
   cart: '/cart',
@@ -79,6 +79,7 @@ const LEGACY_ROUTE_MAP = {
   '/': ROUTES.home,
   '/index.html': ROUTES.home,
   '/music.html': ROUTES.music,
+  '/music': ROUTES.music,
   '/products.html': ROUTES.products,
   '/product.html': ROUTES.productDetail,
   '/product-dashboard.html': ROUTES.productDashboard,
@@ -142,7 +143,8 @@ export function cleanRedirectTarget(path, fallback = ROUTES.profile) {
   try {
     const parsed = new URL(relative, window.location.origin)
     if (parsed.origin !== window.location.origin) return fallback
-    const mappedPath = LEGACY_ROUTE_MAP[parsed.pathname] || parsed.pathname
+    const mappedPath = LEGACY_ROUTE_MAP[parsed.pathname]
+      || (parsed.pathname.startsWith('/music/') ? `${ROUTES.music}${parsed.pathname.slice('/music'.length)}` : parsed.pathname)
     return `${mappedPath}${parsed.search}${parsed.hash}`
   } catch {
     return fallback
