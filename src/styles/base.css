@@ -1208,9 +1208,11 @@ body.has-cart-drawer-open .nav-shell {
   position: absolute;
   z-index: 3;
   inset: auto 0 0;
-  height: 120px;
+  height: clamp(180px, 18vw, 280px);
   pointer-events: none;
-  background: linear-gradient(180deg, rgba(3, 5, 10, 0), rgba(3, 5, 10, .72) 58%, #03050a 100%);
+  background:
+    radial-gradient(ellipse 92% 78% at 50% 112%, rgba(3, 5, 10, 0.98) 0 42%, rgba(3, 5, 10, 0.72) 68%, transparent 100%),
+    linear-gradient(180deg, transparent 0%, rgba(3, 5, 10, 0.18) 30%, rgba(3, 5, 10, 0.82) 74%, #03050a 100%);
 }
 
 .home-video-showcase-inner {
@@ -1232,8 +1234,6 @@ body.has-cart-drawer-open .nav-shell {
   display: block;
   object-fit: cover;
   background: #03050a;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 110px), transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 110px), transparent 100%);
 }
 
 .home-video-showcase-fallback {
@@ -1265,10 +1265,7 @@ body.has-cart-drawer-open .nav-shell {
   padding-bottom: clamp(5rem, 10vw, 8.5rem);
   overflow: hidden;
   z-index: 3;
-  background:
-    radial-gradient(680px 340px at 50% 36%, rgba(102, 142, 255, 0.18), transparent 72%),
-    radial-gradient(520px 280px at 50% 84%, rgba(103, 214, 228, 0.1), transparent 78%),
-    linear-gradient(180deg, rgba(3, 5, 10, 1), rgba(7, 10, 18, 0.98) 42%, rgba(3, 5, 10, 1));
+  background: linear-gradient(180deg, rgba(3, 5, 10, 0) 0, rgba(3, 5, 10, 0.12) 54px, rgba(3, 5, 10, 0.74) 132px, rgba(3, 5, 10, 0.98) 210px, rgba(7, 10, 18, 0.98) 52%, rgba(3, 5, 10, 1));
 }
 
 .home-studio-cta::before {
@@ -1279,7 +1276,8 @@ body.has-cart-drawer-open .nav-shell {
   background:
     linear-gradient(90deg, transparent, rgba(210, 224, 255, 0.08), transparent),
     linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 38%);
-  mask-image: radial-gradient(ellipse at center, black 0%, transparent 68%);
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,black 190px,black 100%);
+  mask-image:linear-gradient(180deg,transparent 0,black 190px,black 100%);
   opacity: 0.7;
 }
 

@@ -124,11 +124,17 @@
 }
 
 .music-content {
+  --music-content-gutter: clamp(1.15rem, 2.6vw, 2.75rem);
   grid-column: 2;
   min-width: 0;
   display: grid;
   gap: 0;
-  padding: 0 clamp(1.15rem, 2.6vw, 2.75rem) 2rem;
+  padding: 0 0 2rem;
+}
+
+.music-content > * {
+  min-width: 0;
+  margin-inline: var(--music-content-gutter);
 }
 
 .music-app-hero {
