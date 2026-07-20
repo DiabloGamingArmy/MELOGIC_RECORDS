@@ -958,19 +958,33 @@ body.community-chrome-hidden .community-right-rail {
 }
 
 .community-post-card {
-  padding: 1.35rem 0 1.45rem;
+  margin: 0;
+  padding: 1.35rem 1rem 1.45rem;
   border:0;
   border-bottom:1px solid rgba(255,255,255,.11);
   border-radius:0;
-  background:transparent;
+  background-color:transparent;
+  background-image:none;
   box-shadow:none;
   cursor: pointer;
-  transition: border-color .16s ease, background .16s ease;
+  transition: border-color .16s ease, background-color .16s ease;
 }
 
 .community-post-card:hover {
   border-color: rgba(83, 197, 255, .3);
-  background: linear-gradient(90deg, rgba(83,197,255,.035), transparent 88%);
+  background-color: rgba(22, 29, 42, .82);
+  background-image: none;
+}
+
+.community-feed .community-post-card:not(.community-post-detail-card) {
+  background-color: transparent;
+  background-image: none;
+}
+
+.community-feed .community-post-card:not(.community-post-detail-card):hover,
+.community-feed .community-post-card:not(.community-post-detail-card):focus-within {
+  background-color: rgba(22, 29, 42, .82);
+  background-image: none;
 }
 
 .community-post-detail-card,

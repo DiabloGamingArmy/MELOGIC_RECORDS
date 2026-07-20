@@ -9,7 +9,9 @@ import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { addToCart } from './data/cartService'
 import { claimFreeProduct } from './data/entitlementService'
 import { listPublicProductsPage } from './data/productService'
+import { getProductReactionSummary } from './data/productEngagementService'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
+import { iconSvg } from './utils/icons'
 import { ROUTES, authRoute, productRoute, publicProfileRoute, usernameProfileRoute } from './utils/routes'
 import {
   fulfillmentTypeLabel,
@@ -73,6 +75,8 @@ const state = {
 
 let searchDebounceTimer = null
 let observer = null
+const reactionCountCache = new Map()
+const reactionCountRequests = new Map()
 const previewController = {
   activeProductId: '',
   activeAudio: null,
@@ -105,8 +109,8 @@ function productCardMarkup(product) {
   const tags = product.genres?.length
     ? product.genres.map((genre) => `#${escapeHtml(String(genre).replace(/\s+/g, ''))}`).join(' · ')
     : (product.tags || []).slice(0, 3).map((tag) => `#${escapeHtml(tag)}`).join(' · ')
-  const likes = product.likeCount ?? product.counts?.likes ?? 0
-  const dislikes = product.counts?.dislikes ?? 0
+  const likes = Math.max(0, Number(product.likeCount ?? product.counts?.likes ?? 0))
+  const dislikes = Math.max(0, Number(product.dislikeCount ?? product.counts?.dislikes ?? 0))
   const isFreeProduct = Boolean(product.isFree) || Number(product.priceCents || 0) <= 0
   const isOwnProduct = Boolean(state.currentUser?.uid && product.artistId === state.currentUser.uid)
   const fulfillment = normalizeProductFulfillment(product)
@@ -146,8 +150,8 @@ function productCardMarkup(product) {
         <p class="product-fulfillment-note">${escapeHtml(physicalSummary)}</p>
 
         <div class="product-stats" aria-label="Product engagement stats">
-          <span>👍 ${likes}</span>
-          <span>👎 ${dislikes}</span>
+          <span aria-label="${likes} likes"><span class="product-stat-icon" aria-hidden="true">${iconSvg('thumbsUp')}</span><span data-product-like-count>${likes}</span></span>
+          <span aria-label="${dislikes} dislikes"><span class="product-stat-icon" aria-hidden="true">${iconSvg('thumbsDown')}</span><span data-product-dislike-count>${dislikes}</span></span>
         </div>
 
         <div class="product-actions">
@@ -176,6 +180,49 @@ function renderProductSkeletons(count = 6, loadingMore = false) {
       </div>
     </article>
   `).join('')
+}
+
+function applyProductReactionCounts(productId, summary = {}) {
+  const likeCount = Math.max(0, Number(summary.likeCount || 0))
+  const dislikeCount = Math.max(0, Number(summary.dislikeCount || 0))
+  const product = state.products.find((entry) => entry.id === productId)
+  if (product) {
+    product.likeCount = likeCount
+    product.dislikeCount = dislikeCount
+    product.counts = { ...(product.counts || {}), likes: likeCount, dislikes: dislikeCount }
+  }
+
+  app.querySelectorAll('[data-open-product][data-product-id]').forEach((card) => {
+    if (card.getAttribute('data-product-id') !== productId) return
+    const likeValue = card.querySelector('[data-product-like-count]')
+    const dislikeValue = card.querySelector('[data-product-dislike-count]')
+    if (likeValue) likeValue.textContent = String(likeCount)
+    if (dislikeValue) dislikeValue.textContent = String(dislikeCount)
+    likeValue?.parentElement?.setAttribute('aria-label', `${likeCount} likes`)
+    dislikeValue?.parentElement?.setAttribute('aria-label', `${dislikeCount} dislikes`)
+  })
+}
+
+function hydrateProductReactionCounts(products = []) {
+  products.forEach((product) => {
+    if (!product?.id) return
+    if (reactionCountCache.has(product.id)) {
+      applyProductReactionCounts(product.id, reactionCountCache.get(product.id))
+      return
+    }
+    if (reactionCountRequests.has(product.id)) return
+
+    const request = getProductReactionSummary(product.id)
+      .then((summary) => {
+        reactionCountCache.set(product.id, summary)
+        applyProductReactionCounts(product.id, summary)
+      })
+      .catch((error) => {
+        if (import.meta.env.DEV) console.warn('[products] Could not refresh reaction counts.', { productId: product.id, message: error?.message })
+      })
+      .finally(() => reactionCountRequests.delete(product.id))
+    reactionCountRequests.set(product.id, request)
+  })
 }
 
 function toReleaseTimestamp(product) {
@@ -289,6 +336,7 @@ function renderProducts() {
   }
 
   bindProductActions(filtered)
+  hydrateProductReactionCounts(filtered)
 }
 
 function mapFiltersForService() {

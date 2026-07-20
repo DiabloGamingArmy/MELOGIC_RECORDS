@@ -1196,25 +1196,34 @@ body.has-cart-drawer-open .nav-shell {
 
 .home-video-showcase {
   position: relative;
-  padding: clamp(3rem, 7vw, 6rem) clamp(1rem, 3vw, 2rem);
+  width: 100%;
+  padding: 0;
   overflow: hidden;
-  background:
-    radial-gradient(900px 440px at 50% 42%, rgba(86, 130, 238, 0.13), transparent 74%),
-    #03050a;
+  background: #03050a;
+  z-index: 2;
+}
+
+.home-video-showcase::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  inset: auto 0 0;
+  height: 120px;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(3, 5, 10, 0), rgba(3, 5, 10, .72) 58%, #03050a 100%);
 }
 
 .home-video-showcase-inner {
   position: relative;
-  width: min(1180px, 100%);
-  margin: 0 auto;
+  z-index: 1;
+  width: 100%;
+  margin: 0;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border: 1px solid rgba(170, 198, 255, 0.14);
-  border-radius: clamp(0.75rem, 1.5vw, 1.15rem);
+  border: 0;
+  border-radius: 0;
   background: #03050a;
-  box-shadow:
-    0 36px 90px rgba(0, 0, 0, 0.48),
-    0 0 70px rgba(75, 116, 220, 0.1);
+  box-shadow: none;
 }
 
 .home-video-showcase-video {
@@ -1223,6 +1232,8 @@ body.has-cart-drawer-open .nav-shell {
   display: block;
   object-fit: cover;
   background: #03050a;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 110px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 110px), transparent 100%);
 }
 
 .home-video-showcase-fallback {
@@ -1247,11 +1258,13 @@ body.has-cart-drawer-open .nav-shell {
 .home-studio-cta {
   position: relative;
   display: grid;
-  align-items: center;
-  min-height: clamp(500px, 68vh, 740px);
-  padding-top: clamp(4.5rem, 9vw, 8rem);
+  align-items: start;
+  min-height: clamp(450px, 60vh, 650px);
+  margin-top: -180px;
+  padding-top: clamp(5rem, 6vw, 6.5rem);
   padding-bottom: clamp(5rem, 10vw, 8.5rem);
   overflow: hidden;
+  z-index: 3;
   background:
     radial-gradient(680px 340px at 50% 36%, rgba(102, 142, 255, 0.18), transparent 72%),
     radial-gradient(520px 280px at 50% 84%, rgba(103, 214, 228, 0.1), transparent 78%),
@@ -1275,6 +1288,7 @@ body.has-cart-drawer-open .nav-shell {
   z-index: 1;
   max-width: 880px;
   padding: 0 clamp(1rem, 4vw, 2rem);
+  transform: translateY(-90px);
 }
 
 .home-studio-cta .home-studio-cta-eyebrow {
