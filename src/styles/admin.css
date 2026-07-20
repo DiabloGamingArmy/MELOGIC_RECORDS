@@ -3543,6 +3543,523 @@
   gap: 0.75rem;
 }
 
+.admin-support-console {
+  display: grid;
+  grid-template-columns: 210px minmax(290px, 360px) minmax(480px, 1fr);
+  min-height: 560px;
+  height: min(820px, calc(100dvh - 340px));
+  overflow: hidden;
+  border: 1px solid var(--admin-border);
+  background: color-mix(in srgb, var(--admin-card) 88%, #02050b);
+}
+
+.admin-support-channel-rail,
+.admin-support-request-pane,
+.admin-support-conversation-pane {
+  min-width: 0;
+  min-height: 0;
+}
+
+.admin-support-channel-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  border-right: 1px solid var(--admin-border);
+  background: color-mix(in srgb, var(--admin-card) 72%, #02050a);
+  padding: 1rem 0.7rem;
+}
+
+.admin-support-rail-heading {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.2rem 0.55rem 0.8rem;
+}
+
+.admin-support-rail-heading span,
+.admin-support-pane-header span,
+.admin-support-handoff-summary span,
+.admin-support-list-label {
+  color: var(--admin-muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.admin-support-channel {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: center;
+  width: 100%;
+  min-height: 64px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--admin-text);
+  padding: 0.65rem 0.55rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.admin-support-channel:hover,
+.admin-support-channel.is-active {
+  border-left-color: var(--admin-primary);
+  background: color-mix(in srgb, var(--admin-primary) 10%, transparent);
+}
+
+.admin-support-channel-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  color: color-mix(in srgb, var(--admin-primary) 72%, white);
+}
+
+.admin-support-channel-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.admin-support-channel > span:nth-child(2) {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.admin-support-channel strong,
+.admin-support-channel small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-support-channel small {
+  color: var(--admin-muted);
+}
+
+.admin-support-channel em {
+  min-width: 24px;
+  border: 1px solid var(--admin-border-strong);
+  border-radius: 999px;
+  color: var(--admin-muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 900;
+  padding: 0.15rem 0.35rem;
+  text-align: center;
+}
+
+.admin-support-channel-note {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  margin-top: auto;
+  border-top: 1px solid var(--admin-border);
+  padding: 0.9rem 0.55rem 0.15rem;
+}
+
+.admin-support-channel-note p {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+}
+
+.admin-support-channel-note small {
+  color: var(--admin-muted);
+  line-height: 1.35;
+}
+
+.admin-support-presence-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  margin-top: 0.3rem;
+  border-radius: 50%;
+  background: #54e5b0;
+  box-shadow: 0 0 12px rgba(84, 229, 176, 0.55);
+}
+
+.admin-support-request-pane {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  border-right: 1px solid var(--admin-border);
+  background: color-mix(in srgb, var(--admin-card) 82%, #03070d);
+}
+
+.admin-support-pane-header,
+.admin-support-chat-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  min-height: 74px;
+  border-bottom: 1px solid var(--admin-border);
+  padding: 0.8rem 1rem;
+}
+
+.admin-support-pane-header h2,
+.admin-support-chat-header h3,
+.admin-support-chat-header p {
+  margin: 0;
+}
+
+.admin-support-filter-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  border-bottom: 1px solid var(--admin-border);
+  padding: 0.6rem 0.75rem;
+}
+
+.admin-support-filter-row select {
+  min-width: 0;
+  flex: 1;
+  min-height: 36px;
+  border: 1px solid var(--admin-border);
+  background: var(--admin-input);
+  color: var(--admin-text);
+  padding: 0 0.55rem;
+}
+
+.admin-support-filter-row > span {
+  color: var(--admin-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.admin-support-request-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.45rem 0;
+}
+
+.admin-support-request-list .admin-support-form-card {
+  width: 100%;
+  min-height: 92px;
+  margin: 0;
+  border-width: 0 0 1px;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.75rem;
+}
+
+.admin-support-request-list .admin-support-form-card:hover,
+.admin-support-request-list .admin-support-form-card.is-selected {
+  background: color-mix(in srgb, var(--admin-primary) 9%, var(--admin-card));
+}
+
+.admin-support-request-list .admin-support-form-card.is-selected {
+  box-shadow: inset 3px 0 0 var(--admin-primary);
+}
+
+.admin-support-list-label {
+  display: block;
+  margin: 0;
+  border-bottom: 1px solid var(--admin-border);
+  padding: 0.75rem;
+}
+
+.admin-support-load-more {
+  margin: 0.75rem;
+}
+
+.admin-support-conversation-pane {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: radial-gradient(circle at 85% 0%, color-mix(in srgb, var(--admin-primary) 8%, transparent), transparent 36%), #050911;
+}
+
+.admin-support-chat-shell {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.admin-support-chat-person {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.admin-support-chat-person > span {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #426fff, #844dff);
+  color: white;
+  font-weight: 900;
+}
+
+.admin-support-chat-person div {
+  min-width: 0;
+}
+
+.admin-support-chat-person small,
+.admin-support-chat-person p {
+  color: var(--admin-muted);
+}
+
+.admin-support-chat-person h3,
+.admin-support-chat-person p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-support-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.admin-support-connection-state {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  color: var(--admin-muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.admin-support-connection-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #758098;
+}
+
+.admin-support-connection-state.is-live i {
+  background: #54e5b0;
+  box-shadow: 0 0 10px rgba(84, 229, 176, 0.6);
+}
+
+.admin-support-handoff-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 0.8fr);
+  border-bottom: 1px solid var(--admin-border);
+}
+
+.admin-support-handoff-summary > div {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+  border-right: 1px solid var(--admin-border);
+  padding: 0.75rem 1rem;
+}
+
+.admin-support-handoff-summary > div:last-child {
+  border-right: 0;
+}
+
+.admin-support-handoff-summary strong,
+.admin-support-handoff-summary small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-support-handoff-summary small {
+  color: var(--admin-muted);
+}
+
+.admin-support-chat-shell .admin-support-thread-messages {
+  align-content: start;
+  max-height: none;
+  min-height: 0;
+  overflow-y: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 1.2rem;
+}
+
+.admin-support-chat-shell .admin-support-thread-message {
+  border-radius: 14px 14px 14px 4px;
+  background: #111827;
+}
+
+.admin-support-chat-shell .admin-support-thread-message.is-agent {
+  border-radius: 14px 14px 4px 14px;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--admin-primary) 30%, #10172a), color-mix(in srgb, var(--admin-primary) 15%, #10172a));
+}
+
+.admin-support-chat-shell .admin-support-thread-message.is-system {
+  border: 0;
+  background: transparent;
+  font-size: 0.76rem;
+}
+
+.admin-support-message-attachments {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.admin-support-message-attachments img {
+  display: block;
+  width: min(260px, 100%);
+  max-height: 240px;
+  object-fit: cover;
+}
+
+.admin-support-message-attachments > a {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  color: var(--admin-text);
+  text-decoration: none;
+}
+
+.admin-support-thread-reply {
+  position: relative;
+  z-index: 2;
+  min-height: 0;
+  border-top: 1px solid var(--admin-border);
+  background: color-mix(in srgb, var(--admin-card) 80%, #03070d);
+  padding: 0.75rem 1rem 1rem;
+}
+
+.admin-support-typing {
+  min-height: 1rem;
+  margin: 0;
+  color: var(--admin-muted);
+  font-size: 0.76rem;
+}
+
+.admin-support-attachment-drafts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.admin-support-attachment-drafts span {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  border: 1px solid var(--admin-border);
+  background: var(--admin-card-subtle);
+  padding: 0.3rem 0.45rem;
+  color: var(--admin-muted);
+  font-size: 0.74rem;
+}
+
+.admin-support-attachment-drafts button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.admin-support-composer-row {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: end;
+}
+
+.admin-support-composer-row textarea {
+  min-height: 44px;
+  max-height: 128px;
+  resize: vertical;
+  border: 1px solid var(--admin-border-strong);
+  border-radius: 10px;
+  background: var(--admin-input);
+  color: var(--admin-text);
+  padding: 0.7rem;
+}
+
+.admin-support-attach-button {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--admin-border-strong);
+  border-radius: 50%;
+  background: var(--admin-card);
+  color: var(--admin-text);
+  cursor: pointer;
+}
+
+.admin-support-conversation-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.45rem;
+  height: 100%;
+  color: var(--admin-muted);
+  text-align: center;
+}
+
+.admin-support-conversation-empty > span svg {
+  width: 30px;
+  height: 30px;
+}
+
+.admin-support-conversation-empty p {
+  margin: 0;
+}
+
+@media (max-width: 1180px) {
+  .admin-support-console {
+    grid-template-columns: 170px minmax(260px, 320px) minmax(420px, 1fr);
+  }
+
+  .admin-support-handoff-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-support-handoff-summary > div:last-child {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--admin-border);
+  }
+}
+
+@media (max-width: 900px) {
+  .admin-support-console {
+    display: block;
+    height: auto;
+    overflow: visible;
+  }
+
+  .admin-support-channel-rail {
+    flex-direction: row;
+    border-right: 0;
+    border-bottom: 1px solid var(--admin-border);
+  }
+
+  .admin-support-rail-heading,
+  .admin-support-channel-note {
+    display: none;
+  }
+
+  .admin-support-channel {
+    width: auto;
+    flex: 1;
+  }
+
+  .admin-support-request-pane {
+    max-height: 420px;
+    border-right: 0;
+    border-bottom: 1px solid var(--admin-border);
+  }
+
+  .admin-support-conversation-pane,
+  .admin-support-chat-shell {
+    min-height: 640px;
+  }
+}
+
 .admin-table-scroll {
   max-height: 360px;
   overflow: auto;

@@ -1,6 +1,8 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentCreated } = require('firebase-functions/v2/firestore')
+const { getAuth } = require('firebase-admin/auth')
 const { FieldValue, Timestamp, getFirestore } = require('firebase-admin/firestore')
+const { getDatabase } = require('firebase-admin/database')
 const { getStorage } = require('firebase-admin/storage')
 const { assertAdmin, assertPermission } = require('../admin/adminAuth')
 const { DEFAULT_SETTINGS, mergeSettings } = require('../admin/adminSettingsShared')
@@ -23,6 +25,7 @@ const {
 const db = getFirestore()
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
+const RESONA_SUPPORT_AVATAR_PATH = 'assets/profilePictures/staff/supportAgentResona.png'
 const MAX_BODY_LENGTH = 1200
 const RESONA_ACTIVITY_TTL_MS = 90 * 1000
 const AI_IMAGE_ATTACHMENT_LIMIT = 4
@@ -96,6 +99,12 @@ function cleanPromptText(value = '', max = 4000) {
   return cleanBody(value, max)
 }
 
+function normalizeAgentFirstName(value = '', fallback = 'Support') {
+  const letters = assertString(value || '').trim()
+  if (!/^[A-Za-z]{1,50}$/.test(letters)) return fallback
+  return `${letters.charAt(0).toUpperCase()}${letters.slice(1).toLowerCase()}`
+}
+
 function serializeDate(value) {
   if (!value) return null
   if (typeof value.toDate === 'function') return value.toDate().toISOString()
@@ -113,6 +122,8 @@ function serializeThread(docSnap) {
     requesterUid: data.requesterUid || '',
     participantUids: getThreadParticipantUids(data),
     assignedAgentUid: data.assignedAgentUid || null,
+    assignedAgentFirstName: data.assignedAgentFirstName || '',
+    assignedAgentAvatarPath: data.assignedAgentAvatarPath || '',
     status: data.status || 'ai_active',
     mode: data.mode || 'general',
     source: data.source || 'inbox_resona',
@@ -151,6 +162,9 @@ function serializeMessage(docSnap) {
     senderId: data.senderId || data.senderUid || '',
     senderType: data.senderType || 'system',
     agentId: data.agentId || '',
+    senderDisplayName: data.senderDisplayName || data.senderFirstName || data.metadata?.agentFirstName || '',
+    senderFirstName: data.senderFirstName || data.metadata?.agentFirstName || '',
+    avatarPath: data.avatarPath || data.metadata?.avatarPath || '',
     body: data.body || '',
     type: data.type || 'text',
     createdAt: serializeDate(data.createdAt),
@@ -234,18 +248,22 @@ async function addSystemMessage(transaction, threadRef, body = '', metadata = {}
 
 async function loadProfileSummary(uid = '') {
   if (!uid) return null
-  const [profileSnap, userSnap] = await Promise.all([
+  const [profileSnap, userSnap, authUser] = await Promise.all([
     db.collection('profiles').doc(uid).get().catch(() => null),
-    db.collection('users').doc(uid).get().catch(() => null)
+    db.collection('users').doc(uid).get().catch(() => null),
+    getAuth().getUser(uid).catch(() => null)
   ])
   const profile = profileSnap?.exists ? profileSnap.data() || {} : {}
   const user = userSnap?.exists ? userSnap.data() || {} : {}
   return {
     uid,
-    displayName: assertString(profile.displayName || user.displayName || profile.name || user.name || '').slice(0, 160),
+    firstName: assertString(user.firstName || '').slice(0, 50),
+    lastName: assertString(user.lastName || '').slice(0, 50),
+    displayName: assertString(profile.displayName || user.displayName || profile.name || user.name || authUser?.displayName || '').slice(0, 160),
     username: assertString(profile.username || user.username || '').slice(0, 120),
+    email: assertString(user.email || profile.email || authUser?.email || '').slice(0, 320),
     role: assertString(user.role || profile.role || user.accountType || 'user').slice(0, 80),
-    avatarURL: assertString(profile.avatarURL || profile.photoURL || user.photoURL || '').slice(0, 2000)
+    avatarURL: assertString(profile.avatarURL || profile.photoURL || user.photoURL || authUser?.photoURL || '').slice(0, 2000)
   }
 }
 
@@ -361,7 +379,37 @@ async function clearResonaActivity(threadRef) {
     },
     updatedAt: FieldValue.serverTimestamp()
   }, { merge: true }).catch(() => null)
-  await clearResonaActivity(threadRef)
+  await setResonaTyping(threadRef, false)
+}
+
+async function deleteQueryDocuments(query) {
+  let snapshot = await query.limit(400).get()
+  while (!snapshot.empty) {
+    const batch = db.batch()
+    snapshot.docs.forEach((docSnap) => batch.delete(docSnap.ref))
+    await batch.commit()
+    if (snapshot.size < 400) break
+    snapshot = await query.limit(400).get()
+  }
+}
+
+async function purgeResonaConversationData({ threadRef, threadId = '', uid = '' } = {}) {
+  await Promise.all([
+    db.recursiveDelete(threadRef.collection('messages')),
+    db.recursiveDelete(threadRef.collection('typing')),
+    db.recursiveDelete(threadRef.collection('participants')),
+    db.recursiveDelete(db.collection('users').doc(uid).collection('hiddenThreadMessages').doc(threadId)),
+    deleteQueryDocuments(db.collection('aiMessageFeedback').where('threadId', '==', threadId)),
+    deleteQueryDocuments(db.collection('reports').where('metadata.threadId', '==', threadId)),
+    db.collection('supportGuidanceSessions').where('threadId', '==', threadId).get().then((snapshot) => (
+      Promise.all(snapshot.docs.map((docSnap) => db.recursiveDelete(docSnap.ref)))
+    )),
+    getStorage().bucket().deleteFiles({
+      prefix: `threads/${threadId}/messages/`,
+      force: true
+    })
+  ])
+  await getDatabase().ref(`supportAgentSessions/${threadId}`).remove().catch(() => null)
 }
 
 async function loadReadableResonaMessage({ uid = '', threadId = '', messageId = '' } = {}) {
@@ -401,6 +449,9 @@ async function lockAiMessage(threadRef, messageId = '') {
     if (!shouldInvokeResona(thread, message)) {
       return { locked: false, reason: 'not_invoked', thread, message }
     }
+    if (thread.historyClearing === true) {
+      return { locked: false, reason: 'history_clearing', thread, message }
+    }
     if (thread.status === 'assigned' || thread.assignedAgentUid) {
       return { locked: false, reason: 'live_agent_assigned', thread, message }
     }
@@ -410,7 +461,8 @@ async function lockAiMessage(threadRef, messageId = '') {
     transaction.set(messageRef, {
       metadata: {
         ...metadata,
-        resonaHandlingStartedAt: FieldValue.serverTimestamp()
+        resonaHandlingStartedAt: FieldValue.serverTimestamp(),
+        resonaHistoryVersion: Math.max(0, Number(thread.historyVersion || 0))
       }
     }, { merge: true })
     transaction.set(threadRef, {
@@ -422,12 +474,35 @@ async function lockAiMessage(threadRef, messageId = '') {
 }
 
 async function writeResonaReply({ threadRef, threadId = '', messageId, thread, userMessage, aiResult }) {
-  const replyText = cleanBody(aiResult.replyText || 'I’m routing this to a live Melogic support agent so they can review the details safely.')
+  const unavailableWithoutEscalation = aiResult.aiAvailable === false && detectEscalationNeed(userMessage.body || '').shouldEscalate !== true
+  const safeResult = unavailableWithoutEscalation
+    ? {
+        ...aiResult,
+        replyText: 'I’m having trouble responding right now. Please try again in a moment, or ask me to connect you with support.',
+        shouldEscalate: false,
+        escalationReason: '',
+        escalationDecision: { shouldEscalate: false, escalationReason: '', confidence: 1 },
+        suggestedCategory: 'temporary_unavailable'
+      }
+    : aiResult
+  const replyText = cleanBody(safeResult.replyText || 'I can help with that. Tell me a little more about what you are trying to do on Melogic.')
   const aiMessageRef = threadRef.collection('messages').doc()
-  const shouldEscalate = aiResult.shouldEscalate === true
+  const shouldEscalate = safeResult.shouldEscalate === true
   const statusBefore = cleanBody(thread.status || 'ai_active', 80)
+  const historyVersion = Math.max(0, Number(thread.historyVersion || 0))
   let statusAfter = statusBefore
+  let skipped = false
   await db.runTransaction(async (transaction) => {
+    const currentThreadSnap = await transaction.get(threadRef)
+    const currentThread = currentThreadSnap.data() || {}
+    if (
+      !currentThreadSnap.exists
+      || currentThread.historyClearing === true
+      || Math.max(0, Number(currentThread.historyVersion || 0)) !== historyVersion
+    ) {
+      skipped = true
+      return
+    }
     transaction.set(aiMessageRef, {
       senderId: RESONA_AGENT_ID,
       senderUid: RESONA_AGENT_ID,
@@ -441,11 +516,11 @@ async function writeResonaReply({ threadRef, threadId = '', messageId, thread, u
       deleted: false,
       edited: false,
       metadata: {
-        confidence: Number(aiResult.confidence || 0),
-        modelUsed: aiResult.modelUsed || '',
+        confidence: Number(safeResult.confidence || 0),
+        modelUsed: safeResult.modelUsed || '',
         shouldEscalate,
-        escalationReason: aiResult.escalationReason || '',
-        webGrounding: aiResult.webGrounding && typeof aiResult.webGrounding === 'object' ? aiResult.webGrounding : null,
+        escalationReason: safeResult.escalationReason || '',
+        webGrounding: safeResult.webGrounding && typeof safeResult.webGrounding === 'object' ? safeResult.webGrounding : null,
         source: 'resona_inbox'
       }
     })
@@ -463,18 +538,20 @@ async function writeResonaReply({ threadRef, threadId = '', messageId, thread, u
       lastMessageSenderId: RESONA_AGENT_ID,
       lastMessageType: 'text',
       lastMessageAttachmentCount: 0,
-      aiEscalationReason: shouldEscalate ? (aiResult.escalationReason || 'support_needed') : '',
-      aiSuggestedCategory: aiResult.suggestedCategory || ''
+      aiEscalationReason: shouldEscalate ? (safeResult.escalationReason || 'support_needed') : '',
+      aiSuggestedCategory: safeResult.suggestedCategory || ''
     }
     if (shouldEscalate) {
       threadUpdate.status = 'waiting_for_agent'
       statusAfter = 'waiting_for_agent'
       threadUpdate.mode = 'support'
       threadUpdate.assignedAgentUid = null
+      threadUpdate.resolvedAt = null
+      threadUpdate.resolvedBy = ''
       threadUpdate.requesterUid = thread.requesterUid || getThreadParticipantUids(thread)[0] || ''
       addSystemMessage(transaction, threadRef, 'Resona requested a live support agent.', {
         event: 'resona_requested_live_agent',
-        reason: aiResult.escalationReason || ''
+        reason: safeResult.escalationReason || ''
       })
     } else if (thread.type === 'agent') {
       threadUpdate.status = 'ai_active'
@@ -484,18 +561,20 @@ async function writeResonaReply({ threadRef, threadId = '', messageId, thread, u
     }
     transaction.set(threadRef, threadUpdate, { merge: true })
   })
+  if (skipped) return { skipped: true, reason: 'history_changed' }
   console.log('[resona-ai]', {
     threadId,
     userMessageId: messageId,
-    escalationDecision: aiResult.escalationDecision || {
+    escalationDecision: safeResult.escalationDecision || {
       shouldEscalate,
-      escalationReason: aiResult.escalationReason || '',
-      confidence: Number(aiResult.confidence || 0)
+      escalationReason: safeResult.escalationReason || '',
+      confidence: Number(safeResult.confidence || 0)
     },
-    escalationReason: aiResult.escalationReason || '',
+    escalationReason: safeResult.escalationReason || '',
     statusBefore,
     statusAfter
   })
+  return { skipped: false }
 }
 
 const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
@@ -631,34 +710,85 @@ const refreshResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
   return { ok: true, threadId }
 })
 
-const clearResonaChatHistory = onCall(CALLABLE_OPTIONS, async (request) => {
+const clearResonaChatHistory = onCall({ ...CALLABLE_OPTIONS, timeoutSeconds: 120, memory: '512MiB' }, async (request) => {
   const uid = assertSignedIn(request)
   const threadId = cleanBody(request.data?.threadId || resonaThreadIdFor(uid), 180)
   const threadRef = db.collection('threads').doc(threadId)
-  await db.runTransaction(async (transaction) => {
+  const clearState = await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
     if (!snap.exists) throw new HttpsError('not-found', 'Resona thread not found.')
     const thread = snap.data() || {}
     if (thread.type !== 'agent' || thread.agentId !== RESONA_AGENT_ID) throw new HttpsError('failed-precondition', 'Only Resona history can be cleared here.')
     if (!getThreadParticipantUids(thread).includes(uid)) throw new HttpsError('permission-denied', 'You do not have access to this Resona thread.')
     transaction.set(threadRef, {
-      clearedAt: FieldValue.serverTimestamp(),
-      clearedBy: uid,
-      mode: thread.contextType && thread.contextType !== 'inbox' ? 'project_assistant' : 'general',
-      status: 'ai_active',
+      historyClearing: true,
+      historyClearingStartedAt: FieldValue.serverTimestamp(),
       assignedAgentUid: null,
+      assignedAgentFirstName: '',
+      assignedAgentAvatarPath: '',
       aiEscalationReason: '',
       aiSuggestedCategory: '',
-      lastMessageText: '',
-      lastMessagePreview: 'Ask Resona anything.',
-      lastMessageSenderId: '',
-      lastMessageType: 'text',
-      lastMessageAttachmentCount: 0,
       updatedAt: FieldValue.serverTimestamp()
     }, { merge: true })
+    return {
+      nextHistoryVersion: Math.max(0, Number(thread.historyVersion || 0)) + 1,
+      mode: thread.contextType && thread.contextType !== 'inbox' ? 'project_assistant' : 'general'
+    }
   })
-  await clearResonaActivity(threadRef)
-  return { ok: true, threadId }
+  try {
+    await purgeResonaConversationData({ threadRef, threadId, uid })
+    await Promise.all([
+      db.recursiveDelete(threadRef.collection('messages')),
+      db.recursiveDelete(threadRef.collection('typing'))
+    ])
+  } catch (error) {
+    await threadRef.set({
+      historyClearing: false,
+      historyClearingFailedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp()
+    }, { merge: true }).catch(() => null)
+    console.error('[resona-clear-history] purge failed', { threadId, uid, message: error?.message || 'unknown' })
+    throw new HttpsError('internal', 'Resona history could not be completely deleted. Please try again.')
+  }
+
+  const clearedAt = Timestamp.now()
+  await threadRef.set({
+    clearedAt,
+    clearedBy: uid,
+    historyVersion: clearState.nextHistoryVersion,
+    historyClearing: false,
+    historyClearingStartedAt: FieldValue.delete(),
+    historyClearingFailedAt: FieldValue.delete(),
+    mode: clearState.mode,
+    status: 'ai_active',
+    assignedAgentUid: null,
+    assignedAgentFirstName: '',
+    assignedAgentAvatarPath: '',
+    participantIds: [uid],
+    participantUids: [uid],
+    memberUids: [uid],
+    participantCount: 1,
+    aiEscalationReason: '',
+    aiSuggestedCategory: '',
+    lastMessageAt: null,
+    lastMessageText: '',
+    lastMessagePreview: 'Ask Resona anything.',
+    lastMessageSenderId: '',
+    lastMessageType: 'text',
+    lastMessageAttachmentCount: 0,
+    resolvedAt: null,
+    resolvedBy: '',
+    resonaActivity: {
+      active: false,
+      state: '',
+      label: '',
+      expiresAt: null,
+      clearedAt
+    },
+    updatedAt: clearedAt
+  }, { merge: true })
+  await threadRef.collection('participants').doc(uid).set(buildParticipantPayload({ uid, role: 'owner' }), { merge: true })
+  return { ok: true, threadId, clearedAt: clearedAt.toDate().toISOString() }
 })
 
 const setThreadResonaAgent = onCall(CALLABLE_OPTIONS, async (request) => {
@@ -895,7 +1025,7 @@ const handleResonaInboxReply = onDocumentCreated({
           attachmentContext: aiAttachmentInputs.attachmentContext,
           attachmentImageParts: aiAttachmentInputs.attachmentImageParts
         })
-    await writeResonaReply({
+    const writeResult = await writeResonaReply({
       threadRef,
       threadId,
       messageId,
@@ -903,7 +1033,7 @@ const handleResonaInboxReply = onDocumentCreated({
       userMessage: message,
       aiResult
     })
-    if (aiResult?.highlightIntent && safePageContext?.sessionId) {
+    if (!writeResult?.skipped && aiResult?.highlightIntent && safePageContext?.sessionId) {
       await createGuidanceOverlayFromIntent({
         sessionId: safePageContext.sessionId,
         intent: aiResult.highlightIntent,
@@ -977,14 +1107,22 @@ async function listResonaMessagesForSupport({ request, threadId = '' }) {
 
 async function claimResonaThread({ request, threadId = '' }) {
   const claims = assertPermission(request, 'orderSupport')
+  const agent = await loadProfileSummary(claims.uid)
+  const agentFirstName = normalizeAgentFirstName(agent?.firstName || assertString(agent?.displayName || '').split(/\s+/)[0])
   const threadRef = db.collection('threads').doc(threadId)
   await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
     if (!snap.exists) throw new HttpsError('not-found', 'Resona thread not found.')
     const thread = snap.data() || {}
     if (thread.type !== 'agent' || thread.agentId !== RESONA_AGENT_ID) throw new HttpsError('not-found', 'Resona thread not found.')
+    if (thread.assignedAgentUid && thread.assignedAgentUid !== claims.uid) {
+      throw new HttpsError('already-exists', 'Another support agent is already connected to this conversation.')
+    }
+    if (thread.status === 'assigned' && thread.assignedAgentUid === claims.uid) return
     transaction.set(threadRef, {
       assignedAgentUid: claims.uid,
+      assignedAgentFirstName: agentFirstName,
+      assignedAgentAvatarPath: RESONA_SUPPORT_AVATAR_PATH,
       status: 'assigned',
       mode: 'live_agent_joined',
       participantIds: FieldValue.arrayUnion(claims.uid),
@@ -992,13 +1130,18 @@ async function claimResonaThread({ request, threadId = '' }) {
       memberUids: FieldValue.arrayUnion(claims.uid),
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
-      lastMessageText: 'A live agent joined the chat.',
-      lastMessagePreview: 'A live agent joined the chat.',
+      lastMessageText: `${agentFirstName} joined the chat.`,
+      lastMessagePreview: `${agentFirstName} joined the chat.`,
       lastMessageSenderId: 'system',
       lastMessageType: 'system'
     }, { merge: true })
     transaction.set(threadRef.collection('participants').doc(claims.uid), buildParticipantPayload({ uid: claims.uid, role: 'support' }), { merge: true })
-    addSystemMessage(transaction, threadRef, 'A live agent joined the chat.', { event: 'live_agent_joined', agentUid: claims.uid })
+    addSystemMessage(transaction, threadRef, `${agentFirstName} joined the chat.`, {
+      event: 'live_agent_joined',
+      agentUid: claims.uid,
+      agentFirstName,
+      avatarPath: RESONA_SUPPORT_AVATAR_PATH
+    })
   })
   await clearResonaActivity(threadRef)
   return { ok: true, threadId }
@@ -1006,38 +1149,64 @@ async function claimResonaThread({ request, threadId = '' }) {
 
 async function resolveResonaThread({ request, threadId = '' }) {
   const claims = assertPermission(request, 'orderSupport')
+  const agent = await loadProfileSummary(claims.uid)
+  const agentFirstName = normalizeAgentFirstName(agent?.firstName || assertString(agent?.displayName || '').split(/\s+/)[0])
   const threadRef = db.collection('threads').doc(threadId)
   await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
     if (!snap.exists) throw new HttpsError('not-found', 'Resona thread not found.')
     const thread = snap.data() || {}
     if (thread.type !== 'agent' || thread.agentId !== RESONA_AGENT_ID) throw new HttpsError('not-found', 'Resona thread not found.')
+    if (!thread.assignedAgentUid && thread.status === 'ai_active') return
+    if (thread.assignedAgentUid && thread.assignedAgentUid !== claims.uid) {
+      throw new HttpsError('failed-precondition', 'Only the connected support agent can disconnect this conversation.')
+    }
+    const wasConnected = Boolean(thread.assignedAgentUid)
+    const message = wasConnected
+      ? `${thread.assignedAgentFirstName || agentFirstName} left the conversation. Resona is active again.`
+      : 'The support request was resolved. Resona is active again.'
     transaction.set(threadRef, {
       assignedAgentUid: null,
+      assignedAgentFirstName: '',
+      assignedAgentAvatarPath: '',
       status: 'ai_active',
       mode: 'general',
       resolvedAt: FieldValue.serverTimestamp(),
       resolvedBy: claims.uid,
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
-      lastMessageText: 'Live support session resolved. Resona is active again.',
-      lastMessagePreview: 'Live support session resolved. Resona is active again.',
+      lastMessageText: message,
+      lastMessagePreview: message,
       lastMessageSenderId: 'system',
       lastMessageType: 'system',
       aiEscalationReason: ''
     }, { merge: true })
-    addSystemMessage(transaction, threadRef, 'Live support session resolved. Resona is active again.', {
-      event: 'live_support_resolved',
-      agentUid: claims.uid
+    addSystemMessage(transaction, threadRef, message, {
+      event: wasConnected ? 'live_agent_disconnected' : 'support_request_resolved',
+      agentUid: claims.uid,
+      agentFirstName: thread.assignedAgentFirstName || agentFirstName
     })
   })
   return { ok: true, threadId }
 }
 
-async function sendResonaSupportMessage({ request, threadId = '', body = '' }) {
+async function sendResonaSupportMessage({ request, threadId = '', body = '', attachments = [] }) {
   const claims = assertPermission(request, 'orderSupport')
   const clean = cleanBody(body)
-  if (!clean) throw new HttpsError('invalid-argument', 'Message content is required.')
+  const safeAttachments = Array.isArray(attachments) ? attachments.slice(0, 8).map((item) => ({
+    name: assertString(item?.name || 'Attachment').slice(0, 180),
+    type: assertString(item?.type || 'file').slice(0, 40),
+    mimeType: assertString(item?.mimeType || 'application/octet-stream').slice(0, 120),
+    size: Math.max(0, Math.min(Number(item?.size || 0), 256 * 1024 * 1024)),
+    storagePath: assertString(item?.storagePath || '').slice(0, 900),
+    url: assertString(item?.url || '').slice(0, 2000),
+    width: Math.max(0, Number(item?.width || 0)),
+    height: Math.max(0, Number(item?.height || 0))
+  })).filter((item) => item.storagePath.startsWith(`threads/${threadId}/messages/`) && item.url) : []
+  if (!clean && !safeAttachments.length) throw new HttpsError('invalid-argument', 'Message content or an attachment is required.')
+  const agent = await loadProfileSummary(claims.uid)
+  const agentFirstName = normalizeAgentFirstName(agent?.firstName || assertString(agent?.displayName || '').split(/\s+/)[0])
+  const preview = clean || `${safeAttachments.length} attachment${safeAttachments.length === 1 ? '' : 's'}`
   const threadRef = db.collection('threads').doc(threadId)
   const messageRef = threadRef.collection('messages').doc()
   await db.runTransaction(async (transaction) => {
@@ -1045,30 +1214,43 @@ async function sendResonaSupportMessage({ request, threadId = '', body = '' }) {
     if (!snap.exists) throw new HttpsError('not-found', 'Resona thread not found.')
     const thread = snap.data() || {}
     if (thread.type !== 'agent' || thread.agentId !== RESONA_AGENT_ID) throw new HttpsError('not-found', 'Resona thread not found.')
+    if (thread.status !== 'assigned' || thread.assignedAgentUid !== claims.uid) {
+      throw new HttpsError('failed-precondition', 'Connect to this conversation before sending as support.')
+    }
     transaction.set(messageRef, {
       senderId: claims.uid,
       senderUid: claims.uid,
       senderType: 'agent',
+      senderDisplayName: agentFirstName,
+      senderFirstName: agentFirstName,
+      avatarPath: RESONA_SUPPORT_AVATAR_PATH,
       body: clean,
-      type: 'text',
-      attachments: [],
+      type: safeAttachments.length ? 'attachment' : 'text',
+      attachments: safeAttachments,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
       deleted: false,
       edited: false,
-      metadata: { source: 'admin_support_queue' }
+      metadata: {
+        source: 'admin_support_queue',
+        liveAgent: true,
+        agentFirstName,
+        avatarPath: RESONA_SUPPORT_AVATAR_PATH
+      }
     })
     transaction.set(threadRef, {
       assignedAgentUid: thread.assignedAgentUid || claims.uid,
+      assignedAgentFirstName: agentFirstName,
+      assignedAgentAvatarPath: RESONA_SUPPORT_AVATAR_PATH,
       status: 'assigned',
       mode: 'live_agent_joined',
       updatedAt: FieldValue.serverTimestamp(),
       lastMessageAt: FieldValue.serverTimestamp(),
-      lastMessageText: clean,
-      lastMessagePreview: clean,
+      lastMessageText: preview,
+      lastMessagePreview: preview,
       lastMessageSenderId: claims.uid,
-      lastMessageType: 'text',
-      lastMessageAttachmentCount: 0
+      lastMessageType: safeAttachments.length ? 'attachment' : 'text',
+      lastMessageAttachmentCount: safeAttachments.length
     }, { merge: true })
   })
   return { ok: true, threadId, messageId: messageRef.id }

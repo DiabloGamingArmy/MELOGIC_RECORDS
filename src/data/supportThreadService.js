@@ -8,8 +8,10 @@ import {
   query
 } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
+import { storage } from '../firebase/storage'
 
 function callable(name, payload = {}) {
   if (!functions) throw new Error('Functions are not configured.')
@@ -34,15 +36,18 @@ function toIsoDate(value) {
 }
 
 export function normalizeSupportThread(threadId, raw = {}) {
+  const isResona = raw.type === 'resona' || String(raw.id || threadId || '').startsWith('resona_')
   return {
     id: String(raw.id || threadId || '').trim(),
-    type: 'support',
+    type: isResona ? 'resona' : 'support',
     requesterUid: String(raw.requesterUid || '').trim(),
     participantUids: Array.isArray(raw.participantUids) ? raw.participantUids.map((uid) => String(uid || '').trim()).filter(Boolean) : [],
     assignedAgentUid: String(raw.assignedAgentUid || '').trim(),
+    assignedAgentFirstName: String(raw.assignedAgentFirstName || raw.assignedAgent?.firstName || '').trim(),
+    assignedAgentAvatarPath: String(raw.assignedAgentAvatarPath || '').trim(),
     status: String(raw.status || 'open').trim() || 'open',
     source: String(raw.source || 'support').trim(),
-    subject: String(raw.subject || 'Support request').trim(),
+    subject: String(raw.subject || (isResona ? 'Resona' : 'Support request')).trim(),
     priority: String(raw.priority || 'normal').trim(),
     createdAt: toIsoDate(raw.createdAt),
     updatedAt: toIsoDate(raw.updatedAt),
@@ -95,6 +100,9 @@ export function normalizeSupportMessage(messageId, raw = {}, metadata = {}) {
     senderUid: String(raw.senderUid || '').trim(),
     senderType: ['user', 'agent', 'system', 'ai', 'system_ai'].includes(raw.senderType) ? raw.senderType : 'system',
     body: String(raw.body || '').trim(),
+    senderDisplayName: String(raw.senderDisplayName || raw.senderFirstName || raw.metadata?.agentFirstName || '').trim(),
+    senderFirstName: String(raw.senderFirstName || raw.metadata?.agentFirstName || '').trim(),
+    avatarPath: String(raw.avatarPath || raw.metadata?.avatarPath || '').trim(),
     createdAt: toIsoDate(raw.createdAt),
     attachments: Array.isArray(raw.attachments) ? raw.attachments : [],
     metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
@@ -115,10 +123,11 @@ export async function createSupportThread(payload = {}) {
   }
 }
 
-export function sendSupportMessage({ threadId = '', body = '', safePageContext = null, asAgent = false } = {}) {
+export function sendSupportMessage({ threadId = '', body = '', attachments = [], safePageContext = null, asAgent = false } = {}) {
   return callable('sendSupportMessage', {
     threadId: String(threadId || '').trim(),
     body: String(body || '').trim(),
+    attachments: Array.isArray(attachments) ? attachments.slice(0, 8) : [],
     asAgent: asAgent === true,
     safePageContext: safePageContext && typeof safePageContext === 'object' ? {
       guidanceSessionActive: safePageContext.guidanceSessionActive === true,
@@ -149,6 +158,28 @@ export function sendSupportMessage({ threadId = '', body = '', safePageContext =
       productTitle: String(safePageContext.productTitle || '').trim().slice(0, 200)
     } : {}
   })
+}
+
+export async function uploadSupportAttachments({ threadId = '', files = [] } = {}) {
+  if (!storage || !threadId) return []
+  const batchId = `admin-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  const uploads = await Promise.all(Array.from(files || []).slice(0, 8).map(async (file, index) => {
+    if (!(file instanceof File)) return null
+    if (Number(file.size || 0) > 256 * 1024 * 1024) throw new Error('Attachment is too large. Maximum size is 256 MB.')
+    const safeName = `${index}-${String(file.name || 'attachment').replace(/[^A-Za-z0-9._-]/g, '-')}`
+    const storagePath = `threads/${threadId}/messages/${batchId}/attachments/${safeName}`
+    const storageRef = ref(storage, storagePath)
+    await uploadBytes(storageRef, file, { contentType: file.type || 'application/octet-stream' })
+    return {
+      name: file.name || safeName,
+      type: String(file.type || '').split('/')[0] || 'file',
+      mimeType: file.type || 'application/octet-stream',
+      size: Number(file.size || 0),
+      storagePath,
+      url: await getDownloadURL(storageRef)
+    }
+  }))
+  return uploads.filter(Boolean)
 }
 
 export function requestSupportAgent({ threadId = '' } = {}) {
@@ -185,15 +216,17 @@ export async function listSupportMessages({ threadId = '' } = {}) {
 
 export function subscribeToSupportThread(threadId = '', callback, onError) {
   if (!db || !threadId) return () => {}
-  return onSnapshot(doc(db, 'supportThreads', threadId), (snap) => {
+  const collectionName = threadId.startsWith('resona_') ? 'threads' : 'supportThreads'
+  return onSnapshot(doc(db, collectionName, threadId), (snap) => {
     callback(snap.exists() ? normalizeSupportThread(snap.id, snap.data()) : null)
   }, onError)
 }
 
 export function subscribeToSupportMessages(threadId = '', callback, onError) {
   if (!db || !threadId) return () => {}
+  const collectionName = threadId.startsWith('resona_') ? 'threads' : 'supportThreads'
   const messagesQuery = query(
-    collection(db, 'supportThreads', threadId, 'messages'),
+    collection(db, collectionName, threadId, 'messages'),
     orderBy('createdAt', 'asc'),
     limit(100)
   )
@@ -204,8 +237,9 @@ export function subscribeToSupportMessages(threadId = '', callback, onError) {
 
 export async function getSupportMessages(threadId = '') {
   if (!db || !threadId) return []
+  const collectionName = threadId.startsWith('resona_') ? 'threads' : 'supportThreads'
   const snapshot = await getDocs(query(
-    collection(db, 'supportThreads', threadId, 'messages'),
+    collection(db, collectionName, threadId, 'messages'),
     orderBy('createdAt', 'asc'),
     limit(100)
   ))

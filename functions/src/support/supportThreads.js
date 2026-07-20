@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const { onDocumentCreated } = require('firebase-functions/v2/firestore')
+const { getAuth } = require('firebase-admin/auth')
 const { FieldValue, Timestamp, getFirestore } = require('firebase-admin/firestore')
 const { assertPermission, cleanString, getRequesterClaims } = require('../admin/adminAuth')
 const { DEFAULT_SETTINGS, mergeSettings } = require('../admin/adminSettingsShared')
@@ -122,6 +123,8 @@ function serializeThread(docSnap) {
     requesterUid: data.requesterUid || '',
     participantUids: Array.isArray(data.participantUids) ? data.participantUids : [],
     assignedAgentUid: data.assignedAgentUid || '',
+    assignedAgentFirstName: data.assignedAgentFirstName || '',
+    assignedAgentAvatarPath: data.assignedAgentAvatarPath || '',
     status: STATUS_VALUES.has(data.status) ? data.status : 'open',
     source: data.source || 'support',
     subject: data.subject || 'Support request',
@@ -175,6 +178,9 @@ function serializeMessage(docSnap) {
     id: docSnap.id,
     senderUid: data.senderUid || '',
     senderType: data.senderType || 'system',
+    senderDisplayName: data.senderDisplayName || data.senderFirstName || data.metadata?.agentFirstName || '',
+    senderFirstName: data.senderFirstName || data.metadata?.agentFirstName || '',
+    avatarPath: data.avatarPath || data.metadata?.avatarPath || '',
     body: data.body || '',
     createdAt: serializeTimestamp(data.createdAt),
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
@@ -199,18 +205,21 @@ async function findActiveThreadForRequester(uid) {
 
 async function loadProfileSummary(uid = '') {
   if (!uid) return null
-  const [profileSnap, userSnap] = await Promise.all([
+  const [profileSnap, userSnap, authUser] = await Promise.all([
     db.collection('profiles').doc(uid).get().catch(() => null),
-    db.collection('users').doc(uid).get().catch(() => null)
+    db.collection('users').doc(uid).get().catch(() => null),
+    getAuth().getUser(uid).catch(() => null)
   ])
   const profile = profileSnap?.exists ? profileSnap.data() || {} : {}
   const user = userSnap?.exists ? userSnap.data() || {} : {}
   return {
     uid,
-    displayName: cleanString(profile.displayName || user.displayName || profile.name || user.name || '', 160),
+    firstName: cleanString(user.firstName || '', 50),
+    lastName: cleanString(user.lastName || '', 50),
+    displayName: cleanString(profile.displayName || user.displayName || profile.name || user.name || authUser?.displayName || '', 160),
     username: cleanString(profile.username || user.username || '', 120),
-    email: cleanString(user.email || profile.email || '', 320),
-    avatarURL: cleanString(profile.avatarURL || profile.photoURL || user.photoURL || '', 2000)
+    email: cleanString(user.email || profile.email || authUser?.email || '', 320),
+    avatarURL: cleanString(profile.avatarURL || profile.photoURL || user.photoURL || authUser?.photoURL || '', 2000)
   }
 }
 
@@ -913,7 +922,7 @@ const sendSupportMessage = onCall(SUPPORT_CALLABLE_OPTIONS, async (request) => {
   const requestedAgentSend = request.data?.asAgent === true
   if (!threadId) throw new HttpsError('invalid-argument', 'Support thread is required.')
   if (isResonaThreadId(threadId) && staff && requestedAgentSend) {
-    return sendResonaSupportMessage({ request, threadId, body })
+    return sendResonaSupportMessage({ request, threadId, body, attachments: request.data?.attachments || [] })
   }
 
   const threadRef = db.collection('supportThreads').doc(threadId)

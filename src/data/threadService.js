@@ -387,7 +387,8 @@ export async function clearResonaChatHistory({ threadId = '' } = {}) {
   const result = await callable({ threadId: String(threadId || '').trim() })
   return {
     ok: result?.data?.ok === true,
-    threadId: result?.data?.threadId || threadId
+    threadId: result?.data?.threadId || threadId,
+    clearedAt: result?.data?.clearedAt || null
   }
 }
 

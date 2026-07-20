@@ -33,6 +33,16 @@ service firebase.storage {
         && firestore.get(/databases/(default)/documents/threads/$(threadId)).data.createdBy == request.auth.uid;
     }
 
+    function isResonaSupportAgent(threadId) {
+      return signedIn()
+        && request.auth.token.admin == true
+        && (
+          request.auth.token.adminRole in ['owner', 'admin']
+          || request.auth.token.orderSupport == true
+        )
+        && firestore.get(/databases/(default)/documents/threads/$(threadId)).data.type == 'resona';
+    }
+
     function isProductOwner(productId) {
       return signedIn()
         && firestore.get(/databases/(default)/documents/products/$(productId)).data.artistId == request.auth.uid;
@@ -553,8 +563,9 @@ service firebase.storage {
     }
 
     match /threads/{threadId}/messages/{messageId}/attachments/{fileName} {
-      allow read: if isThreadParticipant(threadId);
-      allow write: if isThreadParticipant(threadId)
+      allow read: if isThreadParticipant(threadId)
+        || isResonaSupportAgent(threadId);
+      allow write: if (isThreadParticipant(threadId) || isResonaSupportAgent(threadId))
         && isMessageAttachmentUpload(256 * 1024 * 1024);
     }
 

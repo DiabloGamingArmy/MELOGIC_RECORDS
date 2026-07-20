@@ -2,6 +2,23 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "supportAgentSessions": {
+      "$threadId": {
+        ".read": "auth !== null && ((auth.token.admin === true || auth.token.orderSupport === true) || data.child('requesterUid').val() === auth.uid)",
+        ".write": "auth !== null && (auth.token.admin === true || auth.token.orderSupport === true) && newData.hasChildren(['threadId', 'requesterUid', 'agentUid', 'agentFirstName', 'active']) && newData.child('threadId').val() === $threadId && newData.child('agentUid').val() === auth.uid",
+        ".validate": "newData.hasChildren(['threadId', 'requesterUid', 'agentUid', 'agentFirstName', 'active'])",
+        "threadId": { ".validate": "newData.isString() && newData.val() === $threadId" },
+        "requesterUid": { ".validate": "newData.isString() && newData.val().length <= 180" },
+        "agentUid": { ".validate": "newData.isString() && newData.val() === auth.uid" },
+        "agentFirstName": { ".validate": "newData.isString() && newData.val().matches(/^[A-Za-z]{1,50}$/)" },
+        "active": { ".validate": "newData.isBoolean()" },
+        "connectedAt": { ".validate": "newData.isNumber()" },
+        "lastSeenAt": { ".validate": "newData.isNumber()" },
+        "endedAt": { ".validate": "newData.isNumber()" },
+        "reason": { ".validate": "newData.isString() && newData.val().length <= 80" },
+        "$other": { ".validate": false }
+      }
+    },
     "livePresence": {
       "$streamId": {
         ".read": true,

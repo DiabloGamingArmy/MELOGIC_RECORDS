@@ -172,6 +172,21 @@ function validateDisplayName(displayName) {
   return { valid: true, value }
 }
 
+function validatePersonName(raw, label = 'Name') {
+  const value = String(raw || '').trim()
+  if (!value) return { valid: true, value: '' }
+  if (!/^[A-Za-z]+$/.test(value)) {
+    return { valid: false, value, message: `${label} can only contain letters A-Z.` }
+  }
+  if (value.length > 50) {
+    return { valid: false, value, message: `${label} must be 50 characters or less.` }
+  }
+  return {
+    valid: true,
+    value: `${value.charAt(0).toUpperCase()}${value.slice(1).toLowerCase()}`
+  }
+}
+
 function isPlainObject(value) {
   if (!value || typeof value !== 'object') return false
   const proto = Object.getPrototypeOf(value)
@@ -257,6 +272,8 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
     creatorSettings: profileInput.creatorSettings || {},
     // Backward-compat profile fields while migrating to profiles/{uid}
     displayName: profileInput.displayName || authUser?.displayName || '',
+    firstName: validatePersonName(profileInput.firstName, 'First name').value,
+    lastName: validatePersonName(profileInput.lastName, 'Last name').value,
     username: normalizeUsername(profileInput.username),
     bio: profileInput.bio || '',
     photoURL: profileInput.photoURL || authUser?.photoURL || null,
@@ -276,6 +293,8 @@ function buildProvisionedUserDoc(uid, authUser, profileInput = {}) {
     roleLabel: 'User',
     stats: { products: 0, savedItems: 0, comments: 0, likes: 0, downloads: 0 },
     displayName: String(profileInput.displayName || authUser?.displayName || '').trim(),
+    firstName: '',
+    lastName: '',
     username,
     bio: '',
     photoURL: profileInput.photoURL || authUser?.photoURL || '',
@@ -613,6 +632,13 @@ export async function saveProfileChanges(user, payload = {}) {
     displayNameError.code = 'profile/invalid-display-name'
     throw displayNameError
   }
+  const firstNameValidation = validatePersonName(payload.firstName, 'First name')
+  const lastNameValidation = validatePersonName(payload.lastName, 'Last name')
+  if (!firstNameValidation.valid || !lastNameValidation.valid) {
+    const nameError = new Error(firstNameValidation.message || lastNameValidation.message)
+    nameError.code = 'profile/invalid-person-name'
+    throw nameError
+  }
 
   let saveStage = 'init'
 
@@ -667,6 +693,8 @@ export async function saveProfileChanges(user, payload = {}) {
       const normalizedPayload = {
         ...payload,
         displayName: displayNameValidation.value,
+        firstName: firstNameValidation.value,
+        lastName: lastNameValidation.value,
         username: nextUsernameLower,
         role: existingUser.role || 'user',
         roleLabel: existingProfile.roleLabel || deriveRoleLabelFromValue(existingUser.role || existingUser.accountType),

@@ -159,6 +159,7 @@ const {
   createGuidanceTestOverlay
 } = require('./src/support/siteGuidance')
 const { resolveSupportFormRequest } = require('./src/support/supportForms')
+const { handleSupportAgentPresence } = require('./src/support/supportAgentPresence')
 
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
@@ -321,3 +322,4 @@ exports.updateSiteGuidanceSession = updateSiteGuidanceSession
 exports.setSiteGuidanceSessionStatus = setSiteGuidanceSessionStatus
 exports.createGuidanceTestOverlay = createGuidanceTestOverlay
 exports.resolveSupportFormRequest = resolveSupportFormRequest
+exports.handleSupportAgentPresence = handleSupportAgentPresence

@@ -172,10 +172,27 @@ function validateUsername(raw) {
   return { valid: true, normalized }
 }
 
+function validatePersonName(raw, label = 'Name') {
+  const value = String(raw || '').trim()
+  if (!value) return { valid: true, value: '', message: '' }
+  if (!/^[A-Za-z]+$/.test(value)) {
+    return { valid: false, value, message: `${label} can only contain letters A-Z.` }
+  }
+  if (value.length > 50) {
+    return { valid: false, value, message: `${label} must be 50 characters or less.` }
+  }
+  return {
+    valid: true,
+    value: `${value.charAt(0).toUpperCase()}${value.slice(1).toLowerCase()}`,
+    message: ''
+  }
+}
+
 function toHumanProfileError(error) {
   if (error?.code === 'profile/username-taken') return 'That username is already taken. Please choose another.'
   if (error?.code === 'profile/invalid-display-name') return error?.message || 'Display name is required.'
   if (error?.code === 'profile/invalid-username') return error?.message || 'Username is invalid. Use lowercase letters, numbers, underscores, or hyphens only.'
+  if (error?.code === 'profile/invalid-person-name') return error?.message || 'First and last name can only contain letters A-Z.'
   if (error?.code === 'profile/username-claim-write-failed') return 'Could not reserve that username. Please try again.'
   if (error?.code === 'profile/public-profile-write-failed') return 'Could not save your public profile right now. Please try again.'
   if (error?.code === 'profile/private-profile-write-failed') return 'Could not save your private profile settings right now. Please try again.'
@@ -193,6 +210,8 @@ function getMergedState(user, profileResult) {
     profileData,
     userData,
     displayName: effective.displayName || user.displayName || '',
+    firstName: userData.firstName || '',
+    lastName: userData.lastName || '',
     username: effective.username || '',
     bio: effective.bio || '',
     roleLabel: profileData.roleLabel || userData.role || 'User',
@@ -233,7 +252,9 @@ function getMergedState(user, profileResult) {
     },
     validation: {
       displayName: '',
-      username: ''
+      username: '',
+      firstName: '',
+      lastName: ''
     },
     dirtySections: {},
     sectionSaveStates: {}
@@ -706,6 +727,18 @@ function renderSettingsPage() {
                 <small class="field-error ${state.validation?.username ? 'is-visible' : ''}" data-username-error>${state.validation?.username || ''}</small>
               </label>
             </div>
+            <div class="field-grid">
+              <label>
+                <span>First Name</span>
+                <input name="firstName" value="${state.firstName || ''}" maxlength="50" pattern="[A-Za-z]*" autocomplete="given-name" autocapitalize="words" class="${state.validation?.firstName ? 'is-invalid' : ''}" data-person-name-input="firstName" />
+                <small class="field-error ${state.validation?.firstName ? 'is-visible' : ''}" data-person-name-error="firstName">${state.validation?.firstName || ''}</small>
+              </label>
+              <label>
+                <span>Last Name</span>
+                <input name="lastName" value="${state.lastName || ''}" maxlength="50" pattern="[A-Za-z]*" autocomplete="family-name" autocapitalize="words" class="${state.validation?.lastName ? 'is-invalid' : ''}" data-person-name-input="lastName" />
+                <small class="field-error ${state.validation?.lastName ? 'is-visible' : ''}" data-person-name-error="lastName">${state.validation?.lastName || ''}</small>
+              </label>
+            </div>
             <label><span>Bio</span><textarea name="bio" rows="3">${state.bio}</textarea></label>
             <div class="field-grid">
               <label><span>Role Label</span><input name="roleLabel" value="${state.roleLabel}" readonly disabled aria-readonly="true" /><small class="helper-text">Role label is bound to your account type.</small></label>
@@ -922,6 +955,7 @@ function renderSettingsPage() {
   const displayNameErrorEl = editRoot.querySelector('[data-display-name-error]')
   const usernameInput = editRoot.querySelector('[data-username-input]')
   const usernameErrorEl = editRoot.querySelector('[data-username-error]')
+  const personNameInputs = editRoot.querySelectorAll('[data-person-name-input]')
   const featuredCheckboxes = editRoot.querySelectorAll('input[name="featuredProductIds"]')
 
   if (!state.feedback.message && feedback) {
@@ -1015,6 +1049,21 @@ function renderSettingsPage() {
     updateUsernameValidationUI(validation.valid ? '' : validation.message)
   })
 
+  personNameInputs.forEach((input) => {
+    input.addEventListener('input', () => {
+      const key = input.dataset.personNameInput
+      const label = key === 'firstName' ? 'First name' : 'Last name'
+      const validation = validatePersonName(input.value, label)
+      pageState.validation = { ...(pageState.validation || {}), [key]: validation.valid ? '' : validation.message }
+      input.classList.toggle('is-invalid', !validation.valid)
+      const errorEl = editRoot.querySelector(`[data-person-name-error="${key}"]`)
+      if (errorEl) {
+        errorEl.textContent = validation.valid ? '' : validation.message
+        errorEl.classList.toggle('is-visible', !validation.valid)
+      }
+    })
+  })
+
   featuredCheckboxes.forEach((checkbox) => {
     checkbox.addEventListener('change', () => {
       const selected = Array.from(featuredCheckboxes).filter((input) => input.checked)
@@ -1045,13 +1094,16 @@ function renderSettingsPage() {
     const requiresUnifiedProfileSave = ['public-profile', 'featured-items'].includes(submittedSection)
     const displayNameValidation = validateDisplayName(formData.get('displayName'))
     const usernameValidation = validateUsername(formData.get('username'))
+    const firstNameValidation = validatePersonName(formData.get('firstName'), 'First name')
+    const lastNameValidation = validatePersonName(formData.get('lastName'), 'Last name')
 
     if (requiresUnifiedProfileSave) {
       updateDisplayNameValidationUI(displayNameValidation.valid ? '' : displayNameValidation.message)
       updateUsernameValidationUI(usernameValidation.valid ? '' : usernameValidation.message)
+      personNameInputs.forEach((input) => input.dispatchEvent(new Event('input')))
     }
 
-    if (requiresUnifiedProfileSave && (!displayNameValidation.valid || !usernameValidation.valid)) {
+    if (requiresUnifiedProfileSave && (!displayNameValidation.valid || !usernameValidation.valid || !firstNameValidation.valid || !lastNameValidation.valid)) {
       pageState.sectionSaveStates = { ...(pageState.sectionSaveStates || {}), [submittedSection]: 'error' }
       setGlobalEditStatus('Please fix the highlighted fields before saving.', 'error')
       renderSettingsPage()
@@ -1082,6 +1134,8 @@ function renderSettingsPage() {
 
     const nextPayload = {
       displayName: displayNameValidation.value,
+      firstName: firstNameValidation.value,
+      lastName: lastNameValidation.value,
       username: usernameValidation.normalized,
       bio: String(formData.get('bio') || '').trim(),
       role: state.userData.role || 'user',
@@ -1202,7 +1256,9 @@ function renderSettingsPage() {
         },
         validation: {
           displayName: '',
-          username: ''
+          username: '',
+          firstName: '',
+          lastName: ''
         },
         dirtySections: {
           ...(state.dirtySections || {}),

@@ -107,7 +107,8 @@ const NON_ESCALATION_PATTERNS = [
   /\b(how are you|how's it going|tell me (a bit )?about yourself|who are you|what can you do)\b/i,
   /\b(human tone|more human|less robotic|warmer tone|be casual|casually chat|chat casually)\b/i,
   /\b(give me feedback|feedback on my (music|project|song|track)|help me brainstorm|brainstorm)\b/i,
-  /\b(what is this platform|tell me about melogic|how (does|do) .* work|can you see my messages)\b/i
+  /\b(what is this platform|tell me about melogic|how (does|do) .* work)\b/i,
+  /\b(can you|did you|do you)\b[\s\S]{0,36}\b(see|receive|get|read)\b[\s\S]{0,36}\b(this|that|it|my message|my messages|what i sent)\b/i
 ]
 
 function nonEscalatingCasualRequest(text = '') {
@@ -644,14 +645,23 @@ ${message}`
     const grounding = summarizeGroundingMetadata(candidate.groundingMetadata)
     const confidence = Math.max(0, Math.min(1, Number(parsed.confidence || 0)))
     const replyText = cleanPromptText(parsed.replyText || '', 1200)
-    const decision = normalizeEscalationDecision({
+    const modelDecision = normalizeEscalationDecision({
       shouldEscalate: parsed.shouldEscalate === true,
       escalationReason: parsed.escalationReason || parsed.escalationDecision?.escalationReason || parsed.escalationDecision?.reason || '',
       confidence
     }, message)
-    const shouldEscalate = decision.shouldEscalate === true
+    // Strong escalation cases are handled by detectEscalationNeed before the
+    // model is called. Do not allow a probabilistic model classification to
+    // open a live-agent request for an otherwise ordinary message.
+    const downgradedModelEscalation = modelDecision.shouldEscalate === true
+    const decision = downgradedModelEscalation
+      ? { shouldEscalate: false, escalationReason: '', confidence: modelDecision.confidence }
+      : modelDecision
+    const shouldEscalate = false
     return {
-      replyText: shouldEscalate && !replyText
+      replyText: downgradedModelEscalation
+        ? 'I can help with that. Tell me a little more about what you are trying to do on Melogic.'
+        : shouldEscalate && !replyText
         ? 'I’m routing this to a live Melogic support agent so they can review the details safely.'
         : replyText || 'I can help with that. Tell me a little more about what you are trying to do on Melogic.',
       confidence,

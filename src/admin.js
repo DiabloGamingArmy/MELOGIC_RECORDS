@@ -84,8 +84,18 @@ import {
   getSupportMessages,
   listSupportThreads,
   resolveSupportThread,
-  sendSupportMessage
+  sendSupportMessage,
+  subscribeToSupportMessages,
+  subscribeToSupportThread,
+  uploadSupportAttachments
 } from './data/supportThreadService'
+import {
+  markThreadRead,
+  setTypingState,
+  subscribeToThreadParticipants,
+  subscribeToTypingState
+} from './data/messageService'
+import { connectSupportAgentPresence, endSupportAgentPresence } from './data/supportAgentPresence'
 import {
   arrayToLines,
   getBannerAlertSettings,
@@ -566,7 +576,13 @@ supportThreads: {
   selectedId: '',
   savingId: '',
   filter: 'active',
+  source: 'resona',
+  selectionKind: 'thread',
   replyDraft: '',
+  attachmentFiles: [],
+  participantReceipts: [],
+  typingUsers: [],
+  agentAvatarURL: '',
   message: ''
 },
 call: {
@@ -619,6 +635,11 @@ let adminContactCallRoom = null
 let adminContactCallAudioElements = []
 let unsubscribeActiveSupportCalls = null
 let unsubscribeSupportForms = null
+let unsubscribeSelectedSupportThread = null
+let unsubscribeSelectedSupportMessages = null
+let unsubscribeSelectedSupportParticipants = null
+let unsubscribeSelectedSupportTyping = null
+let supportAgentTypingTimer = null
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -772,6 +793,11 @@ function reviewDetailProductId() {
 
 function currentSectionKey() {
   const path = window.location.pathname.replace(/\/+$/, '') || ROUTES.admin
+  const params = new URLSearchParams(window.location.search)
+  // The static admin entry point is used by local previews before Firebase
+  // Hosting applies its clean-URL rewrites. Preserve the canonical route in
+  // production while allowing the support workspace to be reviewed locally.
+  if (path.endsWith('/admin.html') && params.get('mode') === 'support') return 'contact'
   if (isReviewPath(path)) return 'reviews'
   if (path.startsWith(`${ROUTES.adminUsers}/`)) return 'users'
   if (path.startsWith(`${ROUTES.adminReports}/`)) return 'reports'
@@ -1089,7 +1115,64 @@ function themeToggleButton() {
   `
 }
 
+function captureSupportWorkspaceRenderState() {
+  const consoleRoot = app.querySelector('.admin-support-console')
+  if (!consoleRoot) return null
+  const messageScroller = consoleRoot.querySelector('[data-support-message-scroll]')
+  const requestScroller = consoleRoot.querySelector('.admin-support-request-list')
+  const active = document.activeElement
+  const composer = active instanceof HTMLTextAreaElement && active.matches('[data-support-thread-reply-body]')
+    ? active
+    : null
+  return {
+    threadId: state.contact.supportThreads.selectedId || '',
+    windowX: window.scrollX,
+    windowY: window.scrollY,
+    requestScrollTop: Number(requestScroller?.scrollTop || 0),
+    messageScrollTop: Number(messageScroller?.scrollTop || 0),
+    messageDistanceFromBottom: messageScroller
+      ? Math.max(0, messageScroller.scrollHeight - messageScroller.clientHeight - messageScroller.scrollTop)
+      : 0,
+    messageWasAtBottom: messageScroller
+      ? messageScroller.scrollHeight - messageScroller.clientHeight - messageScroller.scrollTop < 48
+      : true,
+    composerFocused: Boolean(composer),
+    selectionStart: Number(composer?.selectionStart || 0),
+    selectionEnd: Number(composer?.selectionEnd || 0),
+    composerScrollTop: Number(composer?.scrollTop || 0)
+  }
+}
+
+function restoreSupportWorkspaceRenderState(snapshot) {
+  if (!snapshot || snapshot.threadId !== (state.contact.supportThreads.selectedId || '')) return
+  const apply = () => {
+    const consoleRoot = app.querySelector('.admin-support-console')
+    if (!consoleRoot) return
+    const requestScroller = consoleRoot.querySelector('.admin-support-request-list')
+    const messageScroller = consoleRoot.querySelector('[data-support-message-scroll]')
+    if (requestScroller) requestScroller.scrollTop = snapshot.requestScrollTop
+    if (messageScroller) {
+      messageScroller.scrollTop = snapshot.messageWasAtBottom
+        ? messageScroller.scrollHeight
+        : Math.max(0, messageScroller.scrollHeight - messageScroller.clientHeight - snapshot.messageDistanceFromBottom)
+    }
+    if (snapshot.composerFocused) {
+      const composer = consoleRoot.querySelector('[data-support-thread-reply-body]')
+      if (composer instanceof HTMLTextAreaElement && !composer.disabled) {
+        composer.focus({ preventScroll: true })
+        const length = composer.value.length
+        composer.setSelectionRange(Math.min(snapshot.selectionStart, length), Math.min(snapshot.selectionEnd, length))
+        composer.scrollTop = snapshot.composerScrollTop
+      }
+    }
+    window.scrollTo(snapshot.windowX, snapshot.windowY)
+  }
+  apply()
+  window.requestAnimationFrame(apply)
+}
+
 function renderLayout(content) {
+  const supportWorkspaceSnapshot = captureSupportWorkspaceRenderState()
   renderShell()
   app.querySelector('[data-admin-root]').innerHTML = `
     ${sidebar()}
@@ -1101,6 +1184,7 @@ function renderLayout(content) {
     </section>
   `
   bindEvents()
+  restoreSupportWorkspaceRenderState(supportWorkspaceSnapshot)
 }
 
 function dashboardView() {
@@ -4241,12 +4325,12 @@ function contactView() {
   return `
     ${adminPageHeader({
       eyebrow: 'Communications',
-      title: 'Contact',
-      description: 'Send support, account, and platform messages from Melogic Records.',
+      title: mode === 'support' ? 'Support Queue' : 'Contact',
+      description: mode === 'support' ? 'Review native requests and take over Resona conversations from one workspace.' : 'Send support, account, and platform messages from Melogic Records.',
       refreshLabel: 'Refresh contact'
     })}
     ${state.contact.error ? `<p class="admin-status is-error">${escapeHtml(state.contact.error)}</p>` : ''}
-    ${contactSummaryCards()}
+    ${mode === 'support' ? '' : contactSummaryCards()}
     ${contactModeTabs(mode)}
     ${mode === 'email' ? emailSettingsPanel() : ''}
     ${mode === 'system' ? systemMessagePanel() : ''}
@@ -4259,141 +4343,102 @@ function contactView() {
 function contactSupportFormsPanel() {
   const formsState = state.contact.supportForms || {}
   const forms = formsState.items || []
-  const selected = selectedSupportForm()
+  const threadsState = state.contact.supportThreads || {}
+  const source = threadsState.source === 'native' ? 'native' : 'resona'
+  const sourceThreads = supportThreadsForSource(source)
+  const selectedThread = selectedSupportThread()
+  const selectedForm = selectedSupportForm()
+  const selectedDetail = source === 'resona' || threadsState.selectionKind === 'thread'
+    ? (selectedThread ? supportThreadDetail(selectedThread) : '')
+    : (selectedForm ? supportFormDetail(selectedForm) : '')
+  const resonaCount = (threadsState.items || []).filter((thread) => thread.type === 'resona' && ['waiting_for_agent', 'assigned'].includes(thread.status)).length
+  const nativeCount = forms.filter((form) => !['resolved', 'archived'].includes(form.status)).length
+    + (threadsState.items || []).filter((thread) => thread.type !== 'resona' && thread.status !== 'resolved').length
 
   return `
-    ${contactSupportThreadsPanel()}
-    <section class="admin-contact-grid">
-      <section class="admin-section-slab admin-fixed-panel">
-        <div class="admin-slab-heading">
-          <div>
-            <h2>Support Forms</h2>
-            <p class="admin-muted">Native public support requests submitted from the Support page.</p>
-          </div>
-          <button type="button" class="admin-secondary-button" data-support-forms-refresh data-guide-id="admin-support-forms-refresh" data-guide-label="Refresh support forms" data-guide-role="support-queue-button">
-            Refresh
-          </button>
+    <section class="admin-support-console" data-support-source-current="${source}">
+      <aside class="admin-support-channel-rail" aria-label="Support channels">
+        <div class="admin-support-rail-heading"><span>Support</span><strong>Channels</strong></div>
+        <button type="button" class="admin-support-channel ${source === 'resona' ? 'is-active' : ''}" data-support-source="resona">
+          <span class="admin-support-channel-icon">${iconSvg('messageCircle')}</span>
+          <span><strong>Resona requests</strong><small>AI handoff queue</small></span>
+          <em>${resonaCount}</em>
+        </button>
+        <button type="button" class="admin-support-channel ${source === 'native' ? 'is-active' : ''}" data-support-source="native">
+          <span class="admin-support-channel-icon">${iconSvg('fileText')}</span>
+          <span><strong>Page native</strong><small>Forms and chats</small></span>
+          <em>${nativeCount}</em>
+        </button>
+        <div class="admin-support-channel-note">
+          <span class="admin-support-presence-dot"></span>
+          <p><strong>Live handoff</strong><small>Connect before replying as an agent.</small></p>
         </div>
+      </aside>
 
-        <div class="admin-contact-tabs is-subtabs" aria-label="Support form filters">
-          ${[
-            ['unresolved', 'Unresolved'],
-            ['resolved', 'Resolved'],
-            ['archived', 'Archived'],
-            ['all', 'All']
-          ].map(([key, label]) => `
-            <button type="button" class="${formsState.filter === key ? 'is-active' : ''}" data-support-form-filter="${key}" data-guide-id="admin-support-form-filter-${key}" data-guide-label="${escapeHtml(label)} support forms filter" data-guide-role="support-form-filter">
-              ${escapeHtml(label)}
-            </button>
-          `).join('')}
+      <section class="admin-support-request-pane">
+        <header class="admin-support-pane-header">
+          <div><span>${source === 'resona' ? 'AI handoff' : 'Support page'}</span><h2>${source === 'resona' ? 'Resona requests' : 'Page native'}</h2></div>
+          <button type="button" class="admin-icon-button" data-support-threads-refresh aria-label="Refresh support queue">${iconSvg('refresh')}</button>
+        </header>
+        <div class="admin-support-filter-row">
+          ${source === 'resona' ? `
+            <select data-support-thread-filter-select aria-label="Request status">
+              ${[['active', 'Needs attention'], ['waiting_for_agent', 'Waiting'], ['assigned', 'Connected'], ['resolved', 'Resolved'], ['all', 'All requests']].map(([key, label]) => `<option value="${key}" ${threadsState.filter === key ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+          ` : `
+            <select data-support-form-filter-select aria-label="Native request status">
+              ${[['unresolved', 'Unresolved'], ['resolved', 'Resolved'], ['archived', 'Archived'], ['all', 'All requests']].map(([key, label]) => `<option value="${key}" ${formsState.filter === key ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+          `}
+          <span>${source === 'resona' ? sourceThreads.length : forms.length + sourceThreads.length} shown</span>
         </div>
-
-        ${formsState.error ? `<p class="admin-status is-error">${escapeHtml(formsState.error)}</p>` : ''}
-        ${formsState.message ? `<p class="admin-status is-success">${escapeHtml(formsState.message)}</p>` : ''}
-
-        <div class="admin-panel-scroll">
-          ${formsState.loading ? '<article class="admin-empty-state">Loading support forms...</article>' : ''}
-          ${!formsState.loading && !forms.length ? `
-            <article class="admin-empty-state">
-              <strong>No support forms yet</strong>
-              <span>Public support form submissions will appear here.</span>
-            </article>
-          ` : ''}
-          ${forms.map((form) => supportFormListCard(form)).join('')}
-          ${formsState.hasMore ? `<div class="admin-load-more-row"><button type="button" class="admin-secondary-button" data-support-forms-load-more ${formsState.loadingMore ? 'disabled' : ''}>${formsState.loadingMore ? 'Loading older...' : 'Load older'}</button></div>` : ''}
+        ${threadsState.error || formsState.error ? `<p class="admin-status is-error">${escapeHtml(threadsState.error || formsState.error)}</p>` : ''}
+        <div class="admin-support-request-list">
+          ${threadsState.loading || (source === 'native' && formsState.loading) ? '<article class="admin-empty-state">Loading requests...</article>' : ''}
+          ${source === 'resona' ? sourceThreads.map((thread) => supportThreadListCard(thread)).join('') : `
+            ${sourceThreads.length ? '<p class="admin-support-list-label">Live conversations</p>' : ''}
+            ${sourceThreads.map((thread) => supportThreadListCard(thread)).join('')}
+            ${forms.length ? '<p class="admin-support-list-label">Form submissions</p>' : ''}
+            ${forms.map((form) => supportFormListCard(form)).join('')}
+          `}
+          ${!threadsState.loading && !(source === 'native' && formsState.loading) && !sourceThreads.length && (source === 'resona' || !forms.length) ? `<article class="admin-empty-state"><strong>No requests here</strong><span>${source === 'resona' ? 'Resona handoffs will appear as they are requested.' : 'Native support requests will appear here.'}</span></article>` : ''}
+          ${source === 'native' && formsState.hasMore ? `<button type="button" class="admin-secondary-button admin-support-load-more" data-support-forms-load-more ${formsState.loadingMore ? 'disabled' : ''}>${formsState.loadingMore ? 'Loading...' : 'Load older'}</button>` : ''}
         </div>
       </section>
 
-      <section class="admin-section-slab admin-fixed-panel">
-        <div class="admin-slab-heading">
-          <div>
-            <h2>Selected Request</h2>
-            <p class="admin-muted">Review the support request and track internal handling.</p>
-          </div>
-        </div>
-
-        ${selected ? supportFormDetail(selected) : `
-          <article class="admin-empty-state">
-            <strong>No request selected</strong>
-            <span>Select a support form to review it.</span>
-          </article>
-        `}
+      <section class="admin-support-conversation-pane">
+        ${threadsState.message || formsState.message ? `<p class="admin-status is-success">${escapeHtml(threadsState.message || formsState.message)}</p>` : ''}
+        ${selectedDetail || `<article class="admin-support-conversation-empty"><span>${iconSvg('messageCircle')}</span><strong>Select a request</strong><p>Conversation history and request context will appear here.</p></article>`}
       </section>
     </section>
   `
 }
 
-function contactSupportThreadsPanel() {
-  const threadsState = state.contact.supportThreads || {}
-  const threads = threadsState.items || []
-  const selected = selectedSupportThread()
+function supportThreadStatusMatches(thread = {}, filter = 'active', source = 'resona') {
+  if (filter === 'all') return true
+  if (filter === 'resolved' && source === 'resona') return thread.status === 'resolved' || Boolean(thread.resolvedAt)
+  if (filter === 'active') {
+    const activeStatuses = source === 'resona'
+      ? ['waiting_for_agent', 'assigned']
+      : ['ai_active', 'waiting_for_agent', 'assigned', 'open']
+    return activeStatuses.includes(thread.status)
+  }
+  return thread.status === filter
+}
 
-  return `
-    <section class="admin-contact-grid admin-support-live-grid">
-      <section class="admin-section-slab admin-fixed-panel">
-        <div class="admin-slab-heading">
-          <div>
-            <h2>Live Support Queue</h2>
-            <p class="admin-muted">Real support chats opened from Inbox and the Support page.</p>
-          </div>
-          <button type="button" class="admin-secondary-button" data-support-threads-refresh data-guide-id="admin-support-threads-refresh" data-guide-label="Refresh live support queue" data-guide-role="support-queue-button">
-            Refresh
-          </button>
-        </div>
-
-        <div class="admin-contact-tabs is-subtabs" aria-label="Support thread filters">
-          ${[
-            ['active', 'Active'],
-            ['ai_active', 'AI Active'],
-            ['waiting_for_agent', 'Waiting'],
-            ['assigned', 'Assigned'],
-            ['resolved', 'Resolved'],
-            ['all', 'All']
-          ].map(([key, label]) => `
-            <button type="button" class="${threadsState.filter === key ? 'is-active' : ''}" data-support-thread-filter="${key}" data-guide-id="admin-support-thread-filter-${key}" data-guide-label="${escapeHtml(label)} support queue filter" data-guide-role="support-queue-filter">
-              ${escapeHtml(label)}
-            </button>
-          `).join('')}
-        </div>
-
-        ${threadsState.error ? `<p class="admin-status is-error">${escapeHtml(threadsState.error)}</p>` : ''}
-        ${threadsState.message ? `<p class="admin-status is-success">${escapeHtml(threadsState.message)}</p>` : ''}
-
-        <div class="admin-panel-scroll">
-          ${threadsState.loading ? '<article class="admin-empty-state">Loading support threads...</article>' : ''}
-          ${!threadsState.loading && !threads.length ? `
-            <article class="admin-empty-state">
-              <strong>No live support threads yet</strong>
-              <span>Escalated Resona chats and live support requests will appear here.</span>
-            </article>
-          ` : ''}
-          ${threads.map((thread) => supportThreadListCard(thread)).join('')}
-        </div>
-      </section>
-
-      <section class="admin-section-slab admin-fixed-panel">
-        <div class="admin-slab-heading">
-          <div>
-            <h2>Selected Chat</h2>
-            <p class="admin-muted">Claim, reply, and resolve live support conversations.</p>
-          </div>
-        </div>
-
-        ${selected ? supportThreadDetail(selected) : `
-          <article class="admin-empty-state">
-            <strong>No chat selected</strong>
-            <span>Choose an escalated Resona or support conversation to review it here.</span>
-          </article>
-        `}
-      </section>
-    </section>
-  `
+function supportThreadsForSource(source = state.contact.supportThreads.source) {
+  const filter = state.contact.supportThreads.filter || 'active'
+  return (state.contact.supportThreads.items || []).filter((thread) => {
+    const matchesSource = source === 'resona' ? thread.type === 'resona' : thread.type !== 'resona'
+    return matchesSource && supportThreadStatusMatches(thread, filter, source)
+  })
 }
 
 function selectedSupportThread() {
   const selectedId = state.contact.supportThreads.selectedId
-  return (state.contact.supportThreads.items || []).find((item) => item.id === selectedId)
-    || state.contact.supportThreads.items?.[0]
+  const sourceThreads = supportThreadsForSource()
+  return sourceThreads.find((item) => item.id === selectedId)
+    || sourceThreads[0]
     || null
 }
 
@@ -4403,11 +4448,11 @@ function supportThreadRequesterLabel(thread = {}) {
 }
 
 function supportThreadListCard(thread = {}) {
-  const selected = state.contact.supportThreads.selectedId === thread.id
+  const selected = state.contact.supportThreads.selectionKind === 'thread' && state.contact.supportThreads.selectedId === thread.id
   const status = thread.status || 'open'
   const preview = thread.lastMessagePreview || 'No messages yet.'
   const assigned = thread.assignedAgent || {}
-  const assignedLabel = assigned.displayName || assigned.username || thread.assignedAgentUid || ''
+  const assignedLabel = thread.assignedAgentFirstName || assigned.firstName || assigned.displayName || assigned.username || thread.assignedAgentUid || ''
   return `
     <button type="button" class="admin-list-card admin-support-form-card admin-support-thread-card ${selected ? 'is-selected' : ''}" data-support-thread-select="${escapeHtml(thread.id)}" data-guide-id="admin-support-thread-${escapeHtml(thread.id)}" data-guide-label="${escapeHtml(thread.subject || supportThreadRequesterLabel(thread) || 'Support chat')}" data-guide-role="support-thread-card">
       <span class="admin-support-form-avatar" aria-hidden="true">${escapeHtml(supportThreadRequesterLabel(thread).slice(0, 1).toUpperCase())}</span>
@@ -4433,46 +4478,53 @@ function supportThreadDetail(thread = {}) {
   const requester = thread.requester || {}
   const assigned = thread.assignedAgent || {}
   const resolved = thread.status === 'resolved'
+  const connected = thread.status === 'assigned' && thread.assignedAgentUid === state.currentUser?.uid
+  const connectedElsewhere = thread.status === 'assigned' && thread.assignedAgentUid && !connected
+  const canResolveRequest = !resolved && ['waiting_for_agent', 'assigned', 'open'].includes(thread.status)
+  const agentName = thread.assignedAgentFirstName || assigned.firstName || assigned.displayName || assigned.username || 'Support'
+  const reason = thread.aiEscalationReason
+    ? humanLabel(thread.aiEscalationReason)
+    : thread.humanRequested
+      ? 'The user requested a live agent'
+      : 'Manual support review'
+  const typingUser = (threadsState.typingUsers || []).find((entry) => entry.uid && entry.uid !== state.currentUser?.uid && entry.uid !== 'resona')
+  const attachments = threadsState.attachmentFiles || []
+  const allowAttachments = thread.type === 'resona'
   return `
-    <article class="admin-detail-card admin-support-form-detail admin-support-thread-detail">
-      <div class="admin-detail-header">
-        <div>
-          <p class="eyebrow">Live Support</p>
-          <h3>${escapeHtml(thread.subject || 'Support chat')}</h3>
-          <p class="admin-code-value">${escapeHtml(thread.id)}</p>
+    <article class="admin-support-chat-shell ${connected ? 'is-connected' : ''}">
+      <header class="admin-support-chat-header">
+        <div class="admin-support-chat-person">
+          <span>${escapeHtml(supportThreadRequesterLabel(thread).slice(0, 1).toUpperCase())}</span>
+          <div><small>${thread.type === 'resona' ? 'Resona handoff' : 'Native support'}</small><h3>${escapeHtml(supportThreadRequesterLabel(thread))}</h3><p>${escapeHtml(requester.username ? `@${requester.username}` : requester.email || thread.requesterUid)}</p></div>
         </div>
-        <span class="admin-pill status-${statusClass(thread.status)}">${escapeHtml(humanLabel(thread.status || 'open'))}</span>
-      </div>
+        <div class="admin-support-chat-actions">
+          <span class="admin-support-connection-state ${connected ? 'is-live' : ''}"><i></i>${connected ? `Connected as ${escapeHtml(agentName)}` : connectedElsewhere ? `Connected to ${escapeHtml(agentName)}` : escapeHtml(humanLabel(thread.status || 'waiting'))}</span>
+          ${canResolveRequest ? `<button type="button" class="admin-secondary-button is-danger" data-support-thread-dismiss="${escapeHtml(thread.id)}" ${saving || connectedElsewhere ? 'disabled' : ''}>Resolve request</button>` : ''}
+          ${connected
+            ? `<button type="button" class="admin-secondary-button" data-support-thread-disconnect="${escapeHtml(thread.id)}" ${saving ? 'disabled' : ''}>Disconnect</button>`
+            : `<button type="button" class="admin-primary-button" data-support-thread-claim="${escapeHtml(thread.id)}" ${saving || resolved || connectedElsewhere ? 'disabled' : ''}>${saving ? 'Connecting...' : 'Connect'}</button>`}
+        </div>
+      </header>
 
-      <dl class="admin-field-grid admin-support-form-fields">
-        <div class="admin-field"><dt>Requester</dt><dd>${escapeHtml(supportThreadRequesterLabel(thread))}</dd></div>
-        <div class="admin-field"><dt>Email</dt><dd>${requester.email ? `<a href="mailto:${escapeHtml(requester.email)}">${escapeHtml(requester.email)}</a>` : '<span class="admin-muted">Not provided</span>'}</dd></div>
-        <div class="admin-field"><dt>Assigned agent</dt><dd>${escapeHtml(assigned.displayName || assigned.username || thread.assignedAgentUid || 'Unassigned')}</dd></div>
-        <div class="admin-field"><dt>AI escalation</dt><dd>${thread.aiEscalationReason ? escapeHtml(humanLabel(thread.aiEscalationReason)) : '<span class="admin-muted">None</span>'}</dd></div>
-        <div class="admin-field"><dt>Updated</dt><dd>${escapeHtml(thread.updatedAt ? formatDate(thread.updatedAt) : 'Not set')}</dd></div>
-      </dl>
+      <section class="admin-support-handoff-summary">
+        <div><span>Why Resona handed off</span><strong>${escapeHtml(reason)}</strong></div>
+        <div><span>User</span><strong>${escapeHtml(supportThreadRequesterLabel(thread))}</strong><small>${escapeHtml(requester.email || requester.username || 'Signed-in Melogic account')}</small></div>
+        <div><span>Request status</span><strong>${escapeHtml(humanLabel(thread.status || 'open'))}</strong><small>${escapeHtml(thread.updatedAt ? formatDate(thread.updatedAt) : 'Not dated')}</small></div>
+      </section>
 
-      <div class="admin-support-thread-messages">
+      <div class="admin-support-thread-messages" data-support-message-scroll>
         ${threadsState.messagesLoading ? '<article class="admin-empty-state">Loading messages...</article>' : ''}
         ${!threadsState.messagesLoading && !messages.length ? '<article class="admin-empty-state">No messages yet.</article>' : ''}
         ${messages.map((message) => supportThreadMessageBubble(message)).join('')}
       </div>
 
       <form class="admin-support-thread-reply" data-support-thread-reply="${escapeHtml(thread.id)}">
-        <label class="admin-field">
-          <span>Reply as Melogic Support</span>
-          <textarea rows="4" maxlength="1200" data-support-thread-reply-body ${resolved || saving ? 'disabled' : ''}>${escapeHtml(threadsState.replyDraft || '')}</textarea>
-        </label>
-        <div class="admin-support-form-actions">
-          <button type="button" class="admin-secondary-button" data-support-thread-claim="${escapeHtml(thread.id)}" ${saving || resolved ? 'disabled' : ''}>
-            ${thread.assignedAgentUid ? 'Reclaim / Join' : 'Claim / Join'}
-          </button>
-          <button type="submit" class="admin-primary-button" ${saving || resolved || !threadsState.replyDraft.trim() ? 'disabled' : ''}>
-            ${saving ? 'Working...' : 'Send Reply'}
-          </button>
-          <button type="button" class="admin-secondary-button admin-support-resolve-button" data-support-thread-resolve="${escapeHtml(thread.id)}" ${saving || resolved ? 'disabled' : ''}>
-            Resolve
-          </button>
+        ${typingUser ? `<p class="admin-support-typing">${escapeHtml(typingUser.displayName || typingUser.username || supportThreadRequesterLabel(thread))} is typing…</p>` : '<p class="admin-support-typing" hidden></p>'}
+        ${attachments.length ? `<div class="admin-support-attachment-drafts">${attachments.map((file, index) => `<span>${escapeHtml(file.name || 'Attachment')}<button type="button" data-support-remove-attachment="${index}" aria-label="Remove attachment">×</button></span>`).join('')}</div>` : ''}
+        <div class="admin-support-composer-row">
+          ${allowAttachments ? `<input type="file" data-support-thread-attachments multiple hidden accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${connected ? '' : 'disabled'}><button type="button" class="admin-support-attach-button" data-support-thread-attach aria-label="Attach files" ${connected ? '' : 'disabled'}>${iconSvg('plus')}</button>` : '<span></span>'}
+          <textarea rows="2" maxlength="1200" data-support-thread-reply-body placeholder="${connected ? `Message as ${escapeHtml(agentName)}…` : 'Connect to join this conversation'}" ${connected && !saving ? '' : 'disabled'}>${escapeHtml(threadsState.replyDraft || '')}</textarea>
+          <button type="submit" class="admin-primary-button" ${saving || !connected || (!threadsState.replyDraft.trim() && !attachments.length) ? 'disabled' : ''}>${saving ? 'Sending...' : 'Send'}</button>
         </div>
       </form>
     </article>
@@ -4482,19 +4534,34 @@ function supportThreadDetail(thread = {}) {
 function supportThreadMessageBubble(message = {}) {
   const type = message.senderType || 'system'
   const label = type === 'agent'
-    ? 'Melogic Support'
+    ? message.senderFirstName || message.senderDisplayName || 'Support'
     : type === 'user'
       ? 'Requester'
       : type === 'ai'
-        ? 'Melogic AI Support'
+        ? 'Resona'
         : 'System'
+  const attachments = Array.isArray(message.attachments) ? message.attachments : []
+  const receipt = supportMessageReceipt(message)
   return `
     <div class="admin-support-thread-message is-${escapeHtml(type)}">
       <strong>${escapeHtml(label)}${type === 'ai' ? '<span class="admin-ai-label">AI</span>' : ''}</strong>
-      <p>${escapeHtml(message.body || '')}</p>
-      <small>${escapeHtml(message.createdAt ? formatDate(message.createdAt) : 'Not dated')}</small>
+      ${message.body ? `<p>${escapeHtml(message.body)}</p>` : ''}
+      ${attachments.length ? `<div class="admin-support-message-attachments">${attachments.map((attachment) => String(attachment.mimeType || '').startsWith('image/')
+        ? `<a href="${escapeHtml(attachment.url || '#')}" target="_blank" rel="noopener"><img src="${escapeHtml(attachment.url || '')}" alt="${escapeHtml(attachment.name || 'Image attachment')}"></a>`
+        : `<a href="${escapeHtml(attachment.url || '#')}" target="_blank" rel="noopener">${iconSvg('file')}<span>${escapeHtml(attachment.name || 'Attachment')}</span></a>`).join('')}</div>` : ''}
+      <small>${escapeHtml(message.createdAt ? formatDate(message.createdAt) : 'Not dated')}${receipt ? ` · ${escapeHtml(receipt)}` : ''}</small>
     </div>
   `
+}
+
+function supportMessageReceipt(message = {}) {
+  if (message.senderType !== 'agent' || !message.createdAt) return ''
+  const selected = selectedSupportThread()
+  const requester = (state.contact.supportThreads.participantReceipts || []).find((entry) => entry.uid === selected?.requesterUid)
+  const messageMs = new Date(message.createdAt).getTime()
+  if (requester?.lastReadAt && new Date(requester.lastReadAt).getTime() >= messageMs) return 'Read'
+  if (requester?.lastDeliveredAt && new Date(requester.lastDeliveredAt).getTime() >= messageMs) return 'Delivered'
+  return 'Sent'
 }
 
 function supportFormSender(form = {}) {
@@ -4512,7 +4579,7 @@ function supportFormInitial(form = {}) {
 }
 
 function supportFormListCard(form = {}) {
-  const selected = state.contact.supportForms.selectedId === form.id
+  const selected = state.contact.supportThreads.selectionKind === 'form' && state.contact.supportForms.selectedId === form.id
   const status = form.status || 'new'
 
   return `
@@ -7622,29 +7689,32 @@ async function loadSupportThreads({ silent = false } = {}) {
 
   try {
     const result = await listSupportThreads({
-      status: threadsState.filter || 'active',
-      limitCount: 75
+      status: 'all',
+      limitCount: 100
     })
     threadsState.items = result.threads || []
     threadsState.loaded = true
     const requestedId = new URLSearchParams(window.location.search).get('thread') || ''
-    if (requestedId && threadsState.items.some((thread) => thread.id === requestedId)) {
+    const sourceThreads = supportThreadsForSource(threadsState.source)
+    if (requestedId && requestedId !== threadsState.selectedId && sourceThreads.some((thread) => thread.id === requestedId)) {
       await selectSupportThread(requestedId, { updateUrl: false, renderAfter: false })
-    } else if (!threadsState.selectedId && threadsState.items[0]?.id) {
-      await selectSupportThread(threadsState.items[0].id, { updateUrl: false, renderAfter: false })
-    } else if (threadsState.selectedId && !threadsState.items.some((thread) => thread.id === threadsState.selectedId)) {
-      await selectSupportThread(threadsState.items[0]?.id || '', { updateUrl: false, renderAfter: false })
+    } else if (!threadsState.selectedId && sourceThreads[0]?.id) {
+      await selectSupportThread(sourceThreads[0].id, { updateUrl: false, renderAfter: false })
+    } else if (threadsState.selectedId && !sourceThreads.some((thread) => thread.id === threadsState.selectedId)) {
+      await selectSupportThread(sourceThreads[0]?.id || '', { updateUrl: false, renderAfter: false })
     }
   } catch (error) {
     console.warn('[admin support threads] load failed', error)
     threadsState.error = error?.message || 'Could not load support threads.'
   } finally {
     threadsState.loading = false
-    render()
+    if (!silent) render()
   }
 }
 
 async function startSupportThreadsWatch() {
+  const requestedSource = new URLSearchParams(window.location.search).get('supportSource') || ''
+  if (['resona', 'native'].includes(requestedSource)) state.contact.supportThreads.source = requestedSource
   const requestedFilter = new URLSearchParams(window.location.search).get('threadFilter') || ''
   if (['active', 'ai_active', 'waiting_for_agent', 'assigned', 'resolved', 'all'].includes(requestedFilter) && state.contact.supportThreads.filter !== requestedFilter) {
     state.contact.supportThreads.filter = requestedFilter
@@ -7658,9 +7728,14 @@ async function startSupportThreadsWatch() {
 
 async function selectSupportThread(threadId = '', { updateUrl = true, renderAfter = true } = {}) {
   const threadsState = state.contact.supportThreads
+  stopSelectedSupportThreadSubscriptions()
   threadsState.selectedId = threadId
+  threadsState.selectionKind = 'thread'
   threadsState.messages = []
   threadsState.replyDraft = ''
+  threadsState.attachmentFiles = []
+  threadsState.participantReceipts = []
+  threadsState.typingUsers = []
   threadsState.message = ''
   if (updateUrl) {
     const params = new URLSearchParams(window.location.search)
@@ -7668,6 +7743,8 @@ async function selectSupportThread(threadId = '', { updateUrl = true, renderAfte
     if (threadId) params.set('thread', threadId)
     else params.delete('thread')
     params.set('threadFilter', threadsState.filter || 'active')
+    params.set('supportSource', threadsState.source || 'resona')
+    params.delete('support')
     window.history.replaceState({}, '', `${ROUTES.adminContact}?${params.toString()}`)
   }
 
@@ -7680,6 +7757,7 @@ async function selectSupportThread(threadId = '', { updateUrl = true, renderAfte
   if (renderAfter) render()
   try {
     threadsState.messages = await getSupportMessages(threadId)
+    startSelectedSupportThreadSubscriptions(threadId)
   } catch (error) {
     console.warn('[admin support threads] messages failed', error)
     threadsState.error = error?.message || 'Could not load support messages.'
@@ -7687,6 +7765,121 @@ async function selectSupportThread(threadId = '', { updateUrl = true, renderAfte
     threadsState.messagesLoading = false
     if (renderAfter) render()
   }
+}
+
+function stopSelectedSupportThreadSubscriptions() {
+  const activeThread = selectedSupportThread()
+  if (activeThread?.id?.startsWith('resona_') && activeThread.assignedAgentUid === state.currentUser?.uid) {
+    setTypingState({ threadId: activeThread.id, uid: state.currentUser.uid, isTyping: false }).catch(() => null)
+  }
+  unsubscribeSelectedSupportThread?.()
+  unsubscribeSelectedSupportMessages?.()
+  unsubscribeSelectedSupportParticipants?.()
+  unsubscribeSelectedSupportTyping?.()
+  unsubscribeSelectedSupportThread = null
+  unsubscribeSelectedSupportMessages = null
+  unsubscribeSelectedSupportParticipants = null
+  unsubscribeSelectedSupportTyping = null
+  if (supportAgentTypingTimer) clearTimeout(supportAgentTypingTimer)
+  supportAgentTypingTimer = null
+}
+
+function supportThreadRealtimeSignature(thread = {}) {
+  return JSON.stringify({
+    id: thread.id || '',
+    status: thread.status || '',
+    assignedAgentUid: thread.assignedAgentUid || '',
+    assignedAgentFirstName: thread.assignedAgentFirstName || '',
+    assignedAgent: thread.assignedAgent || null,
+    aiEscalationReason: thread.aiEscalationReason || '',
+    aiSuggestedCategory: thread.aiSuggestedCategory || '',
+    humanRequested: thread.humanRequested === true,
+    lastMessagePreview: thread.lastMessagePreview || '',
+    resolvedAt: thread.resolvedAt || null,
+    resolvedBy: thread.resolvedBy || '',
+    requester: thread.requester || null
+  })
+}
+
+function supportMessagesRealtimeSignature(messages = []) {
+  return JSON.stringify(messages.map((message) => ({
+    id: message.id,
+    senderType: message.senderType,
+    senderUid: message.senderUid,
+    senderDisplayName: message.senderDisplayName,
+    body: message.body,
+    createdAt: message.createdAt,
+    attachments: message.attachments,
+    pendingWrites: message.pendingWrites === true
+  })))
+}
+
+function supportParticipantsRealtimeSignature(participants = []) {
+  return JSON.stringify(participants.map((participant) => ({
+    uid: participant.uid,
+    lastReadAt: participant.lastReadAt,
+    lastDeliveredAt: participant.lastDeliveredAt
+  })))
+}
+
+function updateSupportTypingIndicator() {
+  const thread = selectedSupportThread()
+  const typingUser = (state.contact.supportThreads.typingUsers || []).find((entry) => (
+    entry.uid && entry.uid !== state.currentUser?.uid && entry.uid !== 'resona'
+  ))
+  const indicator = app.querySelector('.admin-support-typing')
+  if (!indicator) return
+  indicator.textContent = typingUser
+    ? `${typingUser.displayName || typingUser.username || supportThreadRequesterLabel(thread)} is typing…`
+    : ''
+  indicator.hidden = !typingUser
+}
+
+function startSelectedSupportThreadSubscriptions(threadId = '') {
+  if (!threadId) return
+  const threadsState = state.contact.supportThreads
+  const onPermissionError = (error) => {
+    if (!String(error?.code || '').includes('permission-denied')) console.warn('[admin support] realtime subscription failed', error)
+  }
+  unsubscribeSelectedSupportThread = subscribeToSupportThread(threadId, (nextThread) => {
+    if (!nextThread || threadsState.selectedId !== threadId) return
+    const index = threadsState.items.findIndex((thread) => thread.id === threadId)
+    let shouldRender = false
+    if (index >= 0) {
+      const currentThread = threadsState.items[index]
+      const mergedThread = {
+        ...currentThread,
+        ...nextThread,
+        requester: nextThread.requester || currentThread.requester || null,
+        assignedAgent: nextThread.assignedAgent || currentThread.assignedAgent || null
+      }
+      shouldRender = supportThreadRealtimeSignature(currentThread) !== supportThreadRealtimeSignature(mergedThread)
+      threadsState.items[index] = mergedThread
+    }
+    if (shouldRender) render()
+  }, onPermissionError)
+  unsubscribeSelectedSupportMessages = subscribeToSupportMessages(threadId, (messages) => {
+    if (threadsState.selectedId !== threadId) return
+    const changed = supportMessagesRealtimeSignature(threadsState.messages) !== supportMessagesRealtimeSignature(messages)
+    threadsState.messages = messages
+    const selected = selectedSupportThread()
+    if (threadId.startsWith('resona_') && selected?.assignedAgentUid === state.currentUser?.uid) {
+      markThreadRead({ threadId, uid: state.currentUser.uid }).catch(() => null)
+    }
+    if (changed) render()
+  }, onPermissionError)
+  if (!threadId.startsWith('resona_')) return
+  unsubscribeSelectedSupportParticipants = subscribeToThreadParticipants(threadId, (participants) => {
+    if (threadsState.selectedId !== threadId) return
+    const changed = supportParticipantsRealtimeSignature(threadsState.participantReceipts) !== supportParticipantsRealtimeSignature(participants)
+    threadsState.participantReceipts = participants
+    if (changed) render()
+  }, onPermissionError)
+  unsubscribeSelectedSupportTyping = subscribeToTypingState(threadId, (rows) => {
+    if (threadsState.selectedId !== threadId) return
+    threadsState.typingUsers = rows
+    updateSupportTypingIndicator()
+  }, onPermissionError)
 }
 
 async function claimSelectedSupportThread(threadId = '') {
@@ -7698,9 +7891,17 @@ async function claimSelectedSupportThread(threadId = '') {
   render()
   try {
     await claimSupportThread({ threadId })
-    threadsState.message = 'Support thread claimed.'
+    threadsState.message = 'Connected to the conversation.'
     await loadSupportThreads({ silent: true })
-    await selectSupportThread(threadId, { renderAfter: false })
+    const connectedThread = (threadsState.items || []).find((thread) => thread.id === threadId)
+    if (threadId.startsWith('resona_') && connectedThread) {
+      await connectSupportAgentPresence({
+        threadId,
+        requesterUid: connectedThread.requesterUid,
+        agentUid: state.currentUser?.uid,
+        agentFirstName: connectedThread.assignedAgentFirstName || connectedThread.assignedAgent?.firstName || String(state.currentUser?.displayName || 'Support').split(/\s+/)[0]
+      })
+    }
   } catch (error) {
     threadsState.error = error?.message || 'Could not claim support thread.'
   } finally {
@@ -7709,7 +7910,7 @@ async function claimSelectedSupportThread(threadId = '') {
   }
 }
 
-async function resolveSelectedSupportThread(threadId = '') {
+async function resolveSelectedSupportThread(threadId = '', { disposition = 'disconnect' } = {}) {
   if (!threadId) return
   const threadsState = state.contact.supportThreads
   threadsState.savingId = threadId
@@ -7717,10 +7918,23 @@ async function resolveSelectedSupportThread(threadId = '') {
   threadsState.message = ''
   render()
   try {
+    const currentThread = (threadsState.items || []).find((thread) => thread.id === threadId)
+    if (threadId.startsWith('resona_') && currentThread) {
+      await endSupportAgentPresence({
+        threadId,
+        requesterUid: currentThread.requesterUid,
+        agentUid: state.currentUser?.uid,
+        agentFirstName: currentThread.assignedAgentFirstName || currentThread.assignedAgent?.firstName || String(state.currentUser?.displayName || 'Support').split(/\s+/)[0],
+        reason: disposition === 'resolve' ? 'request_resolved' : 'manual_disconnect'
+      }).catch(() => null)
+    }
     await resolveSupportThread({ threadId })
-    threadsState.message = 'Support thread resolved.'
+    const isResona = threadId.startsWith('resona_')
+    threadsState.message = disposition === 'resolve'
+      ? (isResona ? 'Support request resolved. Resona is active again.' : 'Support request resolved.')
+      : (isResona ? 'Disconnected. Resona is active again.' : 'Disconnected from the conversation.')
+    await setTypingState({ threadId, uid: state.currentUser?.uid, isTyping: false }).catch(() => null)
     await loadSupportThreads({ silent: true })
-    await selectSupportThread(threadId, { renderAfter: false })
   } catch (error) {
     threadsState.error = error?.message || 'Could not resolve support thread.'
   } finally {
@@ -7732,22 +7946,48 @@ async function resolveSelectedSupportThread(threadId = '') {
 async function replyToSupportThread(threadId = '') {
   const threadsState = state.contact.supportThreads
   const body = String(threadsState.replyDraft || '').trim()
-  if (!threadId || !body) return
+  const files = Array.from(threadsState.attachmentFiles || [])
+  if (!threadId || (!body && !files.length)) return
   threadsState.savingId = threadId
   threadsState.error = ''
   threadsState.message = ''
   render()
   try {
-    await sendSupportMessage({ threadId, body, asAgent: true })
+    const attachments = files.length ? await uploadSupportAttachments({ threadId, files }) : []
+    await sendSupportMessage({ threadId, body, attachments, asAgent: true })
+    await setTypingState({ threadId, uid: state.currentUser?.uid, isTyping: false }).catch(() => null)
     threadsState.replyDraft = ''
+    threadsState.attachmentFiles = []
     threadsState.message = 'Reply sent.'
     await loadSupportThreads({ silent: true })
-    await selectSupportThread(threadId, { renderAfter: false })
   } catch (error) {
     threadsState.error = error?.message || 'Could not send support reply.'
   } finally {
     threadsState.savingId = ''
     render()
+  }
+}
+
+function updateSupportAgentTyping(isTyping = false) {
+  const threadsState = state.contact.supportThreads
+  const thread = selectedSupportThread()
+  if (!thread?.id?.startsWith('resona_') || thread.assignedAgentUid !== state.currentUser?.uid) return
+  const firstName = thread.assignedAgentFirstName
+    || thread.assignedAgent?.firstName
+    || String(state.currentUser?.displayName || 'Support').trim().split(/\s+/)[0]
+    || 'Support'
+  setTypingState({
+    threadId: thread.id,
+    uid: state.currentUser.uid,
+    displayName: firstName,
+    username: 'Melogic Support',
+    isTyping
+  }).catch(() => null)
+  if (supportAgentTypingTimer) clearTimeout(supportAgentTypingTimer)
+  if (isTyping) {
+    supportAgentTypingTimer = setTimeout(() => {
+      setTypingState({ threadId: thread.id, uid: state.currentUser.uid, isTyping: false }).catch(() => null)
+    }, 3500)
   }
 }
 
@@ -8803,6 +9043,52 @@ app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
     loadSupportThreads({ silent: false })
   })
 
+  app.querySelectorAll('[data-support-source]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.preventDefault()
+      const nextSource = button.getAttribute('data-support-source') === 'native' ? 'native' : 'resona'
+      const threadsState = state.contact.supportThreads
+      if (threadsState.source === nextSource) return
+      stopSelectedSupportThreadSubscriptions()
+      threadsState.source = nextSource
+      threadsState.selectedId = ''
+      threadsState.messages = []
+      threadsState.replyDraft = ''
+      threadsState.attachmentFiles = []
+      threadsState.selectionKind = nextSource === 'native' && state.contact.supportForms.items?.length ? 'form' : 'thread'
+      const params = new URLSearchParams(window.location.search)
+      params.set('mode', 'support')
+      params.set('supportSource', nextSource)
+      params.delete('thread')
+      params.delete('support')
+      window.history.replaceState({}, '', `${ROUTES.adminContact}?${params.toString()}`)
+      const nextThread = supportThreadsForSource(nextSource)[0]
+      if (threadsState.selectionKind === 'thread' && nextThread?.id) await selectSupportThread(nextThread.id, { updateUrl: false })
+      else render()
+    })
+  })
+
+  app.querySelector('[data-support-thread-filter-select]')?.addEventListener('change', async (event) => {
+    const threadsState = state.contact.supportThreads
+    threadsState.filter = event.currentTarget.value || 'active'
+    threadsState.selectedId = ''
+    threadsState.messages = []
+    const next = supportThreadsForSource(threadsState.source)[0]
+    if (next?.id) await selectSupportThread(next.id)
+    else render()
+  })
+
+  app.querySelector('[data-support-form-filter-select]')?.addEventListener('change', (event) => {
+    state.contact.supportForms.filter = event.currentTarget.value || 'unresolved'
+    state.contact.supportForms.loaded = false
+    state.contact.supportForms.cursor = null
+    state.contact.supportForms.hasMore = false
+    state.contact.supportForms.items = []
+    state.contact.supportForms.selectedId = ''
+    state.contact.supportThreads.selectionKind = 'form'
+    loadSupportFormsPage({ append: false })
+  })
+
   app.querySelectorAll('[data-support-thread-filter]').forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault()
@@ -8830,7 +9116,28 @@ app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
   app.querySelector('[data-support-thread-reply-body]')?.addEventListener('input', (event) => {
     state.contact.supportThreads.replyDraft = event.currentTarget.value || ''
     const submit = event.currentTarget.closest('form')?.querySelector('button[type="submit"]')
-    if (submit) submit.disabled = !state.contact.supportThreads.replyDraft.trim() || Boolean(state.contact.supportThreads.savingId)
+    if (submit) submit.disabled = (!state.contact.supportThreads.replyDraft.trim() && !state.contact.supportThreads.attachmentFiles.length) || Boolean(state.contact.supportThreads.savingId)
+    updateSupportAgentTyping(Boolean(state.contact.supportThreads.replyDraft.trim()))
+  })
+
+  app.querySelector('[data-support-thread-attach]')?.addEventListener('click', () => {
+    app.querySelector('[data-support-thread-attachments]')?.click()
+  })
+
+  app.querySelector('[data-support-thread-attachments]')?.addEventListener('change', (event) => {
+    state.contact.supportThreads.attachmentFiles = [
+      ...(state.contact.supportThreads.attachmentFiles || []),
+      ...Array.from(event.currentTarget.files || [])
+    ].slice(0, 8)
+    render()
+  })
+
+  app.querySelectorAll('[data-support-remove-attachment]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = Number(button.getAttribute('data-support-remove-attachment'))
+      state.contact.supportThreads.attachmentFiles = (state.contact.supportThreads.attachmentFiles || []).filter((_, itemIndex) => itemIndex !== index)
+      render()
+    })
   })
 
   app.querySelector('[data-support-thread-reply]')?.addEventListener('submit', (event) => {
@@ -8845,10 +9152,17 @@ app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
     })
   })
 
-  app.querySelectorAll('[data-support-thread-resolve]').forEach((button) => {
+  app.querySelectorAll('[data-support-thread-disconnect]').forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault()
-      resolveSelectedSupportThread(button.getAttribute('data-support-thread-resolve') || '')
+      resolveSelectedSupportThread(button.getAttribute('data-support-thread-disconnect') || '', { disposition: 'disconnect' })
+    })
+  })
+
+  app.querySelectorAll('[data-support-thread-dismiss]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      resolveSelectedSupportThread(button.getAttribute('data-support-thread-dismiss') || '', { disposition: 'resolve' })
     })
   })
 
@@ -8891,6 +9205,8 @@ app.querySelectorAll('[data-support-form-select]').forEach((button) => {
   button.addEventListener('click', (event) => {
     event.preventDefault()
     state.contact.supportForms.selectedId = button.getAttribute('data-support-form-select') || ''
+    state.contact.supportThreads.selectionKind = 'form'
+    stopSelectedSupportThreadSubscriptions()
     const params = new URLSearchParams(window.location.search)
     params.set('mode', 'support')
     if (state.contact.supportForms.selectedId) params.set('support', state.contact.supportForms.selectedId)
@@ -8979,6 +9295,18 @@ document.addEventListener('keydown', (event) => {
     state.accountActionsMenuUid = ''
     render()
   }
+})
+
+window.addEventListener('pagehide', () => {
+  const thread = selectedSupportThread()
+  if (!thread?.id?.startsWith('resona_') || thread.assignedAgentUid !== state.currentUser?.uid) return
+  endSupportAgentPresence({
+    threadId: thread.id,
+    requesterUid: thread.requesterUid,
+    agentUid: state.currentUser.uid,
+    agentFirstName: thread.assignedAgentFirstName || thread.assignedAgent?.firstName || String(state.currentUser?.displayName || 'Support').split(/\s+/)[0],
+    reason: 'browser_closed'
+  }).catch(() => null)
 })
 
 init()

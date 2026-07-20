@@ -101,6 +101,7 @@ import { acceptProductGift, denyProductGift, listIncomingProductGifts } from './
 const app = document.querySelector('#app')
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
+const RESONA_SUPPORT_AVATAR_PATH = 'assets/profilePictures/staff/supportAgentResona.png'
 const RESONA_BACKGROUND_PATH = 'assets/profilePictures/aiSupport/resonaBackground.png'
 const RESONA_BACKGROUND_CACHE_KEY = 'melogic_resona_background_v1'
 const RESONA_BACKGROUND_CACHE_TTL_MS = 24 * 60 * 60 * 1000
@@ -244,6 +245,8 @@ const appState = {
   resonaThreadId: '',
   resonaAvatarURL: '',
   resonaAvatarRequested: false,
+  resonaSupportAvatarURL: '',
+  resonaSupportAvatarRequested: false,
   resonaBackgroundURL: '',
   resonaBackgroundRequested: false,
   resonaFeedbackByMessageId: {},
@@ -372,6 +375,7 @@ let searchDebounceTimer = null
 let mutualUserSearchTimer = null
 let typingStopTimer = null
 let typingExpiryRefreshTimer = null
+let messageSubscriptionFallbackTimer = null
 let activeTypingThreadId = ''
 const typingHeartbeatByThreadId = {}
 const TYPING_HEARTBEAT_MS = 2800
@@ -510,7 +514,8 @@ function setupInboxDelegates() {
     const messageForm = composer.closest('[data-message-form]')
     const sendButton = messageForm?.querySelector('button[type="submit"]')
     const attachments = appState.attachmentDraftByThreadId[threadId] || []
-    if (sendButton) sendButton.disabled = !composer.value.trim() && !attachments.length
+    const thread = appState.threads.find((entry) => entry.id === threadId)
+    if (sendButton) sendButton.disabled = isThreadResonaResponding(thread) || (!composer.value.trim() && !attachments.length)
     debugTyping('composer input', threadId, composer.value.length)
     updateTypingHeartbeat(threadId, composer.value)
   })
@@ -1097,6 +1102,19 @@ function loadResonaAvatar() {
     })
 }
 
+function loadResonaSupportAvatar() {
+  if (appState.resonaSupportAvatarRequested || appState.resonaSupportAvatarURL || !storage) return
+  appState.resonaSupportAvatarRequested = true
+  getDownloadURL(ref(storage, RESONA_SUPPORT_AVATAR_PATH))
+    .then((url) => {
+      appState.resonaSupportAvatarURL = url || ''
+      renderSelectedConversation({ reason: 'state-update' })
+    })
+    .catch(() => {
+      appState.resonaSupportAvatarURL = appState.resonaAvatarURL || ''
+    })
+}
+
 function readCachedResonaBackground() {
   try {
     const cached = JSON.parse(localStorage.getItem(RESONA_BACKGROUND_CACHE_KEY) || '{}')
@@ -1348,6 +1366,8 @@ function scheduleTypingExpiryRefresh(threadId) {
 
 function clearRealtimeListeners() {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
+  if (messageSubscriptionFallbackTimer) window.clearTimeout(messageSubscriptionFallbackTimer)
+  messageSubscriptionFallbackTimer = null
   messageScrollController.detach()
   appState.threadUnsubscribe()
   appState.messageUnsubscribe()
@@ -1664,6 +1684,26 @@ function mergeMessages(existing = [], incoming = []) {
     .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
 }
 
+function replaceRealtimeMessages(existing = [], incoming = [], { preserveLoadedHistory = false } = {}) {
+  const incomingIds = new Set(incoming.map((message) => message?.id).filter(Boolean))
+  const pending = existing.filter((message) => (
+    message?.optimistic
+    || message?.pendingWrites
+  ) && !incomingIds.has(message.id))
+  let loadedHistory = []
+  if (preserveLoadedHistory && incoming.length) {
+    const firstIncomingAt = new Date(incoming[0]?.createdAt || 0).getTime()
+    if (Number.isFinite(firstIncomingAt) && firstIncomingAt > 0) {
+      loadedHistory = existing.filter((message) => {
+        if (!message?.id || incomingIds.has(message.id) || message.optimistic || message.pendingWrites) return false
+        const createdAt = new Date(message.createdAt || 0).getTime()
+        return Number.isFinite(createdAt) && createdAt < firstIncomingAt
+      })
+    }
+  }
+  return mergeMessages([...loadedHistory, ...incoming], pending)
+}
+
 function updateMessageHistoryState(threadId = '') {
   if (!threadId || appState.selectedThreadId !== threadId) return
   const stateRoot = inboxRoot.querySelector('[data-message-history-state]')
@@ -1698,7 +1738,8 @@ async function loadOlderMessagesForThread(threadId = '', {
     appState.messagesByThreadId[threadId] = mergeMessages(older, appState.messagesByThreadId[threadId] || [])
     appState.messagePaginationByThreadId[threadId] = {
       loadingOlder: false,
-      hasOlder: older.length >= OLDER_MESSAGE_PAGE_SIZE
+      hasOlder: older.length >= OLDER_MESSAGE_PAGE_SIZE,
+      loadedOlder: older.length > 0 || appState.messagePaginationByThreadId[threadId]?.loadedOlder === true
     }
     await hydrateProfilesForMessages(threadId, older, { render: false })
     if (appState.selectedThreadId === threadId) {
@@ -2418,7 +2459,17 @@ function getMessageGroupsMarkup(thread, {
       }
 
       const isSelf = entry.senderId === appState.user?.uid
-      const sender = getParticipantMeta(thread, entry.senderId)
+      let sender = getParticipantMeta(thread, entry.senderId)
+      const liveAgentMessage = entry.messages.find((message) => message.senderType === 'agent')
+      if (liveAgentMessage) {
+        sender = {
+          ...sender,
+          displayName: liveAgentMessage.senderFirstName || liveAgentMessage.senderDisplayName || 'Support',
+          username: 'Melogic Support',
+          avatarURL: appState.resonaSupportAvatarURL || appState.resonaAvatarURL || '',
+          photoURL: appState.resonaSupportAvatarURL || appState.resonaAvatarURL || ''
+        }
+      }
       const lastMessage = entry.messages[entry.messages.length - 1]
       const isLatestOutgoingGroup = isSelf && [...grouped].reverse().find((item) => item.kind === 'messages' && item.senderId === appState.user?.uid)?.id === entry.id
       const statusLine = isLatestOutgoingGroup ? `<p class="message-status-line">${escapeHtml(getOutgoingStatusLabel(thread, lastMessage))}</p>` : `<p class="message-status-line is-muted">${escapeHtml(formatTime(lastMessage.createdAt))}</p>`
@@ -2560,18 +2611,21 @@ function getConversationBodyMarkup({
   const previewUrls = appState.attachmentPreviewByThreadId[thread.id] || []
   const typingUsers = getTypingUsers(thread.id)
   const resonaResponding = isThreadResonaResponding(thread)
+  const historyClearing = thread.historyClearing === true
   const resonaActivityLabel = getThreadResonaActivityLabel(thread)
   const blockState = getDmBlockState(thread)
   const isDmComposerBlocked = thread.type === 'dm' && (blockState.currentUserBlockedOther || blockState.otherBlockedCurrentUser)
   const isPreparingThread = Boolean(appState.preparingThreadIds[thread.id])
   const localParticipantIds = getThreadParticipantUids(thread)
   const isKnownParticipant = localParticipantIds.includes(appState.user?.uid)
-  const isComposerUnavailable = isDmComposerBlocked || isPreparingThread || !isKnownParticipant || resonaResponding
+  const isComposerUnavailable = isDmComposerBlocked || isPreparingThread || !isKnownParticipant || historyClearing
   const composerRenderSignature = hashRenderSignature({
     threadId: thread.id,
     isDmComposerBlocked,
     isPreparingThread,
     isKnownParticipant,
+    resonaResponding,
+    historyClearing,
     replyDraft,
     attachments,
     previewUrls,
@@ -2600,7 +2654,7 @@ function getConversationBodyMarkup({
           })}
       <p class="typing-indicator typing-indicator-inline" data-typing-indicator-inline ${typingUsers.length || resonaResponding ? '' : 'hidden'}>${resonaResponding ? escapeHtml(resonaActivityLabel) : (typingUsers.length ? escapeHtml(getConversationSubtitle(thread)) : '')}</p>
       ${blockAlertMarkup}
-      <form class="message-composer ${isComposerUnavailable ? 'is-blocked' : ''} ${resonaResponding ? 'is-resona-locked' : ''}" data-message-form data-guide-id="inbox-message-composer" data-guide-label="Message composer" data-guide-role="message-composer" data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
+      <form class="message-composer ${isComposerUnavailable ? 'is-blocked' : ''}" data-message-form data-guide-id="inbox-message-composer" data-guide-label="Message composer" data-guide-role="message-composer" data-composer-render-signature="${escapeHtml(composerRenderSignature)}">
         <label class="sr-only" for="message-input">Message</label>
         ${replyDraft ? `
           <div class="composer-reply-preview">
@@ -2621,13 +2675,15 @@ function getConversationBodyMarkup({
           const ext = escapeHtml((String(file.name || '').split('.').pop() || type).toUpperCase().slice(0, 6))
           return `<article class="composer-attachment-preview is-file" title="${title}"><div class="composer-file-icon">${ext}</div><small>${title}</small><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`
         }).join('')}</div>` : ''}
-        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="${resonaResponding ? 'Resona is responding...' : isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="${historyClearing ? 'Deleting conversation history...' : isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
         <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isComposerUnavailable ? 'disabled' : ''} />
         <div class="message-composer-footer">
           ${appState.errorMessage
             ? `<p class="composer-error">${escapeHtml(appState.errorMessage)}</p>`
             : resonaResponding
               ? `<p class="composer-note">${escapeHtml(resonaActivityLabel)}</p>`
+            : historyClearing
+              ? '<p class="composer-note">Deleting conversation history...</p>'
             : isPreparingThread
               ? '<p class="composer-note">Preparing conversation...</p>'
               : !isKnownParticipant
@@ -2635,7 +2691,7 @@ function getConversationBodyMarkup({
                 : '<span></span>'}
           <div class="composer-actions">
             <button type="button" class="button button-muted" data-action="attach-file" aria-label="Attach files" data-guide-id="inbox-message-attach" data-guide-label="Attach files" data-guide-role="message-composer-button" ${isComposerUnavailable ? 'disabled' : ''}>+</button>
-            <button type="submit" class="button button-accent" data-guide-id="inbox-message-send" data-guide-label="Send" data-guide-role="message-composer-button" ${(isComposerUnavailable || (!draft.trim() && !attachments.length)) ? 'disabled' : ''}>Send</button>
+            <button type="submit" class="button button-accent" data-guide-id="inbox-message-send" data-guide-label="Send" data-guide-role="message-composer-button" ${(isComposerUnavailable || resonaResponding || (!draft.trim() && !attachments.length)) ? 'disabled' : ''}>Send</button>
           </div>
         </div>
       </form>
@@ -2843,11 +2899,6 @@ async function selectThread(threadId = '', { forceBottom = true } = {}) {
   appState.selectedThreadId = threadId
   saveLastSelectedThread(appState.user?.uid, threadId)
   appState.errorMessage = ''
-  const selectedMirror = appState.threads.find((thread) => thread.id === threadId)
-  const hydratedThread = await hydrateThreadFromSourceIfNeeded(selectedMirror)
-  if (hydratedThread) {
-    upsertThreadInState(hydratedThread)
-  }
   startMessageSubscription(threadId)
   hydrateProfilesForThread(getSelectedThread())
   renderThreadListOnly()
@@ -3011,7 +3062,7 @@ function getThreadConfirmModalMarkup() {
     },
     'clear-resona-history': {
       title: 'Delete Resona chat history?',
-      body: 'This clears your Resona conversation history from your view. This cannot be undone.',
+      body: 'This permanently deletes the conversation, attachments, reactions, and related Resona history. This cannot be undone.',
       confirm: 'Delete history',
       danger: true
     },
@@ -3153,24 +3204,36 @@ async function handleThreadConfirmAction() {
       }
     }
     if (modal.type === 'clear-resona-history') {
-      await clearResonaChatHistory({ threadId: modal.threadId })
-      const clearedAt = new Date().toISOString()
+      const result = await clearResonaChatHistory({ threadId: modal.threadId })
+      const clearedAt = result.clearedAt || new Date().toISOString()
       appState.threads = appState.threads.map((thread) => (thread.id === modal.threadId
         ? {
             ...thread,
             clearedAt,
             clearedBy: appState.user.uid,
+            historyClearing: false,
             lastMessageText: '',
             lastMessagePreview: 'Ask Resona anything.',
             status: 'ai_active',
             mode: 'general',
-            assignedAgentUid: null
+            assignedAgentUid: null,
+            assignedAgentFirstName: '',
+            participantIds: [appState.user.uid],
+            participantUids: [appState.user.uid],
+            memberUids: [appState.user.uid]
           }
         : thread))
-      appState.messagesByThreadId[modal.threadId] = getMessagesAfterThreadClear(
-        appState.threads.find((thread) => thread.id === modal.threadId) || { id: modal.threadId, type: 'agent', agentId: RESONA_AGENT_ID, clearedAt },
-        appState.messagesByThreadId[modal.threadId] || []
-      )
+      appState.messagesByThreadId[modal.threadId] = []
+      appState.messagePaginationByThreadId[modal.threadId] = {
+        loadingOlder: false,
+        hasOlder: false,
+        loadedOlder: false
+      }
+      appState.reactionsByThreadId[modal.threadId] = {}
+      appState.typingUsersByThreadId[modal.threadId] = []
+      appState.optimisticMessagesByThreadId[modal.threadId] = []
+      appState.resonaFeedbackByMessageId = {}
+      clearTypingForThread(modal.threadId)
     }
     if (modal.type === 'block-contact' || modal.type === 'unblock-contact') {
       const thread = appState.threads.find((entry) => entry.id === modal.threadId)
@@ -6411,7 +6474,32 @@ function bindSharedEvents(scope = inboxRoot) {
   }
 }
 
+function captureMessageComposerFocus(root = inboxRoot) {
+  const active = document.activeElement
+  if (!(active instanceof HTMLTextAreaElement) || !active.matches('[data-message-composer-input]') || !root.contains(active)) return null
+  return {
+    threadId: active.getAttribute('data-message-composer-input') || '',
+    selectionStart: Number(active.selectionStart || 0),
+    selectionEnd: Number(active.selectionEnd || 0),
+    scrollTop: Number(active.scrollTop || 0)
+  }
+}
+
+function restoreMessageComposerFocus(snapshot) {
+  if (!snapshot?.threadId || snapshot.threadId !== appState.selectedThreadId) return
+  const composer = inboxRoot.querySelector(`[data-message-composer-input="${CSS.escape(snapshot.threadId)}"]`)
+  if (!(composer instanceof HTMLTextAreaElement) || composer.disabled) return
+  composer.focus({ preventScroll: true })
+  const textLength = composer.value.length
+  composer.setSelectionRange(
+    Math.min(snapshot.selectionStart, textLength),
+    Math.min(snapshot.selectionEnd, textLength)
+  )
+  composer.scrollTop = snapshot.scrollTop
+}
+
 function renderSignedInState() {
+  const composerFocus = captureMessageComposerFocus()
   const scrollSnapshot = messageScrollController.snapshot()
   const previousThreadId = messageScrollController.threadId
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
@@ -6430,6 +6518,7 @@ function renderSignedInState() {
   } else {
     messageScrollController.detach()
   }
+  restoreMessageComposerFocus(composerFocus)
   renderCreateChatModal()
   renderChatSettingsModal()
   renderFloatingUi()
@@ -6503,6 +6592,7 @@ function renderSelectedConversation({
     renderSignedInState()
     return
   }
+  const composerFocus = captureMessageComposerFocus(panel)
   const scrollSnapshot = messageScrollController.snapshot()
   const previousList = getMessageScroller()
   const previousHeader = panel.querySelector('.conversation-header')
@@ -6574,6 +6664,7 @@ function renderSelectedConversation({
     forceBottom,
     preservePrepend
   })
+  restoreMessageComposerFocus(composerFocus)
   debugMessageScroller(`after render: ${reason}`, nextList)
 }
 
@@ -6912,32 +7003,74 @@ function startMessageSubscription(threadId) {
   appState.hiddenMessagesUnsubscribe()
   activeMessageSubscriptionThreadId = threadId
   appState.loadingMessageThreadId = threadId
-  startThreadDetailSubscriptions(threadId)
-  startSelectedSourceThreadSubscription(threadId)
+  if (messageSubscriptionFallbackTimer) window.clearTimeout(messageSubscriptionFallbackTimer)
+  messageSubscriptionFallbackTimer = window.setTimeout(async () => {
+    if (activeMessageSubscriptionThreadId !== threadId || appState.loadingMessageThreadId !== threadId) return
+    try {
+      const messages = await listMessages(threadId)
+      if (activeMessageSubscriptionThreadId !== threadId || appState.loadingMessageThreadId !== threadId) return
+      appState.messagesByThreadId[threadId] = replaceRealtimeMessages([], messages)
+      appState.messagePaginationByThreadId[threadId] = {
+        loadingOlder: false,
+        hasOlder: messages.length >= INITIAL_MESSAGE_LIMIT,
+        loadedOlder: false
+      }
+      appState.loadingMessageThreadId = ''
+      delete appState.preparingThreadIds[threadId]
+      if (appState.selectedThreadId === threadId) {
+        renderSelectedConversation({ forceBottom: true, reason: 'initial-message-fallback' })
+        ensureConversationCanScrollIfPossible(threadId)
+      }
+    } catch (error) {
+      if (activeMessageSubscriptionThreadId !== threadId || appState.loadingMessageThreadId !== threadId) return
+      appState.loadingMessageThreadId = ''
+      appState.errorMessage = getSendErrorMessage(error, getSelectedThread())
+      renderSelectedConversation({ reason: 'message-fallback-error' })
+      warnRealtimePermission(`messages-fallback-${threadId}`, error)
+    }
+  }, 1200)
 
+  try {
+    startThreadDetailSubscriptions(threadId)
+  } catch (error) {
+    warnRealtimePermission(`thread-detail-${threadId}`, error)
+  }
+  try {
+    startSelectedSourceThreadSubscription(threadId)
+  } catch (error) {
+    warnRealtimePermission(`thread-source-${threadId}`, error)
+  }
+
+  try {
   appState.messageUnsubscribe = subscribeToMessages(threadId, async (messages) => {
+    if (messageSubscriptionFallbackTimer) {
+      window.clearTimeout(messageSubscriptionFallbackTimer)
+      messageSubscriptionFallbackTimer = null
+    }
     const snapshotVersion = Number(appState.messageSnapshotVersionByThreadId[threadId] || 0) + 1
     appState.messageSnapshotVersionByThreadId[threadId] = snapshotVersion
     const existing = appState.messagesByThreadId[threadId] || []
     const isInitialMessageBatch = appState.loadingMessageThreadId === threadId || !existing.length
     const shouldAutoScroll = isInitialMessageBatch
       || (appState.selectedThreadId === threadId && messageScrollController.mode === 'bottom')
-    await Promise.all([
-      preloadMessageImages(messages),
-      hydrateProfilesForMessages(threadId, messages, { render: false })
-    ])
+    preloadMessageImages(messages).catch(() => null)
+    hydrateProfilesForMessages(threadId, messages, { render: true }).catch(() => null)
+    try {
     if (
       activeMessageSubscriptionThreadId !== threadId
       || appState.messageSnapshotVersionByThreadId[threadId] !== snapshotVersion
     ) return
-    appState.messagesByThreadId[threadId] = mergeMessages(existing, messages)
+    appState.messagesByThreadId[threadId] = replaceRealtimeMessages(existing, messages, {
+      preserveLoadedHistory: appState.messagePaginationByThreadId[threadId]?.loadedOlder === true
+    })
     reconcileOptimisticMessages(threadId, messages)
     appState.messagePaginationByThreadId[threadId] = {
       ...(appState.messagePaginationByThreadId[threadId] || {}),
       hasOlder: appState.messagePaginationByThreadId[threadId]?.hasOlder === false
         ? false
         : messages.length >= INITIAL_MESSAGE_LIMIT,
-      loadingOlder: false
+      loadingOlder: false,
+      loadedOlder: appState.messagePaginationByThreadId[threadId]?.loadedOlder === true
     }
     appState.loadingMessageThreadId = ''
     delete appState.preparingThreadIds[threadId]
@@ -6959,6 +7092,14 @@ function startMessageSubscription(threadId) {
         if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'reactions-update' })
       }, (error) => warnRealtimePermission(`reactions-${threadId}`, error))
     }
+    } catch (error) {
+      appState.loadingMessageThreadId = ''
+      delete appState.preparingThreadIds[threadId]
+      appState.errorMessage = error?.message || 'The conversation could not be rendered.'
+      console.error('[inbox] realtime message render failed', error)
+      if (appState.selectedThreadId === threadId) renderSelectedConversation({ reason: 'message-render-error' })
+      return
+    }
 
     await markThreadDelivered({ threadId, uid: appState.user.uid }).catch((error) => {
       warnRealtimePermission(`participants-delivered-${threadId}`, error)
@@ -6978,6 +7119,9 @@ function startMessageSubscription(threadId) {
     }
     warnRealtimePermission(`messages-${threadId}`, error)
   })
+  } catch (error) {
+    warnRealtimePermission(`messages-start-${threadId}`, error)
+  }
 
   appState.hiddenMessagesUnsubscribe = subscribeToHiddenThreadMessages({
     threadId,
@@ -7008,6 +7152,7 @@ function startThreadSubscription() {
   appState.isRepairingInbox = false
   renderSignedInState()
   loadResonaAvatar()
+  loadResonaSupportAvatar()
   loadResonaBackground()
   ensureResonaThread({ select: false }).catch(() => {})
 

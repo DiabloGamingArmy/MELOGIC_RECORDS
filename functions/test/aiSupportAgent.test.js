@@ -27,6 +27,47 @@ test('tone requests do not escalate', () => {
   assert.equal(result.reason, '')
 })
 
+test('message visibility checks do not escalate', () => {
+  const messages = [
+    'Hey! Can you see this?',
+    'Can you see my message?',
+    'Did you get what I sent?'
+  ]
+  messages.forEach((message) => {
+    const result = __test.detectEscalationNeed(message)
+    assert.equal(result.shouldEscalate, false, message)
+    assert.equal(result.reason, '', message)
+  })
+})
+
+test('model-only escalation is ignored without deterministic evidence', async () => {
+  const result = await __test.generateSupportReply({
+    apiKey: 'AIza-valid-looking-support-key-1234567890',
+    model: 'gemini-2.5-flash-lite',
+    userMessage: 'Can you see this?',
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({
+        candidates: [{
+          content: {
+            parts: [{
+              text: JSON.stringify({
+                replyText: 'Yes, I can read your message.',
+                confidence: 0.95,
+                shouldEscalate: true,
+                escalationReason: 'private_account_inspection',
+                suggestedCategory: 'account'
+              })
+            }]
+          }
+        }]
+      })
+    })
+  })
+  assert.equal(result.shouldEscalate, false)
+  assert.equal(result.escalationReason, '')
+})
+
 test('refund issues escalate', () => {
   const result = __test.detectEscalationNeed('I need a refund for my order.')
   assert.equal(result.shouldEscalate, true)
