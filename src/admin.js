@@ -2625,7 +2625,7 @@ function distributionReviewDetail(release = null) {
           <h2>${escapeHtml(release.title || 'Untitled release')}</h2>
           <p>${escapeHtml(release.artistName || release.artistUid || 'Artist')} · ${escapeHtml(distributionSourceLabel(release))}</p>
           <div class="admin-distribution-links">
-            <a href="${musicReleaseRoute(release)}" target="_blank" rel="noreferrer">Preview public route</a>
+            <span class="admin-muted">Public route activates after approval: <code>${escapeHtml(musicReleaseRoute(release))}</code></span>
           </div>
         </div>
       </header>
@@ -2638,6 +2638,7 @@ function distributionReviewDetail(release = null) {
           renderField('Genre', [release.genre, release.subgenre].filter(Boolean).join(' · ')),
           renderField('Explicit', release.explicit === true),
           renderDateField('Submitted', release.submittedAt),
+          renderField('Rights accepted', release.rightsAttestation?.accepted === true),
           renderField('Rights version', release.rightsAttestation?.version || ''),
           renderField('Rights accepted by', release.rightsAttestation?.acceptedBy || '', { code: true }),
           renderDateField('Rights accepted at', release.rightsAttestation?.acceptedAt)

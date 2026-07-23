@@ -145,6 +145,8 @@ test('distribution drafts are private to the artist and published releases remai
 
   await assertSucceeds(getDoc(doc(artistDb, 'musicReleases/private-release')))
   await assertSucceeds(getDoc(doc(artistDb, 'musicTracks/private-track')))
+  await assertFails(updateDoc(doc(artistDb, 'musicReleases/private-release'), { title: 'Client bypass' }))
+  await assertFails(updateDoc(doc(artistDb, 'musicTracks/private-track'), { title: 'Client bypass' }))
   await assertFails(getDoc(doc(outsiderDb, 'musicReleases/private-release')))
   await assertFails(getDoc(doc(publicDb, 'musicTracks/private-track')))
   await assertSucceeds(getDoc(doc(publicDb, 'musicReleases/public-release')))

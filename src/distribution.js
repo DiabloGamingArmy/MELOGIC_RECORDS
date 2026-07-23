@@ -106,7 +106,10 @@ function humanLabel(value = '') {
 }
 
 function formatDate(value = '') {
-  const date = new Date(value)
+  const normalized = String(value || '').trim()
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(normalized)
+    ? new Date(`${normalized}T12:00:00`)
+    : new Date(value)
   if (Number.isNaN(date.getTime())) return 'Not set'
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date)
 }
@@ -184,19 +187,21 @@ function distributionHero() {
   const published = state.releases.filter((release) => release.status === 'published').length
   return `
     <section class="distribution-hero">
-      <div class="distribution-hero-copy">
-        <p class="distribution-eyebrow">Artist-controlled publishing</p>
-        <h1>Distribution</h1>
-        <p>Bring an existing release into Melogic Streaming with verified identifiers, official playback links, artwork, and rights confirmation.</p>
-        ${state.user
-          ? '<button type="button" class="distribution-primary" data-new-release>Add Existing Release</button>'
-          : `<a class="distribution-primary" href="${authRoute({ redirect: ROUTES.distribution })}">Sign in to submit</a>`}
+      <div class="distribution-hero-inner">
+        <div class="distribution-hero-copy">
+          <p class="distribution-eyebrow">Artist-controlled publishing</p>
+          <h1>Distribution</h1>
+          <p>Bring an existing release into Melogic Streaming with verified identifiers, official playback links, artwork, and rights confirmation.</p>
+          ${state.user
+            ? '<button type="button" class="distribution-primary" data-new-release>Add Existing Release</button>'
+            : `<a class="distribution-primary" href="${authRoute({ redirect: ROUTES.distribution })}">Sign in to submit</a>`}
+        </div>
+        <dl class="distribution-stats" aria-label="Distribution release summary">
+          <div><dt>Drafts</dt><dd>${drafts}</dd></div>
+          <div><dt>In review</dt><dd>${inReview}</dd></div>
+          <div><dt>Published</dt><dd>${published}</dd></div>
+        </dl>
       </div>
-      <dl class="distribution-stats" aria-label="Distribution release summary">
-        <div><dt>Drafts</dt><dd>${drafts}</dd></div>
-        <div><dt>In review</dt><dd>${inReview}</dd></div>
-        <div><dt>Published</dt><dd>${published}</dd></div>
-      </dl>
     </section>
   `
 }
@@ -273,8 +278,8 @@ function dashboardView() {
         </div>
         ${state.user ? '<button type="button" class="distribution-secondary" data-refresh-releases>Refresh</button>' : ''}
       </header>
-      ${state.error ? `<p class="distribution-notice is-error">${escapeHtml(state.error)}</p>` : ''}
-      ${state.message ? `<p class="distribution-notice is-success">${escapeHtml(state.message)}</p>` : ''}
+      ${state.error ? `<p class="distribution-notice is-error" role="alert">${escapeHtml(state.error)}</p>` : ''}
+      ${state.message ? `<p class="distribution-notice is-success" role="status">${escapeHtml(state.message)}</p>` : ''}
       ${releaseCards()}
     </section>
     <section class="distribution-how">
@@ -289,7 +294,7 @@ function stepNavigation() {
   return `
     <nav class="distribution-steps" aria-label="Release submission steps">
       ${STEPS.map(([key, label], index) => `
-        <button type="button" data-wizard-step="${index}" class="${index === state.step ? 'is-current' : ''} ${index < state.step ? 'is-complete' : ''}">
+        <button type="button" data-wizard-step="${index}" class="${index === state.step ? 'is-current' : ''} ${index < state.step ? 'is-complete' : ''}" ${index === state.step ? 'aria-current="step"' : ''}>
           <span>${index + 1}</span>
           <strong>${escapeHtml(label)}</strong>
         </button>
@@ -331,7 +336,7 @@ function tracksStep() {
           <button type="button" class="distribution-remove-track" data-remove-track="${index}" ${state.form.tracks.length === 1 ? 'disabled' : ''}>Remove</button>
         </article>
       `).join('')}
-      <button type="button" class="distribution-text-button" data-add-track>+ Add another track</button>
+      <button type="button" class="distribution-text-button" data-add-track ${state.form.tracks.length >= 50 ? 'disabled' : ''}>${state.form.tracks.length >= 50 ? '50-track maximum reached' : '+ Add another track'}</button>
     </div>
   `
 }
@@ -421,32 +426,34 @@ function activeStepContent() {
 function wizardView() {
   return `
     <section class="distribution-workspace">
-      <header class="distribution-workspace-header">
-        <div>
-          <p class="distribution-eyebrow">${state.form.releaseId ? 'Edit private draft' : 'New release intake'}</p>
-          <h1>${escapeHtml(state.form.title || 'Add Existing Release')}</h1>
+      <div class="distribution-workspace-inner">
+        <header class="distribution-workspace-header">
+          <div>
+            <p class="distribution-eyebrow">${state.form.releaseId ? 'Edit private draft' : 'New release intake'}</p>
+            <h1>${escapeHtml(state.form.title || 'Add Existing Release')}</h1>
+          </div>
+          <button type="button" class="distribution-close" data-close-wizard aria-label="Close release editor">Close</button>
+        </header>
+        ${state.error ? `<p class="distribution-notice is-error" role="alert">${escapeHtml(state.error)}</p>` : ''}
+        ${state.message ? `<p class="distribution-notice is-success" role="status">${escapeHtml(state.message)}</p>` : ''}
+        <div class="distribution-workspace-grid">
+          ${stepNavigation()}
+          <form class="distribution-wizard" data-distribution-form>
+            <header>
+              <span>Step ${state.step + 1} of ${STEPS.length}</span>
+              <h2>${escapeHtml(STEPS[state.step][1])}</h2>
+            </header>
+            <div class="distribution-step-content">${activeStepContent()}</div>
+            <footer>
+              <button type="button" class="distribution-secondary" data-save-draft ${state.saving ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save draft'}</button>
+              <span class="distribution-footer-spacer"></span>
+              ${state.step > 0 ? '<button type="button" class="distribution-secondary" data-previous-step>Back</button>' : ''}
+              ${state.step < STEPS.length - 1
+                ? '<button type="button" class="distribution-primary" data-next-step>Continue</button>'
+                : `<button type="button" class="distribution-primary" data-submit-release ${state.saving ? 'disabled' : ''}>${state.saving ? 'Submitting…' : 'Submit for review'}</button>`}
+            </footer>
+          </form>
         </div>
-        <button type="button" class="distribution-close" data-close-wizard aria-label="Close release editor">Close</button>
-      </header>
-      ${state.error ? `<p class="distribution-notice is-error">${escapeHtml(state.error)}</p>` : ''}
-      ${state.message ? `<p class="distribution-notice is-success">${escapeHtml(state.message)}</p>` : ''}
-      <div class="distribution-workspace-grid">
-        ${stepNavigation()}
-        <form class="distribution-wizard" data-distribution-form>
-          <header>
-            <span>Step ${state.step + 1} of ${STEPS.length}</span>
-            <h2>${escapeHtml(STEPS[state.step][1])}</h2>
-          </header>
-          <div class="distribution-step-content">${activeStepContent()}</div>
-          <footer>
-            <button type="button" class="distribution-secondary" data-save-draft ${state.saving ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save draft'}</button>
-            <span class="distribution-footer-spacer"></span>
-            ${state.step > 0 ? '<button type="button" class="distribution-secondary" data-previous-step>Back</button>' : ''}
-            ${state.step < STEPS.length - 1
-              ? '<button type="button" class="distribution-primary" data-next-step>Continue</button>'
-              : `<button type="button" class="distribution-primary" data-submit-release ${state.saving ? 'disabled' : ''}>${state.saving ? 'Submitting…' : 'Submit for review'}</button>`}
-          </footer>
-        </form>
       </div>
     </section>
   `
@@ -456,26 +463,28 @@ function detailView() {
   const release = state.detailRelease
   return `
     <section class="distribution-workspace">
-      <header class="distribution-workspace-header">
-        <div>
-          <p class="distribution-eyebrow">${escapeHtml(humanLabel(release.status || 'release'))}</p>
-          <h1>${escapeHtml(release.title || 'Untitled release')}</h1>
-        </div>
-        <button type="button" class="distribution-close" data-close-detail>Close</button>
-      </header>
-      <div class="distribution-readonly">
-        <div class="distribution-readonly-cover">${releaseArtwork(release)}</div>
-        <dl>
-          ${reviewLine('Status', escapeHtml(statusCopy(release)))}
-          ${reviewLine('Distributor', escapeHtml(humanLabel(release.sourceDistributor || 'Other')))}
-          ${reviewLine('UPC', escapeHtml(release.upc || ''))}
-          ${reviewLine('Release date', escapeHtml(formatDate(release.releaseDate)))}
-          ${reviewLine('Tracks', escapeHtml(String(release.tracks?.length || 0)))}
-          ${reviewLine('Last updated', escapeHtml(formatDate(release.updatedAt || release.createdAt)))}
-        </dl>
-        <div class="distribution-readonly-actions">
-          ${release.status === 'published' ? `<a class="distribution-primary" href="${musicReleaseRoute(release)}">Open in Streaming</a>` : ''}
-          <p>${escapeHtml(statusCopy(release))}</p>
+      <div class="distribution-workspace-inner">
+        <header class="distribution-workspace-header">
+          <div>
+            <p class="distribution-eyebrow">${escapeHtml(humanLabel(release.status || 'release'))}</p>
+            <h1>${escapeHtml(release.title || 'Untitled release')}</h1>
+          </div>
+          <button type="button" class="distribution-close" data-close-detail>Close</button>
+        </header>
+        <div class="distribution-readonly">
+          <div class="distribution-readonly-cover">${releaseArtwork(release)}</div>
+          <dl>
+            ${reviewLine('Status', escapeHtml(statusCopy(release)))}
+            ${reviewLine('Distributor', escapeHtml(humanLabel(release.sourceDistributor || 'Other')))}
+            ${reviewLine('UPC', escapeHtml(release.upc || ''))}
+            ${reviewLine('Release date', escapeHtml(formatDate(release.releaseDate)))}
+            ${reviewLine('Tracks', escapeHtml(String(release.tracks?.length || 0)))}
+            ${reviewLine('Last updated', escapeHtml(formatDate(release.updatedAt || release.createdAt)))}
+          </dl>
+          <div class="distribution-readonly-actions">
+            ${release.status === 'published' ? `<a class="distribution-primary" href="${musicReleaseRoute(release)}">Open in Streaming</a>` : ''}
+            <p>${escapeHtml(statusCopy(release))}</p>
+          </div>
         </div>
       </div>
     </section>
@@ -486,6 +495,12 @@ function render() {
   if (state.wizardOpen) return shell(wizardView())
   if (state.detailRelease) return shell(detailView())
   return shell(dashboardView())
+}
+
+function scrollToDistributionStart() {
+  window.requestAnimationFrame(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  })
 }
 
 function releaseToForm(release = {}) {
@@ -510,7 +525,7 @@ function releaseToForm(release = {}) {
     copyrightLine: release.copyrightLine || '',
     publisherLine: release.publisherLine || '',
     credits: typeof release.credits === 'string' ? release.credits : JSON.stringify(release.credits || '', null, 2),
-    rightsAccepted: release.rightsAttestation?.accepted === true,
+    rightsAccepted: false,
     tracks: (release.tracks?.length ? release.tracks : [emptyTrack(0)]).map((track, index) => ({
       ...emptyTrack(index),
       trackId: track.id || track.trackId || '',
@@ -542,6 +557,7 @@ function validateStep(step = state.step) {
   syncVisibleInputs()
   if (step === 0) {
     if (!state.form.title.trim()) return 'Enter the release title.'
+    if (state.form.sourceDistributor === 'other' && !state.form.sourceDistributorLabel.trim()) return 'Enter the distributor name.'
     if (!/^(?:\d{8}|\d{12,14})$/.test(state.form.upc.replace(/[\s-]/g, ''))) return 'Enter a valid 8, 12, 13, or 14 digit UPC/EAN.'
     if (!state.form.releaseDate) return 'Choose the release date.'
     if (!state.form.genre.trim()) return 'Enter a primary genre.'
@@ -682,6 +698,7 @@ function bindEvents() {
       state.artworkPreview = ''
       state.wizardOpen = true
       render()
+      scrollToDistributionStart()
     })
   })
   app.querySelector('[data-refresh-releases]')?.addEventListener('click', () => loadReleases())
@@ -699,11 +716,13 @@ function bindEvents() {
       state.error = ''
       state.message = ''
       render()
+      scrollToDistributionStart()
     })
   })
   app.querySelector('[data-close-detail]')?.addEventListener('click', () => {
     state.detailRelease = null
     render()
+    scrollToDistributionStart()
   })
   app.querySelector('[data-close-wizard]')?.addEventListener('click', () => {
     state.wizardOpen = false
@@ -711,6 +730,7 @@ function bindEvents() {
     if (state.artworkPreview?.startsWith('blob:')) URL.revokeObjectURL(state.artworkPreview)
     state.artworkPreview = ''
     render()
+    scrollToDistributionStart()
   })
   app.querySelectorAll('[data-wizard-step]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -718,6 +738,7 @@ function bindEvents() {
       state.step = Number(button.getAttribute('data-wizard-step')) || 0
       state.error = ''
       render()
+      scrollToDistributionStart()
     })
   })
   app.querySelector('[data-previous-step]')?.addEventListener('click', () => {
@@ -725,6 +746,7 @@ function bindEvents() {
     state.step = Math.max(0, state.step - 1)
     state.error = ''
     render()
+    scrollToDistributionStart()
   })
   app.querySelector('[data-next-step]')?.addEventListener('click', () => {
     const problem = validateStep()
@@ -736,11 +758,13 @@ function bindEvents() {
     state.step = Math.min(STEPS.length - 1, state.step + 1)
     state.error = ''
     render()
+    scrollToDistributionStart()
   })
   app.querySelector('[data-save-draft]')?.addEventListener('click', () => persistDraft().catch(() => null))
   app.querySelector('[data-submit-release]')?.addEventListener('click', submitCurrentRelease)
   app.querySelector('[data-add-track]')?.addEventListener('click', () => {
     syncVisibleInputs()
+    if (state.form.tracks.length >= 50) return
     state.form.tracks.push(emptyTrack(state.form.tracks.length))
     render()
   })
@@ -753,7 +777,7 @@ function bindEvents() {
     })
   })
   app.querySelector('[name="sourceDistributor"]')?.addEventListener('change', (event) => {
-    state.form.sourceDistributor = event.target.value
+    syncVisibleInputs()
     render()
   })
   app.querySelector('[name="artwork"]')?.addEventListener('change', (event) => {

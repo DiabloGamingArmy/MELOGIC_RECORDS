@@ -2,30 +2,34 @@
   min-height: calc(100vh - var(--nav-offset, 4rem));
   padding-top: var(--nav-offset, 4rem);
   color: var(--ml-text, #eef4ff);
-  background:
-    radial-gradient(circle at 82% 8%, rgba(92, 116, 255, 0.14), transparent 34rem),
-    var(--ml-bg, #05070d);
+  background: var(--ml-bg, #05070d);
 }
 
-.distribution-hero,
 .distribution-content,
 .distribution-how,
-.distribution-workspace {
+.distribution-hero-inner,
+.distribution-workspace-inner {
   width: min(1420px, 100%);
   margin-inline: auto;
 }
 
 .distribution-hero {
+  width: 100%;
+  overflow: hidden;
+  border-bottom: 1px solid var(--ml-border, rgba(130, 160, 220, 0.18));
+  background:
+    linear-gradient(90deg, rgba(5, 7, 13, 0.99) 0%, rgba(5, 7, 13, 0.86) 48%, rgba(10, 14, 29, 0.72) 100%),
+    radial-gradient(circle at 76% 22%, rgba(74, 205, 225, 0.18), transparent 31rem),
+    radial-gradient(circle at 96% 0%, rgba(98, 87, 255, 0.15), transparent 34rem);
+}
+
+.distribution-hero-inner {
   min-height: 390px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(380px, 0.7fr);
   align-items: end;
   gap: 4rem;
   padding: clamp(4rem, 8vw, 7rem) clamp(1.25rem, 5vw, 5rem) 3.5rem;
-  border-bottom: 1px solid var(--ml-border, rgba(130, 160, 220, 0.18));
-  background:
-    linear-gradient(90deg, rgba(5, 7, 13, 0.98), rgba(5, 7, 13, 0.68)),
-    radial-gradient(circle at 74% 28%, rgba(74, 205, 225, 0.17), transparent 28rem);
 }
 
 .distribution-eyebrow {
@@ -87,9 +91,22 @@
 }
 
 .distribution-primary:disabled,
-.distribution-secondary:disabled {
+.distribution-secondary:disabled,
+.distribution-close:disabled {
   opacity: 0.55;
   cursor: wait;
+}
+
+.distribution-primary:focus-visible,
+.distribution-secondary:focus-visible,
+.distribution-close:focus-visible,
+.distribution-release-actions a:focus-visible,
+.distribution-release-actions button:focus-visible,
+.distribution-text-button:focus-visible,
+.distribution-steps button:focus-visible,
+.distribution-remove-track:focus-visible {
+  outline: 2px solid rgba(110, 231, 255, 0.82);
+  outline-offset: 3px;
 }
 
 .distribution-stats {
@@ -272,6 +289,11 @@
   background: transparent;
 }
 
+.distribution-text-button:disabled {
+  color: var(--ml-text-dim, #77839a);
+  cursor: not-allowed;
+}
+
 .distribution-how {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -301,7 +323,15 @@
 }
 
 .distribution-workspace {
+  width: 100%;
   min-height: calc(100vh - var(--nav-offset, 4rem));
+  background:
+    linear-gradient(90deg, rgba(5, 7, 13, 0.99) 0%, rgba(5, 7, 13, 0.88) 55%, rgba(11, 15, 32, 0.74) 100%),
+    radial-gradient(circle at 93% 3%, rgba(92, 116, 255, 0.15), transparent 34rem);
+}
+
+.distribution-workspace-inner {
+  min-height: inherit;
   padding: 3rem clamp(1.25rem, 4vw, 4rem) 5rem;
 }
 
@@ -355,6 +385,11 @@
 .distribution-steps button.is-current span,
 .distribution-steps button.is-complete span {
   color: #69d9e9;
+}
+
+.distribution-steps button:hover {
+  color: #eef4ff;
+  background: linear-gradient(90deg, rgba(89, 220, 241, 0.07), transparent);
 }
 
 .distribution-wizard {
@@ -441,6 +476,28 @@
   border-color: #65dcea;
 }
 
+.distribution-field input[type='file'] {
+  padding: 0.45rem 0;
+}
+
+.distribution-field input[type='file']::file-selector-button {
+  min-height: 38px;
+  margin-right: 0.8rem;
+  border: 1px solid var(--ml-border-strong, rgba(130, 190, 255, 0.34));
+  border-radius: 6px;
+  padding: 0 0.9rem;
+  color: var(--ml-text, #eef4ff);
+  font: inherit;
+  font-weight: 750;
+  background: rgba(15, 22, 38, 0.88);
+  cursor: pointer;
+}
+
+.distribution-field input[type='file']::file-selector-button:hover {
+  border-color: rgba(110, 231, 255, 0.62);
+  background: rgba(24, 37, 61, 0.92);
+}
+
 .distribution-field small,
 .distribution-inline-note {
   color: var(--ml-text-muted, #aebbd4);
@@ -480,6 +537,11 @@
   color: #ff9da9;
   background: transparent;
   cursor: pointer;
+}
+
+.distribution-remove-track:disabled {
+  opacity: 0.26;
+  cursor: not-allowed;
 }
 
 .distribution-artwork-layout {
@@ -600,7 +662,7 @@
 }
 
 @media (max-width: 1050px) {
-  .distribution-hero {
+  .distribution-hero-inner {
     grid-template-columns: 1fr;
     gap: 2.5rem;
   }
@@ -628,7 +690,7 @@
 }
 
 @media (max-width: 720px) {
-  .distribution-hero {
+  .distribution-hero-inner {
     min-height: auto;
     padding-top: 3rem;
   }
