@@ -578,17 +578,20 @@ async function writeResonaReply({ threadRef, threadId = '', messageId, thread, u
 }
 
 const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
-  const uid = assertSignedIn(request)
-  const context = normalizeResonaContext(request.data || {})
-  await assertContextAccess({ uid, contextType: context.contextType, contextId: context.contextId })
-  const threadId = resonaThreadIdFor(uid, context)
-  const threadRef = db.collection('threads').doc(threadId)
-  const isInboxContext = context.contextType === 'inbox'
-  const mode = isInboxContext ? 'general' : 'project_assistant'
-  const source = isInboxContext ? 'inbox_resona' : `${context.contextType}_resona`
-  const title = context.contextLabel ? `Resona - ${context.contextLabel}` : 'Resona'
+  const requestUid = assertString(request.auth?.uid || request.context?.auth?.uid || '')
+  const requestContext = normalizeResonaContext(request.data || {})
+  try {
+    const uid = assertSignedIn(request)
+    const context = requestContext
+    await assertContextAccess({ uid, contextType: context.contextType, contextId: context.contextId })
+    const threadId = resonaThreadIdFor(uid, context)
+    const threadRef = db.collection('threads').doc(threadId)
+    const isInboxContext = context.contextType === 'inbox'
+    const mode = isInboxContext ? 'general' : 'project_assistant'
+    const source = isInboxContext ? 'inbox_resona' : `${context.contextType}_resona`
+    const title = context.contextLabel ? `Resona - ${context.contextLabel}` : 'Resona'
 
-  const result = await db.runTransaction(async (transaction) => {
+    const result = await db.runTransaction(async (transaction) => {
     const snap = await transaction.get(threadRef)
     if (snap.exists) {
       const current = snap.data() || {}
@@ -671,10 +674,25 @@ const createOrGetResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {
       }))
     }
     return { threadId, existing: false }
-  })
+    })
 
-  const snap = await threadRef.get()
-  return { ok: true, ...result, thread: serializeThread(snap) }
+    const snap = await threadRef.get()
+    return { ok: true, ...result, thread: serializeThread(snap) }
+  } catch (error) {
+    console.error('[resona] createOrGetResonaThread failed', {
+      uidPreview: requestUid ? `${requestUid.slice(0, 6)}...` : '',
+      contextType: requestContext.contextType,
+      contextId: requestContext.contextId,
+      code: String(error?.code || ''),
+      message: String(error?.message || error || '').slice(0, 500)
+    })
+    if (error instanceof HttpsError) throw error
+    const code = String(error?.code || '').toLowerCase()
+    if (code.includes('aborted') || code.includes('deadline') || code.includes('unavailable')) {
+      throw new HttpsError('unavailable', 'Resona is temporarily unavailable. Please try again.', { retryable: true })
+    }
+    throw new HttpsError('internal', 'Resona could not open this conversation.', { retryable: false })
+  }
 })
 
 const refreshResonaThread = onCall(CALLABLE_OPTIONS, async (request) => {

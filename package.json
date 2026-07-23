@@ -12,11 +12,13 @@
     "dsp:verify": "node scripts/verify-soura-wasm-dsp.mjs",
     "build": "npm run dsp:build && npm run dsp:verify && vite build",
     "preview": "vite preview",
+    "test:rules": "firebase emulators:exec --only firestore --project melogic-records \"node --test test/firestoreRules.test.mjs\"",
     "storage:cors:get": "gsutil cors get gs://melogic-records.firebasestorage.app"
   },
   "devDependencies": {
     "@emnapi/core": "^1.10.0",
     "@emnapi/runtime": "^1.10.0",
+    "@firebase/rules-unit-testing": "^5.0.1",
     "vite": "^8.0.9"
   },
   "dependencies": {

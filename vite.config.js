@@ -2,15 +2,28 @@ import { defineConfig } from 'vite'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+const firebaseConfig = JSON.parse(readFileSync(resolve(__dirname, 'firebase.json'), 'utf-8'))
+
+function hostingHtmlRewrites() {
+  return (firebaseConfig.hosting?.rewrites || [])
+    .filter((entry) => typeof entry?.source === 'string' && typeof entry?.destination === 'string' && entry.destination.endsWith('.html'))
+    .map((entry) => ({ source: entry.source, html: entry.destination.replace(/^\//, '') }))
+}
+
+function matchesHostingSource(source = '', pathname = '') {
+  if (source.endsWith('/**')) {
+    const prefix = source.slice(0, -3)
+    return pathname === prefix || pathname.startsWith(`${prefix}/`)
+  }
+  return pathname === source
+}
+
 function htmlRouteFallbackPlugin() {
-  const routeEntries = [
-    { prefix: '/streaming', html: 'music.html' },
-    { prefix: '/studio/live', html: 'studio.html' }
-  ]
+  const routeEntries = hostingHtmlRewrites()
 
   function findEntry(url = '') {
     const pathname = String(url || '').split('?')[0]
-    return routeEntries.find((entry) => pathname === entry.prefix || pathname.startsWith(`${entry.prefix}/`))
+    return routeEntries.find((entry) => matchesHostingSource(entry.source, pathname))
   }
 
   return {

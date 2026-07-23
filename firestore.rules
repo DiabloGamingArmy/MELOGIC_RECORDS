@@ -805,7 +805,6 @@ service cloud.firestore {
 
     function isStudioCollaboratorResource() {
       return signedIn()
-        && resource.data.collaboratorIds is list
         && request.auth.uid in resource.data.collaboratorIds;
     }
 
@@ -1076,6 +1075,29 @@ service cloud.firestore {
           && request.resource.data.productId == productId;
 
         allow delete: if isOwner(uid);
+      }
+
+      // Streaming history and saved-library rows are private account data.
+      // They are currently populated by trusted server workflows; clients may
+      // read only their own rows and cannot forge playback or library history.
+      match /recentlyPlayedMusic/{historyId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /savedMusicArtists/{artistId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /savedMusicTracks/{trackId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /savedMusicReleases/{releaseId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
       }
 
       match /liveStudio/{studioDoc} {
@@ -1913,9 +1935,15 @@ service cloud.firestore {
 
     match /studioProjects/{projectId} {
       allow get: if isStudioOwnerResource() || isStudioCollaboratorResource();
-      allow list: if isStudioOwnerResource() || isStudioCollaboratorResource();
+      // Keep owner and collaborator list grants separate. Firestore evaluates
+      // queries against each allow expression independently; combining these
+      // predicates prevents an array-contains collaborator query from proving
+      // that every possible result is readable.
+      allow list: if isStudioOwnerResource();
+      allow list: if isStudioCollaboratorResource();
       allow create: if studioProjectCreateIsValid();
-      allow update: if isStudioOwnerResource() && studioProjectUpdateIsValid();
+      allow update: if (isStudioOwnerResource() || isStudioCollaboratorResource())
+        && studioProjectUpdateIsValid();
       allow delete: if isStudioOwnerResource();
     }
 

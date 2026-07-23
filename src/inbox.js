@@ -28,6 +28,7 @@ import {
   getThread,
   getThreadParticipantUids,
   listInboxThreads,
+  listMessages,
   loadProfilesByUids,
   listOlderMessages,
   markThreadDelivered,

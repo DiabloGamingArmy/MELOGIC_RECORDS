@@ -417,6 +417,14 @@
       ]
     },
     {
+      "collectionGroup": "profiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "featuredMusicArtist", "order": "ASCENDING" },
+        { "fieldPath": "featuredMusicRank", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "musicTracks",
       "queryScope": "COLLECTION",
       "fields": [

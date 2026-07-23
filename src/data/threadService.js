@@ -21,6 +21,16 @@ import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 let hasWarnedThreadFallback = false
 const sourceThreadCache = new Map()
+const RESONA_OPEN_RETRY_CODES = new Set([
+  'functions/aborted',
+  'functions/deadline-exceeded',
+  'functions/internal',
+  'functions/unavailable'
+])
+
+function waitForRetry(delayMs = 240) {
+  return new Promise((resolve) => window.setTimeout(resolve, delayMs))
+}
 
 function toIsoDate(value) {
   if (!value) return null
@@ -364,11 +374,22 @@ export async function hydrateThreadFromSourceIfNeeded(thread) {
 
 export async function createOrGetResonaThread(options = {}) {
   const callable = httpsCallable(functions, 'createOrGetResonaThread')
-  const result = await callable({
+  const payload = {
     contextType: String(options.contextType || 'inbox').trim(),
     contextId: String(options.contextId || '').trim(),
     contextLabel: String(options.contextLabel || '').trim()
-  })
+  }
+  let result = null
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      result = await callable(payload)
+      break
+    } catch (error) {
+      if (attempt > 0 || !RESONA_OPEN_RETRY_CODES.has(String(error?.code || '').toLowerCase())) throw error
+      await waitForRetry()
+    }
+  }
+  if (result?.data?.thread?.id) return normalizeThread(result.data.thread.id, result.data.thread)
   if (result?.data?.threadId) return getThread(result.data.threadId)
   throw new Error('Resona thread could not be opened.')
 }
