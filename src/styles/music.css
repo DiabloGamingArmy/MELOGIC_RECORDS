@@ -134,7 +134,8 @@
 
 .music-content > * {
   min-width: 0;
-  margin-inline: var(--music-content-gutter);
+  margin-inline: 0;
+  box-sizing: border-box;
 }
 
 .music-app-hero {
@@ -152,7 +153,8 @@
     radial-gradient(circle at 82% 42%, transparent 0 72px, rgba(111, 225, 255, 0.12) 73px 74px, transparent 75px 112px, rgba(139, 124, 255, 0.1) 113px 114px, transparent 115px),
     radial-gradient(480px 280px at 82% 42%, rgba(64, 155, 207, 0.16), transparent 72%),
     linear-gradient(105deg, rgba(12, 20, 35, 0.68), rgba(7, 11, 20, 0.16));
-  padding: clamp(2.4rem, 5vw, 4.8rem) clamp(0.25rem, 1vw, 0.9rem);
+  padding-block: clamp(2.4rem, 5vw, 4.8rem);
+  padding-inline: var(--music-content-gutter);
   box-shadow: none;
   isolation: isolate;
 }
@@ -1646,6 +1648,12 @@
   display: flex;
   align-items: center;
   gap: 0.45rem;
+}
+
+/* Let section backgrounds reach the content edges while preserving the
+   established reading gutter inside each section. */
+.music-content > * {
+  padding-inline: var(--music-content-gutter);
 }
 
 @keyframes musicShimmer {
