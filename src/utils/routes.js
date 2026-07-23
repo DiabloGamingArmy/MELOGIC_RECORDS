@@ -34,6 +34,7 @@ export const ROUTES = {
   productDashboard: '/products/dashboard',
   admin: '/admin',
   adminReviews: '/admin/reviews',
+  adminDistribution: '/admin/distribution',
   adminProducts: '/admin/products',
   adminUsers: '/admin/users',
   adminReports: '/admin/reports',

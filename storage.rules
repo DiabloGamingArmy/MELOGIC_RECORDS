@@ -219,6 +219,22 @@ service firebase.storage {
       return isStageProjectOwner(projectId);
     }
 
+    function isDistributionReleaseOwner(userId, releaseId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && firestore.get(/databases/(default)/documents/musicReleases/$(releaseId)).data.artistUid == userId;
+    }
+
+    function isEditableDistributionRelease(userId, releaseId) {
+      return isDistributionReleaseOwner(userId, releaseId)
+        && firestore.get(/databases/(default)/documents/musicReleases/$(releaseId)).data.status in ['draft', 'rejected'];
+    }
+
+    function isPublicDistributionRelease(releaseId) {
+      return firestore.get(/databases/(default)/documents/musicReleases/$(releaseId)).data.status == 'published'
+        && firestore.get(/databases/(default)/documents/musicReleases/$(releaseId)).data.visibility == 'public';
+    }
+
     function isJsonUpload(maxBytes) {
       return request.resource != null
         && request.resource.size <= maxBytes
@@ -327,6 +343,17 @@ service firebase.storage {
       allow write: if signedIn() && request.auth.uid == uid && isImageUpload(15 * 1024 * 1024);
     }
 
+    match /users/{uid}/distribution/{releaseId}/artwork/{fileName} {
+      allow read: if isDistributionReleaseOwner(uid, releaseId) || isPublicDistributionRelease(releaseId);
+      allow create, update: if isEditableDistributionRelease(uid, releaseId)
+        && isImageUpload(10 * 1024 * 1024)
+        && request.resource.contentType in ['image/jpeg', 'image/png', 'image/webp']
+        && request.resource.metadata.ownerUid == uid
+        && request.resource.metadata.releaseId == releaseId
+        && request.resource.metadata.assetRole == 'cover_art';
+      allow delete: if isEditableDistributionRelease(uid, releaseId);
+    }
+
     match /users/{uid}/musicLiveUploads/{allPaths=**} {
       allow read: if true;
       allow write: if signedIn() && request.auth.uid == uid;
@@ -366,8 +393,12 @@ service firebase.storage {
 
     // User-owned media uploads. Specific public media paths above remain publicly readable.
     match /users/{uid}/{allPaths=**} {
-      allow read: if signedIn() && request.auth.uid == uid;
-      allow write: if signedIn() && request.auth.uid == uid;
+      allow read: if signedIn()
+        && request.auth.uid == uid
+        && !allPaths.matches('distribution/.*');
+      allow write: if signedIn()
+        && request.auth.uid == uid
+        && !allPaths.matches('distribution/.*');
     }
 
     match /communityStories/{uid}/{storyId}/{fileName} {

@@ -2278,12 +2278,14 @@ service cloud.firestore {
     match /musicReleases/{releaseId} {
       allow read: if resource.data.status == 'published'
         && resource.data.visibility == 'public';
+      allow read: if signedIn() && resource.data.artistUid == request.auth.uid;
       allow write: if false;
     }
 
     match /musicTracks/{trackId} {
       allow read: if resource.data.status == 'published'
         && resource.data.visibility == 'public';
+      allow read: if signedIn() && resource.data.artistUid == request.auth.uid;
       allow write: if false;
     }
 

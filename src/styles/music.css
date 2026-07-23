@@ -1548,6 +1548,39 @@
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
 }
 
+.music-official-playback {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.75fr) minmax(320px, 1.25fr);
+  gap: 1.2rem 2rem;
+  align-items: center;
+  padding: 1.3rem 0;
+  border-block: 1px solid var(--ml-border);
+}
+
+.music-official-playback h2,
+.music-official-playback p {
+  margin: 0.35rem 0 0;
+}
+
+.music-official-playback > div > p:not(.music-eyebrow) {
+  color: var(--ml-text-muted);
+  line-height: 1.55;
+}
+
+.music-official-playback iframe {
+  width: 100%;
+  min-height: 152px;
+  border: 0;
+  border-radius: var(--ml-radius-md);
+}
+
+.music-official-links {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
 .music-track-list {
   display: grid;
   gap: 0.55rem;
@@ -1692,6 +1725,7 @@
   .music-app-hero,
   .music-detail-hero,
   .music-detail-grid,
+  .music-official-playback,
   .music-live-detail,
   .music-go-live-grid,
   .music-how-grid {

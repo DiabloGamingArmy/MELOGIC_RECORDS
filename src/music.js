@@ -619,7 +619,7 @@ function renderSidebar() {
 }
 
 function renderHero() {
-  const uploadHref = state.currentUser ? ROUTES.newProduct : authRoute({ redirect: ROUTES.newProduct })
+  const uploadHref = state.currentUser ? ROUTES.distribution : authRoute({ redirect: ROUTES.distribution })
   const releaseCount = allPublicReleases().length
   return `
     <section class="music-app-hero" data-music-hero>
@@ -1110,16 +1110,58 @@ function renderCredits(credits) {
 function renderTrackRow(track) {
   const playable = Boolean(track.streamAudioURL)
   const isCurrent = state.player.track?.id === track.id
+  const spotifyUrl = track.externalLinks?.spotify || track.externalPlaybackURL || ''
   return `
     <li class="music-track-row ${isCurrent ? 'is-current' : ''}">
       <span class="music-track-number">${track.trackNumber}</span>
       <div>
         <strong>${escapeHtml(track.title)}</strong>
-        <small>${escapeHtml(track.artistName)}${track.explicit ? ' · Explicit' : ''}</small>
+        <small>${escapeHtml(track.artistName)}${track.isrc ? ` · ${escapeHtml(track.isrc)}` : ''}${track.explicit ? ' · Explicit' : ''}</small>
       </div>
       <span>${escapeHtml(formatDuration(track.duration))}</span>
-      <button type="button" class="button button-muted" data-play-track="${escapeHtml(track.id)}" ${playable ? '' : 'disabled'}>${isCurrent && state.player.playing ? 'Pause' : 'Play'}</button>
+      ${playable
+        ? `<button type="button" class="button button-muted" data-play-track="${escapeHtml(track.id)}">${isCurrent && state.player.playing ? 'Pause' : 'Play'}</button>`
+        : spotifyUrl
+          ? `<a class="button button-muted" href="${escapeHtml(spotifyUrl)}" target="_blank" rel="noreferrer">Spotify</a>`
+          : '<span class="music-muted">Official link unavailable</span>'}
     </li>
+  `
+}
+
+function spotifyEmbedURL(value = '') {
+  try {
+    const parsed = new URL(String(value || ''))
+    if (parsed.protocol !== 'https:' || parsed.hostname !== 'open.spotify.com') return ''
+    const match = parsed.pathname.match(/^\/(album|track)\/([A-Za-z0-9]{22})(?:\/|$)/)
+    return match ? `https://open.spotify.com/embed/${match[1]}/${match[2]}?utm_source=generator&theme=0` : ''
+  } catch {
+    return ''
+  }
+}
+
+function renderOfficialPlayback(release = {}) {
+  const spotify = release.externalLinks?.spotify
+    || release.externalPlaybackURL
+    || state.tracks.find((track) => track.externalLinks?.spotify)?.externalLinks?.spotify
+    || ''
+  const embed = spotifyEmbedURL(spotify)
+  const links = [
+    release.externalLinks?.spotify ? ['Spotify', release.externalLinks.spotify] : null,
+    release.externalLinks?.appleMusic ? ['Apple Music', release.externalLinks.appleMusic] : null,
+    release.externalLinks?.hyperFollow ? ['All stores', release.externalLinks.hyperFollow] : null,
+    release.externalLinks?.distributor ? ['Distributor page', release.externalLinks.distributor] : null
+  ].filter(Boolean)
+  if (!embed && !links.length) return ''
+  return `
+    <section class="music-official-playback">
+      <div>
+        <p class="music-eyebrow">Official playback</p>
+        <h2>Listen through the artist’s distributor links</h2>
+        <p>Playback is provided by the linked music service. Melogic is not hosting this distributor-controlled audio.</p>
+      </div>
+      ${embed ? `<iframe src="${escapeHtml(embed)}" title="${escapeHtml(release.title)} on Spotify" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : ''}
+      ${links.length ? `<div class="music-official-links">${links.map(([label, url]) => `<a class="button button-muted" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`).join('')}</div>` : ''}
+    </section>
   `
 }
 
@@ -1155,6 +1197,7 @@ function renderReleaseDetailContent() {
         </div>
       </div>
     </section>
+    ${renderOfficialPlayback(release)}
     <section class="music-detail-grid">
       <div class="music-panel">
         <div class="music-row-heading">
@@ -1168,6 +1211,8 @@ function renderReleaseDetailContent() {
       <aside class="music-panel">
         <p class="music-eyebrow">Credits</p>
         ${renderCredits(release.credits)}
+        ${release.upc ? `<p class="music-legal-line"><strong>UPC:</strong> ${escapeHtml(release.upc)}</p>` : ''}
+        ${release.sourceDistributor ? `<p class="music-legal-line"><strong>Distributed through:</strong> ${escapeHtml(titleCase(release.sourceDistributorLabel || release.sourceDistributor.replace(/_/g, ' ')))}</p>` : ''}
         ${release.copyrightLine ? `<p class="music-legal-line">${escapeHtml(release.copyrightLine)}</p>` : ''}
         ${release.publisherLine ? `<p class="music-legal-line">${escapeHtml(release.publisherLine)}</p>` : ''}
       </aside>

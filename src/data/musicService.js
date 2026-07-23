@@ -27,6 +27,12 @@ export const MUSIC_RELEASE_MODEL = {
   copyrightLine: 'string',
   publisherLine: 'string',
   credits: 'string | object | array',
+  upc: 'string',
+  source: 'artist_submission | internal',
+  sourceDistributor: 'string',
+  externalLinks: 'object',
+  playbackType: 'internal_audio | spotify_embed | external_link',
+  externalPlaybackURL: 'string',
   trackIds: 'string[]',
   likeCount: 'number',
   playCount: 'number'
@@ -41,8 +47,12 @@ export const MUSIC_TRACK_MODEL = {
   trackNumber: 'number',
   discNumber: 'number',
   duration: 'number',
+  isrc: 'string',
   streamAudioPath: 'string',
   streamAudioURL: 'string',
+  externalLinks: 'object',
+  playbackType: 'internal_audio | spotify_embed | external_link',
+  externalPlaybackURL: 'string',
   masterAudioPath: 'string optional/private',
   waveformPath: 'string optional',
   explicit: 'boolean',
@@ -70,6 +80,16 @@ function toStringArray(value) {
 function toNumber(value, fallback = 0) {
   const number = Number(value)
   return Number.isFinite(number) ? Math.max(0, number) : fallback
+}
+
+function normalizeExternalLinks(raw = {}) {
+  const links = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {}
+  return {
+    spotify: String(links.spotify || ''),
+    appleMusic: String(links.appleMusic || ''),
+    hyperFollow: String(links.hyperFollow || ''),
+    distributor: String(links.distributor || '')
+  }
 }
 
 function normalizeSlug(value = '') {
@@ -125,6 +145,13 @@ export function normalizeMusicRelease(dataOrSnap = {}, explicitId = '') {
     copyrightLine: String(raw.copyrightLine || ''),
     publisherLine: String(raw.publisherLine || ''),
     credits: raw.credits || '',
+    upc: String(raw.upc || ''),
+    source: String(raw.source || ''),
+    sourceDistributor: String(raw.sourceDistributor || ''),
+    sourceDistributorLabel: String(raw.sourceDistributorLabel || ''),
+    externalLinks: normalizeExternalLinks(raw.externalLinks),
+    playbackType: String(raw.playbackType || (raw.streamAudioURL ? 'internal_audio' : 'external_link')),
+    externalPlaybackURL: String(raw.externalPlaybackURL || raw.externalLinks?.spotify || ''),
     trackIds: toStringArray(raw.trackIds),
     likeCount: toNumber(raw.likeCount ?? raw.counts?.likes),
     playCount: toNumber(raw.playCount ?? raw.counts?.plays)
@@ -169,10 +196,14 @@ export function normalizeMusicTrack(dataOrSnap = {}, explicitId = '') {
     trackNumber: Math.max(1, Number.parseInt(raw.trackNumber || 1, 10) || 1),
     discNumber: Math.max(1, Number.parseInt(raw.discNumber || 1, 10) || 1),
     duration: toNumber(raw.duration),
+    isrc: String(raw.isrc || ''),
     streamAudioPath: String(raw.streamAudioPath || ''),
     streamAudioURL: String(raw.streamAudioURL || raw.streamAudioUrl || ''),
     masterAudioPath: String(raw.masterAudioPath || ''),
     waveformPath: String(raw.waveformPath || ''),
+    externalLinks: normalizeExternalLinks(raw.externalLinks),
+    playbackType: String(raw.playbackType || (raw.streamAudioURL ? 'internal_audio' : 'external_link')),
+    externalPlaybackURL: String(raw.externalPlaybackURL || raw.externalLinks?.spotify || ''),
     explicit: raw.explicit === true,
     status,
     visibility,

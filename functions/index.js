@@ -114,6 +114,13 @@ const {
   cleanupStaleMusicLiveStreams
 } = require('./src/music/musicLiveStreams')
 const {
+  saveMusicReleaseDraft,
+  listMyMusicReleases,
+  submitMusicRelease,
+  listMusicReleaseReviewQueue,
+  reviewMusicRelease
+} = require('./src/music/musicDistribution')
+const {
   createAntMediaStreamSession,
   getAntMediaPublishAuthorization,
   getAntMediaPlaybackAuthorization,
@@ -224,6 +231,11 @@ exports.listAdminCommunityModeration = listAdminCommunityModeration
 exports.createReport = createReport
 exports.recordAccountSecurityEvent = recordAccountSecurityEvent
 exports.getMyAccountPermissions = getMyAccountPermissions
+exports.saveMusicReleaseDraft = saveMusicReleaseDraft
+exports.listMyMusicReleases = listMyMusicReleases
+exports.submitMusicRelease = submitMusicRelease
+exports.listMusicReleaseReviewQueue = listMusicReleaseReviewQueue
+exports.reviewMusicRelease = reviewMusicRelease
 exports.generateRecoveryCodes = generateRecoveryCodes
 exports.getRecoveryCodeStatus = getRecoveryCodeStatus
 exports.useRecoveryCode = useRecoveryCode

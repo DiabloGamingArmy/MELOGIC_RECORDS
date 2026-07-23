@@ -60,7 +60,7 @@ import { getStorageAssetUrl } from './firebase/storageAssets'
 import { formatUsername } from './utils/format'
 import { formatActionLabel as sharedActionLabel } from './utils/displayFormat'
 import { isPaidMoneyOrder, orderAmountAvailable, orderLifecycleLabel } from './utils/commerce'
-import { ROUTES, adminReviewRoute, authRoute, productRoute, publicProfileRoute } from './utils/routes'
+import { ROUTES, adminReviewRoute, authRoute, musicReleaseRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { iconSvg } from './utils/icons'
 import './styles/base.css'
 import './styles/admin.css'
@@ -106,6 +106,10 @@ import {
   updatePrivateBetaSettings
 } from './data/operationsService'
 import {
+  listMusicReleaseReviewQueue,
+  reviewMusicRelease
+} from './data/distributionService'
+import {
   STUDIO_LIBRARY_ENGINE_TYPES,
   STUDIO_SAMPLE_STRATEGIES,
   STUDIO_LIBRARY_SOURCE_ROOTS,
@@ -143,6 +147,7 @@ const ADMIN_THEME_KEY = 'melogic-admin-theme-v2'
 const SECTIONS = [
   { key: 'dashboard', route: ROUTES.admin, label: 'Overview', icon: 'barChart', permission: 'admin' },
   { key: 'reviews', route: ROUTES.adminReviews, label: 'Audits', icon: 'checkCircle', permission: 'productReview' },
+  { key: 'distribution', route: ROUTES.adminDistribution, label: 'Music Review', icon: 'music', permission: 'productReview' },
   { key: 'products', route: ROUTES.adminProducts, label: 'Products', icon: 'package', permission: 'listingEdit' },
   { key: 'users', route: ROUTES.adminUsers, label: 'Users', icon: 'user', permission: 'userRead' },
   { key: 'reports', route: ROUTES.adminReports, label: 'Reports', icon: 'alertCircle', permission: 'admin' },
@@ -432,6 +437,7 @@ const state = {
   },
   adminData: {
     products: { items: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 },
+    distribution: { items: [], selectedId: '', loading: false, loaded: false, error: '', actioning: '' },
     users: { items: [], profile: null, adminUser: null, recentProducts: [], libraryItems: [], orders: [], commerceSummary: null, payoutConnect: null, earningsSummary: null, creatorLedgerEntries: [], creatorAgeVerification: null, accountEvents: [], adminNotes: [], heavyLoaded: false, loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 4, actioning: '' },
     reports: { items: [], detail: null, reporter: null, target: null, loading: false, loadingMore: false, loaded: false, error: '', filter: 'open', cursor: '', hasMore: false, pageSize: 15, actioning: '' },
     community: {
@@ -2552,6 +2558,164 @@ function productsView() {
       ${adminFilterControls('products', PRODUCT_ADMIN_FILTERS)}
     </section>
     ${loading || `${productAdminTable(products)}${loadMoreControls('products')}`}
+  `
+}
+
+function selectedDistributionRelease() {
+  const data = adminData('distribution')
+  return data.items.find((release) => release.id === data.selectedId) || data.items[0] || null
+}
+
+function distributionSourceLabel(release = {}) {
+  return humanLabel(release.sourceDistributorLabel || release.sourceDistributor || 'Other distributor')
+}
+
+function distributionReleaseCover(release = {}) {
+  const src = String(release.coverArtURL || '').trim()
+  if (/^https:\/\//i.test(src)) {
+    return `<img src="${escapeHtml(src)}" alt="${escapeHtml(release.title || 'Release')} cover" loading="lazy" decoding="async" />`
+  }
+  return `<span>${iconSvg('music')}</span>`
+}
+
+function distributionQueueList(releases = [], selectedId = '') {
+  if (!releases.length) {
+    return '<article class="admin-empty-state"><strong>No music submissions waiting.</strong><span>Artist-controlled releases appear here after rights confirmation.</span></article>'
+  }
+  return `
+    <div class="admin-distribution-queue">
+      ${releases.map((release) => `
+        <button type="button" class="${release.id === selectedId ? 'is-selected' : ''}" data-select-distribution-release="${escapeHtml(release.id)}">
+          <span class="admin-distribution-cover">${distributionReleaseCover(release)}</span>
+          <span>
+            <strong>${escapeHtml(release.title || 'Untitled release')}</strong>
+            <small>${escapeHtml(release.artistName || release.artistUid || 'Artist')}</small>
+            <small>${escapeHtml(distributionSourceLabel(release))} · ${release.tracks?.length || 0} track(s)</small>
+          </span>
+          ${renderBadge(humanLabel(release.status || 'submitted'), statusClass(release.status))}
+        </button>
+      `).join('')}
+    </div>
+  `
+}
+
+function distributionExternalLinks(release = {}) {
+  const links = [
+    ['Spotify', release.externalLinks?.spotify],
+    ['Apple Music', release.externalLinks?.appleMusic],
+    ['HyperFollow', release.externalLinks?.hyperFollow],
+    ['Distributor', release.externalLinks?.distributor]
+  ].filter(([, url]) => /^https:\/\//i.test(String(url || '')))
+  if (!links.length) return '<p class="admin-muted">No release-level store links.</p>'
+  return `<div class="admin-distribution-links">${links.map(([label, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`).join('')}</div>`
+}
+
+function distributionReviewDetail(release = null) {
+  if (!release) {
+    return '<article class="admin-empty-state"><strong>Select a release.</strong><span>Submission metadata, identifiers, rights, and official links will appear here.</span></article>'
+  }
+  const tracks = Array.isArray(release.tracks) ? release.tracks : []
+  const actioning = adminData('distribution').actioning === release.id
+  return `
+    <article class="admin-distribution-review">
+      <header>
+        <div class="admin-distribution-hero-cover">${distributionReleaseCover(release)}</div>
+        <div>
+          <p class="eyebrow">Artist-controlled release</p>
+          <h2>${escapeHtml(release.title || 'Untitled release')}</h2>
+          <p>${escapeHtml(release.artistName || release.artistUid || 'Artist')} · ${escapeHtml(distributionSourceLabel(release))}</p>
+          <div class="admin-distribution-links">
+            <a href="${musicReleaseRoute(release)}" target="_blank" rel="noreferrer">Preview public route</a>
+          </div>
+        </div>
+      </header>
+      <section class="admin-distribution-facts">
+        ${renderKeyValueGrid([
+          renderField('Status', humanLabel(release.status || 'submitted')),
+          renderField('UPC / EAN', release.upc, { code: true }),
+          renderField('Release type', humanLabel(release.releaseType || 'single')),
+          renderDateField('Release date', release.releaseDate),
+          renderField('Genre', [release.genre, release.subgenre].filter(Boolean).join(' · ')),
+          renderField('Explicit', release.explicit === true),
+          renderDateField('Submitted', release.submittedAt),
+          renderField('Rights version', release.rightsAttestation?.version || ''),
+          renderField('Rights accepted by', release.rightsAttestation?.acceptedBy || '', { code: true }),
+          renderDateField('Rights accepted at', release.rightsAttestation?.acceptedAt)
+        ])}
+      </section>
+      <section class="admin-distribution-section">
+        <div class="admin-slab-heading"><h3>Official links</h3></div>
+        ${distributionExternalLinks(release)}
+      </section>
+      <section class="admin-distribution-section">
+        <div class="admin-slab-heading"><h3>Tracks & identifiers</h3><span class="admin-muted">${tracks.length} total</span></div>
+        <div class="admin-distribution-tracks">
+          ${tracks.map((track) => `
+            <article>
+              <span>${escapeHtml(String(track.trackNumber || ''))}</span>
+              <div><strong>${escapeHtml(track.title || 'Untitled track')}</strong><small>${escapeHtml(track.artistName || release.artistName || '')}</small></div>
+              <code>${escapeHtml(track.isrc || 'ISRC missing')}</code>
+              ${track.externalLinks?.spotify ? `<a href="${escapeHtml(track.externalLinks.spotify)}" target="_blank" rel="noreferrer">Spotify</a>` : '<span class="admin-muted">No track link</span>'}
+            </article>
+          `).join('') || '<p class="admin-muted">No tracks attached.</p>'}
+        </div>
+      </section>
+      <section class="admin-distribution-section">
+        <div class="admin-slab-heading"><h3>Credits & copyright</h3></div>
+        <div class="admin-distribution-copy">
+          <p>${escapeHtml(typeof release.credits === 'string' ? release.credits : JSON.stringify(release.credits || {})) || '<span class="admin-muted">No credits provided.</span>'}</p>
+          ${release.copyrightLine ? `<p>${escapeHtml(release.copyrightLine)}</p>` : ''}
+          ${release.publisherLine ? `<p>${escapeHtml(release.publisherLine)}</p>` : ''}
+        </div>
+      </section>
+      ${release.status === 'submitted' ? `
+        <section class="admin-distribution-decision">
+          <label>
+            <span>Review reason / note</span>
+            <textarea data-distribution-review-reason rows="4" maxlength="1200" placeholder="Required when rejecting; optional approval note"></textarea>
+          </label>
+          <div>
+            <button type="button" class="admin-secondary-button admin-danger-button" data-distribution-decision="reject" data-release-id="${escapeHtml(release.id)}" ${actioning ? 'disabled' : ''}>Reject / Return</button>
+            <button type="button" class="admin-primary-button" data-distribution-decision="approve" data-release-id="${escapeHtml(release.id)}" ${actioning ? 'disabled' : ''}>${actioning ? 'Publishing…' : 'Approve & Publish'}</button>
+          </div>
+        </section>
+      ` : `<p class="admin-status is-info">This release is ${escapeHtml(humanLabel(release.status))}. The artist can revise rejected submissions from Distribution.</p>`}
+    </article>
+  `
+}
+
+function distributionAdminView() {
+  if (!can('productReview')) return permissionState('productReview')
+  const data = adminData('distribution')
+  if (data.loading || !data.loaded) {
+    return `
+      ${adminPageHeader({ eyebrow: 'Streaming catalog', title: 'Music Review', description: 'Review artist-controlled releases before publication.', refreshLabel: 'Refresh music submissions' })}
+      <article class="admin-empty-state">Loading music submissions…</article>
+    `
+  }
+  if (data.error) {
+    return `
+      ${adminPageHeader({ eyebrow: 'Streaming catalog', title: 'Music Review', refreshLabel: 'Retry music submissions' })}
+      <article class="admin-empty-state"><strong>Music review could not load.</strong><span>${escapeHtml(data.error)}</span></article>
+    `
+  }
+  const selected = selectedDistributionRelease()
+  return `
+    ${adminPageHeader({
+      eyebrow: 'Streaming catalog',
+      title: 'Music Review',
+      description: 'Verify identifiers, rights, artwork, and official playback links before publication.',
+      refreshLabel: 'Refresh music submissions'
+    })}
+    <section class="admin-distribution-layout">
+      <aside>
+        <div class="admin-slab-heading">
+          <div><h2>Release queue</h2><p class="admin-muted">${data.items.length} submission(s)</p></div>
+        </div>
+        ${distributionQueueList(data.items, selected?.id || '')}
+      </aside>
+      <div>${distributionReviewDetail(selected)}</div>
+    </section>
   `
 }
 
@@ -5728,6 +5892,7 @@ function render() {
   if (state.section === 'dashboard') return renderLayout(dashboardView())
   if (state.section === 'reviews') return renderLayout(reviewsView())
   if (state.section === 'products') return renderLayout(productsView())
+  if (state.section === 'distribution') return renderLayout(distributionAdminView())
   if (state.section === 'users') return renderLayout(usersView())
   if (state.section === 'reports') return renderLayout(reportsView())
   if (state.section === 'community') return renderLayout(communityAdminView())
@@ -5815,6 +5980,13 @@ async function loadAdminOverview({ silent = false } = {}) {
 async function loadAdminSectionData(sectionKey = state.section, { silent = false, append = false } = {}) {
   state.accountActionsMenuUid = ''
   const map = {
+    distribution: async () => {
+      const result = await listMusicReleaseReviewQueue({ limit: 80 })
+      state.adminData.distribution.items = result.releases || []
+      if (!state.adminData.distribution.items.some((release) => release.id === state.adminData.distribution.selectedId)) {
+        state.adminData.distribution.selectedId = state.adminData.distribution.items[0]?.id || ''
+      }
+    },
     products: async () => {
       const data = adminData('products')
       const result = await listAdminProducts({ limitCount: data.pageSize || 15, search: data.search, cursor: append ? data.cursor : '' })
@@ -6051,6 +6223,36 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
   }
 }
 
+async function submitMusicDistributionDecision(releaseId = '', decision = '') {
+  const data = adminData('distribution')
+  if (!releaseId || !['approve', 'reject'].includes(decision) || data.actioning) return
+  const reason = String(app.querySelector('[data-distribution-review-reason]')?.value || '').trim()
+  if (decision === 'reject' && !reason) {
+    state.error = 'A reason is required when returning a release.'
+    render()
+    return
+  }
+  if (decision === 'approve' && !window.confirm('Approve and publish this release in Melogic Streaming?')) return
+  data.actioning = releaseId
+  state.error = ''
+  state.message = ''
+  render()
+  try {
+    await reviewMusicRelease({ releaseId, decision, reason })
+    state.message = decision === 'approve'
+      ? 'Release approved and published in Melogic Streaming.'
+      : 'Release returned to the artist with your review reason.'
+    data.items = data.items.filter((release) => release.id !== releaseId)
+    data.selectedId = data.items[0]?.id || ''
+  } catch (error) {
+    console.warn('[admin] music distribution review failed', { code: error?.code, message: error?.message, details: error?.details })
+    state.error = error?.details?.problems?.join(' ') || error?.message || 'The release decision could not be applied.'
+  } finally {
+    data.actioning = ''
+    render()
+  }
+}
+
 async function loadEmailLogs(tab = state.contact.emailLogTab || 'sent', { append = false, silent = false } = {}) {
   const cleanTab = ['sent', 'failed', 'draft'].includes(tab) ? tab : 'sent'
   const data = emailLogState(cleanTab)
@@ -6087,6 +6289,7 @@ async function loadEmailLogs(tab = state.contact.emailLogTab || 'sent', { append
 }
 
 function canLoadAdminSection(sectionKey = '') {
+  if (sectionKey === 'distribution') return can('productReview')
   if (sectionKey === 'products') return can('listingEdit') || can('productReview')
   if (sectionKey === 'users') return can('userRead') || can('roleManage')
   if (sectionKey === 'reports') return can('admin') || can('userModerate') || can('productReview') || can('orderSupport')
@@ -8373,6 +8576,22 @@ function bindEvents() {
     if (state.section === 'dashboard') loadAdminOverview({ silent: true })
   })
   app.querySelector('[data-refresh-admin-section]')?.addEventListener('click', () => loadAdminSectionData(state.section))
+  app.querySelectorAll('[data-select-distribution-release]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.adminData.distribution.selectedId = button.getAttribute('data-select-distribution-release') || ''
+      state.error = ''
+      state.message = ''
+      render()
+    })
+  })
+  app.querySelectorAll('[data-distribution-decision]').forEach((button) => {
+    button.addEventListener('click', () => {
+      submitMusicDistributionDecision(
+        button.getAttribute('data-release-id') || '',
+        button.getAttribute('data-distribution-decision') || ''
+      )
+    })
+  })
   app.querySelectorAll('[data-toggle-account-actions]').forEach((button) => {
     button.addEventListener('click', (event) => {
       event.preventDefault()

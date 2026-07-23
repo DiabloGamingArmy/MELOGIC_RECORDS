@@ -110,3 +110,43 @@ test('Soura collaborators can discover and edit a shared project without changin
   await assertFails(updateDoc(projectRef, { collaboratorIds: [] }))
   await assertFails(getDoc(doc(outsiderDb, 'studioProjects/shared-project')))
 })
+
+test('distribution drafts are private to the artist and published releases remain public', async () => {
+  await seed('musicReleases/private-release', {
+    artistUid: 'artist',
+    title: 'Private Draft',
+    status: 'draft',
+    visibility: 'private'
+  })
+  await seed('musicTracks/private-track', {
+    artistUid: 'artist',
+    releaseId: 'private-release',
+    title: 'Private Track',
+    status: 'draft',
+    visibility: 'private'
+  })
+  await seed('musicReleases/public-release', {
+    artistUid: 'artist',
+    title: 'Published Release',
+    status: 'published',
+    visibility: 'public'
+  })
+  await seed('musicTracks/public-track', {
+    artistUid: 'artist',
+    releaseId: 'public-release',
+    title: 'Published Track',
+    status: 'published',
+    visibility: 'public'
+  })
+
+  const artistDb = testEnv.authenticatedContext('artist').firestore()
+  const outsiderDb = testEnv.authenticatedContext('outsider').firestore()
+  const publicDb = testEnv.unauthenticatedContext().firestore()
+
+  await assertSucceeds(getDoc(doc(artistDb, 'musicReleases/private-release')))
+  await assertSucceeds(getDoc(doc(artistDb, 'musicTracks/private-track')))
+  await assertFails(getDoc(doc(outsiderDb, 'musicReleases/private-release')))
+  await assertFails(getDoc(doc(publicDb, 'musicTracks/private-track')))
+  await assertSucceeds(getDoc(doc(publicDb, 'musicReleases/public-release')))
+  await assertSucceeds(getDoc(doc(publicDb, 'musicTracks/public-track')))
+})
