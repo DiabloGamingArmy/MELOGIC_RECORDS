@@ -1157,7 +1157,7 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 }
 .studio-projects-panel.is-compact{min-height:260px;border-radius:8px}
 .studio-projects-panel.is-compact .studio-projects-body{min-height:210px}
-.studio-stage-hero .eyebrow{text-transform:uppercase;letter-spacing:.09em;color:#87ead5;font-size:12px;margin:0 0 4px}
+.studio-module-hero .eyebrow{text-transform:uppercase;letter-spacing:.09em;color:#87ead5;font-size:12px;margin:0 0 4px}
 .studio-stage-template-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch}
 .studio-stage-template-card,.studio-stage-project-card{
   min-width:0;

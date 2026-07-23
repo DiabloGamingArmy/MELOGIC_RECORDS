@@ -789,10 +789,17 @@ function renderHub() {
 function renderDaw() {
   return `
     <section class="studio-main">
-      <div class="studio-top-actions">
-        <a class="studio-action-button" data-action="new-project" data-new-daw-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">NEW PROJECT <span>${icon('plus')}</span></a>
-        <a class="studio-action-button" data-action="start-collab" data-start-collab href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">START COLLAB <span>${icon('user')}</span></a>
-      </div>
+      <section class="studio-hub-hero studio-module-hero studio-daw-hero">
+        <div>
+          <p class="eyebrow">Studio Module</p>
+          <h1>Soura</h1>
+          <p>Soura is Melogic's browser-based music production workspace for arranging, editing, collaborating, and building tracks.</p>
+        </div>
+        <div class="studio-hub-actions">
+          <a class="button button-accent" data-action="new-project" data-new-daw-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">New Soura Project</a>
+          <a class="button button-muted" data-action="start-collab" data-start-collab href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioDaw })}">Start Collaboration</a>
+        </div>
+      </section>
       <div class="studio-section-heading"><h2>EXPLORE</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       ${renderDemoCards(dawDemos)}
       <div class="studio-section-heading"><h2>RECENTS</h2><span class="studio-section-line studio-section-line--recents"></span></div>
@@ -807,7 +814,7 @@ function renderDaw() {
 function renderStagemaker() {
   return `
     <section class="studio-main">
-      <section class="studio-hub-hero studio-stage-hero">
+      <section class="studio-hub-hero studio-module-hero studio-stage-hero">
         <div>
           <p class="eyebrow">Studio Module</p>
           <h1>Vertix</h1>
