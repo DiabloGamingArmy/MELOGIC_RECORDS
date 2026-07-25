@@ -16,6 +16,7 @@ import {
   authPersistenceReady,
   auth,
   waitForInitialAuthState,
+  sendEmailVerificationRequest,
   sendPasswordReset,
   updateCurrentUserProfile
 } from './firebase/auth'
@@ -592,13 +593,31 @@ async function handleSignUpSubmit(event) {
       requireUsername: true
     })
 
+    let verificationSent = false
+    try {
+      const verification = await sendEmailVerificationRequest()
+      verificationSent = verification?.ok === true
+    } catch (verificationError) {
+      console.warn('[auth] initial verification email failed', verificationError?.code || verificationError?.message || verificationError)
+    }
+
     if (provisioning?.onboardingRequired) {
-      setFeedback('Account created. Please finish profile setup.', 'info')
+      setFeedback(
+        verificationSent
+          ? 'Account created. Check your email to verify the account, then finish profile setup.'
+          : 'Account created. Please finish profile setup, then request verification from Account Security.',
+        'info'
+      )
       window.location.assign(ROUTES.editProfile)
       return
     }
 
-    setFeedback('Account created. Redirecting to your profile...', 'success')
+    setFeedback(
+      verificationSent
+        ? 'Account created. Verification email sent. Redirecting to your profile...'
+        : 'Account created. Redirecting to your profile...',
+      'success'
+    )
     await redirectToProfile()
   } catch (error) {
     setRecaptchaStatus(signupForm, 'error', 'Verification failed. Please try again.')

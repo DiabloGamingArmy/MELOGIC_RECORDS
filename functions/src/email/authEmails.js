@@ -9,6 +9,14 @@ const GENERIC_RESET_MESSAGE = 'If an account exists for that email, we sent a pa
 const AUTH_ACTION_BASE_URL = 'https://melogicrecords.studio'
 const RESET_LIMIT_MS = 10 * 60 * 1000
 const VERIFY_LIMIT_MS = 5 * 60 * 1000
+const FIREBASE_AUTH_FALLBACK_CODES = new Set([
+  'email-provider-not-configured',
+  'smtp-auth-failed',
+  'smtp-timeout',
+  'smtp-connection-failed',
+  'smtp-recipient-rejected',
+  'smtp-send-failed'
+])
 
 function cleanString(value = '', max = 500) {
   return String(value || '').trim().slice(0, max)
@@ -52,6 +60,11 @@ function callableError(error = {}, stage = '', fallbackCode = 'failed-preconditi
     code: cleanString(error?.code || '', 160),
     firebaseCode: cleanString(error?.errorInfo?.code || error?.code || '', 160)
   })
+}
+
+function shouldUseFirebaseAuthVerificationFallback(error = {}, stage = '') {
+  return cleanString(stage, 120) === 'email send'
+    && FIREBASE_AUTH_FALLBACK_CODES.has(cleanString(error?.code || '', 160))
 }
 
 async function rateLimit(key = '', limitMs = RESET_LIMIT_MS) {
@@ -390,6 +403,7 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     logStage(flow, 'account security event write succeeded', { uid })
   } catch (error) {
     logStage(flow, `${stage} failed`, serializeError(error, stage, { includeStack: true }), 'error')
+    const useFirebaseAuthFallback = shouldUseFirebaseAuthVerificationFallback(error, stage)
     if (email) {
       await writeFailedEmailLog(flow, {
         stage,
@@ -400,7 +414,18 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
         error,
         metadata: { template: 'email_verification' }
       })
-      await writeVerificationFailureEvent(flow, uid, error, stage)
+      if (!useFirebaseAuthFallback) await writeVerificationFailureEvent(flow, uid, error, stage)
+    }
+    if (useFirebaseAuthFallback) {
+      logStage(flow, 'Firebase Auth delivery fallback requested', {
+        uid,
+        providerErrorCode: cleanString(error?.code || '', 160)
+      }, 'warn')
+      return {
+        ok: false,
+        fallback: 'firebase_auth',
+        message: 'Custom email delivery is unavailable. Switching to Firebase verification delivery.'
+      }
     }
     throw callableError(error, stage, 'failed-precondition', 'Verification email could not be sent right now.')
   }
@@ -410,5 +435,8 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
 
 module.exports = {
   requestEmailVerification,
-  requestPasswordResetEmail
+  requestPasswordResetEmail,
+  __test: {
+    shouldUseFirebaseAuthVerificationFallback
+  }
 }

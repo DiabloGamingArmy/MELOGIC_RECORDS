@@ -9,6 +9,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   signOut,
+  sendEmailVerification,
   updateProfile
 } from 'firebase/auth'
 import { httpsCallable } from 'firebase/functions'
@@ -80,7 +81,22 @@ export async function sendEmailVerificationRequest() {
   await authPersistenceReady
   const callable = httpsCallable(functions, 'requestEmailVerification')
   const result = await callable({})
-  return result?.data || { ok: true }
+  const response = result?.data || { ok: true }
+  if (response.fallback !== 'firebase_auth') return response
+
+  const user = auth.currentUser
+  if (!user) {
+    const error = new Error('Sign in before requesting another verification email.')
+    error.code = 'auth/requires-recent-login'
+    throw error
+  }
+  if (user.emailVerified) return { ok: true, message: 'Your email is already verified.' }
+  await sendEmailVerification(user)
+  return {
+    ok: true,
+    message: 'Verification email sent.',
+    provider: 'firebase_auth'
+  }
 }
 
 export function signOutUser() {
