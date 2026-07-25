@@ -8,6 +8,7 @@ import { selectPublicPlaybackPlayer } from './streaming/publicPlaybackService'
 import { buildHlsPlaybackUrl } from './streaming/hlsEdgePlayer'
 import { isRecentHlsHealth } from './streaming/hlsHealth'
 import { isValidGeneratedStreamKey } from './streaming/streamSessionKey'
+import { sanitizeFirebaseCallablePayload } from '../utils/firebaseCallablePayload'
 
 const LIVE_CATEGORIES = ['music', 'podcast', 'radio', 'interview', 'listening_party', 'creator_talk', 'other']
 const LIVE_HEARTBEAT_STALE_MS = 90 * 1000
@@ -113,7 +114,7 @@ export function normalizeLiveStreamTransport(payload = {}) {
 }
 
 function liveWriterPayload(payload = {}) {
-  const normalized = normalizeMusicLiveTransportPayload(payload)
+  const normalized = sanitizeFirebaseCallablePayload(normalizeMusicLiveTransportPayload(payload))
   if (normalized.provider === HLS_EDGE_PROVIDER) {
     normalized.transportProvider = HLS_EDGE_TRANSPORT
     normalized.playbackMode = HLS_PLAYBACK_MODE

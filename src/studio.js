@@ -3587,7 +3587,9 @@ function updateLiveProgramAudioDiagnostics(extra = {}) {
     programInputPeak: Number(inputLevel.peak.toFixed(5)),
     analyserRms: Number(rms.toFixed(5)),
     analyserPeak: Number(peak.toFixed(5)),
-    peakDb: peak > 0 ? Number((20 * Math.log10(peak)).toFixed(2)) : -Infinity,
+    // Callable payloads must be JSON encodable. Treat digital silence as the
+    // meter floor instead of leaking -Infinity into Firebase serialization.
+    peakDb: peak > 0 ? Number((20 * Math.log10(peak)).toFixed(2)) : -120,
     clippingDetected,
     monitorEnabled: live.monitorEnabled === true,
     selectedInputSource: live.inputSource,

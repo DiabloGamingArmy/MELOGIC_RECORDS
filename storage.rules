@@ -359,6 +359,17 @@ service firebase.storage {
       allow write: if signedIn() && request.auth.uid == uid;
     }
 
+    match /users/{uid}/liveStudio/{streamId}/cover/{fileName} {
+      allow read: if true;
+      allow create, update: if signedIn()
+        && request.auth.uid == uid
+        && isImageUpload(8 * 1024 * 1024)
+        && request.resource.metadata.ownerUid == uid
+        && request.resource.metadata.streamId == streamId
+        && request.resource.metadata.type == 'music-live-cover';
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
     match /liveSegments/{streamId}/{segmentType}/{fileName} {
       allow read: if firestore.get(/databases/(default)/documents/musicLiveStreams/$(streamId)).data.status == 'live'
         && (
