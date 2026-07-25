@@ -125,6 +125,20 @@ export async function attachHlsStream({
   }
 
   hls = new Hls({
+    // Melogic Live favors complete segments and a generous buffer. This is
+    // intentionally not low-latency playback: it trades delay for a steadier,
+    // higher-quality stream on real listener connections.
+    lowLatencyMode: false,
+    capLevelToPlayerSize: false,
+    startLevel: -1,
+    maxBufferLength: 60,
+    maxMaxBufferLength: 180,
+    backBufferLength: 90,
+    liveSyncDurationCount: 6,
+    liveMaxLatencyDurationCount: 14,
+    abrEwmaDefaultEstimate: 8000000,
+    abrBandWidthFactor: 0.95,
+    abrBandWidthUpFactor: 0.8,
     manifestLoadingMaxRetry: 12,
     manifestLoadingRetryDelay: 2000,
     manifestLoadingMaxRetryTimeout: 6000,
@@ -133,7 +147,12 @@ export async function attachHlsStream({
     levelLoadingMaxRetryTimeout: 6000
   })
   hls.on(Hls.Events.MANIFEST_PARSED, (_event, data = {}) => {
-    console.info('[hls-edge] status', { status: 'manifestParsed', mode, src, native: false })
+    const levels = Array.isArray(data.levels) ? data.levels : hls.levels || []
+    const highestLevel = levels.reduce((best, level, index) => {
+      const bitrate = Number(level?.bitrate || 0)
+      return bitrate > Number(levels[best]?.bitrate || 0) ? index : best
+    }, 0)
+    console.info('[hls-edge] status', { status: 'manifestParsed', mode, src, native: false, levelCount: levels.length, highestLevel })
     onStatus({
       status: 'manifestParsed',
       mode,
@@ -141,7 +160,11 @@ export async function attachHlsStream({
       mediaEl,
       hls,
       native: false,
-      levelCount: Array.isArray(data.levels) ? data.levels.length : hls.levels?.length || 0
+      levelCount: levels.length,
+      highestLevel,
+      highestLevelBitrate: Number(levels[highestLevel]?.bitrate || 0) || null,
+      highestLevelWidth: Number(levels[highestLevel]?.width || 0) || null,
+      highestLevelHeight: Number(levels[highestLevel]?.height || 0) || null
     })
   })
   hls.on(Hls.Events.ERROR, (_event, data = {}) => {

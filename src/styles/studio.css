@@ -1238,9 +1238,11 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-live-button:hover,.studio-live-button:focus-visible{border-color:rgba(103,242,170,.5);background:#202d42}
 .studio-live-sequence-video-preview{width:110px;aspect-ratio:16/9;border:1px solid rgba(130,160,220,.18);border-radius:7px;background:#000;overflow:hidden;padding:0;cursor:pointer}
 .studio-live-sequence-video-preview video{width:100%;height:100%;display:block;object-fit:cover}
-.studio-live-video-preview{min-height:170px;display:grid;place-items:center;border:1px solid rgba(130,160,220,.2);border-radius:8px;background:#02050a;overflow:hidden;color:#9fadca}
+.studio-live-video-preview{min-height:150px;display:grid;place-items:center;border:1px solid rgba(130,160,220,.2);border-radius:8px;background:#02050a;overflow:hidden;color:#9fadca}
 .studio-live-video-preview.is-active{border-color:rgba(103,242,170,.34)}
 .studio-live-video-preview video{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+.studio-live-video-preview.is-screen-share video{object-fit:contain}
+.studio-live-main>.studio-live-panel:not(.studio-program-panel){overflow:auto;overscroll-behavior:contain}
 .studio-live-mixer input[type=range],.studio-live-monitor-volume input[type=range],.studio-live-preview-volume input[type=range]{appearance:none;-webkit-appearance:none;width:100%;height:18px;background:transparent;cursor:pointer}
 .studio-live-mixer input[type=range]:focus-visible,.studio-live-monitor-volume input[type=range]:focus-visible,.studio-live-preview-volume input[type=range]:focus-visible{outline:2px solid rgba(103,242,170,.72);outline-offset:2px;border-radius:999px}
 .studio-live-mixer input[type=range]::-webkit-slider-runnable-track,.studio-live-monitor-volume input[type=range]::-webkit-slider-runnable-track,.studio-live-preview-volume input[type=range]::-webkit-slider-runnable-track{height:6px;border-radius:999px;background:linear-gradient(90deg,#67f2aa,#8be6ff);box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}

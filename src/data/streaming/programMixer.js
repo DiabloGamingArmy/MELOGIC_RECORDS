@@ -20,13 +20,13 @@ export const PROGRAM_SOURCE_TYPES = [
   { type: 'now-playing-card', label: 'Now Playing Card', media: 'visual' },
   { type: 'image', label: 'Image', media: 'visual' },
   { type: 'text-lower-third', label: 'Text / Lower Third', media: 'visual' },
-  { type: 'screen-share', label: 'Screen Share', media: 'video', future: true },
+  { type: 'screen-share', label: 'Screen Share', media: 'video' },
   { type: 'guest-audio', label: 'Invited Guest Audio', media: 'audio' },
   { type: 'guest-video', label: 'Invited Guest Video', media: 'video' }
 ]
 
 export class ProgramMixer {
-  constructor({ width = 1280, height = 720, fps = 30 } = {}) {
+  constructor({ width = 1920, height = 1080, fps = 30 } = {}) {
     this.width = width
     this.height = height
     this.fps = fps
@@ -44,6 +44,10 @@ export class ProgramMixer {
     this.activeScene = null
     this.snapshotVersion = ''
     this.transition = null
+    this.primaryVideoElement = null
+    this.primaryVideoTrackId = ''
+    this.primaryVideoFit = 'cover'
+    this.previewCanvases = new Set()
   }
 
   attachCanvas(canvas) {
@@ -54,6 +58,26 @@ export class ProgramMixer {
       this.canvas.height = this.height
     }
     return this
+  }
+
+  attachPreviewCanvas(canvas) {
+    if (canvas?.getContext) this.previewCanvases.add(canvas)
+    this.mirrorProgramFrame()
+    return this
+  }
+
+  mirrorProgramFrame() {
+    if (!this.canvas) return
+    this.previewCanvases.forEach((canvas) => {
+      if (!canvas?.isConnected) {
+        this.previewCanvases.delete(canvas)
+        return
+      }
+      if (canvas.width !== this.width) canvas.width = this.width
+      if (canvas.height !== this.height) canvas.height = this.height
+      const context = canvas.getContext('2d')
+      context?.drawImage(this.canvas, 0, 0, canvas.width, canvas.height)
+    })
   }
 
   startRenderLoop() {
@@ -88,12 +112,74 @@ export class ProgramMixer {
     this.context.beginPath()
     this.context.arc(centerX, centerY, size * 0.22, 0, Math.PI * 2)
     this.context.stroke()
+    this.mirrorProgramFrame()
   }
 
-  drawSourceLayer(scene = null, sources = this.sources, alpha = 1) {
+  setPrimaryVideoTrack(track = null, { objectFit = 'cover' } = {}) {
+    const rawTrack = track?.mediaStreamTrack || track || null
+    if (!rawTrack || rawTrack.kind !== 'video' || rawTrack.readyState === 'ended') {
+      this.clearPrimaryVideoTrack()
+      return false
+    }
+    if (this.primaryVideoElement && this.primaryVideoTrackId === rawTrack.id) {
+      this.primaryVideoFit = objectFit === 'contain' ? 'contain' : 'cover'
+      return true
+    }
+    this.clearPrimaryVideoTrack()
+    const video = document.createElement('video')
+    video.autoplay = true
+    video.muted = true
+    video.playsInline = true
+    video.controls = false
+    video.srcObject = new MediaStream([rawTrack])
+    this.primaryVideoElement = video
+    this.primaryVideoTrackId = rawTrack.id
+    this.primaryVideoFit = objectFit === 'contain' ? 'contain' : 'cover'
+    video.play?.().catch(() => {})
+    return true
+  }
+
+  clearPrimaryVideoTrack() {
+    const video = this.primaryVideoElement
+    this.primaryVideoElement = null
+    this.primaryVideoTrackId = ''
+    if (!video) return
+    try { video.pause?.() } catch {}
+    try { video.srcObject = null } catch {}
+    video.remove?.()
+  }
+
+  drawPrimaryVideo(alpha = 1) {
+    const video = this.primaryVideoElement
+    const sourceWidth = Number(video?.videoWidth || 0)
+    const sourceHeight = Number(video?.videoHeight || 0)
+    if (!video || video.readyState < 2 || !sourceWidth || !sourceHeight) return false
+    const canvasRatio = this.width / this.height
+    const sourceRatio = sourceWidth / sourceHeight
+    let drawWidth = this.width
+    let drawHeight = this.height
+    if (this.primaryVideoFit === 'contain') {
+      if (sourceRatio > canvasRatio) drawHeight = this.width / sourceRatio
+      else drawWidth = this.height * sourceRatio
+    } else if (sourceRatio > canvasRatio) {
+      drawWidth = this.height * sourceRatio
+    } else {
+      drawHeight = this.width / sourceRatio
+    }
+    const x = (this.width - drawWidth) / 2
+    const y = (this.height - drawHeight) / 2
+    this.context.save()
+    this.context.globalAlpha = Math.max(0, Math.min(1, Number(alpha || 0)))
+    this.context.drawImage(video, x, y, drawWidth, drawHeight)
+    this.context.restore()
+    return true
+  }
+
+  drawSourceLayer(scene = null, sources = this.sources, alpha = 1, { skipMediaPlaceholders = false } = {}) {
     const allowedSourceIds = Array.isArray(scene?.sources) ? new Set(scene.sources) : null
     const activeSources = Array.from(sources.values())
       .filter((source) => source.enabled !== false && source.visible !== false && (!allowedSourceIds || allowedSourceIds.has(source.sourceId)))
+      .filter((source) => !skipMediaPlaceholders || !['browser-camera', 'screen-share', 'sequence-video'].includes(source.type))
       .sort((a, b) => Number(a.zIndex || 0) - Number(b.zIndex || 0))
     activeSources.forEach((source, index) => {
       const x = source.transform?.x ?? 48 + index * 36
@@ -127,12 +213,13 @@ export class ProgramMixer {
     if (!this.context) return
     this.context.fillStyle = '#05080f'
     this.context.fillRect(0, 0, this.width, this.height)
+    const primaryVideoDrawn = this.drawPrimaryVideo(1)
     if (this.transition) {
       const elapsed = performance.now() - this.transition.startedAt
       const progress = Math.max(0, Math.min(1, elapsed / this.transition.durationMs))
-      const fromCount = this.drawSourceLayer(this.transition.from.scene, this.transition.from.sources, 1 - progress)
-      const toCount = this.drawSourceLayer(this.transition.to.scene, this.transition.to.sources, progress)
-      if (!fromCount && !toCount) this.drawPlaceholder()
+      const fromCount = this.drawSourceLayer(this.transition.from.scene, this.transition.from.sources, 1 - progress, { skipMediaPlaceholders: primaryVideoDrawn })
+      const toCount = this.drawSourceLayer(this.transition.to.scene, this.transition.to.sources, progress, { skipMediaPlaceholders: primaryVideoDrawn })
+      if (!primaryVideoDrawn && !fromCount && !toCount) this.drawPlaceholder()
       if (progress >= 1) {
         const completed = this.transition
         this.transition = null
@@ -142,11 +229,13 @@ export class ProgramMixer {
         this.snapshotVersion = completed.to.version
         completed.resolve?.({ ok: true })
       }
+      this.mirrorProgramFrame()
       return
     }
-    if (!this.drawSourceLayer(scene, this.sources, 1)) {
+    if (!this.drawSourceLayer(scene, this.sources, 1, { skipMediaPlaceholders: primaryVideoDrawn }) && !primaryVideoDrawn) {
       this.drawPlaceholder()
     }
+    this.mirrorProgramFrame()
   }
 
   getProgramMediaStream() {
@@ -170,8 +259,11 @@ export class ProgramMixer {
 
   getVideoTrack() {
     if (!this.videoEnabled || !this.canvas?.captureStream) return null
-    if (!this.captureStream) this.captureStream = this.canvas.captureStream(this.fps)
-    return this.captureStream.getVideoTracks()[0] || null
+    const currentTrack = this.captureStream?.getVideoTracks?.()[0] || null
+    if (!currentTrack || currentTrack.readyState === 'ended') this.captureStream = this.canvas.captureStream(this.fps)
+    const track = this.captureStream.getVideoTracks()[0] || null
+    if (track && 'contentHint' in track) track.contentHint = this.primaryVideoFit === 'contain' ? 'detail' : 'motion'
+    return track
   }
 
   enableAudio() { this.audioEnabled = true }
@@ -245,9 +337,11 @@ export class ProgramMixer {
     this.transition?.resolve?.({ ok: false, interrupted: true })
     this.transition = null
     this.disableVideo()
+    this.clearPrimaryVideoTrack()
     this.audioContext?.close?.().catch(() => {})
     this.audioContext = null
     this.programDestination = null
     this.monitorDestination = null
+    this.previewCanvases.clear()
   }
 }

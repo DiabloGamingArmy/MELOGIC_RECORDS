@@ -1,6 +1,6 @@
 import './styles/base.css'
 import './styles/studio.css'
-import { AudioPresets, Track, createLocalAudioTrack, createLocalVideoTrack } from 'livekit-client'
+import { AudioPresets, Track, createLocalAudioTrack, createLocalScreenTracks, createLocalVideoTrack } from 'livekit-client'
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
@@ -105,8 +105,8 @@ let studioMonitorVisualizerCleanup = null
 let studioProgramMixer = null
 let programCanvasInteraction = null
 const programOutputCanvas = document.createElement('canvas')
-programOutputCanvas.width = 1280
-programOutputCanvas.height = 720
+programOutputCanvas.width = 1920
+programOutputCanvas.height = 1080
 const activeNativeHostSessions = new Map()
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
@@ -277,7 +277,7 @@ const state = {
       activeSceneId: '',
       selectedSourceId: '',
       programSnapshot: { sceneId: '', scene: null, sources: [], version: '' },
-      outputResolution: '1280x720',
+      outputResolution: '1920x1080',
       fps: 30,
       transitionDurationMs: 400,
       transitionState: 'idle',
@@ -1446,7 +1446,6 @@ function renderStreamDetailsPanel() {
             ${link ? `<button type="button" class="studio-live-button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a class="studio-live-button" href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
           </div>
         </form>
-        ${renderDetailedStreamOutputStatus()}
         </div>
         ${renderListenerPreviewPanel()}
       </div>
@@ -1498,6 +1497,7 @@ function renderAdvancedStreamingSettings() {
           <small>${esc(live.streamId ? 'Streaming method is locked for the active stream.' : 'The selected method is saved to the stream draft.')}</small>
         </div>
       </div>
+      ${renderDetailedStreamOutputStatus()}
       <div class="studio-live-provider-copy">
         <article>
           <h2>${isObs ? 'Stream From OBS / Encoder' : 'Stream From Browser'}</h2>
@@ -1508,7 +1508,7 @@ function renderAdvancedStreamingSettings() {
             <li>Playback: ${esc(hlsPlaybackUrl || 'missing')}</li>
             <li>Public playback: Buffered HLS from Melogic Edge</li>
           </ul>
-          ${!isObs && !isNativeProtocol ? `<div class="studio-live-ingest-test"><button type="button" class="studio-live-button" data-test-browser-ingest ${diagnostics.whipTestRunning ? 'disabled' : ''}>${diagnostics.whipTestRunning ? 'Testing Browser Ingest...' : 'Test Browser Ingest'}</button><small>Safe GET reachability check only; it does not start a broadcast.</small></div>` : ''}
+          ${!isObs && !isNativeProtocol ? `<div class="studio-live-ingest-test"><button type="button" class="studio-live-button" data-test-browser-ingest ${diagnostics.whipTestRunning ? 'disabled' : ''}>${diagnostics.whipTestRunning ? 'Testing Browser Ingest...' : 'Test Browser Ingest'}</button><small>Safe browser CORS check only; it does not start a broadcast.</small></div>` : ''}
         </article>
         <article>
           <h2>Streaming Diagnostics</h2>
@@ -1541,8 +1541,13 @@ function renderAdvancedStreamingSettings() {
             <li>Remote answer set: ${diagnostics.remoteAnswerSet ? 'yes' : 'no'}</li>
             <li>Offer SDP length: ${Number(diagnostics.offerSdpLength || 0)}</li>
             <li>Answer SDP length: ${Number(diagnostics.answerSdpLength || 0)}</li>
+            <li>Program target: ${esc(live.programMixer.outputResolution || '1920x1080')} @ ${Number(live.programMixer.fps || 30)} fps</li>
+            <li>Encoder video target: ${Number(diagnostics.videoTargetBitrate || 8000000) / 1000000} Mbps</li>
+            <li>Encoder audio target: ${Math.round(Number(diagnostics.audioTargetBitrate || 256000) / 1000)} kbps stereo</li>
+            <li>Outbound video: ${diagnostics.outboundVideoBitrateKbps ? `${diagnostics.outboundVideoBitrateKbps} kbps` : 'awaiting samples'}</li>
+            <li>Outbound dimensions: ${diagnostics.outboundVideoWidth && diagnostics.outboundVideoHeight ? `${diagnostics.outboundVideoWidth}×${diagnostics.outboundVideoHeight}` : 'awaiting samples'}</li>
+            <li>Encoder limitation: ${esc(diagnostics.outboundVideoQualityLimitation || 'awaiting samples')}</li>
             <li>Program track count: ${diagnostics.programTrackCount ?? diagnostics.mediaStreamTrackCount ?? 0}</li>
-            <li>Audio track count: ${diagnostics.audioTrackCount ?? 0}</li>
             <li>Video track count: ${diagnostics.videoTrackCount ?? 0}</li>
             <li>Audio track: ${esc(diagnostics.audioTrackReadyState || 'none')}</li>
             <li>Video track: ${esc(diagnostics.videoTrackReadyState || 'none')}</li>
@@ -1634,27 +1639,28 @@ function renderInputSourcePanel() {
         </article>
         <article class="studio-live-source-option studio-live-video-input-card ${live.videoEnabled ? 'is-active' : ''}">
           <header class="studio-live-source-card-header">
-            <div><h2>Video Input</h2><p>Choose the local visual source that can feed program output when Video is enabled.</p></div>
+            <div><h2>Video Input</h2><p>Choose the visual source used by the outgoing 1080p program.</p></div>
             <label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="video" ${live.videoEnabled ? 'checked' : ''} /><span></span>Enable Video</label>
           </header>
           <div class="studio-live-video-input-scroll">
             <label>Video source<select data-live-video-source>
-              <option value="browser" ${live.videoSource === 'browser' ? 'selected' : ''}>Browser Video Input</option>
-              <option value="sequence" ${live.videoSource === 'sequence' ? 'selected' : ''}>Sequence Video Source</option>
+              <option value="browser" ${live.videoSource === 'browser' ? 'selected' : ''}>Browser Camera</option>
+              <option value="screen" ${live.videoSource === 'screen' ? 'selected' : ''}>Screen Share</option>
+              <option value="sequence" ${live.videoSource === 'sequence' ? 'selected' : ''}>Program Mixer Output</option>
             </select></label>
-            ${live.videoSource === 'browser' ? `<label>Camera / Screen<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
-              <option value="">Default camera or screen source</option>
+            ${live.videoSource === 'browser' ? `<label>Camera<select data-live-video-device ${live.devicesLoading ? 'disabled' : ''}>
+              <option value="">Default camera</option>
               ${live.videoDevices.map((device) => `<option value="${esc(device.deviceId)}" ${live.selectedVideoDeviceId === device.deviceId ? 'selected' : ''}>${esc(device.label || `Video input ${live.videoDevices.indexOf(device) + 1}`)}</option>`).join('')}
             </select></label>` : ''}
-            <label>Transition<select data-live-video-transition><option value="cut" ${live.videoTransition === 'cut' ? 'selected' : ''}>Cut</option><option value="fade" ${live.videoTransition === 'fade' ? 'selected' : ''}>Fade</option></select></label>
-            <div class="studio-live-video-preview ${live.videoPreviewActive ? 'is-active' : ''}" data-live-video-preview-mount>
-              <span>${esc(live.videoPreviewError || (live.videoSource === 'sequence' ? 'Program output preview is preparing.' : live.videoPreviewActive ? 'Video input preview active' : 'No video input preview'))}</span>
+            ${live.videoSource === 'sequence' ? '<label>Transition<select data-live-video-transition><option value="cut" ' + (live.videoTransition === 'cut' ? 'selected' : '') + '>Cut</option><option value="fade" ' + (live.videoTransition === 'fade' ? 'selected' : '') + '>Fade</option></select></label>' : ''}
+            <div class="studio-live-video-preview ${live.videoPreviewActive ? 'is-active' : ''} ${live.videoSource === 'screen' ? 'is-screen-share' : ''}" data-live-video-preview-mount>
+              <span>${esc(live.videoPreviewError || (live.videoSource === 'sequence' ? 'Program Mixer output is preparing.' : live.videoSource === 'screen' ? (live.videoPreviewActive ? 'Screen share active' : 'No display selected') : live.videoPreviewActive ? 'Camera preview active' : 'No camera preview'))}</span>
             </div>
-            <p class="studio-live-source-status">${esc(live.videoPreviewError || (live.videoSource === 'sequence' ? `Program Mixer output is the Sequence Video preview. Transition: ${live.videoTransition}.` : live.localVideoTrack ? `Video input ready. Transition: ${live.videoTransition}.` : 'Choose a camera/source and click Use Input to preview and publish while live.'))}</p>
+            <p class="studio-live-source-status">${esc(live.videoPreviewError || (live.videoSource === 'sequence' ? `Program Mixer output is ready. Transition: ${live.videoTransition}.` : live.videoSource === 'screen' ? live.localVideoTrack ? 'Screen share is routed through the program mixer.' : 'Select Screen Share to choose a display.' : live.localVideoTrack ? 'Camera is routed through the program mixer.' : 'Select a source and use it to preview before going live.'))}</p>
             <div class="studio-live-action-bar">
-              <button type="button" data-live-use-video-input ${live.videoEnabled ? '' : 'disabled'}>${live.videoSource === 'sequence' ? 'Preview Program Output' : live.localVideoTrack ? 'Use Input Again' : 'Use Input'}</button>
+              <button type="button" data-live-use-video-input ${live.videoEnabled ? '' : 'disabled'}>${live.videoSource === 'sequence' ? 'Preview Program Output' : live.videoSource === 'screen' ? (live.localVideoTrack ? 'Choose Different Display' : 'Share Screen') : live.localVideoTrack ? 'Refresh Camera' : 'Use Camera'}</button>
               ${live.videoSource === 'browser' ? `<button type="button" data-live-refresh-video>${live.devicesLoading ? 'Refreshing...' : 'Refresh Video'}</button>` : ''}
-              <a class="studio-live-button" href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>
+              ${live.videoSource === 'sequence' ? `<a class="studio-live-button" href="${livePanelHref('sequence')}" data-live-panel="sequence">Open Sequence Editor</a>` : ''}
             </div>
           </div>
         </article>
@@ -1961,7 +1967,7 @@ function serializedProgramMixerState() {
     activeSceneId: mixer.programSnapshot?.sceneId || mixer.programSceneId || '',
     selectedSourceId: mixer.selectedSourceId || '',
     programSnapshot: normalizeProgramSnapshot(mixer.programSnapshot),
-    outputResolution: mixer.outputResolution || '1280x720',
+    outputResolution: mixer.outputResolution || '1920x1080',
     fps: Number(mixer.fps || 30),
     transitionDurationMs: Number(mixer.transitionDurationMs || 400),
     mode: 'program'
@@ -1978,7 +1984,7 @@ function restoreProgramMixerState(programState = {}, streamId = '') {
   mixer.programSceneId = mixer.programSnapshot.sceneId || String(programState.programSceneId || programState.activeSceneId || '')
   mixer.activeSceneId = mixer.programSceneId
   mixer.selectedSourceId = String(programState.selectedSourceId || '')
-  mixer.outputResolution = String(programState.outputResolution || mixer.outputResolution || '1280x720')
+  mixer.outputResolution = String(programState.outputResolution || mixer.outputResolution || '1920x1080')
   mixer.fps = Math.max(1, Math.min(60, Number(programState.fps || mixer.fps || 30)))
   mixer.transitionDurationMs = Math.max(0, Math.min(5000, Number(programState.transitionDurationMs || mixer.transitionDurationMs || 400)))
   if (!mixer.programSnapshot.scene && mixer.programSceneId) {
@@ -2239,12 +2245,12 @@ function startStudioHlsHealthPolling() {
 
 function ensureStudioProgramMixer({ syncSnapshot = true } = {}) {
   const live = liveState()
-  const [width, height] = String(live.programMixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
+  const [width, height] = String(live.programMixer.outputResolution || '1920x1080').split('x').map((value) => Number(value) || 0)
   if (!studioProgramMixer) {
-    studioProgramMixer = new ProgramMixer({ width: width || 1280, height: height || 720, fps: Number(live.programMixer.fps || 30) })
+    studioProgramMixer = new ProgramMixer({ width: width || 1920, height: height || 1080, fps: Number(live.programMixer.fps || 30) })
   }
-  studioProgramMixer.width = width || 1280
-  studioProgramMixer.height = height || 720
+  studioProgramMixer.width = width || 1920
+  studioProgramMixer.height = height || 1080
   studioProgramMixer.fps = Number(live.programMixer.fps || 30)
   studioProgramMixer.attachCanvas(programOutputCanvas)
   if (syncSnapshot) {
@@ -2261,17 +2267,21 @@ function ensureStudioProgramMixer({ syncSnapshot = true } = {}) {
 function attachProgramMixerPreview() {
   const previewCanvas = app.querySelector('[data-program-preview-canvas]')
   const programCanvas = app.querySelector('[data-program-program-canvas]')
+  const mixer = ensureStudioProgramMixer()
+  if (liveState().videoEnabled) {
+    mixer.drawProgramFrame(mixer.activeScene)
+    mixer.startRenderLoop()
+  } else {
+    mixer.drawPlaceholder()
+  }
   if (previewCanvas) {
     drawProgramPreviewCanvas(previewCanvas, 'preview')
     attachProgramPreviewCanvasInteractions(previewCanvas)
   }
-  if (programCanvas) drawProgramPreviewCanvas(programCanvas, 'program')
-  const mixer = ensureStudioProgramMixer()
-  if (liveState().videoEnabled) mixer.startRenderLoop()
-  else mixer.drawPlaceholder()
+  if (programCanvas) mixer.attachPreviewCanvas(programCanvas)
 }
 
-function resolvedProgramSourceTransform(source = {}, index = 0, width = 1280, height = 720) {
+function resolvedProgramSourceTransform(source = {}, index = 0, width = 1920, height = 1080) {
   const transform = source.transform || {}
   return {
     x: Number(transform.x ?? 48 + index * 36),
@@ -2314,9 +2324,9 @@ function drawProgramPreviewCanvas(canvas, mode = 'preview') {
   const { mixer, scene, sources } = programCanvasSources(mode)
   const context = canvas?.getContext?.('2d')
   if (!context) return
-  const [width, height] = String(mixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
-  canvas.width = width || 1280
-  canvas.height = height || 720
+  const [width, height] = String(mixer.outputResolution || '1920x1080').split('x').map((value) => Number(value) || 0)
+  canvas.width = width || 1920
+  canvas.height = height || 1080
   context.fillStyle = '#05080f'
   context.fillRect(0, 0, canvas.width, canvas.height)
   if (!scene || !sources.length) {
@@ -2784,9 +2794,9 @@ function renderProgramMixerPanel() {
   const selectedSource = selectedProgramSource()
   const previewSources = programCanvasSources('preview').sources
   const selectedSourceIndex = Math.max(0, previewSources.findIndex((source) => source.sourceId === selectedSource?.sourceId))
-  const [outputWidth, outputHeight] = String(mixer.outputResolution || '1280x720').split('x').map((value) => Number(value) || 0)
+  const [outputWidth, outputHeight] = String(mixer.outputResolution || '1920x1080').split('x').map((value) => Number(value) || 0)
   const selectedTransform = selectedSource
-    ? resolvedProgramSourceTransform(selectedSource, selectedSourceIndex, outputWidth || 1280, outputHeight || 720)
+    ? resolvedProgramSourceTransform(selectedSource, selectedSourceIndex, outputWidth || 1920, outputHeight || 1080)
     : null
   const previewSourceIds = new Set(previewScene?.sources || [])
   const audioSources = mixer.sources.filter((source) => ['browser-microphone', 'sequence-audio', 'guest-audio'].includes(source.type))
@@ -3165,12 +3175,8 @@ function renderLiveStatusBar() {
   return `
     <div class="studio-live-statusbar">
       <span>${esc(live.streamId ? 'ON AIR' : 'OFF AIR')}</span>
-      <span>Mode: ${externalEncoder ? 'External Encoder' : 'Browser Encoder'}</span>
-      <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
       <span>Input: ${esc(externalEncoder ? 'OBS / Encoder' : live.inputSource === 'sequence' ? 'Sequence Output' : 'Browser Input')}</span>
       <span>Source: ${externalEncoder ? esc(live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'waiting') : sourceReady ? 'healthy' : 'not prepared'}</span>
-      <span>Monitor: ${live.monitorEnabled ? 'on' : 'off'}</span>
-      <span>Decks: ${live.activePlayers.length}</span>
       <span>Now: ${esc(current?.titleSnapshot || 'none')}</span>
     </div>
   `
@@ -3279,7 +3285,7 @@ function hydrateLiveStudioFromStream(stream = null) {
   live.chatEnabled = stream.chatEnabled !== false
   live.browserInputEnabled = stream.activeAudioSources?.browser !== false
   live.sequenceInputEnabled = stream.activeAudioSources?.sequence === true || live.inputSource === 'sequence'
-  live.videoSource = stream.activeVideoSource === 'sequence' ? 'sequence' : 'browser'
+  live.videoSource = ['browser', 'screen', 'sequence'].includes(stream.activeVideoSource) ? stream.activeVideoSource : 'browser'
   if (!restoreProgramMixerState(stream.programState || {}, streamId)) {
     live.programMixer.previewSceneId = stream.programState?.previewSceneId || live.programMixer.previewSceneId
     live.programMixer.programSceneId = stream.programState?.programSceneId || stream.programState?.activeSceneId || live.programMixer.programSceneId
@@ -4672,20 +4678,26 @@ function setLiveInputSource(source = 'browser') {
 
 async function stopLiveVideoInput({ render = true } = {}) {
   const live = liveState()
-  if (live.programVideoTrack) {
+  const mixer = studioProgramMixer
+  mixer?.clearPrimaryVideoTrack()
+  if (live.programVideoTrack && !live.browserIngestActive) {
     await live.room?.localParticipant?.unpublishTrack?.(live.programVideoTrack, false).catch(() => {})
     live.programVideoTrack.stop?.()
+    mixer?.releaseVideoCapture?.()
     live.programVideoTrack = null
   }
   const track = live.localVideoTrack
   if (track) {
+    // Clear state before stopping: a browser can synchronously dispatch the
+    // track's ended event, and that event must not render stale source state.
+    live.localVideoTrack = null
     await live.room?.localParticipant?.unpublishTrack?.(track, false).catch(() => {})
     try { track.detach?.().forEach((element) => element.remove?.()) } catch {}
     track.stop?.()
   }
   live.localVideoTrack = null
   live.videoPreviewActive = false
-  live.videoPublishedToProvider = false
+  if (!live.browserIngestActive) live.videoPublishedToProvider = false
   if (live.videoPreviewError && !live.videoEnabled) live.videoPreviewError = ''
   if (live.streamId) await heartbeatLiveProgramState().catch(() => {})
   if (render) renderShell()
@@ -4695,13 +4707,15 @@ async function publishLiveVideoTrackIfNeeded() {
   const live = liveState()
   if (!live.room || !live.videoEnabled || live.videoPublishedToProvider) return
   const mixer = ensureStudioProgramMixer()
-  mixer.attachCanvas(app.querySelector('[data-program-program-canvas]') || app.querySelector('[data-program-preview-canvas]'))
   mixer.enableVideo()
   live.programVideoTrack = mixer.getVideoTrack()
   if (!live.programVideoTrack) return
   await live.room.localParticipant.publishTrack(live.programVideoTrack, {
     source: Track?.Source?.Camera || 'camera',
-    name: 'melogic-program-video'
+    name: 'melogic-program-video',
+    simulcast: false,
+    videoCodec: 'h264',
+    videoEncoding: { maxBitrate: 8000000, maxFramerate: 30, priority: 'high' }
   })
   live.videoPublishedToProvider = true
 }
@@ -4809,6 +4823,32 @@ function attachLiveVideoPreview() {
   }
 }
 
+function setLiveProgramVideoSource(track, { objectFit = 'cover' } = {}) {
+  const rawTrack = track?.mediaStreamTrack || track || null
+  if (!rawTrack || rawTrack.kind !== 'video') throw new Error('The selected source did not provide a video track.')
+  if ('contentHint' in rawTrack) rawTrack.contentHint = objectFit === 'contain' ? 'detail' : 'motion'
+  const mixer = ensureStudioProgramMixer({ syncSnapshot: false })
+  mixer.setPrimaryVideoTrack(rawTrack, { objectFit })
+  if (liveState().videoEnabled) mixer.enableVideo()
+  return rawTrack
+}
+
+function watchLiveVideoSource(track) {
+  const live = liveState()
+  const rawTrack = track?.mediaStreamTrack || track || null
+  if (!rawTrack?.addEventListener) return
+  rawTrack.addEventListener('ended', () => {
+    if (live.localVideoTrack !== track) return
+    studioProgramMixer?.clearPrimaryVideoTrack()
+    live.localVideoTrack = null
+    live.videoPreviewActive = false
+    live.videoPreviewError = ''
+    live.sourceMessage = live.videoSource === 'screen' ? 'Screen sharing stopped.' : 'Camera input stopped.'
+    if (live.streamId) heartbeatLiveProgramState().catch(() => {})
+    if (currentStudioSection() === 'live') renderShell()
+  }, { once: true })
+}
+
 async function useLiveVideoInput() {
   const live = liveState()
   live.videoPreviewError = ''
@@ -4816,13 +4856,15 @@ async function useLiveVideoInput() {
   renderShell()
   try {
     if (live.localVideoTrack) {
-      await live.room?.localParticipant?.unpublishTrack?.(live.localVideoTrack, false).catch(() => {})
-      live.localVideoTrack.stop?.()
+      const previousTrack = live.localVideoTrack
+      live.localVideoTrack = null
+      await live.room?.localParticipant?.unpublishTrack?.(previousTrack, false).catch(() => {})
+      previousTrack.stop?.()
       live.videoPublishedToProvider = false
     }
-    live.localVideoTrack = null
     if (live.videoSource === 'sequence') {
       const mixer = ensureStudioProgramMixer()
+      mixer.clearPrimaryVideoTrack()
       mixer.enableVideo()
       live.programVideoTrack = mixer.getVideoTrack()
       if (!live.programVideoTrack) throw new Error('Program output video is not available.')
@@ -4832,16 +4874,32 @@ async function useLiveVideoInput() {
       attachLiveVideoPreview()
       return
     }
-    const constraints = live.selectedVideoDeviceId ? { deviceId: live.selectedVideoDeviceId } : {}
-    const track = await createLocalVideoTrack(constraints)
+    const track = live.videoSource === 'screen'
+      ? (await createLocalScreenTracks({
+          audio: false,
+          video: { displaySurface: 'monitor' },
+          resolution: { width: 1920, height: 1080, frameRate: 30 },
+          contentHint: 'detail',
+          selfBrowserSurface: 'exclude',
+          surfaceSwitching: 'include',
+          systemAudio: 'exclude'
+        })).find((candidate) => candidate?.mediaStreamTrack?.kind === 'video')
+      : await createLocalVideoTrack({
+          ...(live.selectedVideoDeviceId ? { deviceId: live.selectedVideoDeviceId } : {}),
+          resolution: { width: 1920, height: 1080, frameRate: 30 },
+          frameRate: { ideal: 30, max: 30 }
+        })
+    if (!track) throw new Error('The selected source did not provide a video track.')
     live.localVideoTrack = track
+    setLiveProgramVideoSource(track, { objectFit: live.videoSource === 'screen' ? 'contain' : 'cover' })
+    watchLiveVideoSource(track)
     live.videoPreviewActive = true
     if (live.room && live.videoEnabled) {
       await publishLiveVideoTrackIfNeeded()
-      live.outputStatus = `Video input publishing with ${live.videoTransition} transition preference.`
+      live.outputStatus = `${live.videoSource === 'screen' ? 'Screen share' : 'Camera'} is publishing through the 1080p program output.`
       await heartbeatLiveProgramState().catch(() => {})
     } else {
-      live.sourceMessage = 'Video input preview is local. Enable Video and go live to publish this source.'
+      live.sourceMessage = `${live.videoSource === 'screen' ? 'Screen share' : 'Camera'} preview is local. Enable Video and go live to publish this source.`
     }
     renderShell()
     attachLiveVideoPreview()
@@ -6138,7 +6196,15 @@ function bindLiveStudioControls() {
     renderShell()
   }))
   app.querySelector('[data-live-video-source]')?.addEventListener('change', (e) => {
-    live.videoSource = e.currentTarget.value === 'sequence' ? 'sequence' : 'browser'
+    const nextSource = e.currentTarget.value
+    const requestedSource = ['browser', 'screen', 'sequence'].includes(nextSource) ? nextSource : 'browser'
+    if (requestedSource !== live.videoSource && live.localVideoTrack) {
+      const previousTrack = live.localVideoTrack
+      live.localVideoTrack = null
+      previousTrack.stop?.()
+      studioProgramMixer?.clearPrimaryVideoTrack()
+    }
+    live.videoSource = requestedSource
     live.videoPreviewActive = live.videoSource === 'sequence' && live.videoEnabled
     live.videoPreviewError = ''
     renderShell()
@@ -6149,6 +6215,7 @@ function bindLiveStudioControls() {
     live.videoPreviewError = ''
     live.localVideoTrack?.stop?.()
     live.localVideoTrack = null
+    studioProgramMixer?.clearPrimaryVideoTrack()
     renderShell()
   })
   app.querySelector('[data-live-video-transition]')?.addEventListener('change', (e) => {

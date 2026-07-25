@@ -4,7 +4,9 @@ const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/rt
 const CONNECTION_TIMEOUT_MS = 15000
 const FETCH_TIMEOUT_MS = 15000
 const CONNECTION_FAILURE_GRACE_MS = 30000
-const MUSIC_AUDIO_MAX_BITRATE = 192000
+const MUSIC_AUDIO_MAX_BITRATE = 256000
+const PROGRAM_VIDEO_MAX_BITRATE = 8000000
+const PROGRAM_VIDEO_MAX_FRAMERATE = 30
 
 let activeSession = null
 
@@ -43,6 +45,10 @@ function connectionDiagnostics(peerConnection, mediaStream, extra = {}) {
     videoTrackCount,
     audioTrackReadyState: audioTrack?.readyState || 'none',
     videoTrackReadyState: videoTrack?.readyState || 'none',
+    audioTargetBitrate: MUSIC_AUDIO_MAX_BITRATE,
+    videoTargetBitrate: videoTrack ? PROGRAM_VIDEO_MAX_BITRATE : 0,
+    videoTargetFramerate: videoTrack ? PROGRAM_VIDEO_MAX_FRAMERATE : 0,
+    videoTrackSettings: videoTrack?.getSettings?.() || {},
     ...extra
   }
 }
@@ -126,6 +132,93 @@ async function applyMusicAudioSenderParameters(peerConnection, mediaStream, phas
   return applied
 }
 
+function preferH264VideoCodec(peerConnection) {
+  const transceiver = peerConnection?.getTransceivers?.().find((entry) => entry.sender?.track?.kind === 'video') || null
+  const capabilities = typeof RTCRtpSender !== 'undefined' ? RTCRtpSender.getCapabilities?.('video') : null
+  if (!transceiver?.setCodecPreferences || !Array.isArray(capabilities?.codecs)) return false
+  const h264 = capabilities.codecs.filter((codec) => /video\/h264/i.test(codec.mimeType || ''))
+  if (!h264.length) return false
+  try {
+    transceiver.setCodecPreferences([...h264, ...capabilities.codecs.filter((codec) => !/video\/h264/i.test(codec.mimeType || ''))])
+    return true
+  } catch (error) {
+    console.warn('[Browser WHIP] H.264 preference could not be applied', error)
+    return false
+  }
+}
+
+async function applyProgramVideoSenderParameters(peerConnection, mediaStream, phase = 'after-add-track') {
+  const videoTrack = mediaStream?.getVideoTracks?.()[0] || null
+  const videoSender = peerConnection?.getSenders?.().find((sender) => sender.track?.kind === 'video') || null
+  if (!videoTrack || !videoSender?.getParameters) return false
+  let applied = false
+  let errorMessage = ''
+  try {
+    if ('contentHint' in videoTrack) videoTrack.contentHint = videoTrack.contentHint || 'motion'
+    const params = videoSender.getParameters() || {}
+    params.encodings = params.encodings?.length ? params.encodings : [{}]
+    params.encodings[0] = {
+      ...(params.encodings[0] || {}),
+      maxBitrate: PROGRAM_VIDEO_MAX_BITRATE,
+      maxFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
+      scaleResolutionDownBy: 1
+    }
+    params.degradationPreference = 'maintain-resolution'
+    if (videoSender.setParameters) {
+      await videoSender.setParameters(params)
+      applied = true
+    }
+  } catch (error) {
+    errorMessage = error?.message || String(error)
+    console.warn('[Browser WHIP] video sender parameter update failed', { phase, error: errorMessage })
+  }
+  console.log('[Browser WHIP] video sender parameters', {
+    phase,
+    applied,
+    targetMaxBitrate: PROGRAM_VIDEO_MAX_BITRATE,
+    targetMaxFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
+    trackId: videoTrack.id,
+    settings: videoTrack.getSettings?.(),
+    params: videoSender.getParameters?.(),
+    error: errorMessage
+  })
+  return applied
+}
+
+async function collectOutboundQualityStats(session) {
+  const peerConnection = session?.peerConnection
+  if (!peerConnection?.getStats || session?.stopped) return
+  try {
+    const stats = await peerConnection.getStats()
+    const reports = Array.from(stats.values())
+    const video = reports.find((report) => report.type === 'outbound-rtp' && !report.isRemote && (report.kind === 'video' || report.mediaType === 'video'))
+    const audio = reports.find((report) => report.type === 'outbound-rtp' && !report.isRemote && (report.kind === 'audio' || report.mediaType === 'audio'))
+    const now = performance.now()
+    const previous = session.lastOutboundStats || {}
+    const elapsedMs = Math.max(1, now - Number(previous.at || now))
+    const toKbps = (bytes, previousBytes) => previousBytes == null ? null : Math.round(Math.max(0, Number(bytes || 0) - Number(previousBytes || 0)) * 8 / elapsedMs)
+    const diagnostics = {
+      outboundVideoBitrateKbps: video ? toKbps(video.bytesSent, previous.videoBytes) : null,
+      outboundAudioBitrateKbps: audio ? toKbps(audio.bytesSent, previous.audioBytes) : null,
+      outboundVideoFramesPerSecond: Number(video?.framesPerSecond || 0) || null,
+      outboundVideoWidth: Number(video?.frameWidth || 0) || null,
+      outboundVideoHeight: Number(video?.frameHeight || 0) || null,
+      outboundVideoQualityLimitation: String(video?.qualityLimitationReason || 'none'),
+      outboundPacketsLost: Number(video?.packetsLost || 0) + Number(audio?.packetsLost || 0)
+    }
+    session.lastOutboundStats = { at: now, videoBytes: video?.bytesSent, audioBytes: audio?.bytesSent }
+    session.emitStatus?.('connected', diagnostics)
+  } catch (error) {
+    console.warn('[Browser WHIP] outbound quality stats unavailable', error)
+  }
+}
+
+function startOutboundQualityMonitor(session) {
+  if (session.qualityTimer) window.clearInterval(session.qualityTimer)
+  void collectOutboundQualityStats(session)
+  session.qualityTimer = window.setInterval(() => void collectOutboundQualityStats(session), 10000)
+}
+
 function applyMusicOpusSdp(sdp = '') {
   const text = String(sdp || '')
   const opusMatch = text.match(/^a=rtpmap:(\d+)\s+opus\/48000(?:\/2)?\s*$/mi)
@@ -200,26 +293,55 @@ export async function testBrowserWebrtcIngestReachability({ streamKey = '', time
       lastIngestError: 'Browser streaming could not build the Melogic WHIP ingest URL.'
     }
   }
+  // The public proxy deliberately allows only the production site origin.
+  // Do not turn that intentional restriction into a red error in a local
+  // Studio build; production runs the same CORS-preflight probe below.
+  if (['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    return {
+      whipReachable: null,
+      whipTestStatus: 'production-origin-required',
+      whipUrl: endpoint,
+      ingestEndpointURL: stripEndpointSecrets(endpoint),
+      ingestUrlHost: new URL(endpoint).host,
+      responseStatus: null,
+      responseType: '',
+      responseContentType: '',
+      responseBodyPreview: '',
+      corsPreflightStatus: 'The production proxy allows the Melogic site origin only. Run this check on melogicrecords.studio.',
+      fetchErrorName: '',
+      fetchErrorMessage: '',
+      networkHint: 'Local Studio can prepare sources, but production is required for the browser-to-WHIP CORS check.',
+      lastIngestError: ''
+    }
+  }
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   console.log('[Browser WHIP] reachability test', {
     whipUrl: endpoint,
     origin: window.location.origin,
-    method: 'GET',
+    method: 'OPTIONS',
     credentials: 'omit'
   })
   try {
     const response = await fetch(endpoint, {
-      method: 'GET',
+      // WHIP accepts SDP offers via POST. A GET is not a valid probe and SRS
+      // deliberately closes it, which a reverse proxy reports as a 502. An
+      // OPTIONS request verifies the browser's CORS route without attempting
+      // to create a publishing session or producing a false-negative warning.
+      method: 'OPTIONS',
       mode: 'cors',
       credentials: 'omit',
       cache: 'no-store',
+      headers: {
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type'
+      },
       signal: controller.signal
     })
     const responseText = await response.text().catch(() => '')
     const diagnostics = {
-      whipReachable: true,
-      whipTestStatus: 'response-received',
+      whipReachable: response.ok,
+      whipTestStatus: response.ok ? 'cors-ready' : `http-${response.status}`,
       whipUrl: endpoint,
       ingestEndpointURL: stripEndpointSecrets(endpoint),
       ingestUrlHost: new URL(endpoint).host,
@@ -227,10 +349,12 @@ export async function testBrowserWebrtcIngestReachability({ streamKey = '', time
       responseType: response.type,
       responseContentType: response.headers.get('content-type') || '',
       responseBodyPreview: responseText.slice(0, 500),
-      corsPreflightStatus: 'A cross-origin response was readable; network and CORS routing are reachable.',
+      corsPreflightStatus: response.ok
+        ? 'The browser CORS route is ready. A real WHIP session is negotiated only when Start Stream is pressed.'
+        : `The WHIP CORS preflight returned HTTP ${response.status}.`,
       fetchErrorName: '',
       fetchErrorMessage: '',
-      lastIngestError: ''
+      lastIngestError: response.ok ? '' : `Browser ingest CORS preflight returned HTTP ${response.status}.`
     }
     console.log('[Browser WHIP] reachability response', diagnostics)
     return diagnostics
@@ -287,11 +411,17 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     stopped: false,
     connected: false,
     failureTimer: 0,
-    failureStartedAt: 0
+    failureStartedAt: 0,
+    qualityTimer: 0,
+    lastOutboundStats: null
   }
   activeSession = session
   mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream))
-  await applyMusicAudioSenderParameters(peerConnection, mediaStream)
+  const h264Preferred = preferH264VideoCodec(peerConnection)
+  await Promise.all([
+    applyMusicAudioSenderParameters(peerConnection, mediaStream),
+    applyProgramVideoSenderParameters(peerConnection, mediaStream)
+  ])
   const emitStatus = (status, extra = {}) => onStatus({
     status,
     connectionState: peerConnection.connectionState,
@@ -380,9 +510,12 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
       type: offer.type,
       sdp: applyMusicOpusSdp(offer.sdp)
     }
-    console.log('[Browser WHIP] music Opus offer', {
+    console.log('[Browser WHIP] high-quality offer', {
       stereoRequested: /stereo=1/i.test(musicOffer.sdp || ''),
       maxAverageBitrate: MUSIC_AUDIO_MAX_BITRATE,
+      videoTargetBitrate: PROGRAM_VIDEO_MAX_BITRATE,
+      videoTargetFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
+      h264Preferred,
       dtxDisabled: /usedtx=0/i.test(musicOffer.sdp || '')
     })
     await peerConnection.setLocalDescription(musicOffer)
@@ -473,7 +606,10 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
       ? new RTCSessionDescription({ type: 'answer', sdp: answerSdp })
       : { type: 'answer', sdp: answerSdp }
     await peerConnection.setRemoteDescription(answer)
-    await applyMusicAudioSenderParameters(peerConnection, mediaStream, 'after-answer')
+    await Promise.all([
+      applyMusicAudioSenderParameters(peerConnection, mediaStream, 'after-answer'),
+      applyProgramVideoSenderParameters(peerConnection, mediaStream, 'after-answer')
+    ])
     console.log('[Browser WHIP] remote answer applied', {
       answerLength: answerSdp.length,
       iceConnectionState: peerConnection.iceConnectionState,
@@ -484,6 +620,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     await waitForConnection(peerConnection, mediaStream, emitStatus)
     if (session.stopped || activeSession !== session) throw new Error('Browser WebRTC ingest was stopped.')
     session.connected = true
+    startOutboundQualityMonitor(session)
     const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
       localOfferCreated: true,
       remoteAnswerSet: true,
@@ -536,6 +673,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     onError(error, diagnostics)
     if (activeSession === session) activeSession = null
     session.stopped = true
+    if (session.qualityTimer) window.clearInterval(session.qualityTimer)
     peerConnection.close()
     throw error
   }
@@ -548,6 +686,8 @@ export async function stopBrowserWebrtcIngest() {
   session.stopped = true
   if (session.failureTimer) window.clearTimeout(session.failureTimer)
   session.failureTimer = 0
+  if (session.qualityTimer) window.clearInterval(session.qualityTimer)
+  session.qualityTimer = 0
   session.peerConnection.close()
   session.emitStatus?.('closed')
   if (session.resourceUrl) {
