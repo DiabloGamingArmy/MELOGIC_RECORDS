@@ -1409,7 +1409,7 @@ function renderStreamDetailsPanel() {
           <span>${liveHostViewerCount()} viewers</span>
         </div>
       </header>
-      <div class="studio-live-stream-layout studio-live-stream-layout--details">
+      <div class="studio-live-stream-layout studio-live-stream-layout--details" data-live-scroll-key="stream-details">
         <div class="studio-live-details-stack">
         <form class="studio-live-details-form" data-live-stream-form>
           <label>Stream title<input name="title" maxlength="90" required value="${esc(form.title)}" /></label>
@@ -1717,7 +1717,7 @@ function renderSequenceEditorPanel() {
             <span>${esc(live.activeSequence?.title || 'No sequence')}</span>
           </div>
           <div class="studio-live-sequence-table">
-            <div class="studio-live-sequence-scroll">
+            <div class="studio-live-sequence-scroll" data-live-scroll-key="sequence-playout">
               <div class="studio-live-sequence-head">
                 <span>#</span><span>Status</span><span>Art</span><span>Type</span><span>Title</span><span>Artist</span><span>Album</span><span>Category</span><span>Dur</span><span>ETA</span><span>Playing</span><span>Fade I/O/X</span><span>Source</span><span>Actions</span>
               </div>
@@ -2969,7 +2969,7 @@ function renderLiveStudio() {
                 ? renderSafetyPanel()
                 : renderStreamDetailsPanel()
   return `
-    <section class="studio-live-main">
+    <section class="studio-live-main" data-live-panel-content="${esc(panel)}">
       ${live.error ? `<p class="studio-live-error">${esc(live.error)}</p>` : ''}
       ${panelContent}
       ${live.contextMenu ? renderLiveContextMenu(live.contextMenu) : ''}
@@ -3182,8 +3182,46 @@ function renderLiveStatusBar() {
   `
 }
 
+let shellRenderToken = 0
+
+function captureLiveScrollState(panel = '') {
+  const root = app.querySelector('[data-live-panel-content]')
+  if (!root || root.dataset.livePanelContent !== panel) return null
+  const positions = [...root.querySelectorAll('[data-live-scroll-key]')].map((element) => ({
+    key: element.dataset.liveScrollKey,
+    left: element.scrollLeft,
+    top: element.scrollTop
+  }))
+  return {
+    panel,
+    positions,
+    windowX: window.scrollX,
+    windowY: window.scrollY
+  }
+}
+
+function restoreLiveScrollState(scrollState, renderToken) {
+  if (!scrollState) return
+  const apply = () => {
+    if (renderToken !== shellRenderToken) return
+    const root = app.querySelector('[data-live-panel-content]')
+    if (!root || root.dataset.livePanelContent !== scrollState.panel) return
+    scrollState.positions.forEach(({ key, left, top }) => {
+      const element = [...root.querySelectorAll('[data-live-scroll-key]')]
+        .find((candidate) => candidate.dataset.liveScrollKey === key)
+      if (element) element.scrollTo({ left, top })
+    })
+    window.scrollTo(scrollState.windowX, scrollState.windowY)
+  }
+  apply()
+  window.requestAnimationFrame(apply)
+}
+
 function renderShell() {
   const active = currentStudioSection()
+  const livePanel = active === 'live' ? currentLivePanel() : ''
+  const liveScrollState = active === 'live' ? captureLiveScrollState(livePanel) : null
+  const renderToken = ++shellRenderToken
   if (active === 'live' && isLiveMonitorRoute()) {
     app.innerHTML = `<main class="studio-live-monitor-page">${renderLiveMonitorPage()}</main>`
     hydrateStudioStableImages(app)
@@ -3208,6 +3246,7 @@ function renderShell() {
     attachProgramMixerPreview()
   }
   bind()
+  restoreLiveScrollState(liveScrollState, renderToken)
 }
 
 async function loadDawData() {

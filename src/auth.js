@@ -121,6 +121,13 @@ app.innerHTML = `
                 <button type="button" class="password-toggle" data-password-toggle data-target="signup-password" aria-label="Show password" aria-pressed="false">Show</button>
               </div>
             </label>
+            <label>
+              <span>Confirm Password</span>
+              <div class="password-field">
+                <input type="password" name="signup-confirm-password" placeholder="Re-enter your password" autocomplete="new-password" required />
+                <button type="button" class="password-toggle" data-password-toggle data-target="signup-confirm-password" aria-label="Show password" aria-pressed="false">Show</button>
+              </div>
+            </label>
             <div class="auth-recaptcha-status" data-recaptcha-status data-state="idle">
               <span class="auth-recaptcha-check" aria-hidden="true">✓</span>
               <span class="auth-recaptcha-copy">
@@ -562,10 +569,17 @@ async function handleSignUpSubmit(event) {
   const username = signupForm.querySelector('[name="username"]').value.trim().toLowerCase()
   const email = signupForm.querySelector('[name="signup-email"]').value.trim()
   const password = signupForm.querySelector('[name="signup-password"]').value
+  const confirmPassword = signupForm.querySelector('[name="signup-confirm-password"]').value
   const signupValidation = validateSignupFields(displayName, username)
 
   if (!signupValidation.valid) {
     setFeedback(signupValidation.message, 'error')
+    return
+  }
+
+  if (password !== confirmPassword) {
+    setFeedback('The passwords do not match.', 'error')
+    signupForm.querySelector('[name="signup-confirm-password"]')?.focus()
     return
   }
 

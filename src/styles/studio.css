@@ -1596,6 +1596,7 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-live-sequence-panel>.studio-live-decks{margin-top:16px}
 .studio-live-sequence-panel>.studio-live-workspace{margin-top:12px}
 .studio-live-sequence-panel>.studio-live-footer{margin-block:12px 14px}
+.studio-live-sequence-panel{grid-template-rows:auto auto minmax(0,1fr) auto}
 .studio-live-deck,.studio-live-library,.studio-live-playout,.studio-live-footer{
   border-radius:2px;
   background:rgba(12,18,29,.7);
