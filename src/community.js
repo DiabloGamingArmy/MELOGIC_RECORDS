@@ -94,6 +94,7 @@ const state = {
   activeCommunitySlug: '',
   activeTopicLabel: 'For You',
   selectedCommunityFilters: [],
+  discoveryTab: 'suggested',
   activeTag: normalizeTagKey(parseFeedParam('tag')),
   feedSearch: parseFeedParam('search'),
   feedSort: ['new', 'top-today', 'top-week', 'most-discussed'].includes(parseFeedParam('sort')) ? parseFeedParam('sort') : 'new',
@@ -756,6 +757,10 @@ function renderStoriesRow() {
 
   return `
     <section class="community-stories-row" aria-label="Community stories" data-community-stories-scroll>
+      <div class="community-stories-label" aria-hidden="true">
+        <strong>Stories</strong>
+        <span>Creator updates</span>
+      </div>
       <button type="button" class="community-story-item is-create ${hasOwnActiveStory ? 'has-active-story' : ''}" data-open-story-composer>
         <span class="community-story-ring"><span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span></span>
         <strong>${hasOwnActiveStory ? 'Add Story' : 'Your Story'}</strong>
@@ -776,7 +781,6 @@ function renderStoriesRow() {
 function renderCommunityScrollChrome() {
   return `
     <div class="community-scroll-chrome" data-community-scroll-chrome>
-      ${renderTopicBar()}
       ${renderStoriesRow()}
       <div class="community-shell-divider" aria-hidden="true"></div>
     </div>
@@ -2443,6 +2447,7 @@ function renderCommunityImageViewer() {
 }
 
 function renderLeftNav() {
+  const topicCommunities = visibleTopicCommunities()
   const navGroups = [
     {
       label: 'Public',
@@ -2482,13 +2487,27 @@ function renderLeftNav() {
             ${group.items.map(renderItem).join('')}
           </div>
         `).join('')}
+        <details class="community-left-topic-filter" ${state.selectedCommunityFilters.length ? 'open' : ''}>
+          <summary>
+            <span>${iconSvg('tag')} Topics</span>
+            <em>${state.selectedCommunityFilters.length ? formatCount(state.selectedCommunityFilters.length) : 'Browse'}</em>
+          </summary>
+          <div>
+            ${topicCommunities.map((community) => `
+              <button type="button" class="${state.selectedCommunityFilters.includes(community.communityId) ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(community.communityId)}" aria-pressed="${state.selectedCommunityFilters.includes(community.communityId) ? 'true' : 'false'}">
+                <span>${escapeHtml(community.name)}</span>
+              </button>
+            `).join('')}
+            <a href="${ROUTES.communityCommunities}">${iconSvg('folder')} <span>Browse all communities</span></a>
+          </div>
+        </details>
       </nav>
     </aside>
   `
 }
 
 function trendingCommunities() {
-  return displayedCommunities()
+  return [...displayedCommunities()]
     .sort((a, b) => {
       const scoreA = Number(a.focusCount || 0) + Number(a.postCount || 0)
       const scoreB = Number(b.focusCount || 0) + Number(b.postCount || 0)
@@ -2599,45 +2618,45 @@ async function loadWikipediaHistory() {
   }
 }
 
-function renderSidebar() {
-  const suggested = displayedCommunities()
+function suggestedCommunities() {
+  return displayedCommunities()
     .filter((community) => !state.communityFocus[community.communityId])
-    .slice(0, 5)
-  const communities = trendingCommunities()
+    .slice(0, 4)
+}
+
+function renderCommunityDiscoveryBody() {
+  const isTrending = state.discoveryTab === 'trending'
+  const communities = isTrending ? trendingCommunities().slice(0, 4) : suggestedCommunities()
+  return `
+    <div class="community-discovery-heading">
+      <h2>Discover Communities</h2>
+      <a href="${ROUTES.communityCommunities}">View all</a>
+    </div>
+    <div class="community-discovery-tabs" role="tablist" aria-label="Community discovery">
+      <button type="button" role="tab" aria-selected="${isTrending ? 'false' : 'true'}" class="${isTrending ? '' : 'is-active'}" data-community-discovery-tab="suggested">Suggested</button>
+      <button type="button" role="tab" aria-selected="${isTrending ? 'true' : 'false'}" class="${isTrending ? 'is-active' : ''}" data-community-discovery-tab="trending">Trending</button>
+    </div>
+    ${communities.length ? `
+      <div class="community-suggested-list">
+        ${communities.map((community) => `
+          <article>
+            <a href="${communityRoute(community.slug)}" title="${escapeHtml(`${formatCount(community.focusCount)} focused · ${formatCount(community.postCount)} posts`)}">
+              <span>${escapeHtml(community.name.slice(0, 1).toUpperCase())}</span>
+              <strong>${escapeHtml(community.name)}</strong>
+            </a>
+            ${isTrending ? '' : `<button type="button" data-toggle-community-focus="${escapeHtml(community.communityId)}">${state.communityFocus[community.communityId] ? 'Focused' : 'Focus'}</button>`}
+          </article>
+        `).join('')}
+      </div>
+    ` : `<p>${isTrending ? 'Communities will trend here as creators focus and post.' : 'Communities will appear here as creators focus spaces.'}</p>`}
+  `
+}
+
+function renderSidebar() {
   return `
     <aside class="community-right-rail community-sidebar">
-      <section class="community-rail-card">
-        <h2>Suggested Communities</h2>
-        ${suggested.length ? `
-          <div class="community-suggested-list">
-            ${suggested.map((community) => `
-              <article>
-                <a href="${communityRoute(community.slug)}">
-                  <span>${escapeHtml(community.name.slice(0, 1).toUpperCase())}</span>
-                  <strong>${escapeHtml(community.name)}</strong>
-                  <em>${formatCount(community.focusCount)} focused · ${formatCount(community.postCount)} posts</em>
-                </a>
-                <button type="button" data-toggle-community-focus="${escapeHtml(community.communityId)}">${state.communityFocus[community.communityId] ? 'Focused' : 'Focus'}</button>
-              </article>
-            `).join('')}
-          </div>
-        ` : '<p>Communities will appear here as creators focus spaces.</p>'}
-      </section>
-      <section class="community-rail-card">
-        <h2>Trending Communities</h2>
-        ${communities.length ? `
-          <div class="community-suggested-list">
-            ${communities.map((community) => `
-              <article>
-                <a href="${communityRoute(community.slug)}">
-                  <span>${escapeHtml(community.name.slice(0, 1).toUpperCase())}</span>
-                  <strong>${escapeHtml(community.name)}</strong>
-                  <em>${formatCount(community.focusCount)} focused · ${formatCount(community.postCount)} posts</em>
-                </a>
-              </article>
-            `).join('')}
-          </div>
-        ` : '<p>Communities will trend here as creators focus and post.</p>'}
+      <section class="community-rail-card community-discovery-card" data-community-discovery-widget>
+        ${renderCommunityDiscoveryBody()}
       </section>
       ${renderHistoryWidget()}
       <section class="community-rail-card">
@@ -2646,6 +2665,28 @@ function renderSidebar() {
       </section>
     </aside>
   `
+}
+
+function bindCommunityFocusButtons(root = app) {
+  root?.querySelectorAll('[data-toggle-community-focus]').forEach((button) => button.addEventListener('click', (event) => {
+    stopCommunityActionEvent(event)
+    handleToggleFocus(button.getAttribute('data-toggle-community-focus'))
+  }))
+}
+
+function bindCommunityDiscoveryWidgetEvents(root = app) {
+  root?.querySelectorAll('[data-community-discovery-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextTab = button.getAttribute('data-community-discovery-tab') === 'trending' ? 'trending' : 'suggested'
+      if (nextTab === state.discoveryTab) return
+      state.discoveryTab = nextTab
+      const widget = app?.querySelector('[data-community-discovery-widget]')
+      if (!widget) return
+      widget.innerHTML = renderCommunityDiscoveryBody()
+      bindCommunityDiscoveryWidgetEvents(widget)
+      bindCommunityFocusButtons(widget)
+    })
+  })
 }
 
 function renderDetail() {
@@ -2791,7 +2832,7 @@ function renderFeedToolbar() {
           ${state.feedSearch ? `<button type="button" data-clear-community-search>${escapeHtml(state.feedSearch)} ${iconSvg('x')}</button>` : ''}
         </div>` : ''}
       </div>
-      <div class="community-feed-controls">
+      <div class="community-feed-controls" aria-label="Search, sort, and posting actions">
         <form data-community-feed-search>
           <input type="search" name="communityFeedSearch" value="${escapeHtml(state.feedSearch)}" placeholder="Search posts, tags, creators" />
           <button type="submit" title="Search">${iconSvg('search')}</button>
@@ -5652,6 +5693,7 @@ function bindEvents() {
   setupCommunityPendingLeaveWarning()
   bindFeedRegionEvents(app)
   bindHistoryWidgetEvents(app)
+  bindCommunityDiscoveryWidgetEvents(app)
   setupCommunityOutsideClick()
   app.querySelectorAll('[data-community-tab]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -5872,10 +5914,7 @@ function bindEvents() {
     state.communityFilters.category = event.target.value
     loadCommunities()
   })
-  app.querySelectorAll('[data-toggle-community-focus]').forEach((button) => button.addEventListener('click', (event) => {
-    stopCommunityActionEvent(event)
-    handleToggleFocus(button.getAttribute('data-toggle-community-focus'))
-  }))
+  bindCommunityFocusButtons(app)
   app.querySelector('[data-community-edit-post-form]')?.addEventListener('submit', handleEditPostSubmit)
   app.querySelectorAll('[data-close-edit-post]').forEach((button) => button.addEventListener('click', closeEditPostModal))
   app.querySelectorAll('[data-close-community-report]').forEach((button) => {
