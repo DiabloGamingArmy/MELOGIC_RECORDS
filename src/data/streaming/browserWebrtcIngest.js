@@ -4,6 +4,8 @@ const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/rt
 const CONNECTION_TIMEOUT_MS = 15000
 const FETCH_TIMEOUT_MS = 15000
 const CONNECTION_FAILURE_GRACE_MS = 30000
+const OUTBOUND_STATS_INTERVAL_MS = 10000
+const OUTBOUND_STALL_SAMPLE_LIMIT = 2
 const MUSIC_AUDIO_MAX_BITRATE = 256000
 // 1080p30 browser publishing is intentionally bounded to the same practical
 // range used by major broadcast services. WebRTC congestion control still has
@@ -278,6 +280,18 @@ async function collectOutboundQualityStats(session) {
     const framesPerSecond = video && previous.videoFrames != null
       ? Number(((Math.max(0, Number(video.framesEncoded || 0) - Number(previous.videoFrames || 0)) * 1000) / elapsedMs).toFixed(1))
       : Number(video?.framesPerSecond || 0) || null
+    const hasPreviousSample = previous.at != null
+    const audioTrackLive = session.mediaStream?.getAudioTracks?.().some((track) => track.readyState === 'live') === true
+    const videoTrackLive = session.mediaStream?.getVideoTracks?.().some((track) => track.readyState === 'live') === true
+    const audioAdvanced = audio && previous.audioBytes != null && Number(audio.bytesSent || 0) > Number(previous.audioBytes || 0)
+    const videoAdvanced = video && previous.videoBytes != null && Number(video.bytesSent || 0) > Number(previous.videoBytes || 0)
+    const outboundAdvanced = Boolean(audioAdvanced || videoAdvanced)
+    if (!hasPreviousSample || outboundAdvanced || (!audioTrackLive && !videoTrackLive)) {
+      session.outboundStallSamples = 0
+      if (outboundAdvanced || !hasPreviousSample) session.lastOutboundProgressAt = Date.now()
+    } else {
+      session.outboundStallSamples = Number(session.outboundStallSamples || 0) + 1
+    }
     const selectedProtocol = String(localCandidate?.protocol || remoteCandidate?.protocol || '').toLowerCase()
     const availableOutgoingBitrateKbps = Number.isFinite(Number(candidatePair?.availableOutgoingBitrate))
       ? Math.round(Number(candidatePair.availableOutgoingBitrate) / 1000)
@@ -306,6 +320,8 @@ async function collectOutboundQualityStats(session) {
       candidatePairCurrentRoundTripTimeMs: Number.isFinite(Number(candidatePair?.currentRoundTripTime))
         ? Math.round(Number(candidatePair.currentRoundTripTime) * 1000)
         : null,
+      outboundStallSamples: session.outboundStallSamples,
+      outboundLastProgressAt: session.lastOutboundProgressAt ? new Date(session.lastOutboundProgressAt).toISOString() : '',
       outboundQualityWarning: video && previous.videoBytes != null && videoBitrateKbps < 1800
         ? 'Upload bandwidth is too low for clean 1080p video. Melogic is preserving motion and may reduce resolution.'
         : ''
@@ -317,6 +333,14 @@ async function collectOutboundQualityStats(session) {
       videoFrames: video?.framesEncoded
     }
     session.emitStatus?.('connected', diagnostics)
+    if (session.outboundStallSamples >= OUTBOUND_STALL_SAMPLE_LIMIT) {
+      const error = new Error('Browser encoder stopped sending media while WebRTC still appeared connected.')
+      session.reportFailure?.(error, {
+        ...diagnostics,
+        outboundMediaStalled: true,
+        outboundStallThresholdMs: OUTBOUND_STATS_INTERVAL_MS * OUTBOUND_STALL_SAMPLE_LIMIT
+      })
+    }
   } catch (error) {
     console.warn('[Browser WHIP] outbound quality stats unavailable', error)
   }
@@ -325,7 +349,7 @@ async function collectOutboundQualityStats(session) {
 function startOutboundQualityMonitor(session) {
   if (session.qualityTimer) window.clearInterval(session.qualityTimer)
   void collectOutboundQualityStats(session)
-  session.qualityTimer = window.setInterval(() => void collectOutboundQualityStats(session), 10000)
+  session.qualityTimer = window.setInterval(() => void collectOutboundQualityStats(session), OUTBOUND_STATS_INTERVAL_MS)
 }
 
 function applyMusicOpusSdp(sdp = '') {
@@ -522,7 +546,10 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     failureTimer: 0,
     failureStartedAt: 0,
     qualityTimer: 0,
-    lastOutboundStats: null
+    lastOutboundStats: null,
+    outboundStallSamples: 0,
+    lastOutboundProgressAt: 0,
+    failureReported: false
   }
   activeSession = session
   mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream))
@@ -537,6 +564,18 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     ingestEndpointURL: safeEndpoint,
     ...connectionDiagnostics(peerConnection, mediaStream, extra)
   })
+  const reportFailure = (error, extra = {}) => {
+    if (session.stopped || session.failureReported || activeSession !== session) return
+    session.failureReported = true
+    session.connected = false
+    const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
+      lastIngestError: error?.message || String(error),
+      ...extra
+    })
+    onError(error, diagnostics)
+    void stopBrowserWebrtcIngest()
+  }
+  session.reportFailure = reportFailure
   const emitCurrentState = (event) => {
     const connectionState = peerConnection.connectionState
     const iceConnectionState = peerConnection.iceConnectionState
@@ -578,7 +617,6 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
       session.failureTimer = window.setTimeout(() => {
         session.failureTimer = 0
         if (session.stopped || activeSession !== session || whipTransportReady(peerConnection)) return
-        session.connected = false
         const error = new Error('Browser encoder connection is temporarily unavailable.')
         const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
           lastIngestError: error.message,
@@ -592,8 +630,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
           iceConnectionState: peerConnection.iceConnectionState,
           graceMs: CONNECTION_FAILURE_GRACE_MS
         })
-        onError(error, diagnostics)
-        void stopBrowserWebrtcIngest()
+        reportFailure(error, diagnostics)
       }, CONNECTION_FAILURE_GRACE_MS)
     }
   }

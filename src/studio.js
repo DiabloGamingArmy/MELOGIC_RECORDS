@@ -263,6 +263,9 @@ const state = {
     streamingProtocol: 'hls',
     ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
     browserIngestActive: false,
+    browserIngestReconnectTimer: 0,
+    browserIngestReconnectAttempt: 0,
+    browserIngestReconnecting: false,
     providerDiagnostics: {},
     hlsHealthTimer: 0,
     hlsHealthUrl: '',
@@ -343,6 +346,7 @@ const state = {
     chatDraft: '',
     chatEnabled: true,
     outputStatus: 'Sequence Software input ready.',
+    validationWarning: '',
     monitorEnabled: false,
     monitorVolume: 0.85,
     monitorConnected: false,
@@ -1444,6 +1448,7 @@ function renderStreamDetailsPanel() {
             <small>${form.coverArtSource === 'upload' ? 'Using uploaded square cover.' : form.coverArtURL ? 'Using linked cover URL.' : 'No cover selected yet.'}</small>
           </div>
           <label class="studio-live-check"><input name="rightsAccepted" type="checkbox" ${form.rightsAccepted ? 'checked' : ''} /> I have the rights and permissions required to broadcast this stream.</label>
+          ${live.validationWarning ? `<div class="studio-live-terms-alert" role="alert"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><div><strong>Acceptance required</strong><span>${esc(live.validationWarning)}</span></div></div>` : ''}
           ${renderAdvancedStreamingSettings()}
           ${isNativeRecovery ? '<p class="studio-live-error">This Native Streaming session was interrupted because the browser host session ended. Resume to create a new host session, or end it for listeners.</p>' : ''}
           ${nativeLiveStatusCopy ? `<p class="studio-live-upload-status">${esc(nativeLiveStatusCopy)}</p>` : ''}
@@ -5275,11 +5280,128 @@ function scheduleLiveStudioDraftSave() {
   }, 1400)
 }
 
+const BROWSER_INGEST_RECONNECT_DELAYS_MS = [1500, 3000, 7000, 15000, 30000]
+
+function clearBrowserIngestReconnect() {
+  const live = liveState()
+  if (live.browserIngestReconnectTimer) window.clearTimeout(live.browserIngestReconnectTimer)
+  live.browserIngestReconnectTimer = 0
+  live.browserIngestReconnectAttempt = 0
+  live.browserIngestReconnecting = false
+}
+
+async function startStudioBrowserIngestSession({ streamId = '', streamKey = '', reconnecting = false } = {}) {
+  const live = liveState()
+  const mediaStream = await nativeProgramMediaStream()
+  return startBrowserWebrtcIngest({
+    streamId,
+    streamKey,
+    mediaStream,
+    onStatus: (ingestStatus = {}) => {
+      if (live.streamId !== streamId || live.ending) return
+      live.providerDiagnostics = {
+        ...(live.providerDiagnostics || {}),
+        ...ingestStatus,
+        ingestConnectionState: ingestStatus.connectionState || ingestStatus.status || 'connecting'
+      }
+      if (ingestStatus.connectionState === 'connected') {
+        live.outputStatus = reconnecting
+          ? 'Browser encoder reconnected. Rebuilding the live buffer...'
+          : 'Browser encoder connected. Waiting for HLS segments...'
+      }
+    },
+    onError: (error, ingestDiagnostics = {}) => {
+      if (live.streamId !== streamId || live.ending) return
+      const wasPublishing = live.browserIngestActive
+      live.browserIngestActive = false
+      live.providerDiagnostics = {
+        ...(live.providerDiagnostics || {}),
+        ...ingestDiagnostics,
+        ingestConnectionState: 'reconnecting',
+        lastIngestError: error?.message || String(error)
+      }
+      live.outputStatus = 'Browser encoder connection was interrupted. Reconnecting automatically...'
+      if (wasPublishing) scheduleBrowserIngestReconnect({ streamId, streamKey })
+      heartbeatMusicLiveStream(streamId, {
+        ...liveProgramOutputState(),
+        connectionStatus: 'reconnecting'
+      }).catch(() => {})
+      if (currentStudioSection() === 'live') renderShell()
+    }
+  })
+}
+
+function scheduleBrowserIngestReconnect({ streamId = '', streamKey = '' } = {}) {
+  const live = liveState()
+  if (!streamId || !streamKey || live.streamId !== streamId || live.ending || live.browserIngestReconnectTimer || live.browserIngestReconnecting) return
+  const attempt = Number(live.browserIngestReconnectAttempt || 0)
+  const delayMs = BROWSER_INGEST_RECONNECT_DELAYS_MS[Math.min(attempt, BROWSER_INGEST_RECONNECT_DELAYS_MS.length - 1)]
+  live.browserIngestReconnectAttempt = attempt + 1
+  live.outputStatus = `Browser encoder reconnecting in ${Math.ceil(delayMs / 1000)}s...`
+  live.browserIngestReconnectTimer = window.setTimeout(async () => {
+    live.browserIngestReconnectTimer = 0
+    if (live.streamId !== streamId || live.ending) return
+    live.browserIngestReconnecting = true
+    live.outputStatus = `Reconnecting browser encoder (attempt ${live.browserIngestReconnectAttempt})...`
+    if (currentStudioSection() === 'live') renderShell()
+    let shouldRetry = false
+    try {
+      const result = await startStudioBrowserIngestSession({ streamId, streamKey, reconnecting: true })
+      if (live.streamId !== streamId || live.ending) {
+        await stopBrowserWebrtcIngest().catch(() => {})
+        return
+      }
+      live.browserIngestActive = true
+      live.audioPublishedToProvider = result.audioPublished === true
+      live.videoPublishedToProvider = result.videoPublished === true
+      live.browserIngestReconnectAttempt = 0
+      live.providerDiagnostics = {
+        ...(live.providerDiagnostics || {}),
+        ...(result.diagnostics || {}),
+        ingestEndpointURL: result.ingestEndpointURL || live.providerDiagnostics?.ingestEndpointURL || '',
+        ingestConnectionState: result.connectionState || 'connected',
+        whipConnectedAt: new Date().toISOString(),
+        whipReconnectedAt: new Date().toISOString(),
+        whipStreamKey: streamKey,
+        hlsHealthStreamKey: streamKey,
+        hlsUrl: buildHlsPlaybackUrl(streamKey),
+        hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
+        lastIngestError: ''
+      }
+      live.outputStatus = 'Browser encoder reconnected. Rebuilding the live buffer...'
+      startStudioHlsHealthPolling()
+      heartbeatMusicLiveStream(streamId, {
+        ...liveProgramOutputState(),
+        connectionStatus: 'live'
+      }).catch(() => {})
+    } catch (error) {
+      console.warn('[studio-live] browser ingest reconnect failed', {
+        streamId,
+        attempt: live.browserIngestReconnectAttempt,
+        message: error?.message || String(error)
+      })
+      shouldRetry = true
+    } finally {
+      live.browserIngestReconnecting = false
+      if (shouldRetry) scheduleBrowserIngestReconnect({ streamId, streamKey })
+      if (currentStudioSection() === 'live') renderShell()
+    }
+  }, delayMs)
+}
+
 async function startLiveStudioStream() {
   const live = liveState()
   if (!state.user?.uid || live.starting || live.streamId) return
   live.providerId = live.streamingProtocol === 'nativeStreaming' ? STREAM_PROVIDERS.nativeStreaming : STREAM_PROVIDERS.hlsEdge
   live.ingestMethod = normalizeIngestMethod(live.ingestMethod)
+  if (!live.streamForm.rightsAccepted) {
+    live.validationWarning = 'Accept the rights and permissions acknowledgement before starting your stream.'
+    live.error = ''
+    live.outputStatus = 'Broadcast permission acknowledgement is required.'
+    renderShell()
+    return
+  }
+  live.validationWarning = ''
   live.starting = true
   live.error = ''
   live.outputStatus = 'Creating Melogic Streaming live stream...'
@@ -5287,7 +5409,6 @@ async function startLiveStudioStream() {
   let pendingStreamId = ''
   let browserIngestStarted = false
   try {
-    if (!live.streamForm.rightsAccepted) throw new Error('Accept the live stream rules before starting.')
     let streamKey = live.streamingProtocol === 'hls' ? ensureLiveStreamKey() : ''
     if (live.streamingProtocol === 'hls' && live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc && !isBrowserWebrtcIngestConfigured()) {
       throw new Error('Browser streaming needs the server WebRTC ingest URL configured.')
@@ -5353,34 +5474,13 @@ async function startLiveStudioStream() {
       if (isBrowserIngest) {
         live.outputStatus = 'Connecting Studio Program output to Melogic Edge...'
         renderShell()
-        const mediaStream = await nativeProgramMediaStream()
-        browserIngestResult = await startBrowserWebrtcIngest({
+        browserIngestResult = await startStudioBrowserIngestSession({
           streamId: pendingStreamId,
-          streamKey,
-          mediaStream,
-          onStatus: (ingestStatus = {}) => {
-            live.providerDiagnostics = {
-              ...(live.providerDiagnostics || {}),
-              ...ingestStatus,
-              ingestConnectionState: ingestStatus.connectionState || ingestStatus.status || 'connecting'
-            }
-            if (ingestStatus.connectionState === 'connected') {
-              live.outputStatus = 'Browser encoder connected. Waiting for HLS segments...'
-            }
-          },
-          onError: (error, ingestDiagnostics = {}) => {
-            live.providerDiagnostics = {
-              ...(live.providerDiagnostics || {}),
-              ...ingestDiagnostics,
-              ingestConnectionState: 'error',
-              lastIngestError: error?.message || String(error)
-            }
-            live.outputStatus = 'Browser encoder is temporarily unavailable. The live session remains open.'
-            if (currentStudioSection() === 'live') renderShell()
-          }
+          streamKey
         })
         browserIngestStarted = true
         live.browserIngestActive = true
+        live.browserIngestReconnectAttempt = 0
         live.audioPublishedToProvider = browserIngestResult.audioPublished === true
         live.videoPublishedToProvider = browserIngestResult.videoPublished === true
         live.providerDiagnostics = {
@@ -5513,6 +5613,7 @@ async function startLiveStudioStream() {
       callableDetails: firebaseDetails.details || firebaseDetails.customData || null,
       functionName: 'startLiveStudioStream'
     })
+    clearBrowserIngestReconnect()
     if (browserIngestStarted || live.browserIngestActive) await stopBrowserWebrtcIngest().catch(() => {})
     live.browserIngestActive = false
     if (pendingStreamId) await endMusicLiveStream(pendingStreamId).catch(() => {})
@@ -5531,9 +5632,9 @@ async function startLiveStudioStream() {
     live.livekitAudioPublication = null
     live.audioPublishedToProvider = false
     live.videoPublishedToProvider = false
-    live.error = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+    live.error = error?.message || (live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
       ? 'Browser streaming could not connect to the Melogic ingest server.'
-      : error?.message || 'Could not start Live Studio stream.'
+      : 'Could not start Live Studio stream.')
     live.outputStatus = 'Live stream start failed.'
   } finally {
     live.starting = false
@@ -5550,6 +5651,7 @@ async function endLiveStudioStream() {
   live.outputStatus = 'Ending Live Studio stream...'
   renderShell()
   try {
+    clearBrowserIngestReconnect()
     if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
     live.heartbeatTimer = 0
     stopStudioHlsHealthPolling()
@@ -5661,6 +5763,7 @@ async function endInterruptedNativeStream() {
 
 function unsubscribeLiveStudioRuntime() {
   const live = liveState()
+  clearBrowserIngestReconnect()
   stopStudioHlsHealthPolling()
   live.streamUnsubscribe?.()
   live.chatUnsubscribe?.()
@@ -5691,6 +5794,9 @@ function clearEndedLiveHostState(streamId = '') {
   live.nativeLastDemandChangeAt = ''
   live.providerDiagnostics = {}
   live.browserIngestActive = false
+  live.browserIngestReconnectTimer = 0
+  live.browserIngestReconnectAttempt = 0
+  live.browserIngestReconnecting = false
   live.room = null
   live.localTrack = null
   live.programAudioTrack = null
@@ -5941,6 +6047,10 @@ function bindLiveStudioControls() {
   })
   app.querySelector('[data-live-stream-form]')?.addEventListener('input', (e) => {
     updateLiveStreamFormFromElement(e.currentTarget)
+    if (e.target?.name === 'rightsAccepted' && live.streamForm.rightsAccepted) {
+      live.validationWarning = ''
+      app.querySelector('.studio-live-terms-alert')?.remove()
+    }
     updateLiveListenerPreviewDom()
     scheduleLiveStudioDraftSave()
   })

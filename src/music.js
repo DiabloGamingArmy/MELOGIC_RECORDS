@@ -223,6 +223,9 @@ const state = {
   hlsDiagnostics: {},
   hlsHealthTimer: 0,
   hlsHealthUrl: '',
+  hlsPlaybackRequested: false,
+  hlsRecoveryInFlight: false,
+  hlsRecoveryLastAt: 0,
   nativeViewerSessionId: '',
   nativeHostUnsubscribe: null,
   nativePlaybackTimer: 0,
@@ -2056,9 +2059,15 @@ async function refreshHlsHealth(stream = state.liveStream) {
   } else if (health.hlsHealth === 'offline' && state.liveStatus !== 'playing') {
     state.liveStatus = 'error'
     state.liveError = ''
-  } else if (health.hlsHealth === 'healthy' && !isCurrentLiveListenerActive(stream) && ['error', 'loadingManifest', 'stalled', 'waiting'].includes(state.liveStatus)) {
+  } else if (health.hlsHealth === 'healthy' && ['error', 'loadingManifest', 'stalled', 'waiting'].includes(state.liveStatus)) {
     state.liveStatus = 'ready'
     state.liveError = ''
+    const mediaNeedsReattach = Boolean(
+      state.hlsPlaybackRequested
+      && state.hlsMediaElement
+      && (state.hlsMediaElement.error || Number(state.hlsMediaElement.readyState || 0) === 0)
+    )
+    if (mediaNeedsReattach) void recoverHlsListenerPlayback(stream)
   }
   updateHlsDiagnosticsDom()
   return health
@@ -2346,6 +2355,7 @@ async function playHlsMediaFromGesture() {
 }
 
 async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(state.liveStream || {})) {
+  state.hlsPlaybackRequested = true
   const mode = currentHlsPlaybackMode()
   const dedicatedAudioUrl = mode === 'audioOnly' && isAllowedHlsPlaybackUrl(state.liveStream?.audioOnlyHlsUrl)
     ? state.liveStream.audioOnlyHlsUrl
@@ -2458,6 +2468,30 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
     }
   }
   await playHlsMediaFromGesture()
+}
+
+async function recoverHlsListenerPlayback(stream = state.liveStream) {
+  if (!stream || stream !== state.liveStream || !state.hlsPlaybackRequested || state.hlsRecoveryInFlight) return
+  const now = Date.now()
+  if (now - Number(state.hlsRecoveryLastAt || 0) < 5000) return
+  state.hlsRecoveryInFlight = true
+  state.hlsRecoveryLastAt = now
+  state.liveStatus = 'reconnecting'
+  updateLiveListenerControls()
+  try {
+    cleanupHlsPlayback()
+    await startHlsListenerPlayback(getPublicPlaybackInfo(stream))
+  } catch (error) {
+    state.liveStatus = 'stalled'
+    state.liveError = ''
+    state.hlsDiagnostics = {
+      ...(state.hlsDiagnostics || {}),
+      recoveryError: error?.message || String(error)
+    }
+    updateLiveListenerControls()
+  } finally {
+    state.hlsRecoveryInFlight = false
+  }
 }
 
 function nowPlayingDisplay(stream = {}) {
@@ -5090,6 +5124,9 @@ function disconnectLiveListener() {
   cleanupNativeMediaSourcePipeline()
   cleanupHlsPlayback()
   stopHlsHealthPolling()
+  state.hlsPlaybackRequested = false
+  state.hlsRecoveryInFlight = false
+  state.hlsRecoveryLastAt = 0
   state.hlsDiagnostics = {}
   if (state.liveStream?.id && state.listenerPresenceId) {
     leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
