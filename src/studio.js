@@ -1362,6 +1362,7 @@ function renderDetailedStreamOutputStatus() {
         <span>HLS: ${esc(hlsHealth)}</span>
       </div>
       <small>${esc(statusMessage)}</small>
+      ${diagnostics.outboundQualityWarning ? `<p class="studio-live-status-warning">${esc(diagnostics.outboundQualityWarning)}</p>` : ''}
       ${hlsUrl ? `<div class="studio-program-output-debug"><a class="studio-live-button" href="${esc(hlsUrl)}" target="_blank" rel="noreferrer">Open HLS URL</a><code title="${esc(hlsUrl)}">${esc(hlsUrl)}</code></div>` : ''}
       <dl class="studio-live-external-diagnostics">
         <div><dt>HLS URL</dt><dd>${esc(hlsUrl || 'not available')}</dd></div>
@@ -1542,7 +1543,7 @@ function renderAdvancedStreamingSettings() {
             <li>Offer SDP length: ${Number(diagnostics.offerSdpLength || 0)}</li>
             <li>Answer SDP length: ${Number(diagnostics.answerSdpLength || 0)}</li>
             <li>Program target: ${esc(live.programMixer.outputResolution || '1920x1080')} @ ${Number(live.programMixer.fps || 30)} fps</li>
-            <li>Encoder video target: ${Number(diagnostics.videoTargetBitrate || 8000000) / 1000000} Mbps</li>
+            <li>Encoder video target: ${Number(diagnostics.videoTargetBitrate || 12000000) / 1000000} Mbps</li>
             <li>Encoder audio target: ${Math.round(Number(diagnostics.audioTargetBitrate || 256000) / 1000)} kbps stereo</li>
             <li>Outbound video: ${diagnostics.outboundVideoBitrateKbps ? `${diagnostics.outboundVideoBitrateKbps} kbps` : 'awaiting samples'}</li>
             <li>Outbound dimensions: ${diagnostics.outboundVideoWidth && diagnostics.outboundVideoHeight ? `${diagnostics.outboundVideoWidth}×${diagnostics.outboundVideoHeight}` : 'awaiting samples'}</li>
@@ -3934,8 +3935,9 @@ async function nativeProgramMediaStream({ ensureCompatibilityVideo = false } = {
     const audioTrack = await getLivePublishTrack()
     if (audioTrack) stream.addTrack(audioTrack)
   }
-  // Browser WHIP feeds HLS.  Supply the persistent Program canvas even for an
-  // audio-only show because the HLS edge may require an A/V program.
+  // Publish only the tracks the host enabled. SRS can package audio-only and
+  // video-only programs, so a hidden compatibility canvas would waste encoder
+  // bandwidth and advertise video that the host never selected.
   if (live.videoEnabled || ensureCompatibilityVideo) {
     const mixer = ensureStudioProgramMixer()
     mixer.enableVideo()
@@ -5314,7 +5316,7 @@ async function startLiveStudioStream() {
       if (isBrowserIngest) {
         live.outputStatus = 'Connecting Studio Program output to Melogic Edge...'
         renderShell()
-        const mediaStream = await nativeProgramMediaStream({ ensureCompatibilityVideo: true })
+        const mediaStream = await nativeProgramMediaStream()
         browserIngestResult = await startBrowserWebrtcIngest({
           streamId: pendingStreamId,
           streamKey,

@@ -5,7 +5,9 @@ const CONNECTION_TIMEOUT_MS = 15000
 const FETCH_TIMEOUT_MS = 15000
 const CONNECTION_FAILURE_GRACE_MS = 30000
 const MUSIC_AUDIO_MAX_BITRATE = 256000
-const PROGRAM_VIDEO_MAX_BITRATE = 8000000
+const PROGRAM_VIDEO_START_BITRATE = 6000000
+const PROGRAM_VIDEO_MIN_BITRATE = 2500000
+const PROGRAM_VIDEO_MAX_BITRATE = 12000000
 const PROGRAM_VIDEO_MAX_FRAMERATE = 30
 
 let activeSession = null
@@ -163,7 +165,10 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
       maxFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
       scaleResolutionDownBy: 1
     }
-    params.degradationPreference = 'maintain-resolution'
+    // A fixed 1080p canvas at a collapsed WebRTC bitrate produces the large,
+    // persistent macroblocks seen by viewers. Balanced degradation lets the
+    // browser reduce resolution temporarily instead of destroying every frame.
+    params.degradationPreference = 'balanced'
     if (videoSender.setParameters) {
       await videoSender.setParameters(params)
       applied = true
@@ -185,6 +190,60 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
   return applied
 }
 
+function applyProgramVideoSdp(sdp = '') {
+  const text = String(sdp || '')
+  if (!text.includes('m=video')) return text
+  const lineBreak = text.includes('\r\n') ? '\r\n' : '\n'
+  const sections = text.split(`${lineBreak}m=`)
+  const videoIndex = sections.findIndex((section, index) => index > 0 && section.startsWith('video '))
+  if (videoIndex < 0) return text
+
+  let videoSection = `m=${sections[videoIndex]}`
+  videoSection = videoSection
+    .replace(new RegExp(`^b=AS:\\d+${lineBreak}`, 'gm'), '')
+    .replace(new RegExp(`^b=TIAS:\\d+${lineBreak}`, 'gm'), '')
+
+  const bandwidthLines = `b=AS:${Math.round(PROGRAM_VIDEO_MAX_BITRATE / 1000)}${lineBreak}b=TIAS:${PROGRAM_VIDEO_MAX_BITRATE}`
+  if (/^c=/m.test(videoSection)) {
+    videoSection = videoSection.replace(/^c=.*$/m, (line) => `${line}${lineBreak}${bandwidthLines}`)
+  }
+
+  const h264PayloadTypes = Array.from(videoSection.matchAll(/^a=rtpmap:(\d+)\s+H264\/90000\s*$/gmi))
+    .map((match) => match[1])
+  h264PayloadTypes.forEach((payloadType) => {
+    const fmtpPattern = new RegExp(`^a=fmtp:${payloadType}\\s+(.+)$`, 'mi')
+    const fmtpMatch = videoSection.match(fmtpPattern)
+    const bitrateParameters = {
+      'x-google-start-bitrate': String(Math.round(PROGRAM_VIDEO_START_BITRATE / 1000)),
+      'x-google-min-bitrate': String(Math.round(PROGRAM_VIDEO_MIN_BITRATE / 1000)),
+      'x-google-max-bitrate': String(Math.round(PROGRAM_VIDEO_MAX_BITRATE / 1000))
+    }
+    if (!fmtpMatch) {
+      const rtpmapPattern = new RegExp(`^a=rtpmap:${payloadType}.*$`, 'mi')
+      videoSection = videoSection.replace(rtpmapPattern, (line) => `${line}${lineBreak}a=fmtp:${payloadType} ${Object.entries(bitrateParameters).map(([key, value]) => `${key}=${value}`).join(';')}`)
+      return
+    }
+    const parameters = new Map(
+      fmtpMatch[1]
+        .split(';')
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .map((entry) => {
+          const [key, ...rest] = entry.split('=')
+          return [key, rest.join('=')]
+        })
+    )
+    Object.entries(bitrateParameters).forEach(([key, value]) => parameters.set(key, value))
+    videoSection = videoSection.replace(
+      fmtpPattern,
+      `a=fmtp:${payloadType} ${Array.from(parameters.entries()).map(([key, value]) => value ? `${key}=${value}` : key).join(';')}`
+    )
+  })
+
+  sections[videoIndex] = videoSection.replace(/^m=/, '')
+  return sections.join(`${lineBreak}m=`)
+}
+
 async function collectOutboundQualityStats(session) {
   const peerConnection = session?.peerConnection
   if (!peerConnection?.getStats || session?.stopped) return
@@ -193,6 +252,12 @@ async function collectOutboundQualityStats(session) {
     const reports = Array.from(stats.values())
     const video = reports.find((report) => report.type === 'outbound-rtp' && !report.isRemote && (report.kind === 'video' || report.mediaType === 'video'))
     const audio = reports.find((report) => report.type === 'outbound-rtp' && !report.isRemote && (report.kind === 'audio' || report.mediaType === 'audio'))
+    const remoteVideo = reports.find((report) => report.type === 'remote-inbound-rtp' && (
+      report.localId === video?.id || report.kind === 'video' || report.mediaType === 'video'
+    ))
+    const remoteAudio = reports.find((report) => report.type === 'remote-inbound-rtp' && (
+      report.localId === audio?.id || report.kind === 'audio' || report.mediaType === 'audio'
+    ))
     const now = performance.now()
     const previous = session.lastOutboundStats || {}
     const elapsedMs = Math.max(1, now - Number(previous.at || now))
@@ -204,7 +269,16 @@ async function collectOutboundQualityStats(session) {
       outboundVideoWidth: Number(video?.frameWidth || 0) || null,
       outboundVideoHeight: Number(video?.frameHeight || 0) || null,
       outboundVideoQualityLimitation: String(video?.qualityLimitationReason || 'none'),
-      outboundPacketsLost: Number(video?.packetsLost || 0) + Number(audio?.packetsLost || 0)
+      outboundVideoNackCount: Number(video?.nackCount || 0),
+      outboundVideoPliCount: Number(video?.pliCount || 0),
+      outboundVideoKeyFramesEncoded: Number(video?.keyFramesEncoded || 0),
+      remotePacketsLost: Number(remoteVideo?.packetsLost || 0) + Number(remoteAudio?.packetsLost || 0),
+      remoteRoundTripTimeMs: Number.isFinite(Number(remoteVideo?.roundTripTime))
+        ? Math.round(Number(remoteVideo.roundTripTime) * 1000)
+        : null,
+      outboundQualityWarning: video && previous.videoBytes != null && toKbps(video.bytesSent, previous.videoBytes) < 1800
+        ? 'Upload bandwidth is too low for clean 1080p video. Melogic is preserving motion and may reduce resolution.'
+        : ''
     }
     session.lastOutboundStats = { at: now, videoBytes: video?.bytesSent, audioBytes: audio?.bytesSent }
     session.emitStatus?.('connected', diagnostics)
@@ -508,11 +582,13 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     const offer = await peerConnection.createOffer()
     const musicOffer = {
       type: offer.type,
-      sdp: applyMusicOpusSdp(offer.sdp)
+      sdp: applyProgramVideoSdp(applyMusicOpusSdp(offer.sdp))
     }
     console.log('[Browser WHIP] high-quality offer', {
       stereoRequested: /stereo=1/i.test(musicOffer.sdp || ''),
       maxAverageBitrate: MUSIC_AUDIO_MAX_BITRATE,
+      videoStartBitrate: PROGRAM_VIDEO_START_BITRATE,
+      videoMinBitrate: PROGRAM_VIDEO_MIN_BITRATE,
       videoTargetBitrate: PROGRAM_VIDEO_MAX_BITRATE,
       videoTargetFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
       h264Preferred,

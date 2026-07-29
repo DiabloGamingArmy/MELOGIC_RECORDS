@@ -449,6 +449,17 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
         lastDemandChangeAt: cleanString(data.providerDiagnostics.lastDemandChangeAt, 80),
         lastDemandError: cleanString(data.providerDiagnostics.lastDemandError, 240),
         trackCount: Number.isFinite(Number(data.providerDiagnostics.trackCount)) ? Number(data.providerDiagnostics.trackCount) : null,
+        videoTargetBitrate: Number.isFinite(Number(data.providerDiagnostics.videoTargetBitrate)) ? Number(data.providerDiagnostics.videoTargetBitrate) : null,
+        outboundVideoBitrateKbps: Number.isFinite(Number(data.providerDiagnostics.outboundVideoBitrateKbps)) ? Number(data.providerDiagnostics.outboundVideoBitrateKbps) : null,
+        outboundAudioBitrateKbps: Number.isFinite(Number(data.providerDiagnostics.outboundAudioBitrateKbps)) ? Number(data.providerDiagnostics.outboundAudioBitrateKbps) : null,
+        outboundVideoWidth: Number.isFinite(Number(data.providerDiagnostics.outboundVideoWidth)) ? Number(data.providerDiagnostics.outboundVideoWidth) : null,
+        outboundVideoHeight: Number.isFinite(Number(data.providerDiagnostics.outboundVideoHeight)) ? Number(data.providerDiagnostics.outboundVideoHeight) : null,
+        outboundVideoNackCount: Number.isFinite(Number(data.providerDiagnostics.outboundVideoNackCount)) ? Number(data.providerDiagnostics.outboundVideoNackCount) : null,
+        outboundVideoPliCount: Number.isFinite(Number(data.providerDiagnostics.outboundVideoPliCount)) ? Number(data.providerDiagnostics.outboundVideoPliCount) : null,
+        remotePacketsLost: Number.isFinite(Number(data.providerDiagnostics.remotePacketsLost)) ? Number(data.providerDiagnostics.remotePacketsLost) : null,
+        remoteRoundTripTimeMs: Number.isFinite(Number(data.providerDiagnostics.remoteRoundTripTimeMs)) ? Number(data.providerDiagnostics.remoteRoundTripTimeMs) : null,
+        outboundVideoQualityLimitation: cleanString(data.providerDiagnostics.outboundVideoQualityLimitation, 80),
+        outboundQualityWarning: cleanString(data.providerDiagnostics.outboundQualityWarning, 240),
         recorderStartReason: cleanString(data.providerDiagnostics.recorderStartReason, 120),
         recorderStopReason: cleanString(data.providerDiagnostics.recorderStopReason, 120)
       }

@@ -1619,3 +1619,12 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   .studio-live-stream-layout{padding-inline:16px}
   .studio-live-listener-preview{border-left:0;border-top:1px solid rgba(130,160,220,.18);padding:18px 0 0}
 }
+.studio-live-status-warning {
+  margin: 10px 0 0;
+  border-left: 3px solid #ffbf69;
+  background: rgba(255, 191, 105, 0.08);
+  color: #ffd8a8;
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.45;
+}

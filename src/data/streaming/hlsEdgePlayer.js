@@ -57,6 +57,17 @@ function destroyActivePlayer(mediaEl) {
   active.cleanup()
 }
 
+export function setHlsQualityLevel(mediaEl, requestedLevel = -1) {
+  const active = activePlayers.get(mediaEl)
+  const hls = active?.hls
+  if (!hls) return false
+  const level = Number(requestedLevel)
+  const nextLevel = Number.isInteger(level) && level >= 0 && level < hls.levels.length ? level : -1
+  hls.currentLevel = nextLevel
+  hls.nextLevel = nextLevel
+  return true
+}
+
 export async function attachHlsStream({
   mediaEl,
   src,
@@ -103,7 +114,7 @@ export async function attachHlsStream({
     activePlayers.delete(mediaEl)
     clearMedia(mediaEl)
   }
-  activePlayers.set(mediaEl, { cleanup })
+  activePlayers.set(mediaEl, { cleanup, hls: null })
   console.info('[hls-edge] status', { status: 'loading', mode, src })
   onStatus({ status: 'loading', mode, src, mediaEl, hls: null })
 
@@ -167,6 +178,22 @@ export async function attachHlsStream({
       highestLevelHeight: Number(levels[highestLevel]?.height || 0) || null
     })
   })
+  hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data = {}) => {
+    const level = Number(data.level)
+    const details = hls.levels?.[level] || {}
+    onStatus({
+      status: 'qualityChanged',
+      mode,
+      src,
+      mediaEl,
+      hls,
+      native: false,
+      currentLevel: Number.isInteger(level) ? level : -1,
+      currentLevelBitrate: Number(details.bitrate || 0) || null,
+      currentLevelWidth: Number(details.width || 0) || null,
+      currentLevelHeight: Number(details.height || 0) || null
+    })
+  })
   hls.on(Hls.Events.ERROR, (_event, data = {}) => {
     const payload = {
       status: 'error',
@@ -182,6 +209,6 @@ export async function attachHlsStream({
   })
   hls.loadSource(src)
   hls.attachMedia(mediaEl)
-  activePlayers.set(mediaEl, { cleanup })
+  activePlayers.set(mediaEl, { cleanup, hls })
   return cleanup
 }
