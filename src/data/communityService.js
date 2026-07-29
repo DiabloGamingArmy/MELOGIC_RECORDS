@@ -606,6 +606,54 @@ export async function listFocusedCommunityPosts(uid = '', limitCount = 25, selec
   }
 }
 
+export async function listFollowedCreatorPosts(uid = '', {
+  limitCount = 24,
+  selectedCommunityIds = [],
+  tag = '',
+  search = ''
+} = {}) {
+  const viewerUid = String(uid || '').trim()
+  if (!viewerUid) return []
+
+  const followingSnapshot = await getDocs(query(
+    collection(db, 'users', viewerUid, 'following'),
+    limit(50)
+  ))
+  const followedIds = followingSnapshot.docs
+    .map((entry) => String(entry.id || '').trim())
+    .filter((authorUid) => authorUid && authorUid !== viewerUid)
+  if (!followedIds.length) return []
+
+  const selectedIds = new Set((Array.isArray(selectedCommunityIds) ? selectedCommunityIds : [])
+    .map((id) => String(id || '').trim())
+    .filter(Boolean))
+  const tagKey = normalizeTagKey(tag)
+  const searchToken = normalizeFeedSearchToken(search)
+  const pageLimit = Math.min(50, Math.max(1, Number(limitCount || 24)))
+  const chunks = []
+  for (let index = 0; index < followedIds.length; index += 30) {
+    chunks.push(followedIds.slice(index, index + 30))
+  }
+
+  const snapshots = await Promise.all(chunks.map((authorIds) => getDocs(query(
+    collection(db, POST_COLLECTION),
+    where('authorUid', 'in', authorIds),
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public'),
+    orderBy('createdAt', 'desc'),
+    limit(pageLimit)
+  ))))
+  const posts = snapshots
+    .flatMap((snapshot) => snapshot.docs.map((docSnap) => normalizeCommunityPost(docSnap)))
+    .filter((post) => post.authorUid !== viewerUid)
+    .filter((post) => !selectedIds.size || selectedIds.has(post.communityId))
+    .filter((post) => !tagKey || (post.tagKeys || post.tags || []).includes(tagKey))
+    .filter((post) => postMatchesFeedSearch(post, searchToken))
+    .sort(postSort('new'))
+
+  return posts.slice(0, pageLimit)
+}
+
 export async function getCommunityPost(postId = '') {
   const id = String(postId || '').trim()
   if (!id) throw new Error('post-id-required')

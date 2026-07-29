@@ -3,7 +3,6 @@ import './styles/community.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
-import brandLogoUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { createReport } from './data/productService'
 import {
@@ -18,13 +17,13 @@ import {
   getCommunityComment,
   getCommunityCommentViewerState,
   getCommunityBySlug,
-  getCommunityFocusState,
   getCommunityPost,
   getCommunityPostViewerState,
   getCommunityTopComment,
   listCommunityCommentsPage,
   listCommunities,
-  listFocusedCommunityPosts,
+  listFocusedCommunityIds,
+  listFollowedCreatorPosts,
   listCommunityPosts,
   listCommunityStories,
   listSelectableCommunities,
@@ -61,8 +60,41 @@ import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
+if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
 const COMMUNITY_PAGE_SIZE = 4
+const COMMUNITY_FOLLOWING_CACHE_SIZE = 24
 const COMPOSER_DRAFT_KEY = 'melogic-community-composer-draft-v2'
+const COMMUNITY_COMPOSER_PROMPTS = [
+  "What's happening?",
+  "What's on your mind?",
+  'Anything new today?',
+  'Share your latest.',
+  'Spill the tea.',
+  'What are you creating?',
+  'Drop an update.',
+  'How is it going?',
+  'Share a creative win.',
+  'What are you building?',
+  'Tell the community.',
+  'What is inspiring you?',
+  'Show us your progress.',
+  'Start a conversation.',
+  'What did you make?',
+  'Need some feedback?',
+  'Share your sound.',
+  'What are you exploring?',
+  'Post something fresh.',
+  'What is the vibe?',
+  'Bring us backstage.',
+  'Share today’s highlight.',
+  'Got something to share?',
+  'What are you learning?',
+  'Let creators know.',
+  'What is cooking?',
+  'Share the process.',
+  'Any studio updates?'
+]
+const communityComposerPrompt = COMMUNITY_COMPOSER_PROMPTS[Math.floor(Math.random() * COMMUNITY_COMPOSER_PROMPTS.length)]
 const QUICK_EMOJIS = ['🔥', '🎧', '🎹', '🥁', '🎚️', '✨', '🙌', '💡', '🚀', '❤️', '🤘', '✅']
 const FEEDBACK_CATEGORIES = ['Mix', 'Master', 'Songwriting', 'Sound Design', 'Vocal Performance', 'Stage Layout', 'Product Listing', 'Other']
 const COLLABORATION_ROLES = ['Vocalist', 'Producer', 'Songwriter', 'Guitarist', 'Drummer', 'Mixing Engineer', 'Mastering Engineer', 'Sound Designer', 'Stage Designer', 'Lighting Designer', 'Camera Operator', 'Other']
@@ -154,6 +186,10 @@ const state = {
   feedStillLoading: false,
   feedRequestId: 0,
   activeFeedQueryKey: '',
+  followingFeedCache: {
+    key: '',
+    posts: []
+  },
   openPostMenuId: '',
   openCommentMenuKey: '',
   topCommentPreviews: {},
@@ -285,6 +321,7 @@ let communityRailResizeReady = false
 let communityShellMounted = false
 let communityShellChromeInitialized = false
 let communityPagePreloaderInitialized = false
+let feedNavigationSnapshot = null
 const communityPendingActions = new Map()
 let storyMediaRecorder = null
 let storyRecordingStream = null
@@ -747,9 +784,13 @@ function renderTopicBar() {
           </select>
         </label>
       </div>
-      <div class="community-filter-strip" data-community-topic-scroll aria-label="Filter by community">
-        <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.length ? '' : 'is-active'}" data-clear-community-filters aria-pressed="${state.selectedCommunityFilters.length ? 'false' : 'true'}">All</button>
-        ${communityPills}
+      <div class="community-filter-shell">
+        <div class="community-filter-strip" data-community-topic-scroll aria-label="Filter by community">
+          <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.length ? '' : 'is-active'}" data-clear-community-filters aria-pressed="${state.selectedCommunityFilters.length ? 'false' : 'true'}">All</button>
+          ${communityPills}
+        </div>
+        <button type="button" class="community-filter-arrow is-left" data-topic-scroll="-1" aria-label="Scroll communities left">${iconSvg('chevronRight')}</button>
+        <button type="button" class="community-filter-arrow is-right" data-topic-scroll="1" aria-label="Scroll communities right">${iconSvg('chevronRight')}</button>
       </div>
     </section>
   `
@@ -1607,6 +1648,21 @@ function renderComposerModal() {
   `
 }
 
+function renderComposerLayer() {
+  return `<div data-community-composer-layer>${renderComposerModal()}</div>`
+}
+
+function updateCommunityComposerLayer() {
+  const layer = app?.querySelector('[data-community-composer-layer]')
+  if (!layer) {
+    render()
+    return
+  }
+  document.body.classList.toggle('community-modal-open', communityModalIsOpen())
+  layer.innerHTML = renderComposerModal()
+  bindCommunityComposerEvents(layer)
+}
+
 function linkedProductMarkup(post) {
   const attachment = (post.attachments || []).find((item) => item.type === 'product' && (item.productId || item.targetId))
   const productId = attachment?.productId || attachment?.targetId || post.linkedProductId || ''
@@ -1831,6 +1887,13 @@ function renderTopCommentPreview(post = {}) {
   `
 }
 
+function postAttachmentRenderKey(post = {}) {
+  return (post.attachments || []).map((attachment) => {
+    const path = attachment.storagePath || attachment.snapshot?.previewAudioPath || ''
+    return `${attachment.type || ''}:${path}:${attachment.url || attachment.audioURL || state.attachmentMediaUrls[path] || ''}`
+  }).join('|')
+}
+
 function postCard(post, { detail = false } = {}) {
   const viewer = state.viewerState[post.postId] || {}
   const body = detail ? post.body : post.body.slice(0, 640)
@@ -1864,7 +1927,9 @@ function postCard(post, { detail = false } = {}) {
       ${post.title ? `<h2>${escapeHtml(post.title)}</h2>` : ''}
       <p class="community-post-body">${escapeHtml(body)}${!detail && post.body.length > body.length ? '...' : ''}</p>
       ${renderPostIntent(post)}
-      ${renderPostAttachments(post)}
+      <div data-post-attachments-region data-attachment-render-key="${escapeHtml(postAttachmentRenderKey(post))}">
+        ${renderPostAttachments(post)}
+      </div>
       ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<button type="button" data-community-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join('')}</div>` : ''}
       <footer class="community-post-actions">
         <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
@@ -2144,7 +2209,7 @@ function renderComments(post) {
 }
 
 function emptyCopy() {
-  if (state.activeTab === 'following') return state.currentUser ? 'Focus communities to build this feed.' : 'Sign in to focus communities.'
+  if (state.activeTab === 'following') return state.currentUser ? 'No posts from people you follow yet.' : 'Sign in to see people you follow.'
   if (state.activeTab === 'community') return `No posts in ${state.activeTopicLabel || 'this community'} yet.`
   if (state.activeTab === 'forms') return 'Community forms are being organized here.'
   if (['live', 'saved', 'my-content', 'my-account'].includes(state.activeTab)) return `${activeFeedTitle()} is coming soon.`
@@ -2464,10 +2529,7 @@ function renderLeftNav() {
   `
   return `
     <aside class="community-left-nav" aria-label="Community navigation">
-      <a class="community-side-brand" href="${ROUTES.community}" aria-label="Communité home">
-        <img src="${brandLogoUrl}" alt="" width="38" height="38" />
-        <span>COMMUNITÉ</span>
-      </a>
+      <a class="community-side-brand" href="${ROUTES.community}" aria-label="Community home">COMMUNITY</a>
       <nav>
         ${navItems.map(renderItem).join('')}
         <button type="button" class="community-side-post-button" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>
@@ -2642,6 +2704,62 @@ function renderSidebar() {
   `
 }
 
+function bindStoryRailEvents(root = app) {
+  root?.querySelectorAll('[data-open-story-composer]').forEach((button) => button.addEventListener('click', openStoryComposer))
+  root?.querySelectorAll('[data-open-story]').forEach((button) => button.addEventListener('click', () => openStoryViewer(button.getAttribute('data-open-story') || '')))
+}
+
+function updateStoryRegionsOnly() {
+  app?.querySelectorAll('.community-right-stories, .community-mobile-stories').forEach((region) => {
+    region.innerHTML = renderStoriesRow()
+    bindStoryRailEvents(region)
+  })
+  updateCommunityRailFadeState()
+}
+
+function bindTopicRailEvents(root = app) {
+  root?.querySelectorAll('[data-topic-community-id]').forEach((button) => {
+    button.addEventListener('click', () => selectTopicCommunity({
+      communityId: button.getAttribute('data-topic-community-id') || ''
+    }))
+  })
+  root?.querySelector('[data-clear-community-filters]')?.addEventListener('click', () => {
+    if (!state.selectedCommunityFilters.length) return
+    state.selectedCommunityFilters = []
+    loadFeedPage({ reset: true, localOnly: true })
+  })
+  root?.querySelectorAll('[data-topic-scroll]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const scroller = app.querySelector('[data-community-topic-scroll]')
+      if (!scroller) return
+      const direction = Number(button.getAttribute('data-topic-scroll') || 1)
+      scroller.scrollBy({ left: direction * Math.max(220, scroller.clientWidth * .65), behavior: 'smooth' })
+      window.setTimeout(updateTopicArrowState, 260)
+    })
+  })
+  root?.querySelector('[data-community-topic-scroll]')?.addEventListener('scroll', updateTopicArrowState, { passive: true })
+  updateTopicArrowState()
+}
+
+function updateCommunityAncillaryDom() {
+  const currentHeader = app?.querySelector('.community-feed-header')
+  if (currentHeader) {
+    const holder = document.createElement('div')
+    holder.innerHTML = renderTopicBar().trim()
+    const nextHeader = holder.firstElementChild
+    if (nextHeader) {
+      currentHeader.replaceWith(nextHeader)
+      bindTopicRailEvents(nextHeader)
+    }
+  }
+  const discovery = app?.querySelector('[data-community-discovery-widget]')
+  if (discovery) {
+    discovery.innerHTML = renderCommunityDiscoveryBody()
+    bindCommunityDiscoveryWidgetEvents(discovery)
+    bindCommunityFocusButtons(discovery)
+  }
+}
+
 function renderCommunityRailFooter() {
   const links = [
     ['About', ROUTES.about],
@@ -2698,7 +2816,7 @@ function renderDetail() {
             <p class="eyebrow">Community</p>
             <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
           </div>
-          <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back</span></a>
+          <a class="button button-muted" href="${ROUTES.community}" data-community-back-to-feed>${iconSvg('arrowLeft')} <span>Back</span></a>
         </section>
         ${postLoading ? renderDetailSkeleton() : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
       </div>
@@ -2735,7 +2853,6 @@ function renderCommunityDetail() {
       </div>
       ${renderSidebar()}
     </div>
-    ${renderComposerModal()}
     ${renderStoryComposerModal()}
     ${renderStoryViewerModal()}
     ${renderEditPostModal()}
@@ -2789,7 +2906,6 @@ function renderCommunityHomeView() {
       </div>
       ${renderSidebar()}
     </div>
-    ${renderComposerModal()}
     ${renderStoryComposerModal()}
     ${renderStoryViewerModal()}
     ${renderEditPostModal()}
@@ -2806,7 +2922,7 @@ function renderInlineComposer() {
   return `
     <section class="community-inline-composer" aria-label="Create a post">
       <span class="community-inline-avatar">${avatar}</span>
-      <button type="button" class="community-inline-prompt" data-open-community-composer>What's happening?</button>
+      <button type="button" class="community-inline-prompt" data-open-community-composer>${escapeHtml(communityComposerPrompt)}</button>
       <button type="button" class="community-inline-post" data-open-community-composer>Post</button>
     </section>
   `
@@ -2818,7 +2934,7 @@ function renderCommunityViewContent() {
   else if (state.view.type === 'communities') content = renderCommunitiesView()
   else if (state.view.type === 'community') content = renderCommunityDetail()
   else content = renderCommunityHomeView()
-  return `${content}${renderCommunityImageViewer()}`
+  return `${content}${renderComposerLayer()}${renderCommunityImageViewer()}`
 }
 
 function renderFeedToolbar() {
@@ -2827,7 +2943,7 @@ function renderFeedToolbar() {
   const subtitle = state.view.type === 'community' && state.community
     ? `Posts in c/${state.community.slug}.`
     : state.activeTab === 'following'
-    ? 'Posts from communities you focus.'
+    ? 'Posts from creators you follow.'
     : state.activeTab === 'community'
       ? 'Posts from this community.'
       : 'Fresh creator updates from across Melogic.'
@@ -2867,7 +2983,7 @@ function updateFeedToolbarText() {
   const subtitle = app?.querySelector('[data-community-feed-subtitle]')
   if (title) title.textContent = activeFeedTitle()
   if (subtitle) subtitle.textContent = state.activeTab === 'following'
-    ? 'Posts from communities you focus.'
+    ? 'Posts from creators you follow.'
     : 'Fresh creator updates from across Melogic.'
 }
 
@@ -2886,8 +3002,10 @@ async function loadViewerState() {
     state.viewerState = {}
     return
   }
-  const entries = await Promise.all(state.posts.map(async (post) => [post.postId, await getCommunityPostViewerState(post.postId, state.currentUser.uid)]))
-  state.viewerState = Object.fromEntries(entries)
+  const missingPosts = state.posts.filter((post) => !Object.prototype.hasOwnProperty.call(state.viewerState, post.postId))
+  if (!missingPosts.length) return
+  const entries = await Promise.all(missingPosts.map(async (post) => [post.postId, await getCommunityPostViewerState(post.postId, state.currentUser.uid)]))
+  state.viewerState = { ...state.viewerState, ...Object.fromEntries(entries) }
 }
 
 async function loadCommentViewerState() {
@@ -2945,14 +3063,14 @@ async function loadFeedEnrichment(requestId = state.feedRequestId, { localOnly =
   ])
   if (requestId !== state.feedRequestId) return
   logCommunityPerf('feed enrichment complete', { durationMs: Math.round(performance.now() - startedAt), posts: state.posts.length })
-  if (localOnly) renderFeedRegionOnly()
+  if (localOnly) renderFeedRegionOnly({ reset })
   else render()
 }
 
 async function loadStories({ renderAfter = false } = {}) {
   state.storiesLoading = true
   state.storiesError = ''
-  if (renderAfter) render()
+  if (renderAfter) updateStoryRegionsOnly()
   try {
     state.stories = await listCommunityStories({ limitCount: 30 })
     const requestedStoryId = new URLSearchParams(window.location.search).get('story') || ''
@@ -2970,7 +3088,7 @@ async function loadStories({ renderAfter = false } = {}) {
     state.storiesError = error?.message || 'Stories could not be loaded.'
   } finally {
     state.storiesLoading = false
-    if (renderAfter) render()
+    if (renderAfter) updateStoryRegionsOnly()
   }
 }
 
@@ -3135,11 +3253,11 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
     loadFocusedComment({ renderAfter: true })
       .then(() => loadComments({ renderAfter: true }))
       .catch(() => loadComments({ renderAfter: true }))
-    Promise.allSettled([
-      loadViewerState(),
-      loadAttachmentMediaUrls(),
-      !state.communities.length ? loadCommunities({ renderOnStart: false, renderAfter: true }) : Promise.resolve()
-    ]).then(() => render()).catch(() => render())
+    if (!state.communities.length) {
+      loadCommunities({ renderOnStart: false, renderAfter: false })
+        .then(updateCommunityAncillaryDom)
+        .catch(() => null)
+    }
     return
   }
 
@@ -3178,11 +3296,11 @@ async function loadCommunityFocusState() {
     state.communityFocus = {}
     return
   }
-  const entries = await Promise.all(state.communities.map(async (community) => [
+  const focusedIds = new Set(await listFocusedCommunityIds(state.currentUser.uid, 50))
+  state.communityFocus = Object.fromEntries(state.communities.map((community) => [
     community.communityId,
-    await getCommunityFocusState(community.communityId, state.currentUser.uid)
+    focusedIds.has(community.communityId)
   ]))
-  state.communityFocus = Object.fromEntries(entries)
 }
 
 async function loadCommunities({ renderOnStart = true, renderAfter = true } = {}) {
@@ -3234,42 +3352,96 @@ function withFeedTimeout(promise, timeoutMs = 15000) {
   return Promise.race([promise, timeout]).finally(() => window.clearTimeout(timeoutId))
 }
 
-function renderFeedRegionOnly() {
+function updatePostCardDom(card, post) {
+  const viewer = state.viewerState[post.postId] || {}
+  const actionStates = [
+    ['like', viewer.liked, post.counts.likes],
+    ['dislike', viewer.disliked, post.counts.dislikes],
+    ['save', viewer.saved, post.counts.saves],
+    ['share', false, post.counts.shares]
+  ]
+  actionStates.forEach(([action, active, count]) => {
+    const control = card.querySelector(`[data-community-${action}="${communityCssEscape(post.postId)}"]`)
+    if (!control) return
+    if (action !== 'share') control.classList.toggle('is-active', Boolean(active))
+    const countNode = control.querySelector('em')
+    if (countNode) countNode.textContent = formatCount(count)
+  })
+  const commentCount = card.querySelector('a[href$="#comments"] em')
+  if (commentCount) commentCount.textContent = formatCount(post.counts.comments)
+
+  const attachments = card.querySelector('[data-post-attachments-region]')
+  const nextAttachmentKey = postAttachmentRenderKey(post)
+  if (attachments && attachments.dataset.attachmentRenderKey !== nextAttachmentKey) {
+    attachments.dataset.attachmentRenderKey = nextAttachmentKey
+    attachments.innerHTML = renderPostAttachments(post)
+    bindFeedRegionEvents(attachments)
+  }
+
+  if (!card.querySelector('.community-top-comment-preview')) {
+    const previewMarkup = renderTopCommentPreview(post)
+    if (previewMarkup) {
+      const holder = document.createElement('div')
+      holder.innerHTML = previewMarkup.trim()
+      bindFeedRegionEvents(holder)
+      card.querySelector('.community-post-actions')?.after(holder.firstElementChild)
+    }
+  }
+}
+
+function createBoundPostCard(post) {
+  const holder = document.createElement('div')
+  holder.innerHTML = postCard(post).trim()
+  bindFeedRegionEvents(holder)
+  return holder.firstElementChild
+}
+
+function renderFeedRegionOnly({ reset = false } = {}) {
   const region = app?.querySelector('[data-community-feed-region]')
   if (!region) {
     render()
     return
   }
-  const scrollHost = region.closest('.community-main')
-  const hostTop = scrollHost?.getBoundingClientRect().top || 0
-  const visibleAnchor = scrollHost
-    ? [...region.querySelectorAll('.community-post-card[data-post-id]')]
-        .find((card) => card.getBoundingClientRect().bottom > hostTop + 1)
-    : null
-  const scrollAnchor = visibleAnchor ? {
-    postId: visibleAnchor.getAttribute('data-post-id') || '',
-    offset: visibleAnchor.getBoundingClientRect().top - hostTop
-  } : null
-  const previousScrollTop = scrollHost?.scrollTop || 0
   closePostMenusDom()
   closeCommentMenusDom()
-  region.innerHTML = renderFeed()
-  bindFeedRegionEvents(region)
-  setupFeedPaginationObserver()
-  if (scrollHost && previousScrollTop > 0) {
-    window.requestAnimationFrame(() => {
-      const escapedPostId = scrollAnchor?.postId ? communityCssEscape(scrollAnchor.postId) : ''
-      const restoredAnchor = escapedPostId
-        ? region.querySelector(`.community-post-card[data-post-id="${escapedPostId}"]`)
-        : null
-      if (restoredAnchor && scrollAnchor) {
-        const nextOffset = restoredAnchor.getBoundingClientRect().top - scrollHost.getBoundingClientRect().top
-        scrollHost.scrollTop += nextOffset - scrollAnchor.offset
-      } else {
-        scrollHost.scrollTop = previousScrollTop
-      }
-    })
+
+  const feed = region.querySelector('.community-feed')
+  if (reset || !feed || !state.posts.length) {
+    region.innerHTML = renderFeed()
+    bindFeedRegionEvents(region)
+    setupFeedPaginationObserver()
+    return
   }
+
+  const sentinel = feed.querySelector('[data-community-feed-sentinel]')
+  const existingIds = new Set([...feed.querySelectorAll('.community-post-card[data-post-id]')]
+    .map((card) => card.getAttribute('data-post-id') || ''))
+  state.posts.forEach((post) => {
+    if (existingIds.has(post.postId)) return
+    const card = createBoundPostCard(post)
+    if (card) feed.insertBefore(card, sentinel || null)
+  })
+  state.posts.forEach((post) => {
+    const card = feed.querySelector(`.community-post-card[data-post-id="${communityCssEscape(post.postId)}"]`)
+    if (card) updatePostCardDom(card, post)
+  })
+
+  feed.querySelector('[data-feed-more-error]')?.remove()
+  if (state.feedError) {
+    const holder = document.createElement('div')
+    holder.innerHTML = `<div class="community-feed-state community-panel" data-feed-more-error><strong>Could not load more posts.</strong><span>${escapeHtml(state.feedError)}</span></div>`
+    feed.insertBefore(holder.firstElementChild, sentinel || null)
+  }
+  feed.querySelector('.community-feed-more-state, .community-load-more')?.remove()
+  const footerHolder = document.createElement('div')
+  footerHolder.innerHTML = state.feedLoadingMore
+    ? '<div class="community-feed-more-state">Loading more posts...</div>'
+    : state.feedHasMore
+      ? '<button type="button" class="community-load-more button button-muted" data-load-more-posts>Load more</button>'
+      : '<div class="community-feed-more-state">You are caught up.</div>'
+  bindFeedRegionEvents(footerHolder)
+  feed.append(footerHolder.firstElementChild)
+  setupFeedPaginationObserver()
 }
 
 async function loadFeedPage({ reset = false, localOnly = false } = {}) {
@@ -3299,7 +3471,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
     stillLoadingTimer = window.setTimeout(() => {
       if (state.feedRequestId === requestId && state.feedInitialLoading) {
         state.feedStillLoading = true
-        if (localOnly) renderFeedRegionOnly()
+        if (localOnly) renderFeedRegionOnly({ reset: true })
         else render()
       }
     }, 5000)
@@ -3312,15 +3484,22 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
     let hasMore = false
     if (state.activeTab === 'following') {
       if (state.currentUser?.uid) {
-        const requestedLimit = Math.min(100, reset ? COMMUNITY_PAGE_SIZE : state.posts.length + COMMUNITY_PAGE_SIZE)
-        const focusedPosts = await withFeedTimeout(listFocusedCommunityPosts(
-          state.currentUser.uid,
-          requestedLimit,
-          state.selectedCommunityFilters
-        ))
-        const filteredPosts = filterPostsForActiveTab(focusedPosts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
-        posts = reset ? filteredPosts.slice(0, COMMUNITY_PAGE_SIZE) : filteredPosts.slice(state.posts.length, requestedLimit)
-        hasMore = requestedLimit < 100 && focusedPosts.length >= requestedLimit
+        if (reset || state.followingFeedCache.key !== queryKey) {
+          const followedPosts = await withFeedTimeout(listFollowedCreatorPosts(state.currentUser.uid, {
+            limitCount: COMMUNITY_FOLLOWING_CACHE_SIZE,
+            selectedCommunityIds: state.selectedCommunityFilters,
+            tag: state.activeTag,
+            search: state.feedSearch
+          }))
+          state.followingFeedCache = {
+            key: queryKey,
+            posts: filterPostsForActiveTab(followedPosts)
+          }
+        }
+        const start = reset ? 0 : state.posts.length
+        const end = start + COMMUNITY_PAGE_SIZE
+        posts = state.followingFeedCache.posts.slice(start, end)
+        hasMore = end < state.followingFeedCache.posts.length
       }
     } else {
       const result = await withFeedTimeout(listCommunityPosts({
@@ -3359,7 +3538,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
     state.feedInitialLoading = false
     state.feedLoadingMore = false
     state.feedStillLoading = false
-    if (localOnly) renderFeedRegionOnly()
+    if (localOnly) renderFeedRegionOnly({ reset })
     else render()
     loadFeedEnrichment(requestId, { localOnly }).catch(() => null)
   }
@@ -3382,7 +3561,9 @@ async function loadCommunity() {
   loadStories({ renderAfter: true }).catch(() => null)
 
   if (!state.communities.length && state.view.type !== 'community') {
-    loadCommunities({ renderOnStart: false, renderAfter: true }).catch(() => null)
+    loadCommunities({ renderOnStart: false, renderAfter: false })
+      .then(updateCommunityAncillaryDom)
+      .catch(() => null)
   }
 
   if (['forms', 'live', 'saved', 'my-content', 'my-account'].includes(state.activeTab)) {
@@ -4472,7 +4653,7 @@ function openCommunityComposer() {
     submitting: false,
     error: ''
   }
-  render()
+  updateCommunityComposerLayer()
 }
 
 function closeCommunityComposer() {
@@ -4486,7 +4667,7 @@ function closeCommunityComposer() {
   } else {
     state.composer = { ...state.composer, open: false, submitting: false, error: '' }
   }
-  render()
+  updateCommunityComposerLayer()
 }
 
 function updateComposerFromForm() {
@@ -4577,7 +4758,7 @@ function openCommunityDestinationPicker() {
     destinationLoading: true,
     destinationError: ''
   }
-  render()
+  updateCommunityComposerLayer()
   window.requestAnimationFrame(() => app?.querySelector('[data-community-destination-search]')?.focus())
   loadComposerDestinationCommunities({ force: true }).catch(() => null)
 }
@@ -4590,7 +4771,7 @@ function closeCommunityDestinationPicker() {
     destinationLoading: false,
     destinationError: ''
   }
-  render()
+  updateCommunityComposerLayer()
   window.requestAnimationFrame(() => app?.querySelector('[data-open-community-destination]')?.focus())
 }
 
@@ -4606,7 +4787,7 @@ function selectComposerCommunityDestination(communityId = '') {
     destinationError: ''
   }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
   window.requestAnimationFrame(() => app?.querySelector('[data-open-community-destination]')?.focus())
 }
 
@@ -4616,15 +4797,15 @@ async function openProductPicker() {
     return
   }
   state.composer = { ...state.composer, productPickerOpen: true, productPickerLoading: true, productPickerError: '' }
-  render()
+  updateCommunityComposerLayer()
   try {
     const products = await listShareableCommunityProducts(state.currentUser.uid, 20)
     state.composer = { ...state.composer, products, productPickerLoading: false, productPickerError: '' }
-    render()
+    updateCommunityComposerLayer()
   } catch (error) {
     console.warn('[community] product picker failed', { code: error?.code, message: error?.message })
     state.composer = { ...state.composer, productPickerLoading: false, productPickerError: 'Published products could not be loaded.' }
-    render()
+    updateCommunityComposerLayer()
   }
 }
 
@@ -4639,7 +4820,7 @@ function selectComposerProduct(productId = '') {
     productPickerError: ''
   }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 async function openMusicPicker() {
@@ -4648,15 +4829,15 @@ async function openMusicPicker() {
     return
   }
   state.composer = { ...state.composer, musicPickerOpen: true, musicPickerLoading: true, musicPickerError: '' }
-  render()
+  updateCommunityComposerLayer()
   try {
     const musicPreviews = await listShareableCommunityMusicPreviews(state.currentUser.uid, 20)
     state.composer = { ...state.composer, musicPreviews, musicPickerLoading: false, musicPickerError: '' }
-    render()
+    updateCommunityComposerLayer()
   } catch (error) {
     console.warn('[community] music picker failed', { code: error?.code, message: error?.message })
     state.composer = { ...state.composer, musicPickerLoading: false, musicPickerError: 'Audio previews could not be loaded.' }
-    render()
+    updateCommunityComposerLayer()
   }
 }
 
@@ -4666,15 +4847,15 @@ async function openStagePicker() {
     return
   }
   state.composer = { ...state.composer, stagePickerOpen: true, stagePickerLoading: true, stagePickerError: '' }
-  render()
+  updateCommunityComposerLayer()
   try {
     const stagePlans = await listShareableCommunityStagePlans(state.currentUser.uid, 30)
     state.composer = { ...state.composer, stagePlans, stagePickerLoading: false, stagePickerError: '' }
-    render()
+    updateCommunityComposerLayer()
   } catch (error) {
     console.warn('[community] stage picker failed', { code: error?.code, message: error?.message })
     state.composer = { ...state.composer, stagePickerLoading: false, stagePickerError: 'StageMaker plans could not be loaded.' }
-    render()
+    updateCommunityComposerLayer()
   }
 }
 
@@ -4684,15 +4865,15 @@ async function openStudioPicker() {
     return
   }
   state.composer = { ...state.composer, studioPickerOpen: true, studioPickerLoading: true, studioPickerError: '' }
-  render()
+  updateCommunityComposerLayer()
   try {
     const studioProjects = await listShareableCommunityStudioProjects(state.currentUser.uid, 30)
     state.composer = { ...state.composer, studioProjects, studioPickerLoading: false, studioPickerError: '' }
-    render()
+    updateCommunityComposerLayer()
   } catch (error) {
     console.warn('[community] studio picker failed', { code: error?.code, message: error?.message })
     state.composer = { ...state.composer, studioPickerLoading: false, studioPickerError: 'Studio projects could not be loaded.' }
-    render()
+    updateCommunityComposerLayer()
   }
 }
 
@@ -4715,7 +4896,7 @@ function addComposerAttachment(attachment = {}) {
     studioPickerError: ''
   }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 function composerFileAttachmentId() {
@@ -4751,7 +4932,7 @@ async function addComposerFiles(files = []) {
   const available = Math.max(0, 8 - state.composer.attachments.length - state.composer.fileAttachments.length)
   if (!available) {
     state.composer = { ...state.composer, error: 'Posts can include up to 8 attachments.' }
-    render()
+    updateCommunityComposerLayer()
     return
   }
   const next = []
@@ -4765,7 +4946,7 @@ async function addComposerFiles(files = []) {
   } catch (error) {
     next.forEach((item) => item.previewURL && URL.revokeObjectURL(item.previewURL))
     state.composer = { ...state.composer, error: error?.message || 'This attachment is not supported.' }
-    render()
+    updateCommunityComposerLayer()
     return
   }
   state.composer = {
@@ -4773,7 +4954,7 @@ async function addComposerFiles(files = []) {
     fileAttachments: [...state.composer.fileAttachments, ...next],
     error: selected.length > available ? `Only ${available} more attachment${available === 1 ? '' : 's'} could be added.` : ''
   }
-  render()
+  updateCommunityComposerLayer()
 }
 
 function removeComposerFileAttachment(id = '') {
@@ -4784,7 +4965,7 @@ function removeComposerFileAttachment(id = '') {
     fileAttachments: state.composer.fileAttachments.filter((attachment) => attachment.id !== id),
     error: ''
   }
-  render()
+  updateCommunityComposerLayer()
 }
 
 function clearComposerFileAttachments() {
@@ -4798,7 +4979,7 @@ function selectComposerMusic(storagePath = '') {
   if (!preview) return
   if (!canAddAttachment('music')) {
     state.composer = { ...state.composer, musicPickerError: 'You can attach up to two music previews.' }
-    render()
+    updateCommunityComposerLayer()
     return
   }
   addComposerAttachment(musicAttachmentFromPreview(preview))
@@ -4814,7 +4995,7 @@ function selectComposerStage(projectId = '') {
   if (!project) return
   if (!canAddAttachment('stage_plan')) {
     state.composer = { ...state.composer, stagePickerError: 'Only one Stage Plan can be attached.' }
-    render()
+    updateCommunityComposerLayer()
     return
   }
   if (!confirmPrivateShare(project, 'Stage Plan')) return
@@ -4826,7 +5007,7 @@ function selectComposerStudio(projectId = '') {
   if (!project) return
   if (!canAddAttachment('studio_project')) {
     state.composer = { ...state.composer, studioPickerError: 'Only one Studio Project can be attached.' }
-    render()
+    updateCommunityComposerLayer()
     return
   }
   if (!confirmPrivateShare(project, 'Studio Project')) return
@@ -4840,7 +5021,7 @@ function removeComposerAttachment(type = '') {
     linkedProductId: type === 'product' ? '' : state.composer.linkedProductId
   }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 function removeComposerAttachmentByKey(key = '') {
@@ -4852,20 +5033,20 @@ function removeComposerAttachmentByKey(key = '') {
     linkedProductId: attachmentKey(selectedProductAttachment() || {}) === cleanKey ? '' : state.composer.linkedProductId
   }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 function setComposerIntent(intent = '') {
   updateComposerFromForm()
   state.composer = { ...state.composer, intent: state.composer.intent === intent ? '' : intent, error: '' }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 function clearComposerIntent() {
   state.composer = { ...state.composer, intent: '', error: '' }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 function insertEmoji(emoji = '') {
@@ -4880,7 +5061,7 @@ function insertEmoji(emoji = '') {
   }
   state.composer.emojiOpen = false
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 let mentionSearchTimer = null
@@ -4938,13 +5119,13 @@ function selectMentionedUser(uid = '') {
     mentionResults: []
   }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 function removeMentionedUser(uid = '') {
   state.composer = { ...state.composer, mentionedUsers: state.composer.mentionedUsers.filter((item) => item.uid !== uid) }
   persistComposerDraft()
-  render()
+  updateCommunityComposerLayer()
 }
 
 function openCommunityImageViewer(url = '', name = '') {
@@ -5032,7 +5213,7 @@ function updateTopicArrowState() {
   const atEnd = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 4
   left?.toggleAttribute('disabled', atStart)
   right?.toggleAttribute('disabled', atEnd)
-  updateHorizontalRailFadeState(scroller, app.querySelector('.community-topic-bar'))
+  updateHorizontalRailFadeState(scroller, app.querySelector('.community-filter-shell'))
 }
 
 function updateHorizontalRailFadeState(scroller, root = scroller) {
@@ -5047,7 +5228,7 @@ function updateHorizontalRailFadeState(scroller, root = scroller) {
 function updateCommunityRailFadeState() {
   const topicScroller = app?.querySelector('[data-community-topic-scroll]')
   const storiesScroller = app?.querySelector('[data-community-stories-scroll]')
-  if (topicScroller) updateHorizontalRailFadeState(topicScroller, app.querySelector('.community-topic-bar'))
+  if (topicScroller) updateHorizontalRailFadeState(topicScroller, app.querySelector('.community-filter-shell'))
   if (storiesScroller) updateHorizontalRailFadeState(storiesScroller, storiesScroller)
 }
 
@@ -5117,10 +5298,14 @@ function setupCommunityKeyboardShortcuts() {
         destinationLoading: false,
         destinationError: ''
       }
-      render()
+      updateCommunityComposerLayer()
       return
     }
-    if (state.composer.open) state.composer = { ...state.composer, open: false, submitting: false, error: '' }
+    if (state.composer.open) {
+      state.composer = { ...state.composer, open: false, submitting: false, error: '' }
+      updateCommunityComposerLayer()
+      return
+    }
     if (state.storyComposer.open) {
       resetStoryRecording()
       resetStoryPreviewURL()
@@ -5170,11 +5355,85 @@ function isPostCardInteractiveTarget(target) {
   return Boolean(target?.closest?.('a, button, input, textarea, select, label, [role="button"], [data-stop-card-nav]'))
 }
 
+function captureFeedNavigationSnapshot() {
+  const root = app?.querySelector('[data-community-root]')
+  const main = root?.querySelector('.community-main')
+  if (!root || !main || state.detailPostId) return
+  const scrollTop = main.scrollTop
+  if (root.contains(document.activeElement)) document.activeElement?.blur?.()
+  const fragment = document.createDocumentFragment()
+  while (root.firstChild) fragment.append(root.firstChild)
+  feedNavigationSnapshot = {
+    fragment,
+    scrollTop,
+    state: {
+      activeTab: state.activeTab,
+      activeCommunityId: state.activeCommunityId,
+      activeCommunitySlug: state.activeCommunitySlug,
+      activeTopicLabel: state.activeTopicLabel,
+      selectedCommunityFilters: [...state.selectedCommunityFilters],
+      activeTag: state.activeTag,
+      feedSearch: state.feedSearch,
+      feedSort: state.feedSort,
+      view: { ...state.view },
+      community: state.community,
+      posts: state.posts,
+      attachmentMediaUrls: state.attachmentMediaUrls,
+      viewerState: state.viewerState,
+      feedInitialLoading: state.feedInitialLoading,
+      feedLoadingMore: state.feedLoadingMore,
+      feedHasMore: state.feedHasMore,
+      feedCursor: state.feedCursor,
+      feedError: state.feedError,
+      feedRequestId: state.feedRequestId,
+      activeFeedQueryKey: state.activeFeedQueryKey,
+      followingFeedCache: state.followingFeedCache
+    }
+  }
+}
+
+function restoreFeedNavigationSnapshot() {
+  if (!feedNavigationSnapshot) return false
+  const root = app?.querySelector('[data-community-root]')
+  if (!root) return false
+  const snapshot = feedNavigationSnapshot
+  feedNavigationSnapshot = null
+  Object.assign(state, snapshot.state, {
+    detailPostId: '',
+    focusedCommentId: '',
+    focusedReplyId: '',
+    focusedCommentScrolled: false,
+    detailPostLoading: false,
+    error: '',
+    imageViewer: { open: false, url: '', name: '' }
+  })
+  root.replaceChildren(snapshot.fragment)
+  root.querySelectorAll('.community-image-viewer-backdrop').forEach((overlay) => overlay.remove())
+  document.body.classList.remove('community-modal-open')
+  const main = root.querySelector('.community-main')
+  if (main) {
+    const restoreScroll = () => {
+      main.scrollTop = snapshot.scrollTop
+    }
+    restoreScroll()
+    window.requestAnimationFrame(() => {
+      restoreScroll()
+      window.requestAnimationFrame(restoreScroll)
+    })
+    window.setTimeout(restoreScroll, 80)
+  }
+  updateTopicArrowState()
+  updateCommunityRailFadeState()
+  setupFeedPaginationObserver()
+  return true
+}
+
 function openPostDetail(postId = '', hash = '') {
   const id = String(postId || '').trim()
   if (!id) return
   if (!confirmCommunityNavigation()) return
   const cachedPost = state.posts.find((post) => post.postId === id) || null
+  captureFeedNavigationSnapshot()
   loadPostDetail({ postId: id, seedPost: cachedPost, replaceUrl: true }).then(() => {
     if (hash) document.querySelector(hash)?.scrollIntoView?.({ block: 'start' })
   }).catch(() => null)
@@ -5661,6 +5920,14 @@ function bindCommentEvents(root = app) {
 
 function bindFeedRegionEvents(root = app) {
   if (!root) return
+  root.querySelectorAll('.community-post-card:not(.is-detail) .community-post-actions a[href$="#comments"]').forEach((link) => {
+    link.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const postId = link.closest('.community-post-card')?.getAttribute('data-post-id') || ''
+      openPostDetail(postId, '#comments')
+    })
+  })
   root.querySelectorAll('[data-open-community-image]').forEach((button) => {
     button.addEventListener('click', (event) => {
       stopCommunityActionEvent(event)
@@ -5741,8 +6008,85 @@ function bindFeedRegionEvents(root = app) {
   bindCommentEvents(root)
 }
 
+function bindCommunityComposerEvents(root = app) {
+  root?.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
+  root?.querySelector('[data-open-community-destination]')?.addEventListener('click', openCommunityDestinationPicker)
+  root?.querySelectorAll('[data-close-community-destination]').forEach((button) => button.addEventListener('click', closeCommunityDestinationPicker))
+  root?.querySelector('[data-community-destination-backdrop]')?.addEventListener('click', (event) => {
+    if (event.target === event.currentTarget) closeCommunityDestinationPicker()
+  })
+  root?.querySelector('[data-community-destination-search]')?.addEventListener('input', (event) => {
+    state.composer.destinationSearch = String(event.target.value || '').slice(0, 80)
+    updateCommunityDestinationResultsDom()
+  })
+  bindCommunityDestinationResultEvents(root)
+  root?.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
+  root?.querySelector('[data-community-composer-form]')?.addEventListener('input', updateComposerFromForm)
+  root?.querySelector('[data-open-product-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openProductPicker()
+  })
+  root?.querySelector('[data-open-music-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openMusicPicker()
+  })
+  root?.querySelector('[data-open-stage-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openStagePicker()
+  })
+  root?.querySelector('[data-open-studio-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    openStudioPicker()
+  })
+  root?.querySelector('[data-open-post-attachment-picker]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    root.querySelector('[data-post-attachment-input]')?.click()
+  })
+  root?.querySelector('[data-post-attachment-input]')?.addEventListener('change', async (event) => {
+    await addComposerFiles(event.target.files)
+  })
+  root?.querySelector('[data-close-product-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, productPickerOpen: false, productPickerError: '' }
+    updateCommunityComposerLayer()
+  })
+  root?.querySelector('[data-close-music-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, musicPickerOpen: false, musicPickerError: '' }
+    updateCommunityComposerLayer()
+  })
+  root?.querySelector('[data-close-stage-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, stagePickerOpen: false, stagePickerError: '' }
+    updateCommunityComposerLayer()
+  })
+  root?.querySelector('[data-close-studio-picker]')?.addEventListener('click', () => {
+    state.composer = { ...state.composer, studioPickerOpen: false, studioPickerError: '' }
+    updateCommunityComposerLayer()
+  })
+  root?.querySelectorAll('[data-select-composer-product]').forEach((button) => button.addEventListener('click', () => selectComposerProduct(button.getAttribute('data-select-composer-product') || '')))
+  root?.querySelectorAll('[data-select-composer-music]').forEach((button) => button.addEventListener('click', () => selectComposerMusic(button.getAttribute('data-select-composer-music') || '')))
+  root?.querySelectorAll('[data-select-composer-stage]').forEach((button) => button.addEventListener('click', () => selectComposerStage(button.getAttribute('data-select-composer-stage') || '')))
+  root?.querySelectorAll('[data-select-composer-studio]').forEach((button) => button.addEventListener('click', () => selectComposerStudio(button.getAttribute('data-select-composer-studio') || '')))
+  root?.querySelectorAll('[data-remove-composer-attachment]').forEach((button) => button.addEventListener('click', () => removeComposerAttachment(button.getAttribute('data-remove-composer-attachment') || '')))
+  root?.querySelectorAll('[data-remove-composer-attachment-key]').forEach((button) => button.addEventListener('click', () => removeComposerAttachmentByKey(button.getAttribute('data-remove-composer-attachment-key') || '')))
+  root?.querySelectorAll('[data-remove-composer-file]').forEach((button) => button.addEventListener('click', () => removeComposerFileAttachment(button.getAttribute('data-remove-composer-file') || '')))
+  root?.querySelectorAll('[data-set-composer-intent]').forEach((button) => button.addEventListener('click', () => setComposerIntent(button.getAttribute('data-set-composer-intent') || '')))
+  root?.querySelectorAll('[data-clear-composer-intent]').forEach((button) => button.addEventListener('click', clearComposerIntent))
+  root?.querySelector('[data-toggle-emoji-panel]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    state.composer = { ...state.composer, emojiOpen: !state.composer.emojiOpen }
+    updateCommunityComposerLayer()
+  })
+  root?.querySelectorAll('[data-insert-emoji]').forEach((button) => button.addEventListener('click', () => insertEmoji(button.getAttribute('data-insert-emoji') || '')))
+  root?.querySelector('[data-mention-search]')?.addEventListener('input', (event) => queueMentionSearch(event.target.value))
+  bindMentionPickerEvents(root)
+}
+
 function bindEvents() {
   setupCommunityPendingLeaveWarning()
+  app.querySelector('[data-community-back-to-feed]')?.addEventListener('click', (event) => {
+    if (!feedNavigationSnapshot) return
+    event.preventDefault()
+    window.history.back()
+  })
   bindFeedRegionEvents(app)
   bindHistoryWidgetEvents(app)
   bindCommunityDiscoveryWidgetEvents(app)
@@ -6011,5 +6355,6 @@ window.addEventListener('popstate', () => {
   state.feedSearch = parseFeedParam('search').trim()
   state.feedSearchInput = state.feedSearch
   state.feedSort = ['new', 'top-today', 'top-week', 'most-discussed'].includes(parseFeedParam('sort')) ? parseFeedParam('sort') : 'new'
+  if (!state.detailPostId && restoreFeedNavigationSnapshot()) return
   loadCommunity()
 })
