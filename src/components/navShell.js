@@ -9,6 +9,7 @@ export function navShell(options = {}) {
   const isInbox = currentPage === 'inbox'
   const isStudio = currentPage === 'studio'
   const isDistribution = currentPage === 'distribution'
+  const isCommunity = currentPage === 'community'
   const isSupport = currentPage === 'support'
   const isAdmin = currentPage === 'admin'
 
@@ -28,7 +29,7 @@ export function navShell(options = {}) {
           <a href="${ROUTES.products}" data-guide-id="global-nav-products" data-guide-label="Products" data-guide-role="global-nav-link" ${isProducts ? 'aria-current="page"' : ''}>Products</a>
           <a href="${ROUTES.studio}" data-guide-id="global-nav-studio" data-guide-label="Studio" data-guide-role="global-nav-link" ${isStudio ? 'aria-current="page"' : ''}>Studio</a>
           <a href="${ROUTES.distribution}" data-guide-id="global-nav-distribution" data-guide-label="Distribution" data-guide-role="global-nav-link" ${isDistribution ? 'aria-current="page"' : ''}>Distribution</a>
-          <a href="${ROUTES.community}" data-guide-id="global-nav-community" data-guide-label="Community" data-guide-role="global-nav-link">Community</a>
+          <a href="${ROUTES.community}" data-guide-id="global-nav-community" data-guide-label="Community" data-guide-role="global-nav-link" ${isCommunity ? 'aria-current="page"' : ''}>Community</a>
           <a href="${ROUTES.support}" data-guide-id="global-nav-support" data-guide-label="Support" data-guide-role="global-nav-link" ${isSupport ? 'aria-current="page"' : ''}>Support</a>
         </nav>
 

@@ -1,5 +1,7 @@
 import './styles/base.css'
 import './styles/community.css'
+import { navShell } from './components/navShell'
+import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import brandLogoUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
@@ -59,7 +61,7 @@ import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
-const COMMUNITY_PAGE_SIZE = 12
+const COMMUNITY_PAGE_SIZE = 4
 const COMPOSER_DRAFT_KEY = 'melogic-community-composer-draft-v2'
 const QUICK_EMOJIS = ['🔥', '🎧', '🎹', '🥁', '🎚️', '✨', '🙌', '💡', '🚀', '❤️', '🤘', '✅']
 const FEEDBACK_CATEGORIES = ['Mix', 'Master', 'Songwriting', 'Sound Design', 'Vocal Performance', 'Stage Layout', 'Product Listing', 'Other']
@@ -2462,14 +2464,14 @@ function renderLeftNav() {
   `
   return `
     <aside class="community-left-nav" aria-label="Community navigation">
-      <a class="community-side-brand" href="${ROUTES.home}" aria-label="Melogic Records home">
+      <a class="community-side-brand" href="${ROUTES.community}" aria-label="Communité home">
         <img src="${brandLogoUrl}" alt="" width="38" height="38" />
-        <span>MELOGIC RECORDS</span>
+        <span>COMMUNITÉ</span>
       </a>
       <nav>
         ${navItems.map(renderItem).join('')}
+        <button type="button" class="community-side-post-button" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>
       </nav>
-      <button type="button" class="community-side-post-button" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>
     </aside>
   `
 }
@@ -2589,12 +2591,12 @@ async function loadWikipediaHistory() {
 function suggestedCommunities() {
   return displayedCommunities()
     .filter((community) => !state.communityFocus[community.communityId])
-    .slice(0, 4)
+    .slice(0, 8)
 }
 
 function renderCommunityDiscoveryBody() {
   const isTrending = state.discoveryTab === 'trending'
-  const communities = isTrending ? trendingCommunities().slice(0, 4) : suggestedCommunities()
+  const communities = isTrending ? trendingCommunities().slice(0, 8) : suggestedCommunities()
   return `
     <div class="community-discovery-heading">
       <h2>Discover Communities</h2>
@@ -2628,15 +2630,37 @@ function renderSidebar() {
         <input type="search" name="communityFeedSearch" value="${escapeHtml(state.feedSearch)}" placeholder="Search posts, tags, creators" aria-label="Search posts, tags, creators" />
         <button type="submit" aria-label="Search">Search</button>
       </form>
+      <div class="community-right-stories">
+        ${renderStoriesRow()}
+      </div>
       <section class="community-rail-card community-discovery-card" data-community-discovery-widget>
         ${renderCommunityDiscoveryBody()}
       </section>
       ${renderHistoryWidget()}
-      <section class="community-rail-card">
-        <h2>Guidelines</h2>
-        <p>Share work, give useful feedback, and respect creator ownership.</p>
-      </section>
+      ${renderCommunityRailFooter()}
     </aside>
+  `
+}
+
+function renderCommunityRailFooter() {
+  const links = [
+    ['About', ROUTES.about],
+    ['Contact', ROUTES.contact],
+    ['Support', ROUTES.support],
+    ['FAQ', ROUTES.faq],
+    ['Privacy', ROUTES.privacy],
+    ['Terms', ROUTES.terms],
+    ['Refund Policy', ROUTES.refundPolicy],
+    ['Creator Guidelines', ROUTES.creatorGuidelines],
+    ['Ad Policy', ROUTES.adPolicy]
+  ]
+  return `
+    <footer class="community-rail-footer">
+      <nav aria-label="Site information">
+        ${links.map(([label, href]) => `<a href="${href}">${label}</a>`).join('')}
+      </nav>
+      <p>© ${new Date().getFullYear()} Melogic Records</p>
+    </footer>
   `
 }
 
@@ -2726,9 +2750,13 @@ function renderCommunityPagePreloaderMarkup() {
 function hydrateShell() {
   if (communityShellChromeInitialized) return
   communityShellChromeInitialized = true
+  const logoReadyPromise = initShellChrome().catch((error) => {
+    console.warn('[community] shell init failed', { message: error?.message })
+    return false
+  })
   if (!communityPagePreloaderInitialized) {
     communityPagePreloaderInitialized = true
-    createCriticalAssetPreloader({ logoReadyPromise: Promise.resolve(true), heroReadyPromise: Promise.resolve(true) })
+    createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise: Promise.resolve(true) })
   }
 }
 
@@ -2738,6 +2766,7 @@ function renderCommunityShellOnce() {
   if (!app) return null
   app.innerHTML = `
     ${renderCommunityPagePreloaderMarkup()}
+    ${navShell({ currentPage: 'community' })}
     <main class="community-page" data-community-page>
       <div class="community-root" data-community-root></div>
     </main>
@@ -2755,7 +2784,7 @@ function renderCommunityHomeView() {
       <div class="community-main">
         ${renderTopicBar()}
         ${renderInlineComposer()}
-        ${renderStoriesRow()}
+        <div class="community-mobile-stories">${renderStoriesRow()}</div>
         ${renderActiveCommunityTabContent()}
       </div>
       ${renderSidebar()}
@@ -3211,11 +3240,36 @@ function renderFeedRegionOnly() {
     render()
     return
   }
+  const scrollHost = region.closest('.community-main')
+  const hostTop = scrollHost?.getBoundingClientRect().top || 0
+  const visibleAnchor = scrollHost
+    ? [...region.querySelectorAll('.community-post-card[data-post-id]')]
+        .find((card) => card.getBoundingClientRect().bottom > hostTop + 1)
+    : null
+  const scrollAnchor = visibleAnchor ? {
+    postId: visibleAnchor.getAttribute('data-post-id') || '',
+    offset: visibleAnchor.getBoundingClientRect().top - hostTop
+  } : null
+  const previousScrollTop = scrollHost?.scrollTop || 0
   closePostMenusDom()
   closeCommentMenusDom()
   region.innerHTML = renderFeed()
   bindFeedRegionEvents(region)
   setupFeedPaginationObserver()
+  if (scrollHost && previousScrollTop > 0) {
+    window.requestAnimationFrame(() => {
+      const escapedPostId = scrollAnchor?.postId ? communityCssEscape(scrollAnchor.postId) : ''
+      const restoredAnchor = escapedPostId
+        ? region.querySelector(`.community-post-card[data-post-id="${escapedPostId}"]`)
+        : null
+      if (restoredAnchor && scrollAnchor) {
+        const nextOffset = restoredAnchor.getBoundingClientRect().top - scrollHost.getBoundingClientRect().top
+        scrollHost.scrollTop += nextOffset - scrollAnchor.offset
+      } else {
+        scrollHost.scrollTop = previousScrollTop
+      }
+    })
+  }
 }
 
 async function loadFeedPage({ reset = false, localOnly = false } = {}) {
@@ -3257,15 +3311,17 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
     let cursor = null
     let hasMore = false
     if (state.activeTab === 'following') {
-      if (reset && state.currentUser?.uid) {
-        posts = await withFeedTimeout(listFocusedCommunityPosts(
+      if (state.currentUser?.uid) {
+        const requestedLimit = Math.min(100, reset ? COMMUNITY_PAGE_SIZE : state.posts.length + COMMUNITY_PAGE_SIZE)
+        const focusedPosts = await withFeedTimeout(listFocusedCommunityPosts(
           state.currentUser.uid,
-          COMMUNITY_PAGE_SIZE,
+          requestedLimit,
           state.selectedCommunityFilters
         ))
-        posts = filterPostsForActiveTab(posts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
+        const filteredPosts = filterPostsForActiveTab(focusedPosts).filter((post) => (!state.activeTag || (post.tagKeys || post.tags || []).includes(state.activeTag)) && (!state.feedSearch || `${post.title} ${post.body} ${post.authorDisplayName} ${post.authorUsername} ${(post.tags || []).join(' ')}`.toLowerCase().includes(state.feedSearch.toLowerCase())))
+        posts = reset ? filteredPosts.slice(0, COMMUNITY_PAGE_SIZE) : filteredPosts.slice(state.posts.length, requestedLimit)
+        hasMore = requestedLimit < 100 && focusedPosts.length >= requestedLimit
       }
-      hasMore = false
     } else {
       const result = await withFeedTimeout(listCommunityPosts({
         ...feedQueryOptions(),
@@ -5100,9 +5156,13 @@ function setupFeedPaginationObserver() {
   const sentinel = app?.querySelector('[data-community-feed-sentinel]')
   if (!sentinel || !state.feedHasMore || state.feedInitialLoading || state.feedLoadingMore) return
   if (!('IntersectionObserver' in window)) return
+  const scrollRoot = sentinel.closest('.community-main')
   feedPaginationObserver = new IntersectionObserver((entries) => {
     if (entries.some((entry) => entry.isIntersecting)) loadFeedPage({ reset: false, localOnly: true })
-  }, { rootMargin: '640px 0px 640px 0px' })
+  }, {
+    root: scrollRoot || null,
+    rootMargin: '0px 0px 420px 0px'
+  })
   feedPaginationObserver.observe(sentinel)
 }
 
