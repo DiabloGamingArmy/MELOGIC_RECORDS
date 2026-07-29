@@ -133,8 +133,7 @@ still be required.
 ## Follow-up incident: 2026-07-29
 
 The later pixelation and simultaneous audio/video interruptions are not a
-viewer-buffer problem. Production inspection of stream
-`d5Gjme7YL9CbEUiYfzATP82i2` showed:
+viewer-buffer problem. Production inspection of the active test stream showed:
 
 - The 1920×1080 browser publisher was active, but SRS received only about
   0.49–0.55 Mbps during the inspection.
