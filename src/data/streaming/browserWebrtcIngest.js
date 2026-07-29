@@ -11,12 +11,101 @@ const PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS = 2000
 // 1080p30 browser publishing is intentionally bounded to the same practical
 // range used by major broadcast services. WebRTC congestion control still has
 // final authority; these values are preferences, not a promise of bandwidth.
-const PROGRAM_VIDEO_START_BITRATE = 8500000
-const PROGRAM_VIDEO_MIN_BITRATE = 4500000
 const PROGRAM_VIDEO_MAX_BITRATE = 12000000
 const PROGRAM_VIDEO_MAX_FRAMERATE = 30
+const MIN_PROGRAM_VIDEO_BITRATE = 1000000
+const MAX_PROGRAM_VIDEO_BITRATE = 20000000
+const MAX_PROGRAM_VIDEO_FRAMERATE = 60
+const DEGRADATION_PREFERENCES = new Set(['maintain-resolution', 'balanced', 'maintain-framerate'])
 
 let activeSession = null
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.max(min, Math.min(max, number)) : fallback
+}
+
+function normalizeEncoderSettings(settings = {}, mediaStream = null) {
+  const videoTrack = mediaStream?.getVideoTracks?.()[0] || null
+  const trackSettings = videoTrack?.getSettings?.() || {}
+  const width = Math.round(clampNumber(settings.width || trackSettings.width, 320, 3840, 1920))
+  const height = Math.round(clampNumber(settings.height || trackSettings.height, 180, 2160, 1080))
+  const maxBitrate = Math.round(clampNumber(settings.videoBitrate, MIN_PROGRAM_VIDEO_BITRATE, MAX_PROGRAM_VIDEO_BITRATE, PROGRAM_VIDEO_MAX_BITRATE))
+  const maxFramerate = clampNumber(settings.framerate || trackSettings.frameRate, 1, MAX_PROGRAM_VIDEO_FRAMERATE, PROGRAM_VIDEO_MAX_FRAMERATE)
+  const degradationPreference = DEGRADATION_PREFERENCES.has(settings.degradationPreference)
+    ? settings.degradationPreference
+    : 'maintain-resolution'
+  return {
+    width,
+    height,
+    maxBitrate,
+    maxFramerate,
+    startBitrate: Math.round(clampNumber(settings.startBitrate, MIN_PROGRAM_VIDEO_BITRATE, maxBitrate, Math.min(maxBitrate, maxBitrate * 0.72))),
+    minBitrate: Math.round(clampNumber(settings.minBitrate, 500000, maxBitrate, Math.min(maxBitrate, Math.max(1500000, maxBitrate * 0.38)))),
+    keyFrameIntervalMs: Math.round(clampNumber(settings.keyFrameIntervalMs, 1000, 5000, PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS)),
+    degradationPreference
+  }
+}
+
+export async function probeBrowserEncodingCapabilities(settings = {}) {
+  const normalized = normalizeEncoderSettings(settings)
+  const result = {
+    checked: true,
+    webCodecsAvailable: typeof VideoEncoder === 'function',
+    webCodecsH264Supported: null,
+    webCodecsHardwarePreferenceSupported: null,
+    mediaCapabilitiesAvailable: Boolean(navigator.mediaCapabilities?.encodingInfo),
+    webrtcEncodingSupported: null,
+    webrtcEncodingSmooth: null,
+    webrtcEncodingPowerEfficient: null,
+    requestedWidth: normalized.width,
+    requestedHeight: normalized.height,
+    requestedFramerate: normalized.maxFramerate,
+    requestedBitrate: normalized.maxBitrate
+  }
+
+  if (result.webCodecsAvailable && typeof VideoEncoder.isConfigSupported === 'function') {
+    try {
+      const support = await VideoEncoder.isConfigSupported({
+        // Constrained Baseline, level 4.2 covers the selectable 1080p60 ceiling.
+        // A level 3.1 probe would incorrectly reject some valid hardware paths.
+        codec: 'avc1.42e02a',
+        width: normalized.width,
+        height: normalized.height,
+        bitrate: normalized.maxBitrate,
+        framerate: normalized.maxFramerate,
+        hardwareAcceleration: 'prefer-hardware',
+        latencyMode: 'realtime'
+      })
+      result.webCodecsH264Supported = support.supported === true
+      result.webCodecsHardwarePreferenceSupported = support.supported === true
+    } catch {
+      result.webCodecsH264Supported = false
+      result.webCodecsHardwarePreferenceSupported = false
+    }
+  }
+
+  if (result.mediaCapabilitiesAvailable) {
+    try {
+      const support = await navigator.mediaCapabilities.encodingInfo({
+        type: 'webrtc',
+        video: {
+          contentType: 'video/H264;level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e02a',
+          width: normalized.width,
+          height: normalized.height,
+          bitrate: normalized.maxBitrate,
+          framerate: normalized.maxFramerate
+        }
+      })
+      result.webrtcEncodingSupported = support.supported === true
+      result.webrtcEncodingSmooth = support.smooth === true
+      result.webrtcEncodingPowerEfficient = support.powerEfficient === true
+    } catch {
+      result.webrtcEncodingSupported = null
+    }
+  }
+  return result
+}
 
 function configuredEndpoint() {
   return String(import.meta.env?.VITE_BROWSER_WEBRTC_INGEST_URL || DEFAULT_BROWSER_WHIP_INGEST_URL).trim()
@@ -36,9 +125,10 @@ function stripEndpointSecrets(value = '') {
   }
 }
 
-function connectionDiagnostics(peerConnection, mediaStream, extra = {}) {
+function connectionDiagnostics(peerConnection, mediaStream, extra = {}, settings = {}) {
   const audioTrack = mediaStream?.getAudioTracks?.()[0] || null
   const videoTrack = mediaStream?.getVideoTracks?.()[0] || null
+  const encoderSettings = normalizeEncoderSettings(settings, mediaStream)
   const programTrackCount = mediaStream?.getTracks?.().length || 0
   const audioTrackCount = mediaStream?.getAudioTracks?.().length || 0
   const videoTrackCount = mediaStream?.getVideoTracks?.().length || 0
@@ -54,8 +144,11 @@ function connectionDiagnostics(peerConnection, mediaStream, extra = {}) {
     audioTrackReadyState: audioTrack?.readyState || 'none',
     videoTrackReadyState: videoTrack?.readyState || 'none',
     audioTargetBitrate: MUSIC_AUDIO_MAX_BITRATE,
-    videoTargetBitrate: videoTrack ? PROGRAM_VIDEO_MAX_BITRATE : 0,
-    videoTargetFramerate: videoTrack ? PROGRAM_VIDEO_MAX_FRAMERATE : 0,
+    videoTargetBitrate: videoTrack ? encoderSettings.maxBitrate : 0,
+    videoTargetFramerate: videoTrack ? encoderSettings.maxFramerate : 0,
+    videoTargetWidth: videoTrack ? encoderSettings.width : 0,
+    videoTargetHeight: videoTrack ? encoderSettings.height : 0,
+    videoDegradationPreference: encoderSettings.degradationPreference,
     videoTrackSettings: videoTrack?.getSettings?.() || {},
     ...extra
   }
@@ -94,7 +187,7 @@ function waitForConnection(peerConnection, mediaStream, emitStatus) {
       else resolve()
     }
     function onChange() {
-      emitStatus(peerConnection.connectionState, connectionDiagnostics(peerConnection, mediaStream))
+      emitStatus(peerConnection.connectionState)
       if (whipTransportReady(peerConnection)) finish()
       else if (['failed', 'closed'].includes(peerConnection.connectionState) || peerConnection.iceConnectionState === 'failed') {
         finish(new Error(`Browser WebRTC ingest connection ${peerConnection.connectionState}.`))
@@ -155,10 +248,11 @@ function preferH264VideoCodec(peerConnection) {
   }
 }
 
-async function applyProgramVideoSenderParameters(peerConnection, mediaStream, phase = 'after-add-track') {
+async function applyProgramVideoSenderParameters(peerConnection, mediaStream, phase = 'after-add-track', settings = {}) {
   const videoTrack = mediaStream?.getVideoTracks?.()[0] || null
   const videoSender = peerConnection?.getSenders?.().find((sender) => sender.track?.kind === 'video') || null
   if (!videoTrack || !videoSender?.getParameters) return false
+  const encoderSettings = normalizeEncoderSettings(settings, mediaStream)
   let applied = false
   let errorMessage = ''
   try {
@@ -167,14 +261,14 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
     params.encodings = params.encodings?.length ? params.encodings : [{}]
     params.encodings[0] = {
       ...(params.encodings[0] || {}),
-      maxBitrate: PROGRAM_VIDEO_MAX_BITRATE,
-      maxFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
+      maxBitrate: encoderSettings.maxBitrate,
+      maxFramerate: encoderSettings.maxFramerate,
       scaleResolutionDownBy: 1
     }
     // The HLS buffer can absorb a lower instantaneous frame rate, but it
     // cannot restore detail after WebRTC has reduced a 1080p screen share to
     // 360p. Preserve source resolution and let the browser drop frames first.
-    params.degradationPreference = 'maintain-resolution'
+    params.degradationPreference = encoderSettings.degradationPreference
     if (videoSender.setParameters) {
       await videoSender.setParameters(params)
       applied = true
@@ -186,8 +280,11 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
   console.log('[Browser WHIP] video sender parameters', {
     phase,
     applied,
-    targetMaxBitrate: PROGRAM_VIDEO_MAX_BITRATE,
-    targetMaxFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
+    targetMaxBitrate: encoderSettings.maxBitrate,
+    targetMaxFramerate: encoderSettings.maxFramerate,
+    targetWidth: encoderSettings.width,
+    targetHeight: encoderSettings.height,
+    degradationPreference: encoderSettings.degradationPreference,
     trackId: videoTrack.id,
     settings: videoTrack.getSettings?.(),
     params: videoSender.getParameters?.(),
@@ -220,6 +317,7 @@ async function requestChromeVideoKeyFrame(videoSender, session) {
 function startPeriodicVideoKeyFrames(session) {
   const videoSender = session?.peerConnection?.getSenders?.().find((sender) => sender.track?.kind === 'video') || null
   if (!videoSender) return
+  const keyFrameIntervalMs = session.encoderSettings?.keyFrameIntervalMs || PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS
 
   // Safari and Firefox expose key-frame generation through an encoded
   // transform worker. The worker is a transparent pass-through; its only job
@@ -228,7 +326,7 @@ function startPeriodicVideoKeyFrames(session) {
     try {
       session.keyFrameWorker = new Worker('/workers/streamKeyframeWorker.js')
       videoSender.transform = new RTCRtpScriptTransform(session.keyFrameWorker, {
-        keyFrameIntervalMs: PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS
+        keyFrameIntervalMs
       })
       session.periodicKeyFrameTransform = true
     } catch (error) {
@@ -245,7 +343,7 @@ function startPeriodicVideoKeyFrames(session) {
     void requestChromeVideoKeyFrame(videoSender, session)
   }
   requestKeyFrame()
-  session.keyFrameTimer = window.setInterval(requestKeyFrame, PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS)
+  session.keyFrameTimer = window.setInterval(requestKeyFrame, keyFrameIntervalMs)
 }
 
 function stopPeriodicVideoKeyFrames(session) {
@@ -256,9 +354,10 @@ function stopPeriodicVideoKeyFrames(session) {
   session.keyFrameWorker = null
 }
 
-function applyProgramVideoSdp(sdp = '') {
+function applyProgramVideoSdp(sdp = '', settings = {}) {
   const text = String(sdp || '')
   if (!text.includes('m=video')) return text
+  const encoderSettings = normalizeEncoderSettings(settings)
   const lineBreak = text.includes('\r\n') ? '\r\n' : '\n'
   const sections = text.split(`${lineBreak}m=`)
   const videoIndex = sections.findIndex((section, index) => index > 0 && section.startsWith('video '))
@@ -269,7 +368,7 @@ function applyProgramVideoSdp(sdp = '') {
     .replace(new RegExp(`^b=AS:\\d+${lineBreak}`, 'gm'), '')
     .replace(new RegExp(`^b=TIAS:\\d+${lineBreak}`, 'gm'), '')
 
-  const bandwidthLines = `b=AS:${Math.round(PROGRAM_VIDEO_MAX_BITRATE / 1000)}${lineBreak}b=TIAS:${PROGRAM_VIDEO_MAX_BITRATE}`
+  const bandwidthLines = `b=AS:${Math.round(encoderSettings.maxBitrate / 1000)}${lineBreak}b=TIAS:${encoderSettings.maxBitrate}`
   if (/^c=/m.test(videoSection)) {
     videoSection = videoSection.replace(/^c=.*$/m, (line) => `${line}${lineBreak}${bandwidthLines}`)
   }
@@ -280,9 +379,9 @@ function applyProgramVideoSdp(sdp = '') {
     const fmtpPattern = new RegExp(`^a=fmtp:${payloadType}\\s+(.+)$`, 'mi')
     const fmtpMatch = videoSection.match(fmtpPattern)
     const bitrateParameters = {
-      'x-google-start-bitrate': String(Math.round(PROGRAM_VIDEO_START_BITRATE / 1000)),
-      'x-google-min-bitrate': String(Math.round(PROGRAM_VIDEO_MIN_BITRATE / 1000)),
-      'x-google-max-bitrate': String(Math.round(PROGRAM_VIDEO_MAX_BITRATE / 1000))
+      'x-google-start-bitrate': String(Math.round(encoderSettings.startBitrate / 1000)),
+      'x-google-min-bitrate': String(Math.round(encoderSettings.minBitrate / 1000)),
+      'x-google-max-bitrate': String(Math.round(encoderSettings.maxBitrate / 1000))
     }
     if (!fmtpMatch) {
       const rtpmapPattern = new RegExp(`^a=rtpmap:${payloadType}.*$`, 'mi')
@@ -357,13 +456,33 @@ async function collectOutboundQualityStats(session) {
     const availableOutgoingBitrateKbps = Number.isFinite(Number(candidatePair?.availableOutgoingBitrate))
       ? Math.round(Number(candidatePair.availableOutgoingBitrate) / 1000)
       : null
+    const videoWidth = Number(video?.frameWidth || 0) || null
+    const videoHeight = Number(video?.frameHeight || 0) || null
+    const qualityLimitationReason = String(video?.qualityLimitationReason || 'none').toLowerCase()
+    const encoderSettings = session.encoderSettings || normalizeEncoderSettings({}, session.mediaStream)
+    const resolutionReduced = Boolean(videoWidth && videoHeight && (
+      videoWidth < encoderSettings.width * 0.84 || videoHeight < encoderSettings.height * 0.84
+    ))
+    const frameRateReduced = Number.isFinite(framesPerSecond) && framesPerSecond < Math.min(20, encoderSettings.maxFramerate * 0.66)
+    const bandwidthEstimateLow = availableOutgoingBitrateKbps != null
+      && availableOutgoingBitrateKbps < (encoderSettings.maxBitrate / 1000) * 0.45
+    const bandwidthConstrained = qualityLimitationReason === 'bandwidth'
+      || (bandwidthEstimateLow && (resolutionReduced || frameRateReduced))
+    const cpuConstrained = qualityLimitationReason === 'cpu'
+    const outboundQualityWarning = bandwidthConstrained
+      ? `Available upload bandwidth is constraining the ${encoderSettings.height}p program. Close other uploads or use Ethernet; Melogic will preserve resolution where possible.`
+      : cpuConstrained
+        ? 'Browser encoding load is high. Close other intensive tabs or use an external encoder for more headroom.'
+        : ''
     const diagnostics = {
       outboundVideoBitrateKbps: videoBitrateKbps,
       outboundAudioBitrateKbps: audioBitrateKbps,
       outboundVideoFramesPerSecond: framesPerSecond,
-      outboundVideoWidth: Number(video?.frameWidth || 0) || null,
-      outboundVideoHeight: Number(video?.frameHeight || 0) || null,
-      outboundVideoQualityLimitation: String(video?.qualityLimitationReason || 'none'),
+      outboundVideoWidth: videoWidth,
+      outboundVideoHeight: videoHeight,
+      outboundVideoQualityLimitation: qualityLimitationReason,
+      outboundEncoderImplementation: String(video?.encoderImplementation || ''),
+      outboundPowerEfficientEncoder: typeof video?.powerEfficientEncoder === 'boolean' ? video.powerEfficientEncoder : null,
       outboundVideoNackCount: Number(video?.nackCount || 0),
       outboundVideoPliCount: Number(video?.pliCount || 0),
       outboundVideoKeyFramesEncoded: Number(video?.keyFramesEncoded || 0),
@@ -386,9 +505,7 @@ async function collectOutboundQualityStats(session) {
         : null,
       outboundStallSamples: session.outboundStallSamples,
       outboundLastProgressAt: session.lastOutboundProgressAt ? new Date(session.lastOutboundProgressAt).toISOString() : '',
-      outboundQualityWarning: video && previous.videoBytes != null && videoBitrateKbps < 1800
-        ? 'Upload bandwidth is too low for clean 1080p video. Melogic is preserving resolution and may reduce frame rate.'
-        : ''
+      outboundQualityWarning
     }
     session.lastOutboundStats = {
       at: now,
@@ -577,10 +694,11 @@ export async function testBrowserWebrtcIngestReachability({ streamKey = '', time
   }
 }
 
-export async function startBrowserWebrtcIngest({ streamId = '', streamKey, mediaStream, onStatus = () => {}, onError = () => {} } = {}) {
+export async function startBrowserWebrtcIngest({ streamId = '', streamKey, mediaStream, encodingSettings = {}, onStatus = () => {}, onError = () => {} } = {}) {
   const endpoint = buildBrowserWebrtcIngestUrl(streamKey)
   const hasProgramStream = typeof MediaStream !== 'undefined' && mediaStream instanceof MediaStream
   const trackCount = hasProgramStream ? mediaStream.getTracks().length : 0
+  const normalizedEncodingSettings = normalizeEncoderSettings(encodingSettings, mediaStream)
   console.log('[Browser WHIP] config', {
     streamId,
     streamKey: sanitizeStreamKey(streamKey),
@@ -589,7 +707,8 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     hasProgramStream,
     trackCount,
     audioTrackCount: hasProgramStream ? mediaStream.getAudioTracks().length : 0,
-    videoTrackCount: hasProgramStream ? mediaStream.getVideoTracks().length : 0
+    videoTrackCount: hasProgramStream ? mediaStream.getVideoTracks().length : 0,
+    encodingSettings: normalizedEncodingSettings
   })
   if (!configuredEndpoint() || !isBrowserWebrtcIngestConfigured() || !endpoint) {
     throw new Error('Browser streaming could not build the Melogic WHIP ingest URL.')
@@ -618,21 +737,22 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     lastOutboundStats: null,
     outboundStallSamples: 0,
     lastOutboundProgressAt: 0,
-    failureReported: false
+    failureReported: false,
+    encoderSettings: normalizedEncodingSettings
   }
   activeSession = session
   mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream))
   const h264Preferred = preferH264VideoCodec(peerConnection)
   await Promise.all([
     applyMusicAudioSenderParameters(peerConnection, mediaStream),
-    applyProgramVideoSenderParameters(peerConnection, mediaStream)
+    applyProgramVideoSenderParameters(peerConnection, mediaStream, 'after-add-track', normalizedEncodingSettings)
   ])
   startPeriodicVideoKeyFrames(session)
   const emitStatus = (status, extra = {}) => onStatus({
     status,
     connectionState: peerConnection.connectionState,
     ingestEndpointURL: safeEndpoint,
-    ...connectionDiagnostics(peerConnection, mediaStream, extra)
+    ...connectionDiagnostics(peerConnection, mediaStream, extra, normalizedEncodingSettings)
   })
   const reportFailure = (error, extra = {}) => {
     if (session.stopped || session.failureReported || activeSession !== session) return
@@ -641,7 +761,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     const diagnostics = connectionDiagnostics(peerConnection, mediaStream, {
       lastIngestError: error?.message || String(error),
       ...extra
-    })
+    }, normalizedEncodingSettings)
     onError(error, diagnostics)
     void stopBrowserWebrtcIngest()
   }
@@ -693,7 +813,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
           whipFailureGraceExpired: true,
           whipFailureGraceMs: CONNECTION_FAILURE_GRACE_MS,
           whipFailureStartedAt: session.failureStartedAt ? new Date(session.failureStartedAt).toISOString() : ''
-        })
+        }, normalizedEncodingSettings)
         console.log('[Live Lifecycle] browser WHIP unavailable after grace period', {
           streamId,
           connectionState: peerConnection.connectionState,
@@ -724,15 +844,17 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     const offer = await peerConnection.createOffer()
     const musicOffer = {
       type: offer.type,
-      sdp: applyProgramVideoSdp(applyMusicOpusSdp(offer.sdp))
+      sdp: applyProgramVideoSdp(applyMusicOpusSdp(offer.sdp), normalizedEncodingSettings)
     }
     console.log('[Browser WHIP] high-quality offer', {
       stereoRequested: /stereo=1/i.test(musicOffer.sdp || ''),
       maxAverageBitrate: MUSIC_AUDIO_MAX_BITRATE,
-      videoStartBitrate: PROGRAM_VIDEO_START_BITRATE,
-      videoMinBitrate: PROGRAM_VIDEO_MIN_BITRATE,
-      videoTargetBitrate: PROGRAM_VIDEO_MAX_BITRATE,
-      videoTargetFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
+      videoStartBitrate: normalizedEncodingSettings.startBitrate,
+      videoMinBitrate: normalizedEncodingSettings.minBitrate,
+      videoTargetBitrate: normalizedEncodingSettings.maxBitrate,
+      videoTargetFramerate: normalizedEncodingSettings.maxFramerate,
+      videoTargetResolution: `${normalizedEncodingSettings.width}x${normalizedEncodingSettings.height}`,
+      videoDegradationPreference: normalizedEncodingSettings.degradationPreference,
       h264Preferred,
       dtxDisabled: /usedtx=0/i.test(musicOffer.sdp || '')
     })
@@ -777,7 +899,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
         corsPreflightStatus,
         networkHint: 'Check ingest TLS, CORS, firewall access, and the SRS WHIP listener.',
         lastIngestError: fetchErrorMessage
-      })
+      }, normalizedEncodingSettings)
       throw error
     } finally {
       window.clearTimeout(fetchTimeout)
@@ -810,7 +932,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
         fetchErrorMessage: '',
         corsPreflightStatus,
         lastIngestError: `WHIP negotiation returned HTTP ${response.status}: ${responseBodyPreview || 'empty response body'}`
-      })
+      }, normalizedEncodingSettings)
       throw error
     }
     if (!answerSdp.trim()) {
@@ -826,7 +948,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     await peerConnection.setRemoteDescription(answer)
     await Promise.all([
       applyMusicAudioSenderParameters(peerConnection, mediaStream, 'after-answer'),
-      applyProgramVideoSenderParameters(peerConnection, mediaStream, 'after-answer')
+      applyProgramVideoSenderParameters(peerConnection, mediaStream, 'after-answer', normalizedEncodingSettings)
     ])
     console.log('[Browser WHIP] remote answer applied', {
       answerLength: answerSdp.length,
@@ -854,7 +976,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
       fetchErrorMessage: '',
       corsPreflightStatus,
       lastIngestError: ''
-    })
+    }, normalizedEncodingSettings)
     emitStatus('connected', diagnostics)
     return {
       ok: true,
@@ -883,7 +1005,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
         fetchErrorMessage,
         corsPreflightStatus,
         lastIngestError: error?.message || String(error)
-      }),
+      }, normalizedEncodingSettings),
       ...(error?.whipDiagnostics || {})
     }
     error.whipDiagnostics = diagnostics

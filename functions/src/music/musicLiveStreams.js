@@ -420,6 +420,12 @@ function cleanProgramState(input = {}, existing = {}) {
   const sources = Array.isArray(source.sources) ? source.sources.map(cleanProgramSource).filter((entry) => entry.sourceId).slice(0, 80) : Array.isArray(old.sources) ? old.sources : []
   const snapshotInput = source.programSnapshot && typeof source.programSnapshot === 'object' ? source.programSnapshot : old.programSnapshot || {}
   const snapshotScene = snapshotInput.scene ? cleanProgramScene(snapshotInput.scene) : null
+  const encodingInput = source.encodingSettings && typeof source.encodingSettings === 'object'
+    ? source.encodingSettings
+    : old.encodingSettings && typeof old.encodingSettings === 'object' ? old.encodingSettings : {}
+  const degradationPreference = ['maintain-resolution', 'balanced', 'maintain-framerate'].includes(encodingInput.degradationPreference)
+    ? encodingInput.degradationPreference
+    : 'maintain-resolution'
   return {
     mixerVersion: Math.max(1, Math.min(2, Number(source.mixerVersion || old.mixerVersion || 2))),
     previewSceneId: cleanId(source.previewSceneId || old.previewSceneId || '', 120),
@@ -428,6 +434,10 @@ function cleanProgramState(input = {}, existing = {}) {
     selectedSourceId: cleanId(source.selectedSourceId || old.selectedSourceId || '', 120),
     outputResolution: cleanString(source.outputResolution || old.outputResolution || '1280x720', 40),
     fps: Math.max(1, Math.min(60, Number(source.fps || old.fps || 30))),
+    encodingSettings: {
+      videoBitrateMbps: Math.max(1, Math.min(20, Number(encodingInput.videoBitrateMbps || 12))),
+      degradationPreference
+    },
     transitionDurationMs: Math.max(0, Math.min(5000, Number(source.transitionDurationMs || old.transitionDurationMs || 400))),
     mode: source.mode === 'preview' ? 'preview' : 'program', scenes, sources,
     programSnapshot: snapshotScene ? {
@@ -514,6 +524,16 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
         lastDemandError: cleanString(data.providerDiagnostics.lastDemandError, 240),
         trackCount: Number.isFinite(Number(data.providerDiagnostics.trackCount)) ? Number(data.providerDiagnostics.trackCount) : null,
         videoTargetBitrate: Number.isFinite(Number(data.providerDiagnostics.videoTargetBitrate)) ? Number(data.providerDiagnostics.videoTargetBitrate) : null,
+        videoTargetFramerate: Number.isFinite(Number(data.providerDiagnostics.videoTargetFramerate)) ? Number(data.providerDiagnostics.videoTargetFramerate) : null,
+        videoTargetWidth: Number.isFinite(Number(data.providerDiagnostics.videoTargetWidth)) ? Number(data.providerDiagnostics.videoTargetWidth) : null,
+        videoTargetHeight: Number.isFinite(Number(data.providerDiagnostics.videoTargetHeight)) ? Number(data.providerDiagnostics.videoTargetHeight) : null,
+        videoDegradationPreference: cleanString(data.providerDiagnostics.videoDegradationPreference, 40),
+        webCodecsAvailable: data.providerDiagnostics.webCodecsAvailable === true,
+        webCodecsH264Supported: data.providerDiagnostics.webCodecsH264Supported === true,
+        webCodecsHardwarePreferenceSupported: data.providerDiagnostics.webCodecsHardwarePreferenceSupported === true,
+        webrtcEncodingSupported: data.providerDiagnostics.webrtcEncodingSupported === true,
+        webrtcEncodingSmooth: data.providerDiagnostics.webrtcEncodingSmooth === true,
+        webrtcEncodingPowerEfficient: data.providerDiagnostics.webrtcEncodingPowerEfficient === true,
         outboundVideoBitrateKbps: Number.isFinite(Number(data.providerDiagnostics.outboundVideoBitrateKbps)) ? Number(data.providerDiagnostics.outboundVideoBitrateKbps) : null,
         outboundAudioBitrateKbps: Number.isFinite(Number(data.providerDiagnostics.outboundAudioBitrateKbps)) ? Number(data.providerDiagnostics.outboundAudioBitrateKbps) : null,
         outboundVideoFramesPerSecond: Number.isFinite(Number(data.providerDiagnostics.outboundVideoFramesPerSecond)) ? Number(data.providerDiagnostics.outboundVideoFramesPerSecond) : null,
@@ -532,6 +552,8 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
         availableOutgoingBitrateKbps: Number.isFinite(Number(data.providerDiagnostics.availableOutgoingBitrateKbps)) ? Number(data.providerDiagnostics.availableOutgoingBitrateKbps) : null,
         candidatePairCurrentRoundTripTimeMs: Number.isFinite(Number(data.providerDiagnostics.candidatePairCurrentRoundTripTimeMs)) ? Number(data.providerDiagnostics.candidatePairCurrentRoundTripTimeMs) : null,
         outboundVideoQualityLimitation: cleanString(data.providerDiagnostics.outboundVideoQualityLimitation, 80),
+        outboundEncoderImplementation: cleanString(data.providerDiagnostics.outboundEncoderImplementation, 160),
+        outboundPowerEfficientEncoder: typeof data.providerDiagnostics.outboundPowerEfficientEncoder === 'boolean' ? data.providerDiagnostics.outboundPowerEfficientEncoder : null,
         outboundQualityWarning: cleanString(data.providerDiagnostics.outboundQualityWarning, 240),
         recorderStartReason: cleanString(data.providerDiagnostics.recorderStartReason, 120),
         recorderStopReason: cleanString(data.providerDiagnostics.recorderStopReason, 120)
@@ -832,11 +854,11 @@ function safeJson(value) {
   }
 }
 
-async function loadAccount(uid) {
+async function loadAccount(uid, auth = null) {
   const [userSnap, profileSnap, accountPermissions] = await Promise.all([
     db().collection('users').doc(uid).get(),
     db().collection('profiles').doc(uid).get(),
-    resolvePermissionsForUid(uid).catch(() => null)
+    resolvePermissionsForUid(uid, auth).catch(() => null)
   ])
   return {
     user: userSnap.exists ? userSnap.data() || {} : null,
@@ -879,7 +901,7 @@ function assertCanChat({ auth, user, profile, accountPermissions }) {
   if (accountPermissions?.suspended === true || restrictions.suspended === true || restrictions.communityRestricted === true || restrictions.musicRestricted === true) {
     throw new HttpsError('permission-denied', 'Live chat is restricted for this account.')
   }
-  if (permissions.musicLiveChat === false || permissions.communityMessage === false) {
+  if (permissions.musicLiveChat === false) {
     throw new HttpsError('permission-denied', 'Live chat is restricted for this account.')
   }
 }
@@ -950,7 +972,7 @@ const startMusicLiveStream = onCall(
       if (!uid) throw new HttpsError('unauthenticated', 'Sign in to go live.', { stage })
 
       stage = 'eligibility loaded'
-      const { user, profile, accountPermissions } = await loadAccount(uid)
+      const { user, profile, accountPermissions } = await loadAccount(uid, request.auth)
       liveLog(stage, { uid, permissionsSource: accountPermissions?.source || 'unknown' })
 
       stage = 'eligibility check'
@@ -1210,7 +1232,7 @@ const startMusicLiveStream = onCall(
 const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (request) => {
   const uid = request.auth?.uid
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in to prepare a live stream.')
-  const { user, profile, accountPermissions } = await loadAccount(uid)
+  const { user, profile, accountPermissions } = await loadAccount(uid, request.auth)
   assertEligible({ auth: request.auth, user, profile, accountPermissions })
 
   const requestedStreamId = cleanId(request.data?.streamId, 120)
@@ -1765,7 +1787,7 @@ const toggleMusicLiveReaction = onCall({ region: 'us-central1' }, async (request
   const streamId = cleanString(request.data?.streamId, 120)
   const nextReaction = ALLOWED_REACTIONS.has(request.data?.reaction) ? request.data.reaction : 'none'
   if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
-  const account = await loadAccount(uid)
+  const account = await loadAccount(uid, request.auth)
   assertCanInteract({ auth: request.auth, ...account })
   const streamRef = db().collection('musicLiveStreams').doc(streamId)
   const reactionRef = streamRef.collection('reactions').doc(uid)
@@ -1802,7 +1824,7 @@ const toggleSaveMusicLiveStream = onCall({ region: 'us-central1' }, async (reque
   const streamId = cleanString(request.data?.streamId, 120)
   const saved = request.data?.saved === true
   if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
-  const account = await loadAccount(uid)
+  const account = await loadAccount(uid, request.auth)
   assertCanInteract({ auth: request.auth, ...account })
   const streamRef = db().collection('musicLiveStreams').doc(streamId)
   const saveRef = db().collection('users').doc(uid).collection('savedMusicLiveStreams').doc(streamId)
@@ -1975,7 +1997,7 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   if (!text) throw new HttpsError('invalid-argument', 'Message text is required.')
 
   const [{ user, profile, accountPermissions }, streamSnap] = await Promise.all([
-    loadAccount(uid),
+    loadAccount(uid, request.auth),
     db().collection('musicLiveStreams').doc(streamId).get()
   ])
   assertCanChat({ auth: request.auth, user, profile, accountPermissions })

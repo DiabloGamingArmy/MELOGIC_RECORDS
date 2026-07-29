@@ -43,7 +43,7 @@ import {
   STREAM_PROVIDERS
 } from './data/streaming/streamingProviderTypes'
 import { buildHlsPlaybackUrl, sanitizeHlsStreamKey } from './data/streaming/hlsEdgePlayer'
-import { buildBrowserWebrtcIngestUrl, isBrowserWebrtcIngestConfigured, startBrowserWebrtcIngest, stopBrowserWebrtcIngest, testBrowserWebrtcIngestReachability } from './data/streaming/browserWebrtcIngest'
+import { buildBrowserWebrtcIngestUrl, isBrowserWebrtcIngestConfigured, probeBrowserEncodingCapabilities, startBrowserWebrtcIngest, stopBrowserWebrtcIngest, testBrowserWebrtcIngestReachability } from './data/streaming/browserWebrtcIngest'
 import { checkHlsManifest } from './data/streaming/hlsHealth'
 import { createRandomStreamKey, ensureSessionStreamKey, isValidGeneratedStreamKey } from './data/streaming/streamSessionKey'
 import {
@@ -272,6 +272,15 @@ const state = {
     hlsHealthTimer: 0,
     hlsHealthUrl: '',
     advancedStreamingOpen: false,
+    encodingSettings: {
+      videoBitrateMbps: 12,
+      degradationPreference: 'maintain-resolution'
+    },
+    encoderCapabilities: {
+      checked: false,
+      loading: false,
+      error: ''
+    },
     programMixer: {
       loading: false,
       loaded: false,
@@ -420,7 +429,7 @@ function isLiveMonitorRoute() {
 
 const livePanels = [
   ['stream', 'Stream Details'],
-  ['input', 'Input Source'],
+  ['input', 'Stream Settings'],
   ['program', 'Program Mixer'],
   ['sequence', 'Sequence Editor'],
   ['metadata', 'Manual Metadata'],
@@ -1568,8 +1577,13 @@ function renderAdvancedStreamingSettings() {
             <li>Offer SDP length: ${Number(diagnostics.offerSdpLength || 0)}</li>
             <li>Answer SDP length: ${Number(diagnostics.answerSdpLength || 0)}</li>
             <li>Program target: ${esc(live.programMixer.outputResolution || '1920x1080')} @ ${Number(live.programMixer.fps || 30)} fps</li>
-            <li>Encoder video target: ${Number(diagnostics.videoTargetBitrate || 8000000) / 1000000} Mbps</li>
+            <li>Encoder video target: ${Number(diagnostics.videoTargetBitrate || currentStudioEncoderSettings().videoBitrate) / 1000000} Mbps</li>
             <li>Encoder audio target: ${Math.round(Number(diagnostics.audioTargetBitrate || 256000) / 1000)} kbps stereo</li>
+            <li>WebCodecs API: ${diagnostics.webCodecsAvailable === true ? 'available' : diagnostics.webCodecsAvailable === false ? 'unavailable' : 'not checked'}</li>
+            <li>WebRTC H.264 profile: ${diagnostics.webrtcEncodingSupported === true ? 'supported' : diagnostics.webrtcEncodingSupported === false ? 'unsupported' : 'not reported'}</li>
+            <li>Hardware-efficient capability: ${diagnostics.webrtcEncodingPowerEfficient === true ? 'yes' : diagnostics.webrtcEncodingPowerEfficient === false ? 'no / not reported' : 'not checked'}</li>
+            <li>Active encoder: ${esc(diagnostics.outboundEncoderImplementation || 'browser selected / not reported')}</li>
+            <li>Active encoder power efficient: ${diagnostics.outboundPowerEfficientEncoder === true ? 'yes' : diagnostics.outboundPowerEfficientEncoder === false ? 'no' : 'not reported'}</li>
             <li>Outbound video: ${diagnostics.outboundVideoBitrateKbps ? `${diagnostics.outboundVideoBitrateKbps} kbps` : 'awaiting samples'}</li>
             <li>Outbound audio: ${diagnostics.outboundAudioBitrateKbps ? `${diagnostics.outboundAudioBitrateKbps} kbps` : 'awaiting samples'}</li>
             <li>Outbound frame rate: ${diagnostics.outboundVideoFramesPerSecond ?? 'awaiting samples'}</li>
@@ -1608,6 +1622,187 @@ function renderAdvancedStreamingSettings() {
   `
 }
 
+function currentStudioEncoderSettings() {
+  const live = liveState()
+  const [width, height] = String(live.programMixer.outputResolution || '1920x1080')
+    .split('x')
+    .map((value) => Number(value) || 0)
+  return {
+    width: width || 1920,
+    height: height || 1080,
+    framerate: Math.max(1, Math.min(60, Number(live.programMixer.fps || 30))),
+    videoBitrate: Math.round(Math.max(1, Math.min(20, Number(live.encodingSettings.videoBitrateMbps || 12))) * 1000000),
+    degradationPreference: ['maintain-resolution', 'balanced', 'maintain-framerate'].includes(live.encodingSettings.degradationPreference)
+      ? live.encodingSettings.degradationPreference
+      : 'maintain-resolution',
+    keyFrameIntervalMs: 2000
+  }
+}
+
+function encoderCapabilitySummary() {
+  const live = liveState()
+  const capabilities = live.encoderCapabilities || {}
+  const diagnostics = live.providerDiagnostics || {}
+  if (capabilities.loading) return ['Checking encoder…', 'Testing the selected H.264 WebRTC profile on this device.']
+  if (diagnostics.outboundPowerEfficientEncoder === true) {
+    return ['Hardware encoder active', diagnostics.outboundEncoderImplementation || 'WebRTC reports a power-efficient platform encoder.']
+  }
+  if (!capabilities.checked) return ['Encoder check pending', 'Melogic checks WebCodecs and WebRTC hardware capability when this panel opens.']
+  if (capabilities.webrtcEncodingPowerEfficient === true) {
+    return ['Hardware encoding available', 'The browser reports this WebRTC H.264 profile as power efficient.']
+  }
+  if (capabilities.webCodecsHardwarePreferenceSupported === true) {
+    return ['Hardware codec path available', 'WebCodecs accepts this H.264 hardware-preference profile; WebRTC still selects the live encoder.']
+  }
+  if (capabilities.webrtcEncodingSupported === true) {
+    return ['WebRTC encoding supported', 'This browser supports the profile but does not expose a hardware-acceleration guarantee.']
+  }
+  return ['Compatibility mode', capabilities.error || 'The browser does not expose a hardware encoder result for this profile.']
+}
+
+async function refreshBrowserEncoderCapabilities({ rerender = true } = {}) {
+  const live = liveState()
+  if (live.encoderCapabilities.loading) return live.encoderCapabilities
+  live.encoderCapabilities = { ...live.encoderCapabilities, loading: true, error: '' }
+  if (rerender && currentStudioSection() === 'live') renderShell()
+  try {
+    const capabilities = await probeBrowserEncodingCapabilities(currentStudioEncoderSettings())
+    live.encoderCapabilities = { ...capabilities, loading: false, error: '' }
+    live.providerDiagnostics = {
+      ...(live.providerDiagnostics || {}),
+      webCodecsAvailable: capabilities.webCodecsAvailable,
+      webCodecsH264Supported: capabilities.webCodecsH264Supported,
+      webCodecsHardwarePreferenceSupported: capabilities.webCodecsHardwarePreferenceSupported,
+      webrtcEncodingSupported: capabilities.webrtcEncodingSupported,
+      webrtcEncodingSmooth: capabilities.webrtcEncodingSmooth,
+      webrtcEncodingPowerEfficient: capabilities.webrtcEncodingPowerEfficient
+    }
+  } catch (error) {
+    live.encoderCapabilities = {
+      checked: true,
+      loading: false,
+      error: error?.message || 'Encoder capability check was unavailable.'
+    }
+  }
+  if (rerender && currentStudioSection() === 'live') renderShell()
+  return live.encoderCapabilities
+}
+
+async function applyStudioEncoderSettings({
+  resolution = liveState().programMixer.outputResolution,
+  fps = liveState().programMixer.fps,
+  videoBitrateMbps = liveState().encodingSettings.videoBitrateMbps,
+  degradationPreference = liveState().encodingSettings.degradationPreference
+} = {}) {
+  const live = liveState()
+  if (live.streamId) {
+    live.sourceMessage = 'End the active stream before changing encoder settings.'
+    renderShell()
+    return
+  }
+  const allowedResolutions = new Set(['854x480', '1280x720', '1920x1080'])
+  live.programMixer.outputResolution = allowedResolutions.has(resolution) ? resolution : '1920x1080'
+  live.programMixer.fps = [24, 30, 48, 60].includes(Number(fps)) ? Number(fps) : 30
+  live.encodingSettings.videoBitrateMbps = Math.max(2, Math.min(20, Number(videoBitrateMbps || 12)))
+  live.encodingSettings.degradationPreference = ['maintain-resolution', 'balanced', 'maintain-framerate'].includes(degradationPreference)
+    ? degradationPreference
+    : 'maintain-resolution'
+  live.encoderCapabilities = { checked: false, loading: false, error: '' }
+
+  const settings = currentStudioEncoderSettings()
+  if (studioProgramMixer) {
+    studioProgramMixer.releaseVideoCapture()
+    studioProgramMixer.width = settings.width
+    studioProgramMixer.height = settings.height
+    studioProgramMixer.fps = settings.framerate
+    studioProgramMixer.attachCanvas(programOutputCanvas)
+    if (live.videoEnabled) studioProgramMixer.startRenderLoop()
+  } else {
+    programOutputCanvas.width = settings.width
+    programOutputCanvas.height = settings.height
+  }
+  live.programVideoTrack = null
+
+  const rawTrack = live.localVideoTrack?.mediaStreamTrack || live.localVideoTrack || null
+  if (rawTrack?.applyConstraints && ['browser', 'screen'].includes(live.videoSource)) {
+    await rawTrack.applyConstraints({
+      width: { ideal: settings.width },
+      height: { ideal: settings.height },
+      frameRate: { ideal: settings.framerate, max: settings.framerate }
+    }).catch((error) => {
+      live.sourceMessage = `The current source kept its existing capture format: ${error?.message || 'constraints unavailable'}. Re-select it to apply the new target.`
+    })
+  }
+  live.outputStatus = `Encoder target set to ${settings.width}×${settings.height} at ${settings.framerate} fps, ${(settings.videoBitrate / 1000000).toFixed(1)} Mbps.`
+  scheduleProgramMixerStateSave()
+  scheduleLiveStudioDraftSave()
+  renderShell()
+  await refreshBrowserEncoderCapabilities({ rerender: true }).catch(() => {})
+}
+
+function renderBrowserEncodingSettings() {
+  const live = liveState()
+  const settings = currentStudioEncoderSettings()
+  const bitrateMbps = Number((settings.videoBitrate / 1000000).toFixed(1))
+  const estimatedUploadMbps = Number((bitrateMbps * 1.12 + (live.audioEnabled ? 0.3 : 0.05)).toFixed(1))
+  const highUpload = settings.framerate >= 60 || bitrateMbps > 12 || estimatedUploadMbps >= 14
+  const [capabilityTitle, capabilityDetail] = encoderCapabilitySummary()
+  const locked = Boolean(live.streamId)
+  return `
+    <div class="studio-live-settings-divider" role="separator" aria-label="Encoder settings"></div>
+    <section class="studio-live-encoding-settings" aria-labelledby="studio-live-encoder-title">
+      <header>
+        <div>
+          <p class="eyebrow">Browser encoder</p>
+          <h2 id="studio-live-encoder-title">Video Output</h2>
+          <p>These settings control capture, the WebRTC sender, and WHIP negotiation. End and restart an active stream to change them.</p>
+        </div>
+        <span class="studio-live-settings-lock ${locked ? 'is-locked' : ''}">${locked ? 'Locked while live' : 'Applies on next start'}</span>
+      </header>
+      <div class="studio-live-encoding-grid">
+        <label>Resolution
+          <select data-live-encoding-resolution ${locked ? 'disabled' : ''}>
+            <option value="854x480" ${live.programMixer.outputResolution === '854x480' ? 'selected' : ''}>480p · 854×480</option>
+            <option value="1280x720" ${live.programMixer.outputResolution === '1280x720' ? 'selected' : ''}>720p · 1280×720</option>
+            <option value="1920x1080" ${live.programMixer.outputResolution === '1920x1080' ? 'selected' : ''}>1080p · 1920×1080</option>
+          </select>
+        </label>
+        <label>Frame rate
+          <select data-live-encoding-fps ${locked ? 'disabled' : ''}>
+            ${[24, 30, 48, 60].map((fps) => `<option value="${fps}" ${Number(live.programMixer.fps || 30) === fps ? 'selected' : ''}>${fps} fps</option>`).join('')}
+          </select>
+        </label>
+        <label class="studio-live-bitrate-control">Maximum video bitrate
+          <span><input type="range" min="2" max="20" step="0.5" value="${bitrateMbps}" data-live-encoding-bitrate ${locked ? 'disabled' : ''} /><output>${bitrateMbps.toFixed(1)} Mbps</output></span>
+        </label>
+        <label>Network adaptation
+          <select data-live-encoding-degradation ${locked ? 'disabled' : ''}>
+            <option value="maintain-resolution" ${settings.degradationPreference === 'maintain-resolution' ? 'selected' : ''}>Prioritize sharpness</option>
+            <option value="balanced" ${settings.degradationPreference === 'balanced' ? 'selected' : ''}>Balanced</option>
+            <option value="maintain-framerate" ${settings.degradationPreference === 'maintain-framerate' ? 'selected' : ''}>Prioritize motion</option>
+          </select>
+        </label>
+      </div>
+      <div class="studio-live-upload-estimate">
+        <span>Estimated peak upload</span>
+        <strong>≈ ${estimatedUploadMbps.toFixed(1)} Mbps</strong>
+        <small>Includes video, 256 kbps stereo audio, and transport overhead. Leave headroom above this number.</small>
+      </div>
+      ${highUpload ? `<div class="studio-live-terms-alert studio-live-upload-alert" role="status"><i class="fa-solid fa-signal" aria-hidden="true"></i><div><strong>High upload usage</strong><span>${settings.height}p at ${settings.framerate} fps and ${bitrateMbps.toFixed(1)} Mbps can saturate Wi‑Fi. For stability, use Ethernet or keep measured upload comfortably above ${Math.ceil(estimatedUploadMbps * 1.5)} Mbps.</span></div></div>` : ''}
+      <div class="studio-live-encoder-capability">
+        <div><i class="fa-solid fa-microchip" aria-hidden="true"></i><span><strong>${esc(capabilityTitle)}</strong><small>${esc(capabilityDetail)}</small></span></div>
+        <dl>
+          <div><dt>WebCodecs API</dt><dd>${live.encoderCapabilities.webCodecsAvailable === true ? 'Available' : live.encoderCapabilities.checked ? 'Unavailable' : 'Checking'}</dd></div>
+          <div><dt>WebRTC H.264</dt><dd>${live.encoderCapabilities.webrtcEncodingSupported === true ? 'Supported' : live.encoderCapabilities.checked ? 'Not reported' : 'Checking'}</dd></div>
+          <div><dt>Power efficient</dt><dd>${live.encoderCapabilities.webrtcEncodingPowerEfficient === true ? 'Yes' : live.encoderCapabilities.checked ? 'Not reported' : 'Checking'}</dd></div>
+        </dl>
+        <button type="button" class="studio-live-button" data-live-check-encoder ${live.encoderCapabilities.loading ? 'disabled' : ''}>${live.encoderCapabilities.loading ? 'Checking…' : 'Recheck Encoder'}</button>
+      </div>
+      <p class="studio-muted">WebCodecs is built into supported browsers; it is not downloaded. Melogic uses it for capability checks while WebRTC performs the live encode and can select the device’s platform hardware encoder.</p>
+    </section>
+  `
+}
+
 function renderInputSourcePanel() {
   const live = liveState()
   if (isExternalEncoderSelected()) {
@@ -1615,7 +1810,7 @@ function renderInputSourcePanel() {
     const health = diagnostics.hlsHealth || live.stream?.hlsHealth || (live.streamId ? 'warming' : 'not started')
     return `
       <section class="studio-live-panel studio-live-external-input-panel">
-        <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>External Encoder Input</h1><p>OBS or your encoder controls the media. These controls advertise the stream capabilities without altering the incoming feed.</p></div></header>
+        <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Stream Settings</h1><p>OBS or your encoder controls the media. These controls advertise the stream capabilities without altering the incoming feed.</p></div></header>
         <div class="studio-live-source-grid studio-live-source-grid--foundation">
           <article class="studio-live-source-option is-active">
             <header class="studio-live-source-card-header"><div><h2>Incoming Stream Audio</h2><p>Audio is supplied by the external encoder.</p></div><label class="studio-live-switch"><input type="checkbox" data-live-av-toggle="audio" ${live.audioEnabled ? 'checked' : ''} /><span></span>Advertise Audio</label></header>
@@ -1633,15 +1828,16 @@ function renderInputSourcePanel() {
     `
   }
   return `
-    <section class="studio-live-panel">
+    <section class="studio-live-panel studio-live-stream-settings-panel">
       <header class="studio-live-subheader">
         <div>
           <p class="eyebrow">Live Studio</p>
-          <h1>Input Source</h1>
-          <p>Choose what feeds the Melogic Streaming listener stream.</p>
+          <h1>Stream Settings</h1>
+          <p>Choose what feeds the listener stream, then tune the browser encoder output.</p>
         </div>
       </header>
-      <div class="studio-live-source-grid studio-live-source-grid--foundation">
+      <div class="studio-live-stream-settings-scroll">
+        <div class="studio-live-source-grid studio-live-source-grid--foundation">
         <article class="studio-live-source-option ${live.inputSource === 'browser' ? 'is-active' : ''}">
           <header class="studio-live-source-card-header">
             <div><h2>Audio Input</h2><p>Mix browser mic/interface and Sequence Editor output into one program bus.</p></div>
@@ -1695,8 +1891,10 @@ function renderInputSourcePanel() {
             </div>
           </div>
         </article>
+        </div>
+        ${renderBrowserEncodingSettings()}
+        ${live.sourceMessage ? `<p class="studio-live-error studio-live-settings-message">${esc(live.sourceMessage)}</p>` : ''}
       </div>
-      ${live.sourceMessage ? `<p class="studio-live-error">${esc(live.sourceMessage)}</p>` : ''}
     </section>
   `
 }
@@ -2000,6 +2198,10 @@ function serializedProgramMixerState() {
     programSnapshot: normalizeProgramSnapshot(mixer.programSnapshot),
     outputResolution: mixer.outputResolution || '1920x1080',
     fps: Number(mixer.fps || 30),
+    encodingSettings: {
+      videoBitrateMbps: Math.max(1, Math.min(20, Number(liveState().encodingSettings.videoBitrateMbps || 12))),
+      degradationPreference: currentStudioEncoderSettings().degradationPreference
+    },
     transitionDurationMs: Number(mixer.transitionDurationMs || 400),
     mode: 'program'
   }
@@ -2017,6 +2219,12 @@ function restoreProgramMixerState(programState = {}, streamId = '') {
   mixer.selectedSourceId = String(programState.selectedSourceId || '')
   mixer.outputResolution = String(programState.outputResolution || mixer.outputResolution || '1920x1080')
   mixer.fps = Math.max(1, Math.min(60, Number(programState.fps || mixer.fps || 30)))
+  liveState().encodingSettings = {
+    videoBitrateMbps: Math.max(1, Math.min(20, Number(programState.encodingSettings?.videoBitrateMbps || liveState().encodingSettings.videoBitrateMbps || 12))),
+    degradationPreference: ['maintain-resolution', 'balanced', 'maintain-framerate'].includes(programState.encodingSettings?.degradationPreference)
+      ? programState.encodingSettings.degradationPreference
+      : liveState().encodingSettings.degradationPreference || 'maintain-resolution'
+  }
   mixer.transitionDurationMs = Math.max(0, Math.min(5000, Number(programState.transitionDurationMs || mixer.transitionDurationMs || 400)))
   if (!mixer.programSnapshot.scene && mixer.programSceneId) {
     const programScene = mixer.scenes.find((scene) => scene.sceneId === mixer.programSceneId)
@@ -2837,7 +3045,7 @@ function renderProgramMixerPanel() {
     ? previewSourceIds.size ? 'Select a source on the canvas to move, scale, or rotate it.' : 'This scene has no sources yet. Add one from the Sources card below.'
     : 'No preview scene selected. Create a scene, add sources, then select it for Preview.'
   const programDescription = !live.videoEnabled
-    ? 'Video output disabled. Enable video in Input Source to publish the Program canvas.'
+    ? 'Video output disabled. Enable video in Stream Settings to publish the Program canvas.'
     : programScene ? 'This is the active broadcast canvas sent to the browser encoder.' : 'No scene is on air. Select a Preview scene, then use a transition.'
   return `
     <section class="studio-live-panel studio-program-panel">
@@ -3372,6 +3580,19 @@ function hydrateLiveStudioFromStream(stream = null) {
     live.programMixer.mode = stream.programState?.mode || live.programMixer.mode
   }
   live.providerDiagnostics = stream.providerDiagnostics || live.providerDiagnostics
+  if (typeof stream.providerDiagnostics?.webCodecsAvailable === 'boolean') {
+    live.encoderCapabilities = {
+      checked: true,
+      loading: false,
+      error: '',
+      webCodecsAvailable: stream.providerDiagnostics.webCodecsAvailable,
+      webCodecsH264Supported: stream.providerDiagnostics.webCodecsH264Supported,
+      webCodecsHardwarePreferenceSupported: stream.providerDiagnostics.webCodecsHardwarePreferenceSupported,
+      webrtcEncodingSupported: stream.providerDiagnostics.webrtcEncodingSupported,
+      webrtcEncodingSmooth: stream.providerDiagnostics.webrtcEncodingSmooth,
+      webrtcEncodingPowerEfficient: stream.providerDiagnostics.webrtcEncodingPowerEfficient
+    }
+  }
   live.streamForm = {
     ...live.streamForm,
     title: stream.title || live.streamForm.title,
@@ -4964,6 +5185,12 @@ function watchLiveVideoSource(track) {
 
 async function useLiveVideoInput() {
   const live = liveState()
+  const encoderSettings = currentStudioEncoderSettings()
+  const captureResolution = {
+    width: encoderSettings.width,
+    height: encoderSettings.height,
+    frameRate: encoderSettings.framerate
+  }
   live.videoPreviewError = ''
   live.sourceMessage = ''
   renderShell()
@@ -4991,7 +5218,7 @@ async function useLiveVideoInput() {
       ? (await createLocalScreenTracks({
           audio: false,
           video: { displaySurface: 'monitor' },
-          resolution: { width: 1920, height: 1080, frameRate: 30 },
+          resolution: captureResolution,
           contentHint: 'detail',
           selfBrowserSurface: 'exclude',
           surfaceSwitching: 'include',
@@ -4999,8 +5226,8 @@ async function useLiveVideoInput() {
         })).find((candidate) => candidate?.mediaStreamTrack?.kind === 'video')
       : await createLocalVideoTrack({
           ...(live.selectedVideoDeviceId ? { deviceId: live.selectedVideoDeviceId } : {}),
-          resolution: { width: 1920, height: 1080, frameRate: 30 },
-          frameRate: { ideal: 30, max: 30 }
+          resolution: captureResolution,
+          frameRate: { ideal: encoderSettings.framerate, max: encoderSettings.framerate }
         })
     if (!track) throw new Error('The selected source did not provide a video track.')
     live.localVideoTrack = track
@@ -5323,10 +5550,12 @@ function clearBrowserIngestReconnect() {
 async function startStudioBrowserIngestSession({ streamId = '', streamKey = '', reconnecting = false } = {}) {
   const live = liveState()
   const mediaStream = await nativeProgramMediaStream()
+  await refreshBrowserEncoderCapabilities({ rerender: false }).catch(() => {})
   return startBrowserWebrtcIngest({
     streamId,
     streamKey,
     mediaStream,
+    encodingSettings: currentStudioEncoderSettings(),
     onStatus: (ingestStatus = {}) => {
       if (live.streamId !== streamId || live.ending) return
       live.providerDiagnostics = {
@@ -6335,6 +6564,33 @@ function bindLiveStudioControls() {
     scheduleLiveStudioDraftSave()
     renderShell()
   })
+  app.querySelector('[data-live-encoding-resolution]')?.addEventListener('change', (e) => {
+    applyStudioEncoderSettings({ resolution: e.currentTarget.value }).catch(() => {})
+  })
+  app.querySelector('[data-live-encoding-fps]')?.addEventListener('change', (e) => {
+    applyStudioEncoderSettings({ fps: Number(e.currentTarget.value || 30) }).catch(() => {})
+  })
+  app.querySelector('[data-live-encoding-bitrate]')?.addEventListener('input', (e) => {
+    const output = e.currentTarget.parentElement?.querySelector('output')
+    if (output) output.value = `${Number(e.currentTarget.value || 0).toFixed(1)} Mbps`
+  })
+  app.querySelector('[data-live-encoding-bitrate]')?.addEventListener('change', (e) => {
+    applyStudioEncoderSettings({ videoBitrateMbps: Number(e.currentTarget.value || 12) }).catch(() => {})
+  })
+  app.querySelector('[data-live-encoding-degradation]')?.addEventListener('change', (e) => {
+    applyStudioEncoderSettings({ degradationPreference: e.currentTarget.value }).catch(() => {})
+  })
+  app.querySelector('[data-live-check-encoder]')?.addEventListener('click', () => {
+    live.encoderCapabilities = { checked: false, loading: false, error: '' }
+    refreshBrowserEncoderCapabilities({ rerender: true }).catch(() => {})
+  })
+  if (currentLivePanel() === 'input' && !live.encoderCapabilities.checked && !live.encoderCapabilities.loading) {
+    window.queueMicrotask(() => {
+      if (currentStudioSection() === 'live' && currentLivePanel() === 'input' && !liveState().encoderCapabilities.checked) {
+        refreshBrowserEncoderCapabilities({ rerender: true }).catch(() => {})
+      }
+    })
+  }
   app.querySelectorAll('[data-live-set-source]').forEach((el) => el.addEventListener('click', () => setLiveInputSource(el.dataset.liveSetSource)))
   app.querySelectorAll('[data-live-av-toggle]').forEach((el) => el.addEventListener('change', (e) => {
     setLiveAvEnabled(el.dataset.liveAvToggle, e.currentTarget.checked).catch((error) => {

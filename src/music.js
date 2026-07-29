@@ -251,7 +251,8 @@ const state = {
   liveViewer: {
     reaction: 'none',
     saved: false,
-    loading: false
+    loading: false,
+    pendingAction: ''
   },
   guestInvite: null,
   guestInviteUnsubscribe: null,
@@ -3066,9 +3067,11 @@ async function uploadSequenceAssetFromFile(file, fields = {}) {
   }
 }
 
-function renderLiveChatPanel(streamId = '') {
+function renderLiveChatPanel(stream = state.liveStream || {}) {
+  const streamId = stream?.id || ''
   const signedIn = Boolean(state.currentUser)
-  const chatEnabled = state.liveStream?.chatEnabled !== false
+  const chatEnabled = stream?.chatEnabled !== false
+  const listenerCount = Math.max(0, Number(stream?.listenerCount || 0))
   return `
     <aside class="music-panel music-live-chat">
       <div class="music-row-heading">
@@ -3076,6 +3079,7 @@ function renderLiveChatPanel(streamId = '') {
           <p class="music-eyebrow">Live chat</p>
           <h2>Chat</h2>
         </div>
+        <span class="music-live-chat-status"><i aria-hidden="true"></i>${listenerCount.toLocaleString()} watching</span>
       </div>
       <div class="music-live-chat-messages" data-live-chat-messages>
         ${chatEnabled ? '' : '<p class="music-muted">Live chat is disabled by the host.</p>'}
@@ -3090,7 +3094,13 @@ function renderLiveChatPanel(streamId = '') {
               <p>${escapeHtml(message.text)}</p>
             </div>
           </article>
-        `).join('') : chatEnabled ? '<p class="music-muted">No messages yet.</p>' : ''}
+        `).join('') : chatEnabled ? `
+          <div class="music-live-chat-empty">
+            <span aria-hidden="true">${liveActionIcon('chat')}</span>
+            <strong>Chat is ready</strong>
+            <p>Be the first to say hello.</p>
+          </div>
+        ` : ''}
       </div>
       ${state.liveChat.error ? `<p class="music-live-error">${escapeHtml(state.liveChat.error)}</p>` : ''}
       ${signedIn && chatEnabled ? `
@@ -3244,16 +3254,33 @@ function renderHostSequencePanel() {
 
 function renderLiveActions(stream) {
   const signedIn = Boolean(state.currentUser)
+  const busy = state.liveViewer.loading === true
+  const pendingAction = state.liveViewer.pendingAction || ''
+  const likeActive = state.liveViewer.reaction === 'like'
+  const dislikeActive = state.liveViewer.reaction === 'dislike'
+  const saved = state.liveViewer.saved === true
   return `
-    <div class="music-live-action-bar">
-      <button type="button" class="button button-muted ${state.liveViewer.reaction === 'like' ? 'is-active' : ''}" data-live-reaction="like">${Number(stream.likeCount || 0).toLocaleString()} Like</button>
-      <button type="button" class="button button-muted ${state.liveViewer.reaction === 'dislike' ? 'is-active' : ''}" data-live-reaction="dislike">${Number(stream.dislikeCount || 0).toLocaleString()} Dislike</button>
-      <button type="button" class="button button-muted ${state.liveViewer.saved ? 'is-active' : ''}" data-live-save>${state.liveViewer.saved ? 'Saved' : 'Save'} · ${Number(stream.saveCount || 0).toLocaleString()}</button>
-      <button type="button" class="button button-muted" data-live-share>Share</button>
-      <button type="button" class="button button-muted" data-live-fullscreen-monitor>Fullscreen Monitor</button>
+    <div class="music-live-actions-shell">
+      <div class="music-live-action-bar" aria-label="Live stream actions">
+        <button type="button" class="music-live-action ${likeActive ? 'is-active' : ''}" data-live-reaction="like" aria-pressed="${likeActive}" ${busy ? 'disabled' : ''}>
+          ${liveActionIcon('like')}<span><strong>${Number(stream.likeCount || 0).toLocaleString()}</strong><small>${pendingAction === 'like' ? 'Saving' : 'Like'}</small></span>
+        </button>
+        <button type="button" class="music-live-action ${dislikeActive ? 'is-active' : ''}" data-live-reaction="dislike" aria-pressed="${dislikeActive}" ${busy ? 'disabled' : ''}>
+          ${liveActionIcon('dislike')}<span><strong>${Number(stream.dislikeCount || 0).toLocaleString()}</strong><small>${pendingAction === 'dislike' ? 'Saving' : 'Dislike'}</small></span>
+        </button>
+        <button type="button" class="music-live-action ${saved ? 'is-active' : ''}" data-live-save aria-pressed="${saved}" ${busy ? 'disabled' : ''}>
+          ${liveActionIcon('save')}<span><strong>${Number(stream.saveCount || 0).toLocaleString()}</strong><small>${pendingAction === 'save' ? 'Saving' : saved ? 'Saved' : 'Save'}</small></span>
+        </button>
+        <button type="button" class="music-live-action" data-live-share>
+          ${liveActionIcon('share')}<span><strong>Share</strong><small>Copy link</small></span>
+        </button>
+        <button type="button" class="music-live-action" data-live-fullscreen-monitor>
+          ${liveActionIcon('monitor')}<span><strong>Monitor</strong><small>Pop out</small></span>
+        </button>
+      </div>
+      ${!signedIn ? '<p class="music-live-action-note">Sign in to like, dislike, save, or chat. Watching and sharing remain open.</p>' : ''}
+      ${state.liveActionMessage ? `<p class="music-live-action-note is-status" role="status">${escapeHtml(state.liveActionMessage)}</p>` : ''}
     </div>
-    ${!signedIn ? '<p class="music-muted">Sign in to like, dislike, save, or chat. Listening and sharing are open.</p>' : ''}
-    ${state.liveActionMessage ? `<p class="music-muted">${escapeHtml(state.liveActionMessage)}</p>` : ''}
   `
 }
 
@@ -3699,6 +3726,18 @@ function livePlayerIcon(name = '') {
   return `<svg viewBox="0 0 24 24" aria-hidden="true" ${filled ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'}>${icons[name] || ''}</svg>`
 }
 
+function liveActionIcon(name = '') {
+  const icons = {
+    like: '<path d="M7.2 10.4 10.5 3c.4-.9 1.7-.7 1.8.3l.4 4.4h5.6a2 2 0 0 1 1.9 2.6l-2.1 7.1a2.5 2.5 0 0 1-2.4 1.8H7.2M3.3 9.6h3.9v10H3.3z"/>',
+    dislike: '<path d="m7.2 13.6 3.3 7.4c.4.9 1.7.7 1.8-.3l.4-4.4h5.6a2 2 0 0 0 1.9-2.6l-2.1-7.1a2.5 2.5 0 0 0-2.4-1.8H7.2M3.3 4.4h3.9v10H3.3z"/>',
+    save: '<path d="M6 3.5h12v17l-6-3.8-6 3.8z"/>',
+    share: '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.4m-7.6 6.8 7.6 4.4"/>',
+    monitor: '<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8m-4-4v4"/>',
+    chat: '<path d="M4 5h16v11H9l-5 4z"/>'
+  }
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${icons[name] || ''}</svg>`
+}
+
 function hlsQualityOptionsMarkup() {
   const levels = Array.isArray(state.hlsDiagnostics?.hlsLevels) ? state.hlsDiagnostics.hlsLevels : []
   const options = levels
@@ -4035,7 +4074,7 @@ function renderLiveDetailPage() {
           ${isBufferedStream ? renderHlsDiagnostics() : isNativeStream ? renderNativeReceiverAudioDebug() : renderLiveKitReceiverAudioDebug()}
         </section>
       </main>
-      ${renderLiveChatPanel(stream.id)}
+      ${renderLiveChatPanel(stream)}
     </section>
     ${renderLiveGuestInvitePrompt(stream)}
   `)
@@ -4748,15 +4787,15 @@ async function ensureHostDraftStream() {
 
 async function loadViewerState(streamId) {
   if (!streamId || !state.currentUser) {
-    state.liveViewer = { reaction: 'none', saved: false, loading: false }
+    state.liveViewer = { reaction: 'none', saved: false, loading: false, pendingAction: '' }
     return
   }
   state.liveViewer.loading = true
   try {
     const viewer = await getMusicLiveViewerState(streamId)
-    state.liveViewer = { reaction: viewer.reaction || 'none', saved: viewer.saved === true, loading: false }
+    state.liveViewer = { reaction: viewer.reaction || 'none', saved: viewer.saved === true, loading: false, pendingAction: '' }
   } catch {
-    state.liveViewer = { reaction: 'none', saved: false, loading: false }
+    state.liveViewer = { reaction: 'none', saved: false, loading: false, pendingAction: '' }
   }
 }
 
@@ -4851,6 +4890,35 @@ async function sendLiveChatMessage(form) {
   } finally {
     state.liveChat.sending = false
     rerender()
+  }
+}
+
+async function shareCurrentLiveStream() {
+  const url = liveShareURL(state.liveStream?.id || state.goLive.streamId)
+  if (!url) throw new Error('Live stream link is unavailable.')
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: state.liveStream?.title || 'Melogic Streaming Live', url })
+      return 'Share menu opened.'
+    } catch (error) {
+      if (error?.name === 'AbortError') return ''
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url)
+    return 'Live stream link copied.'
+  } catch {
+    const input = document.createElement('textarea')
+    input.value = url
+    input.setAttribute('readonly', '')
+    input.style.position = 'fixed'
+    input.style.opacity = '0'
+    document.body.append(input)
+    input.select()
+    const copied = document.execCommand('copy')
+    input.remove()
+    if (!copied) throw new Error('Copy the live stream URL from your address bar.')
+    return 'Live stream link copied.'
   }
 }
 
@@ -5898,49 +5966,70 @@ function bindMusicEvents() {
     sendLiveChatMessage(event.currentTarget).catch(() => {})
   })
   app.querySelectorAll('[data-live-reaction]').forEach((button) => {
-    button.addEventListener('click', () => {
+    button.addEventListener('click', async () => {
       if (!state.currentUser) {
         state.liveActionMessage = 'Sign in to like or dislike live streams.'
         rerender()
         return
       }
+      if (state.liveViewer.loading) return
       const requested = button.dataset.liveReaction || 'none'
       const next = state.liveViewer.reaction === requested ? 'none' : requested
-      toggleMusicLiveReaction(state.liveStream?.id || '', next).then((result) => {
+      state.liveViewer.loading = true
+      state.liveViewer.pendingAction = requested
+      state.liveActionMessage = ''
+      rerender()
+      try {
+        const result = await toggleMusicLiveReaction(state.liveStream?.id || '', next)
         state.liveViewer.reaction = result.reaction || next
-        state.liveActionMessage = ''
-      }).catch((error) => {
+        if (state.liveStream) {
+          state.liveStream.likeCount = Math.max(0, Number(result.likeCount ?? state.liveStream.likeCount ?? 0))
+          state.liveStream.dislikeCount = Math.max(0, Number(result.dislikeCount ?? state.liveStream.dislikeCount ?? 0))
+        }
+        state.liveActionMessage = state.liveViewer.reaction === 'none'
+          ? 'Reaction removed.'
+          : state.liveViewer.reaction === 'like' ? 'Liked.' : 'Disliked.'
+      } catch (error) {
         state.liveActionMessage = error?.message || 'Reaction could not be saved.'
-      }).finally(rerender)
+      } finally {
+        state.liveViewer.loading = false
+        state.liveViewer.pendingAction = ''
+        rerender()
+      }
     })
   })
-  app.querySelector('[data-live-save]')?.addEventListener('click', () => {
+  app.querySelector('[data-live-save]')?.addEventListener('click', async () => {
     if (!state.currentUser) {
       state.liveActionMessage = 'Sign in to save live streams.'
       rerender()
       return
     }
+    if (state.liveViewer.loading) return
     const next = !state.liveViewer.saved
-    toggleSaveMusicLiveStream(state.liveStream?.id || '', next).then((result) => {
+    state.liveViewer.loading = true
+    state.liveViewer.pendingAction = 'save'
+    state.liveActionMessage = ''
+    rerender()
+    try {
+      const result = await toggleSaveMusicLiveStream(state.liveStream?.id || '', next)
       state.liveViewer.saved = result.saved === true
+      if (state.liveStream) state.liveStream.saveCount = Math.max(0, Number(result.saveCount ?? state.liveStream.saveCount ?? 0))
       state.liveActionMessage = result.saved ? 'Saved to your live streams.' : 'Removed from saved live streams.'
-    }).catch((error) => {
+    } catch (error) {
       state.liveActionMessage = error?.message || 'Save could not be updated.'
-    }).finally(rerender)
-  })
-  app.querySelector('[data-live-share]')?.addEventListener('click', () => {
-    const url = liveShareURL(state.liveStream?.id || state.goLive.streamId)
-    if (navigator.share) {
-      navigator.share({ title: state.liveStream?.title || 'Melogic Streaming Live', url }).catch(() => {})
-    } else {
-      navigator.clipboard?.writeText(url).then(() => {
-        state.liveActionMessage = 'Live stream link copied.'
-        rerender()
-      }).catch(() => {
-        state.liveActionMessage = url
-        rerender()
-      })
+    } finally {
+      state.liveViewer.loading = false
+      state.liveViewer.pendingAction = ''
+      rerender()
     }
+  })
+  app.querySelector('[data-live-share]')?.addEventListener('click', async () => {
+    try {
+      state.liveActionMessage = await shareCurrentLiveStream()
+    } catch (error) {
+      state.liveActionMessage = error?.message || 'Live stream link could not be shared.'
+    }
+    rerender()
   })
   app.querySelector('[data-live-fullscreen-monitor]')?.addEventListener('click', () => {
     const streamId = state.liveStream?.id || ''

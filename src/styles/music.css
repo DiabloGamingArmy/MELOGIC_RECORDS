@@ -1893,14 +1893,17 @@
 /* Live watch experience --------------------------------------------------- */
 .music-live-watch-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 390px);
   align-items: start;
   gap: 0;
   width: 100%;
-  max-width: 1680px;
+  max-width: 1800px;
   margin: 0 auto;
-  background: #05070c;
+  background:
+    radial-gradient(circle at 42% 12%, rgba(52, 125, 160, 0.08), transparent 31rem),
+    #05070c;
   border: 1px solid rgba(151, 177, 220, 0.14);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.28);
 }
 
 .music-content > .music-live-watch-layout {
@@ -2398,14 +2401,14 @@
   gap: 14px;
   width: 100%;
   padding: 20px clamp(18px, 2.5vw, 34px) 34px;
-  background: #080b12;
+  background:
+    linear-gradient(180deg, rgba(15, 21, 33, 0.96), rgba(8, 11, 18, 0.98)),
+    #080b12;
 }
 
 .music-live-title-row {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 22px;
+  display: grid;
+  gap: 17px;
 }
 
 .music-live-title-row > div:first-child {
@@ -2420,18 +2423,101 @@
   letter-spacing: -0.025em;
 }
 
-.music-live-title-row .music-live-action-bar {
-  justify-content: flex-end;
+.music-live-actions-shell {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
 }
 
-.music-live-title-row .music-live-action-bar .button {
-  min-height: 34px;
-  padding: 0 10px;
+.music-live-title-row .music-live-action-bar {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(151, 177, 220, 0.16);
+  border-radius: 6px;
+  background: rgba(4, 7, 12, 0.64);
+}
+
+.music-live-action {
+  min-width: 0;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 0;
+  border-right: 1px solid rgba(151, 177, 220, 0.13);
+  background: transparent;
+  color: #aab6ca;
+  padding: 7px 10px;
+  font: inherit;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.music-live-action:last-child {
+  border-right: 0;
+}
+
+.music-live-action:hover:not(:disabled),
+.music-live-action:focus-visible {
+  background: rgba(255, 255, 255, 0.055);
+  color: #f4f8ff;
+  outline: none;
+}
+
+.music-live-action.is-active {
+  background: rgba(99, 218, 255, 0.1);
+  color: #7edfff;
+  box-shadow: inset 0 -2px currentColor;
+}
+
+.music-live-action:disabled {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.music-live-action svg {
+  width: 19px;
+  height: 19px;
+  flex: 0 0 19px;
+}
+
+.music-live-action > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  text-align: left;
+}
+
+.music-live-action strong,
+.music-live-action small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-live-action strong {
+  color: inherit;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.music-live-action small {
+  color: #77849a;
+  font-size: 9px;
+}
+
+.music-live-action-note {
+  margin: 0;
+  color: #8996aa;
   font-size: 11px;
 }
 
-.music-live-title-row > .music-muted {
-  display: none;
+.music-live-action-note.is-status {
+  color: #82defb;
 }
 
 .music-live-description {
@@ -2464,6 +2550,7 @@
 
 .music-live-watch-layout > .music-live-chat .music-row-heading {
   min-height: 62px;
+  align-items: center;
   padding: 14px 16px;
   border-bottom: 1px solid rgba(151, 177, 220, 0.14);
 }
@@ -2471,6 +2558,24 @@
 .music-live-watch-layout > .music-live-chat .music-row-heading h2 {
   margin: 2px 0 0;
   font-size: 18px;
+}
+
+.music-live-chat-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #9ca9bd;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.music-live-chat-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #47e798;
+  box-shadow: 0 0 12px rgba(71, 231, 152, 0.7);
 }
 
 .music-live-watch-layout > .music-live-chat .music-live-chat-messages {
@@ -2491,8 +2596,60 @@
 }
 
 .music-live-watch-layout > .music-live-chat .music-live-chat-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
   padding: 12px;
   border-top: 1px solid rgba(151, 177, 220, 0.14);
+  background: rgba(4, 7, 12, 0.36);
+}
+
+.music-live-watch-layout > .music-live-chat .music-live-chat-form input {
+  min-height: 42px;
+  border-radius: 5px;
+  background: #060a11;
+}
+
+.music-live-watch-layout > .music-live-chat .music-live-chat-form input:focus {
+  border-color: rgba(109, 220, 255, 0.58);
+  box-shadow: 0 0 0 3px rgba(109, 220, 255, 0.08);
+  outline: none;
+}
+
+.music-live-watch-layout > .music-live-chat .music-live-chat-form .button {
+  min-height: 42px;
+}
+
+.music-live-chat-empty {
+  align-self: center;
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  color: #7f8ca1;
+  padding: 38px 18px;
+  text-align: center;
+}
+
+.music-live-chat-empty > span {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  color: #72dfff;
+}
+
+.music-live-chat-empty svg {
+  width: 28px;
+  height: 28px;
+}
+
+.music-live-chat-empty strong {
+  color: #dce5f3;
+  font-size: 13px;
+}
+
+.music-live-chat-empty p {
+  margin: 0;
+  font-size: 11px;
 }
 
 .music-live-audio-stage {
@@ -2593,7 +2750,7 @@
 
 @media (max-width: 1180px) {
   .music-live-watch-layout {
-    grid-template-columns: minmax(0, 1fr) 310px;
+    grid-template-columns: minmax(0, 1fr) 330px;
   }
 
   .music-live-watch-toolbar {
@@ -2707,5 +2864,19 @@
     right: 10px;
     bottom: 8px;
     left: 10px;
+  }
+
+  .music-live-title-row .music-live-action-bar {
+    grid-template-columns: repeat(5, minmax(52px, 1fr));
+    overflow-x: auto;
+  }
+
+  .music-live-action {
+    min-width: 58px;
+    padding-inline: 7px;
+  }
+
+  .music-live-action > span {
+    display: none;
   }
 }

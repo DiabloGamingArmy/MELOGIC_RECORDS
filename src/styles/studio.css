@@ -1629,3 +1629,320 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   font-size: 12px;
   line-height: 1.45;
 }
+
+/* Stream settings / browser encoder ------------------------------------- */
+.studio-live-stream-settings-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.studio-live-stream-settings-scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-bottom: 28px;
+}
+
+.studio-live-stream-settings-scroll > .studio-live-source-grid {
+  min-height: auto;
+  overflow: visible;
+}
+
+.studio-live-settings-divider {
+  height: 1px;
+  margin: 4px clamp(22px, 2.8vw, 38px) 0;
+  background: linear-gradient(90deg, rgba(111, 209, 255, 0.55), rgba(130, 160, 220, 0.16) 34%, transparent);
+}
+
+.studio-live-encoding-settings {
+  display: grid;
+  gap: 16px;
+  margin: 0 clamp(22px, 2.8vw, 38px);
+  padding: 22px 0 4px;
+}
+
+.studio-live-encoding-settings > header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.studio-live-encoding-settings > header h2 {
+  margin: 2px 0 0;
+  color: #f0f5ff;
+  font-size: clamp(22px, 2vw, 30px);
+}
+
+.studio-live-encoding-settings > header p:not(.eyebrow) {
+  max-width: 76ch;
+  margin: 5px 0 0;
+  color: #9facc1;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.studio-live-settings-lock {
+  flex: 0 0 auto;
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(103, 242, 170, 0.32);
+  color: #81eeb3;
+  padding: 0 9px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.studio-live-settings-lock.is-locked {
+  border-color: rgba(255, 197, 66, 0.38);
+  color: #ffd477;
+}
+
+.studio-live-encoding-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-block: 1px solid rgba(130, 160, 220, 0.16);
+}
+
+.studio-live-encoding-grid > label {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  min-height: 92px;
+  border-right: 1px solid rgba(130, 160, 220, 0.14);
+  color: #9facc1;
+  padding: 12px 14px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.studio-live-encoding-grid > label:first-child {
+  padding-left: 0;
+}
+
+.studio-live-encoding-grid > label:last-child {
+  border-right: 0;
+  padding-right: 0;
+}
+
+.studio-live-encoding-grid select {
+  width: 100%;
+  height: 38px;
+  border: 1px solid rgba(130, 160, 220, 0.24);
+  border-radius: 4px;
+  background: #0b121e;
+  color: #edf4ff;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.studio-live-encoding-grid select:disabled,
+.studio-live-bitrate-control input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.studio-live-bitrate-control > span {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+}
+
+.studio-live-bitrate-control input {
+  width: 100%;
+  accent-color: #6ee7ff;
+}
+
+.studio-live-bitrate-control output {
+  min-width: 62px;
+  color: #edf4ff;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: right;
+  text-transform: none;
+}
+
+.studio-live-upload-estimate {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 9px;
+  color: #9facc1;
+  font-size: 11px;
+}
+
+.studio-live-upload-estimate > span {
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.studio-live-upload-estimate strong {
+  color: #76dcff;
+  font-size: 15px;
+}
+
+.studio-live-upload-estimate small {
+  color: #758299;
+}
+
+.studio-live-upload-alert {
+  border-radius: 2px;
+}
+
+.studio-live-encoder-capability {
+  display: grid;
+  grid-template-columns: minmax(230px, 1.1fr) minmax(330px, 1.4fr) auto;
+  align-items: center;
+  gap: 18px;
+  border-block: 1px solid rgba(130, 160, 220, 0.16);
+  padding: 14px 0;
+}
+
+.studio-live-encoder-capability > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.studio-live-encoder-capability > div:first-child > i {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: #6ee7ff;
+  background: rgba(110, 231, 255, 0.08);
+}
+
+.studio-live-encoder-capability > div:first-child span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.studio-live-encoder-capability strong {
+  color: #edf4ff;
+  font-size: 13px;
+}
+
+.studio-live-encoder-capability small {
+  color: #8d9bb0;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.studio-live-encoder-capability dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  margin: 0;
+}
+
+.studio-live-encoder-capability dl > div {
+  display: grid;
+  gap: 3px;
+  border-left: 1px solid rgba(130, 160, 220, 0.14);
+  padding: 3px 12px;
+}
+
+.studio-live-encoder-capability dt {
+  color: #738098;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.studio-live-encoder-capability dd {
+  margin: 0;
+  color: #dbe5f4;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.studio-live-settings-message {
+  margin: 14px clamp(22px, 2.8vw, 38px) 0;
+}
+
+@media (max-width: 1180px) {
+  .studio-live-encoding-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .studio-live-encoding-grid > label:nth-child(2) {
+    border-right: 0;
+  }
+
+  .studio-live-encoding-grid > label:nth-child(3),
+  .studio-live-encoding-grid > label:nth-child(4) {
+    border-top: 1px solid rgba(130, 160, 220, 0.14);
+  }
+
+  .studio-live-encoding-grid > label:nth-child(3) {
+    padding-left: 0;
+  }
+
+  .studio-live-encoder-capability {
+    grid-template-columns: 1fr auto;
+  }
+
+  .studio-live-encoder-capability dl {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 700px) {
+  .studio-live-encoding-settings > header {
+    display: grid;
+  }
+
+  .studio-live-settings-lock {
+    justify-self: start;
+  }
+
+  .studio-live-encoding-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-live-encoding-grid > label {
+    border-top: 1px solid rgba(130, 160, 220, 0.14);
+    border-right: 0;
+    padding-inline: 0;
+  }
+
+  .studio-live-encoding-grid > label:first-child {
+    border-top: 0;
+  }
+
+  .studio-live-upload-estimate {
+    grid-template-columns: 1fr auto;
+  }
+
+  .studio-live-upload-estimate small {
+    grid-column: 1 / -1;
+  }
+
+  .studio-live-encoder-capability {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-live-encoder-capability dl {
+    grid-row: auto;
+    grid-column: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .studio-live-encoder-capability .studio-live-button {
+    justify-self: start;
+  }
+}
