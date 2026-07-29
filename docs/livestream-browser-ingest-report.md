@@ -129,3 +129,56 @@ still be required.
   https://docs.cloud.google.com/compute/docs/general-purpose-machines
 - Google Cloud Live Stream API overview:
   https://docs.cloud.google.com/livestream/docs/overview
+
+## Follow-up incident: 2026-07-29
+
+The later pixelation and simultaneous audio/video interruptions are not a
+viewer-buffer problem. Production inspection of stream
+`d5Gjme7YL9CbEUiYfzATP82i2` showed:
+
+- The 1920×1080 browser publisher was active, but SRS received only about
+  0.49–0.55 Mbps during the inspection.
+- The MediaMTX WHEP reader repeatedly received H.264 slices without the
+  referenced PPS and logged `decode_slice_header error` / `no frame`.
+- The relay also logged malformed or undersized payloads and had to repacketize
+  RTP packets larger than its 1440-byte limit.
+- HLS segment duration drifted from six seconds to seven, nine, and eleven
+  seconds because usable IDR frames did not arrive at a stable interval.
+- FFmpeg then reported non-monotonic video DTS. The internal RTSP connection
+  timed out, the WHEP source stopped, and MediaMTX destroyed the HLS muxer and
+  every attached HLS session. The public manifest consequently returned 404
+  while SRS still considered the publisher live.
+
+This explains the observed order of failure: damaged or bandwidth-starved
+inter-frames cause pixelation, then loss of the internal relay destroys both
+audio and video at once.
+
+The current browser path is also forced through TCP twice: once from the
+browser to SRS and again from the MediaMTX WHEP reader to SRS. TCP prevents
+packet loss from being skipped, but congestion blocks newer audio and video
+behind retransmission of older media. MediaMTX documents UDP as the preferred
+WebRTC transport and warns that its TCP transport is less efficient and can
+introduce progressive delay under congestion.
+
+### Corrective architecture
+
+The durable correction is:
+
+1. Publish browser WHIP directly to MediaMTX over its static UDP ICE port, with
+   TCP retained only as fallback.
+2. Remove the SRS → WHEP → RTSP copy chain from browser broadcasts.
+3. Normalize the contribution feed into H.264/AAC with a fixed two-second GOP
+   before HLS packaging. This restores SPS/PPS at every IDR and gives HLS a
+   stable segment boundary.
+4. Generate an adaptive rendition ladder so a viewer is not forced to receive
+   the single contribution rendition.
+
+Steps 3 and 4 require moving the media worker off the current `e2-micro` or
+resizing it. During this incident the VM had no swap, about 239 MiB available
+memory, and load averages as high as 10.9. It can continue signaling and
+remuxing a test stream, but it is not a safe 1080p software-transcode host.
+
+The receiving app now avoids redundant manifest health requests while media is
+actively advancing. Media events remain responsible for detecting a stall,
+and manifest polling resumes while playback is stopped so a restarted muxer
+can be discovered.

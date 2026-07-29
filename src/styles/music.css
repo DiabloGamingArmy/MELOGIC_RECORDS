@@ -1914,9 +1914,10 @@
 .music-live-watch-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 390px);
-  align-items: start;
+  align-items: stretch;
   gap: 0;
   width: 100%;
+  min-height: calc(100dvh - var(--nav-offset, 4.25rem));
   max-width: 1800px;
   margin: 0 auto;
   background:
@@ -2556,12 +2557,13 @@
 
 .music-live-watch-layout > .music-live-chat {
   position: sticky;
-  top: 0;
+  top: var(--nav-offset, 4.25rem);
+  align-self: start;
   display: grid;
   grid-template-rows: auto minmax(260px, 1fr) auto;
   gap: 0;
-  height: min(760px, calc(100dvh - 32px));
-  min-height: 560px;
+  height: calc(100dvh - var(--nav-offset, 4.25rem));
+  min-height: 0;
   padding: 0;
   border: 0;
   border-radius: 0;

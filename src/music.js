@@ -2176,7 +2176,14 @@ function startHlsHealthPolling(stream = state.liveStream) {
   stopHlsHealthPolling()
   state.hlsHealthUrl = playbackInfo.url
   refreshHlsHealth(stream).catch(() => {})
-  state.hlsHealthTimer = window.setInterval(() => refreshHlsHealth(state.liveStream).catch(() => {}), 15000)
+  state.hlsHealthTimer = window.setInterval(() => {
+    // The media pipeline already reports waiting/stalled/error events. Avoid
+    // opening a second MediaMTX HLS session every few seconds while playback
+    // is healthy; resume manifest probes only when the media element stops
+    // advancing so recovery can discover a restarted muxer.
+    if (isHlsMediaActivelyPlaying()) return
+    refreshHlsHealth(state.liveStream).catch(() => {})
+  }, 30000)
 }
 
 function hlsMediaDiagnostics(eventName = '') {
