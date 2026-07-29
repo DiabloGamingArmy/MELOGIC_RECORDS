@@ -56,6 +56,10 @@ trap rollback HUP INT TERM EXIT
 # keyframes, which makes video startup appear black. RTC audio timestamps also
 # do not always land on exact AAC sample boundaries, so let SRS correct mux
 # timestamps instead of deriving DTS directly.
+# Keep SRS's default RTCP sender-report clock calibration. The SDP shortcut in
+# SRS 6.0.184 advances Safari WHIP timestamps roughly 1000x too quickly, which
+# gives RTC-to-RTMP/HLS segments a large negative duration and prevents the
+# first playlist from being published for several minutes.
 docker run -d \
   --name "$origin_name" \
   --restart unless-stopped \
@@ -75,7 +79,7 @@ docker run -d \
   -e SRS_VHOST_RTC_RTC_TO_RTMP=on \
   -e SRS_VHOST_RTC_AAC_BITRATE=192000 \
   -e SRS_VHOST_RTC_PLI_FOR_RTMP=6.0 \
-  -e SRS_VHOST_RTC_INIT_RATE_FROM_SDP=on \
+  -e SRS_VHOST_RTC_INIT_RATE_FROM_SDP=off \
   -e SRS_VHOST_HLS_ENABLED=on \
   -e SRS_VHOST_HLS_HLS_FRAGMENT=4 \
   -e SRS_VHOST_HLS_HLS_WINDOW=300 \
