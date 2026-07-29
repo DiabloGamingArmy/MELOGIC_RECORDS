@@ -1,39 +1,54 @@
 const DEFAULT_HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
+const DEFAULT_BROWSER_HLS_EDGE_BASE_URL = 'https://ingest.melogicrecords.studio/hls'
 export const HLS_EDGE_BASE_URL = String(import.meta.env?.VITE_STREAM_EDGE_BASE_URL || DEFAULT_HLS_EDGE_BASE_URL).trim().replace(/\/+$/, '')
+export const BROWSER_HLS_EDGE_BASE_URL = String(import.meta.env?.VITE_BROWSER_HLS_EDGE_BASE_URL || DEFAULT_BROWSER_HLS_EDGE_BASE_URL).trim().replace(/\/+$/, '')
 
 const HLS_EDGE_URL_PREFIX = `${HLS_EDGE_BASE_URL}/`
+const BROWSER_HLS_EDGE_URL_PREFIX = `${BROWSER_HLS_EDGE_BASE_URL}/`
 const activePlayers = new WeakMap()
 
 export function sanitizeHlsStreamKey(streamKey = '') {
   return String(streamKey || '').trim().replace(/[^A-Za-z0-9_-]/g, '')
 }
 
-export function buildHlsPlaybackUrl(streamKey = '') {
+export function buildHlsPlaybackUrl(streamKey = '', { ingestMethod = '' } = {}) {
   const cleanKey = sanitizeHlsStreamKey(streamKey)
   if (!cleanKey) return ''
+  if (String(ingestMethod) === 'browserWebrtc') {
+    return `${BROWSER_HLS_EDGE_BASE_URL}/${cleanKey}/index.m3u8`
+  }
   return `${HLS_EDGE_BASE_URL}/${cleanKey}.m3u8`
 }
 
 export function isAllowedHlsPlaybackUrl(value = '') {
   const candidate = String(value || '').trim()
-  if (!candidate.startsWith(HLS_EDGE_URL_PREFIX)) return false
   try {
     const parsed = new URL(candidate)
-    const allowedBase = new URL(`${HLS_EDGE_BASE_URL}/`)
-    const expectedPathPrefix = allowedBase.pathname.endsWith('/') ? allowedBase.pathname : `${allowedBase.pathname}/`
-    return parsed.protocol === allowedBase.protocol
-      && parsed.host === allowedBase.host
-      && parsed.pathname.startsWith(expectedPathPrefix)
-      && /^[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname.slice(expectedPathPrefix.length))
-      && parsed.search === ''
-      && parsed.hash === ''
+    if (parsed.search || parsed.hash) return false
+    if (candidate.startsWith(HLS_EDGE_URL_PREFIX)) {
+      const allowedBase = new URL(`${HLS_EDGE_BASE_URL}/`)
+      const expectedPathPrefix = allowedBase.pathname.endsWith('/') ? allowedBase.pathname : `${allowedBase.pathname}/`
+      return parsed.protocol === allowedBase.protocol
+        && parsed.host === allowedBase.host
+        && parsed.pathname.startsWith(expectedPathPrefix)
+        && /^[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname.slice(expectedPathPrefix.length))
+    }
+    if (candidate.startsWith(BROWSER_HLS_EDGE_URL_PREFIX)) {
+      const allowedBase = new URL(`${BROWSER_HLS_EDGE_BASE_URL}/`)
+      const expectedPathPrefix = allowedBase.pathname.endsWith('/') ? allowedBase.pathname : `${allowedBase.pathname}/`
+      return parsed.protocol === allowedBase.protocol
+        && parsed.host === allowedBase.host
+        && parsed.pathname.startsWith(expectedPathPrefix)
+        && /^[A-Za-z0-9_-]+\/index\.m3u8$/.test(parsed.pathname.slice(expectedPathPrefix.length))
+    }
+    return false
   } catch {
     return false
   }
 }
 
-export function resolveHlsPlaybackUrl({ streamKey = '', hlsPlaybackUrl = '' } = {}) {
-  const keyUrl = buildHlsPlaybackUrl(streamKey)
+export function resolveHlsPlaybackUrl({ streamKey = '', hlsPlaybackUrl = '', ingestMethod = '' } = {}) {
+  const keyUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod })
   if (keyUrl) return keyUrl
   return isAllowedHlsPlaybackUrl(hlsPlaybackUrl) ? String(hlsPlaybackUrl).trim() : ''
 }
@@ -123,8 +138,9 @@ export async function attachHlsStream({
   onError = () => {}
 }) {
   if (!mediaEl) throw new Error('An HTML media element is required for HLS playback.')
-  if (!isAllowedHlsPlaybackUrl(src)) throw new Error('Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.')
+  if (!isAllowedHlsPlaybackUrl(src)) throw new Error('Invalid HLS playback URL. Streams must load from a Melogic streaming origin.')
   destroyActivePlayer(mediaEl)
+  mediaEl.crossOrigin = 'use-credentials'
 
   const listeners = []
   let hls = null
@@ -255,6 +271,9 @@ export async function attachHlsStream({
     abrEwmaDefaultEstimate: 8000000,
     abrBandWidthFactor: 0.95,
     abrBandWidthUpFactor: 0.8,
+    xhrSetup: (xhr) => {
+      xhr.withCredentials = true
+    },
     manifestLoadingMaxRetry: 12,
     manifestLoadingRetryDelay: 2000,
     manifestLoadingMaxRetryTimeout: 6000,

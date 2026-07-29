@@ -21,7 +21,8 @@ export function parseHlsManifest(manifest = '') {
     valid: /#EXTM3U/i.test(text) && hasMediaSegment,
     hasExtM3u: /#EXTM3U/i.test(text),
     hasMediaSegment,
-    sequence: sequenceMatch ? Number(sequenceMatch[1]) : null
+    sequence: sequenceMatch ? Number(sequenceMatch[1]) : null,
+    lastMediaUri: mediaLines.at(-1) || ''
   }
 }
 
@@ -31,14 +32,14 @@ export async function checkHlsManifest({
   previous = {},
   startedAt = '',
   connectedAt = '',
-  timeoutMs = 8000
+  timeoutMs = 30000
 } = {}) {
   const checkedAtMs = Date.now()
   const previousLastOkMs = timestampMs(previous.hlsLastOkAt)
   const startedAtMs = timestampMs(connectedAt || startedAt || previous.hlsStartedAt || previous.whipConnectedAt || previous.startedAt || previous.createdAt) || checkedAtMs
   let responseCode = 0
   let error = ''
-  let parsed = { valid: false, hasExtM3u: false, hasMediaSegment: false, sequence: null }
+  let parsed = { valid: false, hasExtM3u: false, hasMediaSegment: false, sequence: null, lastMediaUri: '' }
   const controller = new AbortController()
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
 
@@ -48,6 +49,7 @@ export async function checkHlsManifest({
     let response = await fetch(url.toString(), {
       method: 'GET',
       cache: 'no-store',
+      credentials: 'include',
       headers: { Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain' },
       signal: controller.signal
     })
@@ -70,6 +72,7 @@ export async function checkHlsManifest({
           response = await fetch(childUrl.toString(), {
             method: 'GET',
             cache: 'no-store',
+            credentials: 'include',
             headers: { Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain' },
             signal: controller.signal
           })
@@ -95,10 +98,13 @@ export async function checkHlsManifest({
     ? null
     : Number.isFinite(Number(rawPreviousSequence)) ? Number(rawPreviousSequence) : null
   const sequenceChanged = parsed.sequence == null || previousSequence == null || parsed.sequence !== previousSequence
-  const sequenceFresh = sequenceChanged || Boolean(previousLastOkMs && checkedAtMs - previousLastOkMs <= HLS_RECENT_OK_WINDOW_MS)
-  const healthy = manifestHealthy && sequenceFresh
-  if (manifestHealthy && !sequenceFresh) error = 'HLS media sequence has not advanced within the freshness window.'
-  const lastOkMs = healthy && sequenceChanged ? checkedAtMs : previousLastOkMs
+  const previousLastMediaUri = String(previous.hlsLastMediaUri || '')
+  const mediaUriChanged = Boolean(parsed.lastMediaUri) && parsed.lastMediaUri !== previousLastMediaUri
+  const manifestChanged = sequenceChanged || mediaUriChanged
+  const manifestFresh = manifestChanged || Boolean(previousLastOkMs && checkedAtMs - previousLastOkMs <= HLS_RECENT_OK_WINDOW_MS)
+  const healthy = manifestHealthy && manifestFresh
+  if (manifestHealthy && !manifestFresh) error = 'HLS media playlist has not advanced within the freshness window.'
+  const lastOkMs = healthy && manifestChanged ? checkedAtMs : previousLastOkMs
   const withinWarmup = checkedAtMs - startedAtMs <= HLS_WARMUP_WINDOW_MS
   const secondsSinceStart = Math.max(0, Math.floor((checkedAtMs - startedAtMs) / 1000))
   const recentlyHealthy = Boolean(lastOkMs && checkedAtMs - lastOkMs <= HLS_RECENT_OK_WINDOW_MS)
@@ -109,7 +115,9 @@ export async function checkHlsManifest({
     hlsLastCheckedAt: new Date(checkedAtMs).toISOString(),
     hlsLastManifestSequence: parsed.sequence,
     hlsManifestSequence: parsed.sequence,
+    hlsLastMediaUri: parsed.lastMediaUri,
     hlsSequenceChanged: sequenceChanged,
+    hlsMediaUriChanged: mediaUriChanged,
     hlsManifestAgeMs: lastOkMs ? Math.max(0, checkedAtMs - lastOkMs) : null,
     hlsLastError: healthy ? '' : error,
     hlsError: healthy ? '' : error,

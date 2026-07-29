@@ -28,11 +28,12 @@ const MAX_ACTIVE_LIVE_STREAMS_PER_HOST = 3
 const STAFF_ACTIVE_LIVE_STREAMS_PER_HOST = 10
 const MAX_CONFIGURED_LIVE_STREAMS_PER_HOST = 25
 const HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
+const BROWSER_HLS_EDGE_BASE_URL = 'https://ingest.melogicrecords.studio/hls'
 const RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
 const BROWSER_WHIP_INGEST_BASE_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/'
 const HLS_WARMUP_WINDOW_MS = 45 * 1000
 const HLS_RECENT_OK_WINDOW_MS = 90 * 1000
-const HLS_HEALTH_TIMEOUT_MS = 8000
+const HLS_HEALTH_TIMEOUT_MS = 30000
 const STREAM_KEY_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
 function db() {
@@ -70,9 +71,13 @@ function ensureSessionStreamKey(existingKey, { forceNew = false } = {}) {
   return createRandomStreamKey(25)
 }
 
-function buildHlsPlaybackUrl(streamKey = '') {
+function buildHlsPlaybackUrl(streamKey = '', ingestMethod = '') {
   const cleanKey = sanitizeStreamKey(streamKey)
-  return cleanKey ? `${HLS_EDGE_BASE_URL}/${cleanKey}.m3u8` : ''
+  if (!cleanKey) return ''
+  const browserIngest = cleanString(ingestMethod, 60) === 'browserWebrtc'
+  return browserIngest
+    ? `${BROWSER_HLS_EDGE_BASE_URL}/${cleanKey}/index.m3u8`
+    : `${HLS_EDGE_BASE_URL}/${cleanKey}.m3u8`
 }
 
 function buildBrowserWhipIngestUrl(streamKey = '') {
@@ -112,7 +117,8 @@ function parseHlsManifest(manifest = '') {
   return {
     valid: /#EXTM3U/i.test(text) && hasMediaSegment,
     hasMediaSegment,
-    sequence: sequenceMatch ? Number(sequenceMatch[1]) : null
+    sequence: sequenceMatch ? Number(sequenceMatch[1]) : null,
+    lastMediaUri: mediaLines.at(-1) || ''
   }
 }
 
@@ -121,10 +127,11 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
   const previousLastOkMs = timestampMillis(stream.hlsLastOkAt)
   const startedAtMs = timestampMillis(stream.hlsStartedAt || stream.startedAt || stream.createdAt) || checkedAtMs
   const configuredUrl = sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || stream.hlsUrl || '')
-  const streamKeyUrl = buildHlsPlaybackUrl(stream.streamKey || '')
+  const streamKeyUrl = buildHlsPlaybackUrl(stream.streamKey || '', stream.ingestMethod || stream.ingestMode || '')
   const hlsUrl = streamKeyUrl || configuredUrl
   let responseCode = 0
   let sequence = null
+  let lastMediaUri = ''
   let hasMediaSegment = false
   let error = ''
   let healthy = false
@@ -134,16 +141,63 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
     if (!hlsUrl) throw new Error('Missing HLS manifest URL.')
     const requestUrl = new URL(hlsUrl)
     requestUrl.searchParams.set('_', String(checkedAtMs))
-    const response = await fetch(requestUrl, {
+    const isBrowserHlsUrl = requestUrl.hostname === 'ingest.melogicrecords.studio'
+      && requestUrl.pathname.startsWith('/hls/')
+    if (isBrowserHlsUrl) requestUrl.searchParams.set('cookieCheck', '1')
+    const requestHeaders = {
+      Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain',
+      ...(isBrowserHlsUrl ? { Cookie: 'cookieCheck=1' } : {})
+    }
+    let response = await fetch(requestUrl, {
       method: 'GET',
       cache: 'no-store',
-      headers: { Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain' },
+      headers: requestHeaders,
       signal: controller.signal
     })
     responseCode = response.status
-    const manifest = await response.text()
-    const parsed = parseHlsManifest(manifest)
+    let manifest = await response.text()
+    let parsed = parseHlsManifest(manifest)
+    // MediaMTX returns a master playlist whose non-comment entries point to
+    // the real media playlists. Follow one child so health reports actual
+    // segment production instead of mistaking a valid master for an outage.
+    if (response.ok && /#EXTM3U/i.test(manifest) && !parsed.hasMediaSegment) {
+      const childLine = manifest
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line && !line.startsWith('#') && /\.m3u8(?:[?#]|$)/i.test(line))
+      if (childLine) {
+        const childUrl = new URL(childLine, requestUrl)
+        if (childUrl.origin === requestUrl.origin) {
+          childUrl.searchParams.set('_', String(checkedAtMs))
+          if (isBrowserHlsUrl) childUrl.searchParams.set('cookieCheck', '1')
+          const setCookies = typeof response.headers.getSetCookie === 'function'
+            ? response.headers.getSetCookie()
+            : [response.headers.get('set-cookie')].filter(Boolean)
+          const responseCookies = setCookies
+            .flatMap((header) => String(header || '').split(/,(?=\s*[^;,=\s]+=[^;,]+)/))
+            .map((header) => header.trim().split(';', 1)[0])
+            .filter(Boolean)
+          const cookieHeader = Array.from(new Set([
+            ...(isBrowserHlsUrl ? ['cookieCheck=1'] : []),
+            ...responseCookies
+          ])).join('; ')
+          response = await fetch(childUrl, {
+            method: 'GET',
+            cache: 'no-store',
+            headers: {
+              Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain',
+              ...(cookieHeader ? { Cookie: cookieHeader } : {})
+            },
+            signal: controller.signal
+          })
+          responseCode = response.status
+          manifest = await response.text()
+          parsed = parseHlsManifest(manifest)
+        }
+      }
+    }
     sequence = parsed.sequence
+    lastMediaUri = parsed.lastMediaUri
     hasMediaSegment = parsed.hasMediaSegment === true
     healthy = response.ok && parsed.valid
     if (!response.ok) error = `HTTP ${response.status}`
@@ -158,10 +212,13 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
     ? null
     : Number.isFinite(Number(stream.hlsLastManifestSequence)) ? Number(stream.hlsLastManifestSequence) : null
   const sequenceChanged = sequence == null || previousSequence == null || sequence !== previousSequence
-  const sequenceFresh = sequenceChanged || Boolean(previousLastOkMs && checkedAtMs - previousLastOkMs <= HLS_RECENT_OK_WINDOW_MS)
-  healthy = manifestHealthy && sequenceFresh
-  if (manifestHealthy && !sequenceFresh) error = 'HLS media sequence has not advanced within the freshness window.'
-  const lastOkMs = healthy && sequenceChanged ? checkedAtMs : previousLastOkMs
+  const previousLastMediaUri = cleanString(stream.hlsLastMediaUri || '', 1000)
+  const mediaUriChanged = Boolean(lastMediaUri) && lastMediaUri !== previousLastMediaUri
+  const manifestChanged = sequenceChanged || mediaUriChanged
+  const manifestFresh = manifestChanged || Boolean(previousLastOkMs && checkedAtMs - previousLastOkMs <= HLS_RECENT_OK_WINDOW_MS)
+  healthy = manifestHealthy && manifestFresh
+  if (manifestHealthy && !manifestFresh) error = 'HLS media playlist has not advanced within the freshness window.'
+  const lastOkMs = healthy && manifestChanged ? checkedAtMs : previousLastOkMs
   const withinWarmup = checkedAtMs - startedAtMs <= HLS_WARMUP_WINDOW_MS
   const secondsSinceStart = Math.max(0, Math.floor((checkedAtMs - startedAtMs) / 1000))
   const recentlyHealthy = Boolean(lastOkMs && checkedAtMs - lastOkMs <= HLS_RECENT_OK_WINDOW_MS)
@@ -170,6 +227,7 @@ async function checkHlsStreamHealth(streamId = '', stream = {}) {
     hlsHealth: health,
     hlsLastCheckedAt: admin.firestore.Timestamp.fromMillis(checkedAtMs),
     hlsLastManifestSequence: sequence,
+    hlsLastMediaUri: lastMediaUri,
     hlsLastError: healthy ? '' : cleanString(error, 300),
     hlsResponseCode: responseCode,
     hlsHasMediaSegments: hasMediaSegment,
@@ -198,6 +256,7 @@ async function refreshHlsHealth(docSnap, stream = docSnap.data() || {}) {
     hlsHealth: health.hlsHealth,
     hlsLastCheckedAt: health.hlsLastCheckedAt,
     hlsLastManifestSequence: health.hlsLastManifestSequence,
+    hlsLastMediaUri: health.hlsLastMediaUri,
     hlsLastError: health.hlsLastError,
     hlsResponseCode: health.hlsResponseCode,
     hlsHasMediaSegments: health.hlsHasMediaSegments === true,
@@ -214,10 +273,13 @@ function sanitizeHlsPlaybackUrl(value = '') {
   if (!candidate) return ''
   try {
     const parsed = new URL(candidate)
-    const valid = parsed.protocol === 'https:'
-      && parsed.hostname === 'stream.melogicrecords.studio'
-      && parsed.port === ''
+    const isLegacyEdgeUrl = parsed.hostname === 'stream.melogicrecords.studio'
       && /^\/live\/[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname)
+    const isBrowserEdgeUrl = parsed.hostname === 'ingest.melogicrecords.studio'
+      && /^\/hls\/[A-Za-z0-9_-]+\/index\.m3u8$/.test(parsed.pathname)
+    const valid = parsed.protocol === 'https:'
+      && parsed.port === ''
+      && (isLegacyEdgeUrl || isBrowserEdgeUrl)
       && parsed.search === ''
       && parsed.hash === ''
     return valid ? parsed.toString() : ''
@@ -241,8 +303,8 @@ function bufferedBroadcastFields(data = {}, existing = {}) {
     playbackMode: 'hls',
     latencyProfile: 'buffered',
     streamKey,
-    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
-    hlsUrl: buildHlsPlaybackUrl(streamKey),
+    hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey, ingestMethod),
+    hlsUrl: buildHlsPlaybackUrl(streamKey, ingestMethod),
     llhlsUrl: '',
     rtmpIngestServer: ingestMethod === 'obsRtmp' ? RTMP_INGEST_SERVER : '',
     browserWhipIngestUrl: ingestMethod === 'browserWebrtc' ? buildBrowserWhipIngestUrl(streamKey) : '',
@@ -410,7 +472,7 @@ function cleanProgramOutputState(data = {}, { existing = {}, selectedInputSource
     ? 'browserMediaRecorder'
     : normalizeIngestMethod(data.ingestMethod || data.ingestMode || existing.ingestMethod || existing.ingestMode || 'browserWebrtc')
   const streamKey = nativeProtocol ? '' : sanitizeStreamKey(data.streamKey || existing.streamKey || '')
-  const hlsPlaybackUrl = nativeProtocol ? '' : buildHlsPlaybackUrl(streamKey)
+  const hlsPlaybackUrl = nativeProtocol ? '' : buildHlsPlaybackUrl(streamKey, ingestMethod)
   const audioEnabled = data.audioEnabled === false ? false : data.audioEnabled === true ? true : existing.audioEnabled !== false
   const videoEnabled = data.videoEnabled === true ? true : data.videoEnabled === false ? false : existing.videoEnabled === true
   const canPublishEdgeMedia = !nativeProtocol && ['browserWebrtc', 'obsRtmp'].includes(ingestMethod)
@@ -562,7 +624,7 @@ function markLiveValidationDetails({ streamId = '', provider = 'hlsEdge', stream
   if (validationBranch === 'nativeWeb' && !cleanString(stream.livekitRoomName || stream.roomName, 120)) missingRequiredFields.push('livekitRoomName')
   if (validationBranch === 'hlsEdge') {
     const streamKey = sanitizeStreamKey(requestData.streamKey || stream.streamKey || '')
-    const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+    const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey, requestData.ingestMethod || stream.ingestMethod || '')
     if (!isValidGeneratedStreamKey(streamKey)) missingRequiredFields.push('validGeneratedStreamKey')
     if (!hlsPlaybackUrl) missingRequiredFields.push('hlsPlaybackUrl')
   }
@@ -717,8 +779,8 @@ function liveWriterLog(streamId = '', payload = {}) {
     writerStreamKey: payload.streamKey || '',
     whipStreamKey: payload.ingestMethod === 'browserWebrtc' ? payload.streamKey || '' : '',
     hlsHealthStreamKey: payload.streamKey || '',
-    hlsUrl: payload.hlsUrl || buildHlsPlaybackUrl(payload.streamKey || ''),
-    hlsPlaybackUrl: payload.hlsPlaybackUrl || buildHlsPlaybackUrl(payload.streamKey || '')
+    hlsUrl: payload.hlsUrl || buildHlsPlaybackUrl(payload.streamKey || '', payload.ingestMethod || ''),
+    hlsPlaybackUrl: payload.hlsPlaybackUrl || buildHlsPlaybackUrl(payload.streamKey || '', payload.ingestMethod || '')
   })
 }
 
@@ -1033,7 +1095,7 @@ const startMusicLiveStream = onCall(
         forceNew: selectedProvider === 'hlsEdge',
         status: previousStream.status || 'new',
         ingestMethod: programOutputState.ingestMethod,
-        hlsUrl: buildHlsPlaybackUrl(nextKey)
+        hlsUrl: buildHlsPlaybackUrl(nextKey, programOutputState.ingestMethod)
       })
       liveWriterLog(streamId, programOutputState)
       await streamRef.set({
@@ -1257,7 +1319,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
     forceNew: false,
     status: existingStream.status || 'new',
     ingestMethod: programOutputState.ingestMethod,
-    hlsUrl: buildHlsPlaybackUrl(nextKey)
+    hlsUrl: buildHlsPlaybackUrl(nextKey, programOutputState.ingestMethod)
   })
   return {
     ok: true,
@@ -1631,7 +1693,7 @@ const joinMusicLiveStream = onCall(
       provider,
       playbackMode: provider === 'firebaseSegments' ? 'firebaseSegments' : provider === 'hlsEdge' ? 'hls' : 'webrtc',
       streamKey: sanitizeStreamKey(stream.streamKey || ''),
-      hlsPlaybackUrl: buildHlsPlaybackUrl(stream.streamKey || '') || sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || ''),
+      hlsPlaybackUrl: buildHlsPlaybackUrl(stream.streamKey || '', stream.ingestMethod || stream.ingestMode || '') || sanitizeHlsPlaybackUrl(stream.hlsPlaybackUrl || ''),
       nativeStreaming: stream.nativeStreaming || nativeStreamingDefaults(),
       audioPublished: stream.audioPublished === true,
       videoPublished: stream.videoPublished === true,

@@ -1,0 +1,22 @@
+[Unit]
+Description=Melogic browser WebRTC to HLS remuxer
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2
+ExecStartPre=-/usr/bin/docker rm -f mediamtx-hls
+ExecStart=/usr/bin/docker run --rm --name mediamtx-hls \
+  --add-host=host.docker.internal:host-gateway \
+  -p 127.0.0.1:8888:8888 \
+  -p 127.0.0.1:9997:9997 \
+  -v /etc/melogic/mediamtx-srs-whep.yml:/mediamtx.yml:ro \
+  bluenviron/mediamtx:1.18.2
+ExecStop=/usr/bin/docker stop -t 10 mediamtx-hls
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

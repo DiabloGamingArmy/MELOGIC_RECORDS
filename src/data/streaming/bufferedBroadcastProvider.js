@@ -21,7 +21,7 @@ export function createBufferedBroadcastProvider() {
     capabilities: providerCapabilities(STREAM_PROVIDERS.hlsEdge),
     createStreamSession(options = {}) {
       const streamKey = String(options.streamKey || '')
-      const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+      const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: options.ingestMethod })
       diagnostics = buildProviderDiagnostics({
         provider: STREAM_PROVIDERS.hlsEdge,
         connectionState: 'session-ready',

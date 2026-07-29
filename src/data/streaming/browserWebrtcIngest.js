@@ -390,7 +390,7 @@ export function sanitizeStreamKey(streamKey = '') {
 }
 
 export function buildHlsPlaybackUrl(streamKey = '') {
-  return buildEdgePlaybackUrl(sanitizeStreamKey(streamKey))
+  return buildEdgePlaybackUrl(sanitizeStreamKey(streamKey), { ingestMethod: 'browserWebrtc' })
 }
 
 export function buildBrowserWebrtcIngestUrl(streamKey = '') {

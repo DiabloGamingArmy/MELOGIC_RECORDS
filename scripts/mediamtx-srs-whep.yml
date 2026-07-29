@@ -1,0 +1,32 @@
+logLevel: info
+
+rtsp: false
+rtmp: false
+srt: false
+playback: false
+
+api: true
+apiAddress: :9997
+
+hls: true
+hlsAddress: :8888
+hlsAllowOrigins: ["*"]
+hlsAlwaysRemux: false
+hlsVariant: fmp4
+hlsSegmentCount: 75
+hlsSegmentDuration: 4s
+hlsPartDuration: 500ms
+hlsMuxerCloseAfter: 60s
+
+webrtc: false
+
+paths:
+  "~^([A-Za-z0-9_-]+)$":
+    # Browser publishers continue to enter through SRS WHIP, but MediaMTX reads
+    # the untouched RTC stream through WHEP and owns the HLS mux. This bypasses
+    # SRS 6's RTC-to-RTMP timestamp conversion, which scales Safari timestamps
+    # by roughly 1000x and creates negative-duration MPEG-TS segments.
+    source: whep://host.docker.internal:1985/rtc/v1/whep/?app=live&stream=$G1&eip=104.197.179.248
+    sourceOnDemand: true
+    sourceOnDemandStartTimeout: 20s
+    sourceOnDemandCloseAfter: 60s

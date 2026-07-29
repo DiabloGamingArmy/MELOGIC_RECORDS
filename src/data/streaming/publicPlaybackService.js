@@ -42,12 +42,12 @@ export function getPublicPlaybackInfo(stream = {}) {
     const rawHlsPlaybackUrl = String(stream.rawHlsPlaybackUrl ?? stream.hlsPlaybackUrl ?? '')
     const configuredUrl = String(stream.hlsPlaybackUrl || '').trim()
     const configuredUrlAllowed = isAllowedHlsPlaybackUrl(configuredUrl)
-    const keyUrl = buildHlsPlaybackUrl(stream.streamKey)
+    const keyUrl = buildHlsPlaybackUrl(stream.streamKey, { ingestMethod: stream.ingestMethod })
     const url = keyUrl || (configuredUrlAllowed ? configuredUrl : '')
     const message = url
       ? ''
       : configuredUrl
-        ? 'Invalid HLS playback URL. Streams must load from stream.melogicrecords.studio.'
+        ? 'Invalid HLS playback URL. Streams must load from a Melogic streaming origin.'
         : String(stream.provider || '') === STREAM_PROVIDERS.hlsEdge
           ? 'This HLS stream is missing its stream key. Start a new stream from the updated Studio controls.'
           : 'This stream is missing an HLS stream key.'

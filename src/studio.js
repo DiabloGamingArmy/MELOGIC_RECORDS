@@ -1346,7 +1346,7 @@ function renderDetailedStreamOutputStatus() {
   const live = liveState()
   const diagnostics = live.providerDiagnostics || {}
   const streamKey = currentLiveStreamKey()
-  const hlsUrl = buildHlsPlaybackUrl(streamKey) || diagnostics.hlsUrl || live.stream?.hlsUrl || live.stream?.hlsPlaybackUrl || ''
+  const hlsUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod }) || diagnostics.hlsUrl || live.stream?.hlsUrl || live.stream?.hlsPlaybackUrl || ''
   const whipUrl = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? buildBrowserWebrtcIngestUrl(streamKey) : ''
   let whipStreamParam = ''
   try { whipStreamParam = new URL(whipUrl).searchParams.get('stream') || '' } catch {}
@@ -1484,7 +1484,7 @@ function renderAdvancedStreamingSettings() {
   const current = options.find((option) => option.id === live.ingestMethod) || options[0]
   const diagnostics = live.providerDiagnostics || {}
   const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || '')
-  const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+  const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod })
   const ingestServer = String(import.meta.env?.VITE_STREAM_RTMP_INGEST_SERVER || DEFAULT_RTMP_INGEST_SERVER).replace(/\/+$/, '')
   const isObs = live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
   const isNativeProtocol = live.streamingProtocol === 'nativeStreaming'
@@ -2219,7 +2219,7 @@ async function refreshStudioHlsHealth() {
   if (!live.streamId || live.streamingProtocol !== 'hls') return null
   const streamKey = currentLiveStreamKey()
   if (!streamKey) return null
-  const hlsUrl = buildHlsPlaybackUrl(streamKey)
+  const hlsUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod })
   const health = await checkHlsManifest({
     streamId: live.streamId,
     hlsUrl,
@@ -2262,7 +2262,7 @@ async function refreshStudioHlsHealth() {
 function startStudioHlsHealthPolling() {
   const live = liveState()
   const streamKey = currentLiveStreamKey()
-  const hlsUrl = buildHlsPlaybackUrl(streamKey)
+  const hlsUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod })
   if (!streamKey || !hlsUrl) {
     stopStudioHlsHealthPolling()
     return
@@ -5394,8 +5394,8 @@ function scheduleBrowserIngestReconnect({ streamId = '', streamKey = '' } = {}) 
         whipReconnectedAt: new Date().toISOString(),
         whipStreamKey: streamKey,
         hlsHealthStreamKey: streamKey,
-        hlsUrl: buildHlsPlaybackUrl(streamKey),
-        hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey),
+        hlsUrl: buildHlsPlaybackUrl(streamKey, { ingestMethod: STREAM_INGEST_METHODS.browserWebrtc }),
+        hlsPlaybackUrl: buildHlsPlaybackUrl(streamKey, { ingestMethod: STREAM_INGEST_METHODS.browserWebrtc }),
         lastIngestError: ''
       }
       live.outputStatus = 'Browser encoder reconnected. Rebuilding the live buffer...'
@@ -5456,7 +5456,7 @@ async function resumeInterruptedBrowserStream() {
     live.browserIngestReconnectAttempt = 0
     live.audioPublishedToProvider = ingestResult.audioPublished === true
     live.videoPublishedToProvider = ingestResult.videoPublished === true
-    const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+    const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: STREAM_INGEST_METHODS.browserWebrtc })
     live.providerDiagnostics = {
       ...(live.providerDiagnostics || {}),
       ...(ingestResult.diagnostics || {}),
@@ -5557,7 +5557,7 @@ async function refreshLiveStudioStreamKey() {
       if (live.streamId) throw new Error('The interrupted stream could not be ended before rotating its key.')
     }
     const nextKey = ensureLiveStreamKey({ forceNew: true })
-    const hlsUrl = buildHlsPlaybackUrl(nextKey)
+    const hlsUrl = buildHlsPlaybackUrl(nextKey, { ingestMethod: live.ingestMethod })
     const response = await prepareMusicLiveStreamDraft({
       ...liveStreamPayload(),
       streamId: live.draftStreamId || ''
@@ -5649,13 +5649,13 @@ async function startLiveStudioStream() {
         forceNew: true,
         status: live.stream?.status || 'draft',
         ingestMethod: live.ingestMethod,
-        hlsUrl: buildHlsPlaybackUrl(streamKey)
+        hlsUrl: buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod })
       })
     }
     live.streamId = pendingStreamId
     live.nativeHostSessionId = live.nativeHostSessionId || nativeHostSessionId(pendingStreamId)
     if (isBufferedBroadcastProvider(live.providerId)) {
-      const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+      const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod })
       const isBrowserIngest = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
       let browserIngestResult = null
       live.providerDiagnostics = {
@@ -6050,10 +6050,10 @@ function subscribeLiveStudioStream(streamId = '') {
         hlsHasMediaSegments: stream.hlsHasMediaSegments === true,
         secondsSinceStart: stream.hlsSecondsSinceStart ?? live.providerDiagnostics?.secondsSinceStart ?? 0,
         hlsHealthStreamKey: firestoreStreamKey || live.providerDiagnostics?.hlsHealthStreamKey || '',
-        hlsUrl: buildHlsPlaybackUrl(firestoreStreamKey) || stream.hlsUrl || stream.hlsPlaybackUrl || live.providerDiagnostics?.hlsUrl || '',
-        hlsPlaybackUrl: buildHlsPlaybackUrl(firestoreStreamKey) || stream.hlsPlaybackUrl || live.providerDiagnostics?.hlsPlaybackUrl || ''
+        hlsUrl: buildHlsPlaybackUrl(firestoreStreamKey, { ingestMethod: stream.ingestMethod || live.ingestMethod }) || stream.hlsUrl || stream.hlsPlaybackUrl || live.providerDiagnostics?.hlsUrl || '',
+        hlsPlaybackUrl: buildHlsPlaybackUrl(firestoreStreamKey, { ingestMethod: stream.ingestMethod || live.ingestMethod }) || stream.hlsPlaybackUrl || live.providerDiagnostics?.hlsPlaybackUrl || ''
       }
-      const firestoreHlsUrl = buildHlsPlaybackUrl(firestoreStreamKey)
+      const firestoreHlsUrl = buildHlsPlaybackUrl(firestoreStreamKey, { ingestMethod: stream.ingestMethod || live.ingestMethod })
       logStreamKeyConsistency({
         streamId,
         writerStreamKey: firestoreStreamKey,

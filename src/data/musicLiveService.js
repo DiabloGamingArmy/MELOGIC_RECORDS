@@ -28,10 +28,8 @@ export function sanitizeMusicLiveStreamKey(value = '') {
     .replace(/[^A-Za-z0-9_-]/g, '')
 }
 
-export function buildMusicLiveHlsUrl(streamKey = '') {
-  const base = String(import.meta.env?.VITE_STREAM_EDGE_BASE_URL || DEFAULT_HLS_EDGE_BASE_URL).replace(/\/+$/, '')
-  const cleanKey = sanitizeMusicLiveStreamKey(streamKey)
-  return cleanKey ? `${base}/${cleanKey}.m3u8` : ''
+export function buildMusicLiveHlsUrl(streamKey = '', { ingestMethod = '' } = {}) {
+  return buildHlsPlaybackUrl(sanitizeMusicLiveStreamKey(streamKey), { ingestMethod })
 }
 
 export function buildMusicLiveWhipUrl(streamKey = '') {
@@ -79,7 +77,7 @@ export function normalizeMusicLiveTransportPayload(payload = {}) {
       }
     }
   }
-  const hlsUrl = buildMusicLiveHlsUrl(streamKey)
+  const hlsUrl = buildMusicLiveHlsUrl(streamKey, { ingestMethod })
   return {
     ...payload,
     provider: HLS_EDGE_PROVIDER,
@@ -119,7 +117,7 @@ function liveWriterPayload(payload = {}) {
     normalized.transportProvider = HLS_EDGE_TRANSPORT
     normalized.playbackMode = HLS_PLAYBACK_MODE
     if (!isValidGeneratedStreamKey(normalized.streamKey)) throw new Error('A valid 25-character stream key is required before save.')
-    normalized.hlsPlaybackUrl = buildMusicLiveHlsUrl(normalized.streamKey)
+    normalized.hlsPlaybackUrl = buildMusicLiveHlsUrl(normalized.streamKey, { ingestMethod: normalized.ingestMethod })
     normalized.hlsUrl = normalized.hlsPlaybackUrl
   }
   console.log('[Music Live Writer] normalized transport payload', {
@@ -199,7 +197,9 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     || (raw.ingestProtocol === 'rtmp' ? 'obsRtmp' : raw.ingestProtocol === 'webrtc' ? 'browserWebrtc' : '')
     || 'obsRtmp'
   const normalizedStreamKey = provider === HLS_EDGE_PROVIDER && rawStreamKey ? sanitizeMusicLiveStreamKey(rawStreamKey) : rawStreamKey
-  const streamKeyHlsUrl = provider === HLS_EDGE_PROVIDER ? buildHlsPlaybackUrl(normalizedStreamKey) : ''
+  const streamKeyHlsUrl = provider === HLS_EDGE_PROVIDER
+    ? buildHlsPlaybackUrl(normalizedStreamKey, { ingestMethod: hlsIngestMethod })
+    : ''
   const normalizedHlsPlaybackUrl = provider === HLS_EDGE_PROVIDER
     ? streamKeyHlsUrl || rawHlsPlaybackUrl
     : rawHlsPlaybackUrl

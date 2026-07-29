@@ -1269,6 +1269,7 @@ function renderReleaseDetailPage() {
 function liveStatusLabel(stream = {}) {
   const playbackInfo = getPublicPlaybackInfo(stream)
   if (playbackInfo.provider === STREAM_PROVIDERS.hlsEdge) {
+    if (isHlsMediaActivelyPlaying()) return 'Playing'
     if (state.liveStatus === 'playing') return 'Playing'
     if (stream.ingestMethod === 'browserWebrtc'
       && stream.hostConnected === true
@@ -2050,7 +2051,16 @@ async function refreshHlsHealth(stream = state.liveStream) {
     hlsUrl: playbackInfo.url,
     hlsPlaybackUrl: stream.hlsPlaybackUrl || playbackInfo.url
   })
-  if (health.hlsHealth === 'warming' && state.liveStatus !== 'playing') {
+  const mediaPlaying = isHlsMediaActivelyPlaying()
+  if (mediaPlaying) {
+    state.liveStatus = 'playing'
+    state.liveError = ''
+    state.hlsDiagnostics = {
+      ...(state.hlsDiagnostics || {}),
+      hlsHealth: 'healthy',
+      hlsError: ''
+    }
+  } else if (health.hlsHealth === 'warming' && state.liveStatus !== 'playing') {
     state.liveStatus = 'loadingManifest'
     state.liveError = ''
   } else if (health.hlsHealth === 'stale' && state.liveStatus !== 'playing') {
@@ -2069,7 +2079,7 @@ async function refreshHlsHealth(stream = state.liveStream) {
     )
     if (mediaNeedsReattach) void recoverHlsListenerPlayback(stream)
   }
-  updateHlsDiagnosticsDom()
+  updateLiveListenerControls()
   return health
 }
 
@@ -2090,6 +2100,11 @@ function hlsMediaDiagnostics(eventName = '') {
   const media = state.hlsMediaElement
   const diagnostics = state.hlsDiagnostics || {}
   const playbackInfo = getPublicPlaybackInfo(state.liveStream || {})
+  const mediaPlaying = isHlsMediaActivelyPlaying(media)
+  if (mediaPlaying) {
+    state.liveStatus = 'playing'
+    state.liveError = ''
+  }
   state.hlsDiagnostics = {
     ...diagnostics,
     provider: STREAM_PROVIDERS.hlsEdge,
@@ -2100,13 +2115,13 @@ function hlsMediaDiagnostics(eventName = '') {
     hlsUrl: state.hlsAttachedUrl || diagnostics.hlsUrl || '',
     selectedPlayer: playbackInfo.selectedPlayer || 'hls',
     computedHlsUrl: playbackInfo.computedHlsUrl || playbackInfo.url || '',
-    hlsHealth: diagnostics.hlsHealth || state.liveStream?.hlsHealth || '',
+    hlsHealth: mediaPlaying ? 'healthy' : diagnostics.hlsHealth || state.liveStream?.hlsHealth || '',
     hlsLastOkAt: diagnostics.hlsLastOkAt || state.liveStream?.hlsLastOkAt || '',
     hlsLastCheckedAt: diagnostics.hlsLastCheckedAt || state.liveStream?.hlsLastCheckedAt || '',
     hlsManifestSequence: diagnostics.hlsManifestSequence ?? diagnostics.hlsLastManifestSequence ?? state.liveStream?.hlsLastManifestSequence ?? null,
     hlsManifestAgeMs: diagnostics.hlsManifestAgeMs ?? null,
     hlsResponseCode: diagnostics.hlsResponseCode || state.liveStream?.hlsResponseCode || 0,
-    hlsError: diagnostics.hlsError || diagnostics.hlsLastError || state.liveStream?.hlsLastError || '',
+    hlsError: mediaPlaying ? '' : diagnostics.hlsError ?? diagnostics.hlsLastError ?? state.liveStream?.hlsLastError ?? '',
     hlsHasMediaSegments: diagnostics.hlsHasMediaSegments === true || state.liveStream?.hlsHasMediaSegments === true,
     streamStatus: state.liveStream?.status || '',
     streamIsLive: state.liveStream?.isLive === true,
@@ -2129,7 +2144,7 @@ function hlsMediaDiagnostics(eventName = '') {
     mediaNetworkState: media ? Number(media.networkState || 0) : null,
     mediaCurrentTime: media && Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null,
     mediaDuration: media && Number.isFinite(media.duration) ? Number(media.duration.toFixed(2)) : null,
-    mediaPlaying: Boolean(media && !media.paused && !media.ended && media.readyState >= 2)
+    mediaPlaying
   }
   updateHlsDiagnosticsDom()
   return state.hlsDiagnostics
@@ -2199,6 +2214,7 @@ function createHlsMediaElement(mode = currentHlsPlaybackMode()) {
   media.autoplay = false
   media.playsInline = true
   media.preload = 'auto'
+  media.crossOrigin = 'use-credentials'
   media.muted = mode === 'videoOnly'
   media.defaultMuted = mode === 'videoOnly'
   media.volume = mode === 'videoOnly' ? 0 : Number.isFinite(Number(state.player.volume)) ? Number(state.player.volume) : 1
@@ -2215,6 +2231,10 @@ function createHlsMediaElement(mode = currentHlsPlaybackMode()) {
   state.hlsMediaElement = media
   ensureHlsMediaMounted()
   return media
+}
+
+function isHlsMediaActivelyPlaying(media = state.hlsMediaElement) {
+  return Boolean(media && !media.paused && !media.ended && media.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
 }
 
 function handleHlsStatus(payload = {}) {
@@ -2441,7 +2461,8 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
         mediaEl: media,
         src: playbackUrl,
         mode,
-        stabilizeRtcBridge: state.liveStream?.ingestMethod === 'browserWebrtc',
+        stabilizeRtcBridge: state.liveStream?.ingestMethod === 'browserWebrtc'
+          && playbackUrl.startsWith('https://stream.melogicrecords.studio/'),
         onStatus: handleHlsStatus,
         onError: handleHlsError
       })
@@ -4065,7 +4086,7 @@ function renderHlsDiagnostics() {
     ['hlsManifestAgeMs', diagnostics.hlsManifestAgeMs],
     ['hlsResponseCode', diagnostics.hlsResponseCode || state.liveStream?.hlsResponseCode || 'none'],
     ['secondsSinceStart', diagnostics.secondsSinceStart ?? state.liveStream?.hlsSecondsSinceStart ?? 'none'],
-    ['hlsError', diagnostics.hlsError || state.liveStream?.hlsLastError || 'none'],
+    ['hlsError', diagnostics.mediaPlaying ? 'none' : diagnostics.hlsError ?? state.liveStream?.hlsLastError ?? 'none'],
     ['hlsHasMediaSegments', diagnostics.hlsHasMediaSegments],
     ['streamStatus', diagnostics.streamStatus || state.liveStream?.status || 'unknown'],
     ['streamIsLive', diagnostics.streamIsLive],
@@ -5519,6 +5540,7 @@ function updateLiveListenerControls() {
     const media = state.hlsMediaElement
     const isLoadingStatus = ['loadingManifest', 'connecting', 'connectingTransport', 'waiting', 'stalled'].includes(state.liveStatus)
     const activelyLoading = Boolean(media)
+      && !isHlsMediaActivelyPlaying(media)
       && (isLoadingStatus || (media.readyState < HTMLMediaElement.HAVE_FUTURE_DATA && !media.paused))
     playbackLoader.hidden = !activelyLoading
   }
