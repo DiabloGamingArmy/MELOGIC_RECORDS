@@ -263,9 +263,11 @@ const state = {
     streamingProtocol: 'hls',
     ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
     browserIngestActive: false,
+    browserInterruptedStreamId: '',
     browserIngestReconnectTimer: 0,
     browserIngestReconnectAttempt: 0,
     browserIngestReconnecting: false,
+    refreshingStreamKey: false,
     providerDiagnostics: {},
     hlsHealthTimer: 0,
     hlsHealthUrl: '',
@@ -1403,8 +1405,13 @@ function renderStreamDetailsPanel() {
     ['liveIdleNoListeners', 'liveWarmingBuffer', 'liveBroadcasting'].includes(live.stream?.broadcastState || '')
   )
   const streamKey = sanitizeHlsStreamKey(form.streamKey || '')
-  const streamKeyLocked = isLiveActive || live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
-  const canRegenerateStreamKey = isBufferedProvider && !isLiveActive && live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp
+  const isBrowserRecovery = Boolean(
+    isLiveActive
+    && live.browserInterruptedStreamId
+    && live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+  )
+  const streamKeyLocked = isLiveActive && !isBrowserRecovery
+  const canRefreshStreamKey = isBufferedProvider && (!isLiveActive || isBrowserRecovery)
   const nativeLiveStatusCopy = isFirebaseSegmentProvider(live.providerId) && firebaseSegmentStreamingEnabled() && isLiveActive
     ? (live.nativePlaybackDemandCount > 0
         ? live.nativeRecorderRunning ? 'Live - broadcasting audio chunks.' : 'Live - warming buffer.'
@@ -1435,7 +1442,7 @@ function renderStreamDetailsPanel() {
             <label>Password<input name="password" type="password" autocomplete="new-password" value="${esc(form.password)}" placeholder="${form.accessMode === 'password' ? 'Required for new password streams' : 'Only used for password access'}" /></label>
           </div>
           <label>Tags<input name="tags" value="${esc(form.tags)}" placeholder="radio, release party, talk" /></label>
-          ${isBufferedProvider ? `<label>Stream Key<div class="studio-live-stream-key-row"><input name="streamKey" maxlength="25" required value="${esc(streamKey)}" pattern="[A-Za-z0-9]{25}" autocomplete="off" readonly aria-readonly="true" /><button type="button" class="studio-live-button" data-copy-stream-key="${esc(streamKey)}">Copy</button>${canRegenerateStreamKey ? '<button type="button" class="studio-live-button" data-regenerate-stream-key>Regenerate Stream Key</button>' : ''}</div><small>${streamKeyLocked ? 'This 25-character session key is locked while browser publishing or a live session is active.' : 'Use this exact key in OBS. You may regenerate it before starting.'}</small></label>` : ''}
+          ${isBufferedProvider ? `<label>Stream Key<div class="studio-live-stream-key-row"><input name="streamKey" maxlength="25" required value="${esc(streamKey)}" pattern="[A-Za-z0-9]{25}" autocomplete="off" readonly aria-readonly="true" /><button type="button" class="studio-live-button" data-copy-stream-key="${esc(streamKey)}">Copy</button>${canRefreshStreamKey ? `<button type="button" class="studio-live-button" data-refresh-stream-key ${live.refreshingStreamKey ? 'disabled' : ''}>${live.refreshingStreamKey ? 'Refreshing...' : 'Refresh New Key'}</button>` : ''}</div><small>${streamKeyLocked ? 'This 25-character session key is locked while the live publisher is active.' : isBrowserRecovery ? 'Refreshing the key ends this interrupted session and creates a clean draft.' : 'You can rotate this key before starting a browser or external-encoder stream.'}</small></label>` : ''}
           <div class="studio-live-cover-tools">
             <label>Cover image URL<input name="coverArtURL" value="${esc(form.coverArtURL)}" placeholder="https://..." /></label>
             <div class="studio-live-action-bar">
@@ -1449,6 +1456,7 @@ function renderStreamDetailsPanel() {
           </div>
           <label class="studio-live-check"><input name="rightsAccepted" type="checkbox" ${form.rightsAccepted ? 'checked' : ''} /> I have the rights and permissions required to broadcast this stream.</label>
           ${live.validationWarning ? `<div class="studio-live-terms-alert" role="alert"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i><div><strong>Acceptance required</strong><span>${esc(live.validationWarning)}</span></div></div>` : ''}
+          ${isBrowserRecovery ? '<div class="studio-live-terms-alert" role="alert"><i class="fa-solid fa-rotate" aria-hidden="true"></i><div><strong>Browser stream interrupted</strong><span>A hard refresh closes browser capture and WebRTC. Resume the browser stream to select your sources again, or refresh the key to start a clean session.</span></div></div>' : ''}
           ${renderAdvancedStreamingSettings()}
           ${isNativeRecovery ? '<p class="studio-live-error">This Native Streaming session was interrupted because the browser host session ended. Resume to create a new host session, or end it for listeners.</p>' : ''}
           ${nativeLiveStatusCopy ? `<p class="studio-live-upload-status">${esc(nativeLiveStatusCopy)}</p>` : ''}
@@ -1456,7 +1464,9 @@ function renderStreamDetailsPanel() {
             <button type="submit" data-live-save-info ${live.savingInfo ? 'disabled' : ''}>${live.streamId ? 'Save / Update Stream Info' : 'Save Draft Details'}</button>
             ${isNativeRecovery
               ? `<button type="button" data-live-resume-native ${live.starting ? 'disabled' : ''}>${live.starting ? 'Resuming...' : 'Resume Stream'}</button><button type="button" data-live-end-interrupted ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Interrupted Stream'}</button>`
-              : isLiveActive ? '' : `<button type="button" data-live-start-stream ${state.user && !live.starting ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Stream'}</button>`}
+              : isBrowserRecovery
+                ? `<button type="button" data-live-resume-browser ${live.starting ? 'disabled' : ''}>${live.starting ? 'Resuming...' : 'Resume Browser Stream'}</button>`
+                : isLiveActive ? '' : `<button type="button" data-live-start-stream ${state.user && !live.starting ? '' : 'disabled'}>${live.starting ? 'Starting...' : 'Start Stream'}</button>`}
             ${isLiveActive ? `<button type="button" data-live-end-stream ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending...' : 'End Stream'}</button>` : ''}
             ${link ? `<button type="button" class="studio-live-button" data-copy-live-link="${esc(link)}">Copy Public Link</button><a class="studio-live-button" href="${esc(link)}" target="_blank" rel="noreferrer">Open Public Listener Page</a>` : ''}
           </div>
@@ -2165,7 +2175,7 @@ function liveProgramOutputState() {
       currentSegmentIndex: diagnostics.newestAvailableSegmentIndex ?? streamNative.currentSegmentIndex ?? null,
       lastSegmentAt: streamNative.lastSegmentAt || null
     },
-    hostActive: Boolean(live.streamId && !live.nativeInterruptedStreamId),
+    hostActive: Boolean(live.streamId && !live.nativeInterruptedStreamId && !live.browserInterruptedStreamId),
     hostSessionId: live.nativeHostSessionId || '',
     chatEnabled: live.chatEnabled !== false,
     audioEnabled: live.audioEnabled,
@@ -3324,9 +3334,17 @@ function hydrateLiveStudioFromStream(stream = null) {
   const localHostSessionId = getNativeHostSessionMarker(streamId)
   const sameRuntimeNativeSession = Boolean(localHostSessionId && (!stream.hostSessionId || localHostSessionId === stream.hostSessionId))
   const interruptedNative = firebaseSegmentStreamingEnabled() && isActive && isFirebaseSegmentProvider(stream.provider) && !live.streamId && !live.nativeRecorderRunning && !sameRuntimeNativeSession
+  const interruptedBrowser = Boolean(
+    isActive
+    && !live.streamId
+    && !live.browserIngestActive
+    && !isFirebaseSegmentProvider(stream.provider)
+    && normalizeIngestMethod(stream.ingestMethod || stream.ingestMode, STREAM_PROVIDERS.hlsEdge) === STREAM_INGEST_METHODS.browserWebrtc
+  )
   live.stream = stream
   live.streamId = isActive && !interruptedNative ? streamId : ''
   live.nativeInterruptedStreamId = interruptedNative ? streamId : ''
+  live.browserInterruptedStreamId = interruptedBrowser ? streamId : ''
   live.nativeHostSessionId = sameRuntimeNativeSession ? localHostSessionId : stream.hostSessionId || live.nativeHostSessionId || ''
   live.draftStreamId = streamId || live.draftStreamId || ''
   live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
@@ -3375,6 +3393,8 @@ function hydrateLiveStudioFromStream(stream = null) {
   }
   live.outputStatus = interruptedNative
     ? 'This Firebase Segments session was interrupted because the browser host session ended. Resume or end it.'
+    : interruptedBrowser
+      ? 'Browser capture ended during the page reload. Resume the browser stream to go back on air.'
     : isActive
     ? `Restored ${stream.status} Live Studio stream.`
     : 'Restored Live Studio draft details.'
@@ -3436,6 +3456,16 @@ async function restoreLiveStudioRuntimeState() {
       live.nativeInterruptedStreamId = active.streamId
       live.outputStatus = 'This Native Streaming session was interrupted because the browser host session ended. Resume or end it.'
     }
+  }
+  if (active && live.browserInterruptedStreamId === active.streamId) {
+    await heartbeatMusicLiveStream(active.streamId, {
+      ...liveProgramOutputState(),
+      hostActive: false,
+      hostConnected: false,
+      connectionStatus: 'interrupted'
+    }).catch((error) => {
+      console.warn('[studio-live] interrupted browser state update failed', error?.message || error)
+    })
   }
   if (active) {
     subscribeLiveStudioStream(active.streamId)
@@ -5389,6 +5419,187 @@ function scheduleBrowserIngestReconnect({ streamId = '', streamKey = '' } = {}) 
   }, delayMs)
 }
 
+async function resumeInterruptedBrowserStream() {
+  const live = liveState()
+  const streamId = live.browserInterruptedStreamId || live.streamId || ''
+  const streamKey = sanitizeHlsStreamKey(live.streamForm.streamKey || live.stream?.streamKey || '')
+  if (!state.user?.uid || !streamId || !streamKey || live.starting || live.ending) return
+  if (!live.streamForm.rightsAccepted) {
+    live.validationWarning = 'Accept the rights and permissions acknowledgement before resuming your stream.'
+    live.outputStatus = 'Broadcast permission acknowledgement is required.'
+    renderShell()
+    return
+  }
+  live.validationWarning = ''
+  live.starting = true
+  live.error = ''
+  live.outputStatus = live.videoEnabled
+    ? 'Select the browser video source again to resume the stream...'
+    : 'Preparing browser audio to resume the stream...'
+  renderShell()
+  try {
+    if (live.videoEnabled) {
+      await useLiveVideoInput()
+      const rawVideoTrack = live.localVideoTrack?.mediaStreamTrack || live.localVideoTrack || live.programVideoTrack
+      if (!rawVideoTrack || rawVideoTrack.readyState !== 'live') {
+        throw new Error('Select a video source to resume this browser stream.')
+      }
+    }
+    live.nativeHostSessionId = nativeHostSessionId(streamId)
+    const ingestResult = await startStudioBrowserIngestSession({
+      streamId,
+      streamKey,
+      reconnecting: true
+    })
+    live.browserIngestActive = true
+    live.browserInterruptedStreamId = ''
+    live.browserIngestReconnectAttempt = 0
+    live.audioPublishedToProvider = ingestResult.audioPublished === true
+    live.videoPublishedToProvider = ingestResult.videoPublished === true
+    const hlsPlaybackUrl = buildHlsPlaybackUrl(streamKey)
+    live.providerDiagnostics = {
+      ...(live.providerDiagnostics || {}),
+      ...(ingestResult.diagnostics || {}),
+      ingestEndpointURL: ingestResult.ingestEndpointURL || live.providerDiagnostics?.ingestEndpointURL || '',
+      ingestConnectionState: ingestResult.connectionState || 'connected',
+      whipConnectedAt: new Date().toISOString(),
+      whipReconnectedAt: new Date().toISOString(),
+      whipStreamKey: streamKey,
+      hlsHealthStreamKey: streamKey,
+      hlsUrl: hlsPlaybackUrl,
+      hlsPlaybackUrl,
+      lastIngestError: ''
+    }
+    await markMusicLiveStreamOnAir(streamId, {
+      ...liveStreamPayload(),
+      ...liveProgramOutputState(),
+      streamId,
+      provider: STREAM_PROVIDERS.hlsEdge,
+      streamingProtocol: 'hls',
+      transportProvider: 'hls-edge',
+      ingestMethod: STREAM_INGEST_METHODS.browserWebrtc,
+      ingestProtocol: 'webrtc',
+      ingestMode: 'browser-webrtc',
+      playbackMode: 'hls',
+      streamKey,
+      hlsPlaybackUrl,
+      hlsUrl: hlsPlaybackUrl,
+      llhlsUrl: '',
+      nativeStreaming: { enabled: false, status: 'disabled' },
+      isLive: true,
+      hostSessionId: live.nativeHostSessionId,
+      hostActive: true,
+      connectionStatus: 'live',
+      audioPublished: ingestResult.audioPublished === true,
+      videoPublished: ingestResult.videoPublished === true,
+      programHasAudio: ingestResult.audioPublished === true,
+      programHasVideo: ingestResult.videoPublished === true,
+      broadcastState: 'liveBroadcasting'
+    })
+    if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
+    live.heartbeatTimer = window.setInterval(() => {
+      if (live.streamId !== streamId || !live.browserIngestActive) return
+      heartbeatMusicLiveStream(streamId, {
+        ...liveProgramOutputState(),
+        connectionStatus: 'live'
+      }).catch(() => {})
+      writeNativeHostPresence({
+        streamId,
+        uid: state.user.uid,
+        state: 'online',
+        broadcasting: true,
+        hostSessionId: live.nativeHostSessionId
+      }).catch(() => {})
+    }, 15000)
+    startStudioHlsHealthPolling()
+    await heartbeatLiveProgramState({ connectionStatus: 'live' }).catch(() => {})
+    await writeNativeHostPresence({
+      streamId,
+      uid: state.user.uid,
+      state: 'online',
+      broadcasting: true,
+      hostSessionId: live.nativeHostSessionId
+    }).catch(() => {})
+    live.outputStatus = 'Browser stream resumed. Rebuilding the viewer buffer...'
+  } catch (error) {
+    console.error('[studio-live] resume browser stream failed', error)
+    await stopBrowserWebrtcIngest().catch(() => {})
+    live.browserIngestActive = false
+    live.browserInterruptedStreamId = streamId
+    live.providerDiagnostics = {
+      ...(live.providerDiagnostics || {}),
+      ...(error?.whipDiagnostics || {}),
+      ingestConnectionState: 'interrupted',
+      lastIngestError: error?.message || String(error)
+    }
+    live.error = error?.message || 'The browser stream could not be resumed.'
+    live.outputStatus = 'Browser stream remains interrupted.'
+  } finally {
+    live.starting = false
+    renderShell()
+  }
+}
+
+async function refreshLiveStudioStreamKey() {
+  const live = liveState()
+  if (live.refreshingStreamKey || live.starting || live.ending) return
+  const activeInterruptedStream = Boolean(live.streamId && live.browserInterruptedStreamId === live.streamId)
+  if (live.streamId && !activeInterruptedStream) return
+  if (activeInterruptedStream && !window.confirm('End this interrupted stream and create a clean draft with a new stream key?')) return
+  const previousKey = sanitizeHlsStreamKey(live.streamForm.streamKey || live.stream?.streamKey || '')
+  live.refreshingStreamKey = true
+  live.error = ''
+  live.outputStatus = activeInterruptedStream ? 'Ending the interrupted stream before rotating its key...' : 'Generating a new stream key...'
+  renderShell()
+  try {
+    if (activeInterruptedStream) {
+      await endLiveStudioStream()
+      if (live.streamId) throw new Error('The interrupted stream could not be ended before rotating its key.')
+    }
+    const nextKey = ensureLiveStreamKey({ forceNew: true })
+    const hlsUrl = buildHlsPlaybackUrl(nextKey)
+    const response = await prepareMusicLiveStreamDraft({
+      ...liveStreamPayload(),
+      streamId: live.draftStreamId || ''
+    })
+    live.draftStreamId = response.streamId || live.draftStreamId
+    const persistedKey = sanitizeHlsStreamKey(response.streamKey || '')
+    if (persistedKey && persistedKey !== nextKey) {
+      throw new Error('The stream service did not save the newly generated key.')
+    }
+    if (live.draftStreamId) subscribeLiveStudioStream(live.draftStreamId)
+    live.providerDiagnostics = {
+      ...(live.providerDiagnostics || {}),
+      streamKey: nextKey,
+      whipStreamKey: nextKey,
+      hlsHealthStreamKey: nextKey,
+      hlsUrl,
+      hlsPlaybackUrl: hlsUrl,
+      hlsHealth: 'not checked',
+      hlsLastOkAt: '',
+      hlsLastError: '',
+      hlsResponseCode: 0
+    }
+    console.log('[Stream Key] ensured', {
+      streamId: live.draftStreamId || '',
+      previousKey,
+      nextKey,
+      forceNew: true,
+      status: 'draft',
+      ingestMethod: live.ingestMethod,
+      hlsUrl
+    })
+    live.outputStatus = 'New stream key created and saved to the draft.'
+  } catch (error) {
+    console.error('[studio-live] refresh stream key failed', error)
+    live.error = error?.message || 'A new stream key could not be created.'
+    live.outputStatus = 'Stream key refresh failed.'
+  } finally {
+    live.refreshingStreamKey = false
+    renderShell()
+  }
+}
+
 async function startLiveStudioStream() {
   const live = liveState()
   if (!state.user?.uid || live.starting || live.streamId) return
@@ -5480,6 +5691,7 @@ async function startLiveStudioStream() {
         })
         browserIngestStarted = true
         live.browserIngestActive = true
+        live.browserInterruptedStreamId = ''
         live.browserIngestReconnectAttempt = 0
         live.audioPublishedToProvider = browserIngestResult.audioPublished === true
         live.videoPublishedToProvider = browserIngestResult.videoPublished === true
@@ -5794,9 +6006,11 @@ function clearEndedLiveHostState(streamId = '') {
   live.nativeLastDemandChangeAt = ''
   live.providerDiagnostics = {}
   live.browserIngestActive = false
+  live.browserInterruptedStreamId = ''
   live.browserIngestReconnectTimer = 0
   live.browserIngestReconnectAttempt = 0
   live.browserIngestReconnecting = false
+  live.refreshingStreamKey = false
   live.room = null
   live.localTrack = null
   live.programAudioTrack = null
@@ -6076,6 +6290,10 @@ function bindLiveStudioControls() {
     updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
     resumeInterruptedNativeStream()
   })
+  app.querySelector('[data-live-resume-browser]')?.addEventListener('click', () => {
+    updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
+    resumeInterruptedBrowserStream()
+  })
   app.querySelector('[data-live-end-interrupted]')?.addEventListener('click', () => {
     if (!window.confirm('End this interrupted Native Streaming session for listeners?')) return
     endInterruptedNativeStream()
@@ -6095,30 +6313,9 @@ function bindLiveStudioControls() {
     live.outputStatus = streamKey ? 'Stream key copied.' : 'No stream key is available.'
     renderShell()
   })
-  app.querySelector('[data-regenerate-stream-key]')?.addEventListener('click', () => {
-    if (live.streamId || live.ingestMethod !== STREAM_INGEST_METHODS.obsRtmp) return
-    const previousKey = sanitizeHlsStreamKey(live.streamForm.streamKey || '')
-    const nextKey = ensureLiveStreamKey({ forceNew: true })
-    const hlsUrl = buildHlsPlaybackUrl(nextKey)
-    console.log('[Stream Key] ensured', {
-      streamId: live.draftStreamId || '',
-      previousKey,
-      nextKey,
-      forceNew: true,
-      status: live.stream?.status || 'draft',
-      ingestMethod: live.ingestMethod,
-      hlsUrl
-    })
-    live.providerDiagnostics = {
-      ...(live.providerDiagnostics || {}),
-      streamKey: nextKey,
-      hlsHealthStreamKey: nextKey,
-      hlsUrl,
-      hlsPlaybackUrl: hlsUrl
-    }
-    live.outputStatus = 'A new OBS stream key was generated for this draft.'
-    scheduleLiveStudioDraftSave()
-    renderShell()
+  app.querySelector('[data-refresh-stream-key]')?.addEventListener('click', () => {
+    updateLiveStreamFormFromElement(app.querySelector('[data-live-stream-form]'))
+    refreshLiveStudioStreamKey()
   })
   app.querySelector('[data-live-device-select]')?.addEventListener('change', (e) => {
     stopLiveMicMeter()
