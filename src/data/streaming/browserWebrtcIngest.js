@@ -5,9 +5,12 @@ const CONNECTION_TIMEOUT_MS = 15000
 const FETCH_TIMEOUT_MS = 15000
 const CONNECTION_FAILURE_GRACE_MS = 30000
 const MUSIC_AUDIO_MAX_BITRATE = 256000
-const PROGRAM_VIDEO_START_BITRATE = 6000000
-const PROGRAM_VIDEO_MIN_BITRATE = 2500000
-const PROGRAM_VIDEO_MAX_BITRATE = 12000000
+// 1080p30 browser publishing is intentionally bounded to the same practical
+// range used by major broadcast services. WebRTC congestion control still has
+// final authority; these values are preferences, not a promise of bandwidth.
+const PROGRAM_VIDEO_START_BITRATE = 5000000
+const PROGRAM_VIDEO_MIN_BITRATE = 600000
+const PROGRAM_VIDEO_MAX_BITRATE = 8000000
 const PROGRAM_VIDEO_MAX_FRAMERATE = 30
 
 let activeSession = null
@@ -252,6 +255,14 @@ async function collectOutboundQualityStats(session) {
     const reports = Array.from(stats.values())
     const video = reports.find((report) => report.type === 'outbound-rtp' && !report.isRemote && (report.kind === 'video' || report.mediaType === 'video'))
     const audio = reports.find((report) => report.type === 'outbound-rtp' && !report.isRemote && (report.kind === 'audio' || report.mediaType === 'audio'))
+    const transport = reports.find((report) => report.type === 'transport' && (
+      report.id === video?.transportId || report.id === audio?.transportId
+    )) || reports.find((report) => report.type === 'transport')
+    const candidatePair = reports.find((report) => report.id === transport?.selectedCandidatePairId)
+      || reports.find((report) => report.type === 'candidate-pair' && report.selected === true)
+      || reports.find((report) => report.type === 'candidate-pair' && report.nominated === true && report.state === 'succeeded')
+    const localCandidate = reports.find((report) => report.id === candidatePair?.localCandidateId)
+    const remoteCandidate = reports.find((report) => report.id === candidatePair?.remoteCandidateId)
     const remoteVideo = reports.find((report) => report.type === 'remote-inbound-rtp' && (
       report.localId === video?.id || report.kind === 'video' || report.mediaType === 'video'
     ))
@@ -262,10 +273,19 @@ async function collectOutboundQualityStats(session) {
     const previous = session.lastOutboundStats || {}
     const elapsedMs = Math.max(1, now - Number(previous.at || now))
     const toKbps = (bytes, previousBytes) => previousBytes == null ? null : Math.round(Math.max(0, Number(bytes || 0) - Number(previousBytes || 0)) * 8 / elapsedMs)
+    const videoBitrateKbps = video ? toKbps(video.bytesSent, previous.videoBytes) : null
+    const audioBitrateKbps = audio ? toKbps(audio.bytesSent, previous.audioBytes) : null
+    const framesPerSecond = video && previous.videoFrames != null
+      ? Number(((Math.max(0, Number(video.framesEncoded || 0) - Number(previous.videoFrames || 0)) * 1000) / elapsedMs).toFixed(1))
+      : Number(video?.framesPerSecond || 0) || null
+    const selectedProtocol = String(localCandidate?.protocol || remoteCandidate?.protocol || '').toLowerCase()
+    const availableOutgoingBitrateKbps = Number.isFinite(Number(candidatePair?.availableOutgoingBitrate))
+      ? Math.round(Number(candidatePair.availableOutgoingBitrate) / 1000)
+      : null
     const diagnostics = {
-      outboundVideoBitrateKbps: video ? toKbps(video.bytesSent, previous.videoBytes) : null,
-      outboundAudioBitrateKbps: audio ? toKbps(audio.bytesSent, previous.audioBytes) : null,
-      outboundVideoFramesPerSecond: Number(video?.framesPerSecond || 0) || null,
+      outboundVideoBitrateKbps: videoBitrateKbps,
+      outboundAudioBitrateKbps: audioBitrateKbps,
+      outboundVideoFramesPerSecond: framesPerSecond,
       outboundVideoWidth: Number(video?.frameWidth || 0) || null,
       outboundVideoHeight: Number(video?.frameHeight || 0) || null,
       outboundVideoQualityLimitation: String(video?.qualityLimitationReason || 'none'),
@@ -276,11 +296,26 @@ async function collectOutboundQualityStats(session) {
       remoteRoundTripTimeMs: Number.isFinite(Number(remoteVideo?.roundTripTime))
         ? Math.round(Number(remoteVideo.roundTripTime) * 1000)
         : null,
-      outboundQualityWarning: video && previous.videoBytes != null && toKbps(video.bytesSent, previous.videoBytes) < 1800
+      selectedCandidateProtocol: selectedProtocol || 'unknown',
+      selectedCandidatePairState: String(candidatePair?.state || ''),
+      selectedLocalCandidateType: String(localCandidate?.candidateType || ''),
+      selectedRemoteCandidateType: String(remoteCandidate?.candidateType || ''),
+      selectedRemoteAddress: String(remoteCandidate?.address || remoteCandidate?.ip || ''),
+      selectedRemotePort: Number(remoteCandidate?.port || 0) || null,
+      availableOutgoingBitrateKbps,
+      candidatePairCurrentRoundTripTimeMs: Number.isFinite(Number(candidatePair?.currentRoundTripTime))
+        ? Math.round(Number(candidatePair.currentRoundTripTime) * 1000)
+        : null,
+      outboundQualityWarning: video && previous.videoBytes != null && videoBitrateKbps < 1800
         ? 'Upload bandwidth is too low for clean 1080p video. Melogic is preserving motion and may reduce resolution.'
         : ''
     }
-    session.lastOutboundStats = { at: now, videoBytes: video?.bytesSent, audioBytes: audio?.bytesSent }
+    session.lastOutboundStats = {
+      at: now,
+      videoBytes: video?.bytesSent,
+      audioBytes: audio?.bytesSent,
+      videoFrames: video?.framesEncoded
+    }
     session.emitStatus?.('connected', diagnostics)
   } catch (error) {
     console.warn('[Browser WHIP] outbound quality stats unavailable', error)

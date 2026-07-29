@@ -1371,6 +1371,7 @@ function renderDetailedStreamOutputStatus() {
         <div><dt>WHIP Stream Param</dt><dd>${esc(whipStreamParam || 'not applicable')}</dd></div>
         <div><dt>HLS Response</dt><dd>${esc(diagnostics.hlsResponseCode || live.stream?.hlsResponseCode || 'not checked')}</dd></div>
         <div><dt>HLS Health</dt><dd>${esc(hlsHealth)}</dd></div>
+        <div><dt>HLS Detail</dt><dd>${esc(diagnostics.hlsLastError || live.stream?.hlsLastError || 'No manifest error reported.')}</dd></div>
         <div><dt>Seconds Since Start</dt><dd>${esc(diagnostics.secondsSinceStart ?? live.stream?.hlsSecondsSinceStart ?? 0)}</dd></div>
         <div><dt>Last OK</dt><dd>${esc(diagnostics.hlsLastOkAt || live.stream?.hlsLastOkAt || 'never')}</dd></div>
       </dl>
@@ -1529,6 +1530,7 @@ function renderAdvancedStreamingSettings() {
             <li>Last manifest OK: ${esc(diagnostics.hlsLastOkAt || 'none')}</li>
             <li>Manifest sequence: ${esc(diagnostics.hlsManifestSequence ?? diagnostics.hlsLastManifestSequence ?? 'none')}</li>
             <li>Manifest response: ${esc(diagnostics.hlsResponseCode || 'none')}</li>
+            <li>Manifest detail: ${esc(diagnostics.hlsLastError || 'none')}</li>
             <li>Seconds since start: ${esc(diagnostics.secondsSinceStart ?? 'none')}</li>
             <li>Stream document status: ${esc(diagnostics.streamDocStatus || live.stream?.status || (live.streamId ? 'live' : 'draft'))}</li>
             <li>Ingest connection: ${esc(diagnostics.ingestConnectionState || (isObs ? 'external encoder' : live.browserIngestActive ? 'connected' : 'idle'))}</li>
@@ -1543,11 +1545,16 @@ function renderAdvancedStreamingSettings() {
             <li>Offer SDP length: ${Number(diagnostics.offerSdpLength || 0)}</li>
             <li>Answer SDP length: ${Number(diagnostics.answerSdpLength || 0)}</li>
             <li>Program target: ${esc(live.programMixer.outputResolution || '1920x1080')} @ ${Number(live.programMixer.fps || 30)} fps</li>
-            <li>Encoder video target: ${Number(diagnostics.videoTargetBitrate || 12000000) / 1000000} Mbps</li>
+            <li>Encoder video target: ${Number(diagnostics.videoTargetBitrate || 8000000) / 1000000} Mbps</li>
             <li>Encoder audio target: ${Math.round(Number(diagnostics.audioTargetBitrate || 256000) / 1000)} kbps stereo</li>
             <li>Outbound video: ${diagnostics.outboundVideoBitrateKbps ? `${diagnostics.outboundVideoBitrateKbps} kbps` : 'awaiting samples'}</li>
+            <li>Outbound audio: ${diagnostics.outboundAudioBitrateKbps ? `${diagnostics.outboundAudioBitrateKbps} kbps` : 'awaiting samples'}</li>
+            <li>Outbound frame rate: ${diagnostics.outboundVideoFramesPerSecond ?? 'awaiting samples'}</li>
             <li>Outbound dimensions: ${diagnostics.outboundVideoWidth && diagnostics.outboundVideoHeight ? `${diagnostics.outboundVideoWidth}×${diagnostics.outboundVideoHeight}` : 'awaiting samples'}</li>
             <li>Encoder limitation: ${esc(diagnostics.outboundVideoQualityLimitation || 'awaiting samples')}</li>
+            <li>Selected media transport: ${esc(diagnostics.selectedCandidateProtocol || 'awaiting samples')}</li>
+            <li>Available outgoing bandwidth: ${diagnostics.availableOutgoingBitrateKbps ? `${diagnostics.availableOutgoingBitrateKbps} kbps` : 'not reported'}</li>
+            <li>Candidate RTT: ${diagnostics.candidatePairCurrentRoundTripTimeMs != null ? `${diagnostics.candidatePairCurrentRoundTripTimeMs} ms` : 'not reported'}</li>
             <li>Program track count: ${diagnostics.programTrackCount ?? diagnostics.mediaStreamTrackCount ?? 0}</li>
             <li>Video track count: ${diagnostics.videoTrackCount ?? 0}</li>
             <li>Audio track: ${esc(diagnostics.audioTrackReadyState || 'none')}</li>
@@ -1571,7 +1578,7 @@ function renderAdvancedStreamingSettings() {
         <div><dt>Track count</dt><dd>${Number(diagnostics.mediaStreamTrackCount || 0)}</dd></div>
         <div><dt>CORS / preflight</dt><dd>${esc(diagnostics.corsPreflightStatus || 'Browser did not expose a preflight result.')}</dd></div>
         <div><dt>Error</dt><dd>${esc(diagnostics.lastIngestError)}</dd></div>
-        <div><dt>Hint</dt><dd>${esc(diagnostics.networkHint || 'Verify SRS WHIP availability, TLS, CORS, proxy routing, and UDP candidate access.')}</dd></div>
+        <div><dt>Hint</dt><dd>${esc(diagnostics.networkHint || 'Verify SRS WHIP availability, TLS, CORS, proxy routing, and media candidate access.')}</dd></div>
       </dl></details>` : ''}
       <p class="studio-muted">Firebase stores metadata, presence, chat, viewer counts, and stream cards. Both streaming methods use buffered HLS for public playback.</p>
     </details>
