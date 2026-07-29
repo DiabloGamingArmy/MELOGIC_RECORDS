@@ -284,6 +284,18 @@ export async function listFeaturedArtists(limitCount = 12) {
   }
 }
 
+export async function getMusicArtist(uid = '') {
+  const artistUid = String(uid || '').trim()
+  if (!db || !artistUid || artistUid.includes('/')) return null
+  try {
+    const snapshot = await getDoc(doc(db, FIRESTORE_COLLECTIONS.profiles, artistUid))
+    return snapshot.exists() ? normalizeMusicArtist(snapshot) : null
+  } catch (error) {
+    console.warn('[musicService] Music artist profile could not be loaded.', error?.message || error)
+    return null
+  }
+}
+
 export async function listRecentlyPlayed(uid = '', limitCount = 12) {
   if (!db || !uid) return []
   const cappedLimit = Math.max(1, Math.min(20, Number(limitCount) || 12))

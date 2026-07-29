@@ -457,6 +457,7 @@ export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError
           uid: String(raw.uid || ''),
           displayName: String(raw.displayName || 'Melogic Listener'),
           photoURL: String(raw.photoURL || ''),
+          isCreator: raw.isCreator === true,
           text: String(raw.text || ''),
           createdAt: toIsoDate(raw.createdAt),
           status: String(raw.status || 'visible')

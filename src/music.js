@@ -88,6 +88,7 @@ import {
 } from './data/liveStudioGuestService'
 import {
   getMusicRelease,
+  getMusicArtist,
   listFeaturedArtists,
   listFeaturedMusicReleases,
   listNewMusicReleases,
@@ -207,6 +208,7 @@ const state = {
   },
   liveFilter: 'all',
   liveStream: null,
+  liveHostProfile: null,
   liveStreamUnsubscribe: null,
   liveListRefreshTimer: 0,
   liveStatus: 'idle',
@@ -215,6 +217,8 @@ const state = {
   listenerAudioElement: null,
   listenerVideoElement: null,
   listenerPresenceId: '',
+  listenerPresenceJoinPromise: null,
+  listenerPresenceGeneration: 0,
   hlsMediaElement: null,
   hlsCleanup: null,
   hlsAttachedUrl: '',
@@ -226,6 +230,7 @@ const state = {
   hlsPlaybackRequested: false,
   hlsRecoveryInFlight: false,
   hlsRecoveryLastAt: 0,
+  hlsCleanupInProgress: false,
   nativeViewerSessionId: '',
   nativeHostUnsubscribe: null,
   nativePlaybackTimer: 0,
@@ -243,9 +248,11 @@ const state = {
   nativeListenerDiagnostics: {},
   listenerPresenceTimer: 0,
   liveMonitor: {
-    muted: true
+    muted: false,
+    autoplayMutedFallback: false
   },
   liveVideoExpanded: false,
+  liveVideoFullscreenActive: false,
   livePassword: '',
   liveActionMessage: '',
   liveViewer: {
@@ -518,6 +525,15 @@ function renderAvatarImage({ src = '', name = '', className = 'music-avatar' } =
   })
 }
 
+function liveHostPhotoURL(stream = state.liveStream || {}) {
+  if (!stream) return ''
+  if (stream.hostPhotoURL || stream.hostAvatarURL) return stream.hostPhotoURL || stream.hostAvatarURL
+  if (state.liveHostProfile?.uid === stream.hostUid) {
+    return state.liveHostProfile.avatarURL || state.liveHostProfile.photoURL || ''
+  }
+  return stream.hostUid === state.currentUser?.uid ? state.currentUser?.photoURL || '' : ''
+}
+
 function renderArtistArtwork(artist) {
   const image = artist?.avatarURL || artist?.photoURL || ''
   if (image) return `<img class="music-artist-art" src="${escapeHtml(image)}" alt="${escapeHtml(artist.artistName)} profile image" loading="lazy" />`
@@ -738,6 +754,11 @@ function liveAccessLabel(streamOrForm = {}) {
 function listenerCountLabel(count = 0) {
   const value = Number(count || 0)
   return `${value.toLocaleString()} ${value === 1 ? 'listening' : 'listening'}`
+}
+
+function listenerCountMarkup(count = 0, noun = 'listening') {
+  const value = Math.max(0, Number(count || 0))
+  return `<span data-live-viewer-count>${value.toLocaleString()}</span> ${escapeHtml(noun)}`
 }
 
 function liveShareURL(streamId = '') {
@@ -1119,7 +1140,11 @@ function hydrateStableImages() {
     if (failedBefore) container.classList.add('is-fallback')
     const image = new Image()
     image.alt = container.dataset.alt || ''
-    image.loading = 'lazy'
+    // This image is intentionally preloaded while detached, then moved into
+    // place without being recreated on every live snapshot. Detached lazy
+    // images may never start fetching in Safari, so use eager loading here.
+    image.loading = 'eager'
+    image.decoding = 'async'
     image.onload = () => {
       stableImageCache.set(src, 'loaded')
       stableImageCache.set(`key:${imageKey}`, { lastGoodSrc: src })
@@ -1504,12 +1529,65 @@ function livePresenceId(streamId = '') {
   return uid ? `uid-${uid}-${streamId}` : `${listenerAnonId()}-${streamId}`
 }
 
+function updateLiveViewerCount(count = state.liveStream?.listenerCount || 0) {
+  const listenerCount = Math.max(0, Number(count || 0))
+  if (state.liveStream) state.liveStream.listenerCount = listenerCount
+  app.querySelectorAll('[data-live-viewer-count]').forEach((element) => {
+    element.textContent = listenerCount.toLocaleString()
+  })
+}
+
 function startListenerPresenceHeartbeat(streamId, presenceId) {
   stopListenerPresenceHeartbeat()
   if (!streamId || !presenceId) return
   state.listenerPresenceTimer = window.setInterval(() => {
-    updateMusicLiveListenerPresence(streamId, presenceId).catch(() => {})
+    updateMusicLiveListenerPresence(streamId, presenceId)
+      .then((result = {}) => updateLiveViewerCount(result.listenerCount))
+      .catch(() => {})
   }, 20000)
+}
+
+async function ensureLiveListenerPresence({ monitorMode = state.route.mode === 'liveMonitor' } = {}) {
+  const streamId = state.liveStream?.id || ''
+  if (!streamId) return null
+  if (state.listenerPresenceId) return state.listenerPresenceId
+  if (state.listenerPresenceJoinPromise) return state.listenerPresenceJoinPromise
+  const requestedPresenceId = monitorMode
+    ? `${livePresenceId(streamId)}-monitor`
+    : livePresenceId(streamId)
+  const generation = state.listenerPresenceGeneration
+  const joinPromise = joinMusicLiveStream(streamId, {
+    password: state.livePassword,
+    presenceId: requestedPresenceId,
+    anonId: listenerAnonId()
+  }).then((result = {}) => {
+    if (state.liveStream?.id !== streamId || state.listenerPresenceGeneration !== generation) {
+      const stalePresenceId = result.presenceId || requestedPresenceId
+      leaveMusicLiveStream(streamId, stalePresenceId).catch(() => {})
+      return null
+    }
+    state.listenerPresenceId = result.presenceId || requestedPresenceId
+    updateLiveViewerCount(result.listenerCount)
+    startListenerPresenceHeartbeat(streamId, state.listenerPresenceId)
+    return state.listenerPresenceId
+  }).finally(() => {
+    if (state.listenerPresenceJoinPromise === joinPromise) state.listenerPresenceJoinPromise = null
+  })
+  state.listenerPresenceJoinPromise = joinPromise
+  return joinPromise
+}
+
+async function releaseLiveListenerPresence() {
+  stopListenerPresenceHeartbeat()
+  state.listenerPresenceGeneration += 1
+  const streamId = state.liveStream?.id || ''
+  const presenceId = state.listenerPresenceId
+  state.listenerPresenceId = ''
+  state.listenerPresenceJoinPromise = null
+  if (!streamId || !presenceId) return null
+  const result = await leaveMusicLiveStream(streamId, presenceId).catch(() => null)
+  if (result && state.liveStream?.id === streamId) updateLiveViewerCount(result.listenerCount)
+  return result
 }
 
 function updateNativeAudioDiagnostics(eventName = '') {
@@ -2015,6 +2093,10 @@ function availableHlsPlaybackModes(stream = state.liveStream) {
 
 function currentHlsPlaybackMode(stream = state.liveStream) {
   const available = availableHlsPlaybackModes(stream)
+  if (state.route.mode === 'liveMonitor') {
+    if (available.includes('videoAudio')) return 'videoAudio'
+    return available[0]
+  }
   return HLS_PLAYBACK_MODES.has(state.hlsPlaybackMode) && available.includes(state.hlsPlaybackMode)
     ? state.hlsPlaybackMode
     : available[0]
@@ -2190,12 +2272,16 @@ function updateHlsDiagnosticsDom() {
 function ensureHlsMediaMounted() {
   const media = state.hlsMediaElement
   if (!media) return
-  const mount = app.querySelector('[data-hls-player-mount]')
-  if (mount && media.parentElement !== mount) mount.appendChild(media)
+  const mount = app.querySelector('[data-hls-player-mount], [data-live-monitor-video-mount]')
+  if (mount && media.parentElement !== mount) {
+    mount.innerHTML = ''
+    mount.appendChild(media)
+  }
   hlsMediaDiagnostics()
 }
 
 function cleanupHlsPlayback({ removeElement = true } = {}) {
+  state.hlsCleanupInProgress = true
   const cleanup = state.hlsCleanup
   state.hlsCleanup = null
   try { cleanup?.() } catch {}
@@ -2207,27 +2293,43 @@ function cleanupHlsPlayback({ removeElement = true } = {}) {
   if (removeElement) state.hlsMediaElement?.remove?.()
   state.hlsMediaElement = null
   state.hlsAttachedUrl = ''
+  state.hlsCleanupInProgress = false
 }
 
 function createHlsMediaElement(mode = currentHlsPlaybackMode()) {
+  const monitorMode = state.route.mode === 'liveMonitor'
   const media = document.createElement(mode === 'audioOnly' ? 'audio' : 'video')
-  media.controls = mode === 'audioOnly'
-  media.autoplay = false
+  media.controls = mode === 'audioOnly' && !monitorMode
+  media.autoplay = monitorMode
   media.playsInline = true
   media.preload = 'auto'
   media.crossOrigin = 'use-credentials'
-  media.muted = mode === 'videoOnly'
-  media.defaultMuted = mode === 'videoOnly'
+  media.muted = mode === 'videoOnly' || (monitorMode && state.liveMonitor.muted)
+  media.defaultMuted = media.muted
   media.volume = mode === 'videoOnly' ? 0 : Number.isFinite(Number(state.player.volume)) ? Number(state.player.volume) : 1
   media.dataset.hlsPlayerElement = 'true'
+  if (monitorMode) media.dataset.hlsMonitorElement = 'true'
   if (mode === 'audioOnly') media.dataset.hlsAudioPlayer = 'true'
   else media.dataset.hlsPlayer = 'true'
   ;['play', 'pause', 'loadedmetadata', 'canplay', 'volumechange', 'timeupdate', 'durationchange'].forEach((eventName) => {
     media.addEventListener(eventName, () => {
       if (mode === 'videoOnly' && !media.muted) media.muted = true
       if (eventName === 'volumechange' && mode !== 'videoOnly') state.player.volume = media.volume
+      if (monitorMode && (eventName === 'loadedmetadata' || eventName === 'canplay') && media.paused && state.hlsPlaybackRequested) {
+        playHlsMonitorMedia(media).catch(() => {})
+      }
       hlsMediaDiagnostics(eventName)
     })
+  })
+  media.addEventListener('pause', () => {
+    if (state.hlsCleanupInProgress || state.hlsRecoveryInFlight || state.hlsMediaElement !== media) return
+    if (state.route.mode === 'liveMonitor' && state.hlsPlaybackRequested && !isExplicitlyEndedLiveStream()) {
+      window.setTimeout(() => {
+        if (state.hlsMediaElement === media && media.paused) playHlsMonitorMedia(media).catch(() => {})
+      }, 120)
+      return
+    }
+    releaseLiveListenerPresence().catch(() => {})
   })
   state.hlsMediaElement = media
   ensureHlsMediaMounted()
@@ -2306,7 +2408,12 @@ function handleHlsStatus(payload = {}) {
         tabId: state.nativeViewerSessionId
       }).catch(() => {})
     }
+    ensureLiveListenerPresence().catch(() => {})
     updateLiveMediaSession(state.liveStream)
+  }
+  if (status === 'recovering') {
+    state.liveStatus = 'reconnecting'
+    state.liveError = ''
   }
   if (status === 'waiting' && state.liveStatus !== 'loadingManifest') state.liveStatus = 'waiting'
   if (status === 'stalled') state.liveStatus = 'stalled'
@@ -2355,6 +2462,7 @@ async function playHlsMediaFromGesture() {
   }
   try {
     await media.play()
+    await ensureLiveListenerPresence()
     state.hlsDiagnostics = { ...(state.hlsDiagnostics || {}), lastPlayResult: 'resolved', lastPlayErrorName: '', lastPlayErrorMessage: '' }
     hlsMediaDiagnostics('playResolved')
     return true
@@ -2372,6 +2480,32 @@ async function playHlsMediaFromGesture() {
     hlsMediaDiagnostics('playRejected')
     updateLiveListenerControls()
     return false
+  }
+}
+
+async function playHlsMonitorMedia(media = state.hlsMediaElement) {
+  if (!media || state.route.mode !== 'liveMonitor') return false
+  media.autoplay = true
+  media.playsInline = true
+  media.volume = Math.max(0, Math.min(1, Number(state.player.volume || 1)))
+  media.muted = state.liveMonitor.muted
+  media.defaultMuted = media.muted
+  try {
+    await media.play()
+    state.liveMonitor.autoplayMutedFallback = false
+    await ensureLiveListenerPresence({ monitorMode: true })
+    return true
+  } catch (error) {
+    if (error?.name !== 'NotAllowedError' || media.muted) throw error
+    // Browsers can block audible autoplay in a newly opened window. Keep the
+    // monitor rolling silently and expose one explicit control to enable audio.
+    state.liveMonitor.muted = true
+    state.liveMonitor.autoplayMutedFallback = true
+    media.muted = true
+    media.defaultMuted = true
+    await media.play()
+    await ensureLiveListenerPresence({ monitorMode: true })
+    return true
   }
 }
 
@@ -2489,7 +2623,8 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
       return
     }
   }
-  await playHlsMediaFromGesture()
+  if (state.route.mode === 'liveMonitor') await playHlsMonitorMedia(media)
+  else await playHlsMediaFromGesture()
 }
 
 async function recoverHlsListenerPlayback(stream = state.liveStream) {
@@ -3079,22 +3214,26 @@ function renderLiveChatPanel(stream = state.liveStream || {}) {
           <p class="music-eyebrow">Live chat</p>
           <h2>Chat</h2>
         </div>
-        <span class="music-live-chat-status"><i aria-hidden="true"></i>${listenerCount.toLocaleString()} watching</span>
+        <span class="music-live-chat-status"><i aria-hidden="true"></i>${listenerCountMarkup(listenerCount, 'watching')}</span>
       </div>
       <div class="music-live-chat-messages" data-live-chat-messages>
         ${chatEnabled ? '' : '<p class="music-muted">Live chat is disabled by the host.</p>'}
-        ${chatEnabled && state.liveChat.messages.length ? state.liveChat.messages.map((message) => `
-          <article class="music-live-chat-message">
-            ${renderAvatarImage({ src: message.photoURL, name: message.displayName, className: 'music-chat-avatar' })}
+        ${chatEnabled && state.liveChat.messages.length ? state.liveChat.messages.map((message) => {
+          const isCreator = message.isCreator === true || Boolean(message.uid && message.uid === stream.hostUid)
+          const photoURL = message.photoURL || (isCreator ? liveHostPhotoURL(stream) : '')
+          return `
+          <article class="music-live-chat-message ${isCreator ? 'is-creator' : ''}">
+            ${renderAvatarImage({ src: photoURL, name: message.displayName, className: 'music-chat-avatar' })}
             <div>
-              <div>
+              <div class="music-live-chat-message-meta">
                 <strong>${escapeHtml(message.displayName)}</strong>
+                ${isCreator ? '<span class="music-live-chat-creator-badge">Creator</span>' : ''}
                 <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
               </div>
               <p>${escapeHtml(message.text)}</p>
             </div>
           </article>
-        `).join('') : chatEnabled ? `
+        `}).join('') : chatEnabled ? `
           <div class="music-live-chat-empty">
             <span aria-hidden="true">${liveActionIcon('chat')}</span>
             <strong>Chat is ready</strong>
@@ -3447,8 +3586,19 @@ function renderAudioControls(form) {
 }
 
 function renderHostChatControls() {
-  return state.goLive.streamId
-    ? renderLiveChatPanel(state.goLive.streamId)
+  const stream = state.liveStream?.id === state.goLive.streamId
+    ? state.liveStream
+    : state.goLive.streamId
+      ? {
+          id: state.goLive.streamId,
+          hostUid: state.currentUser?.uid || '',
+          hostPhotoURL: state.currentUser?.photoURL || '',
+          listenerCount: 0,
+          chatEnabled: true
+        }
+      : null
+  return stream
+    ? renderLiveChatPanel(stream)
     : `
       <section class="music-panel music-live-chat music-host-control-section">
         <p class="music-eyebrow">Live chat</p>
@@ -3529,7 +3679,7 @@ function renderPublicLiveMonitorPage() {
   const brand = '<div class="music-live-monitor-brand">MELOGIC STREAMING</div>'
   const controls = `
     <div class="music-live-monitor-controls" data-live-monitor-controls>
-      <button type="button" class="button button-muted" data-live-monitor-audio-toggle>${state.liveMonitor.muted ? 'Unmute music audio' : 'Mute music audio'}</button>
+      <button type="button" class="button button-muted" data-live-monitor-audio-toggle>${state.liveMonitor.muted ? state.liveMonitor.autoplayMutedFallback ? 'Enable monitor audio' : 'Unmute music audio' : 'Mute music audio'}</button>
       ${hasVideo ? '<button type="button" class="button button-muted" data-live-monitor-video-fullscreen>Show Video Stream Fullscreen</button>' : ''}
     </div>
   `
@@ -3568,6 +3718,7 @@ function renderPublicLiveMonitorPage() {
     </main>
   `
   hydrateStableImages()
+  ensureHlsMediaMounted()
   attachLiveVideoElement()
   bindLiveMonitorControls()
   startMusicLiveMonitorVisualizer()
@@ -3608,16 +3759,20 @@ function bindLiveMonitorControls() {
   showControls()
   app.querySelector('[data-live-monitor-audio-toggle]')?.addEventListener('click', (event) => {
     state.liveMonitor.muted = !state.liveMonitor.muted
-    if (state.listenerAudioElement) {
-      state.listenerAudioElement.muted = state.liveMonitor.muted
-      state.listenerAudioElement.volume = state.player.volume
-      if (!state.liveMonitor.muted) state.listenerAudioElement.play?.().catch(() => {})
+    state.liveMonitor.autoplayMutedFallback = false
+    const media = state.listenerAudioElement || state.hlsMediaElement
+    if (media) {
+      media.muted = state.liveMonitor.muted
+      media.defaultMuted = state.liveMonitor.muted
+      media.volume = state.player.volume
+      if (state.hlsMediaElement === media) playHlsMonitorMedia(media).catch(() => {})
+      else media.play?.().catch(() => {})
     }
     event.currentTarget.textContent = state.liveMonitor.muted ? 'Unmute music audio' : 'Mute music audio'
     showControls()
   })
   app.querySelector('[data-live-monitor-video-fullscreen]')?.addEventListener('click', () => {
-    const target = state.listenerVideoElement || app.querySelector('[data-live-monitor-root]')
+    const target = state.hlsMediaElement || state.listenerVideoElement || app.querySelector('[data-live-monitor-root]')
     target?.requestFullscreen?.().catch(() => {})
   })
 }
@@ -3769,7 +3924,7 @@ function renderHlsVideoOverlay(stream = state.liveStream, liveBadge = 'LIVE') {
     <div class="music-live-player-chrome" data-live-player-chrome>
       <div class="music-live-player-status">
         <span class="music-live-badge">${escapeHtml(liveBadge)}</span>
-        <span>${escapeHtml(listenerCountLabel(stream.listenerCount))}</span>
+        <span>${listenerCountMarkup(stream.listenerCount)}</span>
       </div>
       <div class="music-live-player-gradient" aria-hidden="true"></div>
       <div class="music-live-player-controls" aria-label="Live video controls">
@@ -3887,6 +4042,28 @@ function setupLiveVideoControls() {
     if (settingsPanel) settingsPanel.hidden = !settingsOpen
     if (settingsOpen) showControls()
   }
+  const fullscreenTargetIsPlayer = () => {
+    const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement
+    return Boolean(fullscreenElement && (
+      fullscreenElement === shell ||
+      fullscreenElement === media ||
+      fullscreenElement.closest?.('[data-live-video-player]') === shell
+    ))
+  }
+  const handleFullscreenChange = () => {
+    const wasFullscreen = state.liveVideoFullscreenActive
+    state.liveVideoFullscreenActive = fullscreenTargetIsPlayer()
+    if (wasFullscreen && !state.liveVideoFullscreenActive) {
+      window.requestAnimationFrame(() => rerender())
+    }
+  }
+  const handleWebkitFullscreenBegin = () => {
+    state.liveVideoFullscreenActive = true
+  }
+  const handleWebkitFullscreenEnd = () => {
+    state.liveVideoFullscreenActive = false
+    window.requestAnimationFrame(() => rerender())
+  }
 
   listen(shell, 'pointerenter', showControls)
   listen(shell, 'pointermove', showControls)
@@ -3898,6 +4075,10 @@ function setupLiveVideoControls() {
   listen(media, 'pause', updatePlaybackState)
   listen(media, 'timeupdate', updatePlaybackState)
   listen(media, 'progress', updatePlaybackState)
+  listen(document, 'fullscreenchange', handleFullscreenChange)
+  listen(document, 'webkitfullscreenchange', handleFullscreenChange)
+  listen(media, 'webkitbeginfullscreen', handleWebkitFullscreenBegin)
+  listen(media, 'webkitendfullscreen', handleWebkitFullscreenEnd)
   listen(media, 'volumechange', () => {
     shell.classList.toggle('is-muted', media.muted || media.volume === 0)
     const input = shell.querySelector('[data-live-player-volume]')
@@ -4035,7 +4216,7 @@ function renderLiveDetailPage() {
           <div class="music-live-visual-shell ${isBufferedStream && showingVideo ? 'has-custom-controls are-controls-visible' : ''}" ${isBufferedStream && showingVideo ? 'data-live-video-player' : ''}>
             ${isBufferedStream && showingVideo ? '' : `<div class="music-live-player-status">
               <span class="music-live-badge ${isNativeStream ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>
-              <span>${escapeHtml(listenerCountLabel(stream.listenerCount))}</span>
+              <span>${listenerCountMarkup(stream.listenerCount)}</span>
             </div>`}
             ${visual}
             ${isBufferedStream ? renderLivePlaybackLoader() : ''}
@@ -4059,8 +4240,8 @@ function renderLiveDetailPage() {
             ${renderLiveActions(stream)}
           </div>
           <div class="music-live-host">
-            ${renderAvatarImage({ src: stream.hostPhotoURL, name: stream.hostDisplayName, className: 'music-live-avatar' })}
-            <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${escapeHtml(listenerCountLabel(stream.listenerCount))}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
+            ${renderAvatarImage({ src: liveHostPhotoURL(stream), name: stream.hostDisplayName, className: 'music-live-avatar' })}
+            <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${listenerCountMarkup(stream.listenerCount)}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
           </div>
           <p class="music-live-description">${escapeHtml(stream.description || 'Live stream on Melogic Streaming.')}</p>
           ${renderNowPlaying(stream)}
@@ -4347,7 +4528,22 @@ function renderPlayer() {
   `
 }
 
+function isLiveVideoFullscreenActive() {
+  if (state.liveVideoFullscreenActive) return true
+  const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement
+  if (!fullscreenElement) return false
+  return Boolean(
+    fullscreenElement.matches?.('[data-live-video-player], [data-hls-player-element]') ||
+    fullscreenElement.closest?.('[data-live-video-player]')
+  )
+}
+
 function rerender() {
+  if (state.route.mode === 'liveDetail' && isLiveVideoFullscreenActive()) {
+    updateLiveViewerCount(state.liveStream?.listenerCount || 0)
+    updateLiveListenerControls()
+    return
+  }
   if (state.route.mode !== 'liveMonitor' && musicMonitorVisualizerCleanup) musicMonitorVisualizerCleanup()
   if (state.route.mode !== 'liveDetail' && musicLiveControlsCleanup) musicLiveControlsCleanup()
   if (state.route.mode === 'release') renderReleaseDetailPage()
@@ -5198,7 +5394,8 @@ async function endHostBroadcast() {
 }
 
 function disconnectLiveListener() {
-  stopListenerPresenceHeartbeat()
+  state.hlsPlaybackRequested = false
+  releaseLiveListenerPresence().catch(() => {})
   if (state.nativePlaybackTimer) window.clearInterval(state.nativePlaybackTimer)
   state.nativePlaybackTimer = 0
   state.nativeHostUnsubscribe?.()
@@ -5213,14 +5410,9 @@ function disconnectLiveListener() {
   cleanupNativeMediaSourcePipeline()
   cleanupHlsPlayback()
   stopHlsHealthPolling()
-  state.hlsPlaybackRequested = false
   state.hlsRecoveryInFlight = false
   state.hlsRecoveryLastAt = 0
   state.hlsDiagnostics = {}
-  if (state.liveStream?.id && state.listenerPresenceId) {
-    leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
-  }
-  state.listenerPresenceId = ''
   if (state.listenerAudioElement) {
     state.listenerAudioElement.remove()
     state.listenerAudioElement = null
@@ -6415,8 +6607,12 @@ async function loadMusicPage() {
   if (state.route.mode === 'liveDetail' || state.route.mode === 'liveMonitor') {
     state.activeView = 'live'
     state.liveStream = await getMusicLiveStream(state.route.id)
+    state.liveHostProfile = null
     if (state.liveStream?.id) {
       startLiveStreamSubscription(state.liveStream.id)
+      if (state.liveStream.hostUid && !liveHostPhotoURL(state.liveStream)) {
+        state.liveHostProfile = await getMusicArtist(state.liveStream.hostUid)
+      }
       if (state.route.mode === 'liveDetail') {
         if (state.liveStream.chatEnabled !== false) startLiveChatSubscription(state.liveStream.id)
         startLiveSequenceSubscription(state.liveStream.id)
@@ -6431,7 +6627,7 @@ async function loadMusicPage() {
     }
     state.loading = false
     rerender()
-    if (state.route.mode === 'liveMonitor' && state.liveStream?.id && !isBufferedHlsStream(state.liveStream)) {
+    if (state.route.mode === 'liveMonitor' && state.liveStream?.id) {
       joinLiveListener({ monitor: true, forceJoin: true }).catch(() => {})
     }
     return
@@ -6501,10 +6697,9 @@ window.addEventListener('pagehide', () => {
   if (state.liveStream?.id && state.nativeViewerSessionId) {
     clearPlaybackDemand(state.liveStream.id, state.nativeViewerSessionId).catch(() => {})
   }
+  state.hlsPlaybackRequested = false
+  releaseLiveListenerPresence().catch(() => {})
   cleanupHlsPlayback()
-  if (state.liveStream?.id && state.listenerPresenceId) {
-    leaveMusicLiveStream(state.liveStream.id, state.listenerPresenceId).catch(() => {})
-  }
 })
 
 loadMusicPage().catch((error) => {

@@ -1083,7 +1083,7 @@ const startMusicLiveStream = onCall(
       liveLog(stage, { uid, streamId, roomName })
 
       const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
-      const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
+      const hostPhotoURL = cleanString(profile.avatarURL || profile.photoURL || user.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
       const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
 
       let hostToken = ''
@@ -1263,7 +1263,7 @@ const prepareMusicLiveStreamDraft = onCall({ region: 'us-central1' }, async (req
   const programOutputState = cleanProgramOutputState(draftData, { existing: existingStream, selectedInputSource })
   const now = admin.firestore.FieldValue.serverTimestamp()
   const hostDisplayName = cleanString(profile.displayName || user.displayName || request.auth.token.name || 'Melogic Creator', 80)
-  const hostPhotoURL = cleanString(profile.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
+  const hostPhotoURL = cleanString(profile.avatarURL || profile.photoURL || user.avatarURL || user.photoURL || request.auth.token.picture || '', 1000)
   const hostUsername = cleanString(profile.username || profile.handle || user.username || user.handle || request.auth.token.username || '', 80)
   const title = cleanString(request.data?.title, 90) || 'Untitled live stream'
   const roomName = programOutputState.provider === 'nativeWeb' ? cleanRoomName(`music-live-${streamId}`) : ''
@@ -2015,13 +2015,14 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   const now = admin.firestore.FieldValue.serverTimestamp()
   const messageRef = db().collection('musicLiveStreams').doc(streamId).collection('chatMessages').doc()
   const displayName = cleanString(profile?.displayName || user?.displayName || request.auth.token.name || 'Melogic Listener', 80)
-  const photoURL = cleanString(profile?.avatarURL || user?.photoURL || request.auth.token.picture || '', 1000)
+  const photoURL = cleanString(profile?.avatarURL || profile?.photoURL || user?.avatarURL || user?.photoURL || request.auth.token.picture || '', 1000)
   const message = {
     messageId: messageRef.id,
     streamId,
     uid,
     displayName,
     photoURL,
+    isCreator: uid === stream.hostUid,
     text,
     createdAt: now,
     status: 'visible',

@@ -1133,6 +1133,8 @@
 .music-live-chat-messages {
   display: grid;
   gap: 0.55rem;
+  align-content: start;
+  grid-auto-rows: max-content;
   max-height: min(32rem, 48vh);
   overflow: auto;
   padding-right: 0.2rem;
@@ -1148,10 +1150,28 @@
   padding: 0.62rem 0.7rem;
 }
 
-.music-live-chat-message div div {
+.music-live-chat-message-meta {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.music-live-chat-creator-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 6px;
+  border: 1px solid rgba(99, 218, 255, 0.35);
+  border-radius: 3px;
+  background: rgba(61, 189, 233, 0.12);
+  color: #8be6ff;
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .music-chat-avatar {
@@ -2580,6 +2600,8 @@
 
 .music-live-watch-layout > .music-live-chat .music-live-chat-messages {
   max-height: none;
+  align-content: start;
+  grid-auto-rows: max-content;
   padding: 10px 12px;
   overscroll-behavior: contain;
 }

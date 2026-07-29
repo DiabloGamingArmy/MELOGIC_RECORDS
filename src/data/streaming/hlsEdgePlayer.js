@@ -152,6 +152,9 @@ export async function attachHlsStream({
   let hls = null
   let cleaned = false
   let usingNativeFallback = false
+  let networkRecoveryAttempts = 0
+  let mediaRecoveryAttempts = 0
+  let mediaElementRecoveryAttempts = 0
   const listen = (eventName, callback) => {
     mediaEl.addEventListener(eventName, callback)
     listeners.push([eventName, callback])
@@ -169,6 +172,25 @@ export async function attachHlsStream({
       details: error?.message || `HTML media error ${error?.code || ''}`.trim(),
       fatal: true,
       mediaErrorCode: error?.code ?? null
+    }
+    if (hls && mediaElementRecoveryAttempts < 2) {
+      mediaElementRecoveryAttempts += 1
+      console.warn('[hls-edge] recovering HTML media error', {
+        ...payload,
+        attempt: mediaElementRecoveryAttempts
+      })
+      onStatus({
+        ...payload,
+        status: 'recovering',
+        recovery: 'recoverMediaError',
+        attempt: mediaElementRecoveryAttempts,
+        mode,
+        src,
+        mediaEl,
+        hls
+      })
+      try { hls.recoverMediaError() } catch {}
+      return
     }
     console.error('[hls-edge] media error', payload)
     onStatus({ ...payload, mode, src, mediaEl, hls })
@@ -266,18 +288,23 @@ export async function attachHlsStream({
     lowLatencyMode: false,
     capLevelToPlayerSize: false,
     startLevel: -1,
-    maxBufferLength: 180,
-    maxMaxBufferLength: 192,
-    backBufferLength: 120,
+    maxBufferLength: 270,
+    maxMaxBufferLength: 300,
+    backBufferLength: 180,
     // Six-second origin segments place browser viewers about two minutes
     // behind live. That deliberate delay gives Chrome enough complete media
     // to play through brief encoder, network, or remux stalls without skipping
     // content. The "catch up" control can still seek directly to the live edge.
     liveSyncDurationCount: 20,
-    liveMaxLatencyDurationCount: 28,
+    liveMaxLatencyDurationCount: 45,
     abrEwmaDefaultEstimate: 12000000,
-    abrBandWidthFactor: 1,
-    abrBandWidthUpFactor: 0.9,
+    abrBandWidthFactor: 0.85,
+    abrBandWidthUpFactor: 0.72,
+    maxStarvationDelay: 8,
+    maxLoadingDelay: 8,
+    highBufferWatchdogPeriod: 2,
+    nudgeOffset: 0.1,
+    nudgeMaxRetry: 8,
     xhrSetup: (xhr) => {
       xhr.withCredentials = true
     },
@@ -287,6 +314,12 @@ export async function attachHlsStream({
     levelLoadingMaxRetry: 8,
     levelLoadingRetryDelay: 2000,
     levelLoadingMaxRetryTimeout: 6000,
+    fragLoadingMaxRetry: 10,
+    fragLoadingRetryDelay: 1000,
+    fragLoadingMaxRetryTimeout: 12000,
+    keyLoadingMaxRetry: 8,
+    keyLoadingRetryDelay: 1000,
+    keyLoadingMaxRetryTimeout: 10000,
     ...(stabilizeRtcBridge ? { pLoader: RtcBridgePlaylistLoader } : {})
   })
   hls.on(Hls.Events.MANIFEST_PARSED, (_event, data = {}) => {
@@ -311,6 +344,7 @@ export async function attachHlsStream({
     })
   })
   hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data = {}) => {
+    networkRecoveryAttempts = 0
     const level = Number(data.level)
     const details = hls.levels?.[level] || {}
     onStatus({
@@ -326,6 +360,11 @@ export async function attachHlsStream({
       currentLevelHeight: Number(details.height || 0) || null
     })
   })
+  hls.on(Hls.Events.FRAG_BUFFERED, () => {
+    networkRecoveryAttempts = 0
+    mediaRecoveryAttempts = 0
+    mediaElementRecoveryAttempts = 0
+  })
   hls.on(Hls.Events.ERROR, (_event, data = {}) => {
     const errorType = String(data.type || '')
     const errorDetails = String(data.details || '')
@@ -333,6 +372,7 @@ export async function attachHlsStream({
     const shouldUseNativeFallback = !usingNativeFallback
       && nativeHlsSupported
       && stabilizeRtcBridge
+      && networkRecoveryAttempts >= 2
       && (
         isManifestBootstrapFailure
         || (data.fatal === true && (errorType === 'networkError' || /levelLoad/i.test(errorDetails)))
@@ -365,6 +405,48 @@ export async function attachHlsStream({
       fatal: data.fatal === true,
       responseCode: Number(data.response?.code || data.networkDetails?.status || 0) || null,
       responseUrl: String(data.response?.url || data.networkDetails?.responseURL || '')
+    }
+    if (data.fatal === true && errorType === 'networkError' && networkRecoveryAttempts < 4) {
+      networkRecoveryAttempts += 1
+      console.warn('[hls-edge] recovering network error', { ...payload, attempt: networkRecoveryAttempts })
+      onStatus({
+        ...payload,
+        status: 'recovering',
+        recovery: 'startLoad',
+        attempt: networkRecoveryAttempts,
+        mode,
+        src,
+        mediaEl,
+        hls
+      })
+      window.setTimeout(() => {
+        if (!cleaned && hls) hls.startLoad()
+      }, Math.min(4000, networkRecoveryAttempts * 750))
+      return
+    }
+    if (data.fatal === true && errorType === 'mediaError' && mediaRecoveryAttempts < 3) {
+      mediaRecoveryAttempts += 1
+      console.warn('[hls-edge] recovering media error', { ...payload, attempt: mediaRecoveryAttempts })
+      onStatus({
+        ...payload,
+        status: 'recovering',
+        recovery: mediaRecoveryAttempts === 2 ? 'swapAudioCodecAndRecover' : 'recoverMediaError',
+        attempt: mediaRecoveryAttempts,
+        mode,
+        src,
+        mediaEl,
+        hls
+      })
+      try {
+        if (mediaRecoveryAttempts === 2) hls.swapAudioCodec()
+        hls.recoverMediaError()
+      } catch {}
+      return
+    }
+    if (data.fatal !== true) {
+      console.warn('[hls-edge] recoverable playback issue', payload)
+      onStatus({ ...payload, status: 'recovering', mode, src, mediaEl, hls })
+      return
     }
     console.error('[hls-edge] playback error', payload)
     onStatus({ ...payload, mode, src, mediaEl, hls })
