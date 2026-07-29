@@ -68,6 +68,36 @@ export function setHlsQualityLevel(mediaEl, requestedLevel = -1) {
   return true
 }
 
+export function getHlsLiveEdge(mediaEl) {
+  if (!mediaEl) return null
+  const active = activePlayers.get(mediaEl)
+  const hlsLiveSyncPosition = Number(active?.hls?.liveSyncPosition)
+  if (Number.isFinite(hlsLiveSyncPosition) && hlsLiveSyncPosition > 0) return hlsLiveSyncPosition
+  const ranges = mediaEl.seekable
+  if (!ranges?.length) return null
+  const edge = Number(ranges.end(ranges.length - 1))
+  return Number.isFinite(edge) ? edge : null
+}
+
+export function getHlsLiveLatency(mediaEl) {
+  const edge = getHlsLiveEdge(mediaEl)
+  const currentTime = Number(mediaEl?.currentTime)
+  if (!Number.isFinite(edge) || !Number.isFinite(currentTime)) return null
+  return Math.max(0, edge - currentTime)
+}
+
+export async function seekHlsToLiveEdge(mediaEl) {
+  const edge = getHlsLiveEdge(mediaEl)
+  if (!mediaEl || !Number.isFinite(edge)) return false
+  // Stay just inside the seekable range so native HLS players do not reject
+  // the seek while the newest segment is still being finalized.
+  mediaEl.currentTime = Math.max(0, edge - 0.35)
+  try {
+    await mediaEl.play()
+  } catch {}
+  return true
+}
+
 export async function attachHlsStream({
   mediaEl,
   src,
@@ -142,11 +172,14 @@ export async function attachHlsStream({
     lowLatencyMode: false,
     capLevelToPlayerSize: false,
     startLevel: -1,
-    maxBufferLength: 60,
-    maxMaxBufferLength: 180,
-    backBufferLength: 90,
-    liveSyncDurationCount: 6,
-    liveMaxLatencyDurationCount: 14,
+    maxBufferLength: 180,
+    maxMaxBufferLength: 300,
+    backBufferLength: 180,
+    // Four-second origin segments put a normal browser viewer roughly one
+    // minute behind live. The deeper window absorbs long encode/network
+    // stalls without sacrificing the selected rendition.
+    liveSyncDurationCount: 15,
+    liveMaxLatencyDurationCount: 60,
     abrEwmaDefaultEstimate: 8000000,
     abrBandWidthFactor: 0.95,
     abrBandWidthUpFactor: 0.8,

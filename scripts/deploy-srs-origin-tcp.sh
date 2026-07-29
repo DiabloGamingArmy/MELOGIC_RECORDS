@@ -73,7 +73,7 @@ docker run -d \
   -e SRS_VHOST_RTC_INIT_RATE_FROM_SDP=on \
   -e SRS_VHOST_HLS_ENABLED=on \
   -e SRS_VHOST_HLS_HLS_FRAGMENT=4 \
-  -e SRS_VHOST_HLS_HLS_WINDOW=30 \
+  -e SRS_VHOST_HLS_HLS_WINDOW=300 \
   "$image_name" >/dev/null
 
 healthy="false"

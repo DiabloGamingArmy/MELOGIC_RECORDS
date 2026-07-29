@@ -1346,6 +1346,8 @@ function renderDetailedStreamOutputStatus() {
   try { whipStreamParam = new URL(whipUrl).searchParams.get('stream') || '' } catch {}
   const encoderState = diagnostics.connectionState || diagnostics.ingestConnectionState || 'new'
   const hlsHealth = diagnostics.hlsHealth || live.stream?.hlsHealth || 'not checked'
+  const browserBufferedMode = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
+    && String(live.streamingProtocol || 'hls') === 'hls'
   const statusMessage = live.streamId
     ? hlsHealth === 'warming'
       ? 'Waiting for HLS segments...'
@@ -1362,6 +1364,12 @@ function renderDetailedStreamOutputStatus() {
         <span>HLS: ${esc(hlsHealth)}</span>
       </div>
       <small>${esc(statusMessage)}</small>
+      ${browserBufferedMode ? `
+        <div class="studio-live-latency-alert" role="status">
+          <i aria-hidden="true"></i>
+          <div><strong>High-latency browser mode</strong><span>Melogic may buffer the live program for up to five minutes to keep 1080p playback smooth. Use OBS or another external encoder when lower latency matters.</span></div>
+        </div>
+      ` : ''}
       ${diagnostics.outboundQualityWarning ? `<p class="studio-live-status-warning">${esc(diagnostics.outboundQualityWarning)}</p>` : ''}
       ${hlsUrl ? `<div class="studio-program-output-debug"><a class="studio-live-button" href="${esc(hlsUrl)}" target="_blank" rel="noreferrer">Open HLS URL</a><code title="${esc(hlsUrl)}">${esc(hlsUrl)}</code></div>` : ''}
       <dl class="studio-live-external-diagnostics">
@@ -3946,12 +3954,34 @@ async function nativeProgramMediaStream({ ensureCompatibilityVideo = false } = {
   // video-only programs, so a hidden compatibility canvas would waste encoder
   // bandwidth and advertise video that the host never selected.
   if (live.videoEnabled || ensureCompatibilityVideo) {
-    const mixer = ensureStudioProgramMixer()
-    mixer.enableVideo()
-    const videoTrack = mixer.getVideoTrack()
+    const selectedTrack = live.localVideoTrack?.mediaStreamTrack || live.localVideoTrack || null
+    const canPublishSourceDirectly = Boolean(
+      live.videoEnabled
+      && ['browser', 'screen'].includes(live.videoSource)
+      && selectedTrack?.kind === 'video'
+      && selectedTrack.readyState === 'live'
+    )
+    // Camera and screen-share sources already have a browser-managed cadence.
+    // Sending that track directly avoids redrawing 1080p frames through a
+    // requestAnimationFrame canvas, which browsers may heavily throttle and
+    // which manifested as sharp video followed by multi-second frozen frames.
+    // Sequence/program scenes still use the mixer because they genuinely need
+    // compositing.
+    const videoTrack = canPublishSourceDirectly
+      ? selectedTrack
+      : (() => {
+          const mixer = ensureStudioProgramMixer()
+          mixer.enableVideo()
+          return mixer.getVideoTrack()
+        })()
     if (videoTrack) {
+      if ('contentHint' in videoTrack) videoTrack.contentHint = live.videoSource === 'screen' ? 'detail' : 'motion'
       live.programVideoTrack = videoTrack
       stream.addTrack(videoTrack)
+      live.providerDiagnostics = {
+        ...(live.providerDiagnostics || {}),
+        browserVideoPipeline: canPublishSourceDirectly ? 'direct-source-track' : 'program-mixer-canvas'
+      }
     }
   }
   const tracks = stream.getTracks()

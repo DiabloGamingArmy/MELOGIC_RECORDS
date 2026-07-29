@@ -57,8 +57,10 @@ import { getPublicPlaybackInfo, isExplicitFirebaseSegmentsPlayback, isPublicStre
 import {
   attachHlsStream,
   canPlayNativeHls,
+  getHlsLiveLatency,
   isAllowedHlsPlaybackUrl,
   sanitizeHlsStreamKey,
+  seekHlsToLiveEdge,
   setHlsQualityLevel
 } from './data/streaming/hlsEdgePlayer'
 import { checkHlsManifest, HLS_WARMUP_WINDOW_MS } from './data/streaming/hlsHealth'
@@ -99,6 +101,7 @@ import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfi
 const app = document.querySelector('#app')
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
+let musicLiveControlsCleanup = null
 const SILENT_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA=='
 const HLS_PLAYBACK_MODE_STORAGE_KEY = 'melogic_live_playback_mode'
 const HLS_PLAYBACK_MODES = new Set(['videoAudio', 'videoOnly', 'audioOnly'])
@@ -2096,8 +2099,7 @@ function updateHlsDiagnosticsDom() {
     const value = diagnostics[key]
     element.textContent = value === true ? 'yes' : value === false ? 'no' : value == null || value === '' ? 'none' : String(value)
   })
-  const qualitySelect = app.querySelector('[data-hls-quality]')
-  if (qualitySelect) {
+  app.querySelectorAll('[data-hls-quality]').forEach((qualitySelect) => {
     const levels = Array.isArray(diagnostics.hlsLevels) ? diagnostics.hlsLevels : []
     const options = [
       '<option value="-1">Auto</option>',
@@ -2115,10 +2117,15 @@ function updateHlsDiagnosticsDom() {
           return `<option value="${level.index}">${resolution}${bitrate}</option>`
         })
     ]
+    if (!levels.length) {
+      const sourceHeight = Number(state.hlsMediaElement?.videoHeight || 0)
+      options.push(`<option value="-2">${sourceHeight ? `${sourceHeight}p · ` : ''}Source</option>`)
+    }
     const nextMarkup = options.join('')
     if (qualitySelect.innerHTML !== nextMarkup) qualitySelect.innerHTML = nextMarkup
-    qualitySelect.value = String(state.hlsQualityLevel)
-  }
+    const selectedValue = String(state.hlsQualityLevel)
+    qualitySelect.value = Array.from(qualitySelect.options).some((option) => option.value === selectedValue) ? selectedValue : '-1'
+  })
 }
 
 function ensureHlsMediaMounted() {
@@ -2145,7 +2152,7 @@ function cleanupHlsPlayback({ removeElement = true } = {}) {
 
 function createHlsMediaElement(mode = currentHlsPlaybackMode()) {
   const media = document.createElement(mode === 'audioOnly' ? 'audio' : 'video')
-  media.controls = true
+  media.controls = mode === 'audioOnly'
   media.autoplay = false
   media.playsInline = true
   media.preload = 'auto'
@@ -2169,13 +2176,18 @@ function createHlsMediaElement(mode = currentHlsPlaybackMode()) {
 
 function handleHlsStatus(payload = {}) {
   const status = String(payload.status || '')
-  const levels = Array.isArray(payload.hls?.levels)
+  let levels = Array.isArray(payload.hls?.levels)
     ? payload.hls.levels.map((level) => ({
         bitrate: Number(level?.bitrate || 0),
         width: Number(level?.width || 0),
         height: Number(level?.height || 0)
       }))
     : state.hlsDiagnostics?.hlsLevels || []
+  if (status === 'manifestParsed' && !levels.length && payload.mediaEl?.tagName === 'VIDEO') {
+    const width = Number(payload.mediaEl.videoWidth || 0)
+    const height = Number(payload.mediaEl.videoHeight || 0)
+    if (width || height) levels = [{ bitrate: 0, width, height, source: true }]
+  }
   state.hlsDiagnostics = {
     ...(state.hlsDiagnostics || {}),
     hlsManifestLoaded: status === 'manifestParsed' ? true : state.hlsDiagnostics?.hlsManifestLoaded === true,
@@ -3574,6 +3586,239 @@ function startMusicLiveMonitorVisualizer() {
   }
 }
 
+function livePlayerIcon(name = '') {
+  const icons = {
+    play: '<path d="M8 5v14l11-7z"/>',
+    pause: '<path d="M7 5h4v14H7zM14 5h4v14h-4z"/>',
+    live: '<circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4m8.4 0a6 6 0 0 0 0-8.4"/>',
+    volume: '<path d="M4 10v4h4l5 4V6l-5 4H4z" fill="currentColor" stroke="none"/><path d="M16 9a4 4 0 0 1 0 6m2-9a8 8 0 0 1 0 12"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>',
+    airplay: '<path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1M7 21l5-6 5 6z"/>',
+    captions: '<path d="M3 6h18v12H3zM10 10H7a2 2 0 0 0 0 4h3m7-4h-3a2 2 0 0 0 0 4h3"/>',
+    fullscreen: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'
+  }
+  const filled = name === 'play' || name === 'pause'
+  return `<svg viewBox="0 0 24 24" aria-hidden="true" ${filled ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'}>${icons[name] || ''}</svg>`
+}
+
+function hlsQualityOptionsMarkup() {
+  const levels = Array.isArray(state.hlsDiagnostics?.hlsLevels) ? state.hlsDiagnostics.hlsLevels : []
+  const options = levels
+    .map((level, index) => ({
+      index,
+      width: Number(level.width || 0),
+      height: Number(level.height || 0),
+      bitrate: Number(level.bitrate || 0)
+    }))
+    .sort((a, b) => b.height - a.height || b.bitrate - a.bitrate)
+    .map((level) => {
+      const resolution = level.height ? `${level.height}p` : 'Source'
+      const bitrate = level.bitrate > 1 ? ` · ${(level.bitrate / 1000000).toFixed(1)} Mbps` : ''
+      return `<option value="${level.index}">${resolution}${bitrate}</option>`
+    })
+  if (!options.length) {
+    const sourceHeight = Number(state.hlsMediaElement?.videoHeight || 0)
+    options.push(`<option value="-2">${sourceHeight ? `${sourceHeight}p · ` : ''}Source</option>`)
+  }
+  return `<option value="-1">Auto</option>${options.join('')}`
+}
+
+function renderHlsVideoOverlay(stream = state.liveStream, liveBadge = 'LIVE') {
+  const mode = currentHlsPlaybackMode(stream)
+  const availableModes = availableHlsPlaybackModes(stream)
+  const labels = { videoAudio: 'Video & Audio', videoOnly: 'Video Only', audioOnly: 'Audio Only' }
+  const hasAudio = mode !== 'videoOnly'
+  return `
+    <div class="music-live-player-chrome" data-live-player-chrome>
+      <div class="music-live-player-status">
+        <span class="music-live-badge">${escapeHtml(liveBadge)}</span>
+        <span>${escapeHtml(listenerCountLabel(stream.listenerCount))}</span>
+      </div>
+      <div class="music-live-player-gradient" aria-hidden="true"></div>
+      <div class="music-live-player-controls" aria-label="Live video controls">
+        <div class="music-live-player-controls-left">
+          <button type="button" class="music-live-player-icon" data-live-player-play aria-label="Play live stream">
+            <span class="is-play-icon">${livePlayerIcon('play')}</span><span class="is-pause-icon">${livePlayerIcon('pause')}</span>
+          </button>
+          ${hasAudio ? `
+            <button type="button" class="music-live-player-icon" data-live-player-mute aria-label="Mute">${livePlayerIcon('volume')}</button>
+            <input class="music-live-player-volume" type="range" min="0" max="1" step="0.01" value="${state.player.volume}" data-live-player-volume aria-label="Volume" />
+          ` : ''}
+          <button type="button" class="music-live-catch-up" data-live-player-catch-up aria-label="Catch up to the most recent live video">${livePlayerIcon('live')}<span>Go Live</span></button>
+          <span class="music-live-edge-state" data-live-edge-state>LIVE</span>
+        </div>
+        <div class="music-live-player-controls-right">
+          <button type="button" class="music-live-player-icon" data-live-player-captions aria-label="Closed captions" title="Closed captions">${livePlayerIcon('captions')}</button>
+          <button type="button" class="music-live-player-icon" data-live-player-airplay aria-label="AirPlay" title="AirPlay">${livePlayerIcon('airplay')}</button>
+          <button type="button" class="music-live-player-icon" data-live-player-settings aria-label="Playback settings" aria-expanded="false">${livePlayerIcon('settings')}</button>
+          <button type="button" class="music-live-player-icon" data-live-player-fullscreen aria-label="Enter fullscreen">${livePlayerIcon('fullscreen')}</button>
+        </div>
+      </div>
+      <section class="music-live-player-settings" data-live-player-settings-panel aria-label="Playback settings" hidden>
+        <label><span>Quality</span><select data-hls-quality>${hlsQualityOptionsMarkup()}</select></label>
+        <div>
+          <span>Playback</span>
+          <div class="music-live-player-mode" role="radiogroup" aria-label="Playback mode">
+            ${availableModes.map((value) => `<button type="button" role="radio" aria-checked="${mode === value}" class="${mode === value ? 'is-active' : ''}" data-hls-playback-mode="${value}">${labels[value]}</button>`).join('')}
+          </div>
+        </div>
+        <small>Quality choices reflect renditions supplied by the live origin.</small>
+      </section>
+    </div>
+  `
+}
+
+function setupLiveVideoControls() {
+  musicLiveControlsCleanup?.()
+  musicLiveControlsCleanup = null
+  const shell = app.querySelector('[data-live-video-player]')
+  const media = state.hlsMediaElement
+  if (!shell) return
+  if (!media || media.tagName !== 'VIDEO') {
+    const playButton = shell.querySelector('[data-live-player-play]')
+    const settingsButton = shell.querySelector('[data-live-player-settings]')
+    const settingsPanel = shell.querySelector('[data-live-player-settings-panel]')
+    const startPlayback = async () => {
+      await joinLiveListener()
+      setupLiveVideoControls()
+    }
+    const toggleSettings = () => {
+      const next = settingsPanel?.hidden !== false
+      if (settingsPanel) settingsPanel.hidden = !next
+      settingsButton?.setAttribute('aria-expanded', String(next))
+    }
+    playButton?.addEventListener('click', startPlayback)
+    settingsButton?.addEventListener('click', toggleSettings)
+    shell.classList.add('are-controls-visible')
+    musicLiveControlsCleanup = () => {
+      playButton?.removeEventListener('click', startPlayback)
+      settingsButton?.removeEventListener('click', toggleSettings)
+      musicLiveControlsCleanup = null
+    }
+    return
+  }
+
+  const listeners = []
+  let hideTimer = 0
+  let settingsOpen = false
+  const listen = (target, event, callback, options) => {
+    target?.addEventListener?.(event, callback, options)
+    if (target) listeners.push([target, event, callback, options])
+  }
+  const updatePlaybackState = () => {
+    const isPlaying = !media.paused && !media.ended
+    shell.classList.toggle('is-playing', isPlaying)
+    shell.querySelector('[data-live-player-play]')?.setAttribute('aria-label', isPlaying ? 'Pause live stream' : 'Play live stream')
+    const latency = getHlsLiveLatency(media)
+    const atLiveEdge = latency == null || latency < 8
+    shell.classList.toggle('is-behind-live', !atLiveEdge)
+    const edgeState = shell.querySelector('[data-live-edge-state]')
+    if (edgeState) edgeState.textContent = atLiveEdge ? 'LIVE' : `${Math.max(1, Math.round(latency))}s behind`
+  }
+  const showControls = () => {
+    shell.classList.add('are-controls-visible')
+    shell.classList.remove('are-controls-idle')
+    if (hideTimer) window.clearTimeout(hideTimer)
+    hideTimer = window.setTimeout(() => {
+      if (settingsOpen) return
+      shell.classList.remove('are-controls-visible')
+      shell.classList.add('are-controls-idle')
+    }, 5000)
+  }
+  const hideControls = () => {
+    if (settingsOpen) return
+    if (hideTimer) window.clearTimeout(hideTimer)
+    shell.classList.remove('are-controls-visible')
+    shell.classList.add('are-controls-idle')
+  }
+  const settingsButton = shell.querySelector('[data-live-player-settings]')
+  const settingsPanel = shell.querySelector('[data-live-player-settings-panel]')
+  const setSettingsOpen = (next) => {
+    settingsOpen = Boolean(next)
+    settingsButton?.setAttribute('aria-expanded', String(settingsOpen))
+    if (settingsPanel) settingsPanel.hidden = !settingsOpen
+    if (settingsOpen) showControls()
+  }
+
+  listen(shell, 'pointerenter', showControls)
+  listen(shell, 'pointermove', showControls)
+  listen(shell, 'pointerleave', hideControls)
+  listen(shell, 'touchstart', showControls, { passive: true })
+  listen(shell, 'focusin', showControls)
+  listen(shell, 'focusout', () => window.setTimeout(hideControls, 0))
+  listen(media, 'play', updatePlaybackState)
+  listen(media, 'pause', updatePlaybackState)
+  listen(media, 'timeupdate', updatePlaybackState)
+  listen(media, 'progress', updatePlaybackState)
+  listen(media, 'volumechange', () => {
+    shell.classList.toggle('is-muted', media.muted || media.volume === 0)
+    const input = shell.querySelector('[data-live-player-volume]')
+    if (input && Number(input.value) !== media.volume) input.value = String(media.volume)
+  })
+  listen(shell.querySelector('[data-live-player-play]'), 'click', async () => {
+    if (media.paused) await playHlsMediaFromGesture()
+    else media.pause()
+    updatePlaybackState()
+    showControls()
+  })
+  listen(shell.querySelector('[data-live-player-catch-up]'), 'click', async () => {
+    await seekHlsToLiveEdge(media)
+    updatePlaybackState()
+    showControls()
+  })
+  listen(shell.querySelector('[data-live-player-mute]'), 'click', () => {
+    media.muted = !media.muted
+    if (!media.muted && media.volume === 0) media.volume = Math.max(0.25, Number(state.player.volume || 0.75))
+    showControls()
+  })
+  listen(shell.querySelector('[data-live-player-volume]'), 'input', (event) => {
+    const volume = Math.max(0, Math.min(1, Number(event.currentTarget.value || 0)))
+    state.player.volume = volume
+    media.volume = volume
+    media.muted = volume === 0
+    showControls()
+  })
+  listen(settingsButton, 'click', () => setSettingsOpen(!settingsOpen))
+  listen(shell.querySelector('[data-live-player-fullscreen]'), 'click', async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen()
+      else if (shell.requestFullscreen) await shell.requestFullscreen()
+      else if (media.webkitEnterFullscreen) media.webkitEnterFullscreen()
+    } catch {}
+  })
+  const airplayButton = shell.querySelector('[data-live-player-airplay]')
+  if (typeof media.webkitShowPlaybackTargetPicker === 'function') {
+    listen(airplayButton, 'click', () => media.webkitShowPlaybackTargetPicker())
+  } else {
+    airplayButton?.setAttribute('disabled', '')
+    airplayButton?.setAttribute('title', 'AirPlay is not available in this browser')
+  }
+  const captionsButton = shell.querySelector('[data-live-player-captions]')
+  const captionTracks = Array.from(media.textTracks || [])
+  if (!captionTracks.length) {
+    captionsButton?.setAttribute('disabled', '')
+    captionsButton?.setAttribute('title', 'No captions are available for this live stream')
+  } else {
+    listen(captionsButton, 'click', () => {
+      const showing = captionTracks.some((track) => track.mode === 'showing')
+      captionTracks.forEach((track, index) => { track.mode = !showing && index === 0 ? 'showing' : 'disabled' })
+      captionsButton.classList.toggle('is-active', !showing)
+    })
+  }
+  listen(document, 'keydown', (event) => {
+    if (event.key === 'Escape' && settingsOpen) setSettingsOpen(false)
+  })
+  media.setAttribute('x-webkit-airplay', 'allow')
+  updatePlaybackState()
+  showControls()
+
+  musicLiveControlsCleanup = () => {
+    if (hideTimer) window.clearTimeout(hideTimer)
+    listeners.forEach(([target, event, callback, options]) => target.removeEventListener(event, callback, options))
+    musicLiveControlsCleanup = null
+  }
+}
+
 function renderLiveDetailPage() {
   const stream = state.liveStream
   if (state.loading) {
@@ -3603,6 +3848,13 @@ function renderLiveDetailPage() {
   const hasVideo = isBufferedStream ? capabilities.hasVideo : streamHasVideoFoundation(stream)
   const showingVideo = hasVideo && playbackMode !== 'audioOnly'
   const listenerActive = isCurrentLiveListenerActive(stream)
+  const liveBadge = canListen
+    ? nativeLiveStatusLabel(stream)
+    : isExplicitlyEndedLiveStream(stream)
+      ? 'ENDED'
+      : stream.status === 'live'
+        ? 'WAITING'
+        : 'UNAVAILABLE'
   const visual = isBufferedStream && showingVideo
     ? '<div class="music-live-visual music-live-hls-video"><div data-hls-player-mount></div></div>'
     : isBufferedStream
@@ -3617,26 +3869,20 @@ function renderLiveDetailPage() {
     : hasVideo
     ? `<button type="button" class="music-live-visual ${state.liveVideoExpanded ? 'is-expanded' : ''}" data-live-video-hero aria-label="${isLiveListeningStatus() ? 'Show video stream' : 'Click to watch stream'}"><span>Click to Watch Stream</span><div data-live-video-mount></div></button>`
     : renderLiveArtwork(stream, 'music-live-detail-art')
-  const liveBadge = canListen
-    ? nativeLiveStatusLabel(stream)
-    : isExplicitlyEndedLiveStream(stream)
-      ? 'ENDED'
-      : stream.status === 'live'
-        ? 'WAITING'
-        : 'UNAVAILABLE'
   renderAppShell(`
     <section class="music-live-watch-layout ${showingVideo ? 'is-video-mode' : 'is-audio-mode'}">
       <main class="music-live-watch-main">
         <section class="music-live-detail ${hasVideo ? 'has-video-foundation' : ''} ${state.liveVideoExpanded ? 'is-video-expanded' : ''}">
-          <div class="music-live-visual-shell">
-            <div class="music-live-player-status">
+          <div class="music-live-visual-shell ${isBufferedStream && showingVideo ? 'has-custom-controls are-controls-visible' : ''}" ${isBufferedStream && showingVideo ? 'data-live-video-player' : ''}>
+            ${isBufferedStream && showingVideo ? '' : `<div class="music-live-player-status">
               <span class="music-live-badge ${isNativeStream ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>
               <span>${escapeHtml(listenerCountLabel(stream.listenerCount))}</span>
-            </div>
+            </div>`}
             ${visual}
+            ${isBufferedStream && showingVideo ? renderHlsVideoOverlay(stream, liveBadge) : ''}
             ${!isBufferedStream && hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
           </div>
-          <div class="music-live-watch-toolbar">
+          <div class="music-live-watch-toolbar ${isBufferedStream && showingVideo ? 'is-video-toolbar' : ''}">
             ${isBufferedStream ? renderHlsPlaybackModeControl(stream) : ''}
             <div class="music-live-listener">
               <button type="button" class="button button-accent" data-live-listen ${canListen ? '' : 'disabled'}>${listenerActive ? 'Pause / Leave' : showingVideo ? 'Watch Live' : 'Listen Live'}</button>
@@ -3673,6 +3919,7 @@ function renderLiveDetailPage() {
     ${renderLiveGuestInvitePrompt(stream)}
   `)
   if (isBufferedStream && state.hlsMediaElement) ensureHlsMediaMounted()
+  if (isBufferedStream && showingVideo) setupLiveVideoControls()
   if (!isBufferedStream && isNativeStream && state.listenerAudioElement) ensureNativeListenerAudioElement()
   if (!isBufferedStream && !isNativeStream && state.listenerAudioElement) ensureLiveKitListenerAudioMounted()
 }
@@ -3694,7 +3941,7 @@ function renderHlsPlaybackModeControl(stream = state.liveStream) {
       <div class="music-live-hls-mode" role="radiogroup" aria-label="Playback mode">
         ${availableModes.map((value) => `<button type="button" role="radio" aria-checked="${mode === value}" class="${mode === value ? 'is-active' : ''}" data-hls-playback-mode="${value}">${labels[value]}</button>`).join('')}
       </div>
-      <label class="music-live-quality"><span>Quality</span><select data-hls-quality><option value="-1">Auto</option></select></label>
+      <label class="music-live-quality"><span>Quality</span><select data-hls-quality>${hlsQualityOptionsMarkup()}</select></label>
     </section>
   `
 }
@@ -3942,6 +4189,7 @@ function renderPlayer() {
 
 function rerender() {
   if (state.route.mode !== 'liveMonitor' && musicMonitorVisualizerCleanup) musicMonitorVisualizerCleanup()
+  if (state.route.mode !== 'liveDetail' && musicLiveControlsCleanup) musicLiveControlsCleanup()
   if (state.route.mode === 'release') renderReleaseDetailPage()
   else if (state.route.mode === 'liveMonitor') {
     renderPublicLiveMonitorPage()
