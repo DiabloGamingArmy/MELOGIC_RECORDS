@@ -1,8 +1,7 @@
 import './styles/base.css'
 import './styles/community.css'
-import { navShell } from './components/navShell'
-import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
+import brandLogoUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { createReport } from './data/productService'
 import {
@@ -663,7 +662,7 @@ function activeFeedTitle() {
   if (state.activeTab === 'my-account') return 'My Account'
   if (state.activeTab === 'feedback') return 'Feedback'
   if (state.activeTab === 'collaboration') return 'Collaboration'
-  if (state.activeTab === 'following') return 'Focused'
+  if (state.activeTab === 'following') return 'Following'
   if (state.activeTab === 'community') return state.activeTopicLabel || 'Community'
   if (state.activeTab === 'official') return 'Official'
   if (state.activeTab === 'new') return 'New'
@@ -731,15 +730,25 @@ function renderTopicBar() {
     `).join('')
 
   return `
-    <section class="community-topic-bar" aria-label="Community topics">
-      <button type="button" class="community-topic-arrow is-left" data-topic-scroll="-1" aria-label="Scroll topics left">${iconSvg('arrowLeft')}</button>
-      <div class="community-topic-scroll" data-community-topic-scroll>
-        <button type="button" class="community-topic-pill ${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
-        <button type="button" class="community-topic-pill ${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Focused</button>
-        <span class="community-topic-divider" aria-hidden="true"></span>
+    <section class="community-feed-header" aria-label="Feed navigation and filters">
+      <div class="community-master-tabs" role="tablist" aria-label="Feed">
+        <button type="button" role="tab" aria-selected="${state.activeTab === 'for-you' ? 'true' : 'false'}" class="${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
+        <button type="button" role="tab" aria-selected="${state.activeTab === 'following' ? 'true' : 'false'}" class="${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Following</button>
+        <label class="community-sort-control" title="Sort feed">
+          <span class="sr-only">Sort feed</span>
+          ${iconSvg('barChart')}
+          <select data-community-feed-sort aria-label="Sort feed">
+            <option value="new" ${state.feedSort === 'new' ? 'selected' : ''}>New</option>
+            <option value="top-today" ${state.feedSort === 'top-today' ? 'selected' : ''}>Top Today</option>
+            <option value="top-week" ${state.feedSort === 'top-week' ? 'selected' : ''}>Top Week</option>
+            <option value="most-discussed" ${state.feedSort === 'most-discussed' ? 'selected' : ''}>Most Discussed</option>
+          </select>
+        </label>
+      </div>
+      <div class="community-filter-strip" data-community-topic-scroll aria-label="Filter by community">
+        <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.length ? '' : 'is-active'}" data-clear-community-filters aria-pressed="${state.selectedCommunityFilters.length ? 'false' : 'true'}">All</button>
         ${communityPills}
       </div>
-      <button type="button" class="community-topic-arrow is-right" data-topic-scroll="1" aria-label="Scroll topics right">${iconSvg('chevronRight')}</button>
     </section>
   `
 }
@@ -775,15 +784,6 @@ function renderStoriesRow() {
       ${state.storiesLoading ? '<span class="community-story-empty">Loading stories...</span>' : ''}
       ${state.storiesError ? `<span class="community-story-empty">${escapeHtml(state.storiesError)}</span>` : ''}
     </section>
-  `
-}
-
-function renderCommunityScrollChrome() {
-  return `
-    <div class="community-scroll-chrome" data-community-scroll-chrome>
-      ${renderStoriesRow()}
-      <div class="community-shell-divider" aria-hidden="true"></div>
-    </div>
   `
 }
 
@@ -2287,7 +2287,7 @@ function renderActiveCommunityTabContent() {
       description: 'Community account preferences and identity controls will be collected here.'
     })
   }
-  return `${renderFeedToolbar()}<div data-community-feed-region>${renderFeed()}</div>`
+  return `<div data-community-feed-region>${renderFeed()}</div>`
 }
 
 function renderCommunityCard(community) {
@@ -2319,18 +2319,16 @@ function renderCommunityCard(community) {
 function renderCommunitiesView() {
   const categories = directoryCategoryOptions()
   return `
-    <section class="community-hero compact">
-      <div>
-        <p class="eyebrow">Focused Communities</p>
-        <h1>Communities</h1>
-        <p>Find official Melogic spaces created and moderated by the admin team.</p>
-      </div>
-      <div class="community-hero-actions">
-        <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back</span></a>
-      </div>
-    </section>
-    <div class="community-layout">
-      <div class="community-main">
+    <div class="community-layout is-home is-directory">
+      ${renderLeftNav()}
+      <div class="community-main community-route-main">
+        <section class="community-hero compact">
+          <div>
+            <p class="eyebrow">Explore</p>
+            <h1>Communities</h1>
+            <p>Find official Melogic spaces created and moderated by the admin team.</p>
+          </div>
+        </section>
         <section class="community-panel community-community-tools">
           <label>
             <span>Search</span>
@@ -2447,61 +2445,31 @@ function renderCommunityImageViewer() {
 }
 
 function renderLeftNav() {
-  const topicCommunities = visibleTopicCommunities()
-  const navGroups = [
-    {
-      label: 'Public',
-      items: [
-        { label: 'Home', icon: 'home', href: ROUTES.community, active: state.activeTab === 'for-you' && state.view.type === 'feed' },
-        { label: 'Forms', icon: 'fileText', tab: 'forms', active: state.activeTab === 'forms' },
-        { label: 'Communities', icon: 'folder', href: ROUTES.communityCommunities, active: state.view.type === 'communities' },
-        { label: 'DAW Projects', icon: 'music', tab: 'studio-projects', active: state.activeTab === 'studio-projects' },
-        { label: 'Stagemaker Projects', icon: 'cube', tab: 'stage-plans', active: state.activeTab === 'stage-plans' },
-        { label: 'Music', icon: 'music', tab: 'music', active: state.activeTab === 'music' },
-        { label: 'Live', icon: 'play', tab: 'live', active: state.activeTab === 'live' },
-        { label: 'Collaboration', icon: 'user', tab: 'collaboration', active: state.activeTab === 'collaboration' }
-      ]
-    },
-    {
-      label: 'Private',
-      items: [
-        { label: 'Focused', icon: 'eye', tab: 'following', active: state.activeTab === 'following' },
-        { label: 'Saved', icon: 'bookmark', tab: 'saved', active: state.activeTab === 'saved' },
-        { label: 'Feedback', icon: 'messageCircle', tab: 'feedback', active: state.activeTab === 'feedback' },
-        { label: 'My Content', icon: 'fileText', tab: 'my-content', active: state.activeTab === 'my-content' },
-        { label: 'My Account', icon: 'user', tab: 'my-account', active: state.activeTab === 'my-account' }
-      ]
-    }
+  const navItems = [
+    { label: 'Home', icon: 'home', href: ROUTES.community, active: state.view.type === 'feed' },
+    { label: 'Explore', icon: 'search', href: ROUTES.communityCommunities, active: state.view.type === 'communities' },
+    { label: 'Streaming', icon: 'play', href: ROUTES.music },
+    { label: 'Products', icon: 'package', href: ROUTES.products },
+    { label: 'Studio', icon: 'cube', href: ROUTES.studio },
+    { label: 'DAW Projects', icon: 'music', href: ROUTES.studioDaw },
+    { label: 'Stagemaker Projects', icon: 'cube', href: ROUTES.studioStagemaker },
+    { label: 'Distribution', icon: 'upload', href: ROUTES.distribution },
+    { label: 'Inbox', icon: 'mailSend', href: ROUTES.inbox },
+    { label: 'Profile', icon: 'user', href: state.currentUser ? ROUTES.profile : authRoute({ redirect: ROUTES.profile }) }
   ]
-  const renderItem = (item) => item.href ? `
+  const renderItem = (item) => `
     <a class="${item.active ? 'is-active' : ''}" href="${item.href}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></a>
-  ` : `
-    <button type="button" class="${item.active ? 'is-active' : ''}" data-community-tab="${escapeHtml(item.tab)}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></button>
   `
   return `
     <aside class="community-left-nav" aria-label="Community navigation">
+      <a class="community-side-brand" href="${ROUTES.home}" aria-label="Melogic Records home">
+        <img src="${brandLogoUrl}" alt="" width="38" height="38" />
+        <span>MELOGIC RECORDS</span>
+      </a>
       <nav>
-        ${navGroups.map((group) => `
-          <div class="community-left-nav-group">
-            <span class="community-left-nav-heading">${escapeHtml(group.label)}</span>
-            ${group.items.map(renderItem).join('')}
-          </div>
-        `).join('')}
-        <details class="community-left-topic-filter" ${state.selectedCommunityFilters.length ? 'open' : ''}>
-          <summary>
-            <span>${iconSvg('tag')} Topics</span>
-            <em>${state.selectedCommunityFilters.length ? formatCount(state.selectedCommunityFilters.length) : 'Browse'}</em>
-          </summary>
-          <div>
-            ${topicCommunities.map((community) => `
-              <button type="button" class="${state.selectedCommunityFilters.includes(community.communityId) ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(community.communityId)}" aria-pressed="${state.selectedCommunityFilters.includes(community.communityId) ? 'true' : 'false'}">
-                <span>${escapeHtml(community.name)}</span>
-              </button>
-            `).join('')}
-            <a href="${ROUTES.communityCommunities}">${iconSvg('folder')} <span>Browse all communities</span></a>
-          </div>
-        </details>
+        ${navItems.map(renderItem).join('')}
       </nav>
+      <button type="button" class="community-side-post-button" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>
     </aside>
   `
 }
@@ -2655,6 +2623,11 @@ function renderCommunityDiscoveryBody() {
 function renderSidebar() {
   return `
     <aside class="community-right-rail community-sidebar">
+      <form class="community-rail-search" data-community-feed-search>
+        ${iconSvg('search')}
+        <input type="search" name="communityFeedSearch" value="${escapeHtml(state.feedSearch)}" placeholder="Search posts, tags, creators" aria-label="Search posts, tags, creators" />
+        <button type="submit" aria-label="Search">Search</button>
+      </form>
       <section class="community-rail-card community-discovery-card" data-community-discovery-widget>
         ${renderCommunityDiscoveryBody()}
       </section>
@@ -2693,15 +2666,16 @@ function renderDetail() {
   const post = state.posts[0]
   const postLoading = state.detailPostLoading && !post
   return `
-    <section class="community-detail-topbar">
-      <div>
-        <p class="eyebrow">Community</p>
-        <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
-      </div>
-      <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
-    </section>
-    <div class="community-layout is-detail">
-      <div class="community-detail-main">
+    <div class="community-layout is-home is-post-detail">
+      ${renderLeftNav()}
+      <div class="community-main community-route-main">
+        <section class="community-detail-topbar">
+          <div>
+            <p class="eyebrow">Community</p>
+            <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
+          </div>
+          <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back</span></a>
+        </section>
         ${postLoading ? renderDetailSkeleton() : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
       </div>
       ${renderSidebar()}
@@ -2718,26 +2692,21 @@ function renderCommunityDetail() {
   const focused = community ? Boolean(state.communityFocus[community.communityId]) : false
   const focusDisabled = false
   return `
-    <section class="community-hero compact community-community-hero">
-      <div>
-        <p class="eyebrow">Community</p>
-        <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
-        <p>${community ? escapeHtml(community.description) : 'Loading community...'}</p>
-        ${community ? `<div class="community-community-stats hero-stats"><span>c/${escapeHtml(community.slug)}</span><span>${formatCount(community.focusCount)} focused</span><span>${formatCount(community.postCount)} posts</span></div>` : ''}
-      </div>
-      <div class="community-hero-actions">
-        <a class="button button-muted" href="${ROUTES.community}">${iconSvg('arrowLeft')} <span>Back to Community</span></a>
-        <a class="button button-muted" href="${ROUTES.communityCommunities}">All Communities</a>
-        ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>` : ''}
-        ${community ? focusDisabled
-          ? `<button type="button" class="button button-muted" disabled title="Posting is available once this community is active.">${iconSvg('plus')} <span>Post soon</span></button>`
-          : `<button type="button" class="button button-accent" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>`
-        : ''}
-      </div>
-    </section>
-    <div class="community-layout">
-      <div class="community-main">
-        ${community ? renderFeedToolbar() : ''}
+    <div class="community-layout is-home is-community-detail">
+      ${renderLeftNav()}
+      <div class="community-main community-route-main">
+        <section class="community-hero compact community-community-hero">
+          <div>
+            <p class="eyebrow">Community</p>
+            <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
+            <p>${community ? escapeHtml(community.description) : 'Loading community...'}</p>
+            ${community ? `<div class="community-community-stats hero-stats"><span>c/${escapeHtml(community.slug)}</span><span>${formatCount(community.focusCount)} focused</span><span>${formatCount(community.postCount)} posts</span></div>` : ''}
+          </div>
+          <div class="community-hero-actions">
+            <a class="button button-muted" href="${ROUTES.communityCommunities}">All Communities</a>
+            ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>` : ''}
+          </div>
+        </section>
         ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading community...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : community ? renderFeed() : '<section class="community-feed-state community-panel">This community is not available.</section>'}
       </div>
       ${renderSidebar()}
@@ -2757,13 +2726,9 @@ function renderCommunityPagePreloaderMarkup() {
 function hydrateShell() {
   if (communityShellChromeInitialized) return
   communityShellChromeInitialized = true
-  const logoReadyPromise = initShellChrome().catch((error) => {
-    console.warn('[community] shell init failed', { message: error?.message })
-    return false
-  })
   if (!communityPagePreloaderInitialized) {
     communityPagePreloaderInitialized = true
-    createCriticalAssetPreloader({ logoReadyPromise, heroReadyPromise: Promise.resolve(true) })
+    createCriticalAssetPreloader({ logoReadyPromise: Promise.resolve(true), heroReadyPromise: Promise.resolve(true) })
   }
 }
 
@@ -2773,7 +2738,6 @@ function renderCommunityShellOnce() {
   if (!app) return null
   app.innerHTML = `
     ${renderCommunityPagePreloaderMarkup()}
-    ${navShell({ currentPage: 'community' })}
     <main class="community-page" data-community-page>
       <div class="community-root" data-community-root></div>
     </main>
@@ -2785,11 +2749,13 @@ function renderCommunityShellOnce() {
 
 function renderCommunityHomeView() {
   return `
-    ${renderCommunityScrollChrome()}
     ${state.message ? `<p class="community-toast">${escapeHtml(state.message)}</p>` : ''}
     <div class="community-layout is-home">
       ${renderLeftNav()}
       <div class="community-main">
+        ${renderTopicBar()}
+        ${renderInlineComposer()}
+        ${renderStoriesRow()}
         ${renderActiveCommunityTabContent()}
       </div>
       ${renderSidebar()}
@@ -2799,6 +2765,21 @@ function renderCommunityHomeView() {
     ${renderStoryViewerModal()}
     ${renderEditPostModal()}
     ${renderReportModal()}
+  `
+}
+
+function renderInlineComposer() {
+  const user = state.currentUser
+  const name = String(user?.displayName || user?.email || 'Melogic Creator').trim()
+  const avatar = user?.photoURL
+    ? `<img src="${escapeHtml(user.photoURL)}" alt="" loading="lazy" />`
+    : `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
+  return `
+    <section class="community-inline-composer" aria-label="Create a post">
+      <span class="community-inline-avatar">${avatar}</span>
+      <button type="button" class="community-inline-prompt" data-open-community-composer>What's happening?</button>
+      <button type="button" class="community-inline-post" data-open-community-composer>Post</button>
+    </section>
   `
 }
 
@@ -3948,6 +3929,12 @@ function handleFeedSearch(event) {
   event.preventDefault()
   const form = event.currentTarget
   state.feedSearch = String(new FormData(form).get('communityFeedSearch') || '').trim().slice(0, 80)
+  if (state.view.type !== 'feed') {
+    const params = new URLSearchParams()
+    if (state.feedSearch) params.set('search', state.feedSearch)
+    window.location.assign(`${ROUTES.community}${params.toString() ? `?${params}` : ''}`)
+    return
+  }
   updateFeedUrlParams()
   loadCommunity()
 }
@@ -4944,7 +4931,9 @@ function selectTopicTab(tab = 'for-you') {
   if (['for-you', 'following'].includes(state.activeTab) && state.view.type === 'feed') {
     state.activeTopicLabel = activeFeedTitle()
     app?.querySelectorAll('[data-community-tab="for-you"], [data-community-tab="following"]').forEach((button) => {
-      button.classList.toggle('is-active', button.getAttribute('data-community-tab') === state.activeTab)
+      const active = button.getAttribute('data-community-tab') === state.activeTab
+      button.classList.toggle('is-active', active)
+      button.setAttribute('aria-selected', active ? 'true' : 'false')
     })
     updateFeedToolbarText()
     loadFeedPage({ reset: true, localOnly: true })
@@ -4972,6 +4961,9 @@ function selectTopicCommunity({ communityId = '' } = {}) {
     button.classList.toggle('is-active', active)
     button.setAttribute('aria-pressed', active ? 'true' : 'false')
   })
+  const allButton = app?.querySelector('[data-clear-community-filters]')
+  allButton?.classList.toggle('is-active', selected.size === 0)
+  allButton?.setAttribute('aria-pressed', selected.size === 0 ? 'true' : 'false')
   loadFeedPage({ reset: true, localOnly: true })
 }
 
@@ -5722,6 +5714,18 @@ function bindEvents() {
         communityId: button.getAttribute('data-topic-community-id') || ''
       })
     })
+  })
+  app.querySelector('[data-clear-community-filters]')?.addEventListener('click', () => {
+    if (!state.selectedCommunityFilters.length) return
+    state.selectedCommunityFilters = []
+    app.querySelectorAll('[data-topic-community-id]').forEach((button) => {
+      button.classList.remove('is-active')
+      button.setAttribute('aria-pressed', 'false')
+    })
+    const allButton = app.querySelector('[data-clear-community-filters]')
+    allButton?.classList.add('is-active')
+    allButton?.setAttribute('aria-pressed', 'true')
+    loadFeedPage({ reset: true, localOnly: true })
   })
   app.querySelectorAll('[data-topic-scroll]').forEach((button) => {
     button.addEventListener('click', () => {
