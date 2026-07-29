@@ -7,12 +7,13 @@ const CONNECTION_FAILURE_GRACE_MS = 30000
 const OUTBOUND_STATS_INTERVAL_MS = 10000
 const OUTBOUND_STALL_SAMPLE_LIMIT = 2
 const MUSIC_AUDIO_MAX_BITRATE = 256000
+const PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS = 2000
 // 1080p30 browser publishing is intentionally bounded to the same practical
 // range used by major broadcast services. WebRTC congestion control still has
 // final authority; these values are preferences, not a promise of bandwidth.
-const PROGRAM_VIDEO_START_BITRATE = 5000000
-const PROGRAM_VIDEO_MIN_BITRATE = 600000
-const PROGRAM_VIDEO_MAX_BITRATE = 8000000
+const PROGRAM_VIDEO_START_BITRATE = 8500000
+const PROGRAM_VIDEO_MIN_BITRATE = 4500000
+const PROGRAM_VIDEO_MAX_BITRATE = 12000000
 const PROGRAM_VIDEO_MAX_FRAMERATE = 30
 
 let activeSession = null
@@ -170,10 +171,10 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
       maxFramerate: PROGRAM_VIDEO_MAX_FRAMERATE,
       scaleResolutionDownBy: 1
     }
-    // A fixed 1080p canvas at a collapsed WebRTC bitrate produces the large,
-    // persistent macroblocks seen by viewers. Balanced degradation lets the
-    // browser reduce resolution temporarily instead of destroying every frame.
-    params.degradationPreference = 'balanced'
+    // The HLS buffer can absorb a lower instantaneous frame rate, but it
+    // cannot restore detail after WebRTC has reduced a 1080p screen share to
+    // 360p. Preserve source resolution and let the browser drop frames first.
+    params.degradationPreference = 'maintain-resolution'
     if (videoSender.setParameters) {
       await videoSender.setParameters(params)
       applied = true
@@ -193,6 +194,66 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
     error: errorMessage
   })
   return applied
+}
+
+async function requestChromeVideoKeyFrame(videoSender, session) {
+  if (!videoSender?.getParameters || !videoSender?.setParameters) return false
+  try {
+    const params = videoSender.getParameters() || {}
+    const encodings = params.encodings?.length ? params.encodings : [{}]
+    await videoSender.setParameters(params, {
+      encodingOptions: encodings.map(() => ({ keyFrame: true }))
+    })
+    if (session) {
+      session.periodicKeyFrameRequests = Number(session.periodicKeyFrameRequests || 0) + 1
+      session.periodicKeyFrameRequestSupported = true
+    }
+    return true
+  } catch {
+    if (session && session.periodicKeyFrameRequestSupported == null) {
+      session.periodicKeyFrameRequestSupported = false
+    }
+    return false
+  }
+}
+
+function startPeriodicVideoKeyFrames(session) {
+  const videoSender = session?.peerConnection?.getSenders?.().find((sender) => sender.track?.kind === 'video') || null
+  if (!videoSender) return
+
+  // Safari and Firefox expose key-frame generation through an encoded
+  // transform worker. The worker is a transparent pass-through; its only job
+  // is to ask the browser encoder for an IDR frame every two seconds.
+  if (typeof Worker === 'function' && typeof RTCRtpScriptTransform === 'function' && 'transform' in videoSender) {
+    try {
+      session.keyFrameWorker = new Worker('/workers/streamKeyframeWorker.js')
+      videoSender.transform = new RTCRtpScriptTransform(session.keyFrameWorker, {
+        keyFrameIntervalMs: PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS
+      })
+      session.periodicKeyFrameTransform = true
+    } catch (error) {
+      session.keyFrameWorker?.terminate?.()
+      session.keyFrameWorker = null
+      console.warn('[Browser WHIP] encoded key-frame transform unavailable', error)
+    }
+  }
+
+  // Chromium currently implements the sender-parameter key-frame request.
+  // Run it alongside the worker path; unsupported browsers reject harmlessly.
+  const requestKeyFrame = () => {
+    if (session.stopped) return
+    void requestChromeVideoKeyFrame(videoSender, session)
+  }
+  requestKeyFrame()
+  session.keyFrameTimer = window.setInterval(requestKeyFrame, PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS)
+}
+
+function stopPeriodicVideoKeyFrames(session) {
+  if (!session) return
+  if (session.keyFrameTimer) window.clearInterval(session.keyFrameTimer)
+  session.keyFrameTimer = 0
+  session.keyFrameWorker?.terminate?.()
+  session.keyFrameWorker = null
 }
 
 function applyProgramVideoSdp(sdp = '') {
@@ -306,6 +367,9 @@ async function collectOutboundQualityStats(session) {
       outboundVideoNackCount: Number(video?.nackCount || 0),
       outboundVideoPliCount: Number(video?.pliCount || 0),
       outboundVideoKeyFramesEncoded: Number(video?.keyFramesEncoded || 0),
+      periodicKeyFrameTransform: session.periodicKeyFrameTransform === true,
+      periodicKeyFrameRequestSupported: session.periodicKeyFrameRequestSupported,
+      periodicKeyFrameRequests: Number(session.periodicKeyFrameRequests || 0),
       remotePacketsLost: Number(remoteVideo?.packetsLost || 0) + Number(remoteAudio?.packetsLost || 0),
       remoteRoundTripTimeMs: Number.isFinite(Number(remoteVideo?.roundTripTime))
         ? Math.round(Number(remoteVideo.roundTripTime) * 1000)
@@ -323,7 +387,7 @@ async function collectOutboundQualityStats(session) {
       outboundStallSamples: session.outboundStallSamples,
       outboundLastProgressAt: session.lastOutboundProgressAt ? new Date(session.lastOutboundProgressAt).toISOString() : '',
       outboundQualityWarning: video && previous.videoBytes != null && videoBitrateKbps < 1800
-        ? 'Upload bandwidth is too low for clean 1080p video. Melogic is preserving motion and may reduce resolution.'
+        ? 'Upload bandwidth is too low for clean 1080p video. Melogic is preserving resolution and may reduce frame rate.'
         : ''
     }
     session.lastOutboundStats = {
@@ -546,6 +610,11 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     failureTimer: 0,
     failureStartedAt: 0,
     qualityTimer: 0,
+    keyFrameTimer: 0,
+    keyFrameWorker: null,
+    periodicKeyFrameTransform: false,
+    periodicKeyFrameRequestSupported: null,
+    periodicKeyFrameRequests: 0,
     lastOutboundStats: null,
     outboundStallSamples: 0,
     lastOutboundProgressAt: 0,
@@ -558,6 +627,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     applyMusicAudioSenderParameters(peerConnection, mediaStream),
     applyProgramVideoSenderParameters(peerConnection, mediaStream)
   ])
+  startPeriodicVideoKeyFrames(session)
   const emitStatus = (status, extra = {}) => onStatus({
     status,
     connectionState: peerConnection.connectionState,
@@ -822,6 +892,7 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     if (activeSession === session) activeSession = null
     session.stopped = true
     if (session.qualityTimer) window.clearInterval(session.qualityTimer)
+    stopPeriodicVideoKeyFrames(session)
     peerConnection.close()
     throw error
   }
@@ -836,6 +907,7 @@ export async function stopBrowserWebrtcIngest() {
   session.failureTimer = 0
   if (session.qualityTimer) window.clearInterval(session.qualityTimer)
   session.qualityTimer = 0
+  stopPeriodicVideoKeyFrames(session)
   session.peerConnection.close()
   session.emitStatus?.('closed')
   if (session.resourceUrl) {

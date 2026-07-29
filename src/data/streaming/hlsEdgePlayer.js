@@ -15,7 +15,10 @@ export function buildHlsPlaybackUrl(streamKey = '', { ingestMethod = '' } = {}) 
   const cleanKey = sanitizeHlsStreamKey(streamKey)
   if (!cleanKey) return ''
   if (String(ingestMethod) === 'browserWebrtc') {
-    return `${BROWSER_HLS_EDGE_BASE_URL}/${cleanKey}/index.m3u8`
+    // MediaMTX's explicit cookie-check mode returns the master playlist
+    // directly and places the HLS session in child-URI query parameters. This
+    // avoids the initial HTTP redirect that native Safari HLS can reject.
+    return `${BROWSER_HLS_EDGE_BASE_URL}/${cleanKey}/index.m3u8?cookieCheck=1`
   }
   return `${HLS_EDGE_BASE_URL}/${cleanKey}.m3u8`
 }
@@ -24,7 +27,7 @@ export function isAllowedHlsPlaybackUrl(value = '') {
   const candidate = String(value || '').trim()
   try {
     const parsed = new URL(candidate)
-    if (parsed.search || parsed.hash) return false
+    if (parsed.hash) return false
     if (candidate.startsWith(HLS_EDGE_URL_PREFIX)) {
       const allowedBase = new URL(`${HLS_EDGE_BASE_URL}/`)
       const expectedPathPrefix = allowedBase.pathname.endsWith('/') ? allowedBase.pathname : `${allowedBase.pathname}/`
@@ -32,14 +35,17 @@ export function isAllowedHlsPlaybackUrl(value = '') {
         && parsed.host === allowedBase.host
         && parsed.pathname.startsWith(expectedPathPrefix)
         && /^[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname.slice(expectedPathPrefix.length))
+        && parsed.search === ''
     }
     if (candidate.startsWith(BROWSER_HLS_EDGE_URL_PREFIX)) {
       const allowedBase = new URL(`${BROWSER_HLS_EDGE_BASE_URL}/`)
       const expectedPathPrefix = allowedBase.pathname.endsWith('/') ? allowedBase.pathname : `${allowedBase.pathname}/`
+      const validQuery = parsed.searchParams.size === 1 && parsed.searchParams.get('cookieCheck') === '1'
       return parsed.protocol === allowedBase.protocol
         && parsed.host === allowedBase.host
         && parsed.pathname.startsWith(expectedPathPrefix)
         && /^[A-Za-z0-9_-]+\/index\.m3u8$/.test(parsed.pathname.slice(expectedPathPrefix.length))
+        && validQuery
     }
     return false
   } catch {
@@ -261,16 +267,17 @@ export async function attachHlsStream({
     capLevelToPlayerSize: false,
     startLevel: -1,
     maxBufferLength: 180,
-    maxMaxBufferLength: 300,
-    backBufferLength: 180,
-    // Four-second origin segments put a normal browser viewer roughly one
-    // minute behind live. The deeper window absorbs long encode/network
-    // stalls without sacrificing the selected rendition.
-    liveSyncDurationCount: 15,
-    liveMaxLatencyDurationCount: 60,
-    abrEwmaDefaultEstimate: 8000000,
-    abrBandWidthFactor: 0.95,
-    abrBandWidthUpFactor: 0.8,
+    maxMaxBufferLength: 192,
+    backBufferLength: 120,
+    // Six-second origin segments place browser viewers about two minutes
+    // behind live. That deliberate delay gives Chrome enough complete media
+    // to play through brief encoder, network, or remux stalls without skipping
+    // content. The "catch up" control can still seek directly to the live edge.
+    liveSyncDurationCount: 20,
+    liveMaxLatencyDurationCount: 28,
+    abrEwmaDefaultEstimate: 12000000,
+    abrBandWidthFactor: 1,
+    abrBandWidthUpFactor: 0.9,
     xhrSetup: (xhr) => {
       xhr.withCredentials = true
     },

@@ -1,6 +1,8 @@
 logLevel: info
 
-rtsp: false
+rtsp: true
+rtspAddress: :8554
+rtspTransports: [tcp]
 rtmp: false
 srt: false
 playback: false
@@ -13,20 +15,39 @@ hlsAddress: :8888
 hlsAllowOrigins: ["*"]
 hlsAlwaysRemux: false
 hlsVariant: fmp4
-hlsSegmentCount: 75
-hlsSegmentDuration: 4s
+hlsSegmentCount: 32
+hlsSegmentDuration: 6s
 hlsPartDuration: 500ms
 hlsMuxerCloseAfter: 60s
 
 webrtc: false
 
 paths:
-  "~^([A-Za-z0-9_-]+)$":
+  "~^relay/([A-Za-z0-9_-]+)$":
     # Browser publishers continue to enter through SRS WHIP, but MediaMTX reads
     # the untouched RTC stream through WHEP and owns the HLS mux. This bypasses
     # SRS 6's RTC-to-RTMP timestamp conversion, which scales Safari timestamps
     # by roughly 1000x and creates negative-duration MPEG-TS segments.
     source: whep://host.docker.internal:1985/rtc/v1/whep/?app=live&stream=$G1&eip=104.197.179.248
     sourceOnDemand: true
-    sourceOnDemandStartTimeout: 20s
+    sourceOnDemandStartTimeout: 30s
     sourceOnDemandCloseAfter: 60s
+
+  "~^([A-Za-z0-9_-]+)$":
+    # WebRTC standardizes on Opus, but native Apple HLS requires an
+    # Apple-compatible audio codec. Copy H.264 without quality loss and spend
+    # only the small amount of CPU needed to convert Opus to stereo AAC-LC.
+    # This also insulates the HLS muxer from the original WebRTC audio clock.
+    runOnDemand: >-
+      ffmpeg -nostdin -hide_banner -loglevel warning
+      -rtsp_transport tcp -i rtsp://127.0.0.1:$RTSP_PORT/relay/$G1
+      -map 0:v? -map 0:a?
+      -c:v copy
+      -c:a aac -profile:a aac_low -aac_coder fast -b:a 192k -ar 48000 -ac 2
+      -max_muxing_queue_size 2048
+      -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:$RTSP_PORT/$G1
+    # A health check against a stale Firestore "live" document must not turn
+    # into an endless FFmpeg restart loop when the publisher has disconnected.
+    runOnDemandRestart: false
+    runOnDemandStartTimeout: 40s
+    runOnDemandCloseAfter: 60s

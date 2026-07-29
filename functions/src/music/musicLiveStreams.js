@@ -76,7 +76,7 @@ function buildHlsPlaybackUrl(streamKey = '', ingestMethod = '') {
   if (!cleanKey) return ''
   const browserIngest = cleanString(ingestMethod, 60) === 'browserWebrtc'
   return browserIngest
-    ? `${BROWSER_HLS_EDGE_BASE_URL}/${cleanKey}/index.m3u8`
+    ? `${BROWSER_HLS_EDGE_BASE_URL}/${cleanKey}/index.m3u8?cookieCheck=1`
     : `${HLS_EDGE_BASE_URL}/${cleanKey}.m3u8`
 }
 
@@ -277,10 +277,12 @@ function sanitizeHlsPlaybackUrl(value = '') {
       && /^\/live\/[A-Za-z0-9_-]+\.m3u8$/.test(parsed.pathname)
     const isBrowserEdgeUrl = parsed.hostname === 'ingest.melogicrecords.studio'
       && /^\/hls\/[A-Za-z0-9_-]+\/index\.m3u8$/.test(parsed.pathname)
+      && parsed.searchParams.size === 1
+      && parsed.searchParams.get('cookieCheck') === '1'
     const valid = parsed.protocol === 'https:'
       && parsed.port === ''
       && (isLegacyEdgeUrl || isBrowserEdgeUrl)
-      && parsed.search === ''
+      && (isBrowserEdgeUrl || parsed.search === '')
       && parsed.hash === ''
     return valid ? parsed.toString() : ''
   } catch {

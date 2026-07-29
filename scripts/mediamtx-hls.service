@@ -14,7 +14,7 @@ ExecStart=/usr/bin/docker run --rm --name mediamtx-hls \
   -p 127.0.0.1:8888:8888 \
   -p 127.0.0.1:9997:9997 \
   -v /etc/melogic/mediamtx-srs-whep.yml:/mediamtx.yml:ro \
-  bluenviron/mediamtx:1.18.2
+  melogic/mediamtx-ffmpeg:1.18.2-aac1
 ExecStop=/usr/bin/docker stop -t 10 mediamtx-hls
 TimeoutStopSec=15
 
