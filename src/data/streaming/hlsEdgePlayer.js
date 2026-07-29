@@ -129,6 +129,7 @@ export async function attachHlsStream({
   const listeners = []
   let hls = null
   let cleaned = false
+  let usingNativeFallback = false
   const listen = (eventName, callback) => {
     mediaEl.addEventListener(eventName, callback)
     listeners.push([eventName, callback])
@@ -300,6 +301,37 @@ export async function attachHlsStream({
     })
   })
   hls.on(Hls.Events.ERROR, (_event, data = {}) => {
+    const errorType = String(data.type || '')
+    const errorDetails = String(data.details || '')
+    const isManifestBootstrapFailure = /manifestLoad|manifestParsing/i.test(errorDetails)
+    const shouldUseNativeFallback = !usingNativeFallback
+      && nativeHlsSupported
+      && stabilizeRtcBridge
+      && (
+        isManifestBootstrapFailure
+        || (data.fatal === true && (errorType === 'networkError' || /levelLoad/i.test(errorDetails)))
+      )
+    if (shouldUseNativeFallback) {
+      usingNativeFallback = true
+      console.warn('[hls-edge] managed playback failed; falling back to native HLS', {
+        type: errorType,
+        details: errorDetails
+      })
+      try { hls?.destroy?.() } catch {}
+      hls = null
+      try { mediaEl.pause() } catch {}
+      mediaEl.removeAttribute('src')
+      try { mediaEl.load() } catch {}
+      activePlayers.set(mediaEl, { cleanup, hls: null })
+      onStatus({ status: 'nativeFallback', mode, src, mediaEl, hls: null, native: true, levelCount: null })
+      listen('loadedmetadata', () => {
+        onStatus({ status: 'manifestParsed', mode, src, mediaEl, hls: null, native: true, levelCount: null })
+      })
+      mediaEl.src = src
+      mediaEl.load()
+      mediaEl.play().catch(() => {})
+      return
+    }
     const payload = {
       status: 'error',
       type: String(data.type || ''),

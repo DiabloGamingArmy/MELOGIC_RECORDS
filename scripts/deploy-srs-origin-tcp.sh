@@ -22,11 +22,11 @@ fi
 
 streams_json="$(curl -fsS "$streams_url")"
 case "$streams_json" in
-  *'"streams":[]'*) ;;
-  *)
+  *'"active":true'*)
     echo "An SRS stream is active; refusing to interrupt a broadcast." >&2
     exit 1
     ;;
+  *) ;;
 esac
 
 backup_file="/var/tmp/srs-origin-before-tcp-$(date -u +%Y%m%dT%H%M%SZ).json"

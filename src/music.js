@@ -103,6 +103,7 @@ const app = document.querySelector('#app')
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
 let musicLiveControlsCleanup = null
+let musicShellChromeRoot = null
 const SILENT_AUDIO_UNLOCK_SRC = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA=='
 const HLS_PLAYBACK_MODE_STORAGE_KEY = 'melogic_live_playback_mode'
 const HLS_PLAYBACK_MODES = new Set(['videoAudio', 'videoOnly', 'audioOnly'])
@@ -487,7 +488,6 @@ function renderStableImage({ src = '', alt = '', className = '', fallback = 'MR'
   const displaySrc = loaded ? cleanSrc : (keyed?.lastGoodSrc || '')
   return `
     <span class="${escapeHtml(className)} music-stable-image ${displaySrc ? 'is-loaded' : ''} ${failed || (!cleanSrc && !displaySrc) ? 'is-fallback' : ''}" ${cleanSrc ? `data-stable-image data-src="${escapeHtml(cleanSrc)}" data-alt="${escapeHtml(alt)}" data-image-key="${escapeHtml(logicalKey)}"` : ''}>
-      ${displaySrc ? `<img src="${escapeHtml(displaySrc)}" alt="${escapeHtml(alt)}" loading="lazy" />` : ''}
       <span class="music-stable-fallback" aria-hidden="true">${escapeHtml(fallback)}</span>
     </span>
   `
@@ -1056,6 +1056,39 @@ function renderActiveView() {
 }
 
 function renderAppShell(content) {
+  const existingPage = app.querySelector(':scope > .music-page')
+  const existingContent = existingPage?.querySelector('[data-music-content]')
+  if (existingPage && existingContent) {
+    const preservedImages = new Map()
+    existingPage.querySelectorAll('[data-stable-image][data-image-key]').forEach((container) => {
+      const image = container.querySelector('img')
+      const key = container.dataset.imageKey || ''
+      if (!key || !image) return
+      image.remove()
+      preservedImages.set(key, image)
+    })
+
+    existingContent.innerHTML = content
+    const mobileMenu = existingPage.querySelector('[data-toggle-music-sidebar]')
+    if (mobileMenu) {
+      mobileMenu.outerHTML = `<button type="button" class="music-mobile-menu" data-toggle-music-sidebar>${state.sidebarOpen ? 'Close Menu' : 'Streaming Menu'}</button>`
+    }
+    const sidebar = existingPage.querySelector('[data-music-sidebar]')
+    if (sidebar) sidebar.outerHTML = renderSidebar()
+    const player = existingPage.querySelector('[data-music-player]')
+    const playerMarkup = renderPlayer()
+    if (player) player.outerHTML = playerMarkup
+    else if (playerMarkup) existingPage.insertAdjacentHTML('beforeend', playerMarkup)
+    existingPage.querySelectorAll('[data-stable-image][data-image-key]').forEach((container) => {
+      const image = preservedImages.get(container.dataset.imageKey || '')
+      if (!image || image.getAttribute('src') !== container.dataset.src) return
+      container.prepend(image)
+      container.classList.add('is-loaded')
+      container.classList.remove('is-fallback')
+    })
+    return
+  }
+
   app.innerHTML = `
     ${navShell({ currentPage: 'music' })}
     <main class="music-page">
@@ -2209,6 +2242,14 @@ function handleHlsStatus(payload = {}) {
     lastHlsResponseUrl: status === 'error' ? String(payload.responseUrl || '') : state.hlsDiagnostics?.lastHlsResponseUrl || ''
   }
   if (status === 'loading') state.liveStatus = 'loadingManifest'
+  if (status === 'nativeFallback') {
+    state.liveStatus = 'loadingManifest'
+    state.hlsDiagnostics = {
+      ...(state.hlsDiagnostics || {}),
+      hlsJsSupported: false,
+      playbackFallback: 'nativeHls'
+    }
+  }
   if (status === 'manifestParsed' && state.liveStatus !== 'playing') state.liveStatus = 'ready'
   if (status === 'manifestParsed' && state.hlsMediaElement) {
     setHlsQualityLevel(state.hlsMediaElement, state.hlsQualityLevel)
@@ -4228,7 +4269,11 @@ function rerender() {
   else if (state.route.mode === 'sequence') renderSequenceWorkspacePage()
   else if (state.route.mode === 'liveDetail') renderLiveDetailPage()
   else renderLandingPage()
-  initShellChrome()
+  const currentShellRoot = app.querySelector(':scope > .nav-shell')
+  if (currentShellRoot && currentShellRoot !== musicShellChromeRoot) {
+    musicShellChromeRoot = currentShellRoot
+    initShellChrome()
+  }
   hydrateStableImages()
   attachLiveVideoElement()
   bindMusicEvents()

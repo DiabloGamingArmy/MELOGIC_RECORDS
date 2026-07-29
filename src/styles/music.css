@@ -1984,7 +1984,7 @@
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 10px;
+  gap: 20px;
   background: rgba(0, 0, 0, 0.16);
   color: #fff;
   pointer-events: none;

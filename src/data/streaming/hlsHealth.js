@@ -45,15 +45,40 @@ export async function checkHlsManifest({
   try {
     const url = new URL(String(hlsUrl || ''))
     url.searchParams.set('_', String(checkedAtMs))
-    const response = await fetch(url.toString(), {
+    let response = await fetch(url.toString(), {
       method: 'GET',
       cache: 'no-store',
       headers: { Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain' },
       signal: controller.signal
     })
     responseCode = response.status
-    const manifest = await response.text()
+    let manifest = await response.text()
     parsed = parseHlsManifest(manifest)
+    // SRS hls_ctx returns a tiny master playlist first and places the actual
+    // media sequence in a same-origin child playlist. Follow that child once
+    // so health reflects real segments instead of reporting a healthy stream
+    // as offline merely because the wrapper contains no EXTINF lines.
+    if (response.ok && parsed.hasExtM3u && !parsed.hasMediaSegment) {
+      const childLine = manifest
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find((line) => line && !line.startsWith('#') && /\.m3u8(?:[?#]|$)/i.test(line))
+      if (childLine) {
+        const childUrl = new URL(childLine, url)
+        if (childUrl.origin === url.origin) {
+          childUrl.searchParams.set('_', String(checkedAtMs))
+          response = await fetch(childUrl.toString(), {
+            method: 'GET',
+            cache: 'no-store',
+            headers: { Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain' },
+            signal: controller.signal
+          })
+          responseCode = response.status
+          manifest = await response.text()
+          parsed = parseHlsManifest(manifest)
+        }
+      }
+    }
     if (!response.ok) error = `HTTP ${response.status}`
     else if (!parsed.valid) error = parsed.hasExtM3u ? 'Playlist has no media segments yet.' : 'Response is not an HLS playlist.'
   } catch (fetchError) {
