@@ -51,6 +51,11 @@ docker rename "$origin_name" "$backup_name"
 docker update --restart=no "$backup_name" >/dev/null
 trap rollback HUP INT TERM EXIT
 
+# A short rtc_to_rtmp PLI interval makes SRS emit a fresh H.264 sequence
+# header at nearly every HLS boundary. SRS marks each header as a playlist
+# discontinuity, resetting audio and video together for viewers. RTC audio
+# timestamps also do not always land on exact AAC sample boundaries, so let
+# SRS correct mux timestamps instead of deriving DTS directly.
 docker run -d \
   --name "$origin_name" \
   --restart unless-stopped \
@@ -69,11 +74,14 @@ docker run -d \
   -e SRS_VHOST_RTC_ENABLED=on \
   -e SRS_VHOST_RTC_RTC_TO_RTMP=on \
   -e SRS_VHOST_RTC_AAC_BITRATE=192000 \
-  -e SRS_VHOST_RTC_PLI_FOR_RTMP=2.0 \
+  -e SRS_VHOST_RTC_PLI_FOR_RTMP=30.0 \
   -e SRS_VHOST_RTC_INIT_RATE_FROM_SDP=on \
   -e SRS_VHOST_HLS_ENABLED=on \
   -e SRS_VHOST_HLS_HLS_FRAGMENT=4 \
   -e SRS_VHOST_HLS_HLS_WINDOW=300 \
+  -e SRS_VHOST_HLS_HLS_DTS_DIRECTLY=off \
+  -e SRS_VHOST_HLS_HLS_CTX=off \
+  -e SRS_VHOST_HLS_HLS_TS_CTX=off \
   "$image_name" >/dev/null
 
 healthy="false"

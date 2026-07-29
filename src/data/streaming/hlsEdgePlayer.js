@@ -98,10 +98,27 @@ export async function seekHlsToLiveEdge(mediaEl) {
   return true
 }
 
+export function stabilizeRtcBridgePlaylist(playlist = '') {
+  const source = String(playlist || '')
+  if (!source.includes('#EXTM3U') || !source.includes('#EXT-X-DISCONTINUITY')) return source
+
+  const segmentCount = (source.match(/^#EXTINF:/gm) || []).length
+  const discontinuityCount = (source.match(/^#EXT-X-DISCONTINUITY\s*$/gm) || []).length
+  // Preserve legitimate, occasional discontinuities (encoder changes,
+  // failover, etc.). The affected SRS RTC bridge emits one before virtually
+  // every media segment; only that unmistakable pattern is normalized.
+  const isPathologicalRtcPattern = segmentCount >= 3
+    && discontinuityCount >= Math.max(3, segmentCount - 1)
+  if (!isPathologicalRtcPattern) return source
+
+  return source.replace(/^#EXT-X-DISCONTINUITY\s*\r?\n/gm, '')
+}
+
 export async function attachHlsStream({
   mediaEl,
   src,
   mode = 'videoAudio',
+  stabilizeRtcBridge = false,
   onStatus = () => {},
   onError = () => {}
 }) {
@@ -148,7 +165,8 @@ export async function attachHlsStream({
   console.info('[hls-edge] status', { status: 'loading', mode, src })
   onStatus({ status: 'loading', mode, src, mediaEl, hls: null })
 
-  if (canPlayNativeHls(mediaEl)) {
+  const nativeHlsSupported = canPlayNativeHls(mediaEl)
+  if (nativeHlsSupported && !stabilizeRtcBridge) {
     listen('loadedmetadata', () => {
       console.info('[hls-edge] status', { status: 'manifestParsed', mode, src, native: true })
       onStatus({ status: 'manifestParsed', mode, src, mediaEl, hls: null, native: true, levelCount: null })
@@ -161,8 +179,61 @@ export async function attachHlsStream({
   const { default: Hls } = await import('hls.js')
   if (cleaned) return cleanup
   if (!Hls?.isSupported?.()) {
+    if (nativeHlsSupported) {
+      listen('loadedmetadata', () => {
+        onStatus({ status: 'manifestParsed', mode, src, mediaEl, hls: null, native: true, levelCount: null })
+      })
+      mediaEl.src = src
+      mediaEl.load()
+      return cleanup
+    }
     cleanup()
     throw new Error('This browser cannot play this HLS stream.')
+  }
+
+  const BasePlaylistLoader = Hls.DefaultConfig.loader
+  class RtcBridgePlaylistLoader {
+    constructor(config) {
+      this.loader = new BasePlaylistLoader(config)
+      this.stats = this.loader.stats
+    }
+
+    get context() {
+      return this.loader.context
+    }
+
+    getCacheAge() {
+      return this.loader.getCacheAge?.() ?? null
+    }
+
+    getResponseHeader(name) {
+      return this.loader.getResponseHeader?.(name) ?? null
+    }
+
+    load(context, config, callbacks) {
+      this.loader.load(context, config, {
+        ...callbacks,
+        onSuccess: (response, stats, responseContext, networkDetails) => {
+          const data = typeof response?.data === 'string'
+            ? stabilizeRtcBridgePlaylist(response.data)
+            : response?.data
+          callbacks.onSuccess(
+            data === response?.data ? response : { ...response, data },
+            stats,
+            responseContext,
+            networkDetails
+          )
+        }
+      })
+    }
+
+    abort() {
+      this.loader.abort()
+    }
+
+    destroy() {
+      this.loader.destroy()
+    }
   }
 
   hls = new Hls({
@@ -188,7 +259,8 @@ export async function attachHlsStream({
     manifestLoadingMaxRetryTimeout: 6000,
     levelLoadingMaxRetry: 8,
     levelLoadingRetryDelay: 2000,
-    levelLoadingMaxRetryTimeout: 6000
+    levelLoadingMaxRetryTimeout: 6000,
+    ...(stabilizeRtcBridge ? { pLoader: RtcBridgePlaylistLoader } : {})
   })
   hls.on(Hls.Events.MANIFEST_PARSED, (_event, data = {}) => {
     const levels = Array.isArray(data.levels) ? data.levels : hls.levels || []

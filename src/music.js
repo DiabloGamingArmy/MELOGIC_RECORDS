@@ -1,5 +1,6 @@
 import './styles/base.css'
 import './styles/music.css'
+import melogicLoaderMarkUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
 import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack } from 'livekit-client'
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
@@ -2389,6 +2390,7 @@ async function startHlsListenerPlayback(playbackInfo = getPublicPlaybackInfo(sta
         mediaEl: media,
         src: playbackUrl,
         mode,
+        stabilizeRtcBridge: state.liveStream?.ingestMethod === 'browserWebrtc',
         onStatus: handleHlsStatus,
         onError: handleHlsError
       })
@@ -3668,6 +3670,17 @@ function renderHlsVideoOverlay(stream = state.liveStream, liveBadge = 'LIVE') {
   `
 }
 
+function renderLivePlaybackLoader({ hidden = true } = {}) {
+  return `
+    <div class="music-live-playback-loader" data-live-playback-loader role="status" aria-live="polite" aria-label="Loading live stream" ${hidden ? 'hidden' : ''}>
+      <span class="music-live-playback-loader-mark" aria-hidden="true">
+        <img src="${melogicLoaderMarkUrl}" alt="" decoding="async" />
+      </span>
+      <span class="music-live-playback-loader-label">Loading live stream</span>
+    </div>
+  `
+}
+
 function setupLiveVideoControls() {
   musicLiveControlsCleanup?.()
   musicLiveControlsCleanup = null
@@ -3822,7 +3835,18 @@ function setupLiveVideoControls() {
 function renderLiveDetailPage() {
   const stream = state.liveStream
   if (state.loading) {
-    renderAppShell('<section class="music-detail-state"><h1>Loading live stream...</h1></section>')
+    renderAppShell(`
+      <section class="music-live-watch-layout is-video-mode is-loading">
+        <main class="music-live-watch-main">
+          <section class="music-live-detail">
+            <div class="music-live-visual-shell has-custom-controls">
+              <div class="music-live-visual" aria-hidden="true"></div>
+              ${renderLivePlaybackLoader({ hidden: false })}
+            </div>
+          </section>
+        </main>
+      </section>
+    `)
     return
   }
   if (!stream) {
@@ -3879,6 +3903,7 @@ function renderLiveDetailPage() {
               <span>${escapeHtml(listenerCountLabel(stream.listenerCount))}</span>
             </div>`}
             ${visual}
+            ${isBufferedStream ? renderLivePlaybackLoader() : ''}
             ${isBufferedStream && showingVideo ? renderHlsVideoOverlay(stream, liveBadge) : ''}
             ${!isBufferedStream && hasVideo && state.liveVideoExpanded ? '<button type="button" class="button button-muted music-live-hide-video" data-live-hide-video>Hide Video</button>' : ''}
           </div>
@@ -5407,6 +5432,14 @@ function updateLiveListenerControls() {
       ? 'Connecting...'
       : isBufferedHlsStream() ? 'Play' : 'Listen'
   if (status) status.textContent = liveStatusLabel(state.liveStream || {})
+  const playbackLoader = app.querySelector('[data-live-playback-loader]')
+  if (playbackLoader) {
+    const media = state.hlsMediaElement
+    const isLoadingStatus = ['loadingManifest', 'connecting', 'connectingTransport', 'waiting', 'stalled'].includes(state.liveStatus)
+    const activelyLoading = Boolean(media)
+      && (isLoadingStatus || (media.readyState < HTMLMediaElement.HAVE_FUTURE_DATA && !media.paused))
+    playbackLoader.hidden = !activelyLoading
+  }
   updateHlsDiagnosticsDom()
 }
 
