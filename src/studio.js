@@ -5420,15 +5420,17 @@ function logStreamKeyConsistency({
   hlsUrl = '',
   hlsPlaybackUrl = ''
 } = {}) {
+  if (!import.meta.env.DEV) return
   const live = liveState()
-  console.log('[Stream Key Consistency]', {
+  const firestoreStreamKey = live.stream?.streamKey || ''
+  const keys = [firestoreStreamKey, writerStreamKey, whipStreamKey, hlsHealthStreamKey].filter(Boolean)
+  const uniqueKeys = new Set(keys)
+  const playbackUrls = [hlsUrl, hlsPlaybackUrl].filter(Boolean)
+  console.debug('[Streaming] key alignment', {
     streamId: streamId || live.streamId || live.draftStreamId || '',
-    firestoreStreamKey: live.stream?.streamKey || '',
-    writerStreamKey,
-    whipStreamKey,
-    hlsHealthStreamKey,
-    hlsUrl,
-    hlsPlaybackUrl
+    suppliedKeyCount: keys.length,
+    keysAligned: uniqueKeys.size <= 1,
+    playbackUrlsMatch: !keys.length || playbackUrls.every((url) => keys.some((key) => url.includes(key)))
   })
 }
 
@@ -5816,14 +5818,12 @@ async function refreshLiveStudioStreamKey() {
       hlsLastError: '',
       hlsResponseCode: 0
     }
-    console.log('[Stream Key] ensured', {
+    if (import.meta.env.DEV) console.debug('[Streaming] new key created', {
       streamId: live.draftStreamId || '',
-      previousKey,
-      nextKey,
+      keyRotated: Boolean(previousKey && previousKey !== nextKey),
       forceNew: true,
       status: 'draft',
-      ingestMethod: live.ingestMethod,
-      hlsUrl
+      ingestMethod: live.ingestMethod
     })
     live.outputStatus = 'New stream key created and saved to the draft.'
   } catch (error) {
@@ -5878,14 +5878,12 @@ async function startLiveStudioStream() {
       streamKey = sanitizeHlsStreamKey(response.streamKey || '')
       if (!isValidGeneratedStreamKey(streamKey)) throw new Error('The live stream service did not return a valid session stream key.')
       live.streamForm.streamKey = streamKey
-      console.log('[Stream Key] ensured', {
+      if (import.meta.env.DEV) console.debug('[Streaming] new key created', {
         streamId: pendingStreamId,
-        previousKey,
-        nextKey: streamKey,
+        keyRotated: Boolean(previousKey && previousKey !== streamKey),
         forceNew: true,
         status: live.stream?.status || 'draft',
-        ingestMethod: live.ingestMethod,
-        hlsUrl: buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod })
+        ingestMethod: live.ingestMethod
       })
     }
     live.streamId = pendingStreamId

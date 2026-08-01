@@ -139,14 +139,16 @@ function logMusicStreamKeyConsistency({
   hlsUrl = '',
   hlsPlaybackUrl = ''
 } = {}) {
-  console.log('[Stream Key Consistency]', {
+  if (!import.meta.env.DEV) return
+  const firestoreStreamKey = state.liveStream?.streamKey || ''
+  const keys = [firestoreStreamKey, writerStreamKey, whipStreamKey, hlsHealthStreamKey].filter(Boolean)
+  const uniqueKeys = new Set(keys)
+  const playbackUrls = [hlsUrl, hlsPlaybackUrl].filter(Boolean)
+  console.debug('[Streaming] key alignment', {
     streamId: streamId || state.liveStream?.streamId || state.liveStream?.id || state.goLive.streamId || state.goLive.draftStreamId || '',
-    firestoreStreamKey: state.liveStream?.streamKey || '',
-    writerStreamKey,
-    whipStreamKey,
-    hlsHealthStreamKey,
-    hlsUrl,
-    hlsPlaybackUrl
+    suppliedKeyCount: keys.length,
+    keysAligned: uniqueKeys.size <= 1,
+    playbackUrlsMatch: !keys.length || playbackUrls.every((url) => keys.some((key) => url.includes(key)))
   })
 }
 
@@ -3882,6 +3884,7 @@ function livePlayerIcon(name = '') {
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1z"/>',
     airplay: '<path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1M7 21l5-6 5 6z"/>',
     captions: '<path d="M3 6h18v12H3zM10 10H7a2 2 0 0 0 0 4h3m7-4h-3a2 2 0 0 0 0 4h3"/>',
+    pictureInPicture: '<rect x="3" y="5" width="18" height="14" rx="1"/><rect x="12" y="11" width="7" height="5" rx=".5" fill="currentColor" stroke="none"/>',
     fullscreen: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'
   }
   const filled = name === 'play' || name === 'pause'
@@ -3929,9 +3932,15 @@ function renderHlsVideoOverlay(stream = state.liveStream, liveBadge = 'LIVE') {
   const hasAudio = mode !== 'videoOnly'
   return `
     <div class="music-live-player-chrome" data-live-player-chrome>
-      <div class="music-live-player-status">
-        <span class="music-live-badge">${escapeHtml(liveBadge)}</span>
-        <span>${listenerCountMarkup(stream.listenerCount)}</span>
+      <div class="music-live-player-topbar">
+        <div class="music-live-player-identity">
+          <strong>${escapeHtml(stream.title || 'Live stream')}</strong>
+          <span>${escapeHtml(stream.hostDisplayName || 'Melogic creator')}</span>
+        </div>
+        <div class="music-live-player-status">
+          <span class="music-live-badge">${escapeHtml(liveBadge)}</span>
+          <span>${listenerCountMarkup(stream.listenerCount, 'watching')}</span>
+        </div>
       </div>
       <div class="music-live-player-gradient" aria-hidden="true"></div>
       <div class="music-live-player-controls" aria-label="Live video controls">
@@ -3949,6 +3958,7 @@ function renderHlsVideoOverlay(stream = state.liveStream, liveBadge = 'LIVE') {
         <div class="music-live-player-controls-right">
           <button type="button" class="music-live-player-icon" data-live-player-captions aria-label="Closed captions" title="Closed captions">${livePlayerIcon('captions')}</button>
           <button type="button" class="music-live-player-icon" data-live-player-airplay aria-label="AirPlay" title="AirPlay">${livePlayerIcon('airplay')}</button>
+          <button type="button" class="music-live-player-icon" data-live-player-pip aria-label="Picture in picture" title="Picture in picture">${livePlayerIcon('pictureInPicture')}</button>
           <button type="button" class="music-live-player-icon" data-live-player-settings aria-label="Playback settings" aria-expanded="false">${livePlayerIcon('settings')}</button>
           <button type="button" class="music-live-player-icon" data-live-player-fullscreen aria-label="Enter fullscreen">${livePlayerIcon('fullscreen')}</button>
         </div>
@@ -3973,7 +3983,6 @@ function renderLivePlaybackLoader({ hidden = true } = {}) {
       <span class="music-live-playback-loader-mark" aria-hidden="true">
         <img src="${melogicLoaderMarkUrl}" alt="" decoding="async" />
       </span>
-      <span class="music-live-playback-loader-label">Loading live stream</span>
     </div>
   `
 }
@@ -3986,6 +3995,7 @@ function setupLiveVideoControls() {
   if (!shell) return
   if (!media || media.tagName !== 'VIDEO') {
     const playButton = shell.querySelector('[data-live-player-play]')
+    const fullscreenButton = shell.querySelector('[data-live-player-fullscreen]')
     const settingsButton = shell.querySelector('[data-live-player-settings]')
     const settingsPanel = shell.querySelector('[data-live-player-settings-panel]')
     const startPlayback = async () => {
@@ -3999,6 +4009,8 @@ function setupLiveVideoControls() {
     }
     playButton?.addEventListener('click', startPlayback)
     settingsButton?.addEventListener('click', toggleSettings)
+    fullscreenButton?.setAttribute('disabled', '')
+    fullscreenButton?.setAttribute('title', 'Start playback to enter fullscreen')
     shell.classList.add('are-controls-visible')
     musicLiveControlsCleanup = () => {
       playButton?.removeEventListener('click', startPlayback)
@@ -4011,6 +4023,9 @@ function setupLiveVideoControls() {
   const listeners = []
   let hideTimer = 0
   let settingsOpen = false
+  const fullscreenButton = shell.querySelector('[data-live-player-fullscreen]')
+  fullscreenButton?.removeAttribute('disabled')
+  fullscreenButton?.removeAttribute('title')
   const listen = (target, event, callback, options) => {
     target?.addEventListener?.(event, callback, options)
     if (target) listeners.push([target, event, callback, options])
@@ -4060,16 +4075,53 @@ function setupLiveVideoControls() {
   const handleFullscreenChange = () => {
     const wasFullscreen = state.liveVideoFullscreenActive
     state.liveVideoFullscreenActive = fullscreenTargetIsPlayer()
+    shell.classList.toggle('is-fullscreen', state.liveVideoFullscreenActive)
+    shell.querySelector('[data-live-player-fullscreen]')?.setAttribute('aria-label', state.liveVideoFullscreenActive ? 'Exit fullscreen' : 'Enter fullscreen')
     if (wasFullscreen && !state.liveVideoFullscreenActive) {
       window.requestAnimationFrame(() => rerender())
     }
   }
-  const handleWebkitFullscreenBegin = () => {
-    state.liveVideoFullscreenActive = true
+  const setFallbackFullscreen = (active) => {
+    const next = Boolean(active)
+    shell.classList.toggle('is-fullscreen', next)
+    shell.classList.toggle('is-fullscreen-fallback', next)
+    document.documentElement.classList.toggle('music-live-fallback-fullscreen', next)
+    state.liveVideoFullscreenActive = next
+    shell.querySelector('[data-live-player-fullscreen]')?.setAttribute('aria-label', next ? 'Exit fullscreen' : 'Enter fullscreen')
+    if (!next) window.requestAnimationFrame(() => rerender())
   }
-  const handleWebkitFullscreenEnd = () => {
-    state.liveVideoFullscreenActive = false
-    window.requestAnimationFrame(() => rerender())
+  const toggleFullscreen = async () => {
+    if (shell.classList.contains('is-fullscreen-fallback')) {
+      setFallbackFullscreen(false)
+      return
+    }
+    const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement
+    if (fullscreenElement) {
+      const exit = document.exitFullscreen || document.webkitExitFullscreen
+      if (exit) await Promise.resolve(exit.call(document))
+      return
+    }
+    state.liveVideoFullscreenActive = true
+    shell.classList.add('is-fullscreen')
+    let requested = false
+    if (typeof shell.requestFullscreen === 'function') {
+      try {
+        await Promise.resolve(shell.requestFullscreen())
+        requested = true
+      } catch {}
+    }
+    if (!requested && typeof shell.webkitRequestFullscreen === 'function') {
+      try {
+        await Promise.resolve(shell.webkitRequestFullscreen())
+        requested = true
+      } catch {}
+    }
+    if (requested) {
+      await new Promise((resolve) => window.setTimeout(resolve, 100))
+    }
+    if (!requested || !fullscreenTargetIsPlayer()) {
+      setFallbackFullscreen(true)
+    }
   }
 
   listen(shell, 'pointerenter', showControls)
@@ -4084,8 +4136,10 @@ function setupLiveVideoControls() {
   listen(media, 'progress', updatePlaybackState)
   listen(document, 'fullscreenchange', handleFullscreenChange)
   listen(document, 'webkitfullscreenchange', handleFullscreenChange)
-  listen(media, 'webkitbeginfullscreen', handleWebkitFullscreenBegin)
-  listen(media, 'webkitendfullscreen', handleWebkitFullscreenEnd)
+  listen(shell, 'dblclick', async (event) => {
+    if (event.target.closest('button, input, select, label')) return
+    try { await toggleFullscreen() } catch {}
+  })
   listen(media, 'volumechange', () => {
     shell.classList.toggle('is-muted', media.muted || media.volume === 0)
     const input = shell.querySelector('[data-live-player-volume]')
@@ -4115,13 +4169,21 @@ function setupLiveVideoControls() {
     showControls()
   })
   listen(settingsButton, 'click', () => setSettingsOpen(!settingsOpen))
-  listen(shell.querySelector('[data-live-player-fullscreen]'), 'click', async () => {
-    try {
-      if (document.fullscreenElement) await document.exitFullscreen()
-      else if (shell.requestFullscreen) await shell.requestFullscreen()
-      else if (media.webkitEnterFullscreen) media.webkitEnterFullscreen()
-    } catch {}
+  listen(fullscreenButton, 'click', async () => {
+    try { await toggleFullscreen() } catch {}
   })
+  const pipButton = shell.querySelector('[data-live-player-pip]')
+  if (document.pictureInPictureEnabled && typeof media.requestPictureInPicture === 'function') {
+    listen(pipButton, 'click', async () => {
+      try {
+        if (document.pictureInPictureElement) await document.exitPictureInPicture()
+        else await media.requestPictureInPicture()
+      } catch {}
+    })
+  } else {
+    pipButton?.setAttribute('disabled', '')
+    pipButton?.setAttribute('title', 'Picture in picture is not available in this browser')
+  }
   const airplayButton = shell.querySelector('[data-live-player-airplay]')
   if (typeof media.webkitShowPlaybackTargetPicker === 'function') {
     listen(airplayButton, 'click', () => media.webkitShowPlaybackTargetPicker())
@@ -4143,6 +4205,7 @@ function setupLiveVideoControls() {
   }
   listen(document, 'keydown', (event) => {
     if (event.key === 'Escape' && settingsOpen) setSettingsOpen(false)
+    if (event.key === 'Escape' && shell.classList.contains('is-fullscreen-fallback')) setFallbackFullscreen(false)
   })
   media.setAttribute('x-webkit-airplay', 'allow')
   updatePlaybackState()
@@ -4150,6 +4213,7 @@ function setupLiveVideoControls() {
 
   musicLiveControlsCleanup = () => {
     if (hideTimer) window.clearTimeout(hideTimer)
+    document.documentElement.classList.remove('music-live-fallback-fullscreen')
     listeners.forEach(([target, event, callback, options]) => target.removeEventListener(event, callback, options))
     musicLiveControlsCleanup = null
   }
@@ -4246,20 +4310,24 @@ function renderLiveDetailPage() {
             </div>
             ${renderLiveActions(stream)}
           </div>
-          <div class="music-live-host">
-            ${renderAvatarImage({ src: liveHostPhotoURL(stream), name: stream.hostDisplayName, className: 'music-live-avatar' })}
-            <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${listenerCountMarkup(stream.listenerCount)}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
+          <div class="music-live-info-grid">
+            <div class="music-live-channel-card">
+              <div class="music-live-host">
+                ${renderAvatarImage({ src: liveHostPhotoURL(stream), name: stream.hostDisplayName, className: 'music-live-avatar' })}
+                <div><strong>${escapeHtml(stream.hostDisplayName)}</strong><small>${listenerCountMarkup(stream.listenerCount)}${stream.passwordProtected ? ' · Password required' : ''}</small></div>
+              </div>
+              <p class="music-live-description">${escapeHtml(stream.description || 'Live stream on Melogic Streaming.')}</p>
+              <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : `<span>${hasVideo ? 'Live stream' : 'Live audio'}</span>`}</div>
+            </div>
+            ${renderNowPlaying(stream)}
           </div>
-          <p class="music-live-description">${escapeHtml(stream.description || 'Live stream on Melogic Streaming.')}</p>
-          ${renderNowPlaying(stream)}
-          <div class="music-tag-row">${stream.tags.length ? stream.tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : `<span>${hasVideo ? 'Live stream' : 'Live audio'}</span>`}</div>
           ${stream.passwordProtected && !listenerActive ? `
             <form class="music-password-form" data-live-password-form>
               <label><span>Stream password</span><input name="password" type="password" value="${escapeHtml(state.livePassword)}" placeholder="Enter password to listen" /></label>
             </form>
           ` : ''}
-          ${state.liveError ? `<p class="music-live-error">${escapeHtml(state.liveError)}</p>` : `<p class="music-muted" data-live-status>${escapeHtml(canListen ? liveStatusLabel(stream) : isBufferedStream && playbackInfo.message ? playbackInfo.message : 'This stream has ended or is no longer public.')}</p>`}
-          ${isBufferedStream ? renderHlsDiagnostics() : isNativeStream ? renderNativeReceiverAudioDebug() : renderLiveKitReceiverAudioDebug()}
+          ${state.liveError ? `<p class="music-live-error" role="alert">${escapeHtml(state.liveError)}</p>` : ''}
+          ${isBufferedStream ? '' : isNativeStream ? renderNativeReceiverAudioDebug() : renderLiveKitReceiverAudioDebug()}
         </section>
       </main>
       ${renderLiveChatPanel(stream)}
@@ -5228,14 +5296,12 @@ async function startHostBroadcast(form) {
     if (!isValidGeneratedStreamKey(sessionKey)) throw new Error('The live stream service did not return a valid session stream key.')
     state.goLive.form.streamKey = sessionKey
     const sessionPayload = normalizeHlsLivePayload({ ...payload, streamKey: sessionKey })
-    console.log('[Stream Key] ensured', {
+    if (import.meta.env.DEV) console.debug('[Streaming] new key created', {
       streamId: pendingStreamId,
-      previousKey,
-      nextKey: sessionKey,
+      keyRotated: Boolean(previousKey && previousKey !== sessionKey),
       forceNew: true,
       status: state.liveStream?.status || 'draft',
-      ingestMethod: sessionPayload.ingestMethod,
-      hlsUrl: sessionPayload.hlsPlaybackUrl
+      ingestMethod: sessionPayload.ingestMethod
     })
     state.goLive.streamId = pendingStreamId
     state.goLive.draftStreamId = pendingStreamId
@@ -5792,7 +5858,6 @@ async function joinLiveListener(options = {}) {
 
 function updateLiveListenerControls() {
   const button = app.querySelector('[data-live-listen]')
-  const status = app.querySelector('[data-live-status]')
   if (state.listenerAudioElement && app.querySelector('[data-native-audio-mount]')) ensureNativeListenerAudioElement()
   if (state.listenerAudioElement && app.querySelector('[data-livekit-audio-mount]')) ensureLiveKitListenerAudioMounted()
   if (state.hlsMediaElement && app.querySelector('[data-hls-player-mount]')) ensureHlsMediaMounted()
@@ -5801,7 +5866,6 @@ function updateLiveListenerControls() {
     : state.liveStatus === 'connecting' || state.liveStatus === 'connectingTransport' || state.liveStatus === 'reconnecting'
       ? 'Connecting...'
       : isBufferedHlsStream() ? 'Play' : 'Listen'
-  if (status) status.textContent = liveStatusLabel(state.liveStream || {})
   const playbackLoader = app.querySelector('[data-live-playback-loader]')
   if (playbackLoader) {
     const media = state.hlsMediaElement
@@ -6022,15 +6086,12 @@ function bindMusicEvents() {
     updateGoLiveFormState()
     const previousKey = sanitizeHlsStreamKey(state.goLive.form.streamKey || '')
     const nextKey = ensureHostSessionStreamKey({ forceNew: true })
-    const hlsUrl = `${getHlsEdgeBaseUrl()}/${nextKey}.m3u8`
-    console.log('[Stream Key] ensured', {
+    if (import.meta.env.DEV) console.debug('[Streaming] new key created', {
       streamId: state.goLive.draftStreamId || '',
-      previousKey,
-      nextKey,
+      keyRotated: Boolean(previousKey && previousKey !== nextKey),
       forceNew: true,
       status: state.liveStream?.status || 'draft',
-      ingestMethod: state.goLive.form.streamingMethod,
-      hlsUrl
+      ingestMethod: state.goLive.form.streamingMethod
     })
     state.goLive.connectionStatus = 'A new OBS stream key was generated for this draft.'
     rerender()

@@ -127,17 +127,6 @@ export async function checkHlsManifest({
     secondsSinceStart,
     healthy
   }
-  console.log('[HLS Health] check', {
-    streamId,
-    hlsUrl,
-    responseCode,
-    healthy,
-    sequence: parsed.sequence,
-    lastOkAt: diagnostics.hlsLastOkAt,
-    secondsSinceStart,
-    health,
-    error: diagnostics.hlsLastError
-  })
   return diagnostics
 }
 

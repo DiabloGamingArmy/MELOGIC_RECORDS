@@ -160,7 +160,6 @@ export async function attachHlsStream({
     listeners.push([eventName, callback])
   }
   const emitMediaStatus = (status) => {
-    console.info('[hls-edge] status', { status, mode, src })
     onStatus({ status, mode, src, mediaEl, hls })
   }
   ;['canplay', 'playing', 'waiting', 'stalled', 'ended'].forEach((eventName) => listen(eventName, () => emitMediaStatus(eventName)))
@@ -207,13 +206,11 @@ export async function attachHlsStream({
     clearMedia(mediaEl)
   }
   activePlayers.set(mediaEl, { cleanup, hls: null })
-  console.info('[hls-edge] status', { status: 'loading', mode, src })
   onStatus({ status: 'loading', mode, src, mediaEl, hls: null })
 
   const nativeHlsSupported = canPlayNativeHls(mediaEl)
   if (nativeHlsSupported && !stabilizeRtcBridge) {
     listen('loadedmetadata', () => {
-      console.info('[hls-edge] status', { status: 'manifestParsed', mode, src, native: true })
       onStatus({ status: 'manifestParsed', mode, src, mediaEl, hls: null, native: true, levelCount: null })
     })
     mediaEl.src = src
@@ -328,7 +325,6 @@ export async function attachHlsStream({
       const bitrate = Number(level?.bitrate || 0)
       return bitrate > Number(levels[best]?.bitrate || 0) ? index : best
     }, 0)
-    console.info('[hls-edge] status', { status: 'manifestParsed', mode, src, native: false, levelCount: levels.length, highestLevel })
     onStatus({
       status: 'manifestParsed',
       mode,
@@ -408,7 +404,13 @@ export async function attachHlsStream({
     }
     if (data.fatal === true && errorType === 'networkError' && networkRecoveryAttempts < 4) {
       networkRecoveryAttempts += 1
-      console.warn('[hls-edge] recovering network error', { ...payload, attempt: networkRecoveryAttempts })
+      console.warn('[hls-edge] recovering network error', {
+        type: payload.type,
+        details: payload.details,
+        fatal: payload.fatal,
+        responseCode: payload.responseCode,
+        attempt: networkRecoveryAttempts
+      })
       onStatus({
         ...payload,
         status: 'recovering',
@@ -426,7 +428,13 @@ export async function attachHlsStream({
     }
     if (data.fatal === true && errorType === 'mediaError' && mediaRecoveryAttempts < 3) {
       mediaRecoveryAttempts += 1
-      console.warn('[hls-edge] recovering media error', { ...payload, attempt: mediaRecoveryAttempts })
+      console.warn('[hls-edge] recovering media error', {
+        type: payload.type,
+        details: payload.details,
+        fatal: payload.fatal,
+        responseCode: payload.responseCode,
+        attempt: mediaRecoveryAttempts
+      })
       onStatus({
         ...payload,
         status: 'recovering',
@@ -444,11 +452,21 @@ export async function attachHlsStream({
       return
     }
     if (data.fatal !== true) {
-      console.warn('[hls-edge] recoverable playback issue', payload)
+      console.warn('[hls-edge] recoverable playback issue', {
+        type: payload.type,
+        details: payload.details,
+        fatal: payload.fatal,
+        responseCode: payload.responseCode
+      })
       onStatus({ ...payload, status: 'recovering', mode, src, mediaEl, hls })
       return
     }
-    console.error('[hls-edge] playback error', payload)
+    console.error('[hls-edge] playback error', {
+      type: payload.type,
+      details: payload.details,
+      fatal: payload.fatal,
+      responseCode: payload.responseCode
+    })
     onStatus({ ...payload, mode, src, mediaEl, hls })
     onError(payload)
   })
