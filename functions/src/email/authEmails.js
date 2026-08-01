@@ -62,7 +62,7 @@ function callableError(error = {}, stage = '', fallbackCode = 'failed-preconditi
   })
 }
 
-function shouldUseFirebaseAuthVerificationFallback(error = {}, stage = '') {
+function shouldUseFirebaseAuthDeliveryFallback(error = {}, stage = '') {
   return cleanString(stage, 120) === 'email send'
     && FIREBASE_AUTH_FALLBACK_CODES.has(cleanString(error?.code || '', 160))
 }
@@ -304,6 +304,7 @@ const requestPasswordResetEmail = onCall({ timeoutSeconds: 60, memory: '256MiB',
     logStage(flow, 'account security event write succeeded', { uid: userRecord.uid })
   } catch (error) {
     logStage(flow, `${stage} failed`, serializeError(error, stage, { includeStack: true }), 'error')
+    const useFirebaseAuthFallback = shouldUseFirebaseAuthDeliveryFallback(error, stage)
     await writeFailedEmailLog(flow, {
       stage,
       email,
@@ -314,7 +315,11 @@ const requestPasswordResetEmail = onCall({ timeoutSeconds: 60, memory: '256MiB',
         metadata: { template: 'password_reset' }
     })
     await writePasswordResetFailureEvent(flow, userRecord, error, stage)
-    return { ok: true, message: GENERIC_RESET_MESSAGE }
+    return {
+      ok: true,
+      message: GENERIC_RESET_MESSAGE,
+      ...(useFirebaseAuthFallback ? { fallback: 'firebase_auth' } : {})
+    }
   }
 
   return { ok: true, message: GENERIC_RESET_MESSAGE }
@@ -403,7 +408,7 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     logStage(flow, 'account security event write succeeded', { uid })
   } catch (error) {
     logStage(flow, `${stage} failed`, serializeError(error, stage, { includeStack: true }), 'error')
-    const useFirebaseAuthFallback = shouldUseFirebaseAuthVerificationFallback(error, stage)
+    const useFirebaseAuthFallback = shouldUseFirebaseAuthDeliveryFallback(error, stage)
     if (email) {
       await writeFailedEmailLog(flow, {
         stage,
@@ -437,6 +442,7 @@ module.exports = {
   requestEmailVerification,
   requestPasswordResetEmail,
   __test: {
-    shouldUseFirebaseAuthVerificationFallback
+    shouldUseFirebaseAuthDeliveryFallback,
+    shouldUseFirebaseAuthVerificationFallback: shouldUseFirebaseAuthDeliveryFallback
   }
 }

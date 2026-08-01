@@ -111,6 +111,10 @@ const {
   setMusicLiveNowPlaying,
   endMusicLiveStreamBeacon,
   sendMusicLiveChatMessage,
+  joinMusicLiveStreamingRemote,
+  heartbeatMusicLiveStreamingRemote,
+  leaveMusicLiveStreamingRemote,
+  kickMusicLiveStreamingRemote,
   cleanupStaleMusicLiveStreams
 } = require('./src/music/musicLiveStreams')
 const {
@@ -296,6 +300,10 @@ exports.deleteMusicLiveSequenceItem = deleteMusicLiveSequenceItem
 exports.setMusicLiveNowPlaying = setMusicLiveNowPlaying
 exports.endMusicLiveStreamBeacon = endMusicLiveStreamBeacon
 exports.sendMusicLiveChatMessage = sendMusicLiveChatMessage
+exports.joinMusicLiveStreamingRemote = joinMusicLiveStreamingRemote
+exports.heartbeatMusicLiveStreamingRemote = heartbeatMusicLiveStreamingRemote
+exports.leaveMusicLiveStreamingRemote = leaveMusicLiveStreamingRemote
+exports.kickMusicLiveStreamingRemote = kickMusicLiveStreamingRemote
 exports.cleanupStaleMusicLiveStreams = cleanupStaleMusicLiveStreams
 exports.createAntMediaStreamSession = createAntMediaStreamSession
 exports.getAntMediaPublishAuthorization = getAntMediaPublishAuthorization

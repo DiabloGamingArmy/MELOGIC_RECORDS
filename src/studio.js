@@ -11,6 +11,9 @@ import {
   deleteMusicLiveSequenceItem,
   endMusicLiveStream,
   heartbeatMusicLiveStream,
+  heartbeatMusicLiveStreamingRemote,
+  joinMusicLiveStreamingRemote,
+  kickMusicLiveStreamingRemote,
   listHostMusicLiveStreams,
   markMusicLiveStreamOnAir,
   normalizeMusicLiveTransportPayload,
@@ -20,10 +23,12 @@ import {
   setMusicLiveNowPlaying,
   startMusicLiveStream,
   subscribeMusicLiveChat,
+  subscribeMusicLiveStreamingRemotes,
   subscribeMusicLiveStream,
   updateMusicLiveStreamInfo,
   upsertMusicLiveSequenceItem
 } from './data/musicLiveService'
+import { streamingRemoteDeviceInfo } from './data/streaming/streamingRemoteDevice'
 import {
   deleteProgramScene,
   listProgramScenes,
@@ -108,6 +113,7 @@ const programOutputCanvas = document.createElement('canvas')
 programOutputCanvas.width = 1920
 programOutputCanvas.height = 1080
 const activeNativeHostSessions = new Map()
+const localStreamingRemoteDevice = streamingRemoteDeviceInfo()
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 const stableImageCache = new Map()
@@ -251,6 +257,19 @@ const state = {
     streamUnsubscribe: null,
     chatUnsubscribe: null,
     chatMessages: [],
+    chatServerMessages: [],
+    chatPendingMessages: [],
+    remote: {
+      device: localStreamingRemoteDevice,
+      joined: false,
+      role: '',
+      promptStream: null,
+      devices: [],
+      unsubscribe: null,
+      heartbeatTimer: 0,
+      error: '',
+      joining: false
+    },
     panel: '',
     inputSource: 'browser',
     audioEnabled: true,
@@ -435,6 +454,7 @@ const livePanels = [
   ['sequence', 'Sequence Editor'],
   ['metadata', 'Manual Metadata'],
   ['chat', 'Chat'],
+  ['remote', 'Streaming Remote'],
   ['preview', 'Preview / Monitor'],
   ['settings', 'Safety']
 ]
@@ -2002,7 +2022,7 @@ function renderManualMetadataPanel() {
         <label>Album<input name="album" value="${esc(meta.album)}" /></label>
         <label>Artwork URL<input name="artworkURL" value="${esc(meta.artworkURL)}" /></label>
         <label>Notes<textarea name="notes">${esc(meta.notes)}</textarea></label>
-        <div class="studio-live-action-bar"><button type="submit" ${meta.saving ? 'disabled' : ''}>Set Live Metadata</button><button type="button" data-live-clear-metadata ${live.streamId ? '' : 'disabled'}>Clear Live Metadata</button></div>
+        <div class="studio-live-action-bar"><button type="submit" ${meta.saving ? 'disabled' : ''}>Publish Now Playing</button><button type="button" data-live-clear-metadata ${live.streamId ? '' : 'disabled'}>Clear Metadata &amp; Hide Banner</button></div>
       </form>
     </section>
   `
@@ -2015,9 +2035,70 @@ function renderChatPanel() {
     <section class="studio-live-panel studio-live-chat-panel">
       <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><label class="studio-live-switch"><input type="checkbox" data-live-chat-enabled ${chatEnabled ? 'checked' : ''} /><span></span>Enable live chat</label><span><b data-studio-live-viewer-count>${liveHostViewerCount()}</b> viewers</span></div></header>
       <div class="studio-live-chat-log">
-        ${!chatEnabled ? '<p class="studio-live-empty">Live chat is disabled by the host.</p>' : live.streamId ? live.chatMessages.map((message) => `<article><strong>${esc(message.displayName)}</strong><span>${esc(message.text)}</span><small>${esc(message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : '')}</small></article>`).join('') || '<p class="studio-live-empty">No chat messages yet.</p>' : '<p class="studio-live-empty">Chat opens after Start Live.</p>'}
+        ${!chatEnabled ? '<p class="studio-live-empty">Live chat is disabled by the host.</p>' : live.streamId ? live.chatMessages.map((message) => `<article class="${message.deliveryStatus === 'pending' ? 'is-pending' : message.deliveryStatus === 'failed' ? 'is-failed' : ''}"><strong>${esc(message.displayName)}</strong><span>${esc(message.text)}</span><small>${message.deliveryStatus === 'pending' ? 'Sending...' : message.deliveryStatus === 'failed' ? 'Not sent' : esc(message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : '')}</small></article>`).join('') || '<p class="studio-live-empty">No chat messages yet.</p>' : '<p class="studio-live-empty">Chat opens after Start Live.</p>'}
       </div>
       <form class="studio-live-chat-form" data-live-chat-form><input name="message" value="${esc(live.chatDraft)}" placeholder="Message listeners..." ${live.streamId && chatEnabled ? '' : 'disabled'} /><button type="submit" ${live.streamId && chatEnabled ? '' : 'disabled'}>Send</button></form>
+    </section>
+  `
+}
+
+function streamingRemoteDeviceIsOnline(device = {}) {
+  const lastSeen = Date.parse(device.lastSeenAt || '')
+  return device.status === 'online' && Number.isFinite(lastSeen) && Date.now() - lastSeen < 45000
+}
+
+function renderStreamingRemotePrompt(stream = {}) {
+  const live = liveState()
+  return `
+    <section class="studio-live-panel studio-streaming-remote-prompt">
+      <div class="studio-streaming-remote-prompt-icon" aria-hidden="true">↗</div>
+      <p class="eyebrow">Active on another device</p>
+      <h1>Remote Control ${esc(stream.title || 'Live Stream')}?</h1>
+      <p>This account already has an active broadcast. Join it as a Streaming Remote to manage stream details, metadata, chat, and safety controls without starting a second encoder.</p>
+      <div class="studio-streaming-remote-origin">
+        <span>Primary device</span>
+        <strong>${esc(stream.primaryControlDeviceLabel || 'Original streaming device')}</strong>
+      </div>
+      ${live.remote.error ? `<p class="studio-live-error" role="alert">${esc(live.remote.error)}</p>` : ''}
+      <div class="studio-live-action-bar">
+        <button type="button" data-live-remote-join ${live.remote.joining ? 'disabled' : ''}>${live.remote.joining ? 'Joining...' : 'Remote Control Stream'}</button>
+        <a href="${ROUTES.musicLive}" class="button button-muted">Open Streaming</a>
+      </div>
+      <small>The original device remains the primary controller and continues owning browser capture and encoding.</small>
+    </section>
+  `
+}
+
+function renderStreamingRemotePanel() {
+  const live = liveState()
+  const remote = live.remote
+  const isPrimary = remote.role === 'primary'
+  const devices = remote.devices || []
+  return `
+    <section class="studio-live-panel studio-streaming-remote-panel">
+      <header class="studio-live-subheader">
+        <div><p class="eyebrow">Live Studio</p><h1>Streaming Remote</h1><p>Manage the devices connected to this broadcast's control surface.</p></div>
+        <span class="studio-streaming-remote-role is-${esc(remote.role || 'offline')}">${esc(isPrimary ? 'Primary device' : remote.joined ? 'Remote device' : 'Not connected')}</span>
+      </header>
+      <div class="studio-streaming-remote-summary">
+        <div><span>This device</span><strong>${esc(remote.device.label)}</strong><small>${isPrimary ? 'Owns browser capture and cannot be removed.' : 'Cloud controls are synchronized with the primary device.'}</small></div>
+        <div><span>Active controls</span><strong>${devices.filter(streamingRemoteDeviceIsOnline).length}</strong><small>Devices seen in the last 45 seconds</small></div>
+      </div>
+      ${remote.error ? `<p class="studio-live-error" role="alert">${esc(remote.error)}</p>` : ''}
+      <div class="studio-streaming-remote-list">
+        ${devices.length ? devices.map((device) => {
+          const online = streamingRemoteDeviceIsOnline(device)
+          const primary = device.role === 'primary' || device.deviceId === live.stream?.primaryControlDeviceId
+          const current = device.deviceId === remote.device.deviceId
+          return `<article class="${online ? 'is-online' : 'is-offline'} ${device.status === 'kicked' ? 'is-kicked' : ''}">
+            <span class="studio-streaming-remote-device-icon" aria-hidden="true">${device.deviceType === 'mobile' ? '▯' : '▰'}</span>
+            <div><strong>${esc(device.label)}${current ? ' · This device' : ''}</strong><small>${primary ? 'Primary' : device.status === 'kicked' ? 'Removed' : online ? 'Connected now' : `Last seen ${device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : 'recently'}`}</small></div>
+            <span class="studio-streaming-remote-presence">${primary ? 'Primary' : online ? 'Online' : device.status === 'kicked' ? 'Removed' : 'Offline'}</span>
+            ${isPrimary && !primary && device.status !== 'kicked' ? `<button type="button" class="button button-danger" data-live-remote-kick="${esc(device.deviceId)}">Remove</button>` : ''}
+          </article>`
+        }).join('') : '<p class="studio-live-empty">No remote devices have joined this stream.</p>'}
+      </div>
+      <aside class="studio-streaming-remote-note"><strong>How control priority works</strong><p>The device that started the stream is permanent primary for this session. Remote devices can edit shared cloud settings, metadata, chat, and stream state. Camera, microphone, screen capture, and the hardware encoder remain local to the primary device so a remote cannot silently replace the live feed.</p></aside>
     </section>
   `
 }
@@ -2382,6 +2463,7 @@ function liveProgramOutputState() {
   return normalizeMusicLiveTransportPayload({
     streamingProtocol,
     streamingMethod: ingestMethod,
+    controlDevice: streamingRemoteDevicePayload(live.streamId || live.draftStreamId),
     streamKey,
     nativeStreaming: {
       enabled: streamingProtocol === 'nativeStreaming',
@@ -3221,6 +3303,9 @@ function renderProgramMixerPanel() {
 function renderLiveStudio() {
   const live = liveState()
   const panel = currentLivePanel()
+  if (live.remote.promptStream && !live.remote.joined) {
+    return `<section class="studio-live-main" data-live-panel-content="remote-prompt">${renderStreamingRemotePrompt(live.remote.promptStream)}</section>`
+  }
   if (panel !== 'sequence' && live.assetPreview.audio) stopLiveAssetPreview({ render: false })
   live.panel = panel
   const panelContent = panel === 'input'
@@ -3233,6 +3318,8 @@ function renderLiveStudio() {
           ? renderManualMetadataPanel()
           : panel === 'chat'
             ? renderChatPanel()
+            : panel === 'remote'
+              ? renderStreamingRemotePanel()
             : panel === 'preview'
               ? renderPreviewPanel()
               : panel === 'settings'
@@ -3568,6 +3655,137 @@ async function loadLiveStudioItems() {
   refreshLiveDecks()
 }
 
+function stopStreamingRemotePresence() {
+  const remote = liveState().remote
+  remote.unsubscribe?.()
+  remote.unsubscribe = null
+  if (remote.heartbeatTimer) window.clearInterval(remote.heartbeatTimer)
+  remote.heartbeatTimer = 0
+}
+
+function streamingRemoteErrorMessage(error = null, fallback = 'Streaming Remote is temporarily unavailable.') {
+  const code = String(error?.code || '')
+  const message = String(error?.message || '').trim()
+  if (!message || message === 'internal' || /internal|unavailable|not-found/.test(code)) return fallback
+  return message
+}
+
+function subscribeStreamingRemoteDevices(streamId = '') {
+  const live = liveState()
+  const remote = live.remote
+  remote.unsubscribe?.()
+  remote.unsubscribe = subscribeMusicLiveStreamingRemotes(streamId, (devices) => {
+    remote.devices = devices
+    const current = devices.find((device) => device.deviceId === remote.device.deviceId)
+    if (current?.status === 'kicked' && remote.role !== 'primary') {
+      stopStreamingRemotePresence()
+      remote.joined = false
+      remote.role = ''
+      remote.error = 'This device was removed by the primary streaming device.'
+      remote.promptStream = live.stream
+    }
+    if (currentStudioSection() === 'live' && (currentLivePanel() === 'remote' || remote.promptStream)) renderShell()
+  }, (error) => {
+    remote.error = streamingRemoteErrorMessage(error, 'Connected devices could not be loaded.')
+    if (currentStudioSection() === 'live' && currentLivePanel() === 'remote') renderShell()
+  })
+}
+
+function streamingRemoteDevicePayload(streamId = '') {
+  const live = liveState()
+  const resolvedStreamId = streamId || live.streamId || live.draftStreamId || ''
+  return {
+    ...live.remote.device,
+    publisherSessionId: resolvedStreamId ? nativeHostSessionId(resolvedStreamId) : ''
+  }
+}
+
+async function activateStreamingRemotePresence(stream = {}, { claimPrimary = false } = {}) {
+  const live = liveState()
+  const remote = live.remote
+  const streamId = stream.streamId || stream.id || ''
+  if (!streamId || remote.joining) return null
+  remote.joining = true
+  remote.error = ''
+  try {
+    const devicePayload = streamingRemoteDevicePayload(streamId)
+    const result = await joinMusicLiveStreamingRemote(streamId, devicePayload, { claimPrimary })
+    remote.joined = true
+    remote.role = result.role || (stream.primaryControlDeviceId === remote.device.deviceId ? 'primary' : 'remote')
+    remote.promptStream = null
+    subscribeStreamingRemoteDevices(streamId)
+    if (remote.heartbeatTimer) window.clearInterval(remote.heartbeatTimer)
+    const beat = async () => {
+      if (!remote.joined || !['starting', 'live'].includes(live.stream?.status || stream.status)) return
+      try {
+        const heartbeat = await heartbeatMusicLiveStreamingRemote(streamId, devicePayload)
+        if (heartbeat?.primaryInvalid) {
+          stopStreamingRemotePresence()
+          remote.joined = false
+          remote.role = ''
+          remote.error = 'The original publishing device must reclaim primary control before this device can join.'
+          remote.promptStream = live.stream || stream
+          renderShell()
+          return
+        }
+        const roleChanged = Boolean(heartbeat?.role && heartbeat.role !== remote.role)
+        if (heartbeat?.role) remote.role = heartbeat.role
+        const errorCleared = Boolean(remote.error)
+        remote.error = ''
+        if ((roleChanged || errorCleared) && currentStudioSection() === 'live' && currentLivePanel() === 'remote') renderShell()
+        if (heartbeat?.kicked && remote.role !== 'primary') {
+          stopStreamingRemotePresence()
+          remote.joined = false
+          remote.role = ''
+          remote.error = 'This device was removed by the primary streaming device.'
+          remote.promptStream = live.stream || stream
+          renderShell()
+        }
+      } catch (error) {
+        remote.error = streamingRemoteErrorMessage(error, 'Streaming Remote lost its connection.')
+      }
+    }
+    beat().catch(() => {})
+    remote.heartbeatTimer = window.setInterval(() => beat().catch(() => {}), 20000)
+    return result
+  } finally {
+    remote.joining = false
+  }
+}
+
+async function joinActiveStreamAsRemote() {
+  const live = liveState()
+  const stream = live.remote.promptStream
+  if (!stream) return
+  try {
+    await activateStreamingRemotePresence(stream)
+    hydrateLiveStudioFromStream(stream)
+    live.streamId = stream.streamId || stream.id || ''
+    live.draftStreamId = live.streamId
+    live.browserInterruptedStreamId = ''
+    live.nativeInterruptedStreamId = ''
+    live.outputStatus = `Streaming Remote connected to ${stream.title || 'the live stream'}.`
+    subscribeLiveStudioStream(live.streamId)
+    subscribeLiveStudioChat(live.streamId)
+    setLivePanel('remote', { replace: true })
+  } catch (error) {
+    live.remote.error = streamingRemoteErrorMessage(error, 'This device could not join Streaming Remote.')
+    renderShell()
+  }
+}
+
+async function removeStreamingRemoteDevice(targetDeviceId = '') {
+  const live = liveState()
+  if (!targetDeviceId || live.remote.role !== 'primary' || !live.streamId) return
+  live.remote.error = ''
+  try {
+    await kickMusicLiveStreamingRemote(live.streamId, targetDeviceId, live.remote.device)
+  } catch (error) {
+    live.remote.error = streamingRemoteErrorMessage(error, 'The remote device could not be removed.')
+    renderShell()
+  }
+}
+
 function hydrateLiveStudioFromStream(stream = null) {
   if (!stream) return
   const live = liveState()
@@ -3575,11 +3793,12 @@ function hydrateLiveStudioFromStream(stream = null) {
   const streamId = stream.streamId || stream.id || ''
   const localHostSessionId = getNativeHostSessionMarker(streamId)
   const sameRuntimeNativeSession = Boolean(localHostSessionId && (!stream.hostSessionId || localHostSessionId === stream.hostSessionId))
-  const interruptedNative = firebaseSegmentStreamingEnabled() && isActive && isFirebaseSegmentProvider(stream.provider) && !live.streamId && !live.nativeRecorderRunning && !sameRuntimeNativeSession
+  const interruptedNative = firebaseSegmentStreamingEnabled() && isActive && isFirebaseSegmentProvider(stream.provider) && !live.streamId && !live.nativeRecorderRunning && !sameRuntimeNativeSession && !live.remote.joined
   const interruptedBrowser = Boolean(
     isActive
     && !live.streamId
     && !live.browserIngestActive
+    && !live.remote.joined
     && !isFirebaseSegmentProvider(stream.provider)
     && normalizeIngestMethod(stream.ingestMethod || stream.ingestMode, STREAM_PROVIDERS.hlsEdge) === STREAM_INGEST_METHODS.browserWebrtc
   )
@@ -3696,6 +3915,29 @@ async function restoreLiveStudioRuntimeState() {
   }
   const stream = active || draft || null
   if (!stream) return
+  if (active) {
+    const primaryDeviceId = active.primaryControlDeviceId || ''
+    const publisherSessionId = nativeHostSessionId(active.streamId || active.id || '')
+    const ownsLegacyPublisherSession = Boolean(active.hostSessionId && publisherSessionId === active.hostSessionId)
+    const shouldPromptForRemote = Boolean(
+      !ownsLegacyPublisherSession
+      && (
+        (primaryDeviceId && primaryDeviceId !== live.remote.device.deviceId)
+        || (!primaryDeviceId && active.hostSessionId)
+      )
+    )
+    if (shouldPromptForRemote) {
+      live.stream = active
+      live.remote.promptStream = active
+      live.remote.joined = false
+      live.remote.role = ''
+      live.outputStatus = `A live stream is already active on ${active.primaryControlDeviceLabel || 'another device'}.`
+      return
+    }
+    await activateStreamingRemotePresence(active, { claimPrimary: !primaryDeviceId || ownsLegacyPublisherSession }).catch((error) => {
+      live.remote.error = streamingRemoteErrorMessage(error, 'Streaming Remote presence could not be registered.')
+    })
+  }
   hydrateLiveStudioFromStream(stream)
   if (active && isFirebaseSegmentProvider(active.provider) && firebaseSegmentStreamingEnabled()) {
     const hostPresence = await getNativeHostPresence(active.streamId).catch(() => null)
@@ -5507,6 +5749,7 @@ function liveStreamPayload() {
     selectedInputSource: live.inputSource,
     sequenceId: live.activeSequence?.sequenceId || '',
     selectedSequenceId: live.activeSequence?.sequenceId || '',
+    controlDevice: streamingRemoteDevicePayload(live.streamId || live.draftStreamId),
     ...liveProgramOutputState()
   })
 }
@@ -6249,6 +6492,7 @@ function unsubscribeLiveStudioRuntime() {
   live.nativeRecorderRunning = false
   if (live.heartbeatTimer) window.clearInterval(live.heartbeatTimer)
   live.heartbeatTimer = 0
+  stopStreamingRemotePresence()
 }
 
 function clearEndedLiveHostState(streamId = '') {
@@ -6280,6 +6524,11 @@ function clearEndedLiveHostState(streamId = '') {
   live.audioPublishedToProvider = false
   live.videoPublishedToProvider = false
   live.streamForm.streamKey = createRandomStreamKey()
+  live.remote.joined = false
+  live.remote.role = ''
+  live.remote.promptStream = null
+  live.remote.devices = []
+  live.remote.error = ''
 }
 
 function liveStudioStreamRenderSignature(stream = null) {
@@ -6315,6 +6564,14 @@ function subscribeLiveStudioStream(streamId = '') {
   live.streamUnsubscribe = subscribeMusicLiveStream(streamId, (stream) => {
     const previousRenderSignature = liveStudioStreamRenderSignature(live.stream)
     live.stream = stream
+    if (stream && !['starting', 'live'].includes(stream.status)) {
+      stopStreamingRemotePresence()
+      live.remote.joined = false
+      live.remote.role = ''
+      live.remote.promptStream = null
+      live.remote.devices = []
+      live.remote.error = ''
+    }
     if (stream) {
       live.streamForm.title = stream.title || live.streamForm.title
       live.streamForm.description = stream.description || ''
@@ -6328,6 +6585,15 @@ function subscribeLiveStudioStream(streamId = '') {
       const firestoreStreamKey = sanitizeHlsStreamKey(stream.streamKey || '')
       if (firestoreStreamKey) live.streamForm.streamKey = firestoreStreamKey
       live.chatEnabled = stream.chatEnabled !== false
+      if (live.remote.joined) {
+        live.inputSource = stream.selectedInputSource === 'sequence' ? 'sequence' : 'browser'
+        live.audioEnabled = stream.audioEnabled !== false
+        live.videoEnabled = stream.videoEnabled === true
+        live.browserInputEnabled = stream.activeAudioSources?.browser !== false
+        live.sequenceInputEnabled = stream.activeAudioSources?.sequence === true || live.inputSource === 'sequence'
+        live.videoSource = ['browser', 'screen', 'sequence'].includes(stream.activeVideoSource) ? stream.activeVideoSource : live.videoSource
+        if (stream.programState && typeof stream.programState === 'object') restoreProgramMixerState(stream.programState, streamId)
+      }
       live.providerDiagnostics = {
         ...(live.providerDiagnostics || {}),
         hlsHealth: stream.hlsHealth || live.providerDiagnostics?.hlsHealth || '',
@@ -6352,6 +6618,18 @@ function subscribeLiveStudioStream(streamId = '') {
         hlsPlaybackUrl: firestoreHlsUrl || stream.hlsPlaybackUrl || ''
       })
       if (stream.status === 'live' && stream.streamingProtocol === 'hls') startStudioHlsHealthPolling()
+      const localPublisherSessionId = streamId ? nativeHostSessionId(streamId) : ''
+      const ownsPublisherSession = Boolean(stream.hostSessionId && localPublisherSessionId === stream.hostSessionId)
+      const mayClaimUnassignedPrimary = Boolean(!stream.primaryControlDeviceId && (!stream.hostSessionId || ownsPublisherSession))
+      if (
+        stream.status === 'live'
+        && !live.remote.joined
+        && (mayClaimUnassignedPrimary || stream.primaryControlDeviceId === live.remote.device.deviceId)
+      ) {
+        activateStreamingRemotePresence(stream, { claimPrimary: mayClaimUnassignedPrimary || ownsPublisherSession }).catch((error) => {
+          live.remote.error = streamingRemoteErrorMessage(error, 'Streaming Remote presence could not be registered.')
+        })
+      }
     }
     // Heartbeats and HLS-health writes update this Firestore document every
     // few seconds. Rebuilding the entire Live Studio shell for those metadata
@@ -6377,7 +6655,10 @@ function subscribeLiveStudioChat(streamId = '') {
     error: ''
   })
   live.chatUnsubscribe = subscribeMusicLiveChat(streamId, (messages) => {
-    live.chatMessages = messages
+    live.chatServerMessages = messages
+    const acknowledged = new Set(messages.map((message) => `${message.uid}:${message.clientMessageId}`).filter((key) => !key.endsWith(':')))
+    live.chatPendingMessages = live.chatPendingMessages.filter((message) => !acknowledged.has(`${message.uid}:${message.clientMessageId}`))
+    live.chatMessages = [...messages, ...live.chatPendingMessages]
     if (currentLivePanel() === 'chat') renderShell()
   }, (error) => {
     live.error = 'Live chat could not be loaded because of a permission or configuration error.'
@@ -6465,7 +6746,15 @@ async function clearManualLiveMetadata() {
   if (!live.streamId) return
   await setMusicLiveNowPlaying(live.streamId, '')
   await deleteMusicLiveSequenceItem(live.streamId, 'manual-metadata').catch(() => {})
-  live.outputStatus = 'Live metadata cleared.'
+  live.metadata.autoMatchSequencer = false
+  live.metadata.override = false
+  live.metadata.lastAutoMatchedItemId = ''
+  live.metadata.title = ''
+  live.metadata.artist = ''
+  live.metadata.album = ''
+  live.metadata.artworkURL = ''
+  live.metadata.notes = ''
+  live.outputStatus = 'Live metadata cleared. The Now Playing banner is hidden for viewers.'
   renderShell()
 }
 
@@ -6971,6 +7260,10 @@ function bindLiveStudioControls() {
     }
   })
   app.querySelector('[data-live-clear-metadata]')?.addEventListener('click', () => clearManualLiveMetadata())
+  app.querySelector('[data-live-remote-join]')?.addEventListener('click', () => joinActiveStreamAsRemote())
+  app.querySelectorAll('[data-live-remote-kick]').forEach((button) => button.addEventListener('click', () => {
+    removeStreamingRemoteDevice(button.dataset.liveRemoteKick || '').catch(() => {})
+  }))
   app.querySelector('[data-live-asset-editor-form]')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     await saveLiveAssetEditor(e.currentTarget)
@@ -6986,12 +7279,33 @@ function bindLiveStudioControls() {
     e.preventDefault()
     const text = String(new FormData(e.currentTarget).get('message') || '').trim()
     if (!text || !live.streamId || live.chatEnabled === false) return
+    const clientMessageId = typeof window.crypto?.randomUUID === 'function'
+      ? window.crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, '')
+      : `chat${Date.now()}${Math.random().toString(36).slice(2)}`
+    const optimisticMessage = {
+      id: `pending-${clientMessageId}`,
+      clientMessageId,
+      streamId: live.streamId,
+      uid: state.user?.uid || '',
+      displayName: state.user?.displayName || 'You',
+      photoURL: state.user?.photoURL || '',
+      isCreator: true,
+      text,
+      createdAt: new Date().toISOString(),
+      status: 'visible',
+      deliveryStatus: 'pending'
+    }
+    live.chatPendingMessages.push(optimisticMessage)
+    live.chatMessages = [...live.chatServerMessages, ...live.chatPendingMessages]
+    live.chatDraft = ''
+    renderShell()
     try {
-      await sendMusicLiveChatMessage(live.streamId, text)
-      live.chatDraft = ''
+      await sendMusicLiveChatMessage(live.streamId, text, clientMessageId)
     } catch (error) {
+      optimisticMessage.deliveryStatus = 'failed'
       live.error = error?.message || 'Live chat message could not be sent.'
     }
+    live.chatMessages = [...live.chatServerMessages, ...live.chatPendingMessages]
     renderShell()
   })
   app.querySelector('[data-live-chat-enabled]')?.addEventListener('change', async (e) => {
@@ -7242,6 +7556,7 @@ window.addEventListener('popstate', () => {
 
 window.addEventListener('beforeunload', (event) => {
   const live = liveState()
+  if (live.remote.joined && live.remote.role === 'remote') return
   if (isExternalEncoderSelected()) return
   const activeHostSession = Boolean(
     live.streamId &&

@@ -269,6 +269,8 @@ const state = {
   guestSetupStatus: '',
   liveChat: {
     messages: [],
+    serverMessages: [],
+    pendingMessages: [],
     text: '',
     sending: false,
     error: '',
@@ -800,6 +802,7 @@ function musicLiveMonitorRoute(streamId = '') {
 
 function renderNowPlaying(stream = {}) {
   const now = nowPlayingDisplay(stream)
+  if (!now) return ''
   return `
     <article class="music-now-playing">
       ${renderStableImage({ src: now.artworkURL, alt: '', className: 'music-now-playing-art', fallback: 'NP', key: `now-${stream.id || stream.streamId || ''}` })}
@@ -1522,6 +1525,8 @@ function stopLiveChatSubscription() {
   if (state.liveChat.unsubscribe) state.liveChat.unsubscribe()
   state.liveChat.unsubscribe = null
   state.liveChat.messages = []
+  state.liveChat.serverMessages = []
+  state.liveChat.pendingMessages = []
   state.liveChat.error = ''
 }
 
@@ -2718,19 +2723,22 @@ async function recoverHlsListenerPlayback(stream = state.liveStream) {
 
 function nowPlayingDisplay(stream = {}) {
   const current = stream.currentNowPlaying
-  return current?.title
-    ? {
-        title: current.title,
-        artist: current.artist || stream.hostDisplayName,
-        album: current.album || 'Melogic Streaming Live',
-        artworkURL: current.artworkURL || stream.coverArtURL
-      }
-    : {
-        title: stream.title,
-        artist: stream.hostDisplayName,
-        album: 'Melogic Streaming Live',
-        artworkURL: stream.coverArtURL
-      }
+  if (!current?.title) return null
+  return {
+    title: current.title,
+    artist: current.artist || stream.hostDisplayName,
+    album: current.album || 'Melogic Streaming Live',
+    artworkURL: current.artworkURL || stream.coverArtURL
+  }
+}
+
+function playbackMetadataDisplay(stream = {}) {
+  return nowPlayingDisplay(stream) || {
+    title: stream.title || 'Melogic Streaming Live',
+    artist: stream.hostDisplayName || 'Melogic',
+    album: 'Melogic Streaming Live',
+    artworkURL: stream.coverArtURL || ''
+  }
 }
 
 function streamHasVideoFoundation(stream = state.liveStream) {
@@ -2754,7 +2762,7 @@ function liveMetaLine(meta = {}, stream = {}) {
 
 function updateLiveMediaSession(stream = state.liveStream) {
   if (!('mediaSession' in navigator) || typeof window.MediaMetadata !== 'function' || !stream) return
-  const meta = nowPlayingDisplay(stream)
+  const meta = playbackMetadataDisplay(stream)
   const artwork = meta.artworkURL ? [{ src: meta.artworkURL, sizes: '512x512', type: 'image/png' }] : []
   navigator.mediaSession.metadata = new window.MediaMetadata({
     title: meta.title || 'Melogic Streaming Live',
@@ -3287,13 +3295,13 @@ function renderLiveChatPanel(stream = state.liveStream || {}) {
           const isCreator = message.isCreator === true || Boolean(message.uid && message.uid === stream.hostUid)
           const photoURL = message.photoURL || (isCreator ? liveHostPhotoURL(stream) : '')
           return `
-          <article class="music-live-chat-message ${isCreator ? 'is-creator' : ''}">
+          <article class="music-live-chat-message ${isCreator ? 'is-creator' : ''} ${message.deliveryStatus === 'pending' ? 'is-pending' : message.deliveryStatus === 'failed' ? 'is-failed' : ''}">
             ${renderAvatarImage({ src: photoURL, name: message.displayName, className: 'music-chat-avatar' })}
             <div>
               <div class="music-live-chat-message-meta">
                 <strong>${escapeHtml(message.displayName)}</strong>
                 ${isCreator ? '<span class="music-live-chat-creator-badge">Creator</span>' : ''}
-                <time>${escapeHtml(formatChatTime(message.createdAt))}</time>
+                <time>${message.deliveryStatus === 'pending' ? 'Sending...' : message.deliveryStatus === 'failed' ? 'Not sent' : escapeHtml(formatChatTime(message.createdAt))}</time>
               </div>
               <p>${escapeHtml(message.text)}</p>
             </div>
@@ -3738,7 +3746,7 @@ function renderGoLivePage() {
 
 function renderPublicLiveMonitorPage() {
   const stream = state.liveStream
-  const meta = nowPlayingDisplay(stream || {})
+  const meta = playbackMetadataDisplay(stream || {})
   const hasVideo = streamHasVideoFoundation(stream)
   const metaLine = liveMetaLine(meta, stream || {})
   const brand = '<div class="music-live-monitor-brand">MELOGIC STREAMING</div>'
@@ -4614,7 +4622,7 @@ function renderLiveGuestSetupModal(stream = {}, invite = {}) {
 function renderPlayer() {
   if (!shouldShowGlobalMusicPlayer()) return ''
   if (state.listenerRoom && state.liveStream?.id) {
-    const meta = nowPlayingDisplay(state.liveStream)
+    const meta = playbackMetadataDisplay(state.liveStream)
     return `
       <aside class="music-player" data-music-player aria-label="Melogic Streaming live player">
       <div class="music-player-art">
@@ -4963,7 +4971,10 @@ function startLiveChatSubscription(streamId) {
     (messages) => {
       const list = app.querySelector('[data-live-chat-messages]')
       const shouldStick = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 80
-      state.liveChat.messages = messages
+      state.liveChat.serverMessages = messages
+      const acknowledged = new Set(messages.map((message) => `${message.uid}:${message.clientMessageId}`).filter((key) => !key.endsWith(':')))
+      state.liveChat.pendingMessages = state.liveChat.pendingMessages.filter((message) => !acknowledged.has(`${message.uid}:${message.clientMessageId}`))
+      state.liveChat.messages = [...messages, ...state.liveChat.pendingMessages]
       state.liveChat.error = ''
       rerender()
       if (shouldStick) {
@@ -5204,18 +5215,36 @@ async function sendLiveChatMessage(form) {
     rerender()
     return
   }
-  state.liveChat.sending = true
+  const clientMessageId = typeof window.crypto?.randomUUID === 'function'
+    ? window.crypto.randomUUID().replace(/[^A-Za-z0-9_-]/g, '')
+    : `chat${Date.now()}${Math.random().toString(36).slice(2)}`
+  const optimisticMessage = {
+    id: `pending-${clientMessageId}`,
+    clientMessageId,
+    streamId,
+    uid: state.currentUser?.uid || '',
+    displayName: state.currentUser?.displayName || 'You',
+    photoURL: state.currentUser?.photoURL || '',
+    isCreator: state.currentUser?.uid === state.liveStream?.hostUid,
+    text,
+    createdAt: new Date().toISOString(),
+    status: 'visible',
+    deliveryStatus: 'pending'
+  }
+  state.liveChat.pendingMessages.push(optimisticMessage)
+  state.liveChat.messages = [...state.liveChat.serverMessages, ...state.liveChat.pendingMessages]
+  state.liveChat.sending = false
   state.liveChat.error = ''
-  state.liveChat.text = text
+  state.liveChat.text = ''
+  state.liveChat.lastSentAt = now
   rerender()
   try {
-    await sendMusicLiveChatMessage(streamId, text)
-    state.liveChat.text = ''
-    state.liveChat.lastSentAt = Date.now()
+    await sendMusicLiveChatMessage(streamId, text, clientMessageId)
   } catch (error) {
+    optimisticMessage.deliveryStatus = 'failed'
     state.liveChat.error = error?.message || 'Could not send chat message.'
   } finally {
-    state.liveChat.sending = false
+    state.liveChat.messages = [...state.liveChat.serverMessages, ...state.liveChat.pendingMessages]
     rerender()
   }
 }

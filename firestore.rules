@@ -2345,10 +2345,12 @@ service cloud.firestore {
           && get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.chatEnabled != false
           && request.resource.data.keys().hasOnly([
             'messageId',
+            'clientMessageId',
             'streamId',
             'uid',
             'displayName',
             'photoURL',
+            'isCreator',
             'text',
             'createdAt',
             'status',
@@ -2408,10 +2410,20 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      match /remoteDevices/{deviceId} {
+        allow read: if signedIn()
+          && (get(/databases/$(database)/documents/musicLiveStreams/$(streamId)).data.hostUid == request.auth.uid || isAdminClaim());
+        allow write: if false;
+      }
+
       match /reactions/{uid} {
         allow read: if signedIn() && (request.auth.uid == uid || isAdminClaim());
         allow write: if false;
       }
+    }
+
+    match /musicLiveStreamControls/{streamId} {
+      allow read, write: if false;
     }
 
     match /liveStudioSessions/{sessionId} {

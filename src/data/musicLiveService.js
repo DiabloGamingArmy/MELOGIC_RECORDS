@@ -296,6 +296,9 @@ export function normalizeMusicLiveStream(dataOrSnap = {}, explicitId = '') {
     hostConnected: raw.hostConnected === true,
     hostActive: raw.hostActive === true,
     hostSessionId: String(raw.hostSessionId || ''),
+    primaryControlDeviceId: String(raw.primaryControlDeviceId || ''),
+    primaryControlDeviceLabel: String(raw.primaryControlDeviceLabel || ''),
+    primaryControlSource: String(raw.primaryControlSource || ''),
     audioPublished: raw.audioPublished === true,
     videoPublished: raw.videoPublished === true,
     programHasAudio: raw.programHasAudio === true,
@@ -455,6 +458,7 @@ export function subscribeMusicLiveChat(streamId = '', onNext = () => {}, onError
         return {
           id: docSnap.id,
           messageId: String(raw.messageId || docSnap.id),
+          clientMessageId: String(raw.clientMessageId || ''),
           streamId: String(raw.streamId || id),
           uid: String(raw.uid || ''),
           displayName: String(raw.displayName || 'Melogic Listener'),
@@ -617,10 +621,60 @@ export async function endMusicLiveStream(streamId = '') {
   return result?.data || { ok: false }
 }
 
-export async function sendMusicLiveChatMessage(streamId = '', text = '') {
+export async function sendMusicLiveChatMessage(streamId = '', text = '', clientMessageId = '') {
   const callable = httpsCallable(functions, 'sendMusicLiveChatMessage')
-  const result = await callable({ streamId, text })
+  const result = await callable({ streamId, text, clientMessageId })
   return result?.data || { ok: false }
+}
+
+export async function joinMusicLiveStreamingRemote(streamId = '', device = {}, { claimPrimary = false } = {}) {
+  const callable = httpsCallable(functions, 'joinMusicLiveStreamingRemote')
+  const result = await callable({ streamId, device, claimPrimary })
+  return result?.data || { ok: false }
+}
+
+export async function heartbeatMusicLiveStreamingRemote(streamId = '', device = {}) {
+  const callable = httpsCallable(functions, 'heartbeatMusicLiveStreamingRemote')
+  const result = await callable({ streamId, device })
+  return result?.data || { ok: false }
+}
+
+export async function leaveMusicLiveStreamingRemote(streamId = '', device = {}) {
+  const callable = httpsCallable(functions, 'leaveMusicLiveStreamingRemote')
+  const result = await callable({ streamId, device })
+  return result?.data || { ok: false }
+}
+
+export async function kickMusicLiveStreamingRemote(streamId = '', targetDeviceId = '', device = {}) {
+  const callable = httpsCallable(functions, 'kickMusicLiveStreamingRemote')
+  const result = await callable({ streamId, targetDeviceId, device })
+  return result?.data || { ok: false }
+}
+
+export function subscribeMusicLiveStreamingRemotes(streamId = '', onNext = () => {}, onError = () => {}) {
+  const id = String(streamId || '').trim()
+  if (!db || !id || id.includes('/')) return () => {}
+  return onSnapshot(
+    collection(db, FIRESTORE_COLLECTIONS.musicLiveStreams, id, 'remoteDevices'),
+    (snapshot) => {
+      const devices = snapshot.docs.map((docSnap) => {
+        const raw = docSnap.data() || {}
+        return {
+          deviceId: String(raw.deviceId || docSnap.id),
+          label: String(raw.label || 'Unknown device'),
+          browser: String(raw.browser || ''),
+          platform: String(raw.platform || ''),
+          deviceType: String(raw.deviceType || 'desktop'),
+          role: String(raw.role || 'remote'),
+          status: String(raw.status || 'offline'),
+          joinedAt: toIsoDate(raw.joinedAt),
+          lastSeenAt: toIsoDate(raw.lastSeenAt)
+        }
+      }).sort((a, b) => String(b.lastSeenAt || '').localeCompare(String(a.lastSeenAt || '')))
+      onNext(devices)
+    },
+    onError
+  )
 }
 
 export async function updateMusicLiveListenerPresence(streamId = '', presenceId = '') {

@@ -9,6 +9,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   signOut,
+  sendPasswordResetEmail,
   sendEmailVerification,
   updateProfile
 } from 'firebase/auth'
@@ -73,30 +74,73 @@ export async function signInWithGoogle({ forceAccountSelect = false } = {}) {
 export async function sendPasswordReset(email) {
   await authPersistenceReady
   const callable = httpsCallable(functions, 'requestPasswordResetEmail')
-  const result = await callable({ email })
-  return result?.data || { ok: true }
+  try {
+    const result = await callable({ email })
+    const response = result?.data || { ok: true }
+    if (response.fallback !== 'firebase_auth') return response
+  } catch (error) {
+    const code = String(error?.code || '')
+    const recoverable = [
+      'functions/resource-exhausted',
+      'functions/unavailable',
+      'functions/deadline-exceeded',
+      'functions/internal'
+    ].includes(code)
+    if (!recoverable) throw error
+  }
+  await sendPasswordResetEmail(auth, String(email || '').trim(), {
+    url: 'https://melogicrecords.studio/auth',
+    handleCodeInApp: false
+  })
+  return {
+    ok: true,
+    message: 'If an account exists for that email, we sent a password reset link.',
+    provider: 'firebase_auth'
+  }
 }
 
-export async function sendEmailVerificationRequest() {
-  await authPersistenceReady
-  const callable = httpsCallable(functions, 'requestEmailVerification')
-  const result = await callable({})
-  const response = result?.data || { ok: true }
-  if (response.fallback !== 'firebase_auth') return response
+const AUTH_EMAIL_CONTINUE_URL = 'https://melogicrecords.studio/account/security'
 
-  const user = auth.currentUser
+async function sendFirebaseEmailVerification(user) {
   if (!user) {
     const error = new Error('Sign in before requesting another verification email.')
     error.code = 'auth/requires-recent-login'
     throw error
   }
   if (user.emailVerified) return { ok: true, message: 'Your email is already verified.' }
-  await sendEmailVerification(user)
+  await sendEmailVerification(user, {
+    url: AUTH_EMAIL_CONTINUE_URL,
+    handleCodeInApp: false
+  })
   return {
     ok: true,
     message: 'Verification email sent.',
     provider: 'firebase_auth'
   }
+}
+
+export async function sendEmailVerificationRequest() {
+  await authPersistenceReady
+  const callable = httpsCallable(functions, 'requestEmailVerification')
+  try {
+    const result = await callable({})
+    const response = result?.data || { ok: true }
+    if (response.fallback !== 'firebase_auth') return response
+  } catch (error) {
+    // Verification must not depend on the custom SMTP relay being reachable.
+    // Firebase Auth has its own protected delivery path and quotas, so use it
+    // when the callable is unavailable or its server-side cooldown was reached
+    // after a failed SMTP attempt.
+    const code = String(error?.code || '')
+    const recoverable = [
+      'functions/resource-exhausted',
+      'functions/unavailable',
+      'functions/deadline-exceeded',
+      'functions/internal'
+    ].includes(code)
+    if (!recoverable) throw error
+  }
+  return sendFirebaseEmailVerification(auth.currentUser)
 }
 
 export function signOutUser() {

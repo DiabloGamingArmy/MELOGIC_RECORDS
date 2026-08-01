@@ -152,3 +152,43 @@ test('distribution drafts are private to the artist and published releases remai
   await assertSucceeds(getDoc(doc(publicDb, 'musicReleases/public-release')))
   await assertSucceeds(getDoc(doc(publicDb, 'musicTracks/public-track')))
 })
+
+test('Streaming Remote presence is owner-readable and function-only writable', async () => {
+  await seed('musicLiveStreams/live-1', {
+    streamId: 'live-1',
+    hostUid: 'host',
+    title: 'Live Test',
+    status: 'live',
+    visibility: 'public',
+    accessMode: 'public',
+    chatEnabled: true
+  })
+  await seed('musicLiveStreams/live-1/remoteDevices/primary-device', {
+    deviceId: 'primary-device',
+    uid: 'host',
+    label: 'Mac · Safari',
+    role: 'primary',
+    status: 'online'
+  })
+  await seed('musicLiveStreamControls/live-1', {
+    streamId: 'live-1',
+    hostUid: 'host',
+    primaryControlDeviceId: 'primary-device',
+    primaryControlSessionId: 'private-session'
+  })
+
+  const ownerDb = testEnv.authenticatedContext('host').firestore()
+  const outsiderDb = testEnv.authenticatedContext('outsider').firestore()
+  const publicDb = testEnv.unauthenticatedContext().firestore()
+
+  await assertSucceeds(getDocs(collection(ownerDb, 'musicLiveStreams/live-1/remoteDevices')))
+  await assertFails(getDocs(collection(outsiderDb, 'musicLiveStreams/live-1/remoteDevices')))
+  await assertFails(getDoc(doc(publicDb, 'musicLiveStreams/live-1/remoteDevices/primary-device')))
+  await assertFails(setDoc(doc(ownerDb, 'musicLiveStreams/live-1/remoteDevices/untrusted-device'), {
+    deviceId: 'untrusted-device',
+    uid: 'host',
+    role: 'primary',
+    status: 'online'
+  }))
+  await assertFails(getDoc(doc(ownerDb, 'musicLiveStreamControls/live-1')))
+})

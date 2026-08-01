@@ -52,6 +52,38 @@ function cleanId(value, max = 160) {
   return cleanString(value, max).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, max)
 }
 
+function cleanRemoteDevice(value = {}) {
+  return {
+    deviceId: cleanId(value.deviceId, 120),
+    controlSessionId: cleanId(value.controlSessionId, 120),
+    publisherSessionId: cleanId(value.publisherSessionId, 120),
+    label: cleanString(value.label, 120) || 'Unknown device',
+    browser: cleanString(value.browser, 60),
+    platform: cleanString(value.platform, 60),
+    deviceType: value.deviceType === 'mobile' ? 'mobile' : 'desktop'
+  }
+}
+
+function isSecondaryStreamingRemote(stream = {}, requestData = {}) {
+  const requestDeviceId = cleanId(requestData?.controlDevice?.deviceId || requestData?.controlDeviceId, 120)
+  const primaryDeviceId = cleanId(stream.primaryControlDeviceId, 120)
+  return Boolean(requestDeviceId && primaryDeviceId && requestDeviceId !== primaryDeviceId)
+}
+
+function remoteSharedProgramFields(programOutputState = {}) {
+  return {
+    chatEnabled: programOutputState.chatEnabled !== false,
+    audioEnabled: programOutputState.audioEnabled !== false,
+    videoEnabled: programOutputState.videoEnabled === true,
+    audioOnly: programOutputState.videoEnabled !== true,
+    activeAudioSources: programOutputState.activeAudioSources || { browser: true, sequence: false },
+    activeVideoSource: cleanString(programOutputState.activeVideoSource, 80),
+    programState: programOutputState.programState && typeof programOutputState.programState === 'object'
+      ? programOutputState.programState
+      : {}
+  }
+}
+
 function sanitizeStreamKey(value = '') {
   return cleanString(value, 160)
     .replace(/[^A-Za-z0-9_-]/g, '')
@@ -1409,6 +1441,7 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     ? bufferedBroadcastFields(lockedRequestData, stream)
     : {}
   const hlsEdgeStream = requestedProtocol === 'hls'
+  const controlDevice = cleanRemoteDevice(request.data?.controlDevice || request.data || {})
   const safeLiveTitle = cleanString(request.data?.title || stream.title || 'Untitled live stream', 90)
   const safeLiveVisibility = ALLOWED_VISIBILITIES.has(request.data?.visibility)
     ? request.data.visibility
@@ -1434,6 +1467,12 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     playbackMode: programOutputState.playbackMode,
     hostActive: true,
     hostSessionId: cleanString(request.data?.hostSessionId || programOutputState.hostSessionId || '', 120),
+    ...(controlDevice.deviceId ? {
+      primaryControlDeviceId: controlDevice.deviceId,
+      primaryControlDeviceLabel: controlDevice.label,
+      primaryControlSource: 'stream_start',
+      primaryControlAssignedAt: now
+    } : {}),
     listenerCount: Number.isFinite(Number(stream.listenerCount)) ? Number(stream.listenerCount) : 0,
     startedAt: now,
     endedAt: null,
@@ -1452,6 +1491,29 @@ const markMusicLiveStreamOnAir = onCall({ region: 'us-central1' }, async (reques
     updatedAt: now,
     lastHostHeartbeatAt: now
   }, { merge: true })
+
+  if (controlDevice.deviceId) {
+    await Promise.all([
+      streamRef.collection('remoteDevices').doc(controlDevice.deviceId).set({
+        ...controlDevice,
+        controlSessionId: admin.firestore.FieldValue.delete(),
+        publisherSessionId: admin.firestore.FieldValue.delete(),
+        uid,
+        role: 'primary',
+        status: 'online',
+        joinedAt: now,
+        lastSeenAt: now,
+        updatedAt: now
+      }, { merge: true }),
+      db().collection('musicLiveStreamControls').doc(streamId).set({
+        streamId,
+        hostUid: uid,
+        primaryControlDeviceId: controlDevice.deviceId,
+        primaryControlSessionId: controlDevice.controlSessionId,
+        updatedAt: now
+      }, { merge: true })
+    ])
+  }
 
   liveLog('stream marked live', { uid, streamId, provider: programOutputState.provider, streamingProtocol: requestedProtocol, validationBranch: diagnostics.validationBranch, broadcastState: requestedProtocol === 'nativeStreaming' ? 'liveIdleNoListeners' : 'liveBroadcasting' })
   return {
@@ -1486,6 +1548,14 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
   const bufferedState = programOutputState.provider === 'hlsEdge'
     ? bufferedBroadcastFields(heartbeatData, stream)
     : {}
+  if (isSecondaryStreamingRemote(stream, request.data || {})) {
+    await streamRef.set({
+      ...remoteSharedProgramFields(programOutputState),
+      updatedAt: now,
+      lastRemoteControlAt: now
+    }, { merge: true })
+    return { ok: true, streamId, remoteControl: true }
+  }
   const requestedConnectionStatus = cleanString(request.data?.connectionStatus || stream.connectionStatus || '', 80)
   liveWriterLog(streamId, { ...programOutputState, ...bufferedState })
   await streamRef.set({
@@ -1503,6 +1573,208 @@ const heartbeatMusicLiveStream = onCall({ region: 'us-central1' }, async (reques
   }, { merge: true })
 
   return { ok: true, streamId }
+})
+
+async function loadRemoteHostStream(streamId = '', uid = '') {
+  const streamRef = db().collection('musicLiveStreams').doc(streamId)
+  const streamSnap = await streamRef.get()
+  if (!streamSnap.exists) throw new HttpsError('not-found', 'Live stream not found.')
+  const stream = streamSnap.data() || {}
+  if (stream.hostUid !== uid) throw new HttpsError('permission-denied', 'Streaming Remote is only available to the stream owner.')
+  if (!['starting', 'live'].includes(stream.status)) throw new HttpsError('failed-precondition', 'This stream is no longer active.')
+  return { streamRef, stream }
+}
+
+const joinMusicLiveStreamingRemote = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to use Streaming Remote.')
+  const streamId = cleanId(request.data?.streamId, 120)
+  const device = cleanRemoteDevice(request.data?.device || {})
+  if (!streamId || !device.deviceId || !device.controlSessionId) throw new HttpsError('invalid-argument', 'Valid stream and device identifiers are required.')
+  const { streamRef, stream } = await loadRemoteHostStream(streamId, uid)
+  const remoteRef = streamRef.collection('remoteDevices').doc(device.deviceId)
+  const existing = await remoteRef.get()
+  if (existing.data()?.status === 'kicked' && stream.primaryControlDeviceId !== device.deviceId) {
+    throw new HttpsError('permission-denied', 'This device was removed from the stream by the primary controller.')
+  }
+
+  let primaryControlDeviceId = cleanId(stream.primaryControlDeviceId, 120)
+  const publisherOwnsSession = Boolean(stream.hostSessionId && device.publisherSessionId === stream.hostSessionId)
+  const primarySource = cleanString(stream.primaryControlSource, 60)
+  const staleLegacyClaim = Boolean(
+    primaryControlDeviceId === device.deviceId
+    && stream.hostSessionId
+    && !publisherOwnsSession
+    && primarySource !== 'stream_start'
+  )
+  if (staleLegacyClaim) {
+    const now = admin.firestore.FieldValue.serverTimestamp()
+    await Promise.all([
+      streamRef.set({
+        primaryControlDeviceId: admin.firestore.FieldValue.delete(),
+        primaryControlDeviceLabel: admin.firestore.FieldValue.delete(),
+        primaryControlSource: admin.firestore.FieldValue.delete(),
+        primaryControlAssignedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true }),
+      db().collection('musicLiveStreamControls').doc(streamId).delete(),
+      remoteRef.set({ role: 'remote', updatedAt: now }, { merge: true })
+    ])
+    primaryControlDeviceId = ''
+  }
+  const canClaimUnassigned = Boolean(
+    !primaryControlDeviceId
+    && request.data?.claimPrimary === true
+    && (!stream.hostSessionId || publisherOwnsSession)
+  )
+  const canRecoverPublisher = Boolean(
+    publisherOwnsSession
+    && request.data?.claimPrimary === true
+    && primarySource !== 'stream_start'
+    && primaryControlDeviceId !== device.deviceId
+  )
+  if (canClaimUnassigned || canRecoverPublisher) {
+    const previousPrimaryDeviceId = primaryControlDeviceId
+    primaryControlDeviceId = device.deviceId
+    const now = admin.firestore.FieldValue.serverTimestamp()
+    await Promise.all([
+      streamRef.set({
+        primaryControlDeviceId,
+        primaryControlDeviceLabel: device.label,
+        primaryControlSource: publisherOwnsSession ? 'legacy_publisher_recovery' : 'legacy_claim',
+        primaryControlAssignedAt: now,
+        updatedAt: now
+      }, { merge: true }),
+      db().collection('musicLiveStreamControls').doc(streamId).set({
+        streamId,
+        hostUid: uid,
+        primaryControlDeviceId,
+        primaryControlSessionId: device.controlSessionId,
+        updatedAt: now
+      }, { merge: true }),
+      ...(previousPrimaryDeviceId && previousPrimaryDeviceId !== device.deviceId
+        ? [streamRef.collection('remoteDevices').doc(previousPrimaryDeviceId).set({
+            role: 'remote',
+            updatedAt: now
+          }, { merge: true })]
+        : [])
+    ])
+  }
+  const role = primaryControlDeviceId === device.deviceId ? 'primary' : 'remote'
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  if (role === 'primary') {
+    await db().collection('musicLiveStreamControls').doc(streamId).set({
+      streamId,
+      hostUid: uid,
+      primaryControlDeviceId: device.deviceId,
+      primaryControlSessionId: device.controlSessionId,
+      updatedAt: now
+    }, { merge: true })
+  }
+  await remoteRef.set({
+    ...device,
+    controlSessionId: admin.firestore.FieldValue.delete(),
+    publisherSessionId: admin.firestore.FieldValue.delete(),
+    uid,
+    role,
+    status: 'online',
+    joinedAt: existing.exists ? existing.data()?.joinedAt || now : now,
+    lastSeenAt: now,
+    updatedAt: now
+  }, { merge: true })
+  return { ok: true, streamId, deviceId: device.deviceId, role, primaryControlDeviceId }
+})
+
+const heartbeatMusicLiveStreamingRemote = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to use Streaming Remote.')
+  const streamId = cleanId(request.data?.streamId, 120)
+  const device = cleanRemoteDevice(request.data?.device || {})
+  if (!streamId || !device.deviceId) throw new HttpsError('invalid-argument', 'Valid stream and device identifiers are required.')
+  const { streamRef, stream } = await loadRemoteHostStream(streamId, uid)
+  const remoteRef = streamRef.collection('remoteDevices').doc(device.deviceId)
+  const remoteSnap = await remoteRef.get()
+  if (remoteSnap.data()?.status === 'kicked' && stream.primaryControlDeviceId !== device.deviceId) {
+    return { ok: false, kicked: true, streamId, deviceId: device.deviceId }
+  }
+  const now = admin.firestore.FieldValue.serverTimestamp()
+  const publisherOwnsSession = Boolean(stream.hostSessionId && device.publisherSessionId === stream.hostSessionId)
+  const invalidLegacyPrimary = Boolean(
+    stream.primaryControlDeviceId === device.deviceId
+    && stream.hostSessionId
+    && !publisherOwnsSession
+    && stream.primaryControlSource !== 'stream_start'
+  )
+  if (invalidLegacyPrimary) {
+    await Promise.all([
+      streamRef.set({
+        primaryControlDeviceId: admin.firestore.FieldValue.delete(),
+        primaryControlDeviceLabel: admin.firestore.FieldValue.delete(),
+        primaryControlSource: admin.firestore.FieldValue.delete(),
+        primaryControlAssignedAt: admin.firestore.FieldValue.delete(),
+        updatedAt: now
+      }, { merge: true }),
+      db().collection('musicLiveStreamControls').doc(streamId).delete(),
+      remoteRef.set({
+        role: 'remote',
+        status: 'online',
+        lastSeenAt: now,
+        updatedAt: now
+      }, { merge: true })
+    ])
+    return { ok: false, primaryInvalid: true, streamId, deviceId: device.deviceId, role: 'remote' }
+  }
+  const role = stream.primaryControlDeviceId === device.deviceId ? 'primary' : 'remote'
+  await remoteRef.set({
+    ...device,
+    controlSessionId: admin.firestore.FieldValue.delete(),
+    publisherSessionId: admin.firestore.FieldValue.delete(),
+    uid,
+    role,
+    status: 'online',
+    joinedAt: remoteSnap.exists ? remoteSnap.data()?.joinedAt || now : now,
+    lastSeenAt: now,
+    updatedAt: now
+  }, { merge: true })
+  return { ok: true, streamId, deviceId: device.deviceId, role }
+})
+
+const leaveMusicLiveStreamingRemote = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to use Streaming Remote.')
+  const streamId = cleanId(request.data?.streamId, 120)
+  const device = cleanRemoteDevice(request.data?.device || {})
+  if (!streamId || !device.deviceId) throw new HttpsError('invalid-argument', 'Valid stream and device identifiers are required.')
+  const { streamRef } = await loadRemoteHostStream(streamId, uid)
+  await streamRef.collection('remoteDevices').doc(device.deviceId).set({
+    status: 'offline',
+    lastSeenAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+  return { ok: true, streamId, deviceId: device.deviceId }
+})
+
+const kickMusicLiveStreamingRemote = onCall({ region: 'us-central1' }, async (request) => {
+  const uid = request.auth?.uid
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in to use Streaming Remote.')
+  const streamId = cleanId(request.data?.streamId, 120)
+  const targetDeviceId = cleanId(request.data?.targetDeviceId, 120)
+  const device = cleanRemoteDevice(request.data?.device || {})
+  if (!streamId || !targetDeviceId || !device.deviceId || !device.controlSessionId) throw new HttpsError('invalid-argument', 'Valid controller and target device identifiers are required.')
+  const { streamRef, stream } = await loadRemoteHostStream(streamId, uid)
+  if (targetDeviceId === stream.primaryControlDeviceId) throw new HttpsError('failed-precondition', 'The primary streaming device cannot be removed.')
+  const controlSnap = await db().collection('musicLiveStreamControls').doc(streamId).get()
+  const control = controlSnap.data() || {}
+  if (control.primaryControlDeviceId !== device.deviceId || control.primaryControlSessionId !== device.controlSessionId) {
+    throw new HttpsError('permission-denied', 'Only the primary streaming device can remove a remote.')
+  }
+  await streamRef.collection('remoteDevices').doc(targetDeviceId).set({
+    status: 'kicked',
+    kickedAt: admin.firestore.FieldValue.serverTimestamp(),
+    kickedByDeviceId: device.deviceId,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true })
+  return { ok: true, streamId, targetDeviceId }
 })
 
 const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (request) => {
@@ -1556,17 +1828,19 @@ const updateMusicLiveStreamInfo = onCall({ region: 'us-central1' }, async (reque
     selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource)
   })
   const bufferedState = programOutputState.streamingProtocol === 'hls' ? bufferedBroadcastFields(updateData, stream) : {}
+  const secondaryRemote = isSecondaryStreamingRemote(stream, request.data || {})
   liveWriterLog(streamId, { ...programOutputState, ...bufferedState })
   await streamRef.set({
     ...metadata,
     selectedInputSource: normalizeInputSource(request.data?.inputSource || request.data?.selectedInputSource || stream.selectedInputSource),
     selectedSequenceId: cleanId(request.data?.sequenceId || request.data?.selectedSequenceId || stream.selectedSequenceId, 160),
-    ...programOutputState,
-    ...bufferedState,
+    ...(secondaryRemote ? remoteSharedProgramFields(programOutputState) : programOutputState),
+    ...(secondaryRemote ? {} : bufferedState),
     selectedProviderUpdatedAt: now,
     selectedProviderUpdatedBy: uid,
     updatedAt: now,
-    lastMetadataUpdateAt: now
+    lastMetadataUpdateAt: now,
+    ...(secondaryRemote ? { lastRemoteControlAt: now } : {})
   }, { merge: true })
 
   return {
@@ -1629,6 +1903,7 @@ async function endStreamByHost({ uid, streamId, reason = 'host_ended' }) {
     updatedAt: now,
     listenerCount: 0
   }, { merge: true })
+  await db().collection('musicLiveStreamControls').doc(cleanStreamId).delete().catch(() => {})
 
   return { ok: true, streamId: cleanStreamId, status: 'ended' }
 }
@@ -1992,6 +2267,7 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   if (!streamId || streamId.includes('/')) throw new HttpsError('invalid-argument', 'A valid stream id is required.')
   const text = cleanString(request.data?.text, CHAT_TEXT_MAX_LENGTH)
   if (!text) throw new HttpsError('invalid-argument', 'Message text is required.')
+  const clientMessageId = cleanId(request.data?.clientMessageId, 120) || crypto.randomBytes(16).toString('hex')
 
   const [{ user, profile, accountPermissions }, streamSnap] = await Promise.all([
     loadAccount(uid, request.auth),
@@ -2010,11 +2286,14 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   }
 
   const now = admin.firestore.FieldValue.serverTimestamp()
-  const messageRef = db().collection('musicLiveStreams').doc(streamId).collection('chatMessages').doc()
+  // A client-generated id makes retries idempotent and lets the sender replace
+  // its optimistic row with the server row instead of displaying it twice.
+  const messageRef = db().collection('musicLiveStreams').doc(streamId).collection('chatMessages').doc(`${cleanId(uid, 80)}_${clientMessageId}`)
   const displayName = cleanString(profile?.displayName || user?.displayName || request.auth.token.name || 'Melogic Listener', 80)
   const photoURL = cleanString(profile?.avatarURL || profile?.photoURL || user?.avatarURL || user?.photoURL || request.auth.token.picture || '', 1000)
   const message = {
     messageId: messageRef.id,
+    clientMessageId,
     streamId,
     uid,
     displayName,
@@ -2025,8 +2304,12 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
     status: 'visible',
     moderationFlags: []
   }
-  await messageRef.set(message)
-  return { ok: true, messageId: messageRef.id }
+  try {
+    await messageRef.create(message)
+  } catch (error) {
+    if (!['6', 'already-exists'].includes(String(error?.code || ''))) throw error
+  }
+  return { ok: true, messageId: messageRef.id, clientMessageId }
 })
 
 async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
@@ -2129,5 +2412,13 @@ module.exports = {
   setMusicLiveNowPlaying,
   endMusicLiveStreamBeacon,
   sendMusicLiveChatMessage,
-  cleanupStaleMusicLiveStreams
+  joinMusicLiveStreamingRemote,
+  heartbeatMusicLiveStreamingRemote,
+  leaveMusicLiveStreamingRemote,
+  kickMusicLiveStreamingRemote,
+  cleanupStaleMusicLiveStreams,
+  __test: {
+    isSecondaryStreamingRemote,
+    remoteSharedProgramFields
+  }
 }

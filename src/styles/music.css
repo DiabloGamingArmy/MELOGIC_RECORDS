@@ -3084,3 +3084,19 @@ html.music-live-fallback-fullscreen {
     display: none;
   }
 }
+.music-live-chat-message.is-pending {
+  opacity: .72;
+}
+
+.music-live-chat-message.is-pending time {
+  color: var(--music-accent, #70dcff);
+}
+
+.music-live-chat-message.is-failed {
+  border-left: 2px solid #ff7676;
+  padding-left: .65rem;
+}
+
+.music-live-chat-message.is-failed time {
+  color: #ff9a9a;
+}
