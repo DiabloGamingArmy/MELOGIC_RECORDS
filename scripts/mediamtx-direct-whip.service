@@ -1,0 +1,27 @@
+[Unit]
+Description=Melogic direct browser WebRTC ingest and HLS origin
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=2
+ExecStartPre=-/usr/bin/docker rm -f mediamtx-direct-whip
+ExecStartPre=/usr/sbin/sysctl -w net.core.rmem_max=16777216
+ExecStartPre=/usr/sbin/sysctl -w net.core.wmem_max=16777216
+ExecStart=/usr/bin/docker run --rm --name mediamtx-direct-whip \
+  --memory=640m \
+  -p 8000:8000/udp \
+  -p 8000:8000/tcp \
+  -p 8888:8888 \
+  -p 8889:8889 \
+  -p 127.0.0.1:9997:9997 \
+  -v /etc/melogic/mediamtx-direct-whip.yml:/mediamtx.yml:ro \
+  melogic/mediamtx-ffmpeg:1.18.2-aac2
+ExecStop=/usr/bin/docker stop -t 10 mediamtx-direct-whip
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

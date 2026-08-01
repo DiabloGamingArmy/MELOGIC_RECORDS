@@ -1,6 +1,6 @@
 import { buildHlsPlaybackUrl as buildEdgePlaybackUrl, sanitizeHlsStreamKey } from './hlsEdgePlayer'
 
-const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/?app=live&stream={streamKey}&eip=104.197.179.248'
+const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/mtx/ingest/{streamKey}/whip'
 const CONNECTION_TIMEOUT_MS = 15000
 const FETCH_TIMEOUT_MS = 15000
 const CONNECTION_FAILURE_GRACE_MS = 30000
@@ -143,6 +143,9 @@ function connectionDiagnostics(peerConnection, mediaStream, extra = {}, settings
     videoTrackCount,
     audioTrackReadyState: audioTrack?.readyState || 'none',
     videoTrackReadyState: videoTrack?.readyState || 'none',
+    audioTrackSettings: audioTrack?.getSettings?.() || {},
+    audioTrackConstraints: audioTrack?.getConstraints?.() || {},
+    videoContentHint: videoTrack?.contentHint || '',
     audioTargetBitrate: MUSIC_AUDIO_MAX_BITRATE,
     videoTargetBitrate: videoTrack ? encoderSettings.maxBitrate : 0,
     videoTargetFramerate: videoTrack ? encoderSettings.maxFramerate : 0,
@@ -237,7 +240,17 @@ function preferH264VideoCodec(peerConnection) {
   const transceiver = peerConnection?.getTransceivers?.().find((entry) => entry.sender?.track?.kind === 'video') || null
   const capabilities = typeof RTCRtpSender !== 'undefined' ? RTCRtpSender.getCapabilities?.('video') : null
   if (!transceiver?.setCodecPreferences || !Array.isArray(capabilities?.codecs)) return false
-  const h264 = capabilities.codecs.filter((codec) => /video\/h264/i.test(codec.mimeType || ''))
+  const profileScore = (codec) => {
+    const profile = String(codec?.sdpFmtpLine || '').match(/profile-level-id=([0-9a-f]{6})/i)?.[1]?.toLowerCase() || ''
+    if (profile.startsWith('64')) return 4
+    if (profile.startsWith('4d')) return 3
+    if (profile.startsWith('42e0')) return 2
+    if (profile.startsWith('42')) return 1
+    return 0
+  }
+  const h264 = capabilities.codecs
+    .filter((codec) => /video\/h264/i.test(codec.mimeType || ''))
+    .sort((left, right) => profileScore(right) - profileScore(left))
   if (!h264.length) return false
   try {
     transceiver.setCodecPreferences([...h264, ...capabilities.codecs.filter((codec) => !/video\/h264/i.test(codec.mimeType || ''))])
@@ -586,8 +599,12 @@ export function buildBrowserWebrtcIngestUrl(streamKey = '') {
     const url = new URL(expanded)
     if (!['http:', 'https:'].includes(url.protocol)) return ''
     if (!hasPlaceholder) url.searchParams.set('stream', cleanKey)
-    if (!url.searchParams.get('app')) url.searchParams.set('app', 'live')
-    if (!url.searchParams.get('eip')) url.searchParams.set('eip', '104.197.179.248')
+    // Legacy SRS WHIP used query parameters. Direct MediaMTX WHIP identifies
+    // the stream by path and must not inherit SRS-specific routing metadata.
+    if (url.pathname.includes('/rtc/v1/whip/')) {
+      if (!url.searchParams.get('app')) url.searchParams.set('app', 'live')
+      if (!url.searchParams.get('eip')) url.searchParams.set('eip', '104.197.179.248')
+    }
     return url.toString()
   } catch {
     return ''

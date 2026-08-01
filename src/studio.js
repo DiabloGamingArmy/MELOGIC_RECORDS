@@ -1358,7 +1358,12 @@ function renderDetailedStreamOutputStatus() {
   const hlsUrl = buildHlsPlaybackUrl(streamKey, { ingestMethod: live.ingestMethod }) || diagnostics.hlsUrl || live.stream?.hlsUrl || live.stream?.hlsPlaybackUrl || ''
   const whipUrl = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc ? buildBrowserWebrtcIngestUrl(streamKey) : ''
   let whipStreamParam = ''
-  try { whipStreamParam = new URL(whipUrl).searchParams.get('stream') || '' } catch {}
+  try {
+    const parsedWhipUrl = new URL(whipUrl)
+    whipStreamParam = parsedWhipUrl.searchParams.get('stream')
+      || parsedWhipUrl.pathname.match(/\/ingest\/([^/]+)\/whip\/?$/)?.[1]
+      || ''
+  } catch {}
   const encoderState = diagnostics.connectionState || diagnostics.ingestConnectionState || 'new'
   const hlsHealth = diagnostics.hlsHealth || live.stream?.hlsHealth || 'not checked'
   const browserBufferedMode = live.ingestMethod === STREAM_INGEST_METHODS.browserWebrtc
@@ -1391,7 +1396,7 @@ function renderDetailedStreamOutputStatus() {
         <div><dt>HLS URL</dt><dd>${esc(hlsUrl || 'not available')}</dd></div>
         <div><dt>Stream Key</dt><dd>${esc(streamKey || 'not available')}</dd></div>
         <div><dt>Ingest Method</dt><dd>${esc(live.ingestMethod || 'not available')}</dd></div>
-        <div><dt>WHIP Stream Param</dt><dd>${esc(whipStreamParam || 'not applicable')}</dd></div>
+        <div><dt>WHIP Stream Key</dt><dd>${esc(whipStreamParam || 'not applicable')}</dd></div>
         <div><dt>HLS Response</dt><dd>${esc(diagnostics.hlsResponseCode || live.stream?.hlsResponseCode || 'not checked')}</dd></div>
         <div><dt>HLS Health</dt><dd>${esc(hlsHealth)}</dd></div>
         <div><dt>HLS Detail</dt><dd>${esc(diagnostics.hlsLastError || live.stream?.hlsLastError || 'No manifest error reported.')}</dd></div>
@@ -1505,7 +1510,9 @@ function renderAdvancedStreamingSettings() {
   try {
     const parsedWhipUrl = new URL(browserWhipUrl)
     browserWhipHost = parsedWhipUrl.host || browserWhipHost
-    browserWhipStreamParam = parsedWhipUrl.searchParams.get('stream') || ''
+    browserWhipStreamParam = parsedWhipUrl.searchParams.get('stream')
+      || parsedWhipUrl.pathname.match(/\/ingest\/([^/]+)\/whip\/?$/)?.[1]
+      || ''
   } catch {}
   return `
     <details class="studio-live-advanced-streaming" ${live.advancedStreamingOpen ? 'open' : ''} data-advanced-streaming-settings>
@@ -1557,7 +1564,7 @@ function renderAdvancedStreamingSettings() {
             <li>Stream key: ${esc(diagnostics.streamKey || streamKey)}</li>
             <li>Playback URL: ${esc(diagnostics.hlsPlaybackUrl || hlsPlaybackUrl)}</li>
             <li>HLS URL: ${esc(diagnostics.hlsUrl || hlsPlaybackUrl || 'missing')}</li>
-            <li>WHIP URL stream param: ${esc(diagnostics.whipStreamKey || browserWhipStreamParam || 'none')}</li>
+            <li>WHIP stream key: ${esc(diagnostics.whipStreamKey || browserWhipStreamParam || 'none')}</li>
             <li>HLS health: ${esc(diagnostics.hlsHealth || 'not checked')}</li>
             <li>Last manifest OK: ${esc(diagnostics.hlsLastOkAt || 'none')}</li>
             <li>Manifest sequence: ${esc(diagnostics.hlsManifestSequence ?? diagnostics.hlsLastManifestSequence ?? 'none')}</li>

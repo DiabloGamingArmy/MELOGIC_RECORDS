@@ -30,7 +30,7 @@ const MAX_CONFIGURED_LIVE_STREAMS_PER_HOST = 25
 const HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
 const BROWSER_HLS_EDGE_BASE_URL = 'https://ingest.melogicrecords.studio/hls'
 const RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
-const BROWSER_WHIP_INGEST_BASE_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/'
+const BROWSER_WHIP_INGEST_BASE_URL = 'https://ingest.melogicrecords.studio/mtx/ingest'
 const HLS_WARMUP_WINDOW_MS = 45 * 1000
 const HLS_RECENT_OK_WINDOW_MS = 90 * 1000
 const HLS_HEALTH_TIMEOUT_MS = 30000
@@ -83,11 +83,7 @@ function buildHlsPlaybackUrl(streamKey = '', ingestMethod = '') {
 function buildBrowserWhipIngestUrl(streamKey = '') {
   const cleanKey = sanitizeStreamKey(streamKey)
   if (!cleanKey) return ''
-  const url = new URL(BROWSER_WHIP_INGEST_BASE_URL)
-  url.searchParams.set('app', 'live')
-  url.searchParams.set('stream', cleanKey)
-  url.searchParams.set('eip', '104.197.179.248')
-  return url.toString()
+  return `${BROWSER_WHIP_INGEST_BASE_URL}/${encodeURIComponent(cleanKey)}/whip`
 }
 
 function isObsHlsEdgeStream(stream = {}) {

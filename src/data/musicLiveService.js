@@ -19,7 +19,7 @@ export const HLS_STREAMING_PROTOCOL = 'hls'
 export const NATIVE_STREAMING_PROTOCOL = 'nativeStreaming'
 export const DEFAULT_HLS_EDGE_BASE_URL = 'https://stream.melogicrecords.studio/live'
 export const DEFAULT_RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
-export const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/rtc/v1/whip/?app=live&stream={streamKey}&eip=104.197.179.248'
+export const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/mtx/ingest/{streamKey}/whip'
 export const HLS_EDGE_ARCHIVE_NOTE = 'HLS Edge streams publish through the Melogic streaming server and play through the HLS edge.'
 
 export function sanitizeMusicLiveStreamKey(value = '') {
@@ -40,8 +40,10 @@ export function buildMusicLiveWhipUrl(streamKey = '') {
   try {
     const url = new URL(expanded)
     if (!template.includes('{streamKey}')) url.searchParams.set('stream', cleanKey)
-    if (!url.searchParams.get('app')) url.searchParams.set('app', 'live')
-    if (!url.searchParams.get('eip')) url.searchParams.set('eip', '104.197.179.248')
+    if (url.pathname.includes('/rtc/v1/whip/')) {
+      if (!url.searchParams.get('app')) url.searchParams.set('app', 'live')
+      if (!url.searchParams.get('eip')) url.searchParams.set('eip', '104.197.179.248')
+    }
     return url.toString()
   } catch {
     return ''
