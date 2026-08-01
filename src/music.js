@@ -507,7 +507,12 @@ function renderStableImage({ src = '', alt = '', className = '', fallback = 'MR'
 }
 
 function renderLiveArtwork(stream, className = 'music-live-art') {
-  const cover = stream?.coverArtURL || ''
+  const cover = stream?.coverArtURL
+    || stream?.coverImageURL
+    || stream?.currentNowPlaying?.artworkURL
+    || stream?.hostPhotoURL
+    || stream?.hostAvatarURL
+    || ''
   return renderStableImage({
     src: cover,
     alt: `${stream?.title || 'Live stream'} cover art`,
@@ -596,6 +601,8 @@ function carouselRow({ id, eyebrow, title, items = [], type = 'release', emptyTi
     ? items.map(artistCard).join('')
     : type === 'live'
       ? items.map(liveStreamCard).join('')
+      : type === 'mixed'
+        ? items.map((item) => item?.__musicCardType === 'live' ? liveStreamCard(item) : releaseCard(item)).join('')
       : items.map((item) => releaseCard(item)).join('')
   return `
     <section class="music-row-section" id="${escapeHtml(id)}">
@@ -648,7 +655,6 @@ function renderSidebar() {
 
 function renderHero() {
   const uploadHref = state.currentUser ? ROUTES.distribution : authRoute({ redirect: ROUTES.distribution })
-  const releaseCount = allPublicReleases().length
   return `
     <section class="music-app-hero" data-music-hero>
       <video class="music-hero-video" data-music-hero-video muted loop playsinline autoplay preload="metadata" aria-hidden="true"></video>
@@ -662,26 +668,47 @@ function renderHero() {
           <a class="button button-muted" href="${uploadHref}">Submit Music</a>
         </div>
       </div>
-      <div class="music-hero-stat">
-        <span>Published releases</span>
-        <strong>${releaseCount}</strong>
-      </div>
     </section>
   `
 }
 
+function rankedFeaturedLiveStreams(streams = state.rows.liveStreams) {
+  const now = Date.now()
+  return (streams || [])
+    .filter((stream) => stream?.isLive === true || stream?.status === 'live')
+    .map((stream) => {
+      const { hasVideo } = liveStreamMediaCapabilities(stream)
+      const viewers = Math.max(0, Number(stream.listenerCount || 0))
+      const startedAt = new Date(stream.startedAt || stream.createdAt || stream.updatedAt || 0).getTime()
+      const ageMinutes = Number.isFinite(startedAt) && startedAt > 0 ? Math.max(0, (now - startedAt) / 60000) : 1440
+      const recencyScore = Math.max(0, 180 - ageMinutes) / 3
+      const score = (hasVideo ? 160 : 0)
+        + Math.log2(viewers + 1) * 70
+        + recencyScore
+        + (stream.hlsHealth === 'healthy' ? 20 : 0)
+      return { ...stream, __musicCardType: 'live', __featuredLiveScore: score }
+    })
+    // Zero-viewer audio-only broadcasts remain in On Air Now; Top Picks is
+    // reserved for video streams or broadcasts that have attracted a viewer.
+    .filter((stream) => liveStreamMediaCapabilities(stream).hasVideo || Number(stream.listenerCount || 0) > 0)
+    .sort((left, right) => right.__featuredLiveScore - left.__featuredLiveScore)
+}
+
 function renderHomeView() {
   const featured = state.rows.featured.length ? state.rows.featured : state.rows.staffPicks
+  const featuredLive = rankedFeaturedLiveStreams().slice(0, 1)
+  const topPicks = [...featuredLive, ...featured].slice(0, 12)
   const genres = genreList()
   return `
     ${renderHero()}
     ${carouselRow({
       id: 'top-picks',
       eyebrow: state.currentUser ? 'Top Picks for You' : 'Staff Picks',
-      title: state.currentUser ? 'Start with these releases' : 'Featured music to start with',
-      items: featured,
-      emptyTitle: 'Music discovery is warming up.',
-      emptyBody: 'Approved public releases will appear here as creators publish on Melogic Records.'
+      title: featuredLive.length ? 'Featured now' : state.currentUser ? 'Start with these releases' : 'Featured music to start with',
+      items: topPicks,
+      type: 'mixed',
+      emptyTitle: 'Discovery is warming up.',
+      emptyBody: 'Featured live streams and approved public releases will appear here.'
     })}
     ${carouselRow({
       id: 'recently-played',
@@ -760,7 +787,7 @@ function listenerCountLabel(count = 0) {
 
 function listenerCountMarkup(count = 0, noun = 'listening') {
   const value = Math.max(0, Number(count || 0))
-  return `<span data-live-viewer-count>${value.toLocaleString()}</span> ${escapeHtml(noun)}`
+  return `<span class="music-live-viewer-label"><span data-live-viewer-count>${value.toLocaleString()}</span><span>${escapeHtml(noun)}</span></span>`
 }
 
 function liveShareURL(streamId = '') {
@@ -787,22 +814,29 @@ function renderNowPlaying(stream = {}) {
 
 function liveStreamCard(stream) {
   const liveBadge = nativeLiveStatusLabel(stream)
+  const { hasAudio, hasVideo } = liveStreamMediaCapabilities(stream)
+  const actionLabel = hasVideo ? 'Watch' : 'Listen'
+  const mediaLabel = hasVideo && hasAudio ? 'Video + Audio' : hasVideo ? 'Video' : 'Audio'
   return `
-    <article class="music-live-card">
+    <article class="music-live-card ${hasVideo ? 'has-video' : 'is-audio-only'}">
       <a href="${musicLiveStreamRoute(stream)}" class="music-live-card-link">
-        ${renderLiveArtwork(stream)}
+        <div class="music-live-card-visual">
+          ${renderLiveArtwork(stream)}
+          <span class="music-live-card-onair"><i aria-hidden="true"></i> Live</span>
+          <span class="music-live-card-viewers">${listenerCountMarkup(stream.listenerCount, hasVideo ? 'watching' : 'listening')}</span>
+        </div>
         <div class="music-live-card-body">
           <span class="music-live-badge ${isFirebaseSegmentProvider(stream.provider) ? 'is-native' : ''}">${escapeHtml(liveBadge)}</span>
           ${stream.passwordProtected ? '<span class="music-live-lock">Locked</span>' : ''}
           <h3>${escapeHtml(stream.title)}</h3>
           <p>${escapeHtml(stream.hostDisplayName)}</p>
           <div class="music-live-meta">
+            <span>${escapeHtml(mediaLabel)}</span>
             <span>${escapeHtml(liveCategoryLabel(stream.category))}</span>
-            <span>${escapeHtml(listenerCountLabel(stream.listenerCount))}</span>
           </div>
         </div>
       </a>
-      <a class="music-icon-link" href="${musicLiveStreamRoute(stream)}">Listen</a>
+      <a class="music-icon-link" href="${musicLiveStreamRoute(stream)}">${actionLabel}</a>
     </article>
   `
 }
@@ -2192,7 +2226,22 @@ function hlsMediaDiagnostics(eventName = '') {
   const media = state.hlsMediaElement
   const diagnostics = state.hlsDiagnostics || {}
   const playbackInfo = getPublicPlaybackInfo(state.liveStream || {})
-  const mediaPlaying = isHlsMediaActivelyPlaying(media)
+  const mediaCurrentTime = media && Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null
+  const previousObservedTime = Number(diagnostics.mediaObservedTime)
+  const playheadAdvanced = mediaCurrentTime != null
+    && Number.isFinite(previousObservedTime)
+    && mediaCurrentTime > previousObservedTime + 0.03
+  const mediaLastProgressAt = playheadAdvanced
+    ? new Date().toISOString()
+    : diagnostics.mediaLastProgressAt || ((eventName === 'playing' || eventName === 'canplay') ? new Date().toISOString() : '')
+  const progressAgeMs = mediaLastProgressAt ? Date.now() - new Date(mediaLastProgressAt).getTime() : 0
+  const mediaPlaying = Boolean(
+    media
+    && !media.paused
+    && !media.ended
+    && media.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+    && (!mediaLastProgressAt || progressAgeMs < 12000)
+  )
   if (mediaPlaying) {
     state.liveStatus = 'playing'
     state.liveError = ''
@@ -2234,7 +2283,10 @@ function hlsMediaDiagnostics(eventName = '') {
     mediaVolume: media ? Number(media.volume || 0) : null,
     mediaReadyState: media ? Number(media.readyState || 0) : null,
     mediaNetworkState: media ? Number(media.networkState || 0) : null,
-    mediaCurrentTime: media && Number.isFinite(media.currentTime) ? Number(media.currentTime.toFixed(2)) : null,
+    mediaCurrentTime,
+    mediaObservedTime: mediaCurrentTime,
+    mediaLastProgressAt,
+    mediaProgressAgeMs: mediaLastProgressAt ? Math.max(0, progressAgeMs) : null,
     mediaDuration: media && Number.isFinite(media.duration) ? Number(media.duration.toFixed(2)) : null,
     mediaPlaying
   }
@@ -2346,7 +2398,11 @@ function createHlsMediaElement(mode = currentHlsPlaybackMode()) {
 }
 
 function isHlsMediaActivelyPlaying(media = state.hlsMediaElement) {
-  return Boolean(media && !media.paused && !media.ended && media.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA)
+  if (!media || media.paused || media.ended || media.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return false
+  const progressAt = state.hlsDiagnostics?.mediaLastProgressAt || state.hlsDiagnostics?.playbackStartedAt || ''
+  if (!progressAt) return true
+  const ageMs = Date.now() - new Date(progressAt).getTime()
+  return !Number.isFinite(ageMs) || ageMs < 12000
 }
 
 function handleHlsStatus(payload = {}) {
@@ -5858,6 +5914,7 @@ async function joinLiveListener(options = {}) {
 
 function updateLiveListenerControls() {
   const button = app.querySelector('[data-live-listen]')
+  const primaryAction = liveStreamMediaCapabilities(state.liveStream).hasVideo ? 'Watch Live' : 'Listen Live'
   if (state.listenerAudioElement && app.querySelector('[data-native-audio-mount]')) ensureNativeListenerAudioElement()
   if (state.listenerAudioElement && app.querySelector('[data-livekit-audio-mount]')) ensureLiveKitListenerAudioMounted()
   if (state.hlsMediaElement && app.querySelector('[data-hls-player-mount]')) ensureHlsMediaMounted()
@@ -5865,7 +5922,7 @@ function updateLiveListenerControls() {
     ? 'Pause / Leave'
     : state.liveStatus === 'connecting' || state.liveStatus === 'connectingTransport' || state.liveStatus === 'reconnecting'
       ? 'Connecting...'
-      : isBufferedHlsStream() ? 'Play' : 'Listen'
+      : primaryAction
   const playbackLoader = app.querySelector('[data-live-playback-loader]')
   if (playbackLoader) {
     const media = state.hlsMediaElement

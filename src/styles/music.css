@@ -142,7 +142,7 @@
   position: relative;
   min-height: clamp(310px, 31vw, 390px);
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: clamp(1.5rem, 5vw, 5rem);
   overflow: hidden;
@@ -359,6 +359,17 @@
   grid-template-rows: auto 1fr auto;
 }
 
+.music-carousel:has(.music-live-card) {
+  grid-auto-columns: minmax(300px, 360px);
+}
+
+.music-live-card-visual {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #060a12;
+}
+
 .music-release-art,
 .music-live-art,
 .music-detail-art {
@@ -373,7 +384,61 @@
 }
 
 .music-live-art {
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 16 / 9;
+}
+
+.music-live-card-visual .music-live-art {
+  transition: transform 240ms ease, filter 240ms ease;
+}
+
+.music-live-card:hover .music-live-card-visual .music-live-art,
+.music-live-card:focus-within .music-live-card-visual .music-live-art {
+  transform: scale(1.025);
+  filter: brightness(0.92);
+}
+
+.music-live-card-onair,
+.music-live-card-viewers {
+  position: absolute;
+  z-index: 3;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  border-radius: 4px;
+  background: rgba(3, 6, 12, 0.82);
+  color: #fff;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  font-weight: 850;
+  backdrop-filter: blur(10px);
+}
+
+.music-live-card-onair {
+  left: 10px;
+  gap: 6px;
+  background: rgba(202, 37, 72, 0.9);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.music-live-card-onair i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12);
+}
+
+.music-live-card-viewers {
+  right: 10px;
+}
+
+.music-live-viewer-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34em;
+  white-space: nowrap;
 }
 
 .music-release-art-fallback {
@@ -550,7 +615,7 @@
 
 .music-live-card > .music-icon-link {
   flex: none;
-  margin: 0 0.72rem 0.72rem;
+  margin: 0 0.15rem 0.15rem;
   min-height: 2.45rem;
   border-color: rgba(110, 231, 255, 0.34);
   background: linear-gradient(120deg, rgba(110, 231, 255, 0.2), rgba(143, 124, 255, 0.18));

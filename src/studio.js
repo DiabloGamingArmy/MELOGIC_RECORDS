@@ -274,7 +274,8 @@ const state = {
     advancedStreamingOpen: false,
     encodingSettings: {
       videoBitrateMbps: 12,
-      degradationPreference: 'maintain-resolution'
+      degradationPreference: 'maintain-resolution',
+      autoAdjustOutput: true
     },
     encoderCapabilities: {
       checked: false,
@@ -1381,9 +1382,9 @@ function renderDetailedStreamOutputStatus() {
         <span>Mode: ${live.ingestMethod === STREAM_INGEST_METHODS.obsRtmp ? 'OBS' : 'Browser'}</span>
         <span>Protocol: ${esc(live.streamingProtocol || 'hls')}</span>
         <span>WHIP: ${esc(encoderState)}</span>
-        <span>HLS: ${esc(hlsHealth)}</span>
+        <span>HLS: <b data-studio-live-hls-health>${esc(hlsHealth)}</b></span>
       </div>
-      <small>${esc(statusMessage)}</small>
+      <small data-studio-live-output-status>${esc(statusMessage)}</small>
       ${browserBufferedMode ? `
         <div class="studio-live-latency-alert" role="status">
           <i aria-hidden="true"></i>
@@ -1398,7 +1399,7 @@ function renderDetailedStreamOutputStatus() {
         <div><dt>Ingest Method</dt><dd>${esc(live.ingestMethod || 'not available')}</dd></div>
         <div><dt>WHIP Stream Key</dt><dd>${esc(whipStreamParam || 'not applicable')}</dd></div>
         <div><dt>HLS Response</dt><dd>${esc(diagnostics.hlsResponseCode || live.stream?.hlsResponseCode || 'not checked')}</dd></div>
-        <div><dt>HLS Health</dt><dd>${esc(hlsHealth)}</dd></div>
+        <div><dt>HLS Health</dt><dd data-studio-live-hls-health>${esc(hlsHealth)}</dd></div>
         <div><dt>HLS Detail</dt><dd>${esc(diagnostics.hlsLastError || live.stream?.hlsLastError || 'No manifest error reported.')}</dd></div>
         <div><dt>Seconds Since Start</dt><dd>${esc(diagnostics.secondsSinceStart ?? live.stream?.hlsSecondsSinceStart ?? 0)}</dd></div>
         <div><dt>Last OK</dt><dd>${esc(diagnostics.hlsLastOkAt || live.stream?.hlsLastOkAt || 'never')}</dd></div>
@@ -1642,6 +1643,7 @@ function currentStudioEncoderSettings() {
     degradationPreference: ['maintain-resolution', 'balanced', 'maintain-framerate'].includes(live.encodingSettings.degradationPreference)
       ? live.encodingSettings.degradationPreference
       : 'maintain-resolution',
+    autoAdjustOutput: live.encodingSettings.autoAdjustOutput !== false,
     keyFrameIntervalMs: 2000
   }
 }
@@ -1699,7 +1701,8 @@ async function applyStudioEncoderSettings({
   resolution = liveState().programMixer.outputResolution,
   fps = liveState().programMixer.fps,
   videoBitrateMbps = liveState().encodingSettings.videoBitrateMbps,
-  degradationPreference = liveState().encodingSettings.degradationPreference
+  degradationPreference = liveState().encodingSettings.degradationPreference,
+  autoAdjustOutput = liveState().encodingSettings.autoAdjustOutput
 } = {}) {
   const live = liveState()
   if (live.streamId) {
@@ -1714,6 +1717,7 @@ async function applyStudioEncoderSettings({
   live.encodingSettings.degradationPreference = ['maintain-resolution', 'balanced', 'maintain-framerate'].includes(degradationPreference)
     ? degradationPreference
     : 'maintain-resolution'
+  live.encodingSettings.autoAdjustOutput = autoAdjustOutput !== false
   live.encoderCapabilities = { checked: false, loading: false, error: '' }
 
   const settings = currentStudioEncoderSettings()
@@ -1795,6 +1799,10 @@ function renderBrowserEncodingSettings() {
         <strong>≈ ${estimatedUploadMbps.toFixed(1)} Mbps</strong>
         <small>Includes video, 256 kbps stereo audio, and transport overhead. Leave headroom above this number.</small>
       </div>
+      <label class="studio-live-auto-output">
+        <input type="checkbox" data-live-encoding-auto-adjust ${live.encodingSettings.autoAdjustOutput !== false ? 'checked' : ''} ${locked ? 'disabled' : ''} />
+        <span><strong>Automatically stabilize stream quality</strong><small>Uses live WebRTC packet-loss, bandwidth, and encoder-load stats to step bitrate, frame rate, and resolution down before the program stalls, then restores quality gradually after the connection recovers.</small></span>
+      </label>
       ${highUpload ? `<div class="studio-live-terms-alert studio-live-upload-alert" role="status"><i class="fa-solid fa-signal" aria-hidden="true"></i><div><strong>High upload usage</strong><span>${settings.height}p at ${settings.framerate} fps and ${bitrateMbps.toFixed(1)} Mbps can saturate Wi‑Fi. For stability, use Ethernet or keep measured upload comfortably above ${Math.ceil(estimatedUploadMbps * 1.5)} Mbps.</span></div></div>` : ''}
       <div class="studio-live-encoder-capability">
         <div><i class="fa-solid fa-microchip" aria-hidden="true"></i><span><strong>${esc(capabilityTitle)}</strong><small>${esc(capabilityDetail)}</small></span></div>
@@ -2005,7 +2013,7 @@ function renderChatPanel() {
   const chatEnabled = live.chatEnabled !== false
   return `
     <section class="studio-live-panel studio-live-chat-panel">
-      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><label class="studio-live-switch"><input type="checkbox" data-live-chat-enabled ${chatEnabled ? 'checked' : ''} /><span></span>Enable live chat</label><span>${liveHostViewerCount()} viewers</span></div></header>
+      <header class="studio-live-subheader"><div><p class="eyebrow">Live Studio</p><h1>Chat</h1><p>Host chat and moderation stay out of the sequence editor.</p></div><div class="studio-live-status-cluster"><label class="studio-live-switch"><input type="checkbox" data-live-chat-enabled ${chatEnabled ? 'checked' : ''} /><span></span>Enable live chat</label><span><b data-studio-live-viewer-count>${liveHostViewerCount()}</b> viewers</span></div></header>
       <div class="studio-live-chat-log">
         ${!chatEnabled ? '<p class="studio-live-empty">Live chat is disabled by the host.</p>' : live.streamId ? live.chatMessages.map((message) => `<article><strong>${esc(message.displayName)}</strong><span>${esc(message.text)}</span><small>${esc(message.createdAt ? new Date(message.createdAt).toLocaleTimeString() : '')}</small></article>`).join('') || '<p class="studio-live-empty">No chat messages yet.</p>' : '<p class="studio-live-empty">Chat opens after Start Live.</p>'}
       </div>
@@ -2207,7 +2215,8 @@ function serializedProgramMixerState() {
     fps: Number(mixer.fps || 30),
     encodingSettings: {
       videoBitrateMbps: Math.max(1, Math.min(20, Number(liveState().encodingSettings.videoBitrateMbps || 12))),
-      degradationPreference: currentStudioEncoderSettings().degradationPreference
+      degradationPreference: currentStudioEncoderSettings().degradationPreference,
+      autoAdjustOutput: liveState().encodingSettings.autoAdjustOutput !== false
     },
     transitionDurationMs: Number(mixer.transitionDurationMs || 400),
     mode: 'program'
@@ -2230,7 +2239,8 @@ function restoreProgramMixerState(programState = {}, streamId = '') {
     videoBitrateMbps: Math.max(1, Math.min(20, Number(programState.encodingSettings?.videoBitrateMbps || liveState().encodingSettings.videoBitrateMbps || 12))),
     degradationPreference: ['maintain-resolution', 'balanced', 'maintain-framerate'].includes(programState.encodingSettings?.degradationPreference)
       ? programState.encodingSettings.degradationPreference
-      : liveState().encodingSettings.degradationPreference || 'maintain-resolution'
+      : liveState().encodingSettings.degradationPreference || 'maintain-resolution',
+    autoAdjustOutput: programState.encodingSettings?.autoAdjustOutput !== false
   }
   mixer.transitionDurationMs = Math.max(0, Math.min(5000, Number(programState.transitionDurationMs || mixer.transitionDurationMs || 400)))
   if (!mixer.programSnapshot.scene && mixer.programSceneId) {
@@ -2470,8 +2480,22 @@ async function refreshStudioHlsHealth() {
       : health.hlsHealth === 'stale'
         ? 'External encoder HLS is temporarily stale; the last healthy manifest is still within tolerance.'
         : 'HLS manifest is offline. Verify the program encoder is still publishing.'
-  if (currentStudioSection() === 'live') renderShell()
+  if (currentStudioSection() === 'live') updateStudioLiveHealthDom()
   return health
+}
+
+function updateStudioLiveHealthDom() {
+  const live = liveState()
+  const health = live.providerDiagnostics?.hlsHealth || live.stream?.hlsHealth || 'not checked'
+  app.querySelectorAll('[data-studio-live-hls-health]').forEach((element) => {
+    element.textContent = health
+  })
+  app.querySelectorAll('[data-studio-live-output-status]').forEach((element) => {
+    element.textContent = live.outputStatus || 'Program transport is active.'
+  })
+  app.querySelectorAll('[data-studio-live-viewer-count]').forEach((element) => {
+    element.textContent = String(liveHostViewerCount())
+  })
 }
 
 function startStudioHlsHealthPolling() {
@@ -3433,8 +3457,8 @@ let shellRenderToken = 0
 function captureLiveScrollState(panel = '') {
   const root = app.querySelector('[data-live-panel-content]')
   if (!root || root.dataset.livePanelContent !== panel) return null
-  const positions = [...root.querySelectorAll('[data-live-scroll-key]')].map((element) => ({
-    key: element.dataset.liveScrollKey,
+  const positions = [root, ...root.querySelectorAll('[data-live-scroll-key]')].map((element, index) => ({
+    key: element.dataset.liveScrollKey || (index === 0 ? '__panel-root__' : ''),
     left: element.scrollLeft,
     top: element.scrollTop
   }))
@@ -3453,14 +3477,17 @@ function restoreLiveScrollState(scrollState, renderToken) {
     const root = app.querySelector('[data-live-panel-content]')
     if (!root || root.dataset.livePanelContent !== scrollState.panel) return
     scrollState.positions.forEach(({ key, left, top }) => {
-      const element = [...root.querySelectorAll('[data-live-scroll-key]')]
-        .find((candidate) => candidate.dataset.liveScrollKey === key)
+      const element = key === '__panel-root__'
+        ? root
+        : [...root.querySelectorAll('[data-live-scroll-key]')]
+            .find((candidate) => candidate.dataset.liveScrollKey === key)
       if (element) element.scrollTo({ left, top })
     })
     window.scrollTo(scrollState.windowX, scrollState.windowY)
   }
   apply()
   window.requestAnimationFrame(apply)
+  window.setTimeout(apply, 60)
 }
 
 function renderShell() {
@@ -6255,10 +6282,38 @@ function clearEndedLiveHostState(streamId = '') {
   live.streamForm.streamKey = createRandomStreamKey()
 }
 
+function liveStudioStreamRenderSignature(stream = null) {
+  if (!stream) return ''
+  return JSON.stringify({
+    id: stream.id || stream.streamId || '',
+    title: stream.title || '',
+    description: stream.description || '',
+    category: stream.category || '',
+    tags: stream.tags || [],
+    visibility: stream.visibility || '',
+    accessMode: stream.accessMode || '',
+    coverArtURL: stream.coverArtURL || '',
+    coverArtPath: stream.coverArtPath || '',
+    coverArtSource: stream.coverArtSource || '',
+    streamKey: stream.streamKey || '',
+    status: stream.status || '',
+    isLive: stream.isLive === true,
+    broadcastState: stream.broadcastState || '',
+    connectionStatus: stream.connectionStatus || '',
+    streamingProtocol: stream.streamingProtocol || '',
+    ingestMethod: stream.ingestMethod || '',
+    chatEnabled: stream.chatEnabled !== false,
+    programHasAudio: stream.programHasAudio === true,
+    programHasVideo: stream.programHasVideo === true,
+    endedAt: stream.endedAt || ''
+  })
+}
+
 function subscribeLiveStudioStream(streamId = '') {
   const live = liveState()
   live.streamUnsubscribe?.()
   live.streamUnsubscribe = subscribeMusicLiveStream(streamId, (stream) => {
+    const previousRenderSignature = liveStudioStreamRenderSignature(live.stream)
     live.stream = stream
     if (stream) {
       live.streamForm.title = stream.title || live.streamForm.title
@@ -6298,7 +6353,13 @@ function subscribeLiveStudioStream(streamId = '') {
       })
       if (stream.status === 'live' && stream.streamingProtocol === 'hls') startStudioHlsHealthPolling()
     }
-    renderShell()
+    // Heartbeats and HLS-health writes update this Firestore document every
+    // few seconds. Rebuilding the entire Live Studio shell for those metadata
+    // changes replaced media previews and reset nested scroll containers.
+    // Only structural/form changes need a render; status counters update in
+    // place so an open Stream Details panel stays exactly where the host left it.
+    if (previousRenderSignature !== liveStudioStreamRenderSignature(stream)) renderShell()
+    else updateStudioLiveHealthDom()
   })
 }
 
@@ -6584,6 +6645,9 @@ function bindLiveStudioControls() {
   })
   app.querySelector('[data-live-encoding-degradation]')?.addEventListener('change', (e) => {
     applyStudioEncoderSettings({ degradationPreference: e.currentTarget.value }).catch(() => {})
+  })
+  app.querySelector('[data-live-encoding-auto-adjust]')?.addEventListener('change', (e) => {
+    applyStudioEncoderSettings({ autoAdjustOutput: e.currentTarget.checked }).catch(() => {})
   })
   app.querySelector('[data-live-check-encoder]')?.addEventListener('click', () => {
     live.encoderCapabilities = { checked: false, loading: false, error: '' }

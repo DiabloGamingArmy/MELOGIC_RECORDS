@@ -1782,6 +1782,36 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   font-size: 11px;
 }
 
+.studio-live-auto-output {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  border-left: 3px solid rgba(111, 209, 255, 0.72);
+  background: rgba(67, 151, 205, 0.08);
+  padding: 12px 14px;
+  color: #e9f5ff;
+  cursor: pointer;
+}
+
+.studio-live-auto-output input {
+  width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+  accent-color: #70ddff;
+}
+
+.studio-live-auto-output span {
+  display: grid;
+  gap: 3px;
+}
+
+.studio-live-auto-output small {
+  color: #9facc1;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .studio-live-upload-estimate > span {
   font-weight: 850;
   text-transform: uppercase;

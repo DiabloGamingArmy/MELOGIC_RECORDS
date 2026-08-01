@@ -155,6 +155,10 @@ export async function attachHlsStream({
   let networkRecoveryAttempts = 0
   let mediaRecoveryAttempts = 0
   let mediaElementRecoveryAttempts = 0
+  let playbackWatchdogTimer = 0
+  let playbackWatchdogRecoveries = 0
+  let lastObservedMediaTime = -1
+  let lastMediaProgressAt = Date.now()
   const listen = (eventName, callback) => {
     mediaEl.addEventListener(eventName, callback)
     listeners.push([eventName, callback])
@@ -163,6 +167,67 @@ export async function attachHlsStream({
     onStatus({ status, mode, src, mediaEl, hls })
   }
   ;['canplay', 'playing', 'waiting', 'stalled', 'ended'].forEach((eventName) => listen(eventName, () => emitMediaStatus(eventName)))
+  listen('timeupdate', () => {
+    const currentTime = Number(mediaEl.currentTime || 0)
+    if (currentTime > lastObservedMediaTime + 0.03) {
+      lastObservedMediaTime = currentTime
+      lastMediaProgressAt = Date.now()
+      playbackWatchdogRecoveries = 0
+    }
+  })
+  const startPlaybackWatchdog = () => {
+    if (playbackWatchdogTimer) return
+    playbackWatchdogTimer = window.setInterval(() => {
+      if (cleaned || mediaEl.paused || mediaEl.ended) {
+        lastObservedMediaTime = Number(mediaEl.currentTime || 0)
+        lastMediaProgressAt = Date.now()
+        return
+      }
+      const currentTime = Number(mediaEl.currentTime || 0)
+      if (currentTime > lastObservedMediaTime + 0.03) {
+        lastObservedMediaTime = currentTime
+        lastMediaProgressAt = Date.now()
+        playbackWatchdogRecoveries = 0
+        return
+      }
+      if (Date.now() - lastMediaProgressAt < 12000) return
+      playbackWatchdogRecoveries += 1
+      lastMediaProgressAt = Date.now()
+      onStatus({
+        status: 'recovering',
+        recovery: 'playheadWatchdog',
+        attempt: playbackWatchdogRecoveries,
+        mode,
+        src,
+        mediaEl,
+        hls
+      })
+      const ranges = mediaEl.buffered
+      let bufferedEnd = null
+      for (let index = 0; index < (ranges?.length || 0); index += 1) {
+        if (currentTime >= ranges.start(index) - 0.1 && currentTime <= ranges.end(index) + 0.1) {
+          bufferedEnd = ranges.end(index)
+          break
+        }
+      }
+      if (Number.isFinite(bufferedEnd) && bufferedEnd > currentTime + 0.35) {
+        mediaEl.currentTime = Math.min(bufferedEnd - 0.12, currentTime + 0.12)
+      } else if (hls) {
+        try { hls.startLoad(-1) } catch {}
+        if (playbackWatchdogRecoveries % 2 === 0) {
+          try { hls.recoverMediaError() } catch {}
+        }
+      } else {
+        const edge = getHlsLiveEdge(mediaEl)
+        if (Number.isFinite(edge) && edge > currentTime + 0.5) mediaEl.currentTime = Math.max(0, edge - 1)
+        else {
+          try { mediaEl.load() } catch {}
+        }
+      }
+      mediaEl.play().catch(() => {})
+    }, 4000)
+  }
+  startPlaybackWatchdog()
   listen('error', () => {
     const error = mediaEl.error
     const payload = {
@@ -200,6 +265,8 @@ export async function attachHlsStream({
     if (cleaned) return
     cleaned = true
     listeners.forEach(([eventName, callback]) => mediaEl.removeEventListener(eventName, callback))
+    if (playbackWatchdogTimer) window.clearInterval(playbackWatchdogTimer)
+    playbackWatchdogTimer = 0
     hls?.destroy?.()
     hls = null
     activePlayers.delete(mediaEl)
@@ -285,9 +352,10 @@ export async function attachHlsStream({
     lowLatencyMode: false,
     capLevelToPlayerSize: false,
     startLevel: -1,
-    maxBufferLength: 270,
-    maxMaxBufferLength: 300,
-    backBufferLength: 180,
+    maxBufferLength: 120,
+    maxMaxBufferLength: 150,
+    maxBufferSize: 128 * 1000 * 1000,
+    backBufferLength: 30,
     // Six-second origin segments place browser viewers about two minutes
     // behind live. That deliberate delay gives Chrome enough complete media
     // to play through brief encoder, network, or remux stalls without skipping

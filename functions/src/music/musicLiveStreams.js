@@ -432,7 +432,8 @@ function cleanProgramState(input = {}, existing = {}) {
     fps: Math.max(1, Math.min(60, Number(source.fps || old.fps || 30))),
     encodingSettings: {
       videoBitrateMbps: Math.max(1, Math.min(20, Number(encodingInput.videoBitrateMbps || 12))),
-      degradationPreference
+      degradationPreference,
+      autoAdjustOutput: encodingInput.autoAdjustOutput !== false
     },
     transitionDurationMs: Math.max(0, Math.min(5000, Number(source.transitionDurationMs || old.transitionDurationMs || 400))),
     mode: source.mode === 'preview' ? 'preview' : 'program', scenes, sources,

@@ -4,8 +4,8 @@ const DEFAULT_BROWSER_WHIP_INGEST_URL = 'https://ingest.melogicrecords.studio/mt
 const CONNECTION_TIMEOUT_MS = 15000
 const FETCH_TIMEOUT_MS = 15000
 const CONNECTION_FAILURE_GRACE_MS = 30000
-const OUTBOUND_STATS_INTERVAL_MS = 10000
-const OUTBOUND_STALL_SAMPLE_LIMIT = 2
+const OUTBOUND_STATS_INTERVAL_MS = 5000
+const OUTBOUND_STALL_SAMPLE_LIMIT = 3
 const MUSIC_AUDIO_MAX_BITRATE = 256000
 const PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS = 2000
 // 1080p30 browser publishing is intentionally bounded to the same practical
@@ -43,7 +43,8 @@ function normalizeEncoderSettings(settings = {}, mediaStream = null) {
     startBitrate: Math.round(clampNumber(settings.startBitrate, MIN_PROGRAM_VIDEO_BITRATE, maxBitrate, Math.min(maxBitrate, maxBitrate * 0.72))),
     minBitrate: Math.round(clampNumber(settings.minBitrate, 500000, maxBitrate, Math.min(maxBitrate, Math.max(1500000, maxBitrate * 0.38)))),
     keyFrameIntervalMs: Math.round(clampNumber(settings.keyFrameIntervalMs, 1000, 5000, PROGRAM_VIDEO_KEYFRAME_INTERVAL_MS)),
-    degradationPreference
+    degradationPreference,
+    autoAdjustOutput: settings.autoAdjustOutput !== false
   }
 }
 
@@ -242,10 +243,14 @@ function preferH264VideoCodec(peerConnection) {
   if (!transceiver?.setCodecPreferences || !Array.isArray(capabilities?.codecs)) return false
   const profileScore = (codec) => {
     const profile = String(codec?.sdpFmtpLine || '').match(/profile-level-id=([0-9a-f]{6})/i)?.[1]?.toLowerCase() || ''
-    if (profile.startsWith('64')) return 4
-    if (profile.startsWith('4d')) return 3
-    if (profile.startsWith('42e0')) return 2
-    if (profile.startsWith('42')) return 1
+    // Constrained Baseline is the common browser hardware path and the most
+    // dependable profile for a WebRTC -> RTSP -> HLS bridge. High/Main can
+    // push some browsers onto a software encoder without improving a screen
+    // share once WebRTC congestion control is involved.
+    if (profile.startsWith('42e0')) return 4
+    if (profile.startsWith('42')) return 3
+    if (profile.startsWith('4d')) return 2
+    if (profile.startsWith('64')) return 1
     return 0
   }
   const h264 = capabilities.codecs
@@ -269,7 +274,7 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
   let applied = false
   let errorMessage = ''
   try {
-    if ('contentHint' in videoTrack) videoTrack.contentHint = videoTrack.contentHint || 'motion'
+    if ('contentHint' in videoTrack) videoTrack.contentHint = 'detail'
     const params = videoSender.getParameters() || {}
     params.encodings = params.encodings?.length ? params.encodings : [{}]
     params.encodings[0] = {
@@ -306,27 +311,6 @@ async function applyProgramVideoSenderParameters(peerConnection, mediaStream, ph
   return applied
 }
 
-async function requestChromeVideoKeyFrame(videoSender, session) {
-  if (!videoSender?.getParameters || !videoSender?.setParameters) return false
-  try {
-    const params = videoSender.getParameters() || {}
-    const encodings = params.encodings?.length ? params.encodings : [{}]
-    await videoSender.setParameters(params, {
-      encodingOptions: encodings.map(() => ({ keyFrame: true }))
-    })
-    if (session) {
-      session.periodicKeyFrameRequests = Number(session.periodicKeyFrameRequests || 0) + 1
-      session.periodicKeyFrameRequestSupported = true
-    }
-    return true
-  } catch {
-    if (session && session.periodicKeyFrameRequestSupported == null) {
-      session.periodicKeyFrameRequestSupported = false
-    }
-    return false
-  }
-}
-
 function startPeriodicVideoKeyFrames(session) {
   const videoSender = session?.peerConnection?.getSenders?.().find((sender) => sender.track?.kind === 'video') || null
   if (!videoSender) return
@@ -342,6 +326,7 @@ function startPeriodicVideoKeyFrames(session) {
         keyFrameIntervalMs
       })
       session.periodicKeyFrameTransform = true
+      session.periodicKeyFrameRequestSupported = true
     } catch (error) {
       session.keyFrameWorker?.terminate?.()
       session.keyFrameWorker = null
@@ -349,14 +334,10 @@ function startPeriodicVideoKeyFrames(session) {
     }
   }
 
-  // Chromium currently implements the sender-parameter key-frame request.
-  // Run it alongside the worker path; unsupported browsers reject harmlessly.
-  const requestKeyFrame = () => {
-    if (session.stopped) return
-    void requestChromeVideoKeyFrame(videoSender, session)
-  }
-  requestKeyFrame()
-  session.keyFrameTimer = window.setInterval(requestKeyFrame, keyFrameIntervalMs)
+  // RTCRtpSender.setParameters() accepts a single parameters object. Passing
+  // a second, non-standard key-frame options argument was ignored by some
+  // engines and destabilized others. Encoded Transform is the standards-based
+  // request path; browsers without it rely on normal RTCP/key-frame cadence.
 }
 
 function stopPeriodicVideoKeyFrames(session) {
@@ -365,6 +346,54 @@ function stopPeriodicVideoKeyFrames(session) {
   session.keyFrameTimer = 0
   session.keyFrameWorker?.terminate?.()
   session.keyFrameWorker = null
+}
+
+function adaptiveVideoTierSettings(session, tier = 0) {
+  const requested = session.encoderSettings || normalizeEncoderSettings({}, session.mediaStream)
+  const normalizedTier = Math.max(0, Math.min(3, Number(tier || 0)))
+  const tiers = [
+    { bitrateFactor: 1, frameRate: requested.maxFramerate, scale: 1 },
+    { bitrateFactor: 0.78, frameRate: Math.min(requested.maxFramerate, 30), scale: 1 },
+    { bitrateFactor: 0.58, frameRate: Math.min(requested.maxFramerate, 24), scale: 1.25 },
+    { bitrateFactor: 0.42, frameRate: Math.min(requested.maxFramerate, 20), scale: 1.5 }
+  ]
+  const selected = tiers[normalizedTier]
+  return {
+    tier: normalizedTier,
+    maxBitrate: Math.max(MIN_PROGRAM_VIDEO_BITRATE, Math.round(requested.maxBitrate * selected.bitrateFactor)),
+    maxFramerate: selected.frameRate,
+    scaleResolutionDownBy: selected.scale
+  }
+}
+
+async function applyAdaptiveVideoTier(session, requestedTier, reason = '') {
+  if (!session?.encoderSettings?.autoAdjustOutput || session.stopped) return false
+  const next = adaptiveVideoTierSettings(session, requestedTier)
+  if (next.tier === Number(session.adaptiveVideoTier || 0)) return false
+  const sender = session.peerConnection?.getSenders?.().find((entry) => entry.track?.kind === 'video') || null
+  if (!sender?.getParameters || !sender?.setParameters) return false
+  try {
+    const params = sender.getParameters() || {}
+    params.encodings = params.encodings?.length ? params.encodings : [{}]
+    params.encodings[0] = {
+      ...(params.encodings[0] || {}),
+      maxBitrate: next.maxBitrate,
+      maxFramerate: next.maxFramerate,
+      scaleResolutionDownBy: next.scaleResolutionDownBy
+    }
+    params.degradationPreference = next.tier >= 2 ? 'balanced' : session.encoderSettings.degradationPreference
+    await sender.setParameters(params)
+    session.adaptiveVideoTier = next.tier
+    session.adaptiveLastChangedAt = Date.now()
+    session.adaptiveConstrainedSamples = 0
+    session.adaptiveHealthySamples = 0
+    session.adaptiveReason = reason
+    console.info('[Browser WHIP] adaptive video tier changed', { ...next, reason })
+    return true
+  } catch (error) {
+    console.warn('[Browser WHIP] adaptive video tier update failed', error)
+    return false
+  }
 }
 
 function applyProgramVideoSdp(sdp = '', settings = {}) {
@@ -465,6 +494,12 @@ async function collectOutboundQualityStats(session) {
     } else {
       session.outboundStallSamples = Number(session.outboundStallSamples || 0) + 1
     }
+    session.audioStallSamples = !hasPreviousSample || !audioTrackLive || audioAdvanced
+      ? 0
+      : Number(session.audioStallSamples || 0) + 1
+    session.videoStallSamples = !hasPreviousSample || !videoTrackLive || videoAdvanced
+      ? 0
+      : Number(session.videoStallSamples || 0) + 1
     const selectedProtocol = String(localCandidate?.protocol || remoteCandidate?.protocol || '').toLowerCase()
     const availableOutgoingBitrateKbps = Number.isFinite(Number(candidatePair?.availableOutgoingBitrate))
       ? Math.round(Number(candidatePair.availableOutgoingBitrate) / 1000)
@@ -473,15 +508,38 @@ async function collectOutboundQualityStats(session) {
     const videoHeight = Number(video?.frameHeight || 0) || null
     const qualityLimitationReason = String(video?.qualityLimitationReason || 'none').toLowerCase()
     const encoderSettings = session.encoderSettings || normalizeEncoderSettings({}, session.mediaStream)
+    const currentAdaptive = adaptiveVideoTierSettings(session, session.adaptiveVideoTier || 0)
     const resolutionReduced = Boolean(videoWidth && videoHeight && (
       videoWidth < encoderSettings.width * 0.84 || videoHeight < encoderSettings.height * 0.84
     ))
     const frameRateReduced = Number.isFinite(framesPerSecond) && framesPerSecond < Math.min(20, encoderSettings.maxFramerate * 0.66)
     const bandwidthEstimateLow = availableOutgoingBitrateKbps != null
-      && availableOutgoingBitrateKbps < (encoderSettings.maxBitrate / 1000) * 0.45
+      && availableOutgoingBitrateKbps < (currentAdaptive.maxBitrate / 1000) * 0.82
     const bandwidthConstrained = qualityLimitationReason === 'bandwidth'
-      || (bandwidthEstimateLow && (resolutionReduced || frameRateReduced))
+      || bandwidthEstimateLow
     const cpuConstrained = qualityLimitationReason === 'cpu'
+    const transportLoss = Number(remoteVideo?.packetsLost || 0) + Number(remoteAudio?.packetsLost || 0)
+    const previousTransportLoss = Number(previous.remotePacketsLost || 0)
+    const newlyLostPackets = hasPreviousSample ? Math.max(0, transportLoss - previousTransportLoss) : 0
+    const transportConstrained = newlyLostPackets >= 8
+    const severeTransportLoss = newlyLostPackets >= 50
+    const adaptationConstrained = bandwidthConstrained || cpuConstrained || transportConstrained
+    if (encoderSettings.autoAdjustOutput && videoTrackLive && hasPreviousSample) {
+      if (adaptationConstrained) {
+        session.adaptiveConstrainedSamples = Number(session.adaptiveConstrainedSamples || 0) + 1
+        session.adaptiveHealthySamples = 0
+      } else if (videoAdvanced && Number(framesPerSecond || 0) >= Math.min(18, currentAdaptive.maxFramerate * 0.72)) {
+        session.adaptiveHealthySamples = Number(session.adaptiveHealthySamples || 0) + 1
+        session.adaptiveConstrainedSamples = 0
+      }
+      const sinceChange = Date.now() - Number(session.adaptiveLastChangedAt || 0)
+      if ((severeTransportLoss || session.adaptiveConstrainedSamples >= 2) && sinceChange >= 10000) {
+        void applyAdaptiveVideoTier(session, Math.min(3, Number(session.adaptiveVideoTier || 0) + 1),
+          cpuConstrained ? 'cpu' : transportConstrained ? 'packet-loss' : 'bandwidth')
+      } else if (session.adaptiveHealthySamples >= 12 && sinceChange >= 60000) {
+        void applyAdaptiveVideoTier(session, Math.max(0, Number(session.adaptiveVideoTier || 0) - 1), 'sustained-recovery')
+      }
+    }
     const outboundQualityWarning = bandwidthConstrained
       ? `Available upload bandwidth is constraining the ${encoderSettings.height}p program. Close other uploads or use Ethernet; Melogic will preserve resolution where possible.`
       : cpuConstrained
@@ -494,6 +552,7 @@ async function collectOutboundQualityStats(session) {
       outboundVideoWidth: videoWidth,
       outboundVideoHeight: videoHeight,
       outboundVideoQualityLimitation: qualityLimitationReason,
+      outboundBandwidthEstimateLow: bandwidthEstimateLow,
       outboundEncoderImplementation: String(video?.encoderImplementation || ''),
       outboundPowerEfficientEncoder: typeof video?.powerEfficientEncoder === 'boolean' ? video.powerEfficientEncoder : null,
       outboundVideoNackCount: Number(video?.nackCount || 0),
@@ -502,7 +561,9 @@ async function collectOutboundQualityStats(session) {
       periodicKeyFrameTransform: session.periodicKeyFrameTransform === true,
       periodicKeyFrameRequestSupported: session.periodicKeyFrameRequestSupported,
       periodicKeyFrameRequests: Number(session.periodicKeyFrameRequests || 0),
-      remotePacketsLost: Number(remoteVideo?.packetsLost || 0) + Number(remoteAudio?.packetsLost || 0),
+      remotePacketsLost: transportLoss,
+      outboundNewPacketsLost: newlyLostPackets,
+      outboundSeverePacketLoss: severeTransportLoss,
       remoteRoundTripTimeMs: Number.isFinite(Number(remoteVideo?.roundTripTime))
         ? Math.round(Number(remoteVideo.roundTripTime) * 1000)
         : null,
@@ -517,6 +578,14 @@ async function collectOutboundQualityStats(session) {
         ? Math.round(Number(candidatePair.currentRoundTripTime) * 1000)
         : null,
       outboundStallSamples: session.outboundStallSamples,
+      outboundAudioStallSamples: session.audioStallSamples,
+      outboundVideoStallSamples: session.videoStallSamples,
+      adaptiveOutputEnabled: encoderSettings.autoAdjustOutput,
+      adaptiveVideoTier: Number(session.adaptiveVideoTier || 0),
+      adaptiveVideoBitrate: currentAdaptive.maxBitrate,
+      adaptiveVideoFramerate: currentAdaptive.maxFramerate,
+      adaptiveScaleResolutionDownBy: currentAdaptive.scaleResolutionDownBy,
+      adaptiveReason: session.adaptiveReason || '',
       outboundLastProgressAt: session.lastOutboundProgressAt ? new Date(session.lastOutboundProgressAt).toISOString() : '',
       outboundQualityWarning
     }
@@ -524,11 +593,15 @@ async function collectOutboundQualityStats(session) {
       at: now,
       videoBytes: video?.bytesSent,
       audioBytes: audio?.bytesSent,
-      videoFrames: video?.framesEncoded
+      videoFrames: video?.framesEncoded,
+      remotePacketsLost: transportLoss
     }
     session.emitStatus?.('connected', diagnostics)
-    if (session.outboundStallSamples >= OUTBOUND_STALL_SAMPLE_LIMIT) {
-      const error = new Error('Browser encoder stopped sending media while WebRTC still appeared connected.')
+    const requiredTrackStalled = (audioTrackLive && session.audioStallSamples >= OUTBOUND_STALL_SAMPLE_LIMIT)
+      || (videoTrackLive && session.videoStallSamples >= OUTBOUND_STALL_SAMPLE_LIMIT)
+    if (session.outboundStallSamples >= OUTBOUND_STALL_SAMPLE_LIMIT || requiredTrackStalled) {
+      const stalledTrack = videoTrackLive && session.videoStallSamples >= OUTBOUND_STALL_SAMPLE_LIMIT ? 'video' : audioTrackLive && session.audioStallSamples >= OUTBOUND_STALL_SAMPLE_LIMIT ? 'audio' : 'media'
+      const error = new Error(`Browser encoder stopped sending ${stalledTrack} while WebRTC still appeared connected.`)
       session.reportFailure?.(error, {
         ...diagnostics,
         outboundMediaStalled: true,
@@ -753,7 +826,14 @@ export async function startBrowserWebrtcIngest({ streamId = '', streamKey, media
     periodicKeyFrameRequests: 0,
     lastOutboundStats: null,
     outboundStallSamples: 0,
+    audioStallSamples: 0,
+    videoStallSamples: 0,
     lastOutboundProgressAt: 0,
+    adaptiveVideoTier: 0,
+    adaptiveLastChangedAt: 0,
+    adaptiveConstrainedSamples: 0,
+    adaptiveHealthySamples: 0,
+    adaptiveReason: '',
     failureReported: false,
     encoderSettings: normalizedEncodingSettings
   }
