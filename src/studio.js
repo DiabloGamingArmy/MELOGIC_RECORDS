@@ -15,6 +15,7 @@ import {
   joinMusicLiveStreamingRemote,
   kickMusicLiveStreamingRemote,
   listHostMusicLiveStreams,
+  isLiveStreamFresh,
   markMusicLiveStreamOnAir,
   normalizeMusicLiveTransportPayload,
   DEFAULT_RTMP_INGEST_SERVER,
@@ -184,7 +185,6 @@ const STUDIO_APP_FOUNDATIONS = {
     description: 'A focused illustration workspace for sketching, painting, compositing layers, and creating artwork across the Melogic suite.',
     route: ROUTES.studioInkora,
     icon: 'inkora',
-    iconFile: 'Inkora',
     capabilities: ['Brush engine', 'Layer workflow', 'Canvas tools', 'Studio asset export']
   },
   cineara: {
@@ -248,10 +248,11 @@ const stageToolCards = [
 const state = {
   user: null,
   createError: '',
-  daw: { projects: [], recentProjects: [], loading: false, error: '' },
-  stage: { projects: [], recentProjects: [], loading: false, error: '' },
+  daw: { projects: [], recentProjects: [], loading: false, loaded: false, error: '' },
+  stage: { projects: [], recentProjects: [], loading: false, loaded: false, error: '' },
   live: {
     loading: false,
+    loaded: false,
     error: '',
     assets: [],
     sequences: [],
@@ -305,7 +306,8 @@ const state = {
       unsubscribe: null,
       heartbeatTimer: 0,
       error: '',
-      joining: false
+      joining: false,
+      ignoredStreamId: ''
     },
     panel: '',
     inputSource: 'browser',
@@ -526,8 +528,15 @@ function setLivePanel(panel = 'stream', { replace = false } = {}) {
   renderShell()
 }
 
+function isPortraitMobileStudio() {
+  return Boolean(window.matchMedia?.('(orientation: portrait) and (max-width: 1100px)').matches)
+}
+
 function renderLiveRail(activePanel = 'stream') {
   const externalEncoder = isExternalEncoderSelected()
+  const availablePanels = isPortraitMobileStudio()
+    ? livePanels.filter(([key]) => key === 'remote')
+    : livePanels
   return `
     <aside class="studio-live-rail" aria-label="Live Studio tools">
       <div class="studio-live-rail-brand">
@@ -535,7 +544,7 @@ function renderLiveRail(activePanel = 'stream') {
         <span>${state.live.stream?.status || state.live.streamId ? esc(state.live.stream?.status || 'starting') : 'draft'}</span>
       </div>
       <nav>
-        ${livePanels.map(([key, label]) => {
+        ${availablePanels.map(([key, label]) => {
           const disabled = externalEncoder && ['program', 'sequence'].includes(key)
           return `<a class="${activePanel === key ? 'is-active' : ''} ${disabled ? 'is-disabled' : ''}" href="${disabled ? '#' : livePanelHref(key)}" data-live-panel="${esc(key)}" ${disabled ? 'aria-disabled="true" tabindex="-1" title="Disabled while External Encoder is selected."' : ''}><span>${esc(label)}</span></a>`
         }).join('')}
@@ -837,8 +846,8 @@ function renderHub() {
           <p>Your creative workspace for production, stage planning, collaboration, and release prep.</p>
         </div>
         <div class="studio-hub-actions">
-          <a class="studio-hub-cta" href="${ROUTES.studioDaw}">Open Soura</a>
-          <a class="studio-hub-cta" href="${ROUTES.studioStagemaker}">Open Vertix</a>
+          <a class="studio-hub-cta" href="${ROUTES.studioDaw}" data-studio-shell-nav>Open Soura</a>
+          <a class="studio-hub-cta" href="${ROUTES.studioStagemaker}" data-studio-shell-nav>Open Vertix</a>
         </div>
       </section>
 
@@ -856,7 +865,7 @@ function renderHub() {
 
       <div class="studio-section-heading"><h2>STUDIO MODULES</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       <div class="studio-module-grid">
-        ${moduleCards.map((card) => `<a class="studio-module-tile ${card.placeholder ? 'is-placeholder' : ''}" href="${card.href}" ${card.placeholder ? 'data-placeholder-demo aria-disabled="true"' : ''}><strong>${card.title}</strong><span>${card.body}</span></a>`).join('')}
+        ${moduleCards.map((card) => `<a class="studio-module-tile ${card.placeholder ? 'is-placeholder' : ''}" href="${card.href}" ${[ROUTES.studioDaw, ROUTES.studioStagemaker, ROUTES.studioLucentra, ROUTES.studioInkora, ROUTES.studioCineara, ROUTES.studioRundownPilot].includes(card.href) ? 'data-studio-shell-nav' : ''} ${card.placeholder ? 'data-placeholder-demo aria-disabled="true"' : ''}><strong>${card.title}</strong><span>${card.body}</span></a>`).join('')}
       </div>
       <div data-studio-modal-root></div>
     </section>
@@ -864,11 +873,16 @@ function renderHub() {
 }
 
 function renderDaw() {
+  const iconPath = 'assets/profilePictures/soura/soura.png'
   return `
     <section class="studio-main">
-      <section class="studio-hub-hero studio-module-hero studio-daw-hero">
+      <section class="studio-hub-hero studio-module-hero studio-branded-module-hero studio-daw-hero">
+        <div class="studio-app-foundation-icon studio-module-app-icon" aria-hidden="true">
+          <img data-studio-app-icon data-studio-app-icon-path="${iconPath}" alt="" hidden />
+          <span data-studio-app-icon-fallback>SO</span>
+        </div>
         <div>
-          <p class="eyebrow">Studio Module</p>
+          <p class="eyebrow">Digital Audio Workstation</p>
           <h1>Soura</h1>
           <p>Soura is Melogic's browser-based music production workspace for arranging, editing, collaborating, and building tracks.</p>
         </div>
@@ -889,11 +903,16 @@ function renderDaw() {
 }
 
 function renderStagemaker() {
+  const iconPath = 'assets/profilePictures/vertix/vertix.png'
   return `
     <section class="studio-main">
-      <section class="studio-hub-hero studio-module-hero studio-stage-hero">
+      <section class="studio-hub-hero studio-module-hero studio-branded-module-hero studio-stage-hero">
+        <div class="studio-app-foundation-icon studio-module-app-icon" aria-hidden="true">
+          <img data-studio-app-icon data-studio-app-icon-path="${iconPath}" alt="" hidden />
+          <span data-studio-app-icon-fallback>VE</span>
+        </div>
         <div>
-          <p class="eyebrow">Studio Module</p>
+          <p class="eyebrow">3D Software</p>
           <h1>Vertix</h1>
           <p>Vertix is Melogic's stage design and live production planning workspace.</p>
         </div>
@@ -2132,6 +2151,8 @@ function renderStreamingRemotePrompt(stream = {}) {
       <div class="studio-live-action-bar">
         <button type="button" data-live-remote-join ${live.remote.joining ? 'disabled' : ''}>${live.remote.joining ? 'Joining...' : 'Remote Control Stream'}</button>
         <a href="${ROUTES.musicLive}" class="button button-muted">Open Streaming</a>
+        <button type="button" class="button button-danger" data-live-remote-end-start ${live.ending ? 'disabled' : ''}>${live.ending ? 'Ending Stream...' : 'End Stream / Start New'}</button>
+        <button type="button" class="button button-muted" data-live-remote-dismiss>Do Not Connect</button>
       </div>
       <small>The original device remains the primary controller and continues owning browser capture and encoding.</small>
     </section>
@@ -3375,6 +3396,17 @@ function renderLiveStudio() {
   if (live.remote.promptStream && !live.remote.joined) {
     return `<section class="studio-live-main" data-live-panel-content="remote-prompt">${renderStreamingRemotePrompt(live.remote.promptStream)}</section>`
   }
+  if (isPortraitMobileStudio() && !live.remote.joined) {
+    return `<section class="studio-live-main" data-live-panel-content="mobile-remote-only">
+      <section class="studio-live-panel studio-live-mobile-remote-only">
+        <p class="eyebrow">Streaming Remote</p>
+        <h1>Control an existing stream</h1>
+        <p>Starting a browser broadcast is available from desktop Studio. On this device, connect to an active stream to control its details, metadata, chat, and safety settings.</p>
+        ${live.error ? `<p class="studio-live-error" role="alert">${esc(live.error)}</p>` : ''}
+        <button type="button" data-live-mobile-refresh ${live.loading ? 'disabled' : ''}>${live.loading ? 'Checking...' : 'Check for Active Stream'}</button>
+      </section>
+    </section>`
+  }
   if (panel !== 'sequence' && live.assetPreview.audio) stopLiveAssetPreview({ render: false })
   live.panel = panel
   const panelContent = panel === 'input'
@@ -3704,6 +3736,7 @@ async function loadDawData() {
   state.daw.error = deduped.length || indexedResult.status === 'fulfilled' || accessibleResult.status === 'fulfilled'
     ? ''
     : 'Could not load Soura projects.'
+  state.daw.loaded = !state.daw.error
 }
 
 async function loadStageData() {
@@ -3712,11 +3745,13 @@ async function loadStageData() {
     state.stage.projects = [...projects].sort(sortStageProjectsByActivity)
     state.stage.recentProjects = state.stage.projects.slice(0, 6)
     state.stage.error = ''
+    state.stage.loaded = true
   } catch (error) {
     console.error('[studio] stage project query failed', error)
     state.stage.projects = []
     state.stage.recentProjects = []
     state.stage.error = 'Could not load Vertix projects.'
+    state.stage.loaded = false
   }
 }
 
@@ -3851,6 +3886,44 @@ async function joinActiveStreamAsRemote() {
   }
 }
 
+function dismissActiveStreamRemotePrompt() {
+  const live = liveState()
+  const stream = live.remote.promptStream
+  live.remote.ignoredStreamId = stream?.streamId || stream?.id || ''
+  live.remote.promptStream = null
+  live.remote.joined = false
+  live.remote.role = ''
+  live.remote.error = ''
+  live.stream = null
+  live.streamId = ''
+  live.draftStreamId = ''
+  live.outputStatus = 'Streaming Remote connection skipped on this device.'
+  setLivePanel('stream', { replace: true })
+}
+
+async function endPromptedStreamAndStartNew() {
+  const live = liveState()
+  const stream = live.remote.promptStream
+  const streamId = stream?.streamId || stream?.id || ''
+  if (!streamId || live.ending) return
+  live.ending = true
+  live.remote.error = ''
+  renderShell()
+  try {
+    await withTimeout(endMusicLiveStream(streamId), 10000, 'Ending the existing stream timed out.')
+    unsubscribeLiveStudioRuntime()
+    clearEndedLiveHostState(streamId)
+    live.remote.ignoredStreamId = ''
+    live.outputStatus = 'Previous stream ended. Stream Details is ready for a new broadcast.'
+    setLivePanel('stream', { replace: true })
+  } catch (error) {
+    live.remote.error = error?.message || 'The existing stream could not be ended.'
+  } finally {
+    live.ending = false
+    renderShell()
+  }
+}
+
 async function removeStreamingRemoteDevice(targetDeviceId = '') {
   const live = liveState()
   if (!targetDeviceId || live.remote.role !== 'primary' || !live.streamId) return
@@ -3969,7 +4042,12 @@ async function restoreLiveStudioRuntimeState() {
   const live = liveState()
   if (!state.user?.uid || live.streamId || live.draftStreamId) return
   const streams = await listHostMusicLiveStreams(state.user.uid, { limitCount: 20 })
-  const active = streams.find((stream) => ['live', 'starting'].includes(stream.status) && stream.hostUid === state.user.uid)
+  const active = streams.find((stream) => (
+    ['live', 'starting'].includes(stream.status)
+    && stream.hostUid === state.user.uid
+    && isLiveStreamFresh(stream)
+    && (stream.streamId || stream.id || '') !== live.remote.ignoredStreamId
+  ))
   const draft = streams.find((stream) => (
     ['draft', 'setup', 'error'].includes(stream.status)
     && stream.hostUid === state.user.uid
@@ -4069,9 +4147,11 @@ async function loadLiveStudioData() {
     }
     await restoreLiveStudioRuntimeState()
     await loadLiveStudioItems()
+    live.loaded = true
   } catch (error) {
     console.error('[studio-live] load failed', error)
     live.error = 'Could not load Live Studio data.'
+    live.loaded = false
   } finally {
     live.loading = false
   }
@@ -4080,11 +4160,12 @@ async function loadLiveStudioData() {
 async function loadProjectsForCurrentRoute() {
   if (!state.user?.uid) {
     stopLiveAssetPreview({ render: false })
-    state.daw = { projects: [], recentProjects: [], loading: false, error: '' }
-    state.stage = { projects: [], recentProjects: [], loading: false, error: '' }
+    state.daw = { projects: [], recentProjects: [], loading: false, loaded: false, error: '' }
+    state.stage = { projects: [], recentProjects: [], loading: false, loaded: false, error: '' }
     state.live = {
       ...state.live,
       loading: false,
+      loaded: false,
       error: '',
       assets: [],
       sequences: [],
@@ -4106,9 +4187,9 @@ async function loadProjectsForCurrentRoute() {
   }
 
   const active = currentStudioSection()
-  const wantsDaw = active === 'hub' || active === 'daw'
-  const wantsStage = active === 'hub' || active === 'stagemaker'
-  const wantsLive = active === 'live'
+  const wantsDaw = (active === 'hub' || active === 'daw') && !state.daw.loaded
+  const wantsStage = (active === 'hub' || active === 'stagemaker') && !state.stage.loaded
+  const wantsLive = active === 'live' && !state.live.loaded
   if (wantsDaw) state.daw.loading = true
   if (wantsStage) state.stage.loading = true
   if (wantsLive) state.live.loading = true
@@ -7338,6 +7419,9 @@ function bindLiveStudioControls() {
   })
   app.querySelector('[data-live-clear-metadata]')?.addEventListener('click', () => clearManualLiveMetadata())
   app.querySelector('[data-live-remote-join]')?.addEventListener('click', () => joinActiveStreamAsRemote())
+  app.querySelector('[data-live-remote-dismiss]')?.addEventListener('click', () => dismissActiveStreamRemotePrompt())
+  app.querySelector('[data-live-remote-end-start]')?.addEventListener('click', () => endPromptedStreamAndStartNew())
+  app.querySelector('[data-live-mobile-refresh]')?.addEventListener('click', () => loadLiveStudioData().then(() => renderShell()).catch(() => renderShell()))
   app.querySelectorAll('[data-live-remote-kick]').forEach((button) => button.addEventListener('click', () => {
     removeStreamingRemoteDevice(button.dataset.liveRemoteKick || '').catch(() => {})
   }))
@@ -7585,6 +7669,19 @@ function bindLiveStudioControls() {
 
 function bind() {
   if (currentStudioSection() === 'live') bindLiveStudioControls()
+  app.querySelectorAll('[data-studio-shell-nav]').forEach((link) => link.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    const nextUrl = new URL(link.href, window.location.href)
+    if (nextUrl.origin !== window.location.origin) return
+    event.preventDefault()
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`
+    const nextRelativeUrl = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`
+    if (nextRelativeUrl === currentUrl) return
+    window.history.pushState({ studioSection: nextUrl.pathname }, '', nextRelativeUrl)
+    window.scrollTo({ top: 0, left: 0 })
+    renderShell()
+    loadProjectsForCurrentRoute().catch((error) => console.error('[studio] route data load failed', error))
+  }))
   app.querySelector('[data-new-daw-project]')?.addEventListener('click', (e) => {
     if (!state.user) return
     e.preventDefault()
@@ -7628,7 +7725,8 @@ subscribeToAuthState(async (user) => {
 })
 
 window.addEventListener('popstate', () => {
-  if (currentStudioSection() === 'live') renderShell()
+  renderShell()
+  loadProjectsForCurrentRoute().catch((error) => console.error('[studio] history data load failed', error))
 })
 
 window.addEventListener('beforeunload', (event) => {
