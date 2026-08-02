@@ -1443,7 +1443,7 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   overflow-y:auto;
   border-right:1px solid rgba(130,160,220,.16);
   background:linear-gradient(180deg,rgba(7,11,19,.98),rgba(5,8,14,.97));
-  padding:28px 18px 36px;
+  padding:28px 18px 110px;
 }
 .studio-main,
 .studio-shell:has(.studio-hub-hero) .studio-main{
@@ -1464,6 +1464,17 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   box-shadow:inset 2px 0 0 #6ee7ff;
 }
 .studio-sidebar-link:hover{border-color:transparent}
+.studio-sidebar-home{min-height:40px;margin-bottom:2px;text-transform:none}
+.studio-sidebar-group{display:grid;gap:3px;padding-top:13px;border-top:1px solid rgba(130,160,220,.12)}
+.studio-sidebar-group+.studio-sidebar-group{margin-top:10px}
+.studio-sidebar-group-label{padding:0 10px 5px;color:#71809b;font-size:10px;font-weight:900;letter-spacing:.14em;text-transform:uppercase}
+.studio-sidebar-app{min-height:48px;gap:11px;padding:5px 10px;text-transform:none;font-size:14px;letter-spacing:.01em}
+.studio-sidebar-app-icon{position:relative;flex:0 0 30px;width:30px;height:30px;display:grid;place-items:center;overflow:hidden;border:1px solid rgba(144,173,224,.18);border-radius:7px;background:linear-gradient(145deg,rgba(42,54,81,.9),rgba(12,18,31,.96));box-shadow:0 5px 14px rgba(0,0,0,.2)}
+.studio-sidebar-app-icon img:not([hidden]){display:block;width:100%;height:100%;object-fit:cover}
+.studio-sidebar-app-icon [data-studio-app-icon-fallback]{color:#b8c9e9;font-size:10px;font-weight:900;letter-spacing:.02em}
+.studio-sidebar-app-icon [data-studio-app-icon-fallback][hidden]{display:none}
+.studio-sidebar-app.is-active .studio-sidebar-app-icon{border-color:rgba(110,231,255,.55);box-shadow:0 0 0 1px rgba(110,231,255,.12),0 6px 18px rgba(0,0,0,.28)}
+.studio-sidebar-group--resources .studio-sidebar-link{min-height:34px;text-transform:none;font-size:12px}
 .studio-demos-grid{gap:0;border-block:1px solid rgba(130,160,220,.16)}
 .studio-demos-grid .studio-demo-tile{
   min-height:78px;
@@ -1605,13 +1616,42 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-program-panel>.studio-program-workspace{margin:16px 18px 18px}
 .studio-live-statusbar{padding-inline:18px;background:rgba(5,9,15,.96)}
 
+.studio-app-foundation{min-height:calc(100dvh - var(--nav-offset,4.25rem));background:radial-gradient(circle at 85% 5%,rgba(110,231,255,.08),transparent 30%)}
+.studio-app-foundation>*{margin-inline:0}
+.studio-app-foundation-hero{position:relative;display:grid;grid-template-columns:112px minmax(0,720px) auto;align-items:center;gap:28px;min-height:250px;padding:44px var(--studio-content-gutter);border-bottom:1px solid rgba(130,160,220,.16);overflow:hidden}
+.studio-app-foundation-hero::after{content:"";position:absolute;right:-80px;top:-190px;width:430px;height:430px;border:1px solid rgba(110,231,255,.11);border-radius:50%;box-shadow:0 0 0 42px rgba(110,231,255,.025),0 0 0 86px rgba(110,231,255,.018);pointer-events:none}
+.studio-app-foundation-icon{position:relative;z-index:1;width:112px;height:112px;display:grid;place-items:center;overflow:hidden;border:1px solid rgba(138,180,238,.28);border-radius:22px;background:linear-gradient(145deg,#1b2940,#0a101c);box-shadow:0 22px 60px rgba(0,0,0,.35)}
+.studio-app-foundation-icon img:not([hidden]){display:block;width:100%;height:100%;object-fit:cover}
+.studio-app-foundation-icon [data-studio-app-icon-fallback]{color:#dcecff;font-size:30px;font-weight:900;letter-spacing:.04em}
+.studio-app-foundation-icon [data-studio-app-icon-fallback][hidden]{display:none}
+.studio-app-foundation-hero h1{margin:3px 0 10px;font-size:clamp(42px,5vw,72px);line-height:.95;letter-spacing:-.045em}
+.studio-app-foundation-hero p:not(.eyebrow){max-width:680px;margin:0;color:#aebbd4;font-size:16px;line-height:1.6}
+.studio-app-foundation-status{position:relative;z-index:1;align-self:start;justify-self:end;padding:7px 10px;border:1px solid rgba(110,231,255,.28);border-radius:999px;background:rgba(110,231,255,.08);color:#9ceeff;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap}
+.studio-app-foundation-body{display:grid;grid-template-columns:minmax(260px,.75fr) minmax(440px,1.4fr);gap:48px;padding:42px var(--studio-content-gutter) 64px}
+.studio-app-foundation-body header h2{margin:4px 0 12px;font-size:30px;line-height:1.05}
+.studio-app-foundation-body header>p:not(.eyebrow){margin:0;color:#9eabc3;line-height:1.65}
+.studio-app-foundation-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid rgba(130,160,220,.18);border-left:1px solid rgba(130,160,220,.18)}
+.studio-app-foundation-grid article{min-height:118px;display:grid;align-content:center;gap:6px;padding:20px;border-right:1px solid rgba(130,160,220,.18);border-bottom:1px solid rgba(130,160,220,.18);background:linear-gradient(145deg,rgba(18,27,43,.66),rgba(8,13,23,.3))}
+.studio-app-foundation-grid article span{color:#6ee7ff;font-size:10px;font-weight:900;letter-spacing:.12em}
+.studio-app-foundation-grid article strong{font-size:16px}
+.studio-app-foundation-grid article small{color:#8493ad;font-size:12px}
+
 @media (max-width:900px){
   .studio-shell,.studio-shell:has(.studio-hub-hero){grid-template-columns:1fr}
   .studio-sidebar{position:relative;inset:auto;z-index:auto;width:100%;height:auto;padding:20px 14px;border-right:0;border-bottom:1px solid rgba(130,160,220,.16)}
+  .studio-sidebar-nav{grid-template-columns:1fr}
+  .studio-sidebar-group{grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+  .studio-sidebar-group-label{grid-column:1/-1}
   .studio-main,.studio-shell:has(.studio-hub-hero) .studio-main{grid-column:1}
   .studio-main>*{margin-inline:14px}
   .studio-hub-hero{margin:0;padding-inline:20px}
+  .studio-app-foundation>*{margin-inline:0}
+  .studio-app-foundation-hero{grid-template-columns:82px minmax(0,1fr);gap:20px;min-height:0;padding:34px 20px}
+  .studio-app-foundation-icon{width:82px;height:82px;border-radius:17px}
+  .studio-app-foundation-status{grid-column:1/-1;justify-self:start}
+  .studio-app-foundation-body{grid-template-columns:1fr;gap:26px;padding:32px 20px 50px}
 }
+@media (max-width:600px){.studio-sidebar-group{grid-template-columns:1fr}.studio-app-foundation-hero{grid-template-columns:1fr}.studio-app-foundation-grid{grid-template-columns:1fr}.studio-app-foundation-hero h1{font-size:42px}}
 @media (max-width:980px){
   .studio-live-shell{grid-template-columns:1fr}
   .studio-live-rail{padding:10px 12px}

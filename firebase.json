@@ -544,6 +544,38 @@
         "destination": "/studio.html"
       },
       {
+        "source": "/studio/lucentra",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/lucentra/**",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/inkora",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/inkora/**",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/cineara",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/cineara/**",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/rundown-pilot",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/rundown-pilot/**",
+        "destination": "/studio.html"
+      },
+      {
         "source": "/stage",
         "destination": "/stage.html"
       },

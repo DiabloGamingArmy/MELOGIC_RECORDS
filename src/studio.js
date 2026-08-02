@@ -169,6 +169,42 @@ const STUDIO_TOOL_LABELS = {
   stage: 'Vertix'
 }
 
+const STUDIO_APP_FOUNDATIONS = {
+  lucentra: {
+    name: 'Lucentra',
+    category: 'DJ Software',
+    description: 'A performance-focused DJ workspace for preparing sets, mixing decks, managing cues, and shaping live transitions.',
+    route: ROUTES.studioLucentra,
+    icon: 'lucentra',
+    capabilities: ['Decks and mixer', 'Cue points and loops', 'Set library', 'Performance recording']
+  },
+  inkora: {
+    name: 'Inkora',
+    category: '2D Graphics',
+    description: 'A focused illustration workspace for sketching, painting, compositing layers, and creating artwork across the Melogic suite.',
+    route: ROUTES.studioInkora,
+    icon: 'inkora',
+    iconFile: 'Inkora',
+    capabilities: ['Brush engine', 'Layer workflow', 'Canvas tools', 'Studio asset export']
+  },
+  cineara: {
+    name: 'Cineara',
+    category: 'Video Editing',
+    description: 'A nonlinear editing workspace for cutting video, refining audio, building motion graphics, and preparing final delivery.',
+    route: ROUTES.studioCineara,
+    icon: 'cineara',
+    capabilities: ['Timeline editing', 'Media bin', 'Color and effects', 'Render delivery']
+  },
+  rundownpilot: {
+    name: 'Rundown Pilot',
+    category: 'Stage Management',
+    description: 'A live production command center for rundowns, cues, assignments, timing, and coordinated show-day execution.',
+    route: ROUTES.studioRundownPilot,
+    icon: 'rundownpilot',
+    capabilities: ['Run of show', 'Cue tracking', 'Team assignments', 'Live timing']
+  }
+}
+
 function stageCreateErrorMessage(error, user) {
   const kind = classifyStageProjectError(error, user)
   if (kind === 'unauthenticated') return 'Please sign in to create a stage plan.'
@@ -194,6 +230,7 @@ const stageDemos = [
 const moduleCards = [
   { title: STUDIO_TOOL_LABELS.daw, href: ROUTES.studioDaw, body: "Soura is Melogic's browser-based music production workspace for arranging, editing, and building tracks." },
   { title: STUDIO_TOOL_LABELS.stage, href: ROUTES.studioStagemaker, body: "Vertix is Melogic's stage design and live production planning workspace." },
+  ...Object.values(STUDIO_APP_FOUNDATIONS).map((tool) => ({ title: tool.name, href: tool.route, body: tool.description })),
   { title: 'Demos', href: ROUTES.studioDemos, body: 'Explore example sessions and production references.' },
   { title: 'Tutorials', href: ROUTES.studioTutorials, body: 'Learn the tools and workflows inside Melogic Studio.' },
   { title: 'Release Builder', href: '#', body: 'Future release prep, assets, checklists, and distribution handoff.', placeholder: true }
@@ -438,6 +475,10 @@ function currentStudioSection() {
   const pathname = window.location.pathname || ''
   if (pathname === ROUTES.studio) return 'hub'
   if (pathname.startsWith(ROUTES.studioStagemaker)) return 'stagemaker'
+  if (pathname.startsWith(ROUTES.studioLucentra)) return 'lucentra'
+  if (pathname.startsWith(ROUTES.studioInkora)) return 'inkora'
+  if (pathname.startsWith(ROUTES.studioCineara)) return 'cineara'
+  if (pathname.startsWith(ROUTES.studioRundownPilot)) return 'rundownpilot'
   if (pathname.startsWith(ROUTES.studioLive)) return 'live'
   return 'daw'
 }
@@ -877,6 +918,34 @@ function renderStagemaker() {
       <div class="studio-section-heading"><h2>VERTIX TOOLS</h2><span class="studio-section-line studio-section-line--explore"></span></div>
       ${renderStageTools()}
       <div data-studio-modal-root></div>
+    </section>
+  `
+}
+
+function renderStudioAppFoundation(appKey = '') {
+  const tool = STUDIO_APP_FOUNDATIONS[appKey]
+  if (!tool) return renderHub()
+  const iconPath = `assets/profilePictures/${tool.icon}/${tool.iconFile || tool.icon}.png`
+  return `
+    <section class="studio-main studio-app-foundation studio-app-foundation--${esc(appKey)}">
+      <section class="studio-app-foundation-hero">
+        <div class="studio-app-foundation-icon" aria-hidden="true">
+          <img data-studio-app-icon data-studio-app-icon-path="${esc(iconPath)}" alt="" hidden />
+          <span data-studio-app-icon-fallback>${esc(tool.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2))}</span>
+        </div>
+        <div>
+          <p class="eyebrow">${esc(tool.category)}</p>
+          <h1>${esc(tool.name)}</h1>
+          <p>${esc(tool.description)}</p>
+        </div>
+        <span class="studio-app-foundation-status">Foundation phase</span>
+      </section>
+      <section class="studio-app-foundation-body">
+        <header><p class="eyebrow">Workspace</p><h2>Creative tools, built into Studio</h2><p>This is the starting surface for ${esc(tool.name)}. Project creation, editor state, cloud saves, collaboration, and export workflows will be added here as development continues.</p></header>
+        <div class="studio-app-foundation-grid">
+          ${tool.capabilities.map((capability, index) => `<article><span>${String(index + 1).padStart(2, '0')}</span><strong>${esc(capability)}</strong><small>Planned core workspace</small></article>`).join('')}
+        </div>
+      </section>
     </section>
   `
 }
@@ -3594,7 +3663,15 @@ function renderShell() {
     studioProgramMixer.destroy()
     studioProgramMixer = null
   }
-  const content = active === 'hub' ? renderHub() : active === 'stagemaker' ? renderStagemaker() : active === 'live' ? renderLiveStudio() : renderDaw()
+  const content = active === 'hub'
+    ? renderHub()
+    : active === 'stagemaker'
+      ? renderStagemaker()
+      : active === 'live'
+        ? renderLiveStudio()
+        : STUDIO_APP_FOUNDATIONS[active]
+          ? renderStudioAppFoundation(active)
+          : renderDaw()
   app.innerHTML = active === 'live'
     ? `${navShell({ currentPage: 'studio' })}<main class="studio-page studio-live-page"><section class="studio-live-shell">${renderLiveRail(currentLivePanel())}<section class="studio-live-content">${content}${renderLiveStatusBar()}</section></section></main>`
     : `${navShell({ currentPage: 'studio' })}<main class="studio-page"><section class="studio-shell">${studioSidebar({ active })}${content}</section></main>`
