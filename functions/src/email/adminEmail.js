@@ -3,7 +3,7 @@ const admin = require('firebase-admin')
 const crypto = require('node:crypto')
 const { assertAnyPermission, assertPermission, cleanString, requireAdminActionSecurity } = require('../admin/adminAuth')
 const { writeAdminAuditLog } = require('../admin/auditLog')
-const { EMAIL_SECRETS, SUPPORT_EMAIL, providerConfigured, renderEmailTemplate, sendEmail, validateEmailAddress } = require('./emailSender')
+const { EMAIL_SECRETS, SUPPORT_EMAIL, providerConfigured, renderEmailTemplate, renderPremiumEmailHtml, sendEmail, validateEmailAddress } = require('./emailSender')
 const { writeEmailLog } = require('./emailLog')
 const { writeAccountEvent } = require('../account/accountEvents')
 
@@ -56,30 +56,14 @@ function renderAdminTemplate({ templateType = 'raw', subject = '', body = '', ct
   const finalSubject = type === 'alert' && !/^\[alert\]/i.test(cleanSubject) ? `[ALERT] ${cleanSubject}` : cleanSubject
   const safeCtaUrl = validateCtaUrl(ctaUrl)
   const safeCtaLabel = cleanString(ctaLabel || (type === 'alert' ? 'Review Account Security' : 'Open Melogic Records'), 80)
-  if (type === 'raw') {
-    return {
-      templateType: type,
-      finalSubject,
-      html: plainTextToHtml(body),
-      text: body,
-      ctaLabel: '',
-      ctaUrl: ''
-    }
-  }
-  const alertLabel = type === 'alert'
-    ? '<p style="display:inline-block;margin:0 0 14px;padding:5px 9px;border-radius:999px;background:#432318;color:#ffd1a3;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase">Melogic Alert</p>'
-    : ''
-  const button = safeCtaUrl
-    ? `<table role="presentation" cellspacing="0" cellpadding="0" style="margin:24px 0 4px"><tr><td style="background:${type === 'alert' ? '#ffb36b' : '#38d5c8'};border-radius:10px"><a href="${htmlEscape(safeCtaUrl)}" style="display:inline-block;padding:12px 18px;color:#061522;text-decoration:none;font-weight:800;font-size:14px">${htmlEscape(safeCtaLabel)}</a></td></tr></table>`
-    : ''
-  const html = `<!doctype html><html><body style="margin:0;background:#07101f;color:#e7f0ff;font-family:Arial,Helvetica,sans-serif">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#07101f;padding:34px 12px"><tr><td align="center">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#0b1323;border:1px solid ${type === 'alert' ? '#5b3b2d' : '#273b5d'};border-radius:14px;overflow:hidden">
-      <tr><td style="padding:22px 28px;background:#0f1b31;border-bottom:1px solid #243957"><p style="margin:0;color:#8ef8da;font-size:12px;letter-spacing:.18em;font-weight:800">MELOGIC RECORDS</p><p style="margin:8px 0 0;color:#9db2d6;font-size:12px;letter-spacing:.08em;text-transform:uppercase">${type === 'alert' ? 'Account Alert' : 'Support'}</p></td></tr>
-      <tr><td style="padding:30px 28px 26px">${alertLabel}<h1 style="margin:0 0 16px;font-size:26px;line-height:1.2;color:#fff">${htmlEscape(finalSubject)}</h1><div style="font-size:15px;line-height:1.65;color:#d5e1f7">${plainTextToHtml(body)}</div>${button}<hr style="border:0;border-top:1px solid #253750;margin:26px 0" /><p style="margin:0;color:#8fa3c7;font-size:12px;line-height:1.5">Need help? Reply to this email or contact ${SUPPORT_EMAIL}.</p></td></tr>
-    </table>
-  </td></tr></table>
-</body></html>`
+  const html = renderPremiumEmailHtml({
+    eyebrow: type === 'alert' ? 'Account alert' : type === 'support' ? 'Support message' : 'System message',
+    title: finalSubject,
+    body: plainTextToHtml(body),
+    ctaLabel: safeCtaUrl ? safeCtaLabel : '',
+    ctaUrl: safeCtaUrl,
+    tone: type === 'alert' ? 'alert' : 'default'
+  })
   const ctaText = safeCtaUrl ? `\n\n${safeCtaLabel}: ${safeCtaUrl}` : ''
   return {
     templateType: type,
@@ -555,7 +539,12 @@ const sendAdminAuthEmail = onCall({ timeoutSeconds: 60, memory: '256MiB', secret
   } else {
     subject = cleanString(request.data?.subject || 'Melogic Records security notice', 180)
     const body = cleanString(request.data?.body || 'A security notice was sent by Melogic Records Support.', 2000)
-    html = plainTextToHtml(body)
+    html = renderPremiumEmailHtml({
+      eyebrow: 'Account security',
+      title: subject,
+      body: plainTextToHtml(body),
+      tone: 'alert'
+    })
     text = body
   }
   if (template) {

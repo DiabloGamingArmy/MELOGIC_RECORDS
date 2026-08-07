@@ -11,6 +11,7 @@ const EMAIL_SECRETS = [SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM]
 const SUPPORT_EMAIL = 'support@melogicrecords.studio'
 const DEFAULT_FROM = `Melogic Records Support <${SUPPORT_EMAIL}>`
 const SMTP_TIMEOUT_MS = 22000
+const BRAND_LOGO_URL = 'https://firebasestorage.googleapis.com/v0/b/melogic-records.firebasestorage.app/o/assets%2Fbrand%2Fmelogic-logo-mark-white-transparent.png?alt=media'
 
 function cleanString(value = '', max = 1000) {
   return String(value || '')
@@ -135,38 +136,48 @@ const TEMPLATE_SUBJECTS = {
   security_2fa_disabled: 'Two-factor authentication was disabled'
 }
 
-function baseEmailHtml({ eyebrow = 'Melogic Records', title = '', body = '', ctaLabel = '', ctaUrl = '', footer = '' } = {}) {
+function renderPremiumEmailHtml({ eyebrow = 'Account notice', title = '', body = '', ctaLabel = '', ctaUrl = '', footer = '', tone = 'default' } = {}) {
+  const isAlert = tone === 'alert'
+  const accent = isAlert ? '#f4ae72' : '#66e4cf'
+  const accentSoft = isAlert ? '#2e211f' : '#142a31'
+  const border = isAlert ? '#5a3d35' : '#2b3a50'
   const button = ctaUrl
-    ? `<table role="presentation" cellspacing="0" cellpadding="0" style="margin:28px 0 8px"><tr><td style="background:#38d5c8;border-radius:10px"><a href="${htmlEscape(ctaUrl)}" style="display:inline-block;padding:13px 20px;color:#061522;text-decoration:none;font-weight:800;font-size:14px;letter-spacing:.01em">${htmlEscape(ctaLabel || 'Open Melogic Records')}</a></td></tr></table>`
+    ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:28px 0 6px"><tr><td align="center" bgcolor="${accent}" style="border-radius:8px;background:${accent}"><a href="${htmlEscape(ctaUrl)}" style="display:inline-block;padding:14px 22px;border:1px solid ${accent};border-radius:8px;color:#07131c;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-weight:800;font-size:14px;letter-spacing:.01em">${htmlEscape(ctaLabel || 'Open Melogic Records')}</a></td></tr></table>`
     : ''
   return `<!doctype html>
-<html><body style="margin:0;background:#07101f;color:#e7f0ff;font-family:Arial,Helvetica,sans-serif">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#07101f;padding:34px 12px">
-    <tr><td align="center">
-      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#0b1323;border:1px solid #273b5d;border-radius:14px;overflow:hidden">
-        <tr><td>
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#0f1b31;border-bottom:1px solid #243957">
-            <tr><td style="padding:22px 28px">
-              <p style="margin:0;color:#8ef8da;font-size:12px;letter-spacing:.18em;font-weight:800">MELOGIC RECORDS</p>
-              <p style="margin:8px 0 0;color:#9db2d6;font-size:12px;letter-spacing:.08em;text-transform:uppercase">${htmlEscape(eyebrow)}</p>
+<html lang="en"><body style="margin:0;padding:0;background:#070b12;color:#edf2ff;font-family:Arial,Helvetica,sans-serif">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin:0;padding:0;background:#070b12">
+    <tr><td align="center" style="padding:36px 12px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:640px;margin:0 auto">
+        <tr><td style="height:4px;background:${accent};font-size:1px;line-height:4px">&nbsp;</td></tr>
+        <tr><td style="border-right:1px solid ${border};border-bottom:1px solid ${border};border-left:1px solid ${border};border-radius:0 0 16px 16px;background:#101722;overflow:hidden">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+            <tr><td style="padding:24px 28px 22px;background:#111a27;border-bottom:1px solid #29364a">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+                <td valign="middle" style="padding:0"><p style="margin:0;color:${accent};font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px;font-weight:800;letter-spacing:.16em;text-transform:uppercase">${htmlEscape(eyebrow)}</p></td>
+                <td width="48" align="right" valign="middle" style="padding:0"><img src="${BRAND_LOGO_URL}" width="38" height="38" alt="Melogic Records" style="display:block;width:38px;height:38px;border:0;outline:none;text-decoration:none" /></td>
+              </tr></table>
             </td></tr>
-          </table>
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-            <tr><td style="padding:30px 28px 26px">
-              <h1 style="margin:0 0 16px;font-size:27px;line-height:1.2;color:#ffffff;font-weight:800">${htmlEscape(title)}</h1>
-              <div style="font-size:15px;line-height:1.65;color:#d5e1f7">${body}</div>
+            <tr><td style="padding:34px 28px 28px">
+              <h1 style="margin:0 0 16px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:28px;line-height:34px;font-weight:800;letter-spacing:-.02em">${htmlEscape(title)}</h1>
+              <div style="color:#d4ddeb;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:24px">${body}</div>
               ${button}
-              ${footer ? `<p style="margin:18px 0 0;color:#aebddd;font-size:13px;line-height:1.5">${footer}</p>` : ''}
-              <hr style="border:0;border-top:1px solid #253750;margin:26px 0" />
-              <p style="margin:0 0 8px;color:#aabade;font-size:13px;line-height:1.5">If you did not request this, you can ignore this email.</p>
-              <p style="margin:0;color:#8fa3c7;font-size:12px;line-height:1.5">Need help? Reply to this email or contact ${SUPPORT_EMAIL}.</p>
+              ${footer ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0 0"><tr><td style="padding:13px 14px;border:1px solid ${border};border-radius:8px;background:${accentSoft};color:#c0cede;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px">${htmlEscape(footer)}</td></tr></table>` : ''}
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:28px 0 0"><tr><td style="height:1px;background:#2a3546;font-size:1px;line-height:1px">&nbsp;</td></tr></table>
+              <p style="margin:20px 0 0;color:#a8b6ca;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:19px">If you did not request or recognize this activity, you can ignore this email or contact support.</p>
+              <p style="margin:9px 0 0;color:#8494aa;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:19px">Need help? Reply to this email or contact <a href="mailto:${SUPPORT_EMAIL}" style="color:#a9e9df;text-decoration:underline">${SUPPORT_EMAIL}</a>.</p>
             </td></tr>
+            <tr><td style="padding:18px 28px 20px;border-top:1px solid #29364a;background:#0c121c"><p style="margin:0;color:#718198;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:16px">&copy; ${new Date().getFullYear()} Melogic Records</p></td></tr>
           </table>
         </td></tr>
       </table>
     </td></tr>
   </table>
 </body></html>`
+}
+
+function baseEmailHtml(options = {}) {
+  return renderPremiumEmailHtml(options)
 }
 
 function renderEmailTemplate(templateName = '', data = {}) {
@@ -375,6 +386,7 @@ module.exports = {
   EMAIL_SECRETS,
   SUPPORT_EMAIL,
   providerConfigured,
+  renderPremiumEmailHtml,
   renderEmailTemplate,
   sendEmail,
   validateEmailAddress
