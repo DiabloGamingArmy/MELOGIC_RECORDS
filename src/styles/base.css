@@ -38,6 +38,48 @@
   --nav-offset: 4.25rem;
 }
 
+/* Premium Melogic site theme. The homepage keeps the original root tokens and
+   presentation; every other page inherits this darker brand system. */
+html:not(.home-page-root) {
+  --ml-bg: #07080c;
+  --ml-bg-elevated: #0b0d12;
+  --ml-bg-panel: rgba(14, 17, 24, 0.9);
+  --ml-bg-panel-strong: rgba(18, 22, 30, 0.97);
+  --ml-bg-interactive: rgba(23, 27, 37, 0.94);
+  --ml-border: rgba(188, 196, 216, 0.14);
+  --ml-border-strong: rgba(113, 126, 255, 0.48);
+  --ml-text: #ffffff;
+  --ml-text-muted: #b5bbc8;
+  --ml-text-dim: #818897;
+  --ml-accent: #5d7cff;
+  --ml-accent-2: #9867ff;
+  --ml-accent-gradient: linear-gradient(135deg, #477dff 0%, #765dff 52%, #a65cff 100%);
+  --ml-accent-soft: rgba(104, 91, 255, 0.12);
+  --ml-shadow-panel: 0 18px 44px rgba(0, 0, 0, 0.42);
+  --ml-shadow-float: 0 24px 72px rgba(0, 0, 0, 0.58);
+  --ml-glow-cyan: 0 0 26px rgba(101, 91, 255, 0.16);
+  --ml-focus-ring: 0 0 0 3px rgba(100, 112, 255, 0.18);
+  --bg: var(--ml-bg);
+  --bg-soft: var(--ml-bg-elevated);
+  --surface: var(--ml-bg-panel);
+  --text: var(--ml-text);
+  --muted: var(--ml-text-muted);
+  --border: var(--ml-border);
+  --purple: var(--ml-accent-2);
+  --blue: #477dff;
+  --cyan: #6b79ff;
+  --accent: var(--ml-accent-gradient);
+  --admin-bg: #07080c;
+  --admin-card: #11141b;
+  --admin-card-subtle: #171a23;
+  --admin-border: rgba(188, 196, 216, 0.14);
+  --admin-border-strong: rgba(113, 126, 255, 0.48);
+  --admin-primary: #6475ff;
+  --admin-primary-strong: #8260f1;
+  --admin-input: #0a0b10;
+  --admin-code-bg: #090a0f;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2564,3 +2606,441 @@ main:has(.support-hero) .section-inner {
 }
  .artwork-square{aspect-ratio:1/1;object-fit:cover;object-position:center}
  .artwork-square img{width:100%;height:100%;object-fit:cover;object-position:center}
+
+/* Non-homepage shared chrome ------------------------------------------------ */
+html:not(.home-page-root) body {
+  background:
+    radial-gradient(900px 440px at 92% -12%, rgba(80, 81, 255, 0.09), transparent 70%),
+    radial-gradient(720px 420px at -12% 18%, rgba(145, 72, 255, 0.055), transparent 72%),
+    var(--ml-bg);
+}
+
+html:not(.home-page-root) body::selection {
+  background: rgba(111, 91, 255, 0.42);
+  color: #fff;
+}
+
+html:not(.home-page-root),
+html:not(.home-page-root) body {
+  scrollbar-color: rgba(100, 103, 139, 0.78) #07080c;
+}
+
+html:not(.home-page-root)::-webkit-scrollbar-track,
+html:not(.home-page-root) body::-webkit-scrollbar-track {
+  background: #07080c;
+}
+
+html:not(.home-page-root)::-webkit-scrollbar-thumb,
+html:not(.home-page-root) body::-webkit-scrollbar-thumb {
+  border-color: #07080c;
+  background: linear-gradient(180deg, rgba(91, 108, 255, 0.82), rgba(132, 77, 218, 0.78));
+}
+
+html:not(.home-page-root) .nav-shell {
+  background: rgba(7, 8, 12, 0.92);
+  border-bottom-color: rgba(188, 196, 216, 0.14);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.2);
+}
+
+html:not(.home-page-root) .brand-logo {
+  filter: drop-shadow(0 0 10px rgba(103, 91, 255, 0.2));
+}
+
+html:not(.home-page-root) .main-nav a::after {
+  background: var(--ml-accent-gradient);
+}
+
+html:not(.home-page-root) .main-nav a:hover,
+html:not(.home-page-root) .main-nav a:focus-visible,
+html:not(.home-page-root) .main-nav a[aria-current='page'] {
+  color: #fff;
+}
+
+html:not(.home-page-root) .button:focus-visible,
+html:not(.home-page-root) .carousel-control:focus-visible,
+html:not(.home-page-root) .release-card button:focus-visible,
+html:not(.home-page-root) .main-nav a:focus-visible,
+html:not(.home-page-root) .profile-button:focus-visible {
+  outline-color: rgba(113, 126, 255, 0.86);
+}
+
+html:not(.home-page-root) .button-accent,
+html:not(.home-page-root) .ml-button-primary {
+  border-color: rgba(132, 112, 255, 0.54);
+  background: #5d6fff;
+  background-image: var(--ml-accent-gradient);
+  color: #fff;
+  box-shadow: 0 10px 28px rgba(75, 83, 226, 0.24);
+}
+
+html:not(.home-page-root) .button-accent:hover,
+html:not(.home-page-root) .button-accent:focus-visible,
+html:not(.home-page-root) .ml-button-primary:hover,
+html:not(.home-page-root) .ml-button-primary:focus-visible {
+  box-shadow: 0 12px 32px rgba(103, 74, 238, 0.34);
+  filter: brightness(1.06);
+}
+
+html:not(.home-page-root) .button-muted,
+html:not(.home-page-root) .button-cart,
+html:not(.home-page-root) .ml-button-secondary {
+  background: rgba(21, 24, 32, 0.96);
+}
+
+html:not(.home-page-root) .inbox-badge[data-has-unread='true'] {
+  background: var(--ml-accent-gradient);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(105, 91, 255, 0.42);
+}
+
+html:not(.home-page-root) .ml-page-shell {
+  background:
+    radial-gradient(circle at 92% 0, rgba(91, 86, 255, 0.08), transparent 34%),
+    var(--ml-bg);
+}
+
+html:not(.home-page-root) .ml-panel,
+html:not(.home-page-root) .ml-card {
+  background: linear-gradient(180deg, rgba(18, 21, 29, 0.98), rgba(12, 14, 20, 0.96));
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025), var(--ml-shadow-panel);
+}
+
+html:not(.home-page-root) a.ml-card:hover,
+html:not(.home-page-root) button.ml-card:hover,
+html:not(.home-page-root) .ml-card[data-clickable='true']:hover {
+  background: #151821;
+}
+
+html:not(.home-page-root) .ml-stat-bar,
+html:not(.home-page-root) .ml-tab-bar,
+html:not(.home-page-root) .ml-sidebar {
+  background: rgba(9, 10, 15, 0.9);
+}
+
+html:not(.home-page-root) .ml-tab-button:hover,
+html:not(.home-page-root) .ml-tab-button:focus-visible,
+html:not(.home-page-root) .ml-tab-button.is-active,
+html:not(.home-page-root) .ml-sidebar-item:hover,
+html:not(.home-page-root) .ml-sidebar-item:focus-visible,
+html:not(.home-page-root) .ml-sidebar-item.is-active,
+html:not(.home-page-root) .ml-menu-item:hover,
+html:not(.home-page-root) .ml-menu-item:focus-visible {
+  background: var(--ml-accent-soft);
+}
+
+html:not(.home-page-root) .ml-input,
+html:not(.home-page-root) .ml-select,
+html:not(.home-page-root) .ml-textarea {
+  background: #0a0b10;
+}
+
+html:not(.home-page-root) .ml-menu,
+html:not(.home-page-root) .profile-dropdown,
+html:not(.home-page-root) .cart-drawer,
+html:not(.home-page-root) .product-download-modal {
+  background: #101219;
+  border-color: var(--ml-border);
+  box-shadow: var(--ml-shadow-float);
+}
+
+html:not(.home-page-root) .profile-button {
+  border-color: rgba(188, 196, 216, 0.22);
+  background: #11131a;
+}
+
+html:not(.home-page-root) .support-card:hover {
+  background: linear-gradient(135deg, rgba(91, 111, 255, 0.065), transparent 58%);
+}
+
+html:not(.home-page-root) .support-contact-copy {
+  border-left-color: rgba(111, 102, 255, 0.62);
+}
+
+html:not(.home-page-root) .support-card-eyebrow,
+html:not(.home-page-root) .support-form-status[data-status='loading'],
+html:not(.home-page-root) .info-section-copy a,
+html:not(.home-page-root) .support-doc-back-link,
+html:not(.home-page-root) .support-doc-copy a,
+html:not(.home-page-root) .site-footer-links a:hover,
+html:not(.home-page-root) .site-footer-links a:focus-visible {
+  color: #8d86ff;
+}
+
+html:not(.home-page-root) .info-page,
+html:not(.home-page-root) .support-doc-page {
+  background:
+    linear-gradient(180deg, rgba(13, 14, 20, 0.98), rgba(7, 8, 12, 1) 34%),
+    var(--ml-bg);
+}
+
+html:not(.home-page-root) .support-doc-nav-link:hover,
+html:not(.home-page-root) .support-doc-nav-link:focus-visible {
+  border-color: rgba(105, 97, 255, 0.28);
+  border-left-color: rgba(128, 97, 255, 0.72);
+}
+
+html:not(.home-page-root) .support-doc-nav-link.is-active {
+  background: var(--ml-accent-soft);
+}
+
+html:not(.home-page-root) .site-footer {
+  background: #08090d;
+}
+
+html:not(.home-page-root) .access-gate {
+  background: radial-gradient(circle at 20% 0, rgba(86, 72, 184, 0.36), rgba(5, 6, 10, 0.97));
+}
+
+html:not(.home-page-root) .access-gate-card,
+html:not(.home-page-root) .banner-alert-card,
+html:not(.home-page-root) .banner-alert-modal {
+  background: linear-gradient(180deg, #14161e, #0b0c11);
+}
+
+html:not(.home-page-root) .access-gate-button {
+  border-color: rgba(131, 111, 255, 0.72);
+  background: #5d6fff;
+  background-image: var(--ml-accent-gradient);
+}
+
+html:not(.home-page-root) .product-download-progress span {
+  background: #5d6fff;
+  background-image: var(--ml-accent-gradient);
+}
+
+/* Authentication and account surfaces */
+html:not(.home-page-root) .auth-card,
+html:not(.home-page-root) .auth-benefits,
+html:not(.home-page-root) .auth-action-card,
+html:not(.home-page-root) .security-panel,
+html:not(.home-page-root) .account-modal {
+  border-color: var(--ml-border);
+  background: linear-gradient(180deg, #13161e, #0d0f15);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.035), var(--ml-shadow-panel);
+}
+
+html:not(.home-page-root) .auth-toggle,
+html:not(.home-page-root) .auth-form input,
+html:not(.home-page-root) .auth-action-form input,
+html:not(.home-page-root) .password-toggle,
+html:not(.home-page-root) .auth-recaptcha-status {
+  background: #0a0b10;
+  border-color: var(--ml-border);
+}
+
+html:not(.home-page-root) .auth-tab.is-active,
+html:not(.home-page-root) .settings-nav-btn.is-active,
+html:not(.home-page-root) .account-filter-row button.is-active {
+  background: var(--ml-accent-soft);
+  border-color: var(--ml-border-strong);
+  color: #f7f8ff;
+  box-shadow: inset 0 0 0 1px rgba(109, 95, 255, 0.12);
+}
+
+html:not(.home-page-root) .auth-action-main,
+html:not(.home-page-root) .account-page {
+  background:
+    radial-gradient(circle at 82% 0, rgba(85, 87, 255, 0.1), transparent 34%),
+    linear-gradient(180deg, #090a0f, #07080c);
+}
+
+html:not(.home-page-root) .auth-action-wordmark,
+html:not(.home-page-root) .auth-link,
+html:not(.home-page-root) .back-link,
+html:not(.home-page-root) .account-action-links a,
+html:not(.home-page-root) .account-support-panel a {
+  color: #9189ff;
+}
+
+html:not(.home-page-root) .account-row,
+html:not(.home-page-root) .account-summary-grid article,
+html:not(.home-page-root) .account-table,
+html:not(.home-page-root) .account-support-panel,
+html:not(.home-page-root) .account-detail-grid article,
+html:not(.home-page-root) .payout-setup-card,
+html:not(.home-page-root) .payout-panel,
+html:not(.home-page-root) .payout-earnings-grid article,
+html:not(.home-page-root) .payout-withdrawal-panel {
+  border-color: var(--ml-border);
+  background: #11141b;
+}
+
+/* Marketplace, products, profiles and settings */
+html:not(.home-page-root) .cart-page-items,
+html:not(.home-page-root) .cart-page-summary,
+html:not(.home-page-root) .edit-card,
+html:not(.home-page-root) .settings-content,
+html:not(.home-page-root) .media-modal,
+html:not(.home-page-root) .marketplace-editor-header,
+html:not(.home-page-root) .marketplace-editor-tabs-wrap,
+html:not(.home-page-root) .marketplace-editor-workspace,
+html:not(.home-page-root) .product-detail-card,
+html:not(.home-page-root) .panel-surface,
+html:not(.home-page-root) .product-dashboard-empty,
+html:not(.home-page-root) .product-card,
+html:not(.home-page-root) .products-sidebar,
+html:not(.home-page-root) .products-advanced-panel,
+html:not(.home-page-root) .profile-card {
+  border-color: var(--ml-border);
+  background: linear-gradient(180deg, #12151c, #0d0f14);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025), 0 16px 34px rgba(0, 0, 0, 0.3);
+}
+
+html:not(.home-page-root) .profile-grid {
+  border-color: var(--ml-border);
+  background: var(--ml-border);
+}
+
+html:not(.home-page-root) .products-hero {
+  background:
+    radial-gradient(880px 330px at 80% -18%, rgba(89, 92, 255, 0.15), transparent 70%),
+    radial-gradient(680px 280px at 18% 130%, rgba(153, 77, 255, 0.08), transparent 70%),
+    var(--ml-bg);
+}
+
+html:not(.home-page-root) .new-product-btn,
+html:not(.home-page-root) .product-actions .add-btn,
+html:not(.home-page-root) .marketplace-editor-tab.is-active,
+html:not(.home-page-root) .fulfillment-type-card.is-active,
+html:not(.home-page-root) .featured-product-option.is-selected {
+  border-color: rgba(118, 105, 255, 0.55);
+  background: var(--ml-accent-soft);
+  color: #f4f3ff;
+}
+
+html:not(.home-page-root) .filter-control select,
+html:not(.home-page-root) .product-info-field input,
+html:not(.home-page-root) .product-info-field select,
+html:not(.home-page-root) .product-info-field textarea,
+html:not(.home-page-root) .tag-editor,
+html:not(.home-page-root) .account-search,
+html:not(.home-page-root) .account-modal textarea {
+  border-color: var(--ml-border);
+  background: #0a0b10;
+  color: var(--ml-text);
+}
+
+html:not(.home-page-root) .product-chip,
+html:not(.home-page-root) .product-format-badge,
+html:not(.home-page-root) .product-tags span {
+  border-color: rgba(120, 106, 255, 0.38);
+  background: rgba(104, 91, 255, 0.1);
+  color: #c8c3ff;
+}
+
+/* Distribution workflow */
+html:not(.home-page-root) .distribution-page {
+  background: var(--ml-bg);
+}
+
+html:not(.home-page-root) .distribution-hero {
+  background:
+    linear-gradient(90deg, rgba(7, 8, 12, 0.99), rgba(7, 8, 12, 0.87) 52%, rgba(13, 12, 20, 0.76)),
+    radial-gradient(circle at 80% 18%, rgba(84, 91, 255, 0.17), transparent 31rem),
+    radial-gradient(circle at 98% 0, rgba(158, 73, 255, 0.12), transparent 34rem);
+}
+
+html:not(.home-page-root) .distribution-eyebrow,
+html:not(.home-page-root) .distribution-wizard > header span {
+  color: #9189ff;
+}
+
+html:not(.home-page-root) .distribution-release-row,
+html:not(.home-page-root) .distribution-wizard,
+html:not(.home-page-root) .distribution-steps,
+html:not(.home-page-root) .distribution-track-row,
+html:not(.home-page-root) .distribution-readonly,
+html:not(.home-page-root) .distribution-rights {
+  border-color: var(--ml-border);
+  background: #11141b;
+}
+
+html:not(.home-page-root) .distribution-steps button.is-current,
+html:not(.home-page-root) .distribution-primary {
+  border-color: rgba(119, 106, 255, 0.58);
+  background: var(--ml-accent-gradient);
+  color: #fff;
+}
+
+html:not(.home-page-root) .distribution-field input,
+html:not(.home-page-root) .distribution-field select,
+html:not(.home-page-root) .distribution-field textarea {
+  border-color: var(--ml-border);
+  background: #0a0b10;
+}
+
+/* Community and inbox collaboration surfaces */
+html:not(.home-page-root) .community-page {
+  background:
+    radial-gradient(circle at 12% 0, rgba(76, 97, 255, 0.1), transparent 28rem),
+    radial-gradient(circle at 88% 8%, rgba(144, 69, 255, 0.065), transparent 24rem),
+    #07080c;
+}
+
+html:not(.home-page-root) .community-post-card,
+html:not(.home-page-root) .community-community-card,
+html:not(.home-page-root) .community-framework-card,
+html:not(.home-page-root) .community-right-rail .community-rail-card,
+html:not(.home-page-root) .community-comment-card,
+html:not(.home-page-root) .community-comment-composer,
+html:not(.home-page-root) .community-composer-modal,
+html:not(.home-page-root) .community-destination-modal,
+html:not(.home-page-root) .community-story-modal,
+html:not(.home-page-root) .community-inline-composer {
+  border-color: var(--ml-border);
+  background: #11141b;
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.28);
+}
+
+html:not(.home-page-root) .community-post-card:hover,
+html:not(.home-page-root) .community-main .community-post-card:hover {
+  border-color: rgba(113, 126, 255, 0.36);
+  background: #141720;
+}
+
+html:not(.home-page-root) .community-post-options-menu,
+html:not(.home-page-root) .community-comment-options-menu,
+html:not(.home-page-root) .community-emoji-panel {
+  border-color: var(--ml-border);
+  background: #101219;
+}
+
+html:not(.home-page-root) body.is-inbox-page * {
+  scrollbar-color: rgba(105, 102, 172, 0.8) #08090d;
+}
+
+html:not(.home-page-root) .inbox-main-panel,
+html:not(.home-page-root) .inbox-thread-panel,
+html:not(.home-page-root) .inbox-sidebar,
+html:not(.home-page-root) .message-composer,
+html:not(.home-page-root) .thread-actions-menu,
+html:not(.home-page-root) .message-context-menu,
+html:not(.home-page-root) .notification-action-menu,
+html:not(.home-page-root) .thread-confirm-modal,
+html:not(.home-page-root) .reaction-detail-modal,
+html:not(.home-page-root) .create-chat-modal,
+html:not(.home-page-root) .chat-details-modal,
+html:not(.home-page-root) .system-notification-card,
+html:not(.home-page-root) .content-notification-card,
+html:not(.home-page-root) .account-calls-panel,
+html:not(.home-page-root) .mutual-platform-card,
+html:not(.home-page-root) .mutual-method-card {
+  border-color: var(--ml-border);
+  background: #101219;
+}
+
+html:not(.home-page-root) .message-composer textarea,
+html:not(.home-page-root) .mutual-method-card textarea,
+html:not(.home-page-root) .community-comment-composer textarea,
+html:not(.home-page-root) .community-composer-modal textarea,
+html:not(.home-page-root) .community-rail-search {
+  border-color: var(--ml-border);
+  background: #090a0f;
+}
+
+html:not(.home-page-root) .system-notification-card.is-unread,
+html:not(.home-page-root) .content-notification-card.is-unread,
+html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
+  border-color: rgba(117, 105, 255, 0.48);
+  background: rgba(102, 91, 255, 0.09);
+}
