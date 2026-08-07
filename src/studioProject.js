@@ -25,7 +25,7 @@ import {
 import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 import { getStorageAssetUrl } from './firebase/storageAssets.js'
 import { storage as firebaseStorage } from './firebase/storage.js'
-import { ref as storageRef, uploadBytes } from 'firebase/storage'
+import { ref as storageRef, uploadBytesResumable } from 'firebase/storage'
 import { renderAudioDsp, SOURA_AUDIO_DSP_OPERATIONS } from './studio/audio/dsp/audioDspRenderService.js'
 import {
   getSouraWasmDspStatusSnapshot,
@@ -306,6 +306,7 @@ let midiRegions = []
 let audioImportDrag = null
 const audioImportPreviewCache = new Map()
 let audioImportPreviewRaf = 0
+let audioImportUploadState = { active: false, hidden: false, fileName: '', bytesTransferred: 0, totalBytes: 0 }
 const activeRecordingNotes = new Map()
 let cycleRange = null
 let cycleDrag = null
@@ -934,12 +935,12 @@ function getSouraAudioStoragePath({ clipId, contentType = 'audio/webm', suffix =
   const safeSuffix = suffix ? `-${sanitizeStorageFilePart(suffix)}` : ''
   return `studioProjects/${projectId}/audio/${safeClipId}${safeSuffix}.${extensionForAudioType(contentType)}`
 }
-async function uploadSouraAudioBlob(blob, { clipId, suffix = '' } = {}) {
+async function uploadSouraAudioBlob(blob, { clipId, suffix = '', onProgress = null } = {}) {
   if (!blob?.size) return null
   if (!firebaseStorage) throw new Error('Firebase Storage is not initialized.')
   const contentType = blob.type || 'audio/webm'
   const path = getSouraAudioStoragePath({ clipId, contentType, suffix })
-  await uploadBytes(storageRef(firebaseStorage, path), blob, {
+  const uploadTask = uploadBytesResumable(storageRef(firebaseStorage, path), blob, {
     contentType,
     customMetadata: {
       projectId: String(projectState?.id || ''),
@@ -947,6 +948,15 @@ async function uploadSouraAudioBlob(blob, { clipId, suffix = '' } = {}) {
       source: 'soura'
     }
   })
+  if (typeof onProgress === 'function') {
+    uploadTask.on('state_changed', (snapshot) => {
+      onProgress({
+        bytesTransferred: Number(snapshot.bytesTransferred) || 0,
+        totalBytes: Number(snapshot.totalBytes) || Number(blob.size) || 0
+      })
+    })
+  }
+  await uploadTask
   return path
 }
 function audioImportCacheKey(file = {}) {
@@ -3731,6 +3741,55 @@ function renderAudioPitchRenderModal() {
   const title = audioPitchRenderState.mode === 'trace' ? 'Rendering Pitch Trace Edits' : audioPitchRenderState.mode === 'reverse' ? 'Rendering Reverse' : 'Rendering Pitch Shift'
   return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-pitch-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-pitch-render-title">${esc(title)}</h3><p>Soura is rendering edited audio for this region. Playback will use the render when it finishes.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
 }
+function getAudioImportUploadProgress() {
+  const total = Math.max(0, Number(audioImportUploadState.totalBytes) || 0)
+  const transferred = clamp(Number(audioImportUploadState.bytesTransferred) || 0, 0, total || Number.MAX_SAFE_INTEGER)
+  return total ? clamp(transferred / total, 0, 1) : null
+}
+function renderAudioImportUploadModal() {
+  if (!audioImportUploadState.active || audioImportUploadState.hidden) return ''
+  const progress = getAudioImportUploadProgress()
+  const progressLabel = progress == null ? 'Preparing upload...' : `${Math.round(progress * 100)}%`
+  const fileName = audioImportUploadState.fileName || 'audio file'
+  return `<div class="studio-audio-render-modal" data-audio-import-upload-modal role="dialog" aria-modal="false" aria-labelledby="studio-audio-upload-title"><section class="studio-audio-render-panel"><span>Audio import</span><h3 id="studio-audio-upload-title">Uploading Audio</h3><p>Uploading ${esc(fileName)} to your Soura project. You can hide this window and keep working.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small data-audio-import-upload-label>${esc(progressLabel)}</small><button type="button" class="studio-audio-render-hide" data-hide-audio-import-upload>Hide</button></section></div>`
+}
+function updateAudioImportUploadProgressDom() {
+  if (!audioImportUploadState.active || audioImportUploadState.hidden) return
+  const modal = app.querySelector('[data-audio-import-upload-modal]')
+  if (!modal) return
+  const progress = getAudioImportUploadProgress()
+  const label = progress == null ? 'Preparing upload...' : `${Math.round(progress * 100)}%`
+  const progressBar = modal.querySelector('.studio-audio-render-progress')
+  const fill = progressBar?.querySelector('i')
+  progressBar?.classList.toggle('is-indeterminate', progress == null)
+  if (fill && progress != null) fill.style.width = `${Math.round(progress * 100)}%`
+  const labelEl = modal.querySelector('[data-audio-import-upload-label]')
+  if (labelEl) labelEl.textContent = label
+}
+function beginAudioImportUpload(file = null) {
+  audioImportUploadState = {
+    active: true,
+    hidden: false,
+    fileName: String(file?.name || 'Audio file'),
+    bytesTransferred: 0,
+    totalBytes: Math.max(0, Number(file?.size) || 0)
+  }
+  renderEditorPreservingArrangementScroll()
+}
+function updateAudioImportUploadProgress(progress = {}) {
+  if (!audioImportUploadState.active) return
+  audioImportUploadState = {
+    ...audioImportUploadState,
+    bytesTransferred: Math.max(0, Number(progress.bytesTransferred) || 0),
+    totalBytes: Math.max(0, Number(progress.totalBytes) || audioImportUploadState.totalBytes || 0)
+  }
+  updateAudioImportUploadProgressDom()
+}
+function finishAudioImportUpload() {
+  if (!audioImportUploadState.active) return
+  audioImportUploadState = { active: false, hidden: false, fileName: '', bytesTransferred: 0, totalBytes: 0 }
+  app.querySelector('[data-audio-import-upload-modal]')?.remove()
+}
 function renderAudioPreflightRenderModal() {
   if (!audioPreflightRenderState.active) return ''
   const total = Math.max(1, Number(audioPreflightRenderState.total) || 1)
@@ -4374,7 +4433,8 @@ function applyLoadedEditorState(editorState) {
   }
   timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
 }
-function scheduleEditorSave(){ if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } renderEditorPreservingArrangementScroll(captureArrangementScroll()) },800) }
+function updateEditorSaveStatus(){ app.querySelector('[data-save-status]')?.replaceChildren(document.createTextNode(saveStatus)) }
+function scheduleEditorSave(){ if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; updateEditorSaveStatus(); if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } updateEditorSaveStatus() },800) }
 
 async function hydrateRenderedAudioRegionRuntime(region) {
   if (!region?.id || region.type !== 'audio') return false
@@ -5162,6 +5222,12 @@ function updateTransportDisplay(){
 function updateEditorTitleStatus(){ app.querySelector('[data-editor-status]')?.replaceChildren(document.createTextNode(isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded'))) }
 function updateCycleDomFromState(){ const rangeEl = app.querySelector('[data-cycle-range]'); const startGuide = app.querySelector('.studio-cycle-guide--start'); const endGuide = app.querySelector('.studio-cycle-guide--end'); if(!cycleRange){ if(rangeEl) rangeEl.style.width='0px'; return } const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); if (rangeEl){ rangeEl.style.left=`${start}px`; rangeEl.style.width=`${Math.max(beatWidth(), end-start)}px`; rangeEl.classList.toggle('is-enabled', isCycleEnabled) } if (startGuide){ startGuide.style.left=`${start}px`; startGuide.classList.toggle('is-enabled', isCycleEnabled) } if (endGuide){ endGuide.style.left=`${end}px`; endGuide.classList.toggle('is-enabled', isCycleEnabled) } }
 function updateCycleButtonDom(){ const btn=app.querySelector('[data-toggle-cycle]'); if(!btn) return; btn.classList.toggle('is-active', isCycleEnabled); btn.setAttribute('aria-pressed', String(isCycleEnabled)) }
+function updateUtilityToggleButton(selector, enabled) {
+  const button = app.querySelector(selector)
+  if (!button) return
+  button.classList.toggle('is-active', Boolean(enabled))
+  button.setAttribute('aria-pressed', String(Boolean(enabled)))
+}
 function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
 function markTimelineUserInteraction(durationMs = 900){ timelineUserInteractingUntil = Date.now() + durationMs }
 function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); const ruler=app.querySelector('[data-timeline-ruler]'); if(ruler) ruler.scrollLeft=grid.scrollLeft }
@@ -5532,7 +5598,6 @@ function syncBottomPanelHeightToViewport() {
 function openBottomPanel(panelId){
   clearBottomPanelMotionTimer()
   if(activeBottomPanel===panelId){ closeBottomPanel(); return }
-  if(activeBottomPanel==='instrument'&&panelId!=='instrument') { stopAllInstrumentNotes(); stopAllTrackInstrumentNotes() }
   if(panelId !== 'midi-effect') activeMidiEffectEditor = null
   syncBottomPanelHeightToViewport()
   activeBottomPanel=panelId
@@ -5545,7 +5610,6 @@ function openBottomPanel(panelId){
 function closeBottomPanel(){
   if(!activeBottomPanel) return
   clearBottomPanelMotionTimer()
-  if(activeBottomPanel==='instrument') { stopAllInstrumentNotes(); stopAllTrackInstrumentNotes() }
   closingBottomPanel=activeBottomPanel
   activeBottomPanel=''
   bottomPanelMotion='exiting'
@@ -7509,13 +7573,20 @@ async function createAudioRegionFromFile({
     const placementBeat = normalizeTimelineStartBeat(timelineStartBeats, { snapped: false })
     let storagePath = null
     try {
-      storagePath = await uploadSouraAudioBlob(file, { clipId, suffix: source === 'import' ? 'import' : '' })
+      if (source === 'import') beginAudioImportUpload(file)
+      storagePath = await uploadSouraAudioBlob(file, {
+        clipId,
+        suffix: source === 'import' ? 'import' : '',
+        onProgress: source === 'import' ? updateAudioImportUploadProgress : null
+      })
     } catch (error) {
       console.warn('[studioProject] audio import upload failed', { message: error?.message })
+      finishAudioImportUpload()
       recordingStatus = 'Audio upload failed. Try again.'
       renderEditor()
       return null
     }
+    finishAudioImportUpload()
     const selectedAudioTrack = tracks.find((item)=>item.id === trackId)
     const track = selectedAudioTrack && isAudioTrack(selectedAudioTrack)
       ? selectedAudioTrack
@@ -9442,9 +9513,13 @@ function bindEditorEvents() {
     audioImportDrag = null
     scheduleAudioImportPreviewRender()
   })
+  app.querySelector('[data-hide-audio-import-upload]')?.addEventListener('click', () => {
+    audioImportUploadState = { ...audioImportUploadState, hidden: true }
+    app.querySelector('[data-audio-import-upload-modal]')?.remove()
+  })
   app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
-  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { if (selectedTrackId !== el.dataset.trackRow) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = el.dataset.trackRow; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-select') }))
-  app.querySelectorAll('[data-track-icon]').forEach((el) => el.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); const id = el.dataset.trackIcon; if (!id) return; if (selectedTrackId !== id) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } selectedTrackId = id; activeLeftPanel = 'inspector'; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-inspector') }))
+  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { selectedTrackId = el.dataset.trackRow; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-select') }))
+  app.querySelectorAll('[data-track-icon]').forEach((el) => el.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); const id = el.dataset.trackIcon; if (!id) return; selectedTrackId = id; activeLeftPanel = 'inspector'; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-inspector') }))
   app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const nextMenu = el.dataset.toggleInspectorMenu; inspectorMenu = inspectorMenu === nextMenu ? null : nextMenu; inspectorMenuPosition = null; if (inspectorMenu === 'instrument') { const rect = el.getBoundingClientRect(); inspectorMenuPosition = getClampedFloatingPosition(rect.left + rect.width / 2, rect.bottom + 8, 260, 210) } renderEditor() }))
   app.querySelectorAll('[data-inspector-menu-choice]').forEach((el) => el.addEventListener('click', (event) => {
     event.stopPropagation()
@@ -10462,7 +10537,7 @@ function bindEditorEvents() {
     if (activeRecording || isCountInRunning) stopRecordingAndKeep()
     else startRecordFlow()
   }, { capture: true })
-  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor(); if(activeLeftPanel==='library') loadStudioLibrary() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } startRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; if(activeInstrumentSubpage==='keyboard'&&next!=='keyboard') stopAllTrackInstrumentNotes(); activeInstrumentSubpage=next; renderEditor() }) })
+  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor(); if(activeLeftPanel==='library') loadStudioLibrary() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; updateUtilityToggleButton('[data-toggle-snap]', isSnapEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; updateUtilityToggleButton('[data-toggle-count-in]', isCountInEnabled); scheduleEditorSave() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } startRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; updateUtilityToggleButton('[data-toggle-follow-playhead]', followPlayhead); scheduleEditorSave() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); updateUtilityToggleButton('[data-toggle-metronome]', isMetronomeEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; activeInstrumentSubpage=next; renderEditor() }) })
   app.querySelectorAll('[data-library-folder]').forEach((button)=>button.addEventListener('click',(event)=>{
     const toggle = event.target.closest('[data-library-folder-toggle]')
     if (toggle) {
@@ -10631,6 +10706,7 @@ function bindEditorEvents() {
 
 // TODO: connect navigator.requestMIDIAccess() after MIDI permission UX is designed.
 function renderEditor() {
+  const arrangementScroll = captureArrangementScroll()
   if (pendingMidiRollViewport) {
     midiRollViewport = pendingMidiRollViewport
     pendingMidiRollViewport = null
@@ -10677,6 +10753,8 @@ function renderEditor() {
   if (audioRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioRenderModal)
   const audioPitchRenderModal = renderAudioPitchRenderModal()
   if (audioPitchRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioPitchRenderModal)
+  const audioImportUploadModal = renderAudioImportUploadModal()
+  if (audioImportUploadModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioImportUploadModal)
   const audioPreflightModal = renderAudioPreflightRenderModal()
   if (audioPreflightModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioPreflightModal)
   const stretchPromptModal = renderStretchPlaybackPrompt()
@@ -10694,6 +10772,7 @@ function renderEditor() {
   applyStudioGuideTargets()
   updateTransportPlaybackUI()
   mountInlineNumericEditor()
+  restoreArrangementScrollSoon(arrangementScroll)
 }
 
 
