@@ -65,7 +65,7 @@
 
 .settings-nav-btn.is-active {
   border-color: rgba(119, 155, 225, 0.28);
-  border-left-color: #22b8b5;
+  border-left-color: #756cff;
   background: rgba(35, 52, 79, 0.52);
   color: #eff5ff;
 }
@@ -607,7 +607,7 @@ select.is-invalid {
 
 .settings-nav-btn.is-active {
   border-left-color: var(--ml-accent);
-  background: rgba(110, 231, 255, 0.08);
+  background: rgba(105, 91, 255, 0.1);
   color: var(--ml-text);
 }
 

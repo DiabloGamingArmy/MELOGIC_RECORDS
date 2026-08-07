@@ -2310,3 +2310,135 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
     grid-template-columns: 1fr;
   }
 }
+
+/* Blue-violet product alignment: Studio dashboard and Soura workspace. */
+.studio-page {
+  background:
+    radial-gradient(circle at 86% 4%, rgba(94, 74, 220, 0.1), transparent 34%),
+    radial-gradient(circle at 10% 94%, rgba(71, 125, 255, 0.055), transparent 36%),
+    #07080c;
+  color: #fff;
+}
+
+.studio-sidebar,
+.studio-projects-panel,
+.studio-project-card,
+.studio-explore-card,
+.studio-hub-hero,
+.studio-branded-module-hero {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, #0f1117, #0a0b10);
+}
+
+.studio-sidebar-link:hover,
+.studio-shell:has(.studio-hub-hero) .studio-sidebar-link:hover {
+  border-color: rgba(126, 110, 255, 0.28);
+  background: rgba(105, 91, 255, 0.07);
+}
+
+.studio-sidebar-link.is-active,
+.studio-shell:has(.studio-hub-hero) .studio-sidebar-link.is-active {
+  border-color: rgba(126, 110, 255, 0.48);
+  background: linear-gradient(90deg, rgba(71, 125, 255, 0.12), rgba(166, 92, 255, 0.08));
+  box-shadow: inset 2px 0 #756cff;
+  color: #fff;
+}
+
+.studio-section-line--explore,
+.studio-section-line--recents,
+.studio-section-line--projects,
+.studio-shell:has(.studio-hub-hero) .studio-section-line {
+  background: linear-gradient(90deg, #477dff, #a65cff, transparent);
+}
+
+.studio-card-kicker,
+.studio-stage-card-kicker,
+.studio-branded-module-hero .studio-module-kicker,
+.studio-hub-hero .eyebrow {
+  color: #9189ff;
+}
+
+.studio-editor-page {
+  --soura-accent: #756cff;
+  --soura-accent-soft: rgba(105, 91, 255, 0.14);
+  --soura-accent-border: rgba(126, 110, 255, 0.52);
+  background: #090a0e;
+  color: #fff;
+}
+
+.studio-editor-page .studio-appbar,
+.studio-editor-page .studio-transport-bar,
+.studio-editor-page .studio-track-panel,
+.studio-editor-page .studio-track-toolbar,
+.studio-editor-page .studio-timeline-ruler,
+.studio-editor-page .studio-right-rail,
+.studio-editor-page .studio-bottom-panel,
+.studio-editor-page .studio-left-panel {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: #0f1117;
+}
+
+.studio-editor-page .studio-track-card,
+.studio-editor-page .studio-track-toolbar button,
+.studio-editor-page .studio-track-toolbar select,
+.studio-editor-page .studio-right-rail button,
+.studio-editor-page .studio-mixer-strip,
+.studio-editor-page .studio-global-popover,
+.studio-editor-page .studio-track-popover,
+.studio-editor-page .studio-track-menu,
+.studio-editor-page .studio-bottom-panel-body {
+  border-color: rgba(255, 255, 255, 0.1);
+  background-color: #151820;
+  color: #fff;
+}
+
+.studio-editor-page .studio-arrangement-grid,
+.studio-editor-page .studio-mixer-strips {
+  background-color: #090a0e;
+}
+
+.studio-editor-page .studio-track-toolbar button:hover,
+.studio-editor-page .studio-track-toolbar button:focus-visible,
+.studio-editor-page .studio-track-toolbar button.is-active,
+.studio-editor-page .studio-right-rail button:hover,
+.studio-editor-page .studio-right-rail button:focus-visible,
+.studio-editor-page .studio-right-rail button.is-active,
+.studio-editor-page .studio-display-icon-button:hover,
+.studio-editor-page .studio-display-icon-button:focus-visible,
+.studio-editor-page .studio-display-icon-button.is-active,
+.studio-editor-page .studio-tool-button:hover,
+.studio-editor-page .studio-tool-button:focus-visible,
+.studio-editor-page .studio-tool-button.is-active {
+  border-color: var(--soura-accent-border);
+  background: var(--soura-accent-soft);
+  color: #fff;
+}
+
+.studio-editor-page .studio-track-card.is-selected,
+.studio-editor-page .studio-mixer-strip.is-selected {
+  border-color: var(--soura-accent-border);
+  box-shadow: inset 2px 0 var(--soura-accent);
+  background-color: #191b25;
+}
+
+.studio-editor-page .studio-track-menu--floating strong,
+.studio-editor-page .studio-track-automation-sidebar span,
+.studio-editor-page .studio-global-popover strong,
+.studio-editor-page .studio-track-popover strong {
+  color: #a9a2ff;
+}
+
+.studio-editor-page .studio-track-menu button:hover,
+.studio-editor-page .studio-track-menu button:focus-visible,
+.studio-editor-page .studio-global-popover button:hover,
+.studio-editor-page .studio-track-popover button:hover {
+  background: var(--soura-accent-soft);
+}
+
+.studio-editor-page input:focus-visible,
+.studio-editor-page select:focus-visible,
+.studio-editor-page textarea:focus-visible {
+  border-color: var(--soura-accent-border);
+  outline: 2px solid rgba(117, 108, 255, 0.22);
+  outline-offset: 1px;
+}

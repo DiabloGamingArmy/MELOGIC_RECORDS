@@ -105,7 +105,7 @@
 .distribution-text-button:focus-visible,
 .distribution-steps button:focus-visible,
 .distribution-remove-track:focus-visible {
-  outline: 2px solid rgba(110, 231, 255, 0.82);
+  outline: 2px solid rgba(126, 110, 255, 0.82);
   outline-offset: 3px;
 }
 
@@ -494,7 +494,7 @@
 }
 
 .distribution-field input[type='file']::file-selector-button:hover {
-  border-color: rgba(110, 231, 255, 0.62);
+  border-color: rgba(126, 110, 255, 0.62);
   background: rgba(24, 37, 61, 0.92);
 }
 

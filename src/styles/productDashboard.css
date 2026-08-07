@@ -1173,7 +1173,7 @@
 }
 
 .dashboard-lower-sidebar > .dashboard-side-card:nth-of-type(2) {
-  border-top-color: rgba(110, 231, 255, 0.58);
+  border-top-color: rgba(126, 110, 255, 0.58);
   background: linear-gradient(180deg, rgba(13, 22, 34, 0.96), rgba(7, 12, 21, 0.96));
 }
 

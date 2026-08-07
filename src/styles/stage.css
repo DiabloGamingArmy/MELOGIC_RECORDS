@@ -938,3 +938,106 @@ body:has([data-stage-editor-app]) #app{
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Blue-violet product alignment: Vertix dashboard and editor chrome. */
+.stage-dashboard-page {
+  background:
+    radial-gradient(circle at 90% 0, rgba(94, 74, 220, 0.1), transparent 36%),
+    #07080c;
+  color: #fff;
+}
+
+.stage-dashboard-sidebar,
+.stage-dashboard-main,
+.stage-template-card,
+.stage-project-card {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, #0f1117, #0a0b10);
+}
+
+.stage-dashboard-new-button {
+  border-color: rgba(126, 110, 255, 0.5);
+  background: linear-gradient(120deg, #477dff, #a65cff);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(74, 48, 160, 0.24);
+}
+
+.stage-dashboard-nav-item.is-active {
+  border-color: rgba(126, 110, 255, 0.48);
+  background: rgba(105, 91, 255, 0.12);
+  box-shadow: inset 2px 0 #756cff;
+  color: #fff;
+}
+
+.stage-section-heading span {
+  background: linear-gradient(90deg, #477dff, #a65cff, transparent);
+}
+
+.stage-editor-app {
+  --stage-bg: #07080c;
+  --stage-panel: #0f1117;
+  --stage-panel-2: #14171e;
+  --stage-panel-3: #191d25;
+  --stage-border: rgba(255, 255, 255, 0.075);
+  --stage-border-strong: rgba(255, 255, 255, 0.13);
+  --stage-text: rgba(255, 255, 255, 0.9);
+  --stage-muted: rgba(255, 255, 255, 0.58);
+  --stage-faint: rgba(255, 255, 255, 0.36);
+  --stage-accent: #756cff;
+  --stage-accent-soft: rgba(105, 91, 255, 0.14);
+  background: var(--stage-bg);
+}
+
+.stage-editor-app .stage-editor-menu-actions .is-send {
+  background: linear-gradient(120deg, #477dff, #a65cff);
+  color: #fff;
+}
+
+.stage-editor-app .stage-editor-tab-actions .is-beam,
+.stage-editor-app .stage-editor-tab-actions .is-active-view,
+.stage-editor-app .stage-editor-mode-tab.is-active,
+.stage-editor-app .stage-object-tile.is-active,
+.stage-editor-app .stage-editor-rail button.is-active,
+.stage-editor-app .stage-viewport-tools button.is-active,
+.stage-editor-app .stage-viewport-view-modes button.is-active-view,
+.stage-editor-app .stage-inspector-tabs button.is-active,
+.stage-editor-app .stage-data-tabs button.is-active,
+.stage-editor-app .stage-render-mode-row button.is-active {
+  border-color: var(--stage-accent);
+  background: var(--stage-accent-soft);
+  color: #fff;
+}
+
+.stage-editor-app .stage-editor-rail button:hover,
+.stage-editor-app .stage-editor-rail .stage-back-link:hover,
+.stage-editor-app .stage-property-value:hover,
+.stage-editor-app .stage-property-toggle:hover,
+.stage-editor-app .stage-object-command-row button:hover,
+.stage-editor-app .stage-property-popover button:hover,
+.stage-editor-app .stage-object-row-actions button:hover {
+  border-color: rgba(126, 110, 255, 0.5);
+  background: rgba(105, 91, 255, 0.1);
+  color: #fff;
+}
+
+.stage-editor-app .stage-object-data-grid tbody tr:hover {
+  background: rgba(105, 91, 255, 0.07);
+}
+
+.stage-editor-app .stage-object-data-grid tbody tr.is-selected {
+  background: rgba(105, 91, 255, 0.15);
+  outline-color: rgba(126, 110, 255, 0.38);
+}
+
+.stage-editor-app .stage-transform-readout {
+  border-color: rgba(126, 110, 255, 0.5);
+  color: #fff;
+}
+
+.stage-editor-app input:focus-visible,
+.stage-editor-app select:focus-visible,
+.stage-editor-app textarea:focus-visible,
+.stage-editor-app button:focus-visible {
+  outline: 2px solid rgba(117, 108, 255, 0.3);
+  outline-offset: 1px;
+}

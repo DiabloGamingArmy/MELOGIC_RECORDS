@@ -498,12 +498,12 @@ body.community-chrome-hidden .community-right-rail {
 .community-left-nav button:hover,
 .community-left-nav .is-active {
   border-color: transparent;
-  background: linear-gradient(90deg, rgba(83, 197, 255, .11), transparent 92%);
+  background: linear-gradient(90deg, rgba(105, 91, 255, .13), transparent 92%);
   color: #ffffff;
 }
 .community-left-nav .is-active {
   border-radius:0;
-  box-shadow:inset 2px 0 0 #6ee7ff;
+  box-shadow:inset 2px 0 0 #756cff;
 }
 
 .community-left-topic-filter {
@@ -548,7 +548,7 @@ body.community-chrome-hidden .community-right-rail {
 .community-left-topic-filter[open] summary,
 .community-left-topic-filter summary:hover {
   color: #ffffff;
-  background: rgba(110, 231, 255, .06);
+  background: rgba(105, 91, 255, .08);
 }
 
 .community-left-topic-filter > div {
@@ -2498,18 +2498,18 @@ body.community-chrome-hidden .community-right-rail {
 .community-comment-card.is-notification-target {
   margin-inline: -0.55rem;
   padding-inline: 0.55rem;
-  border-left: 2px solid #22b8b5;
-  background: rgba(34, 184, 181, 0.09);
+  border-left: 2px solid #756cff;
+  background: rgba(105, 91, 255, 0.1);
   animation: community-comment-focus 4s ease-out both;
 }
 
 @keyframes community-comment-focus {
   0%,
   55% {
-    background: rgba(34, 184, 181, 0.16);
+    background: rgba(105, 91, 255, 0.16);
   }
   100% {
-    background: rgba(34, 184, 181, 0.06);
+    background: rgba(105, 91, 255, 0.06);
   }
 }
 
@@ -3936,7 +3936,7 @@ body.community-modal-open {
 .community-left-nav button:hover,
 .community-left-nav .is-active {
   border-color: var(--ml-border-strong, rgba(130, 190, 255, 0.34));
-  background: rgba(110, 231, 255, 0.08);
+  background: rgba(105, 91, 255, 0.1);
 }
 
 .community-post-options-menu {

@@ -175,9 +175,9 @@
 .admin-primary-link,
 .admin-primary-button,
 .admin-icon-button {
-  border: 1px solid rgba(110, 231, 255, 0.45);
-  background: linear-gradient(120deg, rgba(110, 231, 255, 0.9), rgba(143, 124, 255, 0.9));
-  color: #061019;
+  border: 1px solid rgba(126, 110, 255, 0.5);
+  background: linear-gradient(120deg, #477dff, #a65cff);
+  color: #fff;
   cursor: pointer;
 }
 
@@ -4460,7 +4460,7 @@
 
 [data-admin-theme="dark"] .admin-status.is-info {
   border-color: var(--admin-border-strong);
-  background: rgba(110, 231, 255, 0.08);
+  background: rgba(105, 91, 255, 0.1);
   color: var(--admin-text);
 }
 
@@ -4474,7 +4474,7 @@
 [data-admin-theme="dark"] .admin-sidebar-nav a:hover,
 [data-admin-theme="dark"] .admin-sidebar-nav a:focus-visible {
   border-color: var(--admin-border-strong);
-  background: rgba(110, 231, 255, 0.07);
+  background: rgba(105, 91, 255, 0.09);
 }
 
 .admin-distribution-layout {

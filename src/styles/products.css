@@ -573,10 +573,10 @@
 }
 
 .new-product-btn {
-  border-color: rgba(110, 231, 255, 0.42);
-  background: linear-gradient(120deg, rgba(110, 231, 255, 0.88), rgba(143, 124, 255, 0.88));
-  color: #061019;
-  box-shadow: 0 8px 22px rgba(70, 110, 210, 0.2);
+  border-color: rgba(126, 110, 255, 0.5);
+  background: linear-gradient(120deg, #477dff, #a65cff);
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(74, 48, 160, 0.24);
 }
 
 .filter-control input,
@@ -619,8 +619,8 @@
 }
 
 .product-actions .add-btn {
-  border-color: rgba(110, 231, 255, 0.42);
-  background: rgba(110, 231, 255, 0.1);
+  border-color: rgba(126, 110, 255, 0.46);
+  background: rgba(105, 91, 255, 0.12);
 }
 
 .product-empty-state {

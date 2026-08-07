@@ -143,8 +143,8 @@
 }
 
 .product-chip {
-  border-color: rgba(110, 231, 255, 0.35);
-  background: rgba(110, 231, 255, 0.09);
+  border-color: rgba(126, 110, 255, 0.36);
+  background: rgba(105, 91, 255, 0.1);
   color: var(--ml-text);
 }
 

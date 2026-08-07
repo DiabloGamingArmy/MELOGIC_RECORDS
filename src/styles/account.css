@@ -394,8 +394,8 @@
 }
 
 .account-filter-row button.is-active {
-  border-color: rgba(110, 231, 255, 0.55);
-  background: rgba(110, 231, 255, 0.1);
+  border-color: rgba(126, 110, 255, 0.55);
+  background: rgba(105, 91, 255, 0.11);
   color: var(--ml-text);
 }
 

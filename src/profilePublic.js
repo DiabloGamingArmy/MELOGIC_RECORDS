@@ -19,8 +19,32 @@ app.innerHTML = `
   ${renderPagePreloaderMarkup()}
   ${navShell({ currentPage: 'profile-public' })}
   <main class="public-profile-page" data-public-profile-root>
-    <section class="public-profile-loading">
-      <article class="public-profile-card"><p>Loading profile...</p></article>
+    <section class="public-profile-loading" aria-busy="true" aria-live="polite">
+      <div class="public-profile-skeleton" aria-hidden="true">
+        <div class="public-skeleton-hero">
+          <span class="public-skeleton-avatar"></span>
+          <div class="public-skeleton-identity">
+            <span class="public-skeleton-line is-name"></span>
+            <span class="public-skeleton-line is-handle"></span>
+            <span class="public-skeleton-line is-role"></span>
+            <div class="public-skeleton-header-stats">
+              ${Array.from({ length: 6 }, () => '<span></span>').join('')}
+            </div>
+            <div class="public-skeleton-actions"><span></span><span></span></div>
+          </div>
+        </div>
+        <div class="public-skeleton-main">
+          <div class="public-skeleton-panels"><span></span><span></span></div>
+          <span class="public-skeleton-divider"></span>
+          <div class="public-skeleton-stat-row">
+            ${Array.from({ length: 5 }, () => '<span></span>').join('')}
+          </div>
+          <div class="public-skeleton-content-grid">
+            ${Array.from({ length: 4 }, () => '<article><span class="public-skeleton-media"></span><span class="public-skeleton-line"></span><span class="public-skeleton-line is-short"></span></article>').join('')}
+          </div>
+        </div>
+      </div>
+      <span class="public-loading-label">Loading profile</span>
     </section>
   </main>
 `

@@ -231,7 +231,7 @@
 .profile-stat-card:hover,
 .profile-stat-card:focus-visible {
   background: rgba(18, 27, 42, 0.98);
-  box-shadow: inset 0 -2px #3bb6ac;
+  box-shadow: inset 0 -2px #756cff;
   outline: none;
 }
 
@@ -303,7 +303,7 @@
 }
 
 .profile-tab.is-active::after {
-  background: #3bb6ac;
+  background: linear-gradient(90deg, #477dff, #a65cff);
 }
 
 .profile-tab-content {
@@ -375,7 +375,7 @@
 .profile-list-row > a,
 .profile-list-row > span,
 .profile-summary-header > a {
-  color: #7ed8d0;
+  color: #9189ff;
   font-size: 0.78rem;
   text-decoration: none;
 }
@@ -383,7 +383,7 @@
 .profile-quick-links a:hover,
 .profile-list-row > a:hover,
 .profile-summary-header > a:hover {
-  color: #b4f2ec;
+  color: #c8c3ff;
   text-decoration: underline;
 }
 
