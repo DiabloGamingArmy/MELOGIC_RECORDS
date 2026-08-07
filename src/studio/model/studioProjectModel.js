@@ -324,7 +324,7 @@ export function normalizeRegion(region = {}) {
       ? {
         ...region.waveform,
         peaks: Array.isArray(region.waveform.peaks)
-          ? region.waveform.peaks.slice(0, 1200).map((peak) => peak && typeof peak === 'object'
+          ? region.waveform.peaks.slice(0, 2400).map((peak) => peak && typeof peak === 'object'
             ? { min: clamp(num(peak.min, 0), -1, 1), max: clamp(num(peak.max, 0), -1, 1), rms: clamp(num(peak.rms, 0), 0, 1) }
             : clamp(num(peak, 0), 0, 1))
           : []

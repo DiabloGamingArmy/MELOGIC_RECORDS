@@ -453,6 +453,13 @@ function secondsToBeats(seconds = 0, tempoMap = null) {
   return 0
 }
 const waveformWindowSeconds = 0.1
+// Keep the waveform density tied to the horizontal space it occupies, rather
+// than thinning a long clip merely because it has more total samples.
+const WAVEFORM_PEAKS_PER_PIXEL = 1.25
+const WAVEFORM_MIN_RENDERED_PEAKS = 96
+const WAVEFORM_MAX_RENDERED_PEAKS = 6000
+const WAVEFORM_PERSISTED_MAX_PEAKS = 2400
+const MAX_TIMELINE_POSITIVE_BEATS = 16384
 const minAudioRegionSeconds = 0.05
 const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
 const AUDIO_FADE_CURVES = ['linear', 'equal-power']
@@ -959,7 +966,7 @@ async function decodeAudioFileForImport(file) {
     const ext = extensionForAudioFile(file)
     const metadata = {
       audioBuffer,
-      waveform: buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 }),
+      waveform: buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS }),
       fileName: file.name || `Imported Audio.${ext || 'audio'}`,
       contentType: file.type || (ext ? `audio/${ext}` : 'audio/*'),
       fileSizeBytes: Number(file.size) || 0,
@@ -2781,7 +2788,7 @@ function getWaveformChunks(region = {}) {
   const step = duration / peaks.length
   return peaks.map((peak, index) => ({ ...normalizeWaveformPeak(peak), t0Seconds: index * step, t1Seconds: (index + 1) * step }))
 }
-function buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks = 1200 } = {}) {
+function buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks = WAVEFORM_PERSISTED_MAX_PEAKS } = {}) {
   const channelCount = Math.max(1, audioBuffer?.numberOfChannels || 1)
   const sampleCount = Math.max(1, audioBuffer?.length || 1)
   const peakCount = clamp(Math.ceil(sampleCount / 256), 64, maxPeaks)
@@ -2864,6 +2871,23 @@ function buildAudioWaveformChunksFromBufferWindow(audioBuffer, startSeconds = 0,
   }
   return chunks
 }
+function getCachedRuntimeWaveformChunks(runtime, startSeconds, endSeconds, maxPeaks) {
+  if (!runtime?.audioBuffer) return []
+  const cache = runtime.waveformChunkCache || (runtime.waveformChunkCache = new Map())
+  const key = `${Number(startSeconds).toFixed(4)}:${Number(endSeconds).toFixed(4)}:${Math.round(maxPeaks)}`
+  const cached = cache.get(key)
+  if (cached) return cached
+  const chunks = buildAudioWaveformChunksFromBufferWindow(runtime.audioBuffer, startSeconds, endSeconds, { maxPeaks })
+  cache.set(key, chunks)
+  if (cache.size > 12) cache.delete(cache.keys().next().value)
+  return chunks
+}
+function getWaveformRenderPeakLimit(region, options = {}) {
+  if (Number.isFinite(Number(options.maxPeaks))) return clamp(Math.round(Number(options.maxPeaks)), WAVEFORM_MIN_RENDERED_PEAKS, WAVEFORM_MAX_RENDERED_PEAKS)
+  const regionBeats = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
+  const displayWidth = options.editor ? 1100 : Math.max(24, regionBeats * beatWidth())
+  return clamp(Math.ceil(displayWidth * WAVEFORM_PEAKS_PER_PIXEL), WAVEFORM_MIN_RENDERED_PEAKS, WAVEFORM_MAX_RENDERED_PEAKS)
+}
 function renderAudioWaveform(region, options = {}) {
   const stretch = normalizeAudioStretch(region.stretch, {
     clipId: region.id,
@@ -2888,9 +2912,10 @@ function renderAudioWaveform(region, options = {}) {
   const viewEnd = hasWindow ? clamp(Number(options.viewEndSeconds) || fullViewDuration, viewStart + 0.01, fullViewDuration) : fullViewDuration
   const sourceViewStart = trimStart + (viewStart / Math.max(0.001, stretchRatio))
   const sourceViewEnd = trimStart + (viewEnd / Math.max(0.001, stretchRatio))
-  const runtime = hasWindow ? getAudioWaveformRuntime(region, { preferRendered: hasRenderedWaveform }) : null
+  const runtime = getAudioWaveformRuntime(region, { preferRendered: hasRenderedWaveform })
+  const maxPeaks = getWaveformRenderPeakLimit(region, options)
   const chunks = runtime?.audioBuffer
-    ? buildAudioWaveformChunksFromBufferWindow(runtime.audioBuffer, sourceViewStart, sourceViewEnd, { maxPeaks: options.maxPeaks || 900 })
+    ? getCachedRuntimeWaveformChunks(runtime, sourceViewStart, sourceViewEnd, maxPeaks)
     : getWaveformChunks(region)
   const visibleChunks = chunks
     .filter((chunk) => chunk.t1Seconds >= sourceViewStart && chunk.t0Seconds <= sourceViewEnd)
@@ -3236,6 +3261,36 @@ function addTrack({ sourceTrack = null, trackType = 'software' } = {}) {
   pushHistory(sourceTrack ? 'duplicate-track' : 'add-track', before, captureDawSnapshot())
   scheduleEditorSave()
   renderEditor()
+}
+function getAudioImportTrackName(fileName = '') {
+  const name = String(fileName || '').trim()
+  return (name || 'Imported Audio').slice(0, 80)
+}
+function createAudioTrackForImport(fileName = '') {
+  const id = makeTrackId()
+  const colors = nextTrackColor(tracks.length)
+  const track = ensureTrackInsertState({
+    id,
+    name: getAudioImportTrackName(fileName),
+    type: 'audio',
+    color: colors.color,
+    colorSoft: colors.colorSoft,
+    icon: 'audio',
+    muted: false,
+    soloed: false,
+    recordArmed: false,
+    automationOpen: false,
+    volume: 72,
+    pan: 0,
+    outputLevel: 0,
+    midiEffects: [],
+    instrument: null,
+    audioEffects: []
+  })
+  tracks.push(track)
+  selectedTrackId = track.id
+  activeLeftPanel = 'inspector'
+  return track
 }
 function duplicateSelectedTrack() {
   const track = ensureTrackInsertState(getSelectedTrack())
@@ -4026,14 +4081,14 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
   const waveform = region.waveform
     ? {
       ...region.waveform,
-      peaks: Array.isArray(region.waveform.peaks) ? region.waveform.peaks.slice(0, persist ? 1200 : region.waveform.peaks.length).map((peak)=>peak && typeof peak === 'object' ? { min: Number(peak.min) || 0, max: Number(peak.max) || 0, rms: Number(peak.rms) || 0 } : Number(peak) || 0) : []
+      peaks: Array.isArray(region.waveform.peaks) ? region.waveform.peaks.slice(0, persist ? WAVEFORM_PERSISTED_MAX_PEAKS : region.waveform.peaks.length).map((peak)=>peak && typeof peak === 'object' ? { min: Number(peak.min) || 0, max: Number(peak.max) || 0, rms: Number(peak.rms) || 0 } : Number(peak) || 0) : []
     }
     : undefined
   if (waveform && Array.isArray(region.waveform?.chunks) && !persist) waveform.chunks = region.waveform.chunks.map((chunk)=>({ ...chunk }))
   const renderedWaveform = region.renderedWaveform
     ? {
       ...region.renderedWaveform,
-      peaks: Array.isArray(region.renderedWaveform.peaks) ? region.renderedWaveform.peaks.slice(0, persist ? 1200 : region.renderedWaveform.peaks.length).map((peak)=>peak && typeof peak === 'object' ? { min: Number(peak.min) || 0, max: Number(peak.max) || 0, rms: Number(peak.rms) || 0 } : Number(peak) || 0) : []
+      peaks: Array.isArray(region.renderedWaveform.peaks) ? region.renderedWaveform.peaks.slice(0, persist ? WAVEFORM_PERSISTED_MAX_PEAKS : region.renderedWaveform.peaks.length).map((peak)=>peak && typeof peak === 'object' ? { min: Number(peak.min) || 0, max: Number(peak.max) || 0, rms: Number(peak.rms) || 0 } : Number(peak) || 0) : []
     }
     : null
   const copy = {
@@ -4343,7 +4398,7 @@ async function hydrateRenderedAudioRegionRuntime(region) {
     const arrayBuffer = await response.arrayBuffer()
     const ctx = getAudioContext()
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
-    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
     audioClipRuntime.set(runtimeId, {
       blob: null,
@@ -4395,7 +4450,7 @@ async function hydrateAudioEditRenderRuntime(region, mode = 'pitchShift') {
     const arrayBuffer = await response.arrayBuffer()
     const ctx = getAudioContext()
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
-    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
     audioClipRuntime.set(runtimeId, {
       blob: null,
@@ -4481,7 +4536,7 @@ async function hydrateAudioRegionRuntime(region) {
     const ctx = getAudioContext()
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
     const fileDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
-    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     region.fileDurationSeconds = Number(region.fileDurationSeconds) || fileDurationSeconds
     region.durationSeconds = Number(region.durationSeconds) || getAudioRegionVisibleDurationSeconds(region)
     region.waveform = Array.isArray(region.waveform?.peaks) && region.waveform.peaks.length ? region.waveform : waveform
@@ -5375,6 +5430,16 @@ function timelineEndX() { const metrics = getTimelineMetrics(); return metrics.z
 function timelineContentWidth() { return timelineEndX() + beatWidth() }
 function cycleMinWidth() { return Math.max(8, beatWidth() / 2) }
 function syncBarsFromPositiveBeats(){ timelineState.bars = Math.max(2, Math.ceil(timelineState.positiveBeats / timelineState.beatsPerBar)) }
+function extendTimelineToContainBeat(beat = 0) {
+  const beatsPerBar = Math.max(1, Number(timelineState.beatsPerBar) || 4)
+  const requiredBeat = Math.max(0, Number(beat) || 0)
+  const nextBarBoundary = Math.ceil(requiredBeat / beatsPerBar) * beatsPerBar
+  const nextPositiveBeats = clamp(Math.max(beatsPerBar, nextBarBoundary), beatsPerBar, MAX_TIMELINE_POSITIVE_BEATS)
+  if (nextPositiveBeats <= timelineState.positiveBeats) return false
+  timelineState.positiveBeats = nextPositiveBeats
+  syncBarsFromPositiveBeats()
+  return true
+}
 function clampTimelineSystems() {
   const start = timelineStartX()
   const end = timelineEndX()
@@ -6506,7 +6571,7 @@ async function renderAudioStretchForRegion(regionId) {
         audioStretchRenderState = { ...audioStretchRenderState, progress }
       }
     })
-    const renderedWaveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
+    const renderedWaveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:${pitchActive ? 'pitch-time' : 'stretch'}:${Math.round(stretchMath.lengthRatio * 1000)}:${result.createdAt}`
     let renderedStoragePath = null
     let renderedSessionOnly = true
@@ -6640,7 +6705,7 @@ async function renderAudioPitchShiftForRegion(regionId) {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
       }
     })
-    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:pitch-shift:${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}:${result.createdAt}`
     let renderedStoragePath = null
     try {
@@ -6735,7 +6800,7 @@ async function renderPitchTraceEditsForRegion(regionId) {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
       }
     })
-    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:pitch-trace:${result.createdAt}`
     let renderedStoragePath = null
     try {
@@ -6829,7 +6894,7 @@ async function renderAudioReverseForRegion(regionId) {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
       }
     })
-    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: 1200 })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:reverse:${result.createdAt}`
     let renderedStoragePath = null
     try {
@@ -7427,12 +7492,6 @@ async function createAudioRegionFromFile({
   timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)),
   source = 'import'
 } = {}) {
-  const track = tracks.find((item)=>item.id === trackId)
-  if (!track || !isAudioTrack(track)) {
-    recordingStatus = 'Select an audio track to import audio, or create a new audio track.'
-    renderEditor()
-    return null
-  }
   if (!isSupportedAudioFile(file)) {
     recordingStatus = 'Unsupported audio file.'
     renderEditor()
@@ -7457,6 +7516,10 @@ async function createAudioRegionFromFile({
       renderEditor()
       return null
     }
+    const selectedAudioTrack = tracks.find((item)=>item.id === trackId)
+    const track = selectedAudioTrack && isAudioTrack(selectedAudioTrack)
+      ? selectedAudioTrack
+      : createAudioTrackForImport(metadata.fileName)
     const region = cloneRegionForState({
       id: clipId,
       clipId,
@@ -7528,6 +7591,7 @@ async function createAudioRegionFromFile({
       waveform: metadata.waveform
     })
     syncAudioRegionTimeline(region)
+    extendTimelineToContainBeat(region.endBeat)
     midiRegions.push(region)
     applyRegionPlacementWithOverlapResolution([region])
     selectSingleRegion(region.id)
@@ -7546,23 +7610,13 @@ async function createAudioRegionFromFile({
 }
 function openAudioImportPicker() {
   const track = getSelectedTrack()
-  if (!track) {
-    recordingStatus = 'Select an audio track first.'
-    renderEditor()
-    return
-  }
-  if (!isAudioTrack(track)) {
-    recordingStatus = 'Select an audio track to import audio, or create a new audio track.'
-    renderEditor()
-    return
-  }
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = 'audio/*'
   input.addEventListener('change', () => {
     const file = input.files?.[0]
     input.remove()
-    if (file) createAudioRegionFromFile({ file, trackId: track.id, timelineStartBeats: clampBeat(xToBeat(timelineState.playheadX)), source: 'import' })
+    if (file) createAudioRegionFromFile({ file, trackId: track?.id, timelineStartBeats: clampBeat(xToBeat(timelineState.playheadX)), source: 'import' })
   }, { once: true })
   input.click()
 }
@@ -7578,17 +7632,18 @@ function getAudioImportPlacement(event, file = null) {
   const track = tracks[trackIndex] || null
   const rawBeat = pointerEventToTimelineBeat(event, { snapped: false })
   const startBeat = clampBeat(isSnapEnabled ? snapBeatToGrid(rawBeat) : rawBeat)
-  const valid = Boolean(track && isAudioTrack(track) && file && isSupportedAudioFile(file))
+  const audioTrack = track && isAudioTrack(track) ? track : null
+  const valid = Boolean(file && isSupportedAudioFile(file))
   return {
-    track,
-    trackId: track?.id || selectedTrackId,
+    track: audioTrack,
+    trackId: audioTrack?.id || '',
     startBeat,
     valid,
     message: !file || !isSupportedAudioFile(file)
       ? 'Unsupported audio file.'
-      : track && !isAudioTrack(track)
-        ? 'Drop audio onto an audio track.'
-        : 'Drop audio onto an audio track.'
+      : audioTrack
+        ? 'Drop to import audio.'
+        : 'A new audio track will be created for this file.'
   }
 }
 function scheduleAudioImportPreviewRender() {
@@ -7642,7 +7697,7 @@ async function handleAudioImportDrop(event) {
     renderEditor()
     return
   }
-  await createAudioRegionFromFile({ file, trackId: placement.track.id, timelineStartBeats: placement.startBeat, source: 'import' })
+  await createAudioRegionFromFile({ file, trackId: placement.trackId, timelineStartBeats: placement.startBeat, source: 'import' })
 }
 function cleanupAudioRecordingController() {
   const controller = audioRecordingController
@@ -7725,7 +7780,7 @@ async function finalizeAudioRecording({ keepEmpty = false } = {}) {
     region.trimEndSeconds = fileDurationSeconds
     region.durationBeats = Math.max(0.25, secondsToBeats(fileDurationSeconds))
     region.endBeat = region.startBeat + region.durationBeats
-    region.waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: 1200 })
+    region.waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     region.audioClip = {
       ...(region.audioClip || {}),
       id: clipId,
@@ -10217,7 +10272,7 @@ function bindEditorEvents() {
     if (beats < 1) return
     extensionDrag.beatCarry -= beats
     if (extensionDrag.side === 'right') {
-      timelineState.positiveBeats = clamp(timelineState.positiveBeats + (beats * direction), timelineState.beatsPerBar, 800)
+      timelineState.positiveBeats = clamp(timelineState.positiveBeats + (beats * direction), timelineState.beatsPerBar, MAX_TIMELINE_POSITIVE_BEATS)
     } else {
       const beforePre = Number(timelineState.preStartPixels) || 0
       timelineState.preStartPixels = clamp(beforePre + (beats * direction * beatWidth()), 0, timelineState.pixelsPerBar * 10)
