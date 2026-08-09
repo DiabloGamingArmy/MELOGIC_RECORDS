@@ -4391,11 +4391,25 @@ body:has(.community-page) #app {
   transform: none;
 }
 
-.community-main .community-post-card.community-post-detail-card {
-  background: transparent;
-  background-color: transparent;
-  background-image: none;
-  box-shadow: none;
+.community-main .community-post-card.community-post-detail-card,
+.community-main .community-post-card.community-post-detail-card:hover,
+.community-main .community-post-card.community-post-detail-card:focus-within,
+.community-main .community-post-card.community-post-detail-card.is-pointer-hovered {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.community-post-detail-card .community-comments,
+.community-post-detail-card .community-comment-card,
+.community-post-detail-card .community-comment-composer,
+.community-post-detail-card .community-comment-composer textarea,
+.community-post-detail-card .community-comment-replies {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
 }
 
 .community-main .community-feed .community-post-card.is-pointer-hovered.is-pointer-hover-fading {
@@ -4413,8 +4427,11 @@ body:has(.community-page) #app {
   }
 }
 
-.community-post-detail-card .community-comment-composer textarea {
-  background: transparent;
+.community-discovery-card {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
 }
 
 .community-right-rail.community-sidebar {
