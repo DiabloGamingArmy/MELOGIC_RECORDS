@@ -317,6 +317,7 @@ let lastCommunityScrollY = window.scrollY || 0
 let communityKeyboardReady = false
 let communityOutsideClickReady = false
 let communityBeforeUnloadReady = false
+let communityInternalNavigationPending = false
 let communityRailResizeReady = false
 let communityShellMounted = false
 let communityShellChromeInitialized = false
@@ -354,19 +355,48 @@ function hasPendingCommunityActions() {
   return communityPendingActions.size > 0
 }
 
+function isCommunityNavigationTarget(target = '') {
+  try {
+    const destination = new URL(target, window.location.origin)
+    return destination.origin === window.location.origin
+      && (destination.pathname === ROUTES.community || destination.pathname.startsWith(`${ROUTES.community}/`))
+  } catch {
+    return false
+  }
+}
+
 function setupCommunityPendingLeaveWarning() {
   if (communityBeforeUnloadReady) return
   communityBeforeUnloadReady = true
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    const link = event.target instanceof Element ? event.target.closest('a[href]') : null
+    if (!link || link.target === '_blank' || link.hasAttribute('download') || !isCommunityNavigationTarget(link.href)) return
+    communityInternalNavigationPending = true
+    window.setTimeout(() => {
+      communityInternalNavigationPending = false
+    }, 0)
+  }, true)
   window.addEventListener('beforeunload', (event) => {
-    if (!hasPendingCommunityActions()) return
+    if (!hasPendingCommunityActions() || communityInternalNavigationPending) return
     event.preventDefault()
     event.returnValue = ''
   })
 }
 
-function confirmCommunityNavigation() {
-  if (!hasPendingCommunityActions()) return true
+function confirmCommunityNavigation(destination = '') {
+  if (!hasPendingCommunityActions() || isCommunityNavigationTarget(destination)) return true
   return window.confirm('Community actions are still saving. Leave anyway?')
+}
+
+function clearFeedPostPointerHover(root = app) {
+  root?.querySelectorAll('.community-post-card.is-pointer-hovered').forEach((card) => card.classList.remove('is-pointer-hovered'))
+}
+
+function setFeedPostPointerHover(card) {
+  if (!card || card.classList.contains('is-detail')) return
+  clearFeedPostPointerHover()
+  card.classList.add('is-pointer-hovered')
 }
 
 function stopCommunityActionEvent(event) {
@@ -3404,6 +3434,10 @@ function renderFeedRegionOnly({ reset = false } = {}) {
   }
   closePostMenusDom()
   closeCommentMenusDom()
+  // A feed refresh can move a card beneath an idle pointer. Remove any prior
+  // pointer-driven state so the new position is highlighted only after a real
+  // pointer move.
+  clearFeedPostPointerHover(region)
 
   const feed = region.querySelector('.community-feed')
   if (reset || !feed || !state.posts.length) {
@@ -5431,7 +5465,7 @@ function restoreFeedNavigationSnapshot() {
 function openPostDetail(postId = '', hash = '') {
   const id = String(postId || '').trim()
   if (!id) return
-  if (!confirmCommunityNavigation()) return
+  if (!confirmCommunityNavigation(communityPostRoute(id))) return
   const cachedPost = state.posts.find((post) => post.postId === id) || null
   captureFeedNavigationSnapshot()
   loadPostDetail({ postId: id, seedPost: cachedPost, replaceUrl: true }).then(() => {
@@ -5938,6 +5972,14 @@ function bindFeedRegionEvents(root = app) {
     })
   })
   root.querySelectorAll('.community-post-card[data-post-id]:not(.is-detail)').forEach((card) => {
+    if (!card.dataset.pointerHoverBound) {
+      card.dataset.pointerHoverBound = 'true'
+      card.addEventListener('pointermove', (event) => {
+        if (event.pointerType === 'touch') return
+        setFeedPostPointerHover(card)
+      })
+      card.addEventListener('pointerleave', () => card.classList.remove('is-pointer-hovered'))
+    }
     card.addEventListener('click', (event) => {
       if (isPostCardInteractiveTarget(event.target)) return
       openPostDetail(card.getAttribute('data-post-id') || '')
