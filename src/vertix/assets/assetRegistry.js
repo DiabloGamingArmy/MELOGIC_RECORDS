@@ -27,12 +27,18 @@ function validateProvider(provider) {
 export function createVertixAssetRegistry(initialProviders = []) {
   const providers = []
   const providerIds = new Set()
+  const subscribers = new Set()
+
+  function notifyProvidersChanged() {
+    subscribers.forEach((subscriber) => subscriber())
+  }
 
   function registerProvider(provider) {
     validateProvider(provider)
     if (providerIds.has(provider.id)) throw new Error(`Duplicate Vertix asset provider: ${provider.id}`)
     providers.push(provider)
     providerIds.add(provider.id)
+    notifyProvidersChanged()
     return provider
   }
 
@@ -50,6 +56,11 @@ export function createVertixAssetRegistry(initialProviders = []) {
 
   return Object.freeze({
     registerProvider,
+    subscribe: (subscriber) => {
+      if (typeof subscriber !== 'function') throw new TypeError('A Vertix asset registry subscriber must be a function.')
+      subscribers.add(subscriber)
+      return () => subscribers.delete(subscriber)
+    },
     listProviders: () => [...providers],
     listAssets: (filters = {}) => allAssets().filter((asset) => assetMatches(asset, filters)),
     getAsset: (assetId) => allAssets().find((asset) => asset.id === assetId),

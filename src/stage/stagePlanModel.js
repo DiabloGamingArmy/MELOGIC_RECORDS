@@ -1,3 +1,5 @@
+import { normalizeLastKnownBounds, normalizeProjectAssetReference } from '../vertix/projects/assetReference.js'
+
 export const DEFAULT_COORDINATE_SYSTEM = {
   // X: stage left/right, Y: height, Z: upstage/downstage
   axes: { x: 'leftRight', y: 'height', z: 'depth' },
@@ -39,7 +41,15 @@ function normalizeStageObject(raw = {}, index = 0) {
   const kind = safeString(raw.kind || raw.type || 'object')
   const category = safeString(raw.category || raw.layer || 'stage')
   const label = safeString(raw.label || raw.name || id, id)
+  const dimensions = normalizeDimensions(raw.dimensions || raw.size, { width: 1, depth: 1, height: 1 })
+  const assetReference = normalizeProjectAssetReference(raw.assetReference)
+  const lastKnownBounds = raw.lastKnownBounds || assetReference
+    ? normalizeLastKnownBounds(raw.lastKnownBounds, dimensions)
+    : null
   return {
+    // Scene objects may carry links, animation data, or future feature data.
+    // Keep that project-owned state intact while normalizing the known fields.
+    ...raw,
     id,
     kind,
     type: safeString(raw.type || kind, kind),
@@ -50,14 +60,16 @@ function normalizeStageObject(raw = {}, index = 0) {
     position: normalizeVector(raw.position, { x: 0, y: 0, z: 0 }),
     rotation: normalizeVector(raw.rotation, { x: 0, y: 0, z: 0 }),
     scale: normalizeVector(raw.scale, { x: 1, y: 1, z: 1 }),
-    dimensions: normalizeDimensions(raw.dimensions || raw.size, { width: 1, depth: 1, height: 1 }),
+    dimensions,
     visible: raw.visible !== false,
     locked: asBoolean(raw.locked, false),
     selectable: raw.selectable !== false,
     protected: asBoolean(raw.protected, false),
     notes: safeString(raw.notes),
     color: safeString(raw.color || raw.metadata?.color),
-    metadata: raw.metadata && typeof raw.metadata === 'object' ? { ...raw.metadata } : {}
+    metadata: raw.metadata && typeof raw.metadata === 'object' ? { ...raw.metadata } : {},
+    ...(assetReference ? { assetReference } : {}),
+    ...(lastKnownBounds ? { lastKnownBounds } : {})
   }
 }
 

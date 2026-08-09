@@ -17,6 +17,8 @@ import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspect
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
 import { mountStageThreeViewport } from './stage/stageThreeViewport'
 import { isOldDemoFallbackPlan, migrateDefaultFallbackPlan, normalizeStagePlan } from './stage/stagePlanModel'
+import { vertixAssetRegistry } from './vertix/assets/builtInStageAssetProvider'
+import { createProjectAssetResolver, resolveProjectAssets, summarizeProjectAssetDependencies } from './vertix/projects/assetResolver'
 import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 
 const app = document.querySelector('#app')
@@ -34,6 +36,7 @@ let lastLoadedProjectId = ''
 let lastLoadedAuthUid = ''
 const loggedProjectLoadFailures = new Set()
 const authRecoverableProjectStatuses = new Set(['auth-restoring', 'unauthenticated', 'permission-denied', 'fallback-local', 'fallback-default', 'not-found', 'network-error', 'rules-error'])
+const projectAssetResolver = createProjectAssetResolver(vertixAssetRegistry)
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 
@@ -196,13 +199,26 @@ function disposeViewportController() {
   stageViewportMountedForProjectId = ''
 }
 
+function refreshProjectAssetResolution() {
+  if (!state.editorProject) {
+    state.assetResolutions = {}
+    state.assetDependencies = []
+    return
+  }
+  // Runtime-only data: it informs rendering but is never written into the plan.
+  state.assetResolutions = resolveProjectAssets(state.editorProject, projectAssetResolver)
+  state.assetDependencies = summarizeProjectAssetDependencies(state.editorProject, projectAssetResolver)
+}
+
 function initStageEditorViewport() {
   disposeViewportController()
   if (!state.projectId || state.editorLoading || state.editorError) return
   const container = app.querySelector('[data-stage-three-viewport]')
   if (!container) return
+  refreshProjectAssetResolution()
   stageViewportController = mountStageThreeViewport(container, {
     project: state.editorProject,
+    assetResolutions: state.assetResolutions,
     projectLoadStatus: state.projectLoadStatus,
     projectLoadMessage: state.projectLoadMessage,
     showDiagnostics: state.showViewportDiagnostics,
@@ -374,6 +390,12 @@ function refreshStageViewport() {
   if (!state.projectId || state.editorLoading || state.editorError || !state.editorProject) return
   initStageEditorViewport()
 }
+
+vertixAssetRegistry.subscribe?.(() => {
+  if (!state.editorProject) return
+  refreshProjectAssetResolution()
+  refreshStageViewport()
+})
 
 async function hydrateStageIcons() {
   const nodes = [...app.querySelectorAll('[data-stage-icon-path]')]

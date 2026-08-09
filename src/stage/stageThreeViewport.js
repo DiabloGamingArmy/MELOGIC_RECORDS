@@ -6,23 +6,28 @@ const SHOW_VIEWPORT_DIAGNOSTICS = Boolean(import.meta?.env?.DEV)
 
 const defaultStagePlan = () => createDefaultStagePlan({ id: 'viewport-fallback', name: 'Viewport Fallback' })
 
-const objectDefsFromProject = (project = {}) => {
+const objectDefsFromProject = (project = {}, assetResolutions = {}) => {
   const source = Array.isArray(project.objects) ? project.objects : defaultStagePlan().objects
   return source.map((object) => {
     const dimensions = object.dimensions || {}
     const position = object.position || {}
+    const key = object.id || object.key || object.name
+    const assetResolution = assetResolutions[key]
+    const lastKnownBounds = object.lastKnownBounds || {}
     return {
-      key: object.id || object.key || object.name,
+      key,
       label: object.label || object.name || object.id || object.key || 'Stage Object',
       type: object.type || object.category || 'Object',
       category: object.category || 'stage',
       color: object.color || object.metadata?.color || '',
       position: Array.isArray(object.position) ? object.position : [Number(position.x || 0), Number(position.y || 0), Number(position.z || 0)],
-      size: Array.isArray(object.size) ? object.size : [Number(dimensions.width || 1), Number(dimensions.height || 1), Number(dimensions.depth || 1)],
+      size: Array.isArray(object.size) ? object.size : [Number(dimensions.width || lastKnownBounds.width || 1), Number(dimensions.height || lastKnownBounds.height || 1), Number(dimensions.depth || lastKnownBounds.depth || 1)],
       rotation: object.rotation || { x: 0, y: 0, z: 0 },
       selectable: object.selectable !== false,
       visible: object.visible !== false,
-      locked: !!object.locked
+      locked: !!object.locked,
+      missingAsset: assetResolution?.status === 'MISSING' || assetResolution?.status === 'INVALID',
+      missingReason: assetResolution?.reason || ''
     }
   }).filter((object) => object.key)
 }
@@ -142,7 +147,7 @@ export function mountStageThreeViewport(container, options = {}) {
     gridHelper.visible = options.showGrid !== false
     scene.add(gridHelper)
 
-    const stageObjectDefs = objectDefsFromProject(options.project)
+    const stageObjectDefs = objectDefsFromProject(options.project, options.assetResolutions || {})
     const stageDimensions = options.project?.stageDimensions || {}
     const deckDef = stageObjectDefs.find((d) => d.key === 'stage-deck' && d.visible !== false)
     const deckWidth = Number(stageDimensions.width || deckDef?.size?.[0] || 32)
@@ -151,15 +156,39 @@ export function mountStageThreeViewport(container, options = {}) {
     const pickables = []
     const objects = {}
     const objectMeta = Object.fromEntries(stageObjectDefs.map((d) => [d.key, d]))
-    const addPickable = (mesh, key) => { mesh.userData.objectKey = key; mesh.userData.stageLocked = !!objectMeta[key]?.locked; pickables.push(mesh); objects[key] = mesh }
+    const addPickable = (mesh, key) => {
+      mesh.traverse?.((node) => { node.userData.objectKey = key; node.userData.stageLocked = !!objectMeta[key]?.locked })
+      mesh.userData.objectKey = key
+      mesh.userData.stageLocked = !!objectMeta[key]?.locked
+      pickables.push(mesh)
+      objects[key] = mesh
+    }
     const materialColorFor = (d) => d.color || (d.type === 'speaker' ? '#365875' : d.category === 'rigging' ? '#6762d2' : d.category === 'lighting' ? '#49c8ff' : d.category === 'video' ? '#4fc8b4' : d.category === 'audio' ? '#2d4059' : d.category === 'power' ? '#ffb86b' : '#222b39')
     const geometryFor = (d) => {
       if (d.type?.includes('cylinder') || d.type === 'microphone') return new THREE.CylinderGeometry(Math.max(0.12, d.size[0] / 2), Math.max(0.12, d.size[0] / 2), Math.max(0.2, d.size[1]), 18)
       if (d.type?.includes('circle')) return new THREE.CylinderGeometry(Math.max(0.2, d.size[0] / 2), Math.max(0.2, d.size[0] / 2), Math.max(0.12, d.size[1]), 32)
       return new THREE.BoxGeometry(...d.size)
     }
+    const missingProxyFor = (d) => {
+      const group = new THREE.Group()
+      const [width, height, depth] = d.size.map((value) => Math.max(0.2, Math.abs(Number(value) || 1)))
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(width, height, depth),
+        new THREE.MeshBasicMaterial({ color: '#ec4bff', transparent: true, opacity: 0.32, depthWrite: false })
+      )
+      const outline = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(width, height, depth)),
+        new THREE.LineBasicMaterial({ color: '#ffb7ff' })
+      )
+      const label = makeLabel(`Missing asset: ${String(d.missingReason || 'unavailable').replaceAll('_', ' ')}`, [0, height / 2 + 1.1, 0], '#ff8cff')
+      group.add(box, outline, label)
+      group.position.set(...d.position)
+      group.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))
+      group.name = `missing-asset:${d.missingReason || 'unknown'}`
+      return group
+    }
 
-    if (deckDef) {
+    if (deckDef && !deckDef.missingAsset) {
       const deckGroup = new THREE.Group(); deckGroup.name = 'stage-deck-group'; deckGroup.userData.objectKey = 'stage-deck'
       deckGroup.position.set(Number(deckDef.position?.[0] || 0), 0, Number(deckDef.position?.[2] || 0))
       deckGroup.rotation.set(THREE.MathUtils.degToRad(deckDef.rotation?.x || 0), THREE.MathUtils.degToRad(deckDef.rotation?.y || 0), THREE.MathUtils.degToRad(deckDef.rotation?.z || 0))
@@ -180,13 +209,17 @@ export function mountStageThreeViewport(container, options = {}) {
       addPickable(deckGroup, 'stage-deck')
     }
 
-    stageObjectDefs.filter((d) => d.key !== 'stage-deck' && d.visible !== false).forEach((d) => {
-      const mesh = new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: materialColorFor(d), roughness: 0.72, metalness: 0.22 }))
-      mesh.position.set(...d.position)
-      mesh.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))
-      if (d.key === 'camera-1' && !d.rotation?.z) mesh.rotation.z = Math.PI / 2
-      scene.add(mesh)
-      addPickable(mesh, d.key)
+    stageObjectDefs.filter((d) => (d.key !== 'stage-deck' || d.missingAsset) && d.visible !== false).forEach((d) => {
+      const object = d.missingAsset
+        ? missingProxyFor(d)
+        : new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: materialColorFor(d), roughness: 0.72, metalness: 0.22 }))
+      if (!d.missingAsset) {
+        object.position.set(...d.position)
+        object.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))
+        if (d.key === 'camera-1' && !d.rotation?.z) object.rotation.z = Math.PI / 2
+      }
+      scene.add(object)
+      addPickable(object, d.key)
     })
 
     const labelSprites = []
@@ -196,7 +229,7 @@ export function mountStageThreeViewport(container, options = {}) {
       scene.add(helper)
       return helper
     }
-    if (deckDef) {
+    if (deckDef && !deckDef.missingAsset) {
       const deckY = Number(deckDef.position?.[1] ?? 0.5)
       line([[0, deckY + 0.65, deckDepth / 2], [0, deckY + 0.65, deckDepth / 2 + 18]], '#5dd9ff')
       line([[-deckWidth / 2, deckY + 0.67, deckDepth / 2 + 0.8], [deckWidth / 2, deckY + 0.67, deckDepth / 2 + 0.8]], '#57d4ff')

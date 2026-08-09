@@ -1,5 +1,6 @@
 import { STORAGE_PATHS } from '../../config/storagePaths'
 import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvider'
+import { createProjectAssetReference, lastKnownBoundsFromAsset } from '../../vertix/projects/assetReference'
 import { getStagePlanWarnings } from '../stagePlanModel'
 
 export const sidebarItems = ['My Projects', 'Templates', 'Asset Library', 'Shared With Me', 'Exports', 'Learn']
@@ -105,6 +106,8 @@ export const state = {
   editorSaveErrorCode: '',
   lastSavedAt: '',
   editorProject: null,
+  assetResolutions: {},
+  assetDependencies: [],
   createError: '',
   selectedStageType: 'Blank Stage',
   activeEditorMode: 'entities',
@@ -254,6 +257,10 @@ export function createStageObjectFromAsset(asset, overrides = {}) {
   const defaultTransform = asset.defaultTransform || {}
   const position = { ...(asset.position || defaultTransform.position || {}), ...(overrides.position || {}) }
   const dimensions = { ...(asset.dimensions || {}), ...(overrides.dimensions || {}) }
+  const assetReference = overrides.assetReference === undefined
+    ? createProjectAssetReference(asset)
+    : overrides.assetReference
+  const lastKnownBounds = overrides.lastKnownBounds || (assetReference ? lastKnownBoundsFromAsset(asset, dimensions) : null)
   return {
     id,
     kind: overrides.kind || asset.kind || asset.type,
@@ -266,13 +273,15 @@ export function createStageObjectFromAsset(asset, overrides = {}) {
     rotation: { x: 0, y: 0, z: 0, ...(defaultTransform.rotation || {}), ...(overrides.rotation || {}) },
     scale: { x: 1, y: 1, z: 1, ...(defaultTransform.scale || {}), ...(overrides.scale || {}) },
     dimensions,
-    visible: true,
-    locked: false,
-    selectable: true,
-    protected: false,
+    visible: overrides.visible ?? true,
+    locked: overrides.locked ?? false,
+    selectable: overrides.selectable ?? true,
+    protected: overrides.protected ?? false,
     color: asset.metadata?.color || overrides.color || '',
     notes: asset.metadata?.notes || '',
-    metadata: { ...(asset.metadata || {}), ...(overrides.metadata || {}) }
+    metadata: { ...(asset.metadata || {}), ...(overrides.metadata || {}) },
+    ...(assetReference ? { assetReference } : {}),
+    ...(lastKnownBounds ? { lastKnownBounds } : {})
   }
 }
 
