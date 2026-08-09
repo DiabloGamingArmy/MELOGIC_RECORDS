@@ -72,9 +72,14 @@ function stagePlanRecoveryKey(projectId = state.projectId) {
 
 function normalizeEditorMode(mode) {
   if (mode === 'builder') return 'entities'
+  if (['stage-plot', 'input-list', 'lighting-patch', 'lighting-plot', 'rigging', 'rigging-plan', 'warnings', 'export'].includes(mode)) return 'stage-data'
+  return mode || 'asset-browser'
+}
+
+function normalizeStageDataView(mode) {
   if (mode === 'lighting-plot') return 'lighting-patch'
   if (mode === 'rigging-plan') return 'rigging'
-  return mode || 'entities'
+  return ['stage-plot', 'input-list', 'lighting-patch', 'rigging', 'warnings', 'export'].includes(mode) ? mode : 'stage-plot'
 }
 
 function buildEditorStateSnapshot() {
@@ -90,6 +95,9 @@ function buildEditorStateSnapshot() {
     editorToolMode: state.editorToolMode,
     stageInteractionMode: state.stageInteractionMode,
     activeEditorMode: normalizeEditorMode(state.activeEditorMode),
+    activeStageDataView: state.activeStageDataView,
+    assetBrowserQuery: { ...state.assetBrowserQuery },
+    selectedAssetBrowserId: state.selectedAssetBrowserId,
     activeInspectorTab: state.activeInspectorTab,
     activeDataTab: state.activeDataTab,
     renderMode: state.renderMode,
@@ -119,7 +127,13 @@ function applyEditorStateSnapshot(editorState = {}) {
   state.objectLibrarySearch = typeof editorState.objectLibrarySearch === 'string' ? editorState.objectLibrarySearch : state.objectLibrarySearch
   state.editorToolMode = editorState.editorToolMode || state.editorToolMode
   state.stageInteractionMode = editorState.stageInteractionMode === 'edit' ? 'edit' : 'object'
-  state.activeEditorMode = normalizeEditorMode(editorState.activeEditorMode || state.activeEditorMode)
+  const savedEditorMode = editorState.activeEditorMode || state.activeEditorMode
+  state.activeEditorMode = normalizeEditorMode(savedEditorMode)
+  state.activeStageDataView = normalizeStageDataView(editorState.activeStageDataView || savedEditorMode)
+  state.assetBrowserQuery = editorState.assetBrowserQuery && typeof editorState.assetBrowserQuery === 'object'
+    ? { ...state.assetBrowserQuery, ...editorState.assetBrowserQuery }
+    : state.assetBrowserQuery
+  state.selectedAssetBrowserId = typeof editorState.selectedAssetBrowserId === 'string' ? editorState.selectedAssetBrowserId : state.selectedAssetBrowserId
   state.activeInspectorTab = editorState.activeInspectorTab || state.activeInspectorTab
   state.activeDataTab = editorState.activeDataTab || state.activeDataTab
   state.renderMode = editorState.renderMode || state.renderMode
@@ -399,6 +413,7 @@ vertixAssetRegistry.subscribe?.(() => {
   if (!state.editorProject) return
   refreshProjectAssetResolution()
   refreshStageViewport()
+  updateEditorModeUI()
 })
 
 async function hydrateStageIcons() {
@@ -656,14 +671,16 @@ function updateViewportControlUI() {
   const grid = app.querySelector('[data-toggle-grid]')
   if (grid) {
     grid.classList.toggle('is-active', state.gridEnabled)
-    grid.textContent = `Grid ${state.gridEnabled ? 'On' : 'Off'}`
+    grid.textContent = 'Grid'
+    grid.setAttribute('aria-pressed', String(state.gridEnabled))
   }
   const beam = app.querySelector('[data-toggle-beam]')
   if (beam) beam.classList.toggle('is-active', state.beamPreviewEnabled)
   const snap = app.querySelector('[data-toggle-snap]')
   if (snap) {
     snap.classList.toggle('is-active', state.snapEnabled)
-    snap.textContent = `Snap ${state.snapEnabled ? 'On' : 'Off'}`
+    snap.textContent = 'Snap'
+    snap.setAttribute('aria-pressed', String(state.snapEnabled))
   }
   const measure = app.querySelector('[data-toggle-measure]')
   if (measure) measure.classList.toggle('is-active', state.measureModeEnabled)

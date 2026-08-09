@@ -16,8 +16,8 @@ import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvid
 const escapeAttr = (value = '') => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
 export function renderLeftPanel(title, body) {
-  const stageTools = editorRailItems.map((item) => `<button type="button" class="${state.activeStageSection === item.key ? 'is-active' : ''}" data-rail-section="${item.key}" title="${item.label}">${item.label}</button>`).join('')
-  return `<aside class="stage-editor-library" data-guide-id="stagemaker-object-library" data-guide-label="${escapeAttr(title)}" data-guide-role="stagemaker-object-library"><header><div><span class="vertix-stage-panel-kicker">Stage tools</span><h3>${title}</h3></div><button type="button" aria-label="Close panel" aria-disabled="true">×</button></header><nav class="vertix-stage-tool-nav" aria-label="Stage tools">${stageTools}</nav><div class="stage-left-panel-content">${body}</div></aside>`
+  const contexts = editorRailItems.map((item) => `<option value="${escapeAttr(item.key)}" ${state.activeStageSection === item.key ? 'selected' : ''}>${escapeAttr(item.label)}</option>`).join('')
+  return `<aside class="stage-editor-library vertix-context-panel" data-guide-id="stagemaker-object-library" data-guide-label="${escapeAttr(title)}" data-guide-role="stagemaker-object-library"><header><div><span class="vertix-stage-panel-kicker">Stage context</span><h3>${title}</h3></div><label class="vertix-context-switcher"><span>Tools</span><select data-stage-context aria-label="Stage contextual tools">${contexts}</select></label></header><div class="stage-left-panel-content">${body}</div></aside>`
 }
 
 export function renderLeftPanelBySection(title, stamp) {

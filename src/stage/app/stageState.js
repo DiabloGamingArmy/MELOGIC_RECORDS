@@ -80,13 +80,9 @@ export const baseStageTypes = [
 ]
 
 export const editorModes = [
+  { key: 'asset-browser', label: 'Asset Browser' },
   { key: 'entities', label: 'Objects' },
-  { key: 'stage-plot', label: 'Stage Plot' },
-  { key: 'input-list', label: 'Input List' },
-  { key: 'lighting-patch', label: 'Lighting Patch' },
-  { key: 'rigging', label: 'Rigging' },
-  { key: 'warnings', label: 'Warnings' },
-  { key: 'export', label: 'Export' }
+  { key: 'stage-data', label: 'Stage Data' }
 ]
 
 export const editorViewModes = [['perspective3d', '3D'], ['top2d', 'Top'], ['front', 'Front'], ['side', 'Side'], ['isometric', 'Iso']]
@@ -139,7 +135,10 @@ export const state = {
   activeVertixDiscipline: 'stage',
   activeVertixWorkspace: 'viewport',
   selectedStageType: 'Blank Stage',
-  activeEditorMode: 'entities',
+  activeEditorMode: 'asset-browser',
+  activeStageDataView: 'stage-plot',
+  assetBrowserQuery: { search: '', category: 'all', type: 'all', source: 'all', publisher: 'all', tag: 'all' },
+  selectedAssetBrowserId: '',
   activeStageSection: 'home',
   activeLibraryCategory: 'all',
   objectLibrarySearch: '',
@@ -602,7 +601,10 @@ export function updateSelectedStageObjectField(field, value, options = {}) {
   const before = cloneData(object)
   if (['x', 'y', 'z'].includes(field)) object.position = { ...(object.position || {}), [field]: Number(value) || 0 }
   else if (['width', 'depth', 'height'].includes(field)) object.dimensions = { ...(object.dimensions || {}), [field]: Math.max(0.05, Number(value) || 0.05) }
-  else if (field === 'rotY') object.rotation = { ...(object.rotation || {}), y: Number(value) || 0 }
+  else if (['rotX', 'rotY', 'rotZ'].includes(field)) {
+    const axis = field.slice(-1).toLowerCase()
+    object.rotation = { ...(object.rotation || {}), [axis]: Number(value) || 0 }
+  }
   else if (field === 'label') { object.label = String(value || ''); object.name = String(value || object.name || '') }
   else if (field === 'locked') object.locked = !!value
   else if (field === 'visible') object.visible = !!value

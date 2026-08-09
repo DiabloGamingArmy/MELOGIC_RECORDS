@@ -9,33 +9,15 @@ import {
   state
 } from '../app/stageState'
 
-const numberValue = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback
-const escapeAttr = (value = '') => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
-const formatNumber = (value, fallback = 0) => {
-  const number = numberValue(value, fallback)
-  return Number.isFinite(number) ? Number(number.toFixed(2)).toString() : String(fallback)
-}
+const escapeHtml = (value = '') => String(value ?? '').replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character]))
+const escapeAttr = (value = '') => escapeHtml(value)
+const numeric = (value, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback
+const formatNumber = (value, fallback = 0) => Number(numeric(value, fallback).toFixed(2)).toString()
 
 function selectedObjectRecord() {
   const selected = selectedStageEntity()
   if (selected.kind === 'object') return selected.entity
-  if (selected.kind === 'none') {
-    return {
-      id: '',
-      label: 'No object selected',
-      name: 'No object selected',
-      type: 'none',
-      category: 'stage',
-      layer: 'stage',
-      position: { x: 0, y: 0, z: 0 },
-      rotation: { y: 0 },
-      dimensions: { width: 0, depth: 0, height: 0 },
-      visible: true,
-      locked: false,
-      notes: '',
-      metadata: {}
-    }
-  }
+  if (selected.kind === 'none') return null
   return {
     id: selected.entity?.id || state.selectedEditorObject,
     label: selected.entity?.name || selected.entity?.source || 'Stage Object',
@@ -44,7 +26,7 @@ function selectedObjectRecord() {
     category: selected.entity?.category || selected.kind,
     layer: selected.entity?.layer || selected.entity?.category || 'stage',
     position: selected.entity?.position || { x: 0, y: 0, z: 0 },
-    rotation: selected.entity?.rotation || { y: 0 },
+    rotation: selected.entity?.rotation || { x: 0, y: 0, z: 0 },
     dimensions: selected.entity?.dimensions || { width: selected.entity?.width || 0, depth: selected.entity?.depth || 0, height: selected.entity?.height || 0 },
     visible: selected.entity?.visible !== false,
     locked: !!selected.entity?.locked,
@@ -53,73 +35,82 @@ function selectedObjectRecord() {
   }
 }
 
-export function selectedEditorObjectMarkup() {
-  const selectedObjects = selectedStageObjects()
-  if (selectedObjects.length > 1) {
-    const categories = [...new Set(selectedObjects.map((object) => object.category || 'stage'))]
-    const layers = [...new Set(selectedObjects.map((object) => object.layer || object.category || 'stage'))]
-    const lockedCount = selectedObjects.filter((object) => object.locked).length
-    const hiddenCount = selectedObjects.filter((object) => object.visible === false).length
-    return `<div data-guide-id="stagemaker-selected-entities" data-guide-label="${selectedObjects.length} selected StageMaker objects" data-guide-role="stage-entity-selection"><div class="stage-readout-grid"><div><span>SELECTION</span><strong>${selectedObjects.length} objects</strong></div><div><span>CATEGORY</span><strong>${categories.length === 1 ? categories[0] : 'mixed'}</strong></div><div><span>LAYER</span><strong>${layers.length === 1 ? layers[0] : 'mixed'}</strong></div><div><span>STATUS</span><strong>${lockedCount} locked · ${hiddenCount} hidden</strong></div></div><div class="stage-object-command-row"><button type="button" data-focus-selected>Focus</button><button type="button" data-multi-transform-field="locked" data-value="true">Lock</button><button type="button" data-multi-transform-field="locked" data-value="false">Unlock</button><button type="button" data-multi-transform-field="visible" data-value="true">Show</button><button type="button" data-multi-transform-field="visible" data-value="false">Hide</button><button type="button" data-delete-selected>Delete</button></div><p class="stage-help-text">Multiple objects selected. Use Move mode to drag the primary selection, or apply shared lock/visibility actions here. Group tools are planned.</p></div>`
-  }
-  const selected = selectedObjectRecord()
-  if (!selected.id) return '<p class="stage-empty-state">No object selected. Use Select to click or drag a box around objects.</p>'
-  const t = state.editorObjectTransforms[selected.id] || {}
-  const position = selected.position || {}
-  const dimensions = selected.dimensions || {}
-  const rotation = selected.rotation || {}
-  const width = t.width ?? numberValue(dimensions.width)
-  const depth = t.depth ?? numberValue(dimensions.depth)
-  const height = t.height ?? numberValue(dimensions.height)
-  const x = t.x ?? numberValue(position.x)
-  const y = t.y ?? numberValue(position.y)
-  const z = t.z ?? numberValue(position.z)
-  const rotY = t.rotY ?? numberValue(rotation.y)
-  const display = {
-    width: formatNumber(width),
-    depth: formatNumber(depth),
-    height: formatNumber(height),
-    x: formatNumber(x),
-    y: formatNumber(y),
-    z: formatNumber(z),
-    rotY: formatNumber(rotY)
-  }
-  const rows = [
-    ['Selected', selected.label || selected.name],
-    ['Type', selected.type || 'Object'],
-    ['Category', selected.category || 'stage'],
-    ['Layer', selected.layer || selected.category || 'stage'],
-    ['Position', `X ${display.x} / Y ${display.y} / Z ${display.z}`, 'position'],
-    ['Dimensions', `${display.width || 'n/a'} x ${display.depth || 'n/a'} x ${display.height || 'n/a'}`, 'size']
-  ]
-  return `<div data-guide-id="stagemaker-entity-${escapeAttr(selected.id)}" data-guide-label="${escapeAttr(selected.label || selected.name || selected.id)}" data-guide-role="stage-entity" data-guide-entity-id="${escapeAttr(selected.id)}"><div class="stage-readout-grid">${rows.map(([k, v, editor]) => `<div><span>${String(k).toUpperCase()}</span>${editor ? `<button type="button" class="stage-property-value" data-open-property-editor="${editor}">${v}</button>` : `<strong>${v}</strong>`}</div>`).join('')}</div><div class="stage-object-command-row"><button type="button" data-focus-selected>Focus</button><button type="button" data-open-property-editor="rotation">Edit Rotation</button><button type="button" data-rotate-selected="-15">Rotate -15</button><button type="button" data-rotate-selected="15">Rotate +15</button><button type="button" data-reset-rotation>Reset Rot</button><button type="button" data-duplicate-selected>Duplicate</button><button type="button" data-delete-selected>Delete</button></div><div class="stage-transform-grid"><label data-open-property-editor="position">X<input data-transform-field="x" type="number" step="0.1" value="${display.x}" readonly></label><label data-open-property-editor="position">Y<input data-transform-field="y" type="number" step="0.1" value="${display.y}" readonly></label><label data-open-property-editor="position">Z<input data-transform-field="z" type="number" step="0.1" value="${display.z}" readonly></label><label data-open-property-editor="size">Width<input data-transform-field="width" type="number" min="0.5" step="0.1" value="${display.width || 0}" readonly></label><label data-open-property-editor="size">Depth<input data-transform-field="depth" type="number" min="0.5" step="0.1" value="${display.depth || 0}" readonly></label><label data-open-property-editor="size">Height<input data-transform-field="height" type="number" min="0.1" step="0.1" value="${display.height || 0}" readonly></label><label data-open-property-editor="rotation">Rotation<input data-transform-field="rotY" type="number" step="1" value="${display.rotY}" readonly></label><label data-open-property-editor="label">Label<input data-transform-field="label" type="text" value="${escapeAttr(t.label || selected.label || selected.name || '')}" readonly></label><label data-open-property-editor="layer">Layer<select data-transform-field="layer" aria-readonly="true">${stageLayers.map((layer) => `<option value="${layer}" ${(selected.layer || selected.category) === layer ? 'selected' : ''}>${layer}</option>`).join('')}</select></label><label>Color<input data-transform-field="color" type="color" value="${selected.color || selected.metadata?.color || '#22b8b5'}"></label><button type="button" class="stage-editor-check stage-property-toggle" data-open-property-editor="locked">Locked <span>${selected.locked ? 'On' : 'Off'}</span></button><button type="button" class="stage-editor-check stage-property-toggle" data-open-property-editor="visible">Visible <span>${selected.visible === false ? 'Off' : 'On'}</span></button><label class="stage-transform-notes">Notes<textarea data-transform-field="notes">${t.notes || selected.notes || ''}</textarea></label></div></div>`
+function section(title, body, className = '') {
+  return `<section class="vertix-property-section ${className}"><h3>${title}</h3>${body}</section>`
 }
 
-function renderDataTab() {
-  const selected = selectedObjectRecord()
+function field(label, key, value, { min, step = '0.1', disabled = false } = {}) {
+  return `<label><span>${label}</span><input data-vertix-transform-field="${key}" type="number" ${min === undefined ? '' : `min="${min}"`} step="${step}" value="${escapeAttr(formatNumber(value))}" ${disabled ? 'disabled' : ''}></label>`
+}
+
+function readout(label, value) {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value || '—')}</strong></div>`
+}
+
+function sourceSection(selected) {
+  const resolution = state.assetResolutions?.[selected.id]
+  const reference = resolution?.reference || selected.assetReference
+  if (!reference) return ''
+  const missing = resolution && resolution.status !== 'RESOLVED'
+  const resolved = resolution?.status === 'RESOLVED'
+  const status = missing ? `Missing · ${resolution.reason || 'unavailable'}` : resolved ? 'Resolved' : 'Referenced'
+  const warning = missing
+    ? `<div class="vertix-missing-asset"><strong>Missing asset</strong><span>${escapeHtml(resolution.reason || 'The required asset is unavailable.')}</span></div>`
+    : ''
+  return section('Asset Source', `${warning}<div class="vertix-property-readout">${readout('Package', reference.packageId)}${readout('Version', reference.packageVersion)}${readout('Asset', reference.assetUuid)}${readout('Publisher', reference.publisherId)}${readout('Status', status)}</div>`, missing ? 'is-missing' : '')
+}
+
+function stageComponentSection(selected) {
   const input = linkedAudioInput(selected.id)
   const fixture = linkedFixture(selected.id)
   const rig = linkedRigging(selected.id)
   const video = linkedVideo(selected.id)
-  if (input) {
-    return `<section class="stage-config-panel"><h3>Audio Data</h3><div class="stage-readout-grid"><div><span>SOURCE</span><strong>${input.source || selected.label}</strong></div><div><span>CHANNEL</span><strong>${input.channel || 'n/a'}</strong></div><div><span>MIC/DI</span><strong>${input.micDi || 'n/a'}</strong></div><div><span>STAND</span><strong>${input.stand || 'n/a'}</strong></div><div><span>PATCH</span><strong>${input.patch || 'unpatched'}</strong></div><div><span>MONITOR</span><strong>${input.monitorSend || 'n/a'}</strong></div></div></section>`
-  }
-  if (fixture) {
-    return `<section class="stage-config-panel"><h3>Lighting Data</h3><div class="stage-readout-grid"><div><span>FIXTURE</span><strong>${fixture.type || fixture.name}</strong></div><div><span>UNIVERSE</span><strong>${fixture.universe || 1}</strong></div><div><span>ADDRESS</span><strong>${fixture.address || 'n/a'}</strong></div><div><span>MODE</span><strong>${fixture.mode || 'n/a'}</strong></div><div><span>BEAM</span><strong>${fixture.beamAngle || 'n/a'} deg</strong></div><div><span>TARGET</span><strong>${fixture.target || 'n/a'}</strong></div></div></section>`
-  }
-  if (rig) {
-    return `<section class="stage-config-panel"><h3>Rigging Data</h3><div class="stage-readout-grid"><div><span>TYPE</span><strong>${rig.type || 'Rigging'}</strong></div><div><span>SPAN</span><strong>${rig.span || 'n/a'}</strong></div><div><span>HEIGHT</span><strong>${rig.height || 'n/a'}</strong></div><div><span>QUALIFIED</span><strong>${rig.qualifiedOnly ? 'Required' : 'Review'}</strong></div></div><p class="stage-safety-note">Load calculation required by qualified rigger.</p></section>`
-  }
-  if (video) {
-    return `<section class="stage-config-panel"><h3>Video Data</h3><div class="stage-readout-grid"><div><span>TYPE</span><strong>${video.type || 'Video'}</strong></div><div><span>SIZE</span><strong>${video.width || 'n/a'} x ${video.height || 'n/a'}</strong></div><div><span>ASPECT</span><strong>${video.aspectRatio || 'n/a'}</strong></div><div><span>RESOLUTION</span><strong>${video.resolution || 'n/a'}</strong></div><div><span>INPUT</span><strong>${video.inputSource || 'n/a'}</strong></div></div></section>`
-  }
-  return `<section class="stage-config-panel"><h3>Object Data</h3><p>This object is currently geometric only. Add audio, lighting, rigging, video, or power metadata to make it appear in production paperwork.</p><div class="stage-readout-grid"><div><span>ID</span><strong>${selected.id}</strong></div><div><span>LAYER</span><strong>${selected.layer || selected.category || 'stage'}</strong></div></div></section>`
+  if (fixture) return section('Lighting Component', `<div class="vertix-property-readout">${readout('Fixture', fixture.type || fixture.name)}${readout('Patch', `U${fixture.universe || 1}:${fixture.address || '—'}`)}${readout('Mode', fixture.mode)}${readout('Target', fixture.target)}</div>`)
+  if (input) return section('Audio Component', `<div class="vertix-property-readout">${readout('Source', input.source || selected.label)}${readout('Channel', input.channel)}${readout('Mic / DI', input.micDi)}${readout('Monitor', input.monitorSend)}</div>`)
+  if (rig || selected.category === 'rigging') return section('Rigging Component', `<div class="vertix-property-readout">${readout('Type', rig?.type || selected.type)}${readout('Span', rig?.span || selected.dimensions?.width)}${readout('Height', rig?.height || selected.position?.y)}${readout('Safety', rig?.qualifiedOnly ? 'Qualified personnel required' : 'Review required')}</div>`)
+  if (video) return section('Video Component', `<div class="vertix-property-readout">${readout('Type', video.type || selected.type)}${readout('Input', video.inputSource)}${readout('Resolution', video.resolution)}${readout('Aspect', video.aspectRatio)}</div>`)
+  if (selected.id === 'stage-deck' || selected.category === 'venue') return section('Stage Component', `<div class="vertix-property-readout">${readout('Layer', selected.layer || 'venue')}${readout('Deck height', selected.position?.y)}${readout('Stage width', selected.dimensions?.width)}${readout('Stage depth', selected.dimensions?.depth)}</div>`)
+  return ''
+}
+
+function customPropertiesSection(selected) {
+  const entries = Object.entries(selected.metadata || {}).filter(([key, value]) => value !== undefined && value !== null && String(value) !== '' && key !== 'color').slice(0, 8)
+  if (!entries.length) return ''
+  return section('Custom Properties', `<div class="vertix-property-readout">${entries.map(([key, value]) => readout(key.replace(/([A-Z])/g, ' $1'), typeof value === 'object' ? JSON.stringify(value) : value)).join('')}</div>`)
+}
+
+function renderMultiSelection(objects) {
+  const locked = objects.filter((object) => object.locked).length
+  return `<section class="vertix-property-empty"><strong>${objects.length} objects selected</strong><span>${locked} locked · shared display controls remain available.</span><div class="vertix-object-actions"><button type="button" data-multi-transform-field="locked" data-value="false">Unlock</button><button type="button" data-multi-transform-field="visible" data-value="true">Show</button><button type="button" data-delete-selected>Delete</button></div></section>`
+}
+
+export function selectedEditorObjectMarkup() {
+  const selectedObjects = selectedStageObjects()
+  if (selectedObjects.length > 1) return renderMultiSelection(selectedObjects)
+  const selected = selectedObjectRecord()
+  if (!selected?.id) return '<section class="vertix-property-empty"><strong>No object selected</strong><span>Select an object in the viewport or Objects editor to inspect it here.</span></section>'
+  const position = selected.position || {}
+  const rotation = selected.rotation || {}
+  const dimensions = selected.dimensions || {}
+  const locked = !!selected.locked
+  const disabled = locked ? 'disabled' : ''
+  const transform = section('Transform', `<div class="vertix-transform-group"><span>Location</span><div class="vertix-transform-row">${field('X', 'x', position.x, { disabled: locked })}${field('Y', 'y', position.y, { disabled: locked })}${field('Z', 'z', position.z, { disabled: locked })}</div></div><div class="vertix-transform-group"><span>Rotation</span><div class="vertix-transform-row">${field('X', 'rotX', rotation.x, { step: '1', disabled: locked })}${field('Y', 'rotY', rotation.y, { step: '1', disabled: locked })}${field('Z', 'rotZ', rotation.z, { step: '1', disabled: locked })}</div></div><div class="vertix-transform-group"><span>Dimensions</span><div class="vertix-transform-row">${field('W', 'width', dimensions.width, { min: 0.05, disabled: locked })}${field('D', 'depth', dimensions.depth, { min: 0.05, disabled: locked })}${field('H', 'height', dimensions.height, { min: 0.05, disabled: locked })}</div></div>${locked ? '<p class="vertix-property-lock-note">Unlock this object to edit transforms or manipulate its gizmo.</p>' : ''}`)
+  const display = section('Display', `<div class="vertix-display-controls"><button type="button" data-vertix-object-toggle="visible" aria-pressed="${selected.visible !== false}">${selected.visible === false ? 'Show in viewport' : 'Visible in viewport'}</button><button type="button" data-vertix-object-toggle="locked" aria-pressed="${locked}">${locked ? 'Unlock object' : 'Lock object'}</button><label><span>Color</span><input data-vertix-transform-field="color" type="color" value="${escapeAttr(selected.color || selected.metadata?.color || '#4e6576')}"></label></div>`)
+  const header = `<header class="vertix-object-header"><div><input data-vertix-transform-field="label" aria-label="Object name" type="text" value="${escapeAttr(selected.label || selected.name || selected.id)}"><p>${escapeHtml(selected.type || 'Object')} · ${escapeHtml(selected.category || 'stage')} · ${escapeHtml(selected.layer || 'stage')}</p></div><div class="vertix-object-actions"><button type="button" data-focus-selected title="Focus selected object">Focus</button><button type="button" data-duplicate-selected title="Duplicate selected object">Duplicate</button><button type="button" data-delete-selected title="Delete selected object">Delete</button></div></header>`
+  const layer = section('Object', `<div class="vertix-property-inline"><label><span>Layer</span><select data-vertix-transform-field="layer">${stageLayers.map((name) => `<option value="${escapeAttr(name)}" ${(selected.layer || selected.category) === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label><span>${escapeHtml(selected.id)}</span></div>`)
+  return `<div class="vertix-universal-properties" data-guide-id="stagemaker-entity-${escapeAttr(selected.id)}" data-guide-label="${escapeAttr(selected.label || selected.id)}" data-guide-role="stage-entity" data-guide-entity-id="${escapeAttr(selected.id)}">${header}${transform}${display}${layer}${stageComponentSection(selected)}${sourceSection(selected)}${customPropertiesSection(selected)}</div>`
+}
+
+function renderDataTab() {
+  const selected = selectedObjectRecord()
+  if (!selected) return '<section class="vertix-property-empty"><span>Select an object to view contextual Stage data.</span></section>'
+  return `<div class="vertix-universal-properties">${stageComponentSection(selected) || section('Object Data', `<div class="vertix-property-readout">${readout('ID', selected.id)}${readout('Type', selected.type)}${readout('Category', selected.category)}${readout('Layer', selected.layer)}</div>`)}${sourceSection(selected)}</div>`
 }
 
 function renderNotesTab() {
   const selected = selectedObjectRecord()
-  const rig = linkedRigging(selected.id)
-  return `<section class="stage-config-panel"><h3>Notes</h3><label class="stage-full-field">Object notes<textarea data-transform-field="notes" placeholder="Notes for crew, venue, or export">${selected.notes || rig?.notes || ''}</textarea></label>${selected.category === 'rigging' || rig ? '<p class="stage-safety-note">Qualified personnel required for rigging/hangs. Do not treat this editor as structural engineering software.</p>' : '<p class="stage-help-text">Notes can be printed into the production packet and linked to this selected entity.</p>'}</section>`
+  if (!selected) return '<section class="vertix-property-empty"><span>Select an object to edit its notes.</span></section>'
+  return `<section class="vertix-property-section"><h3>Notes</h3><label class="vertix-notes-field"><span>Object notes</span><textarea data-transform-field="notes" placeholder="Notes for crew, venue, or export">${escapeHtml(selected.notes || '')}</textarea></label></section>`
 }
 
 function renderAiTab() {
@@ -129,12 +120,7 @@ function renderAiTab() {
 export function renderInspectorTabs() {
   const tabs = [['properties', 'Properties'], ['data', 'Data'], ['notes', 'Notes'], ['ai', 'Resona']]
   const active = ['properties', 'data', 'notes', 'ai'].includes(state.activeInspectorTab) ? state.activeInspectorTab : 'properties'
-  const body = active === 'properties'
-    ? `<section class="stage-config-panel"><h3>Properties</h3><div class="stage-readout" data-stage-selected-readout>${selectedEditorObjectMarkup()}</div></section>`
-    : active === 'data'
-      ? renderDataTab()
-      : active === 'notes'
-        ? renderNotesTab()
-        : renderAiTab()
-  return `<aside class="stage-editor-right"><header class="vertix-editor-region-header"><div><span>Properties</span><small>Stage discipline</small></div><span class="vertix-region-state">${selectedObjectRecord().id ? 'Selection' : 'No selection'}</span></header><div class="stage-inspector-tabs">${tabs.map(([k, l]) => `<button type="button" data-inspector-tab="${k}" class="${active === k ? 'is-active' : ''}" ${k === 'ai' ? 'data-guide-id="stagemaker-resona-tab" data-guide-label="StageMaker Resona tab" data-guide-role="stage-resona-tab"' : ''}>${l}</button>`).join('')}</div><div class="stage-inspector-body">${body}</div></aside>`
+  const body = active === 'properties' ? selectedEditorObjectMarkup() : active === 'data' ? renderDataTab() : active === 'notes' ? renderNotesTab() : renderAiTab()
+  const selected = selectedObjectRecord()
+  return `<aside class="stage-editor-right"><header class="vertix-editor-region-header"><div><span>Properties</span><small>${selected ? 'Object inspector' : 'No selection'}</small></div><span class="vertix-region-state">${selected?.locked ? 'Locked' : selected ? 'Selection' : 'Empty'}</span></header><div class="stage-inspector-tabs">${tabs.map(([key, label]) => `<button type="button" data-inspector-tab="${key}" class="${active === key ? 'is-active' : ''}">${label}</button>`).join('')}</div><div class="stage-inspector-body">${body}</div></aside>`
 }

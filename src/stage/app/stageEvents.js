@@ -146,6 +146,31 @@ export function bindStageEditorEventsOnce(context) {
     if (save) queueStagePlanSave?.()
   }
 
+  const applyInlineObjectField = (field, rawValue, { rerender = true } = {}) => {
+    const object = findStageObject()
+    if (!object || !field) return false
+    const numericFields = new Set(['x', 'y', 'z', 'rotX', 'rotY', 'rotZ', 'width', 'depth', 'height'])
+    const value = numericFields.has(field) ? Number(rawValue) : rawValue
+    if (numericFields.has(field) && !Number.isFinite(value)) return false
+    const updated = updateSelectedStageObjectField(field, value)
+    if (!updated) return false
+    ensureObjectModeForSelection()
+    state.editorObjectTransforms = {
+      ...(state.editorObjectTransforms || {}),
+      [object.id]: { ...(state.editorObjectTransforms?.[object.id] || {}), [field]: value }
+    }
+    const refreshViewport = ['label', 'visible', 'locked', 'color'].includes(field)
+    if (refreshViewport) refreshStageViewport?.()
+    else getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
+    if (rerender) {
+      updateInspectorUI?.()
+      updateEditorModeUI?.()
+      updateViewportControlUI?.()
+    }
+    queueStagePlanSave?.()
+    return true
+  }
+
   const renderPropertyEditorFields = (kind, object) => {
     const position = object.position || {}
     const dimensions = object.dimensions || {}
@@ -291,11 +316,38 @@ export function bindStageEditorEventsOnce(context) {
   }
 
   app.addEventListener('click', (e) => {
+    const assetBrowserSelection = e.target.closest('[data-asset-browser-select]')
+    if (assetBrowserSelection && !e.target.closest('[data-add-stage-asset]')) {
+      state.selectedAssetBrowserId = assetBrowserSelection.dataset.assetBrowserSelect || ''
+      updateEditorModeUI()
+      queueEditorStateSave?.()
+      return
+    }
     const mode = e.target.closest('[data-editor-mode]')
     if (mode) { state.activeEditorMode = mode.dataset.editorMode || 'entities'; updateEditorModeUI(); queueEditorStateSave?.(); return }
     const toolMode = e.target.closest('[data-tool-mode]')
     if (toolMode) {
       setEditorToolMode(toolMode.dataset.toolMode || 'select')
+      return
+    }
+    const interactionMode = e.target.closest('[data-stage-interaction-mode]')
+    if (interactionMode) {
+      setStageInteractionMode(interactionMode.dataset.stageInteractionMode || 'object')
+      return
+    }
+    const objectToggle = e.target.closest('[data-vertix-object-toggle]')
+    if (objectToggle) {
+      const field = objectToggle.dataset.vertixObjectToggle
+      const object = findStageObject()
+      if (field && object) applyInlineObjectField(field, field === 'locked' ? !object.locked : object.visible === false)
+      return
+    }
+    const stageDataView = e.target.closest('[data-stage-data-view]')
+    if (stageDataView) {
+      state.activeEditorMode = 'stage-data'
+      state.activeStageDataView = stageDataView.dataset.stageDataView || 'stage-plot'
+      updateEditorModeUI?.()
+      queueEditorStateSave?.()
       return
     }
     const propertyEditor = e.target.closest('[data-open-property-editor]')
@@ -317,6 +369,10 @@ export function bindStageEditorEventsOnce(context) {
         showStageNotice('That object is not available yet.')
         return
       }
+      if (addAsset.dataset.assetBrowserAdd === 'true') {
+        state.activeEditorMode = 'asset-browser'
+        state.selectedAssetBrowserId = addAsset.dataset.addStageAsset || state.selectedAssetBrowserId
+      }
       refreshStageViewport?.()
       updateStageInspectorSelection()
       updateInspectorUI()
@@ -325,6 +381,20 @@ export function bindStageEditorEventsOnce(context) {
       updateViewportControlUI()
       showStageNotice(`Added ${object.label || object.name}.`)
       queueStagePlanSave?.()
+      return
+    }
+    const assetBrowserCategory = e.target.closest('[data-asset-browser-category]')
+    if (assetBrowserCategory) {
+      state.assetBrowserQuery = { ...state.assetBrowserQuery, category: assetBrowserCategory.dataset.assetBrowserCategory || 'all' }
+      updateEditorModeUI()
+      queueEditorStateSave?.()
+      return
+    }
+    const clearAssetBrowser = e.target.closest('[data-asset-browser-clear]')
+    if (clearAssetBrowser) {
+      state.assetBrowserQuery = { search: '', category: 'all', type: 'all', source: 'all', publisher: 'all', tag: 'all' }
+      updateEditorModeUI()
+      queueEditorStateSave?.()
       return
     }
     const retryLoad = e.target.closest('[data-retry-project-load]')
@@ -564,6 +634,21 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('input', (e) => {
+    const inlineProperty = e.target.closest('[data-vertix-transform-field]')
+    if (inlineProperty) {
+      applyInlineObjectField(inlineProperty.dataset.vertixTransformField, inlineProperty.value, { rerender: false })
+      return
+    }
+    const assetBrowserSearch = e.target.closest('[data-asset-browser-search]')
+    if (assetBrowserSearch) {
+      state.assetBrowserQuery = { ...state.assetBrowserQuery, search: assetBrowserSearch.value || '' }
+      updateEditorModeUI?.()
+      const nextSearch = app.querySelector('[data-asset-browser-search]')
+      nextSearch?.focus?.()
+      nextSearch?.setSelectionRange?.(nextSearch.value.length, nextSearch.value.length)
+      queueEditorStateSave?.()
+      return
+    }
     const librarySearch = e.target.closest('[data-library-search]')
     if (librarySearch) {
       state.objectLibrarySearch = librarySearch.value || ''
@@ -631,6 +716,30 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('change', (e) => {
+    const stageContext = e.target.closest('[data-stage-context]')
+    if (stageContext) {
+      state.activeStageSection = stageContext.value || 'scene'
+      updateLeftPanelUI?.()
+      queueEditorStateSave?.()
+      return
+    }
+    const inlineProperty = e.target.closest('[data-vertix-transform-field]')
+    if (inlineProperty) {
+      const field = inlineProperty.dataset.vertixTransformField
+      if (!applyInlineObjectField(field, inlineProperty.value)) {
+        const object = findStageObject()
+        if (object && ['x', 'y', 'z'].includes(field)) inlineProperty.value = object.position?.[field] ?? 0
+      }
+      return
+    }
+    const assetBrowserFilter = e.target.closest('[data-asset-browser-filter]')
+    if (assetBrowserFilter) {
+      const field = assetBrowserFilter.dataset.assetBrowserFilter
+      if (field) state.assetBrowserQuery = { ...state.assetBrowserQuery, [field]: assetBrowserFilter.value || 'all' }
+      updateEditorModeUI?.()
+      queueEditorStateSave?.()
+      return
+    }
     const dimension = e.target.closest('[data-stage-dimension]')
     if (dimension) {
       if (updateStageDimension(dimension.dataset.stageDimension, dimension.value)) {
