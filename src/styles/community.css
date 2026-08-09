@@ -1130,8 +1130,7 @@ body.community-chrome-hidden .community-right-rail {
   background-image: none;
 }
 
-.community-post-detail-card,
-.community-post-detail-card:hover {
+.community-post-detail-card {
   cursor: default;
   border-color: transparent;
   background: transparent;
@@ -3917,8 +3916,7 @@ body.community-modal-open {
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
 }
 
-.community-post-card.community-post-detail-card,
-.community-post-card.community-post-detail-card:hover {
+.community-post-card.community-post-detail-card {
   cursor: default;
   border-color: transparent;
   background: transparent;
@@ -4393,13 +4391,30 @@ body:has(.community-page) #app {
   transform: none;
 }
 
-.community-main .community-post-card.community-post-detail-card,
-.community-main .community-post-card.community-post-detail-card:hover,
-.community-main .community-post-card.community-post-detail-card:focus-within {
+.community-main .community-post-card.community-post-detail-card {
   background: transparent;
   background-color: transparent;
   background-image: none;
   box-shadow: none;
+}
+
+.community-main .community-feed .community-post-card.is-pointer-hovered.is-pointer-hover-fading {
+  animation: community-post-highlight-fade 5s ease-out forwards;
+}
+
+@keyframes community-post-highlight-fade {
+  from {
+    border-color: rgba(145, 169, 211, .18);
+    background: rgba(12, 18, 30, .62);
+  }
+  to {
+    border-color: rgba(255, 255, 255, .11);
+    background: transparent;
+  }
+}
+
+.community-post-detail-card .community-comment-composer textarea {
+  background: transparent;
 }
 
 .community-right-rail.community-sidebar {

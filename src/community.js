@@ -324,6 +324,7 @@ let communityShellChromeInitialized = false
 let communityPagePreloaderInitialized = false
 let feedNavigationSnapshot = null
 const communityPendingActions = new Map()
+const communityPostHoverTimers = new WeakMap()
 let storyMediaRecorder = null
 let storyRecordingStream = null
 let storyRecordingChunks = []
@@ -389,14 +390,36 @@ function confirmCommunityNavigation(destination = '') {
   return window.confirm('Community actions are still saving. Leave anyway?')
 }
 
+function clearFeedPostPointerHoverForCard(card) {
+  if (!card) return
+  const timers = communityPostHoverTimers.get(card)
+  if (timers) {
+    window.clearTimeout(timers.hold)
+    window.clearTimeout(timers.fade)
+    communityPostHoverTimers.delete(card)
+  }
+  card.classList.remove('is-pointer-hovered', 'is-pointer-hover-fading')
+}
+
 function clearFeedPostPointerHover(root = app) {
-  root?.querySelectorAll('.community-post-card.is-pointer-hovered').forEach((card) => card.classList.remove('is-pointer-hovered'))
+  if (root?.matches?.('.community-post-card.is-pointer-hovered')) clearFeedPostPointerHoverForCard(root)
+  root?.querySelectorAll('.community-post-card.is-pointer-hovered').forEach(clearFeedPostPointerHoverForCard)
 }
 
 function setFeedPostPointerHover(card) {
   if (!card || card.classList.contains('is-detail')) return
+  if (card.classList.contains('is-pointer-hovered')) return
   clearFeedPostPointerHover()
   card.classList.add('is-pointer-hovered')
+  if (state.view.type !== 'feed' || state.activeTab !== 'for-you') return
+
+  const hold = window.setTimeout(() => {
+    if (!card.classList.contains('is-pointer-hovered')) return
+    card.classList.add('is-pointer-hover-fading')
+    const fade = window.setTimeout(() => clearFeedPostPointerHoverForCard(card), 5000)
+    communityPostHoverTimers.set(card, { hold: 0, fade })
+  }, 3000)
+  communityPostHoverTimers.set(card, { hold, fade: 0 })
 }
 
 function stopCommunityActionEvent(event) {
@@ -5978,7 +6001,7 @@ function bindFeedRegionEvents(root = app) {
         if (event.pointerType === 'touch') return
         setFeedPostPointerHover(card)
       })
-      card.addEventListener('pointerleave', () => card.classList.remove('is-pointer-hovered'))
+      card.addEventListener('pointerleave', () => clearFeedPostPointerHoverForCard(card))
     }
     card.addEventListener('click', (event) => {
       if (isPostCardInteractiveTarget(event.target)) return
