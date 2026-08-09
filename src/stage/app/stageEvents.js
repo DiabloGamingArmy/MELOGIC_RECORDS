@@ -133,7 +133,12 @@ export function bindStageEditorEventsOnce(context) {
         x: object.position?.x || 0,
         y: object.position?.y || 0,
         z: object.position?.z || 0,
+        rotX: object.rotation?.x || 0,
         rotY: object.rotation?.y || 0,
+        rotZ: object.rotation?.z || 0,
+        scaleX: object.scale?.x ?? 1,
+        scaleY: object.scale?.y ?? 1,
+        scaleZ: object.scale?.z ?? 1,
         width: object.dimensions?.width || 1,
         depth: object.dimensions?.depth || 1,
         height: object.dimensions?.height || 1
@@ -195,7 +200,7 @@ export function bindStageEditorEventsOnce(context) {
   const applyInlineObjectField = (field, rawValue, { rerender = true } = {}) => {
     const object = findStageObject()
     if (!object || !field) return false
-    const numericFields = new Set(['x', 'y', 'z', 'rotX', 'rotY', 'rotZ', 'width', 'depth', 'height'])
+    const numericFields = new Set(['x', 'y', 'z', 'rotX', 'rotY', 'rotZ', 'scaleX', 'scaleY', 'scaleZ', 'width', 'depth', 'height'])
     const value = numericFields.has(field) ? Number(rawValue) : rawValue
     if (numericFields.has(field) && !Number.isFinite(value)) return false
     const updated = updateSelectedStageObjectField(field, value)

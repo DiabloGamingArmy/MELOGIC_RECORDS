@@ -177,7 +177,7 @@ export const state = {
   paneSizes: {
     library: Number(localStorage.getItem('stagePaneLibrary')) || 236,
     right: Number(localStorage.getItem('stagePaneRight')) || 286,
-    bottom: Number(localStorage.getItem('stagePaneBottom')) || 168,
+    bottom: Number(localStorage.getItem('stagePaneBottom')) || 150,
     bottomSplit: Number.isFinite(savedBottomSplit) && savedBottomSplit >= 70 ? savedBottomSplit : 70
   }
 }

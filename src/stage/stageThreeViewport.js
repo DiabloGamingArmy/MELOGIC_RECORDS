@@ -23,6 +23,7 @@ const objectDefsFromProject = (project = {}, assetResolutions = {}) => {
       position: Array.isArray(object.position) ? object.position : [Number(position.x || 0), Number(position.y || 0), Number(position.z || 0)],
       size: Array.isArray(object.size) ? object.size : [Number(dimensions.width || lastKnownBounds.width || 1), Number(dimensions.height || lastKnownBounds.height || 1), Number(dimensions.depth || lastKnownBounds.depth || 1)],
       rotation: object.rotation || { x: 0, y: 0, z: 0 },
+      scale: object.scale || { x: 1, y: 1, z: 1 },
       selectable: object.selectable !== false,
       visible: object.visible !== false,
       locked: !!object.locked,
@@ -32,22 +33,22 @@ const objectDefsFromProject = (project = {}, assetResolutions = {}) => {
   }).filter((object) => object.key)
 }
 
-const makeLabel = (text, position, tone = '#64d9ff') => {
+const makeLabel = (text, position, tone = '#64d9ff', compact = false) => {
   const canvas = document.createElement('canvas')
-  canvas.width = 384
-  canvas.height = 80
+  canvas.width = compact ? 288 : 384
+  canvas.height = compact ? 60 : 80
   const ctx = canvas.getContext('2d')
   ctx.fillStyle = 'rgba(7, 13, 24, 0.82)'
   ctx.strokeStyle = tone
-  ctx.lineWidth = 2
+  ctx.lineWidth = compact ? 1 : 2
   ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10)
   ctx.fillRect(5, 5, canvas.width - 10, canvas.height - 10)
-  ctx.font = '600 27px Inter, Arial'
+  ctx.font = `600 ${compact ? 20 : 27}px Inter, Arial`
   ctx.fillStyle = '#d9f2ff'
-  ctx.fillText(text, 14, 50)
+  ctx.fillText(text, 14, compact ? 38 : 50)
   const texture = new THREE.CanvasTexture(canvas)
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
-  sprite.scale.set(4.9, 1.02, 1)
+  sprite.scale.set(compact ? 3.45 : 4.9, compact ? 0.72 : 1.02, 1)
   sprite.position.set(...position)
   return sprite
 }
@@ -180,10 +181,11 @@ export function mountStageThreeViewport(container, options = {}) {
         new THREE.EdgesGeometry(new THREE.BoxGeometry(width, height, depth)),
         new THREE.LineBasicMaterial({ color: '#ffb7ff' })
       )
-      const label = makeLabel(`Missing asset: ${String(d.missingReason || 'unavailable').replaceAll('_', ' ')}`, [0, height / 2 + 1.1, 0], '#ff8cff')
-      group.add(box, outline, label)
+      // Missing assets remain editable project objects; selection identifies them.
+      group.add(box, outline)
       group.position.set(...d.position)
       group.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))
+      group.scale.set(Number(d.scale?.x || 1), Number(d.scale?.y || 1), Number(d.scale?.z || 1))
       group.name = `missing-asset:${d.missingReason || 'unknown'}`
       return group
     }
@@ -192,6 +194,7 @@ export function mountStageThreeViewport(container, options = {}) {
       const deckGroup = new THREE.Group(); deckGroup.name = 'stage-deck-group'; deckGroup.userData.objectKey = 'stage-deck'
       deckGroup.position.set(Number(deckDef.position?.[0] || 0), 0, Number(deckDef.position?.[2] || 0))
       deckGroup.rotation.set(THREE.MathUtils.degToRad(deckDef.rotation?.x || 0), THREE.MathUtils.degToRad(deckDef.rotation?.y || 0), THREE.MathUtils.degToRad(deckDef.rotation?.z || 0))
+      deckGroup.scale.set(Number(deckDef.scale?.x || 1), Number(deckDef.scale?.y || 1), Number(deckDef.scale?.z || 1))
       const deckY = Number(deckDef.position?.[1] ?? 0.5)
       const top = new THREE.Mesh(new THREE.BoxGeometry(deckWidth, Math.max(0.42, deckDef.size?.[1] || deckHeight * 0.18), deckDepth), new THREE.MeshStandardMaterial({ color: deckDef.color || '#2b2f37', roughness: 0.72, metalness: 0.16 }))
       top.position.y = deckY + 0.36
@@ -216,6 +219,7 @@ export function mountStageThreeViewport(container, options = {}) {
       if (!d.missingAsset) {
         object.position.set(...d.position)
         object.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))
+        object.scale.set(Number(d.scale?.x || 1), Number(d.scale?.y || 1), Number(d.scale?.z || 1))
         if (d.key === 'camera-1' && !d.rotation?.z) object.rotation.z = Math.PI / 2
       }
       scene.add(object)
@@ -235,12 +239,12 @@ export function mountStageThreeViewport(container, options = {}) {
       line([[-deckWidth / 2, deckY + 0.67, deckDepth / 2 + 0.8], [deckWidth / 2, deckY + 0.67, deckDepth / 2 + 0.8]], '#57d4ff')
       line([[0, deckY + 0.65, -deckDepth / 2], [0, deckY + 0.65, -deckDepth / 2 - 8]], '#6b8aff')
       labelSprites.push(
-        makeLabel(`${formatNum(deckWidth, 0)}' x ${formatNum(deckDepth, 0)}' Stage Deck`, [-deckWidth / 2 + 2, deckY + 2.3, deckDepth / 2 + 2], '#6bdcff'),
-        makeLabel('Downstage Centerline', [0, deckY + 2.1, deckDepth / 2 + 8], '#61d7ff'),
-        makeLabel('DSC', [-deckWidth / 2 + 2, deckY + 2, deckDepth / 2], '#ffb16d'),
-        makeLabel('USC', [0, deckY + 2, -deckDepth / 2 + 1], '#ffb16d'),
-        makeLabel('Stage Left', [-deckWidth / 2 - 4, deckY + 1.7, deckDepth / 2 + 3], '#ffb16d'),
-        makeLabel('Stage Right', [deckWidth / 2 + 4, deckY + 1.7, deckDepth / 2 + 3], '#ffb16d')
+        makeLabel(`${formatNum(deckWidth, 0)}' × ${formatNum(deckDepth, 0)}'`, [-deckWidth / 2 + 2, deckY + 2.3, deckDepth / 2 + 2], '#6bdcff', true),
+        makeLabel('Downstage Centerline', [0, deckY + 2.1, deckDepth / 2 + 8], '#61d7ff', true),
+        makeLabel('DSC', [-deckWidth / 2 + 2, deckY + 2, deckDepth / 2], '#ffb16d', true),
+        makeLabel('USC', [0, deckY + 2, -deckDepth / 2 + 1], '#ffb16d', true),
+        makeLabel('Stage Left', [-deckWidth / 2 - 4, deckY + 1.7, deckDepth / 2 + 3], '#ffb16d', true),
+        makeLabel('Stage Right', [deckWidth / 2 + 4, deckY + 1.7, deckDepth / 2 + 3], '#ffb16d', true)
       )
     }
     labelSprites.forEach((sprite) => { sprite.visible = options.showLabels !== false; scene.add(sprite) })
@@ -283,16 +287,21 @@ export function mountStageThreeViewport(container, options = {}) {
     }
     arrowShaft('x', '#ff6f6f'); arrowShaft('y', '#7cff87'); arrowShaft('z', '#5bc7ff')
     ;['x', 'y', 'z'].forEach((axis) => {
-      const colors = { x: '#ff9a9a', y: '#a8ffae', z: '#9bd8ff' }
+      const colors = { x: '#ff6f6f', y: '#7cff87', z: '#5bc7ff' }
       const box = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, 0.28), gizmoMaterial(colors[axis]))
       if (axis === 'x') box.position.x = 1.55
       if (axis === 'y') box.position.y = 1.55
       if (axis === 'z') box.position.z = 1.55
       addGizmoPart(box, { tool: 'scale', axis, handle: `scale-${axis}` })
     })
-    const rotateRing = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.035, 10, 72), gizmoMaterial('#ffd36b'))
-    rotateRing.rotation.x = Math.PI / 2
-    addGizmoPart(rotateRing, { tool: 'rotate', axis: 'y', handle: 'rotate-yaw' })
+    const rotateRing = (axis, color) => {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.035, 10, 72), gizmoMaterial(color))
+      // Torus starts in XY (normal Z): X ring=YZ, Y ring=XZ, Z ring=XY.
+      if (axis === 'x') ring.rotation.y = Math.PI / 2
+      if (axis === 'y') ring.rotation.x = Math.PI / 2
+      addGizmoPart(ring, { tool: 'rotate', axis, handle: `rotate-${axis}` })
+    }
+    rotateRing('x', '#ff6f6f'); rotateRing('y', '#7cff87'); rotateRing('z', '#5bc7ff')
     let boxHelpers = []
     let selectedLabel = null
     const initialSelectedKeys = (Array.isArray(options.selectedObjectKeys) && options.selectedObjectKeys.length ? options.selectedObjectKeys : [options.selectedObjectKey]).filter((key) => key && objects[key])
@@ -339,6 +348,7 @@ export function mountStageThreeViewport(container, options = {}) {
       startY: 0,
       startX: 0,
       startRotY: 0,
+      startRotation: new THREE.Euler(),
       startPosition: new THREE.Vector3(),
       startDimensions: { width: 1, height: 1, depth: 1 },
       startScale: new THREE.Vector3(1, 1, 1),
@@ -517,7 +527,7 @@ export function mountStageThreeViewport(container, options = {}) {
       applyObjectDimensions(editDrag.key, editDrag.startDimensions)
       updateEditOverlay()
       boxHelpers.forEach((helper) => helper.update())
-      selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+      selectedLabel?.position.set(target.position.x, target.position.y + 2.35, target.position.z)
       renderer.render(scene, camera)
     }
     const cancelEditDrag = () => {
@@ -575,7 +585,7 @@ export function mountStageThreeViewport(container, options = {}) {
         scene.add(helper)
       })
       const label = objectMeta[target.userData.objectKey]?.label || target.userData.objectKey
-      try { selectedLabel = makeLabel(label, [target.position.x, target.position.y + 1.8, target.position.z], '#6bdcff'); scene.add(selectedLabel) } catch (e) { console.warn('[stageThreeViewport] label render skipped', e) }
+      try { selectedLabel = makeLabel(label, [target.position.x, target.position.y + 2.35, target.position.z], '#6bdcff'); scene.add(selectedLabel) } catch (e) { console.warn('[stageThreeViewport] label render skipped', e) }
     }
     const setSelectedKeys = (nextKeys = [], { notify = false, primary = '' } = {}) => {
       const clean = [...new Set((Array.isArray(nextKeys) ? nextKeys : [nextKeys]).filter((key) => key && objects[key]))]
@@ -642,19 +652,19 @@ export function mountStageThreeViewport(container, options = {}) {
     const describeTransform = (target, transform = {}) => {
       if (!target) return ''
       if ([transform.width, transform.height, transform.depth].some(Number.isFinite)) return `Size: ${formatNum(transform.width, 1)} x ${formatNum(transform.depth, 1)} x ${formatNum(transform.height, 1)}`
-      if (Number.isFinite(transform.rotY)) return `Rotation: ${formatNum(transform.rotY, 0)} deg`
+      if ([transform.rotX, transform.rotY, transform.rotZ].some(Number.isFinite)) return `Rotation: X ${formatNum(transform.rotX ?? THREE.MathUtils.radToDeg(target.rotation.x), 0)} · Y ${formatNum(transform.rotY ?? THREE.MathUtils.radToDeg(target.rotation.y), 0)} · Z ${formatNum(transform.rotZ ?? THREE.MathUtils.radToDeg(target.rotation.z), 0)}`
       return `X: ${formatNum(target.position.x, 1)} / Y: ${formatNum(target.position.y, 1)} / Z: ${formatNum(target.position.z, 1)}`
     }
     const restoreDragStart = () => {
       const target = objects[drag.key]
       if (!target) return
       target.position.copy(drag.startPosition)
-      target.rotation.y = THREE.MathUtils.degToRad(drag.startRotY || 0)
+      target.rotation.copy(drag.startRotation)
       applyObjectDimensions(drag.key, drag.startDimensions)
       gizmo.position.copy(target.position)
       updateEditOverlay()
       boxHelpers.forEach((helper) => helper.update())
-      selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+      selectedLabel?.position.set(target.position.x, target.position.y + 2.35, target.position.z)
       renderer.render(scene, camera)
     }
     const cancelTransform = () => {
@@ -693,7 +703,7 @@ export function mountStageThreeViewport(container, options = {}) {
         updateGizmoScale()
         updateEditOverlay()
         boxHelpers.forEach((helper) => helper.update())
-        selectedLabel?.position.set(objects[selectedKey].position.x, objects[selectedKey].position.y + 1.8, objects[selectedKey].position.z)
+        selectedLabel?.position.set(objects[selectedKey].position.x, objects[selectedKey].position.y + 2.35, objects[selectedKey].position.z)
       }
     }
     applyObjectTransforms(options.objectTransforms || {})
@@ -768,6 +778,7 @@ export function mountStageThreeViewport(container, options = {}) {
         drag.startY = event.clientY
         drag.startPosition.copy(target.position)
         drag.startRotY = THREE.MathUtils.radToDeg(target.rotation.y || 0)
+        drag.startRotation.copy(target.rotation)
         drag.startDimensions = currentObjectDimensions(selectedKey)
         drag.startScale.copy(target.scale || new THREE.Vector3(1, 1, 1))
         drag.startSize = objectMeta[selectedKey]?.size || [1, 1, 1]
@@ -800,6 +811,7 @@ export function mountStageThreeViewport(container, options = {}) {
       drag.startY = event.clientY
       drag.startPosition.copy(target.position)
       drag.startRotY = THREE.MathUtils.radToDeg(target.rotation.y || 0)
+      drag.startRotation.copy(target.rotation)
       drag.startDimensions = currentObjectDimensions(hitKey)
       drag.startScale.copy(target.scale || new THREE.Vector3(1, 1, 1))
       drag.startSize = objectMeta[hitKey]?.size || [1, 1, 1]
@@ -859,7 +871,7 @@ export function mountStageThreeViewport(container, options = {}) {
         editDrag.liveTransform = { x: target.position.x, y: target.position.y, z: target.position.z, ...nextDimensions }
         updateEditOverlay()
         boxHelpers.forEach((helper) => helper.update())
-        selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+        selectedLabel?.position.set(target.position.x, target.position.y + 2.35, target.position.z)
         setTransformReadout(describeTransform(target, editDrag.liveTransform))
         renderer.render(scene, camera)
         event.preventDefault()
@@ -901,10 +913,11 @@ export function mountStageThreeViewport(container, options = {}) {
         drag.liveTransform = { x: target.position.x, y: target.position.y, z: target.position.z }
       }
       if (drag.mode === 'rotate') {
-        const nextRot = drag.startRotY + ((event.clientX - drag.startX) * 0.35)
+        const nextRot = THREE.MathUtils.radToDeg(drag.startRotation[drag.axis] || 0) + ((event.clientX - drag.startX - (event.clientY - drag.startY) * 0.35) * 0.35)
         const snappedRot = currentSnapEnabled ? Math.round(nextRot / 5) * 5 : nextRot
-        target.rotation.y = THREE.MathUtils.degToRad(snappedRot)
-        drag.liveTransform = { rotY: snappedRot }
+        target.rotation.copy(drag.startRotation)
+        target.rotation[drag.axis] = THREE.MathUtils.degToRad(snappedRot)
+        drag.liveTransform = { [`rot${drag.axis.toUpperCase()}`]: snappedRot }
       }
       if (drag.mode === 'scale') {
         const pixelDelta = drag.axis === 'y' ? -(event.clientY - drag.startY) : (event.clientX - drag.startX)
@@ -924,12 +937,12 @@ export function mountStageThreeViewport(container, options = {}) {
           nextDims.depth = Math.max(0.05, snapNumber(nextDims.depth))
         }
         applyObjectDimensions(drag.key, nextDims)
-        drag.liveTransform = nextDims
+        drag.liveTransform = { scaleX: target.scale.x, scaleY: target.scale.y, scaleZ: target.scale.z }
       }
       gizmo.position.copy(target.position)
       updateGizmoScale()
       boxHelpers.forEach((helper) => helper.update())
-      selectedLabel?.position.set(target.position.x, target.position.y + 1.8, target.position.z)
+      selectedLabel?.position.set(target.position.x, target.position.y + 2.35, target.position.z)
       setTransformReadout(describeTransform(target, drag.liveTransform || {}))
       renderer.render(scene, camera)
     }
@@ -979,9 +992,9 @@ export function mountStageThreeViewport(container, options = {}) {
       renderer.domElement.releasePointerCapture?.(event.pointerId || drag.pointerId)
       if (target) {
         const transform = drag.mode === 'rotate'
-          ? { rotY: drag.liveTransform?.rotY ?? THREE.MathUtils.radToDeg(target.rotation.y || 0) }
+          ? (drag.liveTransform || { [`rot${drag.axis.toUpperCase()}`]: THREE.MathUtils.radToDeg(target.rotation[drag.axis] || 0) })
           : drag.mode === 'scale'
-            ? (drag.liveTransform || currentObjectDimensions(drag.key))
+            ? (drag.liveTransform || { scaleX: target.scale.x, scaleY: target.scale.y, scaleZ: target.scale.z })
             : { x: target.position.x, y: target.position.y, z: target.position.z }
         options.onTransformObject?.(drag.key, transform)
       }
@@ -1012,7 +1025,7 @@ export function mountStageThreeViewport(container, options = {}) {
       const step = event.shiftKey ? 2 : event.altKey ? 0.25 : currentSnapEnabled ? currentSnapInterval : 0.5
       const axis = { ArrowLeft: ['x', -1], ArrowRight: ['x', 1], ArrowUp: ['z', -1], ArrowDown: ['z', 1], PageUp: ['y', 1], PageDown: ['y', -1] }[event.key]
       if (!axis) return
-      event.preventDefault(); obj.position[axis[0]] += step * axis[1]; if (axis[0] !== 'y') obj.position[axis[0]] = snapNumber(obj.position[axis[0]]); gizmo.position.copy(obj.position); boxHelpers.forEach((helper) => helper.update()); selectedLabel?.position.set(obj.position.x, obj.position.y + 1.8, obj.position.z)
+      event.preventDefault(); obj.position[axis[0]] += step * axis[1]; if (axis[0] !== 'y') obj.position[axis[0]] = snapNumber(obj.position[axis[0]]); gizmo.position.copy(obj.position); boxHelpers.forEach((helper) => helper.update()); selectedLabel?.position.set(obj.position.x, obj.position.y + 2.35, obj.position.z)
       options.onTransformObject?.(selectedKey, { x: obj.position.x, y: obj.position.y, z: obj.position.z })
     }
     const statusOverlay = document.createElement('div')

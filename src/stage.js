@@ -277,7 +277,9 @@ function initStageEditorViewport() {
       if ([transform.x, transform.y, transform.z].some(Number.isFinite)) {
         moveSelectedStageObject({ x: transform.x, y: transform.y, z: transform.z }, { absolute: true })
       } else {
-        if (Number.isFinite(transform.rotY)) updateSelectedStageObjectField('rotY', transform.rotY)
+        ;['rotX', 'rotY', 'rotZ', 'scaleX', 'scaleY', 'scaleZ'].forEach((field) => {
+          if (Number.isFinite(transform[field])) updateSelectedStageObjectField(field, transform[field])
+        })
       }
       ;['width', 'depth', 'height'].forEach((field) => {
         if (Number.isFinite(transform[field])) updateSelectedStageObjectField(field, transform[field])
