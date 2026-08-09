@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "id": "@melogic/reference-stage-essentials",
+  "name": "Reference Stage Essentials",
+  "version": "1.0.0",
+  "publisher": {
+    "id": "melogic",
+    "name": "Melogic Records"
+  },
+  "license": "Melogic Reference Fixture",
+  "vertix": {
+    "minimumVersion": "1.0.0"
+  },
+  "integrity": "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+  "assets": [
+    {
+      "uuid": "c5af3f58-0db4-4a84-9301-4a628d8c8422",
+      "name": "Reference Stage Deck",
+      "type": "stage-deck",
+      "category": "stage",
+      "layer": "stage",
+      "source": {
+        "path": "geometry/reference-stage-deck.glb",
+        "integrity": "sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+      },
+      "metadataPath": "metadata/reference-stage-deck.json",
+      "preview": {
+        "path": "previews/reference-stage-deck.webp"
+      },
+      "tags": ["stage", "deck", "reference"],
+      "dimensions": {
+        "width": 8,
+        "depth": 4,
+        "height": 0.5,
+        "unit": "ft"
+      },
+      "defaultTransform": {
+        "position": { "x": 0, "y": 0.25, "z": 0 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      },
+      "metadata": {
+        "manufacturer": "Melogic Reference",
+        "model": "RSD-8x4",
+        "mountingPoints": [
+          { "id": "leg-a", "position": { "x": -3.5, "y": -0.25, "z": -1.5 } }
+        ],
+        "futureSemanticBlock": {
+          "preserve": true,
+          "revision": 7
+        }
+      }
+    }
+  ],
+  "experimentalMetadata": {
+    "preserveAcrossParsing": true
+  }
+}
