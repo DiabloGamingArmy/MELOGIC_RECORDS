@@ -3,6 +3,7 @@ import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvid
 import { createProjectAssetReference, lastKnownBoundsFromAsset } from '../../vertix/projects/assetReference'
 import { getStagePlanWarnings } from '../stagePlanModel'
 import { ANIMATABLE_PATHS, evaluateProjectAnimation, normalizeProjectAnimation, removeAnimationKeyframe, retargetAnimationTracks, upsertAnimationKeyframe } from '../animation/animationModel.js'
+import { applyProjectObjectDeletion, createProjectObjectDeletion, selectionForProjectObjectDeletion } from '../projectObjectLifecycle.js'
 
 export const sidebarItems = ['My Projects', 'Templates', 'Asset Library', 'Shared With Me', 'Exports', 'Learn']
 export const stageTypes = ['Blank Stage', 'Band Performance', 'DJ / EDM Stage', 'Church Service', 'School Auditorium', 'Livestream Setup', 'Festival Stage']
@@ -178,7 +179,7 @@ export const state = {
     library: Number(localStorage.getItem('stagePaneLibrary')) || 236,
     right: Number(localStorage.getItem('stagePaneRight')) || 286,
     bottom: Number(localStorage.getItem('stagePaneBottom')) || 150,
-    bottomSplit: Number.isFinite(savedBottomSplit) && savedBottomSplit >= 70 ? savedBottomSplit : 70
+    bottomSplit: Number.isFinite(savedBottomSplit) && savedBottomSplit >= 70 ? savedBottomSplit : 74
   }
 }
 
@@ -656,6 +657,17 @@ function restoreLinkedRows(snapshot = {}) {
 }
 
 function applyCommandSnapshot(command, snapshotKey) {
+  if (command?.kind === 'project-object-delete') {
+    state.editorProject = applyProjectObjectDeletion(state.editorProject, command, snapshotKey)
+    const selection = selectionForProjectObjectDeletion(state.editorProject, command, snapshotKey)
+    setSelectedStageObjects(selection.selectedObjectIds, selection.primaryObjectId)
+    const removedIds = new Set(command.objectIds || [])
+    state.editorObjectTransforms = Object.fromEntries(Object.entries(state.editorObjectTransforms || {}).filter(([id]) => !removedIds.has(id)))
+    state.evaluatedObjectTransforms = Object.fromEntries(Object.entries(state.evaluatedObjectTransforms || {}).filter(([id]) => !removedIds.has(id)))
+    if (state.selectedTimelineKey && removedIds.has(String(state.selectedTimelineKey.trackId || '').split(':')[0])) state.selectedTimelineKey = null
+    evaluateStageAnimation(state.currentFrame)
+    return
+  }
   if (command?.kind === 'animation') {
     state.editorProject.animation = cloneData(snapshotKey === 'before' ? command.animationBefore : command.animationAfter)
     evaluateStageAnimation(state.currentFrame)
@@ -798,18 +810,27 @@ export function duplicateSelectedStageObject() {
 }
 
 export function deleteSelectedStageObject() {
-  const targets = selectedStageObjects().filter((object) => !object.protected)
-  if (!targets.length) return false
-  targets.forEach((object) => {
-    const before = cloneData(object)
-    const animationBefore = cloneData(projectAnimation())
-    const beforeLinks = snapshotLinkedRows(object.id)
-    const removeLinked = true
-    removeObjectSnapshot(object.id, { removeLinked })
-    state.editorProject.animation = { ...projectAnimation(), tracks: projectAnimation().tracks.filter((track) => track.targetObjectId !== object.id) }
-    recordObjectCommand(object.id, before, null, { removeLinked, beforeLinks, animationBefore, animationAfter: cloneData(state.editorProject.animation) })
+  return deleteProjectObjects(state.selectedEditorObjects?.length ? state.selectedEditorObjects : [state.selectedEditorObject])
+}
+
+/** Canonical UUID-based deletion entry point for viewport, Outliner, and editors. */
+export function deleteProjectObjects(objectIds = []) {
+  if (!state.editorProject) return false
+  const operation = createProjectObjectDeletion(state.editorProject, objectIds, {
+    selectedObjectIds: state.selectedEditorObjects,
+    primaryObjectId: state.selectedEditorObject
   })
-  setSelectedStageObjects(['stage-deck'], 'stage-deck')
+  if (!operation) return false
+  state.editorProject = operation.project
+  const selection = selectionForProjectObjectDeletion(state.editorProject, operation.command, 'after')
+  setSelectedStageObjects(selection.selectedObjectIds, selection.primaryObjectId)
+  const removedIds = new Set(operation.command.objectIds)
+  state.editorObjectTransforms = Object.fromEntries(Object.entries(state.editorObjectTransforms || {}).filter(([id]) => !removedIds.has(id)))
+  state.evaluatedObjectTransforms = Object.fromEntries(Object.entries(state.evaluatedObjectTransforms || {}).filter(([id]) => !removedIds.has(id)))
+  if (state.selectedTimelineKey && removedIds.has(String(state.selectedTimelineKey.trackId || '').split(':')[0])) state.selectedTimelineKey = null
+  evaluateStageAnimation(state.currentFrame)
+  state.undoStack = [...(state.undoStack || []), operation.command].slice(-80)
+  state.redoStack = []
   return true
 }
 
@@ -867,6 +888,8 @@ export function stageObjectsForTable() {
       linkedVideo(object.id) ? 'video' : '',
       (project.power || []).some((row) => row.linkedObjectId === object.id) ? 'power' : ''
     ].filter(Boolean)
+    const assetResolution = state.assetResolutions?.[object.id || object.key]
+    const missingSource = assetResolution && assetResolution.status !== 'RESOLVED'
     return {
       id: object.id || object.key || object.name,
       name: object.label || object.name || object.id || 'Untitled Object',
@@ -889,7 +912,7 @@ export function stageObjectsForTable() {
       visible: object.visible !== false,
       linkedData: linked,
       warnings: warningCounts[object.id] || 0,
-      status: object.visible === false ? 'hidden' : object.locked ? 'locked' : linked.length ? 'linked' : 'active'
+      status: missingSource ? 'missing source' : object.visible === false ? 'hidden' : object.locked ? 'locked' : linked.length ? 'linked' : 'active'
     }
   })
 }

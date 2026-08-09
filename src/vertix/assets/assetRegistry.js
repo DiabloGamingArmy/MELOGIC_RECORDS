@@ -42,6 +42,15 @@ export function createVertixAssetRegistry(initialProviders = []) {
     return provider
   }
 
+  function unregisterProvider(providerId) {
+    const index = providers.findIndex((provider) => provider.id === providerId)
+    if (index < 0) return false
+    providers.splice(index, 1)
+    providerIds.delete(providerId)
+    notifyProvidersChanged()
+    return true
+  }
+
   function allAssets() {
     const seenIds = new Set()
     return providers.flatMap((provider) => asArray(provider.listAssets()).map((asset) => {
@@ -56,6 +65,7 @@ export function createVertixAssetRegistry(initialProviders = []) {
 
   return Object.freeze({
     registerProvider,
+    unregisterProvider,
     subscribe: (subscriber) => {
       if (typeof subscriber !== 'function') throw new TypeError('A Vertix asset registry subscriber must be a function.')
       subscribers.add(subscriber)

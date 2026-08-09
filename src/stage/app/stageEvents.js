@@ -146,13 +146,14 @@ export function bindStageEditorEventsOnce(context) {
     }
   }
 
-  const syncObjectSurfaces = ({ refreshViewport = false, save = true, notice = '' } = {}) => {
+  const syncObjectSurfaces = ({ refreshViewport = false, refreshLeft = false, save = true, notice = '' } = {}) => {
     syncObjectTransformCache()
     if (refreshViewport) refreshStageViewport?.()
     else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: viewportObjectTransforms(), toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
     updateStageInspectorSelection?.()
     updateInspectorUI?.()
     updateEditorModeUI?.()
+    if (refreshLeft) updateLeftPanelUI?.()
     updateViewportControlUI?.()
     if (notice) showStageNotice?.(notice)
     if (save) queueStagePlanSave?.()
@@ -485,13 +486,13 @@ export function bindStageEditorEventsOnce(context) {
     if (duplicateSelected) {
       const copy = duplicateSelectedStageObject()
       if (!copy) showStageNotice?.('Select an object to duplicate.')
-      else syncObjectSurfaces({ refreshViewport: true, notice: `Duplicated ${copy.label || copy.name}.` })
+      else syncObjectSurfaces({ refreshViewport: true, refreshLeft: true, notice: `Duplicated ${copy.label || copy.name}.` })
       return
     }
     const deleteSelected = e.target.closest('[data-delete-selected]')
     if (deleteSelected) {
       const deleted = deleteSelectedStageObject()
-      syncObjectSurfaces({ refreshViewport: true, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
+      syncObjectSurfaces({ refreshViewport: true, refreshLeft: deleted, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
       return
     }
     const rotateSelected = e.target.closest('[data-rotate-selected]')
@@ -510,13 +511,13 @@ export function bindStageEditorEventsOnce(context) {
     const undoBtn = e.target.closest('[data-undo-stage]')
     if (undoBtn) {
       const ok = undoStageEdit()
-      syncObjectSurfaces({ refreshViewport: true, save: ok, notice: ok ? 'Undo.' : 'Nothing to undo.' })
+      syncObjectSurfaces({ refreshViewport: true, refreshLeft: ok, save: ok, notice: ok ? 'Undo.' : 'Nothing to undo.' })
       return
     }
     const redoBtn = e.target.closest('[data-redo-stage]')
     if (redoBtn) {
       const ok = redoStageEdit()
-      syncObjectSurfaces({ refreshViewport: true, save: ok, notice: ok ? 'Redo.' : 'Nothing to redo.' })
+      syncObjectSurfaces({ refreshViewport: true, refreshLeft: ok, save: ok, notice: ok ? 'Redo.' : 'Nothing to redo.' })
       return
     }
     const addStageTab = e.target.closest('[data-add-stage-tab]')
@@ -1089,13 +1090,13 @@ export function bindStageEditorEventsOnce(context) {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         const ok = e.shiftKey ? redoStageEdit() : undoStageEdit()
-        syncObjectSurfaces({ refreshViewport: true, save: ok, notice: ok ? (e.shiftKey ? 'Redo.' : 'Undo.') : 'Nothing to undo.' })
+        syncObjectSurfaces({ refreshViewport: true, refreshLeft: ok, save: ok, notice: ok ? (e.shiftKey ? 'Redo.' : 'Undo.') : 'Nothing to undo.' })
         return
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault()
         const copy = duplicateSelectedStageObject()
-        syncObjectSurfaces({ refreshViewport: true, save: !!copy, notice: copy ? `Duplicated ${copy.label || copy.name}.` : 'Select an object to duplicate.' })
+        syncObjectSurfaces({ refreshViewport: true, refreshLeft: !!copy, save: !!copy, notice: copy ? `Duplicated ${copy.label || copy.name}.` : 'Select an object to duplicate.' })
         return
       }
       const toolShortcut = { v: 'select', h: 'pan', g: 'move', m: 'move', r: 'rotate', s: 'scale' }[key]
@@ -1108,7 +1109,7 @@ export function bindStageEditorEventsOnce(context) {
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         const deleted = deleteSelectedStageObject()
-        syncObjectSurfaces({ refreshViewport: true, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
+        syncObjectSurfaces({ refreshViewport: true, refreshLeft: deleted, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
         return
       }
       if (key === 'f') {

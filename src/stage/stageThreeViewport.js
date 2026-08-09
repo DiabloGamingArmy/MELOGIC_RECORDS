@@ -27,7 +27,7 @@ const objectDefsFromProject = (project = {}, assetResolutions = {}) => {
       selectable: object.selectable !== false,
       visible: object.visible !== false,
       locked: !!object.locked,
-      missingAsset: assetResolution?.status === 'MISSING' || assetResolution?.status === 'INVALID',
+      missingAsset: Boolean(assetResolution && assetResolution.status !== 'RESOLVED'),
       missingReason: assetResolution?.reason || ''
     }
   }).filter((object) => object.key)

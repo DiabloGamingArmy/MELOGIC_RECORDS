@@ -3,7 +3,10 @@ import { isValidProjectAssetReference, normalizeProjectAssetReference, projectAs
 export const AssetResolutionStatus = Object.freeze({
   RESOLVED: 'RESOLVED',
   MISSING: 'MISSING',
-  INVALID: 'INVALID'
+  UNAVAILABLE: 'UNAVAILABLE',
+  INCOMPATIBLE: 'INCOMPATIBLE',
+  INVALID: 'INVALID',
+  ERROR: 'ERROR'
 })
 
 export const AssetResolutionReason = Object.freeze({
@@ -11,6 +14,8 @@ export const AssetResolutionReason = Object.freeze({
   VERSION_NOT_AVAILABLE: 'VERSION_NOT_AVAILABLE',
   ASSET_NOT_FOUND: 'ASSET_NOT_FOUND',
   INTEGRITY_MISMATCH: 'INTEGRITY_MISMATCH',
+  PACK_UNAVAILABLE: 'PACK_UNAVAILABLE',
+  PACK_INCOMPATIBLE: 'PACK_INCOMPATIBLE',
   INVALID_REFERENCE: 'INVALID_REFERENCE',
   LEGACY_OBJECT: 'LEGACY_OBJECT'
 })
@@ -22,13 +27,21 @@ const resolution = (status, reason, reference, asset = null) => Object.freeze({ 
  * Resolves only an exact package/version/UUID match. Version fallback would
  * silently alter a show file, so it is intentionally absent here.
  */
-export function createProjectAssetResolver(registry) {
+export function createProjectAssetResolver(registry, { packRegistry } = {}) {
   if (!registry || typeof registry.listAssets !== 'function') throw new TypeError('A Vertix asset registry with listAssets() is required.')
 
   function resolve(reference) {
     const normalized = normalizeProjectAssetReference(reference)
     if (!isValidProjectAssetReference(normalized)) {
       return resolution(AssetResolutionStatus.INVALID, AssetResolutionReason.INVALID_REFERENCE, normalized)
+    }
+
+    const packAvailability = packRegistry?.availabilityFor?.(normalized)
+    if (packAvailability?.availability === 'UNAVAILABLE') {
+      return resolution(AssetResolutionStatus.UNAVAILABLE, AssetResolutionReason.PACK_UNAVAILABLE, normalized)
+    }
+    if (packAvailability?.availability === 'INCOMPATIBLE') {
+      return resolution(AssetResolutionStatus.INCOMPATIBLE, AssetResolutionReason.PACK_INCOMPATIBLE, normalized)
     }
 
     const assets = registry.listAssets()

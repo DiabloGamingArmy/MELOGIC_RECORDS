@@ -17,7 +17,7 @@ import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspect
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
 import { mountStageThreeViewport } from './stage/stageThreeViewport'
 import { isOldDemoFallbackPlan, migrateDefaultFallbackPlan, normalizeStagePlan } from './stage/stagePlanModel'
-import { vertixAssetRegistry } from './vertix/assets/builtInStageAssetProvider'
+import { vertixAssetRegistry, vertixPackInstallationRegistry } from './vertix/assets/builtInStageAssetProvider'
 import { createProjectAssetResolver, resolveProjectAssets, summarizeProjectAssetDependencies } from './vertix/projects/assetResolver'
 import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 
@@ -36,7 +36,7 @@ let lastLoadedProjectId = ''
 let lastLoadedAuthUid = ''
 const loggedProjectLoadFailures = new Set()
 const authRecoverableProjectStatuses = new Set(['auth-restoring', 'unauthenticated', 'permission-denied', 'fallback-local', 'fallback-default', 'not-found', 'network-error', 'rules-error'])
-const projectAssetResolver = createProjectAssetResolver(vertixAssetRegistry)
+const projectAssetResolver = createProjectAssetResolver(vertixAssetRegistry, { packRegistry: vertixPackInstallationRegistry })
 
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
 

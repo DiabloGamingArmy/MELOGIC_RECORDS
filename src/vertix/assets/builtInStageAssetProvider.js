@@ -1,4 +1,5 @@
 import { createVertixAssetRegistry } from './assetRegistry.js'
+import { createBrowserPackRegistryStorage, createPackInstallationRegistry } from '../packages/packInstallationRegistry.js'
 
 export const builtInStageAssetPackage = Object.freeze({
   packageId: 'com.melogic.vertix.builtin-stage-assets',
@@ -72,3 +73,13 @@ export const builtInStageAssetProvider = Object.freeze({
 })
 
 export const vertixAssetRegistry = createVertixAssetRegistry([builtInStageAssetProvider])
+
+// This persists only small manifest/install metadata. Asset bytes stay with
+// their authorized remote or executable-local source.
+export const vertixPackInstallationRegistry = createPackInstallationRegistry({
+  assetRegistry: vertixAssetRegistry,
+  environment: globalThis.__VERTIX_RUNTIME__ === 'desktop' ? 'desktop' : 'web',
+  storage: createBrowserPackRegistryStorage()
+})
+
+vertixPackInstallationRegistry.hydrate()

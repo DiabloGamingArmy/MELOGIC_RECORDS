@@ -15,7 +15,7 @@ const escapeAttr = (value = '') => String(value).replace(/&/g, '&amp;').replace(
 
 const isMissingAsset = (object) => {
   const resolution = state.assetResolutions?.[object?.id || object?.key]
-  return resolution?.status === 'MISSING' || resolution?.status === 'INVALID'
+  return Boolean(resolution && resolution.status !== 'RESOLVED')
 }
 
 function renderOutlinerRows(nodes, depth = 0) {
