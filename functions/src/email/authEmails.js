@@ -6,9 +6,9 @@ const { writeEmailLog } = require('./emailLog')
 const { writeAccountEvent } = require('../account/accountEvents')
 
 const GENERIC_RESET_MESSAGE = 'If an account exists for that email, we sent a password reset link.'
+const GENERIC_VERIFICATION_MESSAGE = 'If your email still needs verification, we sent a verification link.'
 const AUTH_ACTION_BASE_URL = 'https://melogicrecords.studio'
 const RESET_LIMIT_MS = 10 * 60 * 1000
-const VERIFY_LIMIT_MS = 5 * 60 * 1000
 const FIREBASE_AUTH_FALLBACK_CODES = new Set([
   'email-provider-not-configured',
   'smtp-auth-failed',
@@ -339,14 +339,6 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.')
     logStage(flow, 'auth check passed', { uid })
 
-    stage = 'payload validation'
-    logStage(flow, 'payload validation passed', { uid })
-
-    stage = 'rate limit check'
-    logStage(flow, 'rate limit check started', { uid })
-    await rateLimit(`email_verification_${uid}`, VERIFY_LIMIT_MS)
-    logStage(flow, 'rate limit check passed', { uid })
-
     stage = 'user lookup'
     const user = await admin.auth().getUser(uid)
     logStage(flow, 'user lookup passed', { uid, emailVerified: Boolean(user.emailVerified), recipientDomain: recipientDomain(user.email || '') })
@@ -354,6 +346,17 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     email = validateEmailAddress(user.email || '')
     if (!email) throw new HttpsError('failed-precondition', 'This account does not have a valid email address.')
     if (user.emailVerified) return { ok: true, message: 'Your email is already verified.' }
+
+    // Match the password-reset delivery path: one request per recipient and
+    // client IP every ten minutes. A throttled request receives the same
+    // generic success response rather than exposing a separate verification
+    // quota to the account holder.
+    const ipHash = hashKey(clientIp(request) || 'unknown-ip')
+    const emailHash = hashKey(email)
+    stage = 'rate limit check'
+    logStage(flow, 'rate limit check started', { uid, recipientDomain: recipientDomain(email) })
+    await rateLimit(`email_verification_${emailHash}_${ipHash}`, RESET_LIMIT_MS)
+    logStage(flow, 'rate limit check passed', { uid, recipientDomain: recipientDomain(email) })
 
     stage = 'actionCodeSettings'
     const settings = actionCodeSettings('/auth/action')
@@ -407,6 +410,10 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     })
     logStage(flow, 'account security event write succeeded', { uid })
   } catch (error) {
+    if (error instanceof HttpsError && error.code === 'resource-exhausted') {
+      logStage(flow, 'rate limit check failed', { code: error.code, uid, recipientDomain: recipientDomain(email) }, 'warn')
+      return { ok: true, message: GENERIC_VERIFICATION_MESSAGE }
+    }
     logStage(flow, `${stage} failed`, serializeError(error, stage, { includeStack: true }), 'error')
     // Do not fall back to the client Firebase Auth sender here. Its quota is
     // independent of this callable's cooldown, so a retry would both bypass
@@ -426,7 +433,7 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     throw callableError(error, stage, 'failed-precondition', 'Verification email could not be sent right now.')
   }
 
-  return { ok: true, message: 'Verification email sent.' }
+  return { ok: true, message: GENERIC_VERIFICATION_MESSAGE }
 })
 
 module.exports = {
