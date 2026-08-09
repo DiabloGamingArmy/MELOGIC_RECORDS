@@ -5,12 +5,12 @@ import {
   editorLibraryCategories,
   editorViewModes,
   exportReadiness,
-  objectLibraryGroups,
   projectLoadLabel,
   stageWarnings,
   state,
   viewportModeLabel
 } from '../app/stageState'
+import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvider'
 
 const escapeAttr = (value = '') => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
@@ -33,7 +33,8 @@ export function renderLeftPanelBySection(title, stamp) {
   if (section === 'object') {
     const activeFilter = state.activeLibraryCategory || 'all'
     const search = String(state.objectLibrarySearch || '').trim().toLowerCase()
-    const assets = objectLibraryGroups.flatMap((group) => group.assets.map((asset) => ({ ...asset, groupLabel: group.label })))
+    const assetGroupLabels = new Map(vertixAssetRegistry.listAssetGroups().flatMap((group) => group.assetIds.map((assetId) => [assetId, group.label])))
+    const assets = vertixAssetRegistry.listAssets().map((asset) => ({ ...asset, groupLabel: assetGroupLabels.get(asset.id) || '' }))
     const filteredAssets = assets.filter((asset) => {
       const matchesCategory = activeFilter === 'all' || asset.category === activeFilter || (activeFilter === 'backline' && asset.category === 'band-backline')
       if (!matchesCategory) return false
