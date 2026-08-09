@@ -75,7 +75,8 @@ export function renderStageTabbar() {
 function renderStatusBar() {
   const selected = selectedStageObjects().length
   const objectCount = state.editorProject?.objects?.length || 0
-  return `<footer class="vertix-status-bar"><span>Stage · ${state.activeVertixWorkspace === 'viewport' ? 'Viewport' : state.activeVertixWorkspace}</span><span>${selected ? `${selected} selected` : 'No selection'}</span><span>${objectCount} objects</span><span>${state.editorToolMode} tool · ${state.viewportMode}</span><span data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span></footer>`
+  const animation = state.editorProject?.animation || { startFrame: 1, endFrame: 250 }
+  return `<footer class="vertix-status-bar"><span>Stage · ${state.activeVertixWorkspace === 'viewport' ? 'Viewport' : state.activeVertixWorkspace}</span><span>${selected ? `${selected} selected` : 'No selection'}</span><span>${objectCount} objects</span><span>${state.editorToolMode} tool · ${state.viewportMode}</span><span data-stage-frame-status>Frame ${state.currentFrame} / ${animation.endFrame || 250}</span><span data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span></footer>`
 }
 
 export function renderEditor() {

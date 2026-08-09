@@ -2,6 +2,7 @@ import { STORAGE_PATHS } from '../../config/storagePaths'
 import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvider'
 import { createProjectAssetReference, lastKnownBoundsFromAsset } from '../../vertix/projects/assetReference'
 import { getStagePlanWarnings } from '../stagePlanModel'
+import { ANIMATABLE_PATHS, evaluateProjectAnimation, normalizeProjectAnimation, removeAnimationKeyframe, retargetAnimationTracks, upsertAnimationKeyframe } from '../animation/animationModel.js'
 
 export const sidebarItems = ['My Projects', 'Templates', 'Asset Library', 'Shared With Me', 'Exports', 'Learn']
 export const stageTypes = ['Blank Stage', 'Band Performance', 'DJ / EDM Stage', 'Church Service', 'School Auditorium', 'Livestream Setup', 'Festival Stage']
@@ -82,7 +83,8 @@ export const baseStageTypes = [
 export const editorModes = [
   { key: 'asset-browser', label: 'Asset Browser' },
   { key: 'entities', label: 'Objects' },
-  { key: 'stage-data', label: 'Stage Data' }
+  { key: 'stage-data', label: 'Stage Data' },
+  { key: 'timeline', label: 'Timeline' }
 ]
 
 export const editorViewModes = [['perspective3d', '3D'], ['top2d', 'Top'], ['front', 'Front'], ['side', 'Side'], ['isometric', 'Iso']]
@@ -142,6 +144,11 @@ export const state = {
   activeStageSection: 'home',
   activeLibraryCategory: 'all',
   objectLibrarySearch: '',
+  currentFrame: 1,
+  timelineZoom: 1,
+  timelinePlaying: false,
+  selectedTimelineKey: null,
+  evaluatedObjectTransforms: {},
   outlinerSearch: '',
   outlinerExpandedIds: {},
   editorToolMode: localStorage.getItem('stageEditorToolMode') || 'pan',
@@ -509,6 +516,85 @@ export function selectedStageEntity() {
 
 const cloneData = (value) => JSON.parse(JSON.stringify(value ?? null))
 
+export function projectAnimation() {
+  if (!state.editorProject) return normalizeProjectAnimation()
+  state.editorProject.animation = normalizeProjectAnimation(state.editorProject.animation || {})
+  return state.editorProject.animation
+}
+
+export function evaluatedObjectTransform(objectId = state.selectedEditorObject) {
+  return state.evaluatedObjectTransforms?.[objectId] || {}
+}
+
+export function viewportObjectTransforms() {
+  const merged = { ...(state.editorObjectTransforms || {}) }
+  Object.entries(state.evaluatedObjectTransforms || {}).forEach(([id, values]) => { merged[id] = { ...(merged[id] || {}), ...values } })
+  return merged
+}
+
+export function evaluateStageAnimation(frame = state.currentFrame) {
+  if (!state.editorProject) return {}
+  const animation = projectAnimation()
+  state.currentFrame = Math.max(animation.startFrame, Math.min(animation.endFrame, Math.round(Number(frame) || animation.startFrame)))
+  state.evaluatedObjectTransforms = evaluateProjectAnimation(state.editorProject, state.currentFrame)
+  return state.evaluatedObjectTransforms
+}
+
+export function setStageCurrentFrame(frame) {
+  return evaluateStageAnimation(frame)
+}
+
+export function animationPathForField(field) {
+  return ANIMATABLE_PATHS[field] || ''
+}
+
+function animatedFieldValue(object, field) {
+  const override = evaluatedObjectTransform(object?.id)?.[field]
+  if (Number.isFinite(override)) return override
+  if (['x', 'y', 'z'].includes(field)) return Number(object?.position?.[field] || 0)
+  if (field.startsWith('rot')) return Number(object?.rotation?.[field.slice(-1).toLowerCase()] || 0)
+  if (field.startsWith('scale')) return Number(object?.scale?.[field.slice(-1).toLowerCase()] ?? 1)
+  return 0
+}
+
+function recordAnimationCommand(before, after) {
+  if (JSON.stringify(before) === JSON.stringify(after)) return false
+  state.undoStack = [...(state.undoStack || []), { kind: 'animation', animationBefore: cloneData(before), animationAfter: cloneData(after) }].slice(-80)
+  state.redoStack = []
+  return true
+}
+
+export function insertStageKeyframe(field, { interpolation = 'linear' } = {}) {
+  const object = findStageObject()
+  const propertyPath = animationPathForField(field)
+  if (!object || !propertyPath) return false
+  const before = cloneData(projectAnimation())
+  const after = upsertAnimationKeyframe(before, object.id, propertyPath, state.currentFrame, animatedFieldValue(object, field), interpolation)
+  state.editorProject.animation = after
+  state.selectedTimelineKey = { trackId: `${object.id}:${propertyPath}`, frame: state.currentFrame }
+  evaluateStageAnimation(state.currentFrame)
+  return recordAnimationCommand(before, after)
+}
+
+export function deleteStageKeyframe(trackId, frame) {
+  if (!state.editorProject || !trackId) return false
+  const before = cloneData(projectAnimation())
+  const after = removeAnimationKeyframe(before, trackId, frame)
+  state.editorProject.animation = after
+  state.selectedTimelineKey = null
+  evaluateStageAnimation(state.currentFrame)
+  return recordAnimationCommand(before, after)
+}
+
+export function updateStageAnimationRange(values = {}) {
+  if (!state.editorProject) return false
+  const before = cloneData(projectAnimation())
+  const after = normalizeProjectAnimation({ ...before, ...values })
+  state.editorProject.animation = after
+  evaluateStageAnimation(state.currentFrame)
+  return recordAnimationCommand(before, after)
+}
+
 function syncLinkedDataForObject(object) {
   if (!object || !state.editorProject) return
   const syncPosition = (item) => ({ ...item, position: { ...(object.position || {}) } })
@@ -570,14 +656,23 @@ function restoreLinkedRows(snapshot = {}) {
 }
 
 function applyCommandSnapshot(command, snapshotKey) {
+  if (command?.kind === 'animation') {
+    state.editorProject.animation = cloneData(snapshotKey === 'before' ? command.animationBefore : command.animationAfter)
+    evaluateStageAnimation(state.currentFrame)
+    return
+  }
   const snapshot = command?.[snapshotKey]
   if (snapshot) {
     replaceObjectSnapshot(snapshot)
     if (snapshotKey === 'before' && command.beforeLinks) restoreLinkedRows(command.beforeLinks)
     setSelectedStageObjects([snapshot.id], snapshot.id)
+    if (command.animationBefore || command.animationAfter) state.editorProject.animation = cloneData(snapshotKey === 'before' ? command.animationBefore : command.animationAfter)
+    evaluateStageAnimation(state.currentFrame)
     return
   }
   removeObjectSnapshot(command.objectId, { removeLinked: command.removeLinked })
+  if (command.animationBefore || command.animationAfter) state.editorProject.animation = cloneData(snapshotKey === 'before' ? command.animationBefore : command.animationAfter)
+  evaluateStageAnimation(state.currentFrame)
   setSelectedStageObjects(['stage-deck'], 'stage-deck')
 }
 
@@ -607,6 +702,10 @@ export function updateSelectedStageObjectField(field, value, options = {}) {
     const axis = field.slice(-1).toLowerCase()
     object.rotation = { ...(object.rotation || {}), [axis]: Number(value) || 0 }
   }
+  else if (['scaleX', 'scaleY', 'scaleZ'].includes(field)) {
+    const axis = field.slice(-1).toLowerCase()
+    object.scale = { ...(object.scale || {}), [axis]: Math.max(0.01, Number(value) || 1) }
+  }
   else if (field === 'label') { object.label = String(value || ''); object.name = String(value || object.name || '') }
   else if (field === 'locked') object.locked = !!value
   else if (field === 'visible') object.visible = !!value
@@ -614,8 +713,13 @@ export function updateSelectedStageObjectField(field, value, options = {}) {
   else if (field === 'layer') object.layer = String(value || object.layer || object.category || 'stage')
   else if (field === 'color') object.color = String(value || '')
   else object.metadata = { ...(object.metadata || {}), [field]: value }
+  const animationPath = animationPathForField(field)
+  if (animationPath && projectAnimation().tracks.some((track) => track.targetObjectId === object.id && track.propertyPath === animationPath)) {
+    state.evaluatedObjectTransforms = { ...(state.evaluatedObjectTransforms || {}), [object.id]: { ...(state.evaluatedObjectTransforms?.[object.id] || {}), [field]: Number(value) } }
+  }
   syncLinkedDataForObject(object)
   if (options.track !== false) recordObjectCommand(object.id, before, object)
+  if (options.autoKey && animationPathForField(field)) insertStageKeyframe(field)
   return true
 }
 
@@ -678,6 +782,7 @@ export function duplicateSelectedStageObject() {
   const object = findStageObject()
   if (!object) return null
   const copy = cloneData(object)
+  const animationBefore = cloneData(projectAnimation())
   const prefix = `${object.type || object.kind || 'object'}-copy`
   copy.id = nextId(prefix, state.editorProject?.objects || [])
   copy.name = `${object.name || object.label || 'Object'} Copy`
@@ -686,8 +791,9 @@ export function duplicateSelectedStageObject() {
   copy.protected = false
   copy.position = { ...(copy.position || {}), x: Number(copy.position?.x || 0) + 1, z: Number(copy.position?.z || 0) + 1 }
   state.editorProject.objects = [...(state.editorProject.objects || []), copy]
+  state.editorProject.animation = retargetAnimationTracks(projectAnimation(), object.id, copy.id)
   setSelectedStageObjects([copy.id], copy.id)
-  recordObjectCommand(copy.id, null, copy)
+  recordObjectCommand(copy.id, null, copy, { animationBefore, animationAfter: cloneData(state.editorProject.animation) })
   return copy
 }
 
@@ -696,10 +802,12 @@ export function deleteSelectedStageObject() {
   if (!targets.length) return false
   targets.forEach((object) => {
     const before = cloneData(object)
+    const animationBefore = cloneData(projectAnimation())
     const beforeLinks = snapshotLinkedRows(object.id)
     const removeLinked = true
     removeObjectSnapshot(object.id, { removeLinked })
-    recordObjectCommand(object.id, before, null, { removeLinked, beforeLinks })
+    state.editorProject.animation = { ...projectAnimation(), tracks: projectAnimation().tracks.filter((track) => track.targetObjectId !== object.id) }
+    recordObjectCommand(object.id, before, null, { removeLinked, beforeLinks, animationBefore, animationAfter: cloneData(state.editorProject.animation) })
   })
   setSelectedStageObjects(['stage-deck'], 'stage-deck')
   return true

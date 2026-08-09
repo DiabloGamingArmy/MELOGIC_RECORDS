@@ -683,6 +683,9 @@ export function mountStageThreeViewport(container, options = {}) {
         if (Number.isFinite(t.rotX)) obj.rotation.x = THREE.MathUtils.degToRad(t.rotX)
         if (Number.isFinite(t.rotY)) obj.rotation.y = THREE.MathUtils.degToRad(t.rotY)
         if (Number.isFinite(t.rotZ)) obj.rotation.z = THREE.MathUtils.degToRad(t.rotZ)
+        if (Number.isFinite(t.scaleX)) obj.scale.x = t.scaleX
+        if (Number.isFinite(t.scaleY)) obj.scale.y = t.scaleY
+        if (Number.isFinite(t.scaleZ)) obj.scale.z = t.scaleZ
         if ([t.width, t.height, t.depth].some(Number.isFinite)) applyObjectDimensions(k, t)
       })
       if (objects[selectedKey]) {

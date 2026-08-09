@@ -1,9 +1,11 @@
 import { ROUTES, authRoute } from '../../utils/routes'
 import {
   addStageAssetToPlan,
+  deleteStageKeyframe,
   deleteSelectedStageObject,
   duplicateSelectedStageObject,
   findStageObject,
+  insertStageKeyframe,
   isSimpleEditableStageObject,
   moveSelectedStageObject,
   redoStageEdit,
@@ -12,12 +14,17 @@ import {
   setSelectedStageObjects,
   stageLayers,
   state,
+  projectAnimation,
+  setStageCurrentFrame,
+  updateStageAnimationRange,
   undoStageEdit,
   updateSelectedStageObjectField,
-  updateSelectedStageObjectsField
+  updateSelectedStageObjectsField,
+  viewportObjectTransforms
 } from './stageState'
 
 let stageEditorEventsBound = false
+let timelinePlaybackFrame = 0
 
 export function bindDashboardEvents({ app, renderCreateModal, openProject, loadDashboardProjects }) {
   app.querySelectorAll('[data-new-stage-plan]').forEach((el) => el.addEventListener('click', (e) => {
@@ -137,13 +144,52 @@ export function bindStageEditorEventsOnce(context) {
   const syncObjectSurfaces = ({ refreshViewport = false, save = true, notice = '' } = {}) => {
     syncObjectTransformCache()
     if (refreshViewport) refreshStageViewport?.()
-    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
+    else getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: viewportObjectTransforms(), toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
     updateStageInspectorSelection?.()
     updateInspectorUI?.()
     updateEditorModeUI?.()
     updateViewportControlUI?.()
     if (notice) showStageNotice?.(notice)
     if (save) queueStagePlanSave?.()
+  }
+
+  const renderTimelineFrame = () => {
+    const animation = projectAnimation()
+    const ratio = Math.max(0.5, Math.min(3, Number(state.timelineZoom) || 1)) * 8
+    const left = (state.currentFrame - animation.startFrame) * ratio
+    app.querySelectorAll('[data-timeline-playhead]').forEach((marker) => {
+      marker.style.left = marker.classList.contains('vertix-timeline-body-playhead') ? `calc(190px + ${left}px)` : `${left}px`
+    })
+    app.querySelectorAll('[data-timeline-current-frame]').forEach((input) => { input.value = String(state.currentFrame) })
+    const status = app.querySelector('[data-stage-frame-status]')
+    if (status) status.textContent = `Frame ${state.currentFrame} / ${animation.endFrame}`
+  }
+
+  const applyTimelineFrame = (frame, { refreshInspector = false } = {}) => {
+    setStageCurrentFrame(frame)
+    getViewportController()?.update?.({ objectTransforms: viewportObjectTransforms(), selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects })
+    if (refreshInspector) updateInspectorUI?.()
+    renderTimelineFrame()
+  }
+
+  const stopTimelinePlayback = () => {
+    state.timelinePlaying = false
+    if (timelinePlaybackFrame) cancelAnimationFrame(timelinePlaybackFrame)
+    timelinePlaybackFrame = 0
+  }
+
+  const startTimelinePlayback = () => {
+    const animation = projectAnimation()
+    const startedAt = performance.now() - ((state.currentFrame - animation.startFrame) / animation.frameRate) * 1000
+    state.timelinePlaying = true
+    const tick = (now) => {
+      if (!state.timelinePlaying) return
+      const current = animation.startFrame + Math.floor(((now - startedAt) / 1000) * animation.frameRate)
+      if (current > animation.endFrame) { stopTimelinePlayback(); updateEditorModeUI?.(); return }
+      applyTimelineFrame(current)
+      timelinePlaybackFrame = requestAnimationFrame(tick)
+    }
+    timelinePlaybackFrame = requestAnimationFrame(tick)
   }
 
   const applyInlineObjectField = (field, rawValue, { rerender = true } = {}) => {
@@ -161,7 +207,7 @@ export function bindStageEditorEventsOnce(context) {
     }
     const refreshViewport = ['label', 'visible', 'locked', 'color'].includes(field)
     if (refreshViewport) refreshStageViewport?.()
-    else getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
+    else getViewportController()?.update?.({ objectTransforms: viewportObjectTransforms(), toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
     if (rerender) {
       updateInspectorUI?.()
       updateEditorModeUI?.()
@@ -242,7 +288,7 @@ export function bindStageEditorEventsOnce(context) {
       updateSelectedStageObjectField('layer', transform.layer)
     }
     state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: { ...existing, ...transform } }
-    getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
+    getViewportController()?.update?.({ selectedObjectKey: state.selectedEditorObject, selectedObjectKeys: state.selectedEditorObjects, objectTransforms: viewportObjectTransforms(), toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
     updateStageInspectorSelection?.()
     updateInspectorUI?.()
     updateEditorModeUI?.()
@@ -325,6 +371,31 @@ export function bindStageEditorEventsOnce(context) {
     }
     const mode = e.target.closest('[data-editor-mode]')
     if (mode) { state.activeEditorMode = mode.dataset.editorMode || 'entities'; updateEditorModeUI(); queueEditorStateSave?.(); return }
+    const insertKeyframe = e.target.closest('[data-insert-keyframe]')
+    if (insertKeyframe) {
+      const updated = insertStageKeyframe(insertKeyframe.dataset.insertKeyframe || '')
+      if (updated) { updateInspectorUI?.(); updateEditorModeUI?.(); queueStagePlanSave?.(); showStageNotice?.(`Keyframe set at frame ${state.currentFrame}.`) }
+      return
+    }
+    const timelineStart = e.target.closest('[data-timeline-start]')
+    if (timelineStart) { applyTimelineFrame(projectAnimation().startFrame, { refreshInspector: true }); return }
+    const timelineEnd = e.target.closest('[data-timeline-end]')
+    if (timelineEnd) { applyTimelineFrame(projectAnimation().endFrame, { refreshInspector: true }); return }
+    const timelinePlay = e.target.closest('[data-timeline-play]')
+    if (timelinePlay) { if (state.timelinePlaying) stopTimelinePlayback(); else startTimelinePlayback(); updateEditorModeUI?.(); return }
+    const timelineFrame = e.target.closest('[data-timeline-frame]')
+    if (timelineFrame) { applyTimelineFrame(Number(timelineFrame.dataset.timelineFrame), { refreshInspector: true }); return }
+    const timelineKey = e.target.closest('[data-timeline-key]')
+    if (timelineKey) {
+      const trackId = timelineKey.dataset.timelineKey || ''
+      const frame = Number(timelineKey.dataset.keyframeFrame)
+      state.selectedTimelineKey = { trackId, frame }
+      applyTimelineFrame(frame, { refreshInspector: true })
+      updateEditorModeUI?.()
+      return
+    }
+    const timelineZoom = e.target.closest('[data-timeline-zoom]')
+    if (timelineZoom) { state.timelineZoom = Math.max(0.5, Math.min(3, Number(state.timelineZoom || 1) + (timelineZoom.dataset.timelineZoom === 'in' ? 0.25 : -0.25))); updateEditorModeUI?.(); return }
     const toolMode = e.target.closest('[data-tool-mode]')
     if (toolMode) {
       setEditorToolMode(toolMode.dataset.toolMode || 'select')
@@ -676,6 +747,8 @@ export function bindStageEditorEventsOnce(context) {
       queueEditorStateSave?.()
       return
     }
+    const timelineFrameInput = e.target.closest('[data-timeline-current-frame]')
+    if (timelineFrameInput) { applyTimelineFrame(Number(timelineFrameInput.value), { refreshInspector: true }); return }
     const librarySearch = e.target.closest('[data-library-search]')
     if (librarySearch) {
       state.objectLibrarySearch = librarySearch.value || ''
@@ -743,7 +816,7 @@ export function bindStageEditorEventsOnce(context) {
     updateSelectedStageObjectField(f.dataset.transformField, v)
     ensureObjectModeForSelection()
     state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [f.dataset.transformField]: v } }
-    getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
+    getViewportController()?.update?.({ objectTransforms: viewportObjectTransforms(), toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
     if (['label', 'visible', 'locked', 'color'].includes(f.dataset.transformField)) {
       refreshStageViewport?.()
     }
@@ -753,6 +826,12 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('change', (e) => {
+    const timelineRange = e.target.closest('[data-timeline-start-frame], [data-timeline-end-frame]')
+    if (timelineRange) {
+      const changed = updateStageAnimationRange(timelineRange.matches('[data-timeline-start-frame]') ? { startFrame: Number(timelineRange.value) } : { endFrame: Number(timelineRange.value) })
+      if (changed) { updateEditorModeUI?.(); queueStagePlanSave?.() }
+      return
+    }
     const stageContext = e.target.closest('[data-stage-context]')
     if (stageContext) {
       state.activeStageSection = stageContext.value || 'scene'
@@ -812,7 +891,7 @@ export function bindStageEditorEventsOnce(context) {
       updateSelectedStageObjectField(changedTransform.dataset.transformField, v)
       ensureObjectModeForSelection()
       state.editorObjectTransforms = { ...state.editorObjectTransforms, [key]: { ...existing, [changedTransform.dataset.transformField]: v } }
-      getViewportController()?.update?.({ objectTransforms: state.editorObjectTransforms, toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
+      getViewportController()?.update?.({ objectTransforms: viewportObjectTransforms(), toolMode: state.editorToolMode, interactionMode: state.stageInteractionMode })
       if (['label', 'visible', 'locked', 'color'].includes(changedTransform.dataset.transformField)) refreshStageViewport?.()
       updateEditorModeUI()
       updateViewportControlUI()
@@ -901,6 +980,16 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('pointerdown', (e) => {
+    const scrub = e.target.closest('[data-timeline-scrub]')
+    if (scrub && !e.target.closest('[data-timeline-key], [data-timeline-frame]')) {
+      const animation = projectAnimation()
+      const rect = scrub.getBoundingClientRect()
+      const scroll = scrub.closest('.vertix-timeline-scroll')
+      const pixelsPerFrame = 8 * Math.max(0.5, Math.min(3, Number(state.timelineZoom) || 1))
+      const frame = animation.startFrame + Math.round((e.clientX - rect.left + (scroll?.scrollLeft || 0)) / pixelsPerFrame)
+      applyTimelineFrame(frame, { refreshInspector: true })
+      return
+    }
     const handle = e.target.closest('[data-resize]')
     if (!handle) return
     const editor = app.querySelector('[data-stage-editor-app]')
@@ -943,6 +1032,24 @@ export function bindStageEditorEventsOnce(context) {
     const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target?.isContentEditable
     if (!typing && !e.defaultPrevented) {
       const key = e.key.toLowerCase()
+      const timelineFocused = !!e.target?.closest?.('[data-timeline-root]')
+      if (timelineFocused && (e.key === 'Delete' || e.key === 'Backspace') && state.selectedTimelineKey) {
+        e.preventDefault()
+        const deleted = deleteStageKeyframe(state.selectedTimelineKey.trackId, state.selectedTimelineKey.frame)
+        if (deleted) { updateEditorModeUI?.(); queueStagePlanSave?.(); showStageNotice?.('Keyframe deleted.') }
+        return
+      }
+      if (timelineFocused && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault()
+        applyTimelineFrame(state.currentFrame + (e.key === 'ArrowLeft' ? -1 : 1), { refreshInspector: true })
+        return
+      }
+      if (timelineFocused && e.code === 'Space') {
+        e.preventDefault()
+        if (state.timelinePlaying) stopTimelinePlayback(); else startTimelinePlayback()
+        updateEditorModeUI?.()
+        return
+      }
       if (e.key === 'Tab') {
         e.preventDefault()
         if (state.stageInteractionMode === 'edit') setStageInteractionMode('object', 'Object Mode.')

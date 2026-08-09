@@ -11,7 +11,7 @@ import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
 import { renderDashboard } from './stage/app/stageDashboard'
 import { renderEditor, renderStageTabbar } from './stage/app/stageEditorRender'
-import { editorTitleStamp, getCurrentStageProjectId, isSimpleEditableStageObject, moveSelectedStageObject, projectDate, setSelectedStageObjects, stageIconPath, stageTypes, state, updateSelectedStageObjectField } from './stage/app/stageState'
+import { editorTitleStamp, evaluateStageAnimation, getCurrentStageProjectId, isSimpleEditableStageObject, moveSelectedStageObject, projectDate, setSelectedStageObjects, stageIconPath, stageTypes, state, updateSelectedStageObjectField, viewportObjectTransforms } from './stage/app/stageState'
 import { renderExportPreview } from './stage/export/exportPreview'
 import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspector/inspectorTabs'
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
@@ -113,7 +113,7 @@ function buildEditorStateSnapshot() {
     showViewportDiagnostics: state.showViewportDiagnostics,
     stageTabs: state.stageTabs,
     activeStageTabId: state.activeStageTabId,
-    objectTransforms: state.editorObjectTransforms,
+    objectTransforms: viewportObjectTransforms(),
     savedAt: new Date().toISOString()
   }
 }
@@ -239,6 +239,7 @@ function initStageEditorViewport() {
   if (!state.projectId || state.editorLoading || state.editorError) return
   const container = app.querySelector('[data-stage-three-viewport]')
   if (!container) return
+  evaluateStageAnimation(state.currentFrame)
   refreshProjectAssetResolution()
   stageViewportController = mountStageThreeViewport(container, {
     project: state.editorProject,
@@ -248,7 +249,7 @@ function initStageEditorViewport() {
     showDiagnostics: state.showViewportDiagnostics,
     selectedObjectKey: state.selectedEditorObject,
     selectedObjectKeys: state.selectedEditorObjects,
-    objectTransforms: state.editorObjectTransforms,
+    objectTransforms: viewportObjectTransforms(),
     toolMode: state.editorToolMode,
     interactionMode: state.stageInteractionMode,
     onSelectObjects: (keys = [], primary = '') => {

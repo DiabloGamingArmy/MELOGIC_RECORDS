@@ -1,4 +1,4 @@
-import { currentStageDimensions, exportReadiness, isStageObjectSelected, selectedEditorObject, stageEntities, stageObjectsForTable, stageWarnings, state, viewportModeLabel } from '../app/stageState'
+import { currentStageDimensions, exportReadiness, isStageObjectSelected, projectAnimation, selectedEditorObject, stageEntities, stageObjectsForTable, stageWarnings, state, viewportModeLabel } from '../app/stageState'
 import { renderStagePlotSvg } from '../export/exportPreview'
 import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvider'
 import { createAssetBrowserCatalog, filterAssetBrowserAssets, normalizeAssetBrowserQuery, selectedAssetBrowserAsset } from '../../vertix/assets/assetBrowserModel'
@@ -95,10 +95,35 @@ function renderAssetBrowser() {
   return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="vertix-asset-browser"><header class="vertix-asset-browser-header"><div><span>Asset Browser</span><small>${catalog.assets.length} available from ${catalog.sources.length} source${catalog.sources.length === 1 ? '' : 's'}</small></div><button type="button" data-asset-browser-clear ${filtersActive ? '' : 'disabled'}>Clear filters</button></header><div class="vertix-asset-browser-controls"><input type="search" data-asset-browser-search placeholder="Search assets…" value="${escapeAttr(query.search)}" aria-label="Search assets" /><div class="vertix-asset-category-row" aria-label="Asset categories">${categoryButtons}</div><div class="vertix-asset-select-row">${filterOptions(catalog.types, query.type, 'type', 'Type')}${filterOptions(catalog.tags, query.tag, 'tag', 'Tag')}${filterOptions(catalog.sources, query.source, 'source', 'Source')}${filterOptions(catalog.publishers, query.publisher, 'publisher', 'Publisher')}</div></div><div class="vertix-asset-results" aria-live="polite">${cards || `<p class="vertix-asset-browser-empty">${catalog.assets.length ? 'No assets match these filters.' : 'No assets are currently available.'}</p>`}</div>${selected ? `<aside class="vertix-asset-detail"><span>Selected asset</span><strong>${escapeHtml(selected.label || selected.name || selected.id)}</strong><small>${escapeHtml(selected.type || 'object')} · ${escapeHtml(selected.category || 'asset')} · ${escapeHtml(selected.dimensions?.width || '?')} × ${escapeHtml(selected.dimensions?.depth || '?')} × ${escapeHtml(selected.dimensions?.height || '?')}</small><small>Source: ${escapeHtml(selected.source.label)}${selected.source.packageVersion ? ` · v${escapeHtml(selected.source.packageVersion)}` : ''}${selected.source.publisherId ? ` · ${escapeHtml(selected.source.publisherId)}` : ''}</small><small>${selected.tags.length ? `Tags: ${escapeHtml(selected.tags.join(', '))}` : 'No tags'}</small><button type="button" data-add-stage-asset="${escapeAttr(selected.id)}" data-asset-browser-add="true">Add to Scene</button></aside>` : ''}</section></section>`
 }
 
+function renderTimeline() {
+  const animation = projectAnimation()
+  const pixelsPerFrame = 8 * Math.max(0.5, Math.min(3, Number(state.timelineZoom) || 1))
+  const frameCount = animation.endFrame - animation.startFrame + 1
+  const width = Math.max(520, frameCount * pixelsPerFrame)
+  const tickStep = frameCount > 420 ? 50 : frameCount > 220 ? 25 : 10
+  const tracksByObject = new Map()
+  animation.tracks.forEach((track) => {
+    const rows = tracksByObject.get(track.targetObjectId) || []
+    rows.push(track)
+    tracksByObject.set(track.targetObjectId, rows)
+  })
+  const objectById = new Map((state.editorProject?.objects || []).map((object) => [object.id, object]))
+  const timelineRows = [...tracksByObject.entries()].map(([objectId, tracks]) => {
+    const object = objectById.get(objectId)
+    const label = object?.label || object?.name || objectId
+    return `<section class="vertix-timeline-object"><button type="button" class="vertix-timeline-object-row ${state.selectedEditorObject === objectId ? 'is-selected' : ''}" data-select-object="${escapeAttr(objectId)}"><strong>${escapeHtml(label)}</strong><small>${tracks.length} channel${tracks.length === 1 ? '' : 's'}</small></button>${tracks.map((track) => `<div class="vertix-timeline-track"><span>${escapeHtml(track.propertyPath.replace('transform.', '').replaceAll('.', ' › '))}</span><div class="vertix-timeline-lane" data-timeline-scrub style="--timeline-width:${width}px">${track.keyframes.map((keyframe) => `<button type="button" class="vertix-timeline-key ${state.selectedTimelineKey?.trackId === track.id && state.selectedTimelineKey?.frame === keyframe.frame ? 'is-selected' : ''}" data-timeline-key="${escapeAttr(track.id)}" data-keyframe-frame="${keyframe.frame}" style="left:${(keyframe.frame - animation.startFrame) * pixelsPerFrame}px" title="Frame ${keyframe.frame}: ${keyframe.value}">◆</button>`).join('')}</div></div>`).join('')}</section>`
+  }).join('')
+  const ticks = []
+  for (let frame = animation.startFrame; frame <= animation.endFrame; frame += tickStep) ticks.push(`<button type="button" data-timeline-frame="${frame}" style="left:${(frame - animation.startFrame) * pixelsPerFrame}px">${frame}</button>`)
+  const playheadLeft = (state.currentFrame - animation.startFrame) * pixelsPerFrame
+  return `<section class="stage-editor-mode-content stage-bottom-primary vertix-timeline" data-timeline-root tabindex="0"><header class="vertix-timeline-header"><div><strong>Timeline</strong><small>${animation.frameRate} fps</small></div><div class="vertix-timeline-transport"><button type="button" data-timeline-start title="Jump to start">|◀</button><button type="button" data-timeline-play aria-pressed="${state.timelinePlaying}" title="${state.timelinePlaying ? 'Pause' : 'Play'}">${state.timelinePlaying ? 'Ⅱ' : '▶'}</button><button type="button" data-timeline-end title="Jump to end">▶|</button><label>Frame <input type="number" data-timeline-current-frame min="${animation.startFrame}" max="${animation.endFrame}" value="${state.currentFrame}"></label><label>Start <input type="number" data-timeline-start-frame value="${animation.startFrame}"></label><label>End <input type="number" data-timeline-end-frame value="${animation.endFrame}"></label><button type="button" data-timeline-zoom="out">−</button><button type="button" data-timeline-zoom="in">+</button></div></header><div class="vertix-timeline-scroll"><div class="vertix-timeline-grid" style="--timeline-width:${width}px"><div class="vertix-timeline-ruler"><span>Tracks</span><div class="vertix-timeline-ruler-track" data-timeline-scrub>${ticks.join('')}<i data-timeline-playhead style="left:${playheadLeft}px"></i></div></div><div class="vertix-timeline-body"><div class="vertix-timeline-track-list">${timelineRows || '<p>No animated objects. Select an object and use ◇ in Properties to insert a keyframe.</p>'}</div><i class="vertix-timeline-body-playhead" data-timeline-playhead style="left:calc(190px + ${playheadLeft}px)"></i></div></div></div></section>`
+}
+
 function renderBottomPrimaryPane() {
   const activeMode = state.activeEditorMode === 'builder' ? 'entities' : state.activeEditorMode
   if (activeMode === 'asset-browser') return renderAssetBrowser()
   if (activeMode === 'stage-data') return renderStageData()
+  if (activeMode === 'timeline') return renderTimeline()
   return `<section class="stage-editor-mode-content stage-bottom-primary"><section class="stage-editor-table-panel is-entities"><h4>Objects</h4>${renderEntityTable()}</section></section>`
 }
 
@@ -131,5 +156,6 @@ function renderDataPane() {
 }
 
 export function renderBottomSplit() {
+  if (state.activeEditorMode === 'timeline') return renderTimeline()
   return `<div class="stage-bottom-split">${renderBottomPrimaryPane()}<div class="stage-bottom-divider" data-resize="bottom-split" aria-hidden="true"></div>${renderDataPane()}</div>`
 }

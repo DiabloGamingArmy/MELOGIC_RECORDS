@@ -5,6 +5,9 @@ import {
   linkedVideo,
   selectedStageEntity,
   selectedStageObjects,
+  animationPathForField,
+  evaluatedObjectTransform,
+  projectAnimation,
   stageLayers,
   state
 } from '../app/stageState'
@@ -40,7 +43,10 @@ function section(title, body, className = '') {
 }
 
 function field(label, key, value, { min, step = '0.1', disabled = false } = {}) {
-  return `<label><span>${label}</span><input data-vertix-transform-field="${key}" type="number" ${min === undefined ? '' : `min="${min}"`} step="${step}" value="${escapeAttr(formatNumber(value))}" ${disabled ? 'disabled' : ''}></label>`
+  const path = animationPathForField(key)
+  const track = path ? projectAnimation().tracks.find((item) => item.targetObjectId === state.selectedEditorObject && item.propertyPath === path) : null
+  const keyed = !!track?.keyframes?.some((item) => item.frame === state.currentFrame)
+  return `<label><span>${label}${path ? `<button type="button" class="vertix-keyframe-button ${track ? 'is-animated' : ''} ${keyed ? 'is-keyed' : ''}" data-insert-keyframe="${key}" title="Insert keyframe at frame ${state.currentFrame}">${keyed ? '◆' : '◇'}</button>` : ''}</span><input data-vertix-transform-field="${key}" type="number" ${min === undefined ? '' : `min="${min}"`} step="${step}" value="${escapeAttr(formatNumber(value))}" ${disabled ? 'disabled' : ''}></label>`
 }
 
 function readout(label, value) {
@@ -92,9 +98,14 @@ export function selectedEditorObjectMarkup() {
   const position = selected.position || {}
   const rotation = selected.rotation || {}
   const dimensions = selected.dimensions || {}
+  const evaluated = evaluatedObjectTransform(selected.id)
+  const animatedPosition = { ...position, x: evaluated.x ?? position.x, y: evaluated.y ?? position.y, z: evaluated.z ?? position.z }
+  const animatedRotation = { ...rotation, x: evaluated.rotX ?? rotation.x, y: evaluated.rotY ?? rotation.y, z: evaluated.rotZ ?? rotation.z }
+  const scale = selected.scale || { x: 1, y: 1, z: 1 }
+  const animatedScale = { ...scale, x: evaluated.scaleX ?? scale.x, y: evaluated.scaleY ?? scale.y, z: evaluated.scaleZ ?? scale.z }
   const locked = !!selected.locked
   const disabled = locked ? 'disabled' : ''
-  const transform = section('Transform', `<div class="vertix-transform-group"><span>Location</span><div class="vertix-transform-row">${field('X', 'x', position.x, { disabled: locked })}${field('Y', 'y', position.y, { disabled: locked })}${field('Z', 'z', position.z, { disabled: locked })}</div></div><div class="vertix-transform-group"><span>Rotation</span><div class="vertix-transform-row">${field('X', 'rotX', rotation.x, { step: '1', disabled: locked })}${field('Y', 'rotY', rotation.y, { step: '1', disabled: locked })}${field('Z', 'rotZ', rotation.z, { step: '1', disabled: locked })}</div></div><div class="vertix-transform-group"><span>Dimensions</span><div class="vertix-transform-row">${field('W', 'width', dimensions.width, { min: 0.05, disabled: locked })}${field('D', 'depth', dimensions.depth, { min: 0.05, disabled: locked })}${field('H', 'height', dimensions.height, { min: 0.05, disabled: locked })}</div></div>${locked ? '<p class="vertix-property-lock-note">Unlock this object to edit transforms or manipulate its gizmo.</p>' : ''}`)
+  const transform = section('Transform', `<div class="vertix-transform-group"><span>Location</span><div class="vertix-transform-row">${field('X', 'x', animatedPosition.x, { disabled: locked })}${field('Y', 'y', animatedPosition.y, { disabled: locked })}${field('Z', 'z', animatedPosition.z, { disabled: locked })}</div></div><div class="vertix-transform-group"><span>Rotation</span><div class="vertix-transform-row">${field('X', 'rotX', animatedRotation.x, { step: '1', disabled: locked })}${field('Y', 'rotY', animatedRotation.y, { step: '1', disabled: locked })}${field('Z', 'rotZ', animatedRotation.z, { step: '1', disabled: locked })}</div></div><div class="vertix-transform-group"><span>Scale</span><div class="vertix-transform-row">${field('X', 'scaleX', animatedScale.x, { min: 0.01, disabled: locked })}${field('Y', 'scaleY', animatedScale.y, { min: 0.01, disabled: locked })}${field('Z', 'scaleZ', animatedScale.z, { min: 0.01, disabled: locked })}</div></div><div class="vertix-transform-group"><span>Dimensions</span><div class="vertix-transform-row">${field('W', 'width', dimensions.width, { min: 0.05, disabled: locked })}${field('D', 'depth', dimensions.depth, { min: 0.05, disabled: locked })}${field('H', 'height', dimensions.height, { min: 0.05, disabled: locked })}</div></div>${locked ? '<p class="vertix-property-lock-note">Unlock this object to edit transforms or manipulate its gizmo.</p>' : ''}`)
   const display = section('Display', `<div class="vertix-display-controls"><button type="button" data-vertix-object-toggle="visible" aria-pressed="${selected.visible !== false}">${selected.visible === false ? 'Show in viewport' : 'Visible in viewport'}</button><button type="button" data-vertix-object-toggle="locked" aria-pressed="${locked}">${locked ? 'Unlock object' : 'Lock object'}</button><label><span>Color</span><input data-vertix-transform-field="color" type="color" value="${escapeAttr(selected.color || selected.metadata?.color || '#4e6576')}"></label></div>`)
   const header = `<header class="vertix-object-header"><div><input data-vertix-transform-field="label" aria-label="Object name" type="text" value="${escapeAttr(selected.label || selected.name || selected.id)}"><p>${escapeHtml(selected.type || 'Object')} · ${escapeHtml(selected.category || 'stage')} · ${escapeHtml(selected.layer || 'stage')}</p></div><div class="vertix-object-actions"><button type="button" data-focus-selected title="Focus selected object">Focus</button><button type="button" data-duplicate-selected title="Duplicate selected object">Duplicate</button><button type="button" data-delete-selected title="Delete selected object">Delete</button></div></header>`
   const layer = section('Object', `<div class="vertix-property-inline"><label><span>Layer</span><select data-vertix-transform-field="layer">${stageLayers.map((name) => `<option value="${escapeAttr(name)}" ${(selected.layer || selected.category) === name ? 'selected' : ''}>${escapeHtml(name)}</option>`).join('')}</select></label><span>${escapeHtml(selected.id)}</span></div>`)

@@ -1,4 +1,5 @@
 import { normalizeLastKnownBounds, normalizeProjectAssetReference } from '../vertix/projects/assetReference.js'
+import { normalizeProjectAnimation } from './animation/animationModel.js'
 
 export const DEFAULT_COORDINATE_SYSTEM = {
   // X: stage left/right, Y: height, Z: upstage/downstage
@@ -392,6 +393,7 @@ export function normalizeStagePlan(raw = {}) {
     venue: normalizeVenue({ ...base.venue, ...(raw.venue || {}), ...(source.venue || {}) }),
     notes: source.notes ?? raw.notes ?? base.notes,
     exportSettings: { ...base.exportSettings, ...(raw.exportSettings || {}), ...(source.exportSettings || {}) },
+    animation: normalizeProjectAnimation(source.animation || raw.animation || base.animation),
     editorState: normalizeEditorState(source.editorState || raw.editorState || base.editorState)
   }
   normalized.warnings = getStagePlanWarnings(normalized)

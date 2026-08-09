@@ -1333,6 +1333,41 @@ html:has(.vertix-application),body:has(.vertix-application),body:has(.vertix-app
 .vertix-stage-data .stage-editor-mode-panel,.vertix-stage-data .stage-editor-table-panel { min-height:0; flex:1 1 auto; }
 .vertix-stage-data-summary .stage-data-tabs { color:var(--stage-faint); font-size:9px; letter-spacing:.08em; text-transform:uppercase; }
 
+/* Phase 8 — dense project animation timeline. */
+.vertix-keyframe-button { width:13px; height:13px; margin-left:2px; border:0; background:transparent; color:#71809a; padding:0; font-size:10px; vertical-align:middle; }
+.vertix-keyframe-button.is-animated { color:#a8a1ff; }
+.vertix-keyframe-button.is-keyed { color:#d9d5ff; text-shadow:0 0 7px rgba(117,108,255,.7); }
+.vertix-timeline { display:flex; flex-direction:column; min-height:0; height:100%; padding:0 !important; background:#0c0f15; overflow:hidden; }
+.vertix-timeline-header { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:30px; padding:4px 7px; border-bottom:1px solid var(--stage-border); }
+.vertix-timeline-header > div:first-child { display:flex; align-items:baseline; gap:6px; }
+.vertix-timeline-header strong { color:#eef1ff; font-size:11px; }
+.vertix-timeline-header small { color:var(--stage-faint); font-size:9px; }
+.vertix-timeline-transport { display:flex; align-items:center; gap:3px; min-width:0; }
+.vertix-timeline-transport button { width:23px; height:21px; border:1px solid var(--stage-border); background:#151923; color:#c4cce0; padding:0; font-size:10px; }
+.vertix-timeline-transport button:hover,.vertix-timeline-transport button[aria-pressed="true"] { border-color:rgba(117,108,255,.72); background:var(--vertix-accent-soft); color:#fff; }
+.vertix-timeline-transport label { display:flex; align-items:center; gap:3px; color:var(--stage-faint); font-size:8px; letter-spacing:.05em; text-transform:uppercase; }
+.vertix-timeline-transport input { width:42px; height:21px; border:1px solid var(--stage-border); background:#090c12; color:#dce5f8; padding:0 4px; font-size:10px; }
+.vertix-timeline-scroll { flex:1 1 auto; min-height:0; overflow:auto; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.22) transparent; }
+.vertix-timeline-grid { min-width:calc(190px + var(--timeline-width)); }
+.vertix-timeline-ruler { display:grid; grid-template-columns:190px var(--timeline-width); position:sticky; top:0; z-index:3; height:23px; border-bottom:1px solid var(--stage-border); background:#11151e; }
+.vertix-timeline-ruler > span { display:flex; align-items:center; padding-left:7px; border-right:1px solid var(--stage-border); color:var(--stage-faint); font-size:8px; letter-spacing:.08em; text-transform:uppercase; }
+.vertix-timeline-ruler-track,.vertix-timeline-lane { position:relative; width:var(--timeline-width); background-image:linear-gradient(90deg,rgba(130,145,180,.11) 1px,transparent 1px); background-size:40px 100%; }
+.vertix-timeline-ruler-track button { position:absolute; top:0; height:22px; border:0; border-left:1px solid rgba(130,145,180,.16); background:transparent; color:#8995ad; padding:0 3px; font-size:8px; transform:translateX(-1px); }
+.vertix-timeline-body { position:relative; min-height:100%; }
+.vertix-timeline-object { border-bottom:1px solid rgba(106,126,160,.16); }
+.vertix-timeline-object-row { display:grid; grid-template-columns:minmax(0,1fr) auto; width:190px; min-height:24px; border:0; border-right:1px solid var(--stage-border); background:#10141c; color:#cad3e6; padding:0 7px; text-align:left; }
+.vertix-timeline-object-row.is-selected { box-shadow:inset 2px 0 var(--vertix-accent); background:var(--vertix-accent-soft); color:#fff; }
+.vertix-timeline-object-row strong { overflow:hidden; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.vertix-timeline-object-row small { color:var(--stage-faint); font-size:8px; }
+.vertix-timeline-track { display:grid; grid-template-columns:190px var(--timeline-width); min-height:20px; }
+.vertix-timeline-track > span { display:flex; align-items:center; overflow:hidden; border-right:1px solid var(--stage-border); background:#0e1118; color:#8693aa; padding-left:17px; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+.vertix-timeline-lane { min-height:20px; border-bottom:1px solid rgba(106,126,160,.11); }
+.vertix-timeline-key { position:absolute; top:5px; width:10px; height:10px; border:0; background:transparent; color:#a8a1ff; padding:0; font-size:10px; line-height:10px; transform:translateX(-5px); }
+.vertix-timeline-key.is-selected { color:#fff; filter:drop-shadow(0 0 3px #756cff); }
+.vertix-timeline-ruler-track [data-timeline-playhead],.vertix-timeline-body-playhead { position:absolute; z-index:4; top:0; bottom:0; width:1px; background:#ff779b; pointer-events:none; }
+.vertix-timeline-ruler-track [data-timeline-playhead] { bottom:auto; height:23px; }
+@media (max-width:1100px) { .vertix-timeline-transport label:nth-of-type(n+2) { display:none; } }
+
 @media (max-width:1180px) {
   .vertix-application .stage-editor-body { grid-template-columns:48px minmax(150px,var(--stage-lib-w,190px)) 6px minmax(280px,1fr) 6px minmax(220px,var(--stage-right-w,250px)); }
   .vertix-viewport-utilities button:nth-child(-n+1) { display:none; }
