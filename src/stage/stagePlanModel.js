@@ -203,7 +203,7 @@ export function createDefaultStagePlan({ id = '', name = 'Blank Stage', version 
       dimensions: { width: 32, depth: 24, height: 1 },
       label: 'Stage Deck',
       locked: true,
-      protected: true,
+      protected: false,
       selectable: true,
       visible: true,
       notes: '',

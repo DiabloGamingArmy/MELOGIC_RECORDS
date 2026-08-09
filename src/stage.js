@@ -11,7 +11,7 @@ import { renderBottomSplit } from './stage/bottomPanel/bottomPanel'
 import { bindDashboardEvents, bindStageEditorEventsOnce } from './stage/app/stageEvents'
 import { renderDashboard } from './stage/app/stageDashboard'
 import { renderEditor, renderStageTabbar } from './stage/app/stageEditorRender'
-import { editorTitleStamp, evaluateStageAnimation, getCurrentStageProjectId, isSimpleEditableStageObject, moveSelectedStageObject, projectDate, setSelectedStageObjects, stageIconPath, stageTypes, state, updateSelectedStageObjectField, viewportObjectTransforms } from './stage/app/stageState'
+import { editorTitleStamp, evaluateStageAnimation, getCurrentStageProjectId, insertStageKeyframe, isSimpleEditableStageObject, moveSelectedStageObject, projectDate, setSelectedStageObjects, stageIconPath, stageTypes, state, updateSelectedStageObjectField, viewportObjectTransforms } from './stage/app/stageState'
 import { renderExportPreview } from './stage/export/exportPreview'
 import { renderInspectorTabs, selectedEditorObjectMarkup } from './stage/inspector/inspectorTabs'
 import { renderLeftPanelBySection } from './stage/panels/leftPanels'
@@ -273,6 +273,12 @@ function initStageEditorViewport() {
     },
     onTransformObject: (key, transform) => {
       setSelectedStageObjects([key], key)
+      const before = state.editorProject?.objects?.find((object) => object.id === key)
+      const changedFields = ['x', 'y', 'z', 'rotX', 'rotY', 'rotZ', 'scaleX', 'scaleY', 'scaleZ'].filter((field) => {
+        if (!Number.isFinite(transform[field])) return false
+        const prior = field.startsWith('rot') ? before?.rotation?.[field.slice(-1).toLowerCase()] : field.startsWith('scale') ? before?.scale?.[field.slice(-1).toLowerCase()] : before?.position?.[field]
+        return Math.abs(Number(transform[field]) - Number(prior ?? (field.startsWith('scale') ? 1 : 0))) > 0.000001
+      })
       state.editorObjectTransforms = { ...(state.editorObjectTransforms || {}), [key]: { ...(state.editorObjectTransforms?.[key] || {}), ...transform } }
       if ([transform.x, transform.y, transform.z].some(Number.isFinite)) {
         moveSelectedStageObject({ x: transform.x, y: transform.y, z: transform.z }, { absolute: true })
@@ -284,10 +290,19 @@ function initStageEditorViewport() {
       ;['width', 'depth', 'height'].forEach((field) => {
         if (Number.isFinite(transform[field])) updateSelectedStageObjectField(field, transform[field])
       })
+      if (state.timelineRecordEnabled) changedFields.forEach((field) => insertStageKeyframe(field))
       updateInspectorUI()
       updateEditorModeUI()
       updateViewportControlUI()
       queueStagePlanSave()
+    },
+    onTransformPreview: (key, transform) => {
+      if (key !== state.selectedEditorObject) return
+      Object.entries(transform || {}).forEach(([field, value]) => {
+        if (!Number.isFinite(Number(value))) return
+        const input = app.querySelector(`[data-vertix-transform-field="${field}"]`)
+        if (input && document.activeElement !== input) input.value = String(Number(value.toFixed?.(2) ?? value))
+      })
     },
     viewportMode: state.viewportMode,
     renderMode: state.renderMode,

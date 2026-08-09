@@ -208,12 +208,22 @@ export function bindStageEditorEventsOnce(context) {
   const startTimelinePlayback = () => {
     const animation = projectAnimation()
     if (state.currentFrame >= animation.endFrame) applyTimelineFrame(animation.startFrame)
+    state.timelinePlaybackStartFrame = state.currentFrame
     const startedAt = performance.now() - ((state.currentFrame - animation.startFrame) / animation.frameRate) * 1000
     state.timelinePlaying = true
     const tick = (now) => {
       if (!state.timelinePlaying) return
       const current = animation.startFrame + Math.floor(((now - startedAt) / 1000) * animation.frameRate)
-      if (current > animation.endFrame) { stopTimelinePlayback(); updateEditorModeUI?.(); return }
+      if (current > animation.endFrame) {
+        if (state.timelineLoopEnabled) {
+          const span = Math.max(1, animation.endFrame - animation.startFrame + 1)
+          applyTimelineFrame(animation.startFrame + ((current - animation.startFrame) % span))
+          timelinePlaybackFrame = requestAnimationFrame(tick)
+          return
+        }
+        applyTimelineFrame(animation.endFrame)
+        stopTimelinePlayback(); updateEditorModeUI?.(); return
+      }
       applyTimelineFrame(current)
       timelinePlaybackFrame = requestAnimationFrame(tick)
     }
@@ -226,7 +236,7 @@ export function bindStageEditorEventsOnce(context) {
     const numericFields = new Set(['x', 'y', 'z', 'rotX', 'rotY', 'rotZ', 'scaleX', 'scaleY', 'scaleZ', 'width', 'depth', 'height'])
     const value = numericFields.has(field) ? Number(rawValue) : rawValue
     if (numericFields.has(field) && !Number.isFinite(value)) return false
-    const updated = updateSelectedStageObjectField(field, value)
+    const updated = updateSelectedStageObjectField(field, value, { autoKey: state.timelineRecordEnabled && rerender })
     if (!updated) return false
     ensureObjectModeForSelection()
     state.editorObjectTransforms = {
@@ -409,6 +419,10 @@ export function bindStageEditorEventsOnce(context) {
     if (timelineStart) { applyTimelineFrame(projectAnimation().startFrame, { refreshInspector: true }); return }
     const timelineEnd = e.target.closest('[data-timeline-end]')
     if (timelineEnd) { applyTimelineFrame(projectAnimation().endFrame, { refreshInspector: true }); return }
+    const timelineLoop = e.target.closest('[data-timeline-loop]')
+    if (timelineLoop) { state.timelineLoopEnabled = !state.timelineLoopEnabled; localStorage.setItem('stageTimelineLoopEnabled', String(state.timelineLoopEnabled)); updateEditorModeUI?.(); return }
+    const timelineRecord = e.target.closest('[data-timeline-record]')
+    if (timelineRecord) { state.timelineRecordEnabled = !state.timelineRecordEnabled; localStorage.setItem('stageTimelineRecordEnabled', String(state.timelineRecordEnabled)); updateEditorModeUI?.(); return }
     const timelinePreviousFrame = e.target.closest('[data-timeline-previous-frame]')
     if (timelinePreviousFrame) { applyTimelineFrame(state.currentFrame - 1, { refreshInspector: true }); return }
     const timelineNextFrame = e.target.closest('[data-timeline-next-frame]')
@@ -544,7 +558,7 @@ export function bindStageEditorEventsOnce(context) {
     const saveAsNew = e.target.closest('[data-save-as-new-stage]')
     if (saveAsNew) { saveCurrentPlanAsNew?.(); return }
     const focusSelected = e.target.closest('[data-focus-selected]')
-    if (focusSelected) { getViewportController()?.focusSelected?.(); showStageNotice?.('Focused selected object.'); return }
+    if (focusSelected) { state.focusEnabled = !!getViewportController()?.focusSelected?.(); updateViewportControlUI?.(); updateInspectorUI?.(); showStageNotice?.(state.focusEnabled ? 'Focus tracking enabled.' : 'Focus tracking disabled.'); return }
     const frameAll = e.target.closest('[data-frame-all]')
     if (frameAll) { getViewportController()?.frameAll?.(); showStageNotice?.('Framed full stage.'); return }
     const duplicateSelected = e.target.closest('[data-duplicate-selected]')
@@ -557,7 +571,8 @@ export function bindStageEditorEventsOnce(context) {
     const deleteSelected = e.target.closest('[data-delete-selected]')
     if (deleteSelected) {
       const deleted = deleteSelectedStageObject()
-      syncObjectSurfaces({ refreshViewport: true, refreshLeft: deleted, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
+      if (deleted) { state.focusEnabled = false; getViewportController()?.cancelFocus?.() }
+      syncObjectSurfaces({ refreshViewport: true, refreshLeft: deleted, save: deleted, notice: deleted ? 'Deleted selected object.' : 'No object selected.' })
       return
     }
     const rotateSelected = e.target.closest('[data-rotate-selected]')
@@ -623,12 +638,15 @@ export function bindStageEditorEventsOnce(context) {
       return
     }
     const workspace = e.target.closest('[data-vertix-workspace]')
-    if (workspace && workspace.dataset.vertixWorkspace === 'viewport') {
-      state.activeVertixWorkspace = 'viewport'
+    if (workspace) {
+      state.activeVertixWorkspace = workspace.dataset.vertixWorkspace || 'viewport'
       updateStageTabsUI?.()
+      updateEditorModeUI?.()
       queueEditorStateSave?.()
       return
     }
+    const topMenu = e.target.closest('[data-stage-top-menu]')
+    if (topMenu) { showStageNotice?.(`${String(topMenu.dataset.stageTopMenu || 'menu').replace(/^./, (letter) => letter.toUpperCase())} menu is active.`); return }
     const discipline = e.target.closest('[data-vertix-discipline]')
     if (discipline && discipline.dataset.vertixDiscipline === 'stage') {
       state.activeVertixDiscipline = 'stage'
@@ -1222,9 +1240,12 @@ export function bindStageEditorEventsOnce(context) {
         applyTimelineFrame(e.key === 'Home' ? projectAnimation().startFrame : projectAnimation().endFrame, { refreshInspector: true })
         return
       }
-      if (timelineFocused && e.code === 'Space') {
+      if (timelineFocused && e.code === 'Space' && !e.repeat) {
         e.preventDefault()
-        if (state.timelinePlaying) stopTimelinePlayback(); else startTimelinePlayback()
+        if (e.shiftKey) {
+          if (state.timelinePlaying) { stopTimelinePlayback(); applyTimelineFrame(state.timelinePlaybackStartFrame, { refreshInspector: true }) }
+          else { applyTimelineFrame(projectAnimation().startFrame); startTimelinePlayback() }
+        } else if (state.timelinePlaying) stopTimelinePlayback(); else startTimelinePlayback()
         updateEditorModeUI?.()
         return
       }
@@ -1235,6 +1256,7 @@ export function bindStageEditorEventsOnce(context) {
         return
       }
       if (e.key === 'Escape') {
+        if (state.focusEnabled) { state.focusEnabled = false; getViewportController()?.cancelFocus?.(); updateViewportControlUI?.(); updateInspectorUI?.(); return }
         if (app.querySelector('[data-stage-property-editor]')) {
           e.preventDefault()
           closePropertyEditor()
@@ -1281,13 +1303,15 @@ export function bindStageEditorEventsOnce(context) {
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         const deleted = deleteSelectedStageObject()
-        syncObjectSurfaces({ refreshViewport: true, refreshLeft: deleted, save: deleted, notice: deleted ? 'Deleted selected object.' : 'Protected objects cannot be deleted.' })
+        if (deleted) { state.focusEnabled = false; getViewportController()?.cancelFocus?.() }
+        syncObjectSurfaces({ refreshViewport: true, refreshLeft: deleted, save: deleted, notice: deleted ? 'Deleted selected object.' : 'No object selected.' })
         return
       }
       if (key === 'f') {
         e.preventDefault()
-        getViewportController()?.focusSelected?.()
-        showStageNotice?.('Focused selected object.')
+        state.focusEnabled = !!getViewportController()?.focusSelected?.()
+        updateViewportControlUI?.()
+        showStageNotice?.(state.focusEnabled ? 'Focus tracking enabled.' : 'Focus tracking disabled.')
         return
       }
       if (key === 'a') {

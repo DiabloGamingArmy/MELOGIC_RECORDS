@@ -15,7 +15,8 @@ const primitiveStageAssets = [
   { id: 'primitive-circle', label: 'Circle', type: 'primitive-circle', category: 'primitive', layer: 'stage', icon: '○', dimensions: { width: 3, depth: 3, height: 0.2 }, position: { x: 0, y: 1.1, z: 0 }, metadata: { color: '#4e6576' } },
   { id: 'primitive-cube', label: 'Cube', type: 'primitive-cube', category: 'primitive', layer: 'stage', icon: '◼', dimensions: { width: 2, depth: 2, height: 2 }, position: { x: 0, y: 2, z: 0 }, metadata: { color: '#38475c' } },
   { id: 'primitive-cylinder', label: 'Cylinder', type: 'primitive-cylinder', category: 'primitive', layer: 'stage', icon: '◉', dimensions: { width: 2, depth: 2, height: 2 }, position: { x: 0, y: 2, z: 0 }, metadata: { color: '#38475c' } },
-  { id: 'primitive-label', label: 'Label', type: 'label', category: 'notes', layer: 'notes', icon: 'Aa', dimensions: { width: 3, depth: 0.3, height: 0.1 }, position: { x: 0, y: 1.5, z: 0 }, metadata: { text: 'Label' } }
+  { id: 'primitive-label', label: 'Label', type: 'label', category: 'notes', layer: 'notes', icon: 'Aa', dimensions: { width: 3, depth: 0.3, height: 0.1 }, position: { x: 0, y: 1.5, z: 0 }, metadata: { text: 'Label' } },
+  { id: 'blueprint-directional-note', label: 'Blueprint Directional Note', type: 'blueprint-directional-note', category: 'notes', layer: 'notes', icon: 'Note', dimensions: { width: 3, depth: 0.3, height: 0.1 }, position: { x: 0, y: 1.5, z: 0 }, metadata: { text: 'Directional Note', color: '#61d7ff' } }
 ]
 
 const productionStageAssets = [

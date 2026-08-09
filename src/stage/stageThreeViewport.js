@@ -28,6 +28,7 @@ const objectDefsFromProject = (project = {}, assetResolutions = {}) => {
       selectable: object.selectable !== false,
       visible: object.visible !== false,
       locked: !!object.locked,
+      metadata: object.metadata || {},
       missingAsset: Boolean(assetResolution && assetResolution.status !== 'RESOLVED'),
       missingReason: assetResolution?.reason || ''
     }
@@ -77,6 +78,8 @@ export function mountStageThreeViewport(container, options = {}) {
     controls.minDistance = 12
     controls.maxDistance = 70
     controls.maxPolarAngle = Math.PI * 0.48
+    let focusActive = false
+    let focusTargetKey = ''
     const formatNum = (value, digits = 2) => Number.isFinite(value) ? value.toFixed(digits) : 'n/a'
     let currentViewMode = options.viewportMode || 'perspective3d'
     let currentRenderMode = options.renderMode || 'technical'
@@ -216,7 +219,9 @@ export function mountStageThreeViewport(container, options = {}) {
     }
 
     stageObjectDefs.filter((d) => (d.key !== 'stage-deck' || d.missingAsset) && d.visible !== false).forEach((d) => {
-      const object = d.missingAsset
+      const object = d.type === 'blueprint-directional-note'
+        ? (() => { const group = new THREE.Group(); group.add(makeLabel(String(d.metadata?.text || d.label || 'Directional Note'), [0, 0, 0], d.color || '#61d7ff', true)); return group })()
+        : d.missingAsset
         ? missingProxyFor(d)
         : new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: materialColorFor(d), roughness: 0.72, metalness: 0.22 }))
       if (!d.missingAsset) {
@@ -230,27 +235,6 @@ export function mountStageThreeViewport(container, options = {}) {
     })
 
     const labelSprites = []
-    const line = (points, color) => {
-      const helper = new THREE.Line(new THREE.BufferGeometry().setFromPoints(points.map((p) => new THREE.Vector3(...p))), new THREE.LineBasicMaterial({ color }))
-      helper.userData.generatedAnnotation = true
-      scene.add(helper)
-      return helper
-    }
-    if (deckDef && !deckDef.missingAsset) {
-      const deckY = Number(deckDef.position?.[1] ?? 0.5)
-      line([[0, deckY + 0.65, deckDepth / 2], [0, deckY + 0.65, deckDepth / 2 + 18]], '#5dd9ff')
-      line([[-deckWidth / 2, deckY + 0.67, deckDepth / 2 + 0.8], [deckWidth / 2, deckY + 0.67, deckDepth / 2 + 0.8]], '#57d4ff')
-      line([[0, deckY + 0.65, -deckDepth / 2], [0, deckY + 0.65, -deckDepth / 2 - 8]], '#6b8aff')
-      labelSprites.push(
-        makeLabel(`${formatNum(deckWidth, 0)}' × ${formatNum(deckDepth, 0)}'`, [-deckWidth / 2 + 2, deckY + 2.3, deckDepth / 2 + 2], '#6bdcff', true),
-        makeLabel('Downstage Centerline', [0, deckY + 2.1, deckDepth / 2 + 8], '#61d7ff', true),
-        makeLabel('DSC', [-deckWidth / 2 + 2, deckY + 2, deckDepth / 2], '#ffb16d', true),
-        makeLabel('USC', [0, deckY + 2, -deckDepth / 2 + 1], '#ffb16d', true),
-        makeLabel('Stage Left', [-deckWidth / 2 - 4, deckY + 1.7, deckDepth / 2 + 3], '#ffb16d', true),
-        makeLabel('Stage Right', [deckWidth / 2 + 4, deckY + 1.7, deckDepth / 2 + 3], '#ffb16d', true)
-      )
-    }
-    labelSprites.forEach((sprite) => { sprite.visible = options.showLabels !== false; scene.add(sprite) })
 
     const beams = new THREE.Group()
     const beamSources = Array.isArray(options.project?.fixtures) && options.project.fixtures.length
@@ -651,7 +635,16 @@ export function mountStageThreeViewport(container, options = {}) {
       frameBox(box)
     }
 
-    const focusSelected = () => selectedKey ? frameBox(objectBox(selectedKey)) : frameAll()
+    const cancelFocus = () => { focusActive = false; focusTargetKey = ''; return false }
+    const focusSelected = () => {
+      if (focusActive) return cancelFocus()
+      if (!selectedKey || !objects[selectedKey]) return false
+      frameBox(objectBox(selectedKey))
+      focusActive = true
+      focusTargetKey = selectedKey
+      return true
+    }
+    controls.addEventListener('start', () => { if (!drag.active && !editDrag.active) cancelFocus() })
     const describeTransform = (target, transform = {}) => {
       if (!target) return ''
       if ([transform.width, transform.height, transform.depth].some(Number.isFinite)) return `Size: ${formatNum(transform.width, 1)} x ${formatNum(transform.depth, 1)} x ${formatNum(transform.height, 1)}`
@@ -872,6 +865,7 @@ export function mountStageThreeViewport(container, options = {}) {
         const nextDimensions = { ...editDrag.startDimensions, width: nextWidth, depth: nextDepth, height: Math.max(0.1, editDrag.startDimensions.height) }
         applyObjectDimensions(editDrag.key, nextDimensions)
         editDrag.liveTransform = { x: target.position.x, y: target.position.y, z: target.position.z, ...nextDimensions }
+        options.onTransformPreview?.(editDrag.key, editDrag.liveTransform)
         updateEditOverlay()
         boxHelpers.forEach((helper) => helper.update())
         selectedLabel?.position.set(target.position.x, target.position.y + 2.35, target.position.z)
@@ -943,6 +937,7 @@ export function mountStageThreeViewport(container, options = {}) {
         drag.liveTransform = { scaleX: target.scale.x, scaleY: target.scale.y, scaleZ: target.scale.z }
       }
       gizmo.position.copy(target.position)
+      options.onTransformPreview?.(drag.key, drag.liveTransform || {})
       updateGizmoScale()
       boxHelpers.forEach((helper) => helper.update())
       selectedLabel?.position.set(target.position.x, target.position.y + 2.35, target.position.z)
@@ -1082,7 +1077,7 @@ export function mountStageThreeViewport(container, options = {}) {
     let raf = 0
     let disposed = false
     let loggedFirstRender = false
-    const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); controls.update(); updateGizmoScale(); renderer.render(scene, camera); if (!loggedFirstRender) { loggedFirstRender = true; console.info('[stageThreeViewport] first render complete'); writeStatus() } }
+    const animate = () => { if (disposed) return; raf = requestAnimationFrame(animate); if (focusActive) { const target = objects[focusTargetKey]; if (!target) cancelFocus(); else { const center = objectBox(focusTargetKey)?.getCenter(new THREE.Vector3()); if (center) { const delta = center.clone().sub(controls.target); controls.target.addScaledVector(delta, 0.16); camera.position.addScaledVector(delta, 0.16) } } } controls.update(); updateGizmoScale(); renderer.render(scene, camera); if (!loggedFirstRender) { loggedFirstRender = true; console.info('[stageThreeViewport] first render complete'); writeStatus() } }
     animate()
 
     const update = (nextOptions = {}) => {
@@ -1132,7 +1127,7 @@ export function mountStageThreeViewport(container, options = {}) {
       console.info('[stageThreeViewport] disposed')
     }
 
-    return { dispose, update, focusSelected, frameAll, cancelTransform }
+    return { dispose, update, focusSelected, frameAll, cancelTransform, cancelFocus, isFocusActive: () => focusActive }
   } catch (error) {
     console.error('[stageThreeViewport] mount failed', error)
     container.classList.add('is-three-error')

@@ -154,6 +154,10 @@ export const state = {
   timelineSnapEnabled: localStorage.getItem('stageTimelineSnapEnabled') !== 'false',
   timelineSnapInterval: [1, 2, 5, 10, 25].includes(savedTimelineSnapInterval) ? savedTimelineSnapInterval : 1,
   timelinePlaying: false,
+  timelinePlaybackStartFrame: 1,
+  timelineLoopEnabled: localStorage.getItem('stageTimelineLoopEnabled') === 'true',
+  timelineRecordEnabled: localStorage.getItem('stageTimelineRecordEnabled') === 'true',
+  focusEnabled: false,
   selectedTimelineKey: null,
   selectedTimelineKeys: [],
   timelineExpandedObjectIds: {},
@@ -750,7 +754,7 @@ function applyCommandSnapshot(command, snapshotKey) {
   removeObjectSnapshot(command.objectId, { removeLinked: command.removeLinked })
   if (command.animationBefore || command.animationAfter) state.editorProject.animation = cloneData(snapshotKey === 'before' ? command.animationBefore : command.animationAfter)
   evaluateStageAnimation(state.currentFrame)
-  setSelectedStageObjects(['stage-deck'], 'stage-deck')
+  setSelectedStageObjects([], '')
 }
 
 export function undoStageEdit() {
@@ -784,6 +788,10 @@ export function updateSelectedStageObjectField(field, value, options = {}) {
     object.scale = { ...(object.scale || {}), [axis]: Math.max(0.01, Number(value) || 1) }
   }
   else if (field === 'label') { object.label = String(value || ''); object.name = String(value || object.name || '') }
+  else if (field === 'noteText') {
+    object.metadata = { ...(object.metadata || {}), text: String(value || '') }
+    if (!object.label || object.label === 'Blueprint Directional Note' || object.label === 'Directional Note') object.label = String(value || 'Directional Note')
+  }
   else if (field === 'locked') object.locked = !!value
   else if (field === 'visible') object.visible = !!value
   else if (field === 'notes') object.notes = String(value || '')

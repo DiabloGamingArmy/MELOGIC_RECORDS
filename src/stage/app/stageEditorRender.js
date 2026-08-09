@@ -10,7 +10,7 @@ function renderEditorState(title, body) {
 }
 
 function renderMenubar(title, stamp) {
-  return `<header class="stage-editor-menubar vertix-global-header"><div class="vertix-global-header-left"><button class="vertix-wordmark" type="button" data-stage-app-menu aria-label="Vertix application menu">VERTIX</button><nav aria-label="Vertix application menus"><button type="button" disabled>File</button><button type="button" disabled>Edit</button><button type="button" disabled>Window</button><button type="button" disabled>Help</button></nav></div><div class="stage-editor-project-title"><span>Scene</span><h2 data-stage-project-title>${title}</h2><p data-stage-project-version>${stamp} · v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><span class="stage-save-pill" data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span><button type="button" data-save-stage-plan>Save</button><button type="button" class="is-send" data-open-export>Render</button></div></header>`
+  return `<header class="stage-editor-menubar vertix-global-header"><div class="vertix-global-header-left"><button class="vertix-wordmark" type="button" data-stage-app-menu aria-label="Vertix application menu">VERTIX</button><nav aria-label="Vertix application menus"><button type="button" data-stage-top-menu="file">File</button><button type="button" data-stage-top-menu="edit">Edit</button><button type="button" data-stage-top-menu="window">Window</button><button type="button" data-stage-top-menu="help">Help</button></nav></div><div class="stage-editor-project-title"><span>Scene</span><h2 data-stage-project-title>${title}</h2><p data-stage-project-version>${stamp} · v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><span class="stage-save-pill" data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span><button type="button" data-save-stage-plan>Save</button><button type="button" class="is-send" data-open-export>Render</button></div></header>`
 }
 
 function renderRail() {
@@ -19,6 +19,7 @@ function renderRail() {
 }
 
 function renderViewport() {
+  if (state.activeVertixWorkspace !== 'viewport') return `<section class="stage-editor-workspace"><div class="vertix-workspace-placeholder"><span>VERTIX WORKSPACE</span><h3>${state.activeVertixWorkspace}</h3><p>This workspace shell is ready for its dedicated toolset.</p><button type="button" data-vertix-workspace="viewport">Return to Viewport</button></div></section>`
   const viewButtons = editorViewModes.map(([k, l]) => `<button type="button" class="${state.viewportMode === k ? 'is-active-view' : ''}" data-view-mode="${k}" data-guide-id="stagemaker-view-${k}" data-guide-label="${l} view" data-guide-role="stagemaker-view-button">${l}</button>`).join('')
   const toolIcons = { select: '↖', move: '↔', rotate: '⟳', scale: '⤢', pan: '✥' }
   const shortcutByTool = { select: 'V', pan: 'H', move: 'G / M', rotate: 'R', scale: 'S' }
@@ -67,7 +68,7 @@ function renderBottomPanel() {
 export function renderStageTabbar() {
   const tabs = ensureStageTabs()
   const stageTabs = tabs.map((tab) => `<button type="button" class="stage-editor-project-tab ${state.activeStageTabId === tab.id ? 'is-active' : ''}" data-stage-tab="${tab.id}" aria-selected="${state.activeStageTabId === tab.id}">${tab.title || 'Untitled Stage'}</button>`).join('')
-  const workspaces = vertixWorkspaceTabs.map((workspace) => `<button type="button" class="vertix-workspace-tab ${state.activeVertixWorkspace === workspace.key ? 'is-active' : ''}" data-vertix-workspace="${workspace.key}" ${workspace.available ? '' : 'disabled'} title="${workspace.available ? `${workspace.label} workspace` : `${workspace.label} workspace is not available yet`}">${workspace.label}</button>`).join('')
+  const workspaces = vertixWorkspaceTabs.map((workspace) => `<button type="button" class="vertix-workspace-tab ${state.activeVertixWorkspace === workspace.key ? 'is-active' : ''}" data-vertix-workspace="${workspace.key}" title="${workspace.label} workspace">${workspace.label}</button>`).join('')
   const canRemove = tabs.length > 1
   return `<section class="stage-editor-tabbar vertix-workspace-bar"><div class="vertix-workspace-tabs" role="tablist" aria-label="Vertix workspaces">${workspaces}</div><div class="vertix-scene-tabs"><span>Scenes</span><div class="stage-editor-project-tabs">${stageTabs}</div><div class="stage-editor-tab-actions"><button type="button" data-add-stage-tab title="Add stage" aria-label="Add stage">+</button><button type="button" data-remove-stage-tab title="Remove current stage" aria-label="Remove current stage" ${canRemove ? '' : 'aria-disabled="true"'}>-</button></div></div></section>`
 }

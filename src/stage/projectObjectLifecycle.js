@@ -50,7 +50,7 @@ export function createProjectObjectDeletion(project, requestedIds, { selectedObj
   const ids = new Set(uniqueIds(requestedIds))
   const removedObjects = (project.objects || [])
     .map((object, index) => ({ object, index }))
-    .filter(({ object }) => ids.has(objectId(object)) && !object?.protected)
+    .filter(({ object }) => ids.has(objectId(object)))
     .map(({ object, index }) => ({ index, object: clone(object) }))
   if (!removedObjects.length) return null
 
