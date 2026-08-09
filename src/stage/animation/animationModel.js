@@ -1,4 +1,5 @@
 export const DEFAULT_ANIMATION = { frameRate: 30, startFrame: 1, endFrame: 250, tracks: [] }
+export const SUPPORTED_FRAME_RATES = Object.freeze([23.976, 24, 25, 29.97, 30, 50, 59.94, 60])
 
 export const ANIMATABLE_PATHS = {
   x: 'transform.position.x', y: 'transform.position.y', z: 'transform.position.z',
@@ -13,7 +14,7 @@ const keyId = (targetObjectId, propertyPath) => `${targetObjectId}:${propertyPat
 export function normalizeProjectAnimation(raw = {}) {
   const startFrame = clampFrame(raw.startFrame, DEFAULT_ANIMATION.startFrame)
   const endFrame = Math.max(startFrame, clampFrame(raw.endFrame, DEFAULT_ANIMATION.endFrame))
-  const frameRate = [24, 25, 30, 50, 60].includes(Number(raw.frameRate)) ? Number(raw.frameRate) : DEFAULT_ANIMATION.frameRate
+  const frameRate = SUPPORTED_FRAME_RATES.includes(Number(raw.frameRate)) ? Number(raw.frameRate) : DEFAULT_ANIMATION.frameRate
   const tracks = Array.isArray(raw.tracks) ? raw.tracks.map((track) => {
     const targetObjectId = String(track?.targetObjectId || '')
     const propertyPath = String(track?.propertyPath || '')

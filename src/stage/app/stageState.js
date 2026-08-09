@@ -111,6 +111,9 @@ export const editorMockObjects = [
 export const stageLayers = ['stage', 'backline', 'audio', 'lighting', 'rigging', 'video', 'venue', 'power', 'notes', 'measurements']
 
 const savedBottomSplit = Number(localStorage.getItem('stagePaneBottomSplit'))
+const savedTimelineZoom = Number(localStorage.getItem('stageTimelineZoom'))
+const savedTimelineGridInterval = Number(localStorage.getItem('stageTimelineGridInterval'))
+const savedTimelineSnapInterval = Number(localStorage.getItem('stageTimelineSnapInterval'))
 
 export const state = {
   user: null,
@@ -146,7 +149,10 @@ export const state = {
   activeLibraryCategory: 'all',
   objectLibrarySearch: '',
   currentFrame: 1,
-  timelineZoom: 1,
+  timelineZoom: Number.isFinite(savedTimelineZoom) ? Math.max(0.5, Math.min(4, savedTimelineZoom)) : 1,
+  timelineGridInterval: [1, 2, 5, 10, 25].includes(savedTimelineGridInterval) ? savedTimelineGridInterval : 5,
+  timelineSnapEnabled: localStorage.getItem('stageTimelineSnapEnabled') !== 'false',
+  timelineSnapInterval: [1, 2, 5, 10, 25].includes(savedTimelineSnapInterval) ? savedTimelineSnapInterval : 1,
   timelinePlaying: false,
   selectedTimelineKey: null,
   selectedTimelineKeys: [],
@@ -603,10 +609,53 @@ export function moveStageKeyframe(trackId, fromFrame, toFrame) {
   return recordAnimationCommand(before, after)
 }
 
+/** Moves a selected group as one history entry while preserving its frame offsets. */
+export function moveStageKeyframes(moves = []) {
+  if (!state.editorProject || !Array.isArray(moves) || !moves.length) return false
+  const before = cloneData(projectAnimation())
+  const byTrack = new Map()
+  moves.forEach(({ trackId, fromFrame, toFrame }) => {
+    if (!trackId || !Number.isFinite(Number(fromFrame)) || !Number.isFinite(Number(toFrame))) return
+    const entries = byTrack.get(trackId) || []
+    entries.push({ fromFrame: Math.round(Number(fromFrame)), toFrame: Math.round(Number(toFrame)) })
+    byTrack.set(trackId, entries)
+  })
+  const after = {
+    ...before,
+    tracks: before.tracks.map((track) => {
+      const movesForTrack = byTrack.get(track.id)
+      if (!movesForTrack?.length) return track
+      const moveBySource = new Map(movesForTrack.map((move) => [move.fromFrame, move.toFrame]))
+      const sourceFrames = new Set(moveBySource.keys())
+      const destinationFrames = new Set(moveBySource.values())
+      const moving = track.keyframes.filter((keyframe) => sourceFrames.has(keyframe.frame)).map((keyframe) => ({ ...keyframe, frame: moveBySource.get(keyframe.frame) }))
+      if (!moving.length) return track
+      const stationary = track.keyframes.filter((keyframe) => !sourceFrames.has(keyframe.frame) && !destinationFrames.has(keyframe.frame))
+      return { ...track, keyframes: [...stationary, ...moving].sort((left, right) => left.frame - right.frame) }
+    })
+  }
+  if (JSON.stringify(before) === JSON.stringify(after)) return false
+  state.editorProject.animation = after
+  state.selectedTimelineKeys = moves.map(({ trackId, toFrame }) => ({ trackId, frame: Math.round(Number(toFrame)) }))
+  state.selectedTimelineKey = state.selectedTimelineKeys[0] || null
+  evaluateStageAnimation(state.currentFrame)
+  return recordAnimationCommand(before, after)
+}
+
 export function updateStageAnimationRange(values = {}) {
   if (!state.editorProject) return false
   const before = cloneData(projectAnimation())
   const after = normalizeProjectAnimation({ ...before, ...values })
+  state.editorProject.animation = after
+  evaluateStageAnimation(state.currentFrame)
+  return recordAnimationCommand(before, after)
+}
+
+export function updateStageAnimationFrameRate(frameRate) {
+  if (!state.editorProject) return false
+  const before = cloneData(projectAnimation())
+  const after = normalizeProjectAnimation({ ...before, frameRate: Number(frameRate) })
+  if (before.frameRate === after.frameRate) return false
   state.editorProject.animation = after
   evaluateStageAnimation(state.currentFrame)
   return recordAnimationCommand(before, after)

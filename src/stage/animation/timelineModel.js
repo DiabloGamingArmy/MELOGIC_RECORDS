@@ -27,6 +27,28 @@ export function timelineRulerStep({ startFrame = 1, endFrame = 250, zoom = 1 } =
   return Math.min(target, span)
 }
 
+export function timelineGridStep({ startFrame = 1, endFrame = 250, zoom = 1, gridInterval = 5 } = {}) {
+  // Grid subdivision is a user preference; ruler labels adapt independently
+  // so changing zoom never silently changes the visual snap/grid cadence.
+  return Math.max(1, Math.round(Number(gridInterval) || 1))
+}
+
+export function snapTimelineFrame(frame, { startFrame = 1, endFrame = 250, enabled = true, interval = 1 } = {}) {
+  const bounded = Math.max(Number(startFrame), Math.min(Number(endFrame), Math.round(Number(frame) || 0)))
+  if (!enabled) return bounded
+  const step = Math.max(1, Math.round(Number(interval) || 1))
+  return Math.max(Number(startFrame), Math.min(Number(endFrame), Number(startFrame) + Math.round((bounded - Number(startFrame)) / step) * step))
+}
+
+export function timelineTimeLabel(frame, frameRate = 30) {
+  const seconds = Math.max(0, (Number(frame) || 0) / (Number(frameRate) || 30))
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const wholeSeconds = Math.floor(seconds % 60)
+  const milliseconds = Math.round((seconds - Math.floor(seconds)) * 1000)
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`
+}
+
 const propertyLabel = (path = '') => {
   const [, group = '', axis = ''] = String(path).match(/^transform\.(position|rotation|scale)\.(x|y|z)$/) || []
   if (!group) return path

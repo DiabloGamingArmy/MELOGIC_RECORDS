@@ -9,6 +9,7 @@ import {
   isSimpleEditableStageObject,
   moveSelectedStageObject,
   moveStageKeyframe,
+  moveStageKeyframes,
   redoStageEdit,
   resetSelectedStageObjectRotation,
   rotateSelectedStageObject,
@@ -17,13 +18,14 @@ import {
   state,
   projectAnimation,
   setStageCurrentFrame,
+  updateStageAnimationFrameRate,
   updateStageAnimationRange,
   undoStageEdit,
   updateSelectedStageObjectField,
   updateSelectedStageObjectsField,
   viewportObjectTransforms
 } from './stageState'
-import { clampTimelineZoom, timelineFrameFromPointer, timelinePixelsPerFrame } from '../animation/timelineModel.js'
+import { clampTimelineZoom, snapTimelineFrame, timelineFrameFromPointer, timelinePixelsPerFrame, timelineTimeLabel } from '../animation/timelineModel.js'
 
 let stageEditorEventsBound = false
 let timelinePlaybackFrame = 0
@@ -170,8 +172,8 @@ export function bindStageEditorEventsOnce(context) {
       marker.style.left = marker.dataset.timelinePlayheadBody === 'true' ? `calc(var(--timeline-track-width) + ${left}px)` : `${left}px`
     })
     app.querySelectorAll('[data-timeline-current-frame]').forEach((input) => { input.value = String(state.currentFrame) })
-    app.querySelectorAll('[data-stage-frame-status]').forEach((status) => { status.textContent = status.tagName === 'B' ? `${state.currentFrame} / ${animation.endFrame}` : `Frame ${state.currentFrame} / ${animation.endFrame}` })
-    app.querySelectorAll('[data-timeline-frame-status]').forEach((status) => { status.textContent = `${state.currentFrame} / ${animation.endFrame}` })
+    app.querySelectorAll('[data-stage-frame-status]').forEach((status) => { status.textContent = `Frame ${state.currentFrame} / ${animation.endFrame}` })
+    app.querySelectorAll('[data-timeline-frame-status]').forEach((status) => { status.textContent = timelineTimeLabel(state.currentFrame, animation.frameRate) })
   }
 
   const applyTimelineFrame = (frame, { refreshInspector = false } = {}) => {
@@ -184,7 +186,7 @@ export function bindStageEditorEventsOnce(context) {
   const frameFromTimelinePointer = (event, root = event.target.closest('[data-timeline-root]')) => {
     const canvas = root?.querySelector?.('[data-timeline-canvas]')
     if (!canvas) return projectAnimation().startFrame
-    const trackWidth = Number.parseFloat(getComputedStyle(canvas).getPropertyValue('--timeline-track-width')) || 210
+    const trackWidth = Number.parseFloat(getComputedStyle(canvas).getPropertyValue('--timeline-track-width')) || 260
     return timelineFrameFromPointer({
       clientX: event.clientX,
       canvasLeft: canvas.getBoundingClientRect().left,
@@ -205,6 +207,7 @@ export function bindStageEditorEventsOnce(context) {
 
   const startTimelinePlayback = () => {
     const animation = projectAnimation()
+    if (state.currentFrame >= animation.endFrame) applyTimelineFrame(animation.startFrame)
     const startedAt = performance.now() - ((state.currentFrame - animation.startFrame) / animation.frameRate) * 1000
     state.timelinePlaying = true
     const tick = (now) => {
@@ -406,6 +409,10 @@ export function bindStageEditorEventsOnce(context) {
     if (timelineStart) { applyTimelineFrame(projectAnimation().startFrame, { refreshInspector: true }); return }
     const timelineEnd = e.target.closest('[data-timeline-end]')
     if (timelineEnd) { applyTimelineFrame(projectAnimation().endFrame, { refreshInspector: true }); return }
+    const timelinePreviousFrame = e.target.closest('[data-timeline-previous-frame]')
+    if (timelinePreviousFrame) { applyTimelineFrame(state.currentFrame - 1, { refreshInspector: true }); return }
+    const timelineNextFrame = e.target.closest('[data-timeline-next-frame]')
+    if (timelineNextFrame) { applyTimelineFrame(state.currentFrame + 1, { refreshInspector: true }); return }
     const timelinePlay = e.target.closest('[data-timeline-play]')
     if (timelinePlay) { if (state.timelinePlaying) stopTimelinePlayback(); else startTimelinePlayback(); updateEditorModeUI?.(); return }
     const timelineFrame = e.target.closest('[data-timeline-frame]')
@@ -446,8 +453,20 @@ export function bindStageEditorEventsOnce(context) {
       updateViewportControlUI?.()
       return
     }
+    const timelineSnap = e.target.closest('[data-timeline-snap]')
+    if (timelineSnap) {
+      state.timelineSnapEnabled = !state.timelineSnapEnabled
+      localStorage.setItem('stageTimelineSnapEnabled', String(state.timelineSnapEnabled))
+      updateEditorModeUI?.()
+      return
+    }
     const timelineZoom = e.target.closest('[data-timeline-zoom]')
-    if (timelineZoom) { state.timelineZoom = clampTimelineZoom(Number(state.timelineZoom || 1) + (timelineZoom.dataset.timelineZoom === 'in' ? 0.25 : -0.25)); updateEditorModeUI?.(); return }
+    if (timelineZoom) {
+      state.timelineZoom = clampTimelineZoom(Number(state.timelineZoom || 1) + (timelineZoom.dataset.timelineZoom === 'in' ? 0.25 : -0.25))
+      localStorage.setItem('stageTimelineZoom', String(state.timelineZoom))
+      updateEditorModeUI?.()
+      return
+    }
     const toolMode = e.target.closest('[data-tool-mode]')
     if (toolMode) {
       setEditorToolMode(toolMode.dataset.toolMode || 'select')
@@ -878,6 +897,32 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('change', (e) => {
+    const timelineFrameRate = e.target.closest('[data-timeline-frame-rate]')
+    if (timelineFrameRate) {
+      const changed = updateStageAnimationFrameRate(timelineFrameRate.value)
+      if (changed) { updateEditorModeUI?.(); queueStagePlanSave?.() }
+      return
+    }
+    const timelineGridInterval = e.target.closest('[data-timeline-grid-interval]')
+    if (timelineGridInterval) {
+      const value = Number(timelineGridInterval.value)
+      if ([1, 2, 5, 10, 25].includes(value)) {
+        state.timelineGridInterval = value
+        localStorage.setItem('stageTimelineGridInterval', String(value))
+        updateEditorModeUI?.()
+      }
+      return
+    }
+    const timelineSnapInterval = e.target.closest('[data-timeline-snap-interval]')
+    if (timelineSnapInterval) {
+      const value = Number(timelineSnapInterval.value)
+      if ([1, 2, 5, 10, 25].includes(value)) {
+        state.timelineSnapInterval = value
+        localStorage.setItem('stageTimelineSnapInterval', String(value))
+        updateEditorModeUI?.()
+      }
+      return
+    }
     const timelineRange = e.target.closest('[data-timeline-start-frame], [data-timeline-end-frame]')
     if (timelineRange) {
       const changed = updateStageAnimationRange(timelineRange.matches('[data-timeline-start-frame]') ? { startFrame: Number(timelineRange.value) } : { endFrame: Number(timelineRange.value) })
@@ -1044,18 +1089,32 @@ export function bindStageEditorEventsOnce(context) {
       if (state.timelinePlaying) stopTimelinePlayback()
       root?.focus?.()
       timelineKey.setPointerCapture?.(e.pointerId)
+      const selectedKeys = (state.selectedTimelineKeys?.length ? state.selectedTimelineKeys : [state.selectedTimelineKey])
+      const sourceKeys = selectedKeys.filter((selected) => Number.isFinite(Number(selected?.frame)) && selected?.trackId)
+      const animation = projectAnimation()
+      const moveGroup = (event) => {
+        const targetFrame = snapTimelineFrame(frameFromTimelinePointer(event, root), { ...animation, enabled: state.timelineSnapEnabled, interval: state.timelineSnapInterval })
+        const desiredDelta = targetFrame - fromFrame
+        const minDelta = Math.max(...sourceKeys.map((selected) => animation.startFrame - selected.frame))
+        const maxDelta = Math.min(...sourceKeys.map((selected) => animation.endFrame - selected.frame))
+        const delta = Math.max(minDelta, Math.min(maxDelta, desiredDelta))
+        return sourceKeys.map((selected) => ({ trackId: selected.trackId, fromFrame: selected.frame, toFrame: selected.frame + delta }))
+      }
       const onMove = (event) => {
-        const frame = frameFromTimelinePointer(event, root)
-        timelineKey.style.left = `${(frame - projectAnimation().startFrame) * timelinePixelsPerFrame(state.timelineZoom)}px`
-        timelineKey.dataset.timelineDragFrame = String(frame)
-        timelineKey.title = `Frame ${frame}`
+        moveGroup(event).forEach((move) => {
+          const key = root?.querySelector?.(`[data-timeline-key="${CSS.escape(move.trackId)}"][data-keyframe-frame="${move.fromFrame}"]`)
+          if (!key) return
+          key.style.left = `${(move.toFrame - animation.startFrame) * timelinePixelsPerFrame(state.timelineZoom)}px`
+          key.dataset.timelineDragFrame = String(move.toFrame)
+          key.title = `Frame ${move.toFrame}`
+        })
       }
       const onUp = (event) => {
-        const frame = frameFromTimelinePointer(event, root)
+        const moves = moveGroup(event)
         timelineKey.releasePointerCapture?.(e.pointerId)
         window.removeEventListener('pointermove', onMove)
         window.removeEventListener('pointerup', onUp)
-        const moved = moveStageKeyframe(trackId, fromFrame, frame)
+        const moved = moves.length > 1 ? moveStageKeyframes(moves) : moveStageKeyframe(trackId, fromFrame, moves[0]?.toFrame ?? fromFrame)
         timelineKeyMoved = moved
         if (moved) { updateEditorModeUI?.(); queueStagePlanSave?.() }
       }
@@ -1125,18 +1184,18 @@ export function bindStageEditorEventsOnce(context) {
   app.addEventListener('wheel', (e) => {
     const root = e.target.closest?.('[data-timeline-root]')
     if (!root || !(e.ctrlKey || e.metaKey)) return
-    const scroll = root.querySelector('[data-timeline-scroll]')
     const beforeFrame = frameFromTimelinePointer(e, root)
     const nextZoom = clampTimelineZoom(Number(state.timelineZoom || 1) + (e.deltaY < 0 ? 0.2 : -0.2))
     if (nextZoom === state.timelineZoom) return
     state.timelineZoom = nextZoom
+    localStorage.setItem('stageTimelineZoom', String(nextZoom))
     e.preventDefault()
     updateEditorModeUI?.()
     requestAnimationFrame(() => {
       const canvas = app.querySelector('[data-timeline-canvas]')
       const nextScroll = app.querySelector('[data-timeline-scroll]')
       if (!canvas || !nextScroll) return
-      const trackWidth = Number.parseFloat(getComputedStyle(canvas).getPropertyValue('--timeline-track-width')) || 210
+      const trackWidth = Number.parseFloat(getComputedStyle(canvas).getPropertyValue('--timeline-track-width')) || 260
       nextScroll.scrollLeft = Math.max(0, (beforeFrame - projectAnimation().startFrame) * timelinePixelsPerFrame(state.timelineZoom) + trackWidth - (e.clientX - canvas.getBoundingClientRect().left))
     })
   }, { passive: false })
@@ -1156,6 +1215,11 @@ export function bindStageEditorEventsOnce(context) {
       if (timelineFocused && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
         e.preventDefault()
         applyTimelineFrame(state.currentFrame + (e.key === 'ArrowLeft' ? -1 : 1), { refreshInspector: true })
+        return
+      }
+      if (timelineFocused && (e.key === 'Home' || e.key === 'End')) {
+        e.preventDefault()
+        applyTimelineFrame(e.key === 'Home' ? projectAnimation().startFrame : projectAnimation().endFrame, { refreshInspector: true })
         return
       }
       if (timelineFocused && e.code === 'Space') {

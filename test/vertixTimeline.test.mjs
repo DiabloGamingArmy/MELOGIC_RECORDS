@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { moveAnimationKeyframe, normalizeProjectAnimation } from '../src/stage/animation/animationModel.js'
-import { buildTimelineTrackHierarchy, timelineFrameAtOffset, timelineFrameFromPointer, timelinePixelsPerFrame, timelineRulerStep } from '../src/stage/animation/timelineModel.js'
+import { moveAnimationKeyframe, normalizeProjectAnimation, SUPPORTED_FRAME_RATES } from '../src/stage/animation/animationModel.js'
+import { buildTimelineTrackHierarchy, snapTimelineFrame, timelineFrameAtOffset, timelineFrameFromPointer, timelineGridStep, timelinePixelsPerFrame, timelineRulerStep, timelineTimeLabel } from '../src/stage/animation/timelineModel.js'
 import { editorFarPlaneForProject } from '../src/stage/viewportVisibilityModel.js'
 
 const animation = normalizeProjectAnimation({
@@ -22,6 +22,24 @@ test('timeline pointer mapping honors zoom, bounds, and horizontal canvas offset
   assert.equal(timelineFrameAtOffset(999999, animation), 800)
   assert.equal(timelineFrameFromPointer({ clientX: 490, canvasLeft: 100, scrollLeft: 200, trackWidth: 210, animation, zoom: 1 }), 58)
   assert.ok(timelineRulerStep({ ...animation, zoom: 0.5 }) > timelineRulerStep({ ...animation, zoom: 4 }))
+})
+
+test('timeline grid, snapping, and time display keep frames authoritative', () => {
+  assert.equal(timelineGridStep({ ...animation, zoom: 1, gridInterval: 5 }), 5)
+  assert.equal(snapTimelineFrame(18, { ...animation, enabled: true, interval: 5 }), 20)
+  assert.equal(snapTimelineFrame(18, { ...animation, enabled: false, interval: 5 }), 18)
+  assert.equal(snapTimelineFrame(-10, { ...animation, enabled: true, interval: 5 }), animation.startFrame)
+  assert.equal(timelineTimeLabel(120, 30), '00:00:04.000')
+  assert.equal(timelineTimeLabel(24, 23.976), '00:00:01.001')
+})
+
+test('project animation accepts production frame-rate presets without retiming frames', () => {
+  for (const frameRate of [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]) {
+    const normalized = normalizeProjectAnimation({ ...animation, frameRate })
+    assert.equal(normalized.frameRate, frameRate)
+    assert.deepEqual(normalized.tracks[0].keyframes.map((keyframe) => keyframe.frame), [10, 80])
+  }
+  assert.deepEqual(SUPPORTED_FRAME_RATES, [23.976, 24, 25, 29.97, 30, 50, 59.94, 60])
 })
 
 test('track hierarchy keeps UUID targeting and project-owned labels, including missing-source objects', () => {
