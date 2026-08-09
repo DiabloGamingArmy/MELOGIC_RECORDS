@@ -659,7 +659,7 @@ function formatTime(value = '') {
 
 function postAvatar(post) {
   const name = post.authorDisplayName || post.authorUsername || 'M'
-  if (post.authorAvatarURL) return `<img src="${escapeHtml(post.authorAvatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
+  if (post.authorAvatarURL) return `<img src="${escapeHtml(post.authorAvatarURL)}" alt="${escapeHtml(name)} avatar" width="48" height="48" loading="lazy" decoding="async" />`
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
@@ -3055,10 +3055,14 @@ async function loadViewerState() {
     state.viewerState = {}
     return
   }
-  const missingPosts = state.posts.filter((post) => !Object.prototype.hasOwnProperty.call(state.viewerState, post.postId))
-  if (!missingPosts.length) return
-  const entries = await Promise.all(missingPosts.map(async (post) => [post.postId, await getCommunityPostViewerState(post.postId, state.currentUser.uid)]))
-  state.viewerState = { ...state.viewerState, ...Object.fromEntries(entries) }
+  // Counts are part of the post document, but a user's own reaction state is
+  // stored in private child documents. Always refresh that state on load so
+  // active reaction buttons cannot be left behind by a stale in-memory map.
+  const entries = await Promise.all(state.posts.map(async (post) => [
+    post.postId,
+    await getCommunityPostViewerState(post.postId, state.currentUser.uid)
+  ]))
+  state.viewerState = Object.fromEntries(entries)
 }
 
 async function loadCommentViewerState() {
@@ -3303,6 +3307,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
     if (previousPostId !== id && !state.commentsByPostId[id]?.loaded) resetActivePostComments(id)
     syncActiveCommentState(id)
     render()
+    loadViewerState().then(render).catch(() => null)
     loadFocusedComment({ renderAfter: true })
       .then(() => loadComments({ renderAfter: true }))
       .catch(() => loadComments({ renderAfter: true }))

@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, startAfter, Timestamp, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocFromServer, getDocs, limit, orderBy, query, startAfter, Timestamp, where } from 'firebase/firestore'
 import { httpsCallable } from 'firebase/functions'
 import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebase/storage'
 import { db } from '../firebase/firestore'
@@ -194,6 +194,16 @@ function safeProductAudioPreviewPath(product = {}, requestedPath = '') {
 
 const storageUrlCache = new Map()
 
+async function getFreshDocument(documentRef) {
+  try {
+    return await getDocFromServer(documentRef)
+  } catch {
+    // Preserve the last known interaction state if the connection goes away
+    // while a Community page is open.
+    return getDoc(documentRef).catch(() => null)
+  }
+}
+
 async function safeStorageUrl(path = '') {
   const clean = String(path || '').trim()
   if (!clean || !storage) return ''
@@ -287,6 +297,52 @@ async function attachCommunityCommentUrls(comment = {}) {
     url: attachment.url || await safeStorageUrl(attachment.path)
   })))
   return { ...comment, attachments }
+}
+
+function communityCommentAuthorFromProfile(comment = {}, profile = {}) {
+  const displayName = String(profile.displayName || profile.name || '').trim()
+  const username = String(profile.username || profile.handle || '').trim()
+  const avatarURL = String(
+    profile.avatarThumbnailURL
+    || profile.photoThumbnailURL
+    || profile.avatarURL
+    || profile.avatarUrl
+    || profile.photoURL
+    || profile.photoUrl
+    || ''
+  ).trim()
+  return {
+    ...comment,
+    authorDisplayName: displayName || comment.authorDisplayName || 'Melogic Creator',
+    authorUsername: username || comment.authorUsername || '',
+    authorAvatarURL: avatarURL || comment.authorAvatarURL || ''
+  }
+}
+
+async function hydrateCommunityCommentAuthors(comments = []) {
+  const authorUids = [...new Set(comments.map((comment) => String(comment?.authorUid || '').trim()).filter(Boolean))]
+  if (!authorUids.length) return comments
+
+  // These are public profile documents. Read them for every comment fetch so
+  // display names, usernames, and avatars do not remain stale in comment data.
+  const profiles = await Promise.all(authorUids.map(async (uid) => {
+    const snapshot = await getDoc(doc(db, 'profiles', uid)).catch(() => null)
+    return [uid, snapshot?.exists?.() ? snapshot.data() || {} : {}]
+  }))
+  const profileByUid = new Map(profiles)
+  return comments.map((comment) => communityCommentAuthorFromProfile(comment, profileByUid.get(comment.authorUid) || {}))
+}
+
+async function hydrateCommunityComments(comments = []) {
+  const [commentsWithUrls, commentsWithAuthors] = await Promise.all([
+    Promise.all(comments.map(attachCommunityCommentUrls)),
+    hydrateCommunityCommentAuthors(comments)
+  ])
+  return commentsWithUrls.map((comment, index) => ({
+    ...comment,
+    ...commentsWithAuthors[index],
+    attachments: comment.attachments
+  }))
 }
 
 export function normalizeCommunityStory(docSnapOrData = {}, explicitId = '') {
@@ -673,9 +729,9 @@ export async function getCommunityPostViewerState(postId = '', uid = '') {
   const viewerUid = String(uid || '').trim()
   if (!id || !viewerUid) return { liked: false, disliked: false, saved: false }
   const [likeSnap, dislikeSnap, saveSnap] = await Promise.all([
-    getDoc(doc(db, POST_COLLECTION, id, 'likes', viewerUid)).catch(() => null),
-    getDoc(doc(db, POST_COLLECTION, id, 'dislikes', viewerUid)).catch(() => null),
-    getDoc(doc(db, POST_COLLECTION, id, 'saves', viewerUid)).catch(() => null)
+    getFreshDocument(doc(db, POST_COLLECTION, id, 'likes', viewerUid)),
+    getFreshDocument(doc(db, POST_COLLECTION, id, 'dislikes', viewerUid)),
+    getFreshDocument(doc(db, POST_COLLECTION, id, 'saves', viewerUid))
   ])
   return { liked: Boolean(likeSnap?.exists?.()), disliked: Boolean(dislikeSnap?.exists?.()), saved: Boolean(saveSnap?.exists?.()) }
 }
@@ -686,14 +742,14 @@ export async function listCommunityComments(postId = '', limitCount = 120) {
   const commentsRef = collection(db, POST_COLLECTION, id, 'comments')
   try {
     const snapshot = await getDocs(query(commentsRef, where('status', '==', 'visible'), orderBy('createdAt', 'asc'), limit(limitCount)))
-    return Promise.all(snapshot.docs.map((docSnap) => attachCommunityCommentUrls(normalizeCommunityComment(docSnap))))
+    return hydrateCommunityComments(snapshot.docs.map((docSnap) => normalizeCommunityComment(docSnap)))
   } catch (error) {
     if (!String(error?.message || '').includes('requires an index')) throw error
     const snapshot = await getDocs(query(commentsRef, where('status', '==', 'visible'), limit(limitCount)))
-    return Promise.all(snapshot.docs
+    return hydrateCommunityComments(snapshot.docs
       .map((docSnap) => normalizeCommunityComment(docSnap))
       .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
-      .map(attachCommunityCommentUrls))
+    )
   }
 }
 
@@ -708,7 +764,7 @@ export async function getCommunityComment(postId = '', commentId = '') {
   if (!snapshot?.exists()) return null
   const comment = normalizeCommunityComment(snapshot)
   if (comment.status !== 'visible') return null
-  return attachCommunityCommentUrls(comment)
+  return hydrateCommunityComments([comment]).then(([hydratedComment]) => hydratedComment || null)
 }
 
 export async function listCommunityCommentsPage({
@@ -734,7 +790,7 @@ export async function listCommunityCommentsPage({
     const snapshot = await getDocs(query(commentsRef, ...constraints))
     const pageDocs = snapshot.docs.slice(0, pageSize)
     return {
-      comments: await Promise.all(pageDocs.map((docSnap) => attachCommunityCommentUrls(normalizeCommunityComment(docSnap)))),
+      comments: await hydrateCommunityComments(pageDocs.map((docSnap) => normalizeCommunityComment(docSnap))),
       cursor: pageDocs.length ? pageDocs[pageDocs.length - 1] : cursor || null,
       hasMore: snapshot.docs.length > pageSize
     }
@@ -752,7 +808,7 @@ export async function listCommunityCommentsPage({
       .sort((a, b) => new Date(a.comment.createdAt || 0).getTime() - new Date(b.comment.createdAt || 0).getTime())
     const pageRows = rows.slice(0, pageSize)
     return {
-      comments: await Promise.all(pageRows.map((row) => attachCommunityCommentUrls(row.comment))),
+      comments: await hydrateCommunityComments(pageRows.map((row) => row.comment)),
       cursor: pageRows.length ? pageRows[pageRows.length - 1].docSnap : cursor || null,
       hasMore: rows.length > pageSize
     }
@@ -774,8 +830,8 @@ export async function getCommunityCommentViewerState(postId = '', commentId = ''
   const viewerUid = String(uid || '').trim()
   if (!cleanPostId || !cleanCommentId || !viewerUid) return { liked: false, disliked: false }
   const [likeSnap, dislikeSnap] = await Promise.all([
-    getDoc(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'likes', viewerUid)).catch(() => null),
-    getDoc(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'dislikes', viewerUid)).catch(() => null)
+    getFreshDocument(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'likes', viewerUid)),
+    getFreshDocument(doc(db, POST_COLLECTION, cleanPostId, 'comments', cleanCommentId, 'dislikes', viewerUid))
   ])
   return { liked: Boolean(likeSnap?.exists?.()), disliked: Boolean(dislikeSnap?.exists?.()) }
 }

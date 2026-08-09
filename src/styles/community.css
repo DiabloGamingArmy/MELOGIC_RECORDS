@@ -4434,6 +4434,13 @@ body:has(.community-page) #app {
   box-shadow: none !important;
 }
 
+.community-history-card {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
 .community-right-rail.community-sidebar {
   display: flex;
   flex-direction: column;
