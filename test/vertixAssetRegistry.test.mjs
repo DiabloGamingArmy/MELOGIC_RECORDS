@@ -7,31 +7,29 @@ import {
   vertixAssetRegistry
 } from '../src/vertix/assets/builtInStageAssetProvider.js'
 
-test('built-in Vertix assets retain their stable identities and specialized metadata', () => {
+test('built-in Vertix assets are the seven portable procedural primitives', () => {
   const assetIds = builtInStageAssets.map((asset) => asset.id)
-  const movingHead = vertixAssetRegistry.getAsset('asset-moving-head')
+  const cube = vertixAssetRegistry.getAsset('primitive-cube')
 
-  assert.equal(assetIds.length, 23)
+  assert.equal(assetIds.length, 7)
   assert.equal(new Set(assetIds).size, assetIds.length)
-  assert.ok(assetIds.includes('primitive-rectangle'))
-  assert.ok(assetIds.includes('asset-power-distro'))
-  assert.equal(movingHead.metadata.address, 1)
-  assert.deepEqual(movingHead.defaultTransform.position, { x: 0, y: 8, z: -8 })
-  assert.deepEqual(movingHead.preview, { icon: 'MH' })
-  assert.ok(movingHead.tags.includes('lighting'))
+  assert.deepEqual(assetIds, ['primitive-cube', 'primitive-plane', 'primitive-uv-sphere', 'primitive-icosphere', 'primitive-cylinder', 'primitive-cone', 'primitive-torus'])
+  assert.deepEqual(cube.defaultTransform.position, { x: 0, y: 1, z: 0 })
+  assert.deepEqual(cube.preview, { icon: 'Cube', kind: 'procedural-3d' })
+  assert.equal(cube.virtualPath, 'VERTIX/Built-in/Primitives/Cube')
 })
 
 test('registry exposes category lookup, asset lookup, groups, and built-in provenance', () => {
-  const movingHead = vertixAssetRegistry.getAsset('asset-moving-head')
-  const lightingAssets = vertixAssetRegistry.listAssets({ category: 'lighting' })
+  const cube = vertixAssetRegistry.getAsset('primitive-cube')
+  const primitiveAssets = vertixAssetRegistry.listAssets({ category: 'primitive' })
   const groups = vertixAssetRegistry.listAssetGroups()
 
   assert.equal(vertixAssetRegistry.getAsset('missing-asset'), undefined)
-  assert.deepEqual(lightingAssets.map((asset) => asset.id), ['asset-moving-head', 'asset-led-bar'])
-  assert.deepEqual(groups.map((group) => group.key), ['primitives', 'production'])
-  assert.deepEqual(movingHead.provenance, {
+  assert.equal(primitiveAssets.length, 7)
+  assert.deepEqual(groups.map((group) => group.key), ['primitives'])
+  assert.deepEqual(cube.provenance, {
     ...builtInStageAssetPackage,
-    assetUuid: 'com.melogic.vertix.builtin-stage-assets:asset-moving-head'
+    assetUuid: 'com.melogic.vertix.builtin-primitives:primitive-cube'
   })
 })
 

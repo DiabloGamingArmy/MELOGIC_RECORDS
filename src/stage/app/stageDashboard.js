@@ -24,6 +24,13 @@ function renderProjectsArea() {
   return `<div class="stage-project-grid">${state.projects.map((p) => projectCard(p)).join('')}</div>`
 }
 
-export function renderDashboard() {
+function renderDashboardMarkup() {
   return `<main class="stage-dashboard-page"><section class="stage-dashboard-shell"><aside class="stage-dashboard-sidebar"><header class="stage-dashboard-brand"><span class="stage-dashboard-brand-mark" aria-hidden="true">▦</span><h1>STAGEMAKER</h1></header><a class="stage-dashboard-new-button" data-new-stage-plan href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">New Stage Plan <span aria-hidden="true">＋</span></a><nav class="stage-dashboard-nav" aria-label="Stagemaker dashboard sections">${sidebarItems.map((item) => `<button class="stage-dashboard-nav-item ${item === 'My Projects' ? 'is-active' : ''}" type="button" ${item === 'My Projects' ? 'aria-current="page"' : ''}>${item}</button>`).join('')}</nav><section class="stage-dashboard-side-panel"><h3>Share + Export</h3><p>Private by default. Collaboration, share links, and production exports are being shaped around real-world stage plots.</p></section></aside><section class="stage-dashboard-main"><header class="stage-dashboard-heading"><h2>StageMaker Projects</h2><p>Create stage plots, input lists, fixture notes, and export-ready blueprints before load-in.</p></header><section class="stage-positioning-grid"><article><strong>Share status</strong><span>Private project workspace</span></article><article><strong>Collaborators</strong><span>Invite workflow coming soon</span></article><article><strong>Exports</strong><span>Stage plot, technical PDF/blueprint, equipment list</span></article></section><section class="stage-template-section"><div class="stage-section-heading"><h3>Starting Formats</h3><span></span></div><div class="stage-template-row">${templateCards.map((tpl) => `<article class="stage-template-card"><div class="stage-template-thumb stage-template-thumb--${esc(tpl.icon)}" aria-hidden="true"></div><div class="stage-template-meta"><h4>${esc(tpl.title)}</h4><p>${esc(tpl.subtitle)}</p><button type="button" class="stage-template-view" data-use-template="${esc(tpl.type)}">Create</button></div></article>`).join('')}</div></section><section class="stage-project-section"><div class="stage-section-heading"><h3>My StageMaker Projects</h3><span></span></div>${renderProjectsArea()}</section><section class="stage-project-section"><div class="stage-section-heading"><h3>Recently Modified Projects</h3><span></span></div>${renderRecent()}</section><div data-stage-modal-root></div></section></section></main>`
+}
+
+export function renderDashboard() {
+  return renderDashboardMarkup()
+    .replaceAll('stage plots', 'production plans')
+    .replaceAll('Stage plot', 'Plan view')
+    .replaceAll('stage plot', 'plan view')
 }

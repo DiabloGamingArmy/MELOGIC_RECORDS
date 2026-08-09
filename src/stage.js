@@ -20,6 +20,8 @@ import { isOldDemoFallbackPlan, migrateDefaultFallbackPlan, normalizeStagePlan }
 import { vertixAssetRegistry, vertixPackInstallationRegistry } from './vertix/assets/builtInStageAssetProvider'
 import { createProjectAssetResolver, resolveProjectAssets, summarizeProjectAssetDependencies } from './vertix/projects/assetResolver'
 import { mountResonaChatSurface } from './components/resonaChatSurface.js'
+import { hydrateVertixAccountAssetProvider } from './data/vertixAssetLibraryService.js'
+import { mountVertixAssetPreviews } from './vertix/assets/assetPreviewRenderer.js'
 
 const app = document.querySelector('#app')
 
@@ -100,6 +102,10 @@ function buildEditorStateSnapshot() {
     activeStageDataView: state.activeStageDataView,
     assetBrowserQuery: { ...state.assetBrowserQuery },
     selectedAssetBrowserId: state.selectedAssetBrowserId,
+    assetBrowserFolder: state.assetBrowserFolder,
+    timelineLoopEnabled: state.timelineLoopEnabled,
+    timelineLoopStartFrame: state.timelineLoopStartFrame,
+    timelineLoopEndFrame: state.timelineLoopEndFrame,
     activeInspectorTab: state.activeInspectorTab,
     activeDataTab: state.activeDataTab,
     renderMode: state.renderMode,
@@ -140,6 +146,10 @@ function applyEditorStateSnapshot(editorState = {}) {
     ? { ...state.assetBrowserQuery, ...editorState.assetBrowserQuery }
     : state.assetBrowserQuery
   state.selectedAssetBrowserId = typeof editorState.selectedAssetBrowserId === 'string' ? editorState.selectedAssetBrowserId : state.selectedAssetBrowserId
+  state.assetBrowserFolder = typeof editorState.assetBrowserFolder === 'string' ? editorState.assetBrowserFolder : state.assetBrowserFolder
+  state.timelineLoopEnabled = typeof editorState.timelineLoopEnabled === 'boolean' ? editorState.timelineLoopEnabled : state.timelineLoopEnabled
+  state.timelineLoopStartFrame = Number(editorState.timelineLoopStartFrame) || state.timelineLoopStartFrame
+  state.timelineLoopEndFrame = Number(editorState.timelineLoopEndFrame) || state.timelineLoopEndFrame
   state.activeInspectorTab = editorState.activeInspectorTab || state.activeInspectorTab
   state.activeDataTab = editorState.activeDataTab || state.activeDataTab
   state.renderMode = editorState.renderMode || state.renderMode
@@ -740,6 +750,7 @@ function updateEditorModeUI() {
   if (!root) return
   root.innerHTML = renderBottomSplit()
   restoreTableScroll(tableScroll)
+  mountVertixAssetPreviews(root, vertixAssetRegistry)
 }
 
 function updateStageTabsUI() {
@@ -823,6 +834,7 @@ function renderApp() {
     ensureStageViewportMounted()
     refreshStageIcons()
     mountStageResonaPanel()
+    mountVertixAssetPreviews(app.querySelector('[data-stage-mode-root]') || app, vertixAssetRegistry)
     applyStageGuideTargets()
     stageEditorMounted = true
     updateEditorProjectHeader()
@@ -1046,6 +1058,11 @@ function applyAuthUser(user) {
   state.authUid = user?.uid || ''
 }
 
+async function hydrateAccountAssetLibrary(user) {
+  try { return await hydrateVertixAccountAssetProvider(user?.uid || '', vertixAssetRegistry) }
+  catch (error) { console.warn('[vertix] Account asset library could not be loaded.', error?.code || error?.message || error); return [] }
+}
+
 function preserveCurrentStageAsLocalRecovery() {
   if (!state.projectId || !state.editorProject) return
   persistLocalStagePlan()
@@ -1057,6 +1074,7 @@ async function handleAuthReadyUser(user, source = 'auth-state') {
   const previousUid = state.authUid || ''
   const nextUid = user?.uid || ''
   applyAuthUser(user)
+  if (previousUid !== nextUid) await hydrateAccountAssetLibrary(user)
 
   if (!state.projectId) {
     if (previousUid !== nextUid) {
@@ -1105,6 +1123,7 @@ if (!canonicalizeLegacyStageRoute()) {
   waitForInitialAuthState().then(async (user) => {
     state.authReady = true
     applyAuthUser(user)
+    await hydrateAccountAssetLibrary(user)
     if (state.projectId) await loadEditorProject({ reason: 'initial-auth', force: true })
     else {
       renderApp()

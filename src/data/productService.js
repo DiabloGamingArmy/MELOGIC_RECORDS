@@ -22,6 +22,7 @@ import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STORAGE_PATHS } from '../config/storagePaths'
 import { getCachedStorageUrl } from '../services/pageMediaCache'
 import { normalizeProductFulfillment } from '../utils/productFulfillment'
+import { deriveProductVertixCapability, normalizeVertixArchiveCapability } from '../vertix/marketplace/vertixAssetFiles.js'
 
 let hasWarnedProductFetch = false
 let hasWarnedProductMedia = false
@@ -235,6 +236,12 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const assetSummary = rawProduct.assetSummary && typeof rawProduct.assetSummary === 'object'
     ? rawProduct.assetSummary
     : {}
+  const deliverableFiles = (Array.isArray(rawProduct.deliverableFiles) ? rawProduct.deliverableFiles : []).map((file) => ({
+    ...file,
+    isVertixAsset: file.isVertixAsset === true,
+    vertixAssetValidation: normalizeVertixArchiveCapability(file.vertixAssetValidation)
+  }))
+  const vertixCapability = deriveProductVertixCapability(deliverableFiles)
   return {
     id: rawProduct.id || productId,
     slug: rawProduct.slug || '',
@@ -286,7 +293,10 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     galleryURLs: media.galleryURLs || [],
     previewVideoURLs: media.previewVideoURLs || [],
     downloadPath: rawProduct.downloadPath || '',
-    deliverableFiles: Array.isArray(rawProduct.deliverableFiles) ? rawProduct.deliverableFiles : [],
+    deliverableFiles,
+    containsVertixAssets: rawProduct.containsVertixAssets === true || vertixCapability.containsVertixAssets,
+    hasVertixAssets: rawProduct.hasVertixAssets === true && vertixCapability.hasVertixAssets,
+    vertixAssetCount: vertixCapability.eligibleAssetCount,
     licensePath: rawProduct.licensePath || '',
     assetSummary: {
       totalFiles: Number(assetSummary.totalFiles || 0),
@@ -1230,6 +1240,20 @@ export async function saveProductFileManifest(productId, fileRows = [], user = n
   await batch.commit()
 }
 
+export async function validateProductVertixAssetFile(productId = '', fileId = '', isVertixAsset = true) {
+  if (!functions || !productId || !fileId) throw new Error('A product and file are required for Vertix validation.')
+  const callable = httpsCallable(functions, 'validateProductVertixAssetFile')
+  const result = await callable({ productId, fileId, isVertixAsset: isVertixAsset === true })
+  return result?.data || { ok: false }
+}
+
+export async function installMarketplaceVertixPack(productId = '') {
+  if (!functions || !productId) throw new Error('A product is required for Vertix installation.')
+  const callable = httpsCallable(functions, 'installMarketplaceVertixPack')
+  const result = await callable({ productId })
+  return result?.data || { ok: false }
+}
+
 export async function initializeProductDraft(user, input = {}, requestedId = '') {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
   const productId = !isPlaceholderProductId(requestedId) ? requestedId : ''
@@ -1660,6 +1684,8 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
       isDownloadable: true,
       canPreview: String(row.contentType || '').startsWith('audio/'),
       description: String(row.description || '').slice(0, 150),
+      isVertixAsset: row.isVertixAsset === true,
+      vertixAssetValidation: normalizeVertixArchiveCapability(row.vertixAssetValidation),
       updatedAt: new Date().toISOString()
     })),
     primaryDownloadPath: deliverable?.storagePath || draft.primaryDownloadPath || draft.downloadPath || '',
@@ -1710,6 +1736,8 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
       canPreview: row.canPreview === true || (row.role === 'deliverable' && String(row.contentType || '').startsWith('audio/')),
       isDeliverable: row.role === 'deliverable' || row.isDeliverable === true,
       isPublicPreview: row.role === 'previewAudio' || row.role === 'previewVideo' || row.role === 'gallery' || row.role === 'cover' || row.role === 'thumbnail',
+      isVertixAsset: row.role === 'deliverable' && row.isVertixAsset === true,
+      vertixAssetValidation: row.role === 'deliverable' ? normalizeVertixArchiveCapability(row.vertixAssetValidation) : normalizeVertixArchiveCapability(),
       sortIndex: Number(row.sortIndex ?? index)
     }))
   }

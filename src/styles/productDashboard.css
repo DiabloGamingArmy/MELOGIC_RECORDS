@@ -466,6 +466,7 @@
   display: grid;
   gap: 0.5rem;
 }
+.dashboard-vertix-indicator{display:inline-flex;align-items:center;gap:.4rem;width:max-content;max-width:100%;border:1px solid rgba(139,119,255,.52);border-radius:999px;background:rgba(117,92,255,.12);color:#ded8ff;padding:.35rem .62rem;font-size:.77rem;font-weight:700;}
 
 .dashboard-price {
   color: #ddffe7;

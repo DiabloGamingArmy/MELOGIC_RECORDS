@@ -351,6 +351,11 @@
 .editor-file-row-menu.is-open{display:grid;}
 .editor-file-row-menu button{background:transparent;border:0;color:#dbe7ff;text-align:left;padding:.42rem .48rem;border-radius:8px;}
 .editor-file-row-menu button:hover{background:rgba(96,145,230,.16);}
+.editor-file-vertix-toggle{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:.15rem .4rem;padding:.45rem .48rem;border-top:1px solid rgba(101,128,194,.28);border-bottom:1px solid rgba(101,128,194,.28);color:#e4ecff;cursor:pointer;}
+.editor-file-vertix-toggle input{grid-row:1 / span 2;margin:0;accent-color:#765cff;}
+.editor-file-vertix-toggle small{color:#91a6ce;font-size:.67rem;line-height:1.25;white-space:normal;}
+.editor-file-vertix-badge{position:absolute;left:.65rem;bottom:.18rem;color:#bfb4ff;font-size:.62rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;}
+.editor-file-stats.is-vertix-ready{color:#bfb4ff;}
 .editor-file-back-icon{display:grid;place-items:center;color:#a9c6ff;}
 .editor-file-back-icon svg{width:18px;height:18px;max-width:18px;max-height:18px;}
 .editor-file-browser svg,

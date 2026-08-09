@@ -49,6 +49,21 @@ export function timelineTimeLabel(frame, frameRate = 30) {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(wholeSeconds).padStart(2, '0')}.${String(milliseconds).padStart(3, '0')}`
 }
 
+export function normalizeTimelineLoopRange(range = {}, animationInput = {}) {
+  const projectStart = Number(animationInput.startFrame || 0)
+  const projectEnd = Math.max(projectStart, Number(animationInput.endFrame || projectStart))
+  const startFrame = Math.max(projectStart, Math.min(projectEnd, Math.round(Number(range.startFrame ?? projectStart) || projectStart)))
+  const endFrame = Math.max(startFrame, Math.min(projectEnd, Math.round(Number(range.endFrame ?? projectEnd) || projectEnd)))
+  return Object.freeze({ startFrame, endFrame })
+}
+
+export function loopedTimelineFrame(frame, range = {}, animationInput = {}) {
+  const normalized = normalizeTimelineLoopRange(range, animationInput)
+  const span = Math.max(1, normalized.endFrame - normalized.startFrame + 1)
+  if (frame <= normalized.endFrame) return Math.max(normalized.startFrame, frame)
+  return normalized.startFrame + ((frame - normalized.startFrame) % span)
+}
+
 const propertyLabel = (path = '') => {
   const [, group = '', axis = ''] = String(path).match(/^transform\.(position|rotation|scale)\.(x|y|z)$/) || []
   if (!group) return path

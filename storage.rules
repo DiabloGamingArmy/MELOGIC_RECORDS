@@ -320,6 +320,16 @@ service firebase.storage {
         );
     }
 
+    match /users/{uid}/vertix/assets/{assetId}/{version}/{fileName} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if signedIn()
+        && request.auth.uid == uid
+        && request.resource != null
+        && request.resource.size <= 512 * 1024 * 1024
+        && request.resource.contentType == 'model/gltf-binary'
+        && request.resource.metadata.assetId == assetId;
+    }
+
     match /users/{uid}/stage/custom-assets/{assetId}/{version}/{fileName} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if signedIn()

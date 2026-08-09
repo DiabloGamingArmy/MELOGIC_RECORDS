@@ -1,5 +1,8 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { getDownloadURL, ref } from 'firebase/storage'
+import { storage } from '../firebase/storage'
 import { createDefaultStagePlan } from './stagePlanModel'
 import { editorFarPlaneForProject } from './viewportVisibilityModel.js'
 const FORCE_STAGE_VIEWPORT_SMOKE_TEST = false
@@ -30,7 +33,8 @@ const objectDefsFromProject = (project = {}, assetResolutions = {}) => {
       locked: !!object.locked,
       metadata: object.metadata || {},
       missingAsset: Boolean(assetResolution && assetResolution.status !== 'RESOLVED'),
-      missingReason: assetResolution?.reason || ''
+      missingReason: assetResolution?.reason || '',
+      sourceUri: assetResolution?.asset?.sourceUri || assetResolution?.asset?.preview?.sourceUri || ''
     }
   }).filter((object) => object.key)
 }
@@ -172,6 +176,11 @@ export function mountStageThreeViewport(container, options = {}) {
     }
     const materialColorFor = (d) => d.color || (d.type === 'speaker' ? '#365875' : d.category === 'rigging' ? '#6762d2' : d.category === 'lighting' ? '#49c8ff' : d.category === 'video' ? '#4fc8b4' : d.category === 'audio' ? '#2d4059' : d.category === 'power' ? '#ffb86b' : '#222b39')
     const geometryFor = (d) => {
+      if (d.type === 'primitive-plane') return new THREE.BoxGeometry(Math.max(0.2, d.size[0]), Math.max(0.02, d.size[1]), Math.max(0.2, d.size[2]))
+      if (d.type === 'primitive-uv-sphere') return new THREE.SphereGeometry(Math.max(0.1, d.size[0] / 2), 32, 20)
+      if (d.type === 'primitive-icosphere') return new THREE.IcosahedronGeometry(Math.max(0.1, d.size[0] / 2), 2)
+      if (d.type === 'primitive-cone') return new THREE.ConeGeometry(Math.max(0.1, d.size[0] / 2), Math.max(0.2, d.size[1]), 32)
+      if (d.type === 'primitive-torus') return new THREE.TorusGeometry(Math.max(0.2, d.size[0] / 2.8), Math.max(0.05, d.size[1] / 4), 16, 48)
       if (d.type?.includes('cylinder') || d.type === 'microphone') return new THREE.CylinderGeometry(Math.max(0.12, d.size[0] / 2), Math.max(0.12, d.size[0] / 2), Math.max(0.2, d.size[1]), 18)
       if (d.type?.includes('circle')) return new THREE.CylinderGeometry(Math.max(0.2, d.size[0] / 2), Math.max(0.2, d.size[0] / 2), Math.max(0.12, d.size[1]), 32)
       return new THREE.BoxGeometry(...d.size)
@@ -193,6 +202,26 @@ export function mountStageThreeViewport(container, options = {}) {
       group.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))
       group.scale.set(Number(d.scale?.x || 1), Number(d.scale?.y || 1), Number(d.scale?.z || 1))
       group.name = `missing-asset:${d.missingReason || 'unknown'}`
+      return group
+    }
+    const loadingModelProxy = (d) => {
+      const group = new THREE.Group()
+      const proxy = new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: '#38495f', wireframe: true, transparent: true, opacity: 0.38 }))
+      proxy.userData.vertixLoadingProxy = true
+      group.add(proxy)
+      if (d.sourceUri && storage) {
+        getDownloadURL(ref(storage, d.sourceUri)).then((url) => new GLTFLoader().load(url, (gltf) => {
+          if (disposed) return
+          group.children.filter((child) => child.userData.vertixLoadingProxy).forEach((child) => { child.geometry?.dispose?.(); child.material?.dispose?.(); group.remove(child) })
+          const model = gltf.scene
+          const box = new THREE.Box3().setFromObject(model)
+          if (!box.isEmpty()) {
+            const center = box.getCenter(new THREE.Vector3())
+            model.position.set(-center.x, -box.min.y, -center.z)
+          }
+          group.add(model)
+        }))
+      }
       return group
     }
 
@@ -223,7 +252,9 @@ export function mountStageThreeViewport(container, options = {}) {
         ? (() => { const group = new THREE.Group(); group.add(makeLabel(String(d.metadata?.text || d.label || 'Directional Note'), [0, 0, 0], d.color || '#61d7ff', true)); return group })()
         : d.missingAsset
         ? missingProxyFor(d)
-        : new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: materialColorFor(d), roughness: 0.72, metalness: 0.22 }))
+        : d.sourceUri
+          ? loadingModelProxy(d)
+          : new THREE.Mesh(geometryFor(d), new THREE.MeshStandardMaterial({ color: materialColorFor(d), roughness: 0.72, metalness: 0.22 }))
       if (!d.missingAsset) {
         object.position.set(...d.position)
         object.rotation.set(THREE.MathUtils.degToRad(d.rotation?.x || 0), THREE.MathUtils.degToRad(d.rotation?.y || 0), THREE.MathUtils.degToRad(d.rotation?.z || 0))

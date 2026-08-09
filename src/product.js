@@ -3,7 +3,7 @@ import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { addToCart } from './data/cartService'
-import { createReport, getProductShellById, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
+import { createReport, getProductShellById, installMarketplaceVertixPack, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
 import { claimFreeProduct, createProductDownloadLink, createProductDownloadUrl, getProductAccessContext, userOwnsProduct } from './data/entitlementService'
 import { sendProductGift } from './data/productGiftService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -1324,6 +1324,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 <span class="dashboard-pill">${escapeHtml(fulfillmentTypeLabel(product))}</span>
                 ${(product.genres || []).slice(0, 3).map((genre) => `<span class="dashboard-pill">${escapeHtml(genre)}</span>`).join('')}
               </div>
+              ${product.hasVertixAssets ? '<div class="dashboard-vertix-indicator" title="This product includes creator-approved, validated Vertix assets.">◇ Vertix Assets Included</div>' : ''}
               <dl class="dashboard-overview-grid">
                 <div><dt>Type</dt><dd>${escapeHtml(typeLabel)}</dd></div>
                 <div><dt>Fulfillment</dt><dd>${escapeHtml(fulfillmentTypeLabel(product))}</dd></div>
@@ -1362,6 +1363,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 ${userHasAccess && !state.isDraftPreview ? `
                   <div class="dashboard-download-divider"></div>
                   ${digitalEnabled ? '<button type="button" class="button dashboard-download-button" data-product-download>Download Content</button>' : ''}
+                  ${digitalEnabled && product.hasVertixAssets ? '<button type="button" class="button button-muted" data-install-vertix-pack>Install to Vertix</button>' : ''}
                   ${isOwner ? `<a class="button button-muted" href="${productRoute(product)}?sendgift=1">Send as Gift</a>` : ''}
                 ` : ''}
                 <div class="dashboard-action-icons-row">
@@ -1433,6 +1435,28 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
       fileCount: getProductViewerDeliverableFiles(product, productFiles).length
     }
     renderProduct(product, recommendations, ownerPreview, productFiles, ownsProduct)
+  })
+  app.querySelector('[data-install-vertix-pack]')?.addEventListener('click', async (event) => {
+    if (!window.confirm('Open and install this product’s verified Vertix assets to your account library?')) return
+    const button = event.currentTarget
+    button.disabled = true
+    button.textContent = 'Installing to Vertix…'
+    try {
+      const result = await installMarketplaceVertixPack(product.id)
+      if (!result?.ok) throw new Error('Vertix installation did not complete.')
+      if (Number(result.install?.failedAssetCount || 0) > 0) {
+        button.disabled = false
+        button.textContent = `Retry ${result.install.failedAssetCount} failed asset${result.install.failedAssetCount === 1 ? '' : 's'}`
+        showActionMessage(`${result.install.installedAssetCount || 0} assets installed; ${result.install.failedAssetCount} need another attempt.`)
+        return
+      }
+      button.textContent = result.alreadyInstalled ? 'Installed' : `Installed ${result.install?.installedAssetCount || ''}`.trim()
+      window.setTimeout(() => window.location.assign(ROUTES.studioStagemaker), 700)
+    } catch (error) {
+      button.disabled = false
+      button.textContent = 'Install to Vertix'
+      showActionMessage(error?.message || 'Could not install this Vertix pack.')
+    }
   })
   app.querySelectorAll('[data-close-product-download]').forEach((element) => {
     element.addEventListener('click', (event) => {

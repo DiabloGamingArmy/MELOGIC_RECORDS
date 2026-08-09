@@ -175,6 +175,16 @@ function normalizeDeliverableFiles(value = [], productId = '') {
   return value.slice(0, 500).map((row, index) => {
     const id = cleanString(row?.id || `file-${index}`, 120)
     const storagePath = normalizePath(row?.storagePath || row?.path || row?.filePath || '')
+    const validationInput = row?.vertixAssetValidation && typeof row.vertixAssetValidation === 'object' ? row.vertixAssetValidation : {}
+    const validation = {
+      status: validationInput.status === 'compatible' ? 'compatible' : validationInput.status === 'incompatible' ? 'incompatible' : 'unchecked',
+      compatible: validationInput.status === 'compatible' && validationInput.compatible === true,
+      compatibleAssetCount: Math.max(0, Math.round(Number(validationInput.compatibleAssetCount || 0) || 0)),
+      invalidAssetCount: Math.max(0, Math.round(Number(validationInput.invalidAssetCount || 0) || 0)),
+      assetPaths: Array.isArray(validationInput.assetPaths) ? validationInput.assetPaths.map((path) => cleanString(path, 500)).filter(Boolean).slice(0, 500) : [],
+      errors: Array.isArray(validationInput.errors) ? validationInput.errors.map((message) => cleanString(message, 300)).filter(Boolean).slice(0, 20) : [],
+      validatedAt: cleanString(validationInput.validatedAt || '', 80)
+    }
     return {
       id,
       productId,
@@ -191,6 +201,8 @@ function normalizeDeliverableFiles(value = [], productId = '') {
       isDownloadable: row?.isDownloadable !== false,
       canPreview: row?.canPreview === true,
       description: cleanString(row?.description || '', 150),
+      isVertixAsset: row?.isVertixAsset === true && validation.compatible && validation.compatibleAssetCount > 0,
+      vertixAssetValidation: validation,
       updatedAt: cleanString(row?.updatedAt || '', 80)
     }
   }).filter((row) => row.id)

@@ -192,3 +192,30 @@ test('Streaming Remote presence is owner-readable and function-only writable', a
   }))
   await assertFails(getDoc(doc(ownerDb, 'musicLiveStreamControls/live-1')))
 })
+
+test('Vertix account assets are owner-private and versions are immutable', async () => {
+  const ownerDb = testEnv.authenticatedContext('owner').firestore()
+  const outsiderDb = testEnv.authenticatedContext('outsider').firestore()
+  const assetId = 'asset:stable-1'
+  const assetRef = doc(ownerDb, `users/owner/vertixAssets/${assetId}`)
+  await assertSucceeds(setDoc(assetRef, {
+    assetId,
+    ownerId: 'owner',
+    currentVersionId: `${assetId}:sha256:abc`,
+    contentHash: 'abc',
+    sourceType: 'imported'
+  }))
+  await assertFails(getDoc(doc(outsiderDb, `users/owner/vertixAssets/${assetId}`)))
+  await assertFails(setDoc(doc(ownerDb, 'users/owner/vertixAssets/wrong-document-id'), {
+    assetId,
+    ownerId: 'owner',
+    currentVersionId: `${assetId}:sha256:abc`,
+    contentHash: 'abc',
+    sourceType: 'imported'
+  }))
+
+  const versionRef = doc(ownerDb, 'users/owner/vertixAssetVersions/version-1')
+  await assertSucceeds(setDoc(versionRef, { assetId, contentHash: 'abc', storageObjectId: 'users/owner/vertix/assets/a/b/c.glb' }))
+  await assertFails(updateDoc(versionRef, { contentHash: 'changed' }))
+  await assertFails(setDoc(doc(ownerDb, 'users/owner/vertixMarketplaceInstalls/untrusted'), { status: 'installed' }))
+})

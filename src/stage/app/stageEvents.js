@@ -25,7 +25,9 @@ import {
   updateSelectedStageObjectsField,
   viewportObjectTransforms
 } from './stageState'
-import { clampTimelineZoom, snapTimelineFrame, timelineFrameFromPointer, timelinePixelsPerFrame, timelineTimeLabel } from '../animation/timelineModel.js'
+import { clampTimelineZoom, loopedTimelineFrame, normalizeTimelineLoopRange, snapTimelineFrame, timelineFrameFromPointer, timelinePixelsPerFrame, timelineTimeLabel } from '../animation/timelineModel.js'
+import { hydrateVertixAccountAssetProvider, importGlbToVertixAccount } from '../../data/vertixAssetLibraryService.js'
+import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvider.js'
 
 let stageEditorEventsBound = false
 let timelinePlaybackFrame = 0
@@ -199,25 +201,29 @@ export function bindStageEditorEventsOnce(context) {
     })
   }
 
-  const stopTimelinePlayback = () => {
+  const stopTimelinePlayback = ({ recordMarker = true } = {}) => {
     state.timelinePlaying = false
+    if (recordMarker) state.timelinePauseMarkerFrame = state.currentFrame
     if (timelinePlaybackFrame) cancelAnimationFrame(timelinePlaybackFrame)
     timelinePlaybackFrame = 0
   }
 
   const startTimelinePlayback = () => {
     const animation = projectAnimation()
-    if (state.currentFrame >= animation.endFrame) applyTimelineFrame(animation.startFrame)
+    const loopRange = normalizeTimelineLoopRange({ startFrame: state.timelineLoopStartFrame, endFrame: state.timelineLoopEndFrame }, animation)
+    const playbackStart = state.timelineLoopEnabled ? loopRange.startFrame : animation.startFrame
+    const playbackEnd = state.timelineLoopEnabled ? loopRange.endFrame : animation.endFrame
+    if (state.currentFrame < playbackStart || state.currentFrame >= playbackEnd) applyTimelineFrame(playbackStart)
     state.timelinePlaybackStartFrame = state.currentFrame
-    const startedAt = performance.now() - ((state.currentFrame - animation.startFrame) / animation.frameRate) * 1000
+    state.timelinePlayMarkerFrame = state.currentFrame
+    const startedAt = performance.now() - ((state.currentFrame - playbackStart) / animation.frameRate) * 1000
     state.timelinePlaying = true
     const tick = (now) => {
       if (!state.timelinePlaying) return
-      const current = animation.startFrame + Math.floor(((now - startedAt) / 1000) * animation.frameRate)
-      if (current > animation.endFrame) {
+      const current = playbackStart + Math.floor(((now - startedAt) / 1000) * animation.frameRate)
+      if (current > playbackEnd) {
         if (state.timelineLoopEnabled) {
-          const span = Math.max(1, animation.endFrame - animation.startFrame + 1)
-          applyTimelineFrame(animation.startFrame + ((current - animation.startFrame) % span))
+          applyTimelineFrame(loopedTimelineFrame(current, loopRange, animation))
           timelinePlaybackFrame = requestAnimationFrame(tick)
           return
         }
@@ -400,6 +406,20 @@ export function bindStageEditorEventsOnce(context) {
   }
 
   app.addEventListener('click', (e) => {
+    const assetFolder = e.target.closest('[data-asset-browser-folder]')
+    if (assetFolder) {
+      state.assetBrowserFolder = assetFolder.dataset.assetBrowserFolder || 'VERTIX'
+      state.selectedAssetBrowserId = ''
+      updateEditorModeUI?.()
+      queueEditorStateSave?.()
+      return
+    }
+    const importAsset = e.target.closest('[data-asset-browser-import]')
+    if (importAsset) {
+      if (!state.user?.uid) { showStageNotice?.('Sign in to import an account asset.'); return }
+      importAsset.closest('.vertix-asset-card')?.querySelector('[data-asset-browser-import-input]')?.click()
+      return
+    }
     const assetBrowserSelection = e.target.closest('[data-asset-browser-select]')
     if (assetBrowserSelection && !e.target.closest('[data-add-stage-asset]')) {
       state.selectedAssetBrowserId = assetBrowserSelection.dataset.assetBrowserSelect || ''
@@ -773,7 +793,7 @@ export function bindStageEditorEventsOnce(context) {
     const exportSvg = e.target.closest('[data-export-svg]')
     if (exportSvg) {
       const svg = app.querySelector('[data-stage-plot-svg]')?.outerHTML || ''
-      if (!svg) showStageNotice?.('No stage plot SVG available.')
+      if (!svg) showStageNotice?.('No plan-view SVG is available.')
       else downloadText(`${state.editorProject?.title || 'stage-plot'}.svg`.replace(/[^a-z0-9._-]+/gi, '-'), svg, 'image/svg+xml')
       return
     }
@@ -915,6 +935,26 @@ export function bindStageEditorEventsOnce(context) {
   })
 
   app.addEventListener('change', (e) => {
+    const assetImportInput = e.target.closest('[data-asset-browser-import-input]')
+    if (assetImportInput) {
+      const file = assetImportInput.files?.[0]
+      if (!file) return
+      showStageNotice?.('Validating and importing GLB…')
+      importGlbToVertixAccount(file, state.user, { folderId: `vertix-project:${state.projectId}`, projectId: state.projectId })
+        .then(async (result) => {
+          if (!result?.ok) {
+            showStageNotice?.(result?.validation?.errors?.[0]?.message || 'The GLB could not be imported.')
+            return
+          }
+          await hydrateVertixAccountAssetProvider(state.user.uid, vertixAssetRegistry)
+          state.selectedAssetBrowserId = result.asset.assetId
+          state.assetBrowserFolder = `VERTIX/Project/${state.projectId || 'current'}`
+          updateEditorModeUI?.()
+          showStageNotice?.(`Imported ${result.asset.displayName} to your Vertix account library.`)
+        })
+        .catch((error) => showStageNotice?.(error?.message || 'GLB import failed.'))
+      return
+    }
     const timelineFrameRate = e.target.closest('[data-timeline-frame-rate]')
     if (timelineFrameRate) {
       const changed = updateStageAnimationFrameRate(timelineFrameRate.value)
@@ -1141,6 +1181,39 @@ export function bindStageEditorEventsOnce(context) {
       e.preventDefault()
       return
     }
+    const loopRail = e.target.closest('[data-timeline-loop-rail]')
+    if (loopRail) {
+      const root = loopRail.closest('[data-timeline-root]')
+      const animation = projectAnimation()
+      const initial = normalizeTimelineLoopRange({ startFrame: state.timelineLoopStartFrame, endFrame: state.timelineLoopEndFrame }, animation)
+      const handle = e.target.closest('[data-timeline-loop-handle]')?.dataset.timelineLoopHandle || ''
+      const anchor = frameFromTimelinePointer(e, root)
+      const updateRange = (event) => {
+        const frame = frameFromTimelinePointer(event, root)
+        const next = handle === 'start'
+          ? normalizeTimelineLoopRange({ startFrame: Math.min(frame, initial.endFrame), endFrame: initial.endFrame }, animation)
+          : handle === 'end'
+            ? normalizeTimelineLoopRange({ startFrame: initial.startFrame, endFrame: Math.max(frame, initial.startFrame) }, animation)
+            : normalizeTimelineLoopRange({ startFrame: Math.min(anchor, frame), endFrame: Math.max(anchor, frame) }, animation)
+        state.timelineLoopStartFrame = next.startFrame
+        state.timelineLoopEndFrame = next.endFrame
+      }
+      const onMove = (event) => updateRange(event)
+      const onUp = (event) => {
+        updateRange(event)
+        localStorage.setItem('stageTimelineLoopStartFrame', String(state.timelineLoopStartFrame))
+        localStorage.setItem('stageTimelineLoopEndFrame', String(state.timelineLoopEndFrame))
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', onUp)
+        updateEditorModeUI?.()
+        queueEditorStateSave?.()
+      }
+      updateRange(e)
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', onUp, { once: true })
+      e.preventDefault()
+      return
+    }
     const scrub = e.target.closest('[data-timeline-scrub]')
     if (scrub && !e.target.closest('[data-timeline-frame]')) {
       const root = scrub.closest('[data-timeline-root]')
@@ -1240,7 +1313,7 @@ export function bindStageEditorEventsOnce(context) {
         applyTimelineFrame(e.key === 'Home' ? projectAnimation().startFrame : projectAnimation().endFrame, { refreshInspector: true })
         return
       }
-      if (timelineFocused && e.code === 'Space' && !e.repeat) {
+      if (e.code === 'Space' && !e.repeat) {
         e.preventDefault()
         if (e.shiftKey) {
           if (state.timelinePlaying) { stopTimelinePlayback(); applyTimelineFrame(state.timelinePlaybackStartFrame, { refreshInspector: true }) }

@@ -4,6 +4,8 @@ const admin = require('firebase-admin')
 const db = admin.firestore()
 const { FieldValue } = admin.firestore
 const { normalizeProductFulfillment } = require('./productFulfillment')
+const { deriveVertixProductFields, isZipFile, STATUS } = require('./vertixAssetArchives')
+const { validateRequestedFile } = require('./validateProductVertixAssetFile')
 
 const FILE_ROLES = new Set(['cover', 'thumbnail', 'gallery', 'previewAudio', 'previewVideo', 'deliverable', 'license'])
 const MAX_FILE_ROWS = 500
@@ -144,6 +146,10 @@ function normalizeFileRow(productId = '', row = {}, index = 0) {
     canPreview: row.canPreview === true || (role === 'deliverable' && contentType.startsWith('audio/')),
     isDeliverable: row.isDeliverable !== false && role === 'deliverable',
     isPublicPreview: row.isPublicPreview === true || ['previewAudio', 'previewVideo', 'gallery', 'cover', 'thumbnail'].includes(role),
+    isVertixAsset: role === 'deliverable' && row.isVertixAsset === true,
+    vertixAssetValidation: row.vertixAssetValidation && typeof row.vertixAssetValidation === 'object'
+      ? row.vertixAssetValidation
+      : { status: STATUS.UNCHECKED, compatible: false, compatibleAssetCount: 0, errors: [] },
     sortIndex: normalizeNumber(row.sortIndex, index)
   }
 }
@@ -166,6 +172,8 @@ function normalizeDeliverableRow(productId = '', row = {}, index = 0) {
     isDownloadable: true,
     canPreview: normalized.canPreview,
     description: normalized.description,
+    isVertixAsset: normalized.isVertixAsset,
+    vertixAssetValidation: normalized.vertixAssetValidation,
     updatedAt: new Date().toISOString()
   }
 }
@@ -245,8 +253,8 @@ function wrapError(error, fallbackOperation = '', fallbackPath = '', productId =
 
 exports.saveProductManifest = onCall(
   {
-    timeoutSeconds: 60,
-    memory: '256MiB',
+    timeoutSeconds: 300,
+    memory: '1GiB',
     cors: true
   },
   async (request) => {
@@ -278,9 +286,22 @@ exports.saveProductManifest = onCall(
       }
 
       const fileRows = normalizeFileRows(productId, manifest)
-      const deliverableRows = normalizeDeliverableRows(productId, manifest, fileRows)
+      const requestedDeliverableRows = normalizeDeliverableRows(productId, manifest, fileRows)
+      const deliverableRows = []
+      for (const row of requestedDeliverableRows) {
+        if (isZipFile(row)) {
+          const requestedByPublisher = row.isVertixAsset === true
+          const validated = await validateRequestedFile(productId, { ...row, isVertixAsset: true })
+          deliverableRows.push({ ...validated, isVertixAsset: requestedByPublisher && validated.vertixAssetValidation?.compatible === true })
+        } else deliverableRows.push({ ...row, isVertixAsset: false })
+      }
       const deliverable = deliverableRows[0] || null
       const assetSummary = normalizeAssetSummary(manifest, fileRows, deliverableRows)
+      const vertixProductFields = deriveVertixProductFields(deliverableRows)
+      const validatedDeliverablesById = new Map(deliverableRows.map((row) => [row.id, row]))
+      const persistedFileRows = fileRows.map((row) => row.role === 'deliverable' && validatedDeliverablesById.has(row.id)
+        ? { ...row, ...validatedDeliverablesById.get(row.id) }
+        : row)
       const fulfillment = normalizeProductFulfillment({
         ...(product || {}),
         ...(manifest || {})
@@ -293,6 +314,7 @@ exports.saveProductManifest = onCall(
         previewVideoPaths: normalizeProductPathArray(productId, manifest.previewVideoPaths, 8, 'previewVideoPaths'),
         downloadPath: normalizeProductPath(productId, manifest.downloadPath || deliverable?.storagePath || '', { field: 'downloadPath' }),
         deliverableFiles: deliverableRows,
+        ...vertixProductFields,
         licensePath: normalizeProductPath(productId, manifest.licensePath || '', { field: 'licensePath' }),
         usageLicense: cleanString(manifest.usageLicense || product.usageLicense || '', 120),
         usageLicenseVersion: normalizeNumber(manifest.usageLicenseVersion, product.usageLicenseVersion || 0),
@@ -336,7 +358,7 @@ exports.saveProductManifest = onCall(
       logOperation(currentOperation, currentPath, productId, uid, product, Object.keys(productUpdate).sort())
       batch.set(productRef, productUpdate, { merge: true })
 
-      fileRows.forEach((row) => {
+      persistedFileRows.forEach((row) => {
         const fileRef = productRef.collection('files').doc(row.id)
         const filePayload = {
           ...row,
@@ -357,10 +379,10 @@ exports.saveProductManifest = onCall(
         productId,
         manifestSaved: true,
         productUpdated: true,
-        fileMetadataWritten: fileRows.length,
+        fileMetadataWritten: persistedFileRows.length,
         updatedPaths: [
           `products/${productId}`,
-          ...fileRows.map((row) => `products/${productId}/files/${row.id}`)
+          ...persistedFileRows.map((row) => `products/${productId}/files/${row.id}`)
         ],
         manifest: {
           ...productUpdate,

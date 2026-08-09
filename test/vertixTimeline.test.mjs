@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { moveAnimationKeyframe, normalizeProjectAnimation, SUPPORTED_FRAME_RATES } from '../src/stage/animation/animationModel.js'
-import { buildTimelineTrackHierarchy, snapTimelineFrame, timelineFrameAtOffset, timelineFrameFromPointer, timelineGridStep, timelinePixelsPerFrame, timelineRulerStep, timelineTimeLabel } from '../src/stage/animation/timelineModel.js'
+import { buildTimelineTrackHierarchy, loopedTimelineFrame, normalizeTimelineLoopRange, snapTimelineFrame, timelineFrameAtOffset, timelineFrameFromPointer, timelineGridStep, timelinePixelsPerFrame, timelineRulerStep, timelineTimeLabel } from '../src/stage/animation/timelineModel.js'
 import { editorFarPlaneForProject } from '../src/stage/viewportVisibilityModel.js'
 
 const animation = normalizeProjectAnimation({
@@ -31,6 +31,13 @@ test('timeline grid, snapping, and time display keep frames authoritative', () =
   assert.equal(snapTimelineFrame(-10, { ...animation, enabled: true, interval: 5 }), animation.startFrame)
   assert.equal(timelineTimeLabel(120, 30), '00:00:04.000')
   assert.equal(timelineTimeLabel(24, 23.976), '00:00:01.001')
+})
+
+test('loop range remains independent from the project range and wraps deterministically', () => {
+  assert.deepEqual(normalizeTimelineLoopRange({ startFrame: 30, endFrame: 80 }, animation), { startFrame: 30, endFrame: 80 })
+  assert.deepEqual(normalizeTimelineLoopRange({ startFrame: -10, endFrame: 900 }, animation), { startFrame: 10, endFrame: 800 })
+  assert.equal(loopedTimelineFrame(81, { startFrame: 30, endFrame: 80 }, animation), 30)
+  assert.equal(loopedTimelineFrame(82, { startFrame: 30, endFrame: 80 }, animation), 31)
 })
 
 test('project animation accepts production frame-rate presets without retiming frames', () => {

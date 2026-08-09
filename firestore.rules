@@ -1122,6 +1122,47 @@ service cloud.firestore {
         allow delete: if isOwner(uid);
       }
 
+      match /vertixAssets/{assetId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.ownerId == uid
+          && request.resource.data.assetId == assetId
+          && request.resource.data.currentVersionId is string
+          && request.resource.data.contentHash is string
+          && request.resource.data.sourceType in ['imported', 'marketplace', 'project', 'shared'];
+        allow delete: if isOwner(uid);
+      }
+
+      match /vertixAssetVersions/{versionId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid)
+          && request.resource.data.assetId is string
+          && request.resource.data.contentHash is string
+          && request.resource.data.storageObjectId is string;
+        allow update, delete: if false;
+      }
+
+      match /vertixFolders/{folderId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.ownerId == uid
+          && request.resource.data.folderId is string;
+        allow delete: if isOwner(uid);
+      }
+
+      match /vertixFolderEntries/{entryId} {
+        allow read: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && request.resource.data.folderId is string
+          && request.resource.data.assetId is string;
+        allow delete: if isOwner(uid);
+      }
+
+      match /vertixMarketplaceInstalls/{installId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /sequenceActionBookmarks/{bookmarkId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid)

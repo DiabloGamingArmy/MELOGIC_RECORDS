@@ -15,13 +15,13 @@ const packageProvider = createPackageAssetProvider(fixtureManifest)
 test('Asset Browser catalogue derives built-in and registered package assets from the registry', () => {
   const registry = createVertixAssetRegistry([builtInStageAssetProvider])
   const builtInCatalog = createAssetBrowserCatalog(registry)
-  assert.equal(builtInCatalog.assets.length, 23)
+  assert.equal(builtInCatalog.assets.length, 7)
   assert.ok(builtInCatalog.sources.some((source) => source.key === 'built-in'))
 
   registry.registerProvider(packageProvider)
   const catalog = createAssetBrowserCatalog(registry)
   const packageAsset = packageProvider.listAssets()[0]
-  assert.equal(catalog.assets.length, 24)
+  assert.equal(catalog.assets.length, 8)
   assert.ok(catalog.sources.some((source) => source.packageId === fixtureManifest.id))
   assert.equal(selectedAssetBrowserAsset(catalog, packageAsset.id)?.assetUuid, packageAsset.assetUuid)
 })
@@ -30,8 +30,8 @@ test('Asset Browser search and category/source filters compose deterministically
   const catalog = createAssetBrowserCatalog(createVertixAssetRegistry([builtInStageAssetProvider, packageProvider]))
   const packageAsset = packageProvider.listAssets()[0]
 
-  assert.deepEqual(filterAssetBrowserAssets(catalog, { search: 'moving head' }).map((asset) => asset.id), ['asset-moving-head'])
-  assert.ok(filterAssetBrowserAssets(catalog, { category: 'audio' }).every((asset) => asset.category === 'audio'))
+  assert.deepEqual(filterAssetBrowserAssets(catalog, { search: 'uv sphere' }).map((asset) => asset.id), ['primitive-uv-sphere'])
+  assert.equal(filterAssetBrowserAssets(catalog, { category: 'primitive' }).length, 7)
   assert.deepEqual(filterAssetBrowserAssets(catalog, { source: `${fixtureManifest.id}@${fixtureManifest.version}` }).map((asset) => asset.id), [packageAsset.id])
   assert.deepEqual(filterAssetBrowserAssets(catalog, { source: `${fixtureManifest.id}@${fixtureManifest.version}`, category: 'stage', search: 'reference deck' }).map((asset) => asset.id), [packageAsset.id])
 })
