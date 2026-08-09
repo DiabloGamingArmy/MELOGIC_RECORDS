@@ -72,6 +72,7 @@ const createCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
       throw new HttpsError('failed-precondition', 'Comments are locked on this post.')
     }
     const visibleCommentsSnap = await tx.get(postRef.collection('comments').where('status', '==', 'visible'))
+    const nextCommentCount = visibleCommentsSnap.size + 1
     let parent = null
     if (parentRef) {
       const parentSnap = await tx.get(parentRef)
@@ -100,8 +101,8 @@ const createCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
 
     tx.set(commentRef, payload)
     tx.set(postRef, {
-      'counts.comments': Math.max(0, Number(visibleCommentsSnap.size || post.counts?.comments || 0)) + 1,
-      commentCount: Math.max(0, Number(visibleCommentsSnap.size || post.counts?.comments || 0)) + 1,
+      'counts.comments': nextCommentCount,
+      commentCount: nextCommentCount,
       score: Math.max(0, Number(post.score || 0)) + 1,
       updatedAt: now
     }, { merge: true })
@@ -142,7 +143,7 @@ const createCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
     return {
       post,
       payload,
-      commentCount: Math.max(0, Number(visibleCommentsSnap.size || post.counts?.comments || 0)) + 1
+      commentCount: nextCommentCount
     }
   })
 

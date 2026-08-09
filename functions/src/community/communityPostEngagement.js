@@ -3,6 +3,7 @@ const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
 const { writeAccountEventToBatch } = require('../account/accountEvents')
 const { loadAuthorSnapshot } = require('./communityCommentShared')
+const { canonicalCounter, desiredToggleState, reactionTransition } = require('./communityEngagementState')
 
 function requireAuth(request) {
   const uid = cleanString(request.auth?.uid || '', 180)
@@ -41,13 +42,13 @@ async function togglePostState(request, kind = 'like') {
   return admin.firestore().runTransaction(async (tx) => {
     const post = await assertPublicPost(tx, postRef)
     const stateSnap = await tx.get(stateRef)
-    const active = !stateSnap.exists
-    const delta = active ? 1 : -1
-    const count = nextCount(post.counts?.[countKey], delta)
+    const active = desiredToggleState(stateSnap.exists, request.data?.active)
+    const delta = Number(active) - Number(stateSnap.exists)
+    const count = nextCount(canonicalCounter(post, kind === 'save' ? 'saveCount' : 'likeCount', countKey), delta)
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    if (active) tx.set(stateRef, { uid, postId: postRef.id, createdAt: now, updatedAt: now })
-    else tx.delete(stateRef)
+    if (active && !stateSnap.exists) tx.set(stateRef, { uid, postId: postRef.id, createdAt: now, updatedAt: now })
+    else if (!active && stateSnap.exists) tx.delete(stateRef)
 
     tx.set(postRef, {
       [`counts.${countKey}`]: count,
@@ -56,7 +57,7 @@ async function togglePostState(request, kind = 'like') {
       updatedAt: now
     }, { merge: true })
 
-    if (kind === 'like' && active && post.authorUid && post.authorUid !== uid) {
+    if (kind === 'like' && active && !stateSnap.exists && post.authorUid && post.authorUid !== uid) {
       writeAccountEventToBatch(admin.firestore(), tx, post.authorUid, {
         type: 'community_post_like',
         title: 'Your post got a like',
@@ -88,23 +89,26 @@ async function togglePostReaction(request, reaction = 'like') {
   return admin.firestore().runTransaction(async (tx) => {
     const post = await assertPublicPost(tx, postRef)
     const [likeSnap, dislikeSnap] = await Promise.all([tx.get(likeRef), tx.get(dislikeRef)])
-    const currentReaction = likeSnap.exists ? 'like' : dislikeSnap.exists ? 'dislike' : ''
-    const nextReaction = currentReaction === reaction ? '' : reaction
-    const likeDelta = (nextReaction === 'like' ? 1 : 0) - (currentReaction === 'like' ? 1 : 0)
-    const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (currentReaction === 'dislike' ? 1 : 0)
-    const likeCount = nextCount(post.counts?.likes ?? post.likeCount, likeDelta)
-    const dislikeCount = nextCount(post.counts?.dislikes ?? post.dislikeCount, dislikeDelta)
+    const transition = reactionTransition({
+      likeExists: likeSnap.exists,
+      dislikeExists: dislikeSnap.exists,
+      requestedReaction: reaction,
+      requestedActive: request.data?.active
+    })
+    const { liked, disliked, likeDelta, dislikeDelta } = transition
+    const likeCount = nextCount(canonicalCounter(post, 'likeCount', 'likes'), likeDelta)
+    const dislikeCount = nextCount(canonicalCounter(post, 'dislikeCount', 'dislikes'), dislikeDelta)
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    if (nextReaction === 'like') {
+    if (liked) {
       tx.set(likeRef, { uid, postId: postRef.id, reaction: 'like', createdAt: now, updatedAt: now }, { merge: true })
       tx.delete(dislikeRef)
-    } else if (nextReaction === 'dislike') {
+    } else if (disliked) {
       tx.set(dislikeRef, { uid, postId: postRef.id, reaction: 'dislike', createdAt: now, updatedAt: now }, { merge: true })
       tx.delete(likeRef)
     } else {
-      if (currentReaction === 'like') tx.delete(likeRef)
-      if (currentReaction === 'dislike') tx.delete(dislikeRef)
+      tx.delete(likeRef)
+      tx.delete(dislikeRef)
     }
 
     tx.set(postRef, {
@@ -116,7 +120,7 @@ async function togglePostReaction(request, reaction = 'like') {
       updatedAt: now
     }, { merge: true })
 
-    if (nextReaction === 'like' && currentReaction !== 'like' && post.authorUid && post.authorUid !== uid) {
+    if (liked && !likeSnap.exists && post.authorUid && post.authorUid !== uid) {
       writeAccountEventToBatch(admin.firestore(), tx, post.authorUid, {
         type: 'community_post_like',
         title: 'Your post got a like',
@@ -132,10 +136,10 @@ async function togglePostReaction(request, reaction = 'like') {
     return {
       ok: true,
       postId: postRef.id,
-      reaction: nextReaction || null,
-      liked: nextReaction === 'like',
-      disliked: nextReaction === 'dislike',
-      active: nextReaction === reaction,
+      reaction: transition.reaction,
+      liked,
+      disliked,
+      active: reaction === 'like' ? liked : disliked,
       likesCount: likeCount,
       dislikesCount: dislikeCount,
       likeCount,
@@ -155,9 +159,15 @@ const recordCommunityPostShare = onCall({ timeoutSeconds: 60, memory: '256MiB' }
 
   return admin.firestore().runTransaction(async (tx) => {
     const post = await assertPublicPost(tx, postRef)
-    const count = nextCount(post.counts?.shares, 1)
+    const shareSnap = await tx.get(shareRef)
+    const count = nextCount(canonicalCounter(post, 'shareCount', 'shares'), shareSnap.exists ? 0 : 1)
     const now = admin.firestore.FieldValue.serverTimestamp()
-    tx.set(shareRef, { uid, postId: postRef.id, sharedAt: now, updatedAt: now }, { merge: true })
+    tx.set(shareRef, {
+      uid,
+      postId: postRef.id,
+      ...(!shareSnap.exists ? { sharedAt: now } : {}),
+      updatedAt: now
+    }, { merge: true })
     tx.set(postRef, { 'counts.shares': count, shareCount: count, updatedAt: now }, { merge: true })
     return { ok: true, postId: postRef.id, sharesCount: count }
   })

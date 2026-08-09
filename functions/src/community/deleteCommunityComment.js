@@ -9,6 +9,7 @@ const {
   postRefFor,
   requireAuth
 } = require('./communityCommentShared')
+const { canonicalCounter } = require('./communityEngagementState')
 
 function isAdmin(request = {}) {
   return request.auth?.token?.admin === true || request.auth?.token?.userModerate === true
@@ -32,7 +33,7 @@ const deleteCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
     const commentSnap = await tx.get(commentRef)
     if (!commentSnap.exists) throw new HttpsError('not-found', 'Comment not found.')
     const comment = commentSnap.data() || {}
-    const currentCommentCount = Number(post.counts?.comments || 0)
+    const currentCommentCount = canonicalCounter(post, 'commentCount', 'comments')
     if (comment.status !== 'visible') return { ok: true, postId, commentId, deleted: true, commentCount: currentCommentCount }
     if (comment.authorUid !== uid && !isAdmin(request)) {
       throw new HttpsError('permission-denied', 'You can only delete your own comment.')
@@ -43,7 +44,7 @@ const deleteCommunityComment = onCall({ timeoutSeconds: 60, memory: '256MiB' }, 
       tx.get(postRef.collection('comments').where('status', '==', 'visible'))
     ])
     const parent = parentSnap?.exists ? parentSnap.data() || {} : {}
-    const nextCommentCount = nextCount(visibleCommentsSnap.size || currentCommentCount, -1)
+    const nextCommentCount = nextCount(visibleCommentsSnap.size, -1)
 
     tx.set(commentRef, {
       status: comment.authorUid === uid ? 'deleted_by_author' : 'hidden_by_moderator',

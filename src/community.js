@@ -324,11 +324,26 @@ let communityShellChromeInitialized = false
 let communityPagePreloaderInitialized = false
 let feedNavigationSnapshot = null
 const communityPendingActions = new Map()
+const communityPostReactionVersions = new Map()
+const communityPostSaveVersions = new Map()
+const communityCommentReactionVersions = new Map()
+const communityFocusVersions = new Map()
 const communityPostHoverTimers = new WeakMap()
 let storyMediaRecorder = null
 let storyRecordingStream = null
 let storyRecordingChunks = []
 let storyRecordingTimer = null
+
+function interactionVersion(versions, id = '') {
+  return versions.get(String(id || '')) || 0
+}
+
+function markInteractionMutation(versions, id = '') {
+  const key = String(id || '')
+  const version = interactionVersion(versions, key) + 1
+  versions.set(key, version)
+  return version
+}
 
 function logCommunityPerf(label, data = {}) {
   if (!COMMUNITY_DEBUG) return
@@ -3058,11 +3073,30 @@ async function loadViewerState() {
   // Counts are part of the post document, but a user's own reaction state is
   // stored in private child documents. Always refresh that state on load so
   // active reaction buttons cannot be left behind by a stale in-memory map.
-  const entries = await Promise.all(state.posts.map(async (post) => [
-    post.postId,
-    await getCommunityPostViewerState(post.postId, state.currentUser.uid)
-  ]))
-  state.viewerState = Object.fromEntries(entries)
+  const viewerUid = state.currentUser.uid
+  const requests = state.posts.map((post) => ({
+    postId: post.postId,
+    reactionVersion: interactionVersion(communityPostReactionVersions, post.postId),
+    saveVersion: interactionVersion(communityPostSaveVersions, post.postId)
+  }))
+  const entries = await Promise.all(requests.map(async (request) => ({
+    ...request,
+    viewer: await getCommunityPostViewerState(request.postId, viewerUid)
+  })))
+  if (state.currentUser?.uid !== viewerUid) return
+  const loadedPostIds = new Set(state.posts.map((post) => post.postId))
+  const nextViewerState = { ...state.viewerState }
+  entries.forEach(({ postId, reactionVersion, saveVersion, viewer }) => {
+    if (!loadedPostIds.has(postId)) return
+    const current = { ...(nextViewerState[postId] || {}) }
+    if (interactionVersion(communityPostReactionVersions, postId) === reactionVersion) {
+      current.liked = Boolean(viewer.liked)
+      current.disliked = Boolean(viewer.disliked)
+    }
+    if (interactionVersion(communityPostSaveVersions, postId) === saveVersion) current.saved = Boolean(viewer.saved)
+    nextViewerState[postId] = current
+  })
+  state.viewerState = nextViewerState
 }
 
 async function loadCommentViewerState() {
@@ -3072,11 +3106,23 @@ async function loadCommentViewerState() {
     state.commentViewerState = {}
     return
   }
-  const entries = await Promise.all(allComments.map(async (comment) => [
-    comment.commentId,
-    await getCommunityCommentViewerState(state.detailPostId, comment.commentId, state.currentUser.uid)
-  ]))
-  state.commentViewerState = Object.fromEntries(entries)
+  const viewerUid = state.currentUser.uid
+  const postId = state.detailPostId
+  const requests = allComments.map((comment) => ({
+    commentId: comment.commentId,
+    version: interactionVersion(communityCommentReactionVersions, `${postId}:${comment.commentId}`)
+  }))
+  const entries = await Promise.all(requests.map(async (request) => ({
+    ...request,
+    viewer: await getCommunityCommentViewerState(postId, request.commentId, viewerUid)
+  })))
+  if (state.currentUser?.uid !== viewerUid || state.detailPostId !== postId) return
+  const nextViewerState = { ...state.commentViewerState }
+  entries.forEach(({ commentId, version, viewer }) => {
+    if (interactionVersion(communityCommentReactionVersions, `${postId}:${commentId}`) !== version) return
+    nextViewerState[commentId] = { liked: Boolean(viewer.liked), disliked: Boolean(viewer.disliked) }
+  })
+  state.commentViewerState = nextViewerState
 }
 
 async function loadAttachmentMediaUrls() {
@@ -3151,11 +3197,23 @@ async function loadStories({ renderAfter = false } = {}) {
 
 async function loadCommentViewerStateFor(comments = []) {
   if (!state.currentUser?.uid || !state.detailPostId || !comments.length) return
-  const entries = await Promise.all(comments.map(async (comment) => [
-    comment.commentId,
-    await getCommunityCommentViewerState(state.detailPostId, comment.commentId, state.currentUser.uid)
-  ]))
-  state.commentViewerState = { ...state.commentViewerState, ...Object.fromEntries(entries) }
+  const viewerUid = state.currentUser.uid
+  const postId = state.detailPostId
+  const requests = comments.map((comment) => ({
+    commentId: comment.commentId,
+    version: interactionVersion(communityCommentReactionVersions, `${postId}:${comment.commentId}`)
+  }))
+  const entries = await Promise.all(requests.map(async (request) => ({
+    ...request,
+    viewer: await getCommunityCommentViewerState(postId, request.commentId, viewerUid)
+  })))
+  if (state.currentUser?.uid !== viewerUid || state.detailPostId !== postId) return
+  const nextViewerState = { ...state.commentViewerState }
+  entries.forEach(({ commentId, version, viewer }) => {
+    if (interactionVersion(communityCommentReactionVersions, `${postId}:${commentId}`) !== version) return
+    nextViewerState[commentId] = { liked: Boolean(viewer.liked), disliked: Boolean(viewer.disliked) }
+  })
+  state.commentViewerState = nextViewerState
 }
 
 function scrollFocusedCommentIntoView() {
@@ -3354,11 +3412,19 @@ async function loadCommunityFocusState() {
     state.communityFocus = {}
     return
   }
-  const focusedIds = new Set(await listFocusedCommunityIds(state.currentUser.uid, 50))
-  state.communityFocus = Object.fromEntries(state.communities.map((community) => [
-    community.communityId,
-    focusedIds.has(community.communityId)
-  ]))
+  const viewerUid = state.currentUser.uid
+  const requests = state.communities.map((community) => ({
+    communityId: community.communityId,
+    version: interactionVersion(communityFocusVersions, community.communityId)
+  }))
+  const focusedIds = new Set(await listFocusedCommunityIds(viewerUid, 50))
+  if (state.currentUser?.uid !== viewerUid) return
+  const nextFocusState = { ...state.communityFocus }
+  requests.forEach(({ communityId, version }) => {
+    if (interactionVersion(communityFocusVersions, communityId) !== version) return
+    nextFocusState[communityId] = focusedIds.has(communityId)
+  })
+  state.communityFocus = nextFocusState
 }
 
 async function loadCommunities({ renderOnStart = true, renderAfter = true } = {}) {
@@ -3990,7 +4056,7 @@ async function handleLike(postId) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  const actionId = `like:${postId}`
+  const actionId = `reaction:${postId}`
   if (communityPendingActions.has(actionId)) return
   const post = postById(postId)
   const previousLiked = Boolean(state.viewerState[postId]?.liked)
@@ -3998,12 +4064,13 @@ async function handleLike(postId) {
   const previousLikes = Number(post?.counts?.likes || 0)
   const previousDislikes = Number(post?.counts?.dislikes || 0)
   const nextLiked = !previousLiked
+  markInteractionMutation(communityPostReactionVersions, postId)
   setPostViewerFlag(postId, 'liked', nextLiked)
   if (nextLiked) setPostViewerFlag(postId, 'disliked', false)
   setPostCount(postId, 'likes', previousLikes + (nextLiked ? 1 : -1))
   if (nextLiked && previousDisliked) setPostCount(postId, 'dislikes', previousDislikes - 1)
   updatePostActionDom(postId)
-  trackCommunityAction(actionId, toggleCommunityPostLike(postId))
+  trackCommunityAction(actionId, toggleCommunityPostLike(postId, nextLiked))
     .then((result) => {
       setPostViewerFlag(postId, 'liked', Boolean(result.liked ?? result.active))
       setPostViewerFlag(postId, 'disliked', Boolean(result.disliked))
@@ -4028,7 +4095,7 @@ async function handleDislike(postId) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  const actionId = `dislike:${postId}`
+  const actionId = `reaction:${postId}`
   if (communityPendingActions.has(actionId)) return
   const post = postById(postId)
   const previousLiked = Boolean(state.viewerState[postId]?.liked)
@@ -4036,12 +4103,13 @@ async function handleDislike(postId) {
   const previousLikes = Number(post?.counts?.likes || 0)
   const previousDislikes = Number(post?.counts?.dislikes || 0)
   const nextDisliked = !previousDisliked
+  markInteractionMutation(communityPostReactionVersions, postId)
   setPostViewerFlag(postId, 'disliked', nextDisliked)
   if (nextDisliked) setPostViewerFlag(postId, 'liked', false)
   setPostCount(postId, 'dislikes', previousDislikes + (nextDisliked ? 1 : -1))
   if (nextDisliked && previousLiked) setPostCount(postId, 'likes', previousLikes - 1)
   updatePostActionDom(postId)
-  trackCommunityAction(actionId, toggleCommunityPostDislike(postId))
+  trackCommunityAction(actionId, toggleCommunityPostDislike(postId, nextDisliked))
     .then((result) => {
       setPostViewerFlag(postId, 'liked', Boolean(result.liked))
       setPostViewerFlag(postId, 'disliked', Boolean(result.disliked ?? result.active))
@@ -4072,10 +4140,11 @@ async function handleSave(postId) {
   const previousSaved = Boolean(state.viewerState[postId]?.saved)
   const previousSaves = Number(post?.counts?.saves || 0)
   const nextSaved = !previousSaved
+  markInteractionMutation(communityPostSaveVersions, postId)
   setPostViewerFlag(postId, 'saved', nextSaved)
   setPostCount(postId, 'saves', previousSaves + (nextSaved ? 1 : -1))
   updatePostActionDom(postId)
-  trackCommunityAction(actionId, toggleCommunityPostSave(postId))
+  trackCommunityAction(actionId, toggleCommunityPostSave(postId, nextSaved))
     .then((result) => {
       setPostViewerFlag(postId, 'saved', Boolean(result.active))
       if (Number.isFinite(Number(result.savesCount))) setPostCount(postId, 'saves', Number(result.savesCount))
@@ -4489,7 +4558,7 @@ async function handleCommentLike(commentId = '') {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  const actionId = `comment-like:${state.detailPostId}:${commentId}`
+  const actionId = `comment-reaction:${state.detailPostId}:${commentId}`
   if (communityPendingActions.has(actionId)) return
   const comment = findLoadedComment(commentId)
   const previousLiked = Boolean(state.commentViewerState[commentId]?.liked)
@@ -4497,11 +4566,12 @@ async function handleCommentLike(commentId = '') {
   const previousLikeCount = Number(comment?.likeCount || 0)
   const previousDislikeCount = Number(comment?.dislikeCount || 0)
   const nextLiked = !previousLiked
+  markInteractionMutation(communityCommentReactionVersions, `${state.detailPostId}:${commentId}`)
   state.commentViewerState[commentId] = { liked: nextLiked, disliked: nextLiked ? false : previousDisliked }
   updateCommentCount(commentId, { likeCount: Math.max(0, previousLikeCount + (nextLiked ? 1 : -1)) })
   if (nextLiked && previousDisliked) updateCommentCount(commentId, { dislikeCount: Math.max(0, previousDislikeCount - 1) })
   updateCommentActionDom(commentId)
-  trackCommunityAction(actionId, toggleCommunityCommentLike({ postId: state.detailPostId, commentId })).then((result) => {
+  trackCommunityAction(actionId, toggleCommunityCommentLike({ postId: state.detailPostId, commentId, active: nextLiked })).then((result) => {
     state.commentViewerState[commentId] = { liked: Boolean(result.liked ?? result.active), disliked: Boolean(result.disliked) }
     if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
     if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
@@ -4523,7 +4593,7 @@ async function handleCommentDislike(commentId = '') {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
-  const actionId = `comment-dislike:${state.detailPostId}:${commentId}`
+  const actionId = `comment-reaction:${state.detailPostId}:${commentId}`
   if (communityPendingActions.has(actionId)) return
   const comment = findLoadedComment(commentId)
   const previousLiked = Boolean(state.commentViewerState[commentId]?.liked)
@@ -4531,11 +4601,12 @@ async function handleCommentDislike(commentId = '') {
   const previousLikeCount = Number(comment?.likeCount || 0)
   const previousDislikeCount = Number(comment?.dislikeCount || 0)
   const nextDisliked = !previousDisliked
+  markInteractionMutation(communityCommentReactionVersions, `${state.detailPostId}:${commentId}`)
   state.commentViewerState[commentId] = { liked: nextDisliked ? false : previousLiked, disliked: nextDisliked }
   updateCommentCount(commentId, { dislikeCount: Math.max(0, previousDislikeCount + (nextDisliked ? 1 : -1)) })
   if (nextDisliked && previousLiked) updateCommentCount(commentId, { likeCount: Math.max(0, previousLikeCount - 1) })
   updateCommentActionDom(commentId)
-  trackCommunityAction(actionId, toggleCommunityCommentDislike({ postId: state.detailPostId, commentId })).then((result) => {
+  trackCommunityAction(actionId, toggleCommunityCommentDislike({ postId: state.detailPostId, commentId, active: nextDisliked })).then((result) => {
     state.commentViewerState[commentId] = { liked: Boolean(result.liked), disliked: Boolean(result.disliked ?? result.active) }
     if (Number.isFinite(Number(result.likeCount))) updateCommentCount(commentId, { likeCount: Number(result.likeCount) })
     if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
@@ -4664,6 +4735,7 @@ async function handleToggleFocus(communityId) {
   const previousCommunities = state.communities
   const previousCommunity = state.community
   const nextFocused = !previousFocused
+  markInteractionMutation(communityFocusVersions, communityId)
   const delta = nextFocused ? 1 : -1
   state.communityFocus[communityId] = nextFocused
   state.communities = state.communities.map((community) => community.communityId === communityId
@@ -4673,7 +4745,7 @@ async function handleToggleFocus(communityId) {
     state.community = { ...state.community, focusCount: Math.max(0, Number(state.community.focusCount || 0) + delta) }
   }
   render()
-  trackCommunityAction(actionId, toggleCommunityFocus(communityId))
+  trackCommunityAction(actionId, toggleCommunityFocus(communityId, nextFocused))
     .then((result) => {
       state.communityFocus[communityId] = Boolean(result.focused)
       state.communities = state.communities.map((community) => community.communityId === communityId ? { ...community, focusCount: Number(result.focusCount ?? community.focusCount) } : community)

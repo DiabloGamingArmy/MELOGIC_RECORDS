@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
 const { writeAccountEventToBatch } = require('../account/accountEvents')
+const { reactionTransition } = require('./communityEngagementState')
 const {
   assertPublicPost,
   commentRefFor,
@@ -34,27 +35,30 @@ async function toggleCommunityCommentReaction(request, reaction = 'like') {
       throw new HttpsError('not-found', 'Comment not found.')
     }
     const comment = commentSnap.data() || {}
-    const currentReaction = likeSnap.exists ? 'like' : dislikeSnap.exists ? 'dislike' : ''
-    const nextReaction = currentReaction === reaction ? '' : reaction
-    const likeDelta = (nextReaction === 'like' ? 1 : 0) - (currentReaction === 'like' ? 1 : 0)
-    const dislikeDelta = (nextReaction === 'dislike' ? 1 : 0) - (currentReaction === 'dislike' ? 1 : 0)
+    const transition = reactionTransition({
+      likeExists: likeSnap.exists,
+      dislikeExists: dislikeSnap.exists,
+      requestedReaction: reaction,
+      requestedActive: request.data?.active
+    })
+    const { liked, disliked, likeDelta, dislikeDelta } = transition
     const likeCount = nextCount(comment.likeCount, likeDelta)
     const dislikeCount = nextCount(comment.dislikeCount, dislikeDelta)
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    if (nextReaction === 'like') {
+    if (liked) {
       tx.set(likeRef, { uid, postId, commentId, reaction: 'like', createdAt: now, updatedAt: now }, { merge: true })
       tx.delete(dislikeRef)
-    } else if (nextReaction === 'dislike') {
+    } else if (disliked) {
       tx.set(dislikeRef, { uid, postId, commentId, reaction: 'dislike', createdAt: now, updatedAt: now }, { merge: true })
       tx.delete(likeRef)
     } else {
-      if (currentReaction === 'like') tx.delete(likeRef)
-      if (currentReaction === 'dislike') tx.delete(dislikeRef)
+      tx.delete(likeRef)
+      tx.delete(dislikeRef)
     }
     tx.set(commentRef, { likeCount, dislikeCount, updatedAt: now }, { merge: true })
 
-    if (nextReaction === 'like' && currentReaction !== 'like' && comment.authorUid && comment.authorUid !== uid) {
+    if (liked && !likeSnap.exists && comment.authorUid && comment.authorUid !== uid) {
       writeAccountEventToBatch(firestore, tx, comment.authorUid, {
         type: 'community_comment_like',
         title: 'Your comment got a like',
@@ -71,10 +75,10 @@ async function toggleCommunityCommentReaction(request, reaction = 'like') {
       ok: true,
       postId,
       commentId,
-      reaction: nextReaction || null,
-      active: nextReaction === reaction,
-      liked: nextReaction === 'like',
-      disliked: nextReaction === 'dislike',
+      reaction: transition.reaction,
+      active: reaction === 'like' ? liked : disliked,
+      liked,
+      disliked,
       likeCount,
       dislikeCount
     }

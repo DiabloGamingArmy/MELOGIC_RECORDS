@@ -3,6 +3,7 @@ const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
 const { writeAccountEventToBatch } = require('../account/accountEvents')
 const { loadAuthorSnapshot } = require('./communityCommentShared')
+const { desiredToggleState } = require('./communityEngagementState')
 
 function requireAuth(request) {
   const uid = cleanString(request.auth?.uid || '', 180)
@@ -28,12 +29,12 @@ const toggleCommunityFocus = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
       throw new HttpsError('failed-precondition', 'This community is not available.')
     }
 
-    const focused = !focusSnap.exists
+    const focused = desiredToggleState(focusSnap.exists, request.data?.focused)
     const current = Math.max(0, Number(community.focusCount || 0))
-    const focusCount = Math.max(0, current + (focused ? 1 : -1))
+    const focusCount = Math.max(0, current + Number(focused) - Number(focusSnap.exists))
     const now = admin.firestore.FieldValue.serverTimestamp()
 
-    if (focused) {
+    if (focused && !focusSnap.exists) {
       tx.set(focusRef, {
         communityId,
         slug: cleanString(community.slug || communityId, 80),
@@ -42,12 +43,12 @@ const toggleCommunityFocus = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
         focusedAt: now,
         updatedAt: now
       })
-    } else {
+    } else if (!focused && focusSnap.exists) {
       tx.delete(focusRef)
     }
 
     tx.set(communityRef, { focusCount, updatedAt: now }, { merge: true })
-    if (focused && community.ownerUid && community.ownerUid !== uid) {
+    if (focused && !focusSnap.exists && community.ownerUid && community.ownerUid !== uid) {
       writeAccountEventToBatch(firestore, tx, community.ownerUid, {
         type: 'community_follow',
         title: 'New community focus',

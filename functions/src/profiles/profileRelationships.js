@@ -156,7 +156,7 @@ async function toggleProfileFollowHandler(request) {
         followerExists: followerSnap.exists,
         followingExists: followingSnap.exists,
         requestedState,
-        followersCount: targetCounterSource.followerCount ?? targetCounterSource.followersCount ?? 0,
+        followersCount: targetCounterSource.followersCount ?? targetCounterSource.followerCount ?? 0,
         followingCount: viewerCounterSource.followingCount || 0
       })
       const { wasFollowing, following, followersCount, followingCount, mirrorsMatch } = transition

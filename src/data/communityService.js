@@ -1379,27 +1379,35 @@ export async function createCommunity(payload = {}) {
   return result?.data || { ok: false }
 }
 
-export async function toggleCommunityFocus(communityId = '') {
+export async function toggleCommunityFocus(communityId = '', focused = null) {
   const callable = httpsCallable(functions, 'toggleCommunityFocus')
-  const result = await callable({ communityId })
+  const payload = { communityId }
+  if (typeof focused === 'boolean') payload.focused = focused
+  const result = await callable(payload)
   return result?.data || { ok: false }
 }
 
-export async function toggleCommunityPostLike(postId = '') {
+export async function toggleCommunityPostLike(postId = '', active = null) {
   const callable = httpsCallable(functions, 'toggleCommunityPostLike')
-  const result = await callable({ postId })
+  const payload = { postId }
+  if (typeof active === 'boolean') payload.active = active
+  const result = await callable(payload)
   return result?.data || { ok: false }
 }
 
-export async function toggleCommunityPostDislike(postId = '') {
+export async function toggleCommunityPostDislike(postId = '', active = null) {
   const callable = httpsCallable(functions, 'toggleCommunityPostDislike')
-  const result = await callable({ postId })
+  const payload = { postId }
+  if (typeof active === 'boolean') payload.active = active
+  const result = await callable(payload)
   return result?.data || { ok: false }
 }
 
-export async function toggleCommunityPostSave(postId = '') {
+export async function toggleCommunityPostSave(postId = '', active = null) {
   const callable = httpsCallable(functions, 'toggleCommunityPostSave')
-  const result = await callable({ postId })
+  const payload = { postId }
+  if (typeof active === 'boolean') payload.active = active
+  const result = await callable(payload)
   return result?.data || { ok: false }
 }
 
