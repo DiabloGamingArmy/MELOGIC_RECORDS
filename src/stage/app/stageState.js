@@ -31,6 +31,33 @@ export const editorRailItems = [
   { key: 'help', label: 'Help', icon: stageIconPath('rail', 'help') }
 ]
 
+// Phase 4 shell registration. Only Stage and Viewport have an editor behind
+// them today; the remaining entries reserve stable, non-functional locations.
+export const vertixDisciplines = [
+  { key: 'stage', label: 'Stage', icon: 'STG', available: true },
+  { key: 'model', label: 'Model', icon: 'MOD' },
+  { key: 'sculpt', label: 'Sculpt', icon: 'SCL' },
+  { key: 'paint', label: 'Paint', icon: 'PNT' },
+  { key: 'animate', label: 'Animate', icon: 'ANM' },
+  { key: 'simulate', label: 'Simulate', icon: 'SIM' },
+  { key: 'fx', label: 'FX', icon: 'FX' },
+  { key: 'compositing', label: 'Comp', icon: 'CMP' },
+  { key: 'output', label: 'Output', icon: 'OUT' }
+]
+
+export const vertixWorkspaceTabs = [
+  { key: 'viewport', label: 'Viewport', available: true },
+  { key: 'shading', label: 'Shading' },
+  { key: 'lighting', label: 'Lighting' },
+  { key: 'cameras', label: 'Cameras' },
+  { key: 'sculpt', label: 'Sculpt' },
+  { key: 'paint', label: 'Paint' },
+  { key: 'animation', label: 'Animation' },
+  { key: 'timeline', label: 'Timeline' },
+  { key: 'compositions', label: 'Compositions' },
+  { key: 'scripting', label: 'Scripting' }
+]
+
 export const editorLibraryCategories = [
   { key: 'all', label: 'All Assets', icon: 'All', iconPath: stageIconPath('library', 'band-backline') },
   { key: 'primitive', label: 'Primitive Shapes', icon: '□', iconPath: stageIconPath('library', 'cases') },
@@ -109,6 +136,8 @@ export const state = {
   assetResolutions: {},
   assetDependencies: [],
   createError: '',
+  activeVertixDiscipline: 'stage',
+  activeVertixWorkspace: 'viewport',
   selectedStageType: 'Blank Stage',
   activeEditorMode: 'entities',
   activeStageSection: 'home',

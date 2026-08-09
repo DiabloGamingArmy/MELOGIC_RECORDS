@@ -136,5 +136,5 @@ export function renderInspectorTabs() {
       : active === 'notes'
         ? renderNotesTab()
         : renderAiTab()
-  return `<aside class="stage-editor-right"><div class="stage-inspector-tabs">${tabs.map(([k, l]) => `<button type="button" data-inspector-tab="${k}" class="${active === k ? 'is-active' : ''}" ${k === 'ai' ? 'data-guide-id="stagemaker-resona-tab" data-guide-label="StageMaker Resona tab" data-guide-role="stage-resona-tab"' : ''}>${l}</button>`).join('')}</div><div class="stage-inspector-body">${body}</div></aside>`
+  return `<aside class="stage-editor-right"><header class="vertix-editor-region-header"><div><span>Properties</span><small>Stage discipline</small></div><span class="vertix-region-state">${selectedObjectRecord().id ? 'Selection' : 'No selection'}</span></header><div class="stage-inspector-tabs">${tabs.map(([k, l]) => `<button type="button" data-inspector-tab="${k}" class="${active === k ? 'is-active' : ''}" ${k === 'ai' ? 'data-guide-id="stagemaker-resona-tab" data-guide-label="StageMaker Resona tab" data-guide-role="stage-resona-tab"' : ''}>${l}</button>`).join('')}</div><div class="stage-inspector-body">${body}</div></aside>`
 }

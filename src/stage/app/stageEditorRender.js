@@ -3,19 +3,19 @@ import { renderBottomSplit } from '../bottomPanel/bottomPanel'
 import { renderExportPreview } from '../export/exportPreview'
 import { renderInspectorTabs } from '../inspector/inspectorTabs'
 import { renderLeftPanelBySection } from '../panels/leftPanels'
-import { editorModes, editorRailItems, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, isSimpleEditableStageObject, projectDate, projectLoadLabel, selectedStageObjects, stageIconPath, state } from './stageState'
+import { editorModes, editorToolModes, editorViewModes, ensureStageTabs, findStageObject, isSimpleEditableStageObject, projectDate, projectLoadLabel, selectedStageObjects, state, vertixDisciplines, vertixWorkspaceTabs } from './stageState'
 
 function renderEditorState(title, body) {
   return `<main class="stage-dashboard-page stage-editor-page"><section class="stage-editor-state"><h2>${title}</h2>${body}<a href="${ROUTES.studioStagemaker}" class="stage-back-link">Back to Stagemaker Projects</a></section></main>`
 }
 
 function renderMenubar(title, stamp) {
-  return `<section class="stage-editor-menubar"><div class="stage-editor-menu-left"><button class="stage-editor-app-menu" type="button" data-stage-app-menu aria-label="Stage app menu">☰</button><button type="button" data-icon-path="${stageIconPath('app', 'file')}">File</button><button type="button" data-icon-path="${stageIconPath('app', 'edit')}">Edit</button><button type="button" data-icon-path="${stageIconPath('app', 'view')}">View</button><button type="button" data-icon-path="${stageIconPath('app', 'share')}">Share</button></div><div class="stage-editor-project-title"><h2 data-stage-project-title>Project: ${title}</h2><p data-stage-project-version>Date/Version ${stamp} | v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><span class="stage-save-pill" data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span><button type="button" aria-disabled="true">Share ▾</button><button type="button" aria-disabled="true">⚙</button><button type="button" aria-disabled="true">⋯</button><button type="button" class="is-send" data-open-export>Send Stage Plan</button></div></section>`
+  return `<header class="stage-editor-menubar vertix-global-header"><div class="vertix-global-header-left"><button class="vertix-wordmark" type="button" data-stage-app-menu aria-label="Vertix application menu">VERTIX</button><span class="vertix-discipline-badge">Stage</span><nav aria-label="Vertix application menus"><button type="button" disabled>File</button><button type="button" disabled>Edit</button><button type="button" disabled>Window</button><button type="button" disabled>Help</button></nav></div><div class="stage-editor-project-title"><span>Scene</span><h2 data-stage-project-title>${title}</h2><p data-stage-project-version>${stamp} · v${state.editorProject?.version || 1}</p></div><div class="stage-editor-menu-actions"><span class="stage-save-pill" data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span><button type="button" data-save-stage-plan>Save</button><button type="button" class="is-send" data-open-export>Render</button></div></header>`
 }
 
 function renderRail() {
-  const railItems = editorRailItems.map((item) => `<button type="button" class="${state.activeStageSection === item.key ? 'is-active' : ''}" data-rail-section="${item.key}" title="${item.label}"><span class="stage-rail-icon" data-stage-icon-path="${item.icon}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">◈</span></span><small>${item.label}</small></button>`).join('')
-  return `<nav class="stage-editor-rail" aria-label="Editor tools">${railItems}<a class="stage-back-link" href="${ROUTES.studioStagemaker}" aria-label="Back to StageMaker" title="Back to StageMaker"><span class="stage-rail-icon" data-stage-icon-path="${stageIconPath('rail', 'exit')}"><img alt="" loading="lazy" hidden /><span class="stage-rail-fallback">↩</span></span><small>Back</small></a></nav>`
+  const disciplines = vertixDisciplines.map((discipline) => `<button type="button" class="${state.activeVertixDiscipline === discipline.key ? 'is-active' : ''}" data-vertix-discipline="${discipline.key}" title="${discipline.available ? `${discipline.label} discipline` : `${discipline.label} is not available yet`}" ${discipline.available ? '' : 'disabled'}><span>${discipline.icon}</span><small>${discipline.label}</small></button>`).join('')
+  return `<nav class="stage-editor-rail vertix-discipline-rail" aria-label="Vertix disciplines"><div class="vertix-rail-mark" aria-hidden="true">V</div>${disciplines}<a class="stage-back-link" href="${ROUTES.studioStagemaker}" aria-label="Back to Stage projects" title="Back to Stage projects"><span>↩</span><small>Projects</small></a></nav>`
 }
 
 function renderViewport() {
@@ -60,14 +60,21 @@ function renderViewport() {
 
 function renderBottomPanel() {
   const tabs = editorModes.map((m) => `<button class="stage-editor-mode-tab ${state.activeEditorMode === m.key ? 'is-active' : ''}" data-editor-mode="${m.key}" data-guide-id="stagemaker-tab-${m.key}" data-guide-label="${m.label}" data-guide-role="stagemaker-bottom-tab" type="button" aria-selected="${state.activeEditorMode === m.key}">${m.label}</button>`).join('')
-  return `<section class="stage-editor-bottom"><div class="stage-resize-handle is-bottom" data-resize="bottom"></div><div class="stage-editor-mode-tabs">${tabs}</div><div data-stage-mode-root>${renderBottomSplit()}</div></section>`
+  return `<section class="stage-editor-bottom"><div class="stage-resize-handle is-bottom" data-resize="bottom"></div><div class="vertix-bottom-editor-header"><span>Editors</span><div class="stage-editor-mode-tabs">${tabs}</div></div><div data-stage-mode-root>${renderBottomSplit()}</div></section>`
 }
 
 export function renderStageTabbar() {
   const tabs = ensureStageTabs()
   const stageTabs = tabs.map((tab) => `<button type="button" class="stage-editor-project-tab ${state.activeStageTabId === tab.id ? 'is-active' : ''}" data-stage-tab="${tab.id}" aria-selected="${state.activeStageTabId === tab.id}">${tab.title || 'Untitled Stage'}</button>`).join('')
+  const workspaces = vertixWorkspaceTabs.map((workspace) => `<button type="button" class="vertix-workspace-tab ${state.activeVertixWorkspace === workspace.key ? 'is-active' : ''}" data-vertix-workspace="${workspace.key}" ${workspace.available ? '' : 'disabled'} title="${workspace.available ? `${workspace.label} workspace` : `${workspace.label} workspace is not available yet`}">${workspace.label}</button>`).join('')
   const canRemove = tabs.length > 1
-  return `<section class="stage-editor-tabbar"><div class="stage-editor-project-tabs">${stageTabs}</div><div class="stage-editor-tab-actions"><button type="button" data-add-stage-tab title="Add stage" aria-label="Add stage">+</button><button type="button" data-remove-stage-tab title="Remove current stage" aria-label="Remove current stage" ${canRemove ? '' : 'aria-disabled="true"'}>-</button></div></section>`
+  return `<section class="stage-editor-tabbar vertix-workspace-bar"><div class="vertix-workspace-tabs" role="tablist" aria-label="Vertix workspaces">${workspaces}</div><div class="vertix-scene-tabs"><span>Scenes</span><div class="stage-editor-project-tabs">${stageTabs}</div><div class="stage-editor-tab-actions"><button type="button" data-add-stage-tab title="Add stage" aria-label="Add stage">+</button><button type="button" data-remove-stage-tab title="Remove current stage" aria-label="Remove current stage" ${canRemove ? '' : 'aria-disabled="true"'}>-</button></div></div></section>`
+}
+
+function renderStatusBar() {
+  const selected = selectedStageObjects().length
+  const objectCount = state.editorProject?.objects?.length || 0
+  return `<footer class="vertix-status-bar"><span>Stage · ${state.activeVertixWorkspace === 'viewport' ? 'Viewport' : state.activeVertixWorkspace}</span><span>${selected ? `${selected} selected` : 'No selection'}</span><span>${objectCount} objects</span><span>${state.editorToolMode} tool · ${state.viewportMode}</span><span data-stage-save-status data-save-status="${state.editorSaveStatus || 'idle'}">${state.editorSaveStatus || 'Ready'}</span></footer>`
 }
 
 export function renderEditor() {
@@ -78,5 +85,5 @@ export function renderEditor() {
   if (state.editorError) return renderEditorState('Could not open this stage plan.', '')
   const title = state.editorProject?.title || 'Untitled Stage Plan'
   const stamp = (projectDate(state.editorProject) || new Date()).toLocaleDateString()
-  return `<main class="stage-editor-app ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" style="--stage-lib-w:${state.paneSizes.library}px;--stage-right-w:${state.paneSizes.right}px;--stage-bottom-h:${state.paneSizes.bottom}px;--stage-bottom-split:${state.paneSizes.bottomSplit}%" data-stage-editor-app>${renderMenubar(title, stamp)}${renderStageTabbar()}<section class="stage-editor-body">${renderRail()}${renderLeftPanelBySection(title, stamp)}<div class="stage-resize-handle is-library" data-resize="library"></div>${renderViewport()}<div class="stage-resize-handle is-right" data-resize="right"></div>${renderInspectorTabs(title, stamp)}${renderBottomPanel()}</section>${state.showExportPreview ? renderExportPreview() : ''}</main>`
+  return `<main class="stage-editor-app vertix-application ${state.showStageGlobalHeader ? '' : 'is-header-hidden'}" style="--stage-lib-w:${state.paneSizes.library}px;--stage-right-w:${state.paneSizes.right}px;--stage-bottom-h:${state.paneSizes.bottom}px;--stage-bottom-split:${state.paneSizes.bottomSplit}%" data-stage-editor-app>${renderMenubar(title, stamp)}${renderStageTabbar()}<section class="stage-editor-body vertix-main-workspace">${renderRail()}${renderLeftPanelBySection(title, stamp)}<div class="stage-resize-handle is-library" data-resize="library"></div>${renderViewport()}<div class="stage-resize-handle is-right" data-resize="right"></div>${renderInspectorTabs(title, stamp)}${renderBottomPanel()}</section>${renderStatusBar()}${state.showExportPreview ? renderExportPreview() : ''}</main>`
 }

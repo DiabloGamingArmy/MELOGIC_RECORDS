@@ -405,6 +405,25 @@ export function bindStageEditorEventsOnce(context) {
     }
     const newStage = e.target.closest('[data-new-stage-plan]')
     if (newStage && app.querySelector('[data-stage-editor-app]')) { window.location.href = ROUTES.studioStagemaker; return }
+    const saveStagePlan = e.target.closest('[data-save-stage-plan]')
+    if (saveStagePlan) {
+      Promise.resolve(flushStagePlanSave?.()).then(() => showStageNotice?.('Stage plan saved.')).catch(() => showStageNotice?.('Save failed. See status.'))
+      return
+    }
+    const workspace = e.target.closest('[data-vertix-workspace]')
+    if (workspace && workspace.dataset.vertixWorkspace === 'viewport') {
+      state.activeVertixWorkspace = 'viewport'
+      updateStageTabsUI?.()
+      queueEditorStateSave?.()
+      return
+    }
+    const discipline = e.target.closest('[data-vertix-discipline]')
+    if (discipline && discipline.dataset.vertixDiscipline === 'stage') {
+      state.activeVertixDiscipline = 'stage'
+      updateRailUI?.()
+      queueEditorStateSave?.()
+      return
+    }
     const menuBtn = e.target.closest('[data-stage-app-menu]')
     if (menuBtn) { state.stageAppMenuOpen = !state.stageAppMenuOpen; updateStageAppMenu(); return }
     const menuPanel = e.target.closest('[data-stage-app-menu-panel]')

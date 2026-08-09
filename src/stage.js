@@ -79,6 +79,8 @@ function normalizeEditorMode(mode) {
 
 function buildEditorStateSnapshot() {
   return {
+    activeVertixDiscipline: state.activeVertixDiscipline,
+    activeVertixWorkspace: state.activeVertixWorkspace,
     viewportMode: state.viewportMode,
     paneSizes: { ...state.paneSizes },
     activeLayer: 'stage',
@@ -108,6 +110,8 @@ function buildEditorStateSnapshot() {
 
 function applyEditorStateSnapshot(editorState = {}) {
   if (!editorState || typeof editorState !== 'object') return
+  state.activeVertixDiscipline = editorState.activeVertixDiscipline === 'stage' ? 'stage' : state.activeVertixDiscipline
+  state.activeVertixWorkspace = editorState.activeVertixWorkspace === 'viewport' ? 'viewport' : state.activeVertixWorkspace
   state.viewportMode = editorState.viewportMode || state.viewportMode
   state.paneSizes = { ...state.paneSizes, ...(editorState.paneSizes || {}) }
   state.activeStageSection = editorState.activeStageSection || state.activeStageSection
@@ -441,12 +445,12 @@ function refreshStageIcons() {
 }
 
 function updateStageAppMenu() {
-  const left = app.querySelector('.stage-editor-menu-left')
+  const left = app.querySelector('.vertix-global-header-left, .stage-editor-menu-left')
   if (!left) return
   const existing = left.querySelector('[data-stage-app-menu-panel]')
   existing?.remove()
   if (!state.stageAppMenuOpen) return
-  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.studioStagemaker}">Back to StageMaker</a><a href="${ROUTES.studio}">Back to Studio</a><button type="button" aria-disabled="true">Asset Library</button><button type="button" aria-disabled="true">Exports</button><label class="stage-menu-check"><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}> Show site-wide header</label></div>`)
+  left.insertAdjacentHTML('beforeend', `<div class="stage-editor-app-menu-panel" data-stage-app-menu-panel><a href="${ROUTES.studioStagemaker}">Stage Projects</a><a href="${ROUTES.studio}">Studio</a><button type="button" aria-disabled="true">Other Vertix disciplines</button><label class="stage-menu-check"><input type="checkbox" data-toggle-main-header ${state.showStageGlobalHeader ? 'checked' : ''}> Show site-wide header</label></div>`)
 }
 
 function updateExportPreview() {
