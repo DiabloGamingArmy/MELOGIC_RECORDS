@@ -1,8 +1,6 @@
 import { ROUTES, authRoute } from '../../utils/routes'
 import {
-  baseStageTypes,
   currentStageDimensions,
-  editorLibraryCategories,
   editorRailItems,
   editorViewModes,
   exportReadiness,
@@ -11,13 +9,41 @@ import {
   state,
   viewportModeLabel
 } from '../app/stageState'
-import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvider'
+import { buildSceneOutliner, filterSceneOutliner, sceneObjectIcon } from '../outliner/sceneOutliner'
 
 const escapeAttr = (value = '') => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
+const isMissingAsset = (object) => {
+  const resolution = state.assetResolutions?.[object?.id || object?.key]
+  return resolution?.status === 'MISSING' || resolution?.status === 'INVALID'
+}
+
+function renderOutlinerRows(nodes, depth = 0) {
+  return nodes.map((node) => {
+    const object = node.object
+    const id = node.id
+    const children = node.children || []
+    const expanded = state.outlinerExpandedIds?.[id] !== false
+    const selected = state.selectedEditorObjects?.includes(id)
+    const missing = isMissingAsset(object)
+    const type = object.type || object.category || 'Object'
+    return `<div class="vertix-outliner-node" style="--vertix-outliner-depth:${depth}"><div class="vertix-outliner-row ${selected ? 'is-selected' : ''} ${missing ? 'is-missing' : ''}" data-select-object="${escapeAttr(id)}" title="${escapeAttr(`${object.label || object.name || id} · ${type}`)}"><button type="button" class="vertix-outliner-expand" data-outliner-expand="${escapeAttr(id)}" ${children.length ? '' : 'disabled'} aria-label="${expanded ? 'Collapse' : 'Expand'} ${escapeAttr(object.label || object.name || id)}">${children.length ? (expanded ? '⌄' : '›') : ''}</button><span class="vertix-outliner-icon">${sceneObjectIcon(object)}</span><span class="vertix-outliner-name">${escapeAttr(object.label || object.name || id)}</span><span class="vertix-outliner-type">${escapeAttr(type)}</span>${missing ? '<span class="vertix-outliner-missing" title="Missing asset">!</span>' : ''}<button type="button" class="vertix-outliner-state ${object.visible !== false ? 'is-active' : ''}" data-outliner-toggle="visible" data-outliner-object="${escapeAttr(id)}" aria-pressed="${object.visible !== false}" aria-label="Toggle visibility">◉</button><button type="button" class="vertix-outliner-state ${object.locked ? 'is-active' : ''}" data-outliner-toggle="locked" data-outliner-object="${escapeAttr(id)}" aria-pressed="${!!object.locked}" aria-label="Toggle lock">▣</button></div>${children.length && expanded ? `<div class="vertix-outliner-children">${renderOutlinerRows(children, depth + 1)}</div>` : ''}</div>`
+  }).join('')
+}
+
+function renderSceneOutliner() {
+  const tree = filterSceneOutliner(buildSceneOutliner(state.editorProject?.objects || []), state.outlinerSearch)
+  const count = state.editorProject?.objects?.length || 0
+  return `<section class="vertix-scene-outliner" aria-label="Scene outliner"><div class="vertix-scene-outliner-heading"><span>Scene</span><small>${count}</small></div><input type="search" data-outliner-search aria-label="Filter scene" placeholder="Filter scene" value="${escapeAttr(state.outlinerSearch)}"><div class="vertix-outliner-list">${tree.length ? renderOutlinerRows(tree) : '<p class="vertix-outliner-empty">No scene objects match.</p>'}</div></section>`
+}
+
+function renderCreateTools() {
+  return `<section class="vertix-create-tools"><div class="vertix-scene-outliner-heading"><span>Create</span><button type="button" data-open-asset-browser>Browse</button></div><div><button type="button" data-add-stage-asset="asset-truss">Truss</button><button type="button" data-add-stage-asset="asset-moving-head">Fixture</button><button type="button" data-add-stage-asset="asset-camera">Camera</button></div></section>`
+}
+
 export function renderLeftPanel(title, body) {
   const contexts = editorRailItems.map((item) => `<option value="${escapeAttr(item.key)}" ${state.activeStageSection === item.key ? 'selected' : ''}>${escapeAttr(item.label)}</option>`).join('')
-  return `<aside class="stage-editor-library vertix-context-panel" data-guide-id="stagemaker-object-library" data-guide-label="${escapeAttr(title)}" data-guide-role="stagemaker-object-library"><header><div><span class="vertix-stage-panel-kicker">Stage context</span><h3>${title}</h3></div><label class="vertix-context-switcher"><span>Tools</span><select data-stage-context aria-label="Stage contextual tools">${contexts}</select></label></header><div class="stage-left-panel-content">${body}</div></aside>`
+  return `<aside class="stage-editor-library vertix-context-panel" data-guide-id="stagemaker-object-library" data-guide-label="${escapeAttr(title)}" data-guide-role="stagemaker-object-library"><header><div><span class="vertix-stage-panel-kicker">Workspace</span><h3>Stage</h3></div><label class="vertix-context-switcher"><span>Tools</span><select data-stage-context aria-label="Stage contextual tools">${contexts}</select></label></header>${renderCreateTools()}${renderSceneOutliner()}<details class="vertix-context-settings"><summary>Stage settings <span>${escapeAttr(title)}</span></summary><div class="stage-left-panel-content">${body}</div></details></aside>`
 }
 
 export function renderLeftPanelBySection(title, stamp) {
@@ -33,17 +59,7 @@ export function renderLeftPanelBySection(title, stamp) {
     ? `<div class="stage-load-recovery"><p class="stage-subtle-warning">${state.projectLoadMessage || 'Project data failed to load. Editing fallback stage.'}</p><div class="stage-action-grid"><button type="button" data-retry-project-load>Retry Project Load</button>${signInAction}<button type="button" data-save-as-new-stage>Save Local Copy as New</button></div></div>`
     : ''
   if (section === 'object') {
-    const activeFilter = state.activeLibraryCategory || 'all'
-    const search = String(state.objectLibrarySearch || '').trim().toLowerCase()
-    const assetGroupLabels = new Map(vertixAssetRegistry.listAssetGroups().flatMap((group) => group.assetIds.map((assetId) => [assetId, group.label])))
-    const assets = vertixAssetRegistry.listAssets().map((asset) => ({ ...asset, groupLabel: assetGroupLabels.get(asset.id) || '' }))
-    const filteredAssets = assets.filter((asset) => {
-      const matchesCategory = activeFilter === 'all' || asset.category === activeFilter || (activeFilter === 'backline' && asset.category === 'band-backline')
-      if (!matchesCategory) return false
-      if (!search) return true
-      return [asset.label, asset.category, asset.type, asset.groupLabel].some((value) => String(value || '').toLowerCase().includes(search))
-    })
-    return renderLeftPanel('OBJECT LIBRARY', `<div class="stage-editor-library-tools"><input aria-label="Search object library" placeholder="Search assets" data-library-search value="${escapeAttr(state.objectLibrarySearch || '')}" /><button type="button" class="stage-library-filter" aria-disabled="true" title="Search filters the asset list">⌕</button></div><div class="stage-category-filter-row">${editorLibraryCategories.map((c) => `<button class="stage-category-chip ${activeFilter === c.key ? 'is-active' : ''}" data-library-category="${c.key}" data-guide-id="stagemaker-library-category-${escapeAttr(c.key)}" data-guide-label="${escapeAttr(c.label)} category" data-guide-role="stagemaker-library-category" type="button"><span class="stage-object-icon-frame" data-stage-icon-path="${c.iconPath}"><img alt="" loading="lazy" hidden /><span class="stage-object-fallback-icon">${c.icon}</span></span><span class="stage-category-label">${c.label}</span></button>`).join('')}</div><label class="stage-editor-check"><input type="checkbox" checked disabled /> Add as stage-aware objects</label><h4>${activeFilter === 'all' ? 'AVAILABLE ASSETS' : `${editorLibraryCategories.find((c) => c.key === activeFilter)?.label || activeFilter} ASSETS`}</h4><div class="stage-asset-card-list">${filteredAssets.map((asset) => `<article class="stage-asset-card" draggable="true" data-stage-asset="${escapeAttr(asset.id)}" data-guide-id="stagemaker-asset-${escapeAttr(asset.id)}" data-guide-label="${escapeAttr(asset.label)} asset" data-guide-role="stagemaker-asset-card"><div class="stage-asset-icon">${asset.icon}</div><div class="stage-asset-main"><strong>${asset.label}</strong><span>${asset.category} · ${asset.type}</span><small>${asset.dimensions?.width || 'n/a'} x ${asset.dimensions?.depth || 'n/a'} x ${asset.dimensions?.height || 'n/a'} ${unit}</small></div><button type="button" data-add-stage-asset="${escapeAttr(asset.id)}" data-guide-id="stagemaker-add-asset-${escapeAttr(asset.id)}" data-guide-label="Add ${escapeAttr(asset.label)}" data-guide-role="stagemaker-add-asset-button">Add</button></article>`).join('') || '<p class="stage-help-text">No assets match this filter.</p>'}</div><h4>BASE STAGE TYPES</h4><div class="stage-base-stage-grid">${baseStageTypes.map((stage) => `<button class="stage-base-stage-card" aria-disabled="true" type="button"><span class="stage-base-stage-thumb" data-stage-icon-path="${stage.icon}"><img alt="" loading="lazy" hidden /><span>${stage.label.slice(0, 2).toUpperCase()}</span></span><span>${stage.label}</span></button>`).join('')}</div>`)
+    return renderLeftPanel('ASSETS', '<section class="stage-config-panel"><h3>Asset Browser</h3><p class="stage-help-text">Browse the package-aware library to add stage assets.</p><button type="button" class="stage-inline-button" data-open-asset-browser>Open Asset Browser</button></section>')
   }
 
   const sessionLabel = !state.authReady ? 'Restoring session...' : state.user?.uid ? 'Signed in' : 'Sign in required'

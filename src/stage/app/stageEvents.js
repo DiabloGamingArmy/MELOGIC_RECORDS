@@ -506,6 +506,33 @@ export function bindStageEditorEventsOnce(context) {
       queueEditorStateSave?.()
       return
     }
+    const openAssetBrowser = e.target.closest('[data-open-asset-browser]')
+    if (openAssetBrowser) {
+      state.activeEditorMode = 'asset-browser'
+      updateEditorModeUI?.()
+      queueEditorStateSave?.()
+      return
+    }
+    const outlinerExpand = e.target.closest('[data-outliner-expand]')
+    if (outlinerExpand && !outlinerExpand.disabled) {
+      const objectId = outlinerExpand.dataset.outlinerExpand || ''
+      state.outlinerExpandedIds = { ...state.outlinerExpandedIds, [objectId]: state.outlinerExpandedIds?.[objectId] === false }
+      updateLeftPanelUI?.()
+      queueEditorStateSave?.()
+      return
+    }
+    const outlinerToggle = e.target.closest('[data-outliner-toggle]')
+    if (outlinerToggle) {
+      const objectId = outlinerToggle.dataset.outlinerObject || ''
+      const field = outlinerToggle.dataset.outlinerToggle
+      if (!objectId || !['visible', 'locked'].includes(field)) return
+      setSelectedStageObjects([objectId], objectId)
+      ensureObjectModeForSelection()
+      const object = findStageObject(objectId)
+      const updated = object ? updateSelectedStageObjectField(field, !object[field]) : false
+      syncObjectSurfaces({ refreshViewport: updated, save: updated, notice: updated ? `${field === 'visible' ? 'Visibility' : 'Lock'} updated.` : 'Object could not be updated.' })
+      return
+    }
     const focusObject = e.target.closest('[data-focus-object]')
     if (focusObject) {
       setSelectedStageObjects([focusObject.dataset.focusObject || state.selectedEditorObject], focusObject.dataset.focusObject || state.selectedEditorObject)
@@ -654,6 +681,16 @@ export function bindStageEditorEventsOnce(context) {
       state.objectLibrarySearch = librarySearch.value || ''
       updateLeftPanelUI?.()
       const nextSearch = app.querySelector('[data-library-search]')
+      nextSearch?.focus?.()
+      nextSearch?.setSelectionRange?.(nextSearch.value.length, nextSearch.value.length)
+      queueEditorStateSave?.()
+      return
+    }
+    const outlinerSearch = e.target.closest('[data-outliner-search]')
+    if (outlinerSearch) {
+      state.outlinerSearch = outlinerSearch.value || ''
+      updateLeftPanelUI?.()
+      const nextSearch = app.querySelector('[data-outliner-search]')
       nextSearch?.focus?.()
       nextSearch?.setSelectionRange?.(nextSearch.value.length, nextSearch.value.length)
       queueEditorStateSave?.()

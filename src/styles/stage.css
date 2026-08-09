@@ -1206,6 +1206,45 @@ body:has([data-stage-editor-app]) #app{
   .vertix-asset-detail small { display:none; }
 }
 
+/* Phase 7 — a single, project-backed scene hierarchy and a bounded application shell. */
+html:has(.vertix-application),body:has(.vertix-application),body:has(.vertix-application) #app { block-size:100dvh; min-block-size:100dvh; overflow:hidden; }
+.stage-editor-app.vertix-application { block-size:100dvh !important; min-block-size:0 !important; display:grid; grid-template-rows:var(--vertix-header-height) var(--vertix-workspace-height) minmax(0,1fr) var(--vertix-status-height); overflow:hidden; }
+.stage-editor-app.vertix-application .stage-editor-body { block-size:auto !important; min-block-size:0 !important; grid-row:3; }
+.stage-editor-app.vertix-application .vertix-status-bar { grid-row:4; min-block-size:0; }
+.vertix-context-panel { display:flex; flex-direction:column; min-block-size:0; overflow:hidden; }
+.vertix-context-panel > header { flex:0 0 auto; }
+.vertix-create-tools { display:grid; gap:5px; flex:0 0 auto; padding:7px 0; border-bottom:1px solid var(--stage-border); }
+.vertix-create-tools > div:last-child { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; }
+.vertix-create-tools button { min-width:0; height:23px; border:1px solid var(--stage-border); background:#121722; color:var(--stage-muted); padding:0 4px; font-size:9px; }
+.vertix-create-tools button:hover { border-color:rgba(117,108,255,.62); color:#fff; }
+.vertix-scene-outliner { display:flex; flex:1 1 auto; flex-direction:column; min-block-size:84px; padding:7px 0 0; overflow:hidden; }
+.vertix-scene-outliner-heading { display:flex; align-items:center; justify-content:space-between; gap:6px; min-width:0; }
+.vertix-scene-outliner-heading > span { color:#cbd5e8; font-size:9px; font-weight:650; letter-spacing:.1em; text-transform:uppercase; }
+.vertix-scene-outliner-heading > small { color:var(--stage-faint); font-size:9px; }
+.vertix-scene-outliner-heading button { height:18px; border:0; background:transparent; color:#aaa5e8; padding:0; font-size:9px; }
+.vertix-scene-outliner input { width:100%; height:24px; margin:5px 0; border:1px solid var(--stage-border); background:#0a0d13; color:var(--stage-text); padding:0 6px; font-size:10px; }
+.vertix-outliner-list { min-block-size:0; overflow:auto; padding:1px 0 4px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.22) transparent; }
+.vertix-outliner-node { min-width:0; }
+.vertix-outliner-row { display:grid; grid-template-columns:16px 14px minmax(0,1fr) auto auto auto auto; align-items:center; min-height:24px; gap:3px; padding:0 2px 0 calc(2px + var(--vertix-outliner-depth,0) * 10px); border-left:2px solid transparent; color:var(--stage-muted); cursor:pointer; }
+.vertix-outliner-row:hover { background:rgba(255,255,255,.045); color:#e5eaff; }
+.vertix-outliner-row.is-selected { border-left-color:var(--vertix-accent); background:var(--vertix-accent-soft); color:#fff; }
+.vertix-outliner-row.is-missing .vertix-outliner-name { color:#f1b6da; }
+.vertix-outliner-expand,.vertix-outliner-state { display:grid; width:16px; height:18px; place-items:center; border:0; background:transparent; color:#72809a; padding:0; font-size:12px; }
+.vertix-outliner-expand:disabled { opacity:0; cursor:default; }
+.vertix-outliner-state { font-size:10px; }
+.vertix-outliner-state.is-active { color:#bfc4ff; }
+.vertix-outliner-state:hover { color:#fff; background:rgba(255,255,255,.08); }
+.vertix-outliner-icon { color:#aaa5e8; font-size:10px; text-align:center; }
+.vertix-outliner-name { min-width:0; overflow:hidden; color:inherit; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.vertix-outliner-type { max-width:44px; overflow:hidden; color:var(--stage-faint); font-size:8px; text-overflow:ellipsis; white-space:nowrap; }
+.vertix-outliner-missing { display:grid; width:12px; height:12px; place-items:center; border:1px solid rgba(236,120,207,.55); color:#f4bcdf; font-size:8px; }
+.vertix-outliner-empty { margin:7px 2px; color:var(--stage-faint); font-size:10px; }
+.vertix-context-settings { flex:0 0 auto; max-block-size:42%; border-top:1px solid var(--stage-border); }
+.vertix-context-settings summary { display:flex; align-items:center; justify-content:space-between; min-height:27px; color:#9ba8bc; cursor:pointer; font-size:9px; letter-spacing:.07em; text-transform:uppercase; }
+.vertix-context-settings summary span { color:var(--stage-faint); font-size:8px; }
+.vertix-context-settings[open] { overflow:auto; }
+.vertix-context-settings .stage-left-panel-content { padding:0 0 8px; }
+
 /* Phase 6 — cohesive viewport editing and universal object properties. */
 .vertix-application { --vertix-context-width: minmax(170px, var(--stage-lib-w, 236px)); }
 .vertix-application .stage-editor-body { grid-template-columns:var(--vertix-rail-width) var(--vertix-context-width) 6px minmax(360px,1fr) 6px minmax(250px,var(--stage-right-w,286px)); }

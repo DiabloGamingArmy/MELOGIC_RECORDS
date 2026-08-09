@@ -92,6 +92,8 @@ function buildEditorStateSnapshot() {
     activeStageSection: state.activeStageSection,
     activeLibraryCategory: state.activeLibraryCategory,
     objectLibrarySearch: state.objectLibrarySearch,
+    outlinerSearch: state.outlinerSearch,
+    outlinerExpandedIds: { ...state.outlinerExpandedIds },
     editorToolMode: state.editorToolMode,
     stageInteractionMode: state.stageInteractionMode,
     activeEditorMode: normalizeEditorMode(state.activeEditorMode),
@@ -125,6 +127,10 @@ function applyEditorStateSnapshot(editorState = {}) {
   state.activeStageSection = editorState.activeStageSection || state.activeStageSection
   state.activeLibraryCategory = editorState.activeLibraryCategory || state.activeLibraryCategory
   state.objectLibrarySearch = typeof editorState.objectLibrarySearch === 'string' ? editorState.objectLibrarySearch : state.objectLibrarySearch
+  state.outlinerSearch = typeof editorState.outlinerSearch === 'string' ? editorState.outlinerSearch : state.outlinerSearch
+  state.outlinerExpandedIds = editorState.outlinerExpandedIds && typeof editorState.outlinerExpandedIds === 'object'
+    ? { ...editorState.outlinerExpandedIds }
+    : state.outlinerExpandedIds
   state.editorToolMode = editorState.editorToolMode || state.editorToolMode
   state.stageInteractionMode = editorState.stageInteractionMode === 'edit' ? 'edit' : 'object'
   const savedEditorMode = editorState.activeEditorMode || state.activeEditorMode

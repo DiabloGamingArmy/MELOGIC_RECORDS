@@ -142,6 +142,8 @@ export const state = {
   activeStageSection: 'home',
   activeLibraryCategory: 'all',
   objectLibrarySearch: '',
+  outlinerSearch: '',
+  outlinerExpandedIds: {},
   editorToolMode: localStorage.getItem('stageEditorToolMode') || 'pan',
   stageInteractionMode: localStorage.getItem('stageInteractionMode') || 'object',
   selectedEditorObject: 'stage-deck',
@@ -168,7 +170,7 @@ export const state = {
   paneSizes: {
     library: Number(localStorage.getItem('stagePaneLibrary')) || 236,
     right: Number(localStorage.getItem('stagePaneRight')) || 286,
-    bottom: Number(localStorage.getItem('stagePaneBottom')) || 190,
+    bottom: Number(localStorage.getItem('stagePaneBottom')) || 168,
     bottomSplit: Number.isFinite(savedBottomSplit) && savedBottomSplit >= 70 ? savedBottomSplit : 70
   }
 }

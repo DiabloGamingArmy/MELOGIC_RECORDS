@@ -34,20 +34,20 @@ const objectDefsFromProject = (project = {}, assetResolutions = {}) => {
 
 const makeLabel = (text, position, tone = '#64d9ff') => {
   const canvas = document.createElement('canvas')
-  canvas.width = 512
-  canvas.height = 128
+  canvas.width = 384
+  canvas.height = 80
   const ctx = canvas.getContext('2d')
   ctx.fillStyle = 'rgba(7, 13, 24, 0.82)'
   ctx.strokeStyle = tone
-  ctx.lineWidth = 4
-  ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16)
-  ctx.fillRect(8, 8, canvas.width - 16, canvas.height - 16)
-  ctx.font = '600 40px Inter, Arial'
+  ctx.lineWidth = 2
+  ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10)
+  ctx.fillRect(5, 5, canvas.width - 10, canvas.height - 10)
+  ctx.font = '600 27px Inter, Arial'
   ctx.fillStyle = '#d9f2ff'
-  ctx.fillText(text, 24, 78)
+  ctx.fillText(text, 14, 50)
   const texture = new THREE.CanvasTexture(canvas)
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
-  sprite.scale.set(6.4, 1.6, 1)
+  sprite.scale.set(4.9, 1.02, 1)
   sprite.position.set(...position)
   return sprite
 }
