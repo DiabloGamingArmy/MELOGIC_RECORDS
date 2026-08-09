@@ -777,7 +777,11 @@ async function handleEmailVerification() {
     console.warn('[account-security] verification email failed', error?.code || error?.message || error)
     const code = String(error?.code || '')
     const message = String(error?.message || '')
-    state.verificationStatus = code === 'functions/internal' || message === 'internal'
+    state.verificationStatus = code === 'functions/resource-exhausted'
+      ? 'A verification email was requested recently. Please wait a few minutes before trying again.'
+      : code === 'auth/too-many-requests'
+      ? 'Email delivery is temporarily rate-limited. Please wait a few minutes before trying again.'
+      : code === 'functions/internal' || message === 'internal'
       ? 'Verification email could not be sent right now. Please try again.'
       : message || 'Verification email could not be sent right now. Please try again.'
     state.verificationStatusType = 'error'

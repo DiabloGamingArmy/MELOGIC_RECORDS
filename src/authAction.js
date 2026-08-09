@@ -310,7 +310,9 @@ async function requestVerificationEmail() {
   } catch (error) {
     console.warn('[auth-action] request verification failed', error?.code || error?.message || error)
     state.tone = 'error'
-    state.message = 'A new verification email could not be sent right now. Return to Account Security and try again.'
+    state.message = error?.code === 'functions/resource-exhausted' || error?.code === 'auth/too-many-requests'
+      ? 'A verification email was requested recently. Please wait a few minutes before trying again.'
+      : 'A new verification email could not be sent right now. Return to Account Security and try again.'
   } finally {
     state.busy = false
     render()

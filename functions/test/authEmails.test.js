@@ -8,7 +8,7 @@ if (!admin.apps.length) {
 
 const { __test } = require('../src/email/authEmails')
 
-test('verification delivery falls back only for email-provider failures', () => {
+test('password reset delivery falls back only for email-provider failures', () => {
   for (const code of [
     'email-provider-not-configured',
     'smtp-auth-failed',
@@ -18,22 +18,22 @@ test('verification delivery falls back only for email-provider failures', () => 
     'smtp-send-failed'
   ]) {
     assert.equal(
-      __test.shouldUseFirebaseAuthVerificationFallback({ code }, 'email send'),
+      __test.shouldUseFirebaseAuthDeliveryFallback({ code }, 'email send'),
       true,
-      `${code} should request Firebase Auth delivery`
+      `${code} should request Firebase Auth delivery for a password reset`
     )
   }
 
   assert.equal(
-    __test.shouldUseFirebaseAuthVerificationFallback({ code: 'smtp-auth-failed' }, 'user lookup'),
+    __test.shouldUseFirebaseAuthDeliveryFallback({ code: 'smtp-auth-failed' }, 'user lookup'),
     false
   )
   assert.equal(
-    __test.shouldUseFirebaseAuthVerificationFallback({ code: 'resource-exhausted' }, 'rate limit check'),
+    __test.shouldUseFirebaseAuthDeliveryFallback({ code: 'resource-exhausted' }, 'rate limit check'),
     false
   )
   assert.equal(
-    __test.shouldUseFirebaseAuthVerificationFallback({ code: 'auth/user-not-found' }, 'user lookup'),
+    __test.shouldUseFirebaseAuthDeliveryFallback({ code: 'auth/user-not-found' }, 'user lookup'),
     false
   )
 })

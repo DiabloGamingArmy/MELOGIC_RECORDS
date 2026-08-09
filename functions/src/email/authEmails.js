@@ -408,7 +408,9 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
     logStage(flow, 'account security event write succeeded', { uid })
   } catch (error) {
     logStage(flow, `${stage} failed`, serializeError(error, stage, { includeStack: true }), 'error')
-    const useFirebaseAuthFallback = shouldUseFirebaseAuthDeliveryFallback(error, stage)
+    // Do not fall back to the client Firebase Auth sender here. Its quota is
+    // independent of this callable's cooldown, so a retry would both bypass
+    // our limit and surface auth/too-many-requests to the account holder.
     if (email) {
       await writeFailedEmailLog(flow, {
         stage,
@@ -419,18 +421,7 @@ const requestEmailVerification = onCall({ timeoutSeconds: 60, memory: '256MiB', 
         error,
         metadata: { template: 'email_verification' }
       })
-      if (!useFirebaseAuthFallback) await writeVerificationFailureEvent(flow, uid, error, stage)
-    }
-    if (useFirebaseAuthFallback) {
-      logStage(flow, 'Firebase Auth delivery fallback requested', {
-        uid,
-        providerErrorCode: cleanString(error?.code || '', 160)
-      }, 'warn')
-      return {
-        ok: false,
-        fallback: 'firebase_auth',
-        message: 'Custom email delivery is unavailable. Switching to Firebase verification delivery.'
-      }
+      await writeVerificationFailureEvent(flow, uid, error, stage)
     }
     throw callableError(error, stage, 'failed-precondition', 'Verification email could not be sent right now.')
   }
@@ -442,7 +433,6 @@ module.exports = {
   requestEmailVerification,
   requestPasswordResetEmail,
   __test: {
-    shouldUseFirebaseAuthDeliveryFallback,
-    shouldUseFirebaseAuthVerificationFallback: shouldUseFirebaseAuthDeliveryFallback
+    shouldUseFirebaseAuthDeliveryFallback
   }
 }
