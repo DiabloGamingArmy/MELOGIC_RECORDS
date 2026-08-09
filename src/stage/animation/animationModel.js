@@ -72,6 +72,23 @@ export function removeAnimationKeyframe(animationInput, trackId, frame) {
   return { ...animation, tracks: animation.tracks.map((track) => track.id === trackId ? { ...track, keyframes: track.keyframes.filter((keyframe) => keyframe.frame !== frame) } : track).filter((track) => track.keyframes.length) }
 }
 
+/** Moves one key while retaining its value/interpolation and replacing a same-frame key deterministically. */
+export function moveAnimationKeyframe(animationInput, trackId, fromFrame, toFrame) {
+  const animation = normalizeProjectAnimation(animationInput)
+  const sourceFrame = clampFrame(fromFrame)
+  const destinationFrame = clampFrame(toFrame)
+  const track = animation.tracks.find((candidate) => candidate.id === trackId)
+  const keyframe = track?.keyframes.find((candidate) => candidate.frame === sourceFrame)
+  if (!track || !keyframe || sourceFrame === destinationFrame) return animation
+  const moved = { ...keyframe, frame: destinationFrame }
+  return {
+    ...animation,
+    tracks: animation.tracks.map((candidate) => candidate.id === trackId
+      ? { ...candidate, keyframes: [...candidate.keyframes.filter((item) => item.frame !== sourceFrame && item.frame !== destinationFrame), moved].sort((a, b) => a.frame - b.frame) }
+      : candidate)
+  }
+}
+
 export function retargetAnimationTracks(animationInput, fromObjectId, toObjectId) {
   const animation = normalizeProjectAnimation(animationInput)
   const copies = animation.tracks.filter((track) => track.targetObjectId === fromObjectId).map((track) => ({ ...track, id: keyId(toObjectId, track.propertyPath), targetObjectId: toObjectId, keyframes: track.keyframes.map((keyframe) => ({ ...keyframe })) }))

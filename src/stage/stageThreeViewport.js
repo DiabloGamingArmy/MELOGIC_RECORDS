@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { createDefaultStagePlan } from './stagePlanModel'
+import { editorFarPlaneForProject } from './viewportVisibilityModel.js'
 const FORCE_STAGE_VIEWPORT_SMOKE_TEST = false
 const SHOW_VIEWPORT_DIAGNOSTICS = Boolean(import.meta?.env?.DEV)
 
@@ -59,8 +60,10 @@ export function mountStageThreeViewport(container, options = {}) {
     container.innerHTML = ''
     const scene = new THREE.Scene()
     scene.background = new THREE.Color('#070c16')
-    scene.fog = new THREE.Fog('#070c16', 38, 120)
-    let camera = new THREE.PerspectiveCamera(45, 1, 0.1, 300)
+    // Editor presentation must not alter project geometry visibility by distance.
+    scene.fog = null
+    const editorFarPlane = editorFarPlaneForProject(options.project)
+    let camera = new THREE.PerspectiveCamera(45, 1, 0.25, editorFarPlane)
     camera.position.set(22, 15, 24)
     camera.lookAt(0, 1.5, 0)
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' })
@@ -107,14 +110,14 @@ export function mountStageThreeViewport(container, options = {}) {
       const aspect = w / h
       const orthoSize = mode === 'front' || mode === 'side' ? 20 : 24
       if (mode === 'perspective3d') {
-        camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 300)
+        camera = new THREE.PerspectiveCamera(45, aspect, 0.25, editorFarPlane)
         camera.position.set(22, 15, 24)
         camera.up.set(0, 1, 0)
         setPlanningControls(false)
         controls.minPolarAngle = 0
         controls.maxPolarAngle = Math.PI * 0.48
       } else {
-        camera = new THREE.OrthographicCamera()
+        camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.25, editorFarPlane)
         setOrthoBounds(camera, orthoSize, aspect)
         setPlanningControls(true)
         controls.minPolarAngle = 0

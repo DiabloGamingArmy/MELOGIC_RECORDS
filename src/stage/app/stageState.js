@@ -2,7 +2,7 @@ import { STORAGE_PATHS } from '../../config/storagePaths'
 import { vertixAssetRegistry } from '../../vertix/assets/builtInStageAssetProvider'
 import { createProjectAssetReference, lastKnownBoundsFromAsset } from '../../vertix/projects/assetReference'
 import { getStagePlanWarnings } from '../stagePlanModel'
-import { ANIMATABLE_PATHS, evaluateProjectAnimation, normalizeProjectAnimation, removeAnimationKeyframe, retargetAnimationTracks, upsertAnimationKeyframe } from '../animation/animationModel.js'
+import { ANIMATABLE_PATHS, evaluateProjectAnimation, moveAnimationKeyframe, normalizeProjectAnimation, removeAnimationKeyframe, retargetAnimationTracks, upsertAnimationKeyframe } from '../animation/animationModel.js'
 import { applyProjectObjectDeletion, createProjectObjectDeletion, selectionForProjectObjectDeletion } from '../projectObjectLifecycle.js'
 
 export const sidebarItems = ['My Projects', 'Templates', 'Asset Library', 'Shared With Me', 'Exports', 'Learn']
@@ -149,6 +149,8 @@ export const state = {
   timelineZoom: 1,
   timelinePlaying: false,
   selectedTimelineKey: null,
+  selectedTimelineKeys: [],
+  timelineExpandedObjectIds: {},
   evaluatedObjectTransforms: {},
   outlinerSearch: '',
   outlinerExpandedIds: {},
@@ -573,6 +575,7 @@ export function insertStageKeyframe(field, { interpolation = 'linear' } = {}) {
   const after = upsertAnimationKeyframe(before, object.id, propertyPath, state.currentFrame, animatedFieldValue(object, field), interpolation)
   state.editorProject.animation = after
   state.selectedTimelineKey = { trackId: `${object.id}:${propertyPath}`, frame: state.currentFrame }
+  state.selectedTimelineKeys = [state.selectedTimelineKey]
   evaluateStageAnimation(state.currentFrame)
   return recordAnimationCommand(before, after)
 }
@@ -583,6 +586,19 @@ export function deleteStageKeyframe(trackId, frame) {
   const after = removeAnimationKeyframe(before, trackId, frame)
   state.editorProject.animation = after
   state.selectedTimelineKey = null
+  state.selectedTimelineKeys = []
+  evaluateStageAnimation(state.currentFrame)
+  return recordAnimationCommand(before, after)
+}
+
+export function moveStageKeyframe(trackId, fromFrame, toFrame) {
+  if (!state.editorProject || !trackId) return false
+  const before = cloneData(projectAnimation())
+  const after = moveAnimationKeyframe(before, trackId, fromFrame, toFrame)
+  if (JSON.stringify(before) === JSON.stringify(after)) return false
+  state.editorProject.animation = after
+  state.selectedTimelineKey = { trackId, frame: Math.round(Number(toFrame) || 0) }
+  state.selectedTimelineKeys = [state.selectedTimelineKey]
   evaluateStageAnimation(state.currentFrame)
   return recordAnimationCommand(before, after)
 }
