@@ -19,12 +19,14 @@
     "@emnapi/core": "^1.10.0",
     "@emnapi/runtime": "^1.10.0",
     "@firebase/rules-unit-testing": "^5.0.1",
+    "@tauri-apps/cli": "^2.11.4",
     "vite": "^8.0.9"
   },
   "dependencies": {
     "@livekit/components-react": "^2.9.21",
     "@livekit/components-styles": "^1.2.0",
     "@stripe/stripe-js": "^9.3.0",
+    "@tauri-apps/api": "^2.11.1",
     "firebase": "^12.12.1",
     "hls.js": "^1.6.16",
     "jszip": "^3.10.1",

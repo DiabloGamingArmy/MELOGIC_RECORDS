@@ -1,7 +1,7 @@
 import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
-import { createStageTemplatePlan, normalizeStagePlan } from '../stage/stagePlanModel'
+import { createDefaultStagePlan, createStageTemplatePlan, normalizeStagePlan } from '../stage/stagePlanModel'
 
 export const STAGE_PROJECTS_COLLECTION = FIRESTORE_COLLECTIONS.stageProjects || 'stageProjects'
 

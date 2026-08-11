@@ -438,7 +438,6 @@
   gap: 0.42rem;
   border: 1px solid rgba(121, 141, 178, 0.22);
   border-radius: 0.8rem;
-  background: rgba(8, 13, 24, 0.78);
   padding: 0.72rem;
 }
 
@@ -458,7 +457,6 @@
 }
 
 .dashboard-section-card p {
-  color: #d2ddf5;
   line-height: 1.58;
 }
 
@@ -1075,6 +1073,8 @@
 
 .dashboard-content-parent {
   gap: 0.85rem;
+  background: transparent;
+  background-color: transparent;
 }
 
 .dashboard-about-section {
@@ -1083,6 +1083,19 @@
   border-bottom: 1px solid var(--ml-border);
   border-radius: 0;
   background: transparent;
+}
+
+/* Keep the About card visually merged with the document background.
+   The stronger selector prevents the shared panel/card surface from
+   repainting the section with the generic panel gradient. */
+.dashboard-section-card.dashboard-about-section,
+.dashboard-section-card.dashboard-section-about,
+.dashboard-about-section.panel-surface,
+.dashboard-section-about.panel-surface {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none;
 }
 
 .dashboard-rich-description {
@@ -1396,5 +1409,778 @@
 
   .dashboard-metadata-panel {
     overflow: visible;
+  }
+}
+
+/* Force About region and every immediate surface behind it transparent */
+.dashboard-main-sections.panel-surface,
+.dashboard-main-sections.panel-surface > .dashboard-content-parent,
+.dashboard-main-sections.panel-surface > .dashboard-content-parent > .dashboard-section-card.dashboard-about-section {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+.dashboard-section-card.dashboard-about-section::before,
+.dashboard-section-card.dashboard-about-section::after {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/* ==========================================================================
+   PRODUCT VIEWER — BALANCED REFINEMENT
+   Conservative flattening: fewer cards, cleaner dividers, consistent page
+   background, and restored breathing room without changing product content.
+   ========================================================================== */
+
+/* ---- Page width / spacing ------------------------------------------------ */
+.product-dashboard-shell {
+  padding-top: 0.9rem;
+  padding-bottom: 1.75rem;
+}
+
+.product-dashboard-shell .section-inner {
+  width: min(1500px, 94vw);
+}
+
+.product-dashboard-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+  grid-template-areas:
+    'media sidebar'
+    'content sidebar';
+  column-gap: 0.8rem;
+  row-gap: 0.95rem;
+  align-items: start;
+}
+
+.dashboard-media-area {
+  grid-area: media;
+  min-width: 0;
+}
+
+.dashboard-lower-sidebar {
+  grid-area: sidebar;
+  position: static;
+  width: auto;
+  display: grid;
+  gap: 0.62rem;
+  align-content: start;
+}
+
+.dashboard-main-sections {
+  grid-area: content;
+  min-width: 0;
+}
+
+.dashboard-content-parent {
+  gap: 0.9rem;
+}
+
+/* ---- Keep the page/document background consistent ----------------------- */
+.dashboard-main-sections.panel-surface,
+.dashboard-main-sections.panel-surface > .dashboard-content-parent,
+.dashboard-section-card.dashboard-about-section,
+.dashboard-about-section,
+.dashboard-recommendations-section,
+.dashboard-recommendations-fullwidth,
+.dashboard-reviews-section,
+.dashboard-reviews-fullwidth {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/* ---- Media block: flatter, but not visually collapsed ------------------- */
+.dashboard-media-area.panel-surface {
+  padding: 0.7rem;
+  border: 1px solid var(--ml-border);
+  border-radius: 6px;
+  background: rgba(10, 13, 20, 0.34);
+  box-shadow: none;
+}
+
+.dashboard-owner-header-card {
+  margin-bottom: 0.7rem;
+  padding: 0.7rem 0.8rem;
+  border: 0;
+  border-bottom: 1px solid var(--ml-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.dashboard-main-media,
+[data-dashboard-main-media] {
+  border-radius: 4px;
+}
+
+.dashboard-thumb-toolbar {
+  margin-top: 0.5rem;
+}
+
+.dashboard-audio-panel {
+  margin-top: 0.6rem;
+  padding-top: 0.55rem;
+}
+
+.dashboard-audio-card {
+  border-radius: 4px;
+  background: rgba(9, 13, 21, 0.42);
+}
+
+/* ---- About section ------------------------------------------------------- */
+.dashboard-section-card.dashboard-about-section {
+  padding: 0.65rem 0 0.85rem;
+  border: 0;
+  border-bottom: 1px solid var(--ml-border);
+  border-radius: 0;
+}
+
+.dashboard-section-card.dashboard-about-section h2 {
+  margin-bottom: 0.3rem;
+}
+
+.dashboard-rich-description p {
+  margin: 0.18rem 0 0.48rem;
+}
+
+/* ---- Details area: no fixed height, but restore comfortable spacing ----- */
+.dashboard-details-split {
+  height: auto;
+  min-height: 0;
+  gap: 0.9rem;
+  align-items: stretch;
+  padding-bottom: 0.95rem;
+  border-bottom: 1px solid var(--ml-border);
+}
+
+.dashboard-file-tree-viewer {
+  height: auto;
+  min-height: 240px;
+  overflow: visible;
+  padding: 0.72rem 0.8rem 0.75rem 0;
+  border: 0;
+  border-right: 1px solid var(--ml-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.dashboard-file-tree-viewer .product-file-browser,
+.product-file-browser {
+  height: auto;
+  min-height: 0;
+  grid-template-rows: auto auto auto auto;
+}
+
+.product-file-browser {
+  gap: 0.5rem;
+}
+
+.product-file-breadcrumbs {
+  padding: 0.55rem 0;
+}
+
+.product-file-list-wrap {
+  min-height: 0;
+  overflow-y: visible;
+}
+
+.product-file-list {
+  min-height: 0;
+  background: rgba(7, 11, 18, 0.32);
+  border-radius: 3px;
+}
+
+.product-file-row {
+  min-height: 48px;
+  padding: 0.48rem 0.62rem;
+}
+
+.product-file-footer {
+  padding-top: 0.42rem;
+}
+
+.dashboard-metadata-panel {
+  min-height: 0;
+  overflow: visible;
+  padding-left: 0.1rem;
+  border-top: 0;
+  border-bottom: 0;
+}
+
+.dashboard-metadata-stack {
+  min-height: 0;
+  height: auto;
+}
+
+.dashboard-metadata-card {
+  padding: 0.68rem 0.05rem;
+}
+
+.dashboard-metadata-card:first-child {
+  padding-top: 0;
+}
+
+.dashboard-metadata-card:last-child {
+  padding-bottom: 0;
+}
+
+/* ---- Right rail: preserve important cards, flatten secondary info ------- */
+.dashboard-lower-sidebar > .panel-surface {
+  border-radius: 5px;
+  box-shadow: none;
+}
+
+/* Product overview remains a real card. */
+.dashboard-lower-sidebar > .dashboard-overview {
+  padding: 0.72rem;
+  background: rgba(12, 15, 22, 0.68);
+}
+
+/* Purchase/action card remains emphasized. */
+.dashboard-lower-sidebar > .dashboard-side-card:nth-of-type(2) {
+  padding: 0.78rem;
+  border: 1px solid rgba(113, 126, 255, 0.30);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(13, 22, 34, 0.90), rgba(7, 12, 21, 0.90));
+}
+
+/* Secondary sidebar cards become document-like sections. */
+.dashboard-lower-sidebar > .dashboard-side-card:nth-of-type(n+3) {
+  padding: 0.72rem 0.15rem;
+  border: 0;
+  border-bottom: 1px solid var(--ml-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.dashboard-lower-sidebar > .dashboard-side-card:nth-of-type(n+3):last-child {
+  border-bottom: 0;
+}
+
+.dashboard-overview {
+  gap: 0.5rem;
+}
+
+.dashboard-overview-grid {
+  gap: 0.46rem 0.65rem;
+}
+
+.dashboard-action-stack {
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+/* ---- Recommended products ------------------------------------------------ */
+.dashboard-recommendations-section,
+.dashboard-recommendations-fullwidth {
+  margin-top: 0;
+  padding: 1rem 0 0.9rem;
+  border: 0;
+  border-top: 1px solid var(--ml-border);
+  border-radius: 0;
+}
+
+.dashboard-lower-section-header {
+  margin-bottom: 0.7rem;
+}
+
+.dashboard-recommend-carousel {
+  gap: 0.55rem;
+  padding-bottom: 0.2rem;
+}
+
+.dashboard-recommend-carousel .dashboard-recommend-card {
+  min-width: 255px;
+  flex-basis: 255px;
+}
+
+.dashboard-recommend-card {
+  min-height: 104px;
+  grid-template-columns: 94px minmax(0, 1fr);
+  padding: 0.42rem;
+  border-radius: 5px;
+  background: rgba(10, 15, 27, 0.48);
+}
+
+/* ---- Reviews ------------------------------------------------------------- */
+.dashboard-reviews-section,
+.dashboard-reviews-fullwidth {
+  margin-top: 0;
+  padding: 1.05rem 0 0;
+  border: 0;
+  border-top: 1px solid var(--ml-border);
+  border-radius: 0;
+}
+
+.dashboard-review-composer {
+  margin-top: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid var(--ml-border);
+  border-radius: 5px;
+  background: rgba(9, 13, 21, 0.38);
+  box-shadow: none;
+}
+
+.dashboard-review-list {
+  margin-top: 0.65rem;
+  gap: 0.55rem;
+}
+
+.dashboard-review-card {
+  border-radius: 5px;
+}
+
+.dashboard-review-empty {
+  padding: 0.55rem 0.65rem;
+  border-radius: 4px;
+}
+
+/* ---- Dividers / rhythm --------------------------------------------------- */
+.dashboard-full-width-divider,
+.dashboard-lower-section-divider,
+.dashboard-section-soft-divider {
+  margin: 0.2rem 0;
+  border-top-color: var(--ml-border);
+}
+
+/* ---- Responsive ---------------------------------------------------------- */
+@media (max-width: 980px) {
+  .product-dashboard-layout {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'media'
+      'sidebar'
+      'content';
+    row-gap: 0.8rem;
+  }
+
+  .dashboard-lower-sidebar {
+    grid-area: sidebar;
+  }
+
+  .dashboard-main-sections {
+    grid-area: content;
+  }
+
+  .dashboard-media-area {
+    grid-area: media;
+  }
+}
+
+@media (max-width: 860px) {
+  .dashboard-details-split {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .dashboard-file-tree-viewer {
+    min-height: 0;
+    padding: 0.65rem 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--ml-border);
+  }
+
+  .dashboard-metadata-panel {
+    padding-left: 0;
+  }
+}
+/* ==========================================================================
+   PRODUCT VIEWER — LEFT-COLUMN CONTENT ALIGNMENT
+   Media stays top-left, main content sits directly below it, and the product
+   side rail occupies the right column alongside both regions.
+   ========================================================================== */
+@media (min-width: 981px) {
+  .product-dashboard-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(320px, 360px);
+    grid-template-areas:
+      'media sidebar'
+      'content sidebar';
+    align-items: start;
+  }
+
+  .dashboard-media-area {
+    grid-area: media;
+    min-width: 0;
+  }
+
+  .dashboard-main-sections {
+    grid-area: content;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .dashboard-lower-sidebar {
+    grid-area: sidebar;
+    align-self: start;
+    min-width: 0;
+  }
+}
+/* ==========================================================================
+   PRODUCT VIEWER — FIXED DESKTOP TRACKS + TOP-ALIGNED CONTENT
+   Prevents the tall right sidebar from stretching the left grid rows and
+   creating a large blank band between media and the About/details content.
+   ========================================================================== */
+
+@media (min-width: 981px) {
+  .product-dashboard-layout {
+    position: relative;
+    display: grid;
+
+    /* Fixed page proportions: flexible working area + fixed side rail. */
+    grid-template-columns: minmax(0, 1fr) 360px;
+
+    /*
+      IMPORTANT:
+      Keep both left-side tracks sized only by their own content.
+      The sidebar is removed from track sizing below so it cannot force
+      vertical expansion between the media and content blocks.
+    */
+    grid-template-rows: max-content max-content;
+    grid-template-areas:
+      'media sidebar'
+      'content sidebar';
+
+    column-gap: 0.8rem;
+    row-gap: 0.75rem;
+    align-items: start;
+    align-content: start;
+  }
+
+  /* Left-side media block. */
+  .dashboard-media-area {
+    grid-area: media;
+    width: 100%;
+    min-width: 0;
+    height: fit-content;
+    min-height: 0;
+    align-self: start;
+    align-content: start;
+  }
+
+  /* Force everything inside the media card toward the top. */
+  .dashboard-media-area.panel-surface {
+    display: grid;
+    grid-auto-rows: max-content;
+    align-content: start;
+  }
+
+  .dashboard-main-media,
+  [data-dashboard-main-media] {
+    align-self: start;
+  }
+
+  .dashboard-thumb-toolbar,
+  .dashboard-audio-panel {
+    align-self: start;
+  }
+
+  /* Main product content sits immediately below the media track. */
+  .dashboard-main-sections {
+    grid-area: content;
+    width: 100%;
+    min-width: 0;
+    height: fit-content;
+    min-height: 0;
+    align-self: start;
+    align-content: start;
+    justify-content: stretch;
+  }
+
+  .dashboard-main-sections.panel-surface {
+    display: grid !important;
+    grid-auto-rows: max-content;
+    align-content: start !important;
+  }
+
+  .dashboard-content-parent {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-auto-rows: max-content;
+    align-content: start;
+    justify-content: stretch;
+    min-height: 0;
+    height: fit-content;
+  }
+
+  .dashboard-about-section,
+  .dashboard-details-split,
+  .dashboard-recommendations-section,
+  .dashboard-reviews-section {
+    align-self: start;
+  }
+
+  /*
+    Keep the sidebar visually in the right column without allowing its height
+    to participate in sizing the two left-side rows.
+  */
+  .dashboard-lower-sidebar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 360px;
+    height: fit-content;
+    min-height: 0;
+    align-content: start;
+    z-index: 1;
+  }
+
+  /*
+    Reserve the sidebar's horizontal space even though it is absolutely
+    positioned. The left column therefore stays perfectly aligned with the
+    media width above it.
+  */
+  .dashboard-media-area,
+  .dashboard-main-sections {
+    grid-column: 1;
+  }
+
+  /* Prevent inherited stretch/fill behavior inside the details area. */
+  .dashboard-details-split {
+    height: auto !important;
+    min-height: 0 !important;
+    align-items: start !important;
+  }
+
+  .dashboard-file-tree-viewer,
+  .dashboard-file-tree-viewer .product-file-browser,
+  .dashboard-metadata-panel,
+  .dashboard-metadata-stack {
+    height: auto !important;
+    min-height: 0 !important;
+    align-self: start;
+    align-content: start;
+  }
+
+  .dashboard-file-tree-viewer {
+    min-height: 220px !important;
+  }
+}
+
+/* Return everything to ordinary flow on narrower layouts. */
+@media (max-width: 980px) {
+  .product-dashboard-layout {
+    position: static;
+  }
+
+  .dashboard-lower-sidebar {
+    position: static;
+    width: 100%;
+    height: auto;
+  }
+}
+/* ==========================================================================
+   PRODUCT VIEWER — TETRIS GRID ALIGNMENT
+   The upper page behaves as two interlocking columns:
+     [ Media            ][ Sidebar stack ]
+     [ About / Details  ][ Sidebar stack ]
+   The second left row stretches to consume any remaining sidebar height.
+   Recommended products and Reviews then begin BELOW BOTH columns.
+   ========================================================================== */
+
+@media (min-width: 981px) {
+  .product-dashboard-layout {
+    position: static !important;
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 360px !important;
+
+    /*
+      Row 1 belongs to the media's natural height.
+      Row 2 is allowed to grow when the sidebar is taller than
+      Media + About/Details. That extra height is deliberately absorbed here,
+      rather than between Media and About.
+    */
+    grid-template-rows: max-content minmax(max-content, 1fr) !important;
+    grid-template-areas:
+      'media sidebar'
+      'content sidebar' !important;
+
+    column-gap: 0.8rem !important;
+    row-gap: 0.75rem !important;
+    align-items: start !important;
+    align-content: start !important;
+  }
+
+  /* Top-left block */
+  .dashboard-media-area {
+    grid-area: media !important;
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    width: 100% !important;
+    min-width: 0 !important;
+    height: fit-content !important;
+    min-height: 0 !important;
+    align-self: start !important;
+    align-content: start !important;
+  }
+
+  .dashboard-media-area.panel-surface {
+    display: grid !important;
+    grid-auto-rows: max-content !important;
+    align-content: start !important;
+  }
+
+  /* Right column participates in height calculation again. */
+  .dashboard-lower-sidebar {
+    grid-area: sidebar !important;
+    grid-column: 2 !important;
+    grid-row: 1 / 3 !important;
+
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    right: auto !important;
+
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+    align-self: stretch !important;
+    align-content: start !important;
+    z-index: auto !important;
+  }
+
+  /*
+    Bottom-left block stretches to the same bottom edge as the sidebar.
+    Its CONTENT remains top-anchored, so the extra space appears only at
+    the bottom of this block instead of as a gap between Media and About.
+  */
+  .dashboard-main-sections {
+    grid-area: content !important;
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 100% !important;
+    min-height: 100% !important;
+
+    align-self: stretch !important;
+    align-content: start !important;
+    justify-content: stretch !important;
+  }
+
+  .dashboard-main-sections.panel-surface {
+    display: grid !important;
+    grid-template-rows: 1fr !important;
+    align-content: stretch !important;
+    background: transparent !important;
+    background-image: none !important;
+  }
+
+  .dashboard-content-parent {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    grid-auto-rows: max-content !important;
+
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 100% !important;
+
+    align-content: start !important;
+    align-items: start !important;
+    justify-content: stretch !important;
+  }
+
+  .dashboard-about-section,
+  .dashboard-details-split {
+    align-self: start !important;
+  }
+
+  .dashboard-details-split {
+    height: auto !important;
+    min-height: 0 !important;
+    align-items: start !important;
+  }
+
+  .dashboard-file-tree-viewer,
+  .dashboard-file-tree-viewer .product-file-browser,
+  .dashboard-metadata-panel,
+  .dashboard-metadata-stack {
+    height: auto !important;
+    min-height: 0 !important;
+    align-self: start !important;
+    align-content: start !important;
+  }
+
+  /*
+    Everything after the upper two-column arrangement becomes a clean,
+    full-width stack. Auto row placement occurs after the two explicit rows.
+  */
+  .dashboard-full-width-divider,
+  .dashboard-recommendations-fullwidth,
+  .dashboard-lower-section-divider,
+  .dashboard-reviews-fullwidth {
+    grid-column: 1 / -1 !important;
+  }
+
+  .dashboard-full-width-divider {
+    grid-row: 3 !important;
+  }
+
+  .dashboard-recommendations-fullwidth {
+    grid-row: 4 !important;
+  }
+
+  .dashboard-lower-section-divider {
+    grid-row: 5 !important;
+  }
+
+  .dashboard-reviews-fullwidth {
+    grid-row: 6 !important;
+  }
+}
+
+/* Mobile/tablet returns to an ordinary vertical stack. */
+@media (max-width: 980px) {
+  .product-dashboard-layout {
+    position: static !important;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: auto !important;
+    grid-template-areas:
+      'media'
+      'sidebar'
+      'content' !important;
+  }
+
+  .dashboard-lower-sidebar,
+  .dashboard-main-sections,
+  .dashboard-media-area,
+  .dashboard-full-width-divider,
+  .dashboard-recommendations-fullwidth,
+  .dashboard-lower-section-divider,
+  .dashboard-reviews-fullwidth {
+    position: static !important;
+    grid-column: 1 !important;
+    grid-row: auto !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: 0 !important;
+  }
+}
+/* ==========================================================================
+   FINAL ALIGNMENT — STRETCH ABOUT/DETAILS CONTAINER TO SIDEBAR BOTTOM
+   Only changes the lower edge of the main About/details region.
+   Internal content remains top-aligned.
+   ========================================================================== */
+@media (min-width: 981px) {
+  .dashboard-main-sections {
+    align-self: stretch !important;
+    height: 100% !important;
+    min-height: 100% !important;
+  }
+
+  .dashboard-main-sections.panel-surface {
+    height: 100% !important;
+    min-height: 100% !important;
+    align-self: stretch !important;
+  }
+
+  .dashboard-content-parent {
+    height: 100% !important;
+    min-height: 100% !important;
+    align-self: stretch !important;
+    align-content: start !important;
   }
 }

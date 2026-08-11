@@ -79,6 +79,7 @@ export default defineConfig({
         creatorGuidelines: resolve(__dirname, 'creator-guidelines.html'),
         adPolicy: resolve(__dirname, 'ad-policy.html'),
         studio: resolve(__dirname, 'studio.html'),
+        soura: resolve(__dirname, 'soura.html'),
         stage: resolve(__dirname, 'stage.html'),
         instrumentHost: resolve(__dirname, 'instrument-host.html'),
         studioProject: resolve(__dirname, 'studio-project.html'),

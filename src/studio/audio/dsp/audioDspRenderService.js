@@ -520,9 +520,10 @@ async function renderPitchTrace(options = {}) {
     .filter(Boolean)
     .map((note) => ({
       ...note,
-      delta: (Number(note.editedMidiNote ?? note.midiNote ?? note.originalMidiNote) || 0) - (Number(note.originalMidiNote ?? note.midiNote) || 0)
+      delta: (Number(note.editedMidiNote ?? note.midiNote ?? note.originalMidiNote) || 0) - (Number(note.originalMidiNote ?? note.midiNote) || 0),
+      fineDeltaCents: Number(note.editedFineTuneCents) || 0
     }))
-    .filter((note) => note.muted === true || Math.abs(Number(note.gainDb) || 0) > 0.001 || Math.abs(note.delta + Number(transposeSemitones || 0) + Number(fineTuneCents || 0) / 100) > 0.001)
+    .filter((note) => note.muted === true || Math.abs(Number(note.gainDb) || 0) > 0.001 || Math.abs(note.delta + Number(transposeSemitones || 0) + (Number(fineTuneCents || 0) + note.fineDeltaCents) / 100) > 0.001)
     .slice(0, 256)
 
   if (!editableNotes.length && (Math.abs(Number(transposeSemitones) || 0) > 0.001 || Math.abs(Number(fineTuneCents) || 0) > 0.001)) {
@@ -542,7 +543,7 @@ async function renderPitchTrace(options = {}) {
       continue
     }
     const semitones = note.delta + (Number(transposeSemitones) || 0)
-    const cents = Number(fineTuneCents) || 0
+    const cents = (Number(fineTuneCents) || 0) + (Number(note.fineDeltaCents) || 0)
     const padSeconds = clamp(Math.max(0.055, durationSeconds * 0.85), 0.055, 0.15)
     const paddedStartSample = clamp(Math.floor((startSeconds - padSeconds) * source.sampleRate), 0, source.length - 1)
     const paddedEndSample = clamp(Math.ceil((startSeconds + durationSeconds + padSeconds) * source.sampleRate), paddedStartSample + 1, source.length)

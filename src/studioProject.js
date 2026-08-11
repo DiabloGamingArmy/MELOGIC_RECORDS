@@ -32,7 +32,14 @@ import {
   isLegacyJsDspFallbackEnabled,
   preloadSouraWasmDsp
 } from './studio/audio/dsp/wasm/souraWasmDspClient.js'
+
+import {
+  createSouraProjectLoader,
+  waitForWarmup
+} from './studio/runtime/souraProjectLoadingScreen.js'
+
 import { renderReversedAudio } from './studio/audio/audioReverseRenderService.js'
+import { getNativeFilePath, getSouraImportPersistenceMode, isSouraDesktopRuntime, registerDesktopLocalAudioReference, releaseDesktopLocalAudioReference } from './studio/audio/native/SouraLocalAudioReference.js'
 import {
   findFolderByPath,
   flattenLibraryFolders,
@@ -42,6 +49,8 @@ import {
   sampleStrategyDefinition
 } from './data/studioLibraryService.js'
 import './styles/dawPluginWindow.css'
+import './studio/audio/PitchTraceViewport.js'
+import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
 
 const app = document.querySelector('#app')
 const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw', 'stagemaker'])
@@ -456,10 +465,10 @@ function secondsToBeats(seconds = 0, tempoMap = null) {
 const waveformWindowSeconds = 0.1
 // Keep the waveform density tied to the horizontal space it occupies, rather
 // than thinning a long clip merely because it has more total samples.
-const WAVEFORM_PEAKS_PER_PIXEL = 1.25
+const WAVEFORM_PEAKS_PER_PIXEL = 2.75
 const WAVEFORM_MIN_RENDERED_PEAKS = 96
-const WAVEFORM_MAX_RENDERED_PEAKS = 6000
-const WAVEFORM_PERSISTED_MAX_PEAKS = 2400
+const WAVEFORM_MAX_RENDERED_PEAKS = 32768
+const WAVEFORM_PERSISTED_MAX_PEAKS = 16384
 const MAX_TIMELINE_POSITIVE_BEATS = 16384
 const minAudioRegionSeconds = 0.05
 const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
@@ -1300,60 +1309,100 @@ function getPitchTraceBaseSummary(region, edit = normalizeAudioEdit(region?.audi
   return { key: 'original', label: 'Original audio', stacked: false, pending: false }
 }
 function renderPitchTraceView(region, track) {
-  const edit = normalizeAudioEdit(region.audioEdit)
-  const trace = edit.pitchTrace
-  const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
-  const visibleNotes = trace.showLowConfidence ? (trace.notes || []) : (trace.notes || []).filter((note)=>note.confidence >= trace.confidenceThreshold)
-  const hiddenNoteCount = Math.max(0, (trace.notes || []).length - visibleNotes.length)
-  const notes = visibleNotes
-  const noteValues = notes.map((note)=>Number(note.editedMidiNote ?? note.midiNote)).filter(Number.isFinite)
-  const minNote = Math.max(0, Math.min(48, ...(noteValues.length ? noteValues : [48])) - 2)
-  const maxNote = Math.min(127, Math.max(72, ...(noteValues.length ? noteValues : [72])) + 2)
-  const rowCount = Math.max(1, maxNote - minNote + 1)
-  const beatCount = Math.max(1, Math.ceil(secondsToBeats(visibleDuration)))
-  const color = getReadableWaveformColor(region.color || track?.color || '#58d4ff')
-  const blocks = notes.map((note)=> {
-    const left = clamp((Number(note.startSeconds) || 0) / visibleDuration, 0, 1) * 100
-    const width = clamp((Number(note.durationSeconds) || 0.01) / visibleDuration, 0.002, 1) * 100
-    const editedMidi = clamp(Math.round(Number(note.editedMidiNote ?? note.midiNote) || 60), minNote, maxNote)
-    const row = maxNote - editedMidi
-    const top = (row / rowCount) * 100
-    const height = Math.max(6, (1 / rowCount) * 100)
-    const opacity = clamp(0.35 + ((Number(note.confidence) || 0) * 0.55), 0.35, 0.92)
-    const delta = editedMidi - (Number(note.originalMidiNote) || editedMidi)
-    const stateClass = [
-      pitchTraceSelectedNoteId === note.id ? 'is-selected' : '',
-      delta ? 'is-edited' : '',
-      note.muted ? 'is-muted' : '',
-      note.confidence < trace.confidenceThreshold ? 'is-low-confidence' : ''
-    ].filter(Boolean).join(' ')
-    const deltaLabel = delta ? ` · ${delta > 0 ? '+' : ''}${delta} st` : ''
-    const sourceLabel = note.source === 'manual' ? 'manual' : 'analysis'
-    return `<button type="button" class="studio-pitch-trace-note ${stateClass}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;top:${top.toFixed(3)}%;height:${height.toFixed(3)}%;--pitch-note-color:${esc(color)};opacity:${opacity.toFixed(2)}" title="${esc(formatMidiNoteName(editedMidi))}${esc(deltaLabel)} · ${Math.round((note.confidence || 0) * 100)}% · ${esc(sourceLabel)}"><span data-pitch-trace-note-handle="left"></span><b>${esc(formatMidiNoteName(editedMidi))}</b><span data-pitch-trace-note-handle="right"></span></button>`
+  const edit=normalizeAudioEdit(region.audioEdit)
+  const trace=edit.pitchTrace
+  const visibleDuration=Math.max(minAudioRegionSeconds,getAudioRegionVisibleDurationSeconds(region))
+  const notes=trace.showLowConfidence?(trace.notes||[]):(trace.notes||[]).filter((note)=>note.confidence>=trace.confidenceThreshold)
+  const values=notes.map((note)=>Number(note.editedMidiNote??note.midiNote)).filter(Number.isFinite)
+  const minDetected=values.length?Math.min(...values):48
+  const maxDetected=values.length?Math.max(...values):72
+  const minNote=Math.max(0,Math.floor(Math.min(48,minDetected-5)))
+  const maxNote=Math.min(127,Math.ceil(Math.max(72,maxDetected+5)))
+  const rowCount=Math.max(1,maxNote-minNote+1)
+  const startBeat=Number(region.startBeat)||0
+  const endBeat=Math.max(startBeat+.25,Number(region.endBeat)||startBeat+1)
+  const lengthBeats=endBeat-startBeat
+  const width=Math.max(420,lengthBeats*midiRollBeatWidth)
+  const color=getReadableWaveformColor(region.color||track?.color||'#58d4ff')
+  const selected=notes.find((note)=>note.id===pitchTraceSelectedNoteId)||null
+  const selectedPitch=selected?Math.round(Number(selected.editedMidiNote??selected.midiNote)||60):null
+  const black=new Set([1,3,6,8,10])
+
+  const keyboard=Array.from({length:rowCount},(_,index)=>{
+    const midi=maxNote-index
+    const pc=((midi%12)+12)%12
+    return `<button type="button" tabindex="-1" class="${black.has(pc)?'is-black':'is-white'} ${pc===0?'is-root':''} ${selectedPitch===midi?'is-selected-pitch':''}" aria-label="${esc(formatMidiNoteName(midi))}">${esc(formatMidiNoteName(midi))}</button>`
   }).join('')
-  const labels = Array.from({ length: rowCount }, (_, index) => {
-    const midi = maxNote - index
-    return midi % 12 === 0 ? `<span style="top:${((index / rowCount) * 100).toFixed(3)}%">${esc(formatMidiNoteName(midi))}</span>` : ''
+
+  const curvePath=(note)=>{
+    const curve=Array.isArray(note.pitchCurve)?note.pitchCurve.filter((point)=>Number.isFinite(Number(point?.relativeSeconds))&&Number.isFinite(Number(point?.cents))):[]
+    if(curve.length>=2){
+      const duration=Math.max(.001,Number(note.durationSeconds)||.001)
+      return curve.map((point,index)=>{
+        const x=clamp((Number(point.relativeSeconds)/duration)*100,0,100)
+        const y=50-((clamp(Number(point.cents)||0,-100,100)/100)*38)
+        return `${index===0?'M':'L'} ${x.toFixed(3)} ${y.toFixed(3)}`
+      }).join(' ')
+    }
+    const a=clamp(Number(note.pitchDriftStartCents)||Number(note.centsOffset)||0,-100,100)
+    const b=clamp(Number(note.pitchDriftEndCents)||Number(note.centsOffset)||0,-100,100)
+    const vibrato=clamp(Number(note.vibratoAmount)||0,0,1)
+    const commands=[]
+    for(let i=0;i<24;i+=1){
+      const t=i/23
+      const cents=clamp(a+((b-a)*t)+(Math.sin(t*Math.PI*7)*vibrato*16),-100,100)
+      commands.push(`${i===0?'M':'L'} ${(t*100).toFixed(3)} ${(50-((cents/100)*38)).toFixed(3)}`)
+    }
+    return commands.join(' ')
+  }
+
+  const blocks=notes.map((note)=>{
+    const left=clamp((Number(note.startSeconds)||0)/visibleDuration,0,1)*100
+    const noteWidth=clamp((Number(note.durationSeconds)||.01)/visibleDuration,.0015,1)*100
+    const edited=clamp(Math.round(Number(note.editedMidiNote??note.midiNote)||60),minNote,maxNote)
+    const original=clamp(Math.round(Number(note.originalMidiNote)||edited),minNote,maxNote)
+    const row=maxNote-edited
+    const top=(row/rowCount)*100
+    const height=Math.max(1.2,(1/rowCount)*100)
+    const cls=[pitchTraceSelectedNoteId===note.id?'is-selected':'',edited!==original||Math.abs(Number(note.editedFineTuneCents)||0)>.001?'is-edited':'',note.muted?'is-muted':'',note.confidence<trace.confidenceThreshold?'is-low-confidence':''].filter(Boolean).join(' ')
+    return `<button type="button" class="studio-pitch-trace-note ${cls}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(4)}%;width:${noteWidth.toFixed(4)}%;top:${top.toFixed(4)}%;height:${height.toFixed(4)}%;--pitch-note-color:${esc(color)}" title="${esc(formatMidiNoteName(edited))} · ${Math.round((Number(note.confidence)||0)*100)}% confidence · ${Math.round((Number(note.pitchStability)||0)*100)}% stability"><span class="studio-pitch-trace-intended" aria-hidden="true"></span><span class="studio-pitch-trace-note-center" aria-hidden="true"></span><svg class="studio-pitch-trace-note-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="${curvePath(note)}"></path></svg><span data-pitch-trace-note-handle="left"></span><b>${esc(formatMidiNoteName(edited))}</b><span data-pitch-trace-note-handle="right"></span></button>`
   }).join('')
-  const beatLines = Array.from({ length: beatCount + 1 }, (_, index)=>`<i style="left:${((index / beatCount) * 100).toFixed(3)}%"></i>`).join('')
-  const status = trace.status === 'analyzing'
-    ? `Analyzing${trace.progress ? ` ${Math.round(trace.progress * 100)}%` : '...'}`
-    : trace.status === 'ready'
-      ? `Ready · ${notes.length} shown${hiddenNoteCount ? ` · ${hiddenNoteCount} hidden` : ''}`
-      : trace.status === 'failed'
-        ? `Failed · ${trace.error || 'Try again'}`
-        : 'Idle'
-  const base = getPitchTraceBaseSummary(region, edit)
-  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount}">
-    <div class="studio-pitch-trace-waveform">${renderAudioWaveform(region)}</div>
-    <div class="studio-pitch-trace-grid" aria-hidden="true">${beatLines}</div>
-    <div class="studio-pitch-trace-labels" aria-hidden="true">${labels}</div>
-    <div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks || '<p>No detected notes yet. Click Analyze Audio to create a Pitch Trace.</p>'}</div>
-    <small>Pitch Trace: ${esc(status)} · ${esc(base.label)}</small>
-  </div>`
+
+  const division=getTimelineDivisionForZoom(midiRollBeatWidth)
+  const step=1/Math.max(1,division)
+  const beatsPerBar=Math.max(1,Number(timelineState.beatsPerBar)||4)
+  const lines=[]
+  const first=Math.floor(startBeat/step)*step
+  for(let beat=first;beat<=endBeat+step;beat+=step){
+    if(beat<startBeat-1e-6)continue
+    const left=((beat-startBeat)/Math.max(.0001,lengthBeats))*100
+    const whole=Math.abs(beat-Math.round(beat))<1e-6
+    const bar=whole&&Math.abs(Math.round(beat)%beatsPerBar)<1e-6
+    lines.push(`<i class="${bar?'is-bar':whole?'is-beat':'is-subdivision'}" style="left:${left.toFixed(4)}%"></i>`)
+  }
+
+  const labels=[]
+  for(let beat=Math.ceil(startBeat);beat<=endBeat+1e-6;beat+=1){
+    const left=((beat-startBeat)/Math.max(.0001,lengthBeats))*100
+    const bar=Math.floor(beat/beatsPerBar)+1
+    const beatInBar=((Math.round(beat)%beatsPerBar)+beatsPerBar)%beatsPerBar+1
+    labels.push(`<span style="left:${left.toFixed(4)}%">${bar}.${beatInBar}</span>`)
+  }
+
+  const octaveLines=Array.from({length:rowCount},(_,index)=>{const midi=maxNote-index;return midi%12===0?`<i style="top:${((index/rowCount)*100).toFixed(4)}%"></i>`:''}).join('')
+  const status=trace.status==='analyzing'?`Analyzing ${Math.round((trace.progress||0)*100)}%`:trace.status==='ready'?`Ready · ${notes.length} notes`:trace.status==='failed'?`Failed · ${trace.error||'Try again'}`:'Idle'
+  const base=getPitchTraceBaseSummary(region,edit)
+  const empty=trace.status==='analyzing'?'<p class="studio-pitch-trace-empty">Deep pitch analysis is running…</p>':trace.status==='failed'?`<p class="studio-pitch-trace-empty">${esc(trace.error||'Pitch analysis failed.')}</p>`:'<p class="studio-pitch-trace-empty">Analyze Audio to map detected pitch onto MIDI rows.</p>'
+
+  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1600})}</div><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-time-ruler">${labels.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>
+          <span
+            class="studio-pitch-trace-playhead"
+            data-pitch-trace-playhead
+            style="left:${positionToRegionEditorX(xToBeat(timelineState.playheadX), region)}px"
+          ></span>${blocks||empty}</div></div></div><footer class="studio-pitch-trace-status"><span>${esc(status)} · ${esc(base.label)}</span><kbd>Independent horizontal scale · Option-scroll changes pitch height</kbd></footer></div>`
 }
 function getPitchTraceEditedNoteCount(trace = {}) {
-  return (trace.notes || []).filter((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.gainDb) || 0) > 0.001).length
+  return (trace.notes || []).filter((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.editedFineTuneCents) || 0) > 0.001 || Math.abs(Number(note.gainDb) || 0) > 0.001).length
 }
 function getSelectedPitchTraceNote(region) {
   if (!region || region.type !== 'audio' || !pitchTraceSelectedNoteId) return null
@@ -1361,44 +1410,25 @@ function getSelectedPitchTraceNote(region) {
   return (trace.notes || []).find((note)=>note.id === pitchTraceSelectedNoteId) || null
 }
 function renderPitchTraceToolPane(region, missing = false) {
-  const edit = normalizeAudioEdit(region.audioEdit)
-  const trace = edit.pitchTrace
-  const selectedPitchNote = getSelectedPitchTraceNote(region)
-  const editedPitchNoteCount = getPitchTraceEditedNoteCount(trace)
-  const pitchTraceRenderStatus = trace.renderStatus === 'needs_render' ? 'Needs render' : (trace.lastError || trace.renderStatus || 'idle')
-  const base = getPitchTraceBaseSummary(region, edit)
-  const shortNoteWarning = selectedPitchNote && Number(selectedPitchNote.durationSeconds) < 0.08
-    ? '<p class="studio-audio-editor-warning">Very short pitch edits may need extra render context. Soura will pad and crossfade this edit during render.</p>'
-    : ''
-  return `<aside class="studio-midi-roll-tools studio-pitch-trace-tools-pane" data-pitch-trace-scroll>
-    <h3>Pitch Trace</h3>
-    <div class="studio-editor-tool-toggle" role="toolbar" aria-label="Pitch Trace tools">
-      <button type="button" data-pitch-trace-tool="cursor" class="${pitchTraceTool === 'cursor' ? 'is-active' : ''}" aria-pressed="${String(pitchTraceTool === 'cursor')}">Cursor</button>
-      <button type="button" data-pitch-trace-tool="pencil" class="${pitchTraceTool === 'pencil' ? 'is-active' : ''}" aria-pressed="${String(pitchTraceTool === 'pencil')}">Pencil</button>
-    </div>
-    <p>${pitchTraceTool === 'pencil' ? 'Draw Audio Notes on the Pitch Trace grid.' : 'Select, drag, and resize Audio Notes.'}</p>
-    <p class="studio-pitch-trace-base">Editing: <strong>${esc(base.label)}</strong>${base.pending ? ' · render global edits first' : ''}</p>
-    <label><input type="checkbox" data-pitch-trace-enabled ${trace.enabled ? 'checked' : ''}> Pitch Trace enabled</label>
-    <label>Mode<select data-pitch-trace-mode><option value="vocal" ${trace.analysisMode === 'vocal' ? 'selected' : ''}>Vocal / Mono</option><option value="instrument" ${trace.analysisMode === 'instrument' ? 'selected' : ''}>Instrument / Mono</option><option value="full-mix" ${trace.analysisMode === 'full-mix' ? 'selected' : ''}>Full Mix Best Effort</option></select></label>
-    <label>Sensitivity<input type="range" min="0" max="1" step="0.05" data-pitch-trace-sensitivity value="${trace.sensitivity}"><small>${Math.round(trace.sensitivity * 100)}%</small></label>
-    <label>Minimum Note<input type="range" min="0.035" max="0.2" step="0.005" data-pitch-trace-min-note value="${trace.minNoteSeconds}"><small>${Math.round(trace.minNoteSeconds * 1000)} ms</small></label>
-    <label>Confidence<input type="range" min="0.2" max="0.95" step="0.05" data-pitch-trace-threshold value="${trace.confidenceThreshold}"><small>${Math.round(trace.confidenceThreshold * 100)}%</small></label>
-    <label><input type="checkbox" data-pitch-trace-show-low-confidence ${trace.showLowConfidence ? 'checked' : ''}> Show low-confidence notes</label>
-    <button type="button" data-pitch-trace-analyze ${missing || trace.status === 'analyzing' ? 'disabled' : ''}>${trace.notes.length ? 'Re-analyze Audible Render' : 'Analyze Audible Render'}</button>
-    <button type="button" data-pitch-trace-clear ${trace.notes.length || trace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
-    <button type="button" data-pitch-trace-render ${trace.enabled && trace.notes.length && !missing && trace.renderStatus !== 'rendering' ? '' : 'disabled'}>${trace.renderStatus === 'failed' ? 'Retry Pitch Edits' : 'Render Pitch Edits'}</button>
-    ${selectedPitchNote ? `<div class="studio-pitch-trace-note-tools">
-      <strong>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</strong>
-      <span>${selectedPitchNote.source === 'manual' ? 'Manual Audio Note' : 'Analyzed Audio Note'} · Original ${esc(formatMidiNoteName(selectedPitchNote.originalMidiNote))}</span>
-      <label>Start<input type="number" min="0" step="0.01" data-pitch-trace-note-field="startSeconds" value="${Number(selectedPitchNote.startSeconds || 0).toFixed(2)}"></label>
-      <label>Length<input type="number" min="0.03" step="0.01" data-pitch-trace-note-field="durationSeconds" value="${Number(selectedPitchNote.durationSeconds || 0.03).toFixed(2)}"></label>
-      <label>Edited Note<input type="number" min="0" max="127" step="1" data-pitch-trace-note-field="editedMidiNote" value="${Number(selectedPitchNote.editedMidiNote || 60)}"><small>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</small></label>
-      <button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}">Reset Note</button>
-      <button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted ? 'Unmute Note' : 'Mute Note'}</button>
-      <button type="button" data-pitch-trace-note-delete="${esc(selectedPitchNote.id)}">Delete Note</button>
-    </div>${shortNoteWarning}` : '<small>Select or draw an Audio Note to edit it.</small>'}
-    <small>Analysis: ${esc(trace.status === 'analyzing' ? 'Analyzing...' : trace.status)} · Render: ${esc(pitchTraceRenderStatus)}${editedPitchNoteCount ? ` · ${editedPitchNoteCount} edit${editedPitchNoteCount === 1 ? '' : 's'}` : ''}</small>
-  </aside>`
+  const edit=normalizeAudioEdit(region.audioEdit)
+  const trace=edit.pitchTrace
+  const selectedPitchNote=getSelectedPitchTraceNote(region)
+  const editedPitchNoteCount=getPitchTraceEditedNoteCount(trace)
+  const base=getPitchTraceBaseSummary(region,edit)
+  const desktopRealtime=isSouraRealtimeDesktopRuntime()
+
+  return `<aside class="studio-midi-roll-tools studio-pitch-trace-tools-pane" data-pitch-trace-tools-scroll><h3>Pitch Tools</h3><div class="studio-editor-tool-toggle" role="toolbar" aria-label="Pitch Trace tools"><button type="button" data-pitch-trace-tool="cursor" class="${pitchTraceTool==='cursor'?'is-active':''}">Cursor</button><button type="button" data-pitch-trace-tool="pencil" class="${pitchTraceTool==='pencil'?'is-active':''}">Pencil</button></div><div class="studio-pitch-trace-local-zoom"><button type="button" data-pitch-trace-zoom="out">V−</button><button type="button" data-pitch-trace-zoom="fit">V Fit</button><button type="button" data-pitch-trace-zoom="in">V+</button></div><p class="studio-pitch-trace-realtime-note">${desktopRealtime?'<strong>Desktop realtime:</strong> pitch and stretch preview live. High-quality rendering is optional.':'<strong>Web:</strong> complex pitch/stretch playback uses the browser-safe render path when required.'}</p><p class="studio-pitch-trace-base">Editing: <strong>${esc(base.label)}</strong></p>
+    <label><input type="checkbox" data-pitch-trace-enabled ${trace.enabled?'checked':''}> Pitch Trace enabled</label>
+    <label>Analysis Mode<select data-pitch-trace-mode><option value="vocal" ${trace.analysisMode==='vocal'?'selected':''}>Vocal / Mono</option><option value="instrument" ${trace.analysisMode==='instrument'?'selected':''}>Instrument / Mono</option><option value="full-mix" ${trace.analysisMode==='full-mix'?'selected':''}>Full Mix Best Effort</option></select></label>
+    <label>Sensitivity<input type="range" min="0" max="1" step="0.025" data-pitch-trace-sensitivity value="${trace.sensitivity}"><small>${Math.round(trace.sensitivity*100)}%</small></label>
+    <label>Minimum Note<input type="range" min="0.025" max="0.2" step="0.005" data-pitch-trace-min-note value="${trace.minNoteSeconds}"><small>${Math.round(trace.minNoteSeconds*1000)} ms</small></label>
+    <label>Confidence<input type="range" min="0.2" max="0.95" step="0.025" data-pitch-trace-threshold value="${trace.confidenceThreshold}"><small>${Math.round(trace.confidenceThreshold*100)}%</small></label>
+    <label><input type="checkbox" data-pitch-trace-show-low-confidence ${trace.showLowConfidence?'checked':''}> Show low-confidence notes</label>
+    <button type="button" data-pitch-trace-analyze ${missing||trace.status==='analyzing'?'disabled':''}>${trace.notes.length?'Deep Re-analyze Audio':'Deep Analyze Audio'}</button>
+    <button type="button" data-pitch-trace-clear ${trace.notes.length||trace.status==='failed'?'':'disabled'}>Clear Analysis</button>
+    <button type="button" class="${desktopRealtime?'studio-render-hq-button':''}" data-pitch-trace-render ${trace.enabled&&trace.notes.length&&!missing&&trace.renderStatus!=='rendering'?'':'disabled'}>${desktopRealtime?'Render Higher Quality':'Render Pitch Trace'}</button>
+    ${selectedPitchNote?`<div class="studio-pitch-trace-note-tools"><strong>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</strong><span>Original ${esc(formatMidiNoteName(selectedPitchNote.originalMidiNote))} · ${Math.round((Number(selectedPitchNote.confidence)||0)*100)}% confidence · ${Math.round((Number(selectedPitchNote.pitchStability)||0)*100)}% stability</span><label>Start<input type="number" min="0" step="0.01" data-pitch-trace-note-field="startSeconds" value="${Number(selectedPitchNote.startSeconds||0).toFixed(2)}"></label><label>Length<input type="number" min="0.02" step="0.01" data-pitch-trace-note-field="durationSeconds" value="${Number(selectedPitchNote.durationSeconds||.03).toFixed(2)}"></label><label>Edited Note<input type="number" min="0" max="127" step="1" data-pitch-trace-note-field="editedMidiNote" value="${Number(selectedPitchNote.editedMidiNote||60)}"><small>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</small></label><label>Fine Pitch<input type="number" min="-100" max="100" step="1" data-pitch-trace-note-field="editedFineTuneCents" value="${Number(selectedPitchNote.editedFineTuneCents||0)}"><small>cents</small></label><button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}">Reset Note</button><button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted?'Unmute Note':'Mute Note'}</button><button type="button" data-pitch-trace-note-delete="${esc(selectedPitchNote.id)}">Delete Note</button></div>`:'<small>Select or draw a note to edit Pitch Trace data.</small>'}
+    <small>Analysis: ${esc(trace.status==='analyzing'?'Analyzing…':trace.status)} · Playback: ${esc(desktopRealtime?'realtime':trace.renderStatus||'idle')}${editedPitchNoteCount?` · ${editedPitchNoteCount} edits`:''}</small></aside>`
 }
 function midiRollPitchRows(region = getMidiRollRegion()) {
   const track = getMidiRegionTrack(region)
@@ -1508,10 +1538,13 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const track = getMidiRegionTrack(region)
   const edit = normalizeAudioEdit(region.audioEdit)
   const pitchTrace = edit.pitchTrace
+  const pitchTraceActive = true
+  const pitchTraceHasEditorData = Boolean(pitchTrace?.enabled || pitchTrace?.notes?.length)
   const pitchShift = edit.pitchShift
   const selectedPitchNote = getSelectedPitchTraceNote(region)
   const editedPitchNoteCount = getPitchTraceEditedNoteCount(pitchTrace)
   const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const desktopRealtime = isSouraRealtimeDesktopRuntime()
   const stretch = normalizeAudioStretch(region.stretch, {
     clipId: region.id,
     sourceDurationSeconds: getAudioSourceDurationSeconds(region),
@@ -1529,13 +1562,13 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const waveformColor = getReadableWaveformColor(color)
   const regionLength = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
   const gridWidth = Math.max(420, regionLength * midiRollBeatWidth)
-  return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${motionClass}" data-audio-region-editor="${esc(region.id)}"${style}>
+  return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${pitchTrace.enabled ? 'has-pitch-trace-mode' : ''} ${motionClass}" data-audio-region-editor="${esc(region.id)}" style="--midi-roll-beat-width:${midiRollBeatWidth}px;--midi-roll-grid-width:${gridWidth}px;${bottomPanelHeightPx ? `height:${bottomPanelHeightPx}px;` : ''}">
     <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
     <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
-    <div class="studio-bottom-panel-body studio-audio-region-editor-body ${pitchTrace.enabled ? 'has-pitch-trace-tools' : ''}">
+    <div class="studio-bottom-panel-body studio-audio-region-editor-body ${pitchTraceActive ? 'has-pitch-trace-tools has-pitch-trace-mode' : ''}">
       <section class="studio-audio-region-editor-preview">
         ${renderRegionEditorTimeline(region, gridWidth)}
-        ${renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled: pitchTrace.enabled, color, waveformColor })}
+        ${renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled: pitchTraceActive, color, waveformColor })}
         <div class="studio-audio-editor-meta">
           <span>Start ${Number(region.startBeat || 0).toFixed(2)} beats</span>
           <span>Length ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span>
@@ -1544,12 +1577,12 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         </div>
         ${missing ? `<p class="studio-audio-editor-warning" title="${esc(getAudioOfflineMessage(region))}">${esc(region.audioClip?.loadError || getAudioOfflineMessage(region))}</p>` : ''}
       </section>
-      ${pitchTrace.enabled ? renderPitchTraceToolPane(region, missing) : ''}
-      ${renderRegionEditorToolStrip({ label: 'Audio region editor tools' })}
+      ${pitchTraceActive ? renderPitchTraceToolPane(region, missing) : ''}
+      ${pitchTrace.enabled ? '' : renderRegionEditorToolStrip({ label: 'Audio region editor tools' })}
       <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
         <h3>${esc(getMidiRegionLabel(region))}</h3>
         <label>Region name<input data-audio-region-name value="${esc(region.name || '')}" placeholder="${esc(track?.name || 'Audio Region')}"></label>
-        ${renderAudioSourceInfo(region)}
+        
         <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="mute" ${edit.mute ? 'checked' : ''}> Mute</label><label><input type="checkbox" data-audio-edit-field="loop" ${edit.loop ? 'checked' : ''}> Loop</label></div>
         <label>Quantize<select data-audio-edit-field="quantize" disabled>${AUDIO_QUANTIZE_OPTIONS.map((value)=>`<option value="${value}" ${edit.quantize===value?'selected':''}>${value === 'off' ? 'Off' : value}</option>`).join('')}</select><small>Coming soon</small></label>
         <label>Q-Swing<input type="range" min="0" max="100" step="1" data-audio-edit-field="qSwing" value="${edit.qSwing}" disabled><small>Coming soon</small></label>
@@ -1557,7 +1590,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         <label>Q-Strength<input type="range" min="0" max="100" step="1" data-audio-edit-field="qStrength" value="${edit.qStrength}" disabled><small>Coming soon</small></label>
         <label>Transpose<input type="number" min="-48" max="48" step="1" data-audio-edit-field="transposeSemitones" value="${edit.transposeSemitones}"><small>semitones</small></label>
         <label>Fine Tune<input type="number" min="-100" max="100" step="1" data-audio-edit-field="fineTuneCents" value="${edit.fineTuneCents}"><small>cents</small></label>
-        <button type="button" data-audio-render-pitch-shift ${pitchShiftActive && !missing && !dspBlocked && pitchShift.renderStatus !== 'rendering' ? '' : 'disabled'} ${dspBlockedTitle}>${pitchShift.renderStatus === 'failed' ? 'Retry Pitch Shift' : 'Render Pitch Shift'}</button>
+        <button type="button" data-audio-render-pitch-shift ${pitchShiftActive && !missing && !dspBlocked && pitchShift.renderStatus !== 'rendering' ? '' : 'disabled'} ${dspBlockedTitle} class="${desktopRealtime ? 'studio-render-hq-button' : ''}">${desktopRealtime ? 'Render Higher Quality' : (pitchShift.renderStatus === 'failed' ? 'Retry Pitch Shift' : 'Render Pitch Shift')}</button>
         <small>Pitch Shift: ${esc(pitchShiftStatus)}${pitchShiftActive ? ` · ${Number(pitchShift.totalSemitones).toFixed(2)} st` : ''}</small>
         <label>Pitch Source<select data-audio-edit-field="pitchSource" disabled><option>Off</option><option>Region</option><option>Project Key</option></select><small>Coming soon</small></label>
         <hr>
@@ -1596,28 +1629,71 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
           <label>Target Length<input type="number" min="${minAudioRegionSeconds}" step="0.01" data-audio-stretch-length value="${stretchMath.targetDurationSeconds.toFixed(2)}"></label>
           <label>Length Ratio<input type="number" min="${STRETCH_RATIO_MIN}" max="${STRETCH_RATIO_MAX}" step="0.01" data-audio-stretch-ratio value="${stretchMath.lengthRatio.toFixed(2)}"></label>
           <p>Stretch Ratio: ${stretchMath.lengthRatio.toFixed(2)}x length · Status: ${esc(stretch.renderError || renderStatus || 'idle')}</p>
-        <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && !dspBlocked && stretchMath.supported ? '' : 'disabled'} ${dspBlockedTitle}>${stretch.renderStatus === 'failed' ? 'Retry Render' : combinedPitchStretchActive ? 'Render Pitch + Stretch' : 'Render Stretch'}</button>
+        <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && !dspBlocked && stretchMath.supported ? '' : 'disabled'} ${dspBlockedTitle} class="${desktopRealtime ? 'studio-render-hq-button' : ''}">${desktopRealtime ? 'Render Higher Quality' : (stretch.renderStatus === 'failed' ? 'Retry Render' : combinedPitchStretchActive ? 'Render Pitch + Stretch' : 'Render Stretch')}</button>
           <button type="button" data-audio-reset-stretch ${stretch.enabled ? '' : 'disabled'}>Reset Stretch</button>
         </div>
+        ${renderAudioSourceInfo(region)}
       </aside>
     </div>
   </section>`
 }
 function renderRegionEditorTimeline(region, gridWidth) {
   if (!region) return ''
+
   const regionStart = Number(region.startBeat) || 0
-  const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 1)
+  const regionEnd = Math.max(
+    regionStart + 0.25,
+    Number(region.endBeat) || regionStart + 1
+  )
   const regionLength = regionEnd - regionStart
-  const width = Math.max(420, Number(gridWidth) || regionLength * midiRollBeatWidth)
-  const playheadLeft = positionToRegionEditorX(xToBeat(timelineState.playheadX), region)
-  const ticks = renderRegionEditorTimelineTicks(regionLength)
-  return `<div class="studio-region-editor-header-container"><div class="studio-region-editor-timeline" data-region-editor-timeline="${esc(region.id)}"><div class="studio-region-editor-timeline-spacer"></div><div class="studio-region-editor-timeline-viewport" data-region-editor-timeline-viewport><div class="studio-region-editor-timeline-inner" data-region-editor-timeline-inner style="width:${width}px">${ticks}<i class="studio-region-editor-playhead" style="left:${playheadLeft}px"></i></div></div></div></div>`
+  const width = Math.max(
+    420,
+    Number(gridWidth) || regionLength * midiRollBeatWidth
+  )
+
+  const projectBeat = xToBeat(timelineState.playheadX)
+  const playheadLeft = positionToRegionEditorX(projectBeat, region)
+  const ticks = renderRegionEditorTimelineTicks(region)
+
+  return `<div class="studio-region-editor-header-container">
+    <div
+      class="studio-region-editor-timeline"
+      data-region-editor-timeline="${esc(region.id)}"
+      style="--midi-roll-grid-width:${width}px"
+    >
+      <div class="studio-region-editor-timeline-spacer"></div>
+      <div
+        class="studio-region-editor-timeline-viewport"
+        data-region-editor-timeline-viewport
+      >
+        <div
+          class="studio-region-editor-timeline-inner"
+          data-region-editor-timeline-inner
+          style="width:${width}px"
+        >
+          ${ticks}
+          <i
+            class="studio-region-editor-playhead"
+            style="left:${playheadLeft}px"
+          ></i>
+        </div>
+      </div>
+    </div>
+  </div>`
 }
 function positionToRegionEditorX(beat = 0, region = getMidiRollRegion()) {
-  return (Number(beat || 0) - (Number(region?.startBeat) || 0)) * midiRollBeatWidth
+  return (
+    Number(beat || 0)
+    - (Number(region?.startBeat) || 0)
+  ) * midiRollBeatWidth
 }
 function regionEditorXToPosition(x = 0, region = getMidiRollRegion()) {
-  return (Number(region?.startBeat) || 0) + (Number(x || 0) / Math.max(1, midiRollBeatWidth))
+  return (
+    Number(region?.startBeat) || 0
+  ) + (
+    Number(x || 0)
+    / Math.max(1, midiRollBeatWidth)
+  )
 }
 function getMidiRollGridDivision() {
   if (midiRollBeatWidth >= 512) return 1 / 32
@@ -1633,15 +1709,53 @@ function snapBeatToRegionEditorGrid(beat = 0, regionStart = 0) {
   const start = Number(regionStart) || 0
   return start + Math.round(((Number(beat) || 0) - start) / division) * division
 }
-function renderRegionEditorTimelineTicks(regionLength = 0) {
-  const division = getMidiRollGridDivision()
-  const count = Math.ceil(regionLength / division) + 1
-  return Array.from({ length: count }, (_, index)=>{
-    const beat = index * division
-    const wholeBeat = Math.abs(beat - Math.round(beat)) < 1e-6
-    const label = wholeBeat ? Math.round(beat) + 1 : ''
-    return `<span class="${wholeBeat ? 'is-major' : 'is-subdivision'}" style="left:${beat * midiRollBeatWidth}px">${label}</span>`
-  }).join('')
+function renderRegionEditorTimelineTicks(region = getMidiRollRegion()) {
+  if (!region) return ''
+
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(
+    regionStart + 0.25,
+    Number(region.endBeat) || regionStart + 1
+  )
+
+  const beatsPerBar = Math.max(
+    1,
+    Number(timelineState.beatsPerBar) || 4
+  )
+
+  const firstWholeBeat = Math.ceil(regionStart - 1e-7)
+  const lastWholeBeat = Math.floor(regionEnd + 1e-7)
+  const output = []
+
+  for (
+    let absoluteBeat = firstWholeBeat;
+    absoluteBeat <= lastWholeBeat;
+    absoluteBeat += 1
+  ) {
+    const left =
+      (absoluteBeat - regionStart)
+      * midiRollBeatWidth
+
+    const modulo =
+      ((absoluteBeat % beatsPerBar) + beatsPerBar)
+      % beatsPerBar
+
+    const isBar = Math.abs(modulo) < 1e-7
+
+    const barLabel =
+      isBar
+        ? String(Math.round(absoluteBeat / beatsPerBar))
+        : ''
+
+    output.push(
+      `<span
+        class="studio-region-editor-tick ${isBar ? 'studio-region-editor-tick--bar' : 'studio-region-editor-tick--beat'}"
+        style="left:${left}px"
+      >${barLabel ? `<b>${esc(barLabel)}</b>` : ''}</span>`
+    )
+  }
+
+  return output.join('')
 }
 function renderMidiRollGridLines(regionLength = 0) {
   const division = getMidiRollGridDivision()
@@ -2046,6 +2160,21 @@ function pasteMidiRegion({ beat = clampBeat(xToBeat(timelineState.playheadX)), t
 }
 function cleanupRegionAfterDelete(regionId) {
   stopRegionPlayback(regionId)
+  const deletedRegion = midiRegions.find((item)=>item.id === regionId)
+  const runtimeId = deletedRegion?.audioClip?.runtimeId || regionId
+  if (runtimeId) {
+    const runtime = audioClipRuntime.get(runtimeId)
+    if (runtime?.url?.startsWith?.('blob:')) try { URL.revokeObjectURL(runtime.url) } catch {}
+    audioClipRuntime.delete(runtimeId)
+    releaseDesktopLocalAudioReference(runtimeId)
+  }
+  for (const [key, runtime] of audioClipRuntime.entries()) {
+    if (runtime?.sourceRuntimeId === runtimeId || String(key).startsWith(`${regionId}:`)) {
+      if (runtime?.url?.startsWith?.('blob:')) try { URL.revokeObjectURL(runtime.url) } catch {}
+      audioClipRuntime.delete(key)
+    }
+  }
+  audioImportPreviewCache.clear()
   if (midiRollState?.regionId === regionId) {
     midiRollState = null
     midiRollSelectedNoteIndex = null
@@ -3009,7 +3138,7 @@ function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = fa
       </nav>
     </header>
     <div class="studio-audio-waveform-viewport" data-audio-waveform-viewport data-waveform-start="${start}" data-waveform-end="${end}" data-waveform-duration="${viewport.fullDuration}" tabindex="0">
-      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: 1100 })}
+      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: 24000 })}
     </div>
   </div>`
 }
@@ -3790,13 +3919,226 @@ function finishAudioImportUpload() {
   audioImportUploadState = { active: false, hidden: false, fileName: '', bytesTransferred: 0, totalBytes: 0 }
   app.querySelector('[data-audio-import-upload-modal]')?.remove()
 }
+function getAudioPreflightCurrentProgress() {
+  const pitchProgress =
+    Number(audioPitchRenderState.progress)
+
+  if (
+    audioPitchRenderState.active
+    && Number.isFinite(pitchProgress)
+  ) {
+    return clamp(pitchProgress, 0, 1)
+  }
+
+  const stretchProgress =
+    Number(audioStretchRenderState.progress)
+
+  if (
+    audioStretchRenderState.active
+    && Number.isFinite(stretchProgress)
+  ) {
+    return clamp(stretchProgress, 0, 1)
+  }
+
+  return 0
+}
+
+function updateAudioPreflightProgressUI() {
+  if (!audioPreflightRenderState.active) return
+
+  const total =
+    Math.max(
+      1,
+      Number(audioPreflightRenderState.total) || 1
+    )
+
+  const completed =
+    clamp(
+      Number(audioPreflightRenderState.completed) || 0,
+      0,
+      total
+    )
+
+  const current =
+    getAudioPreflightCurrentProgress()
+
+  const overall =
+    clamp(
+      (completed + current) / total,
+      0,
+      1
+    )
+
+  const percent =
+    Math.round(overall * 100)
+
+  const modal =
+    app.querySelector(
+      '.studio-audio-render-modal'
+    )
+
+  const progress =
+    modal?.querySelector(
+      '.studio-audio-render-progress'
+    )
+
+  const fill =
+    progress?.querySelector('i')
+
+  const label =
+    modal?.querySelector(
+      '[data-preflight-progress-label]'
+    )
+
+  progress?.setAttribute(
+    'aria-label',
+    `${percent}%`
+  )
+
+  progress?.setAttribute(
+    'aria-valuenow',
+    String(percent)
+  )
+
+  if (fill) {
+    fill.style.width = `${percent}%`
+  }
+
+  if (label) {
+    const currentNumber =
+      Math.min(
+        total,
+        completed + 1
+      )
+
+    const detail =
+      current > 0 && current < 1
+        ? ` · DSP ${Math.round(current * 100)}%`
+        : ''
+
+    label.textContent =
+      `${currentNumber}/${total} renders · `
+      + `${audioPreflightRenderState.currentLabel || 'Queued'}`
+      + detail
+  }
+}
+
 function renderAudioPreflightRenderModal() {
   if (!audioPreflightRenderState.active) return ''
-  const total = Math.max(1, Number(audioPreflightRenderState.total) || 1)
-  const completed = clamp(Number(audioPreflightRenderState.completed) || 0, 0, total)
-  const progress = completed / total
-  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-preflight-render-title"><section class="studio-audio-render-panel"><span>Preparing audio</span><h3 id="studio-preflight-render-title">Preparing Audio</h3><p>Soura needs to render audio edits before playback.</p><div class="studio-audio-render-progress" aria-label="${Math.round(progress * 100)}%"><i style="width:${Math.round(progress * 100)}%"></i></div><small>${completed}/${total} renders · ${esc(audioPreflightRenderState.currentLabel || 'Queued')}</small>${audioPreflightRenderState.error ? `<p>${esc(audioPreflightRenderState.error)}</p><div class="studio-modal-actions"><button type="button" class="button" data-preflight-retry>Retry Render</button><button type="button" class="button button-muted" data-preflight-play-original>Play Original Where Possible</button><button type="button" class="button button-muted" data-preflight-cancel>Cancel</button></div>` : ''}</section></div>`
+
+  const total =
+    Math.max(
+      1,
+      Number(audioPreflightRenderState.total) || 1
+    )
+
+  const completed =
+    clamp(
+      Number(audioPreflightRenderState.completed) || 0,
+      0,
+      total
+    )
+
+  const current =
+    getAudioPreflightCurrentProgress()
+
+  const progress =
+    clamp(
+      (completed + current) / total,
+      0,
+      1
+    )
+
+  const percent =
+    Math.round(progress * 100)
+
+  const currentNumber =
+    Math.min(
+      total,
+      completed + 1
+    )
+
+  return `
+    <div
+      class="studio-audio-render-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="studio-preflight-render-title"
+    >
+      <section class="studio-audio-render-panel">
+        <span>Preparing audio</span>
+
+        <h3 id="studio-preflight-render-title">
+          Preparing Audio
+        </h3>
+
+        <p>
+          Soura is rendering offline audio edits
+          before playback.
+        </p>
+
+        <div
+          class="studio-audio-render-progress"
+          role="progressbar"
+          aria-label="${percent}%"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="${percent}"
+        >
+          <i style="width:${percent}%"></i>
+        </div>
+
+        <small data-preflight-progress-label>
+          ${currentNumber}/${total} renders ·
+          ${esc(
+            audioPreflightRenderState.currentLabel
+            || 'Queued'
+          )}
+          ${
+            current > 0 && current < 1
+              ? ` · DSP ${Math.round(current * 100)}%`
+              : ''
+          }
+        </small>
+
+        ${
+          audioPreflightRenderState.error
+            ? `
+              <p>${esc(audioPreflightRenderState.error)}</p>
+
+              <div class="studio-modal-actions">
+                <button
+                  type="button"
+                  class="button"
+                  data-preflight-retry
+                >
+                  Retry Render
+                </button>
+
+                <button
+                  type="button"
+                  class="button button-muted"
+                  data-preflight-play-original
+                >
+                  Play Original Where Possible
+                </button>
+
+                <button
+                  type="button"
+                  class="button button-muted"
+                  data-preflight-cancel
+                >
+                  Cancel
+                </button>
+              </div>
+            `
+            : ''
+        }
+      </section>
+    </div>
+  `
 }
+
 function renderStretchPlaybackPrompt() {
   if (!stretchPlaybackPrompt?.regionId) return ''
   const region = midiRegions.find((item)=>item.id === stretchPlaybackPrompt.regionId)
@@ -5631,26 +5973,179 @@ function xToSnappedBeat(x){ const beat=xToBeatsFromBarZero(x); return isSnapEnab
 function snapXToBeat(x) { return isSnapEnabled ? beatsFromBarZeroToX(snapBeatToGrid(xToBeatsFromBarZero(x))) : x }
 function maxTimelineX() { return timelineEndX() }
 function updateMidiRollPlayheadDom() {
-  const marker = app.querySelector('[data-midi-roll-playhead]')
-  const region = marker ? getMidiRollRegion() : null
   const playheadBeat = xToBeat(timelineState.playheadX)
-  if (marker && region) {
-    const left = positionToRegionEditorX(playheadBeat, region)
-    marker.style.left = `${left}px`
+
+  const midiMarker = app.querySelector('[data-midi-roll-playhead]')
+  const midiRegion = midiMarker ? getMidiRollRegion() : null
+
+  if (midiMarker && midiRegion) {
+    midiMarker.style.left =
+      `${positionToRegionEditorX(playheadBeat, midiRegion)}px`
   }
-  app.querySelectorAll('[data-region-editor-timeline]').forEach((timeline) => {
-    const timelineRegion = midiRegions.find((item) => item.id === timeline.dataset.regionEditorTimeline)
-    const headerMarker = timeline.querySelector('.studio-region-editor-playhead')
-    if (!timelineRegion || !headerMarker) return
-    headerMarker.style.left = `${positionToRegionEditorX(playheadBeat, timelineRegion)}px`
-  })
+
+  app
+    .querySelectorAll('[data-pitch-trace-playhead]')
+    .forEach((marker) => {
+      const editor = marker.closest('[data-audio-region-editor]')
+      const region = midiRegions.find(
+        (item) => item.id === editor?.dataset?.audioRegionEditor
+      )
+
+      if (!region) return
+
+      marker.style.left =
+        `${positionToRegionEditorX(playheadBeat, region)}px`
+    })
+
+  app
+    .querySelectorAll('[data-region-editor-timeline]')
+    .forEach((timeline) => {
+      const region = midiRegions.find(
+        (item) => item.id === timeline.dataset.regionEditorTimeline
+      )
+
+      const marker = timeline.querySelector(
+        '.studio-region-editor-playhead'
+      )
+
+      if (!region || !marker) return
+
+      marker.style.left =
+        `${positionToRegionEditorX(playheadBeat, region)}px`
+    })
 }
+
+if (!globalThis.__souraPitchTraceCanonicalZoomV45) {
+  globalThis.__souraPitchTraceCanonicalZoomV45 = true
+
+  document.addEventListener(
+    'soura:pitch-trace-horizontal-zoom',
+    (event) => {
+      const view = event.target?.closest?.('.studio-pitch-trace-view')
+      const editor = view?.closest?.('[data-audio-region-editor]')
+      const region = midiRegions.find(
+        (item) => item.id === editor?.dataset?.audioRegionEditor
+      )
+      const scroll = view?.querySelector?.('[data-pitch-trace-scroll]')
+
+      if (!view || !region || !scroll) return
+
+      const direction = event.detail?.direction || 'fit'
+      const rect = scroll.getBoundingClientRect()
+
+      const keyWidth =
+        view.querySelector('.studio-pitch-trace-keyboard')
+          ?.getBoundingClientRect?.().width
+        || 72
+
+      const pointerX = Number.isFinite(Number(event.detail?.clientX))
+        ? clamp(
+            Number(event.detail.clientX) - rect.left - keyWidth,
+            0,
+            Math.max(1, rect.width - keyWidth)
+          )
+        : Math.max(1, rect.width - keyWidth) / 2
+
+      const oldWidth = Math.max(1, midiRollBeatWidth)
+
+      const beatAtPointer =
+        ((scroll.scrollLeft || 0) + pointerX) / oldWidth
+
+      if (direction === 'fit') {
+        const regionLength = Math.max(
+          0.25,
+          (Number(region.endBeat) || 0)
+          - (Number(region.startBeat) || 0)
+        )
+
+        const viewportWidth = Math.max(
+          200,
+          scroll.clientWidth - keyWidth
+        )
+
+        midiRollBeatWidth = Math.round(
+          clamp(
+            viewportWidth / regionLength,
+            12,
+            720
+          )
+        )
+      } else {
+        midiRollBeatWidth = Math.round(
+          clamp(
+            midiRollBeatWidth
+            * (direction === 'in' ? 1.18 : 1 / 1.18),
+            12,
+            720
+          )
+        )
+      }
+
+      const newScrollLeft = direction === 'fit'
+        ? 0
+        : Math.max(
+            0,
+            beatAtPointer * midiRollBeatWidth - pointerX
+          )
+
+      renderEditor()
+
+      requestAnimationFrame(() => {
+        const nextEditor = app.querySelector(
+          `[data-audio-region-editor="${CSS.escape(region.id)}"]`
+        )
+
+        const nextScroll = nextEditor?.querySelector(
+          '[data-pitch-trace-scroll]'
+        )
+
+        if (nextScroll) {
+          nextScroll.scrollLeft = Math.min(
+            newScrollLeft,
+            Math.max(
+              0,
+              nextScroll.scrollWidth - nextScroll.clientWidth
+            )
+          )
+
+          syncRegionEditorTimelineScroll(nextScroll.scrollLeft)
+        }
+
+        updateMidiRollPlayheadDom()
+      })
+    }
+  )
+
+  document.addEventListener(
+    'soura:pitch-trace-horizontal-scroll',
+    (event) => {
+      syncRegionEditorTimelineScroll(
+        Number(event.detail?.scrollLeft) || 0
+      )
+    }
+  )
+}
+
 function syncRegionEditorTimelineScroll(scrollLeft = null) {
-  const bodyScroll = app.querySelector('.studio-midi-roll-scroll')
-  const left = Number.isFinite(Number(scrollLeft)) ? Number(scrollLeft) : (bodyScroll?.scrollLeft || 0)
-  app.querySelectorAll('[data-region-editor-timeline-viewport]').forEach((viewport)=>{
-    if (Math.abs((viewport.scrollLeft || 0) - left) > 0.5) viewport.scrollLeft = left
-  })
+  const bodyScroll =
+    app.querySelector('.studio-pitch-trace-scroll')
+    || app.querySelector('.studio-midi-roll-scroll')
+
+  const left = Number.isFinite(Number(scrollLeft))
+    ? Number(scrollLeft)
+    : (bodyScroll?.scrollLeft || 0)
+
+  app
+    .querySelectorAll('[data-region-editor-timeline-viewport]')
+    .forEach((viewport) => {
+      if (
+        Math.abs(
+          (viewport.scrollLeft || 0) - left
+        ) > 0.5
+      ) {
+        viewport.scrollLeft = left
+      }
+    })
 }
 function captureMidiRollViewport() {
   const scroll = app.querySelector('.studio-midi-roll-scroll')
@@ -6530,6 +7025,7 @@ function stopAudioClipPlayback(regionId = '') {
   try { active.element?.pause?.() } catch {}
   try { active.element?.removeAttribute?.('src') } catch {}
   try { active.source?.disconnect?.() } catch {}
+  if (active.realtimeProcessor) destroySouraRealtimeRegionProcessor(active.realtimeProcessor)
   try { active.gainNode?.disconnect?.() } catch {}
   try { active.mediaSource?.disconnect?.() } catch {}
   activeAudioClipSources.delete(regionId)
@@ -6633,21 +7129,32 @@ async function renderAudioStretchForRegion(regionId) {
       quality: 'high',
       onProgress: (progress) => {
         audioStretchRenderState = { ...audioStretchRenderState, progress }
+        updateAudioPreflightProgressUI()
       }
     })
     const renderedWaveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:${pitchActive ? 'pitch-time' : 'stretch'}:${Math.round(stretchMath.lengthRatio * 1000)}:${result.createdAt}`
     let renderedStoragePath = null
     let renderedSessionOnly = true
-    try {
-      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
-        clipId: region.id,
-        suffix: `${pitchActive ? 'pitch-time' : 'stretch'}-${Math.round(stretchMath.lengthRatio * 1000)}`
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `${pitchActive ? 'pitch-time' : 'stretch'}-${Math.round(stretchMath.lengthRatio * 1000)}`
+    })
+      .then((path) => {
+        if (!path) return
+
+        console.info('[studioProject] derived stretch render persisted in background', {
+          clipId: region.id,
+          path
+        })
       })
-      renderedSessionOnly = !renderedStoragePath
-    } catch (uploadErr) {
-      console.warn('[studioProject] rendered stretch upload failed; using session render only', uploadErr)
-    }
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background stretch render upload failed; session render remains valid',
+          uploadErr
+        )
+      })
     audioClipRuntime.set(renderedRuntimeId, {
       blob: result.renderedBlob,
       url: result.renderedObjectUrl,
@@ -6767,19 +7274,33 @@ async function renderAudioPitchShiftForRegion(regionId) {
       trimEndSeconds: getAudioTrimEndSeconds(region),
       onProgress: (progress) => {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
+        updateAudioPreflightProgressUI()
       }
     })
     const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:pitch-shift:${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}:${result.createdAt}`
+    // Derived audio is a non-destructive runtime cache.
+    // Playback must never wait for cloud persistence.
     let renderedStoragePath = null
-    try {
-      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
-        clipId: region.id,
-        suffix: `pitch-shift-${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}`
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `pitch-shift-${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}`
+    })
+      .then((path) => {
+        if (!path) return
+
+        console.info('[studioProject] derived pitch render persisted in background', {
+          clipId: region.id,
+          path
+        })
       })
-    } catch (uploadErr) {
-      console.warn('[studioProject] rendered pitch shift upload failed; using session render only', uploadErr)
-    }
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background pitch render upload failed; session render remains valid',
+          uploadErr
+        )
+      })
     audioClipRuntime.set(renderedRuntimeId, {
       blob: result.renderedBlob,
       url: result.renderedObjectUrl,
@@ -6862,19 +7383,30 @@ async function renderPitchTraceEditsForRegion(regionId) {
       stackedOnGlobalEdits: base.stackedOnGlobalEdits,
       onProgress: (progress) => {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
+        updateAudioPreflightProgressUI()
       }
     })
     const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:pitch-trace:${result.createdAt}`
     let renderedStoragePath = null
-    try {
-      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
-        clipId: region.id,
-        suffix: `pitch-trace-${result.createdAt}`
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `pitch-trace-${result.createdAt}`
+    })
+      .then((path) => {
+        if (!path) return
+        console.info('[studioProject] derived pitch-trace render persisted in background', {
+          clipId: region.id,
+          path
+        })
       })
-    } catch (uploadErr) {
-      console.warn('[studioProject] rendered pitch trace upload failed; using session render only', uploadErr)
-    }
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background pitch-trace upload failed; session render remains valid',
+          uploadErr
+        )
+      })
     audioClipRuntime.set(renderedRuntimeId, {
       blob: result.renderedBlob,
       url: result.renderedObjectUrl,
@@ -6956,19 +7488,30 @@ async function renderAudioReverseForRegion(regionId) {
       quality: 'lossless',
       onProgress: (progress) => {
         audioPitchRenderState = { ...audioPitchRenderState, progress }
+        updateAudioPreflightProgressUI()
       }
     })
     const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
     const renderedRuntimeId = `${region.id}:reverse:${result.createdAt}`
     let renderedStoragePath = null
-    try {
-      renderedStoragePath = await uploadSouraAudioBlob(result.renderedBlob, {
-        clipId: region.id,
-        suffix: `reverse-${result.createdAt}`
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `reverse-${result.createdAt}`
+    })
+      .then((path) => {
+        if (!path) return
+        console.info('[studioProject] derived reverse render persisted in background', {
+          clipId: region.id,
+          path
+        })
       })
-    } catch (uploadErr) {
-      console.warn('[studioProject] rendered reverse upload failed; using session render only', uploadErr)
-    }
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background reverse upload failed; session render remains valid',
+          uploadErr
+        )
+      })
     audioClipRuntime.set(renderedRuntimeId, {
       blob: result.renderedBlob,
       url: result.renderedObjectUrl,
@@ -7038,52 +7581,93 @@ function startStretchedAudioElement(region, runtime, track, sourceOffsetSeconds,
   }
 }
 function getAudioPlaybackRenderChoice(region, edit, stretch) {
-  const bypassEdits = audioEditPlaybackBypassRegionIds.has(region.id)
-  const trace = edit.pitchTrace || {}
-  const pitchShift = edit.pitchShift || {}
-  const reverse = edit.reverse || {}
-  const traceHasEdits = trace.enabled && trace.notes?.length && (getPitchTraceEditedNoteCount(trace) > 0 || Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001)
-  const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
-  const stretchRuntimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
-  const stretchIsCombined = stretch.algorithm === 'signalsmith_wasm_pitch_time_v1' || stretch.renderedAudio?.operation === 'combined_pitch_time'
-  if (!bypassEdits && pitchShiftActive && stretch.enabled) {
-    if (stretch.renderStatus === 'ready' && stretchIsCombined && stretchRuntimeId && audioClipRuntime.has(stretchRuntimeId)) {
-      return { runtimeId: stretchRuntimeId, mode: 'combinedPitchTime' }
-    }
-    if (stretch.renderedStoragePath || stretch.renderedAudioUrl) return { needsStretchRender: true, message: 'Combined pitch + stretch audio is not loaded yet.' }
-    return { needsStretchRender: true, message: 'Pitch + Stretch must be rendered together before playback.' }
+  const bypassEdits=audioEditPlaybackBypassRegionIds.has(region.id)
+  const desktop=isSouraRealtimeDesktopRuntime()
+  const trace=edit.pitchTrace||{}
+  const pitchShift=edit.pitchShift||{}
+  const reverse=edit.reverse||{}
+  const pitchActive=Math.abs(Number(pitchShift.totalSemitones)||0)>.001
+  const traceEdited=trace.enabled&&Array.isArray(trace.notes)&&getPitchTraceEditedNoteCount(trace)>0
+  const stretchRuntimeId=stretch.renderedRuntimeId||`${region.id}:stretch:persisted`
+  const combined=stretch.algorithm==='signalsmith_wasm_pitch_time_v1'||stretch.renderedAudio?.operation==='combined_pitch_time'
+
+  if(!bypassEdits&&desktop){
+    if(pitchActive&&stretch.enabled&&stretch.renderStatus==='ready'&&combined&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:'combinedPitchTime'}
+    if(traceEdited&&trace.renderStatus==='ready'&&trace.renderedRuntimeId&&audioClipRuntime.has(trace.renderedRuntimeId))return{runtimeId:trace.renderedRuntimeId,mode:'pitchTrace'}
+    if(pitchActive&&!stretch.enabled&&pitchShift.renderStatus==='ready'&&pitchShift.renderedRuntimeId&&audioClipRuntime.has(pitchShift.renderedRuntimeId))return{runtimeId:pitchShift.renderedRuntimeId,mode:'pitchShift'}
+    if(stretch.enabled&&stretch.renderStatus==='ready'&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:combined?'combinedPitchTime':'stretch'}
+    if(reverse.enabled&&reverse.renderStatus==='ready'&&reverse.renderedRuntimeId&&audioClipRuntime.has(reverse.renderedRuntimeId))return{runtimeId:reverse.renderedRuntimeId,mode:'reverse'}
+    if(reverse.enabled)return{needsRender:true,promptMode:'reverse',message:'Reverse requires an explicit render. Pitch and stretch do not.'}
+    if(shouldUseRealtimeRegionProcessing(edit,stretch))return{runtimeId:region.audioClip?.runtimeId||region.id,mode:'desktopRealtime',realtime:true}
+    return{runtimeId:region.audioClip?.runtimeId||region.id,mode:'original'}
   }
-  if (!bypassEdits) {
-    if (traceHasEdits) {
-      if (trace.renderStatus === 'ready' && trace.renderedRuntimeId && audioClipRuntime.has(trace.renderedRuntimeId)) {
-        return { runtimeId: trace.renderedRuntimeId, mode: 'pitchTrace' }
-      }
-      return { needsRender: true, promptMode: 'trace', message: 'Pitch Trace edits must be rendered before playback.' }
-    }
-    if (pitchShiftActive) {
-      if (pitchShift.renderStatus === 'ready' && pitchShift.renderedRuntimeId && audioClipRuntime.has(pitchShift.renderedRuntimeId)) {
-        return { runtimeId: pitchShift.renderedRuntimeId, mode: 'pitchShift' }
-      }
-      return { needsRender: true, promptMode: 'pitchShift', message: 'Pitch Shift must be rendered before playback.' }
-    }
+
+  if(!bypassEdits&&pitchActive&&stretch.enabled){
+    if(stretch.renderStatus==='ready'&&combined&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:'combinedPitchTime'}
+    return{needsStretchRender:true,message:'Pitch + Stretch must be rendered before browser playback.'}
   }
-  if (!bypassEdits && stretch.enabled && stretch.renderStatus === 'ready') {
-    const runtimeId = stretchRuntimeId
-    if (runtimeId && audioClipRuntime.has(runtimeId)) return { runtimeId, mode: stretchIsCombined ? 'combinedPitchTime' : 'stretch' }
-    if (stretch.renderedStoragePath || stretch.renderedAudioUrl) return { needsStretchRender: true, message: 'Rendered stretch audio is not loaded yet.' }
-    return { needsStretchRender: true, message: 'Stretch render is missing its audio buffer.' }
+  if(!bypassEdits&&traceEdited){
+    if(trace.renderStatus==='ready'&&trace.renderedRuntimeId&&audioClipRuntime.has(trace.renderedRuntimeId))return{runtimeId:trace.renderedRuntimeId,mode:'pitchTrace'}
+    return{needsRender:true,promptMode:'trace',message:'Pitch Trace edits must be rendered before browser playback.'}
   }
-  if (!bypassEdits && stretch.enabled && stretch.renderStatus !== 'ready') {
-    return { needsStretchRender: true, message: 'This stretched audio region must finish rendering before playback.' }
+  if(!bypassEdits&&pitchActive){
+    if(pitchShift.renderStatus==='ready'&&pitchShift.renderedRuntimeId&&audioClipRuntime.has(pitchShift.renderedRuntimeId))return{runtimeId:pitchShift.renderedRuntimeId,mode:'pitchShift'}
+    return{needsRender:true,promptMode:'pitchShift',message:'Pitch Shift must be rendered before browser playback.'}
   }
-  if (!bypassEdits && reverse.enabled) {
-    if (reverse.renderStatus === 'ready' && reverse.renderedRuntimeId && audioClipRuntime.has(reverse.renderedRuntimeId)) {
-      return { runtimeId: reverse.renderedRuntimeId, mode: 'reverse' }
-    }
-    return { needsRender: true, promptMode: 'reverse', message: 'Reverse must be rendered before playback.' }
+  if(!bypassEdits&&stretch.enabled){
+    if(stretch.renderStatus==='ready'&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:combined?'combinedPitchTime':'stretch'}
+    return{needsStretchRender:true,message:'This stretched audio region must render before browser playback.'}
   }
-  return { runtimeId: region.audioClip?.runtimeId || region.id, mode: 'original' }
+  if(!bypassEdits&&reverse.enabled){
+    if(reverse.renderStatus==='ready'&&reverse.renderedRuntimeId&&audioClipRuntime.has(reverse.renderedRuntimeId))return{runtimeId:reverse.renderedRuntimeId,mode:'reverse'}
+    return{needsRender:true,promptMode:'reverse',message:'Reverse must be rendered before playback.'}
+  }
+  return{runtimeId:region.audioClip?.runtimeId||region.id,mode:'original'}
 }
+const realtimeAudioRegionPending=new Set()
+
+async function scheduleDesktopRealtimeAudioRegion({region,runtime,track,edit,stretch,clipStartSeconds,clipEndSeconds,visibleDurationSeconds}){
+  if(!region||!runtime?.audioBuffer||realtimeAudioRegionPending.has(region.id)||activeAudioClipSources.has(region.id))return
+  realtimeAudioRegionPending.add(region.id)
+  let processor=null
+  try{
+    const ctx=getAudioContext()
+    const current=getTransportClockProjectSeconds()
+    if(current>=clipEndSeconds)return
+    const elapsed=Math.max(0,current-clipStartSeconds)
+    if(elapsed>=visibleDurationSeconds)return
+    const source=ctx.createBufferSource()
+    source.buffer=runtime.audioBuffer
+    const realtime=await createSouraRealtimeRegionProcessor(ctx,{channels:runtime.audioBuffer.numberOfChannels||2,edit,stretch,clipOffsetSeconds:elapsed,quality:'realtime-high'})
+    processor=realtime.node
+    const refreshed=getTransportClockProjectSeconds()
+    const refreshedElapsed=Math.max(0,refreshed-clipStartSeconds)
+    if(!isPlaying||refreshed>=clipEndSeconds||activeAudioClipSources.has(region.id)){destroySouraRealtimeRegionProcessor(processor);processor=null;return}
+    const offset=Math.min(runtime.audioBuffer.duration-.01,getAudioTrimStartSeconds(region)+refreshedElapsed)
+    const remainingVisible=Math.max(.01,visibleDurationSeconds-refreshedElapsed)
+    const remainingSource=Math.max(.01,getAudioTrimEndSeconds(region)-offset)
+    const sourceDuration=Math.max(.01,Math.min(remainingSource,remainingVisible*Math.max(.05,realtime.rate||1)))
+    const channel=getTrackAudioChannel(track?.id||region.trackId)
+    const gainNode=ctx.createGain()
+    const baseGain=dbToGain(edit.gainDb)
+    const nominal=Math.max(ctx.currentTime,getTransportScheduleTimeForProjectSeconds(refreshed))
+    const startTime=Math.max(ctx.currentTime,nominal-Math.min(.25,realtime.latencySeconds||0))
+    gainNode.gain.setValueAtTime(baseGain,startTime)
+    source.connect(processor);processor.connect(gainNode);gainNode.connect(channel.input)
+    source.onended=()=>{destroySouraRealtimeRegionProcessor(processor);activeAudioClipSources.delete(region.id)}
+    source.start(startTime,Math.max(0,offset),sourceDuration)
+    activeAudioClipSources.set(region.id,{source,gainNode,realtimeProcessor:processor,trackId:track?.id||region.trackId,scheduleTime:startTime,clipStartSeconds,clipEndSeconds,realtime:true})
+    startTrackMeterLoop()
+  }catch(error){
+    if(processor)destroySouraRealtimeRegionProcessor(processor)
+    console.warn('[soura-realtime] live processing failed',{regionId:region?.id,message:error?.message})
+    recordingStatus='Realtime processing could not start. Use Render Higher Quality or retry playback.'
+    updateEditorTitleStatus()
+  }finally{
+    realtimeAudioRegionPending.delete(region.id)
+  }
+}
+
 function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat()) {
   const beat = clampBeat(currentBeat)
   const ctx = getAudioContext()
@@ -7136,6 +7720,18 @@ function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat()) {
       return
     }
     const runtime = audioClipRuntime.get(playbackChoice.runtimeId)
+
+    if (
+      playbackChoice.realtime
+      && runtime?.audioBuffer
+      && isTrackOutputAudible(track)
+      && lookaheadEndSeconds >= clipStartSeconds
+      && currentProjectSeconds < clipEndSeconds
+    ) {
+      void scheduleDesktopRealtimeAudioRegion({ region, runtime, track, edit, stretch, clipStartSeconds, clipEndSeconds, visibleDurationSeconds })
+      return
+    }
+
     const shouldPlay = runtime?.audioBuffer && isTrackOutputAudible(track) && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds
     if (!shouldPlay) {
       if (!runtime?.audioBuffer && isTrackOutputAudible(track) && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds) {
@@ -7571,22 +8167,35 @@ async function createAudioRegionFromFile({
     const durationBeats = Math.max(0.25, secondsToBeats(fileDurationSeconds))
     const now = Date.now()
     const placementBeat = normalizeTimelineStartBeat(timelineStartBeats, { snapped: false })
+    const desktopLocalFirst = source === 'import' && isSouraDesktopRuntime()
+    const importPersistenceMode = getSouraImportPersistenceMode()
+    const localReference = desktopLocalFirst ? registerDesktopLocalAudioReference(clipId, file) : null
     let storagePath = null
-    try {
-      if (source === 'import') beginAudioImportUpload(file)
-      storagePath = await uploadSouraAudioBlob(file, {
-        clipId,
-        suffix: source === 'import' ? 'import' : '',
-        onProgress: source === 'import' ? updateAudioImportUploadProgress : null
+    let backgroundUploadPromise = null
+    if (desktopLocalFirst) {
+      backgroundUploadPromise = uploadSouraAudioBlob(file, { clipId, suffix: 'import' }).then((path) => {
+        const live = midiRegions.find((item)=>item.id === clipId)
+        if (live && path) {
+          live.audioClip = { ...(live.audioClip||{}), storagePath:path, cloudBackupStatus:'ready', uploadError:null, updatedAt:Date.now() }
+          scheduleEditorSave()
+        }
+        return path
+      }).catch((error) => {
+        console.warn('[studioProject] desktop background audio upload failed', { clipId, message:error?.message })
+        const live=midiRegions.find((item)=>item.id===clipId)
+        if(live){live.audioClip={...(live.audioClip||{}),cloudBackupStatus:'failed',uploadError:error?.message||'Background upload failed.',updatedAt:Date.now()};scheduleEditorSave()}
+        return null
       })
-    } catch (error) {
-      console.warn('[studioProject] audio import upload failed', { message: error?.message })
+    } else {
+      try {
+        if (source === 'import') beginAudioImportUpload(file)
+        storagePath = await uploadSouraAudioBlob(file, { clipId, suffix: source === 'import' ? 'import' : '', onProgress: source === 'import' ? updateAudioImportUploadProgress : null })
+      } catch (error) {
+        console.warn('[studioProject] audio import upload failed', { message:error?.message })
+        finishAudioImportUpload(); recordingStatus='Audio upload failed. Try again.'; renderEditor(); return null
+      }
       finishAudioImportUpload()
-      recordingStatus = 'Audio upload failed. Try again.'
-      renderEditor()
-      return null
     }
-    finishAudioImportUpload()
     const selectedAudioTrack = tracks.find((item)=>item.id === trackId)
     const track = selectedAudioTrack && isAudioTrack(selectedAudioTrack)
       ? selectedAudioTrack
@@ -7643,6 +8252,10 @@ async function createAudioRegionFromFile({
         channelCount: metadata.channelCount,
         fileDurationSeconds,
         storagePath,
+        persistenceMode: importPersistenceMode,
+        localReferenceActive: Boolean(localReference),
+        localReferenceHasNativePath: Boolean(localReference?.nativePath || getNativeFilePath(file)),
+        cloudBackupStatus: desktopLocalFirst ? 'uploading' : 'ready',
         sessionOnly: false,
         missingAfterReload: false,
         uploadError: null,
@@ -7655,7 +8268,10 @@ async function createAudioRegionFromFile({
     })
     audioClipRuntime.set(region.id, {
       blob: file,
-      url: URL.createObjectURL(file),
+      file,
+      url: localReference?.objectUrl || URL.createObjectURL(file),
+      localNativePath: localReference?.nativePath || getNativeFilePath(file) || '',
+      localReferenceActive: desktopLocalFirst,
       audioBuffer: metadata.audioBuffer,
       contentType: metadata.contentType,
       fileDurationSeconds,
@@ -7667,7 +8283,8 @@ async function createAudioRegionFromFile({
     applyRegionPlacementWithOverlapResolution([region])
     selectSingleRegion(region.id)
     activeBottomPanel = 'midi-roll'
-    recordingStatus = ''
+    recordingStatus = desktopLocalFirst ? 'Audio ready from local file. Cloud backup is uploading in the background.' : ''
+    void backgroundUploadPromise
     pushHistory('import-audio-region', before, captureDawSnapshot())
     scheduleEditorSave()
     renderEditor()
@@ -8092,6 +8709,8 @@ function applyAudioRegionDrag(event, region) {
     const nextStart = normalizeTimelineStartBeat(drag.startBeat + deltaBeat)
     region.startBeat = nextStart
     region.endBeat = nextStart + originalLength
+    region.timelineStartBeats = nextStart
+    region.timelineStartSeconds = getTimelineSecondsAtBeat(nextStart)
     const nextTrack = tracks[getTrackIndexFromClientY(event.clientY)]
     if (nextTrack) {
       region.trackId = nextTrack.id
@@ -8161,7 +8780,10 @@ function finishMidiRegionDrag() {
   const before = midiRegionDrag.before
   const finished = { id: midiRegionDrag.id, editMode: midiRegionDrag.editMode, regionType: midiRegionDrag.regionType, scroll: midiRegionDrag.scroll }
   const finishedRegion = midiRegions.find((region)=>region.id === midiRegionDrag.id)
-  if (didMove && finishedRegion) applyRegionPlacementWithOverlapResolution([finishedRegion])
+  if (didMove && finishedRegion) {
+    applyRegionPlacementWithOverlapResolution([finishedRegion])
+    if (finishedRegion.type === 'audio') syncAudioRegionTimeline(finishedRegion)
+  }
   midiRegionDrag = null
   document.body.classList.remove('is-studio-dragging', 'is-midi-region-dragging', 'is-audio-region-stretching')
   if (didMove) {
@@ -8473,6 +9095,9 @@ async function analyzePitchTraceForRegion(regionId) {
             status: 'ready',
             algorithm: message.algorithm || PITCH_TRACE_ALGORITHM,
             analysisVersion: PITCH_TRACE_VERSION,
+            analysisQuality: message.analysis?.quality || 'deep',
+            analysisFrameSize: message.analysis?.frameSize || null,
+            analysisHopSize: message.analysis?.hopSize || null,
             analyzedAt: Date.now(),
             analysisMode: currentEdit.pitchTrace.analysisMode,
             sensitivity: currentEdit.pitchTrace.sensitivity,
@@ -10319,7 +10944,7 @@ function bindEditorEvents() {
   const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
   const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) { page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); page.style.setProperty('--studio-track-lanes-height', `${totalTrackLaneHeight()}px`) } const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact)); }
   const isPinnedRight = () => !!grid && (grid.scrollLeft + grid.clientWidth >= grid.scrollWidth - 4)
-  grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); if (overTimeline) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if ((event.ctrlKey || event.metaKey) && overTimeline) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const oldTimelineX = grid.scrollLeft + mouseX; const anchorBeat = xToBeatsFromBarZero(oldTimelineX); let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX); if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat); const cycleBeats = cycleRange ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) } : null; const direction = event.deltaY < 0 ? 1 : -1; const zoomFactor = direction > 0 ? 1.12 : 1 / 1.12; timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoomFactor); timelineState.playheadX = beatsFromBarZeroToX(playheadBeat); if (cycleBeats) { let startBeat = cycleBeats.start; let endBeat = cycleBeats.end; if (isSnapEnabled) { startBeat = snapBeatToGrid(startBeat); endBeat = snapBeatToGrid(endBeat) } cycleRange = { startX: beatsFromBarZeroToX(startBeat), endX: beatsFromBarZeroToX(endBeat) } } refreshTimelineVisualsLive(); const newTimelineX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(newTimelineX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); scheduleEditorSave(); return }
+  grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); if (overTimeline) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if ((event.ctrlKey || event.metaKey) && overTimeline) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const oldTimelineX = grid.scrollLeft + mouseX; const anchorBeat = xToBeatsFromBarZero(oldTimelineX); let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX); if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat); const cycleBeats = cycleRange ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) } : null; const direction = event.deltaY < 0 ? 1 : -1; const zoomFactor = direction > 0 ? 1.12 : 1 / 1.12; timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoomFactor); timelineState.playheadX = beatsFromBarZeroToX(playheadBeat); if (cycleBeats) { let startBeat = cycleBeats.start; let endBeat = cycleBeats.end; if (isSnapEnabled) { startBeat = snapBeatToGrid(startBeat); endBeat = snapBeatToGrid(endBeat) } cycleRange = { startX: beatsFromBarZeroToX(startBeat), endX: beatsFromBarZeroToX(endBeat) } } refreshTimelineVisualsLive(); const newTimelineX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(newTimelineX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); requestAnimationFrame(() => { const correctedX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(correctedX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); updateMidiRollPlayheadDom(); }); scheduleEditorSave(); return }
     if (event.altKey && overTrackZone) { event.preventDefault(); timelineState.trackHeight = clamp(timelineState.trackHeight + (event.deltaY < 0 ? 6 : -6), 44, 220); updateTrackHeightDom(); scheduleTimelineVisualRefresh(); scheduleEditorSave(); return }
     if (event.shiftKey && overTimeline) { event.preventDefault(); const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? normalizedWheelPixels(event, 'x') : normalizedWheelPixels(event, 'y'); grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid) }
   }, { passive:false })
@@ -10389,6 +11014,12 @@ function bindEditorEvents() {
       bottomPanelHeightPx = Math.round(nextHeight)
       bottomPanelResizeDrag.panel?.style.setProperty('height', `${bottomPanelHeightPx}px`)
       app.querySelector('.studio-editor-page')?.style.setProperty('--studio-bottom-panel-height', `${bottomPanelHeightPx}px`)
+      bottomPanelResizeDrag.panel
+        ?.querySelector('.studio-pitch-trace-view')
+        ?.dispatchEvent(new CustomEvent('soura:pitch-trace-panel-resized', {
+          bubbles: true,
+          detail: { height: bottomPanelHeightPx }
+        }))
       return
     }
     if (audioWaveformPanDrag) {
@@ -10900,5 +11531,251 @@ if(!window.__melogicStudioLayoutResizeBound){
 }
 if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllMidiPreviewNotes(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
-async function init() { renderState('Loading project...'); const user = await waitForInitialAuthState(); if (!user) return renderState('Sign in required for Studio.', authRoute({ redirect: window.location.pathname })); const id = projectIdFromPath(); if (!id || reserved.has(id)) return renderState('Studio project not found.'); const project = await getStudioProject(id); if (!project) return renderState('Studio project not found.'); if (!(user.uid === project.ownerId || (project.collaboratorIds || []).includes(user.uid))) return renderState('You do not have access to this Studio project.'); touchStudioProject(project.id).catch(() => {}); projectState = project; if (projectState.editorState) applyLoadedEditorState(projectState.editorState); ensureDefaultCycleRange(); isEditorLoaded = true; renderEditor(); preloadSouraWasmDsp().then(()=>renderEditor()).catch((err)=>{ console.error('[soura-dsp] preload failed', err); renderEditor() }); warmSelectedTrackInstrument('project-open'); hydrateProjectAudioAssets().catch((err)=>console.warn('[studioProject] audio hydration failed', err)) }
+async function init() {
+  const loader =
+    createSouraProjectLoader(app)
+
+  loader.start()
+
+  try {
+    loader.activate(
+      'session',
+      'Checking your Melogic account'
+    )
+
+    const user =
+      await waitForInitialAuthState()
+
+    if (!user) {
+      loader.fail(
+        'session',
+        'Sign in is required to open this Soura project.'
+      )
+
+      return renderState(
+        'Sign in required for Studio.',
+        authRoute({
+          redirect:
+            window.location.pathname
+        })
+      )
+    }
+
+    loader.complete(
+      'session',
+      'Account restored'
+    )
+
+    loader.activate(
+      'project',
+      'Reading project from Firestore'
+    )
+
+    const id =
+      projectIdFromPath()
+
+    if (
+      !id
+      || reserved.has(id)
+    ) {
+      loader.fail(
+        'project',
+        'Studio project not found.'
+      )
+
+      return renderState(
+        'Studio project not found.'
+      )
+    }
+
+    const project =
+      await getStudioProject(id)
+
+    if (!project) {
+      loader.fail(
+        'project',
+        'Studio project not found.'
+      )
+
+      return renderState(
+        'Studio project not found.'
+      )
+    }
+
+    if (
+      !(
+        user.uid === project.ownerId
+        || (
+          project.collaboratorIds
+          || []
+        ).includes(user.uid)
+      )
+    ) {
+      loader.fail(
+        'project',
+        'You do not have access to this Soura project.'
+      )
+
+      return renderState(
+        'You do not have access to this Studio project.'
+      )
+    }
+
+    loader.complete(
+      'project',
+      project.title || 'Project loaded'
+    )
+
+    touchStudioProject(
+      project.id
+    ).catch(() => {})
+
+    loader.activate(
+      'workspace',
+      'Restoring editor state'
+    )
+
+    projectState =
+      project
+
+    if (projectState.editorState) {
+      applyLoadedEditorState(
+        projectState.editorState
+      )
+    }
+
+    ensureDefaultCycleRange()
+
+    loader.complete(
+      'workspace',
+      'Workspace restored'
+    )
+
+    loader.activate(
+      'audio',
+      'Loading Signalsmith WASM DSP'
+    )
+
+    const dspWarmup =
+      preloadSouraWasmDsp()
+
+    const dspResult =
+      await waitForWarmup(
+        dspWarmup,
+        2200
+      )
+
+    if (
+      dspResult.status === 'complete'
+    ) {
+      loader.complete(
+        'audio',
+        'WASM DSP ready'
+      )
+    } else if (
+      dspResult.status === 'failed'
+    ) {
+      console.warn(
+        '[soura-dsp] preload failed',
+        dspResult.error
+      )
+
+      loader.warn(
+        'audio',
+        'DSP will retry when needed'
+      )
+    } else {
+      loader.warn(
+        'audio',
+        'Continuing warmup in background'
+      )
+    }
+
+    loader.activate(
+      'media',
+      'Preparing audio assets'
+    )
+
+    const mediaWarmup =
+      hydrateProjectAudioAssets()
+
+    const mediaResult =
+      await waitForWarmup(
+        mediaWarmup,
+        1800
+      )
+
+    if (
+      mediaResult.status === 'complete'
+    ) {
+      loader.complete(
+        'media',
+        'Audio assets ready'
+      )
+    } else if (
+      mediaResult.status === 'failed'
+    ) {
+      console.warn(
+        '[studioProject] audio hydration failed',
+        mediaResult.error
+      )
+
+      loader.warn(
+        'media',
+        'Media will continue loading as needed'
+      )
+    } else {
+      loader.warn(
+        'media',
+        'Continuing media load in background'
+      )
+    }
+
+    loader.finish()
+
+    isEditorLoaded = true
+
+    renderEditor()
+
+    dspWarmup
+      .then(() => renderEditor())
+      .catch((err) => {
+        console.error(
+          '[soura-dsp] preload failed',
+          err
+        )
+
+        renderEditor()
+      })
+
+    mediaWarmup.catch(
+      (err) =>
+        console.warn(
+          '[studioProject] audio hydration failed',
+          err
+        )
+    )
+
+    warmSelectedTrackInstrument(
+      'project-open'
+    )
+  } catch (error) {
+    console.error(
+      '[Soura] Project initialization failed:',
+      error
+    )
+
+    loader.fail(
+      'project',
+      error?.message
+      || 'Soura could not load this project.'
+    )
+
+    renderState(
+      'Soura could not load this project.'
+    )
+  }
+}
+
 init()
+

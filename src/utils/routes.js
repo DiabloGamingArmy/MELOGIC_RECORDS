@@ -65,16 +65,29 @@ export const ROUTES = {
   adPolicy: '/support/ad-policy',
   studio: '/studio',
   studioDaw: '/studio/daw',
-  studioStagemaker: '/studio/stagemaker',
+
+  // Canonical Vertix route.
+  studioVertix: '/vertix',
+
+  // Compatibility alias: existing code may still refer to this property.
+  // The public URL no longer exposes the StageMaker name.
+  studioStagemaker: '/vertix',
+
   studioLucentra: '/studio/lucentra',
   studioInkora: '/studio/inkora',
   studioCineara: '/studio/cineara',
   studioRundownPilot: '/studio/rundown-pilot',
   studioLive: '/studio/live',
+
+  // Legacy route kept only for compatibility/canonicalization.
   stage: '/stage',
+
   studioProject: '/studio/daw/project',
   studioInstrumentHost: '/instrument-host.html',
-  stageProject: '/studio/stagemaker/project',
+
+  // Canonical Vertix project prefix.
+  stageProject: '/vertix/project',
+
   studioDemos: '/studio/demos',
   studioTutorials: '/studio/tutorials',
   distribution: '/distribution'
@@ -126,7 +139,10 @@ const LEGACY_ROUTE_MAP = {
   '/ad-policy': ROUTES.adPolicy,
   '/studio.html': ROUTES.studio,
   '/studio-live.html': ROUTES.studioLive,
-  '/stage.html': ROUTES.studioStagemaker,
+
+  // Legacy static Stage entry now canonicalizes to Vertix.
+  '/stage.html': ROUTES.studioVertix,
+
   '/studio-project.html': ROUTES.studioDaw,
   '/studio-demos.html': ROUTES.studioDemos,
   '/studio-tutorials.html': ROUTES.studioTutorials,
@@ -147,9 +163,34 @@ export function cleanRedirectTarget(path, fallback = ROUTES.profile) {
 
   try {
     const parsed = new URL(relative, window.location.origin)
+
     if (parsed.origin !== window.location.origin) return fallback
-    const mappedPath = LEGACY_ROUTE_MAP[parsed.pathname]
-      || (parsed.pathname.startsWith('/music/') ? `${ROUTES.music}${parsed.pathname.slice('/music'.length)}` : parsed.pathname)
+
+    let mappedPath = LEGACY_ROUTE_MAP[parsed.pathname]
+      || (parsed.pathname.startsWith('/music/')
+        ? `${ROUTES.music}${parsed.pathname.slice('/music'.length)}`
+        : parsed.pathname)
+
+    // Preserve old StageMaker URLs as compatibility inputs while emitting
+    // only canonical Vertix routes.
+    if (parsed.pathname === '/studio/stagemaker') {
+      mappedPath = ROUTES.studioVertix
+    } else if (parsed.pathname.startsWith('/studio/stagemaker/project/')) {
+      const projectId = parsed.pathname
+        .slice('/studio/stagemaker/project/'.length)
+        .split('/')[0]
+
+      mappedPath = stageProjectRoute(decodeURIComponent(projectId))
+    } else if (parsed.pathname === '/stage') {
+      mappedPath = ROUTES.studioVertix
+    } else if (parsed.pathname.startsWith('/stage/')) {
+      const projectId = parsed.pathname
+        .slice('/stage/'.length)
+        .split('/')[0]
+
+      mappedPath = stageProjectRoute(decodeURIComponent(projectId))
+    }
+
     return `${mappedPath}${parsed.search}${parsed.hash}`
   } catch {
     return fallback
@@ -211,32 +252,48 @@ export function musicLiveStreamRoute(streamOrId = '') {
   const id = typeof streamOrId === 'object'
     ? String(streamOrId.streamId || streamOrId.id || '').trim()
     : String(streamOrId || '').trim()
-  return id ? `${ROUTES.musicLive}/${encodeURIComponent(id)}` : ROUTES.musicLive
+
+  return id
+    ? `${ROUTES.musicLive}/${encodeURIComponent(id)}`
+    : ROUTES.musicLive
 }
 
 export function communityPostRoute(postId = '', { commentId = '', replyId = '' } = {}) {
   const id = String(postId || '').trim()
   if (!id) return ROUTES.community
+
   const params = new URLSearchParams()
+
   if (commentId) params.set('comment', String(commentId))
   if (replyId) params.set('reply', String(replyId))
+
   const query = params.toString()
+
   return `${ROUTES.communityPost}/${encodeURIComponent(id)}${query ? `?${query}` : ''}`
 }
 
 export function communityRoute(slug = '') {
   const clean = String(slug || '').trim()
-  return clean ? `${ROUTES.communitySlug}/${encodeURIComponent(clean)}` : ROUTES.communityCommunities
+
+  return clean
+    ? `${ROUTES.communitySlug}/${encodeURIComponent(clean)}`
+    : ROUTES.communityCommunities
 }
 
 export function inboxActiveCallRoute(targetId = '') {
   const id = String(targetId || '').trim()
-  return id ? `${ROUTES.inboxCalls}/active/${encodeURIComponent(id)}` : ROUTES.inboxCalls
+
+  return id
+    ? `${ROUTES.inboxCalls}/active/${encodeURIComponent(id)}`
+    : ROUTES.inboxCalls
 }
 
 export function adminReviewRoute(productId = '') {
   const id = String(productId || '').trim()
-  return id ? `${ROUTES.adminReviews}/${encodeURIComponent(id)}` : ROUTES.adminReviews
+
+  return id
+    ? `${ROUTES.adminReviews}/${encodeURIComponent(id)}`
+    : ROUTES.adminReviews
 }
 
 export function studioProjectRoute(projectId = '') {
@@ -244,9 +301,25 @@ export function studioProjectRoute(projectId = '') {
 }
 
 export function stageProjectRoute(projectId = '') {
-  return `/studio/stagemaker/project/${encodeURIComponent(String(projectId || '').trim())}`
+  const id = String(projectId || '').trim()
+
+  if (!id) return ROUTES.stageProject
+
+  /*
+    Temporary compatibility query:
+    the legacy Stage engine still resolves project IDs from `projectId`
+    when the new /vertix/project/:id pathname is used. The public path is
+    now Vertix; the query can be removed once stageState's parser is
+    migrated away from legacy StageMaker paths.
+  */
+  const encoded = encodeURIComponent(id)
+
+  return `${ROUTES.stageProject}/${encoded}?projectId=${encoded}`
 }
 
 export function getCurrentPath() {
-  return cleanRedirectTarget(`${window.location.pathname}${window.location.search}${window.location.hash}`, ROUTES.home)
+  return cleanRedirectTarget(
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+    ROUTES.home
+  )
 }

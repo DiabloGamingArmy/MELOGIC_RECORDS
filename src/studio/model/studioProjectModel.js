@@ -98,6 +98,20 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
         pitchDriftStartCents: clamp(num(note?.pitchDriftStartCents, 0), -1200, 1200),
         pitchDriftEndCents: clamp(num(note?.pitchDriftEndCents, 0), -1200, 1200),
         vibratoAmount: clamp(num(note?.vibratoAmount, 0), 0, 1),
+        pitchStability: clamp(num(note?.pitchStability, 0), 0, 1),
+        voicedRatio: clamp(num(note?.voicedRatio, 0), 0, 1),
+        editedFineTuneCents: clamp(num(note?.editedFineTuneCents, 0), -100, 100),
+        analysisMethod: String(note?.analysisMethod || ''),
+        pitchCurve: Array.isArray(note?.pitchCurve)
+          ? note.pitchCurve.slice(0, 128).map((point)=>({
+              timeSeconds: Math.max(0, num(point?.timeSeconds, 0)),
+              relativeSeconds: Math.max(0, num(point?.relativeSeconds, 0)),
+              frequencyHz: Math.max(0, num(point?.frequencyHz, 0)),
+              midi: num(point?.midi, originalMidiNote),
+              cents: clamp(num(point?.cents, 0), -2400, 2400),
+              confidence: clamp(num(point?.confidence, 0), 0, 1)
+            }))
+          : [],
         source: note?.source === 'manual' ? 'manual' : 'analysis',
         lockedToAnalysis: note?.lockedToAnalysis === true,
         muted: note?.muted === true,
@@ -106,13 +120,16 @@ function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
     })
     : []
   const status = ['idle', 'analyzing', 'ready', 'failed'].includes(source.status) ? source.status : 'idle'
-  const hasEditedNotes = notes.some((note) => note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(num(note.gainDb, 0)) > 0.001)
+  const hasEditedNotes = notes.some((note) => note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(num(note.gainDb, 0)) > 0.001 || Math.abs(num(note.editedFineTuneCents, 0)) > 0.001)
   const priorRenderStatus = pitchRenderStatuses.includes(source.renderStatus) ? source.renderStatus : 'idle'
   return {
     enabled: source.enabled === true || legacyFlexFollow === 'on',
     status: status === 'analyzing' ? 'idle' : (notes.length && status === 'idle' ? 'ready' : status),
     algorithm: source.algorithm || (notes.length ? 'yin-js-worker-v1' : null),
     analysisVersion: source.analysisVersion || pitchTraceVersion,
+    analysisQuality: source.analysisQuality || 'deep',
+    analysisFrameSize: source.analysisFrameSize == null ? null : num(source.analysisFrameSize, 0),
+    analysisHopSize: source.analysisHopSize == null ? null : num(source.analysisHopSize, 0),
     analyzedAt: source.analyzedAt == null ? null : num(source.analyzedAt, 0),
     confidenceThreshold: clamp(num(source.confidenceThreshold, 0.65), 0.1, 0.98),
     progress: 0,

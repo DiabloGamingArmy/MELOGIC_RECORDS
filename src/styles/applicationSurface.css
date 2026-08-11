@@ -1,0 +1,48 @@
+/*
+  Shared Melogic application surface
+  ===================================
+  Include this stylesheet only on actual creative-application pages.
+
+  Web:
+    normal Melogic website navigation remains available.
+
+  Nexus / Tauri:
+    global site navigation is removed and the creative application receives
+    the full native window surface.
+*/
+
+html.melogic-desktop-app,
+html.melogic-desktop-app body {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #05070d;
+}
+
+html.melogic-desktop-app #app {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+}
+
+html.melogic-desktop-app .nav-shell {
+  display: none !important;
+}
+
+html.melogic-desktop-app .site-footer {
+  display: none !important;
+}
+
+/*
+  Defensive cleanup for app pages that inherited the website's navigation
+  offset before desktop mode was introduced.
+*/
+html.melogic-desktop-app {
+  --nav-offset: 0px !important;
+}
+
+html.melogic-desktop-app body {
+  padding-top: 0 !important;
+}

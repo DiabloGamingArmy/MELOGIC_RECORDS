@@ -1,0 +1,707 @@
+/*
+  Vertix Project Browser — Concept v3
+  ===================================
+  Goals:
+  - calm visual hierarchy
+  - project-first
+  - minimal card chrome
+  - no dashboard-within-dashboard feeling
+  - Studio-aligned desktop density
+*/
+
+:root {
+  --vertix-bg: #07090f;
+  --vertix-sidebar: #090c13;
+  --vertix-panel: #0d111b;
+  --vertix-panel-soft: #111622;
+
+  --vertix-border: rgba(141, 158, 205, 0.13);
+  --vertix-border-strong: rgba(138, 121, 255, 0.34);
+
+  --vertix-text: #f4f6fb;
+  --vertix-muted: #9ca7bf;
+  --vertix-faint: #667086;
+
+  --vertix-blue: #5688ff;
+  --vertix-purple: #8a5cff;
+
+  --vertix-gradient:
+    linear-gradient(
+      135deg,
+      var(--vertix-blue),
+      var(--vertix-purple)
+    );
+}
+
+.vertix-browser {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+
+  width: 100%;
+  min-height: 100vh;
+
+  color: var(--vertix-text);
+
+  background:
+    radial-gradient(
+      circle at 88% 0%,
+      rgba(86, 136, 255, 0.055),
+      transparent 30%
+    ),
+    radial-gradient(
+      circle at 46% 100%,
+      rgba(138, 92, 255, 0.035),
+      transparent 36%
+    ),
+    var(--vertix-bg);
+}
+
+.vertix-browser-sidebar {
+  position: sticky;
+  top: 0;
+
+  display: flex;
+  flex-direction: column;
+
+  height: 100vh;
+  min-width: 0;
+
+  padding: 22px 14px 16px;
+
+  border-right: 1px solid var(--vertix-border);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(86, 136, 255, 0.015),
+      transparent 24%
+    ),
+    rgba(8, 11, 18, 0.94);
+}
+
+.vertix-browser-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+
+  padding: 0 6px 18px;
+}
+
+.vertix-browser-brand-icon {
+  display: grid;
+  place-items: center;
+
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+
+  padding: 4px;
+
+  overflow: hidden;
+
+  border: 1px solid rgba(122, 105, 255, 0.19);
+  border-radius: 8px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(86, 136, 255, 0.08),
+      rgba(138, 92, 255, 0.07)
+    );
+}
+
+.vertix-browser-brand-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.vertix-browser-brand-icon-fallback {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.vertix-browser-brand-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vertix-browser-brand-copy strong {
+  font-size: 16px;
+  font-weight: 680;
+}
+
+.vertix-browser-brand-copy span {
+  margin-top: 2px;
+
+  color: var(--vertix-faint);
+
+  font-size: 10px;
+  line-height: 1;
+}
+
+.vertix-new-project-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  height: 42px;
+
+  margin: 0 4px 18px;
+  padding: 0 12px;
+
+  border:
+    1px solid rgba(123, 103, 255, 0.46);
+
+  border-left: 3px solid #7767ff;
+  border-radius: 6px;
+
+  background:
+    linear-gradient(
+      90deg,
+      rgba(86, 136, 255, 0.12),
+      rgba(138, 92, 255, 0.14)
+    );
+
+  color: #fff;
+
+  font-size: 12px;
+  font-weight: 700;
+
+  cursor: pointer;
+}
+
+.vertix-new-project-button:hover {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(86, 136, 255, 0.18),
+      rgba(138, 92, 255, 0.2)
+    );
+}
+
+.vertix-browser-nav {
+  display: grid;
+  gap: 2px;
+}
+
+.vertix-browser-nav-item {
+  min-height: 34px;
+
+  padding: 0 10px;
+
+  border: 1px solid transparent;
+  border-radius: 5px;
+
+  background: transparent;
+
+  color: var(--vertix-muted);
+
+  text-align: left;
+
+  font-size: 12px;
+  font-weight: 650;
+
+  cursor: pointer;
+}
+
+.vertix-browser-nav-item:hover {
+  color: var(--vertix-text);
+  background: rgba(255,255,255,0.025);
+}
+
+.vertix-browser-nav-item.is-active {
+  color: #fff;
+
+  border-color: rgba(120, 105, 255, 0.34);
+  border-left: 3px solid #7767ff;
+
+  background:
+    linear-gradient(
+      90deg,
+      rgba(86, 136, 255, 0.095),
+      rgba(138, 92, 255, 0.08)
+    );
+}
+
+.vertix-browser-sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+
+  margin-top: auto;
+  padding: 14px 8px 2px;
+
+  border-top: 1px solid var(--vertix-border);
+}
+
+.vertix-browser-sidebar-label {
+  color: var(--vertix-faint);
+
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.vertix-browser-sidebar-value {
+  margin-top: 4px;
+
+  color: var(--vertix-muted);
+
+  font-size: 10px;
+}
+
+.vertix-browser-main {
+  min-width: 0;
+
+  padding:
+    clamp(28px, 3.5vw, 48px)
+    clamp(28px, 4vw, 58px)
+    70px;
+
+  overflow-y: auto;
+}
+
+.vertix-browser-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+
+  margin-bottom: 38px;
+}
+
+.vertix-browser-eyebrow,
+.vertix-section-kicker {
+  margin: 0 0 7px;
+
+  color: var(--vertix-faint);
+
+  font-size: 9px;
+  font-weight: 700;
+
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+}
+
+.vertix-browser-header h1 {
+  margin: 0;
+
+  font-size: clamp(32px, 3.3vw, 46px);
+  font-weight: 590;
+
+  letter-spacing: -0.045em;
+}
+
+.vertix-browser-header p:last-child {
+  margin: 8px 0 0;
+
+  color: var(--vertix-muted);
+
+  font-size: 13px;
+}
+
+.vertix-browser-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.vertix-primary-button,
+.vertix-secondary-button {
+  min-height: 38px;
+
+  padding: 0 14px;
+
+  border-radius: 6px;
+
+  font-size: 11px;
+  font-weight: 680;
+
+  cursor: pointer;
+}
+
+.vertix-primary-button {
+  border:
+    1px solid rgba(124, 106, 255, 0.52);
+
+  background:
+    linear-gradient(
+      135deg,
+      rgba(86, 136, 255, 0.85),
+      rgba(138, 92, 255, 0.85)
+    );
+
+  color: #fff;
+}
+
+.vertix-secondary-button {
+  border: 1px solid var(--vertix-border);
+
+  background: rgba(255,255,255,0.025);
+
+  color: var(--vertix-muted);
+}
+
+.vertix-browser-section {
+  margin-top: 34px;
+}
+
+.vertix-browser-section-primary {
+  margin-top: 0;
+}
+
+.vertix-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+
+  margin-bottom: 14px;
+}
+
+.vertix-section-heading h2 {
+  margin: 0;
+
+  font-size: 21px;
+  font-weight: 610;
+
+  letter-spacing: -0.025em;
+}
+
+.vertix-section-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.vertix-view-toggle {
+  display: grid;
+  place-items: center;
+
+  width: 30px;
+  height: 30px;
+
+  border: 1px solid transparent;
+  border-radius: 5px;
+
+  background: transparent;
+
+  color: var(--vertix-faint);
+
+  cursor: pointer;
+}
+
+.vertix-view-toggle:hover,
+.vertix-view-toggle.is-active {
+  color: var(--vertix-text);
+
+  border-color: var(--vertix-border);
+
+  background: rgba(255,255,255,0.025);
+}
+
+.vertix-project-grid {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fill, minmax(230px, 1fr));
+
+  gap: 10px;
+}
+
+.vertix-project-card {
+  min-width: 0;
+
+  border: 1px solid var(--vertix-border);
+  border-radius: 6px;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(14, 18, 29, 0.82),
+      rgba(9, 13, 22, 0.86)
+    );
+
+  transition:
+    transform 130ms ease,
+    border-color 130ms ease,
+    background 130ms ease;
+}
+
+.vertix-project-card:hover {
+  transform: translateY(-1px);
+
+  border-color: var(--vertix-border-strong);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(17, 22, 35, 0.92),
+      rgba(10, 14, 24, 0.9)
+    );
+}
+
+.vertix-project-open {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 12px;
+
+  width: 100%;
+
+  padding: 11px;
+
+  border: 0;
+  background: transparent;
+
+  color: inherit;
+
+  text-align: left;
+
+  cursor: pointer;
+}
+
+.vertix-project-thumb {
+  width: 76px;
+  height: 62px;
+
+  border: 1px solid rgba(125, 143, 190, 0.28);
+  border-radius: 5px;
+
+  background: #111624;
+
+  position: relative;
+  overflow: hidden;
+}
+
+.vertix-project-info {
+  min-width: 0;
+
+  align-self: center;
+}
+
+.vertix-project-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.vertix-project-title-row h4 {
+  min-width: 0;
+
+  margin: 0;
+
+  overflow: hidden;
+
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.2;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vertix-project-menu {
+  flex: 0 0 auto;
+
+  color: var(--vertix-faint);
+
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.vertix-project-type {
+  margin: 5px 0 0;
+
+  color: var(--vertix-muted);
+
+  font-size: 10px;
+}
+
+.vertix-project-updated {
+  margin: 3px 0 0;
+
+  color: var(--vertix-faint);
+
+  font-size: 9px;
+}
+
+.vertix-template-strip {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(180px, 1fr));
+
+  gap: 8px;
+}
+
+.vertix-template-card {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+
+  min-height: 66px;
+
+  padding: 8px 10px;
+
+  border: 1px solid var(--vertix-border);
+  border-radius: 6px;
+
+  background: rgba(255,255,255,0.015);
+
+  color: inherit;
+  text-align: left;
+
+  cursor: pointer;
+}
+
+.vertix-template-card:hover {
+  border-color: var(--vertix-border-strong);
+
+  background: rgba(255,255,255,0.025);
+}
+
+.vertix-template-thumb {
+  display: block;
+
+  width: 46px;
+  height: 40px;
+
+  border: 1px solid rgba(125, 143, 190, 0.25);
+  border-radius: 4px;
+
+  background: #111624;
+
+  position: relative;
+  overflow: hidden;
+}
+
+.vertix-template-copy {
+  display: flex;
+  flex-direction: column;
+
+  min-width: 0;
+}
+
+.vertix-template-copy strong {
+  overflow: hidden;
+
+  font-size: 11px;
+  font-weight: 650;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vertix-template-copy small {
+  overflow: hidden;
+
+  margin-top: 3px;
+
+  color: var(--vertix-faint);
+
+  font-size: 9px;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vertix-recent-row {
+  display: grid;
+  grid-template-columns:
+    repeat(auto-fit, minmax(220px, 1fr));
+
+  gap: 8px;
+}
+
+.vertix-recent-row .vertix-project-card {
+  background: rgba(255,255,255,0.012);
+}
+
+.vertix-empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+
+  min-height: 82px;
+
+  padding: 16px;
+
+  border: 1px dashed var(--vertix-border);
+  border-radius: 6px;
+
+  color: var(--vertix-muted);
+
+  background: rgba(255,255,255,0.01);
+}
+
+.vertix-empty-state p {
+  margin: 0;
+
+  font-size: 11px;
+}
+
+.vertix-empty-actions {
+  display: flex;
+  gap: 8px;
+}
+
+html.melogic-desktop-app .vertix-browser {
+  height: 100vh;
+  min-height: 100vh;
+}
+
+html.melogic-desktop-app .vertix-browser-main {
+  height: 100vh;
+
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 1080px) {
+  .vertix-browser {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .vertix-browser-main {
+    padding:
+      26px
+      24px
+      56px;
+  }
+
+  .vertix-project-grid {
+    grid-template-columns:
+      repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .vertix-browser {
+    grid-template-columns: 1fr;
+  }
+
+  .vertix-browser-sidebar {
+    position: static;
+
+    height: auto;
+
+    border-right: 0;
+    border-bottom: 1px solid var(--vertix-border);
+  }
+
+  .vertix-browser-nav {
+    grid-template-columns:
+      repeat(3, minmax(0, 1fr));
+  }
+
+  .vertix-browser-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .vertix-project-grid,
+  .vertix-template-strip,
+  .vertix-recent-row {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,86 @@
+/*
+  Melogic Nexus — application icon catalog
+  ==========================================
+  Drop PNG icons into:
+    public/assets/app-icons/
+
+  Filenames:
+    vertix.png
+    soura.png
+    cineara.png
+    inkora.png
+    lucentra.png
+    rundown-pilot.png
+*/
+
+.nexus-product-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+
+.nexus-product-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.nexus-product-icon-fallback {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: inherit;
+  font-weight: 700;
+}
+
+.nexus-app-icon.nexus-product-icon {
+  width: 42px;
+  height: 42px;
+  padding: 5px;
+  border: 1px solid rgba(120, 108, 255, 0.17);
+  border-radius: 10px;
+  background:
+    linear-gradient(
+      145deg,
+      rgba(86, 136, 255, 0.08),
+      rgba(139, 93, 255, 0.065)
+    ),
+    rgba(255, 255, 255, 0.015);
+}
+
+.nexus-app-card:not(.nexus-app-card-disabled)
+  .nexus-app-icon.nexus-product-icon {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.035),
+    0 0 20px rgba(105, 95, 255, 0.035);
+}
+
+.nexus-app-card-disabled .nexus-app-icon {
+  opacity: 0.38;
+  filter: saturate(0.55);
+}
+
+.nexus-app-launch-target {
+  display: block;
+  margin-top: 7px;
+  color: var(--nexus-text-faint);
+  font-size: 9px;
+  line-height: 1.2;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.nexus-recent-icon.nexus-product-icon {
+  width: 36px;
+  height: 36px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 108, 255, 0.13);
+  background: rgba(255, 255, 255, 0.018);
+}

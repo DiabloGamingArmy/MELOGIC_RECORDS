@@ -148,9 +148,32 @@ function shouldUseLiveInputPath(payload = {}, inputFrames, outputFrames) {
   const operation = payload.operation
   const durationMatched = Math.abs(inputFrames - outputFrames) <= 1
   if (!durationMatched) return false
-  if (operation === SOURA_AUDIO_DSP_OPERATIONS.pitchShift || operation === SOURA_AUDIO_DSP_OPERATIONS.pitchTrace || operation === SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch) return true
-  const rate = inputFrames / Math.max(1, outputFrames)
-  return operation === SOURA_AUDIO_DSP_OPERATIONS.timeStretch && Math.abs(rate - 1) < 0.000001 && Math.abs(getPitchSemitones(payload)) < 0.000001
+
+  /*
+    Offline pitch rendering must use Signalsmith's buffered-input path.
+
+    Safari and Tauri on macOS are WebKit-based. A live AudioWorkletNode
+    connected to an OfflineAudioContext can fail to advance rendering in
+    WebKit, which previously left Soura's pitch preflight at 0/1 forever.
+
+    Buffered input still uses the required Signalsmith WASM DSP engine.
+  */
+  if (
+    operation === SOURA_AUDIO_DSP_OPERATIONS.pitchShift
+    || operation === SOURA_AUDIO_DSP_OPERATIONS.pitchTrace
+    || operation === SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch
+  ) {
+    return false
+  }
+
+  const rate =
+    inputFrames / Math.max(1, outputFrames)
+
+  return (
+    operation === SOURA_AUDIO_DSP_OPERATIONS.timeStretch
+    && Math.abs(rate - 1) < 0.000001
+    && Math.abs(getPitchSemitones(payload)) < 0.000001
+  )
 }
 
 async function createStretchNode(ctx, channels, { liveInput = false } = {}) {
@@ -173,6 +196,44 @@ async function scheduleRenderWindow(stretchNode, { rate, semitones }) {
   })
 }
 
+function renderOfflineContextWithTimeout(
+  ctx,
+  {
+    label = 'Soura DSP render',
+    timeoutMs = 45000
+  } = {}
+) {
+  let timer = 0
+
+  const renderPromise =
+    Promise.resolve().then(
+      () => ctx.startRendering()
+    )
+
+  const timeoutPromise =
+    new Promise((_, reject) => {
+      timer = globalThis.setTimeout(
+        () => {
+          reject(
+            new Error(
+              `${label} timed out after ${Math.round(timeoutMs / 1000)} seconds. Original audio was preserved.`
+            )
+          )
+        },
+        timeoutMs
+      )
+    })
+
+  return Promise.race([
+    renderPromise,
+    timeoutPromise
+  ]).finally(() => {
+    if (timer) {
+      globalThis.clearTimeout(timer)
+    }
+  })
+}
+
 async function renderBufferedInputWithSignalsmith({ input, inputFrames, outputFrames, channels, sampleRate, quality, semitones }) {
   const inputChannels = deinterleave(input, inputFrames, channels)
   const ctx = createOfflineContext(channels, outputFrames, sampleRate)
@@ -187,7 +248,13 @@ async function renderBufferedInputWithSignalsmith({ input, inputFrames, outputFr
     rate,
     semitones
   })
-  const renderedBuffer = await ctx.startRendering()
+  const renderedBuffer =
+    await renderOfflineContextWithTimeout(
+      ctx,
+      {
+        label: 'Soura buffered WASM DSP render'
+      }
+    )
   return interleave(renderedBuffer, outputFrames, channels)
 }
 
@@ -216,7 +283,13 @@ async function renderLiveInputWithSignalsmith({ input, inputFrames, outputFrames
   })
   source.start(0)
 
-  const renderedBuffer = await ctx.startRendering()
+  const renderedBuffer =
+    await renderOfflineContextWithTimeout(
+      ctx,
+      {
+        label: 'Soura live-input WASM DSP render'
+      }
+    )
   return interleave(renderedBuffer, outputFrames, channels, Math.round(latencySeconds * sampleRate))
 }
 

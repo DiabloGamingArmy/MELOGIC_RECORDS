@@ -1,0 +1,342 @@
+:root {
+  --soura-loader-bg: #07090e;
+  --soura-loader-line: rgba(128, 148, 196, 0.16);
+  --soura-loader-text: #f5f7fb;
+  --soura-loader-muted: #909bb0;
+  --soura-loader-faint: #5e687d;
+  --soura-loader-blue: #548cff;
+  --soura-loader-purple: #835dff;
+  --soura-loader-warning: #f5c26b;
+  --soura-loader-danger: #ff7e91;
+}
+
+.soura-project-loader {
+  position: fixed;
+  z-index: 99999;
+  inset: 0;
+
+  display: grid;
+  place-items: center;
+
+  width: 100%;
+  min-height: 100vh;
+  padding: 28px;
+
+  overflow: hidden;
+
+  color: var(--soura-loader-text);
+
+  background:
+    radial-gradient(
+      circle at 50% 44%,
+      rgba(84, 140, 255, 0.08),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at 52% 47%,
+      rgba(131, 93, 255, 0.07),
+      transparent 34%
+    ),
+    var(--soura-loader-bg);
+}
+
+.soura-project-loader::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+
+  pointer-events: none;
+
+  background:
+    linear-gradient(
+      rgba(255,255,255,0.012) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(255,255,255,0.012) 1px,
+      transparent 1px
+    );
+
+  background-size: 42px 42px;
+
+  mask-image:
+    radial-gradient(
+      circle at center,
+      #000,
+      transparent 67%
+    );
+}
+
+.soura-project-loader-card {
+  position: relative;
+
+  width: min(410px, 100%);
+  padding: 28px;
+
+  border: 1px solid var(--soura-loader-line);
+  border-radius: 14px;
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(16, 20, 31, 0.88),
+      rgba(8, 11, 18, 0.86)
+    );
+
+  box-shadow:
+    0 28px 100px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255,255,255,0.025);
+
+  backdrop-filter: blur(18px);
+}
+
+.soura-project-loader-icon {
+  display: grid;
+  place-items: center;
+
+  width: 48px;
+  height: 48px;
+
+  margin-bottom: 15px;
+  padding: 5px;
+
+  overflow: hidden;
+
+  border: 1px solid rgba(126, 111, 255, 0.22);
+  border-radius: 11px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(84, 140, 255, 0.11),
+      rgba(131, 93, 255, 0.1)
+    );
+
+  box-shadow:
+    0 0 30px rgba(93, 105, 255, 0.09);
+}
+
+.soura-project-loader-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.soura-project-loader-icon span {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.soura-project-loader-heading {
+  display: flex;
+  flex-direction: column;
+}
+
+.soura-project-loader-heading strong {
+  font-size: 19px;
+  font-weight: 660;
+  letter-spacing: -0.02em;
+}
+
+.soura-project-loader-heading span {
+  margin-top: 4px;
+
+  color: var(--soura-loader-muted);
+  font-size: 11px;
+}
+
+.soura-project-loader-track {
+  position: relative;
+
+  height: 2px;
+  margin: 22px 0 18px;
+
+  overflow: hidden;
+
+  border-radius: 99px;
+
+  background:
+    rgba(255,255,255,0.055);
+}
+
+.soura-project-loader-track i {
+  position: absolute;
+  inset: 0 auto 0 0;
+
+  display: block;
+
+  min-width: 3%;
+
+  border-radius: inherit;
+
+  background:
+    linear-gradient(
+      90deg,
+      var(--soura-loader-blue),
+      var(--soura-loader-purple)
+    );
+
+  box-shadow:
+    0 0 12px rgba(102, 100, 255, 0.34);
+
+  transition:
+    width 240ms ease;
+}
+
+.soura-project-loader-steps {
+  display: grid;
+  gap: 3px;
+
+  margin: 0;
+  padding: 0;
+
+  list-style: none;
+}
+
+.soura-project-loader-steps li {
+  display: grid;
+
+  grid-template-columns:
+    18px minmax(0, 1fr);
+
+  align-items: center;
+  gap: 9px;
+
+  min-height: 31px;
+
+  color: var(--soura-loader-faint);
+
+  transition:
+    color 160ms ease;
+}
+
+.soura-project-loader-step-state {
+  display: block;
+
+  width: 8px;
+  height: 8px;
+
+  margin-left: 4px;
+
+  border:
+    1px solid rgba(143, 157, 195, 0.27);
+
+  border-radius: 50%;
+
+  background:
+    rgba(255,255,255,0.025);
+}
+
+.soura-project-loader-steps li.is-active {
+  color: var(--soura-loader-text);
+}
+
+.soura-project-loader-steps li.is-active
+  .soura-project-loader-step-state {
+  border-color:
+    rgba(110, 112, 255, 0.75);
+
+  background:
+    rgba(101, 111, 255, 0.5);
+
+  box-shadow:
+    0 0 0 4px rgba(105, 105, 255, 0.06),
+    0 0 12px rgba(100, 109, 255, 0.34);
+
+  animation:
+    soura-loader-pulse
+    1.15s ease-in-out infinite;
+}
+
+.soura-project-loader-steps li.is-done {
+  color: var(--soura-loader-muted);
+}
+
+.soura-project-loader-steps li.is-done
+  .soura-project-loader-step-state {
+  border-color:
+    rgba(110, 231, 183, 0.42);
+
+  background:
+    rgba(110, 231, 183, 0.7);
+}
+
+.soura-project-loader-steps li.is-warning {
+  color: var(--soura-loader-warning);
+}
+
+.soura-project-loader-steps li.is-warning
+  .soura-project-loader-step-state {
+  border-color:
+    rgba(245, 194, 107, 0.48);
+
+  background:
+    rgba(245, 194, 107, 0.72);
+}
+
+.soura-project-loader-steps li.is-failed {
+  color: var(--soura-loader-danger);
+}
+
+.soura-project-loader-steps li.is-failed
+  .soura-project-loader-step-state {
+  border-color:
+    rgba(255, 126, 145, 0.5);
+
+  background:
+    rgba(255, 126, 145, 0.72);
+}
+
+.soura-project-loader-step-copy {
+  display: flex;
+  flex-direction: column;
+
+  min-width: 0;
+}
+
+.soura-project-loader-step-copy strong {
+  font-size: 10px;
+  font-weight: 590;
+}
+
+.soura-project-loader-step-copy small {
+  margin-top: 2px;
+
+  color: currentColor;
+  opacity: 0.62;
+
+  font-size: 8px;
+}
+
+.soura-project-loader-error {
+  margin-top: 16px;
+  padding: 10px 11px;
+
+  border:
+    1px solid rgba(255, 126, 145, 0.18);
+
+  border-radius: 6px;
+
+  background:
+    rgba(255, 126, 145, 0.045);
+
+  color: #ffc2cb;
+
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+@keyframes soura-loader-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+    transform: scale(0.92);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1.08);
+  }
+}

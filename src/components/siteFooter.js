@@ -25,6 +25,11 @@ const PUBLIC_FOOTER_BLOCKED_PREFIXES = [
   '/products/dashboard',
   '/studio/daw',
   '/studio/live',
+
+  // Canonical Vertix workspace routes.
+  '/vertix',
+
+  // Legacy compatibility paths kept blocked while old links age out.
   '/studio/stagemaker/project',
   '/stage'
 ]
@@ -54,8 +59,12 @@ export function ensureSiteFooter({ pathname = window.location.pathname } = {}) {
     document.querySelector('[data-site-footer]')?.remove()
     return
   }
+
   if (document.querySelector('[data-site-footer]')) return
+
   const main = document.querySelector('main')
+
   if (!main) return
+
   main.insertAdjacentHTML('afterend', renderSiteFooter())
 }

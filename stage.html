@@ -2,12 +2,113 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Design 3D stage layouts, lighting concepts, rigging plans, camera positions, and production plots with Melogic Stage." />
-    <title>Melogic | Stage</title>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0"
+    />
+
+    <meta
+      name="description"
+      content="Design 3D environments, stage layouts, lighting concepts, rigging plans, animation, and production scenes with Melogic Vertix."
+    />
+
+    <title>Melogic | Vertix</title>
+
+    <!--
+      Shared creative-application shell.
+      On the web the normal site header remains available.
+      Inside Nexus/Tauri this switches to an edge-to-edge app surface.
+    -->
+    <link
+      rel="stylesheet"
+      href="/src/styles/applicationSurface.css"
+    />
+
+    <!-- Vertix project-browser presentation only. -->
+    <link
+      rel="stylesheet"
+      href="/src/styles/vertixProjectBrowser.css"
+    />
   </head>
+
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/stage.js"></script>
+
+    <!-- Detect Nexus/Tauri before the application renders. -->
+    <script
+      type="module"
+      src="/src/runtime/applicationRuntime.js"
+    ></script>
+
+    <!--
+      Vertix route compatibility bootstrap.
+
+      The current stage engine still understands its historical projectId
+      query fallback. New public URLs are /vertix and /vertix/project/:id.
+    -->
+    <script>
+      (() => {
+        const pathname =
+          window.location.pathname || ""
+
+        const match =
+          pathname.match(
+            /^\/vertix\/project\/([^/]+)/
+          )
+
+        if (match) {
+          const params =
+            new URLSearchParams(
+              window.location.search || ""
+            )
+
+          if (!params.has("projectId")) {
+            try {
+              params.set(
+                "projectId",
+                decodeURIComponent(match[1])
+              )
+            } catch {
+              params.set(
+                "projectId",
+                match[1]
+              )
+            }
+
+            const query = params.toString()
+
+            window.history.replaceState(
+              {},
+              "",
+              `${pathname}${
+                query ? `?${query}` : ""
+              }${window.location.hash || ""}`
+            )
+          }
+        } else if (
+          pathname === "/stage.html"
+          || pathname === "/stage"
+          || pathname === "/studio/stagemaker"
+        ) {
+          window.history.replaceState(
+            {},
+            "",
+            `/vertix${
+              window.location.search || ""
+            }${window.location.hash || ""}`
+          )
+        }
+      })()
+    </script>
+
+    <script
+      type="module"
+      src="/src/vertix/branding/legacyBrandingGuard.js"
+    ></script>
+
+    <script
+      type="module"
+      src="/src/stage.js"
+    ></script>
   </body>
 </html>
