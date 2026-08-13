@@ -51,6 +51,10 @@ import {
 import './styles/dawPluginWindow.css'
 import './studio/audio/PitchTraceViewport.js'
 import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
+import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisService.js'
+import { SOURCE_TYPES, SPECTRAL_BANDS } from './studio/audio/analysis/audioAnalysisConstants.js'
+import { analyzeProjectContext, combineAnalysisResults, compareRegionAnalyses } from './studio/audio/analysis/contextAnalysis.js'
+import { buildRecommendations } from './studio/audio/analysis/recommendationEngine.js'
 import {
   musicalDurationToRegionWidth,
   musicalPositionToRegionX,
@@ -269,6 +273,25 @@ let stretchPlaybackPrompt = null
 let audioEditPlaybackPrompt = null
 const audioEditPlaybackBypassRegionIds = new Set()
 let pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+const smartControlsAnalysisService = new AudioAnalysisService()
+let smartControlsState = {
+  scope: 'track',
+  trackContext: 'independent',
+  profile: 'standard',
+  sourceType: 'auto',
+  activeTab: 'overview',
+  status: 'idle',
+  progress: 0,
+  phase: '',
+  error: '',
+  result: null,
+  comparison: null,
+  contextFindings: [],
+  timelineFindings: [],
+  analyzedEntries: [],
+  jobId: '',
+  provider: ''
+}
 let pitchTraceSelectedNoteId = ''
 let pitchTraceNoteDrag = null
 let pitchTraceTool = 'cursor'
@@ -3890,7 +3913,260 @@ async function assignStudioLibraryInstrument(instrumentId = '') {
   renderEditor()
 }
 
-function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":`<h3>Smart Controls</h3><p>EQ</p><p>Compressor</p><p>Sends</p><p>Track Effects</p>`,"loop-browser":`<h3>Loop Browser</h3><input placeholder="Search loops"/><p>Drums</p><p>Melody</p><p>Bass</p><p>Vocals</p><p>FX</p>`}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''}">${views[activeLeftPanel] || ''}</aside>` }
+function getSmartControlsAudioRegions() {
+  if (smartControlsState.scope === 'region') return getSelectedRegions().filter((region)=>region.type === 'audio')
+  return midiRegions.filter((region)=>region.type === 'audio' && region.trackId === selectedTrackId && !region.muted && !normalizeAudioEdit(region.audioEdit).mute)
+}
+function getAnalysisSourceIdentity(region, audioBuffer = null) {
+  const clip = region.audioClip || {}
+  const stableId = clip.audioAssetId || clip.id || region.clipId || clip.storagePath || clip.runtimeId || region.id
+  const revision = clip.sourceHash || clip.contentHash || clip.etag || [clip.storagePath || clip.fileName || '', clip.fileSizeBytes || region.fileSizeBytes || '', clip.fileDurationSeconds || region.fileDurationSeconds || '', clip.createdAt || ''].join(':')
+  return {
+    id: String(stableId || region.id),
+    revision: String(revision || 'source-v1'),
+    name: getMidiRegionLabel(region),
+    sampleRate: Number(audioBuffer?.sampleRate || clip.sampleRate || region.sampleRate || region.audioContextSampleRate) || 44100,
+    channelCount: Number(audioBuffer?.numberOfChannels || clip.channelCount || region.channelCount) || 1,
+    durationSeconds: Number(audioBuffer?.duration || clip.fileDurationSeconds || region.fileDurationSeconds) || 0
+  }
+}
+async function loadAnalysisPcm(region) {
+  const decodeStartedAt = performance.now()
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) throw new Error(`${getMidiRegionLabel(region)} is offline or could not be decoded.`)
+  const audioBuffer = runtime.audioBuffer
+  const channels = Array.from({ length: Math.max(1, audioBuffer.numberOfChannels || 1) }, (_, channelIndex) => {
+    const copy = new Float32Array(audioBuffer.length)
+    audioBuffer.copyFromChannel(copy, channelIndex)
+    return copy
+  })
+  return { channels, sampleRate: audioBuffer.sampleRate || 44100, decodeMs: performance.now() - decodeStartedAt }
+}
+function getAnalysisRegionInterval(region) {
+  return {
+    name: getMidiRegionLabel(region),
+    startSeconds: getAudioTrimStartSeconds(region),
+    endSeconds: getAudioTrimEndSeconds(region),
+    playbackRate: getAudioRegionPlaybackRate(region)
+  }
+}
+async function analyzeSmartControlsRegion(region, job, onProgress) {
+  const runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  const source = getAnalysisSourceIdentity(region, runtime?.audioBuffer)
+  let decodeMs = 0
+  const result = await smartControlsAnalysisService.analyzeRegion({
+    source,
+    interval: getAnalysisRegionInterval(region),
+    gainDb: Number(normalizeAudioEdit(region.audioEdit).gainDb) || 0,
+    profile: smartControlsState.profile,
+    sourceType: smartControlsState.sourceType,
+    loadPcm: async () => {
+      const loaded = await loadAnalysisPcm(region)
+      decodeMs = loaded.decodeMs
+      return loaded
+    },
+    onProgress,
+    signal: job.signal
+  })
+  result.metadata.decodeMs = decodeMs
+  return {
+    id: region.id,
+    name: getMidiRegionLabel(region),
+    trackId: region.trackId,
+    projectStartSeconds: getTimelineSecondsAtBeat(Number(region.startBeat) || 0),
+    result
+  }
+}
+function updateSmartControlsProgressDom() {
+  const panel = app.querySelector('[data-smart-controls-progress]')
+  if (!panel) return
+  panel.style.setProperty('--analysis-progress', `${Math.round(clamp(smartControlsState.progress, 0, 1) * 100)}%`)
+  const label = panel.querySelector('span')
+  if (label) label.textContent = `${smartControlsState.phase || 'Analyzing'} · ${Math.round(clamp(smartControlsState.progress, 0, 1) * 100)}%`
+}
+function localizedAnalysisFindings(entries = []) {
+  return entries.flatMap((entry) => (entry.result.timelineFindings || []).map((finding) => ({
+    ...finding,
+    id: `${entry.id}:${finding.id}`,
+    label: entries.length > 1 ? `${entry.name}: ${finding.label}` : finding.label,
+    startSeconds: entry.projectStartSeconds + (finding.startSeconds || 0),
+    endSeconds: entry.projectStartSeconds + (finding.endSeconds || finding.startSeconds || 0)
+  })))
+}
+async function runSmartControlsAnalysis() {
+  const regions = getSmartControlsAudioRegions()
+  if (!regions.length) {
+    smartControlsState = { ...smartControlsState, status: 'error', error: smartControlsState.scope === 'region' ? 'Select one or more audio regions first.' : 'The selected track has no analyzable audio regions.' }
+    renderEditor()
+    return
+  }
+  const job = smartControlsAnalysisService.createJob()
+  smartControlsState = { ...smartControlsState, status: 'analyzing', progress: 0, phase: 'Preparing audio', error: '', result: null, comparison: null, contextFindings: [], timelineFindings: [], analyzedEntries: [], jobId: job.jobId }
+  renderEditor()
+  try {
+    const targetEntries = []
+    for (let index = 0; index < regions.length; index += 1) {
+      const entry = await analyzeSmartControlsRegion(regions[index], job, ({ progress, phase }) => {
+        if (!job.isCurrent()) return
+        smartControlsState.progress = ((index + clamp(progress, 0, 1)) / Math.max(1, regions.length)) * (smartControlsState.trackContext === 'project-context' && smartControlsState.scope === 'track' ? 0.55 : 0.92)
+        smartControlsState.phase = phase
+        updateSmartControlsProgressDom()
+      })
+      if (!job.isCurrent()) return
+      targetEntries.push(entry)
+    }
+    const track = getSelectedTrack()
+    const result = smartControlsState.scope === 'region' && targetEntries.length === 1
+      ? targetEntries[0].result
+      : combineAnalysisResults(targetEntries.map((entry)=>entry.result), {
+          id: smartControlsState.scope === 'track' ? `track:${track?.id || selectedTrackId}` : `regions:${targetEntries.map((entry)=>entry.id).join(',')}`,
+          revision: targetEntries.map((entry)=>`${entry.result.source.id}:${entry.result.source.revision}`).join('|'),
+          name: smartControlsState.scope === 'track' ? (track?.name || 'Selected track') : `${targetEntries.length} selected regions`
+        })
+    let contextFindings = []
+    if (smartControlsState.scope === 'track' && smartControlsState.trackContext === 'project-context') {
+      const otherRegions = midiRegions.filter((region) => region.type === 'audio' && region.trackId !== selectedTrackId && !region.muted && !normalizeAudioEdit(region.audioEdit).mute && isTrackAudible(tracks.find((trackItem)=>trackItem.id === region.trackId)))
+      const otherEntries = []
+      for (let index = 0; index < otherRegions.length; index += 1) {
+        const entry = await analyzeSmartControlsRegion(otherRegions[index], job, ({ progress, phase }) => {
+          if (!job.isCurrent()) return
+          smartControlsState.progress = 0.55 + (((index + clamp(progress, 0, 1)) / Math.max(1, otherRegions.length)) * 0.37)
+          smartControlsState.phase = `Context · ${phase}`
+          updateSmartControlsProgressDom()
+        })
+        if (!job.isCurrent()) return
+        entry.name = tracks.find((trackItem)=>trackItem.id === entry.trackId)?.name || entry.name
+        otherEntries.push(entry)
+      }
+      contextFindings = analyzeProjectContext(targetEntries, otherEntries)
+      if (!otherEntries.length) result.metadata.warnings.push('No other audible audio regions were available for source-context comparison.')
+    }
+    result.mode = smartControlsState.scope === 'track'
+      ? (smartControlsState.trackContext === 'project-context' ? 'project-context' : 'independent')
+      : (targetEntries.length > 1 ? 'compare-regions' : 'single-region')
+    result.scope = smartControlsState.scope
+    result.metadata.signalStage = 'source'
+    result.recommendations = buildRecommendations(result, { sourceType: smartControlsState.sourceType, contextFindings })
+    smartControlsState = {
+      ...smartControlsState,
+      status: 'complete',
+      progress: 1,
+      phase: 'Complete',
+      result,
+      comparison: targetEntries.length > 1 ? compareRegionAnalyses(targetEntries) : null,
+      contextFindings,
+      timelineFindings: [...contextFindings, ...localizedAnalysisFindings(targetEntries)],
+      analyzedEntries: targetEntries,
+      provider: result.metadata.provider,
+      jobId: ''
+    }
+    renderEditor()
+  } catch (error) {
+    if (!job.isCurrent()) return
+    smartControlsState = { ...smartControlsState, status: error?.name === 'AbortError' ? 'cancelled' : 'error', error: error?.name === 'AbortError' ? 'Analysis cancelled.' : (error?.message || 'Audio analysis failed.'), jobId: '' }
+    renderEditor()
+  }
+}
+function cancelSmartControlsAnalysis() {
+  smartControlsAnalysisService.cancel()
+  smartControlsState = { ...smartControlsState, status: 'cancelled', phase: '', error: 'Analysis cancelled.', jobId: '' }
+  renderEditor()
+}
+function formatAnalysisNumber(value, digits = 1, fallback = '—') {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : fallback
+}
+function renderSmartControlsMeasurement(label, value, suffix = '', note = '') {
+  return `<div class="studio-smart-measure"><span>${esc(label)}</span><strong>${esc(value)}${suffix}</strong>${note ? `<small>${esc(note)}</small>` : ''}</div>`
+}
+function renderSmartControlsFinding(finding) {
+  const confidence = Number.isFinite(finding.confidence) ? `${Math.round(finding.confidence * 100)}% confidence` : ''
+  const time = Number.isFinite(finding.startSeconds) ? `${formatClockTime(finding.startSeconds)}${Number.isFinite(finding.endSeconds) && finding.endSeconds > finding.startSeconds ? `–${formatClockTime(finding.endSeconds)}` : ''}` : ''
+  return `<button type="button" class="studio-smart-finding" ${Number.isFinite(finding.startSeconds) ? `data-smart-locate="${finding.startSeconds}"` : ''}><span>${esc(finding.label)}</span><small>${esc([time, confidence].filter(Boolean).join(' · '))}</small></button>`
+}
+function formatClockTime(seconds = 0) {
+  const safe = Math.max(0, Number(seconds) || 0)
+  const minutes = Math.floor(safe / 60)
+  return `${String(minutes).padStart(2, '0')}:${(safe % 60).toFixed(1).padStart(4, '0')}`
+}
+function renderSmartControlsResults() {
+  const result = smartControlsState.result
+  if (!result) return `<div class="studio-smart-empty"><strong>Local audio intelligence</strong><p>Analyze the selected track or audio regions. Soura measures locally; it does not use Resona or an LLM to invent DSP facts.</p></div>`
+  const levels = result.measurements.levels || {}
+  const dynamics = result.measurements.dynamics || {}
+  const spectrum = result.measurements.spectral || {}
+  const stereo = result.measurements.stereo || {}
+  const musical = result.measurements.musical || {}
+  const tabs = ['overview', 'technical', 'dynamics', 'spectrum', 'stereo', 'musical', 'context', 'recommendations']
+  let content = ''
+  if (smartControlsState.activeTab === 'overview') {
+    content = `<div class="studio-smart-grid">
+      ${renderSmartControlsMeasurement('Est. loudness', formatAnalysisNumber(levels.estimatedIntegratedLufs), ' LUFS', 'Not standards-certified')}
+      ${renderSmartControlsMeasurement('Sample peak', formatAnalysisNumber(levels.samplePeakDbfs), ' dBFS')}
+      ${renderSmartControlsMeasurement('Crest factor', formatAnalysisNumber(levels.crestFactorDb), ' dB')}
+      ${renderSmartControlsMeasurement('Spectral center', formatAnalysisNumber(spectrum.centroidHz, 0), ' Hz')}
+    </div><div class="studio-smart-summary"><strong>${esc(result.source.name)}</strong><span>${formatAnalysisNumber(result.source.durationSeconds, 2)} s · ${result.source.channelCount === 1 ? 'Mono' : `${result.source.channelCount} channels`} · ${esc(result.profile)}</span><small>${esc(result.metadata.provider)} · ${esc(result.metadata.cache)} · source signal (pre-FX)</small></div>
+    ${smartControlsState.comparison ? renderSmartControlsComparison(smartControlsState.comparison) : ''}`
+  } else if (smartControlsState.activeTab === 'technical') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('RMS', formatAnalysisNumber(levels.rmsDbfs), ' dBFS')}${renderSmartControlsMeasurement('Est. true peak', formatAnalysisNumber(levels.estimatedTruePeakDbtp), ' dBTP', 'Interpolation estimate')}${renderSmartControlsMeasurement('DC offset', formatAnalysisNumber(levels.dcOffset, 5))}${renderSmartControlsMeasurement('Clipping samples', String(levels.clippingSamples || 0))}${renderSmartControlsMeasurement('Est. short-term max', formatAnalysisNumber(levels.maximumShortTermLufs), ' LUFS')}${renderSmartControlsMeasurement('Est. momentary max', formatAnalysisNumber(levels.maximumMomentaryLufs), ' LUFS')}</div>${smartControlsState.timelineFindings.map(renderSmartControlsFinding).join('') || '<p class="studio-smart-muted">No time-local technical event was detected.</p>'}`
+  } else if (smartControlsState.activeTab === 'dynamics') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('Loudness range', formatAnalysisNumber(levels.loudnessRangeLu), ' LU')}${renderSmartControlsMeasurement('Macro variation', formatAnalysisNumber(dynamics.macroVariationDb), ' dB')}${renderSmartControlsMeasurement('Micro variation', formatAnalysisNumber(dynamics.microVariationDb), ' dB')}${renderSmartControlsMeasurement('Transient density', formatAnalysisNumber(dynamics.transientDensityPerSecond, 2), '/s')}${renderSmartControlsMeasurement('Noise floor est.', formatAnalysisNumber(dynamics.noiseFloorEstimateDbfs), ' dBFS')}</div>`
+  } else if (smartControlsState.activeTab === 'spectrum') {
+    content = `<div class="studio-smart-spectrum">${SPECTRAL_BANDS.map((band)=>`<div><span>${band.label}</span><i><b style="width:${Math.round(clamp((spectrum.bands?.[band.id] || 0) * 240, 0, 100))}%"></b></i><small>${formatAnalysisNumber((spectrum.bands?.[band.id] || 0) * 100, 0)}%</small></div>`).join('')}</div>${(spectrum.resonanceCandidates || []).map(renderSmartControlsFinding).join('') || '<p class="studio-smart-muted">No persistent narrow concentration met the detection threshold.</p>'}`
+  } else if (smartControlsState.activeTab === 'stereo') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('L/R balance', formatAnalysisNumber(stereo.balanceDb), ' dB')}${renderSmartControlsMeasurement('Correlation', formatAnalysisNumber(stereo.correlation, 2, result.source.channelCount === 1 ? 'Mono' : '—'))}${renderSmartControlsMeasurement('Side / mid', formatAnalysisNumber(stereo.widthSideMidRatio, 2))}${renderSmartControlsMeasurement('Low stereo', formatAnalysisNumber(stereo.lowFrequencyStereoRatio, 2), '', 'Side/mid below 200 Hz')}${renderSmartControlsMeasurement('Mono check', stereo.monoCompatible ? 'Compatible indicator' : 'Review advised')}</div><p class="studio-smart-muted">Stereo measurements describe the source signal and do not include current pan, buses, or post-FX routing.</p>`
+  } else if (smartControlsState.activeTab === 'musical') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('Tempo estimate', musical.bpm ? formatAnalysisNumber(musical.bpm) : 'No confident result', musical.bpm ? ' BPM' : '', musical.bpm ? `${Math.round((musical.bpmConfidence || 0) * 100)}% confidence` : '')}${renderSmartControlsMeasurement('Key estimate', musical.key ? `${musical.key} ${musical.scale || ''}` : 'No confident result', '', musical.key ? `${Math.round((musical.keyConfidence || 0) * 100)}% confidence` : '')}${renderSmartControlsMeasurement('Onsets', String(musical.onsetsSeconds?.length || 0))}${renderSmartControlsMeasurement('Tuning', musical.tuningConfidence > 0 ? `${formatAnalysisNumber(musical.tuningHz)} Hz` : 'Not confidently estimated')}</div>`
+  } else if (smartControlsState.activeTab === 'context') {
+    content = smartControlsState.scope === 'track' && smartControlsState.trackContext === 'project-context'
+      ? (smartControlsState.contextFindings.map(renderSmartControlsFinding).join('') || '<p class="studio-smart-muted">No high-confidence source-context competition was found among audible audio regions.</p>')
+      : '<p class="studio-smart-muted">Choose Track → In Project to calculate time-local source-context relationships.</p>'
+  } else if (smartControlsState.activeTab === 'recommendations') {
+    content = `<div class="studio-smart-recommendations">${(result.recommendations || []).map((item)=>`<article><span>Recommendation</span><strong>${esc(item.title)}</strong><p>${esc(item.message)}</p><small>${Math.round((item.confidence || 0) * 100)}% confidence</small></article>`).join('')}</div>`
+  }
+  return `<nav class="studio-smart-tabs">${tabs.map((tab)=>`<button type="button" data-smart-tab="${tab}" class="${smartControlsState.activeTab === tab ? 'is-active' : ''}">${tab === 'technical' ? 'Tech' : tab === 'recommendations' ? 'Advice' : tab}</button>`).join('')}</nav><div class="studio-smart-results">${content}</div>`
+}
+function renderSmartControlsComparison(comparison) {
+  return `<section class="studio-smart-comparison"><h4>Region comparison</h4>${comparison.regions.map((entry)=>`<div><span>${esc(entry.name)}</span><strong>${formatAnalysisNumber(entry.result.measurements.levels.estimatedIntegratedLufs)} LUFS est.</strong></div>`).join('')}${comparison.commonCharacteristics.map((item)=>`<p><b>Common:</b> ${esc(item.label)}</p>`).join('')}${comparison.differences.map((item)=>`<p><b>Difference:</b> ${esc(item.label)}</p>`).join('')}</section>`
+}
+function renderSmartControlsPanel() {
+  const selectedCount = getSmartControlsAudioRegions().length
+  const analyzing = smartControlsState.status === 'analyzing'
+  return `<section class="studio-smart-controls">
+    <header><div><span>Audio Analysis</span><h3>Smart Controls</h3></div><em>${selectedCount} ${smartControlsState.scope === 'track' ? 'track region' : 'selected region'}${selectedCount === 1 ? '' : 's'}</em></header>
+    <div class="studio-smart-config">
+      <label>Scope<select data-smart-setting="scope" ${analyzing ? 'disabled' : ''}><option value="track" ${smartControlsState.scope === 'track' ? 'selected' : ''}>Track</option><option value="region" ${smartControlsState.scope === 'region' ? 'selected' : ''}>Region</option></select></label>
+      ${smartControlsState.scope === 'track' ? `<label>Track context<select data-smart-setting="trackContext" ${analyzing ? 'disabled' : ''}><option value="independent" ${smartControlsState.trackContext === 'independent' ? 'selected' : ''}>Independent</option><option value="project-context" ${smartControlsState.trackContext === 'project-context' ? 'selected' : ''}>In Project</option></select></label>` : `<label>Region mode<select disabled><option>${selectedCount > 1 ? 'Compare Regions' : 'Single Region'}</option></select></label>`}
+      <label>Depth<select data-smart-setting="profile" ${analyzing ? 'disabled' : ''}><option value="quick" ${smartControlsState.profile === 'quick' ? 'selected' : ''}>Quick</option><option value="standard" ${smartControlsState.profile === 'standard' ? 'selected' : ''}>Standard</option><option value="deep" ${smartControlsState.profile === 'deep' ? 'selected' : ''}>Deep</option></select></label>
+      <label>Source type<select data-smart-setting="sourceType" ${analyzing ? 'disabled' : ''}>${SOURCE_TYPES.map(([value, label])=>`<option value="${value}" ${smartControlsState.sourceType === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    </div>
+    <div class="studio-smart-actions">${analyzing ? '<button type="button" data-smart-cancel>Cancel</button>' : '<button type="button" class="is-primary" data-smart-analyze>Analyze</button>'}<small>Measurements remain objective; source type changes interpretation only.</small></div>
+    ${analyzing ? `<div class="studio-smart-progress" data-smart-controls-progress style="--analysis-progress:${Math.round(smartControlsState.progress * 100)}%"><i><b></b></i><span>${esc(smartControlsState.phase || 'Analyzing')} · ${Math.round(smartControlsState.progress * 100)}%</span></div>` : ''}
+    ${smartControlsState.error ? `<p class="studio-smart-error">${esc(smartControlsState.error)}</p>` : ''}
+    ${renderSmartControlsResults()}
+  </section>`
+}
+function bindSmartControlsEvents() {
+  app.querySelectorAll('[data-smart-setting]').forEach((input)=>input.addEventListener('change',()=>{
+    const key = input.dataset.smartSetting
+    smartControlsState = { ...smartControlsState, [key]: input.value, error: '' }
+    renderEditor()
+  }))
+  app.querySelector('[data-smart-analyze]')?.addEventListener('click', runSmartControlsAnalysis)
+  app.querySelector('[data-smart-cancel]')?.addEventListener('click', cancelSmartControlsAnalysis)
+  app.querySelectorAll('[data-smart-tab]').forEach((button)=>button.addEventListener('click',()=>{ smartControlsState.activeTab = button.dataset.smartTab; renderEditor() }))
+  app.querySelectorAll('[data-smart-locate]').forEach((button)=>button.addEventListener('click',()=>{
+    const seconds = Number(button.dataset.smartLocate)
+    if (!Number.isFinite(seconds)) return
+    setPlayheadBeat(secondsToBeats(seconds), { restartTransport: false })
+    const grid = app.querySelector('[data-arrangement-grid]')
+    if (grid) grid.scrollLeft = clamp(timelineState.playheadX - (grid.clientWidth * 0.35), 0, Math.max(0, grid.scrollWidth - grid.clientWidth))
+  }))
+}
+function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":renderSmartControlsPanel(),"loop-browser":`<h3>Loop Browser</h3><input placeholder="Search loops"/><p>Drums</p><p>Melody</p><p>Bass</p><p>Vocals</p><p>FX</p>`}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''} ${activeLeftPanel==='smart-controls'?'studio-left-panel--smart-controls':''}">${views[activeLeftPanel] || ''}</aside>` }
 function getActiveNotePage(){ return notePages.find((page)=>page.id===activeNotePageId) || notePages[0] }
 function stashActiveNoteInput(){ const input = app.querySelector('[data-notes-input]'); const active = getActiveNotePage(); if (!input || !active) return; active.body = input.value }
 function renderNotesModal(){ if(!isNotesOpen) return ''; const activePage = getActiveNotePage(); return `<div class="studio-notes-modal"><div class="studio-notes-panel"><header class="studio-notes-header"><h3>Project Notes</h3></header><div class="studio-notes-body"><div class="studio-notes-pages">${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${page.id}" aria-pressed="${String(page.id===activeNotePageId)}">${page.title}</button>`).join('')}<button class="studio-notes-page-button" data-add-notes-page>Add Page</button></div><textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${activePage?.body || ''}</textarea></div><div class="studio-notes-actions"><button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button><button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button></div></div></div>` }
@@ -10146,6 +10422,7 @@ function mountInlineNumericEditor() {
 }
 
 function bindEditorEvents() {
+  bindSmartControlsEvents()
   const trigger = app.querySelector('[data-editor-left-menu]')
   const leftWrap = app.querySelector('.studio-editor-left')
   const ruler = app.querySelector('[data-timeline-ruler]')

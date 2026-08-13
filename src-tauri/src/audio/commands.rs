@@ -1,4 +1,5 @@
 use tauri::State;
+use tauri::AppHandle;
 
 use super::{
   dsp::{
@@ -11,6 +12,7 @@ use super::{
   },
   NativeAudioState,
 };
+use super::analysis::{analyze_with_cache, NativeAudioAnalysisRequest};
 
 fn lock_error() -> String {
   "Soura native audio engine state is unavailable."
@@ -86,4 +88,16 @@ pub fn native_audio_dsp_self_test(
   run_signalsmith_self_test(
     semitones.unwrap_or(-5.0)
   )
+}
+
+#[tauri::command]
+pub async fn native_audio_analyze_pcm(
+  app: AppHandle,
+  request: NativeAudioAnalysisRequest,
+) -> Result<serde_json::Value, String> {
+  tauri::async_runtime::spawn_blocking(move || {
+    analyze_with_cache(&app, request)
+  })
+    .await
+    .map_err(|error| format!("Native audio analysis task failed: {error}"))?
 }

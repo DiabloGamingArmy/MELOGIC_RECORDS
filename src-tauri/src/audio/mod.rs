@@ -1,4 +1,5 @@
 pub mod commands;
+mod analysis;
 mod dsp;
 mod engine;
 
