@@ -281,6 +281,8 @@ let pendingMidiRollViewport = null
 let audioRegionToolsViewport = { regionId: '', scrollTop: 0 }
 let audioWaveformViewport = { regionId: '', startSeconds: 0, endSeconds: 0, zoom: 1 }
 let audioWaveformPanDrag = null
+const AUDIO_REGION_EDITOR_MODE_STORAGE_KEY = 'soura.regionEditor.lastAudioMode'
+const AUDIO_REGION_EDITOR_MODES = Object.freeze({ waveform: 'waveform', pitchTrace: 'pitch-trace' })
 let midiRollBeatWidth = 64
 let midiRollRowHeight = 22
 let midiRollSelectionDrag = null
@@ -1274,6 +1276,23 @@ function renderMidiRegionColorPopover() {
     <button type="button" data-midi-region-reset-color>Reset to Track Color</button>
   </form>`
 }
+function getLastAudioRegionEditorMode() {
+  try {
+    const mode = window.localStorage?.getItem(AUDIO_REGION_EDITOR_MODE_STORAGE_KEY)
+    return Object.values(AUDIO_REGION_EDITOR_MODES).includes(mode)
+      ? mode
+      : AUDIO_REGION_EDITOR_MODES.waveform
+  } catch {
+    return AUDIO_REGION_EDITOR_MODES.waveform
+  }
+}
+function setLastAudioRegionEditorMode(mode) {
+  if (!Object.values(AUDIO_REGION_EDITOR_MODES).includes(mode)) return
+  try { window.localStorage?.setItem(AUDIO_REGION_EDITOR_MODE_STORAGE_KEY, mode) } catch {}
+}
+function renderAudioRegionEditorModeToggle(mode) {
+  return `<div class="studio-audio-region-editor-mode-toggle" role="toolbar" aria-label="Audio Region Editor mode"><button type="button" data-audio-region-editor-mode="${AUDIO_REGION_EDITOR_MODES.waveform}" class="${mode === AUDIO_REGION_EDITOR_MODES.waveform ? 'is-active' : ''}" aria-pressed="${String(mode === AUDIO_REGION_EDITOR_MODES.waveform)}">Waveform</button><button type="button" data-audio-region-editor-mode="${AUDIO_REGION_EDITOR_MODES.pitchTrace}" class="${mode === AUDIO_REGION_EDITOR_MODES.pitchTrace ? 'is-active' : ''}" aria-pressed="${String(mode === AUDIO_REGION_EDITOR_MODES.pitchTrace)}">Pitch Trace</button></div>`
+}
 function renderMidiRegionRenamePopover() {
   if (!regionRenameState?.regionId) return ''
   const region = midiRegions.find((item)=>item.id === regionRenameState.regionId)
@@ -1386,12 +1405,7 @@ function renderPitchTraceView(region, track) {
   const base=getPitchTraceBaseSummary(region,edit)
   const empty=trace.status==='analyzing'?'<p class="studio-pitch-trace-empty">Deep pitch analysis is running…</p>':trace.status==='failed'?`<p class="studio-pitch-trace-empty">${esc(trace.error||'Pitch analysis failed.')}</p>`:'<p class="studio-pitch-trace-empty">Analyze Audio to map detected pitch onto MIDI rows.</p>'
 
-  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1600})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>
-          <span
-            class="studio-pitch-trace-playhead"
-            data-pitch-trace-playhead
-            style="left:${positionToRegionEditorX(xToBeat(timelineState.playheadX), region)}px"
-          ></span>${blocks||empty}</div></div></div><footer class="studio-pitch-trace-status"><span>${esc(status)} · ${esc(base.label)}</span><kbd>Independent horizontal scale · Option-scroll changes pitch height</kbd></footer></div>`
+  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1600})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks||empty}</div></div></div><footer class="studio-pitch-trace-status"><span>${esc(status)} · ${esc(base.label)}</span><kbd>Independent horizontal scale · Option-scroll changes pitch height</kbd></footer></div>`
 }
 function getPitchTraceEditedNoteCount(trace = {}) {
   return (trace.notes || []).filter((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.editedFineTuneCents) || 0) > 0.001 || Math.abs(Number(note.gainDb) || 0) > 0.001).length
@@ -1530,8 +1544,8 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const track = getMidiRegionTrack(region)
   const edit = normalizeAudioEdit(region.audioEdit)
   const pitchTrace = edit.pitchTrace
-  const pitchTraceActive = true
-  const pitchTraceHasEditorData = Boolean(pitchTrace?.enabled || pitchTrace?.notes?.length)
+  const audioEditorMode = getLastAudioRegionEditorMode()
+  const pitchTraceActive = audioEditorMode === AUDIO_REGION_EDITOR_MODES.pitchTrace
   const pitchShift = edit.pitchShift
   const selectedPitchNote = getSelectedPitchTraceNote(region)
   const editedPitchNoteCount = getPitchTraceEditedNoteCount(pitchTrace)
@@ -1554,9 +1568,9 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
   const waveformColor = getReadableWaveformColor(color)
   const regionLength = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
   const gridWidth = Math.max(420, regionLength * midiRollBeatWidth)
-  return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${pitchTrace.enabled ? 'has-pitch-trace-mode' : ''} ${motionClass}" data-audio-region-editor="${esc(region.id)}" style="--midi-roll-beat-width:${midiRollBeatWidth}px;--midi-roll-grid-width:${gridWidth}px;${bottomPanelHeightPx ? `height:${bottomPanelHeightPx}px;` : ''}">
+  return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${pitchTraceActive ? 'has-pitch-trace-mode' : 'has-waveform-mode'} ${motionClass}" data-audio-region-editor="${esc(region.id)}" style="--midi-roll-beat-width:${midiRollBeatWidth}px;--midi-roll-grid-width:${gridWidth}px;${bottomPanelHeightPx ? `height:${bottomPanelHeightPx}px;` : ''}">
     <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
-    <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
+    <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav>${renderAudioRegionEditorModeToggle(audioEditorMode)}<button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
     <div class="studio-bottom-panel-body studio-audio-region-editor-body ${pitchTraceActive ? 'has-pitch-trace-tools has-pitch-trace-mode' : ''}">
       <section class="studio-audio-region-editor-preview">
         ${renderRegionEditorTimeline(region, gridWidth)}
@@ -1570,7 +1584,7 @@ function renderAudioRegionEditorPanel(region, motionClass = '') {
         ${missing ? `<p class="studio-audio-editor-warning" title="${esc(getAudioOfflineMessage(region))}">${esc(region.audioClip?.loadError || getAudioOfflineMessage(region))}</p>` : ''}
       </section>
       ${pitchTraceActive ? renderPitchTraceToolPane(region, missing) : ''}
-      ${pitchTrace.enabled ? '' : renderRegionEditorToolStrip({ label: 'Audio region editor tools' })}
+      ${renderRegionEditorToolStrip({ label: 'Audio region editor tools' })}
       <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
         <h3>${esc(getMidiRegionLabel(region))}</h3>
         <label>Region name<input data-audio-region-name value="${esc(region.name || '')}" placeholder="${esc(track?.name || 'Audio Region')}"></label>
@@ -3113,8 +3127,10 @@ function panAudioWaveformViewport(region, deltaSeconds = 0) {
   setAudioWaveformViewport(region, { startSeconds: start, endSeconds: start + length })
 }
 function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = false, color = '#58d4ff', waveformColor = '#58d4ff' } = {}) {
+  const playheadX = positionToRegionEditorX(xToBeat(timelineState.playheadX), region)
+  const viewportPlayhead = `<i class="studio-region-editor-viewport-playhead" data-region-editor-viewport-playhead data-region-editor-playhead-region="${esc(region.id)}" style="left:${72 + playheadX}px"></i>`
   if (pitchTraceEnabled) {
-    return `<div class="studio-audio-editor-waveform has-pitch-trace" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${renderPitchTraceView(region, track)}</div>`
+    return `<div class="studio-audio-editor-waveform has-pitch-trace" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${renderPitchTraceView(region, track)}${viewportPlayhead}</div>`
   }
   const viewport = normalizeAudioWaveformViewport(region)
   const start = viewport.startSeconds
@@ -3131,6 +3147,7 @@ function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = fa
     </header>
     <div class="studio-audio-waveform-viewport" data-audio-waveform-viewport data-waveform-start="${start}" data-waveform-end="${end}" data-waveform-duration="${viewport.fullDuration}" tabindex="0">
       ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: 24000 })}
+      ${viewportPlayhead}
     </div>
   </div>`
 }
@@ -5976,17 +5993,16 @@ function updateMidiRollPlayheadDom() {
   }
 
   app
-    .querySelectorAll('[data-pitch-trace-playhead]')
+    .querySelectorAll('[data-region-editor-viewport-playhead]')
     .forEach((marker) => {
-      const editor = marker.closest('[data-audio-region-editor]')
       const region = midiRegions.find(
-        (item) => item.id === editor?.dataset?.audioRegionEditor
+        (item) => item.id === marker.dataset.regionEditorPlayheadRegion
       )
-
       if (!region) return
-
-      marker.style.left =
-        `${positionToRegionEditorX(playheadBeat, region)}px`
+      const pitchTraceScroll = marker.closest('.studio-audio-editor-waveform')
+        ?.querySelector('[data-pitch-trace-scroll]')
+      const scrollLeft = pitchTraceScroll?.scrollLeft || 0
+      marker.style.left = `${72 + positionToRegionEditorX(playheadBeat, region) - scrollLeft}px`
     })
 
   app
@@ -6114,6 +6130,7 @@ if (!globalThis.__souraPitchTraceCanonicalZoomV45) {
       syncRegionEditorTimelineScroll(
         Number(event.detail?.scrollLeft) || 0
       )
+      updateMidiRollPlayheadDom()
     }
   )
 }
@@ -10288,10 +10305,17 @@ function bindEditorEvents() {
     const value = input.type === 'checkbox' ? input.checked : input.value
     updateAudioRegionEditField(region, input.dataset.audioEditField, value)
   }))
+  app.querySelectorAll('[data-audio-region-editor-mode]').forEach((button) => button.addEventListener('click', () => {
+    const mode = button.dataset.audioRegionEditorMode
+    if (!Object.values(AUDIO_REGION_EDITOR_MODES).includes(mode)) return
+    setLastAudioRegionEditorMode(mode)
+    renderEditor()
+  }))
   app.querySelector('[data-pitch-trace-enabled]')?.addEventListener('change', (event) => {
     const region = getSelectedAudioRegion()
     if (!region) return
     const trace = normalizeAudioEdit(region.audioEdit).pitchTrace
+    if (event.target.checked) setLastAudioRegionEditorMode(AUDIO_REGION_EDITOR_MODES.pitchTrace)
     setAudioRegionPitchTrace(region, {
       ...trace,
       enabled: event.target.checked,
