@@ -2443,7 +2443,7 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   outline-offset: 1px;
 }
 
-.studio-pitch-trace-view{position:relative;width:100%;min-height:260px;overflow:hidden;background:#0d1625}
+.studio-pitch-trace-view{position:relative;width:100%;min-height:0;overflow:hidden;background:#0d1625}
 .studio-pitch-trace-waveform,.studio-pitch-trace-grid,.studio-pitch-trace-labels,.studio-pitch-trace-notes{position:absolute;inset:0}
 .studio-pitch-trace-waveform{opacity:.42;pointer-events:none}
 .studio-pitch-trace-waveform .studio-audio-waveform,.studio-pitch-trace-waveform .studio-audio-waveform-bars{position:absolute;inset:0;width:100%;height:100%}
@@ -2461,7 +2461,7 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   display:grid!important;
   grid-template-rows:auto minmax(0,1fr)!important;
   min-height:220px!important;
-  height:var(--studio-region-editor-height,auto);
+  height:var(--studio-bottom-panel-height);
   max-height:calc(100vh - 190px)!important;
   overflow:hidden!important;
   box-sizing:border-box!important;
@@ -2493,14 +2493,7 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 }
 
 .studio-region-editor-audio .studio-audio-region-editor-body.has-pitch-trace-tools{
-  display:grid!important;
   grid-template-rows:minmax(0,1fr)!important;
-  grid-template-columns:
-    minmax(0,1fr)
-    48px
-    minmax(190px,215px)
-    minmax(300px,350px)
-    !important;
   height:100%!important;
   min-height:0!important;
   align-items:stretch!important;
@@ -2539,6 +2532,31 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   min-height:100%!important;
 }
 
+.studio-region-editor-audio .studio-pitch-trace-view{
+  display:grid!important;
+  grid-template-rows:minmax(0,1fr) auto!important;
+}
+
+.studio-region-editor-audio .studio-pitch-trace-scroll{
+  display:grid!important;
+  grid-template-columns:72px max-content!important;
+  align-items:stretch!important;
+  min-height:0!important;
+}
+
+.studio-region-editor-audio .studio-pitch-trace-canvas{
+  position:relative!important;
+  width:var(--midi-roll-grid-width,100%)!important;
+  min-width:var(--midi-roll-grid-width,100%)!important;
+  min-height:max(100%,calc(var(--pitch-row-count,24) * var(--pt-row-height,22px)))!important;
+}
+
+.studio-region-editor-audio .studio-pitch-trace-keyboard{
+  width:72px!important;
+  min-width:72px!important;
+  grid-auto-rows:var(--pt-row-height,22px)!important;
+}
+
 /* Side columns are full-height editor columns with their own scrolling. */
 .studio-region-editor-audio .studio-region-editor-tool-strip,
 .studio-region-editor-audio .studio-pitch-trace-tools-pane,
@@ -2555,6 +2573,8 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
    numbered bar tick is the only visible vertical ruler line. */
 .studio-region-editor-audio .studio-region-editor-timeline-inner
   .studio-region-editor-tick{
+  top:0!important;
+  bottom:0!important;
   width:1px!important;
   border:0!important;
   border-left:0!important;
@@ -2562,6 +2582,18 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   box-shadow:none!important;
   filter:none!important;
   background:transparent!important;
+  padding:0!important;
+}
+
+.studio-region-editor-audio .studio-region-editor-timeline-inner
+  .studio-region-editor-tick b{
+  position:absolute!important;
+  top:6px!important;
+  left:4px!important;
+  color:#9fb0d8!important;
+  font-size:10px!important;
+  font-weight:900!important;
+  line-height:1!important;
 }
 
 .studio-region-editor-audio .studio-region-editor-timeline-inner
@@ -2607,3 +2639,23 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   max-width:none!important;
 }
 
+/* Region Editor remains a bottom overlay. Its height is owned by the existing
+   bottomPanelHeightPx resize path and must not consume an arrangement grid row. */
+.studio-editor-page.has-bottom-panel:has(.studio-region-editor-audio){
+  grid-template-rows:42px 64px minmax(0,1fr) var(--studio-footer-height)!important;
+}
+
+.studio-editor-page.has-bottom-panel .studio-bottom-panel.studio-region-editor-audio{
+  position:absolute!important;
+  left:0!important;
+  right:79px!important;
+  bottom:var(--studio-bottom-panel-bottom,56px)!important;
+  width:auto!important;
+  height:var(--studio-bottom-panel-height);
+  min-height:220px!important;
+  max-height:var(--studio-bottom-panel-max-height)!important;
+}
+
+@media(max-width:1280px){
+  .studio-editor-page.has-bottom-panel .studio-bottom-panel.studio-region-editor-audio{right:55px!important}
+}
