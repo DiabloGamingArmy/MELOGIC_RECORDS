@@ -10,6 +10,9 @@ function getState(id = 'pitch-trace') {
 
 function getViewId(view) { return view?.dataset?.pitchTraceRegionId || 'pitch-trace' }
 function getScroll(view) { return view?.querySelector?.('[data-pitch-trace-scroll]') || null }
+function syncWaveformX(view, scrollLeft = getScroll(view)?.scrollLeft || 0) {
+  view.style.setProperty('--pt-waveform-offset', `${-Math.max(0, scrollLeft)}px`)
+}
 
 function applyVerticalState(view, preserve = false, anchorY = 0.5) {
   const state = getState(getViewId(view))
@@ -25,6 +28,7 @@ function applyVerticalState(view, preserve = false, anchorY = 0.5) {
     scroll.scrollTop = preserve
       ? Math.max(0, (scrollRatio * Math.max(1, scroll.scrollHeight)) - (scroll.clientHeight * anchorY))
       : state.scrollTop
+    syncWaveformX(view, scroll.scrollLeft)
   })
 }
 
@@ -90,6 +94,7 @@ document.addEventListener('scroll', (event) => {
   const state = getState(getViewId(view))
   state.scrollLeft = scroll.scrollLeft
   state.scrollTop = scroll.scrollTop
+  syncWaveformX(view, scroll.scrollLeft)
   view.dispatchEvent(new CustomEvent('soura:pitch-trace-horizontal-scroll', {
     bubbles: true,
     detail: { scrollLeft: scroll.scrollLeft }

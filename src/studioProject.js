@@ -1381,20 +1381,12 @@ function renderPitchTraceView(region, track) {
     lines.push(`<i class="${bar?'is-bar':whole?'is-beat':'is-subdivision'}" style="left:${left.toFixed(4)}%"></i>`)
   }
 
-  const labels=[]
-  for(let beat=Math.ceil(startBeat);beat<=endBeat+1e-6;beat+=1){
-    const left=((beat-startBeat)/Math.max(.0001,lengthBeats))*100
-    const bar=Math.floor(beat/beatsPerBar)+1
-    const beatInBar=((Math.round(beat)%beatsPerBar)+beatsPerBar)%beatsPerBar+1
-    labels.push(`<span style="left:${left.toFixed(4)}%">${bar}.${beatInBar}</span>`)
-  }
-
   const octaveLines=Array.from({length:rowCount},(_,index)=>{const midi=maxNote-index;return midi%12===0?`<i style="top:${((index/rowCount)*100).toFixed(4)}%"></i>`:''}).join('')
   const status=trace.status==='analyzing'?`Analyzing ${Math.round((trace.progress||0)*100)}%`:trace.status==='ready'?`Ready · ${notes.length} notes`:trace.status==='failed'?`Failed · ${trace.error||'Try again'}`:'Idle'
   const base=getPitchTraceBaseSummary(region,edit)
   const empty=trace.status==='analyzing'?'<p class="studio-pitch-trace-empty">Deep pitch analysis is running…</p>':trace.status==='failed'?`<p class="studio-pitch-trace-empty">${esc(trace.error||'Pitch analysis failed.')}</p>`:'<p class="studio-pitch-trace-empty">Analyze Audio to map detected pitch onto MIDI rows.</p>'
 
-  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1600})}</div><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-time-ruler">${labels.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>
+  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1600})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>
           <span
             class="studio-pitch-trace-playhead"
             data-pitch-trace-playhead
