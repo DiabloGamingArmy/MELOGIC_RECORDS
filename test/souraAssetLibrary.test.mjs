@@ -30,6 +30,7 @@ test('archive hierarchy is preserved with stable folder and audio ids', () => {
   const kick = first.find((asset) => asset.name === 'one.wav')
   assert.equal(kick.parentId, kicks.id)
   assert.equal(kick.source.archivePath, 'Drums/Kicks/one.wav')
+  assert.equal(kick.source.packId, first[0].id)
 })
 
 test('provider normalization, legacy state migration, and storage feature detection are safe', async () => {

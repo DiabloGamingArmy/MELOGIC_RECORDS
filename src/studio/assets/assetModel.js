@@ -52,7 +52,8 @@ export function normalizeAssetList(rows = []) {
 
 export function buildArchiveHierarchy({ sourceType = 'marketplace', rootId, rootName, productId = '', projectId = '', publisherId = '', sourceFileId = '', version = '', entries = [] } = {}) {
   const collectionId = rootId || stableAssetId(`${sourceType}-collection`, `${productId || projectId}|${rootName}`)
-  const output = [normalizeAsset({ id: collectionId, name: rootName || 'Collection', kind: 'collection', sourceType, parentId: sourceType, readOnly: true, source: { productId, projectId, publisherId, version } })]
+  const packId = rootId || collectionId
+  const output = [normalizeAsset({ id: collectionId, name: rootName || 'Collection', kind: 'collection', sourceType, parentId: sourceType, readOnly: true, source: { productId, packId, projectId, publisherId, version } })]
   const folders = new Map()
   for (const entry of entries) {
     const archivePath = String(entry.archivePath || entry.path || '').replace(/\\/g, '/').replace(/^\/+/, '')
@@ -65,7 +66,7 @@ export function buildArchiveHierarchy({ sourceType = 'marketplace', rootId, root
       logicalPath = logicalPath ? `${logicalPath}/${segment}` : segment
       const folderId = stableAssetId(`${sourceType}-folder`, `${collectionId}|${logicalPath}`)
       if (!folders.has(folderId)) {
-        const folder = normalizeAsset({ id: folderId, name: segment, kind: 'folder', sourceType, parentId, readOnly: true, source: { productId, projectId, publisherId, archivePath: logicalPath, version } })
+        const folder = normalizeAsset({ id: folderId, name: segment, kind: 'folder', sourceType, parentId, readOnly: true, source: { productId, packId, projectId, publisherId, archivePath: logicalPath, version } })
         folders.set(folderId, folder)
         output.push(folder)
       }
@@ -79,11 +80,10 @@ export function buildArchiveHierarchy({ sourceType = 'marketplace', rootId, root
       parentId,
       readOnly: true,
       audio: { duration: entry.duration, channels: entry.channels, sampleRate: entry.sampleRate, format: entry.format || fileName?.split('.').pop(), byteSize: entry.byteSize || entry.fileSize },
-      source: { productId, projectId, publisherId, sourceFileId: entry.sourceFileId || sourceFileId, archivePath, storagePath: entry.storagePath, localPath: entry.localPath, contentHash: entry.contentHash, version },
+      source: { productId, packId, projectId, publisherId, sourceFileId: entry.sourceFileId || sourceFileId, archivePath, storagePath: entry.storagePath, localPath: entry.localPath, contentHash: entry.contentHash, version },
       metadata: { tags: entry.tags || [], productTitle: rootName || '' },
       capabilities: { preview: true, dragToTimeline: true, insertAtPlayhead: true, download: Boolean(entry.storagePath), delete: false }
     }))
   }
   return output
 }
-

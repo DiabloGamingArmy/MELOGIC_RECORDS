@@ -62,6 +62,10 @@ import { UserProvider } from './studio/assets/providers/UserProvider.js'
 import { ProjectProvider } from './studio/assets/providers/ProjectProvider.js'
 import { WebAssetStorage } from './studio/assets/storage/WebAssetStorage.js'
 import { NativeAssetStorage, isNativeAssetRuntime } from './studio/assets/storage/NativeAssetStorage.js'
+import { AssetAuditionController } from './studio/assets/AssetAuditionController.js'
+import { SOURA_ASSET_DRAG_TYPE, createSouraAssetDragPayload, parseSouraAssetDragPayload, planAssetTimelineDrop } from './studio/assets/assetTimelineDrop.js'
+import { getAssetLibraryShortcutAction } from './studio/assets/assetLibraryShortcuts.js'
+import { measureTimeDomainSamples, updateMeterBallistics } from './studio/audio/audioMetering.js'
 import {
   musicalDurationToRegionWidth,
   musicalPositionToRegionX,
@@ -168,11 +172,12 @@ const webAssetStorage = new WebAssetStorage()
 const nativeAssetStorage = isNativeAssetRuntime() ? new NativeAssetStorage() : null
 const userAssetProvider = new UserProvider({ storage: webAssetStorage, nativeStorage: nativeAssetStorage })
 const souraAssetLibrary = new AssetLibrary([new PrimitiveProvider(), new MarketplaceProvider(), userAssetProvider, new ProjectProvider()])
+const assetAuditionBufferCache = new Map()
+const assetAuditionController = new AssetAuditionController({ createSource: createAssetAuditionSource, onStateChange: updateAssetAuditionDom })
 let assetLibraryState = (() => {
   try { return { selectedSourceId: 'primitive', search: '', selectedAssetId: '', loading: false, loaded: false, error: '', ...migrateLegacyAssetLibraryState(JSON.parse(localStorage.getItem(ASSET_LIBRARY_PREF_KEY) || localStorage.getItem('melogic:soura:loopBrowser') || '{}')) } }
   catch { return { selectedSourceId: 'primitive', search: '', selectedAssetId: '', loading: false, loaded: false, error: '' } }
 })()
-let assetLibraryPreviewAudio = null
 let isControlsMenuOpen = false
 let controlsConfigModalOpen = false
 let projectSettingsModalOpen = false
@@ -235,6 +240,8 @@ let followPlayhead = false
 let isCycleEnabled = false
 let isMetronomeEnabled = true
 let audioContext = null
+let masterAudioBus = null
+let assetAuditionGain = null
 let studioAudioEngine = null
 let lastMetronomeBeat = -1
 let activeLeftPanel = ""
@@ -364,6 +371,7 @@ let globalTrackDrag = null
 let globalTrackPopover = null
 let midiRegions = []
 let audioImportDrag = null
+let activeAssetDragPayload = null
 const audioImportPreviewCache = new Map()
 let audioImportPreviewRaf = 0
 let audioImportUploadState = { active: false, hidden: false, fileName: '', bytesTransferred: 0, totalBytes: 0 }
@@ -2591,7 +2599,7 @@ function renderAudioImportPreview() {
   const waveformColor = getReadableWaveformColor(color)
   const duration = Math.max(minAudioRegionSeconds, Number(audioImportDrag.durationSeconds) || minAudioRegionSeconds)
   const width = Math.max(32, secondsToBeats(duration) * beatWidth())
-  const trackIndex = Math.max(0, tracks.findIndex((item)=>item.id === audioImportDrag.trackId))
+  const trackIndex = audioImportDrag.createAudioTrack ? clamp(Number.isFinite(Number(audioImportDrag.newTrackIndex)) ? Number(audioImportDrag.newTrackIndex) : tracks.length, 0, tracks.length) : Math.max(0, tracks.findIndex((item)=>item.id === audioImportDrag.trackId))
   const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
   const top = trackLaneTop(trackIndex) + inset
   const height = Math.max(28, timelineState.trackHeight - (inset * 2))
@@ -2599,7 +2607,7 @@ function renderAudioImportPreview() {
     ? 'Reading audio...'
     : audioImportDrag.valid === false
       ? audioImportDrag.message || 'Drop audio onto an audio track'
-      : `${audioImportDrag.fileName || 'Audio'} · ${formatAudioDuration(duration)}`
+      : `${audioImportDrag.fileName || 'Audio'} · ${formatAudioDuration(duration)} · Beat ${Number(audioImportDrag.startBeat || 0).toFixed(2)}${audioImportDrag.createAudioTrack ? ' · New audio track' : ` · ${track?.name || 'Audio track'}`}${isSnapEnabled ? ' · Snapped' : ''}`
   return `<article class="studio-audio-import-preview ${audioImportDrag.valid === false ? 'is-invalid' : ''} ${audioImportDrag.status === 'loading' ? 'is-loading' : ''}" style="left:${beatToX(audioImportDrag.startBeat || 0)}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};"><strong>${esc(audioImportDrag.fileName || 'Audio import')}</strong><span>${esc(status)}</span></article>`
 }
 function barToX(index){ return barZeroX() + (index * timelineState.pixelsPerBar) }
@@ -3345,7 +3353,9 @@ function renderMixerInsertList(track = null) {
 }
 function renderMixerChannelStrip(track = null, { stereoOut = false } = {}) {
   const color = stereoOut ? '#8cdfff' : (track?.color || '#58d4ff')
-  const level = clamp(Number(track?.outputLevel) || 0, 0, 1)
+  const meterState = stereoOut ? masterAudioBus?.meter : trackAudioChannels.get(track?.id)?.meter
+  const level = clamp(Number(meterState?.level ?? track?.outputLevel) || 0, 0, 1)
+  const peakLevel = clamp(Number(meterState?.peakLevel ?? level) || 0, 0, 1)
   const volume = stereoOut ? 100 : clamp(Number(track?.volume) || 0, 0, 100)
   const pan = stereoOut ? 0 : clamp(Number(track?.pan) || 0, -100, 100)
   const name = stereoOut ? 'Stereo Out' : (track?.name || 'Track')
@@ -3362,7 +3372,7 @@ function renderMixerChannelStrip(track = null, { stereoOut = false } = {}) {
     </div>
     <div class="studio-mixer-inserts">${renderMixerInsertList(stereoOut ? null : track)}</div>
     <div class="studio-mixer-pan"><button class="studio-track-pan" type="button" ${stereoOut ? 'disabled' : `data-track-pan="${esc(id)}"`} aria-label="${esc(name)} pan ${Math.round(pan)}" data-tooltip="Pan ${Math.round(pan)}" style="--pan-angle:${(pan / 100) * 135}deg"></button><span ${stereoOut ? '' : `data-track-pan-readout="${esc(id)}"`}>${esc(formatTrackAutomationValue('pan', pan))}</span></div>
-    <div class="studio-mixer-fader-row"><span class="studio-mixer-meter" aria-hidden="true"><i style="height:${Math.round(level * 100)}%"></i></span><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small class="studio-mixer-volume-readout" ${stereoOut ? '' : `data-track-volume-readout="${esc(id)}"`}>${Math.round(volume)}%</small></div>
+    <div class="studio-mixer-fader-row"><button type="button" class="studio-mixer-meter ${meterState?.clipped ? 'is-clipped' : ''}" data-mixer-meter="${esc(id || 'master')}" data-meter-clip="${esc(id || 'master')}" aria-label="${esc(name)} output meter; click to clear clip"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(peakLevel * 100)}%"></b></button><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small class="studio-mixer-volume-readout" ${stereoOut ? '' : `data-track-volume-readout="${esc(id)}"`}>${Math.round(volume)}%</small></div>
     <span class="studio-mixer-routing">${stereoOut ? 'Output' : esc(track?.audioOutput || 'Stereo Out')}</span>
   </article>`
 }
@@ -3389,13 +3399,23 @@ function assetLibraryParentId(id) {
   if (ASSET_LIBRARY_ROOTS.some((root) => root.id === id)) return ''
   return souraAssetLibrary.getAsset(id)?.parentId || ''
 }
+function getVisibleAssetLibraryRows() {
+  return souraAssetLibrary.listChildren(assetLibraryState.selectedSourceId || 'primitive', assetLibraryState.search)
+}
+function isPreviewableAsset(asset) {
+  return asset?.kind === 'audio' && asset?.capabilities?.preview !== false
+}
 function renderAssetLibraryPanel(motionClass = '') {
   const sourceId = assetLibraryState.selectedSourceId || 'primitive'
   const current = souraAssetLibrary.getAsset(sourceId)
-  const rows = souraAssetLibrary.listChildren(sourceId, assetLibraryState.search)
+  const rows = getVisibleAssetLibraryRows()
+  const audition = assetAuditionController.snapshot()
+  const selectedAsset = souraAssetLibrary.getAsset(assetLibraryState.selectedAssetId)
+  const canPreviewSelected = isPreviewableAsset(selectedAsset)
+  const playingSelected = canPreviewSelected && audition.activeAssetId === selectedAsset.id && ['loading', 'playing'].includes(audition.playbackState)
   const empty = assetLibraryState.loading ? 'Loading assets…' : assetLibraryState.error || (sourceId === 'primitive' ? 'No built-in primitives are registered yet.' : sourceId === 'marketplace' ? 'No marketplace packs installed.' : sourceId === 'user' ? 'Import audio to build your personal library.' : sourceId === 'project' ? 'No reusable audio found in other accessible projects.' : 'This folder is empty.')
   const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
-  return `<section class="studio-bottom-panel studio-asset-library ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Asset Library</strong><nav><button type="button" data-refresh-asset-library>Refresh</button><button type="button" data-detach-bottom-panel="asset-library">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-asset-library-body"><aside class="studio-asset-library-sources" aria-label="Asset sources">${ASSET_LIBRARY_ROOTS.map((root) => `<button type="button" data-asset-folder="${root.id}" class="${sourceId === root.id ? 'is-active' : ''}">${esc(root.name)}</button>`).join('')}</aside><section class="studio-asset-library-content"><div class="studio-asset-library-toolbar">${current ? `<button type="button" data-asset-folder="${esc(assetLibraryParentId(sourceId))}">← Back</button><strong>${esc(current.name)}</strong>` : '<strong>Browse assets</strong>'}<input type="search" data-asset-search value="${esc(assetLibraryState.search)}" placeholder="Search this folder" aria-label="Search assets"><button type="button" data-import-user-asset>Import Audio</button><input type="file" data-user-asset-file accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.aac,.ogg,.oga,.webm,.flac" hidden></div><div class="studio-asset-library-list" role="list">${rows.length ? rows.map((asset) => `<article role="listitem" class="studio-asset-row ${assetLibraryState.selectedAssetId === asset.id ? 'is-selected' : ''}" data-asset-id="${esc(asset.id)}" data-asset-kind="${asset.kind}" draggable="${asset.kind === 'audio'}"><span class="studio-asset-row-icon">${asset.kind === 'audio' ? '♪' : '▸'}</span><span><strong>${esc(asset.name)}</strong><small>${asset.kind === 'audio' ? `${esc(asset.audio?.format || 'audio')}${asset.audio?.duration ? ` · ${Number(asset.audio.duration).toFixed(1)}s` : ''}` : esc(asset.kind)}</small></span>${asset.kind === 'audio' ? '<button type="button" data-preview-asset aria-label="Preview asset">▶</button>' : ''}</article>`).join('') : `<p class="studio-asset-library-empty">${esc(empty)}</p>`}</div></section></div></section>`
+  return `<section class="studio-bottom-panel studio-asset-library ${motionClass}" data-asset-library-panel tabindex="-1"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Asset Library</strong><nav><button type="button" data-refresh-asset-library>Refresh</button><button type="button" data-detach-bottom-panel="asset-library">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-asset-library-body"><aside class="studio-asset-library-sources" aria-label="Asset sources">${ASSET_LIBRARY_ROOTS.map((root) => `<button type="button" data-asset-folder="${root.id}" class="${sourceId === root.id ? 'is-active' : ''}">${esc(root.name)}</button>`).join('')}</aside><section class="studio-asset-library-content"><div class="studio-asset-library-toolbar">${current ? `<button type="button" data-asset-folder="${esc(assetLibraryParentId(sourceId))}">← Back</button><strong>${esc(current.name)}</strong>` : '<strong>Browse assets</strong>'}<input type="search" data-asset-search value="${esc(assetLibraryState.search)}" placeholder="Search this folder" aria-label="Search assets"><button type="button" data-preview-selected-asset title="Preview selected asset (Space)" ${canPreviewSelected ? '' : 'disabled'}>${playingSelected ? '■ Stop' : '▶ Preview'}</button><button type="button" data-import-user-asset>Import Audio</button><input type="file" data-user-asset-file accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.aac,.ogg,.oga,.webm,.flac" hidden></div><div class="studio-asset-library-list" role="listbox" aria-label="Assets">${rows.length ? rows.map((asset) => { const selected = assetLibraryState.selectedAssetId === asset.id; const playing = audition.activeAssetId === asset.id && ['loading', 'playing'].includes(audition.playbackState); return `<article role="option" aria-selected="${String(selected)}" tabindex="${selected ? '0' : '-1'}" class="studio-asset-row ${selected ? 'is-selected' : ''} ${playing ? 'is-playing' : ''}" data-asset-id="${esc(asset.id)}" data-asset-kind="${asset.kind}" draggable="${asset.kind === 'audio' && asset.capabilities?.dragToTimeline !== false}"><span class="studio-asset-row-icon">${asset.kind === 'audio' ? '♪' : '▸'}</span><span><strong title="${esc(asset.name)}">${esc(asset.name)}</strong><small>${asset.kind === 'audio' ? `${esc(asset.audio?.format || 'audio')}${asset.audio?.duration ? ` · ${Number(asset.audio.duration).toFixed(1)}s` : ''}` : esc(asset.kind)}</small></span>${isPreviewableAsset(asset) ? `<button type="button" data-preview-asset aria-label="${playing ? 'Stop' : 'Preview'} ${esc(asset.name)}">${playing ? '■' : '▶'}</button>` : ''}</article>` }).join('') : `<p class="studio-asset-library-empty">${esc(empty)}</p>`}</div></section></div></section>`
 }
 async function resolveAssetLibraryFile(assetId) {
   const resolved = await souraAssetLibrary.resolveAsset(assetId)
@@ -3406,20 +3426,61 @@ async function resolveAssetLibraryFile(assetId) {
   const blob = await response.blob()
   return new File([blob], resolved.fileName || souraAssetLibrary.getAsset(assetId)?.name || 'asset.wav', { type: resolved.contentType || blob.type || 'audio/*' })
 }
-async function insertAssetLibraryAudio(assetId, { trackId = selectedTrackId, timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)) } = {}) {
-  try { await createAudioRegionFromFile({ file: await resolveAssetLibraryFile(assetId), trackId, timelineStartBeats, source: 'asset-library' }) }
+function getAssetOriginMetadata(asset = {}) {
+  return { assetId: String(asset.id || ''), sourceType: String(asset.sourceType || ''), name: String(asset.name || ''), productId: String(asset.source?.productId || ''), packId: String(asset.source?.sourcePackId || asset.source?.packId || ''), projectId: String(asset.source?.projectId || ''), publisherId: String(asset.source?.publisherId || ''), sourceFileId: String(asset.source?.sourceFileId || ''), archivePath: String(asset.source?.archivePath || ''), contentHash: String(asset.source?.contentHash || ''), version: String(asset.source?.version || '') }
+}
+async function insertAssetLibraryAudio(assetId, { trackId = selectedTrackId, newTrackIndex = tracks.length, timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)) } = {}) {
+  const asset = souraAssetLibrary.getAsset(assetId)
+  try { await createAudioRegionFromFile({ file: await resolveAssetLibraryFile(assetId), trackId, newTrackIndex, timelineStartBeats, source: 'asset-library', origin: getAssetOriginMetadata(asset) }) }
   catch (error) { recordingStatus = error?.message || 'Asset could not be inserted.'; updateEditorTitleStatus() }
 }
-async function previewAssetLibraryAudio(assetId) {
-  if (assetLibraryPreviewAudio) { assetLibraryPreviewAudio.pause(); assetLibraryPreviewAudio = null }
-  try {
-    const resolved = await souraAssetLibrary.resolveAsset(assetId)
-    const url = resolved.url || URL.createObjectURL(resolved.file)
-    const audio = new Audio(url)
-    assetLibraryPreviewAudio = audio
-    audio.addEventListener('ended', () => { if (!resolved.url) URL.revokeObjectURL(url); if (assetLibraryPreviewAudio === audio) assetLibraryPreviewAudio = null }, { once: true })
-    await audio.play()
-  } catch (error) { recordingStatus = error?.message || 'Asset preview failed.'; updateEditorTitleStatus() }
+async function createAssetAuditionSource(asset) {
+  const ctx = getAudioContext()
+  if (ctx.state === 'suspended') await ctx.resume()
+  let buffer = assetAuditionBufferCache.get(asset.id)
+  if (!buffer) {
+    const file = await resolveAssetLibraryFile(asset.id)
+    buffer = await ctx.decodeAudioData((await file.arrayBuffer()).slice(0))
+    assetAuditionBufferCache.set(asset.id, buffer)
+  }
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.connect(getAssetAuditionGain())
+  let ended = null
+  let started = false
+  source.onended = () => { try { source.disconnect() } catch {}; ended?.() }
+  return {
+    play: () => { if (!started) { started = true; source.start() }; startTrackMeterLoop() },
+    stop: () => { if (started) { try { source.stop() } catch {} }; try { source.disconnect() } catch {} },
+    onEnded: (callback) => { ended = callback }
+  }
+}
+function updateAssetAuditionDom(state = assetAuditionController.snapshot()) {
+  app.querySelectorAll('[data-asset-id]').forEach((row) => {
+    const selected = row.dataset.assetId === state.selectedAssetId
+    const playing = row.dataset.assetId === state.activeAssetId && ['loading', 'playing'].includes(state.playbackState)
+    row.classList.toggle('is-selected', selected)
+    row.classList.toggle('is-playing', playing)
+    row.setAttribute('aria-selected', String(selected))
+    row.tabIndex = selected ? 0 : -1
+    const button = row.querySelector('[data-preview-asset]')
+    if (button) { button.textContent = playing ? '■' : '▶'; button.setAttribute('aria-label', `${playing ? 'Stop' : 'Preview'} ${souraAssetLibrary.getAsset(row.dataset.assetId)?.name || 'asset'}`) }
+  })
+  const selected = souraAssetLibrary.getAsset(state.selectedAssetId)
+  const toolbar = app.querySelector('[data-preview-selected-asset]')
+  if (toolbar) {
+    const playing = state.activeAssetId === state.selectedAssetId && ['loading', 'playing'].includes(state.playbackState)
+    toolbar.disabled = !isPreviewableAsset(selected)
+    toolbar.textContent = playing ? '■ Stop' : '▶ Preview'
+  }
+}
+async function toggleAssetLibraryAudition(assetId, { autoplayNavigation = true } = {}) {
+  const asset = souraAssetLibrary.getAsset(assetId)
+  if (!isPreviewableAsset(asset)) return false
+  assetLibraryState = { ...assetLibraryState, selectedAssetId: asset.id }
+  assetAuditionController.selectAsset(asset)
+  try { return await assetAuditionController.toggle(asset, { autoplayNavigation }) }
+  catch (error) { recordingStatus = error?.message || 'Asset preview failed.'; updateEditorTitleStatus(); return false }
 }
 function renderBottomPanel(panel,motionClass=''){
   if(panel==='asset-library'||panel==='loops') return renderAssetLibraryPanel(motionClass)
@@ -3531,10 +3592,10 @@ function addTrack({ sourceTrack = null, trackType = 'software' } = {}) {
   renderEditor()
 }
 function getAudioImportTrackName(fileName = '') {
-  const name = String(fileName || '').trim()
+  const name = String(fileName || '').replace(/\.[^.]+$/, '').trim()
   return (name || 'Imported Audio').slice(0, 80)
 }
-function createAudioTrackForImport(fileName = '') {
+function createAudioTrackForImport(fileName = '', { insertIndex = tracks.length } = {}) {
   const id = makeTrackId()
   const colors = nextTrackColor(tracks.length)
   const track = ensureTrackInsertState({
@@ -3555,7 +3616,7 @@ function createAudioTrackForImport(fileName = '') {
     instrument: null,
     audioEffects: []
   })
-  tracks.push(track)
+  tracks.splice(clamp(Math.round(Number(insertIndex) || 0), 0, tracks.length), 0, track)
   selectedTrackId = track.id
   activeLeftPanel = 'inspector'
   return track
@@ -5390,6 +5451,28 @@ function createInteractiveAudioContext() {
 }
 async function getStudioAudioEngine() { if (!studioAudioEngine) { studioAudioEngine = new StudioAudioEngine(); await studioAudioEngine.init() } return studioAudioEngine }
 function getAudioContext(){ if(!audioContext){ audioContext = createInteractiveAudioContext() } if(audioContext.state==='suspended') audioContext.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err)); return audioContext }
+function getMasterAudioBus() {
+  if (masterAudioBus) return masterAudioBus
+  const ctx = getAudioContext()
+  const input = ctx.createGain()
+  const gain = ctx.createGain()
+  const analyser = ctx.createAnalyser()
+  analyser.fftSize = 512
+  analyser.smoothingTimeConstant = 0
+  input.connect(gain)
+  gain.connect(analyser)
+  analyser.connect(ctx.destination)
+  masterAudioBus = { input, gain, analyser, data: new Float32Array(analyser.fftSize), meter: updateMeterBallistics() }
+  return masterAudioBus
+}
+function getAssetAuditionGain() {
+  if (assetAuditionGain) return assetAuditionGain
+  const ctx = getAudioContext()
+  assetAuditionGain = ctx.createGain()
+  assetAuditionGain.gain.value = 1
+  assetAuditionGain.connect(getMasterAudioBus().input)
+  return assetAuditionGain
+}
 function prewarmDawAudio() {
   try { getAudioContext() } catch (err) { console.warn('[studioProject] audio context prewarm failed', err) }
   if (!audioEnginePrewarmPromise) {
@@ -5736,7 +5819,8 @@ function createAudioEffectNodes(ctx, insert = {}) {
 function setTrackChannelVolume(track = {}) {
   const channel = trackAudioChannels.get(track?.id)
   if (!channel?.volumeGain || !audioContext) return
-  setAudioParam(channel.volumeGain.gain, clamp((Number(track.volume) || 0) / 100, 0, 1), 0)
+  const level = isTrackOutputAudible(track) ? clamp((Number(track.volume) || 0) / 100, 0, 1) : 0
+  setAudioParam(channel.volumeGain.gain, level, 0)
 }
 function rebuildTrackAudioEffectsChain(trackId = '') {
   const channel = trackAudioChannels.get(trackId)
@@ -5775,15 +5859,15 @@ function getTrackAudioChannel(trackId = selectedTrackId) {
   const panner = ctx.createStereoPanner()
   const analyser = ctx.createAnalyser()
   analyser.fftSize = 512
-  analyser.smoothingTimeConstant = 0.72
+  analyser.smoothingTimeConstant = 0
   const track = tracks.find((item)=>item.id === id)
   input.gain.value = 1
   volumeGain.gain.value = clamp((Number(track?.volume) || 0) / 100, 0, 1)
   panner.pan.value = clamp((Number(track?.pan) || 0) / 100, -1, 1)
   volumeGain.connect(panner)
   panner.connect(analyser)
-  analyser.connect(ctx.destination)
-  const channel = { input, volumeGain, panner, analyser, effectNodes: [], effectCleanups: [], data: new Float32Array(analyser.fftSize), level: 0, peak: 0 }
+  analyser.connect(getMasterAudioBus().input)
+  const channel = { input, volumeGain, panner, analyser, effectNodes: [], effectCleanups: [], data: new Float32Array(analyser.fftSize), meter: updateMeterBallistics(), level: 0, peak: 0 }
   trackAudioChannels.set(id, channel)
   rebuildTrackAudioEffectsChain(id)
   return channel
@@ -5810,7 +5894,7 @@ function playMetronomeClick(isDownbeat, startTime = null){
   gain.gain.exponentialRampToValueAtTime(0.16,startAt+0.004)
   gain.gain.exponentialRampToValueAtTime(0.0001,startAt+0.055)
   osc.connect(gain)
-  gain.connect(ctx.destination)
+  gain.connect(getMasterAudioBus().input)
   osc.start(startAt)
   osc.stop(startAt+0.065)
 }
@@ -6349,6 +6433,7 @@ function openBottomPanel(panelId){
 }
 function closeBottomPanel(){
   if(!activeBottomPanel) return
+  if (activeBottomPanel === 'asset-library') assetAuditionController.stopAndClear()
   clearBottomPanelMotionTimer()
   closingBottomPanel=activeBottomPanel
   activeBottomPanel=''
@@ -7144,14 +7229,35 @@ function clearTrackKeyboardNotes(trackId = '') {
 }
 function updateTrackMeterDom(track) {
   if (!track) return
-  const level = clamp(Number(track.outputLevel) || 0, 0, 1)
+  const meterState = trackAudioChannels.get(track.id)?.meter || {}
+  const level = clamp(Number(meterState.level ?? track.outputLevel) || 0, 0, 1)
+  const peakLevel = clamp(Number(meterState.peakLevel ?? level) || 0, 0, 1)
   const row = app.querySelector(`[data-track-row="${CSS.escape(track.id)}"]`)
   const meter = app.querySelector(`[data-track-meter="${CSS.escape(track.id)}"]`)
   row?.style.setProperty('--track-meter-level', String(level))
   const fill = meter?.querySelector('i')
   const peak = meter?.querySelector('b')
   if (fill) fill.style.height = `${Math.round(level * 100)}%`
-  if (peak) peak.style.bottom = `${Math.round(level * 100)}%`
+  if (peak) peak.style.bottom = `${Math.round(peakLevel * 100)}%`
+  app.querySelectorAll(`[data-mixer-meter="${CSS.escape(track.id)}"]`).forEach((mixerMeter) => {
+    const mixerFill = mixerMeter.querySelector('i')
+    const mixerPeak = mixerMeter.querySelector('b')
+    if (mixerFill) mixerFill.style.height = `${Math.round(level * 100)}%`
+    if (mixerPeak) mixerPeak.style.bottom = `${Math.round(peakLevel * 100)}%`
+    mixerMeter.classList.toggle('is-clipped', meterState.clipped === true)
+  })
+}
+function updateMasterMeterDom() {
+  const meterState = masterAudioBus?.meter || {}
+  const level = clamp(Number(meterState.level) || 0, 0, 1)
+  const peakLevel = clamp(Number(meterState.peakLevel ?? level) || 0, 0, 1)
+  app.querySelectorAll('[data-mixer-meter="master"]').forEach((meter) => {
+    const fill = meter.querySelector('i')
+    const peak = meter.querySelector('b')
+    if (fill) fill.style.height = `${Math.round(level * 100)}%`
+    if (peak) peak.style.bottom = `${Math.round(peakLevel * 100)}%`
+    meter.classList.toggle('is-clipped', meterState.clipped === true)
+  })
 }
 function updateTrackEqSpectrumDom(track, channel) {
   if (!track?.id || !channel?.analyser) return
@@ -7213,37 +7319,36 @@ function startTrackMeterLoop() {
   if (meterRaf) return
   const tick = () => {
     const tickStart = performance.now()
+    const now = tickStart
     let active = false
     tracks.forEach((track) => {
       const channel = trackAudioChannels.get(track.id)
       if (channel?.analyser) {
         channel.analyser.getFloatTimeDomainData(channel.data)
-        let sum = 0
-        let peak = 0
-        for (let index = 0; index < channel.data.length; index += 1) {
-          const sample = Math.abs(channel.data[index] || 0)
-          sum += sample * sample
-          if (sample > peak) peak = sample
-        }
-        const rms = Math.sqrt(sum / Math.max(1, channel.data.length))
-        const target = clamp(Math.max(rms * 3.2, peak * 1.1), 0, 1)
-        const attack = target > channel.level ? 0.45 : 0.12
-        channel.level += (target - channel.level) * attack
-        channel.peak = Math.max(target, channel.peak * 0.965)
-        track.outputLevel = channel.level < 0.005 ? 0 : channel.level
+        channel.meter = updateMeterBallistics(channel.meter, measureTimeDomainSamples(channel.data), now)
+        channel.level = channel.meter.level
+        channel.peak = channel.meter.peakLevel
+        track.outputLevel = channel.meter.level
         updateTrackEqSpectrumDom(track, channel)
       } else {
-        track.outputLevel = Math.max(0, (Number(track.outputLevel) || 0) * 0.9)
+        track.outputLevel = 0
       }
       if (track.outputLevel > 0) active = true
       updateTrackMeterDom(track)
     })
+    if (masterAudioBus?.analyser) {
+      masterAudioBus.analyser.getFloatTimeDomainData(masterAudioBus.data)
+      masterAudioBus.meter = updateMeterBallistics(masterAudioBus.meter, measureTimeDomainSamples(masterAudioBus.data), now)
+      if (masterAudioBus.meter.level > 0) active = true
+      updateMasterMeterDom()
+    }
     const tickCostMs = performance.now() - tickStart
     const audioActivity = tracks.reduce((sum, track)=>sum + clamp(Number(track.outputLevel) || 0, 0, 1), 0) / Math.max(1, tracks.length)
     cpuUsagePercent = clamp((tickCostMs / 16.67) * 72 + (audioActivity * 28), 0, 100)
     updateCpuAlertState(cpuUsagePercent)
     app.querySelector('[data-cpu-percent]')?.replaceChildren(document.createTextNode(`${Math.round(cpuUsagePercent)}%`))
-    meterRaf = active || isPlaying || activeRecording || activePlaybackNotes.size ? requestAnimationFrame(tick) : 0
+    const auditionState = assetAuditionController.snapshot().playbackState
+    meterRaf = active || isPlaying || activeRecording || activePlaybackNotes.size || ['loading', 'playing'].includes(auditionState) ? requestAnimationFrame(tick) : 0
   }
   meterRaf = requestAnimationFrame(tick)
 }
@@ -8549,8 +8654,10 @@ async function beginAudioRecording(track, { startBeat = null } = {}) {
 async function createAudioRegionFromFile({
   file,
   trackId = selectedTrackId,
+  newTrackIndex = tracks.length,
   timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)),
-  source = 'import'
+  source = 'import',
+  origin = null
 } = {}) {
   if (!isSupportedAudioFile(file)) {
     recordingStatus = 'Unsupported audio file.'
@@ -8599,7 +8706,7 @@ async function createAudioRegionFromFile({
     const selectedAudioTrack = tracks.find((item)=>item.id === trackId)
     const track = selectedAudioTrack && isAudioTrack(selectedAudioTrack)
       ? selectedAudioTrack
-      : createAudioTrackForImport(metadata.fileName)
+      : createAudioTrackForImport(metadata.fileName, { insertIndex: newTrackIndex })
     const region = cloneRegionForState({
       id: clipId,
       clipId,
@@ -8642,6 +8749,7 @@ async function createAudioRegionFromFile({
         audioAssetId: clipId,
         runtimeId: clipId,
         source,
+        origin: origin && typeof origin === 'object' ? { ...origin } : null,
         contentType: metadata.contentType,
         fileType: metadata.fileType,
         fileName: metadata.fileName,
@@ -8715,22 +8823,42 @@ function getFirstAudioFileFromDataTransfer(dataTransfer) {
   const items = Array.from(dataTransfer?.items || [])
   return items.map((item)=>item.kind === 'file' ? item.getAsFile?.() : null).find(isSupportedAudioFile) || null
 }
-function getAudioImportPlacement(event, file = null) {
-  const trackIndex = getTrackLaneFromY(event.clientY)
-  const track = tracks[trackIndex] || null
+function getSouraAssetDragPayload(dataTransfer) {
+  const encoded = dataTransfer?.getData?.(SOURA_ASSET_DRAG_TYPE)
+  const parsed = parseSouraAssetDragPayload(encoded)
+  if (parsed) return parsed
+  const legacyId = dataTransfer?.getData?.('application/x-soura-asset-id')
+  return legacyId ? createSouraAssetDragPayload(souraAssetLibrary.getAsset(legacyId)) : activeAssetDragPayload
+}
+function dataTransferHasSouraAsset(dataTransfer) {
+  return Boolean(activeAssetDragPayload || dataTransfer?.types?.includes?.(SOURA_ASSET_DRAG_TYPE) || dataTransfer?.types?.includes?.('application/x-soura-asset-id'))
+}
+function getTimelineTrackAtPointer(clientY = 0) {
+  const gridEl = app.querySelector('[data-arrangement-grid]')
+  const rect = gridEl?.getBoundingClientRect?.()
+  if (!rect) return null
+  const timelineY = clientY - rect.top + (gridEl.scrollTop || 0)
+  if (timelineY < 0 || timelineY >= totalTrackLaneHeight()) return null
+  return tracks[trackIndexAtTimelineY(timelineY)] || null
+}
+function getAudioImportPlacement(event, file = null, asset = null) {
+  const track = getTimelineTrackAtPointer(event.clientY)
   const rawBeat = pointerEventToTimelineBeat(event, { snapped: false })
-  const startBeat = clampBeat(isSnapEnabled ? snapBeatToGrid(rawBeat) : rawBeat)
-  const audioTrack = track && isAudioTrack(track) ? track : null
-  const valid = Boolean(file && isSupportedAudioFile(file))
+  const trackIndex = track ? tracks.indexOf(track) : -1
+  const plan = planAssetTimelineDrop({ rawBeat, snapEnabled: isSnapEnabled, snap: snapBeatToGrid, track, trackIndex, trackCount: tracks.length, isAudioTrack })
+  const audioTrack = plan.trackId ? track : null
+  const valid = Boolean((file && isSupportedAudioFile(file)) || isPreviewableAsset(asset))
   return {
     track: audioTrack,
-    trackId: audioTrack?.id || '',
-    startBeat,
+    trackId: plan.trackId,
+    newTrackIndex: plan.newTrackIndex,
+    startBeat: clampBeat(plan.startBeat),
+    createAudioTrack: plan.createAudioTrack,
     valid,
-    message: !file || !isSupportedAudioFile(file)
+    message: !valid
       ? 'Unsupported audio file.'
       : audioTrack
-        ? 'Drop to import audio.'
+        ? `Drop on ${audioTrack.name}.`
         : 'A new audio track will be created for this file.'
   }
 }
@@ -8756,7 +8884,9 @@ function updateAudioImportPreview(event) {
     fileKey: key,
     fileName: file.name || 'Audio',
     trackId: placement.trackId,
+    newTrackIndex: placement.newTrackIndex,
     startBeat: placement.startBeat,
+    createAudioTrack: placement.createAudioTrack,
     valid: placement.valid,
     message: placement.message,
     status: cached?.metadata ? 'ready' : 'loading',
@@ -8785,7 +8915,37 @@ async function handleAudioImportDrop(event) {
     renderEditor()
     return
   }
-  await createAudioRegionFromFile({ file, trackId: placement.trackId, timelineStartBeats: placement.startBeat, source: 'import' })
+  await createAudioRegionFromFile({ file, trackId: placement.trackId, newTrackIndex: placement.newTrackIndex, timelineStartBeats: placement.startBeat, source: 'import' })
+}
+function updateAssetLibraryImportPreview(event) {
+  const payload = getSouraAssetDragPayload(event.dataTransfer) || activeAssetDragPayload
+  const asset = souraAssetLibrary.getAsset(payload?.assetId)
+  if (!isPreviewableAsset(asset)) { audioImportDrag = null; return false }
+  const placement = getAudioImportPlacement(event, null, asset)
+  audioImportDrag = {
+    active: true,
+    assetId: asset.id,
+    fileName: asset.name || 'Audio',
+    trackId: placement.trackId,
+    newTrackIndex: placement.newTrackIndex,
+    startBeat: placement.startBeat,
+    createAudioTrack: placement.createAudioTrack,
+    valid: placement.valid,
+    message: placement.message,
+    status: 'ready',
+    durationSeconds: Number(asset.audio?.duration || minAudioRegionSeconds)
+  }
+  return true
+}
+async function handleAssetLibraryImportDrop(event) {
+  const payload = getSouraAssetDragPayload(event.dataTransfer) || activeAssetDragPayload
+  const asset = souraAssetLibrary.getAsset(payload?.assetId)
+  audioImportDrag = null
+  activeAssetDragPayload = null
+  if (!isPreviewableAsset(asset)) return
+  const placement = getAudioImportPlacement(event, null, asset)
+  if (!placement.valid) return
+  await insertAssetLibraryAudio(asset.id, { trackId: placement.trackId, newTrackIndex: placement.newTrackIndex, timelineStartBeats: placement.startBeat })
 }
 function cleanupAudioRecordingController() {
   const controller = audioRecordingController
@@ -10492,11 +10652,47 @@ function mountInlineNumericEditor() {
   })
 }
 
-function bindAssetLibraryEvents(grid) {
+function focusSelectedAssetLibraryRow() {
+  requestAnimationFrame(() => app.querySelector(`[data-asset-id="${CSS.escape(assetLibraryState.selectedAssetId || '')}"]`)?.focus({ preventScroll: true }))
+}
+function hasAssetLibraryShortcutFocus(event) {
+  if (activeBottomPanel !== 'asset-library') return false
+  return Boolean(event.target?.closest?.('[data-asset-library-panel]') || document.activeElement?.closest?.('[data-asset-library-panel]'))
+}
+function handleAssetLibraryShortcut(event) {
+  const asset = souraAssetLibrary.getAsset(assetLibraryState.selectedAssetId)
+  const candidates = getVisibleAssetLibraryRows()
+  const action = getAssetLibraryShortcutAction({
+    code: event.code,
+    focusedInsideLibrary: hasAssetLibraryShortcutFocus(event),
+    textEntry: isTextEntryTarget(event.target),
+    nativeSpaceTarget: Boolean(event.target?.closest?.('button, a, input, textarea, select, [contenteditable="true"]')),
+    modified: event.ctrlKey || event.metaKey || event.altKey,
+    selectedPreviewable: isPreviewableAsset(asset),
+    hasPreviewableRows: candidates.some(isPreviewableAsset)
+  })
+  if (action === 'toggle-audition') {
+    event.preventDefault()
+    void toggleAssetLibraryAudition(asset.id, { autoplayNavigation: true })
+    return true
+  }
+  if (!['move-up', 'move-down'].includes(action)) return false
+  event.preventDefault()
+  void assetAuditionController.moveSelection(action === 'move-up' ? -1 : 1, candidates).then((asset) => {
+    if (!asset) return
+    assetLibraryState = { ...assetLibraryState, selectedAssetId: asset.id }
+    persistAssetLibraryState()
+    renderEditor()
+    focusSelectedAssetLibraryRow()
+  }).catch((error) => { recordingStatus = error?.message || 'Asset preview failed.'; updateEditorTitleStatus() })
+  return true
+}
+function bindAssetLibraryEvents() {
   app.querySelector('[data-refresh-asset-library]')?.addEventListener('click', () => refreshAssetLibrary())
   app.querySelectorAll('[data-asset-folder]').forEach((button) => button.addEventListener('click', () => {
     const id = button.dataset.assetFolder
     if (!id) return
+    assetAuditionController.stopAndClear()
     assetLibraryState = { ...assetLibraryState, selectedSourceId: id, selectedAssetId: '' }
     persistAssetLibraryState(); renderEditor()
   }))
@@ -10509,30 +10705,36 @@ function bindAssetLibraryEvents(grid) {
     try { await userAssetProvider.importFile(file); assetLibraryState = { ...assetLibraryState, selectedSourceId: 'user', loaded: false }; await refreshAssetLibrary() }
     catch (error) { recordingStatus = error?.message || 'Audio import failed.'; updateEditorTitleStatus() }
   })
+  app.querySelector('[data-preview-selected-asset]')?.addEventListener('click', () => {
+    const asset = souraAssetLibrary.getAsset(assetLibraryState.selectedAssetId)
+    if (isPreviewableAsset(asset)) void toggleAssetLibraryAudition(asset.id, { autoplayNavigation: true })
+  })
   app.querySelectorAll('[data-asset-id]').forEach((row) => {
     const id = row.dataset.assetId
     const kind = row.dataset.assetKind
     row.addEventListener('click', (event) => {
-      if (event.target.closest('[data-preview-asset]')) return
-      if (kind !== 'audio') { assetLibraryState = { ...assetLibraryState, selectedSourceId: id, selectedAssetId: '' }; persistAssetLibraryState(); renderEditor(); return }
-      assetLibraryState = { ...assetLibraryState, selectedAssetId: id }; renderEditor()
+      if (event.target.closest('[data-preview-asset]')) {
+        assetLibraryState = { ...assetLibraryState, selectedAssetId: id }
+        assetAuditionController.selectAsset(souraAssetLibrary.getAsset(id))
+        void toggleAssetLibraryAudition(id, { autoplayNavigation: true })
+        return
+      }
+      if (kind !== 'audio') { assetAuditionController.stopAndClear(); assetLibraryState = { ...assetLibraryState, selectedSourceId: id, selectedAssetId: '' }; persistAssetLibraryState(); renderEditor(); return }
+      assetLibraryState = { ...assetLibraryState, selectedAssetId: id }
+      assetAuditionController.selectAsset(souraAssetLibrary.getAsset(id))
+      persistAssetLibraryState(); renderEditor(); focusSelectedAssetLibraryRow()
     })
     if (kind === 'audio') {
-      row.addEventListener('dblclick', () => insertAssetLibraryAudio(id))
-      row.addEventListener('dragstart', (event) => { event.dataTransfer.setData('application/x-soura-asset-id', id); event.dataTransfer.effectAllowed = 'copy' })
-      row.querySelector('[data-preview-asset]')?.addEventListener('click', (event) => { event.stopPropagation(); previewAssetLibraryAudio(id) })
+      row.addEventListener('dragstart', (event) => {
+        const payload = createSouraAssetDragPayload(souraAssetLibrary.getAsset(id))
+        if (!payload) { event.preventDefault(); return }
+        activeAssetDragPayload = payload
+        event.dataTransfer.setData(SOURA_ASSET_DRAG_TYPE, JSON.stringify(payload))
+        event.dataTransfer.setData('application/x-soura-asset-id', id)
+        event.dataTransfer.effectAllowed = 'copy'
+      })
+      row.addEventListener('dragend', () => { activeAssetDragPayload = null; audioImportDrag = null; scheduleAudioImportPreviewRender() })
     }
-  })
-  grid?.addEventListener('dragover', (event) => {
-    if (!event.dataTransfer?.types?.includes('application/x-soura-asset-id')) return
-    event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy'
-  })
-  grid?.addEventListener('drop', (event) => {
-    const id = event.dataTransfer?.getData('application/x-soura-asset-id')
-    if (!id) return
-    event.preventDefault(); event.stopPropagation()
-    const track = tracks[getTrackLaneFromY(event.clientY)]
-    insertAssetLibraryAudio(id, { trackId: track?.id || selectedTrackId, timelineStartBeats: pointerEventToTimelineBeat(event) })
   })
 }
 
@@ -10544,7 +10746,7 @@ function bindEditorEvents() {
   const grid = app.querySelector('[data-arrangement-grid]')
   const selectionBox = app.querySelector('[data-selection-box]')
   const tooltip = app.querySelector('[data-studio-tooltip]')
-  bindAssetLibraryEvents(grid)
+  bindAssetLibraryEvents()
   app.querySelector('[data-region-editor-scroll]')?.addEventListener('scroll', () => captureAudioRegionToolsViewport(), { passive: true })
   trigger?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); setEditorMenuOpen(!isEditorMenuOpen) })
   app.querySelectorAll('[data-daw-menu-toggle]').forEach((button)=>button.addEventListener('click', (event) => {
@@ -10581,22 +10783,31 @@ function bindEditorEvents() {
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
   const page = app.querySelector('.studio-editor-page')
   page?.addEventListener('dragover', (event) => {
-    if (!getFirstAudioFileFromDataTransfer(event.dataTransfer)) return
+    const hasAsset = dataTransferHasSouraAsset(event.dataTransfer)
+    const hasFile = Boolean(getFirstAudioFileFromDataTransfer(event.dataTransfer))
+    if (!hasAsset && !hasFile) return
     event.preventDefault()
     event.dataTransfer.dropEffect = 'copy'
-    updateAudioImportPreview(event)
+    if (hasAsset) updateAssetLibraryImportPreview(event)
+    else updateAudioImportPreview(event)
     scheduleAudioImportPreviewRender()
   })
   page?.addEventListener('dragenter', (event) => {
-    if (!getFirstAudioFileFromDataTransfer(event.dataTransfer)) return
+    const hasAsset = dataTransferHasSouraAsset(event.dataTransfer)
+    const hasFile = Boolean(getFirstAudioFileFromDataTransfer(event.dataTransfer))
+    if (!hasAsset && !hasFile) return
     event.preventDefault()
-    updateAudioImportPreview(event)
+    if (hasAsset) updateAssetLibraryImportPreview(event)
+    else updateAudioImportPreview(event)
     scheduleAudioImportPreviewRender()
   })
   page?.addEventListener('drop', (event) => {
-    if (!getFirstAudioFileFromDataTransfer(event.dataTransfer)) return
+    const hasAsset = dataTransferHasSouraAsset(event.dataTransfer)
+    const hasFile = Boolean(getFirstAudioFileFromDataTransfer(event.dataTransfer))
+    if (!hasAsset && !hasFile) return
     event.preventDefault()
-    handleAudioImportDrop(event)
+    if (hasAsset) void handleAssetLibraryImportDrop(event)
+    else void handleAudioImportDrop(event)
   })
   page?.addEventListener('dragleave', (event) => {
     if (event.relatedTarget && page.contains(event.relatedTarget)) return
@@ -10604,6 +10815,13 @@ function bindEditorEvents() {
     audioImportDrag = null
     scheduleAudioImportPreviewRender()
   })
+  app.querySelectorAll('[data-meter-clip]').forEach((meter) => meter.addEventListener('click', (event) => {
+    event.preventDefault()
+    const meterId = meter.dataset.meterClip
+    const state = meterId === 'master' ? masterAudioBus?.meter : trackAudioChannels.get(meterId)?.meter
+    if (state) state.clipped = false
+    meter.classList.remove('is-clipped')
+  }))
   app.querySelector('[data-hide-audio-import-upload]')?.addEventListener('click', () => {
     audioImportUploadState = { ...audioImportUploadState, hidden: true }
     app.querySelector('[data-audio-import-upload-modal]')?.remove()
@@ -11005,8 +11223,8 @@ function bindEditorEvents() {
     recordingStatus = ''
     renderEditor()
   })
-  app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
-  app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; tracks.forEach(setTrackChannelVolume); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; tracks.forEach(setTrackChannelVolume); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-record]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackRecord); if (!t) return; t.recordArmed = !t.recordArmed; scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-track-volume]').forEach((el) => {
     el.addEventListener('input', () => {
@@ -11891,6 +12109,7 @@ const dawInstrumentKeyMap = {
   KeyL:74, KeyP:75, Semicolon:76, Quote:77
 }
 function handleStudioKeydown(event){
+  if(handleAssetLibraryShortcut(event)) return
   if(isTextEntryTarget(event.target)) return
   if((event.ctrlKey || event.metaKey) && !event.altKey){
     if(event.code === 'KeyZ'){
@@ -12006,7 +12225,7 @@ if(!window.__melogicStudioLayoutResizeBound){
     }, 80)
   }, { passive:true })
 }
-if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllMidiPreviewNotes(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
+if(!window.__melogicDawInstrumentCleanupBound){ window.__melogicDawInstrumentCleanupBound=true; window.addEventListener('beforeunload',(event)=>{ if(activeRecording){ event.preventDefault(); event.returnValue='Recording is in progress. Are you sure you want to leave?' } try { pitchTraceAnalysis.worker?.terminate?.() } catch {} assetAuditionController.stopAndClear(); cleanupPendingAudioInputStream(); cleanupAudioRecordingController(); stopAllMidiPreviewNotes(); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); dawInstrumentRegistry.disposeAll(); dawWindowManager.destroy() }) }
 
 async function init() {
   const loader =
