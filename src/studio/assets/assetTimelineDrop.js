@@ -31,14 +31,14 @@ export function parseSouraAssetDragPayload(value = '') {
   } catch { return null }
 }
 
-export function planAssetTimelineDrop({ rawBeat = 0, snapEnabled = true, snap = (value) => value, track = null, trackIndex = -1, trackCount = 0, isAudioTrack = () => false } = {}) {
+export function planAssetTimelineDrop({ rawBeat = 0, snapEnabled = true, snap = (value) => value, track = null, trackIndex = -1, trackCount = 0, forceNewTrackAtTop = false, isAudioTrack = () => false } = {}) {
   const startBeat = snapEnabled ? snap(rawBeat) : rawBeat
   const compatible = Boolean(track && isAudioTrack(track))
   return {
     startBeat,
-    trackId: compatible ? String(track.id || '') : '',
-    createAudioTrack: !compatible,
-    newTrackIndex: compatible ? -1 : track ? Math.max(0, Number(trackIndex) + 1) : Math.max(0, Number(trackCount) || 0),
+    trackId: compatible && !forceNewTrackAtTop ? String(track.id || '') : '',
+    createAudioTrack: forceNewTrackAtTop || !compatible,
+    newTrackIndex: forceNewTrackAtTop ? 0 : compatible ? -1 : track ? Math.max(0, Number(trackIndex) + 1) : Math.max(0, Number(trackCount) || 0),
     targetTrackName: track?.name || ''
   }
 }

@@ -17,4 +17,8 @@ test('drop planner targets audio tracks and creates tracks beside MIDI or after 
   assert.equal(planAssetTimelineDrop({ rawBeat: 1.13, snapEnabled: false, track: midiTrack, isAudioTrack }).startBeat, 1.13)
   assert.equal(planAssetTimelineDrop({ rawBeat: 1, track: midiTrack, trackIndex: 2, trackCount: 4, isAudioTrack }).newTrackIndex, 3)
   assert.equal(planAssetTimelineDrop({ rawBeat: 1, track: null, trackCount: 4, isAudioTrack }).newTrackIndex, 4)
+  const dedicatedRow = planAssetTimelineDrop({ rawBeat: 17.25, snapEnabled: false, track: audioTrack, trackIndex: 2, trackCount: 4, forceNewTrackAtTop: true, isAudioTrack })
+  assert.equal(dedicatedRow.newTrackIndex, 0)
+  assert.equal(dedicatedRow.startBeat, 17.25)
+  assert.equal(dedicatedRow.trackId, '')
 })

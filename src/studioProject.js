@@ -66,6 +66,8 @@ import { AssetAuditionController } from './studio/assets/AssetAuditionController
 import { SOURA_ASSET_DRAG_TYPE, createSouraAssetDragPayload, parseSouraAssetDragPayload, planAssetTimelineDrop } from './studio/assets/assetTimelineDrop.js'
 import { getAssetLibraryShortcutAction } from './studio/assets/assetLibraryShortcuts.js'
 import { measureTimeDomainSamples, updateMeterBallistics } from './studio/audio/audioMetering.js'
+import { applyInheritedTrackColor, DEFAULT_METRONOME_SETTINGS, moveArrayItem, normalizeMetronomeSettings } from './studio/state/trackEditing.js'
+import { arrangementViewportTransforms } from './studio/timeline/arrangementViewport.js'
 import {
   musicalDurationToRegionWidth,
   musicalPositionToRegionX,
@@ -167,6 +169,9 @@ const automationOpenTrackIds = new Set()
 let trackMenuState = null
 let renameTrackState = null
 let colorPickerState = null
+let activeTrackReorder = null
+let activeEffectReorder = null
+let selectedSystemChannel = ''
 let activeBottomPanel = ''
 const webAssetStorage = new WebAssetStorage()
 const nativeAssetStorage = isNativeAssetRuntime() ? new NativeAssetStorage() : null
@@ -239,11 +244,13 @@ let inlineNumberEditorState = null
 let followPlayhead = false
 let isCycleEnabled = false
 let isMetronomeEnabled = true
+let metronomeSettings = normalizeMetronomeSettings(DEFAULT_METRONOME_SETTINGS)
 let audioContext = null
 let masterAudioBus = null
 let assetAuditionGain = null
 let studioAudioEngine = null
 let lastMetronomeBeat = -1
+const activeMetronomeVoices = new Set()
 let activeLeftPanel = ""
 let studioLibraryState = {
   data: null,
@@ -1258,6 +1265,9 @@ const globalTrackRowsForView = () => {
   return mode === 'all' ? ['arrangement', 'markers', 'tempo', 'time-signature', 'key-signature'] : [mode]
 }
 const renderTrackToolbar = () => `<div class="studio-track-toolbar" aria-label="Track toolbar"><button type="button" data-add-track data-tooltip="Add Track" aria-label="Add Track">+</button><button type="button" data-duplicate-track data-tooltip="Duplicate selected track" aria-label="Duplicate selected track">⧉</button><button type="button" class="${globalTracks.visible ? 'is-active' : ''}" data-toggle-global-tracks data-tooltip="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}" aria-label="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}">G</button><select data-global-track-view aria-label="Global track view">${GLOBAL_TRACK_VIEW_OPTIONS.map((option)=>`<option value="${option.value}" ${globalTracks.viewMode===option.value?'selected':''}>${option.label}</option>`).join('')}</select></div>`
+const NEW_TRACK_DROP_ROW_HEIGHT = 32
+const renderNewTrackDropHeader = () => `<div class="studio-new-track-drop-header ${audioImportDrag?.forceNewTrackAtTop ? 'is-active' : ''}" data-new-track-drop-header>Drop here to make new track</div>`
+const renderNewTrackDropLane = () => `<div class="studio-new-track-drop-lane ${audioImportDrag?.forceNewTrackAtTop ? 'is-active' : ''}" data-new-track-drop-lane><span>Drop here to make new track</span></div>`
 const renderAddTrackModal = () => !addTrackModalOpen ? '' : `<div class="studio-add-track-modal" data-add-track-backdrop>
   <section class="studio-add-track-panel" role="dialog" aria-modal="true" aria-labelledby="studio-add-track-title">
     <header><div><span>New Track</span><h3 id="studio-add-track-title">Add Track</h3></div><button type="button" data-close-add-track aria-label="Close Add Track">Close</button></header>
@@ -1279,7 +1289,7 @@ const renderTrackCard = (track) => {
   const level = clamp(Number(track.outputLevel) || 0, 0, 1)
   const automation = ensureTrackAutomation(track)
   const automationSidebar = track.automationOpen ? `<div class="studio-track-automation-sidebar" data-track-automation-sidebar="${esc(track.id)}"><span>Automation</span><select data-track-automation-parameter="${esc(track.id)}" aria-label="${esc(track.name)} automation parameter">${TRACK_AUTOMATION_PARAMETERS.map((option)=>`<option value="${esc(option.id)}" ${automation.activeParameter===option.id?'selected':''} ${option.disabled?'disabled':''}>${esc(option.label)}</option>`).join('')}</select><small>${esc(formatTrackAutomationValue(automation.activeParameter, getTrackAutomationData(track, automation.activeParameter).defaultValue))}</small></div>` : ''
-  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(normalizedTrackIconType(track))}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div></article>${automationSidebar}</div>`
+  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" data-track-stack="${esc(track.id)}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id && !selectedSystemChannel ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-drag-handle" type="button" draggable="true" data-track-drag-handle="${esc(track.id)}" aria-label="Reorder ${esc(track.name)}" title="Drag to reorder">⋮⋮</button><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(normalizedTrackIconType(track))}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div></article>${automationSidebar}</div>`
 }
 const renderTrackContextMenu = () => {
   if (!trackMenuState?.trackId) return ''
@@ -2370,16 +2380,17 @@ function runRegionToolAction(toolId) {
   else if (toolId === 'duplicate') duplicateSelectedRegions()
 }
 const renderTrackRenamePopover = () => renameTrackState ? `<form class="studio-track-popover studio-track-popover--rename" data-track-rename-form style="left:${Math.round(renameTrackState.x)}px;top:${Math.round(renameTrackState.y)}px"><label>Rename Track<input data-track-rename-input value="${(renameTrackState.name || '').replace(/"/g, '&quot;')}" /></label><div><button type="submit">Save</button><button type="button" data-track-rename-cancel>Cancel</button></div></form>` : ''
-const renderTrackColorPopover = () => colorPickerState ? `<form class="studio-track-popover studio-track-popover--color" data-track-color-form style="left:${Math.round(colorPickerState.x)}px;top:${Math.round(colorPickerState.y)}px"><label>Track Color<input type="color" data-track-color-input value="${colorPickerState.color || '#58d4ff'}" /></label><button type="submit">Apply</button></form>` : ''
+const renderTrackColorPopover = () => colorPickerState && colorPickerState.source !== 'inspector' ? `<form class="studio-track-popover studio-track-popover--color" data-track-color-form style="left:${Math.round(colorPickerState.x)}px;top:${Math.round(colorPickerState.y)}px"><label>Track Color<input type="color" data-track-color-input value="${colorPickerState.previewColor || colorPickerState.committedColor || '#58d4ff'}" /></label><button type="submit">Apply</button></form>` : ''
 
 function trackVisualHeight(track = null) {
   return Math.max(44, timelineState.trackHeight) * (track?.automationOpen ? 2 : 1)
 }
 function trackLaneTop(trackIndex = 0) {
-  return tracks.slice(0, Math.max(0, trackIndex)).reduce((sum, track)=>sum + trackVisualHeight(track), 0)
+  return NEW_TRACK_DROP_ROW_HEIGHT + tracks.slice(0, Math.max(0, trackIndex)).reduce((sum, track)=>sum + trackVisualHeight(track), 0)
 }
 function trackIndexAtTimelineY(y = 0) {
-  let offset = 0
+  let offset = NEW_TRACK_DROP_ROW_HEIGHT
+  if (y < offset) return -1
   for (let index = 0; index < tracks.length; index += 1) {
     const height = trackVisualHeight(tracks[index])
     if (y < offset + height) return index
@@ -2388,7 +2399,7 @@ function trackIndexAtTimelineY(y = 0) {
   return Math.max(0, tracks.length - 1)
 }
 function totalTrackLaneHeight() {
-  return tracks.reduce((sum, track)=>sum + trackVisualHeight(track), 0)
+  return NEW_TRACK_DROP_ROW_HEIGHT + tracks.reduce((sum, track)=>sum + trackVisualHeight(track), 0)
 }
 function normalizedWheelPixels(event, axis = 'y') {
   const raw = axis === 'x' ? event.deltaX : event.deltaY
@@ -3352,7 +3363,8 @@ function renderMixerInsertList(track = null) {
   return inserts.map((insert)=>`<button type="button" class="${insert.enabled === false ? 'is-disabled' : ''}" title="${esc(insert.category)} FX">${esc(insert.name || insert.type || 'Effect')}<small>${esc(insert.category)}</small></button>`).join('')
 }
 function renderMixerChannelStrip(track = null, { stereoOut = false } = {}) {
-  const color = stereoOut ? '#8cdfff' : (track?.color || '#58d4ff')
+  const systemMetronome = track?.id === metronomeSettings.id
+  const color = stereoOut ? '#8cdfff' : systemMetronome ? '#ffd66b' : (track?.color || '#58d4ff')
   const meterState = stereoOut ? masterAudioBus?.meter : trackAudioChannels.get(track?.id)?.meter
   const level = clamp(Number(meterState?.level ?? track?.outputLevel) || 0, 0, 1)
   const peakLevel = clamp(Number(meterState?.peakLevel ?? level) || 0, 0, 1)
@@ -3360,25 +3372,25 @@ function renderMixerChannelStrip(track = null, { stereoOut = false } = {}) {
   const pan = stereoOut ? 0 : clamp(Number(track?.pan) || 0, -100, 100)
   const name = stereoOut ? 'Stereo Out' : (track?.name || 'Track')
   const id = track?.id || ''
-  const selectedClass = !stereoOut && selectedTrackId === id ? 'is-selected' : ''
-  return `<article class="studio-mixer-strip ${stereoOut ? 'studio-mixer-strip--stereo-out' : ''} ${selectedClass}" style="--track-color:${esc(color)};--track-meter-level:${level}" ${id ? `data-mixer-track-strip="${esc(id)}"` : ''}>
+  const selectedClass = systemMetronome ? selectedSystemChannel === 'metronome' ? 'is-selected' : '' : !stereoOut && !selectedSystemChannel && selectedTrackId === id ? 'is-selected' : ''
+  return `<article class="studio-mixer-strip ${stereoOut ? 'studio-mixer-strip--stereo-out' : ''} ${systemMetronome ? 'studio-mixer-strip--metronome' : ''} ${selectedClass}" style="--track-color:${esc(color)};--track-meter-level:${level}" ${systemMetronome ? 'data-mixer-system-channel="metronome"' : id ? `data-mixer-track-strip="${esc(id)}"` : ''}>
     <span class="studio-mixer-color-strip" aria-hidden="true"></span>
-    <button class="studio-mixer-icon" type="button" ${id ? `data-track-icon="${esc(id)}"` : 'disabled'} aria-label="${esc(name)} channel">${stereoOut ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16"/><path d="M4 16h16"/><path d="M8 4v16"/><path d="M16 4v16"/></svg>' : trackTypeIcon(normalizedTrackIconType(track))}</button>
+    <button class="studio-mixer-icon" type="button" ${systemMetronome ? 'data-select-metronome' : id ? `data-track-icon="${esc(id)}"` : 'disabled'} aria-label="${esc(name)} channel">${stereoOut ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16"/><path d="M4 16h16"/><path d="M8 4v16"/><path d="M16 4v16"/></svg>' : systemMetronome ? '♩' : trackTypeIcon(normalizedTrackIconType(track))}</button>
     <strong title="${esc(name)}">${esc(name)}</strong>
     <div class="studio-mixer-buttons">
-      <button type="button" ${stereoOut ? 'disabled' : `data-track-mute="${esc(id)}"`} class="${track?.muted ? 'is-active' : ''}" aria-label="Mute ${esc(name)}" data-tooltip="Mute">${icon('mute')}</button>
-      <button type="button" ${stereoOut ? 'disabled' : `data-track-solo="${esc(id)}"`} class="${track?.soloed ? 'is-active' : ''}" aria-label="Solo ${esc(name)}" data-tooltip="Solo">${icon('solo')}</button>
-      <button type="button" ${stereoOut ? 'disabled' : `data-track-record="${esc(id)}"`} class="${track?.recordArmed ? 'is-active' : ''}" aria-label="Record arm ${esc(name)}" data-tooltip="Record Arm">R</button>
+      <button type="button" ${stereoOut ? 'disabled' : systemMetronome ? 'data-metronome-mute' : `data-track-mute="${esc(id)}"`} class="${track?.muted ? 'is-active' : ''}" aria-label="Mute ${esc(name)}" data-tooltip="Mute">${icon('mute')}</button>
+      <button type="button" ${stereoOut || systemMetronome ? 'disabled' : `data-track-solo="${esc(id)}"`} class="${track?.soloed ? 'is-active' : ''}" aria-label="Solo ${esc(name)}" data-tooltip="Solo">${icon('solo')}</button>
+      <button type="button" ${stereoOut || systemMetronome ? 'disabled' : `data-track-record="${esc(id)}"`} class="${track?.recordArmed ? 'is-active' : ''}" aria-label="Record arm ${esc(name)}" data-tooltip="Record Arm">R</button>
     </div>
     <div class="studio-mixer-inserts">${renderMixerInsertList(stereoOut ? null : track)}</div>
-    <div class="studio-mixer-pan"><button class="studio-track-pan" type="button" ${stereoOut ? 'disabled' : `data-track-pan="${esc(id)}"`} aria-label="${esc(name)} pan ${Math.round(pan)}" data-tooltip="Pan ${Math.round(pan)}" style="--pan-angle:${(pan / 100) * 135}deg"></button><span ${stereoOut ? '' : `data-track-pan-readout="${esc(id)}"`}>${esc(formatTrackAutomationValue('pan', pan))}</span></div>
-    <div class="studio-mixer-fader-row"><button type="button" class="studio-mixer-meter ${meterState?.clipped ? 'is-clipped' : ''}" data-mixer-meter="${esc(id || 'master')}" data-meter-clip="${esc(id || 'master')}" aria-label="${esc(name)} output meter; click to clear clip"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(peakLevel * 100)}%"></b></button><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small class="studio-mixer-volume-readout" ${stereoOut ? '' : `data-track-volume-readout="${esc(id)}"`}>${Math.round(volume)}%</small></div>
+    <div class="studio-mixer-pan"><button class="studio-track-pan" type="button" ${stereoOut ? 'disabled' : systemMetronome ? 'data-metronome-pan' : `data-track-pan="${esc(id)}"`} aria-label="${esc(name)} pan ${Math.round(pan)}" data-tooltip="Pan ${Math.round(pan)}" style="--pan-angle:${(pan / 100) * 135}deg"></button><span ${stereoOut || systemMetronome ? '' : `data-track-pan-readout="${esc(id)}"`}>${esc(formatTrackAutomationValue('pan', pan))}</span></div>
+    <div class="studio-mixer-fader-row"><button type="button" class="studio-mixer-meter ${meterState?.clipped ? 'is-clipped' : ''}" data-mixer-meter="${esc(id || 'master')}" data-meter-clip="${esc(id || 'master')}" aria-label="${esc(name)} output meter; click to clear clip"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(peakLevel * 100)}%"></b></button><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : systemMetronome ? 'data-metronome-volume' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small class="studio-mixer-volume-readout" ${stereoOut || systemMetronome ? '' : `data-track-volume-readout="${esc(id)}"`}>${Math.round(volume)}%</small></div>
     <span class="studio-mixer-routing">${stereoOut ? 'Output' : esc(track?.audioOutput || 'Stereo Out')}</span>
   </article>`
 }
 function renderMixerPanel(motionClass = '') {
   const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
-  return `<section class="studio-bottom-panel studio-mixer-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Mixer</strong><nav><button type="button" data-detach-bottom-panel="mixer">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-mixer-body"><div class="studio-mixer-strips">${renderMixerChannelStrip(null, { stereoOut: true })}<span class="studio-mixer-divider" aria-hidden="true"></span>${tracks.map((track)=>renderMixerChannelStrip(track)).join('')}</div></div></section>`
+  return `<section class="studio-bottom-panel studio-mixer-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Mixer</strong><nav><button type="button" data-detach-bottom-panel="mixer">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-mixer-body"><div class="studio-mixer-strips">${renderMixerChannelStrip(null, { stereoOut: true })}${renderMixerChannelStrip(metronomeSettings)}<span class="studio-mixer-divider" aria-hidden="true"></span>${tracks.map((track)=>renderMixerChannelStrip(track)).join('')}</div></div></section>`
 }
 function persistAssetLibraryState() {
   try { localStorage.setItem(ASSET_LIBRARY_PREF_KEY, JSON.stringify({ selectedSourceId: assetLibraryState.selectedSourceId, search: assetLibraryState.search, activePanel: 'asset-library' })) } catch {}
@@ -3654,6 +3666,17 @@ function renameSelectedTrack(name = '') {
   scheduleEditorSave()
   renderEditor()
 }
+function reorderTrack(trackId = '', targetIndex = 0, before = captureDawSnapshot()) {
+  const fromIndex = tracks.findIndex((track) => track.id === trackId)
+  if (fromIndex < 0) return false
+  const next = moveArrayItem(tracks, fromIndex, targetIndex)
+  if (next.every((track, index) => track === tracks[index])) return false
+  tracks.splice(0, tracks.length, ...next)
+  pushHistory('reorder-track', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditorPreservingArrangementScroll()
+  return true
+}
 function cycleSelectedTrackColor() {
   const track = getSelectedTrack()
   if (!track) return
@@ -3663,18 +3686,41 @@ function cycleSelectedTrackColor() {
   scheduleEditorSave()
   renderEditor()
 }
-function setSelectedTrackColor(color = '', { close = true } = {}) {
-  const track = getSelectedTrack()
+function updateTrackColorPreviewDom(track, changedRegionIds = []) {
+  if (!track) return
+  app.querySelector(`[data-track-row="${CSS.escape(track.id)}"]`)?.style.setProperty('--track-color', track.color)
+  app.querySelector(`[data-track-row="${CSS.escape(track.id)}"]`)?.style.setProperty('--track-color-soft', track.colorSoft)
+  app.querySelector(`[data-mixer-track-strip="${CSS.escape(track.id)}"]`)?.style.setProperty('--track-color', track.color)
+  changedRegionIds.forEach((regionId) => app.querySelector(`[data-midi-region="${CSS.escape(regionId)}"]`)?.style.setProperty('--region-color', track.color))
+}
+function beginTrackColorSession(track, position = {}) {
+  if (!track) return
+  colorPickerState = { ...position, trackId: track.id, committedColor: track.color || '#58d4ff', previewColor: track.color || '#58d4ff', before: captureDawSnapshot() }
+}
+function previewSelectedTrackColor(color = '') {
+  const track = tracks.find((item) => item.id === colorPickerState?.trackId)
   const normalized = /^#[0-9a-f]{6}$/i.test(String(color)) ? String(color) : ''
   if (!track || !normalized) return
-  const before = close ? captureDawSnapshot() : null
-  track.color = normalized
-  track.colorSoft = `${normalized}42`
-  if (colorPickerState) colorPickerState.color = normalized
-  if (close) colorPickerState = null
-  if (before) pushHistory('color-track', before, captureDawSnapshot())
+  colorPickerState.previewColor = normalized
+  updateTrackColorPreviewDom(track, applyInheritedTrackColor(track, midiRegions, normalized))
+}
+function commitSelectedTrackColor({ render = true } = {}) {
+  const session = colorPickerState
+  if (!session) return false
+  const track = tracks.find((item) => item.id === session.trackId)
+  if (track) applyInheritedTrackColor(track, midiRegions, session.previewColor || session.committedColor)
+  colorPickerState = null
+  pushHistory('color-track', session.before, captureDawSnapshot())
   scheduleEditorSave()
-  renderEditor()
+  if (render) renderEditorPreservingArrangementScroll()
+  return true
+}
+function cancelSelectedTrackColor({ render = true } = {}) {
+  const session = colorPickerState
+  const track = tracks.find((item) => item.id === session?.trackId)
+  if (track && session?.committedColor) applyInheritedTrackColor(track, midiRegions, session.committedColor)
+  colorPickerState = null
+  if (render) renderEditorPreservingArrangementScroll()
 }
 function getClampedTrackMenuPosition(clientX = 0, clientY = 0) {
   const width = 210
@@ -3706,7 +3752,7 @@ function getAudioEffectWindowInstanceId(trackId = '', insertId = '') {
   return `audio-effect:${trackId || 'track'}:${insertId || 'insert'}`
 }
 function getAudioEffectInsertFromWindow(pluginWindow = {}) {
-  const track = ensureTrackInsertState(tracks.find((item)=>item.id === pluginWindow.trackId))
+  const track = pluginWindow.trackId === metronomeSettings.id ? metronomeSettings : ensureTrackInsertState(tracks.find((item)=>item.id === pluginWindow.trackId))
   const insertId = String(pluginWindow.pluginInstanceId || '').split(':').pop()
   const insert = track?.audioEffects?.find((item)=>item.id === insertId)
   return { track, insert }
@@ -3765,24 +3811,41 @@ function renderInsertMenu({ menuId, items, action }) {
   const style = floating ? ` style="left:${Math.round(pos.x)}px;top:${Math.round(pos.y)}px"` : ''
   return `<div class="studio-inspector-menu ${floating ? 'studio-inspector-menu--floating' : ''}" data-inspector-menu="${menuId}"${style}>${items.map((item)=>`<button type="button" data-inspector-menu-choice="${action}" data-insert-type="${item.type}">${item.name}</button>`).join('')}${floating ? '<button type="button" data-inspector-menu-choice="instrument-empty" data-insert-type="">No Instrument</button>' : ''}</div>`
 }
-function renderInsertSlot(insert, section) {
+function renderInsertSlot(insert, section, index = 0, count = 1) {
   const canEdit = section === 'midi' || (section === 'audio' && isImplementedAudioEffect(insert.type))
-  return `<article class="studio-insert-slot ${insert.enabled ? 'is-enabled' : 'is-disabled'}">
+  return `<article class="studio-insert-slot ${insert.enabled ? 'is-enabled' : 'is-disabled'}" data-insert-slot="${esc(insert.id)}" data-insert-section="${esc(section)}">
     <div class="studio-insert-slot-label"><strong>${esc(insert.name)}</strong><span>${insert.enabled ? 'Enabled' : 'Disabled'}</span></div>
     <div class="studio-insert-slot-actions">
       <button type="button" class="studio-insert-power ${insert.enabled ? 'is-active' : ''}" data-toggle-insert="${section}" data-insert-id="${insert.id}" aria-label="Toggle ${esc(insert.name)}">${insert.enabled ? 'On' : 'Off'}</button>
       <button type="button" data-edit-insert="${section}" data-insert-id="${insert.id}" ${canEdit ? '' : 'disabled'}>${section === 'audio' ? 'Open' : 'Edit'}</button>
       <button type="button" data-toggle-inspector-menu="${section === 'midi' ? 'midi-effects' : 'audio-effects'}">Change</button>
       <button type="button" data-remove-insert="${section}" data-insert-id="${insert.id}">Remove</button>
+      <span class="studio-insert-order-controls"><button type="button" data-move-insert="-1" data-insert-section="${section}" data-insert-id="${insert.id}" ${index <= 0 ? 'disabled' : ''} aria-label="Move ${esc(insert.name)} earlier">▲</button><button type="button" data-move-insert="1" data-insert-section="${section}" data-insert-id="${insert.id}" ${index >= count - 1 ? 'disabled' : ''} aria-label="Move ${esc(insert.name)} later">▼</button><button type="button" class="studio-insert-drag-handle" draggable="true" data-insert-drag-handle="${esc(insert.id)}" data-insert-section="${section}" aria-label="Drag ${esc(insert.name)} to reorder">⋮</button></span>
     </div>
   </article>`
 }
 function renderInspectorSection({ title, kicker, emptyText, items, section, addLabel, menuId, menuItems, action }) {
   return `<section class="studio-inspector-section">
     <header><div><span>${kicker}</span><h4>${title}</h4></div><button type="button" data-toggle-inspector-menu="${menuId}">${addLabel}</button></header>
-    <div class="studio-insert-list">${items.length ? items.map((insert)=>renderInsertSlot(insert, section)).join('') : `<p class="studio-inspector-empty">${emptyText}</p>`}</div>
+    <div class="studio-insert-list">${items.length ? items.map((insert, index)=>renderInsertSlot(insert, section, index, items.length)).join('') : `<p class="studio-inspector-empty">${emptyText}</p>`}</div>
     ${renderInsertMenu({ menuId, items: menuItems, action })}
   </section>`
+}
+function getSelectedInsertOwner() {
+  return selectedSystemChannel === 'metronome' ? metronomeSettings : ensureTrackInsertState(getSelectedTrack())
+}
+function reorderInsert(owner, section = 'audio', insertId = '', destination = 0, before = captureDawSnapshot()) {
+  const key = section === 'midi' ? 'midiEffects' : 'audioEffects'
+  const list = owner?.[key]
+  if (!Array.isArray(list)) return false
+  const fromIndex = list.findIndex((insert) => insert.id === insertId)
+  if (fromIndex < 0) return false
+  owner[key] = moveArrayItem(list, fromIndex, destination)
+  if (section === 'audio') rebuildTrackAudioEffectsChain(owner.id)
+  pushHistory(`reorder-${section}-effect`, before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditorPreservingArrangementScroll()
+  return true
 }
 function renderInstrumentSlot(track) {
   const instrument = track.instrument
@@ -3829,6 +3892,7 @@ function renderChannelStripSettings(track) {
   </section>`
 }
 function renderTrackInspector() {
+  if (selectedSystemChannel === 'metronome') return renderMetronomeInspector()
   const track = ensureTrackInsertState(tracks.find((t)=>t.id===selectedTrackId))
   if (!track) return '<h3>Inspector</h3><p class="studio-inspector-empty">Select a track to view inserts and controls.</p>'
   const isAudio = isAudioTrack(track)
@@ -3839,6 +3903,21 @@ function renderTrackInspector() {
     ${isAudio ? '' : `<section class="studio-inspector-section studio-inspector-section--instrument"><header><div><span>Instrument</span><h4>Instrument</h4></div></header>${renderInstrumentSlot(track)}</section>`}
     ${renderInspectorSection({ title:'Audio FX', kicker:isAudio ? 'Clip output' : 'Post instrument', emptyText:'No audio effects inserted.', items:track.audioEffects, section:'audio', addLabel:'Add Audio FX', menuId:'audio-effects', menuItems:AUDIO_EFFECT_TYPES, action:'audio' })}
     ${renderChannelStripSettings(track)}
+  </section>`
+}
+function renderMetronomeInspector() {
+  const m = metronomeSettings
+  const range = (key, label, min, max, step = 1) => `<label>${label}<input type="range" data-metronome-setting="${key}" min="${min}" max="${max}" step="${step}" value="${m[key]}"><small>${Number(m[key]).toFixed(step < 1 ? 2 : 0)}</small></label>`
+  return `<section class="studio-track-inspector studio-metronome-inspector">
+    <header class="studio-track-inspector-header"><span class="studio-track-inspector-icon" style="--track-color:#ffd66b">♩</span><div><h3>Metronome</h3><p>System monitoring channel</p></div></header>
+    <div class="studio-inspector-strip"><button class="${m.muted ? 'is-active' : ''}" data-metronome-mute>Mute</button><button disabled title="Metronome is a system channel">Solo</button><button disabled title="Metronome cannot record MIDI">Record</button></div>
+    <section class="studio-inspector-section studio-metronome-editor"><header><div><span>Click generator</span><h4>Metronome Instrument</h4></div></header><div class="studio-metronome-control-grid">
+      <fieldset><legend>Accent</legend>${range('accentLevel','Level',0,1,.01)}${range('accentPitch','Pitch',120,4000,1)}${range('accentTone','Tone',0,1,.01)}</fieldset>
+      <fieldset><legend>Regular Click</legend>${range('clickLevel','Level',0,1,.01)}${range('clickPitch','Pitch',120,4000,1)}${range('clickTone','Tone',0,1,.01)}</fieldset>
+      <fieldset><legend>General</legend>${range('decayMs','Decay',12,240,1)}${range('pan','Stereo position',-100,100,1)}<label>Output<select data-metronome-setting="outputRoute"><option>Stereo Out</option></select></label></fieldset>
+    </div></section>
+    ${renderInspectorSection({ title:'Audio FX', kicker:'Click processing', emptyText:'No audio effects inserted.', items:m.audioEffects, section:'audio', addLabel:'Add Audio FX', menuId:'audio-effects', menuItems:AUDIO_EFFECT_TYPES, action:'audio' })}
+    <p class="studio-channel-hint">The click is monitoring-only and is not included in program export.</p>
   </section>`
 }
 function selectedStudioLibraryFolder() {
@@ -4898,7 +4977,7 @@ function runDawTopMenuAction(action = '') {
   if (action === 'toggle-playback') { if (!(activeRecording || isCountInRunning)) togglePlayback(); renderEditor(); return }
   if (action === 'stop-playback') { if (activeRecording || isCountInRunning) stopRecordingAndKeep(); else { finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = ''; renderEditor() } return }
   if (action === 'record') { if (activeRecording || isCountInRunning) stopRecordingAndKeep(); else startRecordFlow(); return }
-  if (action === 'toggle-metronome') { isMetronomeEnabled = !isMetronomeEnabled; if (isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor(); return }
+  if (action === 'toggle-metronome') { isMetronomeEnabled = !isMetronomeEnabled; metronomeSettings.enabled = isMetronomeEnabled; if (isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor(); return }
   if (action === 'toggle-count-in') { isCountInEnabled = !isCountInEnabled; scheduleEditorSave(); renderEditor(); return }
   if (action === 'toggle-snap') { isSnapEnabled = !isSnapEnabled; scheduleEditorSave(); renderEditor(); return }
   if (action === 'toggle-cycle') { setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor(); return }
@@ -5109,6 +5188,7 @@ function buildEditorStateForSave(){
     globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], timeSignatureEvents:[...(globalTracks.timeSignatureEvents||[])], keySignatureEvents:[...(globalTracks.keySignatureEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] },
     regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })),
     notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId },
+    metronome:{ ...normalizeMetronomeSettings({ ...metronomeSettings, enabled:isMetronomeEnabled }), audioEffects:serializeAudioEffects(metronomeSettings.audioEffects) },
     tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,automation,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,automation:deepClone(automation),volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:serializeAudioEffects(audioEffects)} }),
     toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled }
   }
@@ -5166,6 +5246,8 @@ function applyLoadedEditorState(editorState) {
   if (typeof tg.countIn === 'boolean') isCountInEnabled = tg.countIn
   if (typeof tg.snap === 'boolean') isSnapEnabled = tg.snap
   if (typeof tg.cycle === 'boolean') isCycleEnabled = tg.cycle
+  metronomeSettings = normalizeMetronomeSettings({ ...(editorState.metronome || {}), enabled: typeof tg.metronome === 'boolean' ? tg.metronome : editorState.metronome?.enabled })
+  isMetronomeEnabled = metronomeSettings.enabled
 
   if (Array.isArray(editorState.tracks)) {
     editorState.tracks.forEach((saved) => {
@@ -5214,6 +5296,8 @@ function applyLoadedEditorState(editorState) {
       if (saved.channelSettings && typeof saved.channelSettings === 'object') Object.assign(t, saved.channelSettings)
       ensureTrackInsertState(t)
     })
+    const savedOrder = new Map(editorState.tracks.map((track, index) => [String(track.id), index]))
+    tracks.sort((left, right) => (savedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (savedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER))
     if (!tracks.some((track) => track.id === selectedTrackId)) selectedTrackId = tracks[0]?.id || selectedTrackId
   }
   timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
@@ -5819,8 +5903,12 @@ function createAudioEffectNodes(ctx, insert = {}) {
 function setTrackChannelVolume(track = {}) {
   const channel = trackAudioChannels.get(track?.id)
   if (!channel?.volumeGain || !audioContext) return
-  const level = isTrackOutputAudible(track) ? clamp((Number(track.volume) || 0) / 100, 0, 1) : 0
+  const audible = track.id === metronomeSettings.id ? !track.muted : isTrackOutputAudible(track)
+  const level = audible ? clamp((Number(track.volume) || 0) / 100, 0, 1) : 0
   setAudioParam(channel.volumeGain.gain, level, 0)
+}
+function getAudioChannelOwner(trackId = '') {
+  return trackId === metronomeSettings.id ? metronomeSettings : tracks.find((item)=>item.id === trackId)
 }
 function rebuildTrackAudioEffectsChain(trackId = '') {
   const channel = trackAudioChannels.get(trackId)
@@ -5836,7 +5924,7 @@ function rebuildTrackAudioEffectsChain(trackId = '') {
   channel.effectNodes = []
   channel.effectCleanups = []
   let current = channel.input
-  const track = ensureTrackInsertState(tracks.find((item)=>item.id === trackId))
+  const track = trackId === metronomeSettings.id ? metronomeSettings : ensureTrackInsertState(tracks.find((item)=>item.id === trackId))
   const inserts = (track?.audioEffects || []).filter((insert) => insert.enabled !== false && isImplementedAudioEffect(insert.type))
   inserts.forEach((insert) => {
     const effect = createAudioEffectNodes(ctx, insert)
@@ -5860,7 +5948,7 @@ function getTrackAudioChannel(trackId = selectedTrackId) {
   const analyser = ctx.createAnalyser()
   analyser.fftSize = 512
   analyser.smoothingTimeConstant = 0
-  const track = tracks.find((item)=>item.id === id)
+  const track = getAudioChannelOwner(id)
   input.gain.value = 1
   volumeGain.gain.value = clamp((Number(track?.volume) || 0) / 100, 0, 1)
   panner.pan.value = clamp((Number(track?.pan) || 0) / 100, -1, 1)
@@ -5888,15 +5976,26 @@ function playMetronomeClick(isDownbeat, startTime = null){
   const startAt=Math.max(ctx.currentTime, Number.isFinite(Number(startTime)) ? Number(startTime) : ctx.currentTime)
   const osc=ctx.createOscillator()
   const gain=ctx.createGain()
-  osc.type='sine'
-  osc.frequency.setValueAtTime(isDownbeat?1200:760,startAt)
+  const tone = isDownbeat ? metronomeSettings.accentTone : metronomeSettings.clickTone
+  const level = isDownbeat ? metronomeSettings.accentLevel : metronomeSettings.clickLevel
+  const pitch = isDownbeat ? metronomeSettings.accentPitch : metronomeSettings.clickPitch
+  osc.type=tone < .34 ? 'sine' : tone < .67 ? 'triangle' : 'square'
+  osc.frequency.setValueAtTime(pitch,startAt)
   gain.gain.setValueAtTime(0.0001,startAt)
-  gain.gain.exponentialRampToValueAtTime(0.16,startAt+0.004)
-  gain.gain.exponentialRampToValueAtTime(0.0001,startAt+0.055)
+  gain.gain.exponentialRampToValueAtTime(Math.max(.0001,.22*level),startAt+0.004)
+  const stopAt = startAt + (metronomeSettings.decayMs / 1000)
+  gain.gain.exponentialRampToValueAtTime(0.0001,stopAt)
   osc.connect(gain)
-  gain.connect(getMasterAudioBus().input)
+  gain.connect(getTrackAudioChannel(metronomeSettings.id).input)
+  activeMetronomeVoices.add(osc)
+  osc.onended = () => { activeMetronomeVoices.delete(osc); try { osc.disconnect(); gain.disconnect() } catch {} }
   osc.start(startAt)
-  osc.stop(startAt+0.065)
+  osc.stop(stopAt+0.01)
+  startTrackMeterLoop()
+}
+function stopMetronomeVoices() {
+  activeMetronomeVoices.forEach((voice) => { try { voice.stop() } catch {} })
+  activeMetronomeVoices.clear()
 }
 function maybeTickMetronome(){
   if(!isPlaying||!isMetronomeEnabled) return
@@ -6038,7 +6137,7 @@ function updateUtilityToggleButton(selector, enabled) {
 }
 function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
 function markTimelineUserInteraction(durationMs = 900){ timelineUserInteractingUntil = Date.now() + durationMs }
-function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); const ruler=app.querySelector('[data-timeline-ruler]'); if(ruler) ruler.scrollLeft=grid.scrollLeft }
+function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); syncArrangementRulerScroll(grid.scrollLeft) }
 function getTransportClockProjectSeconds() {
   if (!isPlaying || !transportClock) return secondsFromPlayhead()
   const ctx = getAudioContext()
@@ -6112,9 +6211,13 @@ function syncArrangementRulerScroll(left = null) {
   const globalLane = app.querySelector('[data-global-tracks]')
   const extensionLane = app.querySelector('[data-timeline-extension-lane]')
   const nextLeft = Number.isFinite(Number(left)) ? Number(left) : (grid?.scrollLeft || 0)
-  if (ruler) ruler.scrollLeft = nextLeft
-  if (globalLane) globalLane.scrollLeft = nextLeft
-  if (extensionLane) extensionLane.scrollLeft = nextLeft
+  const transform = arrangementViewportTransforms({ scrollLeft: nextLeft }).horizontal
+  const rulerInner = ruler?.querySelector('[data-timeline-ruler-inner]')
+  const globalInner = globalLane?.querySelector('.studio-global-tracks-inner')
+  const extensionInner = extensionLane?.querySelector('[data-timeline-extension-inner]')
+  if (rulerInner) rulerInner.style.transform = transform
+  if (globalInner) globalInner.style.transform = transform
+  if (extensionInner) extensionInner.style.transform = transform
 }
 function captureArrangementScroll() {
   const grid = getArrangementGrid()
@@ -6126,8 +6229,8 @@ function restoreArrangementScroll(scroll = null) {
   if (!grid || !scroll) return
   grid.scrollLeft = Math.max(0, Number(scroll.left) || 0)
   grid.scrollTop = Math.max(0, Number(scroll.top) || 0)
-  const trackList = app.querySelector('.studio-track-list')
-  if (trackList) trackList.scrollTop = grid.scrollTop
+  const trackListInner = app.querySelector('.studio-track-list-inner')
+  if (trackListInner) trackListInner.style.transform = arrangementViewportTransforms({ scrollTop: grid.scrollTop || 0 }).vertical
   syncArrangementRulerScroll(grid.scrollLeft)
 }
 function restoreArrangementScrollSoon(scroll = null) {
@@ -6215,6 +6318,8 @@ function captureDawSnapshot() {
   return {
     midiRegions: cloneMidiRegionsForHistory(),
     tracks: cloneTracksForHistory(),
+    metronomeSettings: deepClone(metronomeSettings),
+    selectedSystemChannel,
     selectedTrackId,
     selectedMidiRegionId,
     selectedRegionIds: getSelectedRegionIds(),
@@ -6231,6 +6336,9 @@ function restoreDawSnapshot(snapshot) {
   stopAllAudioClipPlayback()
   midiRegions = (snapshot.midiRegions || []).map((region)=>cloneRegionForState(region))
   tracks.splice(0, tracks.length, ...(snapshot.tracks || []).map((track)=>ensureTrackInsertState(deepClone(track))))
+  metronomeSettings = normalizeMetronomeSettings(snapshot.metronomeSettings || metronomeSettings)
+  isMetronomeEnabled = metronomeSettings.enabled
+  selectedSystemChannel = snapshot.selectedSystemChannel || ''
   selectedTrackId = snapshot.selectedTrackId || tracks[0]?.id || ''
   selectedMidiRegionId = snapshot.selectedMidiRegionId || ''
   setSelectedRegions(Array.isArray(snapshot.selectedRegionIds) ? snapshot.selectedRegionIds : (selectedMidiRegionId ? [selectedMidiRegionId] : []), { primaryId: selectedMidiRegionId })
@@ -6240,6 +6348,8 @@ function restoreDawSnapshot(snapshot) {
   midiRegionMenuState = null
   regionColorPickerState = null
   regionRenameState = null
+  tracks.forEach((track) => { if (trackAudioChannels.has(track.id)) rebuildTrackAudioEffectsChain(track.id) })
+  if (trackAudioChannels.has(metronomeSettings.id)) rebuildTrackAudioEffectsChain(metronomeSettings.id)
   scheduleEditorSave()
   renderEditor()
 }
@@ -6723,6 +6833,7 @@ function auditSouraLayout() {
   }
   const viewportHeight = window.innerHeight
   const page = app.querySelector('.studio-editor-page')
+  app.querySelector('[data-new-track-drop-lane]')?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation() })
   const rootHeight = page ? Math.round(page.getBoundingClientRect().height) : 0
   const projectRangeBarVisible = elementVisibleInViewport('[data-timeline-extension-lane]')
   const statusStripVisible = elementVisibleInViewport('.studio-editor-footer')
@@ -7123,7 +7234,7 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
   updateTransportPlaybackUI()
   updateEditorTitleStatus()
 }
-function pausePlayback() { isPlaying = false; clearTransportClock(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI() }
+function pausePlayback() { isPlaying = false; clearTransportClock(); stopMetronomeVoices(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI() }
 function togglePlayback(){ isPlaying ? pausePlayback() : startPlayback() }
 function stopPlayback() { pausePlayback(); audioEditPlaybackBypassRegionIds.clear(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = '' }
 function getNormalizedCycleRange(){ if(!cycleRange) return null; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return end-start>=cycleMinWidth()?{start,end}:null }
@@ -7336,6 +7447,16 @@ function startTrackMeterLoop() {
       if (track.outputLevel > 0) active = true
       updateTrackMeterDom(track)
     })
+    const metronomeChannel = trackAudioChannels.get(metronomeSettings.id)
+    if (metronomeChannel?.analyser) {
+      metronomeChannel.analyser.getFloatTimeDomainData(metronomeChannel.data)
+      metronomeChannel.meter = updateMeterBallistics(metronomeChannel.meter, measureTimeDomainSamples(metronomeChannel.data), now)
+      metronomeChannel.level = metronomeChannel.meter.level
+      metronomeChannel.peak = metronomeChannel.meter.peakLevel
+      metronomeSettings.outputLevel = metronomeChannel.meter.level
+      if (metronomeChannel.meter.level > 0) active = true
+      updateTrackMeterDom(metronomeSettings)
+    }
     if (masterAudioBus?.analyser) {
       masterAudioBus.analyser.getFloatTimeDomainData(masterAudioBus.data)
       masterAudioBus.meter = updateMeterBallistics(masterAudioBus.meter, measureTimeDomainSamples(masterAudioBus.data), now)
@@ -8839,13 +8960,15 @@ function getTimelineTrackAtPointer(clientY = 0) {
   if (!rect) return null
   const timelineY = clientY - rect.top + (gridEl.scrollTop || 0)
   if (timelineY < 0 || timelineY >= totalTrackLaneHeight()) return null
-  return tracks[trackIndexAtTimelineY(timelineY)] || null
+  const trackIndex = trackIndexAtTimelineY(timelineY)
+  return trackIndex < 0 ? null : tracks[trackIndex] || null
 }
 function getAudioImportPlacement(event, file = null, asset = null) {
+  const forceNewTrackAtTop = Boolean(event.target?.closest?.('[data-new-track-drop-lane], [data-new-track-drop-header]'))
   const track = getTimelineTrackAtPointer(event.clientY)
   const rawBeat = pointerEventToTimelineBeat(event, { snapped: false })
   const trackIndex = track ? tracks.indexOf(track) : -1
-  const plan = planAssetTimelineDrop({ rawBeat, snapEnabled: isSnapEnabled, snap: snapBeatToGrid, track, trackIndex, trackCount: tracks.length, isAudioTrack })
+  const plan = planAssetTimelineDrop({ rawBeat, snapEnabled: isSnapEnabled, snap: snapBeatToGrid, track, trackIndex, trackCount: tracks.length, forceNewTrackAtTop, isAudioTrack })
   const audioTrack = plan.trackId ? track : null
   const valid = Boolean((file && isSupportedAudioFile(file)) || isPreviewableAsset(asset))
   return {
@@ -8854,6 +8977,7 @@ function getAudioImportPlacement(event, file = null, asset = null) {
     newTrackIndex: plan.newTrackIndex,
     startBeat: clampBeat(plan.startBeat),
     createAudioTrack: plan.createAudioTrack,
+    forceNewTrackAtTop,
     valid,
     message: !valid
       ? 'Unsupported audio file.'
@@ -8887,6 +9011,7 @@ function updateAudioImportPreview(event) {
     newTrackIndex: placement.newTrackIndex,
     startBeat: placement.startBeat,
     createAudioTrack: placement.createAudioTrack,
+    forceNewTrackAtTop: placement.forceNewTrackAtTop,
     valid: placement.valid,
     message: placement.message,
     status: cached?.metadata ? 'ready' : 'loading',
@@ -8930,6 +9055,7 @@ function updateAssetLibraryImportPreview(event) {
     newTrackIndex: placement.newTrackIndex,
     startBeat: placement.startBeat,
     createAudioTrack: placement.createAudioTrack,
+    forceNewTrackAtTop: placement.forceNewTrackAtTop,
     valid: placement.valid,
     message: placement.message,
     status: 'ready',
@@ -10588,6 +10714,7 @@ function setTrackPan(track, value, { save = false } = {}) {
   app.querySelectorAll(`[data-track-pan-readout="${CSS.escape(track.id)}"]`).forEach((readout) => {
     readout.textContent = formatTrackAutomationValue('pan', track.pan)
   })
+  if (track.id === metronomeSettings.id) app.querySelectorAll('[data-metronome-pan]').forEach((knob) => knob.style.setProperty('--pan-angle', `${(track.pan / 100) * 135}deg`))
   if (save) scheduleEditorSave()
 }
 function openInlineNumericEditor(event, { value, min, max, step = 1, label = 'Value', apply } = {}) {
@@ -10778,8 +10905,8 @@ function bindEditorEvents() {
     updateEditorTitleStatus()
   })
   app.querySelector('[data-musical-typing-toggle]')?.addEventListener('change', (event) => { setMusicalTypingEnabled(event.target.checked); renderEditor() })
-  document.onclick = (event) => { if (event.target.closest('[data-inline-number-editor]') || event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]') || event.target.closest('.studio-controls-config-modal') || event.target.closest('.studio-project-modal')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-daw-menu]') && !event.target.closest('[data-daw-menu-toggle]') && getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { colorPickerState = null; changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() }
-  document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if ((event.key === 'Delete' || event.key === 'Backspace') && selectedGlobalEvent && !event.target?.matches?.('input,textarea,select')) { event.preventDefault(); if (selectedGlobalEvent.type === 'marker') globalTracks.markers = globalTracks.markers.filter((item)=>item.id !== selectedGlobalEvent.id); selectedGlobalEvent = null; scheduleEditorSave(); renderEditor(); return } if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (controlsConfigModalOpen) { controlsConfigModalOpen = false; changed = true } if (projectSettingsModalOpen) { projectSettingsModalOpen = false; changed = true } if (projectManagementModalOpen) { projectManagementModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { colorPickerState = null; changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
+  document.onclick = (event) => { if (event.target.closest('[data-inline-number-editor]') || event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]') || event.target.closest('.studio-controls-config-modal') || event.target.closest('.studio-project-modal')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-daw-menu]') && !event.target.closest('[data-daw-menu-toggle]') && getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { commitSelectedTrackColor({ render:false }); changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() }
+  document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if ((event.key === 'Delete' || event.key === 'Backspace') && selectedGlobalEvent && !event.target?.matches?.('input,textarea,select')) { event.preventDefault(); if (selectedGlobalEvent.type === 'marker') globalTracks.markers = globalTracks.markers.filter((item)=>item.id !== selectedGlobalEvent.id); selectedGlobalEvent = null; scheduleEditorSave(); renderEditor(); return } if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (controlsConfigModalOpen) { controlsConfigModalOpen = false; changed = true } if (projectSettingsModalOpen) { projectSettingsModalOpen = false; changed = true } if (projectManagementModalOpen) { projectManagementModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { cancelSelectedTrackColor({ render:false }); changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
   leftWrap?.addEventListener('click', (event) => event.stopPropagation())
   const page = app.querySelector('.studio-editor-page')
   page?.addEventListener('dragover', (event) => {
@@ -10827,12 +10954,18 @@ function bindEditorEvents() {
     app.querySelector('[data-audio-import-upload-modal]')?.remove()
   })
   app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
-  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { selectedTrackId = el.dataset.trackRow; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-select') }))
-  app.querySelectorAll('[data-track-icon]').forEach((el) => el.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); const id = el.dataset.trackIcon; if (!id) return; selectedTrackId = id; activeLeftPanel = 'inspector'; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-inspector') }))
+  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { selectedSystemChannel = ''; selectedTrackId = el.dataset.trackRow; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-select') }))
+  app.querySelectorAll('[data-track-icon]').forEach((el) => el.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); const id = el.dataset.trackIcon; if (!id) return; selectedSystemChannel = ''; selectedTrackId = id; activeLeftPanel = 'inspector'; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-inspector') }))
+  app.querySelectorAll('[data-select-metronome],[data-mixer-system-channel="metronome"]').forEach((el) => el.addEventListener('click', (event) => { if (event.target.closest('input,[data-metronome-mute],[data-metronome-pan],[data-metronome-volume]')) return; event.preventDefault(); selectedSystemChannel = 'metronome'; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditorPreservingArrangementScroll() }))
+  app.querySelectorAll('[data-metronome-mute]').forEach((button) => button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); metronomeSettings.muted = !metronomeSettings.muted; setTrackChannelVolume(metronomeSettings); scheduleEditorSave(); renderEditorPreservingArrangementScroll() }))
+  app.querySelectorAll('[data-metronome-volume]').forEach((input) => input.addEventListener('input', () => { metronomeSettings.volume = clamp(Number(input.value), 0, 100); setTrackChannelVolume(metronomeSettings); scheduleEditorSave() }))
+  app.querySelectorAll('[data-metronome-pan]').forEach((control) => control.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); panDrag = { trackId: metronomeSettings.id, startX:event.clientX, startPan:metronomeSettings.pan, knob:control }; control.setPointerCapture?.(event.pointerId) }))
+  app.querySelectorAll('[data-metronome-setting]').forEach((input) => input.addEventListener('input', () => { const key=input.dataset.metronomeSetting; metronomeSettings[key]=input.type==='range' ? Number(input.value) : input.value; if(key==='pan') setTrackPan(metronomeSettings,input.value,{save:false}); scheduleEditorSave() }))
+  app.querySelector('[data-toggle-metronome]')?.addEventListener('click', () => queueMicrotask(() => { metronomeSettings.enabled = isMetronomeEnabled }))
   app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const nextMenu = el.dataset.toggleInspectorMenu; inspectorMenu = inspectorMenu === nextMenu ? null : nextMenu; inspectorMenuPosition = null; if (inspectorMenu === 'instrument') { const rect = el.getBoundingClientRect(); inspectorMenuPosition = getClampedFloatingPosition(rect.left + rect.width / 2, rect.bottom + 8, 260, 210) } renderEditor() }))
   app.querySelectorAll('[data-inspector-menu-choice]').forEach((el) => el.addEventListener('click', (event) => {
     event.stopPropagation()
-    const track = ensureTrackInsertState(getSelectedTrack())
+    const track = getSelectedInsertOwner()
     if (!track) return
     const action = el.dataset.inspectorMenuChoice
     if (action === 'midi') {
@@ -10858,11 +10991,11 @@ function bindEditorEvents() {
   app.querySelector('[data-toggle-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; track.instrument.enabled = !track.instrument.enabled; if (!track.instrument.enabled) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } scheduleEditorSave(); renderEditor() })
   app.querySelector('[data-remove-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); if (track.instrument.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId); track.instrument = null; scheduleEditorSave(); renderEditor() })
   app.querySelector('[data-edit-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; if (!track.instrument.pluginInstanceId) track.instrument.pluginInstanceId = `${track.instrument.type}:${track.id}`; dawWindowManager.openPlugin({ pluginType: track.instrument.type, trackId: track.id, instanceId: track.instrument.pluginInstanceId, params: track.instrument.params || {}, forceCenter: true }) })
-  app.querySelectorAll('[data-toggle-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); const list = el.dataset.toggleInsert === 'midi' ? track?.midiEffects : track?.audioEffects; const insert = list?.find((item)=>item.id===el.dataset.insertId); if (!insert) return; insert.enabled = !insert.enabled; if (el.dataset.toggleInsert === 'audio') rebuildTrackAudioEffectsChain(track.id); scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-toggle-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = getSelectedInsertOwner(); const list = el.dataset.toggleInsert === 'midi' ? track?.midiEffects : track?.audioEffects; const insert = list?.find((item)=>item.id===el.dataset.insertId); if (!insert) return; insert.enabled = !insert.enabled; if (el.dataset.toggleInsert === 'audio') rebuildTrackAudioEffectsChain(track.id); scheduleEditorSave(); renderEditor() }))
   app.querySelectorAll('[data-edit-insert]').forEach((el) => el.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
-    const track = ensureTrackInsertState(getSelectedTrack())
+    const track = getSelectedInsertOwner()
     if (el.dataset.editInsert === 'audio') {
       openAudioEffectWindow(track, el.dataset.insertId)
       return
@@ -10876,17 +11009,28 @@ function bindEditorEvents() {
     bottomPanelMotion = 'entering'
     renderEditor()
   }))
-  app.querySelectorAll('[data-remove-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track) return; if (el.dataset.removeInsert === 'midi') track.midiEffects = track.midiEffects.filter((item)=>item.id!==el.dataset.insertId); if (el.dataset.removeInsert === 'audio') { dawWindowManager.closeWindow(getAudioEffectWindowInstanceId(track.id, el.dataset.insertId)); track.audioEffects = track.audioEffects.filter((item)=>item.id!==el.dataset.insertId); rebuildTrackAudioEffectsChain(track.id) } scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-remove-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = getSelectedInsertOwner(); if (!track) return; if (el.dataset.removeInsert === 'midi') track.midiEffects = track.midiEffects.filter((item)=>item.id!==el.dataset.insertId); if (el.dataset.removeInsert === 'audio') { dawWindowManager.closeWindow(getAudioEffectWindowInstanceId(track.id, el.dataset.insertId)); track.audioEffects = track.audioEffects.filter((item)=>item.id!==el.dataset.insertId); rebuildTrackAudioEffectsChain(track.id) } scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-channel-setting="color"]').forEach((input)=>input.addEventListener('input', () => {
+    const track = ensureTrackInsertState(getSelectedTrack())
+    if (!track) return
+    if (!colorPickerState || colorPickerState.trackId !== track.id) beginTrackColorSession(track, { source: 'inspector' })
+    previewSelectedTrackColor(input.value)
+  }))
   app.querySelectorAll('[data-channel-setting]').forEach((input)=>input.addEventListener('change', () => {
     const track = ensureTrackInsertState(getSelectedTrack())
     if (!track) return
     const key = input.dataset.channelSetting
+    if (key === 'color') {
+      if (!colorPickerState || colorPickerState.trackId !== track.id) beginTrackColorSession(track, { source: 'inspector' })
+      previewSelectedTrackColor(input.value)
+      commitSelectedTrackColor()
+      return
+    }
     const before = ['name', 'color'].includes(key) ? captureDawSnapshot() : null
     if (input.type === 'checkbox') track[key] = input.checked
     else if (input.type === 'number' || input.type === 'range') track[key] = Number(input.value)
     else track[key] = input.value
     if (key === 'name') track.name = input.value || track.name
-    if (key === 'color') { track.color = input.value; track.colorSoft = `${input.value}44` }
     if (key === 'pan') setTrackPan(track, input.value)
     if (before) pushHistory(key === 'name' ? 'rename-track' : 'color-track', before, captureDawSnapshot())
     scheduleEditorSave()
@@ -10898,7 +11042,86 @@ function bindEditorEvents() {
   app.querySelector('[data-stop-stuck-notes]')?.addEventListener('click', () => { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() })
   app.querySelector('[data-reset-track-audio]')?.addEventListener('click', () => { const track=getSelectedTrack(); if(!track) return; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); disposeTrackAudioChannel(track.id); if(track.instrument?.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId); if(isSoftwareTrack(track)) ensureTrackInstrumentInstance(track); startTrackMeterLoop() })
   app.querySelector('[data-disable-track-instrument]')?.addEventListener('change', (event) => { const track=ensureTrackInsertState(getSelectedTrack()); if(!track?.instrument) return; track.instrument.enabled = !event.target.checked; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() })
-  const getTrack = (id) => tracks.find((track) => track.id === id)
+  const getTrack = (id) => id === metronomeSettings.id ? metronomeSettings : tracks.find((track) => track.id === id)
+  app.querySelectorAll('[data-track-drag-handle]').forEach((handle) => handle.addEventListener('dragstart', (event) => {
+    const trackId = handle.dataset.trackDragHandle
+    activeTrackReorder = { trackId, before: captureDawSnapshot() }
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/x-soura-track-id', trackId)
+    event.stopPropagation()
+  }))
+  app.querySelectorAll('[data-track-stack]').forEach((stack) => {
+    stack.addEventListener('dragover', (event) => {
+      if (!activeTrackReorder) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = stack.getBoundingClientRect()
+      const after = event.clientY >= rect.top + rect.height / 2
+      app.querySelectorAll('[data-track-stack]').forEach((node) => node.classList.remove('is-reorder-before', 'is-reorder-after'))
+      stack.classList.add(after ? 'is-reorder-after' : 'is-reorder-before')
+    })
+    stack.addEventListener('drop', (event) => {
+      if (!activeTrackReorder) return
+      event.preventDefault()
+      event.stopPropagation()
+      const targetId = stack.dataset.trackStack
+      const sourceIndex = tracks.findIndex((track) => track.id === activeTrackReorder.trackId)
+      const targetIndex = tracks.findIndex((track) => track.id === targetId)
+      const rect = stack.getBoundingClientRect()
+      let destination = targetIndex + (event.clientY >= rect.top + rect.height / 2 ? 1 : 0)
+      if (destination > sourceIndex) destination -= 1
+      const drag = activeTrackReorder
+      activeTrackReorder = null
+      reorderTrack(drag.trackId, destination, drag.before)
+    })
+  })
+  app.querySelectorAll('[data-track-drag-handle]').forEach((handle) => handle.addEventListener('dragend', () => {
+    activeTrackReorder = null
+    app.querySelectorAll('[data-track-stack]').forEach((node) => node.classList.remove('is-reorder-before', 'is-reorder-after'))
+  }))
+  app.querySelectorAll('[data-insert-drag-handle]').forEach((handle) => handle.addEventListener('dragstart', (event) => {
+    activeEffectReorder = { insertId: handle.dataset.insertDragHandle, section: handle.dataset.insertSection, before: captureDawSnapshot() }
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/x-soura-effect-id', activeEffectReorder.insertId)
+    event.stopPropagation()
+  }))
+  app.querySelectorAll('[data-insert-drag-handle]').forEach((handle) => handle.addEventListener('dragend', () => {
+    activeEffectReorder = null
+    app.querySelectorAll('[data-insert-slot]').forEach((slot) => slot.classList.remove('is-reorder-before', 'is-reorder-after'))
+  }))
+  app.querySelectorAll('[data-insert-slot]').forEach((slot) => {
+    slot.addEventListener('dragover', (event) => {
+      if (!activeEffectReorder || slot.dataset.insertSection !== activeEffectReorder.section) return
+      event.preventDefault(); event.stopPropagation()
+      const rect = slot.getBoundingClientRect()
+      const after = event.clientY >= rect.top + rect.height / 2
+      app.querySelectorAll('[data-insert-slot]').forEach((node) => node.classList.remove('is-reorder-before', 'is-reorder-after'))
+      slot.classList.add(after ? 'is-reorder-after' : 'is-reorder-before')
+    })
+    slot.addEventListener('dragleave', () => slot.classList.remove('is-reorder-before', 'is-reorder-after'))
+    slot.addEventListener('drop', (event) => {
+      if (!activeEffectReorder || slot.dataset.insertSection !== activeEffectReorder.section) return
+      event.preventDefault(); event.stopPropagation()
+      const owner = getSelectedInsertOwner()
+      const list = activeEffectReorder.section === 'midi' ? owner?.midiEffects : owner?.audioEffects
+      const sourceIndex = list?.findIndex((insert) => insert.id === activeEffectReorder.insertId) ?? -1
+      const targetIndex = list?.findIndex((insert) => insert.id === slot.dataset.insertSlot) ?? -1
+      const rect = slot.getBoundingClientRect()
+      let destination = targetIndex + (event.clientY >= rect.top + rect.height / 2 ? 1 : 0)
+      if (destination > sourceIndex) destination -= 1
+      const drag = activeEffectReorder
+      activeEffectReorder = null
+      if (sourceIndex >= 0 && targetIndex >= 0) reorderInsert(owner, drag.section, drag.insertId, destination, drag.before)
+    })
+  })
+  app.querySelectorAll('[data-move-insert]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault(); event.stopPropagation()
+    const owner = getSelectedInsertOwner()
+    const section = button.dataset.insertSection
+    const list = section === 'midi' ? owner?.midiEffects : owner?.audioEffects
+    const index = list?.findIndex((insert) => insert.id === button.dataset.insertId) ?? -1
+    if (index >= 0) reorderInsert(owner, section, button.dataset.insertId, index + Number(button.dataset.moveInsert || 0))
+  }))
   const showTooltip = (target) => { if (!tooltip || !target?.dataset?.tooltip) return; tooltip.textContent = target.dataset.tooltip; tooltip.hidden = false; const rect = target.getBoundingClientRect(); const trect = tooltip.getBoundingClientRect(); tooltip.style.left = `${Math.max(8, rect.left + rect.width / 2 - trect.width / 2)}px`; tooltip.style.top = `${Math.max(8, rect.top - trect.height - 8)}px` }
   const hideTooltip = () => { if (tooltip) tooltip.hidden = true }
   app.querySelectorAll('[data-tooltip]').forEach((target) => { target.addEventListener('pointerenter', () => showTooltip(target)); target.addEventListener('pointerleave', hideTooltip); target.addEventListener('focus', () => showTooltip(target)); target.addEventListener('blur', hideTooltip) })
@@ -11319,6 +11542,7 @@ function bindEditorEvents() {
     if (event.target.closest('button,input,select,textarea')) return
     const id = strip.dataset.mixerTrackStrip
     if (!id) return
+    selectedSystemChannel = ''
     selectedTrackId = id
     renderEditorPreservingArrangementScroll()
   }))
@@ -11488,8 +11712,8 @@ function bindEditorEvents() {
   })
   app.querySelector('[data-track-rename-form]')?.addEventListener('submit', (event) => { event.preventDefault(); renameSelectedTrack(app.querySelector('[data-track-rename-input]')?.value || '') })
   app.querySelector('[data-track-rename-cancel]')?.addEventListener('click', (event) => { event.preventDefault(); renameTrackState = null; renderEditor() })
-  app.querySelector('[data-track-color-form]')?.addEventListener('submit', (event) => { event.preventDefault(); setSelectedTrackColor(app.querySelector('[data-track-color-input]')?.value || '') })
-  app.querySelector('[data-track-color-input]')?.addEventListener('input', (event) => { setSelectedTrackColor(event.target.value, { close: false }) })
+  app.querySelector('[data-track-color-form]')?.addEventListener('submit', (event) => { event.preventDefault(); previewSelectedTrackColor(app.querySelector('[data-track-color-input]')?.value || ''); commitSelectedTrackColor() })
+  app.querySelector('[data-track-color-input]')?.addEventListener('input', (event) => { previewSelectedTrackColor(event.target.value) })
   app.querySelectorAll('[data-track-context-action]').forEach((button) => button.addEventListener('click', (event) => {
     event.stopPropagation()
     const action = button.dataset.trackContextAction
@@ -11497,7 +11721,7 @@ function bindEditorEvents() {
     trackMenuState = null
     if (action === 'duplicate') duplicateSelectedTrack()
     else if (action === 'delete') deleteSelectedTrack()
-    else if (action === 'color') { const track = getSelectedTrack(); colorPickerState = { ...menuPos, trackId: selectedTrackId, color: track?.color || '#58d4ff' }; renderEditor() }
+    else if (action === 'color') { beginTrackColorSession(getSelectedTrack(), menuPos); renderEditor() }
     else if (action === 'inspector') { activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }
     else if (action === 'rename') { const track = getSelectedTrack(); renameTrackState = { ...menuPos, trackId: selectedTrackId, name: track?.name || '' }; renderEditorPreservingArrangementScroll(); requestAnimationFrame(()=>app.querySelector('[data-track-rename-input]')?.select?.()) }
   }))
@@ -11607,7 +11831,7 @@ function bindEditorEvents() {
       }
     })
   }))
-  const getRulerLocalX = (event) => { const rect = ruler.getBoundingClientRect(); return clamp(event.clientX - rect.left + ruler.scrollLeft, 0, maxTimelineX()) }
+  const getRulerLocalX = (event) => { const rect = ruler.getBoundingClientRect(); return clamp(event.clientX - rect.left + (grid?.scrollLeft || 0), 0, maxTimelineX()) }
   const applyCycleRange = (start, end) => { const minW = cycleMinWidth(); const min = Math.min(start, end); const max = Math.max(start, end); let s = clamp(isSnapEnabled ? snapXToBeat(min) : min, timelineStartX(), maxTimelineX()); let e = clamp(isSnapEnabled ? snapXToBeat(max) : max, timelineStartX(), maxTimelineX()); if (e - s < minW) e = clamp(s + minW, s + minW, maxTimelineX()); cycleRange = { startX: s, endX: e } }
 
   const extensionLane = app.querySelector('[data-timeline-extension-lane]')
@@ -11616,18 +11840,13 @@ function bindEditorEvents() {
   let extensionDrag = null
   let didMovePlayhead = false
   let didCycleChange = false
-  const syncTimelineScroll = (source = null, { refresh = false } = {}) => { const scrollLeft = source?.scrollLeft ?? grid?.scrollLeft ?? 0; const liveGlobalLane = app.querySelector('[data-global-tracks]'); const sync = (node) => { if (node && node !== source && Math.abs((node.scrollLeft || 0) - scrollLeft) > 0.5) node.scrollLeft = scrollLeft }; sync(grid); sync(ruler); sync(liveGlobalLane); sync(extensionLane); if (refresh) scheduleTimelineVisualRefresh() }
-  let syncingTrackVerticalScroll = false
-  const syncTrackVerticalScroll = (source) => {
-    if (!grid || !trackList || syncingTrackVerticalScroll) return
-    syncingTrackVerticalScroll = true
-    const top = source === trackList ? trackList.scrollTop : grid.scrollTop
-    if (source !== grid && Math.abs((grid.scrollTop || 0) - top) > 0.5) grid.scrollTop = top
-    if (source !== trackList && Math.abs((trackList.scrollTop || 0) - top) > 0.5) trackList.scrollTop = top
-    syncingTrackVerticalScroll = false
+  const syncTimelineScroll = (_source = null, { refresh = false } = {}) => { syncArrangementRulerScroll(grid?.scrollLeft || 0); if (refresh) scheduleTimelineVisualRefresh() }
+  const syncTrackVerticalScroll = () => {
+    const inner = app.querySelector('.studio-track-list-inner')
+    if (inner) inner.style.transform = arrangementViewportTransforms({ scrollTop: grid?.scrollTop || 0 }).vertical
   }
   const updateTimelineRulerDom = () => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
-  const updateTimelineGridLinesDom = () => { const gridInner = app.querySelector('[data-arrangement-grid-inner]'); if (!gridInner) return; const selection = gridInner.querySelector('[data-selection-box]'); const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'; const selectionHtml = selection ? selection.outerHTML : selectionMarkup; gridInner.innerHTML = `<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}` }
+  const updateTimelineGridLinesDom = () => { const gridInner = app.querySelector('[data-arrangement-grid-inner]'); if (!gridInner) return; const selection = gridInner.querySelector('[data-selection-box]'); const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'; const selectionHtml = selection ? selection.outerHTML : selectionMarkup; gridInner.innerHTML = `${renderNewTrackDropLane()}<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}` }
   const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
   const applyTimelineGeometry = () => { timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar); syncBarsFromPositiveBeats(); app.querySelector('[data-arrangement]')?.style.setProperty('--bars', timelineState.bars); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-beat', `${timelineState.pixelsPerBar / timelineState.beatsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--timeline-content-width', `${timelineContentWidth()}px`); clampTimelineSystems(); updateCycleDomFromState(); setPlayhead(timelineState.playheadX) }
   let timelineVisualRefreshRaf = 0
@@ -11640,10 +11859,7 @@ function bindEditorEvents() {
     if (event.shiftKey && overTimeline) { event.preventDefault(); const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? normalizedWheelPixels(event, 'x') : normalizedWheelPixels(event, 'y'); grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid) }
   }, { passive:false })
   grid?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(grid); syncTrackVerticalScroll(grid) }, { passive:true })
-  trackList?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTrackVerticalScroll(trackList) }, { passive:true })
-  ruler?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(ruler) }, { passive:true })
-  app.querySelector('[data-global-tracks]')?.addEventListener('scroll', (event) => { markTimelineUserInteraction(); syncTimelineScroll(event.currentTarget) }, { passive:true })
-  extensionLane?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(extensionLane) }, { passive:true })
+  trackList?.addEventListener('wheel', (event) => { if (!grid) return; event.preventDefault(); markTimelineUserInteraction(); grid.scrollTop = clamp(grid.scrollTop + normalizedWheelPixels(event, 'y'), 0, Math.max(0, grid.scrollHeight - grid.clientHeight)) }, { passive:false })
   const restoreTimelineExtensionScroll = (drag = extensionDrag) => {
     if (!grid || !drag) return
     const max = Math.max(0, grid.scrollWidth - grid.clientWidth)
@@ -11947,6 +12163,7 @@ function bindEditorEvents() {
       commitHistoryMutation('color-midi-region', () => {
         region.independentColor = value
         region.color = value
+        region.regionColorMode = 'custom'
         regionColorPickerState = null
       })
       return
@@ -11961,6 +12178,7 @@ function bindEditorEvents() {
       commitHistoryMutation('reset-midi-region-color', () => {
         delete region.independentColor
         region.color = track?.color || region.color
+        region.regionColorMode = 'inherit-track'
         regionColorPickerState = null
       })
       return
@@ -12067,6 +12285,9 @@ function renderEditor() {
     .replace(`<section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section>`, `<section class="studio-logic-section studio-logic-section--bars">${renderTransportBarsDisplay()}<span class="studio-logic-secondary">bar beat div tick</span></section>`)
     .replace(`<section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section>`, `<section class="studio-logic-section studio-logic-section--tempo">${renderTransportTempoDisplay(displayTempo)}${renderTransportTimeSignatureDisplay(displayTimeSignature)}</section>`)
     .replace(`<section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section>`, `<section class="studio-logic-section studio-logic-section--key">${renderTransportKeyDisplay(displayKeySignature)}<span class="studio-logic-secondary">key</span></section>`)
+  shell = shell
+    .replace(`<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div>`, `<div class="studio-track-list"><div class="studio-track-list-inner">${renderNewTrackDropHeader()}${tracks.map(renderTrackCard).join('')}</div></div>`)
+    .replace(`<div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone`, `<div class="studio-arrangement-grid-inner" data-arrangement-grid-inner>${renderNewTrackDropLane()}<span class="studio-negative-zone`)
   app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
   initShellChrome()
   const resonaRailButton = app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')
@@ -12193,7 +12414,7 @@ function handleStudioKeydown(event){
   else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: -1, event })));scheduleEditorSave()}
   else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: 1, event })));scheduleEditorSave()}
   else if(event.code==='KeyC'){event.preventDefault(); isCycleEnabled=!isCycleEnabled; renderEditor()}
-  else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); renderEditor()}
+  else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; metronomeSettings.enabled=isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor()}
 }
 if(!window.__melogicStudioKeybindsBound){ window.__melogicStudioKeybindsBound=true; document.addEventListener('keydown', handleStudioKeydown); document.addEventListener('keyup',(event)=>{
   const held = pressedDawMidiKeys.get(event.code)
