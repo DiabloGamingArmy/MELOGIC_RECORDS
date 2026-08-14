@@ -10,6 +10,12 @@ function wav() {
   return bytes
 }
 
+function aiff() {
+  const bytes = Buffer.alloc(12)
+  bytes.write('FORM', 0); bytes.writeUInt32BE(4, 4); bytes.write('AIFF', 8)
+  return bytes
+}
+
 function crc32(bytes) {
   let crc = 0xffffffff
   for (const byte of bytes) { crc ^= byte; for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1 }
@@ -28,6 +34,7 @@ test('authoritative inspection validates audio bytes and preserves hierarchy', (
   const result = inspectSouraArchive(storedZip('Drums/Kicks/one.wav', wav()))
   assert.equal(result.compatible, true)
   assert.deepEqual(result.assetPaths, ['Drums/Kicks/one.wav'])
+  assert.equal(inspectSouraArchive(storedZip('Textures/one.aiff', aiff())).compatible, true)
 })
 
 test('unsafe paths, invalid audio, and archive limits fail closed', () => {

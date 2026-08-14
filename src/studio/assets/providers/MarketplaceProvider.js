@@ -20,6 +20,7 @@ export class MarketplaceProvider {
     })
     return installs.docs.flatMap((snapshot) => {
       const install = { installId: snapshot.id, ...snapshot.data() }
+      if (!['installed', 'partial'].includes(install.status)) return []
       return buildArchiveHierarchy({ sourceType: 'marketplace', rootId: install.folderId, rootName: install.productTitle, productId: install.productId, publisherId: install.publisherId, version: install.version, entries: assetsByInstall.get(install.installId) || [] })
     })
   }

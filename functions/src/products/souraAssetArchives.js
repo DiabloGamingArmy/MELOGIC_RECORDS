@@ -3,13 +3,14 @@
 const crypto = require('node:crypto')
 const { LIMITS, STATUS, isZipFile, safePath, centralDirectoryEntries, extractEntry } = require('./vertixAssetArchives')
 
-const AUDIO_FORMATS = new Set(['wav', 'mp3', 'm4a', 'aac', 'ogg', 'oga', 'webm', 'flac'])
-const MIME_BY_FORMAT = Object.freeze({ wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', webm: 'audio/webm', flac: 'audio/flac' })
+const AUDIO_FORMATS = new Set(['wav', 'aif', 'aiff', 'mp3', 'm4a', 'aac', 'ogg', 'oga', 'webm', 'flac'])
+const MIME_BY_FORMAT = Object.freeze({ wav: 'audio/wav', aif: 'audio/aiff', aiff: 'audio/aiff', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', oga: 'audio/ogg', webm: 'audio/webm', flac: 'audio/flac' })
 const extension = (name = '') => String(name).split('.').pop().toLowerCase()
 
 function validateAudioContainer(bytes, format) {
   if (!Buffer.isBuffer(bytes) || bytes.length < 12) return false
   if (format === 'wav') return bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WAVE'
+  if (format === 'aif' || format === 'aiff') return bytes.subarray(0, 4).toString() === 'FORM' && ['AIFF', 'AIFC'].includes(bytes.subarray(8, 12).toString())
   if (format === 'flac') return bytes.subarray(0, 4).toString() === 'fLaC'
   if (format === 'ogg' || format === 'oga') return bytes.subarray(0, 4).toString() === 'OggS'
   if (format === 'mp3') return bytes.subarray(0, 3).toString() === 'ID3' || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)

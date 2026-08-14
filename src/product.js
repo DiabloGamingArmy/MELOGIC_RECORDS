@@ -27,6 +27,7 @@ import { renderSafeRichDescription } from './utils/richDescription'
 import { iconSvg } from './utils/icons'
 import { loadProductLicenseDocument, productLicenseInfo } from './data/productLicenseService'
 import { renderSafeMarkdown } from './utils/safeMarkdown'
+import { souraInstallDiagnostic, souraInstallErrorMessage } from './soura/marketplace/souraInstallUi'
 
 const app = document.querySelector('#app')
 
@@ -1461,19 +1462,30 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
     }
   })
   app.querySelector('[data-install-soura-pack]')?.addEventListener('click', async (event) => {
-    if (!window.confirm('Import this product’s verified Soura audio assets to your Asset Library?')) return
     const button = event.currentTarget
+    if (button.dataset.openSoura === 'true') {
+      window.location.assign(ROUTES.studioDaw)
+      return
+    }
+    if (!window.confirm('Import this product’s verified Soura audio assets to your Asset Library?')) return
     button.disabled = true
     button.textContent = 'Importing to Soura…'
     try {
       const result = await installMarketplaceSouraPack(product.id)
       if (!result?.ok) throw new Error('Soura import did not complete.')
-      button.textContent = result.alreadyInstalled ? 'In Asset Library' : `Imported ${result.install?.installedAssetCount || ''}`.trim()
-      showActionMessage(result.alreadyInstalled ? 'This pack is already in your Soura Asset Library.' : 'Soura assets are ready in Marketplace inside the Asset Library.')
+      button.disabled = false
+      button.dataset.openSoura = 'true'
+      button.textContent = 'Open Soura'
+      const count = Number(result.install?.installedAssetCount || 0)
+      const message = result.alreadyInstalled
+        ? 'This pack is already in your Soura Asset Library. Select Open Soura to use it.'
+        : `${count || 'The'} Soura asset${count === 1 ? '' : 's'} ${result.installState === 'updated' ? 'were updated' : 'were added'} in Asset Library → Marketplace. Select Open Soura to use ${count === 1 ? 'it' : 'them'}.`
+      showActionMessage(message)
     } catch (error) {
+      console.error('[marketplace/soura-install] failed', souraInstallDiagnostic(error, product.id))
       button.disabled = false
       button.textContent = 'Import to Soura'
-      showActionMessage(error?.message || 'Could not import this Soura pack.')
+      showActionMessage(souraInstallErrorMessage(error))
     }
   })
   app.querySelectorAll('[data-close-product-download]').forEach((element) => {
