@@ -107,7 +107,7 @@ fn fft_power(samples: &[f64]) -> Vec<f64> {
 }
 
 fn band_energies(spectrum: &[f64], sample_rate: f64, fft_size: usize) -> Value {
-  let definitions = [
+  let definitions: [(&str, f64, f64); 7] = [
     ("sub", 20.0, 60.0), ("bass", 60.0, 200.0), ("lowMid", 200.0, 500.0),
     ("mid", 500.0, 2000.0), ("upperMid", 2000.0, 5000.0),
     ("presence", 5000.0, 10000.0), ("air", 10000.0, 24000.0),

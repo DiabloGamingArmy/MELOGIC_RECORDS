@@ -176,6 +176,7 @@ function normalizeDeliverableFiles(value = [], productId = '') {
     const id = cleanString(row?.id || `file-${index}`, 120)
     const storagePath = normalizePath(row?.storagePath || row?.path || row?.filePath || '')
     const validationInput = row?.vertixAssetValidation && typeof row.vertixAssetValidation === 'object' ? row.vertixAssetValidation : {}
+    const souraValidationInput = row?.souraAssetValidation && typeof row.souraAssetValidation === 'object' ? row.souraAssetValidation : {}
     const validation = {
       status: validationInput.status === 'compatible' ? 'compatible' : validationInput.status === 'incompatible' ? 'incompatible' : 'unchecked',
       compatible: validationInput.status === 'compatible' && validationInput.compatible === true,
@@ -203,6 +204,17 @@ function normalizeDeliverableFiles(value = [], productId = '') {
       description: cleanString(row?.description || '', 150),
       isVertixAsset: row?.isVertixAsset === true && validation.compatible && validation.compatibleAssetCount > 0,
       vertixAssetValidation: validation,
+      isSouraAsset: row?.isSouraAsset === true && souraValidationInput.status === 'compatible' && souraValidationInput.compatible === true && Number(souraValidationInput.compatibleAssetCount || 0) > 0,
+      souraAssetValidation: {
+        status: souraValidationInput.status === 'compatible' ? 'compatible' : souraValidationInput.status === 'incompatible' ? 'incompatible' : 'unchecked',
+        compatible: souraValidationInput.status === 'compatible' && souraValidationInput.compatible === true,
+        compatibleAssetCount: Math.max(0, Math.round(Number(souraValidationInput.compatibleAssetCount || 0) || 0)),
+        invalidAssetCount: Math.max(0, Math.round(Number(souraValidationInput.invalidAssetCount || 0) || 0)),
+        assetPaths: Array.isArray(souraValidationInput.assetPaths) ? souraValidationInput.assetPaths.map((path) => cleanString(path, 500)).filter(Boolean).slice(0, 7500) : [],
+        assets: Array.isArray(souraValidationInput.assets) ? souraValidationInput.assets.slice(0, 7500) : [],
+        errors: Array.isArray(souraValidationInput.errors) ? souraValidationInput.errors.map((message) => cleanString(message, 300)).filter(Boolean).slice(0, 20) : [],
+        validatedAt: cleanString(souraValidationInput.validatedAt || '', 80)
+      },
       updatedAt: cleanString(row?.updatedAt || '', 80)
     }
   }).filter((row) => row.id)

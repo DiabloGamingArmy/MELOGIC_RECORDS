@@ -2,7 +2,7 @@ import './styles/base.css'
 import './styles/studio.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
-import { waitForInitialAuthState } from './firebase/auth'
+import { auth, waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute } from './utils/routes'
 import { getStudioProject, touchStudioProject, saveStudioProjectEditorState } from './data/studioProjectService'
 import { StudioAudioEngine } from './studio/audio/StudioAudioEngine.js'
@@ -55,6 +55,13 @@ import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisServi
 import { SOURCE_TYPES, SPECTRAL_BANDS } from './studio/audio/analysis/audioAnalysisConstants.js'
 import { analyzeProjectContext, combineAnalysisResults, compareRegionAnalyses } from './studio/audio/analysis/contextAnalysis.js'
 import { buildRecommendations } from './studio/audio/analysis/recommendationEngine.js'
+import { AssetLibrary, ASSET_LIBRARY_ROOTS, migrateLegacyAssetLibraryState } from './studio/assets/AssetLibrary.js'
+import { PrimitiveProvider } from './studio/assets/providers/PrimitiveProvider.js'
+import { MarketplaceProvider } from './studio/assets/providers/MarketplaceProvider.js'
+import { UserProvider } from './studio/assets/providers/UserProvider.js'
+import { ProjectProvider } from './studio/assets/providers/ProjectProvider.js'
+import { WebAssetStorage } from './studio/assets/storage/WebAssetStorage.js'
+import { NativeAssetStorage, isNativeAssetRuntime } from './studio/assets/storage/NativeAssetStorage.js'
 import {
   musicalDurationToRegionWidth,
   musicalPositionToRegionX,
@@ -68,6 +75,7 @@ const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw'
 const PREF_KEY = 'melogic_studio_keep_site_menu_open'
 const MUSICAL_TYPING_PREF_KEY = 'melogic:daw:musicalTyping'
 const CHANNEL_ACCORDION_PREF_KEY = 'melogic:daw:channelStripSettings:accordionState'
+const ASSET_LIBRARY_PREF_KEY = 'melogic:soura:assetLibrary:v1'
 const REGION_TOOL_ITEMS = [
   { id: 'select', label: 'Select', glyph: 'V', shortcut: 'V / 1', enabled: true, mode: 'cursor' },
   { id: 'split', label: 'Split', glyph: 'S', shortcut: 'S / 3', enabled: true, mode: 'cursor' },
@@ -156,6 +164,15 @@ let trackMenuState = null
 let renameTrackState = null
 let colorPickerState = null
 let activeBottomPanel = ''
+const webAssetStorage = new WebAssetStorage()
+const nativeAssetStorage = isNativeAssetRuntime() ? new NativeAssetStorage() : null
+const userAssetProvider = new UserProvider({ storage: webAssetStorage, nativeStorage: nativeAssetStorage })
+const souraAssetLibrary = new AssetLibrary([new PrimitiveProvider(), new MarketplaceProvider(), userAssetProvider, new ProjectProvider()])
+let assetLibraryState = (() => {
+  try { return { selectedSourceId: 'primitive', search: '', selectedAssetId: '', loading: false, loaded: false, error: '', ...migrateLegacyAssetLibraryState(JSON.parse(localStorage.getItem(ASSET_LIBRARY_PREF_KEY) || localStorage.getItem('melogic:soura:loopBrowser') || '{}')) } }
+  catch { return { selectedSourceId: 'primitive', search: '', selectedAssetId: '', loading: false, loaded: false, error: '' } }
+})()
+let assetLibraryPreviewAudio = null
 let isControlsMenuOpen = false
 let controlsConfigModalOpen = false
 let projectSettingsModalOpen = false
@@ -3353,12 +3370,64 @@ function renderMixerPanel(motionClass = '') {
   const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
   return `<section class="studio-bottom-panel studio-mixer-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Mixer</strong><nav><button type="button" data-detach-bottom-panel="mixer">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-mixer-body"><div class="studio-mixer-strips">${renderMixerChannelStrip(null, { stereoOut: true })}<span class="studio-mixer-divider" aria-hidden="true"></span>${tracks.map((track)=>renderMixerChannelStrip(track)).join('')}</div></div></section>`
 }
+function persistAssetLibraryState() {
+  try { localStorage.setItem(ASSET_LIBRARY_PREF_KEY, JSON.stringify({ selectedSourceId: assetLibraryState.selectedSourceId, search: assetLibraryState.search, activePanel: 'asset-library' })) } catch {}
+}
+async function refreshAssetLibrary({ render = true } = {}) {
+  if (assetLibraryState.loading) return
+  assetLibraryState = { ...assetLibraryState, loading: true, error: '' }
+  if (render) renderEditor()
+  try {
+    await souraAssetLibrary.refresh({ uid: auth.currentUser?.uid || '', currentProjectId: projectState?.id || projectIdFromPath() })
+    assetLibraryState = { ...assetLibraryState, loading: false, loaded: true }
+  } catch (error) {
+    assetLibraryState = { ...assetLibraryState, loading: false, loaded: true, error: error?.message || 'Asset Library could not load.' }
+  }
+  if (render) renderEditor()
+}
+function assetLibraryParentId(id) {
+  if (ASSET_LIBRARY_ROOTS.some((root) => root.id === id)) return ''
+  return souraAssetLibrary.getAsset(id)?.parentId || ''
+}
+function renderAssetLibraryPanel(motionClass = '') {
+  const sourceId = assetLibraryState.selectedSourceId || 'primitive'
+  const current = souraAssetLibrary.getAsset(sourceId)
+  const rows = souraAssetLibrary.listChildren(sourceId, assetLibraryState.search)
+  const empty = assetLibraryState.loading ? 'Loading assets…' : assetLibraryState.error || (sourceId === 'primitive' ? 'No built-in primitives are registered yet.' : sourceId === 'marketplace' ? 'No marketplace packs installed.' : sourceId === 'user' ? 'Import audio to build your personal library.' : sourceId === 'project' ? 'No reusable audio found in other accessible projects.' : 'This folder is empty.')
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  return `<section class="studio-bottom-panel studio-asset-library ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Asset Library</strong><nav><button type="button" data-refresh-asset-library>Refresh</button><button type="button" data-detach-bottom-panel="asset-library">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-asset-library-body"><aside class="studio-asset-library-sources" aria-label="Asset sources">${ASSET_LIBRARY_ROOTS.map((root) => `<button type="button" data-asset-folder="${root.id}" class="${sourceId === root.id ? 'is-active' : ''}">${esc(root.name)}</button>`).join('')}</aside><section class="studio-asset-library-content"><div class="studio-asset-library-toolbar">${current ? `<button type="button" data-asset-folder="${esc(assetLibraryParentId(sourceId))}">← Back</button><strong>${esc(current.name)}</strong>` : '<strong>Browse assets</strong>'}<input type="search" data-asset-search value="${esc(assetLibraryState.search)}" placeholder="Search this folder" aria-label="Search assets"><button type="button" data-import-user-asset>Import Audio</button><input type="file" data-user-asset-file accept="audio/*,.wav,.mp3,.m4a,.aac,.ogg,.oga,.webm,.flac" hidden></div><div class="studio-asset-library-list" role="list">${rows.length ? rows.map((asset) => `<article role="listitem" class="studio-asset-row ${assetLibraryState.selectedAssetId === asset.id ? 'is-selected' : ''}" data-asset-id="${esc(asset.id)}" data-asset-kind="${asset.kind}" draggable="${asset.kind === 'audio'}"><span class="studio-asset-row-icon">${asset.kind === 'audio' ? '♪' : '▸'}</span><span><strong>${esc(asset.name)}</strong><small>${asset.kind === 'audio' ? `${esc(asset.audio?.format || 'audio')}${asset.audio?.duration ? ` · ${Number(asset.audio.duration).toFixed(1)}s` : ''}` : esc(asset.kind)}</small></span>${asset.kind === 'audio' ? '<button type="button" data-preview-asset aria-label="Preview asset">▶</button>' : ''}</article>`).join('') : `<p class="studio-asset-library-empty">${esc(empty)}</p>`}</div></section></div></section>`
+}
+async function resolveAssetLibraryFile(assetId) {
+  const resolved = await souraAssetLibrary.resolveAsset(assetId)
+  if (resolved.file) return resolved.file
+  if (!resolved.url) throw new Error('Audio asset could not be resolved.')
+  const response = await fetch(resolved.url)
+  if (!response.ok) throw new Error('Audio asset download failed.')
+  const blob = await response.blob()
+  return new File([blob], resolved.fileName || souraAssetLibrary.getAsset(assetId)?.name || 'asset.wav', { type: resolved.contentType || blob.type || 'audio/*' })
+}
+async function insertAssetLibraryAudio(assetId, { trackId = selectedTrackId, timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)) } = {}) {
+  try { await createAudioRegionFromFile({ file: await resolveAssetLibraryFile(assetId), trackId, timelineStartBeats, source: 'asset-library' }) }
+  catch (error) { recordingStatus = error?.message || 'Asset could not be inserted.'; updateEditorTitleStatus() }
+}
+async function previewAssetLibraryAudio(assetId) {
+  if (assetLibraryPreviewAudio) { assetLibraryPreviewAudio.pause(); assetLibraryPreviewAudio = null }
+  try {
+    const resolved = await souraAssetLibrary.resolveAsset(assetId)
+    const url = resolved.url || URL.createObjectURL(resolved.file)
+    const audio = new Audio(url)
+    assetLibraryPreviewAudio = audio
+    audio.addEventListener('ended', () => { if (!resolved.url) URL.revokeObjectURL(url); if (assetLibraryPreviewAudio === audio) assetLibraryPreviewAudio = null }, { once: true })
+    await audio.play()
+  } catch (error) { recordingStatus = error?.message || 'Asset preview failed.'; updateEditorTitleStatus() }
+}
 function renderBottomPanel(panel,motionClass=''){
+  if(panel==='asset-library'||panel==='loops') return renderAssetLibraryPanel(motionClass)
   if(panel==='instrument') return renderInstrumentPanel().replace('studio-bottom-panel studio-instrument-panel', `studio-bottom-panel studio-instrument-panel ${motionClass}`.trim())
   if(panel==='midi-roll') return renderMidiRollPanel(motionClass)
   if(panel==='midi-effect') return renderMidiEffectEditorPanel(motionClass)
   if(panel==='mixer') return renderMixerPanel(motionClass)
-  const t={loops:['Loop Browser','Loops and samples will appear here.'],collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']
+  const t={collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']
   return `<section class="studio-bottom-panel ${motionClass}"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>${t[0]}</strong><nav><button type="button" data-detach-bottom-panel="${esc(panel)}">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><p>${t[1]}</p></div></section>`
 }
 
@@ -4166,7 +4235,7 @@ function bindSmartControlsEvents() {
     if (grid) grid.scrollLeft = clamp(timelineState.playheadX - (grid.clientWidth * 0.35), 0, Math.max(0, grid.scrollWidth - grid.clientWidth))
   }))
 }
-function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":renderSmartControlsPanel(),"loop-browser":`<h3>Loop Browser</h3><input placeholder="Search loops"/><p>Drums</p><p>Melody</p><p>Bass</p><p>Vocals</p><p>FX</p>`}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''} ${activeLeftPanel==='smart-controls'?'studio-left-panel--smart-controls':''}">${views[activeLeftPanel] || ''}</aside>` }
+function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":renderSmartControlsPanel()}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''} ${activeLeftPanel==='smart-controls'?'studio-left-panel--smart-controls':''}">${views[activeLeftPanel] || ''}</aside>` }
 function getActiveNotePage(){ return notePages.find((page)=>page.id===activeNotePageId) || notePages[0] }
 function stashActiveNoteInput(){ const input = app.querySelector('[data-notes-input]'); const active = getActiveNotePage(); if (!input || !active) return; active.body = input.value }
 function renderNotesModal(){ if(!isNotesOpen) return ''; const activePage = getActiveNotePage(); return `<div class="studio-notes-modal"><div class="studio-notes-panel"><header class="studio-notes-header"><h3>Project Notes</h3></header><div class="studio-notes-body"><div class="studio-notes-pages">${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${page.id}" aria-pressed="${String(page.id===activeNotePageId)}">${page.title}</button>`).join('')}<button class="studio-notes-page-button" data-add-notes-page>Add Page</button></div><textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${activePage?.body || ''}</textarea></div><div class="studio-notes-actions"><button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button><button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button></div></div></div>` }
@@ -6264,6 +6333,7 @@ function persistRegionEditorHeightPreference() {
   try { window.localStorage?.setItem(REGION_EDITOR_HEIGHT_STORAGE_KEY, String(clampBottomPanelHeightPx(bottomPanelHeightPx))) } catch {}
 }
 function openBottomPanel(panelId){
+  if (panelId === 'loops') panelId = 'asset-library'
   clearBottomPanelMotionTimer()
   if(activeBottomPanel===panelId){ closeBottomPanel(); return }
   if(panelId !== 'midi-effect') activeMidiEffectEditor = null
@@ -6273,6 +6343,7 @@ function openBottomPanel(panelId){
   closingBottomPanel=''
   bottomPanelMotion='entering'
   renderEditor()
+  if (panelId === 'asset-library' && !assetLibraryState.loaded && !assetLibraryState.loading) refreshAssetLibrary()
   if (panelId === 'instrument' && !studioLibraryState.loaded && !studioLibraryState.loading) loadStudioLibrary()
   bottomPanelMotionTimer=window.setTimeout(()=>{ bottomPanelMotion=''; renderEditor() },190)
 }
@@ -6288,7 +6359,7 @@ function closeBottomPanel(){
 function detachBottomPanel(panelId = activeBottomPanel) {
   const panel = panelId || activeBottomPanel
   if (!panel) return
-  const title = panel === 'midi-roll' ? 'Region Editor' : panel === 'instrument' ? 'Instrument' : panel.charAt(0).toUpperCase() + panel.slice(1)
+  const title = panel === 'midi-roll' ? 'Region Editor' : panel === 'instrument' ? 'Instrument' : panel === 'asset-library' ? 'Asset Library' : panel.charAt(0).toUpperCase() + panel.slice(1)
   const popup = window.open('', `melogic-${panel}-panel`, 'width=980,height=680,resizable=yes,scrollbars=yes')
   if (!popup) return
   const body = app.querySelector('.studio-bottom-panel')?.outerHTML || `<section><h1>${esc(title)}</h1><p>No panel content available.</p></section>`
@@ -10421,6 +10492,50 @@ function mountInlineNumericEditor() {
   })
 }
 
+function bindAssetLibraryEvents(grid) {
+  app.querySelector('[data-refresh-asset-library]')?.addEventListener('click', () => refreshAssetLibrary())
+  app.querySelectorAll('[data-asset-folder]').forEach((button) => button.addEventListener('click', () => {
+    const id = button.dataset.assetFolder
+    if (!id) return
+    assetLibraryState = { ...assetLibraryState, selectedSourceId: id, selectedAssetId: '' }
+    persistAssetLibraryState(); renderEditor()
+  }))
+  app.querySelector('[data-asset-search]')?.addEventListener('change', (event) => { assetLibraryState = { ...assetLibraryState, search: event.target.value }; persistAssetLibraryState(); renderEditor() })
+  const fileInput = app.querySelector('[data-user-asset-file]')
+  app.querySelector('[data-import-user-asset]')?.addEventListener('click', () => fileInput?.click())
+  fileInput?.addEventListener('change', async () => {
+    const file = fileInput.files?.[0]
+    if (!file || !isSupportedAudioFile(file)) { recordingStatus = 'Choose a supported audio file.'; updateEditorTitleStatus(); return }
+    try { await userAssetProvider.importFile(file); assetLibraryState = { ...assetLibraryState, selectedSourceId: 'user', loaded: false }; await refreshAssetLibrary() }
+    catch (error) { recordingStatus = error?.message || 'Audio import failed.'; updateEditorTitleStatus() }
+  })
+  app.querySelectorAll('[data-asset-id]').forEach((row) => {
+    const id = row.dataset.assetId
+    const kind = row.dataset.assetKind
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('[data-preview-asset]')) return
+      if (kind !== 'audio') { assetLibraryState = { ...assetLibraryState, selectedSourceId: id, selectedAssetId: '' }; persistAssetLibraryState(); renderEditor(); return }
+      assetLibraryState = { ...assetLibraryState, selectedAssetId: id }; renderEditor()
+    })
+    if (kind === 'audio') {
+      row.addEventListener('dblclick', () => insertAssetLibraryAudio(id))
+      row.addEventListener('dragstart', (event) => { event.dataTransfer.setData('application/x-soura-asset-id', id); event.dataTransfer.effectAllowed = 'copy' })
+      row.querySelector('[data-preview-asset]')?.addEventListener('click', (event) => { event.stopPropagation(); previewAssetLibraryAudio(id) })
+    }
+  })
+  grid?.addEventListener('dragover', (event) => {
+    if (!event.dataTransfer?.types?.includes('application/x-soura-asset-id')) return
+    event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'copy'
+  })
+  grid?.addEventListener('drop', (event) => {
+    const id = event.dataTransfer?.getData('application/x-soura-asset-id')
+    if (!id) return
+    event.preventDefault(); event.stopPropagation()
+    const track = tracks[getTrackLaneFromY(event.clientY)]
+    insertAssetLibraryAudio(id, { trackId: track?.id || selectedTrackId, timelineStartBeats: pointerEventToTimelineBeat(event) })
+  })
+}
+
 function bindEditorEvents() {
   bindSmartControlsEvents()
   const trigger = app.querySelector('[data-editor-left-menu]')
@@ -10429,6 +10544,7 @@ function bindEditorEvents() {
   const grid = app.querySelector('[data-arrangement-grid]')
   const selectionBox = app.querySelector('[data-selection-box]')
   const tooltip = app.querySelector('[data-studio-tooltip]')
+  bindAssetLibraryEvents(grid)
   app.querySelector('[data-region-editor-scroll]')?.addEventListener('scroll', () => captureAudioRegionToolsViewport(), { passive: true })
   trigger?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); setEditorMenuOpen(!isEditorMenuOpen) })
   app.querySelectorAll('[data-daw-menu-toggle]').forEach((button)=>button.addEventListener('click', (event) => {
@@ -11723,6 +11839,9 @@ function renderEditor() {
   const bottomPanelHeightStyle = bottomPanelHeightPx ? `--studio-bottom-panel-height:${bottomPanelHeightPx}px;` : ''
   let shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu">${renderTopMenuButtons()}</nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu ${cpuAlerts.enabled && cpuPercent >= cpuAlerts.thresholdPercent ? 'is-warning' : ''}"><strong class="studio-logic-primary" data-cpu-percent>${Math.round(cpuPercent)}%</strong><span class="studio-logic-secondary">CPU${cpuAlerts.enabled ? ` / ${Math.round(cpuAlerts.thresholdPercent)}%` : ''}</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner><button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}${renderControlsConfigModal()}${renderProjectSettingsModal()}${renderProjectManagementModal()}</main>`
   shell = shell.replace(`--studio-track-height:${timelineState.trackHeight}px;`, `--studio-track-height:${timelineState.trackHeight}px;--studio-track-lanes-height:${totalTrackLaneHeight()}px;`)
+  shell = shell
+    .replace(/<button data-left-panel="loop-browser".*?<\/button>/, '')
+    .replace(/<button data-bottom-panel="loops".*?<\/button>/, `<button data-bottom-panel="asset-library" class="${activeBottomPanel === 'asset-library' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel === 'asset-library')}">Asset Library</button>`)
   shell = shell
     .replace(`<span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span>`, `<span data-footer-tempo>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span data-footer-key>${formatKeySignature(displayKeySignature)}</span><span data-footer-time-signature>${formatTimeSignature(displayTimeSignature)}</span>`)
   shell = shell

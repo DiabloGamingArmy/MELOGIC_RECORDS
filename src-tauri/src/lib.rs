@@ -1,4 +1,5 @@
 mod audio;
+mod assets;
 
 use audio::NativeAudioState;
 
@@ -14,6 +15,9 @@ pub fn run() {
       audio::commands::native_audio_stop_test_tone,
       audio::commands::native_audio_dsp_self_test,
       audio::commands::native_audio_analyze_pcm,
+      assets::native_asset_list,
+      assets::native_asset_store,
+      assets::native_asset_read,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

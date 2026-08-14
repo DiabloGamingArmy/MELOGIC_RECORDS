@@ -23,6 +23,7 @@ import { STORAGE_PATHS } from '../config/storagePaths'
 import { getCachedStorageUrl } from '../services/pageMediaCache'
 import { normalizeProductFulfillment } from '../utils/productFulfillment'
 import { deriveProductVertixCapability, normalizeVertixArchiveCapability } from '../vertix/marketplace/vertixAssetFiles.js'
+import { deriveProductSouraCapability, normalizeSouraArchiveCapability } from '../soura/marketplace/souraAssetFiles.js'
 
 let hasWarnedProductFetch = false
 let hasWarnedProductMedia = false
@@ -239,9 +240,12 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
   const deliverableFiles = (Array.isArray(rawProduct.deliverableFiles) ? rawProduct.deliverableFiles : []).map((file) => ({
     ...file,
     isVertixAsset: file.isVertixAsset === true,
-    vertixAssetValidation: normalizeVertixArchiveCapability(file.vertixAssetValidation)
+    vertixAssetValidation: normalizeVertixArchiveCapability(file.vertixAssetValidation),
+    isSouraAsset: file.isSouraAsset === true,
+    souraAssetValidation: normalizeSouraArchiveCapability(file.souraAssetValidation)
   }))
   const vertixCapability = deriveProductVertixCapability(deliverableFiles)
+  const souraCapability = deriveProductSouraCapability(deliverableFiles)
   return {
     id: rawProduct.id || productId,
     slug: rawProduct.slug || '',
@@ -297,6 +301,9 @@ export function normalizeProduct(productId, rawProduct = {}, media = {}) {
     containsVertixAssets: rawProduct.containsVertixAssets === true || vertixCapability.containsVertixAssets,
     hasVertixAssets: rawProduct.hasVertixAssets === true && vertixCapability.hasVertixAssets,
     vertixAssetCount: vertixCapability.eligibleAssetCount,
+    containsSouraAssets: rawProduct.containsSouraAssets === true || souraCapability.containsSouraAssets,
+    hasSouraAssets: rawProduct.hasSouraAssets === true && souraCapability.hasSouraAssets,
+    souraAssetCount: souraCapability.eligibleAssetCount,
     licensePath: rawProduct.licensePath || '',
     assetSummary: {
       totalFiles: Number(assetSummary.totalFiles || 0),
@@ -1254,6 +1261,20 @@ export async function installMarketplaceVertixPack(productId = '') {
   return result?.data || { ok: false }
 }
 
+export async function validateProductSouraAssetFile(productId = '', fileId = '', isSouraAsset = true) {
+  if (!productId || !fileId) throw new Error('A product and file are required.')
+  const callable = httpsCallable(functions, 'validateProductSouraAssetFile')
+  const result = await callable({ productId, fileId, isSouraAsset: isSouraAsset === true })
+  return result?.data || null
+}
+
+export async function installMarketplaceSouraPack(productId = '') {
+  if (!productId) throw new Error('A product is required.')
+  const callable = httpsCallable(functions, 'installMarketplaceSouraPack')
+  const result = await callable({ productId })
+  return result?.data || null
+}
+
 export async function initializeProductDraft(user, input = {}, requestedId = '') {
   if (!db || !user?.uid) throw new Error('Authenticated user required.')
   const productId = !isPlaceholderProductId(requestedId) ? requestedId : ''
@@ -1686,6 +1707,8 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
       description: String(row.description || '').slice(0, 150),
       isVertixAsset: row.isVertixAsset === true,
       vertixAssetValidation: normalizeVertixArchiveCapability(row.vertixAssetValidation),
+      isSouraAsset: row.isSouraAsset === true,
+      souraAssetValidation: normalizeSouraArchiveCapability(row.souraAssetValidation),
       updatedAt: new Date().toISOString()
     })),
     primaryDownloadPath: deliverable?.storagePath || draft.primaryDownloadPath || draft.downloadPath || '',
@@ -1738,6 +1761,8 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
       isPublicPreview: row.role === 'previewAudio' || row.role === 'previewVideo' || row.role === 'gallery' || row.role === 'cover' || row.role === 'thumbnail',
       isVertixAsset: row.role === 'deliverable' && row.isVertixAsset === true,
       vertixAssetValidation: row.role === 'deliverable' ? normalizeVertixArchiveCapability(row.vertixAssetValidation) : normalizeVertixArchiveCapability(),
+      isSouraAsset: row.role === 'deliverable' && row.isSouraAsset === true,
+      souraAssetValidation: row.role === 'deliverable' ? normalizeSouraArchiveCapability(row.souraAssetValidation) : normalizeSouraArchiveCapability(),
       sortIndex: Number(row.sortIndex ?? index)
     }))
   }

@@ -330,6 +330,11 @@ service firebase.storage {
         && request.resource.metadata.assetId == assetId;
     }
 
+    match /users/{uid}/soura/assets/{assetId}/{version}/{fileName} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
+    }
+
     match /users/{uid}/stage/custom-assets/{assetId}/{version}/{fileName} {
       allow read: if signedIn() && request.auth.uid == uid;
       allow write: if signedIn()

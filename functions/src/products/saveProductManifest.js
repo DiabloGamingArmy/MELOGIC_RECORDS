@@ -6,6 +6,8 @@ const { FieldValue } = admin.firestore
 const { normalizeProductFulfillment } = require('./productFulfillment')
 const { deriveVertixProductFields, isZipFile, STATUS } = require('./vertixAssetArchives')
 const { validateRequestedFile } = require('./validateProductVertixAssetFile')
+const { deriveSouraProductFields } = require('./souraAssetArchives')
+const { validateRequestedSouraFile } = require('./validateProductSouraAssetFile')
 
 const FILE_ROLES = new Set(['cover', 'thumbnail', 'gallery', 'previewAudio', 'previewVideo', 'deliverable', 'license'])
 const MAX_FILE_ROWS = 500
@@ -150,6 +152,10 @@ function normalizeFileRow(productId = '', row = {}, index = 0) {
     vertixAssetValidation: row.vertixAssetValidation && typeof row.vertixAssetValidation === 'object'
       ? row.vertixAssetValidation
       : { status: STATUS.UNCHECKED, compatible: false, compatibleAssetCount: 0, errors: [] },
+    isSouraAsset: role === 'deliverable' && row.isSouraAsset === true,
+    souraAssetValidation: row.souraAssetValidation && typeof row.souraAssetValidation === 'object'
+      ? row.souraAssetValidation
+      : { status: STATUS.UNCHECKED, compatible: false, compatibleAssetCount: 0, errors: [] },
     sortIndex: normalizeNumber(row.sortIndex, index)
   }
 }
@@ -174,6 +180,8 @@ function normalizeDeliverableRow(productId = '', row = {}, index = 0) {
     description: normalized.description,
     isVertixAsset: normalized.isVertixAsset,
     vertixAssetValidation: normalized.vertixAssetValidation,
+    isSouraAsset: normalized.isSouraAsset,
+    souraAssetValidation: normalized.souraAssetValidation,
     updatedAt: new Date().toISOString()
   }
 }
@@ -291,13 +299,17 @@ exports.saveProductManifest = onCall(
       for (const row of requestedDeliverableRows) {
         if (isZipFile(row)) {
           const requestedByPublisher = row.isVertixAsset === true
-          const validated = await validateRequestedFile(productId, { ...row, isVertixAsset: true })
-          deliverableRows.push({ ...validated, isVertixAsset: requestedByPublisher && validated.vertixAssetValidation?.compatible === true })
-        } else deliverableRows.push({ ...row, isVertixAsset: false })
+          const requestedForSoura = row.isSouraAsset === true
+          let validated = row
+          if (requestedByPublisher) validated = await validateRequestedFile(productId, { ...validated, isVertixAsset: true })
+          if (requestedForSoura) validated = await validateRequestedSouraFile(productId, { ...validated, isSouraAsset: true })
+          deliverableRows.push({ ...validated, isVertixAsset: requestedByPublisher && validated.vertixAssetValidation?.compatible === true, isSouraAsset: requestedForSoura && validated.souraAssetValidation?.compatible === true })
+        } else deliverableRows.push({ ...row, isVertixAsset: false, isSouraAsset: false })
       }
       const deliverable = deliverableRows[0] || null
       const assetSummary = normalizeAssetSummary(manifest, fileRows, deliverableRows)
       const vertixProductFields = deriveVertixProductFields(deliverableRows)
+      const souraProductFields = deriveSouraProductFields(deliverableRows)
       const validatedDeliverablesById = new Map(deliverableRows.map((row) => [row.id, row]))
       const persistedFileRows = fileRows.map((row) => row.role === 'deliverable' && validatedDeliverablesById.has(row.id)
         ? { ...row, ...validatedDeliverablesById.get(row.id) }
@@ -315,6 +327,7 @@ exports.saveProductManifest = onCall(
         downloadPath: normalizeProductPath(productId, manifest.downloadPath || deliverable?.storagePath || '', { field: 'downloadPath' }),
         deliverableFiles: deliverableRows,
         ...vertixProductFields,
+        ...souraProductFields,
         licensePath: normalizeProductPath(productId, manifest.licensePath || '', { field: 'licensePath' }),
         usageLicense: cleanString(manifest.usageLicense || product.usageLicense || '', 120),
         usageLicenseVersion: normalizeNumber(manifest.usageLicenseVersion, product.usageLicenseVersion || 0),

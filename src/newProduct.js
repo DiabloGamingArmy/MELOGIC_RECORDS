@@ -15,7 +15,8 @@ import {
   saveProductManifest,
   submitProductForReview,
   uploadProductFile,
-  validateProductVertixAssetFile
+  validateProductVertixAssetFile,
+  validateProductSouraAssetFile
 } from './data/productService'
 import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore'
 import { db } from './firebase/firestore'
@@ -45,6 +46,13 @@ import {
   VertixArchiveValidationStatus,
   withVertixAssetFlag
 } from './vertix/marketplace/vertixAssetFiles.js'
+import {
+  deriveProductSouraCapability,
+  inspectSouraAssetArchive,
+  normalizeSouraArchiveCapability,
+  SouraArchiveValidationStatus,
+  withSouraAssetFlag
+} from './soura/marketplace/souraAssetFiles.js'
 
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
@@ -528,6 +536,8 @@ function queueFile(role, file, extra = {}) {
     category: role === 'deliverable' ? 'Deliverables' : '',
     isDeliverable: role === 'deliverable',
     isDownloadable: role === 'deliverable',
+    isSouraAsset: extra.isSouraAsset === true,
+    souraAssetValidation: normalizeSouraArchiveCapability(extra.souraAssetValidation),
     error: extra.error || ''
   }
 }
@@ -742,6 +752,8 @@ function deliverableMetadataFromQueueItem(item = {}) {
     description: String(item.description || '').slice(0, 150),
     isVertixAsset: item.isVertixAsset === true,
     vertixAssetValidation: normalizeVertixArchiveCapability(item.vertixAssetValidation),
+    isSouraAsset: item.isSouraAsset === true,
+    souraAssetValidation: normalizeSouraArchiveCapability(item.souraAssetValidation),
     createdAt: item.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }
@@ -758,10 +770,14 @@ function syncDeliverableDraftMetadata() {
   updateDraftField('primaryDownloadPath', rows[0]?.storagePath || '')
   updateDraftField('primaryDownloadBytes', Number(rows[0]?.sizeBytes || 0))
   const vertix = deriveProductVertixCapability(rows)
+  const soura = deriveProductSouraCapability(rows)
   updateDraftField('assetSummary', { ...(editorState.draft.assetSummary || {}), totalFiles: rows.length, totalBytes: rows.reduce((sum, row) => sum + Number(row.sizeBytes || 0), 0), downloadableCount: rows.length, previewableCount: rows.filter((row) => row.canPreview).length })
   updateDraftField('containsVertixAssets', vertix.containsVertixAssets)
   updateDraftField('hasVertixAssets', vertix.hasVertixAssets)
   updateDraftField('vertixAssetCount', vertix.eligibleAssetCount)
+  updateDraftField('containsSouraAssets', soura.containsSouraAssets)
+  updateDraftField('hasSouraAssets', soura.hasSouraAssets)
+  updateDraftField('souraAssetCount', soura.eligibleAssetCount)
 }
 
 async function ensureDraftProductShell() {
@@ -799,6 +815,15 @@ async function uploadQueueItemsNow(items = []) {
       renderEditor()
     }
   })
+}
+
+async function preflightSouraQueueItems(items = []) {
+  const archives = items.filter((item) => item.role === 'deliverable' && item.file && isZipDeliverable(item))
+  await Promise.all(archives.map(async (item) => {
+    const validation = await inspectSouraAssetArchive(item.file)
+    editorState.uploadQueue = editorState.uploadQueue.map((row) => row.id === item.id ? { ...row, isSouraAsset: false, souraAssetValidation: validation } : row)
+  }))
+  if (archives.length) { syncDeliverableDraftMetadata(); renderEditor() }
 }
 
 function tagValuesFor(field) {
@@ -1666,6 +1691,7 @@ function renderMediaUploadPanel() {
               <h3>${digitalEnabled ? 'Digital Deliverables' : 'Product Media'}</h3>
               <p class="editor-file-stats">${fileEntries.length} ${fileEntries.length === 1 ? 'file' : 'files'} · ${formatBytes(totalBytes)} · ${deliverableCount} deliverable${deliverableCount === 1 ? '' : 's'}</p>
               ${vertixCapability.hasVertixAssets ? `<p class="editor-file-stats is-vertix-ready">Vertix Assets Included · ${vertixCapability.eligibleAssetCount} validated GLB asset${vertixCapability.eligibleAssetCount === 1 ? '' : 's'}</p>` : ''}
+              ${deriveProductSouraCapability(fileEntries).hasSouraAssets ? `<p class="editor-file-stats is-vertix-ready">Soura Assets Included · ${deriveProductSouraCapability(fileEntries).eligibleAssetCount} validated audio asset${deriveProductSouraCapability(fileEntries).eligibleAssetCount === 1 ? '' : 's'}</p>` : ''}
               ${digitalEnabled ? '' : '<p class="editor-file-stats">No digital media required.</p><p class="editor-file-stats">This product is marked as physical only. Digital download files cannot be uploaded for this product format. You can still add product images/previews where supported, but buyer delivery is handled through the physical details and shipping information.</p>'}
             </div>
             ${digitalEnabled ? `<div class="editor-file-add-wrap">
@@ -1683,9 +1709,10 @@ function renderMediaUploadPanel() {
                 : `
                   <div class="editor-file-row is-file">
                     <button type="button" class="editor-file-row-main"><span class="editor-file-icon">${iconSvg('file')}</span><span class="editor-file-name">${escapeHtml(row.entry.name)}</span><span class="editor-file-description">${escapeHtml(formatBytes(row.entry.sizeBytes))}</span><span class="editor-file-status-pill is-${escapeHtml(row.entry.status || 'queued')}">${escapeHtml((row.entry.status || 'queued').replace('_', ' '))}${row.entry.status === 'uploading' ? ` ${Math.round(Number(row.entry.progress || 0))}%` : ''}</span></button>
-                    <div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="file:${escapeHtml(row.entry.id)}" aria-label="Open file actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'is-open' : ''}" role="menu"><button type="button" data-file-action="rename:${escapeHtml(row.entry.id)}">Rename</button><button type="button" data-file-action="move:${escapeHtml(row.entry.id)}">Move</button>${isZipDeliverable(row.entry) ? (() => { const validation = normalizeVertixArchiveCapability(row.entry.vertixAssetValidation); const checking = validation.status === VertixArchiveValidationStatus.CHECKING; const message = checking ? 'Checking GLB compatibility…' : validation.status === VertixArchiveValidationStatus.COMPATIBLE ? `${validation.compatibleAssetCount} compatible GLB${validation.compatibleAssetCount === 1 ? '' : 's'}` : validation.errors[0] || 'Opt in after compatibility validation'; return `<label class="editor-file-vertix-toggle" role="menuitem"><input type="checkbox" data-vertix-asset-toggle="${escapeHtml(row.entry.id)}" ${row.entry.isVertixAsset ? 'checked' : ''} ${checking ? 'disabled' : ''}><span>Vertix Asset</span><small>${escapeHtml(message)}</small></label>` })() : ''}<button type="button" data-file-action="delete:${escapeHtml(row.entry.id)}">Delete</button></div></div>
+                    <div class="editor-file-row-actions"><button type="button" class="editor-file-menu-button" data-row-menu-toggle="file:${escapeHtml(row.entry.id)}" aria-label="Open file actions" aria-haspopup="menu" aria-expanded="${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'true' : 'false'}">${iconSvg('moreVertical')}</button><div class="editor-file-row-menu ${editorState.openDeliverableRowMenu === `file:${row.entry.id}` ? 'is-open' : ''}" role="menu"><button type="button" data-file-action="rename:${escapeHtml(row.entry.id)}">Rename</button><button type="button" data-file-action="move:${escapeHtml(row.entry.id)}">Move</button>${isZipDeliverable(row.entry) ? (() => { const validation = normalizeVertixArchiveCapability(row.entry.vertixAssetValidation); const checking = validation.status === VertixArchiveValidationStatus.CHECKING; const message = checking ? 'Checking GLB compatibility…' : validation.status === VertixArchiveValidationStatus.COMPATIBLE ? `${validation.compatibleAssetCount} compatible GLB${validation.compatibleAssetCount === 1 ? '' : 's'}` : validation.errors[0] || 'Opt in after compatibility validation'; const soura = normalizeSouraArchiveCapability(row.entry.souraAssetValidation); const souraChecking = soura.status === SouraArchiveValidationStatus.CHECKING; const souraMessage = souraChecking ? 'Checking audio compatibility…' : soura.status === SouraArchiveValidationStatus.COMPATIBLE ? `${soura.compatibleAssetCount} compatible audio file${soura.compatibleAssetCount === 1 ? '' : 's'}` : soura.errors[0] || 'Opt in after compatibility validation'; return `<label class="editor-file-vertix-toggle" role="menuitem"><input type="checkbox" data-vertix-asset-toggle="${escapeHtml(row.entry.id)}" ${row.entry.isVertixAsset ? 'checked' : ''} ${checking ? 'disabled' : ''}><span>Vertix Asset</span><small>${escapeHtml(message)}</small></label><label class="editor-file-vertix-toggle" role="menuitem"><input type="checkbox" data-soura-asset-toggle="${escapeHtml(row.entry.id)}" ${row.entry.isSouraAsset ? 'checked' : ''} ${souraChecking ? 'disabled' : ''}><span>Soura Assets</span><small>${escapeHtml(souraMessage)}</small></label>` })() : ''}<button type="button" data-file-action="delete:${escapeHtml(row.entry.id)}">Delete</button></div></div>
                     ${row.entry.status === 'uploading' ? `<div class="editor-file-progress"><span style="width:${Math.max(0, Math.min(100, Number(row.entry.progress || 0)))}%"></span></div>` : ''}
                     ${row.entry.isVertixAsset ? '<span class="editor-file-vertix-badge">Vertix</span>' : ''}
+                    ${row.entry.isSouraAsset ? '<span class="editor-file-vertix-badge">Soura</span>' : ''}
                   </div>`).join('')}`
               : `<div class="file-viewer-empty">${digitalEnabled ? '<p>No product files added yet. Use + Add to attach your main deliverable.</p>' : '<strong>No digital media required.</strong><p>This product is marked as physical only. Digital download files cannot be uploaded for this product format. You can still add product images/previews where supported, but buyer delivery is handled through the physical details and shipping information.</p>'}</div>`}
           </div></div></div>
@@ -2300,6 +2327,7 @@ function renderEditor() {
     editorState.uploadQueue = [...editorState.uploadQueue, ...queued]
     setStatus('Deliverables added. Upload started.', 'info')
     renderEditor()
+    preflightSouraQueueItems(queued)
     uploadQueueItemsNow(queued)
   })
   editorRoot.querySelectorAll('[data-remove-file]').forEach((button) => {
@@ -2456,6 +2484,39 @@ function renderEditor() {
     }
     syncDeliverableDraftMetadata()
     renderEditor()
+  }))
+  editorRoot.querySelectorAll('[data-soura-asset-toggle]').forEach((checkbox) => checkbox.addEventListener('change', async (event) => {
+    event.stopPropagation()
+    const id = checkbox.getAttribute('data-soura-asset-toggle') || ''
+    const requested = checkbox.checked === true
+    const target = gatherFileEntries().find((row) => row.id === id)
+    if (!target || !isZipDeliverable(target)) return
+    const replaceFile = (next) => {
+      editorState.uploadQueue = editorState.uploadQueue.map((item) => item.id === id ? { ...item, ...next } : item)
+      if (Array.isArray(editorState.draft?.deliverableFiles)) updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.map((item) => item.id === id ? { ...item, ...next, updatedAt: new Date().toISOString() } : item))
+    }
+    if (!requested) {
+      replaceFile({ isSouraAsset: false })
+      syncDeliverableDraftMetadata(); renderEditor(); return
+    }
+    replaceFile({ isSouraAsset: false, souraAssetValidation: normalizeSouraArchiveCapability({ status: SouraArchiveValidationStatus.CHECKING }) })
+    renderEditor()
+    try {
+      let next
+      const queued = editorState.uploadQueue.find((item) => item.id === id)
+      if (queued?.file) next = withSouraAssetFlag(target, true, await inspectSouraAssetArchive(queued.file))
+      else if (editorState.draft?.id && target.storagePath) next = (await validateProductSouraAssetFile(editorState.draft.id, id, true))?.file
+      if (!next?.isSouraAsset) {
+        const reason = normalizeSouraArchiveCapability(next?.souraAssetValidation).errors[0] || 'This ZIP has no valid Soura-compatible audio.'
+        replaceFile({ ...(next || {}), isSouraAsset: false }); setStatus(reason, 'error')
+      } else {
+        replaceFile(next); setStatus('Soura Assets enabled. The server will verify the ZIP again when the manifest is saved.', 'success')
+      }
+    } catch (error) {
+      replaceFile({ isSouraAsset: false, souraAssetValidation: normalizeSouraArchiveCapability({ status: SouraArchiveValidationStatus.ERROR, errors: [error?.message || 'Compatibility validation failed.'] }) })
+      setStatus('Soura compatibility could not be verified. The checkbox was left off.', 'error')
+    }
+    syncDeliverableDraftMetadata(); renderEditor()
   }))
   editorRoot.querySelectorAll('[data-deliverable-folder-path]').forEach((button) => {
     button.addEventListener('click', () => {

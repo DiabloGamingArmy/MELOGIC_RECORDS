@@ -3,7 +3,7 @@ import './styles/productDashboard.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { addToCart } from './data/cartService'
-import { createReport, getProductShellById, installMarketplaceVertixPack, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
+import { createReport, getProductShellById, installMarketplaceSouraPack, installMarketplaceVertixPack, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
 import { claimFreeProduct, createProductDownloadLink, createProductDownloadUrl, getProductAccessContext, userOwnsProduct } from './data/entitlementService'
 import { sendProductGift } from './data/productGiftService'
 import { searchProfilesByUsername } from './data/profileSearchService'
@@ -1325,6 +1325,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                 ${(product.genres || []).slice(0, 3).map((genre) => `<span class="dashboard-pill">${escapeHtml(genre)}</span>`).join('')}
               </div>
               ${product.hasVertixAssets ? '<div class="dashboard-vertix-indicator" title="This product includes creator-approved, validated Vertix assets.">◇ Vertix Assets Included</div>' : ''}
+              ${product.hasSouraAssets ? '<div class="dashboard-vertix-indicator" title="This product includes creator-approved, validated Soura audio assets.">♫ Includes Soura Assets</div>' : ''}
               <dl class="dashboard-overview-grid">
                 <div><dt>Type</dt><dd>${escapeHtml(typeLabel)}</dd></div>
                 <div><dt>Fulfillment</dt><dd>${escapeHtml(fulfillmentTypeLabel(product))}</dd></div>
@@ -1364,6 +1365,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   <div class="dashboard-download-divider"></div>
                   ${digitalEnabled ? '<button type="button" class="button dashboard-download-button" data-product-download>Download Content</button>' : ''}
                   ${digitalEnabled && product.hasVertixAssets ? '<button type="button" class="button button-muted" data-install-vertix-pack>Install to Vertix</button>' : ''}
+                  ${digitalEnabled && product.hasSouraAssets ? '<button type="button" class="button button-muted" data-install-soura-pack>Import to Soura</button>' : ''}
                   ${isOwner ? `<a class="button button-muted" href="${productRoute(product)}?sendgift=1">Send as Gift</a>` : ''}
                 ` : ''}
                 <div class="dashboard-action-icons-row">
@@ -1456,6 +1458,22 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
       button.disabled = false
       button.textContent = 'Install to Vertix'
       showActionMessage(error?.message || 'Could not install this Vertix pack.')
+    }
+  })
+  app.querySelector('[data-install-soura-pack]')?.addEventListener('click', async (event) => {
+    if (!window.confirm('Import this product’s verified Soura audio assets to your Asset Library?')) return
+    const button = event.currentTarget
+    button.disabled = true
+    button.textContent = 'Importing to Soura…'
+    try {
+      const result = await installMarketplaceSouraPack(product.id)
+      if (!result?.ok) throw new Error('Soura import did not complete.')
+      button.textContent = result.alreadyInstalled ? 'In Asset Library' : `Imported ${result.install?.installedAssetCount || ''}`.trim()
+      showActionMessage(result.alreadyInstalled ? 'This pack is already in your Soura Asset Library.' : 'Soura assets are ready in Marketplace inside the Asset Library.')
+    } catch (error) {
+      button.disabled = false
+      button.textContent = 'Import to Soura'
+      showActionMessage(error?.message || 'Could not import this Soura pack.')
     }
   })
   app.querySelectorAll('[data-close-product-download]').forEach((element) => {

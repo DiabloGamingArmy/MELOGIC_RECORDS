@@ -2815,3 +2815,17 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 @media(max-width:1280px){
   .studio-editor-page.has-bottom-panel .studio-bottom-panel.studio-midi-roll-editor{right:48px!important}
 }
+/* Asset Library: the canonical source browser for Soura audio. */
+.studio-asset-library-body{display:grid!important;grid-template-columns:180px minmax(0,1fr);padding:0!important;min-height:0;overflow:hidden}
+.studio-asset-library-sources{display:flex;flex-direction:column;gap:5px;padding:12px;border-right:1px solid rgba(142,164,204,.2);background:#0d1421}
+.studio-asset-library-sources button,.studio-asset-library-toolbar button{border:1px solid rgba(142,164,204,.25);background:#151d2c;color:#dbe7ff;border-radius:7px;padding:7px 9px;text-align:left}
+.studio-asset-library-sources button.is-active{border-color:#7259eb;background:rgba(114,89,235,.2)}
+.studio-asset-library-content{display:flex;flex-direction:column;min-width:0;min-height:0}
+.studio-asset-library-toolbar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(142,164,204,.18)}
+.studio-asset-library-toolbar strong{white-space:nowrap}.studio-asset-library-toolbar input{margin-left:auto;min-width:180px;max-width:320px;background:#0b111c;color:#eef4ff;border:1px solid rgba(142,164,204,.28);border-radius:7px;padding:7px 9px}
+.studio-asset-library-list{overflow:auto;padding:8px 12px;display:grid;align-content:start;gap:4px}
+.studio-asset-row{display:grid;grid-template-columns:25px minmax(0,1fr) 34px;align-items:center;gap:8px;padding:7px 9px;border:1px solid transparent;border-radius:7px;color:#dce7fa;cursor:default}
+.studio-asset-row:hover,.studio-asset-row.is-selected{background:rgba(100,125,180,.13);border-color:rgba(142,164,204,.22)}
+.studio-asset-row[draggable=true]{cursor:grab}.studio-asset-row span:nth-child(2){display:flex;min-width:0;flex-direction:column}.studio-asset-row strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.studio-asset-row small{color:#8fa1c1;text-transform:uppercase;font-size:10px}.studio-asset-row button{width:30px;height:27px;border:1px solid rgba(88,212,255,.3);border-radius:6px;background:#132437;color:#8de4ff}
+.studio-asset-library-empty{color:#91a1bc;padding:18px}
+@media(max-width:760px){.studio-asset-library-body{grid-template-columns:120px minmax(0,1fr)}.studio-asset-library-toolbar input{min-width:90px}}

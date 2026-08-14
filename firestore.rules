@@ -1163,6 +1163,17 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Soura marketplace installs are authored by the trusted installer only.
+      match /souraAssets/{assetId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      match /souraMarketplaceInstalls/{installId} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       match /sequenceActionBookmarks/{bookmarkId} {
         allow read: if isOwner(uid);
         allow create, update: if isOwner(uid)
