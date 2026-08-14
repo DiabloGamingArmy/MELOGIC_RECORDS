@@ -4,6 +4,7 @@ const admin = require('firebase-admin')
 const db = admin.firestore()
 const { FieldValue } = admin.firestore
 const { normalizeProductFulfillment } = require('./productFulfillment')
+const { isProductScopedStoragePath, normalizeStoragePath } = require('./productStorageScope')
 
 const ALLOWED_STATUSES = new Set([
   'draft',
@@ -142,19 +143,19 @@ function normalizeAssetSummary(value = {}) {
   }
 }
 
-function normalizePreviewAssignment(value = {}) {
+function normalizePreviewAssignment(value = {}, productId = '') {
   const input = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   return {
     hoverEnabled: input.hoverEnabled !== false,
     hoverDelayMs: Math.max(0, Math.round(Number(input.hoverDelayMs || 0) || 0)),
-    hoverVideoPath: normalizePath(input.hoverVideoPath),
+    hoverVideoPath: scopedProductPath(productId, input.hoverVideoPath),
     hoverVideoURL: normalizeUrl(input.hoverVideoURL),
-    hoverAudioPath: normalizePath(input.hoverAudioPath),
+    hoverAudioPath: scopedProductPath(productId, input.hoverAudioPath),
     hoverAudioURL: normalizeUrl(input.hoverAudioURL),
     cardPreviewMode: ['none', 'audio', 'video', 'video-audio'].includes(input.cardPreviewMode) ? input.cardPreviewMode : 'audio',
-    detailHeroPreviewPath: normalizePath(input.detailHeroPreviewPath),
+    detailHeroPreviewPath: scopedProductPath(productId, input.detailHeroPreviewPath),
     detailHeroPreviewType: ['audio', 'video', 'image', ''].includes(input.detailHeroPreviewType) ? input.detailHeroPreviewType : '',
-    demoReelPath: normalizePath(input.demoReelPath),
+    demoReelPath: scopedProductPath(productId, input.demoReelPath),
     demoReelType: ['audio', 'video', ''].includes(input.demoReelType) ? input.demoReelType : '',
     updatedAt: cleanString(input.updatedAt || '', 80)
   }
@@ -174,7 +175,8 @@ function normalizeDeliverableFiles(value = [], productId = '') {
   if (!Array.isArray(value)) return []
   return value.slice(0, 500).map((row, index) => {
     const id = cleanString(row?.id || `file-${index}`, 120)
-    const storagePath = normalizePath(row?.storagePath || row?.path || row?.filePath || '')
+    const candidatePath = normalizeStoragePath(row?.storagePath || row?.path || row?.filePath || '')
+    const storagePath = isProductScopedStoragePath(productId, candidatePath) ? candidatePath : ''
     const validationInput = row?.vertixAssetValidation && typeof row.vertixAssetValidation === 'object' ? row.vertixAssetValidation : {}
     const souraValidationInput = row?.souraAssetValidation && typeof row.souraAssetValidation === 'object' ? row.souraAssetValidation : {}
     const validation = {
@@ -217,7 +219,21 @@ function normalizeDeliverableFiles(value = [], productId = '') {
       },
       updatedAt: cleanString(row?.updatedAt || '', 80)
     }
-  }).filter((row) => row.id)
+  }).filter((row) => row.id && row.storagePath)
+}
+
+function explicitOrExisting(input = {}, key = '', existing = {}) {
+  return Object.prototype.hasOwnProperty.call(input || {}, key) ? input[key] : existing?.[key]
+}
+
+function scopedProductPath(productId = '', value = '') {
+  const path = normalizeStoragePath(value)
+  return isProductScopedStoragePath(productId, path) ? path : ''
+}
+
+function scopedProductPathArray(productId = '', value, limit = 24) {
+  const rows = Array.isArray(value) ? value : String(value || '').split(',')
+  return rows.map((path) => scopedProductPath(productId, path)).filter(Boolean).slice(0, limit)
 }
 
 function buildSearchKeywords(product = {}, creator = {}) {
@@ -312,23 +328,23 @@ function baseProductPayload({ product = {}, productId = '', uid = '', existing =
       ? Boolean(existing?.sellerAgreementAccepted)
       : product.sellerAgreementAccepted === true,
     sellerAgreementVersion: cleanString(product.sellerAgreementVersion || existing?.sellerAgreementVersion || '', 80),
-    coverPath: normalizePath(product.coverPath || existing?.coverPath || ''),
-    thumbnailPath: normalizePath(product.thumbnailPath || existing?.thumbnailPath || ''),
+    coverPath: scopedProductPath(productId, explicitOrExisting(product, 'coverPath', existing) || ''),
+    thumbnailPath: scopedProductPath(productId, explicitOrExisting(product, 'thumbnailPath', existing) || ''),
     coverURL: normalizeUrl(product.coverURL || existing?.coverURL || ''),
     thumbnailURL: normalizeUrl(product.thumbnailURL || existing?.thumbnailURL || ''),
-    galleryPaths: normalizePathArray(product.galleryPaths ?? existing?.galleryPaths, 24),
-    previewAudioPaths: normalizePathArray(product.previewAudioPaths ?? existing?.previewAudioPaths, 12),
-    previewVideoPaths: normalizePathArray(product.previewVideoPaths ?? existing?.previewVideoPaths, 8),
-    downloadPath: normalizePath(product.downloadPath || existing?.downloadPath || ''),
-    deliverableFiles: normalizeDeliverableFiles(product.deliverableFiles || existing?.deliverableFiles || [], productId),
-    licensePath: normalizePath(product.licensePath || existing?.licensePath || ''),
+    galleryPaths: scopedProductPathArray(productId, explicitOrExisting(product, 'galleryPaths', existing), 24),
+    previewAudioPaths: scopedProductPathArray(productId, explicitOrExisting(product, 'previewAudioPaths', existing), 12),
+    previewVideoPaths: scopedProductPathArray(productId, explicitOrExisting(product, 'previewVideoPaths', existing), 8),
+    downloadPath: scopedProductPath(productId, explicitOrExisting(product, 'downloadPath', existing) || ''),
+    deliverableFiles: normalizeDeliverableFiles(explicitOrExisting(product, 'deliverableFiles', existing) || [], productId),
+    licensePath: scopedProductPath(productId, explicitOrExisting(product, 'licensePath', existing) || ''),
     assetSummary: normalizeAssetSummary(product.assetSummary || existing?.assetSummary || {}),
-    primaryPreviewPath: normalizePath(product.primaryPreviewPath || existing?.primaryPreviewPath || ''),
+    primaryPreviewPath: scopedProductPath(productId, explicitOrExisting(product, 'primaryPreviewPath', existing) || ''),
     primaryPreviewType: cleanString(product.primaryPreviewType || existing?.primaryPreviewType || '', 40),
     primaryPreviewDuration: Math.max(0, Number(product.primaryPreviewDuration || existing?.primaryPreviewDuration || 0) || 0),
-    primaryDownloadPath: normalizePath(product.primaryDownloadPath || product.downloadPath || existing?.primaryDownloadPath || existing?.downloadPath || ''),
+    primaryDownloadPath: scopedProductPath(productId, Object.prototype.hasOwnProperty.call(product, 'primaryDownloadPath') ? product.primaryDownloadPath : (Object.prototype.hasOwnProperty.call(product, 'downloadPath') ? product.downloadPath : (existing?.primaryDownloadPath || existing?.downloadPath || ''))),
     primaryDownloadBytes: Math.max(0, Math.round(Number(product.primaryDownloadBytes || existing?.primaryDownloadBytes || 0) || 0)),
-    previewAssignment: normalizePreviewAssignment(product.previewAssignment || existing?.previewAssignment || {}),
+    previewAssignment: normalizePreviewAssignment(explicitOrExisting(product, 'previewAssignment', existing) || {}, productId),
     priceCents,
     payoutTargetCents,
     currency: normalizeCurrency(product.currency || existing?.currency || 'USD'),

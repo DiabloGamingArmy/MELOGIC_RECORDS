@@ -24,6 +24,7 @@ import { getCachedStorageUrl } from '../services/pageMediaCache'
 import { normalizeProductFulfillment } from '../utils/productFulfillment'
 import { deriveProductVertixCapability, normalizeVertixArchiveCapability } from '../vertix/marketplace/vertixAssetFiles.js'
 import { deriveProductSouraCapability, normalizeSouraArchiveCapability } from '../soura/marketplace/souraAssetFiles.js'
+import { findNonProductScopedManifestPaths, isProductScopedStoragePath, normalizeProductDeliverableReferences } from '../marketplace/productManifestPaths.js'
 
 let hasWarnedProductFetch = false
 let hasWarnedProductMedia = false
@@ -1649,7 +1650,9 @@ export async function uploadProductFile({ productId, queueItem, onProgress } = {
       if (typeof onProgress === 'function') onProgress(progress)
     }, reject, resolve)
   })
-  return { ...queueItem, storagePath, progress: 100, status: 'uploaded' }
+  const fullPath = task.snapshot?.ref?.fullPath || storageRef.fullPath || storagePath
+  if (!isProductScopedStoragePath(productId, fullPath)) throw new Error('Replacement upload did not resolve to the current product Storage namespace.')
+  return { ...queueItem, storagePath: fullPath, progress: 100, status: 'uploaded' }
 }
 
 export async function deleteProductStorageFile(storagePath = '') {
@@ -1675,8 +1678,8 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
   const gallery = byRole('gallery').map((item) => item.storagePath).filter(Boolean)
   const previewAudio = byRole('previewAudio').map((item) => item.storagePath).filter(Boolean)
   const previewVideo = byRole('previewVideo').map((item) => item.storagePath).filter(Boolean)
-  const existingDeliverables = Array.isArray(draft.deliverableFiles) ? draft.deliverableFiles : []
-  const deliverableRows = deliverables.length ? deliverables : existingDeliverables
+  const existingDeliverables = normalizeProductDeliverableReferences(productId, draft.deliverableFiles)
+  const deliverableRows = normalizeProductDeliverableReferences(productId, deliverables.length ? deliverables : existingDeliverables)
   const fileRows = uploadedFiles.length ? uploadedFiles : deliverableRows
   const totalBytes = fileRows.reduce((sum, item) => sum + Number(item.sizeBytes || 0), 0)
   const resolvedCoverPath = cover?.storagePath || draft.coverPath || ''
@@ -1765,6 +1768,15 @@ export async function saveProductManifest({ productId, draft = {}, uploadedFiles
       souraAssetValidation: row.role === 'deliverable' ? normalizeSouraArchiveCapability(row.souraAssetValidation) : normalizeSouraArchiveCapability(),
       sortIndex: Number(row.sortIndex ?? index)
     }))
+  }
+  const invalidPaths = findNonProductScopedManifestPaths(productId, manifest)
+  if (invalidPaths.length) {
+    const first = invalidPaths[0]
+    const error = new Error(`${first.field} is not in the current product Storage namespace.`)
+    error.code = 'product/non-product-scoped-storage-path'
+    error.details = { manifestField: first.field, offendingPath: /^https?:\/+\/?/i.test(first.path) || /^gs:\/+\/?/i.test(first.path) ? '[signed-or-download-url omitted]' : first.path.split(/[?#]/, 1)[0].slice(0, 320), expectedProductPrefix: `products/${productId}/` }
+    console.error('[productService] rejected non-product-scoped manifest path', error.details)
+    throw error
   }
   const operationName = 'callable saveProductManifest'
   const path = `${FIRESTORE_COLLECTIONS.products}/${productId}`

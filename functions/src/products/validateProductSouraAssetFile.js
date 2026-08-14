@@ -4,6 +4,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { deriveSouraProductFields, inspectSouraArchive, isZipFile } = require('./souraAssetArchives')
 const { STATUS } = require('./vertixAssetArchives')
+const { requireProductScopedStoragePath } = require('./productStorageScope')
 const db = admin.firestore()
 const { FieldValue } = admin.firestore
 
@@ -11,8 +12,7 @@ const safeId = (value = '', field = 'id') => { const id = String(value || '').tr
 
 async function validateRequestedSouraFile(productId, file) {
   if (!isZipFile(file)) return { ...file, isSouraAsset: false, souraAssetValidation: { status: STATUS.INCOMPATIBLE, compatible: false, compatibleAssetCount: 0, errors: ['Only ZIP deliverables can be Soura Assets.'], validatedAt: new Date().toISOString() } }
-  const storagePath = String(file.storagePath || '')
-  if (!storagePath.startsWith(`products/${productId}/`) || storagePath.includes('..')) throw new HttpsError('invalid-argument', 'File storage path is not product-scoped.')
+  const storagePath = requireProductScopedStoragePath(productId, file.storagePath || '', `deliverableFiles.${file.id || 'unknown'}.storagePath`)
   const storageFile = admin.storage().bucket().file(storagePath)
   const [metadata] = await storageFile.getMetadata()
   if (Number(metadata.size || 0) > 512 * 1024 * 1024) throw new HttpsError('resource-exhausted', 'ZIP exceeds the supported validation size.')

@@ -8,6 +8,7 @@ const { deriveVertixProductFields, isZipFile, STATUS } = require('./vertixAssetA
 const { validateRequestedFile } = require('./validateProductVertixAssetFile')
 const { deriveSouraProductFields } = require('./souraAssetArchives')
 const { validateRequestedSouraFile } = require('./validateProductSouraAssetFile')
+const { LEGACY_PRODUCT_FILE_FIELDS, requireProductScopedStoragePath, staleProductFileIds } = require('./productStorageScope')
 
 const FILE_ROLES = new Set(['cover', 'thumbnail', 'gallery', 'previewAudio', 'previewVideo', 'deliverable', 'license'])
 const MAX_FILE_ROWS = 500
@@ -76,13 +77,7 @@ function normalizeProductPath(productId = '', value = '', { required = false, fi
     if (required) throw new HttpsError('invalid-argument', `${field} is required.`)
     return ''
   }
-  if (raw.includes('../') || raw.includes('..\\') || raw.startsWith('users/') || /^https?:\/\//i.test(raw) || /^gs:\/\//i.test(raw)) {
-    throw new HttpsError('invalid-argument', `${field} must be a product-scoped storage path.`)
-  }
-  if (!raw.startsWith(`products/${productId}/`)) {
-    throw new HttpsError('invalid-argument', `${field} must start with products/${productId}/.`)
-  }
-  return raw.slice(0, 900)
+  return requireProductScopedStoragePath(productId, raw, field).slice(0, 900)
 }
 
 function normalizeProductPathArray(productId = '', value, limit = 24, field = 'paths') {
@@ -293,6 +288,8 @@ exports.saveProductManifest = onCall(
         })
       }
 
+      currentOperation = 'validate-product-manifest-paths'
+      currentPath = `products/${productId}`
       const fileRows = normalizeFileRows(productId, manifest)
       const requestedDeliverableRows = normalizeDeliverableRows(productId, manifest, fileRows)
       const deliverableRows = []
@@ -353,8 +350,11 @@ exports.saveProductManifest = onCall(
         compatibilityNotes: cleanLongString(manifest.compatibilityNotes || '', 5000),
         formatNotes: cleanLongString(manifest.formatNotes || '', 5000),
         includedFiles: cleanLongString(manifest.includedFiles || '', 10000),
+        // Canonical file metadata lives in deliverableFiles plus products/{id}/files.
+        // Remove legacy top-level mirrors so deleted objects cannot be resurrected.
         updatedAt: FieldValue.serverTimestamp()
       }
+      LEGACY_PRODUCT_FILE_FIELDS.forEach((field) => { productUpdate[field] = FieldValue.delete() })
 
       if (product.status === 'published') {
         productUpdate.status = 'review_pending'
@@ -365,6 +365,11 @@ exports.saveProductManifest = onCall(
       if (productUpdate.visibility === 'public') productUpdate.visibility = 'unlisted'
       if (productUpdate.status === 'published') productUpdate.status = 'review_pending'
 
+      currentOperation = 'read-existing-product-files'
+      currentPath = `products/${productId}/files`
+      const existingFileSnapshot = await productRef.collection('files').get()
+      const staleFileIdSet = new Set(staleProductFileIds(existingFileSnapshot.docs.map((snapshot) => snapshot.id), persistedFileRows.map((row) => row.id)))
+      const staleFileDocs = existingFileSnapshot.docs.filter((snapshot) => staleFileIdSet.has(snapshot.id))
       const batch = db.batch()
       currentOperation = 'update-product-manifest'
       currentPath = `products/${productId}`
@@ -382,10 +387,23 @@ exports.saveProductManifest = onCall(
         batch.set(fileRef, filePayload, { merge: true })
       })
 
+      const canDeleteStaleInManifestBatch = 1 + persistedFileRows.length + staleFileDocs.length <= 500
+      if (canDeleteStaleInManifestBatch) staleFileDocs.forEach((snapshot) => batch.delete(snapshot.ref))
+
       currentOperation = 'commit-product-manifest-batch'
       currentPath = `products/${productId}`
       logOperation(currentOperation, currentPath, productId, uid, product, ['productUpdate', 'fileRows'])
       await batch.commit()
+
+      if (!canDeleteStaleInManifestBatch && staleFileDocs.length) {
+        currentOperation = 'delete-stale-product-file-metadata'
+        const cleanupWriter = db.bulkWriter()
+        staleFileDocs.forEach((snapshot) => cleanupWriter.delete(snapshot.ref))
+        await cleanupWriter.close()
+      }
+
+      const manifestResponse = { ...productUpdate, updatedAt: new Date().toISOString() }
+      for (const legacyField of LEGACY_PRODUCT_FILE_FIELDS) delete manifestResponse[legacyField]
 
       return {
         ok: true,
@@ -393,14 +411,12 @@ exports.saveProductManifest = onCall(
         manifestSaved: true,
         productUpdated: true,
         fileMetadataWritten: persistedFileRows.length,
+        staleFileMetadataDeleted: staleFileDocs.length,
         updatedPaths: [
           `products/${productId}`,
           ...persistedFileRows.map((row) => `products/${productId}/files/${row.id}`)
         ],
-        manifest: {
-          ...productUpdate,
-          updatedAt: new Date().toISOString()
-        }
+        manifest: manifestResponse
       }
     } catch (error) {
       const wrapped = wrapError(error, currentOperation, currentPath, productId, uid, product)
@@ -409,6 +425,9 @@ exports.saveProductManifest = onCall(
         path: wrapped.details?.path || currentPath,
         code: wrapped.code || error?.code || 'internal',
         message: wrapped.message,
+        manifestField: wrapped.details?.manifestField || null,
+        offendingPath: wrapped.details?.offendingPath || null,
+        expectedProductPrefix: wrapped.details?.expectedProductPrefix || null,
         ...parentDiagnostics(productId, uid, product)
       })
       throw wrapped

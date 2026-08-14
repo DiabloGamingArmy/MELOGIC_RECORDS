@@ -53,6 +53,7 @@ import {
   SouraArchiveValidationStatus,
   withSouraAssetFlag
 } from './soura/marketplace/souraAssetFiles.js'
+import { normalizeProductDeliverableReferences, removeProductFileReferences } from './marketplace/productManifestPaths.js'
 
 const PRODUCT_SECTIONS = [
   { key: 'product-info', label: 'Product Info' },
@@ -484,6 +485,7 @@ function toPathString(value) {
 
 function normalizeDraftPaths(draft = {}) {
   const fulfillment = normalizeProductFulfillment(draft)
+  const productId = String(draft.id || '')
   return {
     ...draft,
     marketplaceProductType: fulfillment.type,
@@ -498,7 +500,7 @@ function normalizeDraftPaths(draft = {}) {
     thumbnailPath: toPathString(draft.thumbnailPath),
     downloadPath: toPathString(draft.downloadPath),
     primaryDownloadPath: toPathString(draft.primaryDownloadPath),
-    deliverableFiles: Array.isArray(draft.deliverableFiles) ? draft.deliverableFiles : []
+    deliverableFiles: normalizeProductDeliverableReferences(productId, draft.deliverableFiles)
   }
 }
 
@@ -763,7 +765,7 @@ function syncDeliverableDraftMetadata() {
   if (!editorState.draft) return
   const queuedRows = editorState.uploadQueue.filter((item) => item.role === 'deliverable' && item.status === 'uploaded' && item.storagePath).map(deliverableMetadataFromQueueItem)
   const queuedIds = new Set(queuedRows.map((row) => row.id))
-  const existingRows = Array.isArray(editorState.draft.deliverableFiles) ? editorState.draft.deliverableFiles.filter((row) => !queuedIds.has(row.id)) : []
+  const existingRows = normalizeProductDeliverableReferences(editorState.draft.id, editorState.draft.deliverableFiles).filter((row) => !queuedIds.has(row.id))
   const rows = [...existingRows, ...queuedRows]
   updateDraftField('deliverableFiles', rows)
   updateDraftField('downloadPath', rows[0]?.storagePath || '')
@@ -2345,7 +2347,7 @@ function renderEditor() {
       if (!key) return
       editorState.mediaFiles[key] = (editorState.mediaFiles[key] || []).filter((row) => (row.webkitRelativePath || row.name) !== target.displayPath)
       editorState.uploadQueue = editorState.uploadQueue.filter((row) => row.id !== target.id)
-      if (target.isDeliverable) syncDeliverableDraftMetadata()
+      if (target.isDeliverable) { editorState.draft = removeProductFileReferences(editorState.draft, target); syncDeliverableDraftMetadata() }
       setStatus('File removed from draft.', 'info')
       renderEditor()
     })
@@ -2433,8 +2435,10 @@ function renderEditor() {
           return
         }
       }
-      editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.id !== id)
-      if (Array.isArray(editorState.draft?.deliverableFiles)) updateDraftField('deliverableFiles', editorState.draft.deliverableFiles.filter((item) => item.id !== id))
+      editorState.uploadQueue = editorState.uploadQueue.filter((item) => item.id !== id && item.storagePath !== target?.storagePath)
+      editorState.mediaFiles.deliverables = (editorState.mediaFiles.deliverables || []).filter((file) => String(file.webkitRelativePath || file.name || '') !== String(target?.displayPath || target?.name || ''))
+      editorState.draft = removeProductFileReferences(editorState.draft, target)
+      saveDraftState()
       syncDeliverableDraftMetadata()
     }
     editorState.openDeliverableRowMenu = ''
