@@ -1,4 +1,8 @@
 import './styles/base.css'
+import { installSouraThemeConsole } from "./soura/themes/themeManager.js";
+
+// Experimental Soura theme console (session-only)
+installSouraThemeConsole();
 import './styles/studio.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
@@ -11856,8 +11860,89 @@ function bindEditorEvents() {
   const isPinnedRight = () => !!grid && (grid.scrollLeft + grid.clientWidth >= grid.scrollWidth - 4)
   grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); if (overTimeline) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if ((event.ctrlKey || event.metaKey) && overTimeline) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const mouseX = event.clientX - rect.left; const oldTimelineX = grid.scrollLeft + mouseX; const anchorBeat = xToBeatsFromBarZero(oldTimelineX); let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX); if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat); const cycleBeats = cycleRange ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) } : null; const direction = event.deltaY < 0 ? 1 : -1; const zoomFactor = direction > 0 ? 1.12 : 1 / 1.12; timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoomFactor); timelineState.playheadX = beatsFromBarZeroToX(playheadBeat); if (cycleBeats) { let startBeat = cycleBeats.start; let endBeat = cycleBeats.end; if (isSnapEnabled) { startBeat = snapBeatToGrid(startBeat); endBeat = snapBeatToGrid(endBeat) } cycleRange = { startX: beatsFromBarZeroToX(startBeat), endX: beatsFromBarZeroToX(endBeat) } } refreshTimelineVisualsLive(); const newTimelineX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(newTimelineX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); requestAnimationFrame(() => { const correctedX = beatsFromBarZeroToX(anchorBeat); grid.scrollLeft = clamp(correctedX - mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth)); syncTimelineScroll(grid); updateMidiRollPlayheadDom(); }); scheduleEditorSave(); return }
     if (event.altKey && overTrackZone) { event.preventDefault(); timelineState.trackHeight = clamp(timelineState.trackHeight + (event.deltaY < 0 ? 6 : -6), 44, 220); updateTrackHeightDom(); scheduleTimelineVisualRefresh(); scheduleEditorSave(); return }
-    if (event.shiftKey && overTimeline) { event.preventDefault(); const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? normalizedWheelPixels(event, 'x') : normalizedWheelPixels(event, 'y'); grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid) }
+    if (event.shiftKey && overTimeline) { event.preventDefault(); const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? normalizedWheelPixels(event, 'x') : normalizedWheelPixels(event, 'y'); grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid); return }
+    // Safari/macOS trackpads emit ordinary horizontal wheel gestures through deltaX.
+    // Handle them explicitly so the arrangement remains horizontally scrollable even
+    // when synchronized ruler/extension layers use transforms and overscroll containment.
+    if (overTimeline && Math.abs(event.deltaX) > 0.01) {
+      event.preventDefault()
+      const delta = normalizedWheelPixels(event, 'x')
+      grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth))
+      syncTimelineScroll(grid)
+    }
   }, { passive:false })
+  // Keep the arrangement grid as the viewport, not as the full timeline content.
+  // A previous timeline refactor could assign the project/timeline pixel width to
+  // .studio-arrangement-grid itself. That makes clientWidth === scrollWidth and
+  // mathematically removes all horizontal scrolling. The wide project geometry
+  // belongs on .studio-arrangement-grid-inner instead.
+  const repairArrangementHorizontalViewport = () => {
+    if (!grid) return
+    const inner = grid.querySelector('.studio-arrangement-grid-inner')
+    if (!inner) return
+
+    const arrangement = grid.closest('.studio-arrangement')
+    const viewportWidth = Math.max(
+      1,
+      Math.round(arrangement?.clientWidth || grid.parentElement?.clientWidth || 0)
+    )
+    const projectWidth = Math.max(
+      viewportWidth,
+      Math.round(
+        parseFloat(inner.style.width || '') ||
+        inner.scrollWidth ||
+        inner.getBoundingClientRect().width ||
+        grid.scrollWidth ||
+        viewportWidth
+      )
+    )
+
+    // The arrangement itself is a one-column CSS grid. Its auto-sized column was
+    // expanding to the inner musical canvas width (e.g. 8706px), even though the
+    // arrangement's visible box was only ~921px. Constrain that grid track to the
+    // viewport so overflow happens INSIDE .studio-arrangement-grid.
+    if (arrangement) {
+      arrangement.style.gridTemplateColumns = 'minmax(0, 1fr)'
+      arrangement.style.minWidth = '0'
+      arrangement.style.maxWidth = '100%'
+      arrangement.style.overflowX = 'hidden'
+    }
+
+    // Remove any inline full-project sizing accidentally applied to the viewport.
+    grid.style.width = '100%'
+    grid.style.maxWidth = '100%'
+    grid.style.minWidth = '0'
+    grid.style.boxSizing = 'border-box'
+    grid.style.overflowX = 'auto'
+    grid.style.overscrollBehaviorX = 'contain'
+
+    // Preserve the wide musical canvas on the inner content element.
+    inner.style.width = `${projectWidth}px`
+    inner.style.minWidth = `${projectWidth}px`
+    inner.style.maxWidth = 'none'
+  }
+
+  repairArrangementHorizontalViewport()
+  requestAnimationFrame(repairArrangementHorizontalViewport)
+  window.addEventListener('resize', repairArrangementHorizontalViewport, { passive:true })
+
+  // Capture horizontal trackpad gestures at the whole arrangement level.
+  // The ruler/global/extension layers are siblings of the scrollable grid, so a
+  // listener attached only to the grid misses gestures that begin over those layers.
+  const arrangementSurface = app.querySelector('[data-arrangement]')
+  arrangementSurface?.addEventListener('wheel', (event) => {
+    if (!grid || isTextEntryTarget(event.target) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
+    const dx = normalizedWheelPixels(event, 'x')
+    if (Math.abs(dx) <= 0.01) return
+    const maxScroll = Math.max(0, grid.scrollWidth - grid.clientWidth)
+    if (maxScroll <= 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    markTimelineUserInteraction()
+    grid.scrollLeft = clamp((grid.scrollLeft || 0) + dx, 0, maxScroll)
+    syncTimelineScroll(grid)
+  }, { passive:false, capture:true })
+
   grid?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(grid); syncTrackVerticalScroll(grid) }, { passive:true })
   trackList?.addEventListener('wheel', (event) => { if (!grid) return; event.preventDefault(); markTimelineUserInteraction(); grid.scrollTop = clamp(grid.scrollTop + normalizedWheelPixels(event, 'y'), 0, Math.max(0, grid.scrollHeight - grid.clientHeight)) }, { passive:false })
   const restoreTimelineExtensionScroll = (drag = extensionDrag) => {

@@ -1,0 +1,1619 @@
+/*
+Soura Experimental Light Theme — Full White UI
+Theme-only visual overrides. No layout/scroll geometry changes.
+*/
+
+:root[data-soura-theme="light"] {
+  color-scheme: light;
+
+  --ml-bg: #eef2f6;
+  --ml-bg-panel: #ffffff;
+  --ml-bg-panel-strong: #ffffff;
+  --ml-bg-interactive: #f3f6fa;
+  --ml-text: #111827;
+  --ml-text-muted: #64748b;
+  --ml-border: #cbd3de;
+  --ml-border-strong: #aeb9c7;
+  --ml-shadow-float: 0 16px 42px rgba(15, 23, 42, .13);
+  --ml-focus-ring: 0 0 0 3px rgba(88, 101, 216, .16);
+
+  --soura-white: #ffffff;
+  --soura-canvas: #f8fafc;
+  --soura-soft: #f1f4f8;
+  --soura-soft-2: #e9eef4;
+  --soura-border: #cbd3de;
+  --soura-border-soft: #dce3eb;
+  --soura-ink: #111827;
+  --soura-ink-2: #334155;
+  --soura-muted: #64748b;
+  --soura-faint: #94a3b8;
+  --soura-accent: #5865d8;
+}
+
+/* Root application */
+:root[data-soura-theme="light"] body,
+:root[data-soura-theme="light"] .studio-editor-page,
+:root[data-soura-theme="light"] .studio-editor-workspace {
+  background:#eef2f6 !important;
+  color:var(--soura-ink) !important;
+}
+
+/* Top bars */
+:root[data-soura-theme="light"] .studio-editor-page [class*="topbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="menu-bar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="menubar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="toolbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="transport"] {
+  background-color:#ffffff !important;
+  color:var(--soura-ink) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow: none !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="transport-display"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="transport-info"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="lcd"] {
+  background:#f3f6fa !important;
+  color:#172033 !important;
+  border-color: #b8c3d1 !important;
+}
+
+/* Buttons */
+:root[data-soura-theme="light"] .studio-editor-page button {
+  background-color:#ffffff;
+  color:#172033;
+  border-color: #bfc9d5;
+  box-shadow: none;
+}
+:root[data-soura-theme="light"] .studio-editor-page button:hover:not(:disabled) {
+  background-color:#edf1f6;
+  border-color: #9eabba;
+}
+:root[data-soura-theme="light"] .studio-editor-page button:active:not(:disabled) {
+  background-color:#e3e9f0;
+}
+:root[data-soura-theme="light"] .studio-editor-page button:disabled {
+  color:#374151;
+  opacity: .58;
+}
+:root[data-soura-theme="light"] .studio-editor-page button.is-active,
+:root[data-soura-theme="light"] .studio-editor-page button[class*="active"],
+:root[data-soura-theme="light"] .studio-editor-page [aria-pressed="true"] {
+  background-color:#eef0ff !important;
+  border-color: #8c96df !important;
+  color:#303b9b !important;
+}
+
+/* Inputs */
+:root[data-soura-theme="light"] .studio-editor-page input:not([type="range"]):not([type="color"]),
+:root[data-soura-theme="light"] .studio-editor-page select,
+:root[data-soura-theme="light"] .studio-editor-page textarea {
+  background:#ffffff !important;
+  color:#172033 !important;
+  border-color: #bfc9d5 !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page input::placeholder,
+:root[data-soura-theme="light"] .studio-editor-page textarea::placeholder {
+  color:#374151 !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page input[type="range"],
+:root[data-soura-theme="light"] .studio-editor-page input[type="checkbox"],
+:root[data-soura-theme="light"] .studio-editor-page input[type="radio"] {
+  accent-color: var(--soura-accent);
+}
+
+/* Track/control column */
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-list"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-sidebar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-column"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-controls"] {
+  background-color:#f3f6f9 !important;
+  color:var(--soura-ink) !important;
+  border-color: var(--soura-border) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-row"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-card"] {
+  background-color:#ffffff !important;
+  color:var(--soura-ink) !important;
+  border-color: #cbd3de !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-row"]:hover,
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-header"]:hover,
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-card"]:hover {
+  background-color:#f8fafc !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="new-track"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="drop"][class*="track"] {
+  background-color:#edf2f7 !important;
+  color:#536277 !important;
+  border-color: #c8d2de !important;
+}
+
+/* Arrangement */
+:root[data-soura-theme="light"] .studio-arrangement {
+  background-color:#ffffff !important;
+  color:var(--soura-ink) !important;
+  border-color: var(--soura-border) !important;
+}
+
+:root[data-soura-theme="light"] .studio-arrangement-grid,
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner {
+  background-color:#f9fafc !important;
+  color:var(--soura-ink) !important;
+}
+
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="grid-line"],
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="tick-line"],
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="beat-line"] {
+  border-color: rgba(71, 85, 105, .10) !important;
+}
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="measure-line"],
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="bar-line"] {
+  border-color: rgba(71, 85, 105, .22) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="ruler"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-header"] {
+  background-color:#edf1f5 !important;
+  color:#65758a !important;
+  border-color: #c7d0dc !important;
+}
+
+/* Right tool rail */
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-rail"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-toolbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="side-toolbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="tool-rail"] {
+  background-color:#f3f6f9 !important;
+  color:var(--soura-ink) !important;
+  border-color: var(--soura-border) !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-rail"] button,
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-toolbar"] button,
+:root[data-soura-theme="light"] .studio-editor-page [class*="side-toolbar"] button,
+:root[data-soura-theme="light"] .studio-editor-page [class*="tool-rail"] button {
+  background-color:#ffffff !important;
+  color:#172033 !important;
+  border-color: #aeb9c7 !important;
+}
+
+/* Inspector / asset browser / mixer / region editor */
+:root[data-soura-theme="light"] .studio-editor-page [class*="inspector"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="asset-library"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="asset-browser"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="mixer"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="region-editor"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="bottom-panel"] {
+  background-color:#f5f7fa !important;
+  color:var(--soura-ink) !important;
+  border-color: var(--soura-border) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="panel-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="panel-toolbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="asset-toolbar"] {
+  background-color:#ffffff !important;
+  color:var(--soura-ink) !important;
+  border-color: var(--soura-border) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="asset-row"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="file-row"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="library-row"] {
+  color:#263244 !important;
+  border-color: #e0e6ed !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [class*="asset-row"]:hover,
+:root[data-soura-theme="light"] .studio-editor-page [class*="file-row"]:hover,
+:root[data-soura-theme="light"] .studio-editor-page [class*="library-row"]:hover {
+  background-color:#eaf0f6 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="mixer-channel"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="channel-strip"] {
+  background-color:#ffffff !important;
+  color:#172033 !important;
+  border-color: #cbd3de !important;
+}
+
+/* Menus / popovers / dialogs */
+:root[data-soura-theme="light"] .studio-editor-page [role="menu"],
+:root[data-soura-theme="light"] .studio-editor-page [role="dialog"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="popover"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="dropdown-menu"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="context-menu"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="modal-panel"] {
+  background:#ffffff !important;
+  color:#172033 !important;
+  border-color: #bcc7d4 !important;
+  box-shadow: 0 16px 42px rgba(15, 23, 42, .16) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [role="menuitem"]:hover,
+:root[data-soura-theme="light"] .studio-editor-page [class*="menu-item"]:hover {
+  background-color:#edf1f6 !important;
+}
+
+/* Status and bottom overview */
+:root[data-soura-theme="light"] .studio-editor-page [class*="status-bar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="statusbar"] {
+  background-color:#edf1f5 !important;
+  color:#475569 !important;
+  border-color: #c7d0dc !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-scroll"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-overview"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="overview-bar"] {
+  background-color:#e8edf3 !important;
+  border-color: #c2ccd8 !important;
+}
+
+/* Muted text */
+:root[data-soura-theme="light"] .studio-editor-page [class*="muted"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="secondary"],
+:root[data-soura-theme="light"] .studio-editor-page small {
+  color:var(--soura-muted);
+}
+
+/* Scrollbars */
+:root[data-soura-theme="light"] .studio-editor-page * {
+  scrollbar-color:#d1d5db #e5e7eb;
+}
+:root[data-soura-theme="light"] .studio-editor-page *::-webkit-scrollbar-track {
+  background:#edf1f5;
+}
+:root[data-soura-theme="light"] .studio-editor-page *::-webkit-scrollbar-thumb {
+  background:#d1d5db;
+  border: 2px solid #edf1f5;
+  border-radius: 999px;
+}
+:root[data-soura-theme="light"] .studio-editor-page *::-webkit-scrollbar-thumb:hover {
+  background:#d1d5db;
+}
+
+/* Selection / focus */
+:root[data-soura-theme="light"] .studio-editor-page ::selection {
+  background:rgba(88, 101, 216, .22);
+  color:#111827;
+}
+:root[data-soura-theme="light"] .studio-editor-page :focus-visible {
+  outline-color: var(--soura-accent);
+}
+
+/* Preserve region / clip colors: they encode track identity. */
+
+
+/* =========================================================
+   Screenshot cleanup pass — eliminate remaining dark shells
+   ========================================================= */
+
+/* Main application shell / header strip */
+:root[data-soura-theme="light"] .studio-editor-page,
+:root[data-soura-theme="light"] .studio-editor-page > main,
+:root[data-soura-theme="light"] .studio-editor-page > section,
+:root[data-soura-theme="light"] .studio-editor-workspace,
+:root[data-soura-theme="light"] .studio-editor-workspace > section {
+  background-color:#eef2f6 !important;
+  color:#111827 !important;
+}
+
+/* Project title/header area visible behind the centered project name. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="project-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="project-title"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="editor-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="header-center"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="titlebar"] {
+  background-color:#ffffff !important;
+  color:#111827 !important;
+  border-color: #cbd3de !important;
+  box-shadow: none !important;
+}
+
+/*
+  Left side under the visible track cards.
+  Target container/shell names, not region/clip elements.
+*/
+:root[data-soura-theme="light"] .studio-editor-page [class*="tracks-pane"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="tracks-panel"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="tracks-list"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-pane"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-panel"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-list-wrap"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-list-container"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-headers"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-header-list"] {
+  background-color:#f3f6f9 !important;
+  color:#111827 !important;
+  border-color: #cbd3de !important;
+}
+
+/* If the track column has an empty filler element, keep it light as well. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="track"][class*="filler"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track"][class*="spacer"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track"][class*="empty"] {
+  background-color:#f3f6f9 !important;
+  border-color: #d7dee7 !important;
+}
+
+/* Main timeline backing surfaces around the actual grid. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="arrangement-pane"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="arrangement-body"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-pane"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-body"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="editor-canvas"] {
+  background-color:#f8fafc !important;
+  border-color: #cbd3de !important;
+}
+
+/* Top ruler / locator strip should read distinctly from the blank canvas. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-ruler"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="arrangement-ruler"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="locator"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="cycle-bar"] {
+  background-color:#e9eef4 !important;
+  color:#64748b !important;
+  border-color: #c4ceda !important;
+}
+
+/* Right-side rail backing and the empty area beneath its controls. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-sidebar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="tools-sidebar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="side-rail"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="toolbar-rail"] {
+  background-color:#f3f6f9 !important;
+  border-color: #cbd3de !important;
+}
+
+/* Bottom project-length / overview area. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="project-length"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-length"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="project-overview"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-footer"] {
+  background-color:#e9eef4 !important;
+  color:#475569 !important;
+  border-color: #c2ccd8 !important;
+}
+
+/* Bottom status/output strip — fully light in the white theme. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="footer"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="status"] {
+  background-color:#f5f7fa !important;
+  color:#475569 !important;
+  border-color: #cbd3de !important;
+}
+
+/* Icon treatments that were designed around a dark surface. */
+:root[data-soura-theme="light"] .studio-editor-page svg {
+  color:currentColor;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page button svg {
+  stroke: currentColor;
+}
+
+/* Remove dark glow/shadow remnants from generic studio controls. */
+:root[data-soura-theme="light"] .studio-editor-page [class*="control"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="button"] {
+  text-shadow: none !important;
+}
+
+/*
+  Preserve track/region identity colors and waveform colors.
+  Do not globally set backgrounds for classes containing "region" or "clip".
+*/
+
+/* ===== v5 Contrast Pass ===== */
+:root[data-soura-theme="light"] {
+  --ml-bg:#dfe5ec;
+  --ml-bg-panel:#f6f8fa;
+  --ml-bg-panel-strong:#ffffff;
+  --ml-bg-interactive:#e9eef4;
+  --ml-text:#0b1220;
+  --ml-text-muted:#445267;
+  --ml-border:#b5c0ce;
+  --ml-border-strong:#8795a8;
+  --soura-canvas:#e9eef4;
+  --soura-soft:#e2e8ef;
+  --soura-border:#b4c0cd;
+  --soura-ink:#0b1220;
+  --soura-muted:#445267;
+}
+
+:root[data-soura-theme="light"] body,
+:root[data-soura-theme="light"] .studio-editor-page,
+:root[data-soura-theme="light"] .studio-editor-workspace{
+  background:#dfe5ec !important;
+  color:#0b1220 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="topbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="menu-bar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="menubar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="project-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="editor-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="titlebar"]{
+  background:#eef2f6 !important;
+  color:#0b1220 !important;
+  border-color:#aeb9c7 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="toolbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="transport"]{
+  background:#f7f9fb !important;
+  color:#0b1220 !important;
+  border-color:#b3becb !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="transport-display"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="transport-info"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="lcd"]{
+  background:#dfe6ee !important;
+  color:#07101e !important;
+  border-color:#9eabba !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-list"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-sidebar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-column"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="tracks-pane"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="tracks-panel"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="inspector"]{
+  background:#e4e9ef !important;
+  color:#0b1220 !important;
+  border-color:#aeb9c7 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-row"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="track-card"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="inspector-section"]{
+  background:#f8fafc !important;
+  color:#0b1220 !important;
+  border-color:#aeb9c7 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="section-title"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="section-label"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="inspector"] legend,
+:root[data-soura-theme="light"] .studio-editor-page [class*="inspector"] label{
+  color:#26364d !important;
+}
+
+:root[data-soura-theme="light"] .studio-arrangement{
+  background:#dfe5ec !important;
+  border-color:#aeb9c7 !important;
+}
+
+:root[data-soura-theme="light"] .studio-arrangement-grid,
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner,
+:root[data-soura-theme="light"] .studio-editor-page [class*="arrangement-body"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-body"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="editor-canvas"]{
+  background:#e9edf2 !important;
+  color:#0b1220 !important;
+}
+
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="grid-line"],
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="tick-line"]{
+  border-color:rgba(39,52,70,.18) !important;
+  background-color:rgba(39,52,70,.12) !important;
+}
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="beat-line"]{
+  border-color:rgba(31,43,59,.28) !important;
+  background-color:rgba(31,43,59,.18) !important;
+}
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="measure-line"],
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="bar-line"]{
+  border-color:rgba(18,29,44,.42) !important;
+  background-color:rgba(18,29,44,.28) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="ruler"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-header"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="locator"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="cycle-bar"]{
+  background:#d6dee7 !important;
+  color:#304158 !important;
+  border-color:#9eabba !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="new-track"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="drop"][class*="track"]{
+  background:#d9e1ea !important;
+  color:#34445a !important;
+  border-color:#a6b2c0 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-rail"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-toolbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="right-sidebar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="side-toolbar"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="tool-rail"]{
+  background:#e1e7ee !important;
+  color:#0b1220 !important;
+  border-color:#a5b1bf !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page button{
+  background:#f7f9fb;
+  color:#0b1220;
+  border-color:#9fabb9;
+}
+:root[data-soura-theme="light"] .studio-editor-page button:hover:not(:disabled){
+  background:#e1e7ee;
+  border-color:#77879a;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page input:not([type="range"]):not([type="color"]),
+:root[data-soura-theme="light"] .studio-editor-page select,
+:root[data-soura-theme="light"] .studio-editor-page textarea{
+  background:#f8fafc !important;
+  color:#0b1220 !important;
+  border-color:#9daaba !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="muted"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="secondary"],
+:root[data-soura-theme="light"] .studio-editor-page small{
+  color:#4b5a6e !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [class*="status"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="footer"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-overview"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="project-overview"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="timeline-footer"]{
+  background:#d8e0e8 !important;
+  color:#314158 !important;
+  border-color:#9faebe !important;
+}
+
+
+/* =========================================================
+   v7 Exact-Class Light Theme Corrections
+   Built from v5 to avoid the v6 ruler regression.
+   ========================================================= */
+
+/* ---- TOP APP BAR ----
+   Match the appbar to the menu-button surface so File/Edit/etc
+   no longer look like white buttons floating on a separate strip.
+*/
+:root[data-soura-theme="light"] .studio-editor-appbar {
+  background:#f7f9fb !important;
+  color:#0b1220 !important;
+  border-color:#b5c0ce !important;
+  box-shadow:none !important;
+}
+:root[data-soura-theme="light"] .studio-editor-menu button,
+:root[data-soura-theme="light"] .studio-editor-menu-button {
+  background:#f7f9fb !important;
+  color:#0b1220 !important;
+  border-color:transparent !important;
+  box-shadow:none !important;
+}
+:root[data-soura-theme="light"] .studio-editor-menu button:hover,
+:root[data-soura-theme="light"] .studio-editor-menu-button:hover {
+  background:#e8edf3 !important;
+  color:#0b1220 !important;
+}
+
+/* ---- LOGIC / TRANSPORT DISPLAY ---- */
+:root[data-soura-theme="light"] .studio-logic-display {
+  background:linear-gradient(180deg,#e3e8ee,#d8e0e8) !important;
+  border-color:#9eabba !important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.45) !important;
+}
+:root[data-soura-theme="light"] .studio-logic-section {
+  border-left-color:#b2bdca !important;
+}
+:root[data-soura-theme="light"] .studio-logic-primary {
+  color:#0b1220 !important;
+}
+:root[data-soura-theme="light"] .studio-logic-secondary {
+  color:#435166 !important;
+}
+:root[data-soura-theme="light"] .studio-display-icon-button {
+  background:#edf1f5 !important;
+  color:#253247 !important;
+  border-color:#aab5c2 !important;
+}
+
+/* ---- TIMELINE RULER ----
+   Revert the v6 dark strip. Keep it visibly distinct without going dark.
+*/
+:root[data-soura-theme="light"] .studio-timeline-ruler {
+  background:#d6dee7 !important;
+  border-bottom-color:#9eabba !important;
+}
+:root[data-soura-theme="light"] .studio-ruler-bar-label {
+  color:#304158 !important;
+}
+
+/* ---- VIEWPORT ---- */
+:root[data-soura-theme="light"] .studio-arrangement {
+  background:#d9e0e7 !important;
+  color:#0b1220 !important;
+}
+:root[data-soura-theme="light"] .studio-arrangement-grid,
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner {
+  background-color:#d9e0e7 !important;
+  color:#0b1220 !important;
+}
+
+/* Grid visibility on gray */
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="grid-line"],
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="tick-line"] {
+  border-color:rgba(19,28,40,.16) !important;
+  background-color:rgba(19,28,40,.09) !important;
+}
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="beat-line"] {
+  border-color:rgba(19,28,40,.25) !important;
+  background-color:rgba(19,28,40,.14) !important;
+}
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="measure-line"],
+:root[data-soura-theme="light"] .studio-arrangement-grid [class*="bar-line"] {
+  border-color:rgba(8,15,25,.40) !important;
+  background-color:rgba(8,15,25,.22) !important;
+}
+
+/* ---- TRACK PANEL / STACK ----
+   The stack is the large filler parent below/behind track cards.
+*/
+:root[data-soura-theme="light"] .studio-track-panel,
+:root[data-soura-theme="light"] .studio-track-toolbar,
+:root[data-soura-theme="light"] .studio-track-list,
+:root[data-soura-theme="light"] .studio-track-list-inner,
+:root[data-soura-theme="light"] .studio-track-stack {
+  background:#dfe5ec !important;
+  color:#0b1220 !important;
+  border-color:#aeb9c7 !important;
+}
+:root[data-soura-theme="light"] .studio-track-toolbar button,
+:root[data-soura-theme="light"] .studio-track-toolbar select {
+  background:#f1f4f7 !important;
+  color:#0b1220 !important;
+  border-color:#9faebe !important;
+}
+:root[data-soura-theme="light"] .studio-new-track-drop-header {
+  background:#d2dae3 !important;
+  color:#34445a !important;
+  border-bottom-color:#a4b0be !important;
+}
+:root[data-soura-theme="light"] .studio-track-card {
+  background:#edf1f5 !important;
+  color:#0b1220 !important;
+  border-color:#aeb9c7 !important;
+}
+:root[data-soura-theme="light"] .studio-track-card.is-selected {
+  background:#e6ebf2 !important;
+  border-color:#6f8bc2 !important;
+}
+:root[data-soura-theme="light"] .studio-track-name,
+:root[data-soura-theme="light"] .studio-track-control,
+:root[data-soura-theme="light"] .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-drag-handle {
+  color:#172033 !important;
+}
+:root[data-soura-theme="light"] .studio-track-control,
+:root[data-soura-theme="light"] .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-icon {
+  background:#f7f9fb !important;
+  border-color:#aeb9c7 !important;
+}
+
+/* ---- BOTTOM PROJECT EXTENSION LANE ---- */
+:root[data-soura-theme="light"] .studio-timeline-extension-lane,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner {
+  background:#cbd3dc !important;
+  border-color:#98a5b4 !important;
+  box-shadow:none !important;
+}
+
+/* Dark gray dotted guide */
+:root[data-soura-theme="light"] .studio-timeline-extension-lane::before,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner::before {
+  background:repeating-linear-gradient(
+    90deg,
+    rgba(45,54,66,.82) 0 5px,
+    transparent 5px 11px
+  ) !important;
+  box-shadow:none !important;
+}
+
+/* Dark gray arrows instead of cyan */
+:root[data-soura-theme="light"] .studio-timeline-extension-handle {
+  filter:none !important;
+}
+:root[data-soura-theme="light"] .studio-timeline-extension-handle--left,
+:root[data-soura-theme="light"] .studio-timeline-extension-handle--right {
+  background:#d1d5db !important;
+}
+
+/* ---- LEFT INSPECTOR ---- */
+:root[data-soura-theme="light"] .studio-left-panel,
+:root[data-soura-theme="light"] .studio-left-panel--inspector {
+  background:#dfe5ec !important;
+  color:#0b1220 !important;
+  border-right-color:#a7b2bf !important;
+}
+:root[data-soura-theme="light"] .studio-left-panel p,
+:root[data-soura-theme="light"] .studio-left-panel li {
+  color:#314158 !important;
+}
+:root[data-soura-theme="light"] .studio-track-inspector-header {
+  background:#edf1f5 !important;
+  color:#0b1220 !important;
+  border-color:#aab5c2 !important;
+}
+:root[data-soura-theme="light"] .studio-track-inspector-header p {
+  color:#506075 !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-section {
+  background:#edf1f5 !important;
+  color:#0b1220 !important;
+  border-color:#aab5c2 !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-section header span {
+  color:#286b92 !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-section h4 {
+  color:#111827 !important;
+}
+:root[data-soura-theme="light"] .studio-channel-hint,
+:root[data-soura-theme="light"] .studio-audio-track-summary p,
+:root[data-soura-theme="light"] .studio-inspector-empty,
+:root[data-soura-theme="light"] .studio-instrument-empty p {
+  color:#4b5a6e !important;
+}
+
+/* Inspector effect/instrument slots */
+:root[data-soura-theme="light"] .studio-insert-slot,
+:root[data-soura-theme="light"] .studio-instrument-slot {
+  background:linear-gradient(180deg,#e2e8ef,#d7dee7) !important;
+  color:#111827 !important;
+  border-color:#9faebe !important;
+}
+:root[data-soura-theme="light"] .studio-insert-slot span,
+:root[data-soura-theme="light"] .studio-instrument-slot span {
+  color:#56657a !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-strip button,
+:root[data-soura-theme="light"] .studio-inspector-section header button,
+:root[data-soura-theme="light"] .studio-instrument-empty button,
+:root[data-soura-theme="light"] .studio-insert-slot button,
+:root[data-soura-theme="light"] .studio-instrument-slot button {
+  background:#f7f9fb !important;
+  color:#111827 !important;
+  border-color:#98a5b4 !important;
+}
+
+/* Channel Strip Settings */
+:root[data-soura-theme="light"] .studio-channel-settings-scroll details {
+  background:#e8edf3 !important;
+  border-color:#aeb9c7 !important;
+}
+:root[data-soura-theme="light"] .studio-channel-settings-scroll summary {
+  color:#286b92 !important;
+}
+:root[data-soura-theme="light"] .studio-channel-settings-scroll label,
+:root[data-soura-theme="light"] .studio-channel-settings-scroll p {
+  color:#34445a !important;
+}
+:root[data-soura-theme="light"] .studio-channel-settings-scroll input,
+:root[data-soura-theme="light"] .studio-channel-settings-scroll select,
+:root[data-soura-theme="light"] .studio-channel-settings-scroll textarea,
+:root[data-soura-theme="light"] .studio-channel-settings-scroll button {
+  background:#f7f9fb !important;
+  color:#111827 !important;
+  border-color:#98a5b4 !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-divider {
+  color:#34445a !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-divider::before,
+:root[data-soura-theme="light"] .studio-inspector-divider::after {
+  background:#d1d5db !important;
+}
+
+/* ---- FOOTER ---- */
+:root[data-soura-theme="light"] .studio-editor-footer {
+  background:#d9e0e7 !important;
+  color:#34445a !important;
+  border-top-color:#a7b2bf !important;
+}
+:root[data-soura-theme="light"] .studio-footer-save-status {
+  color:#34445a !important;
+}
+
+/* ---- RIGHT RAIL ---- */
+:root[data-soura-theme="light"] .studio-right-rail {
+  background:#dfe5ec !important;
+  border-color:#a7b2bf !important;
+}
+:root[data-soura-theme="light"] .studio-right-rail button {
+  background:#f4f7fa !important;
+  color:#111827 !important;
+  border-color:#98a5b4 !important;
+}
+
+/* ---- POPOVERS / MENUS ---- */
+:root[data-soura-theme="light"] .studio-inspector-menu,
+:root[data-soura-theme="light"] .studio-global-popover,
+:root[data-soura-theme="light"] .studio-track-popover,
+:root[data-soura-theme="light"] .studio-track-menu {
+  background:#f4f7fa !important;
+  color:#111827 !important;
+  border-color:#98a5b4 !important;
+  box-shadow:0 16px 38px rgba(15,23,42,.15) !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-menu button {
+  color:#111827 !important;
+}
+:root[data-soura-theme="light"] .studio-inspector-menu button:hover,
+:root[data-soura-theme="light"] .studio-inspector-menu button:focus-visible {
+  background:#e2e8ef !important;
+}
+
+/* ---- HIGH-CONTRAST TEXT DEFAULTS ---- */
+:root[data-soura-theme="light"] .studio-editor-page {
+  color:#0b1220 !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page small,
+:root[data-soura-theme="light"] .studio-editor-page [class*="muted"],
+:root[data-soura-theme="light"] .studio-editor-page [class*="secondary"] {
+  color:#4b5a6e !important;
+}
+
+/* ===== v10 STRICT LIGHT THEME ===== */
+:root[data-soura-theme="light"] .studio-editor-appbar,
+:root[data-soura-theme="light"] .studio-editor-menu,
+:root[data-soura-theme="light"] .studio-editor-menu button,
+:root[data-soura-theme="light"] .studio-editor-menu-button {
+  background:#f1f5f9 !important;color:#1f2937 !important;border-color:#cbd5e1 !important;box-shadow:none !important;
+}
+:root[data-soura-theme="light"] .studio-arrangement,
+:root[data-soura-theme="light"] .studio-arrangement-grid,
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner {
+  background:#d1d5db !important;color:#111827 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-timeline-ruler {
+  background:#e5e7eb !important;color:#1f2937 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-ruler-bar-label {color:#374151 !important;}
+:root[data-soura-theme="light"] .studio-track-panel,
+:root[data-soura-theme="light"] .studio-track-toolbar,
+:root[data-soura-theme="light"] .studio-track-list,
+:root[data-soura-theme="light"] .studio-track-list-inner,
+:root[data-soura-theme="light"] .studio-track-stack {
+  background:#e5e7eb !important;color:#111827 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-track-card {
+  background:#f8fafc !important;color:#111827 !important;border-color:#b6c0cc !important;box-shadow:none !important;
+}
+:root[data-soura-theme="light"] .studio-track-card:hover {
+  background:#e5e7eb !important;color:#111827 !important;
+}
+:root[data-soura-theme="light"] .studio-track-card.is-selected {
+  background:#d1d5db !important;color:#111827 !important;
+}
+:root[data-soura-theme="light"] .studio-track-control,
+:root[data-soura-theme="light"] .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-icon {
+  background:#e5e7eb !important;color:#1f2937 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-track-control:hover,
+:root[data-soura-theme="light"] .studio-record-arm:hover,
+:root[data-soura-theme="light"] .studio-track-more:hover,
+:root[data-soura-theme="light"] .studio-track-icon:hover {
+  background:#d1d5db !important;color:#111827 !important;
+}
+:root[data-soura-theme="light"] .studio-logic-display {
+  background:linear-gradient(180deg,#e5e7eb,#d1d5db) !important;border-color:#9ca3af !important;box-shadow:none !important;
+}
+:root[data-soura-theme="light"] .studio-logic-primary {color:#111827 !important;}
+:root[data-soura-theme="light"] .studio-logic-secondary {color:#4b5563 !important;}
+:root[data-soura-theme="light"] .studio-timeline-extension-lane,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner {
+  background:#e5e7eb !important;border-color:#b6c0cc !important;box-shadow:none !important;
+}
+:root[data-soura-theme="light"] .studio-timeline-extension-lane::before,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner::before {
+  background:none !important;border-top:2px dashed #4b5563 !important;box-shadow:none !important;
+}
+:root[data-soura-theme="light"] .studio-timeline-extension-handle,
+:root[data-soura-theme="light"] .studio-timeline-extension-handle--left,
+:root[data-soura-theme="light"] .studio-timeline-extension-handle--right {
+  background:#e5e7eb !important;color:#374151 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-left-panel,
+:root[data-soura-theme="light"] .studio-left-panel--inspector,
+:root[data-soura-theme="light"] .studio-right-rail {
+  background:#e5e7eb !important;color:#111827 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-track-inspector-header,
+:root[data-soura-theme="light"] .studio-inspector-section,
+:root[data-soura-theme="light"] .studio-channel-settings-scroll details,
+:root[data-soura-theme="light"] .studio-inspector-strip {
+  background:#f1f5f9 !important;color:#111827 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-insert-slot,
+:root[data-soura-theme="light"] .studio-instrument-slot {
+  background:linear-gradient(180deg,#e5e7eb,#d1d5db) !important;color:#1f2937 !important;border-color:#9ca3af !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [class*="mixer"],
+:root[data-soura-theme="light"] .studio-mixer-strip,
+:root[data-soura-theme="light"] .studio-editor-page [class*="channel-strip"] {
+  background:#e5e7eb !important;color:#111827 !important;border-color:#b6c0cc !important;filter:none !important;
+}
+:root[data-soura-theme="light"] .studio-mixer-strip button,
+:root[data-soura-theme="light"] .studio-editor-page [class*="mixer"] button {
+  background:#f1f5f9 !important;color:#1f2937 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page button {
+  background:#f1f5f9;color:#1f2937;border-color:#b6c0cc;
+}
+:root[data-soura-theme="light"] .studio-editor-page button:hover:not(:disabled) {
+  background:#e5e7eb;color:#111827;
+}
+:root[data-soura-theme="light"] .studio-editor-page input:not([type="range"]):not([type="color"]),
+:root[data-soura-theme="light"] .studio-editor-page select,
+:root[data-soura-theme="light"] .studio-editor-page textarea {
+  background:#f8fafc !important;color:#111827 !important;border-color:#b6c0cc !important;
+}
+:root[data-soura-theme="light"] .studio-editor-footer {
+  background:#e5e7eb !important;color:#374151 !important;border-color:#b6c0cc !important;
+}
+
+
+/* =========================================================
+   v11 TRACK HOVER STATE CORRECTION
+   Swap the current visual states:
+   - Idle/default track card = white
+   - Hover track card = light gray
+   - Buttons blend into the track-card background in each state
+   ========================================================= */
+
+/* DEFAULT / NOT HOVERED */
+:root[data-soura-theme="light"] .studio-track-card {
+  background:#f8fafc !important;
+  color:#111827 !important;
+  border-color:#b6c0cc !important;
+}
+
+/* Make track-card controls visually belong to the white card at rest. */
+:root[data-soura-theme="light"] .studio-track-card .studio-track-control,
+:root[data-soura-theme="light"] .studio-track-card .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-icon {
+  background:#f8fafc !important;
+  color:#1f2937 !important;
+  border-color:#cbd5e1 !important;
+  box-shadow:none !important;
+}
+
+/* HOVERED TRACK */
+:root[data-soura-theme="light"] .studio-track-card:hover {
+  background:#e5e7eb !important;
+  color:#111827 !important;
+  border-color:#9ca3af !important;
+}
+
+/* On hover, controls match the same light-gray track background. */
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-control,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-icon {
+  background:#e5e7eb !important;
+  color:#111827 !important;
+  border-color:#b6c0cc !important;
+}
+
+/* Avoid a second darker hover state on the child buttons. */
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-control:hover,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-record-arm:hover,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-more:hover,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-icon:hover {
+  background:#e5e7eb !important;
+  color:#111827 !important;
+  border-color:#9ca3af !important;
+}
+
+/* Selected state stays separate from hover/idle, but remains light-theme safe. */
+:root[data-soura-theme="light"] .studio-track-card.is-selected {
+  background:#d1d5db !important;
+  color:#111827 !important;
+  border-color:#9ca3af !important;
+}
+
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-track-control,
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-track-icon {
+  background:#d1d5db !important;
+  color:#111827 !important;
+  border-color:#9ca3af !important;
+}
+
+
+/* =========================================================
+   v12 TRACK STATE NORMALIZATION
+   Hard rule for EVERY visual surface inside a track card:
+     idle       = pure white
+     selected   = slightly gray
+     hovered    = more gray
+   Hover intentionally wins over selected.
+   ========================================================= */
+
+:root[data-soura-theme="light"] {
+  --soura-track-idle: #ffffff;
+  --soura-track-selected: #eef0f2;
+  --soura-track-hover: #dde1e5;
+}
+
+/* DEFAULT / NOT HOVERED */
+:root[data-soura-theme="light"] .studio-track-card {
+  background: var(--soura-track-idle) !important;
+  background-color: var(--soura-track-idle) !important;
+}
+
+:root[data-soura-theme="light"] .studio-track-card button,
+:root[data-soura-theme="light"] .studio-track-card input:not([type="range"]):not([type="color"]),
+:root[data-soura-theme="light"] .studio-track-card select,
+:root[data-soura-theme="light"] .studio-track-card textarea,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-control,
+:root[data-soura-theme="light"] .studio-track-card .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-icon,
+:root[data-soura-theme="light"] .studio-track-card [class*="button"],
+:root[data-soura-theme="light"] .studio-track-card [class*="control"],
+:root[data-soura-theme="light"] .studio-track-card [class*="toggle"],
+:root[data-soura-theme="light"] .studio-track-card [class*="chip"],
+:root[data-soura-theme="light"] .studio-track-card [class*="badge"] {
+  background: var(--soura-track-idle) !important;
+  background-color: var(--soura-track-idle) !important;
+}
+
+/* SELECTED */
+:root[data-soura-theme="light"] .studio-track-card.is-selected {
+  background: var(--soura-track-selected) !important;
+  background-color: var(--soura-track-selected) !important;
+}
+
+:root[data-soura-theme="light"] .studio-track-card.is-selected button,
+:root[data-soura-theme="light"] .studio-track-card.is-selected input:not([type="range"]):not([type="color"]),
+:root[data-soura-theme="light"] .studio-track-card.is-selected select,
+:root[data-soura-theme="light"] .studio-track-card.is-selected textarea,
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-track-control,
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-card.is-selected .studio-track-icon,
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="button"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="control"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="toggle"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="chip"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="badge"] {
+  background: var(--soura-track-selected) !important;
+  background-color: var(--soura-track-selected) !important;
+}
+
+/* HOVER — placed after selected so hover wins */
+:root[data-soura-theme="light"] .studio-track-card:hover {
+  background: var(--soura-track-hover) !important;
+  background-color: var(--soura-track-hover) !important;
+}
+
+:root[data-soura-theme="light"] .studio-track-card:hover button,
+:root[data-soura-theme="light"] .studio-track-card:hover input:not([type="range"]):not([type="color"]),
+:root[data-soura-theme="light"] .studio-track-card:hover select,
+:root[data-soura-theme="light"] .studio-track-card:hover textarea,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-control,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-icon,
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="button"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="control"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="toggle"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="chip"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="badge"] {
+  background: var(--soura-track-hover) !important;
+  background-color: var(--soura-track-hover) !important;
+}
+
+/* Prevent child controls from creating their own fourth background shade. */
+:root[data-soura-theme="light"] .studio-track-card:hover button:hover,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-control:hover,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-record-arm:hover,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-more:hover,
+:root[data-soura-theme="light"] .studio-track-card:hover .studio-track-icon:hover {
+  background: var(--soura-track-hover) !important;
+  background-color: var(--soura-track-hover) !important;
+}
+
+/* Readability only; no independent surface styling. */
+:root[data-soura-theme="light"] .studio-track-card,
+:root[data-soura-theme="light"] .studio-track-card button,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-control,
+:root[data-soura-theme="light"] .studio-track-card .studio-record-arm,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-more,
+:root[data-soura-theme="light"] .studio-track-card .studio-track-icon {
+  color: #1f2937 !important;
+  box-shadow: none !important;
+}
+
+
+/* =========================================================
+   v13 TRACK TEXT/HEADER SURFACE FIX
+   Force the title/header/text-bearing surface inside each track
+   to use the exact same state background as the track card.
+   ========================================================= */
+
+/* IDLE */
+:root[data-soura-theme="light"] .studio-track-card [class*="track-name"],
+:root[data-soura-theme="light"] .studio-track-card [class*="track-title"],
+:root[data-soura-theme="light"] .studio-track-card [class*="track-header"],
+:root[data-soura-theme="light"] .studio-track-card [class*="track-label"],
+:root[data-soura-theme="light"] .studio-track-card [class*="track-main"],
+:root[data-soura-theme="light"] .studio-track-card [class*="track-content"],
+:root[data-soura-theme="light"] .studio-track-card [class*="track-info"] {
+  background: var(--soura-track-idle) !important;
+  background-color: var(--soura-track-idle) !important;
+}
+
+/* SELECTED */
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="track-name"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="track-title"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="track-header"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="track-label"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="track-main"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="track-content"],
+:root[data-soura-theme="light"] .studio-track-card.is-selected [class*="track-info"] {
+  background: var(--soura-track-selected) !important;
+  background-color: var(--soura-track-selected) !important;
+}
+
+/* HOVER — wins over selected */
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-name"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-title"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-header"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-label"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-main"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-content"],
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-info"] {
+  background: var(--soura-track-hover) !important;
+  background-color: var(--soura-track-hover) !important;
+}
+
+/* Prevent nested title/name wrappers from retaining old white fills. */
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-name"] *,
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-title"] *,
+:root[data-soura-theme="light"] .studio-track-card:hover [class*="track-header"] * {
+  background-color: transparent !important;
+}
+
+
+/* =========================================================
+   v14 TIMELINE TICK + PLAYHEAD CONTRAST
+   ========================================================= */
+
+/* Sub-tick / subdivision lines between numbered timeline marks. */
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner {
+  --soura-subtick-color: #626b75;
+}
+
+/* Cover the common grid implementations without changing geometry. */
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner [class*="subtick"],
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner [class*="sub-tick"],
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner [class*="minor-grid"],
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner [class*="subdivision"] {
+  border-color: #626b75 !important;
+  background-color: #626b75 !important;
+}
+
+/* Main vertical timeline/playhead line — near-black for clear position reading. */
+:root[data-soura-theme="light"] [class*="playhead"][class*="line"],
+:root[data-soura-theme="light"] .studio-playhead-line,
+:root[data-soura-theme="light"] .studio-timeline-playhead-line,
+:root[data-soura-theme="light"] .studio-arrangement-playhead-line {
+  background: #171a1f !important;
+  background-color: #171a1f !important;
+  border-color: #171a1f !important;
+}
+
+
+/* =========================================================
+   v15 EXACT TIMELINE GRID LINE FIX
+   Derived from live DOM inspection:
+     .studio-grid-line--bar
+     .studio-grid-line--beat
+   ========================================================= */
+
+/* Beat/subdivision lines between numbered bars */
+:root[data-soura-theme="light"] .studio-grid-line.studio-grid-line--beat {
+  background: #6b7280 !important;
+  background-color: #6b7280 !important;
+  border-color: #6b7280 !important;
+  opacity: .48 !important;
+}
+
+/* Bar lines: stronger/darker than beat lines */
+:root[data-soura-theme="light"] .studio-grid-line.studio-grid-line--bar {
+  background: #374151 !important;
+  background-color: #374151 !important;
+  border-color: #374151 !important;
+  opacity: .82 !important;
+}
+
+/* Ensure generic earlier light-theme grid rules cannot win */
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner > .studio-grid-line--beat {
+  background: #6b7280 !important;
+  background-color: #6b7280 !important;
+  border-color: #6b7280 !important;
+}
+
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner > .studio-grid-line--bar {
+  background: #374151 !important;
+  background-color: #374151 !important;
+  border-color: #374151 !important;
+}
+
+
+/* =========================================================
+   v16 EXACT TIMELINE RULER + DIVISION MARKERS
+   Based on the actual selectors in src/styles/studio.css.
+   ========================================================= */
+
+/* TOP TIMELINE HEADER / RULER — explicitly black */
+:root[data-soura-theme="light"] .studio-timeline-ruler {
+  background: #111318 !important;
+  background-color: #111318 !important;
+  border-bottom-color: #343a43 !important;
+}
+
+/* Number labels on the black ruler */
+:root[data-soura-theme="light"] .studio-ruler-bar-label {
+  color: #9ca3af !important;
+}
+
+/* Subdivision labels if Soura renders them */
+:root[data-soura-theme="light"] .studio-ruler-bar-label--subdivision {
+  color: #737b86 !important;
+}
+
+/* EXACT grid-line classes from studio.css.
+   These are the vertical division markers generated by Soura. */
+:root[data-soura-theme="light"] .studio-grid-line--bar {
+  background: #374151 !important;
+  background-color: #374151 !important;
+  opacity: 1 !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--beat {
+  background: #68717d !important;
+  background-color: #68717d !important;
+  opacity: .72 !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--half {
+  background: #78818c !important;
+  background-color: #78818c !important;
+  opacity: .60 !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--quarter {
+  background: #858d97 !important;
+  background-color: #858d97 !important;
+  opacity: .50 !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--subdivision {
+  background: #9299a2 !important;
+  background-color: #9299a2 !important;
+  opacity: .42 !important;
+}
+
+/* Exact playhead classes discovered in studio.css.
+   Keep position line near-black for maximum visibility. */
+:root[data-soura-theme="light"] .studio-ruler-playhead,
+:root[data-soura-theme="light"] .studio-grid-playhead {
+  background: #171a1f !important;
+  background-color: #171a1f !important;
+}
+
+/* The triangle above the playhead */
+:root[data-soura-theme="light"] .studio-ruler-playhead::before {
+  border-top-color: #171a1f !important;
+  filter: none !important;
+}
+
+
+/* =========================================================
+   v17 RULER DIVISION VISIBILITY FIX
+   Draw ruler subdivisions directly on the ruler background,
+   independent of DOM child elements / iframe inspection.
+   ========================================================= */
+
+/*
+  Ruler:
+  - dark header background
+  - one stronger line every bar
+  - three smaller beat divisions between bar marks
+  - numbers remain readable above the drawn tick layer
+*/
+:root[data-soura-theme="light"] .studio-timeline-ruler {
+  position: relative !important;
+  background-color: #15181d !important;
+
+  /* 48 px = current bar width seen in live DOM:
+     bar at 0, beat at 12/24/36, next bar at 48.
+     Layer 1: bar lines every 48px
+     Layer 2: beat lines every 12px
+  */
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(31, 41, 55, 0.95) 0,
+      rgba(31, 41, 55, 0.95) 1px,
+      transparent 1px,
+      transparent 48px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(107, 114, 128, 0.78) 0,
+      rgba(107, 114, 128, 0.78) 1px,
+      transparent 1px,
+      transparent 12px
+    ) !important;
+
+  border-bottom-color: #6b7280 !important;
+}
+
+/* Numeric labels stay above the generated ruler marks. */
+:root[data-soura-theme="light"] .studio-ruler-bar-label {
+  position: relative !important;
+  z-index: 2 !important;
+  color: #c7ccd3 !important;
+  text-shadow: none !important;
+}
+
+/* If Soura emits subdivision labels, keep them more subtle. */
+:root[data-soura-theme="light"] .studio-ruler-bar-label--subdivision {
+  color: #8f97a1 !important;
+}
+
+/* =========================================================
+   BODY GRID REBALANCE
+   The previous pass made the viewport grid too aggressive.
+   Keep the ruler divisions obvious, while the editor body is calmer.
+   ========================================================= */
+
+:root[data-soura-theme="light"] .studio-grid-line--bar {
+  background: #737b85 !important;
+  background-color: #737b85 !important;
+  opacity: 0.58 !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--beat {
+  background: #8f969f !important;
+  background-color: #8f969f !important;
+  opacity: 0.34 !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--half,
+:root[data-soura-theme="light"] .studio-grid-line--quarter,
+:root[data-soura-theme="light"] .studio-grid-line--subdivision {
+  background: #9fa6ae !important;
+  background-color: #9fa6ae !important;
+  opacity: 0.20 !important;
+}
+
+/* =========================================================
+   PLAYHEAD
+   ========================================================= */
+
+:root[data-soura-theme="light"] .studio-ruler-playhead,
+:root[data-soura-theme="light"] .studio-grid-playhead {
+  background: #111318 !important;
+  background-color: #111318 !important;
+  opacity: 1 !important;
+}
+
+:root[data-soura-theme="light"] .studio-ruler-playhead::before {
+  border-top-color: #111318 !important;
+  filter: none !important;
+}
+
+
+/* =========================================================
+   v18 — RULER-INNER TICKS + INTERACTION-LAYER SEPARATION
+   Live DOM confirmed:
+     .studio-timeline-ruler-inner
+       ├─ .studio-cycle-strip (22px high)
+       ├─ .studio-ruler-bar-label (every 48px)
+       └─ .studio-ruler-playhead
+   There are NO native ruler tick elements, so draw them on
+   ruler-inner itself so they scroll/translate with the ruler.
+   ========================================================= */
+
+/* Outer ruler stays neutral and does not paint its own tick grid. */
+:root[data-soura-theme="light"] .studio-timeline-ruler {
+  background: #d6dee7 !important;
+  background-image: none !important;
+  border-bottom: 1px solid #aeb9c5 !important;
+}
+
+/* The moving inner ruler owns the actual tick pattern. */
+:root[data-soura-theme="light"] .studio-timeline-ruler-inner {
+  position: relative !important;
+  background: #d6dee7 !important;
+  background-color: #d6dee7 !important;
+}
+
+/*
+  Lower ruler/timeline-position zone only.
+  top:22px matches the live .studio-cycle-strip height.
+  This keeps tick marks out of the loop/cycle lane.
+*/
+:root[data-soura-theme="light"] .studio-timeline-ruler-inner::after {
+  content: "" !important;
+  position: absolute !important;
+  left: 0 !important;
+  right: 0 !important;
+  top: 22px !important;
+  bottom: 0 !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+
+  /* 48px per bar; 12px per beat from live DOM positions. */
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      #4b5563 0,
+      #4b5563 1px,
+      transparent 1px,
+      transparent 48px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(75, 85, 99, 0.58) 0,
+      rgba(75, 85, 99, 0.58) 1px,
+      transparent 1px,
+      transparent 12px
+    ) !important;
+}
+
+/* Keep numeric labels above the synthetic tick layer. */
+:root[data-soura-theme="light"] .studio-ruler-bar-label {
+  position: absolute !important;
+  z-index: 3 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #27313d !important;
+}
+
+/* Playhead remains above ticks and labels. */
+:root[data-soura-theme="light"] .studio-ruler-playhead {
+  z-index: 5 !important;
+  background: #111318 !important;
+  background-color: #111318 !important;
+}
+
+/* =========================================================
+   INTERACTION ZONE CONTRAST
+   Make loop/cycle editing and timeline-position editing
+   visibly distinct without leaving the light-theme palette.
+   ========================================================= */
+
+/* Upper draggable loop/cycle zone */
+:root[data-soura-theme="light"] .studio-cycle-strip {
+  background: #edf1f5 !important;
+  background-color: #edf1f5 !important;
+  border-bottom: 1px solid #bcc6d1 !important;
+}
+
+/* Lower ruler/position zone */
+:root[data-soura-theme="light"] .studio-timeline-ruler-inner {
+  box-shadow: inset 0 -1px 0 #aeb9c5 !important;
+}
+
+/* Active loop/cycle range stays readable against its distinct lane. */
+:root[data-soura-theme="light"] .studio-cycle-range {
+  background: rgba(84, 170, 195, 0.24) !important;
+  border-color: rgba(66, 132, 153, 0.55) !important;
+}
+
+:root[data-soura-theme="light"] .studio-cycle-range-handle {
+  background: rgba(66, 132, 153, 0.34) !important;
+}
+
+
+/* =========================================================
+   v19 — COLOR-ONLY TIMELINE POLISH
+   No layout, sizing, positioning, transform, z-index, or geometry changes.
+   ========================================================= */
+
+/* Distinguish the two timeline interaction layers with neutral light grays. */
+:root[data-soura-theme="light"] .studio-cycle-strip {
+  background-color: #eef2f6 !important;
+  border-bottom-color: #b8c3cf !important;
+}
+
+:root[data-soura-theme="light"] .studio-timeline-ruler,
+:root[data-soura-theme="light"] .studio-timeline-ruler-inner {
+  background-color: #d6dee7 !important;
+  border-bottom-color: #aab6c3 !important;
+}
+
+/* Ruler numerals / labels. */
+:root[data-soura-theme="light"] .studio-ruler-bar-label {
+  color: #263343 !important;
+}
+
+/* Loop range remains visible but less saturated against light mode. */
+:root[data-soura-theme="light"] .studio-cycle-range {
+  background-color: rgba(79, 157, 181, 0.20) !important;
+  border-color: rgba(57, 118, 139, 0.52) !important;
+}
+
+:root[data-soura-theme="light"] .studio-cycle-range-handle {
+  background-color: rgba(57, 118, 139, 0.30) !important;
+}
+
+/* Arrangement grid hierarchy: visible, but not dominant. */
+:root[data-soura-theme="light"] .studio-grid-line--bar {
+  background-color: rgba(52, 64, 79, 0.55) !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--beat {
+  background-color: rgba(52, 64, 79, 0.28) !important;
+}
+
+:root[data-soura-theme="light"] .studio-grid-line--half,
+:root[data-soura-theme="light"] .studio-grid-line--quarter,
+:root[data-soura-theme="light"] .studio-grid-line--subdivision {
+  background-color: rgba(52, 64, 79, 0.16) !important;
+}
+
+/* Playhead stays the strongest neutral timeline indicator. */
+:root[data-soura-theme="light"] .studio-ruler-playhead,
+:root[data-soura-theme="light"] .studio-grid-playhead {
+  background-color: #15191f !important;
+}
+
+:root[data-soura-theme="light"] .studio-ruler-playhead::before {
+  border-top-color: #15191f !important;
+}
+
+
+/* =========================================================
+   v20 — LIGHT THEME RULER NUMBER PLATES
+   Mirrors the root ruler-label geometry while using light-theme colors.
+   Opaque plate masks the vertical division line behind the numeral.
+   ========================================================= */
+
+:root[data-soura-theme="light"] .studio-ruler-bar-label {
+  transform: translateX(-50%) !important;
+  min-width: 18px !important;
+  min-height: 17px !important;
+  padding: 1px 4px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+
+  background: #d6dee7 !important;
+  background-color: #d6dee7 !important;
+  color: #263343 !important;
+  border: 1px solid #aab6c3 !important;
+  border-radius: 5px !important;
+
+  line-height: 1 !important;
+  text-align: center !important;
+  z-index: 4 !important;
+}

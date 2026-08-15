@@ -1,0 +1,91 @@
+/* =========================================================
+   SOURA REGULAR/DARK THEME — TIMELINE VISIBILITY PATCH
+   COLOR-ONLY. No layout, sizing, positioning, transforms, or behavior.
+   Append this to: src/styles/studio.css
+   ========================================================= */
+
+/* Separate cycle/loop interaction lane from the numbered ruler. */
+.studio-cycle-strip {
+  background-color: #171b24;
+  border-bottom-color: rgba(151, 166, 190, 0.28);
+}
+
+.studio-timeline-ruler,
+.studio-timeline-ruler-inner {
+  background-color: #10131a;
+  border-bottom-color: rgba(151, 166, 190, 0.30);
+}
+
+/* Make ruler labels clearer without making them bright white. */
+.studio-ruler-bar-label {
+  color: #c1cad8;
+}
+
+/*
+  Ruler-inner synthetic dividers.
+  This is paint-only: it creates an overlay and does not affect document flow,
+  sizing, hit-testing, scrolling, snapping, or timeline behavior.
+*/
+.studio-timeline-ruler-inner::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 22px;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 1;
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(190, 202, 220, 0.58) 0,
+      rgba(190, 202, 220, 0.58) 1px,
+      transparent 1px,
+      transparent 48px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(190, 202, 220, 0.28) 0,
+      rgba(190, 202, 220, 0.28) 1px,
+      transparent 1px,
+      transparent 12px
+    );
+}
+
+/* Main arrangement grid hierarchy: bars > beats > subdivisions. */
+.studio-grid-line--bar {
+  background-color: rgba(207, 216, 230, 0.34);
+}
+
+.studio-grid-line--beat {
+  background-color: rgba(207, 216, 230, 0.17);
+}
+
+.studio-grid-line--half,
+.studio-grid-line--quarter,
+.studio-grid-line--subdivision {
+  background-color: rgba(207, 216, 230, 0.09);
+}
+
+/* Keep the playhead stronger than every divider. */
+.studio-ruler-playhead {
+  background-color: rgba(229, 235, 245, 0.82);
+}
+
+.studio-grid-playhead {
+  background-color: rgba(229, 235, 245, 0.78);
+}
+
+.studio-ruler-playhead::before {
+  border-top-color: rgba(229, 235, 245, 0.96);
+}
+
+/* Keep loop range distinct but restrained. */
+.studio-cycle-range {
+  background-color: rgba(40, 190, 220, 0.18);
+  border-color: rgba(70, 205, 230, 0.42);
+}
+
+.studio-cycle-range-handle {
+  background-color: rgba(70, 205, 230, 0.28);
+}
