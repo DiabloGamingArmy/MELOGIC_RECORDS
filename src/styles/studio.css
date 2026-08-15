@@ -3090,3 +3090,324 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   --studio-track-grid-top: 0px;
 }
 /* soura-contextual-extension-lane-v3:css:end */
+
+/* soura-signal-deck-v1:css:begin */
+/* =========================================================
+   SOURA SIGNAL DECK
+   Low-profile transport redesign. Functionality is unchanged.
+   ========================================================= */
+
+.studio-editor-transport {
+  min-height:64px;
+  height:64px;
+  padding:0 14px;
+  gap:16px;
+  background:
+    linear-gradient(180deg,rgba(22,27,38,.98),rgba(15,19,28,.99));
+  border-top:1px solid rgba(115,136,179,.16);
+  border-bottom:1px solid rgba(115,136,179,.24);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.025),
+    inset 0 -1px 0 rgba(0,0,0,.35);
+}
+
+.studio-transport-center {
+  justify-self:center;
+  display:grid;
+  grid-template-columns:max-content minmax(560px,690px) max-content;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  padding:4px 5px;
+  border:1px solid rgba(111,132,176,.16);
+  border-radius:10px;
+  background:rgba(5,9,16,.42);
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.012);
+}
+
+.studio-editor-transport .studio-tool-group--left,
+.studio-editor-transport .studio-tool-group--transport,
+.studio-editor-transport .studio-tool-group--utilities {
+  gap:2px;
+  padding:3px;
+  border:1px solid rgba(110,132,176,.16);
+  border-radius:8px;
+  background:rgba(9,14,22,.62);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.018);
+}
+
+.studio-editor-transport .studio-tool-button {
+  width:30px;
+  height:30px;
+  flex:0 0 30px;
+  border:1px solid transparent;
+  border-radius:6px;
+  background:transparent;
+  color:#aeb9ca;
+  box-shadow:none;
+  transform:none;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.studio-editor-transport .studio-tool-button svg {
+  width:17px;
+  height:17px;
+  stroke-width:2.25;
+}
+
+.studio-editor-transport .studio-tool-button:hover,
+.studio-editor-transport .studio-tool-button:focus-visible {
+  background:rgba(140,163,199,.105);
+  border-color:rgba(151,174,209,.16);
+  color:#f0f5ff;
+  box-shadow:none;
+  transform:none;
+}
+
+.studio-editor-transport [data-transport-play] {
+  color:#8ddcff;
+}
+.studio-editor-transport [data-transport-play].is-active {
+  background:rgba(51,196,235,.18);
+  border-color:rgba(85,211,244,.38);
+  color:#eafcff;
+  box-shadow:inset 0 -2px 0 #55d3f4;
+}
+
+.studio-editor-transport [data-transport-record] {
+  color:#ff8394;
+}
+.studio-editor-transport [data-transport-record].is-active {
+  background:rgba(226,62,87,.18);
+  border-color:rgba(255,103,125,.42);
+  color:#fff0f3;
+  box-shadow:inset 0 -2px 0 #ff667d;
+}
+
+.studio-editor-transport [data-toggle-cycle].is-active {
+  background:rgba(132,109,255,.16);
+  border-color:rgba(157,139,255,.38);
+  color:#e9e4ff;
+  box-shadow:inset 0 -2px 0 #9c8bff;
+}
+
+.studio-editor-transport [data-toggle-metronome].is-active {
+  background:rgba(233,181,85,.14);
+  border-color:rgba(240,197,113,.32);
+  color:#ffd990;
+  box-shadow:inset 0 -2px 0 #eec16c;
+}
+
+.studio-editor-transport [data-toggle-count-in].is-active {
+  background:rgba(151,112,255,.13);
+  border-color:rgba(173,143,255,.3);
+  color:#cfbfff;
+  box-shadow:inset 0 -2px 0 #9d82ff;
+}
+
+.studio-editor-transport [data-toggle-snap].is-active,
+.studio-editor-transport [data-toggle-follow-playhead].is-active,
+.studio-editor-transport .studio-tool-group--left .studio-tool-button.is-active {
+  background:rgba(61,187,225,.13);
+  border-color:rgba(91,203,236,.28);
+  color:#b8efff;
+  box-shadow:inset 0 -2px 0 rgba(83,210,244,.9);
+}
+
+.studio-logic-display {
+  width:clamp(560px,39vw,690px);
+  min-width:560px;
+  max-width:690px;
+  height:44px;
+  padding:0;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+  display:grid;
+  grid-template-columns:
+    minmax(112px,1.08fr)
+    minmax(142px,1.30fr)
+    minmax(88px,.82fr)
+    minmax(82px,.76fr)
+    minmax(78px,.72fr)
+    minmax(68px,.64fr);
+  gap:0;
+  overflow:visible;
+}
+
+.studio-logic-section {
+  position:relative;
+  min-width:0;
+  padding:5px 8px 4px;
+  display:grid;
+  align-content:center;
+  gap:3px;
+  border:1px solid rgba(112,135,176,.22);
+  border-left:0;
+  border-radius:0;
+  background:#0d131d;
+  box-shadow:none;
+  overflow:hidden;
+}
+
+.studio-logic-section--time {
+  border-left:1px solid rgba(112,135,176,.22);
+  border-radius:7px 0 0 7px;
+  background:#0b131d;
+  box-shadow:inset 0 2px 0 rgba(76,205,240,.62);
+}
+.studio-logic-section--bars {
+  margin-right:6px;
+  border-radius:0 7px 7px 0;
+  background:#0b131d;
+  box-shadow:inset 0 2px 0 rgba(76,205,240,.62);
+}
+
+.studio-logic-section--tempo {
+  border-left:1px solid rgba(112,135,176,.22);
+  border-radius:7px 0 0 7px;
+  background:#10121d;
+  box-shadow:inset 0 2px 0 rgba(151,128,255,.58);
+}
+.studio-logic-section--key {
+  margin-right:6px;
+  border-radius:0 7px 7px 0;
+  background:#10121d;
+  box-shadow:inset 0 2px 0 rgba(151,128,255,.58);
+}
+
+.studio-logic-section--midi {
+  border-left:1px solid rgba(112,135,176,.22);
+  border-radius:7px 0 0 7px;
+  background:#0d1619;
+  box-shadow:inset 0 2px 0 rgba(83,199,168,.5);
+}
+.studio-logic-section--cpu {
+  --soura-cpu-load:0%;
+  margin-right:0;
+  border-radius:0 7px 7px 0;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(86,207,173,.72) 0 var(--soura-cpu-load),
+      rgba(86,207,173,.09) var(--soura-cpu-load) 100%
+    ) bottom / 100% 2px no-repeat,
+    #0d1619;
+  box-shadow:inset 0 2px 0 rgba(83,199,168,.5);
+}
+
+.studio-logic-section--cpu.is-warning {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(255,106,119,.88) 0 var(--soura-cpu-load),
+      rgba(255,106,119,.10) var(--soura-cpu-load) 100%
+    ) bottom / 100% 2px no-repeat,
+    #181113;
+  box-shadow:inset 0 2px 0 rgba(255,102,125,.72);
+}
+
+.studio-logic-primary {
+  display:block;
+  color:#eef5ff;
+  font-family:
+    ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;
+  font-size:12.5px;
+  font-weight:760;
+  line-height:1;
+  font-variant-numeric:tabular-nums;
+  letter-spacing:-.015em;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.studio-logic-section--time .studio-logic-primary,
+.studio-logic-section--bars .studio-logic-primary {
+  font-size:13.5px;
+  letter-spacing:-.025em;
+}
+
+.studio-logic-secondary {
+  display:flex;
+  align-items:center;
+  gap:4px;
+  min-height:10px;
+  color:#78869b;
+  font-size:8px;
+  font-weight:760;
+  line-height:1;
+  letter-spacing:.085em;
+  text-transform:uppercase;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+}
+
+.studio-logic-editable {
+  border-radius:3px;
+  padding:2px 3px;
+  margin:-2px -3px;
+}
+.studio-logic-editable:hover {
+  color:#fff;
+  background:rgba(121,185,220,.10);
+}
+
+.studio-logic-bars {
+  gap:3px;
+}
+
+.studio-display-icon-button {
+  width:14px;
+  height:14px;
+  border:0;
+  border-radius:3px;
+  background:transparent;
+  color:#8d9ab0;
+}
+
+@media (max-width:1350px) {
+  .studio-transport-center {
+    grid-template-columns:max-content minmax(500px,620px) max-content;
+    gap:7px;
+  }
+  .studio-logic-display {
+    width:clamp(500px,43vw,620px);
+    min-width:500px;
+    max-width:620px;
+  }
+  .studio-logic-primary {
+    font-size:11.5px;
+  }
+  .studio-logic-section--time .studio-logic-primary,
+  .studio-logic-section--bars .studio-logic-primary {
+    font-size:12.5px;
+  }
+}
+
+@media (max-width:1100px) {
+  .studio-editor-transport {
+    grid-template-columns:1fr;
+    height:auto;
+    min-height:104px;
+    padding-block:8px;
+  }
+  .studio-transport-center {
+    display:flex;
+    justify-self:start;
+    flex-wrap:wrap;
+    max-width:100%;
+  }
+  .studio-logic-display {
+    width:min(100%,640px);
+    min-width:0;
+    max-width:640px;
+  }
+}
+/* soura-signal-deck-v1:css:end */

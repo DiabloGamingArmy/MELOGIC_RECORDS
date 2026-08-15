@@ -1743,3 +1743,155 @@ Theme-only visual overrides. No layout/scroll geometry changes.
   --studio-track-grid-top: 0px;
 }
 /* soura-contextual-extension-lane-v3:css:end */
+
+/* soura-signal-deck-v1:css:begin */
+/* Soura Signal Deck — light companion. */
+:root[data-soura-theme="light"] .studio-editor-page .studio-editor-transport {
+  background:linear-gradient(180deg,#f2f5f8,#e9eef3) !important;
+  border-top-color:#d8e0e8 !important;
+  border-bottom-color:#c8d2dd !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.8) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-transport-center {
+  background:rgba(224,230,237,.72) !important;
+  border-color:#cbd4de !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-tool-group--left,
+:root[data-soura-theme="light"] .studio-editor-page .studio-tool-group--transport,
+:root[data-soura-theme="light"] .studio-editor-page .studio-tool-group--utilities {
+  background:#e6ebf0 !important;
+  border-color:#c8d1dc !important;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.72) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-editor-transport .studio-tool-button {
+  background:transparent !important;
+  border-color:transparent !important;
+  color:#536174 !important;
+  box-shadow:none !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-editor-transport .studio-tool-button:hover,
+:root[data-soura-theme="light"] .studio-editor-page .studio-editor-transport .studio-tool-button:focus-visible {
+  background:#d9e0e7 !important;
+  border-color:#c2ccd7 !important;
+  color:#172033 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [data-transport-play] {
+  color:#087fa4 !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [data-transport-play].is-active {
+  background:#d6f0f7 !important;
+  border-color:#8ccfde !important;
+  color:#075f7c !important;
+  box-shadow:inset 0 -2px 0 #20a8c8 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [data-transport-record] {
+  color:#bd3349 !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [data-transport-record].is-active {
+  background:#f7dde2 !important;
+  border-color:#dda1ad !important;
+  color:#9e2438 !important;
+  box-shadow:inset 0 -2px 0 #d44a62 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [data-toggle-cycle].is-active,
+:root[data-soura-theme="light"] .studio-editor-page [data-toggle-count-in].is-active {
+  background:#e7e2fb !important;
+  border-color:#b9ace8 !important;
+  color:#54449a !important;
+  box-shadow:inset 0 -2px 0 #7664c8 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [data-toggle-metronome].is-active {
+  background:#f7edd7 !important;
+  border-color:#d8bd82 !important;
+  color:#8b6827 !important;
+  box-shadow:inset 0 -2px 0 #c79537 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page [data-toggle-snap].is-active,
+:root[data-soura-theme="light"] .studio-editor-page [data-toggle-follow-playhead].is-active,
+:root[data-soura-theme="light"] .studio-editor-page .studio-tool-group--left .studio-tool-button.is-active {
+  background:#dceff4 !important;
+  border-color:#a9cfd9 !important;
+  color:#276a7b !important;
+  box-shadow:inset 0 -2px 0 #4da8bb !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-display {
+  background:transparent !important;
+  border:0 !important;
+  box-shadow:none !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section {
+  border-color:#c3ced9 !important;
+  color:#182233 !important;
+  box-shadow:none !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section--time,
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section--bars {
+  background:#f8fafc !important;
+  box-shadow:inset 0 2px 0 #57a9be !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section--tempo,
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section--key {
+  background:#f8f7fc !important;
+  box-shadow:inset 0 2px 0 #8d7ac9 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section--midi {
+  background:#f5faf8 !important;
+  box-shadow:inset 0 2px 0 #5fa890 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section--cpu {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(63,148,122,.70) 0 var(--soura-cpu-load),
+      rgba(63,148,122,.10) var(--soura-cpu-load) 100%
+    ) bottom / 100% 2px no-repeat,
+    #f5faf8 !important;
+  box-shadow:inset 0 2px 0 #5fa890 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-section--cpu.is-warning {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(190,57,76,.78) 0 var(--soura-cpu-load),
+      rgba(190,57,76,.10) var(--soura-cpu-load) 100%
+    ) bottom / 100% 2px no-repeat,
+    #fcf6f7 !important;
+  box-shadow:inset 0 2px 0 #c65a6c !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-primary {
+  color:#172033 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-secondary {
+  color:#657386 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-logic-editable:hover {
+  color:#111827 !important;
+  background:#e8edf2 !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page .studio-display-icon-button {
+  background:transparent !important;
+  border-color:transparent !important;
+  color:#68778a !important;
+}
+/* soura-signal-deck-v1:css:end */

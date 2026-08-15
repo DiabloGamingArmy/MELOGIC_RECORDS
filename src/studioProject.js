@@ -7645,6 +7645,7 @@ function startTrackMeterLoop() {
     cpuUsagePercent = clamp((tickCostMs / 16.67) * 72 + (audioActivity * 28), 0, 100)
     updateCpuAlertState(cpuUsagePercent)
     app.querySelector('[data-cpu-percent]')?.replaceChildren(document.createTextNode(`${Math.round(cpuUsagePercent)}%`))
+    app.querySelector('.studio-logic-section--cpu')?.style.setProperty('--soura-cpu-load', `${Math.round(cpuUsagePercent)}%`)
     const auditionState = assetAuditionController.snapshot().playbackState
     meterRaf = active || isPlaying || activeRecording || activePlaybackNotes.size || ['loading', 'playing'].includes(auditionState) ? requestAnimationFrame(tick) : 0
   }
@@ -12024,10 +12025,26 @@ function bindEditorEvents() {
   }
   const updateTimelineRulerDom = () => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
   const updateTimelineGridLinesDom = () => { const gridInner = app.querySelector('[data-arrangement-grid-inner]'); if (!gridInner) return; const selection = gridInner.querySelector('[data-selection-box]'); const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'; const selectionHtml = selection ? selection.outerHTML : selectionMarkup; gridInner.innerHTML = `${renderNewTrackDropLane()}<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}` }
+  /* soura-signal-deck-v1:js:begin */
+  /*
+   * The extension lane uses the same canonical musical grid model as the ruler
+   * and arrangement. Rebuild its DOM in the same live-refresh transaction.
+   */
+  const updateTimelineExtensionDom = () => {
+    const inner = app.querySelector('[data-timeline-extension-inner]')
+    if (!inner) return
+
+    inner
+      .querySelectorAll('[data-extension-beat-line]')
+      .forEach((line) => line.remove())
+
+    inner.insertAdjacentHTML('afterbegin', renderTimelineExtensionBeatLines())
+  }
+  /* soura-signal-deck-v1:js:end */
   const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
   const applyTimelineGeometry = () => { timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar); syncBarsFromPositiveBeats(); app.querySelector('[data-arrangement]')?.style.setProperty('--bars', timelineState.bars); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-beat', `${timelineState.pixelsPerBar / timelineState.beatsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--timeline-content-width', `${timelineContentWidth()}px`); clampTimelineSystems(); updateCycleDomFromState(); setPlayhead(timelineState.playheadX) }
   let timelineVisualRefreshRaf = 0
-  const refreshTimelineVisualsLive = () => { applyTimelineGeometry(); updateTimelineRulerDom(); updateTimelineGridLinesDom(); updateGlobalTrackLaneDom(); updateCycleDomFromState(); updateTransportDisplay(); syncTimelineScroll(null, { refresh: false }); bindMidiRegionEvents() }
+  const refreshTimelineVisualsLive = () => { applyTimelineGeometry(); updateTimelineRulerDom(); updateTimelineGridLinesDom(); updateTimelineExtensionDom(); updateGlobalTrackLaneDom(); updateCycleDomFromState(); updateTransportDisplay(); syncTimelineScroll(null, { refresh: false }); bindMidiRegionEvents() }
   const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
   const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) { page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); page.style.setProperty('--studio-track-lanes-height', `${totalTrackLaneHeight()}px`) } const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact));
   page.style.setProperty('--studio-track-grid-top', `${currentNewTrackDropRowHeight()}px`) }
