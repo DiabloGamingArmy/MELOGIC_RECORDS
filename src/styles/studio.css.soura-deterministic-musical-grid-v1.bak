@@ -2953,39 +2953,3 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
   text-align: center;
   z-index: 4;
 }
-
-/* soura-deterministic-musical-grid-v1:css:begin */
-/*
- * Timeline ruler/grid rendering now comes from musical positions in JS.
- * Disable the old fixed-pixel synthetic ruler pattern; a 48px/12px
- * repeating background can only be correct at one zoom level.
- */
-.studio-timeline-ruler-inner::after {
-  content: none !important;
-  display: none !important;
-  background-image: none !important;
-}
-
-.studio-ruler-grid-line {
-  position: absolute;
-  top: 22px;
-  bottom: 0;
-  width: 1px;
-  pointer-events: none;
-  z-index: 2;
-}
-
-.studio-ruler-grid-line--bar { background-color: rgba(210,220,235,.60); }
-.studio-ruler-grid-line--beat { background-color: rgba(210,220,235,.34); }
-.studio-ruler-grid-line--half { background-color: rgba(210,220,235,.20); }
-.studio-ruler-grid-line--quarter,
-.studio-ruler-grid-line--subdivision { background-color: rgba(210,220,235,.12); }
-
-.studio-ruler-bar-label--beat { opacity: .88; }
-
-.studio-grid-line--bar { background-color: rgba(207,216,230,.38); }
-.studio-grid-line--beat { background-color: rgba(207,216,230,.22); }
-.studio-grid-line--half { background-color: rgba(207,216,230,.12); }
-.studio-grid-line--quarter,
-.studio-grid-line--subdivision { background-color: rgba(207,216,230,.07); }
-/* soura-deterministic-musical-grid-v1:css:end */

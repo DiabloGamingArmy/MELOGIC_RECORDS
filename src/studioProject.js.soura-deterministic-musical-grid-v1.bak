@@ -2666,169 +2666,24 @@ function formatGridRulerLabel(beat = 0, division = 1) {
   if (beatWidth() / division < 56) return ''
   return `${bar}.${beatInBar}.${Math.round(fractional * division)}`
 }
-/* soura-deterministic-musical-grid-v1:helpers:begin */
-/*
- * Canonical timeline grid model.
- *
- * Project beat coordinates are quarter-note beats.
- * A time signature's notated beat unit is 4 / denominator quarter beats:
- *   4/4 => 1.0 project beat per notated beat, 4.0 per bar
- *   6/8 => 0.5 project beats per notated beat, 3.0 per bar
- *   3/4 => 1.0 project beat per notated beat, 3.0 per bar
- *
- * Ruler labels and arrangement lines consume this SAME model.
- * Pixel coordinates never determine whether a line is a bar or beat.
- */
-function getTimelineGridSubdivisionFactor(pixelsPerNotatedBeat = 0) {
-  const px = Math.max(0, Number(pixelsPerNotatedBeat) || 0)
-  if (px >= 88) return 4
-  if (px >= 40) return 2
-  return 1
-}
-
-function timelineGridDivisionKind(subdivisionIndex, factor) {
-  if (factor <= 1) return 'beat'
-  if (factor === 2) return subdivisionIndex === 1 ? 'half' : 'beat'
-  if (subdivisionIndex === 2) return 'half'
-  if (subdivisionIndex === 1 || subdivisionIndex === 3) return 'quarter'
-  return 'subdivision'
-}
-
-function buildTimelineMusicalGridModel() {
-  const metrics = getTimelineMetrics()
-  const maxBeat = Math.max(0, Number(metrics.maxBeat) || 0)
-  const pxPerQuarter = Math.max(0.0001, Number(metrics.pixelsPerBeat) || 1)
-  const epsilon = 1e-7
-
-  const rawMap = normalizeTimeSignatureMap()
-  const timeMap = (Array.isArray(rawMap) && rawMap.length
-    ? rawMap
-    : [{ beat: 0, numerator: Number(timelineState.beatsPerBar) || 4, denominator: 4 }]
-  )
-    .map((event) => ({
-      beat: Math.max(0, Number(event.beat) || 0),
-      numerator: Math.max(1, Math.round(Number(event.numerator) || 4)),
-      denominator: Math.max(1, Math.round(Number(event.denominator) || 4))
-    }))
-    .sort((a, b) => a.beat - b.beat)
-
-  if (timeMap[0].beat > epsilon) {
-    timeMap.unshift({
-      beat: 0,
-      numerator: Math.max(1, Number(timelineState.beatsPerBar) || 4),
-      denominator: 4
-    })
-  }
-
-  const output = []
-  let barOffset = 0
-
-  for (let segmentIndex = 0; segmentIndex < timeMap.length; segmentIndex += 1) {
-    const sig = timeMap[segmentIndex]
-    const segmentStart = Math.min(maxBeat, Math.max(0, sig.beat))
-    const nextEventBeat = segmentIndex + 1 < timeMap.length
-      ? Math.max(segmentStart, Number(timeMap[segmentIndex + 1].beat) || segmentStart)
-      : maxBeat
-    const segmentEnd = Math.min(maxBeat, nextEventBeat)
-
-    if (segmentEnd < segmentStart - epsilon) continue
-
-    const beatUnit = 4 / Math.max(1, sig.denominator)
-    const barLength = Math.max(beatUnit, sig.numerator * beatUnit)
-    const pixelsPerNotatedBeat = pxPerQuarter * beatUnit
-    const factor = getTimelineGridSubdivisionFactor(pixelsPerNotatedBeat)
-    const step = beatUnit / factor
-    const showBeatLabels = pixelsPerNotatedBeat >= 34
-
-    const span = Math.max(0, segmentEnd - segmentStart)
-    const stepCount = Math.floor((span + epsilon) / step)
-    const includeSegmentEnd = segmentIndex === timeMap.length - 1
-
-    for (let stepIndex = 0; stepIndex <= stepCount; stepIndex += 1) {
-      const projectBeat = segmentStart + (stepIndex * step)
-
-      if (projectBeat > segmentEnd + epsilon) break
-      if (!includeSegmentEnd && projectBeat >= segmentEnd - epsilon) break
-      if (projectBeat > maxBeat + epsilon) break
-
-      const local = Math.max(0, projectBeat - segmentStart)
-      const barIndex = Math.floor((local + epsilon) / barLength)
-      const intoBar = local - (barIndex * barLength)
-      const notatedBeatIndex = Math.floor((intoBar + epsilon) / beatUnit)
-      const intoBeat = intoBar - (notatedBeatIndex * beatUnit)
-      let subdivisionIndex = Math.round(intoBeat / step)
-
-      if (subdivisionIndex >= factor) subdivisionIndex = 0
-
-      const atBeatBoundary = Math.abs(intoBeat) < epsilon || subdivisionIndex === 0
-      const atBarBoundary = Math.abs(intoBar) < epsilon
-
-      let kind
-      if (atBarBoundary) kind = 'bar'
-      else if (atBeatBoundary) kind = 'beat'
-      else kind = timelineGridDivisionKind(subdivisionIndex, factor)
-
-      const barNumber = barOffset + barIndex
-      const beatNumber = Math.min(sig.numerator, notatedBeatIndex + 1)
-      const label = kind === 'bar'
-        ? String(barNumber)
-        : (kind === 'beat' && showBeatLabels ? `${barNumber}.${beatNumber}` : '')
-
-      output.push({
-        projectBeat,
-        x: beatToX(projectBeat),
-        kind,
-        label,
-        barNumber,
-        beatNumber,
-        numerator: sig.numerator,
-        denominator: sig.denominator,
-        subdivisionFactor: factor
-      })
-    }
-
-    if (segmentIndex < timeMap.length - 1 && span > epsilon) {
-      barOffset += Math.max(1, Math.ceil((span - epsilon) / barLength))
-    }
-  }
-
-  const rank = { bar: 5, beat: 4, half: 3, quarter: 2, subdivision: 1 }
-  const deduped = new Map()
-
-  output.forEach((item) => {
-    const key = Math.round(item.projectBeat * 1000000)
-    const previous = deduped.get(key)
-    if (!previous || (rank[item.kind] || 0) > (rank[previous.kind] || 0)) {
-      deduped.set(key, item)
-    }
-  })
-
-  return [...deduped.values()].sort((a, b) => a.projectBeat - b.projectBeat)
-}
-/* soura-deterministic-musical-grid-v1:helpers:end */
-
 function renderTimelineRuler() {
-  return buildTimelineMusicalGridModel().map((division) => {
-    const line = `<span
-      class="studio-ruler-grid-line studio-ruler-grid-line--${division.kind}"
-      data-ruler-grid-division="${division.kind}"
-      data-musical-beat="${division.projectBeat}"
-      style="left:${division.x}px"
-    ></span>`
-
-    if (!division.label) return line
-
-    const labelClass = division.kind === 'bar'
-      ? 'studio-ruler-bar-label'
-      : 'studio-ruler-bar-label studio-ruler-bar-label--beat'
-
-    return `${line}<span
-      class="${labelClass}"
-      data-ruler-musical-label="${division.kind}"
-      data-musical-beat="${division.projectBeat}"
-      style="left:${division.x}px"
-    >${esc(division.label)}</span>`
-  }).join('')
+  const labels = []
+  const division = beatWidth() >= 96 ? getTimelineDivisionForZoom(beatWidth(), { forSnap: true }) : 1
+  const step = 1 / division
+  const { startBeat, endBeat } = getVisibleTimelineBeatRange({ division })
+  const startStep = Math.floor(startBeat / step)
+  const endStep = Math.ceil(endBeat / step)
+  for (let index = startStep; index <= endStep; index += 1) {
+    const beat = index * step
+    const isWholeBeat = Math.abs(beat - Math.round(beat)) < 1e-6
+    if (!isWholeBeat && beatWidth() / division < 44) continue
+    const label = formatGridRulerLabel(beat, division)
+    if (!label) continue
+    const left = beatsFromBarZeroToX(beat)
+    if (left < 0 || left > timelineEndX()) continue
+    labels.push(`<span class="studio-ruler-bar-label ${isWholeBeat ? '' : 'studio-ruler-bar-label--subdivision'}" style="left:${left}px">${esc(label)}</span>`)
+  }
+  return labels.join('')
 }
 function renderCycleRange(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<div class="studio-cycle-range ${isCycleEnabled ? 'is-enabled' : ''}" data-cycle-range style="left:${start}px;width:${Math.max(0,end-start)}px"><span class="studio-cycle-range-handle" data-cycle-handle="start"></span><span class="studio-cycle-range-body" data-cycle-drag="move"></span><span class="studio-cycle-range-handle" data-cycle-handle="end"></span></div>` }
 function renderRulerMarkerLabels(){
@@ -2837,12 +2692,25 @@ function renderRulerMarkerLabels(){
 }
 function renderCycleBoundaryGuides(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<span class="studio-cycle-guide studio-cycle-guide--start ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${start}px"></span><span class="studio-cycle-guide studio-cycle-guide--end ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${end}px"></span>` }
 function renderTimelineLines() {
-  return buildTimelineMusicalGridModel().map((division) => `<span
-    class="studio-grid-line studio-grid-line--${division.kind}"
-    data-grid-division="${division.kind}"
-    data-musical-beat="${division.projectBeat}"
-    style="left:${division.x}px"
-  ></span>`).join('')
+  const lines = []
+  const division = getTimelineDivisionForZoom()
+  const step = 1 / division
+  const { startBeat, endBeat } = getVisibleTimelineBeatRange({ division })
+  const startStep = Math.floor(startBeat / step)
+  const endStep = Math.ceil(endBeat / step)
+  const beatsPerBar = Math.max(1, Number(timelineState.beatsPerBar) || 4)
+  for (let index = startStep; index <= endStep; index += 1) {
+    const beat = index * step
+    const left = beatsFromBarZeroToX(beat)
+    if (left < 0 || left > timelineEndX()) continue
+    const wholeBeat = Math.abs(beat - Math.round(beat)) < 1e-6
+    const barLine = wholeBeat && Math.round(beat) % beatsPerBar === 0
+    const halfBeat = !wholeBeat && Math.abs((beat * 2) - Math.round(beat * 2)) < 1e-6
+    const quarterBeat = !wholeBeat && Math.abs((beat * 4) - Math.round(beat * 4)) < 1e-6
+    const cls = barLine ? 'studio-grid-line--bar' : wholeBeat ? 'studio-grid-line--beat' : halfBeat ? 'studio-grid-line--half' : quarterBeat ? 'studio-grid-line--quarter' : 'studio-grid-line--subdivision'
+    lines.push(`<span class="studio-grid-line ${cls}" data-grid-division="${division}" style="left:${left}px"></span>`)
+  }
+  return lines.join('')
 }
 function normalizeTempoMap(events = globalTracks.tempoEvents) {
   const current = clampProjectBpm(projectState?.bpm || 140)
