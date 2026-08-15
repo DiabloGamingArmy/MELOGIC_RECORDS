@@ -2989,3 +2989,104 @@ body.is-studio-dragging{user-select:none;-webkit-user-select:none}
 .studio-grid-line--quarter,
 .studio-grid-line--subdivision { background-color: rgba(207,216,230,.07); }
 /* soura-deterministic-musical-grid-v1:css:end */
+
+/* soura-track-bounded-grid-v1:begin */
+/*
+ * Track-bounded arrangement grid.
+ *
+ * --studio-track-lanes-height is maintained by Soura from:
+ *   NEW_TRACK_DROP_ROW_HEIGHT + sum(trackVisualHeight(track))
+ *
+ * We intentionally remove the dedicated new-track drop row (32px)
+ * from the painted track-grid field. The arrangement element itself remains
+ * full-height so scrolling, drops, selections, and the transport playhead keep
+ * their existing behavior.
+ */
+.studio-editor-page {
+  --studio-track-grid-top: 32px;
+}
+
+/*
+ * Horizontal track-row separators only exist where actual track/automation
+ * rows exist. Below the last track, the arrangement becomes plain canvas.
+ */
+.studio-arrangement-grid-inner {
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--studio-track-height) - 1px),
+      rgba(255,255,255,.07) calc(var(--studio-track-height) - 1px),
+      rgba(255,255,255,.07) var(--studio-track-height)
+    );
+  background-position: 0 var(--studio-track-grid-top);
+  background-size:
+    100% max(
+      0px,
+      calc(var(--studio-track-lanes-height) - var(--studio-track-grid-top))
+    );
+  background-repeat: no-repeat;
+}
+
+/*
+ * Musical alignment lines keep all existing X positions and classifications;
+ * only their vertical paint extent is bounded to actual track rows.
+ */
+.studio-arrangement-grid-inner > .studio-grid-line {
+  top: var(--studio-track-grid-top);
+  bottom: auto;
+  height: max(
+    0px,
+    calc(var(--studio-track-lanes-height) - var(--studio-track-grid-top))
+  );
+}
+
+/*
+ * The transport playhead is deliberately NOT track-bounded.
+ */
+.studio-arrangement-grid-inner > .studio-grid-playhead {
+  top: 0;
+  bottom: 0;
+  height: auto;
+}
+/* soura-track-bounded-grid-v1:end */
+
+/* soura-contextual-extension-lane-v3:css:begin */
+/* Bottom project-length lane: beat/downbeat lines only. */
+.studio-timeline-extension-lane,
+.studio-timeline-extension-lane-inner {
+  background-image: none !important;
+}
+
+.studio-timeline-extension-lane::before,
+.studio-timeline-extension-lane::after,
+.studio-timeline-extension-lane-inner::before,
+.studio-timeline-extension-lane-inner::after {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.studio-timeline-extension-lane-inner {
+  border-top: 0 !important;
+  border-bottom: 0 !important;
+}
+
+.studio-timeline-extension-beat-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(207,216,230,.30);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Hidden contextual new-track row occupies no geometry. */
+.studio-editor-page {
+  --studio-track-grid-top: 0px;
+}
+/* soura-contextual-extension-lane-v3:css:end */

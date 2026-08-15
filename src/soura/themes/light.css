@@ -1666,3 +1666,80 @@ Theme-only visual overrides. No layout/scroll geometry changes.
   background-color: rgba(52,64,79,.10) !important;
 }
 /* soura-deterministic-musical-grid-v1:css:end */
+
+/* soura-track-bounded-grid-v1:begin */
+/*
+ * Light-theme companion. Same geometry as root Soura; only separator paint
+ * changes for contrast against the light arrangement surface.
+ */
+:root[data-soura-theme="light"] .studio-editor-page {
+  --studio-track-grid-top: 32px;
+}
+
+:root[data-soura-theme="light"] .studio-arrangement-grid-inner {
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--studio-track-height) - 1px),
+      rgba(52,64,79,.13) calc(var(--studio-track-height) - 1px),
+      rgba(52,64,79,.13) var(--studio-track-height)
+    ) !important;
+  background-position: 0 var(--studio-track-grid-top) !important;
+  background-size:
+    100% max(
+      0px,
+      calc(var(--studio-track-lanes-height) - var(--studio-track-grid-top))
+    ) !important;
+  background-repeat: no-repeat !important;
+}
+
+:root[data-soura-theme="light"]
+  .studio-arrangement-grid-inner > .studio-grid-line {
+  top: var(--studio-track-grid-top) !important;
+  bottom: auto !important;
+  height: max(
+    0px,
+    calc(var(--studio-track-lanes-height) - var(--studio-track-grid-top))
+  ) !important;
+}
+
+:root[data-soura-theme="light"]
+  .studio-arrangement-grid-inner > .studio-grid-playhead {
+  top: 0 !important;
+  bottom: 0 !important;
+  height: auto !important;
+}
+/* soura-track-bounded-grid-v1:end */
+
+/* soura-contextual-extension-lane-v3:css:begin */
+:root[data-soura-theme="light"] .studio-timeline-extension-lane,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner {
+  background-image: none !important;
+}
+
+:root[data-soura-theme="light"] .studio-timeline-extension-lane::before,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane::after,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner::before,
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner::after {
+  content: none !important;
+  display: none !important;
+  background: none !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+:root[data-soura-theme="light"] .studio-timeline-extension-lane-inner {
+  border-top: 0 !important;
+  border-bottom: 0 !important;
+}
+
+:root[data-soura-theme="light"] .studio-timeline-extension-beat-line {
+  background: rgba(52,64,79,.36) !important;
+}
+
+:root[data-soura-theme="light"] .studio-editor-page {
+  --studio-track-grid-top: 0px;
+}
+/* soura-contextual-extension-lane-v3:css:end */
