@@ -33,7 +33,12 @@ const RTMP_INGEST_SERVER = 'rtmp://104.197.179.248/live'
 const BROWSER_WHIP_INGEST_BASE_URL = 'https://ingest.melogicrecords.studio/mtx/ingest'
 const HLS_WARMUP_WINDOW_MS = 45 * 1000
 const HLS_RECENT_OK_WINDOW_MS = 90 * 1000
-const HLS_HEALTH_TIMEOUT_MS = 30000
+// Health checks are advisory lifecycle probes, not user-facing playback requests.
+// Keep the timeout short so an unreachable edge cannot hold a scheduled worker open.
+const HLS_HEALTH_TIMEOUT_MS = 5000
+// A dead HLS edge must remain offline for a bounded period before cleanup ends it.
+// Fresh host heartbeats always protect an actively controlled stream from auto-ending.
+const HLS_OFFLINE_END_GRACE_MS = 10 * 60 * 1000
 const STREAM_KEY_ALPHABET = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
 
 function db() {
@@ -2312,22 +2317,74 @@ const sendMusicLiveChatMessage = onCall({ region: 'us-central1' }, async (reques
   return { ok: true, messageId: messageRef.id, clientMessageId }
 })
 
+function shouldEndOfflineHlsStream(stream = {}, health = {}, nowMs = Date.now()) {
+  if (health.healthy === true || health.hlsHealth !== 'offline') return false
+
+  // Do not auto-end a stream while its controlling host is still alive.
+  // This protects legitimate broadcasts during a temporary HLS edge outage.
+  if (stream.hostConnected === true && isHeartbeatFresh(stream)) return false
+
+  const lastOkMs = timestampMillis(health.hlsLastOkAt || stream.hlsLastOkAt)
+  const startedAtMs = timestampMillis(
+    health.hlsStartedAt
+      || stream.hlsStartedAt
+      || stream.startedAt
+      || stream.createdAt
+  )
+  const offlineReferenceMs = lastOkMs || startedAtMs
+
+  // If we cannot establish how long the stream has been unhealthy, keep it for
+  // this pass. refreshHlsHealth() persists hlsStartedAt so a later run can decide.
+  if (!offlineReferenceMs) return false
+
+  return nowMs - offlineReferenceMs >= HLS_OFFLINE_END_GRACE_MS
+}
+
 async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
   const stream = docSnap.data() || {}
   if (stream.status === 'live') {
     if (isHlsEdgeStream(stream)) {
       const health = await refreshHlsHealth(docSnap, stream)
-      console.log('[Live Lifecycle] not ending hlsEdge stream', {
+      if (!shouldEndOfflineHlsStream(stream, health)) {
+        console.log('[Live Lifecycle] keeping hlsEdge stream', {
+          streamId: docSnap.id,
+          reason: `scheduled_hls_health_${health.hlsHealth}`,
+          status: stream.status,
+          isLive: stream.isLive,
+          connectionStatus: stream.connectionStatus,
+          hostConnected: stream.hostConnected === true,
+          heartbeatFresh: isHeartbeatFresh(stream),
+          hlsHealth: health.hlsHealth,
+          lastOkAt: health.hlsLastOkAt || stream.hlsLastOkAt || null,
+          whipConnectionState: stream.providerDiagnostics?.connectionState || stream.providerDiagnostics?.ingestConnectionState || ''
+        })
+        return false
+      }
+
+      await docSnap.ref.set({
+        status: 'ended',
+        isLive: false,
+        connectionStatus: 'stale',
+        hostActive: false,
+        hostConnected: false,
+        audioPublished: false,
+        videoPublished: false,
+        programHasAudio: false,
+        programHasVideo: false,
+        endedAt: now,
+        endReason: 'hls_offline_timeout',
+        cleanupSource: 'scheduled',
+        updatedAt: now,
+        listenerCount: 0
+      }, { merge: true })
+
+      console.log('[Live Lifecycle] ended stale hlsEdge stream', {
         streamId: docSnap.id,
-        reason: `scheduled_hls_health_${health.hlsHealth}`,
-        status: stream.status,
-        isLive: stream.isLive,
-        connectionStatus: stream.connectionStatus,
+        reason: 'hls_offline_timeout',
         hlsHealth: health.hlsHealth,
-        lastOkAt: health.hlsLastOkAt || stream.hlsLastOkAt || null,
-        whipConnectionState: stream.providerDiagnostics?.connectionState || stream.providerDiagnostics?.ingestConnectionState || ''
+        lastOkAt: health.hlsLastOkAt || stream.hlsLastOkAt || null
       })
-      return false
+      return true
     }
     const isFirebaseSegments = normalizeProvider(stream.provider) === 'firebaseSegments'
     const stale = stream.hostConnected !== true || (!isFirebaseSegments && !isStreamPublishing(stream)) || !isHeartbeatFresh(stream)
@@ -2373,9 +2430,16 @@ async function cleanupMusicLiveStreamSnapshot(docSnap, now) {
 const cleanupStaleMusicLiveStreams = onSchedule(
   {
     region: 'us-central1',
-    schedule: 'every 1 minutes',
-    timeoutSeconds: 60,
-    memory: '256MiB'
+    // Lifecycle cleanup is not latency-sensitive. Five-minute cadence cuts
+    // baseline invocations by 80% while still bounding stale-state lifetime.
+    schedule: 'every 5 minutes',
+    timeoutSeconds: 30,
+    memory: '256MiB',
+    // This worker is network/Firestore bound. Restore the fractional CPU
+    // allocation used by 1st-gen 256 MiB functions instead of Gen 2's 1 vCPU.
+    cpu: 'gcf_gen1',
+    // Never let a stalled cleanup run fan out into overlapping instances.
+    maxInstances: 1
   },
   async () => {
     const now = admin.firestore.FieldValue.serverTimestamp()

@@ -59,6 +59,7 @@ export class DawWindowManager {
     this.resizeState = null
     this.effectDragState = null
     this.hostWindows = new Map()
+    this.popoutWatchTimers = new Map()
     this.sessionState = readSessionState()
     this.channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel(CHANNEL_NAME) : null
     this.handlePointerMove = this.handlePointerMove.bind(this)
@@ -70,8 +71,20 @@ export class DawWindowManager {
 
   destroy() {
     window.removeEventListener('message', this.handleHostMessage)
+    window.removeEventListener('pointermove', this.handlePointerMove)
     this.channel?.removeEventListener('message', this.handleHostMessage)
     this.channel?.close()
+    this.channel = null
+    this.popoutWatchTimers.forEach((timer) => window.clearInterval(timer))
+    this.popoutWatchTimers.clear()
+    this.hostWindows.forEach((popout) => {
+      try { if (popout && !popout.closed) popout.close() } catch {}
+    })
+    this.hostWindows.clear()
+    this.dragState = null
+    this.resizeState = null
+    this.effectDragState = null
+    document.body.classList.remove('is-daw-window-dragging')
   }
 
   openPlugin({ pluginType, trackId, instanceId = '', params = {}, forceCenter = false } = {}) {
@@ -355,6 +368,9 @@ export class DawWindowManager {
   }
 
   closeWindow(id) {
+    const watchTimer = this.popoutWatchTimers.get(id)
+    if (watchTimer) window.clearInterval(watchTimer)
+    this.popoutWatchTimers.delete(id)
     const popout = this.hostWindows.get(id)
     if (popout && !popout.closed) popout.close()
     this.hostWindows.delete(id)
@@ -423,6 +439,9 @@ export class DawWindowManager {
       windowState.detached = false
       windowState.minimized = false
       this.hostWindows.delete(id)
+      const watchTimer = this.popoutWatchTimers.get(id)
+      if (watchTimer) window.clearInterval(watchTimer)
+      this.popoutWatchTimers.delete(id)
       this.persist()
       this.onChange()
     }
@@ -444,9 +463,12 @@ export class DawWindowManager {
   }
 
   watchPopout(id, popout) {
+    const existingTimer = this.popoutWatchTimers.get(id)
+    if (existingTimer) window.clearInterval(existingTimer)
     const timer = window.setInterval(() => {
       if (!popout.closed) return
       window.clearInterval(timer)
+      this.popoutWatchTimers.delete(id)
       const windowState = this.windows.get(id)
       if (!windowState) return
       windowState.detached = false
@@ -455,6 +477,7 @@ export class DawWindowManager {
       this.persist()
       this.onChange()
     }, 800)
+    this.popoutWatchTimers.set(id, timer)
   }
 
   updateParam(id, param, value, { notifyHost = true } = {}) {

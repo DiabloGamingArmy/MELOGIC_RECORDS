@@ -1,115 +1,39 @@
 import { AUDIO_EFFECT_MANIFESTS } from '../../daw/audioEffects/catalog.js'
+import { getInstalledSouraPluginManifestByType, isSouraWasmPluginType } from './souraWasmPluginPackage.js'
 
-export const DAW_PLUGIN_TYPES = {
-  melogicWavetable: 'melogic-wavetable',
-  librarySampler: 'library-sampler'
-}
+export const DAW_PLUGIN_TYPES = { melogicWavetable: 'melogic-wavetable', librarySampler: 'library-sampler' }
 
 export const DAW_PLUGIN_DEFINITIONS = {
-  [DAW_PLUGIN_TYPES.librarySampler]: {
-    pluginType: DAW_PLUGIN_TYPES.librarySampler,
-    title: 'Library',
-    status: 'Track instrument',
-    defaultSize: { width: 720, height: 480 },
-    defaultParams: {
-      libraryInstrumentId: '',
-      libraryInstrumentName: '',
-      libraryInstrumentVersion: 1,
-      volume: 0.8,
-      attack: 0.006,
-      release: 0.16
-    }
-  },
+  [DAW_PLUGIN_TYPES.librarySampler]: { pluginType: DAW_PLUGIN_TYPES.librarySampler, title: 'Library', status: 'Track instrument', defaultSize: { width: 720, height: 480 }, defaultParams: { libraryInstrumentId:'', libraryInstrumentName:'', libraryInstrumentVersion:1, volume:0.8, attack:0.006, release:0.16 } },
   [DAW_PLUGIN_TYPES.melogicWavetable]: {
-    pluginType: DAW_PLUGIN_TYPES.melogicWavetable,
-    title: 'Melogic Wavetable',
-    status: 'Web Audio prototype',
-    defaultSize: { width: 1100, height: 762 },
-    fixedFrame: { width: 1100, height: 720, minScale: 0.75, maxScale: 1.25, headerHeight: 42 },
-    defaultParams: {
-      mwtPage: 'osc',
-      preset: 'init',
-      wavetableId: 'builtin-saw',
-      wavetablePosition: 0.35,
-      oscEnabled: true,
-      octave: 0,
-      coarsePitch: 0,
-      finePitch: 0,
-      unisonVoices: 1,
-      detune: 0.08,
-      unisonBlend: 1,
-      phase: 0,
-      phaseRandom: 0.15,
-      oscLevel: 0.85,
-      oscPan: 0,
-      oscCount: 1,
-      selectedOsc: 1,
-      fxRack: '',
-      selectedFx: '',
-      filterEnabled: false,
-      filterType: 'lowpass',
-      filterCutoff: 0.72,
-      resonance: 0.18,
-      attack: 0.02,
-      decay: 0.16,
-      sustain: 0.68,
-      release: 0.24,
-      lfoRate: 0.35,
-      lfoShape: 'sine',
-      lfoAmount: 0,
-      lfoTarget: 'none',
-      macro1: 0,
-      macro2: 0,
-      macro3: 0,
-      macro4: 0,
-      modulationMatrix: [
-        { source: 'lfo1', target: 'filter.cutoff', amount: 0, bipolar: true, curve: 'linear', enabled: false },
-        { source: 'macro1', target: 'filter.cutoff', amount: 0, bipolar: false, curve: 'linear', enabled: false }
-      ],
-      modSource: 'lfo1',
-      assetBrowserType: 'wavetable',
-      assetBrowserPack: '',
-      assetBrowserTag: '',
-      assetBrowserSearch: '',
-      qualityMode: 'Balanced',
-      oversampling: '1x',
-      voiceMode: 'Poly',
-      legato: false,
-      velocityResponse: 0.65,
-      cpuSafety: true,
-      volume: 0.45
-    }
+    pluginType: DAW_PLUGIN_TYPES.melogicWavetable, title:'Melogic Wavetable', status:'Web Audio prototype', defaultSize:{ width:1100, height:762 }, fixedFrame:{ width:1100, height:720, minScale:0.75, maxScale:1.25, headerHeight:42 },
+    defaultParams:{ mwtPage:'osc', preset:'init', wavetableId:'builtin-saw', wavetablePosition:0.35, oscEnabled:true, octave:0, coarsePitch:0, finePitch:0, unisonVoices:1, detune:0.08, unisonBlend:1, phase:0, phaseRandom:0.15, oscLevel:0.85, oscPan:0, oscCount:1, selectedOsc:1, fxRack:'', selectedFx:'', filterEnabled:false, filterType:'lowpass', filterCutoff:0.72, resonance:0.18, attack:0.02, decay:0.16, sustain:0.68, release:0.24, lfoRate:0.35, lfoShape:'sine', lfoAmount:0, lfoTarget:'none', macro1:0, macro2:0, macro3:0, macro4:0, modulationMatrix:[{source:'lfo1',target:'filter.cutoff',amount:0,bipolar:true,curve:'linear',enabled:false},{source:'macro1',target:'filter.cutoff',amount:0,bipolar:false,curve:'linear',enabled:false}], modSource:'lfo1', assetBrowserType:'wavetable', assetBrowserPack:'', assetBrowserTag:'', assetBrowserSearch:'', qualityMode:'Balanced', oversampling:'1x', voiceMode:'Poly', legato:false, velocityResponse:0.65, cpuSafety:true, volume:0.45 }
   }
 }
 
-AUDIO_EFFECT_MANIFESTS
-  .filter((manifest) => manifest.implemented && manifest.pluginType)
-  .forEach((manifest) => {
-    DAW_PLUGIN_DEFINITIONS[manifest.pluginType] = {
-      pluginType: manifest.pluginType,
-      title: `Soura ${manifest.name}`,
-      status: 'Track audio effect',
-      defaultSize: manifest.id === 'eq' ? { width: 920, height: 620 } : { width: 720, height: 540 },
-      defaultParams: { ...(manifest.defaultParams || {}) }
-    }
-  })
+AUDIO_EFFECT_MANIFESTS.filter((manifest) => manifest.implemented && manifest.pluginType).forEach((manifest) => {
+  DAW_PLUGIN_DEFINITIONS[manifest.pluginType] = { pluginType:manifest.pluginType, title:`Soura ${manifest.name}`, status:'Track audio effect', defaultSize:manifest.id === 'eq' ? {width:920,height:620}:{width:720,height:540}, defaultParams:{ ...(manifest.defaultParams || {}) } }
+})
+
+function getSouraWasmDefinition(pluginType) {
+  const manifest = getInstalledSouraPluginManifestByType(pluginType)
+  if (!manifest) return null
+  return {
+    pluginType,
+    title: manifest.name,
+    status: 'C++ / WebAssembly instrument',
+    defaultSize: { width: 680, height: Math.max(360, 190 + ((manifest.parameters || []).length * 42)) },
+    defaultParams: Object.fromEntries((manifest.parameters || []).map((parameter) => [parameter.id, parameter.default]))
+  }
+}
 
 export function getDawPluginDefinition(pluginType = '') {
+  if (isSouraWasmPluginType(pluginType)) return getSouraWasmDefinition(pluginType) || { pluginType, title:'Missing Soura Plugin', status:'Unavailable', defaultSize:{width:680,height:360}, defaultParams:{} }
   return DAW_PLUGIN_DEFINITIONS[pluginType] || DAW_PLUGIN_DEFINITIONS[DAW_PLUGIN_TYPES.melogicWavetable]
 }
 
 export function createDawPluginInstance({ pluginType = DAW_PLUGIN_TYPES.melogicWavetable, trackId = 'demo-track', instanceId = '', params = {} } = {}) {
   const definition = getDawPluginDefinition(pluginType)
   const pluginInstanceId = instanceId || `${definition.pluginType}:${trackId || 'track'}`
-  return {
-    pluginInstanceId,
-    pluginType: definition.pluginType,
-    title: definition.title,
-    trackId,
-    detached: false,
-    minimized: false,
-    windowPosition: { x: 96, y: 92 },
-    windowSize: { ...definition.defaultSize },
-    params: { ...definition.defaultParams, ...(params || {}) }
-  }
+  return { pluginInstanceId, pluginType:definition.pluginType, title:definition.title, trackId, detached:false, minimized:false, windowPosition:{x:96,y:92}, windowSize:{...definition.defaultSize}, params:{...definition.defaultParams,...(params||{})} }
 }

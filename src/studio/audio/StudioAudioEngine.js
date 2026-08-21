@@ -2,8 +2,10 @@ const DEFAULT_BPM = 140
 const DEFAULT_POSITION_BEATS = 0
 
 export class StudioAudioEngine {
-  constructor() {
-    this.audioContext = null
+  constructor({ audioContext = null, useTransportWorklet = true } = {}) {
+    this.audioContext = audioContext
+    this.ownsAudioContext = !audioContext
+    this.useTransportWorklet = useTransportWorklet !== false
     this.workletNode = null
     this.isWorkletLoaded = false
     // Keep the AudioWorklet same-origin and CSP-safe. Vite can inline small `new URL()`
@@ -20,17 +22,17 @@ export class StudioAudioEngine {
 
   async init() {
     if (this.state.isReady) return this.getState()
-    const Ctx = window.AudioContext || window.webkitAudioContext
-    if (!Ctx) throw new Error('Web Audio API is not supported in this browser.')
     if (!this.audioContext) {
+      const Ctx = window.AudioContext || window.webkitAudioContext
+      if (!Ctx) throw new Error('Web Audio API is not supported in this browser.')
       try {
         this.audioContext = new Ctx({ latencyHint: 'interactive' })
       } catch {
         this.audioContext = new Ctx()
       }
-      this.state.sampleRate = this.audioContext.sampleRate || this.state.sampleRate
     }
-    await this.loadWorklet()
+    this.state.sampleRate = this.audioContext.sampleRate || this.state.sampleRate
+    if (this.useTransportWorklet) await this.loadWorklet()
     this.state.isReady = true
     return this.getState()
   }
@@ -77,14 +79,18 @@ export class StudioAudioEngine {
 
   setBpm(bpm) {
     if (!Number.isFinite(bpm)) return this.getState()
-    this.state.bpm = Math.max(1, Number(bpm))
+    const nextBpm = Math.max(1, Number(bpm))
+    if (Math.abs(nextBpm - this.state.bpm) < 0.0001) return this.getState()
+    this.state.bpm = nextBpm
     this.workletNode?.port.postMessage({ type: 'transport:set-bpm', bpm: this.state.bpm })
     return this.getState()
   }
 
   setPositionBeats(beats) {
     if (!Number.isFinite(beats)) return this.getState()
-    this.state.positionBeats = Number(beats)
+    const nextPosition = Number(beats)
+    if (Math.abs(nextPosition - this.state.positionBeats) < 0.000001) return this.getState()
+    this.state.positionBeats = nextPosition
     this.workletNode?.port.postMessage({ type: 'transport:set-position', positionBeats: this.state.positionBeats })
     return this.getState()
   }
@@ -99,10 +105,10 @@ export class StudioAudioEngine {
     try { this.workletNode?.disconnect() } catch (_) {}
     this.workletNode = null
     this.isWorkletLoaded = false
-    if (this.audioContext) {
+    if (this.audioContext && this.ownsAudioContext) {
       this.audioContext.close().catch(() => {})
-      this.audioContext = null
     }
+    this.audioContext = null
   }
 }
 

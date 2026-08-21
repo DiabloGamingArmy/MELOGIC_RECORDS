@@ -1,6 +1,9 @@
 import { DAW_PLUGIN_TYPES } from '../plugins/pluginCatalog.js'
 import { BasicSynthInstrument } from './BasicSynthInstrument.js'
 import { LibrarySamplerInstrument } from './LibrarySamplerInstrument.js'
+import { NativeVst3Instrument } from './NativeVst3Instrument.js'
+import { SouraWasmInstrument } from './SouraWasmInstrument.js'
+import { isSouraWasmPluginType } from '../plugins/souraWasmPluginPackage.js'
 
 export class InstrumentRegistry {
   constructor({ getAudioContext, getDestination, resolveLibraryInstrument } = {}) {
@@ -10,7 +13,8 @@ export class InstrumentRegistry {
     this.instances = new Map()
     this.factories = new Map([
       [DAW_PLUGIN_TYPES.melogicWavetable, (options) => new BasicSynthInstrument(options)],
-      [DAW_PLUGIN_TYPES.librarySampler, (options) => new LibrarySamplerInstrument(options)]
+      [DAW_PLUGIN_TYPES.librarySampler, (options) => new LibrarySamplerInstrument(options)],
+      ['native-vst3', (options) => new NativeVst3Instrument(options)]
     ])
   }
 
@@ -22,7 +26,9 @@ export class InstrumentRegistry {
       existing.setManifest?.(manifest)
       return existing
     }
-    const factory = this.factories.get(type)
+    const factory = isSouraWasmPluginType(type)
+      ? (options) => new SouraWasmInstrument(options)
+      : this.factories.get(type)
     if (!factory) return null
     const audioContext = this.getAudioContext?.()
     const instrument = factory({
@@ -39,9 +45,7 @@ export class InstrumentRegistry {
     return instrument
   }
 
-  get(id = '') {
-    return this.instances.get(id) || null
-  }
+  get(id = '') { return this.instances.get(id) || null }
 
   noteOn(id, note, velocity = 0.85, options = {}) {
     const instrument = this.get(id)
@@ -49,58 +53,22 @@ export class InstrumentRegistry {
     const runNoteOn = () => {
       const audioContext = instrument.audioContext
       const startOffsetSeconds = options.live ? Math.max(0, Math.min(0.005, Number(options.startOffsetSeconds) || 0)) : 0
-      const startTime = options.live && audioContext
-        ? audioContext.currentTime + startOffsetSeconds
-        : options.startTime
-      const liveOptions = options.live
-        ? {
-            ...options,
-            startTime,
-            onScheduled: ({ scheduledAudioTime, audioContextCurrentTime } = {}) => {
-              console.info('[live-note] scheduled', {
-                note,
-                scheduledAudioTime,
-                audioContextCurrentTime,
-                scheduleDeltaMs: Math.round(((Number(scheduledAudioTime) || 0) - (Number(audioContextCurrentTime) || 0)) * 1000),
-                selectedTrackId: options.selectedTrackId,
-                instrumentId: id,
-                source: options.source || 'live'
-              })
-            },
-            onTriggered: ({ scheduledAudioTime, audioContextCurrentTime } = {}) => {
-              console.info('[live-note] triggered', {
-                note,
-                scheduleDeltaMs: Math.round(((Number(scheduledAudioTime) || 0) - (Number(audioContextCurrentTime) || 0)) * 1000),
-                instrumentId: id,
-                source: options.source || 'live'
-              })
-            }
-          }
-        : options
+      const startTime = options.live && audioContext ? audioContext.currentTime + startOffsetSeconds : options.startTime
+      const liveOptions = options.live ? {
+        ...options, startTime,
+        onScheduled: ({ scheduledAudioTime, audioContextCurrentTime } = {}) => console.info('[live-note] scheduled', { note, scheduledAudioTime, audioContextCurrentTime, scheduleDeltaMs: Math.round(((Number(scheduledAudioTime) || 0) - (Number(audioContextCurrentTime) || 0)) * 1000), selectedTrackId: options.selectedTrackId, instrumentId: id, source: options.source || 'live' }),
+        onTriggered: ({ scheduledAudioTime, audioContextCurrentTime } = {}) => console.info('[live-note] triggered', { note, scheduleDeltaMs: Math.round(((Number(scheduledAudioTime) || 0) - (Number(audioContextCurrentTime) || 0)) * 1000), instrumentId: id, source: options.source || 'live' })
+      } : options
       return instrument.noteOn(note, velocity, liveOptions)
     }
-    const ensureRunning = instrument?.ensureRunning?.()
-    Promise.resolve(ensureRunning).then(runNoteOn).catch((error) => {
-      console.warn('[InstrumentRegistry] noteOn failed', { id, message: error?.message })
-    })
+    Promise.resolve(instrument?.ensureRunning?.()).then(() => {
+      if (this.instances.get(id) !== instrument) return
+      return runNoteOn()
+    }).catch((error) => console.warn('[InstrumentRegistry] noteOn failed', { id, message: error?.message }))
   }
 
-  noteOff(id, note, options = {}) {
-    this.get(id)?.noteOff(note, options)
-  }
-
-  setParam(id, name, value) {
-    this.get(id)?.setParam(name, value)
-  }
-
-  dispose(id) {
-    const instrument = this.instances.get(id)
-    if (!instrument) return
-    instrument.dispose()
-    this.instances.delete(id)
-  }
-
-  disposeAll() {
-    Array.from(this.instances.keys()).forEach((id) => this.dispose(id))
-  }
+  noteOff(id, note, options = {}) { this.get(id)?.noteOff(note, options) }
+  setParam(id, name, value) { this.get(id)?.setParam(name, value) }
+  dispose(id) { const instrument = this.instances.get(id); if (!instrument) return; instrument.dispose(); this.instances.delete(id) }
+  disposeAll() { Array.from(this.instances.keys()).forEach((id) => this.dispose(id)) }
 }
