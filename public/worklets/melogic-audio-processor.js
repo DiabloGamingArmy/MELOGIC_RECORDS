@@ -52,10 +52,11 @@ class MelogicAudioProcessor extends AudioWorkletProcessor {
     const output = outputs[0]
     if (!output) return true
 
+    // AudioWorklet output buffers are zero-initialized for every render quantum.
+    // This processor is currently a transport clock and intentionally emits no
+    // audio, so explicitly filling every channel with zeros only adds audio-thread
+    // work without changing the output.
     const frameSize = output[0]?.length || 128
-    for (let channel = 0; channel < output.length; channel += 1) {
-      output[channel].fill(0)
-    }
 
     if (this.isRunning) {
       this.sampleCounter += frameSize
