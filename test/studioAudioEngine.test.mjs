@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { StudioAudioEngine } from '../src/studio/audio/StudioAudioEngine.js'
 
-test('transport control messages are emitted only when values change', () => {
+test('stopped transport state changes are retained without flooding the worklet', () => {
   const messages = []
   const sharedContext = { closeCalls: 0, close() { this.closeCalls += 1; return Promise.resolve() } }
   const engine = new StudioAudioEngine({ audioContext: sharedContext })
@@ -11,6 +11,34 @@ test('transport control messages are emitted only when values change', () => {
     disconnect() {}
   }
 
+  engine.setBpm(120)
+  engine.setPositionBeats(4)
+  engine.setPositionBeats(8)
+
+  assert.deepEqual(messages, [])
+  assert.equal(engine.getState().bpm, 120)
+  assert.equal(engine.getState().positionBeats, 8)
+
+  engine.startTransport()
+  assert.deepEqual(messages, [
+    { type: 'transport:start', bpm: 120, positionBeats: 8 }
+  ])
+
+  engine.destroy()
+  assert.equal(sharedContext.closeCalls, 0)
+})
+
+test('running transport control messages are emitted only when values change', () => {
+  const messages = []
+  const sharedContext = { closeCalls: 0, close() { this.closeCalls += 1; return Promise.resolve() } }
+  const engine = new StudioAudioEngine({ audioContext: sharedContext })
+  engine.workletNode = {
+    port: { postMessage: (message) => messages.push(message) },
+    disconnect() {}
+  }
+
+  engine.startTransport()
+  messages.length = 0
   engine.setBpm(140)
   engine.setBpm(120)
   engine.setBpm(120)
@@ -44,4 +72,28 @@ test('shared project audio context can skip the unused transport worklet', async
   assert.equal(state.isReady, true)
   engine.destroy()
   assert.equal(sharedContext.closeCalls, 0)
+})
+
+test('concurrent init calls share one initialization pass', async () => {
+  const sharedContext = {
+    sampleRate: 48000,
+    close() { return Promise.resolve() }
+  }
+  const engine = new StudioAudioEngine({ audioContext: sharedContext })
+  let workletLoadCalls = 0
+  let releaseLoad
+  const loadGate = new Promise((resolve) => { releaseLoad = resolve })
+  engine.loadWorklet = async () => {
+    workletLoadCalls += 1
+    await loadGate
+  }
+
+  const first = engine.init()
+  const second = engine.init()
+  releaseLoad()
+  const [firstState, secondState] = await Promise.all([first, second])
+
+  assert.equal(workletLoadCalls, 1)
+  assert.equal(firstState.isReady, true)
+  assert.equal(secondState.isReady, true)
 })
