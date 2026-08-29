@@ -10,6 +10,7 @@ import { auth, waitForInitialAuthState } from './firebase/auth'
 import { ROUTES, authRoute } from './utils/routes'
 import { getStudioProject, touchStudioProject, saveStudioProjectEditorState } from './data/studioProjectService'
 import { StudioAudioEngine } from './studio/audio/StudioAudioEngine.js'
+import { createSouraWebAudioContextOwner } from './studio/audio/SouraWebAudioContext.js'
 import { normalizeStudioProjectModel } from './studio/model/studioProjectModel.js'
 import { InstrumentRegistry } from './studio/instruments/InstrumentRegistry.js'
 import { DawWindowManager } from './studio/plugins/DawWindowManager.js'
@@ -297,6 +298,16 @@ let audioContext = null
 let masterAudioBus = null
 let assetAuditionGain = null
 let studioAudioEngine = null
+const souraAudioDiagnosticsEnabled = Boolean(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraAudio'))
+let lastSouraAudioDiagnostics = { context: { state: 'uninitialized', creationCount: 0 }, graph: {}, checkedAt: 0 }
+const souraAudioContextOwner = createSouraWebAudioContextOwner({
+  createContext: () => createInteractiveAudioContext(),
+  onStateChange: () => publishSouraAudioDiagnostics()
+})
+window.__souraAudioDiagnostics = Object.freeze({
+  snapshot: () => structuredClone(lastSouraAudioDiagnostics),
+  playTestTone: souraAudioDiagnosticsEnabled ? (options) => playSouraOutputTestTone(options) : undefined
+})
 let lastMetronomeBeat = -1
 const activeMetronomeVoices = new Set()
 let activeLeftPanel = ""
@@ -5927,7 +5938,56 @@ function createInteractiveAudioContext() {
   }
 }
 async function getStudioAudioEngine() { if (!studioAudioEngine) { studioAudioEngine = new StudioAudioEngine({ audioContext: getAudioContext(), useTransportWorklet: false }); await studioAudioEngine.init() } return studioAudioEngine }
-function getAudioContext(){ if(!audioContext){ audioContext = createInteractiveAudioContext() } if(audioContext.state==='suspended') audioContext.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err)); return audioContext }
+function getAudioContext(){
+  const ownedContext = souraAudioContextOwner.getContext()
+  if (audioContext && audioContext !== ownedContext) throw new Error('Soura detected multiple live AudioContexts. Reload the project before playback.')
+  audioContext = ownedContext
+  return audioContext
+}
+function getSouraAudioGraphSnapshot() {
+  const ctx = audioContext
+  const trackContexts = [...trackAudioChannels.entries()].map(([trackId, channel]) => ({
+    trackId,
+    matchesAuthoritativeContext: !ctx || channel?.input?.context === ctx
+  }))
+  const sourceContexts = [...activeAudioClipSources.entries()].map(([regionId, source]) => ({
+    regionId,
+    matchesAuthoritativeContext: !ctx || source?.source?.context === ctx
+  }))
+  return {
+    masterCreated: Boolean(masterAudioBus),
+    masterConnectedToDestination: Boolean(masterAudioBus?.connectedToDestination),
+    masterMatchesAuthoritativeContext: !masterAudioBus || masterAudioBus.input?.context === ctx,
+    masterLevel: Number(masterAudioBus?.meter?.level) || 0,
+    trackContexts,
+    sourceContexts
+  }
+}
+function publishSouraAudioDiagnostics() {
+  if (!souraAudioDiagnosticsEnabled) return
+  lastSouraAudioDiagnostics = {
+    context: souraAudioContextOwner.snapshot(),
+    graph: getSouraAudioGraphSnapshot(),
+    checkedAt: performance.now()
+  }
+  document.documentElement.dataset.souraAudioDiagnostics = JSON.stringify(lastSouraAudioDiagnostics)
+}
+function assertAuthoritativeSouraAudioGraph() {
+  const graph = getSouraAudioGraphSnapshot()
+  const mismatch = !graph.masterMatchesAuthoritativeContext
+    || graph.trackContexts.some((entry) => !entry.matchesAuthoritativeContext)
+    || graph.sourceContexts.some((entry) => !entry.matchesAuthoritativeContext)
+  if (mismatch) throw new Error('Soura audio routing crossed multiple AudioContexts. Reload the project before playback.')
+  return graph
+}
+async function ensureSouraAudioOutputRunning(reason = 'playback') {
+  const ctx = await souraAudioContextOwner.ensureRunning(reason)
+  audioContext = ctx
+  getMasterAudioBus()
+  assertAuthoritativeSouraAudioGraph()
+  publishSouraAudioDiagnostics()
+  return ctx
+}
 function getMasterAudioBus() {
   if (masterAudioBus) return masterAudioBus
   const ctx = getAudioContext()
@@ -5939,7 +5999,8 @@ function getMasterAudioBus() {
   input.connect(gain)
   gain.connect(analyser)
   analyser.connect(ctx.destination)
-  masterAudioBus = { input, gain, analyser, data: new Float32Array(analyser.fftSize), meter: updateMeterBallistics() }
+  masterAudioBus = { input, gain, analyser, data: new Float32Array(analyser.fftSize), meter: updateMeterBallistics(), connectedToDestination: true }
+  publishSouraAudioDiagnostics()
   return masterAudioBus
 }
 function getAssetAuditionGain() {
@@ -5951,13 +6012,32 @@ function getAssetAuditionGain() {
   return assetAuditionGain
 }
 function prewarmDawAudio() {
-  try { getAudioContext() } catch (err) { console.warn('[studioProject] audio context prewarm failed', err) }
   if (!audioEnginePrewarmPromise) {
-    audioEnginePrewarmPromise = getStudioAudioEngine()
+    audioEnginePrewarmPromise = ensureSouraAudioOutputRunning('user-prewarm')
+      .then(() => getStudioAudioEngine())
       .then((engine)=>engine.resume().then(()=>engine))
       .catch((err)=>{ audioEnginePrewarmPromise = null; console.warn('[studioProject] audio engine prewarm failed', err); throw err })
   }
   return audioEnginePrewarmPromise
+}
+async function playSouraOutputTestTone({ frequency = 440, durationSeconds = 0.3, level = 0.06 } = {}) {
+  if (!souraAudioDiagnosticsEnabled) throw new Error('The Soura output test tone is available only in development diagnostics.')
+  const ctx = await ensureSouraAudioOutputRunning('diagnostic-test-tone')
+  const oscillator = ctx.createOscillator()
+  const gain = ctx.createGain()
+  const startAt = ctx.currentTime + 0.01
+  const stopAt = startAt + clamp(Number(durationSeconds) || 0.3, 0.05, 1)
+  oscillator.frequency.value = clamp(Number(frequency) || 440, 80, 2000)
+  gain.gain.setValueAtTime(0.0001, startAt)
+  gain.gain.exponentialRampToValueAtTime(clamp(Number(level) || 0.06, 0.001, 0.2), startAt + 0.01)
+  gain.gain.exponentialRampToValueAtTime(0.0001, stopAt)
+  oscillator.connect(gain)
+  gain.connect(getMasterAudioBus().input)
+  oscillator.onended = () => { try { oscillator.disconnect(); gain.disconnect() } catch {} }
+  oscillator.start(startAt)
+  oscillator.stop(stopAt + 0.01)
+  publishSouraAudioDiagnostics()
+  return { startAt, stopAt, context: souraAudioContextOwner.snapshot() }
 }
 function effectDbToGain(db = 0) {
   return 10 ** (clamp(Number(db) || 0, -80, 24) / 20)
@@ -7593,8 +7673,7 @@ async function preparePortableTrackPlayback() {
   }))
 }
 async function prepareProjectPlayback() {
-  const ctx = getAudioContext()
-  if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
+  getAudioContext()
   await preparePortableTrackPlayback()
   tracks.filter((track) => isSoftwareTrack(track) && getTrackPortablePlaybackDecision(track).mode === 'live').forEach((track)=>ensureTrackInstrumentInstance(track))
   const pendingAudio = midiRegions.filter((region)=>{
@@ -7682,6 +7761,18 @@ async function runAudioRenderReadinessAudit() {
 }
 async function startPlayback({ skipRenderAudit = false } = {}) {
   if (isPlaying || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active) return
+  let ctx
+  try {
+    // Resume while the Play activation is still current, before project
+    // hydration or render audits introduce unrelated asynchronous waits.
+    ctx = await ensureSouraAudioOutputRunning('play-control')
+  } catch (err) {
+    recordingStatus = err?.message || 'Soura could not start browser audio. Check the output device and press Play again.'
+    console.error('[studioProject] playback blocked before transport start', err)
+    updateEditorTitleStatus()
+    updateTransportPlaybackUI()
+    return
+  }
   const requestedPlayheadX = timelineState.playheadX
   const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null
   if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start)
@@ -7698,8 +7789,15 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
     }
     setPlayhead(playbackStartX || requestedPlayheadX)
   }
-  const ctx = getAudioContext()
-  if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
+  try {
+    ctx = await ensureSouraAudioOutputRunning('playback-ready')
+  } catch (err) {
+    recordingStatus = err?.message || 'Soura browser audio stopped before playback could begin.'
+    console.error('[studioProject] playback preparation lost audio output', err)
+    updateEditorTitleStatus()
+    updateTransportPlaybackUI()
+    return
+  }
   recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus
   beginTransportClock(timelineState.playheadX, { reason: 'play' })
   prewarmDawAudio().then((engine) => {

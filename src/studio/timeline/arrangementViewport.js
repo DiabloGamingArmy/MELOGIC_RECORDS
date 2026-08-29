@@ -24,15 +24,12 @@ export function normalizeWheelDeltaPixels({ delta = 0, deltaMode = 0, pageSize =
 
 export function timelineZoomFactorFromWheel({
   deltaY = 0,
-  deltaMode = 0,
-  pageSize = 800,
-  sensitivity = 0.002,
-  maxExponent = 0.28
+  step = 1.12
 } = {}) {
-  const pixels = normalizeWheelDeltaPixels({ delta: deltaY, deltaMode, pageSize })
-  const limit = Math.max(0.01, Math.abs(finiteNumber(maxExponent, 0.28)))
-  const exponent = Math.max(-limit, Math.min(limit, -pixels * Math.max(0, finiteNumber(sensitivity, 0.002))))
-  return Math.exp(exponent)
+  const direction = Math.sign(finiteNumber(deltaY))
+  const magnitude = Math.max(1.000001, finiteNumber(step, 1.12))
+  if (!direction) return 1
+  return direction < 0 ? magnitude : 1 / magnitude
 }
 
 export function timelineXForBeat({ beat = 0, originX = 0, pixelsPerBeat = 1 } = {}) {
@@ -85,6 +82,7 @@ export function collectTimelineGeometryInvariantErrors({
   expectedContentWidth = null,
   surfaces = [],
   positions = [],
+  durations = [],
   roundTripBeats = [],
   tolerance = 0.05
 } = {}) {
@@ -108,6 +106,13 @@ export function collectTimelineGeometryInvariantErrors({
     const expected = timelineXForBeat({ beat: position.beat, originX, pixelsPerBeat })
     if (Math.abs(finiteNumber(position.x) - expected) > epsilon) {
       errors.push({ kind: 'beat-position', surface: position.surface || 'unknown', beat: finiteNumber(position.beat), expected, actual: finiteNumber(position.x) })
+    }
+  }
+
+  for (const duration of durations) {
+    const expected = Math.max(0, finiteNumber(duration.durationBeats)) * Math.max(0.000001, finiteNumber(pixelsPerBeat, 1))
+    if (Math.abs(finiteNumber(duration.width) - expected) > epsilon) {
+      errors.push({ kind: 'beat-duration', surface: duration.surface || 'region', durationBeats: finiteNumber(duration.durationBeats), expected, actual: finiteNumber(duration.width) })
     }
   }
 
