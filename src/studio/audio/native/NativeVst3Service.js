@@ -1,6 +1,8 @@
 import { ensureNativeVst3Host, nativeVst3OpenEditor, nativeVst3SetMix } from './NativeVst3HostService.js'
+import { isSouraDesktopRuntime } from '../../runtime/SouraRuntimeCapabilities.js'
 const NATIVE_VST3_TYPE = 'native-vst3'
 let invokeFn = null
+let installedPluginScanPromise = null
 
 async function getInvoke() {
   if (invokeFn) return invokeFn
@@ -10,11 +12,7 @@ async function getInvoke() {
 }
 
 export function isNativeVst3Runtime() {
-  return Boolean(
-    globalThis.__TAURI_INTERNALS__
-    || globalThis.__TAURI__
-    || navigator.userAgent.includes('Tauri')
-  )
+  return isSouraDesktopRuntime()
 }
 
 export function isNativeVst3Instrument(instrument) {
@@ -30,6 +28,35 @@ export async function scanInstalledNativeVst3() {
   return Array.isArray(plugins) ? plugins : []
 }
 
+function normalizeIdentity(value = '') {
+  return String(value || '').trim().toLowerCase()
+}
+
+export async function resolveNativeVst3RuntimePath(params = {}, { refresh = false } = {}) {
+  if (!isNativeVst3Runtime()) return ''
+  if (params.nativePluginPath && await isNativeVst3PathAvailable(params.nativePluginPath).catch(() => false)) {
+    return params.nativePluginPath
+  }
+  if (refresh || !installedPluginScanPromise) installedPluginScanPromise = scanInstalledNativeVst3()
+  const plugins = await installedPluginScanPromise.catch((error) => {
+    installedPluginScanPromise = null
+    throw error
+  })
+  const bundleId = normalizeIdentity(params.nativePluginBundleId)
+  const name = normalizeIdentity(params.nativePluginName)
+  const vendor = normalizeIdentity(params.nativePluginVendor)
+  const version = normalizeIdentity(params.nativePluginVersion)
+  const match = plugins.find((plugin) => bundleId && normalizeIdentity(plugin.bundleId) === bundleId)
+    || plugins.find((plugin) => name && normalizeIdentity(plugin.name) === name
+      && (!vendor || normalizeIdentity(plugin.vendor) === vendor)
+      && (!version || normalizeIdentity(plugin.version) === version))
+  if (!match?.path) return ''
+  // This path is a local runtime cache. Project serialization deliberately removes it.
+  params.nativePluginPath = match.path
+  params.nativeExecutionState = 'resolved'
+  return match.path
+}
+
 export async function isNativeVst3PathAvailable(path = '') {
   if (!isNativeVst3Runtime() || !path) return false
   const invoke = await getInvoke()
@@ -38,7 +65,7 @@ export async function isNativeVst3PathAvailable(path = '') {
 
 export function createNativeVst3TrackInstrument(plugin, trackId = '') {
   if (!plugin?.path) throw new Error('A VST3 bundle path is required.')
-  const stableKey = String(plugin.bundleId || plugin.path)
+  const stableKey = String(plugin.bundleId || [plugin.vendor, plugin.name, plugin.version].filter(Boolean).join(':') || 'unknown-vst3')
   return {
     id: `instrument-native-vst3-${Date.now()}`,
     type: NATIVE_VST3_TYPE,
@@ -127,7 +154,7 @@ export async function chooseInstalledNativeVst3() {
 
 export async function showNativeVst3ExecutionStatus(instrument) {
   const instanceId = instrument?.pluginInstanceId
-  const path = instrument?.params?.nativePluginPath || ''
+  const path = await resolveNativeVst3RuntimePath(instrument?.params || {})
   if (!instanceId || !path) throw new Error('Native VST3 instrument state is incomplete.')
   await ensureNativeVst3Host({ instanceId, path, sampleRate: 48000, maxBlockSize: 512 })
   return nativeVst3OpenEditor(instanceId)

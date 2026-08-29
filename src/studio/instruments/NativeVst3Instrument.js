@@ -4,6 +4,7 @@ import {
   nativeVst3NoteOff,
   nativeVst3NoteOn
 } from '../audio/native/NativeVst3HostService.js'
+import { resolveNativeVst3RuntimePath } from '../audio/native/NativeVst3Service.js'
 
 export class NativeVst3Instrument {
   constructor({ id, type, trackId, audioContext, params = {} } = {}) {
@@ -20,14 +21,14 @@ export class NativeVst3Instrument {
     if (this.disposed) throw new Error('Native VST3 instrument is disposed.')
     if (this.readyPromise) return this.readyPromise
 
-    const path = this.params.nativePluginPath
-    if (!path) throw new Error('Native VST3 path is missing from instrument state.')
-
-    this.readyPromise = ensureNativeVst3Host({
-      instanceId: this.id,
-      path,
-      sampleRate: this.audioContext?.sampleRate || 48000,
-      maxBlockSize: 512
+    this.readyPromise = resolveNativeVst3RuntimePath(this.params).then((path) => {
+      if (!path) throw new Error('The required VST3 instrument is not installed on this computer.')
+      return ensureNativeVst3Host({
+        instanceId: this.id,
+        path,
+        sampleRate: this.audioContext?.sampleRate || 48000,
+        maxBlockSize: 512
+      })
     }).catch((error) => {
       this.readyPromise = null
       throw error

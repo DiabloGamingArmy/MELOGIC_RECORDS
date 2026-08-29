@@ -45,7 +45,20 @@ import {
 
 import { renderReversedAudio } from './studio/audio/audioReverseRenderService.js'
 import { getNativeFilePath, getSouraImportPersistenceMode, isSouraDesktopRuntime, registerDesktopLocalAudioReference, releaseDesktopLocalAudioReference } from './studio/audio/native/SouraLocalAudioReference.js'
-import { chooseInstalledNativeVst3, createNativeVst3TrackInstrument, isNativeVst3Instrument, showNativeVst3ExecutionStatus, nativeVst3SetMix } from './studio/audio/native/NativeVst3Service.js'
+import { chooseInstalledNativeVst3, createNativeVst3TrackInstrument, isNativeVst3Instrument, resolveNativeVst3RuntimePath, showNativeVst3ExecutionStatus, nativeVst3SetMix } from './studio/audio/native/NativeVst3Service.js'
+import { getSouraRuntimeCapabilities } from './studio/runtime/SouraRuntimeCapabilities.js'
+import {
+  SOURA_EDITOR_FORMAT_VERSION,
+  computePortableTrackSourceRevision,
+  createTrackDependencyDescriptor,
+  getPortableTrackPlaybackDecision,
+  normalizePortableTrackRender,
+  serializePortableInstrument,
+  serializePortableTrackRender
+} from './studio/portability/portableTrackRender.js'
+import { collectMetronomeBeatIndices } from './studio/transport/metronomeSchedule.js'
+import { VIEWPORT_PLAYHEAD_UPDATE_OPTIONS } from './studio/transport/timelineTransportInvariant.js'
+import { createSouraPerformanceDiagnostics } from './studio/performance/SouraPerformanceDiagnostics.js'
 import {
   findFolderByPath,
   flattenLibraryFolders,
@@ -88,6 +101,13 @@ import {
 } from './studio/regionEditorCoordinates.js'
 
 const app = document.querySelector('#app')
+const souraRuntimeCapabilities = getSouraRuntimeCapabilities()
+const souraPerformanceDiagnostics = createSouraPerformanceDiagnostics({
+  enabled: Boolean(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraPerf'))
+})
+window.__souraPerformanceDiagnostics = Object.freeze({
+  snapshot: () => souraPerformanceDiagnostics.snapshot()
+})
 const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw', 'stagemaker'])
 const PREF_KEY = 'melogic_studio_keep_site_menu_open'
 const MUSICAL_TYPING_PREF_KEY = 'melogic:daw:musicalTyping'
@@ -393,10 +413,13 @@ let playbackContentRevision = 0
 let timelineRegionIndex = { revision: -1, source: null, entries: [], byId: new Map(), maxDurationBeats: 0.05 }
 const audioClipRuntime = new Map()
 const activeAudioClipSources = new Map()
+const portableTrackRuntime = new Map()
+const activePortableTrackSources = new Map()
 const audioOfflineWarnedRegionIds = new Set()
 let audioRecordingController = null
 let pendingAudioInputStream = null
 let lastPlaybackBeat = 0
+let lastPerformanceDiagnosticsPublishAt = 0
 let globalTrackDrag = null
 let globalTrackPopover = null
 let midiRegions = []
@@ -1336,11 +1359,36 @@ const renderAddTrackModal = () => !addTrackModalOpen ? '' : `<div class="studio-
     </div>
   </section>
 </div>`
+function getTrackPortablePlaybackDecision(track) {
+  const decision = getPortableTrackPlaybackDecision({
+    track,
+    regions: midiRegions,
+    tempoEvents: globalTracks.tempoEvents,
+    timeSignatureEvents: globalTracks.timeSignatureEvents,
+    capabilities: souraRuntimeCapabilities,
+    dependencyAvailable: portableTrackRuntime.get(track?.id)?.dependencyAvailable
+  })
+  const runtime = portableTrackRuntime.get(track?.id)
+  return decision.mode === 'portable' && runtime?.error
+    ? { ...decision, mode: 'unavailable', renderLoadError: runtime.error }
+    : decision
+}
+function getTrackCapabilityStatus(track) {
+  if (!isNativeVst3Instrument(track?.instrument)) return null
+  const decision = getTrackPortablePlaybackDecision(track)
+  const dependencyName = decision.dependency?.name || track.instrument?.name || 'Plug-in'
+  if (decision.mode === 'portable') return { state: 'portable', label: `${dependencyName} — Portable Audio`, title: 'The live plug-in is unavailable. Soura is playing the current portable track render.' }
+  if (decision.mode === 'stale') return { state: 'stale', label: `${dependencyName} — Render Stale`, title: 'The plug-in is unavailable and the portable render no longer matches the editable source.' }
+  if (decision.mode === 'unavailable') return { state: 'unavailable', label: `${dependencyName} — Unavailable`, title: 'Install this plug-in in Soura Desktop, or create a portable render on a system where it is available.' }
+  return null
+}
 const renderTrackCard = (track) => {
   const level = clamp(Number(track.outputLevel) || 0, 0, 1)
   const automation = ensureTrackAutomation(track)
+  const capabilityStatus = getTrackCapabilityStatus(track)
+  const trackTitle = `<span class="studio-track-title"><strong class="studio-track-name">${esc(track.name)}</strong>${capabilityStatus ? `<small class="studio-track-capability is-${capabilityStatus.state}" title="${esc(capabilityStatus.title)}">${esc(capabilityStatus.label)}</small>` : ''}</span>`
   const automationSidebar = track.automationOpen ? `<div class="studio-track-automation-sidebar" data-track-automation-sidebar="${esc(track.id)}"><span>Automation</span><select data-track-automation-parameter="${esc(track.id)}" aria-label="${esc(track.name)} automation parameter">${TRACK_AUTOMATION_PARAMETERS.map((option)=>`<option value="${esc(option.id)}" ${automation.activeParameter===option.id?'selected':''} ${option.disabled?'disabled':''}>${esc(option.label)}</option>`).join('')}</select><small>${esc(formatTrackAutomationValue(automation.activeParameter, getTrackAutomationData(track, automation.activeParameter).defaultValue))}</small></div>` : ''
-  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" data-track-stack="${esc(track.id)}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id && !selectedSystemChannel ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-drag-handle" type="button" draggable="true" data-track-drag-handle="${esc(track.id)}" aria-label="Reorder ${esc(track.name)}" title="Drag to reorder">⋮⋮</button><button class="studio-track-icon" type="button" aria-label="${track.name} track" data-track-icon="${track.id}">${trackTypeIcon(normalizedTrackIconType(track))}</button><strong class="studio-track-name">${track.name}</strong><button class="studio-track-more" type="button" data-track-options="${track.id}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${track.name}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${track.name}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${track.name}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${track.name}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${track.name} volume" /><button class="studio-track-pan" type="button" aria-label="${track.name} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${track.name} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div></article>${automationSidebar}</div>`
+  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" data-track-stack="${esc(track.id)}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id && !selectedSystemChannel ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-drag-handle" type="button" draggable="true" data-track-drag-handle="${esc(track.id)}" aria-label="Reorder ${esc(track.name)}" title="Drag to reorder">⋮⋮</button><button class="studio-track-icon" type="button" aria-label="${esc(track.name)} track" data-track-icon="${esc(track.id)}">${trackTypeIcon(normalizedTrackIconType(track))}</button>${trackTitle}<button class="studio-track-more" type="button" data-track-options="${esc(track.id)}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${esc(track.name)}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${esc(track.name)}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${esc(track.name)}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${esc(track.name)}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${esc(track.name)} volume" /><button class="studio-track-pan" type="button" aria-label="${esc(track.name)} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${esc(track.name)} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div></article>${automationSidebar}</div>`
 }
 const renderTrackContextMenu = () => {
   if (!trackMenuState?.trackId) return ''
@@ -5218,6 +5266,7 @@ function applyProjectSettingsFromForm(form) {
   renderEditor()
 }
 function setTimelineZoomPixelsPerBeat(pixelsPerBeat = beatWidth()) {
+  souraPerformanceDiagnostics.recordViewportChange(isPlaying)
   const scroll = captureArrangementScroll()
   const currentBeat = xToBeatsFromBarZero(timelineState.playheadX)
   timelineState.pixelsPerBar = clampTimelinePixelsPerBar(Number(pixelsPerBeat) * Math.max(1, Number(timelineState.beatsPerBar) || 4))
@@ -5447,13 +5496,51 @@ function normalizeLoadedRegion(region = {}) {
   })
   return type === 'audio' ? syncAudioRegionTimeline(normalized) : normalized
 }
+function serializeTrackForEditorState(track) {
+  ensureTrackInsertState(track)
+  const { id, name, color, colorSoft, muted, soloed, recordArmed, automationOpen, automation, volume, pan, outputLevel, midiEffects, instrument, audioEffects } = track
+  const type = normalizeTrackType(track.type)
+  const channelSettings = {
+    notes: track.notes || '',
+    monitor: !!track.monitor,
+    midiInput: track.midiInput || 'All Inputs',
+    midiChannel: track.midiChannel || 'All',
+    audioInput: track.audioInput || 'Browser default',
+    audioOutput: track.audioOutput || 'Stereo Out',
+    transpose: Number(track.transpose || 0),
+    octaveShift: Number(track.octaveShift || 0),
+    velocityOffset: Number(track.velocityOffset || 0),
+    quantize: track.quantize || 'Off',
+    gainTrim: Number(track.gainTrim || 0),
+    meterMode: track.meterMode || 'Peak + RMS',
+    midiLatencyMs: Number(track.midiLatencyMs || 0),
+    regionColorMode: track.regionColorMode || 'Track color',
+    defaultRegionLength: Number(track.defaultRegionLength || 4),
+    autoNameRegions: track.autoNameRegions !== false
+  }
+  const sourceRevision = computePortableTrackSourceRevision({
+    track,
+    regions: midiRegions,
+    tempoEvents: globalTracks.tempoEvents,
+    timeSignatureEvents: globalTracks.timeSignatureEvents
+  })
+  return {
+    id, name, type, color, colorSoft, muted, soloed, recordArmed, automationOpen,
+    automation: deepClone(automation), volume, pan, outputLevel, channelSettings,
+    midiEffects: type === 'software' ? midiEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : [],
+    instrument: type === 'software' ? serializePortableInstrument(instrument) : null,
+    audioEffects: serializeAudioEffects(audioEffects),
+    dependency: type === 'software' ? createTrackDependencyDescriptor(instrument) : null,
+    portableRender: serializePortableTrackRender(track.portableRender, sourceRevision)
+  }
+}
 function buildEditorStateForSave(){
   ensureCanonicalGlobalTracks()
   const tempoAtStart = getTempoAtBeat(0, globalTracks.tempoEvents)
   const timeAtStart = getTimeSignatureAtBeat(0, globalTracks.timeSignatureEvents)
   const keyAtStart = getKeySignatureAtBeat(0, globalTracks.keySignatureEvents)
   return {
-    version:4,
+    version:SOURA_EDITOR_FORMAT_VERSION,
     projectMetadata:{
       title: projectState?.title || 'Untitled Project',
       bpm: tempoAtStart.bpm,
@@ -5475,7 +5562,7 @@ function buildEditorStateForSave(){
     regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })),
     notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId },
     metronome:{ ...normalizeMetronomeSettings({ ...metronomeSettings, enabled:isMetronomeEnabled }), audioEffects:serializeAudioEffects(metronomeSettings.audioEffects) },
-    tracks: tracks.map((track)=>{ ensureTrackInsertState(track); const {id,name,color,colorSoft,muted,soloed,recordArmed,automationOpen,automation,volume,pan,outputLevel,midiEffects,instrument,audioEffects}=track; const type=normalizeTrackType(track.type); const channelSettings={notes:track.notes||'',monitor:!!track.monitor,midiInput:track.midiInput||'All Inputs',midiChannel:track.midiChannel||'All',audioInput:track.audioInput||'Browser default',audioOutput:track.audioOutput||'Stereo Out',transpose:Number(track.transpose||0),octaveShift:Number(track.octaveShift||0),velocityOffset:Number(track.velocityOffset||0),quantize:track.quantize||'Off',gainTrim:Number(track.gainTrim||0),meterMode:track.meterMode||'Peak + RMS',midiLatencyMs:Number(track.midiLatencyMs||0),regionColorMode:track.regionColorMode||'Track color',defaultRegionLength:Number(track.defaultRegionLength||4),autoNameRegions:track.autoNameRegions!==false}; return {id,name,type,color,colorSoft,muted,soloed,recordArmed,automationOpen,automation:deepClone(automation),volume,pan,outputLevel,channelSettings,midiEffects:type==='software'?midiEffects.map((fx)=>({...fx,params:{...(fx.params||{})}})):[],instrument:type==='software'&&instrument?{...instrument,params:{...(instrument.params||{})}}:null,audioEffects:serializeAudioEffects(audioEffects)} }),
+    tracks: tracks.map(serializeTrackForEditorState),
     toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled }
   }
 }
@@ -5577,7 +5664,9 @@ function applyLoadedEditorState(editorState) {
         outputLevel: Number.isFinite(Number(saved.outputLevel)) ? Number(saved.outputLevel) : t.outputLevel,
         midiEffects: savedType === 'software' && Array.isArray(saved.midiEffects) ? saved.midiEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : [],
         instrument: savedType === 'software' && saved.instrument && typeof saved.instrument === 'object' ? { ...saved.instrument, params: { ...(saved.instrument.params || {}) } } : null,
-        audioEffects: serializeAudioEffects(saved.audioEffects)
+        audioEffects: serializeAudioEffects(saved.audioEffects),
+        dependency: saved.dependency && typeof saved.dependency === 'object' ? deepClone(saved.dependency) : createTrackDependencyDescriptor(saved.instrument),
+        portableRender: normalizePortableTrackRender(saved.portableRender)
       })
       if (saved.channelSettings && typeof saved.channelSettings === 'object') Object.assign(t, saved.channelSettings)
       ensureTrackInsertState(t)
@@ -6288,12 +6377,13 @@ function maybeTickMetronome({ currentProjectSeconds = getTransportClockProjectSe
   if(!isPlaying||!isMetronomeEnabled) return
   const currentBeatIndex = Math.max(0, Math.floor(secondsToBeats(currentProjectSeconds, tempoMap)))
   const lookaheadBeatIndex = Math.max(currentBeatIndex, Math.floor(secondsToBeats(currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS, tempoMap)))
-  const firstBeatToSchedule = Math.max(lastMetronomeBeat + 1, currentBeatIndex)
-  for (let beatIndex = firstBeatToSchedule; beatIndex <= lookaheadBeatIndex; beatIndex += 1) {
+  const beatIndices = collectMetronomeBeatIndices({ lastScheduledBeat: lastMetronomeBeat, currentBeat: currentBeatIndex, lookaheadBeat: lookaheadBeatIndex })
+  for (const beatIndex of beatIndices) {
     const sig = getTimeSignatureAtBeat(beatIndex)
     playMetronomeClick(beatIndex % Math.max(1, sig.numerator || 4) === 0, getTransportScheduleTimeForProjectSeconds(beatsToSeconds(beatIndex, tempoMap)))
     lastMetronomeBeat = beatIndex
   }
+  souraPerformanceDiagnostics.recordMetronomeBeats(beatIndices.length)
 }
 function secondsFromPlayhead(){ return beatsToSeconds(xToBeatsFromBarZero(timelineState.playheadX)) }
 function formatTimeFromPlayhead(){ const raw=secondsFromPlayhead(); const total=Math.abs(raw)<0.0005?0:raw; const isNegative=total<0; const absTotal=Math.abs(total); const m=Math.floor(absTotal/60); const s=Math.floor(absTotal%60); const ms=Math.floor((absTotal%1)*1000); const sub=Math.floor(((absTotal*1000)%1)*100); return `${isNegative?'-':''}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}.${String(sub).padStart(2,'0')}` }
@@ -6443,7 +6533,7 @@ function getTransportScheduleTimeForProjectSeconds(projectSeconds = 0) {
   if (!transportClock) return getAudioContext().currentTime
   return transportClock.audioContextStartTime + (Math.max(0, Number(projectSeconds) || 0) - transportClock.playheadStartSeconds)
 }
-function beginTransportClock(playheadX = timelineState.playheadX, { schedulerStartDelaySeconds = TRANSPORT_SCHEDULER_START_DELAY_SECONDS } = {}) {
+function beginTransportClock(playheadX = timelineState.playheadX, { schedulerStartDelaySeconds = TRANSPORT_SCHEDULER_START_DELAY_SECONDS, reason = 'play' } = {}) {
   const ctx = getAudioContext()
   const tempoMap = normalizeTempoMap()
   const playheadStartBeats = clampBeat(xToBeat(playheadX))
@@ -6462,6 +6552,7 @@ function beginTransportClock(playheadX = timelineState.playheadX, { schedulerSta
   transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
   lastPlaybackScheduleProjectSeconds = -Infinity
   lastMetronomeBeat = Math.max(-1, Math.floor(playheadStartBeats) - 1)
+  souraPerformanceDiagnostics.recordTransportStart(reason)
   console.info('[transport] play requested', {
     playheadStartSeconds,
     playheadStartBeats,
@@ -7208,9 +7299,9 @@ function applyStudioGuideTargets() {
     element.setAttribute('data-guide-role', role)
   })
 }
-function setPlayhead(x, { restartTransport = true } = {}) {
+function setPlayhead(x, { restartTransport = true, syncAudioEngine = true } = {}) {
   timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX())
-  if (studioAudioEngine && !isTransportTicking) {
+  if (syncAudioEngine && studioAudioEngine && !isTransportTicking) {
     const beat = clampBeat(xToBeat(timelineState.playheadX))
     const tempo = getTempoAtBeat(beat)
     studioAudioEngine.setBpm(Number(tempo.bpm || projectState?.bpm || 140))
@@ -7222,9 +7313,10 @@ function setPlayhead(x, { restartTransport = true } = {}) {
   if (restartTransport && isPlaying && !isTransportTicking) {
     stopAllAudioClipPlayback()
     stopAllPlaybackNotes()
-    beginTransportClock(timelineState.playheadX)
+    beginTransportClock(timelineState.playheadX, { reason: 'seek' })
     const beat = clampBeat(xToBeat(timelineState.playheadX))
     const schedulingContext = createPlaybackSchedulingContext()
+    updatePortableTrackPlayback(schedulingContext)
     updateMidiRegionPlayback(beat, schedulingContext)
     updateAudioClipPlayback(beat, schedulingContext)
   }
@@ -7361,19 +7453,24 @@ function pixelsPerSecond() { const bps = 1 / getSecondsPerBeatAtBeat(clampBeat(x
 function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
 function tickPlayback(frameTime = performance.now()) {
   if (!isPlaying) return
+  souraPerformanceDiagnostics.recordFrame(frameTime)
+  if (souraPerformanceDiagnostics.enabled && frameTime - lastPerformanceDiagnosticsPublishAt >= 1000) {
+    lastPerformanceDiagnosticsPublishAt = frameTime
+    document.documentElement.dataset.souraPerformanceDiagnostics = JSON.stringify(souraPerformanceDiagnostics.snapshot())
+  }
   const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null
   let state = updatePlayheadFromTransportClock()
   if (cycle && timelineState.playheadX >= cycle.end) {
     stopAllPlaybackNotes()
     stopAllAudioClipPlayback()
-    beginTransportClock(cycle.start, { schedulerStartDelaySeconds: 0 })
+    beginTransportClock(cycle.start, { schedulerStartDelaySeconds: 0, reason: 'cycle-loop' })
     state = updatePlayheadFromTransportClock()
   }
   if (isCountInRunning && countInTargetX != null && timelineState.playheadX >= countInTargetX) {
     isTransportTicking = true
     setPlayhead(countInTargetX)
     isTransportTicking = false
-    beginTransportClock(timelineState.playheadX, { schedulerStartDelaySeconds: 0 })
+    beginTransportClock(timelineState.playheadX, { schedulerStartDelaySeconds: 0, reason: 'count-in' })
     state = updatePlayheadFromTransportClock()
   }
   if (isCountInRunning && countInTargetX != null) {
@@ -7399,10 +7496,12 @@ function tickPlayback(frameTime = performance.now()) {
     || state.projectSeconds < lastPlaybackScheduleProjectSeconds
     || state.projectSeconds - lastPlaybackScheduleProjectSeconds >= TRANSPORT_SCHEDULER_INTERVAL_SECONDS
   if (scheduleDue) {
+    souraPerformanceDiagnostics.recordSchedulerPass()
     const schedulingContext = createPlaybackSchedulingContext({
       currentProjectSeconds: state.projectSeconds,
       tempoMap: state.tempoMap
     })
+    updatePortableTrackPlayback(schedulingContext)
     updateMidiRegionPlayback(currentBeat, schedulingContext)
     updateAudioClipPlayback(currentBeat, schedulingContext)
     maybeTickMetronome(schedulingContext)
@@ -7421,10 +7520,65 @@ function tickPlayback(frameTime = performance.now()) {
   if (timelineState.playheadX >= maxTimelineX()) return pausePlayback()
   playRaf = requestAnimationFrame(tickPlayback)
 }
+async function hydratePortableTrackAudio(track, portableRender) {
+  const current = portableTrackRuntime.get(track.id) || {}
+  if (current.audioBuffer && current.sourceRevision === portableRender.sourceRevision) return true
+  if (current.hydrationPromise) return current.hydrationPromise
+  const hydrationPromise = (async () => {
+    const downloadUrl = portableRender.audio.downloadUrl || await getStorageAssetUrl(portableRender.audio.storagePath, {
+      scopeKey: `soura-project:${projectState?.id || 'project'}`,
+      type: 'soura-portable-track-render',
+      warnOnFail: true
+    })
+    if (!downloadUrl) throw new Error('Portable track render could not be located.')
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`Portable track render fetch failed (${response.status}).`)
+    const arrayBuffer = await response.arrayBuffer()
+    const audioBuffer = await getAudioContext().decodeAudioData(arrayBuffer.slice(0))
+    portableTrackRuntime.set(track.id, {
+      ...portableTrackRuntime.get(track.id),
+      mode: 'portable',
+      audioBuffer,
+      downloadUrl,
+      sourceRevision: portableRender.sourceRevision,
+      hydrationPromise: null,
+      error: ''
+    })
+    return true
+  })().catch((error) => {
+    portableTrackRuntime.set(track.id, {
+      ...portableTrackRuntime.get(track.id),
+      mode: 'unavailable',
+      audioBuffer: null,
+      hydrationPromise: null,
+      error: error?.message || 'Portable track render failed to load.'
+    })
+    console.warn('[portable-track] render hydration failed', { trackId: track.id, message: error?.message })
+    return false
+  })
+  portableTrackRuntime.set(track.id, { ...current, hydrationPromise })
+  return hydrationPromise
+}
+async function preparePortableTrackPlayback() {
+  await Promise.all(tracks.filter((track) => isNativeVst3Instrument(track.instrument)).map(async (track) => {
+    let dependencyAvailable = false
+    if (souraRuntimeCapabilities.nativeVst3Host) {
+      dependencyAvailable = Boolean(await resolveNativeVst3RuntimePath(track.instrument.params || {}).catch((error) => {
+        console.warn('[portable-track] native plug-in resolution failed', { trackId: track.id, message: error?.message })
+        return ''
+      }))
+    }
+    portableTrackRuntime.set(track.id, { ...portableTrackRuntime.get(track.id), dependencyAvailable, error: '' })
+    const decision = getTrackPortablePlaybackDecision(track)
+    portableTrackRuntime.set(track.id, { ...portableTrackRuntime.get(track.id), mode: decision.mode, sourceRevision: decision.sourceRevision })
+    if (decision.mode === 'portable') await hydratePortableTrackAudio(track, decision.portableRender)
+  }))
+}
 async function prepareProjectPlayback() {
   const ctx = getAudioContext()
   if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
-  tracks.filter(isSoftwareTrack).forEach((track)=>ensureTrackInstrumentInstance(track))
+  await preparePortableTrackPlayback()
+  tracks.filter((track) => isSoftwareTrack(track) && getTrackPortablePlaybackDecision(track).mode === 'live').forEach((track)=>ensureTrackInstrumentInstance(track))
   const pendingAudio = midiRegions.filter((region)=>{
     const edit = normalizeAudioEdit(region.audioEdit)
     const stretch = normalizeAudioStretch(region.stretch, {
@@ -7529,7 +7683,7 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
   const ctx = getAudioContext()
   if (ctx.state === 'suspended') await ctx.resume().catch((err)=>console.warn('[studioProject] audio context resume failed', err))
   recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus
-  beginTransportClock(timelineState.playheadX)
+  beginTransportClock(timelineState.playheadX, { reason: 'play' })
   prewarmDawAudio().then((engine) => {
     const tempo = getTempoAtBeat(clampBeat(xToBeat(timelineState.playheadX)))
     engine.setBpm(Number(tempo.bpm || projectState?.bpm || 140))
@@ -7540,6 +7694,7 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
   lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX))
   lastPlayTimestamp = performance.now()
   const schedulingContext = createPlaybackSchedulingContext()
+  updatePortableTrackPlayback(schedulingContext)
   updateAudioClipPlayback(lastPlaybackBeat, schedulingContext)
   updateMidiRegionPlayback(lastPlaybackBeat, schedulingContext)
   maybeTickMetronome(schedulingContext)
@@ -7822,6 +7977,7 @@ function stopAllInstrumentNotes(){ if(!instrumentAudioContext) { activeInstrumen
 function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
   const target = ensureTrackInsertState(track)
   if (!target?.instrument) return null
+  if (isNativeVst3Instrument(target.instrument) && !souraRuntimeCapabilities.nativeVst3Host) return null
   if (!target.instrument.pluginInstanceId) target.instrument.pluginInstanceId = `${target.instrument.type}:${target.id}`
   const channel = getTrackAudioChannel(target.id)
   setTrackChannelVolume(target)
@@ -8016,6 +8172,72 @@ function makeFadeGainCurve({ baseGain, fromProgress = 0, toProgress = 1, curve =
 }
 function stopAllAudioClipPlayback() {
   Array.from(activeAudioClipSources.keys()).forEach((regionId)=>stopAudioClipPlayback(regionId))
+  stopAllPortableTrackPlayback()
+}
+function stopPortableTrackPlayback(trackId = '') {
+  const active = activePortableTrackSources.get(trackId)
+  if (!active) return
+  try { active.source?.stop?.() } catch {}
+  try { active.source?.disconnect?.() } catch {}
+  activePortableTrackSources.delete(trackId)
+}
+function stopAllPortableTrackPlayback() {
+  Array.from(activePortableTrackSources.keys()).forEach(stopPortableTrackPlayback)
+}
+function updatePortableTrackPlayback(schedulingContext = null) {
+  if (!isPlaying || !transportClock) return
+  const ctx = getAudioContext()
+  const context = schedulingContext || createPlaybackSchedulingContext()
+  const { currentProjectSeconds, tempoMap, audibleTrackIds } = context
+  const lookaheadEndSeconds = currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS
+
+  activePortableTrackSources.forEach((active, trackId) => {
+    const track = tracks.find((item) => item.id === trackId)
+    const decision = track ? getTrackPortablePlaybackDecision(track) : null
+    if (!track || decision?.mode !== 'portable' || !audibleTrackIds.has(trackId) || currentProjectSeconds >= active.renderEndSeconds + 0.05) {
+      stopPortableTrackPlayback(trackId)
+    }
+  })
+
+  tracks.forEach((track) => {
+    if (activePortableTrackSources.has(track.id) || !audibleTrackIds.has(track.id)) return
+    const decision = getTrackPortablePlaybackDecision(track)
+    if (decision.mode !== 'portable') return
+    const runtime = portableTrackRuntime.get(track.id)
+    const audioBuffer = runtime?.audioBuffer
+    if (!audioBuffer) return
+    const audio = decision.portableRender.audio
+    const startBeat = Number(audio.startBeat) || 0
+    const renderStartSeconds = beatsToSeconds(startBeat, tempoMap)
+    const renderEndSeconds = Number.isFinite(Number(audio.endBeat))
+      ? beatsToSeconds(Number(audio.endBeat), tempoMap)
+      : renderStartSeconds + audioBuffer.duration
+    if (lookaheadEndSeconds < renderStartSeconds || currentProjectSeconds >= renderEndSeconds) return
+    try {
+      const rawScheduleTime = getTransportScheduleTimeForProjectSeconds(renderStartSeconds)
+      const scheduleTime = Math.max(ctx.currentTime, transportClock.audioContextStartTime, rawScheduleTime)
+      const projectSecondsAtSchedule = transportClock.playheadStartSeconds + Math.max(0, scheduleTime - transportClock.audioContextStartTime)
+      const offsetSeconds = Math.max(0, projectSecondsAtSchedule - renderStartSeconds)
+      const playDuration = Math.min(audioBuffer.duration - offsetSeconds, renderEndSeconds - projectSecondsAtSchedule)
+      if (playDuration <= 0.01) return
+      const source = ctx.createBufferSource()
+      source.buffer = audioBuffer
+      source.connect(getTrackAudioChannel(track.id).input)
+      source.onended = () => activePortableTrackSources.delete(track.id)
+      source.start(scheduleTime, Math.min(offsetSeconds, Math.max(0, audioBuffer.duration - 0.01)), playDuration)
+      activePortableTrackSources.set(track.id, { source, scheduleTime, renderStartSeconds, renderEndSeconds })
+      console.info('[portable-track] scheduled fallback', {
+        trackId: track.id,
+        dependency: decision.dependency?.name || 'unknown',
+        sourceRevision: decision.sourceRevision,
+        offsetSeconds
+      })
+      startTrackMeterLoop()
+    } catch (error) {
+      console.warn('[portable-track] fallback scheduling failed', { trackId: track.id, message: error?.message })
+      stopPortableTrackPlayback(track.id)
+    }
+  })
 }
 function createPendingStretchMetadata(input = {}) {
   const sourceDurationSeconds = finitePositiveNumber(input.sourceDurationSeconds)
@@ -8881,7 +9103,7 @@ function updateMidiRegionPlayback(currentBeat = getTransportClockProjectBeat(), 
     const region = byId.get(active.regionId)
     const track = tracksById.get(active.trackId)
     const activeEndSeconds = beatsToSeconds(active.endBeat, tempoMap)
-    if (!region || region.muted || !audibleTrackIds.has(active.trackId) || !track?.instrument || track.instrument.enabled === false || currentProjectSeconds >= activeEndSeconds + 0.05) {
+    if (!region || region.muted || !audibleTrackIds.has(active.trackId) || !track?.instrument || track.instrument.enabled === false || getTrackPortablePlaybackDecision(track).mode !== 'live' || currentProjectSeconds >= activeEndSeconds + 0.05) {
       stopPlaybackNote(key)
     }
   })
@@ -8892,7 +9114,7 @@ function updateMidiRegionPlayback(currentBeat = getTransportClockProjectBeat(), 
     const regionEndBeat = Math.max(regionStartBeat, Number(region.endBeat) || regionStartBeat)
     if (lookaheadEndBeat < regionStartBeat || beat >= regionEndBeat) return
     const track = tracksById.get(region.trackId)
-    if (!audibleTrackIds.has(region.trackId) || !track?.instrument || track.instrument.enabled === false) return
+    if (!audibleTrackIds.has(region.trackId) || !track?.instrument || track.instrument.enabled === false || getTrackPortablePlaybackDecision(track).mode !== 'live') return
     ensureTrackInstrumentInstance(track)
     const schedule = getMidiPlaybackSchedule(region)
     const firstIndex = findMidiPlaybackScheduleStart(schedule.entries, beat - schedule.maxDurationBeats)
@@ -12314,7 +12536,9 @@ function bindEditorEvents() {
   }
   /* soura-signal-deck-v1:js:end */
   const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
-  const applyTimelineGeometry = () => { timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar); syncBarsFromPositiveBeats(); app.querySelector('[data-arrangement]')?.style.setProperty('--bars', timelineState.bars); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-beat', `${timelineState.pixelsPerBar / timelineState.beatsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--timeline-content-width', `${timelineContentWidth()}px`); clampTimelineSystems(); updateCycleDomFromState(); setPlayhead(timelineState.playheadX) }
+  // Viewport geometry may move the playhead's pixels, but it must never seek or
+  // synchronize the audio engine. Musical time remains owned by the transport.
+  const applyTimelineGeometry = () => { timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar); syncBarsFromPositiveBeats(); app.querySelector('[data-arrangement]')?.style.setProperty('--bars', timelineState.bars); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-beat', `${timelineState.pixelsPerBar / timelineState.beatsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--timeline-content-width', `${timelineContentWidth()}px`); clampTimelineSystems(); updateCycleDomFromState(); setPlayhead(timelineState.playheadX, VIEWPORT_PLAYHEAD_UPDATE_OPTIONS) }
   let renderedTimelineBeatRange = getTimelineRenderBeatRange()
   let timelineVisualRefreshRaf = 0
   const refreshTimelineVisualsLive = ({ preserveRegions = false, refreshGlobalTracks = true } = {}) => {
@@ -12436,6 +12660,7 @@ function bindEditorEvents() {
   let timelineZoomSettleTimer = 0
 
   const queueTimelineZoom = ({ zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats }) => {
+    souraPerformanceDiagnostics.recordViewportChange(isPlaying)
     if (pendingTimelineZoom) {
       pendingTimelineZoom.zoomFactor *= zoomFactor
       pendingTimelineZoom.mouseX = mouseX
@@ -12454,7 +12679,8 @@ function bindEditorEvents() {
       if (!zoom || !grid) return
 
       timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoom.zoomFactor)
-      timelineState.playheadX = beatsFromBarZeroToX(zoom.playheadBeat)
+      const visualPlayheadBeat = isPlaying ? getTransportClockProjectBeat() : zoom.playheadBeat
+      timelineState.playheadX = beatsFromBarZeroToX(visualPlayheadBeat)
       if (zoom.cycleBeats) {
         let startBeat = zoom.cycleBeats.start
         let endBeat = zoom.cycleBeats.end
@@ -13428,8 +13654,10 @@ async function init() {
       'Preparing audio assets'
     )
 
-    const mediaWarmup =
-      hydrateProjectAudioAssets()
+    const mediaWarmup = Promise.all([
+      hydrateProjectAudioAssets(),
+      preparePortableTrackPlayback()
+    ])
 
     const mediaResult =
       await waitForWarmup(

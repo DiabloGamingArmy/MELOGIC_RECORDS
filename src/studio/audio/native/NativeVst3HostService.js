@@ -1,3 +1,5 @@
+import { isSouraDesktopRuntime } from '../../runtime/SouraRuntimeCapabilities.js'
+
 let invokeFn = null
 async function getInvoke() {
   if (invokeFn) return invokeFn
@@ -6,7 +8,7 @@ async function getInvoke() {
   return invokeFn
 }
 export function isNativeVst3HostRuntime() {
-  return Boolean(globalThis.__TAURI_INTERNALS__ || globalThis.__TAURI__ || navigator.userAgent.includes('Tauri'))
+  return isSouraDesktopRuntime()
 }
 export async function ensureNativeVst3Host({ instanceId, path, sampleRate = 48000, maxBlockSize = 512 } = {}) {
   if (!isNativeVst3HostRuntime()) throw new Error('Native VST3 hosting is available only in Soura Desktop.')

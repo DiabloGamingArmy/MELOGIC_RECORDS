@@ -8,6 +8,8 @@
   It only configures or interrogates the native engine.
 */
 
+import { isSouraDesktopRuntime } from '../../runtime/SouraRuntimeCapabilities.js'
+
 let invokeFn = null
 
 async function getInvoke() {
@@ -27,11 +29,7 @@ async function getInvoke() {
 }
 
 export function isSouraNativeRuntime() {
-  return Boolean(
-    globalThis.__TAURI_INTERNALS__
-    || globalThis.__TAURI__
-    || navigator.userAgent.includes('Tauri')
-  )
+  return isSouraDesktopRuntime()
 }
 
 export class NativeSouraAudioBackend {
