@@ -86,7 +86,15 @@ import { SOURA_ASSET_DRAG_TYPE, createSouraAssetDragPayload, parseSouraAssetDrag
 import { getAssetLibraryShortcutAction } from './studio/assets/assetLibraryShortcuts.js'
 import { measureTimeDomainSamples, updateMeterBallistics } from './studio/audio/audioMetering.js'
 import { applyInheritedTrackColor, DEFAULT_METRONOME_SETTINGS, moveArrayItem, normalizeMetronomeSettings } from './studio/state/trackEditing.js'
-import { arrangementViewportTransforms } from './studio/timeline/arrangementViewport.js'
+import {
+  arrangementViewportTransforms,
+  beatForTimelineX,
+  collectTimelineGeometryInvariantErrors,
+  normalizeWheelDeltaPixels,
+  planTimelineZoomViewport,
+  timelineXForBeat,
+  timelineZoomFactorFromWheel
+} from './studio/timeline/arrangementViewport.js'
 import {
   getTimelineViewportBeatRange,
   timelineBeatRangesOverlap,
@@ -107,6 +115,10 @@ const souraPerformanceDiagnostics = createSouraPerformanceDiagnostics({
 })
 window.__souraPerformanceDiagnostics = Object.freeze({
   snapshot: () => souraPerformanceDiagnostics.snapshot()
+})
+let lastTimelineGeometryDiagnostics = { revision: 0, errors: [], checkedAt: 0 }
+window.__souraTimelineGeometry = Object.freeze({
+  snapshot: () => structuredClone(lastTimelineGeometryDiagnostics)
 })
 const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw', 'stagemaker'])
 const PREF_KEY = 'melogic_studio_keep_site_menu_open'
@@ -395,6 +407,9 @@ let selectedTrackAutomation = null
 let transportInlineEdit = null
 let transportValueDrag = null
 let timelineUserInteractingUntil = 0
+let timelineZoomOwnsViewportUntil = 0
+let timelineProgrammaticScrollUntil = 0
+let timelineGeometryRevision = 0
 let timelineExtensionRepeatTimer = 0
 let editorEventBindingsCleanup = null
 let timelineViewportRefreshRequest = null
@@ -2502,8 +2517,11 @@ function totalTrackLaneHeight() {
 }
 function normalizedWheelPixels(event, axis = 'y') {
   const raw = axis === 'x' ? event.deltaX : event.deltaY
-  const unit = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? Math.max(1, window.innerHeight * 0.85) : 1)
-  return raw * unit
+  return normalizeWheelDeltaPixels({
+    delta: raw,
+    deltaMode: event.deltaMode,
+    pageSize: Math.max(1, window.innerHeight * 0.85)
+  })
 }
 const TRACK_AUTOMATION_PARAMETERS = [
   { id: 'volume', label: 'Volume', min: 0, max: 100, unit: '%', valueKey: 'volume' },
@@ -6516,7 +6534,7 @@ function updateUtilityToggleButton(selector, enabled) {
 }
 function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
 function markTimelineUserInteraction(durationMs = 900){ timelineUserInteractingUntil = Date.now() + durationMs }
-function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); syncArrangementRulerScroll(grid.scrollLeft) }
+function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil || performance.now() < timelineZoomOwnsViewportUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; timelineProgrammaticScrollUntil=performance.now()+50; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); syncArrangementRulerScroll(grid.scrollLeft) }
 function getTransportClockProjectSeconds() {
   if (!isPlaying || !transportClock) return secondsFromPlayhead()
   const ctx = getAudioContext()
@@ -6823,8 +6841,8 @@ function clampTimelineSystems() {
     cycleRange = { startX: s, endX: e }
   }
 }
-function beatToX(beat = 0) { const metrics = getTimelineMetrics(); return metrics.zeroX + Number(beat || 0) * metrics.pixelsPerBeat }
-function xToBeat(x = 0) { const metrics = getTimelineMetrics(); return (Number(x || 0) - metrics.zeroX) / metrics.pixelsPerBeat }
+function beatToX(beat = 0) { const metrics = getTimelineMetrics(); return timelineXForBeat({ beat, originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat }) }
+function xToBeat(x = 0) { const metrics = getTimelineMetrics(); return beatForTimelineX({ x, originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat }) }
 function snapBeat(beat = 0, snapValue = 1) { const value = Number(snapValue) || 1; return Math.round(Number(beat || 0) / value) * value }
 function clampBeat(beat = 0) { const metrics = getTimelineMetrics(); return clamp(Number(beat) || 0, metrics.minBeat, metrics.maxBeat) }
 function snapBeatToGrid(beat = 0, stepBeats = getSnapStepBeats(), direction = 'nearest') {
@@ -12536,22 +12554,144 @@ function bindEditorEvents() {
   }
   /* soura-signal-deck-v1:js:end */
   const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
+  const updateGlobalTrackGeometryDom = () => {
+    const byId = (items = []) => new Map(items.map((item) => [item.id, item]))
+    const arrangements = byId(globalTracks.arrangement || [])
+    const markers = byId(globalTracks.markers || [])
+    const timeSignatures = byId(normalizeTimeSignatureMap())
+    const keySignatures = byId(normalizeKeySignatureMap())
+
+    app.querySelectorAll('[data-global-arrangement]').forEach((element) => {
+      const item = arrangements.get(element.dataset.globalArrangement)
+      if (!item) return
+      element.style.left = `${beatToX(item.startBeat)}px`
+      element.style.width = `${Math.max(48, (Number(item.endBeat) - Number(item.startBeat)) * beatWidth())}px`
+    })
+    app.querySelectorAll('[data-global-marker]').forEach((element) => {
+      const item = markers.get(element.dataset.globalMarker)
+      if (!item) return
+      element.style.left = `${beatToX(item.beat)}px`
+      if (Number(item.durationBeats) > 0) element.style.width = `${Math.max(24, Number(item.durationBeats) * beatWidth())}px`
+    })
+    app.querySelectorAll('[data-global-time-signature]').forEach((element) => {
+      const item = timeSignatures.get(element.dataset.globalTimeSignature)
+      if (item) element.style.left = `${beatToX(item.beat)}px`
+    })
+    app.querySelectorAll('[data-global-key-signature]').forEach((element) => {
+      const item = keySignatures.get(element.dataset.globalKeySignature)
+      if (item) element.style.left = `${beatToX(item.beat)}px`
+    })
+
+    const template = document.createElement('template')
+    template.innerHTML = renderTempoLane(normalizeTempoEvents())
+    const nextSvg = template.content.querySelector('.studio-global-tempo-svg')
+    const currentSvg = app.querySelector('.studio-global-tempo-svg')
+    if (nextSvg && currentSvg) currentSvg.replaceWith(nextSvg)
+    template.content.querySelectorAll('[data-global-tempo], [data-global-tempo-curve]').forEach((next) => {
+      const attribute = next.hasAttribute('data-global-tempo') ? 'data-global-tempo' : 'data-global-tempo-curve'
+      const id = next.getAttribute(attribute)
+      const current = app.querySelector(`[${attribute}="${CSS.escape(id)}"]`)
+      if (!current) return
+      current.style.left = next.style.left
+      current.style.top = next.style.top
+    })
+  }
+
+  const syncTimelineSurfaceGeometry = (geometry) => {
+    if (!geometry) return
+    const arrangement = app.querySelector('[data-arrangement]')
+    if (arrangement) arrangement.dataset.timelineGeometryRevision = String(geometry.revision)
+    ;[
+      ['ruler', app.querySelector('[data-timeline-ruler-inner]')],
+      ['global', app.querySelector('[data-global-tracks-inner]')],
+      ['grid', app.querySelector('[data-arrangement-grid-inner]')],
+      ['extension', app.querySelector('[data-timeline-extension-inner]')]
+    ].forEach(([surface, element]) => {
+      if (!element) return
+      element.style.width = `${geometry.contentWidth}px`
+      element.style.minWidth = `${geometry.contentWidth}px`
+      element.style.maxWidth = 'none'
+      element.dataset.timelineGeometryRevision = String(geometry.revision)
+      element.dataset.timelineGeometrySurface = surface
+    })
+  }
+
+  const publishTimelineGeometryDiagnostics = (geometry) => {
+    if (!(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraGeometry'))) return
+    const positions = []
+    app.querySelectorAll('[data-musical-beat]').forEach((element) => positions.push({
+      surface: element.closest('[data-timeline-ruler]') ? 'ruler' : element.closest('[data-timeline-extension-lane]') ? 'extension' : 'grid',
+      beat: Number(element.dataset.musicalBeat),
+      x: parseFloat(element.style.left)
+    }))
+    const { byId } = getTimelineRegionIndex()
+    app.querySelectorAll('[data-midi-region]').forEach((element) => {
+      const region = byId.get(element.dataset.midiRegion)
+      if (region) positions.push({ surface: 'region', beat: Number(region.startBeat) || 0, x: parseFloat(element.style.left) })
+    })
+    const markers = new Map((globalTracks.markers || []).map((marker) => [marker.id, marker]))
+    app.querySelectorAll('[data-global-marker]').forEach((element) => {
+      const marker = markers.get(element.dataset.globalMarker)
+      if (marker) positions.push({ surface: 'marker', beat: Number(marker.beat) || 0, x: parseFloat(element.style.left) })
+    })
+    const arrangement = app.querySelector('[data-arrangement]')
+    positions.push({ surface: 'playhead', beat: xToBeat(timelineState.playheadX), x: parseFloat(arrangement?.style.getPropertyValue('--playhead-x')) })
+    const surfaces = [...app.querySelectorAll('[data-timeline-geometry-surface]')].map((element) => ({
+      name: element.dataset.timelineGeometrySurface,
+      width: parseFloat(element.style.width)
+    }))
+    const errors = collectTimelineGeometryInvariantErrors({
+      originX: geometry.originX,
+      pixelsPerBeat: geometry.pixelsPerBeat,
+      expectedContentWidth: geometry.contentWidth,
+      surfaces,
+      positions,
+      roundTripBeats: [0, 0.25, 1, geometry.maxBeat]
+    })
+    lastTimelineGeometryDiagnostics = { revision: geometry.revision, errors, checkedAt: performance.now(), surfaceCount: surfaces.length, positionCount: positions.length }
+    document.documentElement.dataset.souraTimelineGeometry = errors.length ? 'failed' : 'ok'
+  }
+
   // Viewport geometry may move the playhead's pixels, but it must never seek or
   // synchronize the audio engine. Musical time remains owned by the transport.
-  const applyTimelineGeometry = () => { timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar); syncBarsFromPositiveBeats(); app.querySelector('[data-arrangement]')?.style.setProperty('--bars', timelineState.bars); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--pixels-per-beat', `${timelineState.pixelsPerBar / timelineState.beatsPerBar}px`); app.querySelector('[data-arrangement]')?.style.setProperty('--timeline-content-width', `${timelineContentWidth()}px`); clampTimelineSystems(); updateCycleDomFromState(); setPlayhead(timelineState.playheadX, VIEWPORT_PLAYHEAD_UPDATE_OPTIONS) }
+  const applyTimelineGeometry = () => {
+    timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar)
+    syncBarsFromPositiveBeats()
+    const metrics = getTimelineMetrics()
+    const geometry = {
+      revision: ++timelineGeometryRevision,
+      contentWidth: timelineContentWidth(),
+      maxBeat: metrics.maxBeat,
+      originX: metrics.zeroX,
+      pixelsPerBeat: metrics.pixelsPerBeat
+    }
+    const arrangement = app.querySelector('[data-arrangement]')
+    arrangement?.style.setProperty('--bars', timelineState.bars)
+    arrangement?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`)
+    arrangement?.style.setProperty('--pixels-per-beat', `${metrics.pixelsPerBeat}px`)
+    arrangement?.style.setProperty('--timeline-content-width', `${geometry.contentWidth}px`)
+    syncTimelineSurfaceGeometry(geometry)
+    clampTimelineSystems()
+    updateCycleDomFromState()
+    setPlayhead(timelineState.playheadX, VIEWPORT_PLAYHEAD_UPDATE_OPTIONS)
+    return geometry
+  }
   let renderedTimelineBeatRange = getTimelineRenderBeatRange()
   let timelineVisualRefreshRaf = 0
   const refreshTimelineVisualsLive = ({ preserveRegions = false, refreshGlobalTracks = true } = {}) => {
-    applyTimelineGeometry()
+    const geometry = applyTimelineGeometry()
     const gridModel = buildTimelineMusicalGridModel()
     updateTimelineRulerDom(gridModel)
     updateTimelineGridLinesDom(gridModel, { preserveRegions })
     updateTimelineExtensionDom(gridModel)
     if (refreshGlobalTracks) updateGlobalTrackLaneDom()
+    else updateGlobalTrackGeometryDom()
+    syncTimelineSurfaceGeometry(geometry)
     updateCycleDomFromState()
     updateTransportDisplay()
     renderedTimelineBeatRange = getTimelineRenderBeatRange()
     syncTimelineScroll(null, { refresh: false })
+    publishTimelineGeometryDiagnostics(geometry)
     if (!preserveRegions) bindMidiRegionEvents()
   }
   const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
@@ -12661,6 +12801,8 @@ function bindEditorEvents() {
 
   const queueTimelineZoom = ({ zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats }) => {
     souraPerformanceDiagnostics.recordViewportChange(isPlaying)
+    timelineZoomOwnsViewportUntil = performance.now() + 180
+    timelineProgrammaticScrollUntil = performance.now() + 180
     if (pendingTimelineZoom) {
       pendingTimelineZoom.zoomFactor *= zoomFactor
       pendingTimelineZoom.mouseX = mouseX
@@ -12678,7 +12820,8 @@ function bindEditorEvents() {
       pendingTimelineZoom = null
       if (!zoom || !grid) return
 
-      timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * zoom.zoomFactor)
+      const frameZoomFactor = Math.exp(clamp(Math.log(Math.max(0.000001, zoom.zoomFactor)), -0.32, 0.32))
+      timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * frameZoomFactor)
       const visualPlayheadBeat = isPlaying ? getTransportClockProjectBeat() : zoom.playheadBeat
       timelineState.playheadX = beatsFromBarZeroToX(visualPlayheadBeat)
       if (zoom.cycleBeats) {
@@ -12694,9 +12837,20 @@ function bindEditorEvents() {
         }
       }
 
-      applyTimelineGeometry()
-      const newTimelineX = beatsFromBarZeroToX(zoom.anchorBeat)
-      grid.scrollLeft = clamp(newTimelineX - zoom.mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth))
+      const geometry = applyTimelineGeometry()
+      const viewportPlan = planTimelineZoomViewport({
+        targetPixelsPerBeat: geometry.pixelsPerBeat,
+        originX: geometry.originX,
+        maxBeat: geometry.maxBeat,
+        contentWidth: geometry.contentWidth,
+        viewportWidth: grid.clientWidth,
+        pointerViewportX: zoom.mouseX,
+        pointerBeat: zoom.anchorBeat,
+        playheadBeat: visualPlayheadBeat,
+        followPlayhead,
+        playing: isPlaying
+      })
+      grid.scrollLeft = viewportPlan.scrollLeft
 
       // One canonical model, one paint transaction, no region teardown.
       const gridModel = buildTimelineMusicalGridModel()
@@ -12704,22 +12858,19 @@ function bindEditorEvents() {
       updateTimelineGridLinesDom(gridModel, { preserveRegions: true })
       updateTimelineExtensionDom(gridModel)
       updateTimelineRegionGeometryDom()
+      updateGlobalTrackGeometryDom()
+      syncTimelineSurfaceGeometry(geometry)
       updateCycleDomFromState()
       updateTransportDisplay()
       renderedTimelineBeatRange = getTimelineRenderBeatRange()
       syncTimelineScroll(grid, { refresh: false })
-
-      requestAnimationFrame(() => {
-        const correctedX = beatsFromBarZeroToX(zoom.anchorBeat)
-        grid.scrollLeft = clamp(correctedX - zoom.mouseX, 0, Math.max(0, timelineContentWidth() - grid.clientWidth))
-        syncTimelineScroll(grid, { refresh: false })
-        updateMidiRollPlayheadDom()
-      })
+      updateMidiRollPlayheadDom()
+      publishTimelineGeometryDiagnostics(geometry)
 
       if (timelineZoomSettleTimer) window.clearTimeout(timelineZoomSettleTimer)
       timelineZoomSettleTimer = window.setTimeout(() => {
         timelineZoomSettleTimer = 0
-        refreshTimelineVisualsLive({ preserveRegions: true, refreshGlobalTracks: true })
+        refreshTimelineVisualsLive({ preserveRegions: true, refreshGlobalTracks: false })
         refreshVisibleTimelineRegionsDom()
         scheduleVisibleAudioWaveformRefresh(0)
         scheduleEditorSave()
@@ -12727,21 +12878,42 @@ function bindEditorEvents() {
     })
   }
 
+  const queueTimelineZoomAtViewport = ({ deltaY = 0, deltaMode = 0, mouseX = 0 } = {}) => {
+    if (!grid) return false
+    const oldTimelineX = grid.scrollLeft + mouseX
+    const anchorBeat = xToBeatsFromBarZero(oldTimelineX)
+    let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX)
+    if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat)
+    const cycleBeats = cycleRange
+      ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) }
+      : null
+    const zoomFactor = timelineZoomFactorFromWheel({
+      deltaY,
+      deltaMode,
+      pageSize: Math.max(1, grid.clientHeight || window.innerHeight * 0.85)
+    })
+    if (Math.abs(zoomFactor - 1) < 0.000001) return false
+    queueTimelineZoom({ zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats })
+    return true
+  }
+
+  if (import.meta.env?.DEV) {
+    window.__souraTimelineViewportTest = Object.freeze({
+      zoomAt: ({ deltaY = 0, deltaMode = 0, pointerRatio = 0.5 } = {}) => queueTimelineZoomAtViewport({
+        deltaY,
+        deltaMode,
+        mouseX: grid ? grid.clientWidth * clamp(Number(pointerRatio) || 0, 0, 1) : 0
+      })
+    })
+  }
+
   const isPinnedRight = () => !!grid && (grid.scrollLeft + grid.clientWidth >= grid.scrollWidth - 4)
-  grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); if (overTimeline) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if ((event.ctrlKey || event.metaKey) && overTimeline) {
+  grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); const zoomGesture = (event.ctrlKey || event.metaKey) && overTimeline; if (overTimeline && !zoomGesture) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if (zoomGesture) {
       event.preventDefault()
+      if (!(followPlayhead && isPlaying)) markTimelineUserInteraction()
       const rect = grid.getBoundingClientRect()
       const mouseX = event.clientX - rect.left
-      const oldTimelineX = grid.scrollLeft + mouseX
-      const anchorBeat = xToBeatsFromBarZero(oldTimelineX)
-      let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX)
-      if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat)
-      const cycleBeats = cycleRange
-        ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) }
-        : null
-      const direction = event.deltaY < 0 ? 1 : -1
-      const zoomFactor = direction > 0 ? 1.12 : 1 / 1.12
-      queueTimelineZoom({ zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats })
+      queueTimelineZoomAtViewport({ deltaY: event.deltaY, deltaMode: event.deltaMode, mouseX })
       return
     }
     if (event.altKey && overTrackZone) { event.preventDefault(); timelineState.trackHeight = clamp(timelineState.trackHeight + (event.deltaY < 0 ? 6 : -6), 44, 220); updateTrackHeightDom(); scheduleTimelineVisualRefresh(); scheduleEditorSave(); return }
@@ -12771,16 +12943,7 @@ function bindEditorEvents() {
       1,
       Math.round(arrangement?.clientWidth || grid.parentElement?.clientWidth || 0)
     )
-    const projectWidth = Math.max(
-      viewportWidth,
-      Math.round(
-        parseFloat(inner.style.width || '') ||
-        inner.scrollWidth ||
-        inner.getBoundingClientRect().width ||
-        grid.scrollWidth ||
-        viewportWidth
-      )
-    )
+    const projectWidth = Math.max(viewportWidth, timelineContentWidth())
 
     // The arrangement itself is a one-column CSS grid. Its auto-sized column was
     // expanding to the inner musical canvas width (e.g. 8706px), even though the
@@ -12802,9 +12965,14 @@ function bindEditorEvents() {
     grid.style.overscrollBehaviorX = 'contain'
 
     // Preserve the wide musical canvas on the inner content element.
-    inner.style.width = `${projectWidth}px`
-    inner.style.minWidth = `${projectWidth}px`
-    inner.style.maxWidth = 'none'
+    const geometry = {
+      revision: timelineGeometryRevision || 1,
+      contentWidth: projectWidth,
+      maxBeat: getTimelineMetrics().maxBeat,
+      originX: getTimelineMetrics().zeroX,
+      pixelsPerBeat: getTimelineMetrics().pixelsPerBeat
+    }
+    syncTimelineSurfaceGeometry(geometry)
   }
 
   repairArrangementHorizontalViewport()
@@ -12828,7 +12996,7 @@ function bindEditorEvents() {
     syncTimelineScroll(grid)
   }, { passive:false, capture:true })
 
-  grid?.addEventListener('scroll', () => { markTimelineUserInteraction(); syncTimelineScroll(grid); syncTrackVerticalScroll(grid); scheduleTimelineViewportRefresh(); scheduleVisibleAudioWaveformRefresh() }, { passive:true })
+  grid?.addEventListener('scroll', () => { if (performance.now() >= timelineProgrammaticScrollUntil) markTimelineUserInteraction(); syncTimelineScroll(grid); syncTrackVerticalScroll(grid); scheduleTimelineViewportRefresh(); scheduleVisibleAudioWaveformRefresh() }, { passive:true })
   trackList?.addEventListener('wheel', (event) => { if (!grid) return; event.preventDefault(); markTimelineUserInteraction(); grid.scrollTop = clamp(grid.scrollTop + normalizedWheelPixels(event, 'y'), 0, Math.max(0, grid.scrollHeight - grid.clientHeight)) }, { passive:false })
   const restoreTimelineExtensionScroll = (drag = extensionDrag) => {
     if (!grid || !drag) return
