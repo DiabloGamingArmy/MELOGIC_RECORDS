@@ -92,7 +92,6 @@ import {
   beatForTimelineX,
   collectTimelineGeometryInvariantErrors,
   normalizeWheelDeltaPixels,
-  planTimelineScrollRefresh,
   planTimelineZoomViewport,
   timelineXForBeat,
   timelineZoomFactorFromWheel
@@ -13062,7 +13061,6 @@ function bindEditorEvents() {
     grid.style.boxSizing = 'border-box'
     grid.style.overflowX = 'auto'
     grid.style.overscrollBehaviorX = 'contain'
-    grid.style.scrollBehavior = 'auto'
 
     // Preserve the wide musical canvas on the inner content element.
     const geometry = {
@@ -13096,21 +13094,7 @@ function bindEditorEvents() {
     syncTimelineScroll(grid)
   }, { passive:false, capture:true })
 
-  grid?.addEventListener('scroll', () => {
-    const scrollPolicy = planTimelineScrollRefresh({
-      now: performance.now(),
-      programmaticScrollUntil: timelineProgrammaticScrollUntil,
-      zoomOwnsViewportUntil: timelineZoomOwnsViewportUntil
-    })
-    if (scrollPolicy.shouldMarkUserInteraction) markTimelineUserInteraction()
-    // Synchronize ruler/global/extension transforms immediately on every scroll.
-    syncTimelineScroll(grid)
-    syncTrackVerticalScroll(grid)
-    // queueTimelineZoom already paints one complete canonical geometry transaction.
-    // Do not race it with a second delayed ruler/region rebuild from this scroll event.
-    if (scrollPolicy.shouldRefreshViewport) scheduleTimelineViewportRefresh()
-    if (scrollPolicy.shouldRefreshWaveforms) scheduleVisibleAudioWaveformRefresh()
-  }, { passive:true })
+  grid?.addEventListener('scroll', () => { if (performance.now() >= timelineProgrammaticScrollUntil) markTimelineUserInteraction(); syncTimelineScroll(grid); syncTrackVerticalScroll(grid); scheduleTimelineViewportRefresh(); scheduleVisibleAudioWaveformRefresh() }, { passive:true })
   trackList?.addEventListener('wheel', (event) => { if (!grid) return; event.preventDefault(); markTimelineUserInteraction(); grid.scrollTop = clamp(grid.scrollTop + normalizedWheelPixels(event, 'y'), 0, Math.max(0, grid.scrollHeight - grid.clientHeight)) }, { passive:false })
   const restoreTimelineExtensionScroll = (drag = extensionDrag) => {
     if (!grid || !drag) return

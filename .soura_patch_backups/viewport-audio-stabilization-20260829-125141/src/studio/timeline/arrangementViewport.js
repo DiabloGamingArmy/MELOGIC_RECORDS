@@ -32,27 +32,6 @@ export function timelineZoomFactorFromWheel({
   return direction < 0 ? magnitude : 1 / magnitude
 }
 
-// soura-viewport-motion-lock-v1
-// A zoom transaction already paints ruler/grid/regions from one canonical geometry
-// revision. Its native scroll event must not enqueue a second delayed rebuild.
-// Follow-playhead scrolling remains refreshable because it is not zoom-owned.
-export function planTimelineScrollRefresh({
-  now = 0,
-  programmaticScrollUntil = 0,
-  zoomOwnsViewportUntil = 0
-} = {}) {
-  const timestamp = finiteNumber(now)
-  const programmatic = timestamp < finiteNumber(programmaticScrollUntil)
-  const zoomOwnsViewport = timestamp < finiteNumber(zoomOwnsViewportUntil)
-  return {
-    programmatic,
-    zoomOwnsViewport,
-    shouldMarkUserInteraction: !programmatic,
-    shouldRefreshViewport: !zoomOwnsViewport,
-    shouldRefreshWaveforms: !zoomOwnsViewport
-  }
-}
-
 export function timelineXForBeat({ beat = 0, originX = 0, pixelsPerBeat = 1 } = {}) {
   return finiteNumber(originX) + (finiteNumber(beat) * Math.max(0.000001, finiteNumber(pixelsPerBeat, 1)))
 }

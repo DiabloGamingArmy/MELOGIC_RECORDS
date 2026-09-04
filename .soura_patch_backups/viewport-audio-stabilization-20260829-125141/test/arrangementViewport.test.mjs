@@ -6,7 +6,6 @@ import {
   clampArrangementViewport,
   collectTimelineGeometryInvariantErrors,
   normalizeWheelDeltaPixels,
-  planTimelineScrollRefresh,
   planTimelineZoomViewport,
   timelineXForBeat,
   timelineZoomFactorFromWheel
@@ -24,34 +23,20 @@ test('viewport clamps min and max scroll boundaries', () => {
   assert.deepEqual(clampArrangementViewport({ scrollLeft: 900, scrollTop: 800, maxScrollLeft: 400, maxScrollTop: 200 }), { scrollLeft: 400, scrollTop: 200 })
 })
 
-test('wheel zoom preserves the current deliberate 12% per-event magnitude', () => {
-  const zoomIn = timelineZoomFactorFromWheel({ deltaY: -1 })
-  const zoomInLargeDelta = timelineZoomFactorFromWheel({ deltaY: -40 })
-  const zoomOut = timelineZoomFactorFromWheel({ deltaY: 1 })
-  assert.equal(zoomIn, 1.12)
-  assert.equal(zoomInLargeDelta, 1.12)
-  assert.ok(Math.abs(zoomIn * zoomOut - 1) < 1e-12)
+test('wheel zoom is proportional to normalized delta instead of event count', () => {
+  const tiny = timelineZoomFactorFromWheel({ deltaY: -1 })
+  const larger = timelineZoomFactorFromWheel({ deltaY: -40 })
+  assert.ok(tiny > 1 && tiny < 1.01)
+  assert.ok(larger > tiny)
+  assert.ok(Math.abs(tiny * timelineZoomFactorFromWheel({ deltaY: 1 }) - 1) < 1e-12)
   assert.equal(normalizeWheelDeltaPixels({ delta: 2, deltaMode: 1 }), 32)
   assert.equal(normalizeWheelDeltaPixels({ delta: 1, deltaMode: 2, pageSize: 720 }), 720)
 })
 
-test('zoom-owned programmatic scroll does not enqueue a second viewport paint', () => {
-  const duringZoom = planTimelineScrollRefresh({ now: 100, programmaticScrollUntil: 280, zoomOwnsViewportUntil: 280 })
-  assert.deepEqual(duringZoom, {
-    programmatic: true,
-    zoomOwnsViewport: true,
-    shouldMarkUserInteraction: false,
-    shouldRefreshViewport: false,
-    shouldRefreshWaveforms: false
-  })
-})
-
-test('follow-playhead programmatic scroll still refreshes visible timeline content', () => {
-  const followScroll = planTimelineScrollRefresh({ now: 100, programmaticScrollUntil: 150, zoomOwnsViewportUntil: 0 })
-  assert.equal(followScroll.programmatic, true)
-  assert.equal(followScroll.shouldMarkUserInteraction, false)
-  assert.equal(followScroll.shouldRefreshViewport, true)
-  assert.equal(followScroll.shouldRefreshWaveforms, true)
+test('continued small pinch deltas progress smoothly across the zoom range', () => {
+  const one = timelineZoomFactorFromWheel({ deltaY: -1 })
+  const accumulated = Array.from({ length: 100 }, () => one).reduce((value, factor) => value * factor, 1)
+  assert.ok(accumulated > 1.2 && accumulated < 1.23)
 })
 
 test('follow-playhead zoom centers the authoritative beat without mutating it', () => {
@@ -101,10 +86,6 @@ test('timeline coordinate invariants share one beat-to-pixel authority', () => {
     expectedContentWidth: 2512,
     surfaces: ['ruler', 'grid', 'extension'].map((name) => ({ name, width: 2512 })),
     positions,
-    durations: [
-      { surface: 'region', durationBeats: 0.5, width: 0.5 * pixelsPerBeat },
-      { surface: 'region', durationBeats: 4, width: 4 * pixelsPerBeat }
-    ],
     roundTripBeats: [0, 0.25, 7, 63]
   })
   assert.deepEqual(errors, [])

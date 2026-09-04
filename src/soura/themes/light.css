@@ -15,7 +15,7 @@ Theme-only visual overrides. No layout/scroll geometry changes.
   --ml-border: #cbd3de;
   --ml-border-strong: #aeb9c7;
   --ml-shadow-float: 0 16px 42px rgba(15, 23, 42, .13);
-  --ml-focus-ring: 0 0 0 3px rgba(88, 101, 216, .16);
+  --ml-focus-ring: 0 0 0 3px rgba(8, 127, 158, .16);
 
   --soura-white: #ffffff;
   --soura-canvas: #f8fafc;
@@ -27,7 +27,7 @@ Theme-only visual overrides. No layout/scroll geometry changes.
   --soura-ink-2: #334155;
   --soura-muted: #64748b;
   --soura-faint: #94a3b8;
-  --soura-accent: #5865d8;
+  --soura-accent: #087f9e;
 }
 
 /* Root application */
@@ -79,9 +79,25 @@ Theme-only visual overrides. No layout/scroll geometry changes.
 :root[data-soura-theme="light"] .studio-editor-page button.is-active,
 :root[data-soura-theme="light"] .studio-editor-page button[class*="active"],
 :root[data-soura-theme="light"] .studio-editor-page [aria-pressed="true"] {
-  background-color:#eef0ff !important;
-  border-color: #8c96df !important;
-  color:#303b9b !important;
+  background-color:#e7f7fb !important;
+  border-color: #53a9bc !important;
+  color:#075f75 !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [data-track-mute].is-active {
+  background-color:#fff3dc !important;
+  border-color:#d7a552 !important;
+  color:#76521b !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page [data-track-solo].is-active {
+  background-color:#fff7cf !important;
+  border-color:#d4b444 !important;
+  color:#654f08 !important;
+}
+:root[data-soura-theme="light"] .studio-editor-page .studio-record-arm.is-active,
+:root[data-soura-theme="light"] .studio-editor-page [data-transport-record].is-active {
+  background-color:#fff0f2 !important;
+  border-color:#e47b89 !important;
+  color:#a4253a !important;
 }
 
 /* Inputs */
@@ -277,7 +293,7 @@ Theme-only visual overrides. No layout/scroll geometry changes.
 
 /* Selection / focus */
 :root[data-soura-theme="light"] .studio-editor-page ::selection {
-  background:rgba(88, 101, 216, .22);
+  background:rgba(8, 127, 158, .2);
   color:#111827;
 }
 :root[data-soura-theme="light"] .studio-editor-page :focus-visible {
