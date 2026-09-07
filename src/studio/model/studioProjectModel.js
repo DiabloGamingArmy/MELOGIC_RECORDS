@@ -1,3 +1,4 @@
+import { normalizeNoteNotation, normalizeRegionScore } from '../score/scoreModel.js'
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d)
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
 const pitchTraceVersion = 'pitch-trace-v1'
@@ -66,10 +67,11 @@ export function createTrackModel(input = {}) {
 export function normalizeMidiNote(note = {}) {
   return {
     id: String(note.id || makeId('note')),
-    pitch: clamp(Math.round(num(note.pitch, 60)), 0, 127),
+    pitch: clamp(Math.round(num(note.note ?? note.pitch, 60)), 0, 127),
     startBeat: num(note.startBeat, 0),
     durationBeats: Math.max(0.0001, num(note.durationBeats, 1)),
-    velocity: clamp(num(note.velocity, 0.8), 0, 1)
+    velocity: clamp(num(note.velocity, 0.8), 0, 1),
+    ...(note.notation ? { notation: normalizeNoteNotation(note.notation) } : {})
   }
 }
 
@@ -350,6 +352,7 @@ export function normalizeRegion(region = {}) {
     gain: clamp(num(region.gain, 1), 0, 2),
     pan: clamp(num(region.pan, 0), -1, 1),
     muted: !!region.muted,
+    ...(region.score ? { score: normalizeRegionScore(region.score) } : {}),
     notes: type === 'midi' ? (Array.isArray(region.notes) ? region.notes.map(normalizeMidiNote) : []) : []
   }
 }

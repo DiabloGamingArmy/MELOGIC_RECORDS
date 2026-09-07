@@ -14,18 +14,6 @@ function syncWaveformX(view, scrollLeft = getScroll(view)?.scrollLeft || 0) {
   view.style.setProperty('--pt-waveform-offset', `${-Math.max(0, scrollLeft)}px`)
 }
 
-// soura-region-editor-keyboard-native-scroll-v3
-// Safari/WebKit-safe keyboard synchronization: keep keyboard painting in native layout.
-// The pitch canvas remains the scroll owner; the keyboard mirrors only scrollTop.
-function syncPitchKeyboardY(view, scrollTop = getScroll(view)?.scrollTop || 0) {
-  const keyboard = view?.querySelector?.('.studio-pitch-trace-keyboard')
-  if (!keyboard) return
-  const y = Math.max(0, Number(scrollTop) || 0)
-  keyboard.style.setProperty('--pt-keyboard-scroll-top', `${y}px`)
-  keyboard.style.marginTop = `${-y}px`
-  keyboard.style.transform = 'none'
-}
-
 function applyVerticalState(view, preserve = false, anchorY = 0.5) {
   const state = getState(getViewId(view))
   const scroll = getScroll(view)
@@ -41,7 +29,6 @@ function applyVerticalState(view, preserve = false, anchorY = 0.5) {
       ? Math.max(0, (scrollRatio * Math.max(1, scroll.scrollHeight)) - (scroll.clientHeight * anchorY))
       : state.scrollTop
     syncWaveformX(view, scroll.scrollLeft)
-    syncPitchKeyboardY(view, scroll.scrollTop)
   })
 }
 
@@ -101,14 +88,13 @@ document.addEventListener('wheel', (event) => {
 
 document.addEventListener('scroll', (event) => {
   const scroll = event.target
-  if (!scroll || scroll.nodeType !== 1 || !scroll.matches?.('[data-pitch-trace-scroll]')) return
+  if (!(scroll instanceof Element) || !scroll.matches('[data-pitch-trace-scroll]')) return
   const view = scroll.closest('.studio-pitch-trace-view')
   if (!view) return
   const state = getState(getViewId(view))
   state.scrollLeft = scroll.scrollLeft
   state.scrollTop = scroll.scrollTop
   syncWaveformX(view, scroll.scrollLeft)
-  syncPitchKeyboardY(view, scroll.scrollTop)
   view.dispatchEvent(new CustomEvent('soura:pitch-trace-horizontal-scroll', {
     bubbles: true,
     detail: { scrollLeft: scroll.scrollLeft }
