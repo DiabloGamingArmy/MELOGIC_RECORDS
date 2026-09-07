@@ -24,26 +24,30 @@ export function normalizeWheelDeltaPixels({ delta = 0, deltaMode = 0, pageSize =
 
 export function timelineZoomFactorFromWheel({
   deltaY = 0,
-  step = 1.12
+  deltaMode = 0,
+  pageSize = 800,
+  lineSize = 16,
+  sensitivity = 0.002,
+  maxExponent = 0.28
 } = {}) {
-  const direction = Math.sign(finiteNumber(deltaY))
-  const magnitude = Math.max(1.000001, finiteNumber(step, 1.12))
-  if (!direction) return 1
-  return direction < 0 ? magnitude : 1 / magnitude
+  const pixels = normalizeWheelDeltaPixels({ delta: deltaY, deltaMode, pageSize, lineSize })
+  const limit = Math.max(0.01, Math.abs(finiteNumber(maxExponent, 0.28)))
+  const exponent = Math.max(-limit, Math.min(limit, -pixels * Math.max(0, finiteNumber(sensitivity, 0.002))))
+  return Math.exp(exponent)
 }
 
-// soura-viewport-motion-lock-v1
-// A zoom transaction already paints ruler/grid/regions from one canonical geometry
-// revision. Its native scroll event must not enqueue a second delayed rebuild.
-// Follow-playhead scrolling remains refreshable because it is not zoom-owned.
 export function planTimelineScrollRefresh({
-  now = 0,
-  programmaticScrollUntil = 0,
-  zoomOwnsViewportUntil = 0
+  scrollLeft = 0,
+  geometryRevision = 0,
+  plannedScroll = null,
+  tolerance = 0.5
 } = {}) {
-  const timestamp = finiteNumber(now)
-  const programmatic = timestamp < finiteNumber(programmaticScrollUntil)
-  const zoomOwnsViewport = timestamp < finiteNumber(zoomOwnsViewportUntil)
+  const targetMatches = plannedScroll != null
+    && Math.abs(finiteNumber(scrollLeft) - finiteNumber(plannedScroll.scrollLeft)) <= Math.max(0.000001, finiteNumber(tolerance, 0.5))
+  const revisionMatches = plannedScroll != null
+    && finiteNumber(plannedScroll.revision, -1) === finiteNumber(geometryRevision, -2)
+  const programmatic = targetMatches && revisionMatches
+  const zoomOwnsViewport = programmatic && plannedScroll.owner === 'zoom'
   return {
     programmatic,
     zoomOwnsViewport,
@@ -53,12 +57,45 @@ export function planTimelineScrollRefresh({
   }
 }
 
+export function createTimelineGeometrySnapshot({
+  revision = 0,
+  originX = 0,
+  pixelsPerBeat = 1,
+  maxBeat = 0,
+  contentWidth = 0,
+  viewportWidth = 0,
+  scrollLeft = 0
+} = {}) {
+  const normalizedViewportWidth = Math.max(0, finiteNumber(viewportWidth))
+  const normalizedContentWidth = Math.max(normalizedViewportWidth, finiteNumber(contentWidth))
+  const maxScrollLeft = Math.max(0, normalizedContentWidth - normalizedViewportWidth)
+  const viewport = clampArrangementViewport({ scrollLeft, maxScrollLeft })
+  return {
+    revision: Math.max(0, Math.trunc(finiteNumber(revision))),
+    originX: finiteNumber(originX),
+    pixelsPerBeat: Math.max(0.000001, finiteNumber(pixelsPerBeat, 1)),
+    maxBeat: Math.max(0, finiteNumber(maxBeat)),
+    contentWidth: normalizedContentWidth,
+    viewportWidth: normalizedViewportWidth,
+    maxScrollLeft,
+    scrollLeft: viewport.scrollLeft
+  }
+}
+
 export function timelineXForBeat({ beat = 0, originX = 0, pixelsPerBeat = 1 } = {}) {
   return finiteNumber(originX) + (finiteNumber(beat) * Math.max(0.000001, finiteNumber(pixelsPerBeat, 1)))
 }
 
 export function beatForTimelineX({ x = 0, originX = 0, pixelsPerBeat = 1 } = {}) {
   return (finiteNumber(x) - finiteNumber(originX)) / Math.max(0.000001, finiteNumber(pixelsPerBeat, 1))
+}
+
+export function timelineViewportXForBeat({ beat = 0, geometry = {} } = {}) {
+  return timelineXForBeat({ beat, originX: geometry.originX, pixelsPerBeat: geometry.pixelsPerBeat }) - finiteNumber(geometry.scrollLeft)
+}
+
+export function timelineWidthForBeats({ durationBeats = 0, pixelsPerBeat = 1 } = {}) {
+  return Math.max(0, finiteNumber(durationBeats)) * Math.max(0.000001, finiteNumber(pixelsPerBeat, 1))
 }
 
 export function planTimelineZoomViewport({
@@ -103,7 +140,10 @@ export function collectTimelineGeometryInvariantErrors({
   expectedContentWidth = null,
   surfaces = [],
   positions = [],
+  viewportPositions = [],
   durations = [],
+  bounds = [],
+  expectedRevision = null,
   roundTripBeats = [],
   tolerance = 0.05
 } = {}) {
@@ -117,9 +157,11 @@ export function collectTimelineGeometryInvariantErrors({
   }
 
   for (const surface of surfaces) {
-    if (expectedContentWidth == null) break
-    if (Math.abs(finiteNumber(surface.width) - finiteNumber(expectedContentWidth)) > epsilon) {
+    if (expectedContentWidth != null && Math.abs(finiteNumber(surface.width) - finiteNumber(expectedContentWidth)) > epsilon) {
       errors.push({ kind: 'surface-width', surface: surface.name || 'unknown', expected: finiteNumber(expectedContentWidth), actual: finiteNumber(surface.width) })
+    }
+    if (expectedRevision != null && finiteNumber(surface.revision, -1) !== finiteNumber(expectedRevision, -2)) {
+      errors.push({ kind: 'surface-revision', surface: surface.name || 'unknown', expected: finiteNumber(expectedRevision), actual: finiteNumber(surface.revision, -1) })
     }
   }
 
@@ -130,10 +172,28 @@ export function collectTimelineGeometryInvariantErrors({
     }
   }
 
+  for (const position of viewportPositions) {
+    const expected = timelineXForBeat({ beat: position.beat, originX, pixelsPerBeat }) - finiteNumber(position.scrollLeft)
+    if (Math.abs(finiteNumber(position.x) - expected) > epsilon) {
+      errors.push({ kind: 'viewport-position', surface: position.surface || 'unknown', beat: finiteNumber(position.beat), expected, actual: finiteNumber(position.x) })
+    }
+  }
+
   for (const duration of durations) {
-    const expected = Math.max(0, finiteNumber(duration.durationBeats)) * Math.max(0.000001, finiteNumber(pixelsPerBeat, 1))
+    const expected = timelineWidthForBeats({ durationBeats: duration.durationBeats, pixelsPerBeat })
     if (Math.abs(finiteNumber(duration.width) - expected) > epsilon) {
       errors.push({ kind: 'beat-duration', surface: duration.surface || 'region', durationBeats: finiteNumber(duration.durationBeats), expected, actual: finiteNumber(duration.width) })
+    }
+  }
+
+
+  for (const bound of bounds) {
+    const containerLeft = finiteNumber(bound.containerLeft)
+    const containerRight = containerLeft + Math.max(0, finiteNumber(bound.containerWidth))
+    const left = finiteNumber(bound.left)
+    const right = left + Math.max(0, finiteNumber(bound.width))
+    if (left < containerLeft - epsilon || right > containerRight + epsilon) {
+      errors.push({ kind: 'container-bounds', surface: bound.surface || 'unknown', containerLeft, containerRight, left, right })
     }
   }
 

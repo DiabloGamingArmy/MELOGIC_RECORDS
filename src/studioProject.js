@@ -90,11 +90,14 @@ import { applyInheritedTrackColor, DEFAULT_METRONOME_SETTINGS, moveArrayItem, no
 import {
   arrangementViewportTransforms,
   beatForTimelineX,
+  clampArrangementViewport,
   collectTimelineGeometryInvariantErrors,
+  createTimelineGeometrySnapshot,
   normalizeWheelDeltaPixels,
   planTimelineScrollRefresh,
   planTimelineZoomViewport,
   timelineXForBeat,
+  timelineWidthForBeats,
   timelineZoomFactorFromWheel
 } from './studio/timeline/arrangementViewport.js'
 import {
@@ -109,6 +112,8 @@ import {
   regionXToMusicalPosition,
   snapMusicalPosition
 } from './studio/regionEditorCoordinates.js'
+
+import { getRegionTimelineRange, getTimelineRegionGeometry, getTimelineRegionLaneGeometry } from './studio/timeline/regionGeometry.js'
 
 const app = document.querySelector('#app')
 const souraRuntimeCapabilities = getSouraRuntimeCapabilities()
@@ -419,12 +424,10 @@ let selectedTrackAutomation = null
 let transportInlineEdit = null
 let transportValueDrag = null
 let timelineUserInteractingUntil = 0
-let timelineZoomOwnsViewportUntil = 0
-let timelineProgrammaticScrollUntil = 0
 let timelineGeometryRevision = 0
+let pendingTimelineProgrammaticScroll = null
 let timelineExtensionRepeatTimer = 0
 let editorEventBindingsCleanup = null
-let timelineViewportRefreshRequest = null
 let regionRenameState = null
 let regionColorPickerState = null
 let audioEnginePrewarmPromise = null
@@ -1336,6 +1339,7 @@ const TIMELINE_ZOOM_LIMITS = {
   deepestSnapDivision: 256,
   maxRenderedGridLines: 1800
 }
+const TIMELINE_MIN_REGION_BEATS = 0.05
 const globalTrackRowsForView = () => {
   const mode = globalTracks.viewMode === 'signature' ? 'key-signature' : (globalTracks.viewMode || 'markers')
   return mode === 'all' ? ['arrangement', 'markers', 'tempo', 'time-signature', 'key-signature'] : [mode]
@@ -2109,12 +2113,17 @@ function getSelectedRegions() {
   return midiRegions.filter((region)=>ids.has(region.id)).sort((a,b)=>(Number(a.startBeat)||0)-(Number(b.startBeat)||0))
 }
 function getRegionBeatRange(region = {}) {
-  if (region.type === 'audio') syncAudioRegionTimeline(region)
-  const startBeat = Number(region.startBeat) || 0
-  const fallbackLength = region.type === 'audio' ? secondsToBeats(getAudioRegionVisibleDurationSeconds(region)) : Math.max(0.25, Number(region.durationBeats) || 1)
-  const endBeat = Math.max(startBeat + 0.001, Number(region.endBeat) || (startBeat + fallbackLength))
-  return { startBeat, endBeat }
+  return getRegionTimelineRange(region)
 }
+function getRegionGeometrySnapshot() {
+  const metrics = getTimelineMetrics()
+  return { originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat, revision: timelineGeometryRevision }
+}
+function getRegionLaneGeometry(region) {
+  const trackIndex = Math.max(0, tracks.findIndex(track => track.id === region.trackId))
+  return getTimelineRegionLaneGeometry({ laneTop: trackLaneTop(trackIndex), trackHeight: timelineState.trackHeight })
+}
+
 function stopRegionPlayback(regionId) {
   activePlaybackNotes.forEach((active, key) => { if (active.regionId === regionId) stopPlaybackNote(key) })
   stopAudioClipPlayback(regionId)
@@ -2717,8 +2726,7 @@ function addTrackAutomationPointFromEvent(event) {
 function getTimelineRegionIndex() {
   if (timelineRegionIndex.revision === playbackContentRevision && timelineRegionIndex.source === midiRegions) return timelineRegionIndex
   const entries = midiRegions.map((region) => {
-      const startBeat = Number(region.startBeat) || 0
-      const endBeat = Math.max(startBeat, Number(region.endBeat) || startBeat + Math.max(0.05, Number(region.durationBeats) || 0.05))
+      const { startBeat, endBeat } = getRegionTimelineRange(region)
       return { region, startBeat, endBeat }
     }).sort((a, b) => a.startBeat - b.startBeat)
   timelineRegionIndex = {
@@ -3291,19 +3299,14 @@ function renderAudioEditVisualOverlays(region) {
 }
 function renderMidiRegion(region, isRecording = false) {
   const trackIndex = Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))
-  const startBeat = Number(region.startBeat) || 0
-  const endBeat = Math.max(startBeat + 0.15, Number(region.endBeat) || startBeat + 0.25)
-  const left = beatsFromBarZeroToX(startBeat)
-  const width = Math.max(18, (endBeat - startBeat) * beatWidth())
-  const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
-  const top = trackLaneTop(trackIndex) + inset
-  const height = Math.max(28, timelineState.trackHeight - (inset * 2))
+  const { startBeat, left, width } = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
+  const { top, height } = getRegionLaneGeometry(region)
   const track = tracks[trackIndex] || getSelectedTrack()
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
   const notes = Array.isArray(region.notes) ? region.notes : []
   const visibleNotes = isRecording ? notes : notes.filter((note)=>noteIsVisibleInRegion(region, note))
   const selected = !isRecording && regionIsSelected(region.id)
-  return `<article class="studio-midi-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${region.muted ? 'is-region-muted' : ''}" data-midi-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${color};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording MIDI' : esc(getMidiRegionLabel(region))}</strong>${visibleNotes.slice(0,24).map((note)=>{ const noteStart=Number(note.startBeat) || startBeat; const noteLeft=(noteStart - startBeat) * beatWidth(); const noteWidth=Math.max(4, (Number(note.durationBeats) || 0.05) * beatWidth()); const noteTop=clamp(82 - (((note.note || 60) - 48) / 36) * 70, 8, 82); return `<span class="studio-midi-note-preview" style="left:${noteLeft}px;width:${noteWidth}px;top:${noteTop}%"></span>` }).join('')}</article>`
+  return `<article class="studio-midi-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${region.muted ? 'is-region-muted' : ''}" data-timeline-geometry-revision="${timelineGeometryRevision}" data-midi-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${color};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording MIDI' : esc(getMidiRegionLabel(region))}</strong>${visibleNotes.slice(0,24).map((note)=>{ const noteStart=Number(note.startBeat) || startBeat; const noteLeft=(noteStart - startBeat) * beatWidth(); const noteWidth=Math.max(4, (Number(note.durationBeats) || 0.05) * beatWidth()); const noteTop=clamp(82 - (((note.note || 60) - 48) / 36) * 70, 8, 82); return `<span class="studio-midi-note-preview" style="left:${noteLeft}px;width:${noteWidth}px;top:${noteTop}%"></span>` }).join('')}</article>`
 }
 function normalizeWaveformPeak(peak) {
   if (peak && typeof peak === 'object') {
@@ -3439,13 +3442,13 @@ function getCachedRuntimeWaveformChunks(runtime, startSeconds, endSeconds, maxPe
 }
 function getWaveformRenderPeakLimit(region, options = {}) {
   if (Number.isFinite(Number(options.maxPeaks))) return clamp(Math.round(Number(options.maxPeaks)), WAVEFORM_MIN_RENDERED_PEAKS, WAVEFORM_MAX_RENDERED_PEAKS)
-  const regionBeats = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
+  const regionBeats = getRegionTimelineRange(region).durationBeats
   const measuredWidth = Number(options.displayWidth)
   const displayWidth = Number.isFinite(measuredWidth) && measuredWidth > 0
     ? measuredWidth
     : options.editor
       ? 1100
-      : Math.max(24, regionBeats * beatWidth())
+      : Math.max(24, timelineWidthForBeats({ durationBeats: regionBeats, pixelsPerBeat: beatWidth() }))
   return clamp(Math.ceil(displayWidth * WAVEFORM_PEAKS_PER_PIXEL), WAVEFORM_MIN_RENDERED_PEAKS, WAVEFORM_MAX_RENDERED_PEAKS)
 }
 function renderAudioWaveform(region, options = {}) {
@@ -3480,10 +3483,9 @@ function renderAudioWaveform(region, options = {}) {
   let waveformDisplayWidth = options.editor ? 1100 : null
   if (!options.editor && !hasWindow) {
     const arrangementGrid = app?.querySelector?.('[data-arrangement-grid]')
-    const regionStartBeat = Number(region.startBeat) || 0
-    const regionEndBeat = Math.max(regionStartBeat + 0.001, Number(region.endBeat) || regionStartBeat + 0.25)
-    const regionLeftPx = beatsFromBarZeroToX(regionStartBeat)
-    const regionWidthPx = Math.max(1, (regionEndBeat - regionStartBeat) * beatWidth())
+    const projection = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
+    const regionLeftPx = projection.left
+    const regionWidthPx = Math.max(1, projection.width)
     const viewportLeftPx = Number(arrangementGrid?.scrollLeft) || 0
     const viewportWidthPx = Math.max(320, Number(arrangementGrid?.clientWidth) || Math.min(1600, window.innerWidth || 1600))
     const bufferPx = Math.max(320, viewportWidthPx * 0.75)
@@ -3603,15 +3605,9 @@ function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = fa
   </div>`
 }
 function renderAudioRegion(region, isRecording = false) {
-  syncAudioRegionTimeline(region)
   const trackIndex = Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))
-  const startBeat = Number(region.startBeat) || 0
-  const endBeat = Math.max(startBeat + 0.15, Number(region.endBeat) || startBeat + Math.max(0.25, Number(region.durationBeats) || 0.25))
-  const left = isRecording && Number.isFinite(Number(region.recordingStartPixelX)) ? Number(region.recordingStartPixelX) : beatsFromBarZeroToX(startBeat)
-  const width = Math.max(isRecording ? 1 : 18, (endBeat - startBeat) * beatWidth())
-  const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
-  const top = trackLaneTop(trackIndex) + inset
-  const height = Math.max(28, timelineState.trackHeight - (inset * 2))
+  const { left, width } = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
+  const { top, height } = getRegionLaneGeometry(region)
   const track = tracks[trackIndex] || getSelectedTrack()
   const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
   const waveformColor = getReadableWaveformColor(color)
@@ -3633,7 +3629,7 @@ function renderAudioRegion(region, isRecording = false) {
   const stretchLabel = stretching || stretch.enabled
     ? `<b class="studio-audio-stretch-label">${pitchLabel && !stretching ? `${esc(pitchLabel)} · ` : ''}${stretching ? 'Time Stretch' : stretchStatus} ${speedLabel}% speed</b>`
     : (pitchLabel ? `<b class="studio-audio-stretch-label">${esc(pitchLabel)}</b>` : '')
-  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute || region.muted ? 'is-audio-muted is-region-muted' : ''}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
+  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute || region.muted ? 'is-audio-muted is-region-muted' : ''}" data-timeline-geometry-revision="${timelineGeometryRevision}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
 }
 function syncSelectedTrackVolumeControl(track){
   if (!track) return
@@ -6615,7 +6611,7 @@ function updateUtilityToggleButton(selector, enabled) {
 }
 function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
 function markTimelineUserInteraction(durationMs = 900){ timelineUserInteractingUntil = Date.now() + durationMs }
-function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil || performance.now() < timelineZoomOwnsViewportUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; const max=grid.scrollWidth-grid.clientWidth; timelineProgrammaticScrollUntil=performance.now()+50; grid.scrollLeft=Math.min(Math.max(0,timelineState.playheadX-mid),max); syncArrangementRulerScroll(grid.scrollLeft) }
+function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; setArrangementScrollLeft(grid, timelineState.playheadX-mid, { owner: 'follow' }) }
 function getTransportClockProjectSeconds() {
   if (!isPlaying || !transportClock) return secondsFromPlayhead()
   const ctx = getAudioContext()
@@ -6701,7 +6697,17 @@ function syncArrangementRulerScroll(left = null) {
   if (rulerInner) rulerInner.style.transform = transform
   if (globalInner) globalInner.style.transform = transform
   if (extensionInner) extensionInner.style.transform = transform
-  timelineViewportRefreshRequest?.()
+}
+function setArrangementScrollLeft(grid, scrollLeft, { owner = 'programmatic', revision = timelineGeometryRevision } = {}) {
+  if (!grid) return 0
+  const maxScrollLeft = Math.max(0, grid.scrollWidth - grid.clientWidth)
+  const targetScrollLeft = clampArrangementViewport({ scrollLeft, maxScrollLeft }).scrollLeft
+  pendingTimelineProgrammaticScroll = Math.abs((grid.scrollLeft || 0) - targetScrollLeft) > 0.01
+    ? { owner, revision, scrollLeft: targetScrollLeft }
+    : null
+  grid.scrollLeft = targetScrollLeft
+  syncArrangementRulerScroll(targetScrollLeft)
+  return targetScrollLeft
 }
 function captureArrangementScroll() {
   const grid = getArrangementGrid()
@@ -6711,11 +6717,10 @@ function captureArrangementScroll() {
 function restoreArrangementScroll(scroll = null) {
   const grid = getArrangementGrid()
   if (!grid || !scroll) return
-  grid.scrollLeft = Math.max(0, Number(scroll.left) || 0)
+  setArrangementScrollLeft(grid, Math.max(0, Number(scroll.left) || 0), { owner: 'restore' })
   grid.scrollTop = Math.max(0, Number(scroll.top) || 0)
   const trackListInner = app.querySelector('.studio-track-list-inner')
   if (trackListInner) trackListInner.style.transform = arrangementViewportTransforms({ scrollTop: grid.scrollTop || 0 }).vertical
-  syncArrangementRulerScroll(grid.scrollLeft)
 }
 function restoreArrangementScrollSoon(scroll = null) {
   if (!scroll) return
@@ -6894,8 +6899,8 @@ function beatWidth() { return getTimelineMetrics().pixelsPerBeat }
 function timelineStartX() { return 0 }
 function barZeroX() { return getTimelineMetrics().zeroX }
 function barOneX() { return barZeroX() }
-function timelineEndX() { const metrics = getTimelineMetrics(); return metrics.zeroX + metrics.maxBeat * metrics.pixelsPerBeat }
-function timelineContentWidth() { return timelineEndX() + beatWidth() }
+function timelineEndX() { const metrics = getTimelineMetrics(); return timelineXForBeat({ beat: metrics.maxBeat, originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat }) }
+function timelineContentWidth() { return timelineEndX() + timelineWidthForBeats({ durationBeats: 1, pixelsPerBeat: beatWidth() }) }
 function cycleMinWidth() { return Math.max(8, beatWidth() / 2) }
 function syncBarsFromPositiveBeats(){ timelineState.bars = Math.max(2, Math.ceil(timelineState.positiveBeats / timelineState.beatsPerBar)) }
 function extendTimelineToContainBeat(beat = 0) {
@@ -9293,6 +9298,8 @@ function openRegionEditorForRegion(regionId = '') {
 }
 function bindMidiRegionEvents() {
   app.querySelectorAll('[data-midi-region]').forEach((region)=>{
+    if (region.dataset.timelineEventsBound === 'true') return
+    region.dataset.timelineEventsBound = 'true'
     region.addEventListener('pointerdown',(event)=>{
       activeCommandContext = 'arrangement'
       const regionId = region.dataset.midiRegion
@@ -12611,7 +12618,7 @@ function bindEditorEvents() {
   let extensionDrag = null
   let didMovePlayhead = false
   let didCycleChange = false
-  const syncTimelineScroll = (_source = null, { refresh = false } = {}) => { syncArrangementRulerScroll(grid?.scrollLeft || 0); if (refresh) scheduleTimelineVisualRefresh() }
+  const syncTimelineScroll = () => { syncArrangementRulerScroll(grid?.scrollLeft || 0) }
   const syncTrackVerticalScroll = () => {
     const inner = app.querySelector('.studio-track-list-inner')
     if (inner) inner.style.transform = arrangementViewportTransforms({ scrollTop: grid?.scrollTop || 0 }).vertical
@@ -12664,13 +12671,13 @@ function bindEditorEvents() {
       const item = arrangements.get(element.dataset.globalArrangement)
       if (!item) return
       element.style.left = `${beatToX(item.startBeat)}px`
-      element.style.width = `${Math.max(48, (Number(item.endBeat) - Number(item.startBeat)) * beatWidth())}px`
+      element.style.width = `${Math.max(48, timelineWidthForBeats({ durationBeats: Number(item.endBeat) - Number(item.startBeat), pixelsPerBeat: beatWidth() }))}px`
     })
     app.querySelectorAll('[data-global-marker]').forEach((element) => {
       const item = markers.get(element.dataset.globalMarker)
       if (!item) return
       element.style.left = `${beatToX(item.beat)}px`
-      if (Number(item.durationBeats) > 0) element.style.width = `${Math.max(24, Number(item.durationBeats) * beatWidth())}px`
+      if (Number(item.durationBeats) > 0) element.style.width = `${Math.max(24, timelineWidthForBeats({ durationBeats: Number(item.durationBeats), pixelsPerBeat: beatWidth() }))}px`
     })
     app.querySelectorAll('[data-global-time-signature]').forEach((element) => {
       const item = timeSignatures.get(element.dataset.globalTimeSignature)
@@ -12699,7 +12706,10 @@ function bindEditorEvents() {
   const syncTimelineSurfaceGeometry = (geometry) => {
     if (!geometry) return
     const arrangement = app.querySelector('[data-arrangement]')
-    if (arrangement) arrangement.dataset.timelineGeometryRevision = String(geometry.revision)
+    if (arrangement) {
+      arrangement.dataset.timelineGeometryRevision = String(geometry.revision)
+      arrangement.dataset.timelineScrollLeft = String(geometry.scrollLeft)
+    }
     ;[
       ['ruler', app.querySelector('[data-timeline-ruler-inner]')],
       ['global', app.querySelector('[data-global-tracks-inner]')],
@@ -12712,58 +12722,115 @@ function bindEditorEvents() {
       element.style.maxWidth = 'none'
       element.dataset.timelineGeometryRevision = String(geometry.revision)
       element.dataset.timelineGeometrySurface = surface
+      element.dataset.timelinePixelsPerBeat = String(geometry.pixelsPerBeat)
+      element.dataset.timelineOriginX = String(geometry.originX)
     })
   }
 
   const publishTimelineGeometryDiagnostics = (geometry) => {
     if (!(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraGeometry'))) return
     const positions = []
-    app.querySelectorAll('[data-musical-beat]').forEach((element) => positions.push({
-      surface: element.closest('[data-timeline-ruler]') ? 'ruler' : element.closest('[data-timeline-extension-lane]') ? 'extension' : 'grid',
-      beat: Number(element.dataset.musicalBeat),
-      x: parseFloat(element.style.left)
-    }))
+    const regionMeasurements = []
+    const durations = []
+    const viewportPositions = []
+    const bounds = []
+    const capturePosition = (element, surface, beat, viewport) => {
+      positions.push({ surface, beat, x: parseFloat(element.style.left) })
+      if (viewport) viewportPositions.push({
+        surface,
+        beat,
+        scrollLeft: grid?.scrollLeft || 0,
+        x: element.getBoundingClientRect().left - viewport.getBoundingClientRect().left
+      })
+    }
+    app.querySelectorAll('[data-ruler-grid-division][data-musical-beat], [data-extension-beat-line][data-musical-beat], [data-grid-division][data-musical-beat]').forEach((element) => {
+      const surface = element.closest('[data-timeline-ruler]') ? 'ruler' : element.closest('[data-timeline-extension-lane]') ? 'extension' : 'grid'
+      const viewport = surface === 'ruler'
+        ? element.closest('[data-timeline-ruler]')
+        : surface === 'extension'
+          ? element.closest('[data-timeline-extension-lane]')
+          : grid
+      capturePosition(element, surface, Number(element.dataset.musicalBeat), viewport)
+    })
     const { byId } = getTimelineRegionIndex()
     app.querySelectorAll('[data-midi-region]').forEach((element) => {
       const region = byId.get(element.dataset.midiRegion)
-      if (region) positions.push({ surface: 'region', beat: Number(region.startBeat) || 0, x: parseFloat(element.style.left) })
+      if (region) {
+        const expected = getTimelineRegionGeometry(region, geometry)
+        capturePosition(element, 'region', expected.startBeat, grid)
+        const rect = element.getBoundingClientRect()
+        const actualTimelineLeft = rect.left - grid.getBoundingClientRect().left - grid.clientLeft + grid.scrollLeft
+        const measurement = {
+          regionId: region.id, type: region.type, ...expected,
+          pixelsPerBeat: geometry.pixelsPerBeat, originX: geometry.originX, scrollLeft: grid.scrollLeft,
+          expectedLeft: expected.left, expectedWidth: expected.width,
+          actualLeft: parseFloat(element.style.left), actualWidth: parseFloat(element.style.width),
+          boundingLeft: rect.left, boundingWidth: rect.width, actualTimelineLeft,
+          waveformWidths: [...element.querySelectorAll('.studio-audio-waveform, .studio-audio-waveform-bars')].map(node => node.getBoundingClientRect().width)
+        }
+        regionMeasurements.push(measurement)
+        durations.push({ surface: region.id, durationBeats: expected.durationBeats, width: rect.width })
+        positions.push({ surface: `${region.id}:bounding`, beat: expected.startBeat, x: actualTimelineLeft })
+      }
+      const regionRect = element.getBoundingClientRect()
+      element.querySelectorAll('.studio-audio-waveform, .studio-audio-waveform-bars').forEach((waveform) => {
+        const waveformRect = waveform.getBoundingClientRect()
+        bounds.push({ surface: 'waveform', containerLeft: regionRect.left, containerWidth: regionRect.width, left: waveformRect.left, width: waveformRect.width })
+      })
     })
     const markers = new Map((globalTracks.markers || []).map((marker) => [marker.id, marker]))
     app.querySelectorAll('[data-global-marker]').forEach((element) => {
       const marker = markers.get(element.dataset.globalMarker)
-      if (marker) positions.push({ surface: 'marker', beat: Number(marker.beat) || 0, x: parseFloat(element.style.left) })
+      if (marker) capturePosition(element, 'marker', Number(marker.beat) || 0, app.querySelector('[data-global-tracks]'))
     })
     const arrangement = app.querySelector('[data-arrangement]')
     positions.push({ surface: 'playhead', beat: xToBeat(timelineState.playheadX), x: parseFloat(arrangement?.style.getPropertyValue('--playhead-x')) })
     const surfaces = [...app.querySelectorAll('[data-timeline-geometry-surface]')].map((element) => ({
       name: element.dataset.timelineGeometrySurface,
-      width: parseFloat(element.style.width)
+      width: parseFloat(element.style.width),
+      revision: Number(element.dataset.timelineGeometryRevision)
     }))
     const errors = collectTimelineGeometryInvariantErrors({
       originX: geometry.originX,
       pixelsPerBeat: geometry.pixelsPerBeat,
       expectedContentWidth: geometry.contentWidth,
+      expectedRevision: geometry.revision,
       surfaces,
       positions,
+      viewportPositions,
+      durations,
+      bounds,
       roundTripBeats: [0, 0.25, 1, geometry.maxBeat]
     })
-    lastTimelineGeometryDiagnostics = { revision: geometry.revision, errors, checkedAt: performance.now(), surfaceCount: surfaces.length, positionCount: positions.length }
+    if (Math.abs((grid?.scrollLeft || 0) - geometry.scrollLeft) > 0.5) errors.push({ kind: 'scroll-position', expected: geometry.scrollLeft, actual: grid?.scrollLeft || 0 })
+    lastTimelineGeometryDiagnostics = {
+      ...geometry,
+      regions: regionMeasurements,
+      errors,
+      checkedAt: performance.now(),
+      surfaceCount: surfaces.length,
+      positionCount: positions.length,
+      viewportPositionCount: viewportPositions.length,
+      waveformBoundsCount: bounds.length
+    }
     document.documentElement.dataset.souraTimelineGeometry = errors.length ? 'failed' : 'ok'
   }
 
   // Viewport geometry may move the playhead's pixels, but it must never seek or
   // synchronize the audio engine. Musical time remains owned by the transport.
-  const applyTimelineGeometry = () => {
+  const applyTimelineGeometry = ({ scrollLeft = grid?.scrollLeft || 0, viewportWidth = grid?.clientWidth || 0 } = {}) => {
     timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar)
     syncBarsFromPositiveBeats()
     const metrics = getTimelineMetrics()
-    const geometry = {
+    const geometry = createTimelineGeometrySnapshot({
       revision: ++timelineGeometryRevision,
       contentWidth: timelineContentWidth(),
       maxBeat: metrics.maxBeat,
       originX: metrics.zeroX,
-      pixelsPerBeat: metrics.pixelsPerBeat
-    }
+      pixelsPerBeat: metrics.pixelsPerBeat,
+      viewportWidth,
+      scrollLeft
+    })
     const arrangement = app.querySelector('[data-arrangement]')
     arrangement?.style.setProperty('--bars', timelineState.bars)
     arrangement?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`)
@@ -12789,31 +12856,28 @@ function bindEditorEvents() {
     updateCycleDomFromState()
     updateTransportDisplay()
     renderedTimelineBeatRange = getTimelineRenderBeatRange()
-    syncTimelineScroll(null, { refresh: false })
+    syncTimelineScroll()
     publishTimelineGeometryDiagnostics(geometry)
     if (!preserveRegions) bindMidiRegionEvents()
   }
   const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
   const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) { page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); page.style.setProperty('--studio-track-lanes-height', `${totalTrackLaneHeight()}px`) } const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact));
   page.style.setProperty('--studio-track-grid-top', `${currentNewTrackDropRowHeight()}px`) }
-  const updateTimelineRegionGeometryDom = () => {
+  const updateTimelineRegionGeometryDom = (geometry = getRegionGeometrySnapshot()) => {
     const { byId } = getTimelineRegionIndex()
     app.querySelectorAll('[data-midi-region]').forEach((element) => {
-      const region = byId.get(element.dataset.midiRegion)
+      const region = byId.get(element.dataset.midiRegion) || (element.dataset.midiRegion === 'recording' && activeRecording
+        ? { ...activeRecording, endBeat: Math.max(activeRecording.startBeat + 0.25, xToBeat(timelineState.playheadX)) } : null)
       if (!region) return
-      const trackIndex = Math.max(0, tracks.findIndex((track) => track.id === region.trackId))
-      const startBeat = Number(region.startBeat) || 0
-      const endBeat = Math.max(startBeat + 0.15, Number(region.endBeat) || startBeat + Math.max(0.25, Number(region.durationBeats) || 0.25))
-      const left = beatsFromBarZeroToX(startBeat)
-      const width = Math.max(region.type === 'audio' ? 22 : 18, (endBeat - startBeat) * beatWidth())
-      const top = trackTopAtIndex(trackIndex) + 6
-      const height = Math.max(24, timelineState.trackHeight - 12)
+      const { startBeat, left, width } = getTimelineRegionGeometry(region, geometry)
+      const { top, height } = getRegionLaneGeometry(region)
+      element.dataset.timelineGeometryRevision = String(geometry.revision)
 
       element.style.left = `${left}px`
       element.style.top = `${top}px`
       element.style.width = `${width}px`
       element.style.height = `${height}px`
-      element.style.setProperty('--beat-width', `${beatWidth()}px`)
+      element.style.setProperty('--beat-width', `${geometry.pixelsPerBeat}px`)
 
       if (region.type !== 'audio') {
         const notes = Array.isArray(region.notes) ? region.notes.filter((note) => noteIsVisibleInRegion(region, note)).slice(0, 24) : []
@@ -12822,8 +12886,8 @@ function bindEditorEvents() {
           const note = notes[index]
           if (!note) return
           const noteStart = Number(note.startBeat) || startBeat
-          preview.style.left = `${(noteStart - startBeat) * beatWidth()}px`
-          preview.style.width = `${Math.max(4, (Number(note.durationBeats) || 0.05) * beatWidth())}px`
+          preview.style.left = `${timelineWidthForBeats({ durationBeats: noteStart - startBeat, pixelsPerBeat: geometry.pixelsPerBeat })}px`
+          preview.style.width = `${Math.max(4, timelineWidthForBeats({ durationBeats: Number(note.durationBeats) || 0.05, pixelsPerBeat: geometry.pixelsPerBeat }))}px`
         })
       }
     })
@@ -12839,10 +12903,7 @@ function bindEditorEvents() {
     app.querySelectorAll('[data-audio-region]').forEach((element) => {
       const region = byId.get(element.dataset.audioRegion)
       if (!region || region.type !== 'audio') return
-      const startBeat = Number(region.startBeat) || 0
-      const endBeat = Math.max(startBeat + 0.001, Number(region.endBeat) || startBeat + 0.25)
-      const regionLeft = beatsFromBarZeroToX(startBeat)
-      const regionRight = beatsFromBarZeroToX(endBeat)
+      const { left: regionLeft, right: regionRight } = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
       if (regionRight < viewportLeft - buffer || regionLeft > viewportRight + buffer) return
 
       const template = document.createElement('template')
@@ -12856,12 +12917,23 @@ function bindEditorEvents() {
     })
   }
 
-  const refreshVisibleTimelineRegionsDom = (range = getTimelineRenderBeatRange()) => {
+  const reconcileVisibleTimelineRegionsDom = (range = getTimelineRenderBeatRange()) => {
     const gridInner = app.querySelector('[data-arrangement-grid-inner]')
-    if (!gridInner) return
-    const playhead = gridInner.querySelector('[data-grid-playhead]')
-    gridInner.querySelectorAll('[data-midi-region]').forEach((node) => node.remove())
-    playhead?.insertAdjacentHTML('beforebegin', renderTimelineRegionElements(range))
+    const playhead = gridInner?.querySelector('[data-grid-playhead]')
+    if (!gridInner || !playhead) return
+    const visibleRegions = getTimelineRegionsInRange(range)
+    const visibleIds = new Set(visibleRegions.map((region) => String(region.id)))
+    const mountedIds = new Set()
+    gridInner.querySelectorAll('[data-midi-region]').forEach((element) => {
+      const id = String(element.dataset.midiRegion || '')
+      if (id !== 'recording' && !visibleIds.has(id)) element.remove()
+      else mountedIds.add(id)
+    })
+    visibleRegions.forEach((region) => {
+      const id = String(region.id)
+      if (mountedIds.has(id)) return
+      playhead.insertAdjacentHTML('beforebegin', region.type === 'audio' ? renderAudioRegion(region, false) : renderMidiRegion(region, false))
+    })
     bindMidiRegionEvents()
   }
 
@@ -12877,13 +12949,13 @@ function bindEditorEvents() {
       updateTimelineRulerDom(gridModel)
       updateTimelineGridLinesDom(gridModel, { preserveRegions: true })
       updateTimelineExtensionDom(gridModel)
-      refreshVisibleTimelineRegionsDom(nextRange)
+      reconcileVisibleTimelineRegionsDom(nextRange)
+      updateTimelineRegionGeometryDom()
       updateCycleDomFromState()
       renderedTimelineBeatRange = nextRange
-      syncTimelineScroll(grid, { refresh: false })
+      syncTimelineScroll()
     })
   }
-  timelineViewportRefreshRequest = scheduleTimelineViewportRefresh
 
   let visibleWaveformRefreshTimer = 0
   const scheduleVisibleAudioWaveformRefresh = (delay = 90) => {
@@ -12896,12 +12968,9 @@ function bindEditorEvents() {
 
   let timelineZoomRaf = 0
   let pendingTimelineZoom = null
-  let timelineZoomSettleTimer = 0
 
   const queueTimelineZoom = ({ zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats }) => {
     souraPerformanceDiagnostics.recordViewportChange(isPlaying)
-    timelineZoomOwnsViewportUntil = performance.now() + 180
-    timelineProgrammaticScrollUntil = performance.now() + 180
     if (pendingTimelineZoom) {
       pendingTimelineZoom.zoomFactor *= zoomFactor
       pendingTimelineZoom.mouseX = mouseX
@@ -12936,12 +13005,13 @@ function bindEditorEvents() {
         }
       }
 
-      const geometry = applyTimelineGeometry()
+      const metrics = getTimelineMetrics()
+      const contentWidth = timelineContentWidth()
       const viewportPlan = planTimelineZoomViewport({
-        targetPixelsPerBeat: geometry.pixelsPerBeat,
-        originX: geometry.originX,
-        maxBeat: geometry.maxBeat,
-        contentWidth: geometry.contentWidth,
+        targetPixelsPerBeat: metrics.pixelsPerBeat,
+        originX: metrics.zeroX,
+        maxBeat: metrics.maxBeat,
+        contentWidth,
         viewportWidth: grid.clientWidth,
         pointerViewportX: zoom.mouseX,
         pointerBeat: zoom.anchorBeat,
@@ -12949,31 +13019,28 @@ function bindEditorEvents() {
         followPlayhead,
         playing: isPlaying
       })
-      grid.scrollLeft = viewportPlan.scrollLeft
+      const geometry = applyTimelineGeometry({ scrollLeft: viewportPlan.scrollLeft, viewportWidth: grid.clientWidth })
+      geometry.scrollLeft = setArrangementScrollLeft(grid, geometry.scrollLeft, { owner: 'zoom', revision: geometry.revision })
 
-      // One canonical model, one paint transaction, no region teardown.
+      // Native grid scrolling owns the arrangement camera. Sibling ruler/global/
+      // extension canvases mirror that camera exactly once with -scrollLeft.
       const gridModel = buildTimelineMusicalGridModel()
       updateTimelineRulerDom(gridModel)
       updateTimelineGridLinesDom(gridModel, { preserveRegions: true })
       updateTimelineExtensionDom(gridModel)
-      updateTimelineRegionGeometryDom()
+      const nextRange = getTimelineRenderBeatRange()
+      reconcileVisibleTimelineRegionsDom(nextRange)
+      updateTimelineRegionGeometryDom(geometry)
+      scheduleVisibleAudioWaveformRefresh()
       updateGlobalTrackGeometryDom()
       syncTimelineSurfaceGeometry(geometry)
       updateCycleDomFromState()
       updateTransportDisplay()
-      renderedTimelineBeatRange = getTimelineRenderBeatRange()
-      syncTimelineScroll(grid, { refresh: false })
+      renderedTimelineBeatRange = nextRange
+      syncTimelineScroll()
       updateMidiRollPlayheadDom()
       publishTimelineGeometryDiagnostics(geometry)
-
-      if (timelineZoomSettleTimer) window.clearTimeout(timelineZoomSettleTimer)
-      timelineZoomSettleTimer = window.setTimeout(() => {
-        timelineZoomSettleTimer = 0
-        refreshTimelineVisualsLive({ preserveRegions: true, refreshGlobalTracks: false })
-        refreshVisibleTimelineRegionsDom()
-        scheduleVisibleAudioWaveformRefresh(0)
-        scheduleEditorSave()
-      }, 120)
+      scheduleEditorSave()
     })
   }
 
@@ -13065,13 +13132,16 @@ function bindEditorEvents() {
     grid.style.scrollBehavior = 'auto'
 
     // Preserve the wide musical canvas on the inner content element.
-    const geometry = {
+    const metrics = getTimelineMetrics()
+    const geometry = createTimelineGeometrySnapshot({
       revision: timelineGeometryRevision || 1,
       contentWidth: projectWidth,
-      maxBeat: getTimelineMetrics().maxBeat,
-      originX: getTimelineMetrics().zeroX,
-      pixelsPerBeat: getTimelineMetrics().pixelsPerBeat
-    }
+      maxBeat: metrics.maxBeat,
+      originX: metrics.zeroX,
+      pixelsPerBeat: metrics.pixelsPerBeat,
+      viewportWidth: grid.clientWidth,
+      scrollLeft: grid.scrollLeft
+    })
     syncTimelineSurfaceGeometry(geometry)
   }
 
@@ -13098,16 +13168,17 @@ function bindEditorEvents() {
 
   grid?.addEventListener('scroll', () => {
     const scrollPolicy = planTimelineScrollRefresh({
-      now: performance.now(),
-      programmaticScrollUntil: timelineProgrammaticScrollUntil,
-      zoomOwnsViewportUntil: timelineZoomOwnsViewportUntil
+      scrollLeft: grid.scrollLeft,
+      geometryRevision: timelineGeometryRevision,
+      plannedScroll: pendingTimelineProgrammaticScroll
     })
+    pendingTimelineProgrammaticScroll = null
     if (scrollPolicy.shouldMarkUserInteraction) markTimelineUserInteraction()
     // Synchronize ruler/global/extension transforms immediately on every scroll.
     syncTimelineScroll(grid)
     syncTrackVerticalScroll(grid)
-    // queueTimelineZoom already paints one complete canonical geometry transaction.
-    // Do not race it with a second delayed ruler/region rebuild from this scroll event.
+    // A matching zoom scroll acknowledges the revision already painted above.
+    // Every other scroll remains a normal native-scroll viewport update.
     if (scrollPolicy.shouldRefreshViewport) scheduleTimelineViewportRefresh()
     if (scrollPolicy.shouldRefreshWaveforms) scheduleVisibleAudioWaveformRefresh()
   }, { passive:true })
@@ -13497,12 +13568,11 @@ function bindEditorEvents() {
   updateTransportPlaybackUI()
   editorEventBindingsCleanup = () => {
     bindingAbortController.abort()
-    if (timelineViewportRefreshRequest === scheduleTimelineViewportRefresh) timelineViewportRefreshRequest = null
     if (timelineVisualRefreshRaf) cancelAnimationFrame(timelineVisualRefreshRaf)
     if (timelineViewportRefreshRaf) cancelAnimationFrame(timelineViewportRefreshRaf)
     if (timelineZoomRaf) cancelAnimationFrame(timelineZoomRaf)
     if (visibleWaveformRefreshTimer) window.clearTimeout(visibleWaveformRefreshTimer)
-    if (timelineZoomSettleTimer) window.clearTimeout(timelineZoomSettleTimer)
+    pendingTimelineProgrammaticScroll = null
     if (timelineExtensionRepeatTimer) {
       window.clearInterval(timelineExtensionRepeatTimer)
       timelineExtensionRepeatTimer = 0
@@ -13772,6 +13842,21 @@ if(!window.__melogicDawInstrumentCleanupBound){
 }
 
 async function init() {
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has('regionGeometryFixture')) {
+    projectState = { title: 'Region geometry audit (local only)', bpm: 120 }
+    timelineState.pixelsPerBar = 100
+    midiRegions = [
+      { id: 'audit-audio', type: 'audio', trackId: tracks[0].id, startBeat: 4, endBeat: 12, durationBeats: 8, fileDurationSeconds: 4, trimStartSeconds: 0, trimEndSeconds: 4, waveform: { peaks: [0.2,0.8,0.4,0.6] } },
+      { id: 'audit-midi', type: 'midi', trackId: tracks[0].id, startBeat: 16, endBeat: 20, notes: [{ startBeat:16, durationBeats:2, note:60 }] }
+    ]
+    const { mountRegionGeometryFixture, createFixtureAudioBuffer } = await import('../test/fixtures/soura/regionGeometryFixture.js')
+    audioClipRuntime.set('audit-audio', { audioBuffer: createFixtureAudioBuffer(), fileDurationSeconds: 4 })
+    midiRegions[0].audioClip = { runtimeId: 'audit-audio', audioReady: true, loadStatus: 'ready' }
+    renderEditor()
+    mountRegionGeometryFixture({ regions: () => midiRegions, rerender: renderEditor })
+    return
+  }
+
   const loader =
     createSouraProjectLoader(app)
 
