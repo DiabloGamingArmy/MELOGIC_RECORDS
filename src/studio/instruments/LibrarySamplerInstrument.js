@@ -141,7 +141,7 @@ export class LibrarySamplerInstrument {
   async noteOn(note, velocity = 0.8, { startTime = null, stopTime = null, onScheduled = null, onTriggered = null } = {}) {
     const midi = Number(note)
     if (!Number.isFinite(midi)) return
-    this.noteOff(midi, { immediate: true })
+    this.noteOff(midi, { immediate: true, stopTime: startTime })
     this.heldNotes.add(midi)
     const requestToken = Symbol(`sample-note-${midi}`)
     this.pendingNotes.set(midi, requestToken)

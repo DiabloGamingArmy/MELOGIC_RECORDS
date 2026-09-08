@@ -134,7 +134,7 @@ export class BasicSynthInstrument {
     const midi = Number(note)
     if (!Number.isFinite(midi)) return
     if (!this.params.oscEnabled) return
-    this.noteOff(midi, { immediate: true })
+    this.noteOff(midi, { immediate: true, stopTime: startTime })
     const now = this.audioContext.currentTime
     const startAt = Math.max(now, Number.isFinite(Number(startTime)) ? Number(startTime) : now)
     const velocityGain = clamp(velocity, 0, 1)
@@ -217,7 +217,7 @@ export class BasicSynthInstrument {
       try { oscillator.stop(Math.max(voice.startTime || now, stopAt + release + 0.02)) } catch {}
     })
     try { voice.lfo?.oscillator.stop(Math.max(voice.startTime || now, stopAt + release + 0.02)) } catch {}
-    window.setTimeout(() => {
+    const cleanup = () => {
       try {
         voice.oscillators.forEach((oscillator) => oscillator.disconnect())
         voice.envelope.disconnect()
@@ -229,7 +229,8 @@ export class BasicSynthInstrument {
         // Voice may already be disconnected.
       }
       if (this.voices.get(midi) === voice) this.voices.delete(midi)
-    }, Math.ceil((Math.max(0, stopAt - now) + release + 0.05) * 1000))
+    }
+    if (voice.oscillators[0]) voice.oscillators[0].onended = cleanup
   }
 
   setParam(name, value) {

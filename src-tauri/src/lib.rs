@@ -1,3 +1,4 @@
+mod project_export;
 mod audio;
 mod assets;
 mod vst3;
@@ -9,9 +10,14 @@ use native_vst3_host::NativeVst3HostState;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
+    .manage(project_export::ProjectExportState::default())
     .manage(NativeAudioState::default())
     .manage(NativeVst3HostState::default())
     .invoke_handler(tauri::generate_handler![
+      project_export::project_export_begin,
+      project_export::project_export_write,
+      project_export::project_export_finish,
+      project_export::project_export_cancel,
       audio::commands::native_audio_initialize,
       audio::commands::native_audio_list_output_devices,
       audio::commands::native_audio_get_status,
