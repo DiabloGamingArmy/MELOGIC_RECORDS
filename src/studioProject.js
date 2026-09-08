@@ -1,3 +1,5 @@
+import { createScoreHost } from './studio/score/scoreHost.js'
+import { normalizeScoreDocument } from './studio/score/scoreDocument.js'
 import { normalizeNoteNotation, normalizeRegionScore } from './studio/score/scoreModel.js'
 import { editScoreNotes, moveScoreNotes, insertScoreNote } from './studio/score/scoreCommands.js'
 import './styles/base.css'
@@ -458,7 +460,10 @@ let audioContext = null
 let masterAudioBus = null
 let assetAuditionGain = null
 let studioAudioEngine = null
-const souraAudioDiagnosticsEnabled = Boolean(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraAudio'))
+// soura-audio-output-repair-v1
+// Audio output diagnostics stay available in production because a DAW must be able
+// to distinguish transport state from an actual audible-output failure.
+const souraAudioDiagnosticsEnabled = true
 let lastSouraAudioDiagnostics = { context: { state: 'uninitialized', creationCount: 0 }, graph: {}, checkedAt: 0 }
 const souraAudioContextOwner = createSouraWebAudioContextOwner({
   createContext: () => createInteractiveAudioContext(),
@@ -466,7 +471,8 @@ const souraAudioContextOwner = createSouraWebAudioContextOwner({
 })
 window.__souraAudioDiagnostics = Object.freeze({
   snapshot: () => structuredClone(lastSouraAudioDiagnostics),
-  playTestTone: souraAudioDiagnosticsEnabled ? (options) => playSouraOutputTestTone(options) : undefined
+  playTestTone: (options) => playSouraOutputTestTone(options),
+  repair: () => repairSouraAudioOutputGraph({ reason: 'manual-diagnostic' })
 })
 let lastMetronomeBeat = -1
 const activeMetronomeVoices = new Set()
@@ -2247,7 +2253,7 @@ function selectSingleRegion(regionId) {
   setSelectedRegions(regionId ? [regionId] : [], { primaryId: regionId || '' })
 }
 function syncRegionSelectionDom() {
-  if (activeBottomPanel === 'score' && scoreMountedRegionId !== (getScoreRegion()?.id || null)) queueMicrotask(mountScorePanel)
+  if (activeBottomPanel === 'score' && scoreDocument.source.mode === 'region' && scoreMountedRegionId !== (getScoreRegion()?.id || null)) queueMicrotask(mountScorePanel)
   const ids = new Set(getSelectedRegionIds())
   app.querySelectorAll('[data-midi-region]').forEach((node) => {
     node.classList.toggle('is-selected', ids.has(node.dataset.midiRegion))
@@ -4009,6 +4015,8 @@ async function toggleAssetLibraryAudition(assetId, { autoplayNavigation = true }
   try { return await assetAuditionController.toggle(asset, { autoplayNavigation }) }
   catch (error) { recordingStatus = error?.message || 'Asset preview failed.'; updateEditorTitleStatus(); return false }
 }
+let scoreDocument = normalizeScoreDocument()
+let selectedMidiNoteRefs = []
 let scoreController = null
 let scoreMountGeneration = 0
 let scoreMountedRegionId = null
@@ -4028,28 +4036,30 @@ function mountScorePanel() {
   if (source?.type !== 'audio' && source) midiRollState = { regionId: source.id }
   import('./studio/score/ScoreEditor.js').then(({ mountScoreEditor }) => {
     if (generation !== scoreMountGeneration || !root.isConnected || activeBottomPanel !== 'score') return
-    const select = (index, additive = false) => {
-      activeCommandContext = 'score'
-      const previous = getSelectedMidiRollNoteIndices(source)
-      midiRollSelectedNoteIndices = index == null ? [] : additive ? (previous.includes(index) ? previous.filter(i => i !== index) : [...previous,index]) : [index]
-      midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
-    }
-    scoreController = mountScoreEditor(root, {
-      region: () => source,
-      context: () => ({ startBeat: Number(source?.startBeat) || 0, endBeat: Number(source?.endBeat) || (Number(source?.startBeat) || 0) + 4, timeSignatures: normalizeTimeSignatureMap(), keySignatures: normalizeKeySignatureMap() }),
-      secondsToProjectBeat: audioRegionLocalSecondsToProjectBeat,
-      selection: () => getSelectedMidiRollNoteIndices(source), select,
-      selectAll: () => { midiRollSelectedNoteIndices = (source?.notes || []).map((_,i) => i); midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null },
-      edit: patch => commitHistoryMutation('score-edit-notes', () => editScoreNotes(source, getSelectedMidiRollNoteIndices(source), patch)),
-      move: (beat,pitch) => commitHistoryMutation('score-move-notes', () => moveScoreNotes(source, getSelectedMidiRollNoteIndices(source), beat, pitch)),
-      insert: note => commitHistoryMutation('score-insert-note', () => select(insertScoreNote(source,note,makeInsertId('note')))),
-      settings: settings => commitHistoryMutation('score-presentation', () => { source.score = normalizeRegionScore({ ...source.score, settings }) }, { render: false }),
-      delete: deleteSelectedMidiNote, copy: copySelectedMidiRollNotes, paste: pasteSelectedMidiRollNotes,
-      cut: () => { if (copySelectedMidiRollNotes()) deleteSelectedMidiNote() },
-      undo: undoDawEdit, redo: redoDawEdit,
-      openSource: () => { if (source?.type === 'audio') openRegionEditorForRegion(source.id); else openBottomPanel('midi-roll') },
-      playhead: () => ({ beat: xToBeat(timelineState.playheadX), playing: isPlaying })
+    const host=createScoreHost({
+      state:()=>({regions:midiRegions,tracks,selectedRegionId:selectedMidiRegionId,selectedRegionIds:getSelectedRegionIds(),selectedTrackId}),
+      title:()=>projectState?.title||'Untitled score',refresh:renderEditor,selectTrack:id=>{selectedTrackId=id;renderEditor()},
+      document:()=>scoreDocument,setDocument:value=>{scoreDocument=value},
+      selection:()=>selectedMidiNoteRefs,
+      select:(ids,events)=>{
+        selectedMidiNoteRefs=ids
+        const primary=events.find(e=>ids.includes(e.id))
+        if(primary){selectedMidiRegionId=primary.regionId;selectedTrackId=primary.trackId;midiRollState={regionId:primary.regionId}}
+        midiRollSelectedNoteIndices=events.filter(e=>e.regionId===selectedMidiRegionId&&ids.includes(e.id)).map(e=>e.index)
+        midiRollSelectedNoteIndex=midiRollSelectedNoteIndices[0]??null
+        activeCommandContext='score'
+        // Arrangement highlighting without remounting the active score controller.
+        app.querySelectorAll('[data-midi-region]').forEach(node=>node.classList.toggle('is-selected',node.dataset.midiRegion===selectedMidiRegionId))
+      },
+      commit:commitHistoryMutation,id:makeInsertId,
+      context:()=>({timeSignatures:normalizeTimeSignatureMap(),keySignatures:normalizeKeySignatureMap(),tempoEvents:normalizeTempoMap()}),
+      secondsToProjectBeat:audioRegionLocalSecondsToProjectBeat,
+      clipboard:value=>{midiNoteClipboard=value},paste:pasteSelectedMidiRollNotes,
+      undo:undoDawEdit,redo:redoDawEdit,
+      openSource:()=>{const region=getScoreRegion();if(region?.type==='audio')openRegionEditorForRegion(region.id);else openBottomPanel('midi-roll')},
+      playhead:()=>({beat:xToBeat(timelineState.playheadX),playing:isPlaying})
     })
+    scoreController = mountScoreEditor(root, host)
     scoreController.updatePlayhead(xToBeat(timelineState.playheadX), isPlaying)
   }).catch(error => { if (root.isConnected && generation === scoreMountGeneration) { root.textContent = 'Score Editor could not load. Close and reopen to retry.'; console.error('Score Editor',error) } })
 }
@@ -5772,6 +5782,7 @@ function buildEditorStateForSave(){
   const keyAtStart = getKeySignatureAtBeat(0, globalTracks.keySignatureEvents)
   return {
     version:SOURA_EDITOR_FORMAT_VERSION,
+    scoreDocument: normalizeScoreDocument(scoreDocument),
     projectMetadata:{
       title: projectState?.title || 'Untitled Project',
       bpm: tempoAtStart.bpm,
@@ -5799,6 +5810,7 @@ function buildEditorStateForSave(){
 }
 function applyLoadedEditorState(editorState) {
   if (!editorState || typeof editorState !== 'object') return
+  scoreDocument = normalizeScoreDocument(editorState.scoreDocument)
   const tl = editorState.timeline || {}
   if (Number.isFinite(tl.bars)) timelineState.bars = Math.max(2, Number(tl.bars))
   if (Number.isFinite(tl.beatsPerBar)) timelineState.beatsPerBar = Math.max(1, Number(tl.beatsPerBar))
@@ -6182,6 +6194,64 @@ function assertAuthoritativeSouraAudioGraph() {
   if (mismatch) throw new Error('Soura audio routing crossed multiple AudioContexts. Reload the project before playback.')
   return graph
 }
+async function repairSouraAudioOutputGraph({ reason = 'playback' } = {}) {
+  const ctx = await souraAudioContextOwner.ensureRunning(`repair:${reason}`)
+  audioContext = ctx
+
+  // A stale/disconnected master bus can leave transport visibly running while
+  // every source (metronome included) is silent. Rebuild the bus against the
+  // authoritative AudioContext and explicitly re-home all existing channels.
+  const previousMaster = masterAudioBus
+  if (previousMaster) {
+    try { previousMaster.input?.disconnect() } catch {}
+    try { previousMaster.gain?.disconnect() } catch {}
+    try { previousMaster.analyser?.disconnect() } catch {}
+  }
+  masterAudioBus = null
+  const master = getMasterAudioBus()
+
+  // Never inherit an accidental zero/non-finite master value.
+  master.gain.gain.cancelScheduledValues(ctx.currentTime)
+  master.gain.gain.setValueAtTime(1, ctx.currentTime)
+
+  for (const channel of trackAudioChannels.values()) {
+    try { channel.analyser?.disconnect() } catch {}
+    try { channel.analyser?.connect(master.input) } catch (err) {
+      console.warn('[studioProject] failed to reconnect track channel to Stereo Out', err)
+    }
+  }
+
+  // Asset audition is also part of the same output contract.
+  if (assetAuditionGain) {
+    try { assetAuditionGain.disconnect() } catch {}
+    try { assetAuditionGain.connect(master.input) } catch (err) {
+      console.warn('[studioProject] failed to reconnect asset audition to Stereo Out', err)
+    }
+  }
+
+  // Safari can report a running AudioContext before the hardware path has been
+  // exercised after navigation/resume. A zero-gain priming source created from
+  // the user Play gesture wakes the destination without producing a click.
+  try {
+    const primer = ctx.createOscillator()
+    const primerGain = ctx.createGain()
+    primerGain.gain.setValueAtTime(0, ctx.currentTime)
+    primer.connect(primerGain)
+    primerGain.connect(master.input)
+    primer.onended = () => {
+      try { primer.disconnect(); primerGain.disconnect() } catch {}
+    }
+    primer.start(ctx.currentTime)
+    primer.stop(ctx.currentTime + 0.015)
+  } catch (err) {
+    console.warn('[studioProject] audio output primer failed', err)
+  }
+
+  assertAuthoritativeSouraAudioGraph()
+  publishSouraAudioDiagnostics()
+  return ctx
+}
+
 async function ensureSouraAudioOutputRunning(reason = 'playback') {
   const ctx = await souraAudioContextOwner.ensureRunning(reason)
   audioContext = ctx
@@ -7010,6 +7080,8 @@ function cloneTracksForHistory() {
 }
 function captureDawSnapshot() {
   return {
+    scoreDocument: normalizeScoreDocument(scoreDocument),
+    selectedMidiNoteRefs: [...selectedMidiNoteRefs],
     midiRegions: cloneMidiRegionsForHistory(),
     tracks: cloneTracksForHistory(),
     metronomeSettings: deepClone(metronomeSettings),
@@ -7028,6 +7100,8 @@ function restoreDawSnapshot(snapshot) {
   stopAllTrackInstrumentNotes()
   stopAllPlaybackNotes()
   stopAllAudioClipPlayback()
+  scoreDocument=normalizeScoreDocument(snapshot.scoreDocument)
+  selectedMidiNoteRefs=[...(snapshot.selectedMidiNoteRefs||[])]
   midiRegions = (snapshot.midiRegions || []).map((region)=>cloneRegionForState(region))
   tracks.splice(0, tracks.length, ...(snapshot.tracks || []).map((track)=>ensureTrackInsertState(deepClone(track))))
   metronomeSettings = normalizeMetronomeSettings(snapshot.metronomeSettings || metronomeSettings)
@@ -7221,7 +7295,7 @@ function persistRegionEditorHeightPreference() {
   try { window.localStorage?.setItem(REGION_EDITOR_HEIGHT_STORAGE_KEY, String(clampBottomPanelHeightPx(bottomPanelHeightPx))) } catch {}
 }
 function openBottomPanel(panelId){
-  if (panelId === 'score') { activeCommandContext = 'score'; if (!bottomPanelHeightPx) bottomPanelHeightPx = 440 }
+  if (panelId === 'score') { const region=getMidiRollRegion(); selectedMidiNoteRefs=getSelectedMidiRollNoteIndices(region).map(i=>`${region.id}:${region.notes[i].id??i}`); activeCommandContext = 'score'; if (!bottomPanelHeightPx) bottomPanelHeightPx = 440 }
   if (panelId === 'loops') panelId = 'asset-library'
   clearBottomPanelMotionTimer()
   if(activeBottomPanel===panelId){ closeBottomPanel(); return }
@@ -7978,7 +8052,7 @@ async function startPlayback({ skipRenderAudit = false } = {}) {
   try {
     // Resume while the Play activation is still current, before project
     // hydration or render audits introduce unrelated asynchronous waits.
-    ctx = await ensureSouraAudioOutputRunning('play-control')
+    ctx = await repairSouraAudioOutputGraph({ reason: 'play-control' })
   } catch (err) {
     recordingStatus = err?.message || 'Soura could not start browser audio. Check the output device and press Play again.'
     console.error('[studioProject] playback blocked before transport start', err)
@@ -10971,6 +11045,7 @@ function pasteSelectedMidiRollNotes() {
     region.durationBeats = region.endBeat - regionStart
     midiRollSelectedNoteIndices = created.map((createdNote)=>region.notes.indexOf(createdNote)).filter((index)=>index >= 0)
     midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    if(activeBottomPanel==='score')selectedMidiNoteRefs=created.map(note=>`${region.id}:${note.id}`)
     midiRollStatus = `Pasted ${incoming.length} note${incoming.length === 1 ? '' : 's'}.`
   })
   return true

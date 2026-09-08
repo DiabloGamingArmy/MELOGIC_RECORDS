@@ -137,32 +137,277 @@ function hydrateStudioStableImages(root = app) {
     const src = String(el.dataset.stableImageSrc || '').trim()
     const key = String(el.dataset.stableImageKey || src || '').trim()
     if (!src || !key) return
+
     const cached = stableImageCache.get(key)
-    if (cached?.status === 'loaded' && cached.src === src) {
-      if (!el.querySelector('img')) el.innerHTML = `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" />`
-      return
+    const displaySrc = cached?.lastGoodSrc || cached?.src || src
+
+    // studio-visual-asset-persistence-v1
+    // Put the browser-resolvable image into the new DOM immediately. The old
+    // implementation left the container empty until a fresh Image.onload fired,
+    // creating a visible flash every time Studio re-rendered a page.
+    let img = el.querySelector('img')
+    if (!img) {
+      img = document.createElement('img')
+      img.alt = ''
+      img.decoding = 'async'
+      img.loading = 'eager'
+      img.fetchPriority = 'high'
+      el.replaceChildren(img)
     }
+    if (img.src !== new URL(displaySrc, window.location.href).href) {
+      img.src = displaySrc
+    }
+
+    if (cached?.status === 'loaded' && cached.src === src) return
     if (cached?.status === 'loading' && cached.src === src) return
-    stableImageCache.set(key, { status: 'loading', src, lastGoodSrc: cached?.lastGoodSrc || (cached?.status === 'loaded' ? cached.src : '') })
+
+    stableImageCache.set(key, {
+      status: 'loading',
+      src,
+      lastGoodSrc: cached?.lastGoodSrc || (cached?.status === 'loaded' ? cached.src : '')
+    })
+
     const image = new Image()
     image.decoding = 'async'
+    image.fetchPriority = 'high'
     image.onload = () => {
       stableImageCache.set(key, { status: 'loaded', src, lastGoodSrc: src })
       root.querySelectorAll?.(`[data-stable-image-key="${CSS.escape(key)}"][data-stable-image-src="${CSS.escape(src)}"]`).forEach((target) => {
-        target.innerHTML = `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" />`
+        const targetImg = target.querySelector('img')
+        if (targetImg) {
+          if (targetImg.src !== image.src) targetImg.src = src
+        } else {
+          const restored = document.createElement('img')
+          restored.alt = ''
+          restored.decoding = 'async'
+          restored.loading = 'eager'
+          restored.fetchPriority = 'high'
+          restored.src = src
+          target.replaceChildren(restored)
+        }
       })
     }
     image.onerror = () => {
       const previous = stableImageCache.get(key)
       stableImageCache.set(key, { status: 'failed', src, lastGoodSrc: previous?.lastGoodSrc || '' })
       if (previous?.lastGoodSrc) {
-        root.querySelectorAll?.(`[data-stable-image-key="${CSS.escape(key)}"][data-stable-image-src="${CSS.escape(src)}"]`).forEach((target) => {
-          target.innerHTML = `<img src="${esc(previous.lastGoodSrc)}" alt="" loading="lazy" decoding="async" />`
+        root.querySelectorAll?.(`[data-stable-image-key="${CSS.escape(key)}"]`).forEach((target) => {
+          const targetImg = target.querySelector('img')
+          if (targetImg) targetImg.src = previous.lastGoodSrc
         })
       }
     }
     image.src = src
+    image.decode?.().catch(() => {})
   })
+}
+
+// studio-home-firebase-storage-v3
+const STUDIO_HOME_HERO_STORAGE_PATH = 'assets/site/studio/home/heroBanner.png'
+let studioHomeHeroDownloadURLPromise = null
+
+function studioHomeHeroDownloadURL() {
+  if (!studioHomeHeroDownloadURLPromise) {
+    studioHomeHeroDownloadURLPromise = getDownloadURL(storageRef(storage, STUDIO_HOME_HERO_STORAGE_PATH))
+      .catch((error) => {
+        studioHomeHeroDownloadURLPromise = null
+        console.error('[studio/home] Firebase Storage hero could not be resolved', {
+          path: STUDIO_HOME_HERO_STORAGE_PATH,
+          code: error?.code || '',
+          message: error?.message || String(error || '')
+        })
+        throw error
+      })
+  }
+  return studioHomeHeroDownloadURLPromise
+}
+
+function hydrateStudioHomeHero(root = app) {
+  const hero = root?.querySelector?.('.studio-home-reference-hero')
+  if (hero) applyPersistentStudioHeroURL(hero, 'studio-home', '--studio-home-hero-image')
+  if (!hero || hero.dataset.firebaseHeroReady === 'true' || hero.dataset.firebaseHeroLoading === 'true') return
+  hero.dataset.firebaseHeroLoading = 'true'
+  studioHomeHeroDownloadURL().then((url) => {
+    if (!hero.isConnected) return
+    rememberPersistentStudioHeroURL('studio-home', url)
+    hero.style.setProperty('--studio-home-hero-image', `url("${String(url).replaceAll('"', '%22')}")`)
+    hero.dataset.firebaseHeroReady = 'true'
+    hero.removeAttribute('data-firebase-hero-loading')
+  }).catch(() => {
+    if (!hero.isConnected) return
+    hero.removeAttribute('data-firebase-hero-loading')
+  })
+}
+
+const studioHomeHeroObserver = new MutationObserver(() => hydrateStudioHomeHero(app))
+studioHomeHeroObserver.observe(app, { childList: true, subtree: true })
+queueMicrotask(() => hydrateStudioHomeHero(app))
+
+// soura-studio-banner-v1
+const SOURA_STUDIO_HERO_STORAGE_PATH = 'assets/site/studio/soura/heroBanner.png'
+let souraStudioHeroDownloadURLPromise = null
+
+function souraStudioHeroDownloadURL() {
+  if (!souraStudioHeroDownloadURLPromise) {
+    souraStudioHeroDownloadURLPromise = getDownloadURL(storageRef(storage, SOURA_STUDIO_HERO_STORAGE_PATH))
+      .catch((error) => {
+        souraStudioHeroDownloadURLPromise = null
+        console.error('[studio/soura] Firebase Storage hero could not be resolved', {
+          path: SOURA_STUDIO_HERO_STORAGE_PATH,
+          code: error?.code || '',
+          message: error?.message || String(error || '')
+        })
+        throw error
+      })
+  }
+  return souraStudioHeroDownloadURLPromise
+}
+
+function hydrateSouraStudioHero(root = app) {
+  const hero = root?.querySelector?.('.studio-daw-hero')
+  if (!hero) return
+  applyPersistentStudioHeroURL(hero, 'soura-studio', '--soura-studio-hero-image')
+
+  // soura-studio-banner-actions-v2
+  // Target the actual Soura copy container by locating the Soura heading,
+  // rather than taking the first <div> in the hero (which is the logo box).
+  const souraTitle = [...hero.querySelectorAll('h1, h2')]
+    .find((heading) => String(heading.textContent || '').trim() === 'Soura')
+  const copy = souraTitle?.parentElement || null
+  const actions = hero.querySelector('.studio-hub-actions')
+
+  hero.querySelectorAll('p').forEach((paragraph) => {
+    const text = String(paragraph.textContent || '').trim()
+    if (text === "Soura is Melogic's browser-based music production workspace for arranging, editing, collaborating, and building tracks.") {
+      paragraph.remove()
+    }
+  })
+
+  if (copy && actions && actions.parentElement !== copy) {
+    copy.appendChild(actions)
+  }
+  if (copy && actions) {
+    actions.classList.add('studio-daw-hero-actions-under-copy', 'is-positioned')
+  }
+
+  if (hero.dataset.firebaseSouraHeroReady === 'true' || hero.dataset.firebaseSouraHeroLoading === 'true') return
+  hero.dataset.firebaseSouraHeroLoading = 'true'
+
+  souraStudioHeroDownloadURL().then((url) => {
+    if (!hero.isConnected) return
+    const safeUrl = String(url).replaceAll('"', '%22')
+    rememberPersistentStudioHeroURL('soura-studio', url)
+    hero.style.setProperty('--soura-studio-hero-image', 'url("' + safeUrl + '")')
+    hero.dataset.firebaseSouraHeroReady = 'true'
+    hero.removeAttribute('data-firebase-soura-hero-loading')
+  }).catch(() => {
+    if (!hero.isConnected) return
+    hero.removeAttribute('data-firebase-soura-hero-loading')
+  })
+}
+
+const souraStudioHeroObserver = new MutationObserver(() => hydrateSouraStudioHero(app))
+souraStudioHeroObserver.observe(app, { childList: true, subtree: true })
+queueMicrotask(() => hydrateSouraStudioHero(app))
+
+// vertix-studio-banner-v1
+const VERTIX_STUDIO_HERO_STORAGE_PATH = 'assets/site/studio/vertix/heroBanner.png'
+let vertixStudioHeroDownloadURLPromise = null
+
+function vertixStudioHeroDownloadURL() {
+  if (!vertixStudioHeroDownloadURLPromise) {
+    vertixStudioHeroDownloadURLPromise = getDownloadURL(storageRef(storage, VERTIX_STUDIO_HERO_STORAGE_PATH))
+      .catch((error) => {
+        vertixStudioHeroDownloadURLPromise = null
+        console.error('[studio/vertix] Firebase Storage hero could not be resolved', {
+          path: VERTIX_STUDIO_HERO_STORAGE_PATH,
+          code: error?.code || '',
+          message: error?.message || String(error || '')
+        })
+        throw error
+      })
+  }
+  return vertixStudioHeroDownloadURLPromise
+}
+
+function hydrateVertixStudioHero(root = app) {
+  const vertixTitle = [...root.querySelectorAll('h1, h2')]
+    .find((heading) => String(heading.textContent || '').trim() === 'Vertix')
+  if (!vertixTitle) return
+
+  const hero = vertixTitle.closest('section')
+  if (!hero) return
+  hero.classList.add('studio-vertix-hero')
+  applyPersistentStudioHeroURL(hero, 'vertix-studio', '--vertix-studio-hero-image')
+
+  const copy = vertixTitle.parentElement || null
+  const actions = hero.querySelector('.studio-hub-actions')
+
+  // Mirror the finalized Soura behavior: remove the descriptive body copy,
+  // but preserve the category/eyebrow and the product title.
+  if (copy) {
+    [...copy.querySelectorAll(':scope > p')].forEach((paragraph) => {
+      const text = String(paragraph.textContent || '').trim()
+      if (!text) return
+      const upper = text.toUpperCase()
+      const isCategory = upper.includes('3D') || upper.includes('STAGE') || upper.includes('DESIGN')
+      if (!isCategory) paragraph.remove()
+    })
+  }
+
+  if (copy && actions && actions.parentElement !== copy) {
+    copy.appendChild(actions)
+  }
+  if (copy && actions) {
+    actions.classList.add('studio-vertix-hero-actions-under-copy', 'is-positioned')
+  }
+
+  if (hero.dataset.firebaseVertixHeroReady === 'true' || hero.dataset.firebaseVertixHeroLoading === 'true') return
+  hero.dataset.firebaseVertixHeroLoading = 'true'
+
+  vertixStudioHeroDownloadURL().then((url) => {
+    if (!hero.isConnected) return
+    const safeUrl = String(url).replaceAll('"', '%22')
+    rememberPersistentStudioHeroURL('vertix-studio', url)
+    hero.style.setProperty('--vertix-studio-hero-image', 'url("' + safeUrl + '")')
+    hero.dataset.firebaseVertixHeroReady = 'true'
+    hero.removeAttribute('data-firebase-vertix-hero-loading')
+  }).catch(() => {
+    if (!hero.isConnected) return
+    hero.removeAttribute('data-firebase-vertix-hero-loading')
+  })
+}
+
+const vertixStudioHeroObserver = new MutationObserver(() => hydrateVertixStudioHero(app))
+vertixStudioHeroObserver.observe(app, { childList: true, subtree: true })
+queueMicrotask(() => hydrateVertixStudioHero(app))
+
+// studio-visual-asset-persistence-v1
+// Keep resolved Firebase hero URLs synchronously reusable across Studio route
+// renders. Promise callbacks are asynchronous even after resolution, which
+// otherwise creates a one-frame blank background every time a hero DOM node is
+// recreated.
+let studioPersistentHeroURLs = window.__melogicStudioHeroURLs
+if (!(studioPersistentHeroURLs instanceof Map)) {
+  studioPersistentHeroURLs = new Map()
+  Object.defineProperty(window, '__melogicStudioHeroURLs', {
+    value: studioPersistentHeroURLs,
+    configurable: true
+  })
+}
+
+function applyPersistentStudioHeroURL(hero, cacheKey, cssVariable) {
+  const cachedURL = studioPersistentHeroURLs.get(cacheKey)
+  if (!hero || !cachedURL) return false
+  const safeUrl = String(cachedURL).replaceAll('"', '%22')
+  hero.style.setProperty(cssVariable, 'url("' + safeUrl + '")')
+  return true
+}
+
+function rememberPersistentStudioHeroURL(cacheKey, url) {
+  const value = String(url || '').trim()
+  if (value) studioPersistentHeroURLs.set(cacheKey, value)
+  return value
 }
 
 const STUDIO_TOOL_LABELS = {
@@ -839,15 +1084,12 @@ function renderProjectsPanel(kind = 'daw') {
 function renderHub() {
   return `
     <section class="studio-main">
-      <section class="studio-hub-hero">
-        <div>
-          <p class="eyebrow">Creative Dashboard</p>
-          <h1>Melogic Studio</h1>
-          <p>Your creative workspace for production, stage planning, collaboration, and release prep.</p>
-        </div>
-        <div class="studio-hub-actions">
-          <a class="studio-hub-cta" href="${ROUTES.studioDaw}" data-studio-shell-nav>Open Soura</a>
-          <a class="studio-hub-cta" href="${ROUTES.studioStagemaker}" data-studio-shell-nav>Open Vertix</a>
+      <section class="studio-hub-hero studio-home-reference-hero" aria-label="Melogic Studio">
+        <div class="studio-home-reference-hero-copy">
+          <h1>
+            <strong>CREATIVITY,</strong>
+            <span>AT YOUR FINGERTIPS.</span>
+          </h1>
         </div>
       </section>
 
@@ -914,7 +1156,7 @@ function renderStagemaker() {
         <div>
           <p class="eyebrow">3D Software</p>
           <h1>Vertix</h1>
-          <p>Vertix is Melogic's stage design and live production planning workspace.</p>
+          <!-- vertix-remove-description-v1 -->
         </div>
         <div class="studio-hub-actions">
           <a class="button button-accent" data-new-stage-project href="${state.user ? '#' : authRoute({ redirect: ROUTES.studioStagemaker })}">New Vertix Plan</a>

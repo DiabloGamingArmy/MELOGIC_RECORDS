@@ -1,3 +1,4 @@
+import { normalizeScoreDocument } from '../score/scoreDocument.js'
 import { normalizeNoteNotation, normalizeRegionScore } from '../score/scoreModel.js'
 const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d)
 const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
@@ -369,6 +370,7 @@ export function normalizeStudioProjectModel(model = {}) {
   const base = model && typeof model === 'object' ? model : {}
   return {
     version: 1,
+    ...(base.scoreDocument ? { scoreDocument: normalizeScoreDocument(base.scoreDocument) } : {}),
     bpm: Math.max(1, num(base.bpm, 140)),
     beatsPerBar: Math.max(1, Math.round(num(base.beatsPerBar, 4))),
     tracks: Array.isArray(base.tracks) ? base.tracks.map(createTrackModel) : [],

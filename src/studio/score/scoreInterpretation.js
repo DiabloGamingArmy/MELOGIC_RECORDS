@@ -1,18 +1,28 @@
-import { assignStaff, assignVoices, buildMeasures, decomposeDuration, displayQuantum, keyName, measureAtBeat, quantizeForDisplay } from './scoreTheory.js'
+import { drumDisplay } from './scoreSymbols.js'
+import { transposeKey, assignStaff, assignVoices, buildMeasures, decomposeDuration, displayQuantum, keyName, measureAtBeat, quantizeForDisplay } from './scoreTheory.js'
 import { assignTab } from './scoreTab.js'
 
-export function interpretScore(events, { startBeat = 0, endBeat = 4, settings, timeSignatures, keySignatures = [] }) {
+export function interpretScore(events, { startBeat = 0, endBeat = 4, settings, timeSignatures, keySignatures = [], staffChanges = [], symbols = [], tempoEvents = [] }) {
   const quantum = displayQuantum(events, settings.quantization)
   const displayed = events.map(e => quantizeForDisplay(e, settings.quantization === 'auto' ? displayQuantum([e]) : quantum))
+  for (const event of displayed) {
+    event.soundingPitch = event.pitch
+    event.pitch = settings.clef === 'percussion' ? drumDisplay(event.pitch, settings.drumMap).pitch : event.pitch + (settings.concertPitch ? 0 : settings.instrumentTranspose)
+    if (settings.clef === 'percussion') event.notehead = drumDisplay(event.soundingPitch, settings.drumMap).head
+  }
   const allMeasures = buildMeasures(Math.max(endBeat, startBeat + 1), timeSignatures)
   const measures = allMeasures.filter(m => m.endBeat > startBeat + 1e-7)
   const byMeasure = new Map(measures.map(m => [m.index, m]))
   const staffIds = settings.mode === 'grand' ? ['treble', 'bass'] : [settings.clef === 'auto' ? (events.length && events.reduce((sum,e) => sum + e.pitch, 0) / events.length < 60 ? 'bass' : 'treble') : settings.clef]
   const assigned = staffIds.flatMap(staff => assignVoices(displayed.filter(e => settings.mode !== 'grand' || assignStaff(e, settings) === staff)).map(e => ({ ...e, staff })))
-  const tab = assignTab(displayed, settings)
+  const tab = assignTab(displayed.map(e=>({...e,pitch:e.soundingPitch})), settings)
   for (const measure of measures) {
     const key = keySignatures.reduce((active, event) => event.beat <= measure.startBeat ? event : active, { root: 'C', scale: 'major' })
     measure.key = settings.key === 'project' ? keyName(key) : settings.key
+    if (!settings.concertPitch && settings.instrumentTranspose) measure.key = transposeKey(measure.key, settings.instrumentTranspose)
+    measure.clefs = Object.fromEntries(staffIds.map(staff => [staff, [...staffChanges, ...symbols.filter(s=>s.type==='clef')].filter(s=>!s.staff||s.staff===staff).sort((a,b)=>a.beat-b.beat).reduce((clef,s)=>s.beat<=measure.startBeat ? s.clef||s.text||clef : clef, staff)]))
+    measure.symbols = symbols.filter(s => s.type !== 'clef' && (s.beat < measure.endBeat && (s.endBeat ?? s.beat) >= measure.startBeat))
+    measure.tempoEvents = tempoEvents.filter(s=>s.beat>=measure.startBeat&&s.beat<measure.endBeat)
     measure.staffs = Object.fromEntries(staffIds.map(staff => [staff, new Map()]))
   }
   for (const event of assigned) {
@@ -49,7 +59,7 @@ export function interpretScore(events, { startBeat = 0, endBeat = 4, settings, t
           const triplet = Math.abs((end - start) * 16 - Math.round((end - start) * 16)) > 1e-5
           const pieces = decomposeDuration(end - start, { triplet })
           pieces.forEach((value, part) => {
-            tokens.push({ ...value, startBeat: cursor, events: chord.sort((a,b) => a.pitch - b.pitch),
+            tokens.push({ ...value, startBeat: cursor, events: [...chord].sort((a,b) => a.pitch - b.pitch).map(event=>({...event,tieIn:part>0||event.tieIn,tieOut:part<pieces.length-1||event.tieOut})),
               tieIn: chord.length && (part > 0 || chord[0].tieIn), tieOut: chord.length && (part < pieces.length - 1 || chord[0].tieOut) })
             cursor += value.beats
           })
@@ -67,7 +77,7 @@ export function interpretScore(events, { startBeat = 0, endBeat = 4, settings, t
       measure.staffs[staff] = [...voices.entries()].map(([voice, tokens]) => ({ voice, tokens }))
     }
     measure.x = x
-    measure.width = Math.max(300, 140 + (measure.endBeat - measure.startBeat) * 38, 130 + complexity * 34)
+    measure.width = Math.max(300, 170 + (measure.endBeat - measure.startBeat) * 38, 180 + complexity * 38)
     x += measure.width
   }
   return { measures, width: x + 20, quantum, tab, events, staffIds }

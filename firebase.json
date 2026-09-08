@@ -274,7 +274,6 @@
         "destination": "/studio",
         "type": 301
       },
-
       {
         "source": "/stage.html",
         "destination": "/vertix",
@@ -295,7 +294,6 @@
         "destination": "/vertix/project/:projectId",
         "type": 301
       },
-
       {
         "source": "/studio-project.html",
         "destination": "/studio/daw",
@@ -540,20 +538,6 @@
         "source": "/studio/daw/**",
         "destination": "/studio-project.html"
       },
-
-      {
-        "source": "/vertix/project/**",
-        "destination": "/stage.html"
-      },
-      {
-        "source": "/vertix",
-        "destination": "/stage.html"
-      },
-      {
-        "source": "/vertix/**",
-        "destination": "/stage.html"
-      },
-
       {
         "source": "/studio/stagemaker/project/**",
         "destination": "/stage.html"
@@ -566,7 +550,6 @@
         "source": "/studio/stagemaker/**",
         "destination": "/stage.html"
       },
-
       {
         "source": "/studio/live",
         "destination": "/studio.html"
@@ -607,7 +590,6 @@
         "source": "/studio/rundown-pilot/**",
         "destination": "/studio.html"
       },
-
       {
         "source": "/stage",
         "destination": "/stage.html"
@@ -616,7 +598,6 @@
         "source": "/stage/**",
         "destination": "/stage.html"
       },
-
       {
         "source": "/studio/demos",
         "destination": "/studio-demos.html"
@@ -628,6 +609,18 @@
       {
         "source": "/studio/**",
         "destination": "/studio-project.html"
+      },
+      {
+        "source": "/vertix/project/**",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/vertix",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/vertix/**",
+        "destination": "/studio.html"
       },
       {
         "source": "/distribution",

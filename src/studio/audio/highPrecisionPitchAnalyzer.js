@@ -24,6 +24,7 @@ function chooseConfig(sampleRate,mode='vocal',sensitivity=.72,quality='deep'){
     continuityWeight:mode==='full-mix'?.18:.34,
     octavePenalty:mode==='full-mix'?.13:.25,
     curvePointLimit:deep?96:48,
+    analysisMode:mode,
     sampleRate
   }
 }
@@ -72,71 +73,116 @@ function normalizedCorrelation(frame, tau, stride = 1) {
 }
 
 function detectCandidates(frame, sampleRate, config) {
+  // soura-pitch-analysis-period-lock-v5
   const minTau = Math.max(2, Math.floor(sampleRate / config.maxFrequency))
   const maxTau = Math.min(frame.length - 3, Math.ceil(sampleRate / config.minFrequency))
-
-  // Two-stage detector: inexpensive coarse correlation first, then full
-  // resolution refinement only around the strongest lag neighborhoods.
-  // This keeps deep analysis practical on multi-minute regions.
-  const lagStride = config.quality === 'deep' ? 3 : 5
+  const lagStride = config.quality === 'deep' ? 2 : 4
   const sampleStride = config.quality === 'deep' ? 2 : 3
   const coarse = []
 
+  // Correlation by itself has a classic failure mode on harmonic instruments:
+  // T, 2T, 3T... can all score highly. Sorting every lag globally therefore
+  // tends to choose a SUBHARMONIC (too-low note). Piano makes this especially
+  // obvious. We first find local periodic peaks instead.
   for (let tau = minTau; tau <= maxTau; tau += lagStride) {
-    const score = normalizedCorrelation(frame, tau, sampleStride)
-    if (score > 0.28) coarse.push({ tau, score })
+    coarse.push({ tau, score: normalizedCorrelation(frame, tau, sampleStride) })
   }
 
-  coarse.sort((a, b) => b.score - a.score)
-  const seeds = coarse.slice(0, config.quality === 'deep' ? 7 : 4)
-  const refined = new Map()
+  const coarsePeaks = []
+  for (let i = 1; i < coarse.length - 1; i++) {
+    const a = coarse[i - 1], b = coarse[i], c = coarse[i + 1]
+    if (b.score >= 0.22 && b.score >= a.score && b.score >= c.score) coarsePeaks.push(b)
+  }
 
-  for (const seed of seeds) {
-    const from = Math.max(minTau, seed.tau - lagStride - 1)
-    const to = Math.min(maxTau, seed.tau + lagStride + 1)
-
-    for (let tau = from; tau <= to; tau += 1) {
-      if (refined.has(tau)) continue
-      refined.set(tau, normalizedCorrelation(frame, tau, 1))
+  // Keep strongest neighborhoods, but ALSO probe integer divisors. If a long
+  // lag is a 2T/3T subharmonic peak, its true fundamental period T is now
+  // guaranteed a chance to compete even when it missed the global top-N.
+  const strongest = [...coarsePeaks].sort((a, b) => b.score - a.score).slice(0, config.quality === 'deep' ? 12 : 7)
+  const seeds = new Set()
+  for (const peak of strongest) {
+    seeds.add(peak.tau)
+    for (const divisor of [2, 3, 4]) {
+      const divided = Math.round(peak.tau / divisor)
+      if (divided >= minTau && divided <= maxTau) seeds.add(divided)
     }
   }
 
-  const ordered = [...refined.entries()]
-    .map(([tau, score]) => ({ tau, score }))
-    .sort((a, b) => b.score - a.score)
+  // Also preserve the earliest strong peak relative to the maximum. This is
+  // the McLeod/YIN-style "first credible period" idea: prefer the shortest
+  // period that explains the waveform nearly as well as later multiples.
+  const maxCoarse = strongest[0]?.score || 0
+  const nearMaximum = coarsePeaks
+    .filter(peak => peak.score >= Math.max(0.36, maxCoarse * (config.quality === 'deep' ? 0.86 : 0.82)))
+    .sort((a, b) => a.tau - b.tau)
+  if (nearMaximum[0]) seeds.add(nearMaximum[0].tau)
 
-  const result = []
+  const refined = new Map()
+  const refineRadius = lagStride + 2
+  for (const seed of seeds) {
+    for (let tau = Math.max(minTau, seed - refineRadius); tau <= Math.min(maxTau, seed + refineRadius); tau++) {
+      if (!refined.has(tau)) refined.set(tau, normalizedCorrelation(frame, tau, 1))
+    }
+  }
 
-  for (const item of ordered.slice(0, config.quality === 'deep' ? 8 : 5)) {
-    const left = refined.get(item.tau - 1) ?? item.score
-    const center = item.score
-    const right = refined.get(item.tau + 1) ?? item.score
-    const denominator = left - (2 * center) + right
-    const offset = Math.abs(denominator) > 1e-12
-      ? 0.5 * (left - right) / denominator
-      : 0
-    const refinedTau = item.tau + clamp(offset, -1, 1)
+  const localPeaks = []
+  const taus = [...refined.keys()].sort((a, b) => a - b)
+  for (const tau of taus) {
+    const center = refined.get(tau)
+    const left = refined.get(tau - 1) ?? normalizedCorrelation(frame, Math.max(minTau, tau - 1), 1)
+    const right = refined.get(tau + 1) ?? normalizedCorrelation(frame, Math.min(maxTau, tau + 1), 1)
+    if (!(center >= left && center >= right && center >= 0.24)) continue
+
+    const denominator = left - 2 * center + right
+    const offset = Math.abs(denominator) > 1e-12 ? 0.5 * (left - right) / denominator : 0
+    const refinedTau = tau + clamp(offset, -1, 1)
     const frequencyHz = sampleRate / Math.max(1, refinedTau)
+    if (!Number.isFinite(frequencyHz) || frequencyHz < config.minFrequency || frequencyHz > config.maxFrequency) continue
 
-    if (!Number.isFinite(frequencyHz)) continue
-    if (frequencyHz < config.minFrequency || frequencyHz > config.maxFrequency) continue
-
+    // Period-multiple support: a true fundamental period usually remains
+    // periodic at 2T and 3T. This is useful evidence, but only a modest bonus
+    // because harmonic-rich timbres can also partially satisfy it.
+    const multipleScores = []
+    for (const multiple of [2, 3]) {
+      const mt = Math.round(refinedTau * multiple)
+      if (mt <= maxTau) multipleScores.push(normalizedCorrelation(frame, mt, config.quality === 'deep' ? 2 : 3))
+    }
+    const harmonicSupport = multipleScores.length ? median(multipleScores) : center
     const midi = frequencyToMidi(frequencyHz)
-    const confidence = clamp((center - 0.18) / 0.82, 0, 1)
+    const confidence = clamp(((center - 0.18) / 0.82) * 0.86 + clamp((harmonicSupport - 0.2) / 0.8, 0, 1) * 0.14, 0, 1)
 
-    // Reject duplicate/harmonic-equivalent candidates that land within a few cents.
-    if (result.some((candidate) => Math.abs(candidate.midi - midi) < 0.08)) continue
-
-    result.push({
+    if (localPeaks.some(candidate => Math.abs(candidate.midi - midi) < 0.08)) continue
+    localPeaks.push({
       frequencyHz,
       midi,
       confidence,
-      nsdf: center
+      nsdf: center,
+      harmonicSupport,
+      periodTau: refinedTau
     })
   }
 
-  return result
+  if (!localPeaks.length) return []
+
+  const bestPeriodicity = Math.max(...localPeaks.map(candidate => candidate.nsdf))
+  const credible = localPeaks.filter(candidate =>
+    candidate.nsdf >= Math.max(0.34, bestPeriodicity * (config.quality === 'deep' ? 0.855 : 0.82))
+  )
+  const earliestCredibleTau = credible.length ? Math.min(...credible.map(candidate => candidate.periodTau)) : Infinity
+
+  // Fundamental-likelihood bonus is strongest for the earliest near-max peak.
+  // This specifically suppresses octave/sub-octave lock errors without
+  // snapping the measured cents or forcing equal temperament.
+  for (const candidate of localPeaks) {
+    candidate.fundamentalBonus = Number.isFinite(earliestCredibleTau)
+      ? clamp(1 - Math.abs(candidate.periodTau - earliestCredibleTau) / Math.max(1, earliestCredibleTau), 0, 1)
+      : 0
+  }
+
+  return localPeaks
+    .sort((a, b) => (b.confidence + b.fundamentalBonus * 0.16) - (a.confidence + a.fundamentalBonus * 0.16))
+    .slice(0, config.quality === 'deep' ? 10 : 6)
 }
+
 function chooseCandidate(candidates,previousMidi,config){
   let best=null,bestScore=-Infinity
   for(const c of candidates){
@@ -144,11 +190,19 @@ function chooseCandidate(candidates,previousMidi,config){
     const continuity=Number.isFinite(previousMidi)?1-distance/24:.5
     const delta=Number.isFinite(previousMidi)?Math.abs(c.midi-previousMidi):0
     const octaveLike=Math.min(Math.abs(delta-12),Math.abs(delta-24))<.75?1:0
-    const score=c.confidence+continuity*config.continuityWeight-octaveLike*config.octavePenalty
+    const centsFromSemitone=Math.abs(c.midi-Math.round(c.midi))*100
+    const equalTemperamentPrior=config.analysisMode==='instrument'?clamp(1-centsFromSemitone/55,0,1):0
+    const score=
+      c.confidence+
+      (c.fundamentalBonus||0)*.16+
+      continuity*config.continuityWeight-
+      octaveLike*config.octavePenalty+
+      equalTemperamentPrior*.035
     if(score>bestScore){bestScore=score;best=c}
   }
   return best
 }
+
 function smoothFrames(frames){
   const out=frames.map(f=>({...f}))
   for(let i=0;i<out.length;i++){
@@ -219,7 +273,22 @@ function segment(frames,{bpm,regionStartBeat,stretchRatio,confidenceThreshold,mi
     const voiced=current.frames.filter(f=>f.voiced)
     if(!voiced.length){current=null;return}
     const start=voiced[0].startSeconds,end=voiced[voiced.length-1].endSeconds,duration=Math.max(0,end-start)
-    const confidence=median(voiced.map(f=>f.confidence)),medianMidi=median(voiced.map(f=>f.midi)),midiNote=clamp(Math.round(medianMidi),0,127)
+    const confidence=median(voiced.map(f=>f.confidence))
+    const trim=Math.min(Math.floor(voiced.length*.18),Math.max(0,voiced.length-3))
+    const stableFrames=mode==='instrument'&&voiced.length>=5?voiced.slice(trim):voiced
+    const weightedMidi=stableFrames
+      .filter(f=>Number.isFinite(f.midi))
+      .sort((a,b)=>a.midi-b.midi)
+    let medianMidi=median(stableFrames.map(f=>f.midi))
+    if(weightedMidi.length){
+      const totalWeight=weightedMidi.reduce((sum,f)=>sum+Math.max(.05,f.confidence||0),0)
+      let cumulative=0
+      for(const frame of weightedMidi){
+        cumulative+=Math.max(.05,frame.confidence||0)
+        if(cumulative>=totalWeight*.5){medianMidi=frame.midi;break}
+      }
+    }
+    const midiNote=clamp(Math.round(medianMidi),0,127)
     if(duration>=minNoteSeconds&&confidence>=confidenceThreshold){
       const summary=curveSummary(current.frames,midiNote,config.curvePointLimit),visibleStart=start*stretchRatio,visibleDuration=duration*stretchRatio
       notes.push({
@@ -230,7 +299,7 @@ function segment(frames,{bpm,regionStartBeat,stretchRatio,confidenceThreshold,mi
         confidence:+confidence.toFixed(4),centsOffset:summary.centsOffset,pitchDriftStartCents:summary.pitchDriftStartCents,pitchDriftEndCents:summary.pitchDriftEndCents,
         vibratoAmount:summary.vibratoAmount,pitchStability:summary.pitchStability,voicedRatio:summary.voicedRatio,
         pitchCurve:summary.pitchCurve.map(p=>({...p,timeSeconds:+(p.timeSeconds*stretchRatio).toFixed(5),relativeSeconds:+(p.relativeSeconds*stretchRatio).toFixed(5)})),
-        editedFineTuneCents:0,gainDb:0,source:'analysis',analysisMethod:'yin+nsdf+continuity-v4',lockedToAnalysis:false,muted:false,renderStatus:'idle'
+        editedFineTuneCents:0,gainDb:0,source:'analysis',analysisMethod:'period-peak+nsdf+continuity-v5',lockedToAnalysis:false,muted:false,renderStatus:'idle'
       })
     }
     current=null
@@ -253,15 +322,27 @@ function segment(frames,{bpm,regionStartBeat,stretchRatio,confidenceThreshold,mi
 export function analyzePitchHighPrecision({samples,sampleRate,bpm=140,regionStartBeat=0,stretchRatio=1,analysisMode='vocal',sensitivity=.72,minNoteSeconds=.06,confidenceThreshold=.48,quality='deep',onProgress=null}={}){
   if(!(samples instanceof Float32Array))throw new Error('Pitch analyzer expected Float32Array audio samples.')
   const config=chooseConfig(sampleRate,analysisMode,clamp(sensitivity,0,1),quality),frame=new Float32Array(config.frameSize),frames=[]
-  let previousMidi=NaN
+  let previousMidi=NaN,unvoicedRun=0
+  const continuityResetFrames=Math.max(2,Math.round((analysisMode==='instrument'?.035:.055)/(config.hopSize/sampleRate)))
   const total=Math.max(1,Math.ceil(Math.max(0,samples.length-config.frameSize)/config.hopSize))
   for(let start=0,index=0;start+config.frameSize<=samples.length;start+=config.hopSize,index++){
     if(index%12===0)onProgress?.(clamp(index/total*.72,0,.72))
     const level=rms(samples,start,config.frameSize)
-    if(level<config.rmsFloor){frames.push({voiced:false,startSeconds:start/sampleRate,endSeconds:(start+config.hopSize)/sampleRate,rms:level,confidence:0});continue}
+    if(level<config.rmsFloor){
+      unvoicedRun++
+      if(unvoicedRun>=continuityResetFrames)previousMidi=NaN
+      frames.push({voiced:false,startSeconds:start/sampleRate,endSeconds:(start+config.hopSize)/sampleRate,rms:level,confidence:0})
+      continue
+    }
     windowFrame(samples,start,config.frameSize,frame)
     const candidate=chooseCandidate(detectCandidates(frame,sampleRate,config),previousMidi,config)
-    if(!candidate||candidate.confidence<Math.max(.26,confidenceThreshold-.22)){frames.push({voiced:false,startSeconds:start/sampleRate,endSeconds:(start+config.hopSize)/sampleRate,rms:level,confidence:candidate?.confidence||0});continue}
+    if(!candidate||candidate.confidence<Math.max(.26,confidenceThreshold-.22)){
+      unvoicedRun++
+      if(unvoicedRun>=continuityResetFrames)previousMidi=NaN
+      frames.push({voiced:false,startSeconds:start/sampleRate,endSeconds:(start+config.hopSize)/sampleRate,rms:level,confidence:candidate?.confidence||0})
+      continue
+    }
+    unvoicedRun=0
     previousMidi=candidate.midi
     frames.push({voiced:true,startSeconds:start/sampleRate,endSeconds:(start+config.hopSize)/sampleRate,frequencyHz:candidate.frequencyHz,midi:candidate.midi,confidence:candidate.confidence,rms:level})
   }
@@ -271,5 +352,5 @@ export function analyzePitchHighPrecision({samples,sampleRate,bpm=140,regionStar
   const notes=segment(smoothed,{bpm:Number(bpm)||140,regionStartBeat:Number(regionStartBeat)||0,stretchRatio:Math.max(.05,Number(stretchRatio)||1),confidenceThreshold:clamp(confidenceThreshold,.1,.98),minNoteSeconds:clamp(minNoteSeconds,.025,.35),mode:analysisMode,config})
   onProgress?.(.98)
   const voiced=smoothed.filter(f=>f.voiced).length
-  return{notes,frameCount:smoothed.length,voicedFrameCount:voiced,voicedRatio:smoothed.length?voiced/smoothed.length:0,algorithm:`soura-yin-nsdf-continuity-v4:${analysisMode}:${quality}`,analysis:{quality,analysisMode,sampleRate,frameSize:config.frameSize,hopSize:config.hopSize,hopSeconds:config.hopSize/sampleRate,minFrequency:config.minFrequency,maxFrequency:config.maxFrequency,sensitivity,minNoteSeconds,confidenceThreshold,curvePointLimit:config.curvePointLimit}}
+  return{notes,frameCount:smoothed.length,voicedFrameCount:voiced,voicedRatio:smoothed.length?voiced/smoothed.length:0,algorithm:`soura-period-peak-nsdf-continuity-v5:${analysisMode}:${quality}`,analysis:{quality,analysisMode,sampleRate,frameSize:config.frameSize,hopSize:config.hopSize,hopSeconds:config.hopSize/sampleRate,minFrequency:config.minFrequency,maxFrequency:config.maxFrequency,sensitivity,minNoteSeconds,confidenceThreshold,curvePointLimit:config.curvePointLimit}}
 }

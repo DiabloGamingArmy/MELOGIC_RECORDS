@@ -125,7 +125,15 @@ export async function listSharedStageProjects(uid) {
   try {
     const snapshot = await getDocs(query(collection(db, STAGE_PROJECTS_COLLECTION), where('collaboratorIds', 'array-contains', id)))
     return snapshot.docs.map((d) => normalizeStageProject(d.id, d.data())).sort(sortStageProjectsByActivity)
-  } catch (error) { console.error('[stageProjectService] shared query failed', error?.code || '', error?.message || error); throw error }
+  } catch (error) {
+    // studio-home-firebase-storage-v3
+    if (classifyStageProjectError(error, { uid: id }) === 'permission-denied') {
+      console.info('[stageProjectService] shared Vertix query denied by current Firestore rules; continuing with owned/indexed projects')
+      return []
+    }
+    console.error('[stageProjectService] shared query failed', error?.code || '', error?.message || error)
+    throw error
+  }
 }
 
 export async function listIndexedStageProjects(uid) {

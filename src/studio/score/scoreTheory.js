@@ -41,8 +41,11 @@ export function displayQuantum(events, setting = 'auto') {
   return candidates.find(q => events.every(e => Math.abs(Math.round(e.startBeat / q) * q - e.startBeat) < 0.035 && Math.abs(Math.round(e.durationBeats / q) * q - e.durationBeats) < 0.04)) || 0.125
 }
 export function quantizeForDisplay(event, quantum) {
-  const startBeat = Math.round(event.startBeat / quantum) * quantum
-  return { ...event, startBeat, durationBeats: Math.max(quantum, Math.round(event.durationBeats / quantum) * quantum) }
+  // soura-score-editor-hardening-v1
+  const q = Number(quantum)
+  if (!Number.isFinite(q) || q <= 0) return { ...event }
+  const startBeat = Math.round(event.startBeat / q) * q
+  return { ...event, startBeat, durationBeats: Math.max(q, Math.round(event.durationBeats / q) * q) }
 }
 export function buildMeasures(endBeat, signatures = [{ beat: 0, numerator: 4, denominator: 4 }]) {
   const map = [...signatures].filter(s => Number.isFinite(s.beat) && s.beat >= 0 && s.numerator > 0 && [1,2,4,8,16,32,64].includes(s.denominator)).sort((a,b) => a.beat - b.beat)
@@ -68,7 +71,7 @@ const VALUES = [ ['w',4],['h',2],['q',1],['8',0.5],['16',0.25],['32',0.125],['64
 export function decomposeDuration(beats, { triplet = false } = {}) {
   const choices = VALUES.flatMap(([duration, value]) => triplet
     ? [{ duration, beats: value * 2 / 3, dots: 0, triplet: true }]
-    : [{ duration, beats: value * 1.5, dots: 1, triplet: false }, { duration, beats: value, dots: 0, triplet: false }]).sort((a,b) => b.beats - a.beats)
+    : [{ duration, beats: value * 1.75, dots: 2, triplet: false }, { duration, beats: value * 1.5, dots: 1, triplet: false }, { duration, beats: value, dots: 0, triplet: false }]).sort((a,b) => b.beats - a.beats)
   const result = []
   let remaining = beats
   while (remaining > 1e-6 && result.length < 128) {
@@ -96,4 +99,12 @@ export function assignVoices(events) {
     voices[voice] = { start: event.startBeat, end }
     return { ...event, voice }
   })
+}
+
+export function transposeKey(key, semitones) {
+  const minor=key.endsWith('m'), root=minor?key.slice(0,-1):key
+  const pitch=NATURAL[root[0]]+(root.includes('#')?1:root.includes('b')?-1:0)
+  const pc=((pitch+semitones)%12+12)%12
+  const names=Object.values(keyAlterations(key)).some(v=>v<0)?['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B']:['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
+  return keyName(names[pc]+(minor?'m':''))
 }

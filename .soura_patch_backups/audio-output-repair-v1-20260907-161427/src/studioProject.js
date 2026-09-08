@@ -1,0 +1,14371 @@
+import { normalizeNoteNotation, normalizeRegionScore } from './studio/score/scoreModel.js'
+import { editScoreNotes, moveScoreNotes, insertScoreNote } from './studio/score/scoreCommands.js'
+import './styles/base.css'
+import { installSouraThemeConsole } from "./soura/themes/themeManager.js";
+
+// Experimental Soura theme console (session-only)
+installSouraThemeConsole();
+import './styles/studio.css'
+import { navShell } from './components/navShell'
+import { initShellChrome } from './appBoot'
+import { auth, waitForInitialAuthState } from './firebase/auth'
+import { ROUTES, authRoute } from './utils/routes'
+import { getStudioProject, touchStudioProject, saveStudioProjectEditorState } from './data/studioProjectService'
+import { StudioAudioEngine } from './studio/audio/StudioAudioEngine.js'
+import { createSouraWebAudioContextOwner } from './studio/audio/SouraWebAudioContext.js'
+import { normalizeStudioProjectModel } from './studio/model/studioProjectModel.js'
+import { InstrumentRegistry } from './studio/instruments/InstrumentRegistry.js'
+import { DawWindowManager } from './studio/plugins/DawWindowManager.js'
+import { DAW_PLUGIN_TYPES } from './studio/plugins/pluginCatalog.js'
+import { renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
+import { isSouraAudioEffectPlugin, renderSouraAudioEffectShell } from './studio/plugins/SouraAudioEffectShell.js'
+import { isSouraWasmPluginType, renderSouraWasmPluginShell } from './studio/plugins/SouraWasmPluginShell.js'
+import { getDawPluginManifest, listDawInstruments, SOURA_PLUGIN_IMPORT_ID, chooseAndImportSouraPlugin } from './daw/pluginHost/pluginRegistry.js'
+import { MIDI_EFFECT_MANIFESTS } from './daw/midiEffects/catalog.js'
+import {
+  AUDIO_EFFECT_MANIFESTS,
+  getAudioEffectDefaultParams,
+  getAudioEffectManifest,
+  getAudioEffectPluginType,
+  getAudioEffectTypeFromPlugin,
+  isImplementedAudioEffect
+} from './daw/audioEffects/catalog.js'
+import { mountResonaChatSurface } from './components/resonaChatSurface.js'
+import { getStorageAssetUrl } from './firebase/storageAssets.js'
+import { storage as firebaseStorage } from './firebase/storage.js'
+import { ref as storageRef, uploadBytesResumable } from 'firebase/storage'
+import { renderAudioDsp, SOURA_AUDIO_DSP_OPERATIONS } from './studio/audio/dsp/audioDspRenderService.js'
+import {
+  getSouraWasmDspStatusSnapshot,
+  isLegacyJsDspFallbackEnabled,
+  preloadSouraWasmDsp
+} from './studio/audio/dsp/wasm/souraWasmDspClient.js'
+
+import {
+  createSouraProjectLoader,
+  waitForWarmup
+} from './studio/runtime/souraProjectLoadingScreen.js'
+
+import { renderReversedAudio } from './studio/audio/audioReverseRenderService.js'
+import { getNativeFilePath, getSouraImportPersistenceMode, isSouraDesktopRuntime, registerDesktopLocalAudioReference, releaseDesktopLocalAudioReference } from './studio/audio/native/SouraLocalAudioReference.js'
+import { chooseInstalledNativeVst3, createNativeVst3TrackInstrument, isNativeVst3Instrument, resolveNativeVst3RuntimePath, showNativeVst3ExecutionStatus, nativeVst3SetMix } from './studio/audio/native/NativeVst3Service.js'
+import { getSouraRuntimeCapabilities } from './studio/runtime/SouraRuntimeCapabilities.js'
+import {
+  SOURA_EDITOR_FORMAT_VERSION,
+  computePortableTrackSourceRevision,
+  createTrackDependencyDescriptor,
+  getPortableTrackPlaybackDecision,
+  normalizePortableTrackRender,
+  serializePortableInstrument,
+  serializePortableTrackRender
+} from './studio/portability/portableTrackRender.js'
+import { collectMetronomeBeatIndices } from './studio/transport/metronomeSchedule.js'
+import { VIEWPORT_PLAYHEAD_UPDATE_OPTIONS } from './studio/transport/timelineTransportInvariant.js'
+import { createSouraPerformanceDiagnostics } from './studio/performance/SouraPerformanceDiagnostics.js'
+import {
+  findFolderByPath,
+  flattenLibraryFolders,
+  getDefaultLibraryContent,
+  getInstrumentsForFolder,
+  samplePlaybackModeLabel,
+  sampleStrategyDefinition
+} from './data/studioLibraryService.js'
+import './styles/dawPluginWindow.css'
+import './studio/audio/PitchTraceViewport.js'
+import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
+import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisService.js'
+import { SOURCE_TYPES, SPECTRAL_BANDS } from './studio/audio/analysis/audioAnalysisConstants.js'
+import { analyzeProjectContext, combineAnalysisResults, compareRegionAnalyses } from './studio/audio/analysis/contextAnalysis.js'
+import { buildRecommendations } from './studio/audio/analysis/recommendationEngine.js'
+import { AssetLibrary, ASSET_LIBRARY_ROOTS, migrateLegacyAssetLibraryState } from './studio/assets/AssetLibrary.js'
+import { PrimitiveProvider } from './studio/assets/providers/PrimitiveProvider.js'
+import { MarketplaceProvider } from './studio/assets/providers/MarketplaceProvider.js'
+import { UserProvider } from './studio/assets/providers/UserProvider.js'
+import { ProjectProvider } from './studio/assets/providers/ProjectProvider.js'
+import { WebAssetStorage } from './studio/assets/storage/WebAssetStorage.js'
+import { NativeAssetStorage, isNativeAssetRuntime } from './studio/assets/storage/NativeAssetStorage.js'
+import { AssetAuditionController } from './studio/assets/AssetAuditionController.js'
+import { SOURA_ASSET_DRAG_TYPE, createSouraAssetDragPayload, parseSouraAssetDragPayload, planAssetTimelineDrop } from './studio/assets/assetTimelineDrop.js'
+import { getAssetLibraryShortcutAction } from './studio/assets/assetLibraryShortcuts.js'
+import { measureTimeDomainSamples, updateMeterBallistics } from './studio/audio/audioMetering.js'
+import { applyInheritedTrackColor, DEFAULT_METRONOME_SETTINGS, moveArrayItem, normalizeMetronomeSettings } from './studio/state/trackEditing.js'
+import {
+  arrangementViewportTransforms,
+  beatForTimelineX,
+  clampArrangementViewport,
+  collectTimelineGeometryInvariantErrors,
+  createTimelineGeometrySnapshot,
+  normalizeWheelDeltaPixels,
+  planTimelineScrollRefresh,
+  planTimelineZoomViewport,
+  timelineXForBeat,
+  timelineWidthForBeats,
+  timelineZoomFactorFromWheel
+} from './studio/timeline/arrangementViewport.js'
+import {
+  getTimelineViewportBeatRange,
+  timelineBeatRangesOverlap,
+  timelineViewportNeedsRefresh
+} from './studio/timeline/timelineViewport.js'
+import {
+  musicalDurationToRegionWidth,
+  musicalPositionToRegionX,
+  regionWidthToMusicalDuration,
+  regionXToMusicalPosition,
+  snapMusicalPosition
+} from './studio/regionEditorCoordinates.js'
+
+import { getRegionTimelineRange, getTimelineRegionGeometry, getTimelineRegionLaneGeometry } from './studio/timeline/regionGeometry.js'
+
+const app = document.querySelector('#app')
+// soura-detached-region-editor-capture-override-v7
+const souraDetachedRegionRequest = (() => {
+  const params = new URLSearchParams(window.location.search)
+  const panel = String(params.get('souraDetachedPanel') || '')
+  const regionId = String(params.get('souraDetachedRegion') || '')
+  const active = panel === 'midi-roll'
+  if (active) {
+    document.documentElement.classList.add('is-soura-detached-region-editor-v7')
+    document.documentElement.dataset.souraDetachedRegion = regionId
+  }
+  return Object.freeze({ active, panel, regionId })
+})()
+
+// soura-detached-region-controller-portal-v8
+let souraDetachedRegionPortalWindow = null
+let souraDetachedRegionPortalWatch = 0
+
+function detachedRegionPortalIsOpenV8() {
+  return Boolean(souraDetachedRegionPortalWindow && !souraDetachedRegionPortalWindow.closed)
+}
+
+function copyDetachedRegionStylesV8(targetDocument) {
+  targetDocument.querySelectorAll('link[data-soura-portal-style],style[data-soura-portal-style]').forEach((node) => node.remove())
+  document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
+    const clone = node.cloneNode(true)
+    clone.setAttribute('data-soura-portal-style', '1')
+    targetDocument.head.appendChild(clone)
+  })
+}
+
+function syncDetachedRegionPortalV8() {
+  if (!detachedRegionPortalIsOpenV8()) return
+  const popup = souraDetachedRegionPortalWindow
+  const popupDocument = popup.document
+  const portalRoot = popupDocument.querySelector('#soura-detached-region-portal')
+  if (!portalRoot) return
+
+  const livePanel = app.querySelector(
+    '.studio-bottom-panel[data-audio-region-editor], .studio-bottom-panel[data-midi-roll-editor], .studio-bottom-panel.studio-midi-roll-editor'
+  )
+  if (!livePanel || !livePanel.isConnected) return
+
+  livePanel.classList.add('studio-detached-controller-panel-v8')
+  if (livePanel.ownerDocument !== popupDocument) {
+    popupDocument.adoptNode(livePanel)
+  }
+  portalRoot.replaceChildren(livePanel)
+}
+
+function closeDetachedRegionPortalV8() {
+  if (souraDetachedRegionPortalWatch) {
+    window.clearInterval(souraDetachedRegionPortalWatch)
+    souraDetachedRegionPortalWatch = 0
+  }
+  souraDetachedRegionPortalWindow = null
+  queueMicrotask(() => renderEditor())
+}
+
+function installDetachedRegionKeyboardBridgeV8(popup) {
+  const forward = (event) => {
+    const target = event.target
+    const typing = target?.matches?.('input,textarea,select') || target?.isContentEditable
+    if (typing && event.key !== 'Escape') return
+
+    const forwarded = new KeyboardEvent(event.type, {
+      key: event.key,
+      code: event.code,
+      location: event.location,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      metaKey: event.metaKey,
+      repeat: event.repeat,
+      bubbles: true,
+      cancelable: true
+    })
+    document.dispatchEvent(forwarded)
+    if (forwarded.defaultPrevented) event.preventDefault()
+  }
+
+  popup.document.addEventListener('keydown', forward, true)
+  popup.document.addEventListener('keyup', forward, true)
+}
+
+function openDetachedRegionEditorV7() {
+  if (detachedRegionPortalIsOpenV8()) {
+    souraDetachedRegionPortalWindow.focus?.()
+    queueMicrotask(syncDetachedRegionPortalV8)
+    return
+  }
+
+  const availWidth = Math.max(980, Number(window.screen?.availWidth) || 1180)
+  const availHeight = Math.max(680, Number(window.screen?.availHeight) || 760)
+  const width = Math.min(1320, Math.max(980, Math.round(availWidth * 0.80)))
+  const height = Math.min(860, Math.max(680, Math.round(availHeight * 0.76)))
+  const left = Math.max(0, Math.round((availWidth - width) / 2))
+  const top = Math.max(0, Math.round((availHeight - height) / 2))
+
+  const popup = window.open(
+    '',
+    'melogic-region-editor',
+    `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=no`
+  )
+  if (!popup) {
+    window.alert('Safari blocked the detached Region Editor. Allow pop-ups for Melogic and try again.')
+    return
+  }
+
+  popup.document.open()
+  popup.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Region Editor | Melogic DAW</title>
+  <style data-soura-portal-style>
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#090f1a}
+    #soura-detached-region-portal{position:fixed;inset:0;overflow:hidden;background:#090f1a}
+  </style>
+</head>
+<body>
+  <div id="soura-detached-region-portal"></div>
+</body>
+</html>`)
+  popup.document.close()
+
+  souraDetachedRegionPortalWindow = popup
+  copyDetachedRegionStylesV8(popup.document)
+  installDetachedRegionKeyboardBridgeV8(popup)
+  popup.focus?.()
+
+  souraDetachedRegionPortalWatch = window.setInterval(() => {
+    if (!detachedRegionPortalIsOpenV8()) {
+      closeDetachedRegionPortalV8()
+      return
+    }
+    syncDetachedRegionPortalV8()
+  }, 250)
+
+  queueMicrotask(syncDetachedRegionPortalV8)
+}
+
+// Capture phase intentionally intercepts ONLY Region Editor Detach before any
+// legacy/local detach implementation can run. No dependency on detachBottomPanel().
+document.addEventListener('click', (event) => {
+  const button = event.target?.closest?.('[data-detach-bottom-panel="midi-roll"]')
+  if (!button || souraDetachedRegionRequest.active) return
+  event.preventDefault()
+  event.stopPropagation()
+  event.stopImmediatePropagation()
+  openDetachedRegionEditorV7()
+}, true)
+const souraRuntimeCapabilities = getSouraRuntimeCapabilities()
+const souraPerformanceDiagnostics = createSouraPerformanceDiagnostics({
+  enabled: Boolean(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraPerf'))
+})
+window.__souraPerformanceDiagnostics = Object.freeze({
+  snapshot: () => souraPerformanceDiagnostics.snapshot()
+})
+let lastTimelineGeometryDiagnostics = { revision: 0, errors: [], checkedAt: 0 }
+window.__souraTimelineGeometry = Object.freeze({
+  snapshot: () => structuredClone(lastTimelineGeometryDiagnostics)
+})
+const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw', 'stagemaker'])
+const PREF_KEY = 'melogic_studio_keep_site_menu_open'
+const MUSICAL_TYPING_PREF_KEY = 'melogic:daw:musicalTyping'
+const CHANNEL_ACCORDION_PREF_KEY = 'melogic:daw:channelStripSettings:accordionState'
+const ASSET_LIBRARY_PREF_KEY = 'melogic:soura:assetLibrary:v1'
+const REGION_TOOL_ITEMS = [
+  { id: 'select', label: 'Select', glyph: 'V', shortcut: 'V / 1', enabled: true, mode: 'cursor' },
+  { id: 'split', label: 'Split', glyph: 'S', shortcut: 'S / 3', enabled: true, mode: 'cursor' },
+  { id: 'erase', label: 'Erase', glyph: 'E', shortcut: 'E / 4', enabled: true, mode: 'cursor' },
+  { id: 'mute', label: 'Mute', glyph: 'M', shortcut: 'M', enabled: true, mode: 'cursor' },
+  { id: 'loop', label: 'Loop', glyph: 'L', shortcut: 'L', enabled: true, mode: 'action', title: 'Loop selected region' },
+  { id: 'stretch', label: 'Stretch', glyph: 'T', shortcut: 'Edge drag', enabled: true, mode: 'cursor' },
+  { id: 'draw', label: 'Draw', glyph: 'P', enabled: false, reason: 'Use Pencil in Region Editor' },
+  { id: 'fade', label: 'Fade', glyph: 'F', enabled: false, reason: 'Use Region Editor fades' },
+  { id: 'slip', label: 'Slip', glyph: 'L', enabled: false, reason: 'Coming soon' },
+  { id: 'audition', label: 'Audition', glyph: 'A', enabled: false, reason: 'Coming soon' },
+  { id: 'marquee', label: 'Marquee', glyph: 'Q', enabled: false, reason: 'Coming soon' },
+  { id: 'glue', label: 'Glue', glyph: 'G', enabled: false, reason: 'Coming soon' },
+  { id: 'reverse', label: 'Reverse', glyph: 'RV', enabled: false, reason: 'Use Region Editor render' },
+  { id: 'gain', label: 'Gain', glyph: '+', enabled: false, reason: 'Use Region Editor gain' },
+  { id: 'automation', label: 'Automation', glyph: 'AU', enabled: false, reason: 'Use track automation' }
+]
+const MIDI_ROLL_FINE_BEAT_STEP = 1 / 128
+let keepSiteMenuOpen = localStorage.getItem(PREF_KEY) === '1'
+let channelAccordionState = (() => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(CHANNEL_ACCORDION_PREF_KEY) || '{}')
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+})()
+let projectState = null
+const dawInstrumentRegistry = new InstrumentRegistry({
+  getAudioContext: () => getAudioContext(),
+  getDestination: (trackId) => getTrackAudioChannel(trackId).input,
+  resolveLibraryInstrument: (instrumentId) => resolveStudioLibraryInstrument(instrumentId)
+})
+const dawWindowManager = new DawWindowManager({
+  renderContent: (pluginWindow) => isSouraAudioEffectPlugin(pluginWindow?.pluginType)
+    ? renderSouraAudioEffectShell(pluginWindow)
+    : isSouraWasmPluginType(pluginWindow?.pluginType)
+      ? renderSouraWasmPluginShell(pluginWindow)
+      : renderPluginShell(pluginWindow, { hostMode: 'inline' }),
+  getHostUrl: (pluginWindow) => {
+    const params = new URLSearchParams({
+      pluginInstanceId: pluginWindow.pluginInstanceId,
+      pluginType: pluginWindow.pluginType,
+      trackId: pluginWindow.trackId || ''
+    })
+    return `${ROUTES.studioInstrumentHost}?${params.toString()}`
+  },
+  onOpen: (pluginWindow) => {
+    if (isSouraAudioEffectPlugin(pluginWindow?.pluginType)) return
+    dawInstrumentRegistry.createOrGet({
+      id: pluginWindow.pluginInstanceId,
+      type: pluginWindow.pluginType,
+      trackId: pluginWindow.trackId,
+      params: pluginWindow.params
+    })
+  },
+  onClose: (pluginInstanceId) => {
+    // Closing a plugin window hides the UI; the track-owned instrument can keep sounding/recording.
+  },
+  onParamChange: (pluginInstanceId, param, value) => {
+    const pluginWindow = dawWindowManager.windows.get(pluginInstanceId)
+    if (isSouraAudioEffectPlugin(pluginWindow?.pluginType)) {
+      updateAudioEffectParamFromWindow(pluginWindow, param, value)
+      return
+    }
+    dawInstrumentRegistry.setParam(pluginInstanceId, param, value)
+    const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
+    if (track?.instrument) track.instrument.params = { ...(track.instrument.params || {}), [param]: value }
+  },
+  onNoteOn: (pluginInstanceId, note, velocity) => {
+    const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
+    if (track?.instrument?.enabled === false) return
+    triggerLiveInstrumentNote(track, note, velocity, { source: 'plugin', activeKey: `plugin:${pluginInstanceId}:${note}` })
+    startTrackMeterLoop()
+  },
+  onNoteOff: (pluginInstanceId, note) => {
+    const track = tracks.find((item)=>item.instrument?.pluginInstanceId === pluginInstanceId)
+    stopLiveInstrumentNote(track, note, { activeKey: `plugin:${pluginInstanceId}:${note}` })
+  },
+  onChange: () => renderEditor()
+})
+let isEditorMenuOpen = false
+let selectedTrackId = 'demo-track'
+let isFileMenuOpen = false
+let activeTopMenu = ''
+const automationOpenTrackIds = new Set()
+let trackMenuState = null
+let renameTrackState = null
+let colorPickerState = null
+let activeTrackReorder = null
+let activeEffectReorder = null
+let selectedSystemChannel = ''
+let activeBottomPanel = ''
+const webAssetStorage = new WebAssetStorage()
+const nativeAssetStorage = isNativeAssetRuntime() ? new NativeAssetStorage() : null
+const userAssetProvider = new UserProvider({ storage: webAssetStorage, nativeStorage: nativeAssetStorage })
+const souraAssetLibrary = new AssetLibrary([new PrimitiveProvider(), new MarketplaceProvider(), userAssetProvider, new ProjectProvider()])
+const assetAuditionBufferCache = new Map()
+const assetAuditionController = new AssetAuditionController({ createSource: createAssetAuditionSource, onStateChange: updateAssetAuditionDom })
+let assetLibraryState = (() => {
+  try { return { selectedSourceId: 'primitive', search: '', selectedAssetId: '', loading: false, loaded: false, error: '', ...migrateLegacyAssetLibraryState(JSON.parse(localStorage.getItem(ASSET_LIBRARY_PREF_KEY) || localStorage.getItem('melogic:soura:loopBrowser') || '{}')) } }
+  catch { return { selectedSourceId: 'primitive', search: '', selectedAssetId: '', loading: false, loaded: false, error: '' } }
+})()
+let isControlsMenuOpen = false
+let controlsConfigModalOpen = false
+let projectSettingsModalOpen = false
+let projectManagementModalOpen = false
+let selectedGlobalEvent = null
+let cpuAlertState = { aboveSince: 0, lastAlertAt: 0, message: '', visible: false }
+let cpuUsagePercent = 0
+const activeInstrumentNotes = new Map()
+const pressedKeyboardNotes = new Set()
+const pressedDawMidiKeys = new Map()
+const activeKeyboardNoteSources = new Map()
+let isTypingPianoEnabled = localStorage.getItem(MUSICAL_TYPING_PREF_KEY) === '1'
+let instrumentAudioContext = null
+let instrumentMasterGain = null
+let instrumentPanNode = null
+let instrumentVolume = 0.35
+let instrumentPan = 0
+let instrumentTreble = 0.5
+let instrumentReverb = 0.3
+let instrumentOctaveOffset = 0
+let instrumentMacroView = 'knobs'
+let typingExpressionTarget = 'pitch'
+let typingPitchTrigger = 0
+let typingModTrigger = 0
+let typingPitchFine = 0
+let typingModFine = 0
+let macroPadPosition = { x: 0.5, y: 0.5 }
+let instrumentMacros = [
+  { id: 'macro-1', label: 'Tone', value: 0.5 },
+  { id: 'macro-2', label: 'Motion', value: 0.5 },
+  { id: 'macro-3', label: 'Attack', value: 0.25 },
+  { id: 'macro-4', label: 'Release', value: 0.35 },
+  { id: 'macro-5', label: 'Drive', value: 0.2 },
+  { id: 'macro-6', label: 'Width', value: 0.65 },
+  { id: 'macro-7', label: 'Filter', value: 0.55 },
+  { id: 'macro-8', label: 'Texture', value: 0.4 }
+]
+let isSustainEnabled = false
+let selectedInstrumentName = ''
+let activeInstrumentSubpage = 'keyboard'
+const instrumentSubpages = []
+const instrumentPresetItems = []
+const chordRoots = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+const chordOctaves = ['Oct 1','Oct 2','Oct 3','Oct 4','Oct 5','Oct 6']
+let activeMidiEffectEditor = null
+const arpModes = ['Up','Down','Up/Down','Random','As Played','Chord Repeat']
+const arpRates = ['1/4','1/8','1/16','1/32','1/8D','1/8T']
+const arpLengths = [4,8,12,16,24,32]
+const arpPatternPresets = ['Straight 8ths','Rolling 16ths','Trance Gate','Dubstep Pulse','Bass Bounce','Up 2 Octaves','Random Pluck','Chord Repeat']
+const arpNoteNames = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+let isPlaying = false
+let playRaf = 0
+let lastPlayTimestamp = 0
+let lastPlaybackScheduleProjectSeconds = -Infinity
+let lastTransportDisplayPaintAt = -Infinity
+let lastRecordingRegionPaintAt = -Infinity
+let isTransportTicking = false
+let transportClock = null
+let transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
+let panDrag = null
+let inlineNumberEditorState = null
+let followPlayhead = false
+let isCycleEnabled = false
+let isMetronomeEnabled = true
+let metronomeSettings = normalizeMetronomeSettings(DEFAULT_METRONOME_SETTINGS)
+let audioContext = null
+let masterAudioBus = null
+let assetAuditionGain = null
+let studioAudioEngine = null
+const souraAudioDiagnosticsEnabled = Boolean(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraAudio'))
+let lastSouraAudioDiagnostics = { context: { state: 'uninitialized', creationCount: 0 }, graph: {}, checkedAt: 0 }
+const souraAudioContextOwner = createSouraWebAudioContextOwner({
+  createContext: () => createInteractiveAudioContext(),
+  onStateChange: () => publishSouraAudioDiagnostics()
+})
+window.__souraAudioDiagnostics = Object.freeze({
+  snapshot: () => structuredClone(lastSouraAudioDiagnostics),
+  playTestTone: souraAudioDiagnosticsEnabled ? (options) => playSouraOutputTestTone(options) : undefined
+})
+let lastMetronomeBeat = -1
+const activeMetronomeVoices = new Set()
+let activeLeftPanel = ""
+let studioLibraryState = {
+  data: null,
+  loading: false,
+  loaded: false,
+  error: '',
+  selectedPath: '',
+  selectedInstrumentId: '',
+  expandedRootIds: new Set(),
+  loadStatusByInstrumentId: new Map()
+}
+let studioLibraryManifestPromise = null
+let inspectorMenu = null
+let inspectorMenuPosition = null
+let globalTracks = {
+  visible: false,
+  viewMode: 'all',
+  arrangement: [],
+  markers: [],
+  tempoEvents: [],
+  timeSignatureEvents: [],
+  keySignatureEvents: [],
+  signatureEvents: [],
+  videoRefs: []
+}
+let isNotesOpen = false
+let notePages = [{ id: 'page-1', title: 'Page 1', body: '' }]
+let activeNotePageId = 'page-1'
+let isSnapEnabled = true
+let isCountInEnabled = true
+let isCountInRunning = false
+let countInTimer = 0
+let countInBeatsRemaining = 0
+let countInTargetX = null
+let countInTargetTrackId = ''
+let recordingStatus = ''
+let activeRecording = null
+let addTrackModalOpen = false
+let selectedMidiRegionId = ''
+const selectedRegionIds = new Set()
+let activeRegionTool = 'select'
+let midiRegionDrag = null
+let midiRegionDragRenderRaf = 0
+let pendingMidiRegionDragEvent = null
+let timelineEdgeScrollRaf = 0
+let timelineEdgeScrollState = null
+let audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
+let audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+let audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+let stretchPlaybackPrompt = null
+let audioEditPlaybackPrompt = null
+const audioEditPlaybackBypassRegionIds = new Set()
+let pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+const smartControlsAnalysisService = new AudioAnalysisService()
+let smartControlsState = {
+  scope: 'track',
+  trackContext: 'independent',
+  profile: 'standard',
+  sourceType: 'auto',
+  activeTab: 'overview',
+  status: 'idle',
+  progress: 0,
+  phase: '',
+  error: '',
+  result: null,
+  comparison: null,
+  contextFindings: [],
+  timelineFindings: [],
+  analyzedEntries: [],
+  jobId: '',
+  provider: ''
+}
+let pitchTraceSelectedNoteId = ''
+let pitchTraceNoteDrag = null
+let pitchTraceTool = 'cursor'
+let pitchTraceNoteDraw = null
+let meterRaf = 0
+let lastMeterPaintAt = -Infinity
+let meterDomCache = new Map()
+let midiRegionMenuState = null
+let midiRegionClipboard = null
+let midiNoteClipboard = null
+let activeCommandContext = 'arrangement'
+let midiRollState = null
+let midiRollSelectedNoteIndex = null
+let midiRollSelectedNoteIndices = []
+let midiRollStatus = ''
+let midiRollTool = 'cursor'
+let midiRollViewport = { regionId: '', scrollLeft: 0, scrollTop: 0 }
+let pendingMidiRollViewport = null
+let audioRegionToolsViewport = { regionId: '', scrollTop: 0 }
+let audioWaveformViewport = { regionId: '', startSeconds: 0, endSeconds: 0, zoom: 1 }
+let audioWaveformPanDrag = null
+const AUDIO_REGION_EDITOR_MODE_STORAGE_KEY = 'soura.regionEditor.lastAudioMode'
+const REGION_EDITOR_HEIGHT_STORAGE_KEY = 'soura.regionEditor.height'
+const AUDIO_REGION_EDITOR_MODES = Object.freeze({ waveform: 'waveform', pitchTrace: 'pitch-trace' })
+const REGION_EDITOR_KEYBOARD_WIDTH = 88
+let midiRollBeatWidth = 64
+let midiRollRowHeight = 22
+let midiRollSelectionDrag = null
+let midiNoteDrag = null
+const midiPreviewNotes = new Map()
+let regionEditorPlayheadDrag = null
+let trackAutomationDrag = null
+let selectedTrackAutomation = null
+let transportInlineEdit = null
+let transportValueDrag = null
+let timelineUserInteractingUntil = 0
+let timelineGeometryRevision = 0
+let pendingTimelineProgrammaticScroll = null
+let timelineExtensionRepeatTimer = 0
+let editorEventBindingsCleanup = null
+let regionRenameState = null
+let regionColorPickerState = null
+let audioEnginePrewarmPromise = null
+let bottomPanelHeightPx = 0
+let bottomPanelResizeDrag = null
+const undoStack = []
+const redoStack = []
+const HISTORY_LIMIT = 80
+const trackAudioChannels = new Map()
+const activePlaybackNotes = new Map()
+const midiPlaybackScheduleCache = new WeakMap()
+let playbackContentRevision = 0
+let timelineRegionIndex = { revision: -1, source: null, entries: [], byId: new Map(), maxDurationBeats: 0.05 }
+const audioClipRuntime = new Map()
+const activeAudioClipSources = new Map()
+const portableTrackRuntime = new Map()
+const activePortableTrackSources = new Map()
+const audioOfflineWarnedRegionIds = new Set()
+let audioRecordingController = null
+let pendingAudioInputStream = null
+let lastPlaybackBeat = 0
+let lastPerformanceDiagnosticsPublishAt = 0
+let globalTrackDrag = null
+let globalTrackPopover = null
+let midiRegions = []
+let audioImportDrag = null
+let activeAssetDragPayload = null
+const audioImportPreviewCache = new Map()
+let audioImportPreviewRaf = 0
+let audioImportUploadState = { active: false, hidden: false, fileName: '', bytesTransferred: 0, totalBytes: 0 }
+const activeRecordingNotes = new Map()
+let cycleRange = null
+let cycleDrag = null
+let spacePlaybackStartX = null
+let saveTimer = 0
+let isEditorLoaded = false
+let saveStatus = 'Saved'
+let bottomPanelMotion = ''
+let closingBottomPanel = ''
+let bottomPanelMotionTimer = 0
+const STUDIO_APPBAR_HEIGHT = 42
+const STUDIO_TRANSPORT_HEIGHT = 64
+const STUDIO_FOOTER_HEIGHT = 32
+const STUDIO_EXTENSION_LANE_HEIGHT = 24
+const STUDIO_MIN_TIMELINE_HEIGHT = 132
+const STUDIO_NAV_OFFSET = 64
+let arpEnabled = false
+let arpMode = 'Up/Down'
+let arpRate = '1/16'
+let arpOctaves = 2
+let arpGate = 70
+let arpSwing = 12
+let arpVelocity = 80
+let arpLength = 16
+let selectedArpStepIndex = 0
+let currentArpPatternName = 'Custom Pattern'
+let arpEditMode = 'velocity'
+let arpNotePickerStepIndex = null
+let arpNotePickerOctave = 4
+const arpEditModes = [
+  { id: 'note', label: 'Note' },
+  { id: 'velocity', label: 'Velocity' },
+  { id: 'octave', label: 'Octave' },
+  { id: 'gate', label: 'Gate' },
+  { id: 'probability', label: 'Probability' },
+  { id: 'accent', label: 'Accent' },
+  { id: 'tie', label: 'Tie' }
+]
+const createDefaultArpStep = (i=0)=>({ active:i%2===0, note:0, noteOctave:4, velocity:[100,55,0,75][i%4], octave:i%4===2?-1:(i%4===0?1:0), gate:70, probability:100, accent:i%4===0, tie:false })
+const normalizeArpStep = (step={}, i=0)=>({
+  active: Boolean(step.active),
+  note: Number.isFinite(Number(step.note)) ? clamp(Number(step.note), 0, 11) : createDefaultArpStep(i).note,
+  noteOctave: Number.isFinite(Number(step.noteOctave)) ? clamp(Number(step.noteOctave), 0, 8) : 4,
+  velocity: Number.isFinite(Number(step.velocity)) ? clamp(Number(step.velocity), 1, 127) : createDefaultArpStep(i).velocity,
+  octave: Number.isFinite(Number(step.octave)) ? clamp(Number(step.octave), -2, 4) : createDefaultArpStep(i).octave,
+  gate: Number.isFinite(Number(step.gate)) ? clamp(Number(step.gate), 10, 100) : createDefaultArpStep(i).gate,
+  probability: Number.isFinite(Number(step.probability)) ? clamp(Number(step.probability), 0, 100) : createDefaultArpStep(i).probability,
+  accent: Boolean(step.accent),
+  tie: Boolean(step.tie)
+})
+let arpSteps = Array.from({length:16}, (_,i)=>createDefaultArpStep(i))
+
+const timelineState = { bars: 20, beatsPerBar: 4, positiveBeats: 80, pixelsPerBar: 120, preStartPixels: 0, playheadX: 0, trackHeight: 96, selectionBox: null, isSelecting: false, isDraggingPlayhead: false }
+// Future canonical source: beat-based regions from studioProjectModel; UI still renders existing DOM grid for now.
+const timelineRegions = []
+
+const normalizeTrackType = (type) => type === 'audio' ? 'audio' : 'software'
+const isAudioTrack = (track) => normalizeTrackType(track?.type) === 'audio'
+const isSoftwareTrack = (track) => !isAudioTrack(track)
+const trackTypeLabel = (track) => isAudioTrack(track) ? 'Audio' : 'Software'
+const normalizedTrackIconType = (track) => isAudioTrack(track) ? 'audio' : 'instrument'
+const ROOT_NOTE_OPTIONS = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
+const KEY_SCALE_OPTIONS = ['major','minor','chromatic','dorian','phrygian','lydian','mixolydian','locrian','harmonic minor','melodic minor']
+const TIME_SIGNATURE_DENOMINATORS = [2,4,8,16]
+const COMMON_TRANSPORT_TIME_SIGNATURES = ['2/4','3/4','4/4','5/4','6/8','7/8','9/8','12/8']
+const COMMON_TRANSPORT_KEYS = ['C major','C minor','C# major','C# minor','Db major','Db minor','D major','D minor','Eb major','Eb minor','E major','E minor','F major','F minor','F# major','F# minor','Gb major','Gb minor','G major','G minor','Ab major','Ab minor','A major','A minor','Bb major','Bb minor','B major','B minor']
+const DEFAULT_CPU_ALERTS = { enabled: true, thresholdPercent: 85, sustainMs: 5000, cooldownMs: 60000 }
+const nowIso = () => new Date().toISOString()
+const clampProjectBpm = (value = 140) => clamp(Number(value) || 140, 20, 300)
+const normalizeRootNote = (value = 'C') => ROOT_NOTE_OPTIONS.includes(String(value || '').trim()) ? String(value || '').trim() : 'C'
+const normalizeScaleMode = (value = 'minor') => KEY_SCALE_OPTIONS.includes(String(value || '').trim()) ? String(value || '').trim() : 'minor'
+const normalizeCpuAlerts = (settings = {}) => ({
+  enabled: settings.enabled !== false,
+  thresholdPercent: clamp(Number(settings.thresholdPercent) || DEFAULT_CPU_ALERTS.thresholdPercent, 1, 100),
+  sustainMs: clamp(Number(settings.sustainMs) || DEFAULT_CPU_ALERTS.sustainMs, 1000, 60000),
+  cooldownMs: clamp(Number(settings.cooldownMs) || DEFAULT_CPU_ALERTS.cooldownMs, 5000, 300000)
+})
+function parseProjectKey(value = projectState?.key || 'C minor') {
+  const raw = String(value || '').trim()
+  const parts = raw.split(/\s+/)
+  return { root: normalizeRootNote(parts[0] || 'C'), scale: normalizeScaleMode(parts.slice(1).join(' ') || 'minor') }
+}
+function formatKeySignature(event = {}) {
+  const root = normalizeRootNote(event.root || event.key || parseProjectKey().root)
+  const scale = normalizeScaleMode(event.scale || parseProjectKey().scale)
+  return event.label || `${root} ${scale}`
+}
+function parseTimeSignature(value = projectState?.timeSignature || '4/4') {
+  if (typeof value === 'object' && value) {
+    return {
+      numerator: clamp(Math.round(Number(value.numerator) || 4), 1, 32),
+      denominator: TIME_SIGNATURE_DENOMINATORS.includes(Number(value.denominator)) ? Number(value.denominator) : 4
+    }
+  }
+  const match = String(value || '4/4').match(/(\d+)\s*\/\s*(\d+)/)
+  const numerator = clamp(Math.round(Number(match?.[1]) || 4), 1, 32)
+  const denominator = TIME_SIGNATURE_DENOMINATORS.includes(Number(match?.[2])) ? Number(match?.[2]) : 4
+  return { numerator, denominator }
+}
+function formatTimeSignature(event = {}) {
+  const sig = parseTimeSignature(event)
+  return `${sig.numerator}/${sig.denominator}`
+}
+function getProjectCpuAlerts() {
+  return normalizeCpuAlerts(projectState?.settings?.cpuAlerts || projectState?.editorState?.settings?.cpuAlerts || {})
+}
+function beatsToSeconds(beats = 0, tempoMap = null) {
+  const targetBeat = Math.max(0, Number(beats) || 0)
+  const map = tempoMap || normalizeTempoMap()
+  let seconds = 0
+  for (let i = 0; i < map.length; i += 1) {
+    const current = map[i]
+    const nextBeat = i < map.length - 1 ? Math.max(current.beat, Number(map[i + 1].beat) || current.beat) : targetBeat
+    const segmentEnd = Math.min(targetBeat, nextBeat)
+    if (segmentEnd > current.beat) seconds += tempoSegmentDuration(current, map[i + 1], segmentEnd)
+    if (targetBeat <= nextBeat) break
+  }
+  return Math.max(0, seconds)
+}
+function secondsToBeats(seconds = 0, tempoMap = null) {
+  const targetSeconds = Math.max(0, Number(seconds) || 0)
+  const map = tempoMap || normalizeTempoMap()
+  let elapsed = 0
+  for (let i = 0; i < map.length; i += 1) {
+    const current = map[i]
+    const nextBeat = i < map.length - 1 ? Math.max(current.beat, Number(map[i + 1].beat) || current.beat) : Infinity
+    const segmentBeats = nextBeat - current.beat
+    const segmentSeconds = Number.isFinite(segmentBeats) ? tempoSegmentDuration(current, map[i + 1], nextBeat) : Infinity
+    if (!Number.isFinite(segmentSeconds) || targetSeconds <= elapsed + segmentSeconds) {
+      if (!Number.isFinite(segmentSeconds)) {
+        return Math.max(0, current.beat + ((targetSeconds - elapsed) / (60 / clampProjectBpm(current.bpm))))
+      }
+      let low = current.beat
+      let high = nextBeat
+      for (let step = 0; step < 24; step += 1) {
+        const mid = (low + high) / 2
+        const midSeconds = tempoSegmentDuration(current, map[i + 1], mid)
+        if (midSeconds < targetSeconds - elapsed) low = mid
+        else high = mid
+      }
+      return Math.max(0, (low + high) / 2)
+    }
+    elapsed += segmentSeconds
+  }
+  return 0
+}
+const waveformWindowSeconds = 0.1
+// Keep the waveform density tied to the horizontal space it occupies, rather
+// than thinning a long clip merely because it has more total samples.
+const WAVEFORM_PEAKS_PER_PIXEL = 2.75
+const WAVEFORM_MIN_RENDERED_PEAKS = 96
+const WAVEFORM_MAX_RENDERED_PEAKS = 32768
+const WAVEFORM_PERSISTED_MAX_PEAKS = 16384
+const MAX_TIMELINE_POSITIVE_BEATS = 16384
+const minAudioRegionSeconds = 0.05
+const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
+const AUDIO_FADE_CURVES = ['linear', 'equal-power']
+const AUDIO_PITCH_SOURCES = ['off', 'region', 'project-key']
+const STRETCH_SPEED_MIN = 25
+const STRETCH_SPEED_MAX = 400
+const STRETCH_RATIO_MIN = 100 / STRETCH_SPEED_MAX
+const STRETCH_RATIO_MAX = 100 / STRETCH_SPEED_MIN
+const TRANSPORT_SCHEDULER_START_DELAY_SECONDS = 0.08
+const TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS = 0.16
+const TRANSPORT_SCHEDULER_INTERVAL_SECONDS = 0.025
+const TRANSPORT_DISPLAY_INTERVAL_MS = 1000 / 30
+const METER_DISPLAY_INTERVAL_MS = 1000 / 30
+const PLAYBACK_LATENCY_COMPENSATION_SECONDS = 0
+const LIVE_NOTE_SAFETY_OFFSET_SECONDS = 0.003
+const PITCH_TRACE_VERSION = 'pitch-trace-v2'
+const PITCH_TRACE_ALGORITHM = 'yin-nsdf-js-worker-v2'
+const PITCH_TRACE_ANALYSIS_MODES = ['vocal', 'instrument', 'full-mix']
+const PITCH_RENDER_STATUSES = ['idle', 'rendering', 'ready', 'failed', 'needs_render']
+
+function beatsToSecondsAtBpm(beats = 0, bpm = Number(projectState?.bpm || 140)) {
+  return Math.max(0, Number(beats) || 0) * (60 / Math.max(1, Number(bpm) || 140))
+}
+function secondsToBeatsAtBpm(seconds = 0, bpm = Number(projectState?.bpm || 140)) {
+  return Math.max(0, Number(seconds) || 0) * (Math.max(1, Number(bpm) || 140) / 60)
+}
+function getTimelineSecondsAtBeat(beat = 0) {
+  return beatsToSeconds(clampBeat(Number(beat) || 0))
+}
+function getTimelineSecondsAtPlayhead() {
+  return getTimelineSecondsAtBeat(xToBeat(timelineState.playheadX))
+}
+function midiNoteToFrequency(midi = 60) {
+  return Number((440 * (2 ** ((Number(midi) - 69) / 12))).toFixed(3))
+}
+function getAudioPitchShiftTotal(transposeSemitones = 0, fineTuneCents = 0) {
+  return (Number(transposeSemitones) || 0) + ((Number(fineTuneCents) || 0) / 100)
+}
+function normalizeRenderedAudioMetadata(metadata = null) {
+  if (!metadata || typeof metadata !== 'object') return null
+  const numOrNull = (value) => Number.isFinite(Number(value)) ? Number(value) : null
+  return {
+    sourceSampleRate: numOrNull(metadata.sourceSampleRate),
+    renderedSampleRate: numOrNull(metadata.renderedSampleRate),
+    sourceBitDepth: numOrNull(metadata.sourceBitDepth),
+    renderedBitDepth: numOrNull(metadata.renderedBitDepth),
+    bitDepthPreserved: metadata.bitDepthPreserved === true,
+    sourceChannelCount: numOrNull(metadata.sourceChannelCount),
+    renderedChannelCount: numOrNull(metadata.renderedChannelCount),
+    sampleRatePreserved: metadata.sampleRatePreserved === true,
+    channelCountPreserved: metadata.channelCountPreserved === true,
+    algorithm: metadata.algorithm || null,
+    engine: metadata.engine || null,
+    engineLabel: metadata.engineLabel || null,
+    engineType: metadata.engineType || null,
+    operation: metadata.operation || null,
+    quality: metadata.quality || null,
+    qualityMode: metadata.qualityMode || null,
+    renderedDurationSeconds: numOrNull(metadata.renderedDurationSeconds),
+    renderCreatedAt: numOrNull(metadata.renderCreatedAt)
+  }
+}
+function normalizePitchShift(pitchShift = {}, transposeSemitones = 0, fineTuneCents = 0) {
+  const source = pitchShift && typeof pitchShift === 'object' ? pitchShift : {}
+  const transpose = clamp(Number(transposeSemitones) || 0, -48, 48)
+  const fine = clamp(Number(fineTuneCents) || 0, -100, 100)
+  const totalSemitones = getAudioPitchShiftTotal(transpose, fine)
+  const hasShift = Math.abs(totalSemitones) > 0.001
+  const priorStatus = PITCH_RENDER_STATUSES.includes(source.renderStatus) ? source.renderStatus : 'idle'
+  const sourceTotal = Number.isFinite(Number(source.totalSemitones)) ? Number(source.totalSemitones) : totalSemitones
+  const valueChanged = Math.abs(sourceTotal - totalSemitones) > 0.001
+  const renderStatus = !hasShift
+    ? 'idle'
+    : (priorStatus === 'ready' && valueChanged ? 'needs_render' : priorStatus === 'idle' ? 'needs_render' : priorStatus)
+  return {
+    enabled: hasShift || source.enabled === true,
+    transposeSemitones: transpose,
+    fineTuneCents: fine,
+    totalSemitones,
+    renderStatus,
+    renderedStoragePath: source.renderedStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
+    algorithm: source.algorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
+    preservesDuration: source.preservesDuration !== false,
+    lastError: source.lastError || null,
+    renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null
+  }
+}
+function normalizeReverseEdit(reverse = {}, legacyStatus = 'idle', legacyStoragePath = null) {
+  const source = reverse && typeof reverse === 'object' ? reverse : {}
+  const enabled = reverse === true || source.enabled === true
+  const statusValue = source.renderStatus || legacyStatus
+  return {
+    enabled,
+    renderStatus: PITCH_RENDER_STATUSES.includes(statusValue) ? statusValue : (enabled ? 'needs_render' : 'idle'),
+    renderedStoragePath: source.renderedStoragePath || legacyStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
+    algorithm: source.algorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
+    lastError: source.lastError || null,
+    renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null
+  }
+}
+function normalizePitchTrace(trace = {}, legacyFlexFollow = 'off') {
+  const source = trace && typeof trace === 'object' ? trace : {}
+  const status = ['idle', 'analyzing', 'ready', 'failed'].includes(source.status) ? source.status : 'idle'
+  const notes = Array.isArray(source.notes)
+    ? source.notes.slice(0, 512).map((note, index)=>{
+      const originalMidiNote = clamp(Math.round(Number(note?.originalMidiNote ?? note?.midiNote) || 60), 0, 127)
+      const editedMidiNote = clamp(Math.round(Number(note?.editedMidiNote ?? note?.midiNote ?? originalMidiNote) || originalMidiNote), 0, 127)
+      const originalFrequencyHz = Math.max(0, Number(note?.originalFrequencyHz ?? note?.frequencyHz) || midiNoteToFrequency(originalMidiNote))
+      const editedFrequencyHz = Math.max(0, Number(note?.editedFrequencyHz) || midiNoteToFrequency(editedMidiNote))
+      const noteRenderStatus = PITCH_RENDER_STATUSES.includes(note?.renderStatus) ? note.renderStatus : (editedMidiNote !== originalMidiNote ? 'needs_render' : 'idle')
+      return {
+        id: String(note?.id || `pt-${index + 1}`),
+        startSeconds: Math.max(0, Number(note?.startSeconds) || 0),
+        durationSeconds: Math.max(0.01, Number(note?.durationSeconds) || 0.01),
+        startBeat: Math.max(0, Number(note?.startBeat) || 0),
+        durationBeats: Math.max(0.001, Number(note?.durationBeats) || 0.001),
+        originalMidiNote,
+        editedMidiNote,
+        midiNote: editedMidiNote,
+        noteName: formatMidiNoteName(editedMidiNote),
+        originalFrequencyHz,
+        editedFrequencyHz,
+        frequencyHz: editedFrequencyHz,
+        confidence: clamp(Number(note?.confidence) || 0, 0, 1),
+        centsOffset: clamp(Number(note?.centsOffset) || 0, -50, 50),
+        gainDb: clamp(Number(note?.gainDb) || 0, -24, 24),
+        pitchDriftStartCents: clamp(Number(note?.pitchDriftStartCents) || 0, -1200, 1200),
+        pitchDriftEndCents: clamp(Number(note?.pitchDriftEndCents) || 0, -1200, 1200),
+        vibratoAmount: clamp(Number(note?.vibratoAmount) || 0, 0, 1),
+        source: note?.source === 'manual' ? 'manual' : 'analysis',
+        lockedToAnalysis: note?.lockedToAnalysis === true,
+        muted: note?.muted === true,
+        renderStatus: noteRenderStatus
+      }
+    }).filter((note)=>note.durationSeconds > 0)
+    : []
+  const hasEditedNotes = notes.some((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.gainDb) || 0) > 0.001)
+  const priorRenderStatus = PITCH_RENDER_STATUSES.includes(source.renderStatus) ? source.renderStatus : 'idle'
+  const renderStatus = hasEditedNotes && priorRenderStatus === 'idle' ? 'needs_render' : priorRenderStatus
+  return {
+    enabled: source.enabled === true || legacyFlexFollow === 'on',
+    status: notes.length && status === 'idle' ? 'ready' : status,
+    algorithm: source.algorithm || (notes.length ? PITCH_TRACE_ALGORITHM : null),
+    analysisVersion: source.analysisVersion || PITCH_TRACE_VERSION,
+    analyzedAt: Number.isFinite(Number(source.analyzedAt)) ? Number(source.analyzedAt) : null,
+    confidenceThreshold: clamp(Number(source.confidenceThreshold ?? 0.5), 0.1, 0.98),
+    analysisMode: PITCH_TRACE_ANALYSIS_MODES.includes(source.analysisMode) ? source.analysisMode : 'vocal',
+    sensitivity: clamp(Number(source.sensitivity ?? 0.72), 0, 1),
+    minNoteSeconds: clamp(Number(source.minNoteSeconds ?? 0.08), 0.035, 0.35),
+    showLowConfidence: source.showLowConfidence === true,
+    baseRenderSource: ['original', 'global_wasm_render', 'combined_wasm_render'].includes(source.baseRenderSource) ? source.baseRenderSource : null,
+    stackedOnGlobalEdits: source.stackedOnGlobalEdits === true,
+    progress: 0,
+    error: source.error || null,
+    renderStatus,
+    renderedStoragePath: source.renderedStoragePath || null,
+    renderedAudioUrl: source.renderedAudioUrl || null,
+    renderedRuntimeId: source.renderedRuntimeId || null,
+    renderedDurationSeconds: Number.isFinite(Number(source.renderedDurationSeconds)) ? Number(source.renderedDurationSeconds) : null,
+    renderAlgorithm: source.renderAlgorithm || null,
+    renderedAudio: normalizeRenderedAudioMetadata(source.renderedAudio),
+    preservesDuration: source.preservesDuration !== false,
+    lastError: source.lastError || null,
+    renderedAt: Number.isFinite(Number(source.renderedAt)) ? Number(source.renderedAt) : null,
+    notes
+  }
+}
+function normalizeAudioEdit(edit = {}) {
+  const quantize = AUDIO_QUANTIZE_OPTIONS.includes(String(edit.quantize || '').toLowerCase()) ? String(edit.quantize).toLowerCase() : 'off'
+  const fadeInCurve = AUDIO_FADE_CURVES.includes(edit.fadeInCurve) ? edit.fadeInCurve : 'linear'
+  const fadeOutCurve = AUDIO_FADE_CURVES.includes(edit.fadeOutCurve) ? edit.fadeOutCurve : 'linear'
+  const pitchSource = AUDIO_PITCH_SOURCES.includes(edit.pitchSource) ? edit.pitchSource : 'off'
+  const transposeSemitones = clamp(Number(edit.transposeSemitones) || 0, -48, 48)
+  const fineTuneCents = clamp(Number(edit.fineTuneCents) || 0, -100, 100)
+  return {
+    mute: edit.mute === true,
+    loop: edit.loop === true,
+    quantize,
+    qSwing: clamp(Number(edit.qSwing) || 0, 0, 100),
+    qRange: Number.isFinite(Number(edit.qRange)) ? Number(edit.qRange) : null,
+    qStrength: clamp(Number(edit.qStrength ?? 100), 0, 100),
+    transposeSemitones,
+    fineTuneCents,
+    pitchShift: normalizePitchShift(edit.pitchShift, transposeSemitones, fineTuneCents),
+    pitchSource,
+    pitchTrace: normalizePitchTrace(edit.pitchTrace, edit.flexFollow === 'on' ? 'on' : 'off'),
+    gainDb: clamp(Number(edit.gainDb) || 0, -24, 24),
+    delayMs: clamp(Number(edit.delayMs) || 0, 0, 2000),
+    fadeInSeconds: Math.max(0, Number(edit.fadeInSeconds) || 0),
+    fadeInCurve,
+    fadeOutSeconds: Math.max(0, Number(edit.fadeOutSeconds) || 0),
+    fadeOutCurve,
+    reverse: normalizeReverseEdit(edit.reverse, edit.reverseRenderStatus, edit.reverseRenderedStoragePath)
+  }
+}
+function finitePositiveNumber(value) {
+  const number = Number(value)
+  return Number.isFinite(number) && number > 0 ? number : null
+}
+function getStretchStatus(value) {
+  const status = value === 'none' ? 'idle' : value
+  return ['idle', 'rendering', 'ready', 'failed', 'needs_render'].includes(status) ? status : 'idle'
+}
+function getRawAudioRegionVisibleDurationSeconds(region = {}) {
+  const visible = finitePositiveNumber(region.visibleDurationSeconds)
+  if (visible) return visible
+  const duration = finitePositiveNumber(region.durationSeconds)
+  if (duration) return duration
+  const beats = finitePositiveNumber(region.durationBeats)
+  if (beats) return Math.max(minAudioRegionSeconds, beatsToSeconds(beats))
+  return null
+}
+function stretchErrorMessage() {
+  return `Stretch speed must be between ${STRETCH_SPEED_MIN}% and ${STRETCH_SPEED_MAX}%.`
+}
+function isKnownGoodStretchRender(stretch = {}, status = stretch.renderStatus) {
+  return status === 'ready' && Boolean(stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl)
+}
+function logStretchDebug(action, regionOrId, payload = {}) {
+  const clipId = typeof regionOrId === 'string' ? regionOrId : (regionOrId?.id || regionOrId?.audioClip?.audioAssetId || '')
+  const stretch = typeof regionOrId === 'object' ? normalizeAudioStretch(regionOrId.stretch, {
+    sourceDurationSeconds: getAudioSourceDurationSeconds(regionOrId),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(regionOrId)
+  }) : null
+  console.info(`[stretch] ${action}`, {
+    clipId,
+    sourceDurationSeconds: payload.sourceDurationSeconds ?? stretch?.sourceDurationSeconds ?? null,
+    targetDurationSeconds: payload.targetDurationSeconds ?? stretch?.targetDurationSeconds ?? null,
+    speedPercent: payload.speedPercent ?? stretch?.speedPercent ?? null,
+    lengthRatio: payload.lengthRatio ?? stretch?.lengthRatio ?? null,
+    renderStatus: payload.renderStatus ?? stretch?.renderStatus ?? null,
+    reason: payload.reason || null
+  })
+}
+function makeDefaultAudioStretch(sourceDurationSeconds = null, overrides = {}) {
+  const source = finitePositiveNumber(sourceDurationSeconds)
+  const target = finitePositiveNumber(overrides.targetDurationSeconds) || source
+  return {
+    enabled: false,
+    sourceDurationSeconds: source,
+    targetDurationSeconds: target,
+    ratio: 1,
+    lengthRatio: 1,
+    speedPercent: 100,
+    mode: 'none',
+    algorithm: null,
+    preservesPitch: false,
+    renderedObjectUrl: null,
+    renderedAudioUrl: null,
+    renderedStoragePath: null,
+    renderedRuntimeId: null,
+    renderedDurationSeconds: null,
+    renderedAudio: null,
+    renderedAt: null,
+    renderedSessionOnly: false,
+    renderStatus: 'idle',
+    lastError: null,
+    renderError: null,
+    updatedAt: overrides.updatedAt || null
+  }
+}
+function buildCanonicalStretch({
+  enabled = false,
+  sourceDurationSeconds = null,
+  targetDurationSeconds = null,
+  renderStatus = 'idle',
+  renderError = null,
+  renderedObjectUrl = null,
+  renderedAudioUrl = null,
+  renderedStoragePath = null,
+  renderedRuntimeId = null,
+  renderedDurationSeconds = null,
+  renderedAudio = null,
+  renderedAt = null,
+  renderedSessionOnly = false,
+  algorithm = null,
+  preservesPitch = true,
+  updatedAt = Date.now()
+} = {}) {
+  const source = finitePositiveNumber(sourceDurationSeconds)
+  const target = finitePositiveNumber(targetDurationSeconds)
+  if (!source || !target) {
+    return {
+      ...makeDefaultAudioStretch(source, { targetDurationSeconds: target || source, updatedAt }),
+      renderError: 'Duration unavailable.',
+      lastError: 'Duration unavailable.'
+    }
+  }
+  const lengthRatio = target / source
+  const speedPercent = (source / target) * 100
+  const supported = Number.isFinite(lengthRatio) && Number.isFinite(speedPercent) && lengthRatio >= STRETCH_RATIO_MIN && lengthRatio <= STRETCH_RATIO_MAX && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX
+  return {
+    enabled: Boolean(enabled),
+    sourceDurationSeconds: source,
+    targetDurationSeconds: target,
+    ratio: lengthRatio,
+    lengthRatio,
+    speedPercent,
+    mode: enabled ? 'offline_render' : 'none',
+    algorithm: algorithm || (enabled ? 'signalsmith_wasm_time_stretch_v1' : null),
+    preservesPitch: Boolean(enabled && preservesPitch),
+    renderedObjectUrl: renderedObjectUrl || null,
+    renderedAudioUrl: renderedAudioUrl || null,
+    renderedStoragePath: renderedStoragePath || null,
+    renderedRuntimeId: renderedRuntimeId || null,
+    renderedDurationSeconds: finitePositiveNumber(renderedDurationSeconds),
+    renderedAudio: normalizeRenderedAudioMetadata(renderedAudio),
+    renderedAt: Number.isFinite(Number(renderedAt)) ? Number(renderedAt) : null,
+    renderedSessionOnly: renderedSessionOnly === true,
+    renderStatus: getStretchStatus(renderStatus),
+    lastError: renderError || (supported ? null : stretchErrorMessage()),
+    renderError: renderError || (supported ? null : stretchErrorMessage()),
+    updatedAt
+  }
+}
+function normalizeAudioStretch(stretch = {}, context = {}) {
+  const source = finitePositiveNumber(stretch.sourceDurationSeconds) || finitePositiveNumber(context.sourceDurationSeconds)
+  const visible = finitePositiveNumber(context.visibleDurationSeconds)
+  const status = getStretchStatus(stretch.renderStatus || (stretch.renderedRuntimeId || stretch.renderedStoragePath || stretch.renderedAudioUrl ? 'ready' : 'idle'))
+  const requestedEnabled = stretch.enabled === true
+  const rawTarget = finitePositiveNumber(stretch.targetDurationSeconds)
+  const rawRatio = finitePositiveNumber(stretch.lengthRatio ?? stretch.ratio)
+  const rawSpeed = finitePositiveNumber(stretch.speedPercent)
+  const targetFromRatio = source && rawRatio ? source * rawRatio : null
+  const targetFromSpeed = source && rawSpeed ? source / (rawSpeed / 100) : null
+  const target = rawTarget || (requestedEnabled ? (targetFromRatio || targetFromSpeed || visible || source) : source)
+  const lengthRatio = source && target ? target / source : (rawRatio || 1)
+  const speedPercent = source && target ? (source / target) * 100 : (rawSpeed || (100 / Math.max(0.001, lengthRatio)))
+  const knownGood = isKnownGoodStretchRender(stretch, status)
+  const outOfRange = speedPercent < STRETCH_SPEED_MIN || speedPercent > STRETCH_SPEED_MAX || lengthRatio < STRETCH_RATIO_MIN || lengthRatio > STRETCH_RATIO_MAX
+  const suspiciousTinyTarget = requestedEnabled && target && source && target <= Math.max(minAudioRegionSeconds * 1.1, source * 0.08) && source > target * 4 && !knownGood
+  const structurallyInvalid = !source || !target || !Number.isFinite(lengthRatio) || !Number.isFinite(speedPercent) || lengthRatio <= 0 || target <= 0 || source <= 0 || suspiciousTinyTarget
+  if (requestedEnabled && (structurallyInvalid || (context.migrateCorrupt === true && outOfRange)) && !knownGood) {
+    const safeDuration = source || visible || minAudioRegionSeconds
+    logStretchDebug('normalize', context.clipId || '', {
+      sourceDurationSeconds: source,
+      targetDurationSeconds: target,
+      speedPercent,
+      lengthRatio,
+      renderStatus: status,
+      reason: suspiciousTinyTarget ? 'corrupt_tiny_target' : 'invalid_or_out_of_range'
+    })
+    return makeDefaultAudioStretch(safeDuration)
+  }
+  if (!requestedEnabled) return makeDefaultAudioStretch(source || visible || null)
+  return buildCanonicalStretch({
+    enabled: true,
+    sourceDurationSeconds: source,
+    targetDurationSeconds: target,
+    renderStatus: status,
+    renderError: stretch.renderError || stretch.lastError || null,
+    renderedObjectUrl: stretch.renderedObjectUrl,
+    renderedAudioUrl: stretch.renderedAudioUrl,
+    renderedStoragePath: stretch.renderedStoragePath,
+    renderedRuntimeId: stretch.renderedRuntimeId,
+    renderedDurationSeconds: stretch.renderedDurationSeconds,
+    renderedAudio: stretch.renderedAudio,
+    renderedAt: stretch.renderedAt,
+    renderedSessionOnly: stretch.renderedSessionOnly,
+    algorithm: stretch.algorithm,
+    preservesPitch: stretch.preservesPitch !== false,
+    updatedAt: stretch.updatedAt || null
+  })
+}
+function getAudioStretchMath(region = {}, targetDuration = null) {
+  const sourceRaw = getAudioSourceDurationSeconds(region)
+  const source = finitePositiveNumber(sourceRaw)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: source,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const target = finitePositiveNumber(targetDuration) || (stretch.enabled ? stretch.targetDurationSeconds : source)
+  if (!source || !target) {
+    return {
+      originalDurationSeconds: source || null,
+      sourceDurationSeconds: source || null,
+      targetDurationSeconds: target || null,
+      lengthRatio: 1,
+      speedPercent: 100,
+      rawSpeedPercent: 100,
+      supported: false,
+      error: 'Duration unavailable.'
+    }
+  }
+  if (!stretch.enabled && targetDuration == null) {
+    return {
+      originalDurationSeconds: source,
+      sourceDurationSeconds: source,
+      targetDurationSeconds: source,
+      lengthRatio: 1,
+      speedPercent: 100,
+      rawSpeedPercent: 100,
+      supported: true,
+      error: null
+    }
+  }
+  const lengthRatio = target / source
+  const speedPercent = (source / target) * 100
+  const supported = Number.isFinite(speedPercent) && Number.isFinite(lengthRatio) && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX && lengthRatio >= STRETCH_RATIO_MIN && lengthRatio <= STRETCH_RATIO_MAX
+  return {
+    originalDurationSeconds: source,
+    sourceDurationSeconds: source,
+    targetDurationSeconds: target,
+    lengthRatio,
+    speedPercent: Number.isFinite(speedPercent) ? speedPercent : 100,
+    rawSpeedPercent: speedPercent,
+    supported,
+    error: supported ? null : stretchErrorMessage()
+  }
+}
+function sanitizeStorageFilePart(value = '') {
+  return String(value || 'asset').trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'asset'
+}
+function extensionForAudioType(contentType = '') {
+  if (contentType.includes('wav')) return 'wav'
+  if (contentType.includes('ogg')) return 'ogg'
+  if (contentType.includes('mpeg') || contentType.includes('mp3')) return 'mp3'
+  if (contentType.includes('mp4') || contentType.includes('m4a')) return 'm4a'
+  if (contentType.includes('flac')) return 'flac'
+  return 'webm'
+}
+function extensionForAudioFile(file = {}) {
+  const name = String(file?.name || '')
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : ''
+  return ext || extensionForAudioType(file?.type || '')
+}
+function isSupportedAudioFile(file = {}) {
+  if (!file) return false
+  if (String(file.type || '').startsWith('audio/')) return true
+  return ['wav', 'mp3', 'm4a', 'aac', 'ogg', 'oga', 'webm', 'flac'].includes(extensionForAudioFile(file))
+}
+function formatFileSize(bytes = 0) {
+  const size = Math.max(0, Number(bytes) || 0)
+  if (size >= 1024 * 1024 * 1024) return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(2)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${Math.round(size)} B`
+}
+function formatAudioDuration(seconds = 0) {
+  const value = Math.max(0, Number(seconds) || 0)
+  const minutes = Math.floor(value / 60)
+  const wholeSeconds = Math.floor(value % 60)
+  const ms = Math.round((value % 1) * 1000)
+  return `${minutes}:${String(wholeSeconds).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
+}
+function parseWavBitDepth(arrayBuffer) {
+  try {
+    const view = new DataView(arrayBuffer)
+    const text = (offset, length) => Array.from({ length }, (_, index)=>String.fromCharCode(view.getUint8(offset + index))).join('')
+    if (text(0, 4) !== 'RIFF' || text(8, 4) !== 'WAVE') return { bitDepth: null, bitDepthSource: 'not_applicable' }
+    let offset = 12
+    while (offset + 8 <= view.byteLength) {
+      const chunkId = text(offset, 4)
+      const chunkSize = view.getUint32(offset + 4, true)
+      if (chunkId === 'fmt ' && offset + 24 <= view.byteLength) {
+        return { bitDepth: view.getUint16(offset + 22, true), bitDepthSource: 'wav_header' }
+      }
+      offset += 8 + chunkSize + (chunkSize % 2)
+    }
+  } catch {}
+  return { bitDepth: null, bitDepthSource: 'unknown' }
+}
+function getSouraAudioStoragePath({ clipId, contentType = 'audio/webm', suffix = '' } = {}) {
+  const projectId = sanitizeStorageFilePart(projectState?.id || projectIdFromPath() || 'project')
+  const safeClipId = sanitizeStorageFilePart(clipId || makeInsertId('audio'))
+  const safeSuffix = suffix ? `-${sanitizeStorageFilePart(suffix)}` : ''
+  return `studioProjects/${projectId}/audio/${safeClipId}${safeSuffix}.${extensionForAudioType(contentType)}`
+}
+async function uploadSouraAudioBlob(blob, { clipId, suffix = '', onProgress = null } = {}) {
+  if (!blob?.size) return null
+  if (!firebaseStorage) throw new Error('Firebase Storage is not initialized.')
+  const contentType = blob.type || 'audio/webm'
+  const path = getSouraAudioStoragePath({ clipId, contentType, suffix })
+  const uploadTask = uploadBytesResumable(storageRef(firebaseStorage, path), blob, {
+    contentType,
+    customMetadata: {
+      projectId: String(projectState?.id || ''),
+      clipId: String(clipId || ''),
+      source: 'soura'
+    }
+  })
+  if (typeof onProgress === 'function') {
+    uploadTask.on('state_changed', (snapshot) => {
+      onProgress({
+        bytesTransferred: Number(snapshot.bytesTransferred) || 0,
+        totalBytes: Number(snapshot.totalBytes) || Number(blob.size) || 0
+      })
+    })
+  }
+  await uploadTask
+  return path
+}
+function audioImportCacheKey(file = {}) {
+  return `${file.name || 'audio'}:${file.size || 0}:${file.lastModified || 0}:${file.type || ''}`
+}
+async function decodeAudioFileForImport(file) {
+  if (!isSupportedAudioFile(file)) throw new Error('Unsupported audio file.')
+  const key = audioImportCacheKey(file)
+  const cached = audioImportPreviewCache.get(key)
+  if (cached?.metadata?.audioBuffer) return cached.metadata
+  if (cached?.promise) return cached.promise
+  const promise = (async () => {
+    const arrayBuffer = await file.arrayBuffer()
+    const ctx = getAudioContext()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const wavBitDepth = parseWavBitDepth(arrayBuffer)
+    const ext = extensionForAudioFile(file)
+    const metadata = {
+      audioBuffer,
+      waveform: buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS }),
+      fileName: file.name || `Imported Audio.${ext || 'audio'}`,
+      contentType: file.type || (ext ? `audio/${ext}` : 'audio/*'),
+      fileSizeBytes: Number(file.size) || 0,
+      sampleRate: audioBuffer.sampleRate || null,
+      channelCount: audioBuffer.numberOfChannels || null,
+      fileDurationSeconds: Math.max(minAudioRegionSeconds, audioBuffer.duration || 0),
+      bitDepth: wavBitDepth.bitDepth,
+      bitDepthSource: ext === 'wav' ? wavBitDepth.bitDepthSource : 'not_applicable',
+      fileType: file.type || ext.toUpperCase() || 'audio'
+    }
+    audioImportPreviewCache.set(key, { metadata })
+    return metadata
+  })().catch((error) => {
+    audioImportPreviewCache.delete(key)
+    throw error
+  })
+  audioImportPreviewCache.set(key, { promise })
+  return promise
+}
+function getAudioImportRegionLabel(fileName = '') {
+  const clean = String(fileName || 'Imported Audio').replace(/\.[^.]+$/, '').trim()
+  return clean.slice(0, 80) || 'Imported Audio'
+}
+function parseHexColor(color = '') {
+  const normalized = String(color || '').trim()
+  const match = normalized.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (!match) return null
+  const hex = match[1].length === 3 ? match[1].split('').map((char)=>char + char).join('') : match[1]
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16)
+  }
+}
+function rgbToHsl({ r, g, b }) {
+  const nr = r / 255
+  const ng = g / 255
+  const nb = b / 255
+  const max = Math.max(nr, ng, nb)
+  const min = Math.min(nr, ng, nb)
+  let h = 0
+  let s = 0
+  const l = (max + min) / 2
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    if (max === nr) h = ((ng - nb) / d) + (ng < nb ? 6 : 0)
+    else if (max === ng) h = ((nb - nr) / d) + 2
+    else h = ((nr - ng) / d) + 4
+    h /= 6
+  }
+  return { h: Math.round(h * 360), s: Math.round(s * 100), l: Math.round(l * 100) }
+}
+function getReadableWaveformColor(color = '#58d4ff') {
+  const rgb = parseHexColor(color)
+  if (!rgb) return color || '#58d4ff'
+  const luminance = (0.2126 * rgb.r) + (0.7152 * rgb.g) + (0.0722 * rgb.b)
+  if (luminance < 14) return '#ffffff'
+  if (luminance >= 72) return `#${[rgb.r, rgb.g, rgb.b].map((value)=>value.toString(16).padStart(2, '0')).join('')}`
+  const hsl = rgbToHsl(rgb)
+  return `hsl(${hsl.h} ${Math.max(72, hsl.s)}% ${Math.max(58, hsl.l)}%)`
+}
+function getAudioClipStatusLabel(region = {}) {
+  const status = region.audioClip?.loadStatus || 'idle'
+  if (status === 'loading' || status === 'pending') return 'Loading audio...'
+  if (status === 'ready' || region.audioClip?.audioReady) return 'Audio ready'
+  if (status === 'missing' || status === 'failed' || region.missingMedia) return 'Audio file offline'
+  return region.audioClip?.storagePath || region.audioClip?.downloadUrl ? 'Audio pending' : 'Audio file offline'
+}
+function getAudioOfflineMessage(region = {}) {
+  const reason = region.audioClip?.offlineReason || (region.audioClip?.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
+  if (reason === 'decode_failed') return 'The audio file was found but could not be decoded. Re-upload or re-record the clip.'
+  if (reason === 'storage_fetch_failed') return 'The audio file could not be loaded from storage. Try again, or reconnect the audio.'
+  return 'This region has metadata but no persistent audio file. Re-record or reconnect the audio.'
+}
+function getAudioFileDurationSeconds(region = {}) {
+  return Math.max(minAudioRegionSeconds, Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds || region.durationBeats && beatsToSeconds(region.durationBeats) || 0))
+}
+function getAudioTrimStartSeconds(region = {}) {
+  const fileDuration = getAudioFileDurationSeconds(region)
+  return clamp(Number(region.trimStartSeconds) || 0, 0, Math.max(0, fileDuration - minAudioRegionSeconds))
+}
+function getAudioTrimEndSeconds(region = {}) {
+  const fileDuration = getAudioFileDurationSeconds(region)
+  const raw = Number.isFinite(Number(region.trimEndSeconds)) ? Number(region.trimEndSeconds) : fileDuration
+  return clamp(raw, getAudioTrimStartSeconds(region) + minAudioRegionSeconds, fileDuration)
+}
+function getAudioSourceDurationSeconds(region = {}) {
+  return Math.max(minAudioRegionSeconds, getAudioTrimEndSeconds(region) - getAudioTrimStartSeconds(region))
+}
+function getAudioStretchRatio(region = {}) {
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  return stretch.enabled ? stretch.lengthRatio : 1
+}
+function getAudioRegionVisibleDurationSeconds(region = {}) {
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  return Math.max(minAudioRegionSeconds, stretch.enabled ? (stretch.targetDurationSeconds || sourceDurationSeconds) : sourceDurationSeconds)
+}
+function getAudioRegionPlaybackRate(region = {}) {
+  return clamp(getAudioSourceDurationSeconds(region) / getAudioRegionVisibleDurationSeconds(region), 0.05, 4)
+}
+function syncAudioRegionTimeline(region = {}) {
+  if (region.type !== 'audio') return region
+  const rawStartBeat = Number.isFinite(Number(region.startBeat))
+    ? Number(region.startBeat)
+    : Number.isFinite(Number(region.timelineStartBeats))
+      ? Number(region.timelineStartBeats)
+      : 0
+  const startBeat = normalizeTimelineStartBeat(rawStartBeat, { snapped: false })
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const visibleDurationSeconds = Math.max(minAudioRegionSeconds, stretch.enabled ? (stretch.targetDurationSeconds || sourceDurationSeconds) : sourceDurationSeconds)
+  region.startBeat = startBeat
+  region.timelineStartBeats = startBeat
+  region.timelineStartSeconds = getTimelineSecondsAtBeat(startBeat)
+  region.visibleDurationSeconds = visibleDurationSeconds
+  region.durationSeconds = visibleDurationSeconds
+  region.durationBeats = secondsToBeats(visibleDurationSeconds)
+  region.endBeat = startBeat + region.durationBeats
+  region.playbackRate = getAudioRegionPlaybackRate(region)
+  region.stretch = stretch
+  return region
+}
+
+const tracks = [
+  {
+    id: 'demo-track',
+    name: 'Demo Track',
+    type: 'software',
+    color: '#ff4d5d',
+    colorSoft: 'rgba(255, 77, 93, 0.26)',
+    icon: 'instrument',
+    muted: false,
+    soloed: false,
+    recordArmed: false,
+    automationOpen: false,
+    volume: 72,
+    pan: 0,
+    outputLevel: 0,
+    midiEffects: [],
+    instrument: null,
+    audioEffects: []
+  }
+]
+
+const MIDI_EFFECT_TYPES = MIDI_EFFECT_MANIFESTS.map(({ id, name }) => ({ type: id, name }))
+const AUDIO_EFFECT_TYPES = AUDIO_EFFECT_MANIFESTS
+  .filter((manifest) => manifest.implemented)
+  .map(({ id, name }) => ({ type: id, name }))
+
+const studioProjectModel = normalizeStudioProjectModel({ tracks, regions: timelineRegions })
+
+const projectIdFromPath = () => {
+  const parts = (window.location.pathname || '').split('/').filter(Boolean)
+  if (parts[0] === 'studio' && parts[1] === 'daw' && parts[2] === 'project') return decodeURIComponent((parts[3] || '').trim())
+  if (parts[0] === 'studio' && parts[1] === 'project') return decodeURIComponent((parts[2] || '').trim())
+  return decodeURIComponent((parts[1] || '').trim())
+}
+const icon = (name) => ({ mute:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m11 5-5 4H3v6h3l5 4z"/><path d="m23 9-6 6"/><path d="m17 9 6 6"/></svg>', solo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M5 14h3v6H5z"/><path d="M16 14h3v6h-3z"/></svg>', record:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/></svg>', automation:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 17 16 7"/></svg>', more:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>' }[name] || '')
+const toolIcon = (name) => ({ library:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M9 4v6"/></svg>', inspector:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 7h8"/><path d="M4 17h16"/><path d="M14 7h6"/><path d="M4 12h16"/><circle cx="11" cy="7" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="17" cy="17" r="2"/></svg>', notes:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>', sliders:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 21V10"/><path d="M8 6V3"/><path d="M16 21v-3"/><path d="M16 14V3"/><path d="M12 21v-7"/><path d="M12 10V3"/></svg>', loop:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12a9 9 0 0 1 15.5-6.5"/><path d="M21 3v6h-6"/><path d="M21 12a9 9 0 0 1-15.5 6.5"/><path d="M3 21v-6h6"/></svg>',store:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 9h18l-1 11H4Z"/><path d="M3 9 5 3h14l2 6"/><path d="M9 9v3a3 3 0 0 0 6 0V9"/></svg>', start:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 5v14"/><path d="m19 6-9 6 9 6V6z"/></svg>', rewind:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m11 19-9-7 9-7v14z"/><path d="m22 19-9-7 9-7v14z"/></svg>', play:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m8 5 11 7-11 7z"/></svg>', stop:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>', record:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/></svg>', metro:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m12 4-6 16h12z"/><path d="M12 10v6"/><path d="M9 4h6"/></svg>', count:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v14"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/></svg>', forward:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m13 19 9-7-9-7v14z"/><path d="m2 19 9-7-9-7v14z"/></svg>',end:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m5 6 9 6-9 6V6z"/><path d="M19 5v14"/></svg>',snap:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15a6 6 0 0 0 12 0v-3h-4v3a2 2 0 0 1-4 0v-3H6z"/><path d="M6 12V7"/><path d="M18 12V7"/><path d="M6 7h4"/><path d="M14 7h4"/></svg>' }[name] || '')
+
+const trackTypeIcon = (type) => ({
+  audio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 10v4"/><path d="M7 7v10"/><path d="M11 4v16"/><path d="M15 7v10"/><path d="M19 10v4"/></svg>',
+  software: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 10h10"/><path d="M7 14h10"/></svg>',
+  instrument: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 10h10"/><path d="M7 14h10"/></svg>',
+  midi: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>',
+  drums: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="8" rx="7" ry="3"/><path d="M5 8v6c0 1.7 3.1 3 7 3s7-1.3 7-3V8"/></svg>',
+  bass: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 4v16"/><path d="M6 8h8a4 4 0 1 1 0 8H6"/></svg>'
+}[type] || '')
+
+const toolButton = (label, n, extra = '') => `<button class="studio-tool-button ${extra}" aria-label="${label}" data-tooltip="${label}">${toolIcon(n)}</button>`
+
+const GLOBAL_TRACK_VIEW_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'markers', label: 'Markers' },
+  { value: 'tempo', label: 'Tempo' },
+  { value: 'time-signature', label: 'Time Sig' },
+  { value: 'key-signature', label: 'Key Sig' },
+  { value: 'video', label: 'Video / Reference' }
+]
+const GLOBAL_TRACK_ROW_LABELS = {
+  arrangement: 'Arrangement',
+  markers: 'Markers',
+  tempo: 'Tempo',
+  'time-signature': 'Time Signature',
+  'key-signature': 'Key Signature',
+  video: 'Video / Reference'
+}
+const TIMELINE_ZOOM_LIMITS = {
+  minPixelsPerBeat: 12,
+  maxPixelsPerBeat: 4096,
+  deepestSnapDivision: 256,
+  maxRenderedGridLines: 1800
+}
+const TIMELINE_MIN_REGION_BEATS = 0.05
+const globalTrackRowsForView = () => {
+  const mode = globalTracks.viewMode === 'signature' ? 'key-signature' : (globalTracks.viewMode || 'markers')
+  return mode === 'all' ? ['arrangement', 'markers', 'tempo', 'time-signature', 'key-signature'] : [mode]
+}
+const renderTrackToolbar = () => `<div class="studio-track-toolbar" aria-label="Track toolbar"><button type="button" data-add-track data-tooltip="Add Track" aria-label="Add Track">+</button><button type="button" data-duplicate-track data-tooltip="Duplicate selected track" aria-label="Duplicate selected track">⧉</button><button type="button" class="${globalTracks.visible ? 'is-active' : ''}" data-toggle-global-tracks data-tooltip="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}" aria-label="${globalTracks.visible ? 'Hide Global Tracks' : 'Show Global Tracks'}">G</button><select data-global-track-view aria-label="Global track view">${GLOBAL_TRACK_VIEW_OPTIONS.map((option)=>`<option value="${option.value}" ${globalTracks.viewMode===option.value?'selected':''}>${option.label}</option>`).join('')}</select></div>`
+const NEW_TRACK_DROP_ROW_HEIGHT = 32
+/* soura-contextual-extension-lane-v3:js:begin */
+/*
+ * Contextual new-track drop row.
+ * Uses Soura's own application state; no DOM observer or selector guessing.
+ */
+function shouldShowNewTrackDropRow() {
+  return (
+    activeBottomPanel === 'asset-library'
+    || Boolean(audioImportDrag?.active && audioImportDrag?.file)
+  )
+}
+
+function currentNewTrackDropRowHeight() {
+  return shouldShowNewTrackDropRow() ? NEW_TRACK_DROP_ROW_HEIGHT : 0
+}
+
+const renderNewTrackDropHeader = () => (
+  !shouldShowNewTrackDropRow()
+    ? ''
+    : `<div class="studio-new-track-drop-header ${audioImportDrag?.forceNewTrackAtTop ? 'is-active' : ''}" data-new-track-drop-header>Drop here to make new track</div>`
+)
+/* soura-contextual-extension-lane-v3:js:end */
+const renderNewTrackDropLane = () => (
+  !shouldShowNewTrackDropRow()
+    ? ''
+    : `<div class="studio-new-track-drop-lane ${audioImportDrag?.forceNewTrackAtTop ? 'is-active' : ''}" data-new-track-drop-lane><span>Drop here to make new track</span></div>`
+)
+const renderAddTrackModal = () => !addTrackModalOpen ? '' : `<div class="studio-add-track-modal" data-add-track-backdrop>
+  <section class="studio-add-track-panel" role="dialog" aria-modal="true" aria-labelledby="studio-add-track-title">
+    <header><div><span>New Track</span><h3 id="studio-add-track-title">Add Track</h3></div><button type="button" data-close-add-track aria-label="Close Add Track">Close</button></header>
+    <div class="studio-add-track-options">
+      <button type="button" class="studio-add-track-option" data-create-track-type="software">
+        <span class="studio-add-track-option-icon">${trackTypeIcon('software')}</span>
+        <strong>Software Track</strong>
+        <small>MIDI regions, instruments, MIDI effects, and post-instrument audio FX.</small>
+      </button>
+      <button type="button" class="studio-add-track-option" data-create-track-type="audio">
+        <span class="studio-add-track-option-icon">${trackTypeIcon('audio')}</span>
+        <strong>Audio Track</strong>
+        <small>Record from your mic or interface, edit the clip, and add Audio FX.</small>
+      </button>
+    </div>
+  </section>
+</div>`
+function getTrackPortablePlaybackDecision(track) {
+  const decision = getPortableTrackPlaybackDecision({
+    track,
+    regions: midiRegions,
+    tempoEvents: globalTracks.tempoEvents,
+    timeSignatureEvents: globalTracks.timeSignatureEvents,
+    capabilities: souraRuntimeCapabilities,
+    dependencyAvailable: portableTrackRuntime.get(track?.id)?.dependencyAvailable
+  })
+  const runtime = portableTrackRuntime.get(track?.id)
+  return decision.mode === 'portable' && runtime?.error
+    ? { ...decision, mode: 'unavailable', renderLoadError: runtime.error }
+    : decision
+}
+function getTrackCapabilityStatus(track) {
+  if (!isNativeVst3Instrument(track?.instrument)) return null
+  const decision = getTrackPortablePlaybackDecision(track)
+  const dependencyName = decision.dependency?.name || track.instrument?.name || 'Plug-in'
+  if (decision.mode === 'portable') return { state: 'portable', label: `${dependencyName} — Portable Audio`, title: 'The live plug-in is unavailable. Soura is playing the current portable track render.' }
+  if (decision.mode === 'stale') return { state: 'stale', label: `${dependencyName} — Render Stale`, title: 'The plug-in is unavailable and the portable render no longer matches the editable source.' }
+  if (decision.mode === 'unavailable') return { state: 'unavailable', label: `${dependencyName} — Unavailable`, title: 'Install this plug-in in Soura Desktop, or create a portable render on a system where it is available.' }
+  return null
+}
+const renderTrackCard = (track) => {
+  const level = clamp(Number(track.outputLevel) || 0, 0, 1)
+  const automation = ensureTrackAutomation(track)
+  const capabilityStatus = getTrackCapabilityStatus(track)
+  const trackTitle = `<span class="studio-track-title"><strong class="studio-track-name">${esc(track.name)}</strong>${capabilityStatus ? `<small class="studio-track-capability is-${capabilityStatus.state}" title="${esc(capabilityStatus.title)}">${esc(capabilityStatus.label)}</small>` : ''}</span>`
+  const automationSidebar = track.automationOpen ? `<div class="studio-track-automation-sidebar" data-track-automation-sidebar="${esc(track.id)}"><span>Automation</span><select data-track-automation-parameter="${esc(track.id)}" aria-label="${esc(track.name)} automation parameter">${TRACK_AUTOMATION_PARAMETERS.map((option)=>`<option value="${esc(option.id)}" ${automation.activeParameter===option.id?'selected':''} ${option.disabled?'disabled':''}>${esc(option.label)}</option>`).join('')}</select><small>${esc(formatTrackAutomationValue(automation.activeParameter, getTrackAutomationData(track, automation.activeParameter).defaultValue))}</small></div>` : ''
+  return `<div class="studio-track-stack ${track.automationOpen ? 'has-automation-open' : ''}" data-track-stack="${esc(track.id)}" style="--track-row-height:${trackVisualHeight(track)}px"><article class="studio-track-card ${selectedTrackId === track.id && !selectedSystemChannel ? 'is-selected' : ''} ${timelineState.trackHeight <= 56 ? 'is-track-compact' : ''}" data-track-row="${track.id}" data-guide-id="studio-track-${esc(track.id)}" data-guide-label="${esc(track.name)} track" data-guide-role="daw-track" style="--track-color: ${track.color}; --track-color-soft: ${track.colorSoft};--track-meter-level:${level};"><div class="studio-track-main-controls"><div class="studio-track-header-row"><button class="studio-track-drag-handle" type="button" draggable="true" data-track-drag-handle="${esc(track.id)}" aria-label="Reorder ${esc(track.name)}" title="Drag to reorder">⋮⋮</button><button class="studio-track-icon" type="button" aria-label="${esc(track.name)} track" data-track-icon="${esc(track.id)}">${trackTypeIcon(normalizedTrackIconType(track))}</button>${trackTitle}<button class="studio-track-more" type="button" data-track-options="${esc(track.id)}" aria-label="Track options" data-tooltip="Track options">${icon('more')}</button></div><div class="studio-track-control-row"><button type="button" class="studio-track-control ${track.muted ? 'is-active' : ''}" data-track-mute="${track.id}" aria-label="Mute ${esc(track.name)}" data-tooltip="Mute">${icon('mute')}</button><button type="button" class="studio-track-control ${track.soloed ? 'is-active' : ''}" data-track-solo="${track.id}" aria-label="Solo ${esc(track.name)}" data-tooltip="Solo">${icon('solo')}</button><button type="button" class="studio-record-arm ${track.recordArmed ? 'is-active' : ''}" data-track-record="${track.id}" aria-label="Record arm ${esc(track.name)}" data-tooltip="Record arm">R</button><button type="button" class="studio-track-control ${track.automationOpen ? 'is-active' : ''}" data-track-automation="${track.id}" aria-label="Automation ${esc(track.name)}" data-tooltip="Automation">${icon('automation')}</button><input class="studio-track-volume" data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}" aria-label="${esc(track.name)} volume" /><button class="studio-track-pan" type="button" aria-label="${esc(track.name)} pan ${Math.round(track.pan)}" data-tooltip="Pan ${Math.round(track.pan)}" data-track-pan="${track.id}" style="--pan-angle: ${(track.pan / 100) * 135}deg"></button><span class="studio-track-meter-separator" aria-hidden="true"></span><span class="studio-track-meter" data-track-meter="${track.id}" aria-label="${esc(track.name)} output meter"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(level * 100)}%"></b></span></div></div></article>${automationSidebar}</div>`
+}
+const renderTrackContextMenu = () => {
+  if (!trackMenuState?.trackId) return ''
+  const track = tracks.find((item) => item.id === trackMenuState.trackId)
+  if (!track) return ''
+  return `<div class="studio-track-menu studio-track-menu--floating" data-track-menu style="left:${Math.round(trackMenuState.x)}px;top:${Math.round(trackMenuState.y)}px"><strong>${track.name}</strong><button data-track-context-action="rename">Rename Track</button><button data-track-context-action="duplicate">Duplicate Track</button><button data-track-context-action="delete" ${tracks.length <= 1 ? 'disabled' : ''}>Delete Track</button><button data-track-context-action="color">Change Color</button><button data-track-context-action="inspector">Open Inspector</button></div>`
+}
+function getClampedFloatingPosition(clientX = 0, clientY = 0, width = 220, height = 260) {
+  const margin = 8
+  const rect = app?.querySelector?.('.studio-editor-page')?.getBoundingClientRect?.() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+  return {
+    x: clamp(clientX, rect.left + margin, Math.max(rect.left + margin, rect.right - width - margin)),
+    y: clamp(clientY, rect.top + margin, Math.max(rect.top + margin, rect.bottom - height - margin))
+  }
+}
+function setMusicalTypingEnabled(enabled) {
+  isTypingPianoEnabled = !!enabled
+  localStorage.setItem(MUSICAL_TYPING_PREF_KEY, isTypingPianoEnabled ? '1' : '0')
+  if (!isTypingPianoEnabled) stopAllTrackInstrumentNotes()
+}
+function isChannelSectionOpen(sectionId = '', defaultOpen = false) {
+  return Object.prototype.hasOwnProperty.call(channelAccordionState, sectionId) ? channelAccordionState[sectionId] !== false : defaultOpen
+}
+function persistChannelAccordionState(sectionId = '', open = false) {
+  if (!sectionId) return
+  channelAccordionState = { ...channelAccordionState, [sectionId]: !!open }
+  localStorage.setItem(CHANNEL_ACCORDION_PREF_KEY, JSON.stringify(channelAccordionState))
+}
+function renderMidiRegionContextMenu() {
+  if (!midiRegionMenuState?.regionId) return ''
+  const region = midiRegions.find((item)=>item.id === midiRegionMenuState.regionId)
+  if (!region) return ''
+  const isAudioRegion = region.type === 'audio'
+  return `<div class="studio-midi-context-menu" data-midi-context-menu style="left:${Math.round(midiRegionMenuState.x)}px;top:${Math.round(midiRegionMenuState.y)}px">
+    <strong>${esc(getMidiRegionLabel(region))}</strong>
+    <button type="button" data-midi-region-action="view-roll">Open Region Editor</button>
+    <button type="button" data-midi-region-action="rename">Rename Region</button>
+    <button type="button" data-midi-region-action="copy">Copy</button>
+    <button type="button" data-midi-region-action="paste" ${midiRegionClipboard ? '' : 'disabled'}>Paste</button>
+    <button type="button" data-midi-region-action="color">Independent Color</button>
+    <button type="button" data-midi-region-action="delete">Delete</button>
+  </div>`
+}
+function renderMidiRegionColorPopover() {
+  if (!regionColorPickerState?.regionId) return ''
+  const region = midiRegions.find((item)=>item.id === regionColorPickerState.regionId)
+  if (!region) return ''
+  return `<form class="studio-midi-color-popover" data-midi-color-form style="left:${Math.round(regionColorPickerState.x)}px;top:${Math.round(regionColorPickerState.y)}px">
+    <label>Region Color<input type="color" data-midi-region-color-input value="${esc(region.independentColor || region.color || '#58d4ff')}" /></label>
+    <button type="submit">Apply</button>
+    <button type="button" data-midi-region-reset-color>Reset to Track Color</button>
+  </form>`
+}
+function getLastAudioRegionEditorMode() {
+  try {
+    const mode = window.localStorage?.getItem(AUDIO_REGION_EDITOR_MODE_STORAGE_KEY)
+    return Object.values(AUDIO_REGION_EDITOR_MODES).includes(mode)
+      ? mode
+      : AUDIO_REGION_EDITOR_MODES.waveform
+  } catch {
+    return AUDIO_REGION_EDITOR_MODES.waveform
+  }
+}
+function setLastAudioRegionEditorMode(mode) {
+  if (!Object.values(AUDIO_REGION_EDITOR_MODES).includes(mode)) return
+  try { window.localStorage?.setItem(AUDIO_REGION_EDITOR_MODE_STORAGE_KEY, mode) } catch {}
+}
+function renderMidiRegionRenamePopover() {
+  if (!regionRenameState?.regionId) return ''
+  const region = midiRegions.find((item)=>item.id === regionRenameState.regionId)
+  if (!region) return ''
+  return `<form class="studio-midi-rename-popover" data-midi-rename-form style="left:${Math.round(regionRenameState.x)}px;top:${Math.round(regionRenameState.y)}px">
+    <label>Region Name<input data-midi-rename-input value="${esc(region.name || '')}" placeholder="${esc(getMidiRegionTrack(region)?.name || 'Track name')}" /></label>
+    <div><button type="submit">Save</button><button type="button" data-midi-rename-cancel>Cancel</button></div>
+  </form>`
+}
+function renderMidiRollModal() {
+  return ''
+}
+function getPitchTraceBaseSummary(region, edit = normalizeAudioEdit(region?.audioEdit)) {
+  if (!region || region.type !== 'audio') return { key: 'original', label: 'Original audio', stacked: false, pending: false }
+  const traceSource = edit.pitchTrace?.baseRenderSource || edit.pitchTrace?.renderedAudio?.baseRenderSource
+  if (traceSource === 'combined_wasm_render') return { key: traceSource, label: 'Combined pitch + stretch render', stacked: true, pending: false }
+  if (traceSource === 'global_wasm_render') return { key: traceSource, label: 'Global rendered audio', stacked: true, pending: false }
+  const pitchShift = edit.pitchShift || {}
+  const reverse = edit.reverse || {}
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const pitchActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const stretchIsCombined = stretch.algorithm === 'signalsmith_wasm_pitch_time_v1' || stretch.renderedAudio?.operation === 'combined_pitch_time'
+  if (stretch.enabled && stretch.renderStatus === 'ready') return { key: stretchIsCombined ? 'combined_wasm_render' : 'global_wasm_render', label: stretchIsCombined ? 'Combined pitch + stretch render' : 'Global stretch render', stacked: true, pending: false }
+  if (pitchActive && pitchShift.renderStatus === 'ready') return { key: 'global_wasm_render', label: 'Global transpose render', stacked: true, pending: false }
+  if (reverse.enabled && reverse.renderStatus === 'ready') return { key: 'global_wasm_render', label: 'Reverse render', stacked: true, pending: false }
+  if ((stretch.enabled && stretch.renderStatus !== 'ready') || (pitchActive && pitchShift.renderStatus !== 'ready') || (reverse.enabled && reverse.renderStatus !== 'ready')) {
+    return { key: 'pending_global_render', label: 'Global render pending', stacked: true, pending: true }
+  }
+  return { key: 'original', label: 'Original audio', stacked: false, pending: false }
+}
+function renderPitchTraceView(region, track) {
+  const edit=normalizeAudioEdit(region.audioEdit)
+  const trace=edit.pitchTrace
+  const visibleDuration=Math.max(minAudioRegionSeconds,getAudioRegionVisibleDurationSeconds(region))
+  const notes=trace.showLowConfidence?(trace.notes||[]):(trace.notes||[]).filter((note)=>note.confidence>=trace.confidenceThreshold)
+  const values=notes.map((note)=>Number(note.editedMidiNote??note.midiNote)).filter(Number.isFinite)
+  const minDetected=values.length?Math.min(...values):48
+  const maxDetected=values.length?Math.max(...values):72
+  const minNote=Math.max(0,Math.floor(Math.min(48,minDetected-5)))
+  const maxNote=Math.min(127,Math.ceil(Math.max(72,maxDetected+5)))
+  const rowCount=Math.max(1,maxNote-minNote+1)
+  const startBeat=Number(region.startBeat)||0
+  const endBeat=Math.max(startBeat+.25,Number(region.endBeat)||startBeat+1)
+  const lengthBeats=endBeat-startBeat
+  const width=Math.max(420,musicalDurationToRegionWidth(lengthBeats,midiRollBeatWidth))
+  const color=getReadableWaveformColor(region.color||track?.color||'#58d4ff')
+  const selected=notes.find((note)=>note.id===pitchTraceSelectedNoteId)||null
+  const selectedPitch=selected?Math.round(Number(selected.editedMidiNote??selected.midiNote)||60):null
+  const black=new Set([1,3,6,8,10])
+
+  const keyboard=Array.from({length:rowCount},(_,index)=>{
+    const midi=maxNote-index
+    const pc=((midi%12)+12)%12
+    return `<button type="button" tabindex="-1" class="${black.has(pc)?'is-black':'is-white'} ${pc===0?'is-root':''} ${selectedPitch===midi?'is-selected-pitch':''}" aria-label="${esc(formatMidiNoteName(midi))}">${esc(formatMidiNoteName(midi))}</button>`
+  }).join('')
+
+  const curvePath=(note)=>{
+    const curve=Array.isArray(note.pitchCurve)?note.pitchCurve.filter((point)=>Number.isFinite(Number(point?.relativeSeconds))&&Number.isFinite(Number(point?.cents))):[]
+    if(curve.length>=2){
+      const duration=Math.max(.001,Number(note.durationSeconds)||.001)
+      return curve.map((point,index)=>{
+        const x=clamp((Number(point.relativeSeconds)/duration)*100,0,100)
+        const y=50-((clamp(Number(point.cents)||0,-100,100)/100)*38)
+        return `${index===0?'M':'L'} ${x.toFixed(3)} ${y.toFixed(3)}`
+      }).join(' ')
+    }
+    const a=clamp(Number(note.pitchDriftStartCents)||Number(note.centsOffset)||0,-100,100)
+    const b=clamp(Number(note.pitchDriftEndCents)||Number(note.centsOffset)||0,-100,100)
+    const vibrato=clamp(Number(note.vibratoAmount)||0,0,1)
+    const commands=[]
+    for(let i=0;i<24;i+=1){
+      const t=i/23
+      const cents=clamp(a+((b-a)*t)+(Math.sin(t*Math.PI*7)*vibrato*16),-100,100)
+      commands.push(`${i===0?'M':'L'} ${(t*100).toFixed(3)} ${(50-((cents/100)*38)).toFixed(3)}`)
+    }
+    return commands.join(' ')
+  }
+
+  const blocks=notes.map((note)=>{
+    const noteStartBeat=audioRegionLocalSecondsToProjectBeat(region,Number(note.startSeconds)||0)
+    const noteEndBeat=audioRegionLocalSecondsToProjectBeat(region,(Number(note.startSeconds)||0)+Math.max(.01,Number(note.durationSeconds)||.01))
+    const left=positionToRegionEditorX(noteStartBeat,region)
+    const noteWidth=Math.max(8,positionToRegionEditorX(noteEndBeat,region)-left)
+    const edited=clamp(Math.round(Number(note.editedMidiNote??note.midiNote)||60),minNote,maxNote)
+    const original=clamp(Math.round(Number(note.originalMidiNote)||edited),minNote,maxNote)
+    const row=maxNote-edited
+    const top=(row/rowCount)*100
+    const height=Math.max(1.2,(1/rowCount)*100)
+    const cls=[pitchTraceSelectedNoteId===note.id?'is-selected':'',edited!==original||Math.abs(Number(note.editedFineTuneCents)||0)>.001?'is-edited':'',note.muted?'is-muted':'',note.confidence<trace.confidenceThreshold?'is-low-confidence':''].filter(Boolean).join(' ')
+    return `<button type="button" class="studio-pitch-trace-note ${cls}" data-pitch-trace-note="${esc(note.id)}" style="left:${left.toFixed(3)}px;width:${noteWidth.toFixed(3)}px;top:${top.toFixed(4)}%;height:${height.toFixed(4)}%;--pitch-note-color:${esc(color)}" title="${esc(formatMidiNoteName(edited))} · ${Math.round((Number(note.confidence)||0)*100)}% confidence · ${Math.round((Number(note.pitchStability)||0)*100)}% stability"><span class="studio-pitch-trace-intended" aria-hidden="true"></span><span class="studio-pitch-trace-note-center" aria-hidden="true"></span><svg class="studio-pitch-trace-note-curve" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="${curvePath(note)}"></path></svg><span data-pitch-trace-note-handle="left"></span><b>${esc(formatMidiNoteName(edited))}</b><span data-pitch-trace-note-handle="right"></span></button>`
+  }).join('')
+
+  const step=getRegionEditorMusicalGridStep()
+  const beatsPerBar=Math.max(1,Number(timelineState.beatsPerBar)||4)
+  const lines=[]
+  const firstIndex=Math.ceil((startBeat-1e-7)/step)
+  const lastIndex=Math.floor((endBeat+1e-7)/step)
+  for(let index=firstIndex;index<=lastIndex;index+=1){
+    const beat=index*step
+    const left=positionToRegionEditorX(beat,region)
+    const whole=Math.abs(beat-Math.round(beat))<1e-6
+    const bar=whole&&Math.abs(Math.round(beat)%beatsPerBar)<1e-6
+    const division=!whole&&Math.abs((beat*4)-Math.round(beat*4))<1e-6
+    lines.push(`<i class="${bar?'is-bar':whole?'is-beat':division?'is-division':'is-tick'}" style="left:${left.toFixed(3)}px"></i>`)
+  }
+
+  const octaveLines=Array.from({length:rowCount},(_,index)=>{const midi=maxNote-index;return midi%12===0?`<i style="top:${((index/rowCount)*100).toFixed(4)}%"></i>`:''}).join('')
+  const status=trace.status==='analyzing'?`Analyzing ${Math.round((trace.progress||0)*100)}%`:trace.status==='ready'?`Ready · ${notes.length} notes`:trace.status==='failed'?`Failed · ${trace.error||'Try again'}`:'Idle'
+  const base=getPitchTraceBaseSummary(region,edit)
+  const empty=trace.status==='analyzing'?'<p class="studio-pitch-trace-empty">Deep pitch analysis is running…</p>':trace.status==='failed'?`<p class="studio-pitch-trace-empty">${esc(trace.error||'Pitch analysis failed.')}</p>`:'<p class="studio-pitch-trace-empty">Analyze Audio to map detected pitch onto MIDI rows.</p>'
+  const emptyOverlay=(trace.notes||[]).length?'':empty
+
+  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1600})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks}</div></div></div>${emptyOverlay}<footer class="studio-pitch-trace-status"><span>${esc(status)} · ${esc(base.label)}</span><kbd>Independent horizontal scale · Option-scroll changes pitch height</kbd></footer></div>`
+}
+function getPitchTraceEditedNoteCount(trace = {}) {
+  return (trace.notes || []).filter((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.editedFineTuneCents) || 0) > 0.001 || Math.abs(Number(note.gainDb) || 0) > 0.001).length
+}
+function getSelectedPitchTraceNote(region) {
+  if (!region || region.type !== 'audio' || !pitchTraceSelectedNoteId) return null
+  const trace = normalizeAudioEdit(region.audioEdit).pitchTrace
+  return (trace.notes || []).find((note)=>note.id === pitchTraceSelectedNoteId) || null
+}
+function renderPitchTraceToolPane(region, missing = false) {
+  const edit=normalizeAudioEdit(region.audioEdit)
+  const trace=edit.pitchTrace
+  const selectedPitchNote=getSelectedPitchTraceNote(region)
+  const editedPitchNoteCount=getPitchTraceEditedNoteCount(trace)
+  const base=getPitchTraceBaseSummary(region,edit)
+  const desktopRealtime=isSouraRealtimeDesktopRuntime()
+
+  return `<aside class="studio-midi-roll-tools studio-pitch-trace-tools-pane" data-pitch-trace-tools-scroll><h3>Pitch Tools</h3><div class="studio-editor-tool-toggle" role="toolbar" aria-label="Pitch Trace tools"><button type="button" data-pitch-trace-tool="cursor" class="${pitchTraceTool==='cursor'?'is-active':''}">Cursor</button><button type="button" data-pitch-trace-tool="pencil" class="${pitchTraceTool==='pencil'?'is-active':''}">Pencil</button></div><div class="studio-pitch-trace-local-zoom"><button type="button" data-pitch-trace-axis="y" data-pitch-trace-zoom="out">V−</button><button type="button" data-pitch-trace-axis="y" data-pitch-trace-zoom="fit">V Fit</button><button type="button" data-pitch-trace-axis="y" data-pitch-trace-zoom="in">V+</button></div><p class="studio-pitch-trace-realtime-note">${desktopRealtime?'<strong>Desktop realtime:</strong> pitch and stretch preview live. High-quality rendering is optional.':'<strong>Web:</strong> complex pitch/stretch playback uses the browser-safe render path when required.'}</p><p class="studio-pitch-trace-base">Editing: <strong>${esc(base.label)}</strong></p>
+    <label><input type="checkbox" data-pitch-trace-enabled ${trace.enabled?'checked':''}> Pitch Trace enabled</label>
+    <label>Analysis Mode<select data-pitch-trace-mode><option value="vocal" ${trace.analysisMode==='vocal'?'selected':''}>Vocal / Mono</option><option value="instrument" ${trace.analysisMode==='instrument'?'selected':''}>Instrument / Mono</option><option value="full-mix" ${trace.analysisMode==='full-mix'?'selected':''}>Full Mix Best Effort</option></select></label>
+    <label>Sensitivity<input type="range" min="0" max="1" step="0.025" data-pitch-trace-sensitivity value="${trace.sensitivity}"><small>${Math.round(trace.sensitivity*100)}%</small></label>
+    <label>Minimum Note<input type="range" min="0.025" max="0.2" step="0.005" data-pitch-trace-min-note value="${trace.minNoteSeconds}"><small>${Math.round(trace.minNoteSeconds*1000)} ms</small></label>
+    <label>Confidence<input type="range" min="0.2" max="0.95" step="0.025" data-pitch-trace-threshold value="${trace.confidenceThreshold}"><small>${Math.round(trace.confidenceThreshold*100)}%</small></label>
+    <label><input type="checkbox" data-pitch-trace-show-low-confidence ${trace.showLowConfidence?'checked':''}> Show low-confidence notes</label>
+    <button type="button" data-pitch-trace-analyze ${missing||trace.status==='analyzing'?'disabled':''}>${trace.notes.length?'Deep Re-analyze Audio':'Deep Analyze Audio'}</button>
+    <button type="button" data-pitch-trace-clear ${trace.notes.length||trace.status==='failed'?'':'disabled'}>Clear Analysis</button>
+    <button type="button" class="${desktopRealtime?'studio-render-hq-button':''}" data-pitch-trace-render ${trace.enabled&&trace.notes.length&&!missing&&trace.renderStatus!=='rendering'?'':'disabled'}>${desktopRealtime?'Render Higher Quality':'Render Pitch Trace'}</button>
+    ${selectedPitchNote?`<div class="studio-pitch-trace-note-tools"><strong>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</strong><span>Original ${esc(formatMidiNoteName(selectedPitchNote.originalMidiNote))} · ${Math.round((Number(selectedPitchNote.confidence)||0)*100)}% confidence · ${Math.round((Number(selectedPitchNote.pitchStability)||0)*100)}% stability</span><label>Start<input type="number" min="0" step="0.01" data-pitch-trace-note-field="startSeconds" value="${Number(selectedPitchNote.startSeconds||0).toFixed(2)}"></label><label>Length<input type="number" min="0.02" step="0.01" data-pitch-trace-note-field="durationSeconds" value="${Number(selectedPitchNote.durationSeconds||.03).toFixed(2)}"></label><label>Edited Note<input type="number" min="0" max="127" step="1" data-pitch-trace-note-field="editedMidiNote" value="${Number(selectedPitchNote.editedMidiNote||60)}"><small>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</small></label><label>Fine Pitch<input type="number" min="-100" max="100" step="1" data-pitch-trace-note-field="editedFineTuneCents" value="${Number(selectedPitchNote.editedFineTuneCents||0)}"><small>cents</small></label><button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}">Reset Note</button><button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted?'Unmute Note':'Mute Note'}</button><button type="button" data-pitch-trace-note-delete="${esc(selectedPitchNote.id)}">Delete Note</button></div>`:'<small>Select or draw a note to edit Pitch Trace data.</small>'}
+    <small>Analysis: ${esc(trace.status==='analyzing'?'Analyzing…':trace.status)} · Playback: ${esc(desktopRealtime?'realtime':trace.renderStatus||'idle')}${editedPitchNoteCount?` · ${editedPitchNoteCount} edits`:''}</small></aside>`
+}
+function midiRollPitchRows(region = getMidiRollRegion()) {
+  const track = getMidiRegionTrack(region)
+  const playable = getInstrumentPlayableRange(track)
+  const notes = (region?.notes || []).map((note)=>Number(note?.note)).filter(Number.isFinite)
+  const minNote = Math.min(36, playable.hasMappedRange ? playable.min : 36, ...(notes.length ? notes : [36]))
+  const maxNote = Math.max(84, playable.hasMappedRange ? playable.max : 84, ...(notes.length ? notes : [84]))
+  const rowMin = Math.floor(minNote / 12) * 12
+  const rowMax = (Math.ceil((maxNote + 1) / 12) * 12) - 1
+  const rows = []
+  for (let note = rowMax; note >= rowMin; note -= 1) rows.push(note)
+  return rows
+}
+function formatMidiNoteName(midi = 60) {
+  const names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
+  const pitch = ((Number(midi) % 12) + 12) % 12
+  const octave = Math.floor(Number(midi) / 12) - 1
+  return `${names[pitch]}${octave}`
+}
+function formatBitDepth(region = {}) {
+  const bitDepth = Number(region.bitDepth ?? region.audioClip?.bitDepth)
+  const source = region.bitDepthSource || region.audioClip?.bitDepthSource || 'unknown'
+  if (Number.isFinite(bitDepth) && bitDepth > 0) return `${bitDepth}-bit`
+  if (source === 'not_applicable') return 'Compressed / not directly available'
+  return 'Unknown'
+}
+function formatRenderedBitDepth(value = null) {
+  const bitDepth = Number(value)
+  return Number.isFinite(bitDepth) && bitDepth > 0 ? `${bitDepth}-bit` : 'Unknown'
+}
+function getAudioSourceBitDepth(region = {}) {
+  const bitDepth = Number(region.bitDepth ?? region.audioClip?.bitDepth)
+  return Number.isFinite(bitDepth) && bitDepth > 0 ? bitDepth : null
+}
+function getActiveRenderedAudioMetadata(region = {}) {
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  if (edit.pitchTrace?.renderStatus === 'ready' && edit.pitchTrace.renderedAudio) return edit.pitchTrace.renderedAudio
+  if (edit.pitchShift?.renderStatus === 'ready' && edit.pitchShift.renderedAudio) return edit.pitchShift.renderedAudio
+  if (stretch.renderStatus === 'ready' && stretch.renderedAudio) return stretch.renderedAudio
+  if (edit.reverse?.renderStatus === 'ready' && edit.reverse.renderedAudio) return edit.reverse.renderedAudio
+  return null
+}
+function formatStorageStatus(region = {}) {
+  if (region.audioClip?.loadStatus === 'ready' || region.audioClip?.audioReady) return 'Loaded'
+  if (region.audioClip?.loadStatus === 'loading' || region.audioClip?.loadStatus === 'pending') return 'Loading'
+  if (region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed') return 'Offline / missing'
+  return region.audioClip?.storagePath || region.audioClip?.downloadUrl ? 'Pending' : 'Offline / missing'
+}
+function getSouraDspStatusLabel(status = getSouraWasmDspStatusSnapshot()) {
+  if (status.status === 'loaded') return 'Loaded'
+  if (status.status === 'loading') return 'Loading'
+  if (status.status === 'failed') return 'Failed'
+  return 'Not loaded'
+}
+function isSouraDspRenderBlocked() {
+  return getSouraWasmDspStatusSnapshot().status === 'failed'
+}
+function renderSouraDspStatus() {
+  const status = getSouraWasmDspStatusSnapshot()
+  const failed = status.status === 'failed'
+  const legacy = isLegacyJsDspFallbackEnabled()
+  return `<section class="studio-audio-dsp-status ${failed ? 'is-failed' : ''} ${legacy ? 'is-legacy' : ''}">
+    <strong>DSP Engine</strong>
+    <span>Engine: ${esc(status.engineLabel || 'Soura WASM DSP: Signalsmith Stretch')}</span>
+    <span>Status: ${esc(getSouraDspStatusLabel(status))}</span>
+    <span>Quality: ${esc(status.quality || 'High')}</span>
+    ${failed ? `<em>WASM DSP engine is required for pitch/stretch rendering and failed to load.${status.error ? ` ${esc(status.error)}` : ''}</em>` : ''}
+    ${legacy ? '<em>Legacy JavaScript DSP fallback is active. Audio quality is reduced.</em>' : ''}
+  </section>`
+}
+function renderAudioSourceInfo(region = {}) {
+  const clip = region.audioClip || {}
+  const sourceLabel = (region.source || clip.source) === 'import' ? 'Imported' : 'Recorded'
+  const sampleRate = Number(region.sampleRate ?? clip.sampleRate ?? region.audioContextSampleRate ?? region.projectSampleRate)
+  const channels = Number(region.channelCount ?? clip.channelCount)
+  const renderedAudio = getActiveRenderedAudioMetadata(region)
+  const rows = [
+    ['File name', clip.fileName || region.fileName || 'Unknown'],
+    ['File type', clip.contentType || region.contentType || clip.fileType || region.fileType || 'Unknown'],
+    ['Duration', formatAudioDuration(region.fileDurationSeconds || clip.fileDurationSeconds || getAudioFileDurationSeconds(region))],
+    ['Sample rate', Number.isFinite(sampleRate) && sampleRate > 0 ? `${Math.round(sampleRate)} Hz` : 'Unknown'],
+    ['Bit depth', formatBitDepth(region)],
+    ['Channels', Number.isFinite(channels) && channels > 0 ? String(channels) : 'Unknown'],
+    ['File size', clip.fileSizeBytes || region.fileSizeBytes ? formatFileSize(clip.fileSizeBytes || region.fileSizeBytes) : 'Unknown'],
+    ['Source', sourceLabel],
+    ['Storage status', formatStorageStatus(region)]
+  ]
+  if (renderedAudio) {
+    rows.push(
+      ['Rendered sample rate', renderedAudio.renderedSampleRate ? `${Math.round(renderedAudio.renderedSampleRate)} Hz` : 'Unknown'],
+      ['Rendered bit depth', `${formatRenderedBitDepth(renderedAudio.renderedBitDepth)}${renderedAudio.bitDepthPreserved ? ' (preserved)' : renderedAudio.sourceBitDepth ? ' (changed)' : ' (source unknown)'}`],
+      ['Render engine', renderedAudio.engineLabel || renderedAudio.engine || 'Unknown'],
+      ['Render engine type', renderedAudio.engineType || 'Unknown'],
+      ['Render algorithm', renderedAudio.algorithm || 'Unknown'],
+      ['Render quality', renderedAudio.qualityMode || 'Unknown']
+    )
+  }
+  return `<section class="studio-audio-file-info"><header><strong>Source Audio</strong><span>Read-only</span></header><dl>${rows.map(([label, value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>${renderSouraDspStatus()}</section>`
+}
+function renderAudioRegionEditorPanel(region, motionClass = '') {
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  const track = getMidiRegionTrack(region)
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const pitchTrace = edit.pitchTrace
+  const audioEditorMode = getLastAudioRegionEditorMode()
+  const pitchTraceActive = audioEditorMode === AUDIO_REGION_EDITOR_MODES.pitchTrace
+  const pitchShift = edit.pitchShift
+  const selectedPitchNote = getSelectedPitchTraceNote(region)
+  const editedPitchNoteCount = getPitchTraceEditedNoteCount(pitchTrace)
+  const pitchShiftActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const desktopRealtime = isSouraRealtimeDesktopRuntime()
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const combinedPitchStretchActive = pitchShiftActive && stretch.enabled
+  const pitchShiftStatus = pitchShift.renderStatus === 'needs_render' ? 'Needs render' : (pitchShift.lastError || pitchShift.renderStatus || 'idle')
+  const pitchTraceRenderStatus = pitchTrace.renderStatus === 'needs_render' ? 'Needs render' : (pitchTrace.lastError || pitchTrace.renderStatus || 'idle')
+  const stretchMath = getAudioStretchMath(region)
+  const missing = Boolean(region.missingMedia || region.audioClip?.loadStatus === 'missing' || region.audioClip?.loadStatus === 'failed')
+  const dspBlocked = isSouraDspRenderBlocked()
+  const dspBlockedTitle = dspBlocked ? 'title="WASM DSP engine is required for pitch/stretch rendering and failed to load."' : ''
+  const renderStatus = stretch.renderStatus === 'needs_render' ? 'Needs render' : stretch.renderStatus
+  const color = region.color || track?.color || '#58d4ff'
+  const waveformColor = getReadableWaveformColor(color)
+  const regionLength = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
+  const gridWidth = Math.max(420, musicalDurationToRegionWidth(regionLength, midiRollBeatWidth))
+  const keyboardWidth = pitchTraceActive ? REGION_EDITOR_KEYBOARD_WIDTH : 0
+  return `<section class="studio-bottom-panel studio-midi-roll-editor studio-region-editor-audio ${pitchTraceActive ? 'has-pitch-trace-mode' : 'has-waveform-mode'} ${motionClass}" data-audio-region-editor="${esc(region.id)}" style="--region-editor-keyboard-width:${keyboardWidth}px;--midi-roll-beat-width:${midiRollBeatWidth}px;--midi-roll-grid-width:${gridWidth}px;${bottomPanelHeightPx ? `height:${bottomPanelHeightPx}px;` : ''}">
+    <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
+    <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Audio Track')} · ${esc(getMidiRegionLabel(region))} · ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
+    <div class="studio-bottom-panel-body studio-audio-region-editor-body ${pitchTraceActive ? 'has-pitch-trace-tools has-pitch-trace-mode' : ''}">
+      <section class="studio-audio-region-editor-preview">
+        ${renderRegionEditorTimeline(region, gridWidth)}
+        ${renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled: pitchTraceActive, color, waveformColor })}
+        <div class="studio-audio-editor-meta">
+          <span>Length ${getAudioRegionVisibleDurationSeconds(region).toFixed(2)}s</span>
+          <span>Speed ${Math.round(stretchMath.speedPercent)}%</span>
+          <span>${esc(getAudioClipStatusLabel(region))}</span>
+        </div>
+        ${missing ? `<p class="studio-audio-editor-warning" title="${esc(getAudioOfflineMessage(region))}">${esc(region.audioClip?.loadError || getAudioOfflineMessage(region))}</p>` : ''}
+      </section>
+      ${pitchTraceActive ? renderPitchTraceToolPane(region, missing) : ''}
+      ${renderRegionEditorToolStrip({ label: 'Audio region editor tools', audioEditorMode })}
+      <aside class="studio-midi-roll-tools studio-audio-region-tools" data-region-editor-scroll>
+        <h3>${esc(getMidiRegionLabel(region))}</h3>
+        <label>Region name<input data-audio-region-name value="${esc(region.name || '')}" placeholder="${esc(track?.name || 'Audio Region')}"></label>
+        
+        <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="mute" ${edit.mute ? 'checked' : ''}> Mute</label><label><input type="checkbox" data-audio-edit-field="loop" ${edit.loop ? 'checked' : ''}> Loop</label></div>
+        <label>Quantize<select data-audio-edit-field="quantize" disabled>${AUDIO_QUANTIZE_OPTIONS.map((value)=>`<option value="${value}" ${edit.quantize===value?'selected':''}>${value === 'off' ? 'Off' : value}</option>`).join('')}</select><small>Coming soon</small></label>
+        <label>Q-Swing<input type="range" min="0" max="100" step="1" data-audio-edit-field="qSwing" value="${edit.qSwing}" disabled><small>Coming soon</small></label>
+        <label>Q-Range<input type="number" step="0.1" data-audio-edit-field="qRange" value="${edit.qRange ?? ''}" placeholder="Coming soon" disabled></label>
+        <label>Q-Strength<input type="range" min="0" max="100" step="1" data-audio-edit-field="qStrength" value="${edit.qStrength}" disabled><small>Coming soon</small></label>
+        <label>Transpose<input type="number" min="-48" max="48" step="1" data-audio-edit-field="transposeSemitones" value="${edit.transposeSemitones}"><small>semitones</small></label>
+        <label>Fine Tune<input type="number" min="-100" max="100" step="1" data-audio-edit-field="fineTuneCents" value="${edit.fineTuneCents}"><small>cents</small></label>
+        <button type="button" data-audio-render-pitch-shift ${pitchShiftActive && !missing && !dspBlocked && pitchShift.renderStatus !== 'rendering' ? '' : 'disabled'} ${dspBlockedTitle} class="${desktopRealtime ? 'studio-render-hq-button' : ''}">${desktopRealtime ? 'Render Higher Quality' : (pitchShift.renderStatus === 'failed' ? 'Retry Pitch Shift' : 'Render Pitch Shift')}</button>
+        <small>Pitch Shift: ${esc(pitchShiftStatus)}${pitchShiftActive ? ` · ${Number(pitchShift.totalSemitones).toFixed(2)} st` : ''}</small>
+        <label>Pitch Source<select data-audio-edit-field="pitchSource" disabled><option>Off</option><option>Region</option><option>Project Key</option></select><small>Coming soon</small></label>
+        <hr>
+        <div class="studio-pitch-trace-controls">
+          ${pitchTrace.enabled ? '<p>Pitch Trace tools are shown in the dedicated pane beside the editor.</p>' : `<label><input type="checkbox" data-pitch-trace-enabled> Pitch Trace</label>
+          <p>Analyze the audio region, then drag detected notes vertically to retune audio segments.</p>
+          <label>Mode<select data-pitch-trace-mode><option value="vocal" ${pitchTrace.analysisMode === 'vocal' ? 'selected' : ''}>Vocal / Mono</option><option value="instrument" ${pitchTrace.analysisMode === 'instrument' ? 'selected' : ''}>Instrument / Mono</option><option value="full-mix" ${pitchTrace.analysisMode === 'full-mix' ? 'selected' : ''}>Full Mix Best Effort</option></select></label>
+          <label>Sensitivity<input type="range" min="0" max="1" step="0.05" data-pitch-trace-sensitivity value="${pitchTrace.sensitivity}"><small>${Math.round(pitchTrace.sensitivity * 100)}%</small></label>
+          <label>Minimum Note<input type="range" min="0.035" max="0.2" step="0.005" data-pitch-trace-min-note value="${pitchTrace.minNoteSeconds}"><small>${Math.round(pitchTrace.minNoteSeconds * 1000)} ms</small></label>
+          <label>Confidence<input type="range" min="0.2" max="0.95" step="0.05" data-pitch-trace-threshold value="${pitchTrace.confidenceThreshold}"><small>${Math.round(pitchTrace.confidenceThreshold * 100)}%</small></label>
+          <label><input type="checkbox" data-pitch-trace-show-low-confidence ${pitchTrace.showLowConfidence ? 'checked' : ''}> Show low-confidence notes</label>
+          <button type="button" data-pitch-trace-analyze ${missing || pitchTrace.status === 'analyzing' ? 'disabled' : ''}>${pitchTrace.notes.length ? 'Re-analyze Audible Render' : 'Analyze Audible Render'}</button>
+          <button type="button" data-pitch-trace-clear ${pitchTrace.notes.length || pitchTrace.status === 'failed' ? '' : 'disabled'}>Clear Analysis</button>
+          <button type="button" data-pitch-trace-render ${pitchTrace.enabled && pitchTrace.notes.length && !missing && !dspBlocked && pitchTrace.renderStatus !== 'rendering' ? '' : 'disabled'} ${dspBlockedTitle}>${pitchTrace.renderStatus === 'failed' ? 'Retry Pitch Trace Render' : 'Render Pitch Trace'}</button>
+          ${selectedPitchNote ? `<div class="studio-pitch-trace-note-tools">
+            <strong>${esc(formatMidiNoteName(selectedPitchNote.editedMidiNote))}</strong>
+            <span>Original ${esc(formatMidiNoteName(selectedPitchNote.originalMidiNote))} · ${selectedPitchNote.editedMidiNote - selectedPitchNote.originalMidiNote > 0 ? '+' : ''}${selectedPitchNote.editedMidiNote - selectedPitchNote.originalMidiNote} st</span>
+            <button type="button" data-pitch-trace-note-reset="${esc(selectedPitchNote.id)}" ${selectedPitchNote.editedMidiNote === selectedPitchNote.originalMidiNote && !selectedPitchNote.muted ? 'disabled' : ''}>Reset Note</button>
+            <button type="button" data-pitch-trace-note-mute="${esc(selectedPitchNote.id)}">${selectedPitchNote.muted ? 'Unmute Note' : 'Mute Note'}</button>
+          </div>` : '<small>Select and drag a Pitch Trace note to edit pitch.</small>'}
+          <small>Pitch Trace: ${esc(pitchTrace.status === 'analyzing' ? 'Analyzing...' : pitchTrace.status)} · Render: ${esc(pitchTraceRenderStatus)}${editedPitchNoteCount ? ` · ${editedPitchNoteCount} edit${editedPitchNoteCount === 1 ? '' : 's'}` : ''}</small>`}
+        </div>
+        <label>Gain<input type="range" min="-24" max="24" step="0.5" data-audio-edit-field="gainDb" value="${edit.gainDb}"><small>${edit.gainDb.toFixed(1)} dB</small></label>
+        <label>Delay<input type="number" min="0" max="2000" step="1" data-audio-edit-field="delayMs" value="${edit.delayMs}"><small>ms</small></label>
+        <label>Fade-In<input type="number" min="0" step="0.01" data-audio-edit-field="fadeInSeconds" value="${edit.fadeInSeconds}"><small>seconds</small></label>
+        <label>Fade-In Curve<select data-audio-edit-field="fadeInCurve">${AUDIO_FADE_CURVES.map((value)=>`<option value="${value}" ${edit.fadeInCurve===value?'selected':''}>${value}</option>`).join('')}</select></label>
+        <label>Fade-Out<input type="number" min="0" step="0.01" data-audio-edit-field="fadeOutSeconds" value="${edit.fadeOutSeconds}"><small>seconds</small></label>
+        <label>Fade-Out Curve<select data-audio-edit-field="fadeOutCurve">${AUDIO_FADE_CURVES.map((value)=>`<option value="${value}" ${edit.fadeOutCurve===value?'selected':''}>${value}</option>`).join('')}</select></label>
+        <div class="studio-audio-region-checks"><label><input type="checkbox" data-audio-edit-field="reverse" ${edit.reverse.enabled ? 'checked' : ''}> Reverse</label></div>
+        <button type="button" data-audio-render-reverse ${edit.reverse.enabled && !missing && edit.reverse.renderStatus !== 'rendering' ? '' : 'disabled'}>${edit.reverse.renderStatus === 'failed' ? 'Retry Reverse Render' : 'Render Reverse'}</button>
+        <small>Reverse: ${esc(edit.reverse.lastError || (edit.reverse.renderStatus === 'needs_render' ? 'Needs render' : edit.reverse.renderStatus || 'idle'))}</small>
+        <hr>
+        <div class="studio-audio-stretch-controls">
+          <label><input type="checkbox" data-audio-stretch-enabled ${stretch.enabled ? 'checked' : ''}> Stretch enabled</label>
+          <label>Speed %<input type="number" min="${STRETCH_SPEED_MIN}" max="${STRETCH_SPEED_MAX}" step="1" data-audio-stretch-speed value="${Math.round(stretchMath.speedPercent)}"></label>
+          <label>Target Length<input type="number" min="${minAudioRegionSeconds}" step="0.01" data-audio-stretch-length value="${stretchMath.targetDurationSeconds.toFixed(2)}"></label>
+          <label>Length Ratio<input type="number" min="${STRETCH_RATIO_MIN}" max="${STRETCH_RATIO_MAX}" step="0.01" data-audio-stretch-ratio value="${stretchMath.lengthRatio.toFixed(2)}"></label>
+          <p>Stretch Ratio: ${stretchMath.lengthRatio.toFixed(2)}x length · Status: ${esc(stretch.renderError || renderStatus || 'idle')}</p>
+        <button type="button" data-audio-render-stretch ${stretch.enabled && !missing && !dspBlocked && stretchMath.supported ? '' : 'disabled'} ${dspBlockedTitle} class="${desktopRealtime ? 'studio-render-hq-button' : ''}">${desktopRealtime ? 'Render Higher Quality' : (stretch.renderStatus === 'failed' ? 'Retry Render' : combinedPitchStretchActive ? 'Render Pitch + Stretch' : 'Render Stretch')}</button>
+          <button type="button" data-audio-reset-stretch ${stretch.enabled ? '' : 'disabled'}>Reset Stretch</button>
+        </div>
+        ${renderAudioSourceInfo(region)}
+      </aside>
+    </div>
+  </section>`
+}
+function renderRegionEditorTimeline(region, gridWidth) {
+  if (!region) return ''
+
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(
+    regionStart + 0.25,
+    Number(region.endBeat) || regionStart + 1
+  )
+  const regionLength = regionEnd - regionStart
+  const width = Math.max(
+    420,
+    Number(gridWidth) || musicalDurationToRegionWidth(regionLength, midiRollBeatWidth)
+  )
+
+  const projectBeat = xToBeat(timelineState.playheadX)
+  const playheadLeft = positionToRegionEditorX(projectBeat, region)
+  const ticks = renderRegionEditorTimelineTicks(region)
+
+  return `<div class="studio-region-editor-header-container">
+    <div
+      class="studio-region-editor-timeline"
+      data-region-editor-timeline="${esc(region.id)}"
+      style="--midi-roll-grid-width:${width}px"
+    >
+      <div class="studio-region-editor-timeline-spacer"></div>
+      <div
+        class="studio-region-editor-timeline-viewport"
+        data-region-editor-timeline-viewport
+      >
+        <div
+          class="studio-region-editor-timeline-inner"
+          data-region-editor-timeline-inner
+          style="width:${width}px"
+        >
+          ${ticks}
+          <i
+            class="studio-region-editor-playhead"
+            style="left:${playheadLeft}px"
+          ></i>
+        </div>
+      </div>
+    </div>
+  </div>`
+}
+function positionToRegionEditorX(beat = 0, region = getMidiRollRegion()) {
+  return musicalPositionToRegionX(beat, {
+    regionStartBeat: Number(region?.startBeat) || 0,
+    pixelsPerBeat: midiRollBeatWidth
+  })
+}
+function regionEditorXToPosition(x = 0, region = getMidiRollRegion()) {
+  return regionXToMusicalPosition(x, {
+    regionStartBeat: Number(region?.startBeat) || 0,
+    pixelsPerBeat: midiRollBeatWidth
+  })
+}
+function audioRegionLocalSecondsToProjectBeat(region, localSeconds = 0) {
+  const regionStartBeat = Number(region?.startBeat) || 0
+  return secondsToBeats(beatsToSeconds(regionStartBeat) + Math.max(0, Number(localSeconds) || 0))
+}
+function projectBeatToAudioRegionLocalSeconds(region, projectBeat = 0) {
+  const regionStartBeat = Number(region?.startBeat) || 0
+  return Math.max(0, beatsToSeconds(Number(projectBeat) || 0) - beatsToSeconds(regionStartBeat))
+}
+function getRegionEditorMusicalGridStep() {
+  if (midiRollBeatWidth >= 512) return 1 / 32
+  if (midiRollBeatWidth >= 320) return 1 / 16
+  if (midiRollBeatWidth >= 180) return 1 / 8
+  return 1 / 4
+}
+function getMidiRollEditSnapValue() {
+  return isSnapEnabled ? getRegionEditorMusicalGridStep() : MIDI_ROLL_FINE_BEAT_STEP
+}
+function snapBeatToRegionEditorGrid(beat = 0, regionStart = 0) {
+  return snapMusicalPosition(beat, getRegionEditorMusicalGridStep())
+}
+function renderRegionEditorTimelineTicks(region = getMidiRollRegion()) {
+  if (!region) return ''
+
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(
+    regionStart + 0.25,
+    Number(region.endBeat) || regionStart + 1
+  )
+
+  const beatsPerBar = Math.max(
+    1,
+    Number(timelineState.beatsPerBar) || 4
+  )
+
+  const step = getRegionEditorMusicalGridStep()
+  const firstStep = Math.ceil((regionStart - 1e-7) / step)
+  const lastStep = Math.floor((regionEnd + 1e-7) / step)
+  const output = []
+
+  for (let index = firstStep; index <= lastStep; index += 1) {
+    const absoluteBeat = index * step
+    const left = positionToRegionEditorX(absoluteBeat, region)
+
+    const isWholeBeat = Math.abs(absoluteBeat - Math.round(absoluteBeat)) < 1e-7
+
+    const modulo =
+      ((absoluteBeat % beatsPerBar) + beatsPerBar)
+      % beatsPerBar
+
+    const isBar = isWholeBeat && Math.abs(modulo) < 1e-7
+    const isDivision = !isWholeBeat && Math.abs((absoluteBeat * 4) - Math.round(absoluteBeat * 4)) < 1e-7
+    const tickClass = isBar
+      ? 'studio-region-editor-tick--bar'
+      : isWholeBeat
+        ? 'studio-region-editor-tick--beat'
+        : isDivision
+          ? 'studio-region-editor-tick--division'
+          : 'studio-region-editor-tick--tick'
+
+    const barLabel =
+      isBar
+        ? String(Math.round(absoluteBeat / beatsPerBar))
+        : ''
+
+    output.push(
+      `<span
+        class="studio-region-editor-tick ${tickClass}"
+        style="left:${left}px"
+      >${barLabel ? `<b>${esc(barLabel)}</b>` : ''}</span>`
+    )
+  }
+
+  return output.join('')
+}
+function renderMidiRollGridLines(region) {
+  const regionStart = Number(region?.startBeat) || 0
+  const regionLength = Math.max(0, (Number(region?.endBeat) || regionStart) - regionStart)
+  const division = getRegionEditorMusicalGridStep()
+  const firstBeat = Math.ceil((regionStart - 1e-7) / division) * division
+  const lastBeat = Math.floor((regionStart + regionLength + 1e-7) / division) * division
+  const count = Math.max(0, Math.floor(((lastBeat - firstBeat) / division) + 1e-7) + 1)
+  return Array.from({ length: count }, (_, index)=>{
+    const absoluteBeat = firstBeat + (index * division)
+    const wholeBeat = Math.abs(absoluteBeat - Math.round(absoluteBeat)) < 1e-6
+    const halfBeat = !wholeBeat && Math.abs((absoluteBeat * 2) - Math.round(absoluteBeat * 2)) < 1e-6
+    const cls = wholeBeat ? 'is-beat' : halfBeat ? 'is-half' : 'is-subdivision'
+    return `<i class="${cls}" style="left:${positionToRegionEditorX(absoluteBeat, region)}px"></i>`
+  }).join('')
+}
+function getRegionEditorToolItems() {
+  return REGION_TOOL_ITEMS.filter((tool) => tool.mode !== 'action' && (tool.enabled || tool.id === 'draw'))
+}
+function getRegionEditorActiveTool() {
+  return midiRollTool === 'pencil' ? 'draw' : (activeRegionTool || 'select')
+}
+function renderRegionEditorToolStrip({ label = 'Region Editor tools', audioEditorMode = '' } = {}) {
+  const activeTool = getRegionEditorActiveTool()
+  const modeButtons = Object.values(AUDIO_REGION_EDITOR_MODES).includes(audioEditorMode)
+    ? `<span class="studio-region-editor-view-tools"><span class="studio-region-editor-tool-divider" aria-hidden="true"></span><button type="button" class="studio-region-editor-mode-button ${audioEditorMode === AUDIO_REGION_EDITOR_MODES.waveform ? 'is-active' : ''}" data-audio-region-editor-mode="${AUDIO_REGION_EDITOR_MODES.waveform}" title="Waveform" aria-label="Waveform" aria-pressed="${String(audioEditorMode === AUDIO_REGION_EDITOR_MODES.waveform)}"><span>W</span><small>Wave</small></button><button type="button" class="studio-region-editor-mode-button ${audioEditorMode === AUDIO_REGION_EDITOR_MODES.pitchTrace ? 'is-active' : ''}" data-audio-region-editor-mode="${AUDIO_REGION_EDITOR_MODES.pitchTrace}" title="Pitch Trace" aria-label="Pitch Trace" aria-pressed="${String(audioEditorMode === AUDIO_REGION_EDITOR_MODES.pitchTrace)}"><span>PT</span><small>Pitch</small></button></span>`
+    : ''
+  return `<nav class="studio-region-editor-tool-strip" role="toolbar" aria-label="${esc(label)}"><span class="studio-region-editor-edit-tools">${getRegionEditorToolItems().map((tool) => {
+    const enabled = tool.enabled || tool.id === 'draw'
+    const active = activeTool === tool.id
+    const title = `${tool.id === 'draw' ? 'Draw / Pencil' : tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}${!enabled && tool.reason ? ` - ${tool.reason}` : ''}`
+    return `<button type="button" class="studio-region-editor-tool-button ${active ? 'is-active' : ''}" data-region-editor-tool="${esc(tool.id)}" aria-label="${esc(title)}" aria-pressed="${String(active)}" ${enabled ? '' : 'disabled'}><span>${esc(tool.glyph)}</span><small>${esc(tool.id === 'draw' ? 'Pencil' : tool.label)}</small></button>`
+  }).join('')}</span>${modeButtons}</nav>`
+}
+function renderMidiRollPanel(motionClass = '') {
+  const selectedRegion = midiRegions.find((item)=>item.id === selectedMidiRegionId) || midiRegions.find((item)=>item.id === midiRollState?.regionId) || null
+  if (selectedRegion?.type === 'audio') return renderAudioRegionEditorPanel(selectedRegion, motionClass)
+  const region = selectedRegion?.type === 'midi' ? selectedRegion : getMidiRollRegion()
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  if (!region) {
+    return `<section class="studio-bottom-panel studio-midi-roll-editor ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Region Editor</strong><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><p>Select a MIDI or audio region to edit.</p></div></section>`
+  }
+  const track = getMidiRegionTrack(region)
+  const notes = region.notes || []
+  const selectedNote = getSelectedMidiRollNote()
+  const rows = midiRollPitchRows()
+  const regionLength = Math.max(0.25, (Number(region.endBeat) || 0) - (Number(region.startBeat) || 0))
+  const gridWidth = Math.max(420, musicalDurationToRegionWidth(regionLength, midiRollBeatWidth))
+  const gridHeight = rows.length * midiRollRowHeight
+  const quantize = midiRollState?.quantize || '0.25'
+  const playheadBeat = xToBeat(timelineState.playheadX)
+  const playheadLeft = positionToRegionEditorX(playheadBeat, region)
+  const selectedPitches = new Set(midiRollSelectedNoteIndices.map((index)=>Number(notes[index]?.note)).filter(Number.isFinite))
+  if (Number.isInteger(midiRollSelectedNoteIndex) && notes[midiRollSelectedNoteIndex]) selectedPitches.add(Number(notes[midiRollSelectedNoteIndex].note))
+  return `<section class="studio-bottom-panel studio-midi-roll-editor ${motionClass}" data-midi-roll-editor data-midi-roll-region="${esc(region.id)}" style="--midi-roll-beat-width:${midiRollBeatWidth}px;--midi-roll-row-height:${midiRollRowHeight}px;--midi-roll-grid-width:${gridWidth}px;--midi-roll-grid-height:${gridHeight}px;${bottomPanelHeightPx ? `height:${bottomPanelHeightPx}px;` : ''}">
+    <span class="studio-bottom-panel-resize" data-bottom-panel-resize></span>
+    <header class="studio-bottom-panel-header studio-midi-roll-header"><div><strong>Region Editor</strong><span>${esc(track?.name || 'Track')} · ${esc(getMidiRegionLabel(region))} · ${Number(region.startBeat || 0).toFixed(2)}-${Number(region.endBeat || 0).toFixed(2)} · ${notes.length} notes</span></div><nav><button type="button" data-detach-bottom-panel="midi-roll">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header>
+    <div class="studio-bottom-panel-body studio-midi-roll-body">
+      <section class="studio-midi-roll-main">
+        ${renderRegionEditorTimeline(region, gridWidth)}
+        <div class="studio-midi-roll-scroll">
+          <div class="studio-midi-roll-keys" style="height:${gridHeight}px">${rows.map((note)=>{ const pitch=((note%12)+12)%12; const black=[1,3,6,8,10].includes(pitch); return `<button type="button" class="${black ? 'is-black' : 'is-white'} ${pitch === 0 ? 'is-root' : ''} ${selectedPitches.has(note) ? 'is-selected-pitch' : ''}" data-midi-roll-key-note="${note}" aria-label="Preview ${esc(formatMidiNoteName(note))}">${pitch === 0 ? esc(formatMidiNoteName(note)) : ''}</button>` }).join('')}</div>
+          <div class="studio-midi-roll-grid" data-midi-roll-grid style="width:${gridWidth}px;height:${gridHeight}px">
+            ${renderMidiRollGridLines(region)}
+            <span class="studio-midi-roll-playhead" data-midi-roll-playhead style="left:${playheadLeft}px"></span>
+            <span class="studio-midi-roll-selection" data-midi-roll-selection hidden></span>
+            ${notes.map((note, index)=>{
+              const pitchIndex = rows.indexOf(Number(note.note) || 60)
+              const left = Math.max(0, positionToRegionEditorX(Number(note.startBeat || region.startBeat), region))
+              const width = Math.max(10, musicalDurationToRegionWidth(Number(note.durationBeats) || 0.25, midiRollBeatWidth))
+              const top = Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)
+              const selected = index === midiRollSelectedNoteIndex || midiRollSelectedNoteIndices.includes(index)
+              return `<button type="button" class="studio-midi-roll-note ${selected ? 'is-selected' : ''}" data-midi-note-index="${index}" title="${esc(formatMidiNoteName(note.note))} · ${Number(note.startBeat || 0).toFixed(2)} · ${Number(note.durationBeats || 0.25).toFixed(2)} beats" style="left:${left}px;top:${top}px;width:${width}px;--region-color:${esc(region.independentColor || region.color || track?.color || '#58d4ff')}"><span data-midi-note-handle="left"></span><strong>${esc(formatMidiNoteName(note.note))}</strong><span data-midi-note-handle="right"></span></button>`
+            }).join('')}
+          </div>
+        </div>
+      </section>
+      ${renderRegionEditorToolStrip({ label: 'MIDI region editor tools' })}
+      <aside class="studio-midi-roll-tools">
+        <h3>${esc(getMidiRegionLabel(region))}</h3>
+        <div class="studio-editor-tool-toggle" role="toolbar" aria-label="MIDI editor tools">
+          <button type="button" data-midi-roll-tool="cursor" class="${midiRollTool === 'cursor' ? 'is-active' : ''}" aria-pressed="${String(midiRollTool === 'cursor')}">Cursor</button>
+          <button type="button" data-midi-roll-tool="pencil" class="${midiRollTool === 'pencil' ? 'is-active' : ''}" aria-pressed="${String(midiRollTool === 'pencil')}">Pencil</button>
+        </div>
+        <p>${selectedNote ? `${esc(formatMidiNoteName(selectedNote.note))} at ${Number(selectedNote.startBeat || 0).toFixed(2)}` : (notes.length ? 'No notes selected. Quantize will apply to the active clip.' : 'No notes available to edit.')}</p>
+        ${midiRollStatus ? `<p class="studio-midi-roll-status">${esc(midiRollStatus)}</p>` : ''}
+        <label>Velocity<input data-midi-note-velocity type="range" min="1" max="127" value="${Math.round(clamp(Number(selectedNote?.velocity || 0.85), 0, 1) * 127)}" ${selectedNote ? '' : 'disabled'}><small>${Math.round(clamp(Number(selectedNote?.velocity || 0.85), 0, 1) * 127)}</small></label>
+        <label>Quantize<select data-midi-roll-quantize><option value="1" ${quantize==='1'?'selected':''}>1/4</option><option value="0.5" ${quantize==='0.5'?'selected':''}>1/8</option><option value="0.25" ${quantize==='0.25'?'selected':''}>1/16</option><option value="0.125" ${quantize==='0.125'?'selected':''}>1/32</option></select></label>
+        <button type="button" data-midi-quantize-note ${notes.length ? '' : 'disabled'}>${selectedNote || midiRollSelectedNoteIndices.length ? 'Quantize Selection' : 'Quantize Clip'}</button>
+        <label>Note Length<input data-midi-note-length type="number" min="0.05" step="0.05" value="${Number(selectedNote?.durationBeats || 0.25).toFixed(2)}" ${selectedNote ? '' : 'disabled'}></label>
+        <div class="studio-midi-roll-transpose"><button type="button" data-midi-note-transpose="-12" ${selectedNote ? '' : 'disabled'}>-12</button><button type="button" data-midi-note-transpose="-1" ${selectedNote ? '' : 'disabled'}>-1</button><button type="button" data-midi-note-transpose="1" ${selectedNote ? '' : 'disabled'}>+1</button><button type="button" data-midi-note-transpose="12" ${selectedNote ? '' : 'disabled'}>+12</button></div>
+        <button type="button" data-midi-delete-note ${selectedNote ? '' : 'disabled'}>Delete Selected Note</button>
+        <button type="button" disabled>Humanize</button>
+        <button type="button" disabled>Legato</button>
+      </aside>
+    </div>
+  </section>`
+}
+function getLiveRegionIds() {
+  return new Set(midiRegions.map((region)=>region.id).filter(Boolean))
+}
+function pruneSelectedRegionIds() {
+  const liveIds = getLiveRegionIds()
+  Array.from(selectedRegionIds).forEach((id)=>{ if (!liveIds.has(id)) selectedRegionIds.delete(id) })
+  if (selectedMidiRegionId && !liveIds.has(selectedMidiRegionId)) selectedMidiRegionId = selectedRegionIds.values().next().value || ''
+}
+function getSelectedRegionIds() {
+  pruneSelectedRegionIds()
+  if (!selectedRegionIds.size && selectedMidiRegionId) selectedRegionIds.add(selectedMidiRegionId)
+  return Array.from(selectedRegionIds).filter((id)=>midiRegions.some((region)=>region.id === id))
+}
+function regionIsSelected(regionId) {
+  return getSelectedRegionIds().includes(regionId)
+}
+function setSelectedRegions(regionIds = [], { primaryId = null } = {}) {
+  selectedRegionIds.clear()
+  regionIds.filter(Boolean).forEach((id)=>selectedRegionIds.add(id))
+  selectedMidiRegionId = primaryId || regionIds.find(Boolean) || ''
+}
+function selectSingleRegion(regionId) {
+  setSelectedRegions(regionId ? [regionId] : [], { primaryId: regionId || '' })
+}
+function syncRegionSelectionDom() {
+  if (activeBottomPanel === 'score' && scoreMountedRegionId !== (getScoreRegion()?.id || null)) queueMicrotask(mountScorePanel)
+  const ids = new Set(getSelectedRegionIds())
+  app.querySelectorAll('[data-midi-region]').forEach((node) => {
+    node.classList.toggle('is-selected', ids.has(node.dataset.midiRegion))
+  })
+}
+function toggleRegionSelection(regionId) {
+  if (!regionId) return
+  pruneSelectedRegionIds()
+  if (selectedRegionIds.has(regionId)) selectedRegionIds.delete(regionId)
+  else selectedRegionIds.add(regionId)
+  selectedMidiRegionId = selectedRegionIds.has(regionId) ? regionId : (selectedRegionIds.values().next().value || '')
+}
+function clearRegionSelection() {
+  setSelectedRegions([])
+}
+function getSelectedRegions() {
+  const ids = new Set(getSelectedRegionIds())
+  return midiRegions.filter((region)=>ids.has(region.id)).sort((a,b)=>(Number(a.startBeat)||0)-(Number(b.startBeat)||0))
+}
+function getRegionBeatRange(region = {}) {
+  return getRegionTimelineRange(region)
+}
+function getRegionGeometrySnapshot() {
+  const metrics = getTimelineMetrics()
+  return { originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat, revision: timelineGeometryRevision }
+}
+function getRegionLaneGeometry(region) {
+  const trackIndex = Math.max(0, tracks.findIndex(track => track.id === region.trackId))
+  return getTimelineRegionLaneGeometry({ laneTop: trackLaneTop(trackIndex), trackHeight: timelineState.trackHeight })
+}
+
+function stopRegionPlayback(regionId) {
+  activePlaybackNotes.forEach((active, key) => { if (active.regionId === regionId) stopPlaybackNote(key) })
+  stopAudioClipPlayback(regionId)
+}
+function invalidateAudioRegionRenderState(region) {
+  if (!region || region.type !== 'audio') return region
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  if (stretch.enabled && stretch.renderStatus === 'ready') {
+    region.stretch = {
+      ...stretch,
+      renderStatus: 'needs_render',
+      renderedObjectUrl: null,
+      renderedAudioUrl: null,
+      renderedStoragePath: null,
+      renderedRuntimeId: null,
+      renderedDurationSeconds: null,
+      renderedAt: null,
+      renderedAudio: null,
+      renderError: null,
+      lastError: null
+    }
+  } else {
+    region.stretch = stretch
+  }
+  const edit = normalizeAudioEdit(region.audioEdit)
+  if (edit.pitchShift?.renderStatus === 'ready') {
+    edit.pitchShift = { ...edit.pitchShift, renderStatus: 'needs_render', renderedStoragePath: null, renderedAudioUrl: null, renderedRuntimeId: null, renderedDurationSeconds: null, renderedAt: null, renderedAudio: null, lastError: null }
+  }
+  if (edit.pitchTrace?.renderStatus === 'ready') {
+    edit.pitchTrace = { ...edit.pitchTrace, renderStatus: getPitchTraceEditedNoteCount(edit.pitchTrace) ? 'needs_render' : 'idle', renderedStoragePath: null, renderedAudioUrl: null, renderedRuntimeId: null, renderedDurationSeconds: null, renderedAt: null, renderedAudio: null, lastError: null }
+  }
+  if (edit.reverse?.renderStatus === 'ready') {
+    edit.reverse = { ...edit.reverse, renderStatus: edit.reverse.enabled ? 'needs_render' : 'idle', renderedStoragePath: null, renderedAudioUrl: null, renderedRuntimeId: null, renderedDurationSeconds: null, renderedAt: null, renderedAudio: null, lastError: null }
+  }
+  region.audioEdit = edit
+  region.renderedWaveform = null
+  region.stretchRender = null
+  return region
+}
+function makeAudioRegionSlice(region, sliceStartBeat, sliceEndBeat, { preserveId = false } = {}) {
+  const { startBeat, endBeat } = getRegionBeatRange(region)
+  const nextStart = clamp(sliceStartBeat, startBeat, endBeat)
+  const nextEnd = clamp(sliceEndBeat, nextStart, endBeat)
+  if (nextEnd - nextStart < 0.01) return null
+  const playbackRate = getAudioRegionPlaybackRate(region)
+  const trimStart = getAudioTrimStartSeconds(region)
+  const sourceStart = trimStart + (beatsToSeconds(nextStart - startBeat) * playbackRate)
+  const sourceEnd = trimStart + (beatsToSeconds(nextEnd - startBeat) * playbackRate)
+  const visibleDurationSeconds = Math.max(minAudioRegionSeconds, beatsToSeconds(nextEnd - nextStart))
+  const sourceDurationSeconds = Math.max(minAudioRegionSeconds, sourceEnd - sourceStart)
+  const slice = cloneRegionForState(region, { persist: false })
+  if (!preserveId) slice.id = makeInsertId('audio-region')
+  slice.startBeat = nextStart
+  slice.endBeat = nextEnd
+  slice.timelineStartBeats = nextStart
+  slice.timelineStartSeconds = getTimelineSecondsAtBeat(nextStart)
+  slice.trimStartSeconds = sourceStart
+  slice.trimEndSeconds = sourceEnd
+  slice.visibleDurationSeconds = visibleDurationSeconds
+  slice.durationSeconds = visibleDurationSeconds
+  slice.durationBeats = nextEnd - nextStart
+  slice.clipId = region.clipId || region.audioClip?.audioAssetId || region.audioClip?.id || region.id
+  slice.audioClip = { ...(region.audioClip || {}), runtimeId: region.audioClip?.runtimeId || region.id, audioAssetId: region.audioClip?.audioAssetId || region.audioClip?.id || region.clipId || region.id, id: region.audioClip?.id || region.clipId || region.id }
+  const wasStretched = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  }).enabled
+  slice.stretch = wasStretched ? createPendingStretchMetadata({ sourceDurationSeconds, targetDurationSeconds: visibleDurationSeconds }) : makeDefaultAudioStretch(sourceDurationSeconds)
+  invalidateAudioRegionRenderState(slice)
+  syncAudioRegionTimeline(slice)
+  return slice
+}
+function makeMidiRegionSlice(region, sliceStartBeat, sliceEndBeat, { preserveId = false } = {}) {
+  const { startBeat, endBeat } = getRegionBeatRange(region)
+  const nextStart = clamp(sliceStartBeat, startBeat, endBeat)
+  const nextEnd = clamp(sliceEndBeat, nextStart, endBeat)
+  if (nextEnd - nextStart < 0.01) return null
+  const slice = cloneRegionForState(region, { persist: false })
+  if (!preserveId) slice.id = makeInsertId('midi-region')
+  slice.startBeat = nextStart
+  slice.endBeat = nextEnd
+  slice.notes = (region.notes || []).map((note) => {
+    const noteStart = Number(note.startBeat) || startBeat
+    const noteEnd = noteStart + Math.max(0.05, Number(note.durationBeats) || 0.05)
+    const overlapStart = Math.max(noteStart, nextStart)
+    const overlapEnd = Math.min(noteEnd, nextEnd)
+    if (overlapEnd - overlapStart < 0.01) return null
+    const changed = overlapStart !== noteStart || overlapEnd !== noteEnd || !preserveId
+    return { ...note, id: changed ? makeInsertId('note') : note.id, startBeat: overlapStart, durationBeats: Math.max(0.01, overlapEnd - overlapStart) }
+  }).filter(Boolean)
+  return slice
+}
+function sliceRegionForBeatRange(region, startBeat, endBeat, options = {}) {
+  return region.type === 'audio'
+    ? makeAudioRegionSlice(region, startBeat, endBeat, options)
+    : makeMidiRegionSlice(region, startBeat, endBeat, options)
+}
+function splitExistingRegionAroundIncoming(existingRegion, incomingRegion) {
+  const existing = getRegionBeatRange(existingRegion)
+  const incoming = getRegionBeatRange(incomingRegion)
+  if (existingRegion.trackId !== incomingRegion.trackId || existing.endBeat <= incoming.startBeat || existing.startBeat >= incoming.endBeat) return [existingRegion]
+  stopRegionPlayback(existingRegion.id)
+  const pieces = []
+  if (existing.startBeat < incoming.startBeat - 0.001) {
+    const left = sliceRegionForBeatRange(existingRegion, existing.startBeat, incoming.startBeat, { preserveId: true })
+    if (left) pieces.push(left)
+  }
+  if (existing.endBeat > incoming.endBeat + 0.001) {
+    const right = sliceRegionForBeatRange(existingRegion, incoming.endBeat, existing.endBeat, { preserveId: pieces.length === 0 })
+    if (right) pieces.push(right)
+  }
+  return pieces
+}
+function applyRegionPlacementWithOverlapResolution(incomingRegions = []) {
+  const incoming = (Array.isArray(incomingRegions) ? incomingRegions : [incomingRegions]).filter(Boolean)
+  if (!incoming.length) return []
+  incoming.forEach((region)=>{ if (region.type === 'audio') syncAudioRegionTimeline(region) })
+  const incomingIds = new Set(incoming.map((region)=>region.id).filter(Boolean))
+  const sortedIncoming = incoming.slice().sort((a,b)=>{
+    const trackDelta = tracks.findIndex((track)=>track.id === a.trackId) - tracks.findIndex((track)=>track.id === b.trackId)
+    return trackDelta || (getRegionBeatRange(a).startBeat - getRegionBeatRange(b).startBeat)
+  })
+  let working = midiRegions.filter((region)=>!incomingIds.has(region.id))
+  sortedIncoming.forEach((incomingRegion) => {
+    const next = []
+    working.forEach((existingRegion) => {
+      next.push(...splitExistingRegionAroundIncoming(existingRegion, incomingRegion))
+    })
+    next.push(incomingRegion)
+    working = next
+  })
+  midiRegions = working
+  pruneSelectedRegionIds()
+  return sortedIncoming
+}
+function getRegionTypeTrackType(region) {
+  return region?.type === 'audio' ? 'audio' : 'software'
+}
+function trackSupportsRegionType(track, regionType) {
+  if (!track) return false
+  return regionType === 'audio' ? isAudioTrack(track) : !isAudioTrack(track)
+}
+function makeTrackForPaste({ regionType = 'midi', sourceTrack = null, insertIndex = tracks.length } = {}) {
+  const type = getRegionTypeTrackType({ type: regionType })
+  const id = makeTrackId()
+  const source = sourceTrack ? ensureTrackInsertState(deepClone(sourceTrack)) : null
+  const colors = source ? { color: source.color, colorSoft: source.colorSoft } : nextTrackColor(Math.max(0, insertIndex))
+  const instrument = type === 'software' && source?.instrument ? { ...source.instrument, id: makeInsertId('instrument'), pluginInstanceId: `${source.instrument.type}:${id}`, params: { ...(source.instrument.params || {}) } } : null
+  const track = ensureTrackInsertState({
+    id,
+    name: source ? `${source.name} Paste` : (type === 'audio' ? `Audio ${tracks.length + 1}` : `Software ${tracks.length + 1}`),
+    type,
+    color: colors.color,
+    colorSoft: colors.colorSoft,
+    icon: type === 'audio' ? 'audio' : 'instrument',
+    muted: false,
+    soloed: false,
+    recordArmed: false,
+    automationOpen: Boolean(source?.automationOpen),
+    volume: Number.isFinite(Number(source?.volume)) ? Number(source.volume) : 72,
+    pan: Number.isFinite(Number(source?.pan)) ? Number(source.pan) : 0,
+    outputLevel: 0,
+    midiEffects: type === 'software' ? cloneInsertList(source?.midiEffects || []) : [],
+    instrument,
+    audioEffects: cloneInsertList(source?.audioEffects || [])
+  })
+  tracks.splice(clamp(insertIndex, 0, tracks.length), 0, track)
+  warmTrackInstrument(track, { reason: 'paste-region-track' })
+  return track
+}
+function ensurePasteTargetTrack({ desiredIndex = 0, regionType = 'midi', sourceTrack = null } = {}) {
+  const safeIndex = clamp(Number(desiredIndex) || 0, 0, Math.max(0, tracks.length))
+  const existing = tracks[safeIndex]
+  if (trackSupportsRegionType(existing, regionType)) return existing
+  return makeTrackForPaste({ regionType, sourceTrack, insertIndex: safeIndex })
+}
+function copyMidiRegion(regionId = selectedMidiRegionId) {
+  const ids = regionIsSelected(regionId) ? getSelectedRegionIds() : [regionId]
+  const regions = midiRegions.filter((region)=>ids.includes(region.id))
+  if (!regions.length) return
+  const sorted = regions.sort((a,b)=>{
+    const trackDelta = tracks.findIndex((track)=>track.id === a.trackId) - tracks.findIndex((track)=>track.id === b.trackId)
+    return trackDelta || ((Number(a.startBeat)||0)-(Number(b.startBeat)||0))
+  })
+  const earliestStartBeat = Math.min(...sorted.map((region)=>Number(region.startBeat) || 0))
+  const minTrackIndex = Math.min(...sorted.map((region)=>Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))))
+  midiRegionClipboard = {
+    type: 'regions',
+    earliestStartBeat,
+    minTrackIndex,
+    regions: sorted.map((region)=>({
+      region: cloneRegionForState(region, { persist: false }),
+      relativeStartBeat: (Number(region.startBeat) || 0) - earliestStartBeat,
+      relativeTrackOffset: Math.max(0, tracks.findIndex((track)=>track.id === region.trackId)) - minTrackIndex,
+      sourceTrack: deepClone(ensureTrackInsertState(tracks.find((track)=>track.id === region.trackId) || getSelectedTrack()))
+    }))
+  }
+}
+function cloneRegionForArrangementCopy(sourceRegion, { id = makeInsertId(sourceRegion.type === 'audio' ? 'audio-region' : 'midi-region'), trackId = sourceRegion.trackId, startBeat = Number(sourceRegion.startBeat) || 0 } = {}) {
+  const sourceStart = Number(sourceRegion.startBeat) || 0
+  const sourceEnd = Math.max(sourceStart + 0.25, Number(sourceRegion.endBeat) || sourceStart + 1)
+  const length = Math.max(0.25, sourceEnd - sourceStart)
+  const delta = startBeat - sourceStart
+  const next = cloneRegionForState(sourceRegion, { persist: false })
+  next.id = id
+  next.trackId = trackId || sourceRegion.trackId
+  next.startBeat = startBeat
+  next.endBeat = startBeat + length
+  next.color = next.independentColor || tracks.find((track)=>track.id === next.trackId)?.color || next.color
+  next.name = next.name || ''
+  if (next.type === 'midi') {
+    next.notes = (sourceRegion.notes || []).map((note)=>({ ...note, startBeat: (Number(note.startBeat) || sourceStart) + delta }))
+  } else if (next.type === 'audio') {
+    next.clipId = sourceRegion.clipId || sourceRegion.audioClip?.audioAssetId || sourceRegion.audioClip?.id || sourceRegion.id
+    next.audioClip = {
+      ...(sourceRegion.audioClip || {}),
+      runtimeId: sourceRegion.audioClip?.runtimeId || sourceRegion.id,
+      audioAssetId: sourceRegion.audioClip?.audioAssetId || sourceRegion.audioClip?.id || sourceRegion.clipId || sourceRegion.id,
+      id: sourceRegion.audioClip?.id || sourceRegion.clipId || sourceRegion.id
+    }
+    next.timelineStartBeats = startBeat
+    next.timelineStartSeconds = getTimelineSecondsAtBeat(startBeat)
+    syncAudioRegionTimeline(next)
+  }
+  return next
+}
+function pasteMidiRegion({ beat = clampBeat(xToBeat(timelineState.playheadX)), trackId = selectedTrackId } = {}) {
+  if (!midiRegionClipboard?.regions?.length) return
+  commitHistoryMutation('paste-midi-regions', () => {
+    const startBeat = clampBeat(isSnapEnabled ? snapBeat(beat) : beat)
+    const baseIndex = Math.max(0, tracks.findIndex((track)=>track.id === (trackId || selectedTrackId)))
+    const sorted = midiRegionClipboard.regions.slice().sort((a,b)=>a.relativeTrackOffset-b.relativeTrackOffset || a.relativeStartBeat-b.relativeStartBeat)
+    const created = []
+    const incoming = []
+    sorted.forEach((item) => {
+      const sourceRegion = item.region
+      const targetTrack = ensurePasteTargetTrack({
+        desiredIndex: baseIndex + Number(item.relativeTrackOffset || 0),
+        regionType: sourceRegion.type || 'midi',
+        sourceTrack: item.sourceTrack
+      })
+      const copy = cloneRegionForArrangementCopy(sourceRegion, {
+        trackId: targetTrack.id,
+        startBeat: startBeat + Number(item.relativeStartBeat || 0)
+      })
+      incoming.push(copy)
+      created.push(copy.id)
+    })
+    midiRegions.push(...incoming)
+    applyRegionPlacementWithOverlapResolution(incoming)
+    setSelectedRegions(created, { primaryId: created[0] || '' })
+    selectedTrackId = tracks.find((track)=>track.id === (trackId || selectedTrackId))?.id || tracks[baseIndex]?.id || selectedTrackId
+  })
+}
+function cleanupRegionAfterDelete(regionId) {
+  stopRegionPlayback(regionId)
+  const deletedRegion = midiRegions.find((item)=>item.id === regionId)
+  const runtimeId = deletedRegion?.audioClip?.runtimeId || regionId
+  if (runtimeId) {
+    const runtime = audioClipRuntime.get(runtimeId)
+    if (runtime?.url?.startsWith?.('blob:')) try { URL.revokeObjectURL(runtime.url) } catch {}
+    audioClipRuntime.delete(runtimeId)
+    releaseDesktopLocalAudioReference(runtimeId)
+  }
+  for (const [key, runtime] of audioClipRuntime.entries()) {
+    if (runtime?.sourceRuntimeId === runtimeId || String(key).startsWith(`${regionId}:`)) {
+      if (runtime?.url?.startsWith?.('blob:')) try { URL.revokeObjectURL(runtime.url) } catch {}
+      audioClipRuntime.delete(key)
+    }
+  }
+  audioImportPreviewCache.clear()
+  if (midiRollState?.regionId === regionId) {
+    midiRollState = null
+    midiRollSelectedNoteIndex = null
+    midiRollSelectedNoteIndices = []
+    if (activeBottomPanel === 'midi-roll') activeBottomPanel = ''
+  }
+}
+function deleteMidiRegion(regionId = selectedMidiRegionId) {
+  const ids = regionIsSelected(regionId) ? getSelectedRegionIds() : [regionId]
+  const deleteIds = ids.filter((id)=>midiRegions.some((region)=>region.id === id))
+  if (!deleteIds.length) return
+  commitHistoryMutation('delete-midi-regions', () => {
+    midiRegions = midiRegions.filter((region)=>!deleteIds.includes(region.id))
+    deleteIds.forEach(cleanupRegionAfterDelete)
+    selectedRegionIds.clear()
+    if (deleteIds.includes(selectedMidiRegionId)) selectedMidiRegionId = ''
+  })
+}
+function duplicateSelectedRegions() {
+  const regions = getSelectedRegions()
+  if (!regions.length) return
+  commitHistoryMutation('duplicate-midi-regions', () => {
+    const groupStart = Math.min(...regions.map((region)=>Number(region.startBeat) || 0))
+    const groupEnd = Math.max(...regions.map((region)=>Number(region.endBeat) || ((Number(region.startBeat) || 0) + 1)))
+    const offset = Math.max(0.25, groupEnd - groupStart)
+    const created = []
+    const incoming = []
+    regions.forEach((region) => {
+      const copy = cloneRegionForArrangementCopy(region, { startBeat: (Number(region.startBeat) || 0) + offset })
+      incoming.push(copy)
+      created.push(copy.id)
+    })
+    midiRegions.push(...incoming)
+    applyRegionPlacementWithOverlapResolution(incoming)
+    setSelectedRegions(created, { primaryId: created[0] || '' })
+  })
+}
+function loopSelectedRegions() {
+  const regions = getSelectedRegions()
+  if (!regions.length) return
+  duplicateSelectedRegions()
+}
+function toggleSelectedRegionMute(regionId = selectedMidiRegionId) {
+  const ids = regionIsSelected(regionId) ? getSelectedRegionIds() : [regionId]
+  const regions = midiRegions.filter((region)=>ids.includes(region.id))
+  if (!regions.length) return
+  commitHistoryMutation('toggle-region-mute', () => {
+    const nextMuted = !regions.every((region)=>region.type === 'audio' ? normalizeAudioEdit(region.audioEdit).mute : region.muted === true)
+    regions.forEach((region) => {
+      if (region.type === 'audio') region.audioEdit = { ...normalizeAudioEdit(region.audioEdit), mute: nextMuted }
+      region.muted = nextMuted
+      if (nextMuted) {
+        activePlaybackNotes.forEach((active, key) => { if (active.regionId === region.id) stopPlaybackNote(key) })
+        stopAudioClipPlayback(region.id)
+      }
+    })
+  })
+}
+function makeSplitStretchMetadata(sourceDurationSeconds, targetDurationSeconds) {
+  if (Math.abs(sourceDurationSeconds - targetDurationSeconds) < 0.01) return makeDefaultAudioStretch(sourceDurationSeconds)
+  return createPendingStretchMetadata({ sourceDurationSeconds, targetDurationSeconds })
+}
+function splitAudioRegionAtBeat(region, splitBeat) {
+  const { startBeat, endBeat } = getRegionBeatRange(region)
+  if (splitBeat <= startBeat + 0.05 || splitBeat >= endBeat - 0.05) return []
+  const left = makeAudioRegionSlice(region, startBeat, splitBeat, { preserveId: true })
+  const right = makeAudioRegionSlice(region, splitBeat, endBeat)
+  return left && right ? [left, right] : []
+}
+function splitMidiRegionAtBeat(region, splitBeat) {
+  const { startBeat, endBeat } = getRegionBeatRange(region)
+  if (splitBeat <= startBeat + 0.05 || splitBeat >= endBeat - 0.05) return []
+  const left = makeMidiRegionSlice(region, startBeat, splitBeat, { preserveId: true })
+  const right = makeMidiRegionSlice(region, splitBeat, endBeat)
+  return left && right ? [left, right] : []
+}
+function splitRegionAtBeat(regionId, beat) {
+  const region = midiRegions.find((item)=>item.id === regionId)
+  if (!region) return
+  const splitBeat = clampBeat(isSnapEnabled ? snapBeat(beat) : beat)
+  const pieces = region.type === 'audio' ? splitAudioRegionAtBeat(region, splitBeat) : splitMidiRegionAtBeat(region, splitBeat)
+  if (pieces.length !== 2) return
+  commitHistoryMutation('split-region', () => {
+    const index = midiRegions.findIndex((item)=>item.id === region.id)
+    if (index < 0) return
+    midiRegions.splice(index, 1, pieces[0], pieces[1])
+    setSelectedRegions(pieces.map((piece)=>piece.id), { primaryId: pieces[1].id })
+  })
+}
+function handleRegionToolPointer(event, regionId) {
+  if (activeRegionTool === 'split') {
+    splitRegionAtBeat(regionId, pointerEventToTimelineBeat(event, { snapped: false }))
+    return true
+  }
+  if (activeRegionTool === 'erase') {
+    deleteMidiRegion(regionId)
+    return true
+  }
+  if (activeRegionTool === 'mute') {
+    toggleSelectedRegionMute(regionId)
+    return true
+  }
+  return false
+}
+function setActiveRegionTool(toolId = 'select') {
+  const tool = REGION_TOOL_ITEMS.find((item)=>item.id === toolId && item.enabled && item.mode !== 'action')
+  activeRegionTool = tool?.id || 'select'
+  renderEditorPreservingArrangementScroll()
+}
+function runRegionToolAction(toolId) {
+  if (toolId === 'loop') loopSelectedRegions()
+  else if (toolId === 'duplicate') duplicateSelectedRegions()
+}
+const renderTrackRenamePopover = () => renameTrackState ? `<form class="studio-track-popover studio-track-popover--rename" data-track-rename-form style="left:${Math.round(renameTrackState.x)}px;top:${Math.round(renameTrackState.y)}px"><label>Rename Track<input data-track-rename-input value="${(renameTrackState.name || '').replace(/"/g, '&quot;')}" /></label><div><button type="submit">Save</button><button type="button" data-track-rename-cancel>Cancel</button></div></form>` : ''
+const renderTrackColorPopover = () => colorPickerState && colorPickerState.source !== 'inspector' ? `<form class="studio-track-popover studio-track-popover--color" data-track-color-form style="left:${Math.round(colorPickerState.x)}px;top:${Math.round(colorPickerState.y)}px"><label>Track Color<input type="color" data-track-color-input value="${colorPickerState.previewColor || colorPickerState.committedColor || '#58d4ff'}" /></label><button type="submit">Apply</button></form>` : ''
+
+function trackVisualHeight(track = null) {
+  return Math.max(44, timelineState.trackHeight) * (track?.automationOpen ? 2 : 1)
+}
+function trackLaneTop(trackIndex = 0) {
+  return currentNewTrackDropRowHeight() + tracks.slice(0, Math.max(0, trackIndex)).reduce((sum, track)=>sum + trackVisualHeight(track), 0)
+}
+function trackIndexAtTimelineY(y = 0) {
+  let offset = currentNewTrackDropRowHeight()
+  if (y < offset) return -1
+  for (let index = 0; index < tracks.length; index += 1) {
+    const height = trackVisualHeight(tracks[index])
+    if (y < offset + height) return index
+    offset += height
+  }
+  return Math.max(0, tracks.length - 1)
+}
+function totalTrackLaneHeight() {
+  return currentNewTrackDropRowHeight() + tracks.reduce((sum, track)=>sum + trackVisualHeight(track), 0)
+}
+function normalizedWheelPixels(event, axis = 'y') {
+  const raw = axis === 'x' ? event.deltaX : event.deltaY
+  return normalizeWheelDeltaPixels({
+    delta: raw,
+    deltaMode: event.deltaMode,
+    pageSize: Math.max(1, window.innerHeight * 0.85)
+  })
+}
+const TRACK_AUTOMATION_PARAMETERS = [
+  { id: 'volume', label: 'Volume', min: 0, max: 100, unit: '%', valueKey: 'volume' },
+  { id: 'pan', label: 'Pan', min: -100, max: 100, unit: '', valueKey: 'pan' },
+  { id: 'filter', label: 'Filter', min: 0, max: 100, unit: '%', valueKey: 'filter' },
+  { id: 'more', label: 'Add / More...', disabled: true }
+]
+function trackAutomationParameterDef(parameter = 'volume') {
+  return TRACK_AUTOMATION_PARAMETERS.find((item)=>item.id === parameter && !item.disabled) || TRACK_AUTOMATION_PARAMETERS[0]
+}
+function trackCurrentAutomationValue(track = {}, parameter = 'volume') {
+  if (parameter === 'pan') return clamp(Number(track.pan) || 0, -100, 100)
+  if (parameter === 'filter') return clamp(Number(track.filter) || 50, 0, 100)
+  return clamp(Number(track.volume) || 0, 0, 100)
+}
+function clampTrackAutomationValue(parameter = 'volume', value = 0) {
+  const def = trackAutomationParameterDef(parameter)
+  return clamp(Number(value) || 0, def.min, def.max)
+}
+function normalizeTrackAutomation(track = {}) {
+  const activeParameter = ['volume', 'pan', 'filter'].includes(track.automation?.activeParameter) ? track.automation.activeParameter : 'volume'
+  const sourceParameters = track.automation?.parameters && typeof track.automation.parameters === 'object' ? track.automation.parameters : {}
+  const parameters = {}
+  ;['volume', 'pan', 'filter'].forEach((parameter)=>{
+    const source = sourceParameters[parameter] || {}
+    parameters[parameter] = {
+      defaultValue: clampTrackAutomationValue(parameter, Number.isFinite(Number(source.defaultValue)) ? source.defaultValue : trackCurrentAutomationValue(track, parameter)),
+      points: (Array.isArray(source.points) ? source.points : []).map((point)=>({
+        id: point.id || makeInsertId('automation'),
+        beat: clampBeat(Number(point.beat ?? point.position) || 0),
+        value: clampTrackAutomationValue(parameter, point.value),
+        curve: point.curve === 'hold' ? 'hold' : 'linear',
+        curveAmount: clamp(Number(point.curveAmount) || 0, -1, 1)
+      })).sort((a,b)=>a.beat-b.beat)
+    }
+  })
+  return { visible: track.automation?.visible !== false, activeParameter, parameters }
+}
+function evaluateTrackAutomationValue(track = {}, parameter = 'volume', beat = 0) {
+  const data = getTrackAutomationData(track, parameter)
+  const points = [...(data.points || [])].sort((a, b)=>a.beat-b.beat)
+  if (!points.length) return data.defaultValue
+  const targetBeat = clampBeat(Number(beat) || 0)
+  if (targetBeat <= points[0].beat) return points[0].value
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1]
+    const next = points[index]
+    if (targetBeat > next.beat) continue
+    const span = Math.max(0.000001, next.beat - previous.beat)
+    const t = clamp((targetBeat - previous.beat) / span, 0, 1)
+    const shaped = applyAutomationCurve(t, previous.curveAmount)
+    return clampTrackAutomationValue(parameter, previous.value + ((next.value - previous.value) * shaped))
+  }
+  return points[points.length - 1].value
+}
+function ensureTrackAutomation(track = {}) {
+  if (!track) return null
+  track.automation = normalizeTrackAutomation(track)
+  return track.automation
+}
+function getTrackAutomationParameter(track = {}) {
+  return ensureTrackAutomation(track)?.activeParameter || 'volume'
+}
+function getTrackAutomationData(track = {}, parameter = getTrackAutomationParameter(track)) {
+  return ensureTrackAutomation(track)?.parameters?.[parameter] || normalizeTrackAutomation(track).parameters.volume
+}
+function setTrackAutomationDefault(track, parameter, value) {
+  const automation = ensureTrackAutomation(track)
+  const data = automation.parameters[parameter]
+  data.defaultValue = clampTrackAutomationValue(parameter, value)
+  if (parameter === 'volume') {
+    track.volume = Math.round(data.defaultValue)
+    setTrackChannelVolume(track)
+    syncSelectedTrackVolumeControl(track)
+  } else if (parameter === 'pan') {
+    setTrackPan(track, data.defaultValue)
+  } else if (parameter === 'filter') {
+    track.filter = data.defaultValue
+  }
+}
+function trackAutomationValueToY(parameter = 'volume', value = 0, height = timelineState.trackHeight) {
+  const def = trackAutomationParameterDef(parameter)
+  const ratio = (clampTrackAutomationValue(parameter, value) - def.min) / Math.max(1, def.max - def.min)
+  return clamp((1 - ratio) * Math.max(1, height - 16) + 8, 8, Math.max(8, height - 8))
+}
+function trackAutomationYToValue(parameter = 'volume', y = 0, height = timelineState.trackHeight) {
+  const def = trackAutomationParameterDef(parameter)
+  const ratio = 1 - clamp((Number(y) - 8) / Math.max(1, height - 16), 0, 1)
+  return clampTrackAutomationValue(parameter, def.min + ratio * (def.max - def.min))
+}
+function formatTrackAutomationValue(parameter = 'volume', value = 0) {
+  const rounded = Math.round(clampTrackAutomationValue(parameter, value))
+  if (parameter === 'pan') return rounded === 0 ? 'C' : `${Math.abs(rounded)}${rounded < 0 ? 'L' : 'R'}`
+  return `${rounded}%`
+}
+function renderTrackAutomationLanes() {
+  return tracks.map((track, trackIndex)=>{
+    if (!track.automationOpen) return ''
+    const automation = ensureTrackAutomation(track)
+    const parameter = automation.activeParameter
+    const data = automation.parameters[parameter]
+    const top = trackLaneTop(trackIndex) + timelineState.trackHeight
+    const height = Math.max(44, timelineState.trackHeight)
+    const points = (data.points || []).map((point)=>({
+      ...point,
+      x: beatsFromBarZeroToX(point.beat),
+      y: trackAutomationValueToY(parameter, point.value, height)
+    }))
+    const defaultY = trackAutomationValueToY(parameter, data.defaultValue, height)
+    const path = points.length
+      ? points.map((point, index)=>{
+        if (index === 0) return `M ${point.x} ${point.y}`
+        const previous = points[index - 1]
+        const curve = clamp(Number(previous.curveAmount) || 0, -1, 1)
+        const midX = (previous.x + point.x) / 2
+        const midY = ((previous.y + point.y) / 2) - (curve * height * 0.28)
+        return Math.abs(curve) < 0.001 ? `L ${point.x} ${point.y}` : `Q ${midX} ${midY} ${point.x} ${point.y}`
+      }).join(' ')
+      : `M ${barZeroX()} ${defaultY} L ${timelineContentWidth()} ${defaultY}`
+    const segmentHits = points.slice(0, -1).map((point, index)=>{
+      const next = points[index + 1]
+      const left = Math.min(point.x, next.x)
+      const width = Math.max(18, Math.abs(next.x - point.x))
+      const centerY = ((point.y + next.y) / 2) - (clamp(Number(point.curveAmount) || 0, -1, 1) * height * 0.28)
+      return `<button type="button" class="studio-track-automation-segment-hit" data-track-automation-segment="${esc(point.id)}" data-track-id="${esc(track.id)}" data-track-automation-segment-parameter="${esc(parameter)}" style="left:${left}px;top:${clamp(centerY, 8, height - 8)}px;width:${width}px" aria-label="${esc(track.name)} ${esc(parameter)} automation curve segment"></button>`
+    }).join('')
+    return `<section class="studio-track-automation-lane" data-track-automation-lane="${esc(track.id)}" data-track-automation-parameter="${esc(parameter)}" style="top:${top}px;height:${height}px;--track-color:${esc(track.color || '#58d4ff')}"><svg viewBox="0 0 ${timelineContentWidth()} ${height}" preserveAspectRatio="none"><path class="studio-track-automation-line" data-track-automation-default-line="${esc(track.id)}" d="${path}"></path></svg>${segmentHits}${points.map((point)=>`<button type="button" class="studio-track-automation-point ${selectedTrackAutomation?.trackId===track.id&&selectedTrackAutomation?.parameter===parameter&&selectedTrackAutomation?.pointId===point.id?'is-selected':''}" data-track-automation-point="${esc(point.id)}" data-track-id="${esc(track.id)}" data-track-automation-point-parameter="${esc(parameter)}" style="left:${point.x}px;top:${point.y}px"><span>${esc(formatTrackAutomationValue(parameter, point.value))}</span></button>`).join('')}${points.length ? '' : `<button type="button" class="studio-track-automation-default-line-hit" data-track-automation-default="${esc(track.id)}" data-track-automation-default-parameter="${esc(parameter)}" style="top:${defaultY}px" aria-label="${esc(track.name)} ${esc(parameter)} automation default"></button>`}</section>`
+  }).join('')
+}
+function trackAutomationPointer(event, lane = event.target.closest?.('[data-track-automation-lane]')) {
+  const track = tracks.find((item)=>item.id === lane?.dataset.trackAutomationLane)
+  if (!track || !lane) return null
+  const parameter = lane.dataset.trackAutomationParameter || getTrackAutomationParameter(track)
+  const rect = lane.getBoundingClientRect()
+  const x = event.clientX - rect.left + (app.querySelector('[data-arrangement-grid]')?.scrollLeft || 0)
+  const y = event.clientY - rect.top
+  const rawBeat = clampBeat(xToBeatsFromBarZero(x))
+  return {
+    track,
+    parameter,
+    beat: isSnapEnabled ? snapBeatToGrid(rawBeat) : rawBeat,
+    value: trackAutomationYToValue(parameter, y, Math.max(44, timelineState.trackHeight)),
+    lane
+  }
+}
+function setTrackAutomationPoint(track, parameter, pointId, patch = {}) {
+  const data = getTrackAutomationData(track, parameter)
+  data.points = data.points.map((point)=>point.id === pointId ? {
+    ...point,
+    ...patch,
+    beat: clampBeat(Number(patch.beat ?? point.beat) || 0),
+    value: clampTrackAutomationValue(parameter, patch.value ?? point.value)
+  } : point).sort((a,b)=>a.beat-b.beat)
+}
+function setTrackAutomationSegmentCurve(track, parameter, pointId, curveAmount = 0) {
+  const data = getTrackAutomationData(track, parameter)
+  data.points = data.points.map((point)=>point.id === pointId ? {
+    ...point,
+    curve: 'linear',
+    curveAmount: clamp(Number(curveAmount) || 0, -1, 1)
+  } : point)
+}
+function addTrackAutomationPointFromEvent(event) {
+  const info = trackAutomationPointer(event)
+  if (!info) return
+  const data = getTrackAutomationData(info.track, info.parameter)
+  const nearby = data.points.find((point)=>Math.abs(point.beat - info.beat) < 0.015)
+  if (nearby) {
+    selectedTrackAutomation = { trackId: info.track.id, parameter: info.parameter, pointId: nearby.id }
+    renderEditorPreservingArrangementScroll()
+    return
+  }
+  const point = { id: makeInsertId('automation-point'), beat: info.beat, value: info.value, curve: 'linear', curveAmount: 0 }
+  data.points.push(point)
+  data.points.sort((a,b)=>a.beat-b.beat)
+  selectedTrackAutomation = { trackId: info.track.id, parameter: info.parameter, pointId: point.id }
+  scheduleEditorSave()
+  renderEditorPreservingArrangementScroll()
+}
+
+function getTimelineRegionIndex() {
+  if (timelineRegionIndex.revision === playbackContentRevision && timelineRegionIndex.source === midiRegions) return timelineRegionIndex
+  const entries = midiRegions.map((region) => {
+      const { startBeat, endBeat } = getRegionTimelineRange(region)
+      return { region, startBeat, endBeat }
+    }).sort((a, b) => a.startBeat - b.startBeat)
+  timelineRegionIndex = {
+    revision: playbackContentRevision,
+    source: midiRegions,
+    entries,
+    byId: new Map(entries.map((entry) => [entry.region.id, entry.region])),
+    maxDurationBeats: entries.reduce((max, entry) => Math.max(max, entry.endBeat - entry.startBeat), 0.05)
+  }
+  return timelineRegionIndex
+}
+function findTimelineRegionRenderStart(entries = [], minimumStartBeat = 0) {
+  let low = 0
+  let high = entries.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (entries[middle].startBeat < minimumStartBeat) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+function getTimelineRegionsInRange(range = getTimelineRenderBeatRange()) {
+  const index = getTimelineRegionIndex()
+  const firstIndex = findTimelineRegionRenderStart(index.entries, range.startBeat - index.maxDurationBeats)
+  const visible = []
+  for (let entryIndex = firstIndex; entryIndex < index.entries.length; entryIndex += 1) {
+    const entry = index.entries[entryIndex]
+    if (entry.startBeat > range.endBeat) break
+    if (timelineBeatRangesOverlap(entry.startBeat, entry.endBeat, range)) visible.push(entry.region)
+  }
+  return visible
+}
+function renderTimelineRegionElements(range = getTimelineRenderBeatRange()) {
+  const persisted = getTimelineRegionsInRange(range)
+    .map((region)=>region.type === 'audio' ? renderAudioRegion(region, false) : renderMidiRegion(region, false))
+    .join('')
+  const liveNotes = activeRecording?.type === 'midi' ? [
+    ...(activeRecording.notes || []),
+    ...Array.from(activeRecordingNotes.values()).map((note)=>({
+      note: note.note,
+      velocity: note.velocity,
+      startBeat: note.startBeat,
+      durationBeats: Math.max(0.05, clampBeat(xToBeat(timelineState.playheadX)) - note.startBeat)
+    }))
+  ] : []
+  const live = activeRecording
+    ? activeRecording.type === 'audio'
+      ? renderAudioRegion({ ...activeRecording, endBeat: Math.max(activeRecording.startBeat + 0.25, clampBeat(xToBeat(timelineState.playheadX))), color: '#ff2d55' }, true)
+      : renderMidiRegion({ ...activeRecording, notes: liveNotes, endBeat: Math.max(activeRecording.startBeat + 0.25, clampBeat(xToBeat(timelineState.playheadX))), color: '#ff2d55' }, true)
+    : ''
+  return `${persisted}${live}`
+}
+function renderTimelineRegions() {
+  return `${renderTrackAutomationLanes()}${renderTimelineRegionElements()}`
+}
+function renderAudioImportPreview() {
+  if (!audioImportDrag?.active) return ''
+  const track = tracks.find((item)=>item.id === audioImportDrag.trackId)
+  const color = track?.color || '#58d4ff'
+  const waveformColor = getReadableWaveformColor(color)
+  const duration = Math.max(minAudioRegionSeconds, Number(audioImportDrag.durationSeconds) || minAudioRegionSeconds)
+  const width = Math.max(32, secondsToBeats(duration) * beatWidth())
+  const trackIndex = audioImportDrag.createAudioTrack ? clamp(Number.isFinite(Number(audioImportDrag.newTrackIndex)) ? Number(audioImportDrag.newTrackIndex) : tracks.length, 0, tracks.length) : Math.max(0, tracks.findIndex((item)=>item.id === audioImportDrag.trackId))
+  const inset = Math.max(1, Math.round(timelineState.trackHeight * 0.01))
+  const top = trackLaneTop(trackIndex) + inset
+  const height = Math.max(28, timelineState.trackHeight - (inset * 2))
+  const status = audioImportDrag.status === 'loading'
+    ? 'Reading audio...'
+    : audioImportDrag.valid === false
+      ? audioImportDrag.message || 'Drop audio onto an audio track'
+      : `${audioImportDrag.fileName || 'Audio'} · ${formatAudioDuration(duration)} · Beat ${Number(audioImportDrag.startBeat || 0).toFixed(2)}${audioImportDrag.createAudioTrack ? ' · New audio track' : ` · ${track?.name || 'Audio track'}`}${isSnapEnabled ? ' · Snapped' : ''}`
+  return `<article class="studio-audio-import-preview ${audioImportDrag.valid === false ? 'is-invalid' : ''} ${audioImportDrag.status === 'loading' ? 'is-loading' : ''}" style="left:${beatToX(audioImportDrag.startBeat || 0)}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};"><strong>${esc(audioImportDrag.fileName || 'Audio import')}</strong><span>${esc(status)}</span></article>`
+}
+function barToX(index){ return barZeroX() + (index * timelineState.pixelsPerBar) }
+function preStartBarCount(){ return Math.floor((timelineState.preStartPixels || 0) / timelineState.pixelsPerBar) }
+function getTimelineMinPixelsPerBar(){ return TIMELINE_ZOOM_LIMITS.minPixelsPerBeat * Math.max(1, Number(timelineState.beatsPerBar) || 4) }
+function getTimelineMaxPixelsPerBar(){ return TIMELINE_ZOOM_LIMITS.maxPixelsPerBeat * Math.max(1, Number(timelineState.beatsPerBar) || 4) }
+function clampTimelinePixelsPerBar(value = timelineState.pixelsPerBar) {
+  return clamp(Number(value) || 120, getTimelineMinPixelsPerBar(), getTimelineMaxPixelsPerBar())
+}
+function getTimelineDivisionForZoom(pixelsPerBeat = beatWidth(), { forSnap = false } = {}) {
+  const minSpacing = pixelsPerBeat >= 2048 ? 8 : (forSnap ? 12 : 14)
+  const divisions = [256,128,64,32,16,8,4,2,1]
+  return divisions.find((division)=>pixelsPerBeat / division >= minSpacing) || 1
+}
+function getSnapStepBeats() {
+  return 1 / getTimelineDivisionForZoom(beatWidth())
+}
+function getTimelineRenderBeatRange({ bufferViewports = 1.25 } = {}) {
+  const maxBeat = Math.max(timelineState.beatsPerBar, Number(timelineState.positiveBeats) || timelineState.beatsPerBar)
+  const grid = app?.querySelector?.('[data-arrangement-grid]')
+  return getTimelineViewportBeatRange({
+    scrollLeft: Number(grid?.scrollLeft) || 0,
+    viewportWidth: Number(grid?.clientWidth) || Math.min(1600, window.innerWidth || 1600),
+    originX: barZeroX(),
+    pixelsPerBeat: beatWidth(),
+    minBeat: 0,
+    maxBeat,
+    bufferViewports
+  })
+}
+function formatGridRulerLabel(beat = 0, division = 1) {
+  const beatsPerBar = Math.max(1, Number(timelineState.beatsPerBar) || 4)
+  if (Math.abs(beat) < 1e-6) return '0'
+  if (Math.abs(beat % beatsPerBar) < 1e-6) return String(Math.round(beat / beatsPerBar))
+  if (beatWidth() < 84) return ''
+  const bar = Math.floor(beat / beatsPerBar)
+  const beatInBar = Math.floor(((beat % beatsPerBar) + beatsPerBar) % beatsPerBar) + 1
+  const fractional = beat - Math.floor(beat)
+  if (Math.abs(fractional) < 1e-6) return `${bar}.${beatInBar}`
+  if (beatWidth() / division < 56) return ''
+  return `${bar}.${beatInBar}.${Math.round(fractional * division)}`
+}
+/* soura-deterministic-musical-grid-v1:helpers:begin */
+/*
+ * Canonical timeline grid model.
+ *
+ * Project beat coordinates are quarter-note beats.
+ * A time signature's notated beat unit is 4 / denominator quarter beats:
+ *   4/4 => 1.0 project beat per notated beat, 4.0 per bar
+ *   6/8 => 0.5 project beats per notated beat, 3.0 per bar
+ *   3/4 => 1.0 project beat per notated beat, 3.0 per bar
+ *
+ * Ruler labels and arrangement lines consume this SAME model.
+ * Pixel coordinates never determine whether a line is a bar or beat.
+ */
+function getTimelineGridSubdivisionFactor(pixelsPerNotatedBeat = 0) {
+  const px = Math.max(0, Number(pixelsPerNotatedBeat) || 0)
+  if (px >= 88) return 4
+  if (px >= 40) return 2
+  return 1
+}
+
+function timelineGridDivisionKind(subdivisionIndex, factor) {
+  if (factor <= 1) return 'beat'
+  if (factor === 2) return subdivisionIndex === 1 ? 'half' : 'beat'
+  if (subdivisionIndex === 2) return 'half'
+  if (subdivisionIndex === 1 || subdivisionIndex === 3) return 'quarter'
+  return 'subdivision'
+}
+
+function buildTimelineMusicalGridModel() {
+  const metrics = getTimelineMetrics()
+  const maxBeat = Math.max(0, Number(metrics.maxBeat) || 0)
+  const pxPerQuarter = Math.max(0.0001, Number(metrics.pixelsPerBeat) || 1)
+  const epsilon = 1e-7
+  const renderRange = getTimelineRenderBeatRange()
+
+  const rawMap = normalizeTimeSignatureMap()
+  const timeMap = (Array.isArray(rawMap) && rawMap.length
+    ? rawMap
+    : [{ beat: 0, numerator: Number(timelineState.beatsPerBar) || 4, denominator: 4 }]
+  )
+    .map((event) => ({
+      beat: Math.max(0, Number(event.beat) || 0),
+      numerator: Math.max(1, Math.round(Number(event.numerator) || 4)),
+      denominator: Math.max(1, Math.round(Number(event.denominator) || 4))
+    }))
+    .sort((a, b) => a.beat - b.beat)
+
+  if (timeMap[0].beat > epsilon) {
+    timeMap.unshift({
+      beat: 0,
+      numerator: Math.max(1, Number(timelineState.beatsPerBar) || 4),
+      denominator: 4
+    })
+  }
+
+  const output = []
+  let barOffset = 0
+
+  for (let segmentIndex = 0; segmentIndex < timeMap.length; segmentIndex += 1) {
+    const sig = timeMap[segmentIndex]
+    const segmentStart = Math.min(maxBeat, Math.max(0, sig.beat))
+    const nextEventBeat = segmentIndex + 1 < timeMap.length
+      ? Math.max(segmentStart, Number(timeMap[segmentIndex + 1].beat) || segmentStart)
+      : maxBeat
+    const segmentEnd = Math.min(maxBeat, nextEventBeat)
+
+    if (segmentEnd < segmentStart - epsilon) continue
+
+    const beatUnit = 4 / Math.max(1, sig.denominator)
+    const barLength = Math.max(beatUnit, sig.numerator * beatUnit)
+    const pixelsPerNotatedBeat = pxPerQuarter * beatUnit
+    const factor = getTimelineGridSubdivisionFactor(pixelsPerNotatedBeat)
+    const step = beatUnit / factor
+    const showBeatLabels = pixelsPerNotatedBeat >= 34
+
+    const span = Math.max(0, segmentEnd - segmentStart)
+    const stepCount = Math.floor((span + epsilon) / step)
+    const includeSegmentEnd = segmentIndex === timeMap.length - 1
+    const firstStepIndex = Math.max(0, Math.ceil((renderRange.startBeat - segmentStart - epsilon) / step))
+    const lastStepIndex = Math.min(stepCount, Math.floor((renderRange.endBeat - segmentStart + epsilon) / step))
+
+    for (let stepIndex = firstStepIndex; stepIndex <= lastStepIndex; stepIndex += 1) {
+      const projectBeat = segmentStart + (stepIndex * step)
+
+      if (projectBeat > segmentEnd + epsilon) break
+      if (!includeSegmentEnd && projectBeat >= segmentEnd - epsilon) break
+      if (projectBeat > maxBeat + epsilon) break
+
+      const local = Math.max(0, projectBeat - segmentStart)
+      const barIndex = Math.floor((local + epsilon) / barLength)
+      const intoBar = local - (barIndex * barLength)
+      const notatedBeatIndex = Math.floor((intoBar + epsilon) / beatUnit)
+      const intoBeat = intoBar - (notatedBeatIndex * beatUnit)
+      let subdivisionIndex = Math.round(intoBeat / step)
+
+      if (subdivisionIndex >= factor) subdivisionIndex = 0
+
+      const atBeatBoundary = Math.abs(intoBeat) < epsilon || subdivisionIndex === 0
+      const atBarBoundary = Math.abs(intoBar) < epsilon
+
+      let kind
+      if (atBarBoundary) kind = 'bar'
+      else if (atBeatBoundary) kind = 'beat'
+      else kind = timelineGridDivisionKind(subdivisionIndex, factor)
+
+      const barNumber = barOffset + barIndex
+      const beatNumber = Math.min(sig.numerator, notatedBeatIndex + 1)
+      const label = kind === 'bar'
+        ? String(barNumber)
+        : (kind === 'beat' && showBeatLabels ? `${barNumber}.${beatNumber}` : '')
+
+      output.push({
+        projectBeat,
+        x: beatToX(projectBeat),
+        kind,
+        label,
+        barNumber,
+        beatNumber,
+        numerator: sig.numerator,
+        denominator: sig.denominator,
+        subdivisionFactor: factor
+      })
+    }
+
+    if (segmentIndex < timeMap.length - 1 && span > epsilon) {
+      barOffset += Math.max(1, Math.ceil((span - epsilon) / barLength))
+    }
+  }
+
+  const rank = { bar: 5, beat: 4, half: 3, quarter: 2, subdivision: 1 }
+  const deduped = new Map()
+
+  output.forEach((item) => {
+    const key = Math.round(item.projectBeat * 1000000)
+    const previous = deduped.get(key)
+    if (!previous || (rank[item.kind] || 0) > (rank[previous.kind] || 0)) {
+      deduped.set(key, item)
+    }
+  })
+
+  return [...deduped.values()].sort((a, b) => a.projectBeat - b.projectBeat)
+}
+/* soura-deterministic-musical-grid-v1:helpers:end */
+
+function renderTimelineRuler(gridModel = null) {
+  const model = gridModel || buildTimelineMusicalGridModel()
+  return model.map((division) => {
+    const line = `<span
+      class="studio-ruler-grid-line studio-ruler-grid-line--${division.kind}"
+      data-ruler-grid-division="${division.kind}"
+      data-musical-beat="${division.projectBeat}"
+      style="left:${division.x}px"
+    ></span>`
+
+    if (!division.label) return line
+
+    const labelClass = division.kind === 'bar'
+      ? 'studio-ruler-bar-label'
+      : 'studio-ruler-bar-label studio-ruler-bar-label--beat'
+
+    return `${line}<span
+      class="${labelClass}"
+      data-ruler-musical-label="${division.kind}"
+      data-musical-beat="${division.projectBeat}"
+      style="left:${division.x}px"
+    >${esc(division.label)}</span>`
+  }).join('')
+}
+function renderCycleRange(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<div class="studio-cycle-range ${isCycleEnabled ? 'is-enabled' : ''}" data-cycle-range style="left:${start}px;width:${Math.max(0,end-start)}px"><span class="studio-cycle-range-handle" data-cycle-handle="start"></span><span class="studio-cycle-range-body" data-cycle-drag="move"></span><span class="studio-cycle-range-handle" data-cycle-handle="end"></span></div>` }
+function renderRulerMarkerLabels(){
+  if (globalTracks.visible) return ''
+  return (globalTracks.markers || []).map((marker)=>`<span class="studio-ruler-marker-label" style="left:${beatsFromBarZeroToX(marker.beat)}px;--marker-color:${esc(marker.color || '#ffe08a')}">${esc(marker.name || marker.label || 'Marker')}</span>`).join('')
+}
+function renderCycleBoundaryGuides(){ if(!cycleRange) return ''; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return `<span class="studio-cycle-guide studio-cycle-guide--start ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${start}px"></span><span class="studio-cycle-guide studio-cycle-guide--end ${isCycleEnabled ? 'is-enabled' : ''}" style="left:${end}px"></span>` }
+
+function renderTimelineExtensionBeatLines(gridModel = null) {
+  const model = gridModel || buildTimelineMusicalGridModel()
+  return model
+    .filter((division) => (
+      division.kind === 'bar' || division.kind === 'beat'
+    ))
+    .map((division) => `<span
+      class="studio-timeline-extension-beat-line"
+      data-extension-beat-line
+      data-musical-beat="${division.projectBeat}"
+      style="left:${division.x}px"
+    ></span>`)
+    .join('')
+}
+
+function renderTimelineLines(gridModel = null) {
+
+const model = gridModel || buildTimelineMusicalGridModel()
+return model.map((division) => `<span
+    class="studio-grid-line studio-grid-line--${division.kind}"
+    data-grid-division="${division.kind}"
+    data-musical-beat="${division.projectBeat}"
+    style="left:${division.x}px"
+  ></span>`).join('')
+}
+function normalizeTempoMap(events = globalTracks.tempoEvents) {
+  const current = clampProjectBpm(projectState?.bpm || 140)
+  const source = Array.isArray(events) ? events : []
+  const normalized = (source.length ? source : [{ id: 'tempo-start', beat: 0, bpm: current, curve: 'hold' }])
+    .map((event)=>({
+      id: event.id || makeInsertId('tempo'),
+      beat: Math.max(0, Number(event.beat) || 0),
+      bpm: clampProjectBpm(event.bpm || current),
+      curve: event.curve === 'hold' ? 'hold' : 'linear',
+      curveAmount: clamp(Number(event.curveAmount) || 0, -1, 1),
+      createdAt: event.createdAt || nowIso(),
+      updatedAt: event.updatedAt || event.createdAt || nowIso()
+    }))
+    .sort((a,b)=>a.beat-b.beat)
+  if (!normalized.some((event)=>event.beat === 0)) normalized.unshift({ id: 'tempo-start', beat: 0, bpm: current, curve: 'hold', createdAt: nowIso(), updatedAt: nowIso() })
+  return normalized
+}
+function normalizeTempoEvents() {
+  return normalizeTempoMap()
+}
+function applyAutomationCurve(t = 0, curveAmount = 0) {
+  const value = clamp(Number(t) || 0, 0, 1)
+  const curve = clamp(Number(curveAmount) || 0, -1, 1)
+  if (Math.abs(curve) < 0.001) return value
+  const exponent = 1 + Math.abs(curve) * 3
+  return curve > 0 ? 1 - Math.pow(1 - value, exponent) : Math.pow(value, exponent)
+}
+function interpolateTempoBpm(start = {}, end = null, beat = 0) {
+  const startBpm = clampProjectBpm(start.bpm || projectState?.bpm || 140)
+  if (!end || start.curve === 'hold') return startBpm
+  const segmentBeats = Math.max(0.000001, (Number(end.beat) || 0) - (Number(start.beat) || 0))
+  const t = clamp(((Number(beat) || 0) - (Number(start.beat) || 0)) / segmentBeats, 0, 1)
+  const shaped = applyAutomationCurve(t, start.curveAmount)
+  return clampProjectBpm(startBpm + ((clampProjectBpm(end.bpm || startBpm) - startBpm) * shaped))
+}
+function tempoSegmentDuration(start = {}, end = null, segmentEndBeat = 0) {
+  const startBeat = Number(start.beat) || 0
+  const endBeat = Math.max(startBeat, Number(segmentEndBeat) || startBeat)
+  const beats = endBeat - startBeat
+  if (beats <= 0) return 0
+  if (!end || start.curve === 'hold') return beats * (60 / clampProjectBpm(start.bpm))
+  const steps = Math.max(8, Math.ceil(beats * 8))
+  let seconds = 0
+  let previousBeat = startBeat
+  let previousBpm = interpolateTempoBpm(start, end, previousBeat)
+  for (let index = 1; index <= steps; index += 1) {
+    const currentBeat = startBeat + (beats * (index / steps))
+    const currentBpm = interpolateTempoBpm(start, end, currentBeat)
+    const avgBpm = clampProjectBpm((previousBpm + currentBpm) / 2)
+    seconds += (currentBeat - previousBeat) * (60 / avgBpm)
+    previousBeat = currentBeat
+    previousBpm = currentBpm
+  }
+  return seconds
+}
+function getTempoAtBeat(beat = 0, events = normalizeTempoMap()) {
+  const target = Math.max(0, Number(beat) || 0)
+  const map = Array.isArray(events) && events.length ? events : normalizeTempoMap()
+  const index = Math.max(0, map.findIndex((event, eventIndex)=>target >= event.beat && (eventIndex === map.length - 1 || target < map[eventIndex + 1].beat)))
+  const active = map[index] || map[0] || { beat: 0, bpm: clampProjectBpm(projectState?.bpm || 140), curve: 'hold' }
+  const next = map[index + 1] || null
+  return { ...active, evaluatedBeat: target, bpm: interpolateTempoBpm(active, next, target) }
+}
+function getSecondsPerBeatAtBeat(beat = 0) {
+  return 60 / clampProjectBpm(getTempoAtBeat(beat).bpm)
+}
+function normalizeTimeSignatureMap(events = globalTracks.timeSignatureEvents) {
+  const project = projectState || {}
+  const legacy = Array.isArray(globalTracks.signatureEvents) ? globalTracks.signatureEvents : []
+  const source = Array.isArray(events) && events.length ? events : legacy.map((event)=>({ id: `time-${event.id || makeInsertId('signature')}`, beat: event.beat, ...parseTimeSignature(event.timeSignature) }))
+  const fallback = parseTimeSignature(project.timeSignature || project.editorState?.settings?.project?.timeSignature || '4/4')
+  const normalized = (source.length ? source : [{ id: 'time-signature-start', beat: 0, ...fallback }])
+    .map((event)=>({
+      id: event.id || makeInsertId('time-signature'),
+      beat: Math.max(0, Number(event.beat) || 0),
+      ...parseTimeSignature(event),
+      createdAt: event.createdAt || nowIso(),
+      updatedAt: event.updatedAt || event.createdAt || nowIso()
+    }))
+    .sort((a,b)=>a.beat-b.beat)
+  if (!normalized.some((event)=>event.beat === 0)) normalized.unshift({ id: 'time-signature-start', beat: 0, ...fallback, createdAt: nowIso(), updatedAt: nowIso() })
+  return normalized
+}
+function normalizeKeySignatureMap(events = globalTracks.keySignatureEvents) {
+  const legacy = Array.isArray(globalTracks.signatureEvents) ? globalTracks.signatureEvents : []
+  const parsedProjectKey = parseProjectKey()
+  const source = Array.isArray(events) && events.length ? events : legacy.map((event)=>({ id: `key-${event.id || makeInsertId('signature')}`, beat: event.beat, root: event.key, scale: event.scale }))
+  const normalized = (source.length ? source : [{ id: 'key-signature-start', beat: 0, root: parsedProjectKey.root, scale: parsedProjectKey.scale }])
+    .map((event)=>({
+      id: event.id || makeInsertId('key-signature'),
+      beat: Math.max(0, Number(event.beat) || 0),
+      root: normalizeRootNote(event.root || event.key || parsedProjectKey.root),
+      scale: normalizeScaleMode(event.scale || parsedProjectKey.scale),
+      label: formatKeySignature(event),
+      createdAt: event.createdAt || nowIso(),
+      updatedAt: event.updatedAt || event.createdAt || nowIso()
+    }))
+    .sort((a,b)=>a.beat-b.beat)
+  if (!normalized.some((event)=>event.beat === 0)) normalized.unshift({ id: 'key-signature-start', beat: 0, root: parsedProjectKey.root, scale: parsedProjectKey.scale, label: `${parsedProjectKey.root} ${parsedProjectKey.scale}`, createdAt: nowIso(), updatedAt: nowIso() })
+  return normalized
+}
+function getTimeSignatureAtBeat(beat = 0, events = normalizeTimeSignatureMap()) {
+  const target = Math.max(0, Number(beat) || 0)
+  return events.reduce((active, event)=>event.beat <= target ? event : active, events[0] || { beat: 0, numerator: 4, denominator: 4 })
+}
+function getKeySignatureAtBeat(beat = 0, events = normalizeKeySignatureMap()) {
+  const target = Math.max(0, Number(beat) || 0)
+  return events.reduce((active, event)=>event.beat <= target ? event : active, events[0] || { beat: 0, ...parseProjectKey() })
+}
+function ensureCanonicalGlobalTracks() {
+  if (!projectState) return
+  if (globalTracks.viewMode === 'signature') globalTracks.viewMode = 'key-signature'
+  globalTracks.tempoEvents = normalizeTempoMap(globalTracks.tempoEvents).filter((event)=>event.id !== 'tempo-default')
+  globalTracks.timeSignatureEvents = normalizeTimeSignatureMap(globalTracks.timeSignatureEvents).filter((event)=>event.id !== 'time-signature-default')
+  globalTracks.keySignatureEvents = normalizeKeySignatureMap(globalTracks.keySignatureEvents).filter((event)=>event.id !== 'key-signature-default')
+  globalTracks.markers = (Array.isArray(globalTracks.markers) ? globalTracks.markers : []).map((marker)=>({
+    id: marker.id || makeInsertId('marker'),
+    beat: Math.max(0, Number(marker.beat) || 0),
+    durationBeats: Math.max(0, Number(marker.durationBeats) || 0),
+    name: marker.name || marker.label || 'Marker',
+    label: marker.label || marker.name || 'Marker',
+    color: marker.color || '#ffe08a',
+    createdAt: marker.createdAt || nowIso(),
+    updatedAt: marker.updatedAt || marker.createdAt || nowIso()
+  })).sort((a,b)=>a.beat-b.beat)
+  projectState.bpm = getTempoAtBeat(0, globalTracks.tempoEvents).bpm
+  projectState.timeSignature = formatTimeSignature(getTimeSignatureAtBeat(0, globalTracks.timeSignatureEvents))
+  projectState.key = formatKeySignature(getKeySignatureAtBeat(0, globalTracks.keySignatureEvents))
+  timelineState.beatsPerBar = getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)), globalTracks.timeSignatureEvents).numerator || timelineState.beatsPerBar
+}
+function renderTempoLane(events = normalizeTempoEvents()) {
+  const rowHeight = globalTracks.viewMode === 'tempo' ? 126 : 26
+  const points = events.map((event)=>({ ...event, x: beatsFromBarZeroToX(event.beat), y: clamp(rowHeight - 12 - ((event.bpm - 20) / 280) * (rowHeight - 20), 8, rowHeight - 12) }))
+  const line = points.length > 1
+    ? points.map((point, index)=>{
+      if (index === 0) return `M ${point.x} ${point.y}`
+      const previous = points[index - 1]
+      const curve = clamp(Number(previous.curveAmount) || 0, -1, 1)
+      const midX = (previous.x + point.x) / 2
+      const midY = ((previous.y + point.y) / 2) - (curve * rowHeight * 0.28)
+      return Math.abs(curve) < 0.001 ? `L ${point.x} ${point.y}` : `Q ${midX} ${midY} ${point.x} ${point.y}`
+    }).join(' ')
+    : `M ${barZeroX()} ${points[0]?.y || rowHeight / 2} L ${timelineContentWidth()} ${points[0]?.y || rowHeight / 2}`
+  const handles = points.slice(0, -1).map((point, index)=>{
+    const next = points[index + 1]
+    const curve = clamp(Number(point.curveAmount) || 0, -1, 1)
+    const x = (point.x + next.x) / 2
+    const y = ((point.y + next.y) / 2) - (curve * rowHeight * 0.28)
+    return `<button type="button" class="studio-global-tempo-curve-handle ${selectedGlobalEvent?.type==='tempo-curve'&&selectedGlobalEvent.id===point.id?'is-selected':''}" data-global-tempo-curve="${point.id}" style="left:${x}px;top:${y}px" aria-label="Tempo curve handle"></button>`
+  }).join('')
+  return `<svg class="studio-global-tempo-svg" viewBox="0 0 ${timelineContentWidth()} ${rowHeight}" preserveAspectRatio="none"><path d="${line}"></path></svg>${handles}${points.map((point)=>`<button type="button" class="studio-global-tempo-node ${selectedGlobalEvent?.type==='tempo'&&selectedGlobalEvent.id===point.id?'is-selected':''}" data-global-tempo="${point.id}" style="left:${point.x}px;top:${point.y}px"><span>${Math.round(point.bpm)} BPM</span></button>`).join('')}`
+}
+function renderTimeSignatureLane(events = normalizeTimeSignatureMap()) {
+  return events.map((item)=>`<button type="button" class="studio-global-block studio-global-block--small ${selectedGlobalEvent?.type==='time-signature'&&selectedGlobalEvent.id===item.id?'is-selected':''}" data-global-time-signature="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;width:94px">${formatTimeSignature(item)}</button>`).join('')
+}
+function renderKeySignatureLane(events = normalizeKeySignatureMap()) {
+  return events.map((item)=>`<button type="button" class="studio-global-block studio-global-block--small studio-global-block--key ${selectedGlobalEvent?.type==='key-signature'&&selectedGlobalEvent.id===item.id?'is-selected':''}" data-global-key-signature="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;width:132px">${esc(formatKeySignature(item))}</button>`).join('')
+}
+function renderGlobalTrackLane() {
+  if (!globalTracks.visible) return ''
+  const tempoEvents = normalizeTempoEvents()
+  const timeSignatureEvents = normalizeTimeSignatureMap()
+  const keySignatureEvents = normalizeKeySignatureMap()
+  const rowRenderers = {
+    arrangement: () => `${(globalTracks.arrangement || []).map((item)=>`<button type="button" class="studio-global-block" data-global-arrangement="${item.id}" style="left:${beatsFromBarZeroToX(item.startBeat)}px;width:${Math.max(48, (item.endBeat - item.startBeat) * beatWidth())}px;background:${item.color || ''}">${item.label || 'Section'}</button>`).join('')}${globalTrackDrag?.type==='arrangement'?`<span class="studio-global-block studio-global-block--preview" style="left:${beatsFromBarZeroToX(Math.min(globalTrackDrag.startBeat, globalTrackDrag.currentBeat))}px;width:${Math.max(16, Math.abs(globalTrackDrag.currentBeat - globalTrackDrag.startBeat) * beatWidth())}px">Section</span>`:''}`,
+    markers: () => (globalTracks.markers || []).map((item)=>`<button type="button" class="studio-global-marker ${selectedGlobalEvent?.type==='marker'&&selectedGlobalEvent.id===item.id?'is-selected':''}" data-global-marker="${item.id}" style="left:${beatsFromBarZeroToX(item.beat)}px;${Number(item.durationBeats)>0?`width:${Math.max(24, Number(item.durationBeats)*beatWidth())}px`:''};--marker-color:${esc(item.color || '#ffe08a')}">${esc(item.name || item.label || 'Marker')}</button>`).join(''),
+    tempo: () => renderTempoLane(tempoEvents),
+    'time-signature': () => renderTimeSignatureLane(timeSignatureEvents),
+    'key-signature': () => renderKeySignatureLane(keySignatureEvents),
+    video: () => '<span class="studio-global-empty">No reference loaded</span>'
+  }
+  const rows = globalTrackRowsForView()
+  return `<section class="studio-global-tracks studio-global-tracks--${globalTracks.viewMode || 'all'}" data-global-tracks><div class="studio-global-tracks-inner" data-global-tracks-inner style="width:${timelineContentWidth()}px">${rows.map((id)=>`<div class="studio-global-row studio-global-row--${id}" data-global-row="${id}"><div class="studio-global-row-content">${rowRenderers[id]?.() || ''}</div></div>`).join('')}<span class="studio-global-playhead"></span></div></section>`
+}
+function renderGlobalTrackLabels() {
+  if (!globalTracks.visible) return ''
+  const rows = globalTrackRowsForView()
+  return `<section class="studio-global-track-labels studio-global-track-labels--${globalTracks.viewMode || 'all'}"><strong>Global Tracks</strong>${rows.map((id)=>`<button type="button" data-global-label="${id}" class="${globalTracks.viewMode===id?'is-active':''}">${GLOBAL_TRACK_ROW_LABELS[id] || id}</button>`).join('')}</section>`
+}
+function renderGlobalTrackPopover() {
+  if (!globalTrackPopover) return ''
+  if (globalTrackPopover.type === 'tempo') {
+    return `<form class="studio-global-popover" data-global-tempo-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>BPM<input data-global-tempo-bpm type="number" min="20" max="300" step="0.1" value="${Number(globalTrackPopover.bpm || projectState?.bpm || 140)}"></label><label>Curve<select data-global-tempo-curve><option value="hold" ${globalTrackPopover.curve!=='linear'?'selected':''}>hold</option><option value="linear" ${globalTrackPopover.curve==='linear'?'selected':''}>linear</option></select></label><button type="submit">Save</button><button type="button" data-delete-global-event>Delete</button></form>`
+  }
+  if (globalTrackPopover.type === 'time-signature') {
+    const sig = parseTimeSignature(globalTrackPopover)
+    return `<form class="studio-global-popover" data-global-time-signature-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>Numerator<input data-global-time-numerator type="number" min="1" max="32" step="1" value="${sig.numerator}"></label><label>Denominator<select data-global-time-denominator>${TIME_SIGNATURE_DENOMINATORS.map((value)=>`<option value="${value}" ${sig.denominator===value?'selected':''}>${value}</option>`).join('')}</select></label><button type="submit">Save</button><button type="button" data-delete-global-event>Delete</button></form>`
+  }
+  if (globalTrackPopover.type === 'key-signature') {
+    return `<form class="studio-global-popover" data-global-key-signature-form style="left:${Math.round(globalTrackPopover.x)}px;top:${Math.round(globalTrackPopover.y)}px"><label>Root<select data-global-key-root>${ROOT_NOTE_OPTIONS.map((key)=>`<option value="${key}" ${normalizeRootNote(globalTrackPopover.root||globalTrackPopover.key)===key?'selected':''}>${key}</option>`).join('')}</select></label><label>Scale<select data-global-key-scale>${KEY_SCALE_OPTIONS.map((scale)=>`<option value="${scale}" ${normalizeScaleMode(globalTrackPopover.scale)===scale?'selected':''}>${scale}</option>`).join('')}</select></label><button type="submit">Save</button><button type="button" data-delete-global-event>Delete</button></form>`
+  }
+  return ''
+}
+function getAssignedLibraryManifest(track = getSelectedTrack()) {
+  if (track?.instrument?.type !== DAW_PLUGIN_TYPES.librarySampler) return null
+  const instrumentId = track.instrument.params?.libraryInstrumentId
+  return studioLibraryState.data?.instruments?.find((item)=>item.id === instrumentId) || null
+}
+function getInstrumentPlayableRange(track = getSelectedTrack()) {
+  const roots = (getAssignedLibraryManifest(track)?.samples || [])
+    .map((sample)=>Number(sample?.rootMidi))
+    .filter(Number.isFinite)
+  if (!roots.length) return { min: 0, max: 127, hasMappedRange: false, belowMidi: false }
+  return {
+    min: Math.min(...roots),
+    max: Math.max(...roots),
+    hasMappedRange: true,
+    belowMidi: Math.min(...roots) < 0
+  }
+}
+function getInstrumentOctaveBounds(track = getSelectedTrack()) {
+  const range = getInstrumentPlayableRange(track)
+  return {
+    min: Math.floor((range.min - 48) / 12),
+    max: Math.ceil((range.max - 84) / 12)
+  }
+}
+function clampInstrumentOctaveOffset(track = getSelectedTrack()) {
+  const bounds = getInstrumentOctaveBounds(track)
+  instrumentOctaveOffset = clamp(instrumentOctaveOffset, Math.min(bounds.min, 0), Math.max(bounds.max, 0))
+  return bounds
+}
+function getInstrumentKeys(track = getSelectedTrack()){
+  const whites=[0,2,4,5,7,9,11]
+  const labelByMidi = Object.entries(dawInstrumentKeyMap).reduce((labels, [code, midi]) => {
+    const display = ({ KeyA:'A',KeyS:'S',KeyD:'D',KeyF:'F',KeyG:'G',KeyH:'H',KeyJ:'J',KeyK:'K',KeyL:'L',Semicolon:';',Quote:"'",KeyW:'W',KeyE:'E',KeyT:'T',KeyY:'Y',KeyU:'U',KeyO:'O',KeyP:'P' })[code]
+    if (display) labels[midi + (instrumentOctaveOffset * 12)] = display
+    return labels
+  }, {})
+  const keys=[]
+  let whiteIndex=0
+  const startMidi = 48 + (instrumentOctaveOffset * 12)
+  const endMidi = 84 + (instrumentOctaveOffset * 12)
+  for(let midi=startMidi;midi<=endMidi;midi+=1){
+    const pitchClass=((midi%12)+12)%12
+    const isWhite=whites.includes(pitchClass)
+    const octave=Math.floor(midi/12)-1
+    const whiteSlot = isWhite ? whiteIndex : Math.max(0, whiteIndex - 1)
+    keys.push({ midi, isWhite, whiteSlot, octaveLabel:isWhite&&pitchClass===0?`C${octave}`:'', keyLabel:labelByMidi[midi] || '', keyboardCode:'' })
+    if (isWhite) whiteIndex += 1
+  }
+  return keys
+}
+function getSelectedTrack(){ return tracks.find((track)=>track.id===selectedTrackId) || tracks[0] }
+function renderAudioEditVisualOverlays(region) {
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const visibleDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
+  const fadeInWidth = clamp((Number(edit.fadeInSeconds) || 0) / visibleDuration, 0, 1) * 100
+  const fadeOutWidth = clamp((Number(edit.fadeOutSeconds) || 0) / visibleDuration, 0, 1) * 100
+  const delayLeft = clamp((Number(edit.delayMs) || 0) / 1000 / visibleDuration, 0, 1) * 100
+  return `<span class="studio-audio-edit-overlays" aria-hidden="true">
+    ${fadeInWidth > 0.25 ? `<i class="studio-audio-fade-overlay studio-audio-fade-overlay--in ${edit.fadeInCurve === 'equal-power' ? 'is-equal-power' : ''}" style="width:${fadeInWidth.toFixed(3)}%"></i>` : ''}
+    ${fadeOutWidth > 0.25 ? `<i class="studio-audio-fade-overlay studio-audio-fade-overlay--out ${edit.fadeOutCurve === 'equal-power' ? 'is-equal-power' : ''}" style="width:${fadeOutWidth.toFixed(3)}%"></i>` : ''}
+    ${Number(edit.delayMs) > 0 ? `<i class="studio-audio-delay-marker" style="left:${delayLeft.toFixed(3)}%"><b>Delay +${Math.round(edit.delayMs)}ms</b></i>` : ''}
+    ${Math.abs(Number(edit.gainDb) || 0) > 0.01 ? `<b class="studio-audio-gain-badge">${edit.gainDb > 0 ? '+' : ''}${Number(edit.gainDb).toFixed(1)} dB</b>` : ''}
+  </span>`
+}
+function renderMidiRegion(region, isRecording = false) {
+  const trackIndex = Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))
+  const { startBeat, left, width } = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
+  const { top, height } = getRegionLaneGeometry(region)
+  const track = tracks[trackIndex] || getSelectedTrack()
+  const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
+  const notes = Array.isArray(region.notes) ? region.notes : []
+  const visibleNotes = isRecording ? notes : notes.filter((note)=>noteIsVisibleInRegion(region, note))
+  const selected = !isRecording && regionIsSelected(region.id)
+  return `<article class="studio-midi-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${region.muted ? 'is-region-muted' : ''}" data-timeline-geometry-revision="${timelineGeometryRevision}" data-midi-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${color};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording MIDI' : esc(getMidiRegionLabel(region))}</strong>${visibleNotes.slice(0,24).map((note)=>{ const noteStart=Number(note.startBeat) || startBeat; const noteLeft=(noteStart - startBeat) * beatWidth(); const noteWidth=Math.max(4, (Number(note.durationBeats) || 0.05) * beatWidth()); const noteTop=clamp(82 - (((note.note || 60) - 48) / 36) * 70, 8, 82); return `<span class="studio-midi-note-preview" style="left:${noteLeft}px;width:${noteWidth}px;top:${noteTop}%"></span>` }).join('')}</article>`
+}
+function normalizeWaveformPeak(peak) {
+  if (peak && typeof peak === 'object') {
+    const min = clamp(Number(peak.min) || 0, -1, 1)
+    const max = clamp(Number(peak.max) || 0, -1, 1)
+    return { min: Math.min(min, max), max: Math.max(min, max), rms: clamp(Number(peak.rms) || Math.max(Math.abs(min), Math.abs(max)), 0, 1) }
+  }
+  const value = clamp(Number(peak) || 0, 0, 1)
+  return { min: -value, max: value, rms: value }
+}
+function buildFallbackWaveform(region) {
+  const duration = getAudioSourceDurationSeconds(region)
+  return Array.from({ length: 16 }, (_, index) => ({
+    t0Seconds: (index / 16) * duration,
+    t1Seconds: ((index + 1) / 16) * duration,
+    ...normalizeWaveformPeak([0.08, 0.16, 0.1, 0.22, 0.14, 0.18, 0.09, 0.2][index % 8])
+  }))
+}
+function getWaveformChunks(region = {}) {
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const hasRenderedEditWaveform = region.renderedWaveform && (
+    (edit.pitchTrace.enabled && edit.pitchTrace.renderStatus === 'ready') ||
+    (edit.pitchShift.enabled && edit.pitchShift.renderStatus === 'ready') ||
+    (stretch.enabled && stretch.renderStatus === 'ready') ||
+    (edit.reverse.enabled && edit.reverse.renderStatus === 'ready')
+  )
+  const waveform = hasRenderedEditWaveform ? region.renderedWaveform : (region.waveform || {})
+  if (Array.isArray(waveform.chunks) && waveform.chunks.length) return waveform.chunks.map((chunk) => ({ ...normalizeWaveformPeak(chunk), t0Seconds: Number(chunk.t0Seconds) || 0, t1Seconds: Number(chunk.t1Seconds) || ((Number(chunk.t0Seconds) || 0) + (Number(waveform.sampleWindowSeconds) || waveformWindowSeconds)) }))
+  const peaks = Array.isArray(waveform.peaks) ? waveform.peaks : []
+  if (!peaks.length) return buildFallbackWaveform(region)
+  const duration = Math.max(minAudioRegionSeconds, Number(waveform.durationSeconds) || getAudioFileDurationSeconds(region))
+  const step = duration / peaks.length
+  return peaks.map((peak, index) => ({ ...normalizeWaveformPeak(peak), t0Seconds: index * step, t1Seconds: (index + 1) * step }))
+}
+function buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks = WAVEFORM_PERSISTED_MAX_PEAKS } = {}) {
+  const channelCount = Math.max(1, audioBuffer?.numberOfChannels || 1)
+  const sampleCount = Math.max(1, audioBuffer?.length || 1)
+  const peakCount = clamp(Math.ceil(sampleCount / 256), 64, maxPeaks)
+  const samplesPerPeak = Math.max(1, Math.ceil(sampleCount / peakCount))
+  const peaks = []
+  for (let peakIndex = 0; peakIndex < peakCount; peakIndex += 1) {
+    const start = peakIndex * samplesPerPeak
+    const end = Math.min(sampleCount, start + samplesPerPeak)
+    let min = 1
+    let max = -1
+    let sum = 0
+    let count = 0
+    for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+      const channel = audioBuffer.getChannelData(channelIndex)
+      for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+        const sample = channel[sampleIndex] || 0
+        if (sample < min) min = sample
+        if (sample > max) max = sample
+        sum += sample * sample
+        count += 1
+      }
+    }
+    peaks.push({ min: Number(clamp(min, -1, 1).toFixed(3)), max: Number(clamp(max, -1, 1).toFixed(3)), rms: Number(Math.sqrt(sum / Math.max(1, count)).toFixed(3)) })
+  }
+  return { peaks, resolution: 'high', samplesPerPeak, durationSeconds: audioBuffer.duration, generatedAt: Date.now() }
+}
+function getAudioWaveformRuntime(region, { preferRendered = true } = {}) {
+  if (!region || region.type !== 'audio') return null
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const candidates = []
+  if (preferRendered) {
+    if (edit.pitchTrace?.renderStatus === 'ready') candidates.push(edit.pitchTrace.renderedRuntimeId)
+    if (edit.pitchShift?.renderStatus === 'ready') candidates.push(edit.pitchShift.renderedRuntimeId)
+    if (edit.reverse?.renderStatus === 'ready') candidates.push(edit.reverse.renderedRuntimeId)
+    if (stretch.enabled && stretch.renderStatus === 'ready') candidates.push(stretch.renderedRuntimeId)
+  }
+  candidates.push(region.audioClip?.runtimeId || region.id)
+  const runtimeId = candidates.find((id) => id && audioClipRuntime.has(id))
+  return runtimeId ? audioClipRuntime.get(runtimeId) : null
+}
+function buildAudioWaveformChunksFromBufferWindow(audioBuffer, startSeconds = 0, endSeconds = 0, { maxPeaks = 900 } = {}) {
+  if (!audioBuffer?.length) return []
+  const sampleRate = audioBuffer.sampleRate || 44100
+  const startSample = clamp(Math.floor(Math.max(0, startSeconds) * sampleRate), 0, audioBuffer.length - 1)
+  const endSample = clamp(Math.ceil(Math.max(startSeconds + 0.001, endSeconds) * sampleRate), startSample + 1, audioBuffer.length)
+  const sampleCount = Math.max(1, endSample - startSample)
+  const peakCount = clamp(Math.ceil(sampleCount / Math.max(1, Math.ceil(sampleCount / maxPeaks))), 48, maxPeaks)
+  const samplesPerPeak = Math.max(1, Math.ceil(sampleCount / peakCount))
+  const channelCount = Math.max(1, audioBuffer.numberOfChannels || 1)
+  const chunks = []
+  for (let peakIndex = 0; peakIndex < peakCount; peakIndex += 1) {
+    const start = startSample + peakIndex * samplesPerPeak
+    const end = Math.min(endSample, start + samplesPerPeak)
+    let min = 1
+    let max = -1
+    let sum = 0
+    let count = 0
+    for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+      const channel = audioBuffer.getChannelData(channelIndex)
+      for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+        const sample = channel[sampleIndex] || 0
+        if (sample < min) min = sample
+        if (sample > max) max = sample
+        sum += sample * sample
+        count += 1
+      }
+    }
+    chunks.push({
+      t0Seconds: start / sampleRate,
+      t1Seconds: end / sampleRate,
+      min: Number(clamp(min, -1, 1).toFixed(4)),
+      max: Number(clamp(max, -1, 1).toFixed(4)),
+      rms: Number(Math.sqrt(sum / Math.max(1, count)).toFixed(4))
+    })
+  }
+  return chunks
+}
+function getCachedRuntimeWaveformChunks(runtime, startSeconds, endSeconds, maxPeaks) {
+  if (!runtime?.audioBuffer) return []
+  const cache = runtime.waveformChunkCache || (runtime.waveformChunkCache = new Map())
+  const key = `${Number(startSeconds).toFixed(4)}:${Number(endSeconds).toFixed(4)}:${Math.round(maxPeaks)}`
+  const cached = cache.get(key)
+  if (cached) return cached
+  const chunks = buildAudioWaveformChunksFromBufferWindow(runtime.audioBuffer, startSeconds, endSeconds, { maxPeaks })
+  cache.set(key, chunks)
+  if (cache.size > 12) cache.delete(cache.keys().next().value)
+  return chunks
+}
+function getWaveformRenderPeakLimit(region, options = {}) {
+  if (Number.isFinite(Number(options.maxPeaks))) return clamp(Math.round(Number(options.maxPeaks)), WAVEFORM_MIN_RENDERED_PEAKS, WAVEFORM_MAX_RENDERED_PEAKS)
+  const regionBeats = getRegionTimelineRange(region).durationBeats
+  const measuredWidth = Number(options.displayWidth)
+  const displayWidth = Number.isFinite(measuredWidth) && measuredWidth > 0
+    ? measuredWidth
+    : options.editor
+      ? 1100
+      : Math.max(24, timelineWidthForBeats({ durationBeats: regionBeats, pixelsPerBeat: beatWidth() }))
+  return clamp(Math.ceil(displayWidth * WAVEFORM_PEAKS_PER_PIXEL), WAVEFORM_MIN_RENDERED_PEAKS, WAVEFORM_MAX_RENDERED_PEAKS)
+}
+function renderAudioWaveform(region, options = {}) {
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const hasRenderedWaveform = region.renderedWaveform && (
+    (edit.pitchTrace.enabled && edit.pitchTrace.renderStatus === 'ready') ||
+    (edit.pitchShift.enabled && edit.pitchShift.renderStatus === 'ready') ||
+    (stretch.enabled && stretch.renderStatus === 'ready') ||
+    (edit.reverse.enabled && edit.reverse.renderStatus === 'ready')
+  )
+  const trimStart = hasRenderedWaveform ? 0 : getAudioTrimStartSeconds(region)
+  const trimEnd = hasRenderedWaveform ? getAudioRegionVisibleDurationSeconds(region) : getAudioTrimEndSeconds(region)
+  const sourceDuration = getAudioSourceDurationSeconds(region)
+  const visibleDuration = getAudioRegionVisibleDurationSeconds(region)
+  const stretchRatio = hasRenderedWaveform ? 1 : getAudioStretchRatio(region)
+  const fullViewDuration = Math.max(minAudioRegionSeconds, hasRenderedWaveform ? visibleDuration : stretch.enabled ? visibleDuration : sourceDuration)
+  const hasWindow = Number.isFinite(Number(options.viewStartSeconds)) || Number.isFinite(Number(options.viewEndSeconds))
+  const viewStart = hasWindow ? clamp(Number(options.viewStartSeconds) || 0, 0, Math.max(0, fullViewDuration - 0.01)) : 0
+  const viewEnd = hasWindow ? clamp(Number(options.viewEndSeconds) || fullViewDuration, viewStart + 0.01, fullViewDuration) : fullViewDuration
+
+  // Arrangement waveforms are rendered only for the currently visible timeline
+  // slice plus a generous buffer. The SVG keeps the full region coordinate
+  // system, so the visible detail remains accurately positioned while offscreen
+  // waveform points never need to be generated.
+  let renderViewStart = viewStart
+  let renderViewEnd = viewEnd
+  let waveformDisplayWidth = options.editor ? 1100 : null
+  if (!options.editor && !hasWindow) {
+    const arrangementGrid = app?.querySelector?.('[data-arrangement-grid]')
+    const projection = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
+    const regionLeftPx = projection.left
+    const regionWidthPx = Math.max(1, projection.width)
+    const viewportLeftPx = Number(arrangementGrid?.scrollLeft) || 0
+    const viewportWidthPx = Math.max(320, Number(arrangementGrid?.clientWidth) || Math.min(1600, window.innerWidth || 1600))
+    const bufferPx = Math.max(320, viewportWidthPx * 0.75)
+    const clippedLeftPx = clamp(viewportLeftPx - bufferPx - regionLeftPx, 0, regionWidthPx)
+    const clippedRightPx = clamp(viewportLeftPx + viewportWidthPx + bufferPx - regionLeftPx, 0, regionWidthPx)
+
+    if (clippedRightPx > clippedLeftPx + 0.5) {
+      const startRatio = clippedLeftPx / regionWidthPx
+      const endRatio = clippedRightPx / regionWidthPx
+      renderViewStart = viewStart + ((viewEnd - viewStart) * startRatio)
+      renderViewEnd = viewStart + ((viewEnd - viewStart) * endRatio)
+      waveformDisplayWidth = Math.max(24, clippedRightPx - clippedLeftPx)
+    } else {
+      // Offscreen regions keep a tiny valid waveform slice. When they enter the
+      // viewport the scroll scheduler below refreshes them at full visible LOD.
+      renderViewStart = viewStart
+      renderViewEnd = Math.min(viewEnd, viewStart + Math.max(0.01, (viewEnd - viewStart) * 0.002))
+      waveformDisplayWidth = 24
+    }
+  }
+
+  const sourceViewStart = trimStart + (renderViewStart / Math.max(0.001, stretchRatio))
+  const sourceViewEnd = trimStart + (renderViewEnd / Math.max(0.001, stretchRatio))
+  const runtime = getAudioWaveformRuntime(region, { preferRendered: hasRenderedWaveform })
+  const maxPeaks = getWaveformRenderPeakLimit(region, { ...options, displayWidth: waveformDisplayWidth })
+  const chunks = runtime?.audioBuffer
+    ? getCachedRuntimeWaveformChunks(runtime, sourceViewStart, sourceViewEnd, maxPeaks)
+    : getWaveformChunks(region)
+  const visibleChunks = chunks
+    .filter((chunk) => chunk.t1Seconds >= sourceViewStart && chunk.t0Seconds <= sourceViewEnd)
+    .map((chunk) => {
+      const t0 = clamp(chunk.t0Seconds, sourceViewStart, sourceViewEnd)
+      const t1 = clamp(chunk.t1Seconds, sourceViewStart, sourceViewEnd)
+      const x0 = ((stretch.enabled || hasRenderedWaveform) ? (t0 - trimStart) * stretchRatio : (t0 - trimStart)) - viewStart
+      const x1 = ((stretch.enabled || hasRenderedWaveform) ? (t1 - trimStart) * stretchRatio : (t1 - trimStart)) - viewStart
+      return { ...chunk, x: (x0 + x1) / 2, width: Math.max(0.004, x1 - x0) }
+    })
+  const viewDuration = Math.max(0.001, viewEnd - viewStart)
+  const fallbackChunks = buildFallbackWaveform(region)
+    .filter((chunk) => chunk.t1Seconds >= sourceViewStart && chunk.t0Seconds <= sourceViewEnd)
+    .map((chunk) => {
+      const t0 = clamp(chunk.t0Seconds, sourceViewStart, sourceViewEnd)
+      const t1 = clamp(chunk.t1Seconds, sourceViewStart, sourceViewEnd)
+      const x0 = ((stretch.enabled || hasRenderedWaveform) ? (t0 - trimStart) * stretchRatio : (t0 - trimStart)) - viewStart
+      const x1 = ((stretch.enabled || hasRenderedWaveform) ? (t1 - trimStart) * stretchRatio : (t1 - trimStart)) - viewStart
+      return { ...chunk, x: (x0 + x1) / 2, width: Math.max(0.004, x1 - x0) }
+    })
+  const safeChunks = visibleChunks.length ? visibleChunks : fallbackChunks
+  const upper = safeChunks.map((chunk) => `${chunk.x.toFixed(4)},${(50 - (Math.max(Math.abs(chunk.min), Math.abs(chunk.max), chunk.rms) * 42)).toFixed(2)}`).join(' ')
+  const lower = safeChunks.map((chunk) => `${chunk.x.toFixed(4)},${(50 + (Math.max(Math.abs(chunk.min), Math.abs(chunk.max), chunk.rms) * 42)).toFixed(2)}`).reverse().join(' ')
+  const bars = safeChunks.length > (options.editor ? 420 : 220) ? '' : safeChunks.map((chunk)=>`<span style="left:${(chunk.x / viewDuration * 100).toFixed(3)}%;width:${Math.max(1, chunk.width / viewDuration * 100).toFixed(3)}%;top:${(50 - chunk.max * 42).toFixed(2)}%;height:${Math.max(1, (chunk.max - chunk.min) * 42).toFixed(2)}%"></span>`).join('')
+  return `<svg class="studio-audio-waveform" viewBox="0 0 ${Math.max(0.001, viewDuration)} 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${upper} ${lower}"></polygon><polyline points="${upper}"></polyline><polyline points="${lower.split(' ').reverse().join(' ')}"></polyline></svg><div class="studio-audio-waveform-bars" aria-hidden="true">${bars}</div>`
+}
+function normalizeAudioWaveformViewport(region) {
+  const fullDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
+  if (audioWaveformViewport.regionId !== region.id) {
+    audioWaveformViewport = { regionId: region.id, startSeconds: 0, endSeconds: fullDuration, zoom: 1 }
+    return { ...audioWaveformViewport, fullDuration }
+  }
+  const zoom = clamp(Number(audioWaveformViewport.zoom) || 1, 1, 128)
+  const length = clamp(Number(audioWaveformViewport.endSeconds - audioWaveformViewport.startSeconds) || (fullDuration / zoom), Math.min(0.02, fullDuration), fullDuration)
+  const start = clamp(Number(audioWaveformViewport.startSeconds) || 0, 0, Math.max(0, fullDuration - length))
+  audioWaveformViewport = { regionId: region.id, startSeconds: start, endSeconds: start + length, zoom: fullDuration / Math.max(0.001, length) }
+  return { ...audioWaveformViewport, fullDuration }
+}
+function setAudioWaveformViewport(region, next = {}) {
+  if (!region) return
+  const fullDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
+  const start = clamp(Number(next.startSeconds) || 0, 0, fullDuration)
+  const end = clamp(Number(next.endSeconds) || fullDuration, start + Math.min(0.02, fullDuration), fullDuration)
+  audioWaveformViewport = {
+    regionId: region.id,
+    startSeconds: Math.min(start, Math.max(0, fullDuration - (end - start))),
+    endSeconds: Math.min(fullDuration, Math.min(start, Math.max(0, fullDuration - (end - start))) + (end - start)),
+    zoom: fullDuration / Math.max(0.001, end - start)
+  }
+}
+function zoomAudioWaveformViewport(region, factor = 1, anchorRatio = 0.5) {
+  const current = normalizeAudioWaveformViewport(region)
+  const fullDuration = current.fullDuration
+  const currentLength = Math.max(0.001, current.endSeconds - current.startSeconds)
+  const nextLength = clamp(currentLength / Math.max(0.1, factor), Math.min(0.02, fullDuration), fullDuration)
+  const anchor = current.startSeconds + (currentLength * clamp(anchorRatio, 0, 1))
+  const nextStart = clamp(anchor - (nextLength * clamp(anchorRatio, 0, 1)), 0, Math.max(0, fullDuration - nextLength))
+  setAudioWaveformViewport(region, { startSeconds: nextStart, endSeconds: nextStart + nextLength })
+}
+function panAudioWaveformViewport(region, deltaSeconds = 0) {
+  const current = normalizeAudioWaveformViewport(region)
+  const length = current.endSeconds - current.startSeconds
+  const start = clamp(current.startSeconds + deltaSeconds, 0, Math.max(0, current.fullDuration - length))
+  setAudioWaveformViewport(region, { startSeconds: start, endSeconds: start + length })
+}
+function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = false, color = '#58d4ff', waveformColor = '#58d4ff' } = {}) {
+  const playheadX = positionToRegionEditorX(xToBeat(timelineState.playheadX), region)
+  const viewportOffset = pitchTraceEnabled ? REGION_EDITOR_KEYBOARD_WIDTH : 0
+  const viewportPlayhead = `<i class="studio-region-editor-viewport-playhead" data-region-editor-viewport-playhead data-region-editor-playhead-region="${esc(region.id)}" style="left:${viewportOffset + playheadX}px"></i>`
+  if (pitchTraceEnabled) {
+    return `<div class="studio-audio-editor-waveform has-pitch-trace" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">${renderPitchTraceView(region, track)}${viewportPlayhead}</div>`
+  }
+  const viewport = normalizeAudioWaveformViewport(region)
+  const start = viewport.startSeconds
+  const end = viewport.endSeconds
+  const zoom = Math.max(1, viewport.zoom)
+  return `<div class="studio-audio-editor-waveform has-waveform-viewport" data-audio-waveform-shell="${esc(region.id)}" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">
+    <header class="studio-audio-waveform-toolbar">
+      <div><strong>Waveform</strong><span>${start.toFixed(2)}s-${end.toFixed(2)}s · ${zoom.toFixed(1)}x</span></div>
+      <nav aria-label="Waveform zoom controls">
+        <button type="button" data-audio-waveform-zoom="out" ${zoom <= 1.01 ? 'disabled' : ''}>-</button>
+        <button type="button" data-audio-waveform-zoom="fit" ${zoom <= 1.01 ? 'disabled' : ''}>Fit</button>
+        <button type="button" data-audio-waveform-zoom="in">+</button>
+      </nav>
+    </header>
+    <div class="studio-audio-waveform-viewport" data-audio-waveform-viewport data-waveform-start="${start}" data-waveform-end="${end}" data-waveform-duration="${viewport.fullDuration}" tabindex="0">
+      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: 24000 })}
+      ${viewportPlayhead}
+    </div>
+  </div>`
+}
+function renderAudioRegion(region, isRecording = false) {
+  const trackIndex = Math.max(0, tracks.findIndex((track)=>track.id === region.trackId))
+  const { left, width } = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
+  const { top, height } = getRegionLaneGeometry(region)
+  const track = tracks[trackIndex] || getSelectedTrack()
+  const color = isRecording ? '#ff2d55' : (region.color || track?.color || '#58d4ff')
+  const waveformColor = getReadableWaveformColor(color)
+  const selected = !isRecording && regionIsSelected(region.id)
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const renderedRuntimeReady = stretch.enabled && stretch.renderStatus === 'ready' && stretch.renderedRuntimeId && audioClipRuntime.has(stretch.renderedRuntimeId)
+  const missing = Boolean(region.audioClip?.missingAfterReload || region.missingMedia) && !audioClipRuntime.has(region.audioClip?.runtimeId || region.id) && !renderedRuntimeReady
+  const stretching = midiRegionDrag?.id === region.id && midiRegionDrag.editMode === 'stretch'
+  const stretchStatus = stretch.renderStatus === 'rendering' ? 'Rendering' : stretch.renderStatus === 'failed' ? 'Render failed' : (stretch.renderStatus === 'ready' ? 'Rendered' : 'Stretch')
+  const stretchMath = getAudioStretchMath(region)
+  const speedLabel = Math.round(stretchMath.speedPercent)
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const pitchSemitones = Number(edit.pitchShift?.totalSemitones) || ((Number(edit.transposeSemitones) || 0) + ((Number(edit.fineTuneCents) || 0) / 100))
+  const pitchLabel = Math.abs(pitchSemitones) > 0.001 ? `Pitch ${pitchSemitones > 0 ? '+' : ''}${pitchSemitones.toFixed(Math.abs(pitchSemitones % 1) > 0.001 ? 2 : 0)} st` : ''
+  const stretchLabel = stretching || stretch.enabled
+    ? `<b class="studio-audio-stretch-label">${pitchLabel && !stretching ? `${esc(pitchLabel)} · ` : ''}${stretching ? 'Time Stretch' : stretchStatus} ${speedLabel}% speed</b>`
+    : (pitchLabel ? `<b class="studio-audio-stretch-label">${esc(pitchLabel)}</b>` : '')
+  return `<article class="studio-midi-region studio-audio-region ${isRecording ? 'is-recording' : ''} ${selected ? 'is-selected' : ''} ${missing ? 'is-missing-media' : ''} ${stretch.enabled ? 'is-stretched' : ''} ${stretching ? 'is-stretching' : ''} ${edit.mute || region.muted ? 'is-audio-muted is-region-muted' : ''}" data-timeline-geometry-revision="${timelineGeometryRevision}" data-midi-region="${region.id || 'recording'}" data-audio-region="${region.id || 'recording'}" style="left:${left}px;top:${top}px;width:${width}px;height:${height}px;--region-color:${esc(color)};--waveform-color:${esc(waveformColor)};--beat-width:${beatWidth()}px;"><i class="studio-midi-region-handle studio-midi-region-handle--left" data-midi-region-handle="left"></i><i class="studio-midi-region-handle studio-midi-region-handle--right" data-midi-region-handle="right"></i><strong>${isRecording ? 'Recording Audio' : esc(getMidiRegionLabel(region))}</strong>${renderAudioWaveform(region)}${renderAudioEditVisualOverlays(region)}${stretchLabel}${missing ? `<em title="${esc(getAudioOfflineMessage(region))}">Audio file offline</em>` : ''}</article>`
+}
+function syncSelectedTrackVolumeControl(track){
+  if (!track) return
+  app.querySelectorAll(`[data-track-volume="${CSS.escape(track.id)}"]`).forEach((input) => {
+    input.value = String(track.volume)
+    input.setAttribute('value', String(track.volume))
+  })
+  app.querySelectorAll(`[data-track-volume-readout="${CSS.escape(track.id)}"]`).forEach((readout) => {
+    readout.textContent = `${Math.round(track.volume)}%`
+  })
+}
+function getInstrumentKnobDescriptors(){
+  const selected=getSelectedTrack()
+  const trackVolume=Number.isFinite(Number(selected?.volume)) ? Number(selected.volume) : Math.round(instrumentVolume*100)
+  const trackPan=Number.isFinite(Number(selected?.pan)) ? Number(selected.pan) : Math.round(instrumentPan*100)
+  instrumentVolume=clamp(trackVolume/100,0,1)
+  instrumentPan=clamp(trackPan/100,-1,1)
+  return [{label:'Pan',value:clamp(trackPan,-100,100),min:-100,max:100,step:1,key:'pan'},{label:'Volume',value:instrumentVolume,min:0,max:1,step:0.01,key:'volume'}]
+}
+function getInstrumentPanelStatus() {
+  const track = getSelectedTrack()
+  if (!track) return { track:null, ok:false, message:'Select a track to play.' }
+  if (isAudioTrack(track)) return { track, ok:false, message:'Audio tracks do not use software instruments.' }
+  if (!track.instrument) return { track, ok:false, message:'Choose an instrument on the selected track.' }
+  if (track.instrument.enabled === false) return { track, ok:false, message:'Instrument is disabled.' }
+  return { track, ok:true, message:`Playing ${track.name}` }
+}
+function renderInstrumentKeyboardView(){
+  const status = getInstrumentPanelStatus()
+  const range = getInstrumentPlayableRange(status.track)
+  const keys=getInstrumentKeys(status.track);
+  const white=keys.filter(k=>k.isWhite); const black=keys.filter(k=>!k.isWhite); const whiteCount=Math.max(1,white.length)
+  const isPressed = (midi) => isTrackKeyboardNoteActive(status.track?.id, midi)
+  const rangeLabel = range.hasMappedRange
+    ? `${formatMidiNoteName(range.min)} to ${formatMidiNoteName(range.max)}${range.belowMidi ? ' · internal notes below MIDI 0 supported' : ''}`
+    : 'Full MIDI range'
+  return `<div class="studio-instrument-keyboard-shell"><div class="studio-keyboard-status"><strong>${esc(status.ok ? status.message : 'Instrument keyboard')}</strong><span>${esc(rangeLabel)}</span></div><div class="studio-virtual-keyboard ${status.ok ? '' : 'is-disabled'}" data-virtual-keyboard style="--white-key-count:${whiteCount};--track-color:${status.track?.color || '#58d4ff'};">${status.ok ? '' : `<div class="studio-keyboard-empty">${status.message}</div>`}<div class="studio-piano-white-keys">${white.map(k=>`<button type="button" class="studio-piano-key studio-piano-key--white ${isPressed(k.midi)?'is-pressed':''}" data-midi="${k.midi}" data-piano-midi="${k.midi}" data-key-type="white" ${status.ok?'':'disabled'}><span>${k.octaveLabel}</span><small>${k.keyLabel}</small></button>`).join('')}</div><div class="studio-piano-black-keys" aria-hidden="false">${black.map(k=>`<button type="button" class="studio-piano-key studio-piano-key--black ${isPressed(k.midi)?'is-pressed':''}" data-midi="${k.midi}" data-piano-midi="${k.midi}" style="left:${((k.whiteSlot + 1) / whiteCount) * 100}%" ${status.ok?'':'disabled'}><small>${k.keyLabel}</small></button>`).join('')}</div></div></div>`
+}
+function renderInstrumentChordsView(){
+  return `<div class="studio-chord-keyboard" data-chord-keyboard>${chordRoots.map((root)=>`<button class="studio-chord-key" type="button" data-chord-root="${root}"><strong>${root}</strong><span class="studio-chord-key-quality">Major / Minor</span><span class="studio-chord-key-octaves" aria-hidden="true">${chordOctaves.map((octave)=>`<span>${octave}</span>`).join('')}</span></button>`).join('')}</div>`
+}
+function getArpStepValueForMode(step, mode){ if(!step) return 0; if(mode==='note') return step.note ?? 0; if(mode==='velocity') return step.velocity ?? 0; if(mode==='octave') return step.octave ?? 0; if(mode==='gate') return step.gate ?? arpGate; if(mode==='probability') return step.probability ?? 100; if(mode==='accent') return step.accent ? 1 : 0; if(mode==='tie') return step.tie ? 1 : 0; return step.velocity ?? 0 }
+function getArpStepBarHeight(step, mode){ if(!step?.active) return 0; if(mode==='velocity') return Math.max(4, Math.round(((step.velocity ?? 0)/127)*100)); if(mode==='gate') return Math.max(4, Math.round(((step.gate ?? arpGate)/100)*100)); if(mode==='probability') return Math.max(4, Math.round(((step.probability ?? 100)/100)*100)); if(mode==='octave') return Math.max(10, 50 + ((step.octave ?? 0)*20)); if(mode==='note') return Math.max(10, 50 + ((step.note ?? 0)*3)); if(mode==='accent') return step.accent ? 100 : 18; if(mode==='tie') return step.tie ? 100 : 18; return 50 }
+function getArpStepLabelForMode(step, mode){ if(!step) return ''; if(mode==='note') return `${(step.note ?? 0) >= 0 ? '+' : ''}${step.note ?? 0} st`; if(mode==='velocity') return String(step.velocity ?? 0); if(mode==='octave') return (step.octave ?? 0) === 0 ? '0' : ((step.octave ?? 0) > 0 ? `+${step.octave}` : `${step.octave}`); if(mode==='gate') return `${step.gate ?? arpGate}%`; if(mode==='probability') return `${step.probability ?? 100}%`; if(mode==='accent') return step.accent ? 'Accent' : 'Normal'; if(mode==='tie') return step.tie ? 'Tie' : 'Free'; return '' }
+function cycleArpStepByMode(step, mode){ if(!step) return; if(mode==='octave'){ const values=[-2,-1,0,1,2,3,4]; const i=values.indexOf(step.octave ?? 0); step.octave=values[(i+1+values.length)%values.length] } else if(mode==='gate'){ const values=[10,25,50,70,85,100]; const i=values.indexOf(step.gate ?? arpGate); step.gate=values[(i+1+values.length)%values.length] } else if(mode==='probability'){ const values=[0,25,50,75,100]; const i=values.indexOf(step.probability ?? 100); step.probability=values[(i+1+values.length)%values.length] } else if(mode==='accent') step.accent=!step.accent; else if(mode==='tie') step.tie=!step.tie }
+
+
+function getArpStepNoteLabel(step){ const note=Number.isFinite(Number(step?.note))?Number(step.note):0; const octave=Number.isFinite(Number(step?.noteOctave))?Number(step.noteOctave):arpNotePickerOctave; const name=arpNoteNames[((note%12)+12)%12]; return `${name}${octave}` }
+function getVelocityFromStepPointer(event, element){ const rect=element.getBoundingClientRect(); const ratio=1-clamp((event.clientY-rect.top)/Math.max(1,rect.height),0,1); return clamp(Math.round(1+ratio*126),1,127) }
+function renderArpNotePicker(){ const step=arpSteps[arpNotePickerStepIndex]||null; return `<section class="studio-arp-note-picker" data-arp-note-picker><header><div><strong>Assign Note</strong><span>Step ${(arpNotePickerStepIndex ?? 0)+1}</span></div><div class="studio-arp-note-picker-octave"><button type="button" class="studio-arp-button" data-arp-note-picker-octave="-1">−</button><strong>Oct ${arpNotePickerOctave}</strong><button type="button" class="studio-arp-button" data-arp-note-picker-octave="1">+</button></div><button type="button" class="studio-arp-button" data-arp-note-picker-close>Cancel</button></header><div class="studio-arp-note-picker-keys">${arpNoteNames.map((name,index)=>`<button type="button" class="studio-arp-note-picker-key ${index===step?.note&&arpNotePickerOctave===step?.noteOctave?'is-selected':''}" data-arp-note-value="${index}"><strong>${name}</strong><span>${name}${arpNotePickerOctave}</span></button>`).join('')}</div></section>` }
+
+function renderInstrumentArpView(){
+  const step = normalizeArpStep(arpSteps[selectedArpStepIndex] || arpSteps[0], selectedArpStepIndex)
+  const arpLegendByMode = { note:'Bar = Velocity · Label = Note', velocity:'Bar = Velocity · Label = Velocity', octave:'Bar = Octave Offset · Label = Octave', gate:'Bar = Gate Length · Label = Gate', probability:'Bar = Trigger Chance · Label = Probability', accent:'Bar = Accent State · Label = Accent', tie:'Bar = Tie State · Label = Tie' }
+  const arpStepArea = arpEditMode === 'note' && arpNotePickerStepIndex !== null
+    ? renderArpNotePicker()
+    : `<div class="studio-arp-steps ${arpEnabled?'':'is-arp-disabled'}">${arpSteps.slice(0,arpLength).map((raw,i)=>{ const st=normalizeArpStep(raw,i); const bar=getArpStepBarHeight(st,arpEditMode); return `<button type="button" class="studio-arp-step studio-arp-step--${arpEditMode} ${(st.octave??0)<0?'is-negative-octave':''} ${(st.octave??0)>0?'is-positive-octave':''} ${(st.probability??100)===0?'is-probability-zero':''} ${st.active?'is-active':'is-muted'} ${st.accent?'is-accent':''} ${st.tie?'is-tie':''} ${selectedArpStepIndex===i?'is-selected':''}" data-arp-step="${i}"><span>${i+1}</span>${st.active?`<em style="height:${bar}%"></em>`:'<i>•</i>'}${arpEditMode==='note'?`<span class="studio-arp-step-note-label">${getArpStepNoteLabel(st)}</span>`:''}<small>${getArpStepLabelForMode(st,arpEditMode)}</small></button>` }).join('')}</div>`
+  return `<section class="studio-arp-page" data-instrument-subpage-view="arp" data-arp-edit-mode="${arpEditMode}"><section class="studio-arp-top-grid"><div class="studio-arp-top-left"><div class="studio-arp-control-group studio-arp-control-group--playback"><span>Playback</span><button type="button" class="studio-arp-power-switch ${arpEnabled?'is-active':''}" data-arp-toggle aria-pressed="${String(arpEnabled)}"><span class="studio-arp-power-track"><span class="studio-arp-power-thumb"></span></span><strong>Arp</strong><em>${arpEnabled?'On':'Off'}</em></button><label>Mode<select data-arp-mode>${arpModes.map((x)=>`<option ${arpMode===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Rate<select data-arp-rate>${arpRates.map((x)=>`<option ${arpRate===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Length<select data-arp-length>${arpLengths.map((x)=>`<option ${arpLength===x?'selected':''}>${x}</option>`).join('')}</select></label><label>Octaves<div class="studio-arp-stepper"><button type="button" class="studio-arp-button" data-arp-octave="-1">−</button><strong data-arp-octave-value>${arpOctaves}</strong><button type="button" class="studio-arp-button" data-arp-octave="+1">+</button></div></label></div><nav class="studio-arp-edit-modes" aria-label="Arp step assignment mode">${arpEditModes.map((mode)=>`<button type="button" class="studio-arp-button ${arpEditMode===mode.id?'is-active':''}" data-arp-edit-mode="${mode.id}" aria-pressed="${String(arpEditMode===mode.id)}">${mode.label}</button>`).join('')}</nav></div><div class="studio-arp-control-group studio-arp-control-group--feel"><span>Feel</span><label>Gate<input data-arp-gate type="range" min="10" max="100" value="${arpGate}"/><small>${arpGate}%</small></label><label>Swing<input data-arp-swing type="range" min="0" max="75" value="${arpSwing}"/><small>${arpSwing}%</small></label><label>Velocity<input data-arp-velocity type="range" min="1" max="127" value="${arpVelocity}"/><small>${arpVelocity}</small></label></div></section><div class="studio-arp-legend">${arpLegendByMode[arpEditMode]||''}</div><div class="studio-arp-main">${arpStepArea}<aside class="studio-arp-properties studio-arp-presets"><header class="studio-arp-properties-header"><div><strong>Arp Properties</strong><span>Pattern: ${currentArpPatternName}</span></div><div class="studio-arp-actions"><button type="button" class="studio-arp-button" data-arp-reset>Reset</button><button type="button" class="studio-arp-button" data-arp-randomize>Randomize</button><button type="button" class="studio-arp-button" disabled title="Print to MIDI will be available once MIDI regions are enabled.">Print to MIDI</button></div></header><div class="studio-arp-properties-scroll"><section class="studio-arp-pattern-list">${arpPatternPresets.map((name)=>`<button type="button" class="studio-arp-button studio-arp-button--ghost" data-arp-pattern="${name}">${name}</button>`).join('')}</section><section class="studio-arp-step-inspector"><header><strong>Step ${selectedArpStepIndex+1}</strong><span>${arpEditModes.find((m)=>m.id===arpEditMode)?.label||'Step'} Mode</span></header><label class="studio-arp-inspector-toggle"><input type="checkbox" data-arp-step-active ${step.active?'checked':''}>Active</label><label>Note<input type="number" data-arp-step-note min="0" max="11" value="${step.note ?? 0}"><small>${getArpStepNoteLabel(step)}</small></label><label>Octave<input type="number" data-arp-step-note-octave min="0" max="8" value="${step.noteOctave ?? 4}"></label><label>Velocity<input type="range" data-arp-step-velocity min="1" max="127" value="${step.velocity ?? arpVelocity}"><small data-arp-step-velocity-value>${step.velocity ?? arpVelocity}</small></label><label>Step Octave<input type="number" data-arp-step-octave min="-2" max="4" value="${step.octave ?? 0}"></label><label>Gate<input type="range" data-arp-step-gate min="10" max="100" value="${step.gate ?? arpGate}"><small data-arp-step-gate-value>${step.gate ?? arpGate}%</small></label><label>Probability<input type="range" data-arp-step-probability min="0" max="100" value="${step.probability ?? 100}"><small data-arp-step-probability-value>${step.probability ?? 100}%</small></label><label class="studio-arp-inspector-toggle"><input type="checkbox" data-arp-step-accent ${step.accent?'checked':''}>Accent</label><label class="studio-arp-inspector-toggle"><input type="checkbox" data-arp-step-tie ${step.tie?'checked':''}>Tie</label></section></div></aside></div></section>`
+}
+function renderInstrumentPerformanceControls(){
+  clampInstrumentOctaveOffset()
+  const bounds = getInstrumentOctaveBounds()
+  const expressionValue = typingExpressionTarget === 'pitch' ? typingPitchFine : typingModFine
+  return `<div class="studio-instrument-toolbar"><div class="studio-instrument-left"><div class="studio-instrument-controls"><button type="button" data-sustain-toggle class="${isSustainEnabled?'is-active':''}">Sustain</button><button type="button" data-typing-piano-toggle class="${isTypingPianoEnabled?'is-active':''}" aria-pressed="${String(isTypingPianoEnabled)}">Typing Piano</button><div class="studio-instrument-octave"><span class="studio-instrument-octave-label">Octave</span><div class="studio-instrument-octave-controls"><button type="button" data-octave-down aria-label="Octave down" ${instrumentOctaveOffset<=Math.min(bounds.min,0)?'disabled':''}>−</button><strong class="studio-octave-readout">${instrumentOctaveOffset>0?'+':''}${instrumentOctaveOffset}</strong><button type="button" data-octave-up aria-label="Octave up" ${instrumentOctaveOffset>=Math.max(bounds.max,0)?'disabled':''}>+</button></div></div><div class="studio-typing-expression" aria-label="Musical typing expression"><span>${typingExpressionTarget === 'pitch' ? 'Pitch' : 'Mod'} fine</span><strong>${expressionValue}</strong><small>C/V pitch · B/N mod · 1-0 fine · − target</small></div></div></div><div class="studio-instrument-knob-bank">${getInstrumentKnobDescriptors().map((knob)=>`<label class="studio-instrument-knob"><span class="studio-instrument-knob-label">${knob.label}</span><button class="studio-instrument-knob-dial" type="button" data-instrument-knob-dial="${knob.key}" style="--knob-angle:${-135 + ((knob.value-knob.min)/(knob.max-knob.min))*270}deg" aria-label="${knob.label}"><input data-instrument-knob="${knob.key}" type="range" min="${knob.min}" max="${knob.max}" step="${knob.step}" value="${knob.value}"></button><span class="studio-instrument-knob-value" data-instrument-knob-value="${knob.key}">${knob.key==='pan'?`${Math.round(knob.value)}`:`${Math.round(knob.value*100)}%`}</span></label>`).join('')}</div></div><div class="studio-instrument-divider"></div>`
+}
+function renderInstrumentPanel(){
+  return `<section class="studio-bottom-panel studio-instrument-panel"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header studio-instrument-panel-header"><strong>Instrument Keyboard</strong><nav><button type="button" data-detach-bottom-panel="instrument">Detach</button><button type="button" class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body">${renderInstrumentPerformanceControls()}<div class="studio-instrument-content" data-instrument-content>${renderInstrumentKeyboardView()}</div></div></section>`
+}
+function getActiveMidiEffectEditor() {
+  const track = tracks.find((item)=>item.id === activeMidiEffectEditor?.trackId)
+  const insert = track?.midiEffects?.find((item)=>item.id === activeMidiEffectEditor?.insertId)
+  return track && insert ? { track, insert } : null
+}
+function renderMidiEffectEditorPanel(motionClass = '') {
+  const editor = getActiveMidiEffectEditor()
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  if (!editor) return `<section class="studio-bottom-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>MIDI Effect</strong><nav><button type="button" class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel">Close</button></nav></header><div class="studio-bottom-panel-body"><p>Select a MIDI effect to edit.</p></div></section>`
+  const content = editor.insert.type === 'chord-trigger'
+    ? renderInstrumentChordsView()
+    : editor.insert.type === 'arpeggiator'
+      ? renderInstrumentArpView()
+      : `<section class="studio-instrument-subpage-placeholder"><h3>${esc(editor.insert.name)}</h3><p>This MIDI effect does not have a dedicated editor yet.</p></section>`
+  return `<section class="studio-bottom-panel studio-midi-effect-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><div><strong>${esc(editor.insert.name)}</strong><span>${esc(editor.track.name)} · MIDI Effect</span></div><nav><button type="button" data-detach-bottom-panel="midi-effect">Detach</button><button type="button" class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><div class="studio-instrument-content">${content}</div></div></section>`
+}
+function renderMixerInsertList(track = null) {
+  const inserts = track ? [
+    ...(isSoftwareTrack(track) ? (track.midiEffects || []).map((insert)=>({ ...insert, category: 'MIDI' })) : []),
+    ...(track.audioEffects || []).map((insert)=>({ ...insert, category: 'Audio' }))
+  ] : []
+  if (!inserts.length) return '<p>No effects</p>'
+  return inserts.map((insert)=>`<button type="button" class="${insert.enabled === false ? 'is-disabled' : ''}" title="${esc(insert.category)} FX">${esc(insert.name || insert.type || 'Effect')}<small>${esc(insert.category)}</small></button>`).join('')
+}
+function renderMixerChannelStrip(track = null, { stereoOut = false } = {}) {
+  const systemMetronome = track?.id === metronomeSettings.id
+  const color = stereoOut ? '#8cdfff' : systemMetronome ? '#ffd66b' : (track?.color || '#58d4ff')
+  const meterState = stereoOut ? masterAudioBus?.meter : trackAudioChannels.get(track?.id)?.meter
+  const level = clamp(Number(meterState?.level ?? track?.outputLevel) || 0, 0, 1)
+  const peakLevel = clamp(Number(meterState?.peakLevel ?? level) || 0, 0, 1)
+  const volume = stereoOut ? 100 : clamp(Number(track?.volume) || 0, 0, 100)
+  const pan = stereoOut ? 0 : clamp(Number(track?.pan) || 0, -100, 100)
+  const name = stereoOut ? 'Stereo Out' : (track?.name || 'Track')
+  const id = track?.id || ''
+  const selectedClass = systemMetronome ? selectedSystemChannel === 'metronome' ? 'is-selected' : '' : !stereoOut && !selectedSystemChannel && selectedTrackId === id ? 'is-selected' : ''
+  return `<article class="studio-mixer-strip ${stereoOut ? 'studio-mixer-strip--stereo-out' : ''} ${systemMetronome ? 'studio-mixer-strip--metronome' : ''} ${selectedClass}" style="--track-color:${esc(color)};--track-meter-level:${level}" ${systemMetronome ? 'data-mixer-system-channel="metronome"' : id ? `data-mixer-track-strip="${esc(id)}"` : ''}>
+    <span class="studio-mixer-color-strip" aria-hidden="true"></span>
+    <button class="studio-mixer-icon" type="button" ${systemMetronome ? 'data-select-metronome' : id ? `data-track-icon="${esc(id)}"` : 'disabled'} aria-label="${esc(name)} channel">${stereoOut ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 8h16"/><path d="M4 16h16"/><path d="M8 4v16"/><path d="M16 4v16"/></svg>' : systemMetronome ? '♩' : trackTypeIcon(normalizedTrackIconType(track))}</button>
+    <strong title="${esc(name)}">${esc(name)}</strong>
+    <div class="studio-mixer-buttons">
+      <button type="button" ${stereoOut ? 'disabled' : systemMetronome ? 'data-metronome-mute' : `data-track-mute="${esc(id)}"`} class="${track?.muted ? 'is-active' : ''}" aria-label="Mute ${esc(name)}" data-tooltip="Mute">${icon('mute')}</button>
+      <button type="button" ${stereoOut || systemMetronome ? 'disabled' : `data-track-solo="${esc(id)}"`} class="${track?.soloed ? 'is-active' : ''}" aria-label="Solo ${esc(name)}" data-tooltip="Solo">${icon('solo')}</button>
+      <button type="button" ${stereoOut || systemMetronome ? 'disabled' : `data-track-record="${esc(id)}"`} class="${track?.recordArmed ? 'is-active' : ''}" aria-label="Record arm ${esc(name)}" data-tooltip="Record Arm">R</button>
+    </div>
+    <div class="studio-mixer-inserts">${renderMixerInsertList(stereoOut ? null : track)}</div>
+    <div class="studio-mixer-pan"><button class="studio-track-pan" type="button" ${stereoOut ? 'disabled' : systemMetronome ? 'data-metronome-pan' : `data-track-pan="${esc(id)}"`} aria-label="${esc(name)} pan ${Math.round(pan)}" data-tooltip="Pan ${Math.round(pan)}" style="--pan-angle:${(pan / 100) * 135}deg"></button><span ${stereoOut || systemMetronome ? '' : `data-track-pan-readout="${esc(id)}"`}>${esc(formatTrackAutomationValue('pan', pan))}</span></div>
+    <div class="studio-mixer-fader-row"><button type="button" class="studio-mixer-meter ${meterState?.clipped ? 'is-clipped' : ''}" data-mixer-meter="${esc(id || 'master')}" data-meter-clip="${esc(id || 'master')}" aria-label="${esc(name)} output meter; click to clear clip"><i style="height:${Math.round(level * 100)}%"></i><b style="bottom:${Math.round(peakLevel * 100)}%"></b></button><input class="studio-mixer-fader studio-track-volume" ${stereoOut ? 'disabled' : systemMetronome ? 'data-metronome-volume' : `data-track-volume="${esc(id)}"`} type="range" min="0" max="100" value="${volume}" aria-label="${esc(name)} volume"><small class="studio-mixer-volume-readout" ${stereoOut || systemMetronome ? '' : `data-track-volume-readout="${esc(id)}"`}>${Math.round(volume)}%</small></div>
+    <span class="studio-mixer-routing">${stereoOut ? 'Output' : esc(track?.audioOutput || 'Stereo Out')}</span>
+  </article>`
+}
+function renderMixerPanel(motionClass = '') {
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  return `<section class="studio-bottom-panel studio-mixer-panel ${motionClass}"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Mixer</strong><nav><button type="button" data-detach-bottom-panel="mixer">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-mixer-body"><div class="studio-mixer-strips">${renderMixerChannelStrip(null, { stereoOut: true })}${renderMixerChannelStrip(metronomeSettings)}<span class="studio-mixer-divider" aria-hidden="true"></span>${tracks.map((track)=>renderMixerChannelStrip(track)).join('')}</div></div></section>`
+}
+function persistAssetLibraryState() {
+  try { localStorage.setItem(ASSET_LIBRARY_PREF_KEY, JSON.stringify({ selectedSourceId: assetLibraryState.selectedSourceId, search: assetLibraryState.search, activePanel: 'asset-library' })) } catch {}
+}
+async function refreshAssetLibrary({ render = true } = {}) {
+  if (assetLibraryState.loading) return
+  assetLibraryState = { ...assetLibraryState, loading: true, error: '' }
+  if (render) renderEditor()
+  try {
+    await souraAssetLibrary.refresh({ uid: auth.currentUser?.uid || '', currentProjectId: projectState?.id || projectIdFromPath() })
+    assetLibraryState = { ...assetLibraryState, loading: false, loaded: true }
+  } catch (error) {
+    assetLibraryState = { ...assetLibraryState, loading: false, loaded: true, error: error?.message || 'Asset Library could not load.' }
+  }
+  if (render) renderEditor()
+}
+function assetLibraryParentId(id) {
+  if (ASSET_LIBRARY_ROOTS.some((root) => root.id === id)) return ''
+  return souraAssetLibrary.getAsset(id)?.parentId || ''
+}
+function getVisibleAssetLibraryRows() {
+  return souraAssetLibrary.listChildren(assetLibraryState.selectedSourceId || 'primitive', assetLibraryState.search)
+}
+function isPreviewableAsset(asset) {
+  return asset?.kind === 'audio' && asset?.capabilities?.preview !== false
+}
+function renderAssetLibraryPanel(motionClass = '') {
+  const sourceId = assetLibraryState.selectedSourceId || 'primitive'
+  const current = souraAssetLibrary.getAsset(sourceId)
+  const rows = getVisibleAssetLibraryRows()
+  const audition = assetAuditionController.snapshot()
+  const selectedAsset = souraAssetLibrary.getAsset(assetLibraryState.selectedAssetId)
+  const canPreviewSelected = isPreviewableAsset(selectedAsset)
+  const playingSelected = canPreviewSelected && audition.activeAssetId === selectedAsset.id && ['loading', 'playing'].includes(audition.playbackState)
+  const empty = assetLibraryState.loading ? 'Loading assets…' : assetLibraryState.error || (sourceId === 'primitive' ? 'No built-in primitives are registered yet.' : sourceId === 'marketplace' ? 'No marketplace packs installed.' : sourceId === 'user' ? 'Import audio to build your personal library.' : sourceId === 'project' ? 'No reusable audio found in other accessible projects.' : 'This folder is empty.')
+  const style = bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''
+  return `<section class="studio-bottom-panel studio-asset-library ${motionClass}" data-asset-library-panel tabindex="-1"${style}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Asset Library</strong><nav><button type="button" data-refresh-asset-library>Refresh</button><button type="button" data-detach-bottom-panel="asset-library">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body studio-asset-library-body"><aside class="studio-asset-library-sources" aria-label="Asset sources">${ASSET_LIBRARY_ROOTS.map((root) => `<button type="button" data-asset-folder="${root.id}" class="${sourceId === root.id ? 'is-active' : ''}">${esc(root.name)}</button>`).join('')}</aside><section class="studio-asset-library-content"><div class="studio-asset-library-toolbar">${current ? `<button type="button" data-asset-folder="${esc(assetLibraryParentId(sourceId))}">← Back</button><strong>${esc(current.name)}</strong>` : '<strong>Browse assets</strong>'}<input type="search" data-asset-search value="${esc(assetLibraryState.search)}" placeholder="Search this folder" aria-label="Search assets"><button type="button" data-preview-selected-asset title="Preview selected asset (Space)" ${canPreviewSelected ? '' : 'disabled'}>${playingSelected ? '■ Stop' : '▶ Preview'}</button><button type="button" data-import-user-asset>Import Audio</button><input type="file" data-user-asset-file accept="audio/*,.wav,.aif,.aiff,.mp3,.m4a,.aac,.ogg,.oga,.webm,.flac" hidden></div><div class="studio-asset-library-list" role="listbox" aria-label="Assets">${rows.length ? rows.map((asset) => { const selected = assetLibraryState.selectedAssetId === asset.id; const playing = audition.activeAssetId === asset.id && ['loading', 'playing'].includes(audition.playbackState); return `<article role="option" aria-selected="${String(selected)}" tabindex="${selected ? '0' : '-1'}" class="studio-asset-row ${selected ? 'is-selected' : ''} ${playing ? 'is-playing' : ''}" data-asset-id="${esc(asset.id)}" data-asset-kind="${asset.kind}" draggable="${asset.kind === 'audio' && asset.capabilities?.dragToTimeline !== false}"><span class="studio-asset-row-icon">${asset.kind === 'audio' ? '♪' : '▸'}</span><span><strong title="${esc(asset.name)}">${esc(asset.name)}</strong><small>${asset.kind === 'audio' ? `${esc(asset.audio?.format || 'audio')}${asset.audio?.duration ? ` · ${Number(asset.audio.duration).toFixed(1)}s` : ''}` : esc(asset.kind)}</small></span>${isPreviewableAsset(asset) ? `<button type="button" data-preview-asset aria-label="${playing ? 'Stop' : 'Preview'} ${esc(asset.name)}">${playing ? '■' : '▶'}</button>` : ''}</article>` }).join('') : `<p class="studio-asset-library-empty">${esc(empty)}</p>`}</div></section></div></section>`
+}
+async function resolveAssetLibraryFile(assetId) {
+  const resolved = await souraAssetLibrary.resolveAsset(assetId)
+  if (resolved.file) return resolved.file
+  if (!resolved.url) throw new Error('Audio asset could not be resolved.')
+  const response = await fetch(resolved.url)
+  if (!response.ok) throw new Error('Audio asset download failed.')
+  const blob = await response.blob()
+  return new File([blob], resolved.fileName || souraAssetLibrary.getAsset(assetId)?.name || 'asset.wav', { type: resolved.contentType || blob.type || 'audio/*' })
+}
+function getAssetOriginMetadata(asset = {}) {
+  return { assetId: String(asset.id || ''), sourceType: String(asset.sourceType || ''), name: String(asset.name || ''), productId: String(asset.source?.productId || ''), packId: String(asset.source?.sourcePackId || asset.source?.packId || ''), projectId: String(asset.source?.projectId || ''), publisherId: String(asset.source?.publisherId || ''), sourceFileId: String(asset.source?.sourceFileId || ''), archivePath: String(asset.source?.archivePath || ''), contentHash: String(asset.source?.contentHash || ''), version: String(asset.source?.version || '') }
+}
+async function insertAssetLibraryAudio(assetId, { trackId = selectedTrackId, newTrackIndex = tracks.length, timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)) } = {}) {
+  const asset = souraAssetLibrary.getAsset(assetId)
+  try { await createAudioRegionFromFile({ file: await resolveAssetLibraryFile(assetId), trackId, newTrackIndex, timelineStartBeats, source: 'asset-library', origin: getAssetOriginMetadata(asset) }) }
+  catch (error) { recordingStatus = error?.message || 'Asset could not be inserted.'; updateEditorTitleStatus() }
+}
+async function createAssetAuditionSource(asset) {
+  const ctx = getAudioContext()
+  if (ctx.state === 'suspended') await ctx.resume()
+  let buffer = assetAuditionBufferCache.get(asset.id)
+  if (!buffer) {
+    const file = await resolveAssetLibraryFile(asset.id)
+    buffer = await ctx.decodeAudioData((await file.arrayBuffer()).slice(0))
+    assetAuditionBufferCache.set(asset.id, buffer)
+  }
+  const source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.connect(getAssetAuditionGain())
+  let ended = null
+  let started = false
+  source.onended = () => { try { source.disconnect() } catch {}; ended?.() }
+  return {
+    play: () => { if (!started) { started = true; source.start() }; startTrackMeterLoop() },
+    stop: () => { if (started) { try { source.stop() } catch {} }; try { source.disconnect() } catch {} },
+    onEnded: (callback) => { ended = callback }
+  }
+}
+function updateAssetAuditionDom(state = assetAuditionController.snapshot()) {
+  app.querySelectorAll('[data-asset-id]').forEach((row) => {
+    const selected = row.dataset.assetId === state.selectedAssetId
+    const playing = row.dataset.assetId === state.activeAssetId && ['loading', 'playing'].includes(state.playbackState)
+    row.classList.toggle('is-selected', selected)
+    row.classList.toggle('is-playing', playing)
+    row.setAttribute('aria-selected', String(selected))
+    row.tabIndex = selected ? 0 : -1
+    const button = row.querySelector('[data-preview-asset]')
+    if (button) { button.textContent = playing ? '■' : '▶'; button.setAttribute('aria-label', `${playing ? 'Stop' : 'Preview'} ${souraAssetLibrary.getAsset(row.dataset.assetId)?.name || 'asset'}`) }
+  })
+  const selected = souraAssetLibrary.getAsset(state.selectedAssetId)
+  const toolbar = app.querySelector('[data-preview-selected-asset]')
+  if (toolbar) {
+    const playing = state.activeAssetId === state.selectedAssetId && ['loading', 'playing'].includes(state.playbackState)
+    toolbar.disabled = !isPreviewableAsset(selected)
+    toolbar.textContent = playing ? '■ Stop' : '▶ Preview'
+  }
+}
+async function toggleAssetLibraryAudition(assetId, { autoplayNavigation = true } = {}) {
+  const asset = souraAssetLibrary.getAsset(assetId)
+  if (!isPreviewableAsset(asset)) return false
+  assetLibraryState = { ...assetLibraryState, selectedAssetId: asset.id }
+  assetAuditionController.selectAsset(asset)
+  try { return await assetAuditionController.toggle(asset, { autoplayNavigation }) }
+  catch (error) { recordingStatus = error?.message || 'Asset preview failed.'; updateEditorTitleStatus(); return false }
+}
+let scoreController = null
+let scoreMountGeneration = 0
+let scoreMountedRegionId = null
+function getScoreRegion() {
+  return midiRegions.find(region => region.id === selectedMidiRegionId)
+    || midiRegions.find(region => region.trackId === selectedTrackId && region.type !== 'audio')
+    || null
+}
+function mountScorePanel() {
+  const root = app.querySelector('[data-score-editor-root]')
+  if (!root || activeBottomPanel !== 'score') return
+  const generation = ++scoreMountGeneration
+  scoreController?.destroy()
+  scoreController = null
+  const source = getScoreRegion()
+  scoreMountedRegionId = source?.id || null
+  if (source?.type !== 'audio' && source) midiRollState = { regionId: source.id }
+  import('./studio/score/ScoreEditor.js').then(({ mountScoreEditor }) => {
+    if (generation !== scoreMountGeneration || !root.isConnected || activeBottomPanel !== 'score') return
+    const select = (index, additive = false) => {
+      activeCommandContext = 'score'
+      const previous = getSelectedMidiRollNoteIndices(source)
+      midiRollSelectedNoteIndices = index == null ? [] : additive ? (previous.includes(index) ? previous.filter(i => i !== index) : [...previous,index]) : [index]
+      midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    }
+    scoreController = mountScoreEditor(root, {
+      region: () => source,
+      context: () => ({ startBeat: Number(source?.startBeat) || 0, endBeat: Number(source?.endBeat) || (Number(source?.startBeat) || 0) + 4, timeSignatures: normalizeTimeSignatureMap(), keySignatures: normalizeKeySignatureMap() }),
+      secondsToProjectBeat: audioRegionLocalSecondsToProjectBeat,
+      selection: () => getSelectedMidiRollNoteIndices(source), select,
+      selectAll: () => { midiRollSelectedNoteIndices = (source?.notes || []).map((_,i) => i); midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null },
+      edit: patch => commitHistoryMutation('score-edit-notes', () => editScoreNotes(source, getSelectedMidiRollNoteIndices(source), patch)),
+      move: (beat,pitch) => commitHistoryMutation('score-move-notes', () => moveScoreNotes(source, getSelectedMidiRollNoteIndices(source), beat, pitch)),
+      insert: note => commitHistoryMutation('score-insert-note', () => select(insertScoreNote(source,note,makeInsertId('note')))),
+      settings: settings => commitHistoryMutation('score-presentation', () => { source.score = normalizeRegionScore({ ...source.score, settings }) }, { render: false }),
+      delete: deleteSelectedMidiNote, copy: copySelectedMidiRollNotes, paste: pasteSelectedMidiRollNotes,
+      cut: () => { if (copySelectedMidiRollNotes()) deleteSelectedMidiNote() },
+      undo: undoDawEdit, redo: redoDawEdit,
+      openSource: () => { if (source?.type === 'audio') openRegionEditorForRegion(source.id); else openBottomPanel('midi-roll') },
+      playhead: () => ({ beat: xToBeat(timelineState.playheadX), playing: isPlaying })
+    })
+    scoreController.updatePlayhead(xToBeat(timelineState.playheadX), isPlaying)
+  }).catch(error => { if (root.isConnected && generation === scoreMountGeneration) { root.textContent = 'Score Editor could not load. Close and reopen to retry.'; console.error('Score Editor',error) } })
+}
+function renderScorePanel(motionClass = '') {
+  return `<section class="studio-bottom-panel studio-score-editor ${motionClass}"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>Score Editor</strong><nav><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close Score Editor">Close</button></nav></header><div class="soura-score-root" data-score-editor-root><p>Loading notation…</p></div></section>`
+}
+
+function renderBottomPanel(panel,motionClass=''){
+  if(panel==='score') return renderScorePanel(motionClass)
+  if(panel==='asset-library'||panel==='loops') return renderAssetLibraryPanel(motionClass)
+  if(panel==='instrument') return renderInstrumentPanel().replace('studio-bottom-panel studio-instrument-panel', `studio-bottom-panel studio-instrument-panel ${motionClass}`.trim())
+  if(panel==='midi-roll') return renderMidiRollPanel(motionClass)
+  if(panel==='midi-effect') return renderMidiEffectEditorPanel(motionClass)
+  if(panel==='mixer') return renderMixerPanel(motionClass)
+  const t={collab:['Collaboration','Project presence, comments, and invites will appear here.']}[panel]||['Panel','']
+  return `<section class="studio-bottom-panel ${motionClass}"${bottomPanelHeightPx ? ` style="height:${bottomPanelHeightPx}px"` : ''}><span class="studio-bottom-panel-resize" data-bottom-panel-resize></span><header class="studio-bottom-panel-header"><strong>${t[0]}</strong><nav><button type="button" data-detach-bottom-panel="${esc(panel)}">Detach</button><button class="studio-bottom-panel-close" data-close-bottom-panel aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button></nav></header><div class="studio-bottom-panel-body"><p>${t[1]}</p></div></section>`
+}
+
+function makeInsertId(prefix = 'insert') { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}` }
+function makeTrackId() { return makeInsertId('track') }
+function normalizeAudioEffectInsert(insert = {}) {
+  const type = String(insert?.type || '')
+  const manifest = getAudioEffectManifest(type)
+  if (!manifest) return null
+  return {
+    id: String(insert.id || makeInsertId(type)),
+    type,
+    name: insert.name || manifest.name,
+    enabled: insert.enabled !== false,
+    params: { ...getAudioEffectDefaultParams(type), ...(insert.params || {}) }
+  }
+}
+function serializeAudioEffects(list = []) {
+  return (Array.isArray(list) ? list : [])
+    .map(normalizeAudioEffectInsert)
+    .filter(Boolean)
+    .map((insert) => ({
+      id: insert.id,
+      type: insert.type,
+      name: insert.name,
+      enabled: insert.enabled !== false,
+      params: { ...(insert.params || {}) }
+    }))
+}
+function cloneInsertList(list = []) {
+  return Array.isArray(list) ? list.map((item)=>({ ...item, id: makeInsertId(item.type || 'insert'), params: { ...(item.params || {}) } })) : []
+}
+function ensureTrackInsertState(track) {
+  if (!track) return null
+  track.type = normalizeTrackType(track.type)
+  track.icon = normalizedTrackIconType(track)
+  if (isAudioTrack(track)) {
+    track.instrument = null
+    track.midiEffects = []
+  }
+  if (!Array.isArray(track.midiEffects)) track.midiEffects = []
+  if (!Array.isArray(track.audioEffects)) track.audioEffects = []
+  track.audioEffects = track.audioEffects.map(normalizeAudioEffectInsert).filter(Boolean)
+  if (track.instrument && typeof track.instrument !== 'object') track.instrument = null
+  ensureTrackAutomation(track)
+  return track
+}
+function nextTrackColor(index = tracks.length) {
+  const colors = [
+    ['#ff4d5d', 'rgba(255, 77, 93, 0.26)'],
+    ['#58d4ff', 'rgba(88, 212, 255, 0.24)'],
+    ['#8f78ff', 'rgba(143, 120, 255, 0.24)'],
+    ['#62e0aa', 'rgba(98, 224, 170, 0.22)'],
+    ['#ffb45d', 'rgba(255, 180, 93, 0.22)']
+  ]
+  const [color, colorSoft] = colors[index % colors.length]
+  return { color, colorSoft }
+}
+function openAddTrackModal() {
+  addTrackModalOpen = true
+  renderEditor()
+}
+function closeAddTrackModal() {
+  addTrackModalOpen = false
+  renderEditor()
+}
+function addTrack({ sourceTrack = null, trackType = 'software' } = {}) {
+  const before = captureDawSnapshot()
+  const id = makeTrackId()
+  const colors = sourceTrack ? { color: sourceTrack.color, colorSoft: sourceTrack.colorSoft } : nextTrackColor(tracks.length)
+  const base = sourceTrack ? ensureTrackInsertState(sourceTrack) : null
+  const type = normalizeTrackType(base?.type || trackType)
+  const instrument = type === 'software' && base?.instrument ? { ...base.instrument, id: makeInsertId('instrument'), pluginInstanceId: `${base.instrument.type}:${id}`, params: { ...(base.instrument.params || {}) } } : null
+  const track = {
+    id,
+    name: base ? `${base.name} Copy` : (type === 'audio' ? `Audio ${tracks.length + 1}` : `Software ${tracks.length + 1}`),
+    type,
+    color: colors.color,
+    colorSoft: colors.colorSoft,
+    icon: type === 'audio' ? 'audio' : 'instrument',
+    muted: false,
+    soloed: false,
+    recordArmed: false,
+    automationOpen: Boolean(base?.automationOpen),
+    volume: Number.isFinite(Number(base?.volume)) ? Number(base.volume) : 72,
+    pan: Number.isFinite(Number(base?.pan)) ? Number(base.pan) : 0,
+    outputLevel: 0,
+    midiEffects: type === 'software' ? cloneInsertList(base?.midiEffects || []) : [],
+    instrument,
+    audioEffects: cloneInsertList(base?.audioEffects || [])
+  }
+  tracks.push(track)
+  selectedTrackId = id
+  warmTrackInstrument(track, { reason: sourceTrack ? 'duplicate-track' : 'add-track' })
+  activeLeftPanel = 'inspector'
+  inspectorMenu = null
+  trackMenuState = null
+  addTrackModalOpen = false
+  pushHistory(sourceTrack ? 'duplicate-track' : 'add-track', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function getAudioImportTrackName(fileName = '') {
+  const name = String(fileName || '').replace(/\.[^.]+$/, '').trim()
+  return (name || 'Imported Audio').slice(0, 80)
+}
+function createAudioTrackForImport(fileName = '', { insertIndex = tracks.length } = {}) {
+  const id = makeTrackId()
+  const colors = nextTrackColor(tracks.length)
+  const track = ensureTrackInsertState({
+    id,
+    name: getAudioImportTrackName(fileName),
+    type: 'audio',
+    color: colors.color,
+    colorSoft: colors.colorSoft,
+    icon: 'audio',
+    muted: false,
+    soloed: false,
+    recordArmed: false,
+    automationOpen: false,
+    volume: 72,
+    pan: 0,
+    outputLevel: 0,
+    midiEffects: [],
+    instrument: null,
+    audioEffects: []
+  })
+  tracks.splice(clamp(Math.round(Number(insertIndex) || 0), 0, tracks.length), 0, track)
+  selectedTrackId = track.id
+  activeLeftPanel = 'inspector'
+  return track
+}
+function duplicateSelectedTrack() {
+  const track = ensureTrackInsertState(getSelectedTrack())
+  if (!track) return
+  addTrack({ sourceTrack: track })
+}
+function deleteSelectedTrack() {
+  const index = tracks.findIndex((track)=>track.id===selectedTrackId)
+  if (index < 0 || tracks.length <= 1) return
+  if (!window.confirm(`Delete "${tracks[index].name}"? This removes the track from this project.`)) return
+  const before = captureDawSnapshot()
+  const [removed] = tracks.splice(index, 1)
+  if (removed?.instrument?.pluginInstanceId) dawWindowManager.closeWindow(removed.instrument.pluginInstanceId)
+  ;(removed?.audioEffects || []).forEach((insert) => dawWindowManager.closeWindow(getAudioEffectWindowInstanceId(removed.id, insert.id)))
+  disposeTrackAudioChannel(removed.id)
+  midiRegions = midiRegions.filter((region)=>region.trackId !== removed.id)
+  selectedTrackId = tracks[Math.max(0, index - 1)]?.id || tracks[0]?.id || ''
+  trackMenuState = null
+  inspectorMenu = null
+  pushHistory('delete-track', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function renameSelectedTrack(name = '') {
+  const track = getSelectedTrack()
+  const nextName = String(name || '').trim()
+  if (!track || !nextName) return
+  const before = captureDawSnapshot()
+  track.name = nextName.slice(0, 80)
+  renameTrackState = null
+  pushHistory('rename-track', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function reorderTrack(trackId = '', targetIndex = 0, before = captureDawSnapshot()) {
+  const fromIndex = tracks.findIndex((track) => track.id === trackId)
+  if (fromIndex < 0) return false
+  const next = moveArrayItem(tracks, fromIndex, targetIndex)
+  if (next.every((track, index) => track === tracks[index])) return false
+  tracks.splice(0, tracks.length, ...next)
+  pushHistory('reorder-track', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditorPreservingArrangementScroll()
+  return true
+}
+function cycleSelectedTrackColor() {
+  const track = getSelectedTrack()
+  if (!track) return
+  const colors = nextTrackColor((tracks.findIndex((item)=>item.id===track.id) || 0) + 1)
+  track.color = colors.color
+  track.colorSoft = colors.colorSoft
+  scheduleEditorSave()
+  renderEditor()
+}
+function updateTrackColorPreviewDom(track, changedRegionIds = []) {
+  if (!track) return
+  app.querySelector(`[data-track-row="${CSS.escape(track.id)}"]`)?.style.setProperty('--track-color', track.color)
+  app.querySelector(`[data-track-row="${CSS.escape(track.id)}"]`)?.style.setProperty('--track-color-soft', track.colorSoft)
+  app.querySelector(`[data-mixer-track-strip="${CSS.escape(track.id)}"]`)?.style.setProperty('--track-color', track.color)
+  changedRegionIds.forEach((regionId) => app.querySelector(`[data-midi-region="${CSS.escape(regionId)}"]`)?.style.setProperty('--region-color', track.color))
+}
+function beginTrackColorSession(track, position = {}) {
+  if (!track) return
+  colorPickerState = { ...position, trackId: track.id, committedColor: track.color || '#58d4ff', previewColor: track.color || '#58d4ff', before: captureDawSnapshot() }
+}
+function previewSelectedTrackColor(color = '') {
+  const track = tracks.find((item) => item.id === colorPickerState?.trackId)
+  const normalized = /^#[0-9a-f]{6}$/i.test(String(color)) ? String(color) : ''
+  if (!track || !normalized) return
+  colorPickerState.previewColor = normalized
+  updateTrackColorPreviewDom(track, applyInheritedTrackColor(track, midiRegions, normalized))
+}
+function commitSelectedTrackColor({ render = true } = {}) {
+  const session = colorPickerState
+  if (!session) return false
+  const track = tracks.find((item) => item.id === session.trackId)
+  if (track) applyInheritedTrackColor(track, midiRegions, session.previewColor || session.committedColor)
+  colorPickerState = null
+  pushHistory('color-track', session.before, captureDawSnapshot())
+  scheduleEditorSave()
+  if (render) renderEditorPreservingArrangementScroll()
+  return true
+}
+function cancelSelectedTrackColor({ render = true } = {}) {
+  const session = colorPickerState
+  const track = tracks.find((item) => item.id === session?.trackId)
+  if (track && session?.committedColor) applyInheritedTrackColor(track, midiRegions, session.committedColor)
+  colorPickerState = null
+  if (render) renderEditorPreservingArrangementScroll()
+}
+function getClampedTrackMenuPosition(clientX = 0, clientY = 0) {
+  const width = 210
+  const height = 250
+  const margin = 8
+  const appRect = app?.querySelector?.('.studio-editor-page')?.getBoundingClientRect?.() || { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight }
+  return {
+    x: clamp(clientX, appRect.left + margin, Math.max(appRect.left + margin, appRect.right - width - margin)),
+    y: clamp(clientY, appRect.top + margin, Math.max(appRect.top + margin, appRect.bottom - height - margin))
+  }
+}
+function createInsert(type, catalog = []) {
+  const item = catalog.find((entry) => entry.type === type) || catalog[0]
+  const params = catalog === AUDIO_EFFECT_TYPES ? getAudioEffectDefaultParams(item?.type) : {}
+  return item ? { id: makeInsertId(item.type), type: item.type, name: item.name, enabled: true, params } : null
+}
+function createTrackInstrument(pluginType = DAW_PLUGIN_TYPES.melogicWavetable, trackId = selectedTrackId) {
+  const manifest = getDawPluginManifest(pluginType)
+  return {
+    id: makeInsertId('instrument'),
+    type: pluginType,
+    name: manifest?.name || 'Melogic Wavetable',
+    enabled: true,
+    pluginInstanceId: `${pluginType}:${trackId || 'track'}`,
+    params: {}
+  }
+}
+function getAudioEffectWindowInstanceId(trackId = '', insertId = '') {
+  return `audio-effect:${trackId || 'track'}:${insertId || 'insert'}`
+}
+function getAudioEffectInsertFromWindow(pluginWindow = {}) {
+  const track = pluginWindow.trackId === metronomeSettings.id ? metronomeSettings : ensureTrackInsertState(tracks.find((item)=>item.id === pluginWindow.trackId))
+  const insertId = String(pluginWindow.pluginInstanceId || '').split(':').pop()
+  const insert = track?.audioEffects?.find((item)=>item.id === insertId)
+  return { track, insert }
+}
+function coerceAudioEffectParam(effectType = '', param = '', value = null) {
+  const defaults = getAudioEffectDefaultParams(effectType)
+  if (typeof defaults[param] === 'boolean') return value === true || value === 'true' || value === '1'
+  if (typeof defaults[param] === 'number') return Number.isFinite(Number(value)) ? Number(value) : defaults[param]
+  return value
+}
+function getDelayDivisionSeconds(division = '1/8', bpm = projectState?.bpm || 140) {
+  const quarter = 60 / clamp(Number(bpm) || 140, 20, 300)
+  const value = String(division || '1/8').toUpperCase()
+  const dotted = value.endsWith('D')
+  const triplet = value.endsWith('T')
+  const denominator = Math.max(1, Number(value.replace(/[^0-9]/g, '')) || 8)
+  const base = quarter * (4 / denominator)
+  const multiplier = dotted ? 1.5 : triplet ? (2 / 3) : 1
+  return clamp(base * multiplier, 0.03, 1.5)
+}
+function updateAudioEffectParamFromWindow(pluginWindow = {}, param = '', value = null) {
+  const effectType = getAudioEffectTypeFromPlugin(pluginWindow.pluginType)
+  const { track, insert } = getAudioEffectInsertFromWindow(pluginWindow)
+  if (!track || !insert || !effectType || !param) return
+  const coerced = coerceAudioEffectParam(effectType, param, value)
+  insert.params = {
+    ...getAudioEffectDefaultParams(effectType),
+    ...(insert.params || {}),
+    [param]: coerced
+  }
+  if (effectType === 'delay' && insert.params.sync && (param === 'sync' || param === 'noteDivision')) {
+    insert.params.time = getDelayDivisionSeconds(insert.params.noteDivision)
+    pluginWindow.params = { ...(pluginWindow.params || {}), time: insert.params.time }
+  }
+  rebuildTrackAudioEffectsChain(track.id)
+  scheduleEditorSave()
+}
+function openAudioEffectWindow(track = getSelectedTrack(), insertId = '') {
+  const target = ensureTrackInsertState(track)
+  const insert = target?.audioEffects?.find((item)=>item.id === insertId)
+  const pluginType = getAudioEffectPluginType(insert?.type)
+  if (!target || !insert || !pluginType) return
+  insert.params = { ...getAudioEffectDefaultParams(insert.type), ...(insert.params || {}) }
+  dawWindowManager.openPlugin({
+    pluginType,
+    trackId: target.id,
+    instanceId: getAudioEffectWindowInstanceId(target.id, insert.id),
+    params: insert.params,
+    forceCenter: true
+  })
+}
+function renderInsertMenu({ menuId, items, action }) {
+  if (inspectorMenu !== menuId) return ''
+  const floating = menuId === 'instrument'
+  const pos = floating ? (inspectorMenuPosition || getClampedFloatingPosition(window.innerWidth * 0.5, window.innerHeight * 0.42, 260, 210)) : null
+  const style = floating ? ` style="left:${Math.round(pos.x)}px;top:${Math.round(pos.y)}px"` : ''
+  return `<div class="studio-inspector-menu ${floating ? 'studio-inspector-menu--floating' : ''}" data-inspector-menu="${menuId}"${style}>${items.map((item)=>`<button type="button" data-inspector-menu-choice="${action}" data-insert-type="${item.type}">${item.name}</button>`).join('')}${floating ? '<button type="button" data-inspector-menu-choice="native-vst3-browser" data-insert-type="native-vst3">Installed VST3…</button><button type="button" data-inspector-menu-choice="instrument-empty" data-insert-type="">No Instrument</button>' : ''}</div>`
+}
+function renderInsertSlot(insert, section, index = 0, count = 1) {
+  const canEdit = section === 'midi' || (section === 'audio' && isImplementedAudioEffect(insert.type))
+  return `<article class="studio-insert-slot ${insert.enabled ? 'is-enabled' : 'is-disabled'}" data-insert-slot="${esc(insert.id)}" data-insert-section="${esc(section)}">
+    <div class="studio-insert-slot-label"><strong>${esc(insert.name)}</strong><span>${insert.enabled ? 'Enabled' : 'Disabled'}</span></div>
+    <div class="studio-insert-slot-actions">
+      <button type="button" class="studio-insert-power ${insert.enabled ? 'is-active' : ''}" data-toggle-insert="${section}" data-insert-id="${insert.id}" aria-label="Toggle ${esc(insert.name)}">${insert.enabled ? 'On' : 'Off'}</button>
+      <button type="button" data-edit-insert="${section}" data-insert-id="${insert.id}" ${canEdit ? '' : 'disabled'}>${section === 'audio' ? 'Open' : 'Edit'}</button>
+      <button type="button" data-toggle-inspector-menu="${section === 'midi' ? 'midi-effects' : 'audio-effects'}">Change</button>
+      <button type="button" data-remove-insert="${section}" data-insert-id="${insert.id}">Remove</button>
+      <span class="studio-insert-order-controls"><button type="button" data-move-insert="-1" data-insert-section="${section}" data-insert-id="${insert.id}" ${index <= 0 ? 'disabled' : ''} aria-label="Move ${esc(insert.name)} earlier">▲</button><button type="button" data-move-insert="1" data-insert-section="${section}" data-insert-id="${insert.id}" ${index >= count - 1 ? 'disabled' : ''} aria-label="Move ${esc(insert.name)} later">▼</button><button type="button" class="studio-insert-drag-handle" draggable="true" data-insert-drag-handle="${esc(insert.id)}" data-insert-section="${section}" aria-label="Drag ${esc(insert.name)} to reorder">⋮</button></span>
+    </div>
+  </article>`
+}
+function renderInspectorSection({ title, kicker, emptyText, items, section, addLabel, menuId, menuItems, action }) {
+  return `<section class="studio-inspector-section">
+    <header><div><span>${kicker}</span><h4>${title}</h4></div><button type="button" data-toggle-inspector-menu="${menuId}">${addLabel}</button></header>
+    <div class="studio-insert-list">${items.length ? items.map((insert, index)=>renderInsertSlot(insert, section, index, items.length)).join('') : `<p class="studio-inspector-empty">${emptyText}</p>`}</div>
+    ${renderInsertMenu({ menuId, items: menuItems, action })}
+  </section>`
+}
+function getSelectedInsertOwner() {
+  return selectedSystemChannel === 'metronome' ? metronomeSettings : ensureTrackInsertState(getSelectedTrack())
+}
+function reorderInsert(owner, section = 'audio', insertId = '', destination = 0, before = captureDawSnapshot()) {
+  const key = section === 'midi' ? 'midiEffects' : 'audioEffects'
+  const list = owner?.[key]
+  if (!Array.isArray(list)) return false
+  const fromIndex = list.findIndex((insert) => insert.id === insertId)
+  if (fromIndex < 0) return false
+  owner[key] = moveArrayItem(list, fromIndex, destination)
+  if (section === 'audio') rebuildTrackAudioEffectsChain(owner.id)
+  pushHistory(`reorder-${section}-effect`, before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditorPreservingArrangementScroll()
+  return true
+}
+function renderInstrumentSlot(track) {
+  const instrument = track.instrument
+  const instruments = listDawInstruments()
+  if (!instrument) {
+    return `<article class="studio-instrument-slot is-empty"><div class="studio-insert-slot-label"><strong>No instrument loaded</strong><span>Empty</span></div><div class="studio-instrument-slot-actions"><button type="button" data-toggle-inspector-menu="instrument">Choose</button></div></article>${renderInsertMenu({ menuId: 'instrument', items: instruments.map((item)=>({ type: item.id, name: item.name })), action: 'instrument' })}`
+  }
+  const canEdit = instrument.type !== DAW_PLUGIN_TYPES.librarySampler
+  return `<article class="studio-instrument-slot ${instrument.enabled ? 'is-enabled' : 'is-disabled'}">
+    <div class="studio-instrument-slot-main studio-insert-slot-label"><strong>${esc(instrument.name)}</strong><span>${instrument.enabled ? 'Enabled' : 'Disabled'} · ${esc(track.name)}</span></div>
+    <div class="studio-instrument-slot-actions">
+      <button type="button" class="${instrument.enabled ? 'is-active' : ''}" data-toggle-track-instrument>${instrument.enabled ? 'On' : 'Off'}</button>
+      ${canEdit ? '<button type="button" data-edit-track-instrument>Edit</button>' : '<button type="button" disabled title="Library instruments are managed from the Library.">Library</button>'}
+      <button type="button" data-toggle-inspector-menu="instrument">Change</button>
+      <button type="button" data-remove-track-instrument>Remove</button>
+    </div>
+    ${renderInsertMenu({ menuId: 'instrument', items: instruments.map((item)=>({ type: item.id, name: item.name })), action: 'instrument' })}
+  </article>`
+}
+function renderChannelStripSettings(track) {
+  const ctx = audioContext
+  const detailOpen = (id, defaultOpen = false) => isChannelSectionOpen(id, defaultOpen) ? 'open' : ''
+  const selected = (value, expected) => String(value || '') === String(expected) ? 'selected' : ''
+  const routingControls = isAudioTrack(track)
+    ? `<label>Audio Input<select data-channel-setting="audioInput"><option ${selected(track.audioInput, 'Browser default')}>Browser default</option><option disabled>Interface input selection</option></select></label><label>Audio Output<select data-channel-setting="audioOutput"><option ${selected(track.audioOutput, 'Stereo Out')}>Stereo Out</option><option disabled>Bus 1</option><option disabled>Bus 2</option></select></label><label class="studio-channel-toggle"><input data-channel-setting="monitor" type="checkbox" ${track.monitor ? 'checked' : ''}>Monitor Input</label>`
+    : `<label>MIDI Input<select data-channel-setting="midiInput"><option ${selected(track.midiInput, 'All Inputs')}>All Inputs</option><option ${selected(track.midiInput, 'Computer Keyboard')}>Computer Keyboard</option><option disabled>Web MIDI Device</option></select></label><label>MIDI Channel<select data-channel-setting="midiChannel"><option ${selected(track.midiChannel, 'All')}>All</option>${Array.from({length:16},(_,i)=>`<option ${selected(track.midiChannel, i+1)}>${i+1}</option>`).join('')}</select></label><label>Audio Output<select data-channel-setting="audioOutput"><option ${selected(track.audioOutput, 'Stereo Out')}>Stereo Out</option><option disabled>Bus 1</option><option disabled>Bus 2</option></select></label><label class="studio-channel-toggle"><input data-channel-setting="monitor" type="checkbox" ${track.monitor ? 'checked' : ''}>Monitor Input</label>`
+  const performanceControls = isAudioTrack(track)
+    ? '<p class="studio-channel-hint">Audio tracks record and play clips directly. MIDI transpose, velocity, and quantize controls apply to software tracks.</p>'
+    : `<label>Transpose<input data-channel-setting="transpose" type="number" min="-48" max="48" value="${Number(track.transpose || 0)}"></label><label>Octave Shift<input data-channel-setting="octaveShift" type="number" min="-4" max="4" value="${Number(track.octaveShift || 0)}"></label><label>Velocity Offset<input data-channel-setting="velocityOffset" type="number" min="-64" max="64" value="${Number(track.velocityOffset || 0)}"></label><label>Quantize Input<select data-channel-setting="quantize"><option ${selected(track.quantize, 'Off')}>Off</option><option ${selected(track.quantize, '1/4')}>1/4</option><option ${selected(track.quantize, '1/8')}>1/8</option><option ${selected(track.quantize, '1/16')}>1/16</option><option ${selected(track.quantize, '1/32')}>1/32</option></select></label>`
+  const safetyControls = isAudioTrack(track)
+    ? '<button type="button" data-reset-track-audio>Reset Track Audio Engine</button><p class="studio-channel-hint">Stop recording before changing browser input permissions.</p>'
+    : `<button type="button" data-stop-stuck-notes>Stop Stuck Notes</button><button type="button" data-reset-track-audio>Reset Track Audio Engine</button><label class="studio-channel-toggle"><input data-disable-track-instrument type="checkbox" ${track.instrument?.enabled === false ? 'checked' : ''}>Disable instrument on track</label>`
+  return `<section class="studio-inspector-section studio-channel-strip-settings">
+    <h4 class="studio-inspector-divider"><span>Channel Strip Settings</span></h4>
+    <div class="studio-channel-settings-scroll">
+      <details data-channel-accordion="identity" ${detailOpen('identity', true)}><summary>Track Identity</summary><label>Name<input data-channel-setting="name" value="${esc(track.name)}"></label><label>Color<input data-channel-setting="color" type="color" value="${esc(track.color || '#58d4ff')}"></label><label>Notes<textarea data-channel-setting="notes" placeholder="Track notes">${esc(track.notes || '')}</textarea></label></details>
+      <details data-channel-accordion="routing" ${detailOpen('routing', true)}><summary>Routing</summary>${routingControls}</details>
+      <details data-channel-accordion="performance" ${detailOpen('performance')}><summary>Performance</summary>${performanceControls}</details>
+      <details data-channel-accordion="audio" ${detailOpen('audio')}><summary>Channel Audio</summary><label>Volume<input data-track-volume="${track.id}" type="range" min="0" max="100" value="${track.volume}"></label><label>Pan<input data-channel-setting="pan" type="range" min="-100" max="100" step="1" value="${track.pan}"></label><label>Gain Trim<input data-channel-setting="gainTrim" type="range" min="-24" max="24" step="0.5" value="${Number(track.gainTrim || 0)}"></label><label>Meter Mode<select data-channel-setting="meterMode"><option ${selected(track.meterMode, 'Peak + RMS')}>Peak + RMS</option><option ${selected(track.meterMode, 'Peak')}>Peak</option><option ${selected(track.meterMode, 'RMS')}>RMS</option></select></label></details>
+      <details data-channel-accordion="latency" ${detailOpen('latency')}><summary>Latency / Browser Audio</summary><p>Engine: ${ctx ? ctx.state : 'Not started'}</p><p>Sample rate: ${ctx?.sampleRate ? `${ctx.sampleRate} Hz` : 'Not available'}</p><p>Base latency: ${ctx?.baseLatency ? `${Math.round(ctx.baseLatency * 1000)} ms` : 'Not available'}</p><p>Output latency: ${ctx?.outputLatency ? `${Math.round(ctx.outputLatency * 1000)} ms` : 'Not available'}</p><label>MIDI latency compensation<input data-channel-setting="midiLatencyMs" type="number" min="0" max="500" value="${Number(track.midiLatencyMs || 0)}"></label></details>
+      <details data-channel-accordion="regions" ${detailOpen('regions')}><summary>Region Defaults</summary><label>Default Region Color<select data-channel-setting="regionColorMode"><option ${selected(track.regionColorMode, 'Track color')}>Track color</option><option ${selected(track.regionColorMode, 'Custom')}>Custom</option></select></label><label>Default Length<input data-channel-setting="defaultRegionLength" type="number" min="0.25" step="0.25" value="${Number(track.defaultRegionLength || 4)}"></label><label class="studio-channel-toggle"><input data-channel-setting="autoNameRegions" type="checkbox" ${track.autoNameRegions !== false ? 'checked' : ''}>Auto-name recorded regions</label></details>
+      <details data-channel-accordion="safety" ${detailOpen('safety')}><summary>Safety</summary>${safetyControls}</details>
+    </div>
+  </section>`
+}
+function renderTrackInspector() {
+  if (selectedSystemChannel === 'metronome') return renderMetronomeInspector()
+  const track = ensureTrackInsertState(tracks.find((t)=>t.id===selectedTrackId))
+  if (!track) return '<h3>Inspector</h3><p class="studio-inspector-empty">Select a track to view inserts and controls.</p>'
+  const isAudio = isAudioTrack(track)
+  return `<section class="studio-track-inspector">
+    <header class="studio-track-inspector-header"><span class="studio-track-inspector-icon" style="--track-color:${track.color}">${trackTypeIcon(normalizedTrackIconType(track))}</span><div><h3>${track.name}</h3><p>${trackTypeLabel(track)} track</p></div></header>
+    <div class="studio-inspector-strip"><button class="${track.muted?'is-active':''}" data-track-mute="${track.id}">Mute</button><button class="${track.soloed?'is-active':''}" data-track-solo="${track.id}">Solo</button><button class="${track.recordArmed?'is-active':''}" data-track-record="${track.id}">Record</button></div>
+    ${isAudio ? '<section class="studio-inspector-section studio-audio-track-summary"><header><div><span>Audio Track</span><h4>Input Recording</h4></div></header><p>Press Record to request microphone/interface access and capture a session clip. Recorded audio plays back in this browser session.</p><p class="studio-audio-session-note">MVP persistence: clip metadata and waveform save with the project; raw audio remains in memory until you reload.</p></section>' : renderInspectorSection({ title:'MIDI Effects', kicker:'Pre instrument', emptyText:'No MIDI effects inserted.', items:track.midiEffects, section:'midi', addLabel:'Add MIDI Effect', menuId:'midi-effects', menuItems:MIDI_EFFECT_TYPES, action:'midi' })}
+    ${isAudio ? '' : `<section class="studio-inspector-section studio-inspector-section--instrument"><header><div><span>Instrument</span><h4>Instrument</h4></div></header>${renderInstrumentSlot(track)}</section>`}
+    ${renderInspectorSection({ title:'Audio FX', kicker:isAudio ? 'Clip output' : 'Post instrument', emptyText:'No audio effects inserted.', items:track.audioEffects, section:'audio', addLabel:'Add Audio FX', menuId:'audio-effects', menuItems:AUDIO_EFFECT_TYPES, action:'audio' })}
+    ${renderChannelStripSettings(track)}
+  </section>`
+}
+function renderMetronomeInspector() {
+  const m = metronomeSettings
+  const range = (key, label, min, max, step = 1) => `<label>${label}<input type="range" data-metronome-setting="${key}" min="${min}" max="${max}" step="${step}" value="${m[key]}"><small>${Number(m[key]).toFixed(step < 1 ? 2 : 0)}</small></label>`
+  return `<section class="studio-track-inspector studio-metronome-inspector">
+    <header class="studio-track-inspector-header"><span class="studio-track-inspector-icon" style="--track-color:#ffd66b">♩</span><div><h3>Metronome</h3><p>System monitoring channel</p></div></header>
+    <div class="studio-inspector-strip"><button class="${m.muted ? 'is-active' : ''}" data-metronome-mute>Mute</button><button disabled title="Metronome is a system channel">Solo</button><button disabled title="Metronome cannot record MIDI">Record</button></div>
+    <section class="studio-inspector-section studio-metronome-editor"><header><div><span>Click generator</span><h4>Metronome Instrument</h4></div></header><div class="studio-metronome-control-grid">
+      <fieldset><legend>Accent</legend>${range('accentLevel','Level',0,1,.01)}${range('accentPitch','Pitch',120,4000,1)}${range('accentTone','Tone',0,1,.01)}</fieldset>
+      <fieldset><legend>Regular Click</legend>${range('clickLevel','Level',0,1,.01)}${range('clickPitch','Pitch',120,4000,1)}${range('clickTone','Tone',0,1,.01)}</fieldset>
+      <fieldset><legend>General</legend>${range('decayMs','Decay',12,240,1)}${range('pan','Stereo position',-100,100,1)}<label>Output<select data-metronome-setting="outputRoute"><option>Stereo Out</option></select></label></fieldset>
+    </div></section>
+    ${renderInspectorSection({ title:'Audio FX', kicker:'Click processing', emptyText:'No audio effects inserted.', items:m.audioEffects, section:'audio', addLabel:'Add Audio FX', menuId:'audio-effects', menuItems:AUDIO_EFFECT_TYPES, action:'audio' })}
+    <p class="studio-channel-hint">The click is monitoring-only and is not included in program export.</p>
+  </section>`
+}
+function selectedStudioLibraryFolder() {
+  const folders = studioLibraryState.data?.folders || []
+  return findFolderByPath(folders, studioLibraryState.selectedPath)
+}
+
+function renderStudioLibraryFolderNode(folder, depth = 0) {
+  const children = folder.children || []
+  const expanded = studioLibraryState.expandedRootIds.has(folder.id)
+  const selected = studioLibraryState.selectedPath === folder.path
+  return `<div class="studio-daw-library-folder" style="--library-depth:${depth}">
+    <button type="button" class="studio-daw-library-folder-button ${selected ? 'is-active' : ''}" data-library-folder="${esc(folder.path)}" data-library-folder-id="${esc(folder.id)}" aria-expanded="${children.length ? String(expanded) : 'false'}">
+      <span data-library-folder-toggle="${esc(folder.id)}">${children.length ? (expanded ? '−' : '+') : ''}</span>
+      <strong>${esc(folder.label)}</strong>
+      ${folder.type === 'engine-folder' ? `<small>${esc(folder.engineType || '')}</small>` : ''}
+    </button>
+    ${children.length && expanded ? `<div class="studio-daw-library-folder-children">${children.map((child) => renderStudioLibraryFolderNode(child, depth + 1)).join('')}</div>` : ''}
+  </div>`
+}
+
+function renderStudioLibraryTree() {
+  const folders = studioLibraryState.data?.folders || []
+  return folders.map((root) => renderStudioLibraryFolderNode(root)).join('')
+}
+
+function renderStudioLibraryResults() {
+  const selection = selectedStudioLibraryFolder()
+  if (!selection) return '<div class="studio-daw-library-empty"><strong>Select a folder</strong><p>Choose any library folder to browse its instruments.</p></div>'
+  const instruments = getInstrumentsForFolder(studioLibraryState.data, selection.path).filter((instrument) => (
+    instrument.enabled !== false
+    && instrument.visibility === 'public'
+  ))
+  if (!instruments.length) {
+    const comingSoon = selection.type === 'engine-folder' && selection.engineType !== 'sample-based'
+    return `<div class="studio-daw-library-empty">
+      <strong>${comingSoon ? 'Coming soon' : 'No instruments yet'}</strong>
+      <p>${comingSoon ? `${selection.label} instruments are not available in this engine yet.` : 'This folder does not contain instruments yet.'}</p>
+    </div>`
+  }
+  const breadcrumb = selection.path.split('/').map(esc).join(' / ')
+  return `<div class="studio-daw-library-instruments">${instruments.map((instrument) => {
+    const activeOnSelectedTrack = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
+      && getSelectedTrack()?.instrument?.params?.libraryInstrumentId === instrument.id
+    const selected = studioLibraryState.selectedInstrumentId === instrument.id || activeOnSelectedTrack
+    const loadState = studioLibraryState.loadStatusByInstrumentId.get(instrument.id)
+    const strategy = sampleStrategyDefinition(instrument.sampleStrategy)
+    const playbackMode = samplePlaybackModeLabel(instrument.samplePlaybackMode)
+    const statusLabel = loadState?.status === 'loading'
+      ? 'Loading'
+      : loadState?.status === 'loaded'
+        ? 'Loaded'
+        : activeOnSelectedTrack
+          ? 'Assigned'
+        : instrument.engineType === 'sample-based'
+          ? `${instrument.samples?.length || 0} samples`
+          : 'Coming soon'
+    return `<button type="button" class="studio-daw-library-instrument ${selected ? 'is-selected' : ''}" data-library-instrument="${esc(instrument.id)}">
+      <span class="studio-daw-library-instrument-icon">${instrument.engineType === 'sample-based' ? 'S' : instrument.engineType === 'wavetable' ? 'W' : 'V'}</span>
+      <span><strong>${esc(instrument.name)}</strong><small>${esc(instrument.description || `${instrument.samples?.length || 0} mapped samples`)}</small><span class="studio-daw-library-instrument-meta">${instrument.engineType === 'sample-based' ? `<b>${esc(strategy?.label || 'Custom')}</b><b>${esc(playbackMode)}</b>` : ''}<b class="${loadState?.status === 'error' ? 'is-error' : ''}">${esc(statusLabel)}</b></span></span>
+      <em>${esc(instrument.engineType === 'sample-based' ? 'Sample Based' : instrument.engineType === 'wavetable' ? 'Wavetable' : 'VST')}</em>
+    </button>`
+  }).join('')}</div><div class="studio-daw-library-breadcrumb">${breadcrumb}</div>`
+}
+
+function renderStudioLibrarySelection() {
+  const instrument = (studioLibraryState.data?.instruments || []).find((item) => item.id === studioLibraryState.selectedInstrumentId)
+  if (!instrument) return ''
+  const loadState = studioLibraryState.loadStatusByInstrumentId.get(instrument.id)
+  const strategy = sampleStrategyDefinition(instrument.sampleStrategy)
+  const playbackMode = samplePlaybackModeLabel(instrument.samplePlaybackMode)
+  const message = instrument.engineType !== 'sample-based'
+    ? `${instrument.engineType === 'vst' ? 'HTML VST' : 'Wavetable'} runtime is coming soon. Its manifest can be managed without executing untrusted source.`
+    : loadState?.status === 'loading'
+      ? `Loading ${instrument.samples?.length || 0} mapped samples for the selected track...`
+      : loadState?.status === 'error'
+        ? loadState.message
+        : loadState?.status === 'loaded'
+          ? 'Loaded into the selected track through Library.'
+          : 'Click to assign this instrument to the selected track and load its samples.'
+  return `<section class="studio-daw-library-selection">
+    <div><span>${esc(instrument.folderPath)}</span><strong>${esc(instrument.name)}</strong></div>
+    <dl><div><dt>Engine</dt><dd>${esc(instrument.engineType)}</dd></div><div><dt>${instrument.engineType === 'sample-based' ? 'Strategy' : 'Runtime'}</dt><dd>${esc(instrument.engineType === 'sample-based' ? strategy?.label || 'Custom' : instrument.runtime || 'Coming soon')}</dd></div>${instrument.engineType === 'sample-based' ? `<div><dt>Playback</dt><dd>${esc(playbackMode)}</dd></div>` : ''}<div><dt>Version</dt><dd>v${instrument.version || 1}</dd></div></dl>
+    <p>${esc(message)}</p>
+  </section>`
+}
+
+function renderStudioLibraryPanel() {
+  if (studioLibraryState.loading) return '<section class="studio-daw-library"><header><h3>Library</h3><p>Loading default content...</p></header><div class="studio-daw-library-loading">Reading the Studio library manifest.</div></section>'
+  if (studioLibraryState.error) return `<section class="studio-daw-library"><header><h3>Library</h3><p>Default instruments</p></header><div class="studio-daw-library-empty is-error"><strong>Library unavailable</strong><p>${esc(studioLibraryState.error)}</p><button type="button" data-library-retry>Try again</button></div></section>`
+  if (studioLibraryState.loaded && !studioLibraryState.data) return '<section class="studio-daw-library"><header><h3>Library</h3><p>Default instruments</p></header><div class="studio-daw-library-empty"><strong>Library content has not been initialized yet.</strong><p>An administrator can initialize it from Operations → Studio → DAW.</p></div></section>'
+  return `<section class="studio-daw-library">
+    <header><div><h3>${esc(studioLibraryState.data?.rootLabel || 'Library')}</h3><p>Default instruments</p></div><span>${studioLibraryState.data?.instruments?.length || 0}</span></header>
+    <div class="studio-daw-library-browser">
+      <nav aria-label="Studio Library folders">${renderStudioLibraryTree()}</nav>
+      <div class="studio-daw-library-results">${renderStudioLibraryResults()}</div>
+    </div>
+    ${renderStudioLibrarySelection()}
+  </section>`
+}
+
+async function loadStudioLibrary({ force = false } = {}) {
+  if (studioLibraryState.loading || (studioLibraryState.loaded && !force)) return
+  studioLibraryState.loading = true
+  studioLibraryState.error = ''
+  renderEditor()
+  try {
+    const data = await getDefaultLibraryContent()
+    const flatFolders = flattenLibraryFolders(data?.folders || [])
+    const firstRoot = data?.folders?.[0]
+    const firstDestination = flatFolders.find((folder) => folder.type === 'engine-folder') || flatFolders[0]
+    const assignedInstrumentId = getSelectedTrack()?.instrument?.type === DAW_PLUGIN_TYPES.librarySampler
+      ? getSelectedTrack()?.instrument?.params?.libraryInstrumentId || ''
+      : ''
+    const assignedInstrument = data?.instruments?.find((item) => item.id === assignedInstrumentId)
+    studioLibraryState = {
+      ...studioLibraryState,
+      data,
+      loaded: true,
+      selectedPath: studioLibraryState.selectedPath || assignedInstrument?.folderPath || firstDestination?.path || '',
+      selectedInstrumentId: studioLibraryState.selectedInstrumentId || assignedInstrumentId,
+      expandedRootIds: studioLibraryState.expandedRootIds.size
+        ? studioLibraryState.expandedRootIds
+        : new Set(flatFolders.filter((folder) => firstDestination?.path.startsWith(folder.path)).map((folder) => folder.id))
+    }
+  } catch (error) {
+    console.warn('[studio-library] manifest read failed', { code: error?.code, message: error?.message })
+    studioLibraryState.error = error?.message || 'Could not load the default Studio library.'
+    studioLibraryState.loaded = true
+  } finally {
+    studioLibraryState.loading = false
+    renderEditorPreservingArrangementScroll()
+  }
+}
+
+async function resolveStudioLibraryInstrument(instrumentId = '') {
+  const current = studioLibraryState.data?.instruments?.find((item) => item.id === instrumentId)
+  if (current) return current
+  if (!studioLibraryManifestPromise) {
+    studioLibraryManifestPromise = getDefaultLibraryContent().finally(() => {
+      studioLibraryManifestPromise = null
+    })
+  }
+  const data = await studioLibraryManifestPromise
+  if (data) {
+    studioLibraryState.data = data
+    studioLibraryState.loaded = true
+  }
+  return data?.instruments?.find((item) => item.id === instrumentId) || null
+}
+
+async function assignStudioLibraryInstrument(instrumentId = '') {
+  const instrument = await resolveStudioLibraryInstrument(instrumentId)
+  if (!instrument) return
+  studioLibraryState.selectedInstrumentId = instrument.id
+  if (instrument.engineType !== 'sample-based') {
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'coming-soon', message: 'Runtime coming soon.' })
+    renderEditor()
+    return
+  }
+  const track = ensureTrackInsertState(getSelectedTrack())
+  if (!track) {
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'error', message: 'Select a track before loading an instrument.' })
+    renderEditor()
+    return
+  }
+  const before = captureDawSnapshot()
+  stopAllTrackInstrumentNotes()
+  stopAllPlaybackNotes()
+  stopAllAudioClipPlayback()
+  if (track.instrument?.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId)
+  track.type = 'software'
+  track.icon = 'instrument'
+  track.instrument = {
+    id: makeInsertId('instrument'),
+    type: DAW_PLUGIN_TYPES.librarySampler,
+    name: `Library · ${instrument.name}`,
+    enabled: true,
+    pluginInstanceId: `${DAW_PLUGIN_TYPES.librarySampler}:${track.id}`,
+    params: {
+      libraryInstrumentId: instrument.id,
+      libraryInstrumentName: instrument.name,
+      libraryInstrumentVersion: instrument.version || 1,
+      volume: 0.8,
+      attack: 0.006,
+      release: 0.16
+    }
+  }
+  studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'loading', message: '' })
+  pushHistory('assign-library-instrument', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+  try {
+    const sampler = ensureTrackInstrumentInstance(track)
+    sampler?.setManifest?.(instrument)
+    await sampler?.preload?.()
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'loaded', message: '' })
+  } catch (error) {
+    console.warn('[studio-library] sampler load failed', { instrumentId: instrument.id, message: error?.message })
+    studioLibraryState.loadStatusByInstrumentId.set(instrument.id, { status: 'error', message: error?.message || 'Samples could not be loaded.' })
+  }
+  renderEditor()
+}
+
+function getSmartControlsAudioRegions() {
+  if (smartControlsState.scope === 'region') return getSelectedRegions().filter((region)=>region.type === 'audio')
+  return midiRegions.filter((region)=>region.type === 'audio' && region.trackId === selectedTrackId && !region.muted && !normalizeAudioEdit(region.audioEdit).mute)
+}
+function getAnalysisSourceIdentity(region, audioBuffer = null) {
+  const clip = region.audioClip || {}
+  const stableId = clip.audioAssetId || clip.id || region.clipId || clip.storagePath || clip.runtimeId || region.id
+  const revision = clip.sourceHash || clip.contentHash || clip.etag || [clip.storagePath || clip.fileName || '', clip.fileSizeBytes || region.fileSizeBytes || '', clip.fileDurationSeconds || region.fileDurationSeconds || '', clip.createdAt || ''].join(':')
+  return {
+    id: String(stableId || region.id),
+    revision: String(revision || 'source-v1'),
+    name: getMidiRegionLabel(region),
+    sampleRate: Number(audioBuffer?.sampleRate || clip.sampleRate || region.sampleRate || region.audioContextSampleRate) || 44100,
+    channelCount: Number(audioBuffer?.numberOfChannels || clip.channelCount || region.channelCount) || 1,
+    durationSeconds: Number(audioBuffer?.duration || clip.fileDurationSeconds || region.fileDurationSeconds) || 0
+  }
+}
+async function loadAnalysisPcm(region) {
+  const decodeStartedAt = performance.now()
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) throw new Error(`${getMidiRegionLabel(region)} is offline or could not be decoded.`)
+  const audioBuffer = runtime.audioBuffer
+  const channels = Array.from({ length: Math.max(1, audioBuffer.numberOfChannels || 1) }, (_, channelIndex) => {
+    const copy = new Float32Array(audioBuffer.length)
+    audioBuffer.copyFromChannel(copy, channelIndex)
+    return copy
+  })
+  return { channels, sampleRate: audioBuffer.sampleRate || 44100, decodeMs: performance.now() - decodeStartedAt }
+}
+function getAnalysisRegionInterval(region) {
+  return {
+    name: getMidiRegionLabel(region),
+    startSeconds: getAudioTrimStartSeconds(region),
+    endSeconds: getAudioTrimEndSeconds(region),
+    playbackRate: getAudioRegionPlaybackRate(region)
+  }
+}
+async function analyzeSmartControlsRegion(region, job, onProgress) {
+  const runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  const source = getAnalysisSourceIdentity(region, runtime?.audioBuffer)
+  let decodeMs = 0
+  const result = await smartControlsAnalysisService.analyzeRegion({
+    source,
+    interval: getAnalysisRegionInterval(region),
+    gainDb: Number(normalizeAudioEdit(region.audioEdit).gainDb) || 0,
+    profile: smartControlsState.profile,
+    sourceType: smartControlsState.sourceType,
+    loadPcm: async () => {
+      const loaded = await loadAnalysisPcm(region)
+      decodeMs = loaded.decodeMs
+      return loaded
+    },
+    onProgress,
+    signal: job.signal
+  })
+  result.metadata.decodeMs = decodeMs
+  return {
+    id: region.id,
+    name: getMidiRegionLabel(region),
+    trackId: region.trackId,
+    projectStartSeconds: getTimelineSecondsAtBeat(Number(region.startBeat) || 0),
+    result
+  }
+}
+function updateSmartControlsProgressDom() {
+  const panel = app.querySelector('[data-smart-controls-progress]')
+  if (!panel) return
+  panel.style.setProperty('--analysis-progress', `${Math.round(clamp(smartControlsState.progress, 0, 1) * 100)}%`)
+  const label = panel.querySelector('span')
+  if (label) label.textContent = `${smartControlsState.phase || 'Analyzing'} · ${Math.round(clamp(smartControlsState.progress, 0, 1) * 100)}%`
+}
+function localizedAnalysisFindings(entries = []) {
+  return entries.flatMap((entry) => (entry.result.timelineFindings || []).map((finding) => ({
+    ...finding,
+    id: `${entry.id}:${finding.id}`,
+    label: entries.length > 1 ? `${entry.name}: ${finding.label}` : finding.label,
+    startSeconds: entry.projectStartSeconds + (finding.startSeconds || 0),
+    endSeconds: entry.projectStartSeconds + (finding.endSeconds || finding.startSeconds || 0)
+  })))
+}
+async function runSmartControlsAnalysis() {
+  const regions = getSmartControlsAudioRegions()
+  if (!regions.length) {
+    smartControlsState = { ...smartControlsState, status: 'error', error: smartControlsState.scope === 'region' ? 'Select one or more audio regions first.' : 'The selected track has no analyzable audio regions.' }
+    renderEditor()
+    return
+  }
+  const job = smartControlsAnalysisService.createJob()
+  smartControlsState = { ...smartControlsState, status: 'analyzing', progress: 0, phase: 'Preparing audio', error: '', result: null, comparison: null, contextFindings: [], timelineFindings: [], analyzedEntries: [], jobId: job.jobId }
+  renderEditor()
+  try {
+    const targetEntries = []
+    for (let index = 0; index < regions.length; index += 1) {
+      const entry = await analyzeSmartControlsRegion(regions[index], job, ({ progress, phase }) => {
+        if (!job.isCurrent()) return
+        smartControlsState.progress = ((index + clamp(progress, 0, 1)) / Math.max(1, regions.length)) * (smartControlsState.trackContext === 'project-context' && smartControlsState.scope === 'track' ? 0.55 : 0.92)
+        smartControlsState.phase = phase
+        updateSmartControlsProgressDom()
+      })
+      if (!job.isCurrent()) return
+      targetEntries.push(entry)
+    }
+    const track = getSelectedTrack()
+    const result = smartControlsState.scope === 'region' && targetEntries.length === 1
+      ? targetEntries[0].result
+      : combineAnalysisResults(targetEntries.map((entry)=>entry.result), {
+          id: smartControlsState.scope === 'track' ? `track:${track?.id || selectedTrackId}` : `regions:${targetEntries.map((entry)=>entry.id).join(',')}`,
+          revision: targetEntries.map((entry)=>`${entry.result.source.id}:${entry.result.source.revision}`).join('|'),
+          name: smartControlsState.scope === 'track' ? (track?.name || 'Selected track') : `${targetEntries.length} selected regions`
+        })
+    let contextFindings = []
+    if (smartControlsState.scope === 'track' && smartControlsState.trackContext === 'project-context') {
+      const otherRegions = midiRegions.filter((region) => region.type === 'audio' && region.trackId !== selectedTrackId && !region.muted && !normalizeAudioEdit(region.audioEdit).mute && isTrackAudible(tracks.find((trackItem)=>trackItem.id === region.trackId)))
+      const otherEntries = []
+      for (let index = 0; index < otherRegions.length; index += 1) {
+        const entry = await analyzeSmartControlsRegion(otherRegions[index], job, ({ progress, phase }) => {
+          if (!job.isCurrent()) return
+          smartControlsState.progress = 0.55 + (((index + clamp(progress, 0, 1)) / Math.max(1, otherRegions.length)) * 0.37)
+          smartControlsState.phase = `Context · ${phase}`
+          updateSmartControlsProgressDom()
+        })
+        if (!job.isCurrent()) return
+        entry.name = tracks.find((trackItem)=>trackItem.id === entry.trackId)?.name || entry.name
+        otherEntries.push(entry)
+      }
+      contextFindings = analyzeProjectContext(targetEntries, otherEntries)
+      if (!otherEntries.length) result.metadata.warnings.push('No other audible audio regions were available for source-context comparison.')
+    }
+    result.mode = smartControlsState.scope === 'track'
+      ? (smartControlsState.trackContext === 'project-context' ? 'project-context' : 'independent')
+      : (targetEntries.length > 1 ? 'compare-regions' : 'single-region')
+    result.scope = smartControlsState.scope
+    result.metadata.signalStage = 'source'
+    result.recommendations = buildRecommendations(result, { sourceType: smartControlsState.sourceType, contextFindings })
+    smartControlsState = {
+      ...smartControlsState,
+      status: 'complete',
+      progress: 1,
+      phase: 'Complete',
+      result,
+      comparison: targetEntries.length > 1 ? compareRegionAnalyses(targetEntries) : null,
+      contextFindings,
+      timelineFindings: [...contextFindings, ...localizedAnalysisFindings(targetEntries)],
+      analyzedEntries: targetEntries,
+      provider: result.metadata.provider,
+      jobId: ''
+    }
+    renderEditor()
+  } catch (error) {
+    if (!job.isCurrent()) return
+    smartControlsState = { ...smartControlsState, status: error?.name === 'AbortError' ? 'cancelled' : 'error', error: error?.name === 'AbortError' ? 'Analysis cancelled.' : (error?.message || 'Audio analysis failed.'), jobId: '' }
+    renderEditor()
+  }
+}
+function cancelSmartControlsAnalysis() {
+  smartControlsAnalysisService.cancel()
+  smartControlsState = { ...smartControlsState, status: 'cancelled', phase: '', error: 'Analysis cancelled.', jobId: '' }
+  renderEditor()
+}
+function formatAnalysisNumber(value, digits = 1, fallback = '—') {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : fallback
+}
+function renderSmartControlsMeasurement(label, value, suffix = '', note = '') {
+  return `<div class="studio-smart-measure"><span>${esc(label)}</span><strong>${esc(value)}${suffix}</strong>${note ? `<small>${esc(note)}</small>` : ''}</div>`
+}
+function renderSmartControlsFinding(finding) {
+  const confidence = Number.isFinite(finding.confidence) ? `${Math.round(finding.confidence * 100)}% confidence` : ''
+  const time = Number.isFinite(finding.startSeconds) ? `${formatClockTime(finding.startSeconds)}${Number.isFinite(finding.endSeconds) && finding.endSeconds > finding.startSeconds ? `–${formatClockTime(finding.endSeconds)}` : ''}` : ''
+  return `<button type="button" class="studio-smart-finding" ${Number.isFinite(finding.startSeconds) ? `data-smart-locate="${finding.startSeconds}"` : ''}><span>${esc(finding.label)}</span><small>${esc([time, confidence].filter(Boolean).join(' · '))}</small></button>`
+}
+function formatClockTime(seconds = 0) {
+  const safe = Math.max(0, Number(seconds) || 0)
+  const minutes = Math.floor(safe / 60)
+  return `${String(minutes).padStart(2, '0')}:${(safe % 60).toFixed(1).padStart(4, '0')}`
+}
+function renderSmartControlsResults() {
+  const result = smartControlsState.result
+  if (!result) return `<div class="studio-smart-empty"><strong>Local audio intelligence</strong><p>Analyze the selected track or audio regions. Soura measures locally; it does not use Resona or an LLM to invent DSP facts.</p></div>`
+  const levels = result.measurements.levels || {}
+  const dynamics = result.measurements.dynamics || {}
+  const spectrum = result.measurements.spectral || {}
+  const stereo = result.measurements.stereo || {}
+  const musical = result.measurements.musical || {}
+  const tabs = ['overview', 'technical', 'dynamics', 'spectrum', 'stereo', 'musical', 'context', 'recommendations']
+  let content = ''
+  if (smartControlsState.activeTab === 'overview') {
+    content = `<div class="studio-smart-grid">
+      ${renderSmartControlsMeasurement('Est. loudness', formatAnalysisNumber(levels.estimatedIntegratedLufs), ' LUFS', 'Not standards-certified')}
+      ${renderSmartControlsMeasurement('Sample peak', formatAnalysisNumber(levels.samplePeakDbfs), ' dBFS')}
+      ${renderSmartControlsMeasurement('Crest factor', formatAnalysisNumber(levels.crestFactorDb), ' dB')}
+      ${renderSmartControlsMeasurement('Spectral center', formatAnalysisNumber(spectrum.centroidHz, 0), ' Hz')}
+    </div><div class="studio-smart-summary"><strong>${esc(result.source.name)}</strong><span>${formatAnalysisNumber(result.source.durationSeconds, 2)} s · ${result.source.channelCount === 1 ? 'Mono' : `${result.source.channelCount} channels`} · ${esc(result.profile)}</span><small>${esc(result.metadata.provider)} · ${esc(result.metadata.cache)} · source signal (pre-FX)</small></div>
+    ${smartControlsState.comparison ? renderSmartControlsComparison(smartControlsState.comparison) : ''}`
+  } else if (smartControlsState.activeTab === 'technical') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('RMS', formatAnalysisNumber(levels.rmsDbfs), ' dBFS')}${renderSmartControlsMeasurement('Est. true peak', formatAnalysisNumber(levels.estimatedTruePeakDbtp), ' dBTP', 'Interpolation estimate')}${renderSmartControlsMeasurement('DC offset', formatAnalysisNumber(levels.dcOffset, 5))}${renderSmartControlsMeasurement('Clipping samples', String(levels.clippingSamples || 0))}${renderSmartControlsMeasurement('Est. short-term max', formatAnalysisNumber(levels.maximumShortTermLufs), ' LUFS')}${renderSmartControlsMeasurement('Est. momentary max', formatAnalysisNumber(levels.maximumMomentaryLufs), ' LUFS')}</div>${smartControlsState.timelineFindings.map(renderSmartControlsFinding).join('') || '<p class="studio-smart-muted">No time-local technical event was detected.</p>'}`
+  } else if (smartControlsState.activeTab === 'dynamics') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('Loudness range', formatAnalysisNumber(levels.loudnessRangeLu), ' LU')}${renderSmartControlsMeasurement('Macro variation', formatAnalysisNumber(dynamics.macroVariationDb), ' dB')}${renderSmartControlsMeasurement('Micro variation', formatAnalysisNumber(dynamics.microVariationDb), ' dB')}${renderSmartControlsMeasurement('Transient density', formatAnalysisNumber(dynamics.transientDensityPerSecond, 2), '/s')}${renderSmartControlsMeasurement('Noise floor est.', formatAnalysisNumber(dynamics.noiseFloorEstimateDbfs), ' dBFS')}</div>`
+  } else if (smartControlsState.activeTab === 'spectrum') {
+    content = `<div class="studio-smart-spectrum">${SPECTRAL_BANDS.map((band)=>`<div><span>${band.label}</span><i><b style="width:${Math.round(clamp((spectrum.bands?.[band.id] || 0) * 240, 0, 100))}%"></b></i><small>${formatAnalysisNumber((spectrum.bands?.[band.id] || 0) * 100, 0)}%</small></div>`).join('')}</div>${(spectrum.resonanceCandidates || []).map(renderSmartControlsFinding).join('') || '<p class="studio-smart-muted">No persistent narrow concentration met the detection threshold.</p>'}`
+  } else if (smartControlsState.activeTab === 'stereo') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('L/R balance', formatAnalysisNumber(stereo.balanceDb), ' dB')}${renderSmartControlsMeasurement('Correlation', formatAnalysisNumber(stereo.correlation, 2, result.source.channelCount === 1 ? 'Mono' : '—'))}${renderSmartControlsMeasurement('Side / mid', formatAnalysisNumber(stereo.widthSideMidRatio, 2))}${renderSmartControlsMeasurement('Low stereo', formatAnalysisNumber(stereo.lowFrequencyStereoRatio, 2), '', 'Side/mid below 200 Hz')}${renderSmartControlsMeasurement('Mono check', stereo.monoCompatible ? 'Compatible indicator' : 'Review advised')}</div><p class="studio-smart-muted">Stereo measurements describe the source signal and do not include current pan, buses, or post-FX routing.</p>`
+  } else if (smartControlsState.activeTab === 'musical') {
+    content = `<div class="studio-smart-grid">${renderSmartControlsMeasurement('Tempo estimate', musical.bpm ? formatAnalysisNumber(musical.bpm) : 'No confident result', musical.bpm ? ' BPM' : '', musical.bpm ? `${Math.round((musical.bpmConfidence || 0) * 100)}% confidence` : '')}${renderSmartControlsMeasurement('Key estimate', musical.key ? `${musical.key} ${musical.scale || ''}` : 'No confident result', '', musical.key ? `${Math.round((musical.keyConfidence || 0) * 100)}% confidence` : '')}${renderSmartControlsMeasurement('Onsets', String(musical.onsetsSeconds?.length || 0))}${renderSmartControlsMeasurement('Tuning', musical.tuningConfidence > 0 ? `${formatAnalysisNumber(musical.tuningHz)} Hz` : 'Not confidently estimated')}</div>`
+  } else if (smartControlsState.activeTab === 'context') {
+    content = smartControlsState.scope === 'track' && smartControlsState.trackContext === 'project-context'
+      ? (smartControlsState.contextFindings.map(renderSmartControlsFinding).join('') || '<p class="studio-smart-muted">No high-confidence source-context competition was found among audible audio regions.</p>')
+      : '<p class="studio-smart-muted">Choose Track → In Project to calculate time-local source-context relationships.</p>'
+  } else if (smartControlsState.activeTab === 'recommendations') {
+    content = `<div class="studio-smart-recommendations">${(result.recommendations || []).map((item)=>`<article><span>Recommendation</span><strong>${esc(item.title)}</strong><p>${esc(item.message)}</p><small>${Math.round((item.confidence || 0) * 100)}% confidence</small></article>`).join('')}</div>`
+  }
+  return `<nav class="studio-smart-tabs">${tabs.map((tab)=>`<button type="button" data-smart-tab="${tab}" class="${smartControlsState.activeTab === tab ? 'is-active' : ''}">${tab === 'technical' ? 'Tech' : tab === 'recommendations' ? 'Advice' : tab}</button>`).join('')}</nav><div class="studio-smart-results">${content}</div>`
+}
+function renderSmartControlsComparison(comparison) {
+  return `<section class="studio-smart-comparison"><h4>Region comparison</h4>${comparison.regions.map((entry)=>`<div><span>${esc(entry.name)}</span><strong>${formatAnalysisNumber(entry.result.measurements.levels.estimatedIntegratedLufs)} LUFS est.</strong></div>`).join('')}${comparison.commonCharacteristics.map((item)=>`<p><b>Common:</b> ${esc(item.label)}</p>`).join('')}${comparison.differences.map((item)=>`<p><b>Difference:</b> ${esc(item.label)}</p>`).join('')}</section>`
+}
+function renderSmartControlsPanel() {
+  const selectedCount = getSmartControlsAudioRegions().length
+  const analyzing = smartControlsState.status === 'analyzing'
+  return `<section class="studio-smart-controls">
+    <header><div><span>Audio Analysis</span><h3>Smart Controls</h3></div><em>${selectedCount} ${smartControlsState.scope === 'track' ? 'track region' : 'selected region'}${selectedCount === 1 ? '' : 's'}</em></header>
+    <div class="studio-smart-config">
+      <label>Scope<select data-smart-setting="scope" ${analyzing ? 'disabled' : ''}><option value="track" ${smartControlsState.scope === 'track' ? 'selected' : ''}>Track</option><option value="region" ${smartControlsState.scope === 'region' ? 'selected' : ''}>Region</option></select></label>
+      ${smartControlsState.scope === 'track' ? `<label>Track context<select data-smart-setting="trackContext" ${analyzing ? 'disabled' : ''}><option value="independent" ${smartControlsState.trackContext === 'independent' ? 'selected' : ''}>Independent</option><option value="project-context" ${smartControlsState.trackContext === 'project-context' ? 'selected' : ''}>In Project</option></select></label>` : `<label>Region mode<select disabled><option>${selectedCount > 1 ? 'Compare Regions' : 'Single Region'}</option></select></label>`}
+      <label>Depth<select data-smart-setting="profile" ${analyzing ? 'disabled' : ''}><option value="quick" ${smartControlsState.profile === 'quick' ? 'selected' : ''}>Quick</option><option value="standard" ${smartControlsState.profile === 'standard' ? 'selected' : ''}>Standard</option><option value="deep" ${smartControlsState.profile === 'deep' ? 'selected' : ''}>Deep</option></select></label>
+      <label>Source type<select data-smart-setting="sourceType" ${analyzing ? 'disabled' : ''}>${SOURCE_TYPES.map(([value, label])=>`<option value="${value}" ${smartControlsState.sourceType === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+    </div>
+    <div class="studio-smart-actions">${analyzing ? '<button type="button" data-smart-cancel>Cancel</button>' : '<button type="button" class="is-primary" data-smart-analyze>Analyze</button>'}<small>Measurements remain objective; source type changes interpretation only.</small></div>
+    ${analyzing ? `<div class="studio-smart-progress" data-smart-controls-progress style="--analysis-progress:${Math.round(smartControlsState.progress * 100)}%"><i><b></b></i><span>${esc(smartControlsState.phase || 'Analyzing')} · ${Math.round(smartControlsState.progress * 100)}%</span></div>` : ''}
+    ${smartControlsState.error ? `<p class="studio-smart-error">${esc(smartControlsState.error)}</p>` : ''}
+    ${renderSmartControlsResults()}
+  </section>`
+}
+function bindSmartControlsEvents() {
+  app.querySelectorAll('[data-smart-setting]').forEach((input)=>input.addEventListener('change',()=>{
+    const key = input.dataset.smartSetting
+    smartControlsState = { ...smartControlsState, [key]: input.value, error: '' }
+    renderEditor()
+  }))
+  app.querySelector('[data-smart-analyze]')?.addEventListener('click', runSmartControlsAnalysis)
+  app.querySelector('[data-smart-cancel]')?.addEventListener('click', cancelSmartControlsAnalysis)
+  app.querySelectorAll('[data-smart-tab]').forEach((button)=>button.addEventListener('click',()=>{ smartControlsState.activeTab = button.dataset.smartTab; renderEditor() }))
+  app.querySelectorAll('[data-smart-locate]').forEach((button)=>button.addEventListener('click',()=>{
+    const seconds = Number(button.dataset.smartLocate)
+    if (!Number.isFinite(seconds)) return
+    setPlayheadBeat(secondsToBeats(seconds), { restartTransport: false })
+    const grid = app.querySelector('[data-arrangement-grid]')
+    if (grid) grid.scrollLeft = clamp(timelineState.playheadX - (grid.clientWidth * 0.35), 0, Math.max(0, grid.scrollWidth - grid.clientWidth))
+  }))
+}
+function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":renderSmartControlsPanel()}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''} ${activeLeftPanel==='smart-controls'?'studio-left-panel--smart-controls':''}">${views[activeLeftPanel] || ''}</aside>` }
+function getActiveNotePage(){ return notePages.find((page)=>page.id===activeNotePageId) || notePages[0] }
+function stashActiveNoteInput(){ const input = app.querySelector('[data-notes-input]'); const active = getActiveNotePage(); if (!input || !active) return; active.body = input.value }
+function renderNotesModal(){ if(!isNotesOpen) return ''; const activePage = getActiveNotePage(); return `<div class="studio-notes-modal"><div class="studio-notes-panel"><header class="studio-notes-header"><h3>Project Notes</h3></header><div class="studio-notes-body"><div class="studio-notes-pages">${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${page.id}" aria-pressed="${String(page.id===activeNotePageId)}">${page.title}</button>`).join('')}<button class="studio-notes-page-button" data-add-notes-page>Add Page</button></div><textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${activePage?.body || ''}</textarea></div><div class="studio-notes-actions"><button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button><button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button></div></div></div>` }
+function renderAudioStretchRenderModal() {
+  if (!audioStretchRenderState.active) return ''
+  const progress = Number.isFinite(Number(audioStretchRenderState.progress)) ? clamp(Number(audioStretchRenderState.progress), 0, 1) : null
+  const progressLabel = progress == null ? 'Rendering...' : `${Math.round(progress * 100)}%`
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-audio-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-audio-render-title">Rendering Audio Stretch</h3><p>Soura is rendering the stretched audio region. This may take a moment.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
+}
+function renderAudioPitchRenderModal() {
+  if (!audioPitchRenderState.active) return ''
+  const progress = Number.isFinite(Number(audioPitchRenderState.progress)) ? clamp(Number(audioPitchRenderState.progress), 0, 1) : null
+  const progressLabel = progress == null ? 'Rendering...' : `${Math.round(progress * 100)}%`
+  const title = audioPitchRenderState.mode === 'trace' ? 'Rendering Pitch Trace Edits' : audioPitchRenderState.mode === 'reverse' ? 'Rendering Reverse' : 'Rendering Pitch Shift'
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-pitch-render-title"><section class="studio-audio-render-panel"><span>Offline render</span><h3 id="studio-pitch-render-title">${esc(title)}</h3><p>Soura is rendering edited audio for this region. Playback will use the render when it finishes.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small>${esc(progressLabel)}</small></section></div>`
+}
+function getAudioImportUploadProgress() {
+  const total = Math.max(0, Number(audioImportUploadState.totalBytes) || 0)
+  const transferred = clamp(Number(audioImportUploadState.bytesTransferred) || 0, 0, total || Number.MAX_SAFE_INTEGER)
+  return total ? clamp(transferred / total, 0, 1) : null
+}
+function renderAudioImportUploadModal() {
+  if (!audioImportUploadState.active || audioImportUploadState.hidden) return ''
+  const progress = getAudioImportUploadProgress()
+  const progressLabel = progress == null ? 'Preparing upload...' : `${Math.round(progress * 100)}%`
+  const fileName = audioImportUploadState.fileName || 'audio file'
+  return `<div class="studio-audio-render-modal" data-audio-import-upload-modal role="dialog" aria-modal="false" aria-labelledby="studio-audio-upload-title"><section class="studio-audio-render-panel"><span>Audio import</span><h3 id="studio-audio-upload-title">Uploading Audio</h3><p>Uploading ${esc(fileName)} to your Soura project. You can hide this window and keep working.</p><div class="studio-audio-render-progress ${progress == null ? 'is-indeterminate' : ''}" aria-label="${esc(progressLabel)}">${progress == null ? '<i></i>' : `<i style="width:${Math.round(progress * 100)}%"></i>`}</div><small data-audio-import-upload-label>${esc(progressLabel)}</small><button type="button" class="studio-audio-render-hide" data-hide-audio-import-upload>Hide</button></section></div>`
+}
+function updateAudioImportUploadProgressDom() {
+  if (!audioImportUploadState.active || audioImportUploadState.hidden) return
+  const modal = app.querySelector('[data-audio-import-upload-modal]')
+  if (!modal) return
+  const progress = getAudioImportUploadProgress()
+  const label = progress == null ? 'Preparing upload...' : `${Math.round(progress * 100)}%`
+  const progressBar = modal.querySelector('.studio-audio-render-progress')
+  const fill = progressBar?.querySelector('i')
+  progressBar?.classList.toggle('is-indeterminate', progress == null)
+  if (fill && progress != null) fill.style.width = `${Math.round(progress * 100)}%`
+  const labelEl = modal.querySelector('[data-audio-import-upload-label]')
+  if (labelEl) labelEl.textContent = label
+}
+function beginAudioImportUpload(file = null) {
+  audioImportUploadState = {
+    active: true,
+    hidden: false,
+    fileName: String(file?.name || 'Audio file'),
+    bytesTransferred: 0,
+    totalBytes: Math.max(0, Number(file?.size) || 0)
+  }
+  renderEditorPreservingArrangementScroll()
+}
+function updateAudioImportUploadProgress(progress = {}) {
+  if (!audioImportUploadState.active) return
+  audioImportUploadState = {
+    ...audioImportUploadState,
+    bytesTransferred: Math.max(0, Number(progress.bytesTransferred) || 0),
+    totalBytes: Math.max(0, Number(progress.totalBytes) || audioImportUploadState.totalBytes || 0)
+  }
+  updateAudioImportUploadProgressDom()
+}
+function finishAudioImportUpload() {
+  if (!audioImportUploadState.active) return
+  audioImportUploadState = { active: false, hidden: false, fileName: '', bytesTransferred: 0, totalBytes: 0 }
+  app.querySelector('[data-audio-import-upload-modal]')?.remove()
+}
+function getAudioPreflightCurrentProgress() {
+  const pitchProgress =
+    Number(audioPitchRenderState.progress)
+
+  if (
+    audioPitchRenderState.active
+    && Number.isFinite(pitchProgress)
+  ) {
+    return clamp(pitchProgress, 0, 1)
+  }
+
+  const stretchProgress =
+    Number(audioStretchRenderState.progress)
+
+  if (
+    audioStretchRenderState.active
+    && Number.isFinite(stretchProgress)
+  ) {
+    return clamp(stretchProgress, 0, 1)
+  }
+
+  return 0
+}
+
+function updateAudioPreflightProgressUI() {
+  if (!audioPreflightRenderState.active) return
+
+  const total =
+    Math.max(
+      1,
+      Number(audioPreflightRenderState.total) || 1
+    )
+
+  const completed =
+    clamp(
+      Number(audioPreflightRenderState.completed) || 0,
+      0,
+      total
+    )
+
+  const current =
+    getAudioPreflightCurrentProgress()
+
+  const overall =
+    clamp(
+      (completed + current) / total,
+      0,
+      1
+    )
+
+  const percent =
+    Math.round(overall * 100)
+
+  const modal =
+    app.querySelector(
+      '.studio-audio-render-modal'
+    )
+
+  const progress =
+    modal?.querySelector(
+      '.studio-audio-render-progress'
+    )
+
+  const fill =
+    progress?.querySelector('i')
+
+  const label =
+    modal?.querySelector(
+      '[data-preflight-progress-label]'
+    )
+
+  progress?.setAttribute(
+    'aria-label',
+    `${percent}%`
+  )
+
+  progress?.setAttribute(
+    'aria-valuenow',
+    String(percent)
+  )
+
+  if (fill) {
+    fill.style.width = `${percent}%`
+  }
+
+  if (label) {
+    const currentNumber =
+      Math.min(
+        total,
+        completed + 1
+      )
+
+    const detail =
+      current > 0 && current < 1
+        ? ` · DSP ${Math.round(current * 100)}%`
+        : ''
+
+    label.textContent =
+      `${currentNumber}/${total} renders · `
+      + `${audioPreflightRenderState.currentLabel || 'Queued'}`
+      + detail
+  }
+}
+
+function renderAudioPreflightRenderModal() {
+  if (!audioPreflightRenderState.active) return ''
+
+  const total =
+    Math.max(
+      1,
+      Number(audioPreflightRenderState.total) || 1
+    )
+
+  const completed =
+    clamp(
+      Number(audioPreflightRenderState.completed) || 0,
+      0,
+      total
+    )
+
+  const current =
+    getAudioPreflightCurrentProgress()
+
+  const progress =
+    clamp(
+      (completed + current) / total,
+      0,
+      1
+    )
+
+  const percent =
+    Math.round(progress * 100)
+
+  const currentNumber =
+    Math.min(
+      total,
+      completed + 1
+    )
+
+  return `
+    <div
+      class="studio-audio-render-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="studio-preflight-render-title"
+    >
+      <section class="studio-audio-render-panel">
+        <span>Preparing audio</span>
+
+        <h3 id="studio-preflight-render-title">
+          Preparing Audio
+        </h3>
+
+        <p>
+          Soura is rendering offline audio edits
+          before playback.
+        </p>
+
+        <div
+          class="studio-audio-render-progress"
+          role="progressbar"
+          aria-label="${percent}%"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="${percent}"
+        >
+          <i style="width:${percent}%"></i>
+        </div>
+
+        <small data-preflight-progress-label>
+          ${currentNumber}/${total} renders ·
+          ${esc(
+            audioPreflightRenderState.currentLabel
+            || 'Queued'
+          )}
+          ${
+            current > 0 && current < 1
+              ? ` · DSP ${Math.round(current * 100)}%`
+              : ''
+          }
+        </small>
+
+        ${
+          audioPreflightRenderState.error
+            ? `
+              <p>${esc(audioPreflightRenderState.error)}</p>
+
+              <div class="studio-modal-actions">
+                <button
+                  type="button"
+                  class="button"
+                  data-preflight-retry
+                >
+                  Retry Render
+                </button>
+
+                <button
+                  type="button"
+                  class="button button-muted"
+                  data-preflight-play-original
+                >
+                  Play Original Where Possible
+                </button>
+
+                <button
+                  type="button"
+                  class="button button-muted"
+                  data-preflight-cancel
+                >
+                  Cancel
+                </button>
+              </div>
+            `
+            : ''
+        }
+      </section>
+    </div>
+  `
+}
+
+function renderStretchPlaybackPrompt() {
+  if (!stretchPlaybackPrompt?.regionId) return ''
+  const region = midiRegions.find((item)=>item.id === stretchPlaybackPrompt.regionId)
+  if (!region) return ''
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-stretch-prompt-title"><section class="studio-audio-render-panel"><span>Stretch render required</span><h3 id="studio-stretch-prompt-title">Render stretched audio?</h3><p>This stretched audio region must be rendered before playback.</p>${stretch.renderError ? `<small>${esc(stretch.renderError)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-stretch-prompt-render ${stretch.renderStatus === 'rendering' ? 'disabled' : ''}>${stretch.renderStatus === 'failed' ? 'Retry Render' : 'Render Now'}</button><button type="button" class="button button-muted" data-stretch-prompt-play-original>Play Original</button><button type="button" class="button button-muted" data-stretch-prompt-cancel>Cancel</button></div></section></div>`
+}
+function renderAudioEditPlaybackPrompt() {
+  if (!audioEditPlaybackPrompt?.regionId) return ''
+  const region = midiRegions.find((item)=>item.id === audioEditPlaybackPrompt.regionId)
+  if (!region) return ''
+  const mode = audioEditPlaybackPrompt.mode === 'trace' ? 'Pitch Trace edits' : audioEditPlaybackPrompt.mode === 'reverse' ? 'Reverse' : 'Pitch Shift'
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const error = audioEditPlaybackPrompt.mode === 'trace' ? edit.pitchTrace.lastError : audioEditPlaybackPrompt.mode === 'reverse' ? edit.reverse.lastError : edit.pitchShift.lastError
+  return `<div class="studio-audio-render-modal" role="dialog" aria-modal="true" aria-labelledby="studio-audio-edit-prompt-title"><section class="studio-audio-render-panel"><span>Pitch render required</span><h3 id="studio-audio-edit-prompt-title">Render edited audio?</h3><p>${esc(mode)} must be rendered before playback can use it.</p>${error ? `<small>${esc(error)}</small>` : ''}<div class="studio-modal-actions"><button type="button" class="button" data-audio-edit-prompt-render>Render Now</button><button type="button" class="button button-muted" data-audio-edit-prompt-original>Play Original</button><button type="button" class="button button-muted" data-audio-edit-prompt-cancel>Cancel</button></div></section></div>`
+}
+const TOP_MENU_LABELS = [
+  ['file', 'File'],
+  ['edit', 'Edit'],
+  ['view', 'View'],
+  ['track', 'Track'],
+  ['mix', 'Mix'],
+  ['controls', 'Controls'],
+  ['help', 'Help']
+]
+const TOP_MENU_OFFSETS = { file: 0, edit: 45, view: 90, track: 140, mix: 190, controls: 235, help: 316 }
+function getActiveTopMenu() {
+  return activeTopMenu || (isFileMenuOpen ? 'file' : (isControlsMenuOpen ? 'controls' : ''))
+}
+function setActiveTopMenu(menuId = '') {
+  activeTopMenu = menuId || ''
+  isFileMenuOpen = activeTopMenu === 'file'
+  isControlsMenuOpen = activeTopMenu === 'controls'
+}
+function renderTopMenuButtons() {
+  const active = getActiveTopMenu()
+  return TOP_MENU_LABELS.map(([id, label])=>`<button type="button" data-daw-menu-toggle="${id}" class="${active === id ? 'is-active' : ''}">${label}</button>`).join('')
+}
+function menuSeparator() { return { separator: true } }
+function getTopMenuItems(menuId = '') {
+  const hasRegion = !!selectedMidiRegionId
+  const selectedTrack = getSelectedTrack()
+  const hasClipboard = !!midiRegionClipboard
+  const canDeleteTrack = tracks.length > 1 && !!selectedTrack
+  const snapDivision = Math.round(1 / getSnapStepBeats())
+  const items = {
+    file: [
+      { label: 'Save Project', action: 'save-project', icon: 'S', shortcut: 'Cmd+S', enabled: true, tooltip: 'Save the current Soura project state.' },
+      menuSeparator(),
+      { label: 'Import Audio...', action: 'import-audio', icon: 'I', shortcut: 'Shift+Cmd+I', enabled: true, tooltip: 'Import browser-decodable audio onto the selected audio track.' },
+      { label: 'New Project', icon: '+', enabled: false, tooltip: 'Project creation is handled from the Studio hub.' },
+      { label: 'Open Project...', icon: 'O', enabled: false, tooltip: 'Use the Studio hub to open a different project.' },
+      { label: 'Export Mix...', icon: 'E', enabled: false, tooltip: 'Mix export is not wired yet.' }
+    ],
+    edit: [
+      { label: 'Undo', action: 'undo', shortcut: 'Cmd+Z', enabled: undoStack.length > 0, tooltip: undoStack.length ? 'Undo the last arrangement edit.' : 'Nothing to undo.' },
+      { label: 'Redo', action: 'redo', shortcut: 'Shift+Cmd+Z', enabled: redoStack.length > 0, tooltip: redoStack.length ? 'Redo the last undone edit.' : 'Nothing to redo.' },
+      menuSeparator(),
+      { label: 'Copy Region', action: 'copy-region', shortcut: 'Cmd+C', enabled: hasRegion, tooltip: hasRegion ? 'Copy the selected region.' : 'Select a region first.' },
+      { label: 'Paste Region at Playhead', action: 'paste-region', shortcut: 'Cmd+V', enabled: hasClipboard, tooltip: hasClipboard ? 'Paste copied regions at the playhead.' : 'Copy a region first.' },
+      { label: 'Duplicate Region', action: 'duplicate-region', shortcut: 'Cmd+D', enabled: hasRegion, tooltip: hasRegion ? 'Duplicate selected regions.' : 'Select a region first.' },
+      { label: 'Delete Region', action: 'delete-region', shortcut: 'Delete', enabled: hasRegion, tooltip: hasRegion ? 'Delete selected regions.' : 'Select a region first.' },
+      menuSeparator(),
+      { label: 'Select All Regions', action: 'select-all-regions', shortcut: 'Cmd+A', enabled: midiRegions.length > 0, tooltip: midiRegions.length ? 'Select all regions in the arrangement.' : 'No regions to select.' },
+      { label: 'Deselect All', action: 'deselect-regions', shortcut: 'Esc', enabled: getSelectedRegionIds().length > 0, tooltip: 'Clear the current region selection.' },
+      { label: 'Split Region at Playhead', action: 'split-region-playhead', shortcut: 'Cmd+T', enabled: hasRegion, tooltip: hasRegion ? 'Split the selected region at the playhead.' : 'Select a region first.' },
+      menuSeparator(),
+      { label: 'Project Settings', enabled: false },
+      { label: 'Project Settings...', action: 'project-settings', enabled: true, tooltip: 'Edit project name, tempo, time signature, key, and CPU alert threshold.' },
+      { label: 'Project Management...', action: 'project-management', enabled: true, tooltip: 'View project metadata, counts, timing maps, and storage summary.' }
+    ],
+    view: [
+      { label: 'Zoom In', action: 'zoom-in', shortcut: 'Cmd++', enabled: true, tooltip: 'Zoom the timeline in.' },
+      { label: 'Zoom Out', action: 'zoom-out', shortcut: 'Cmd+-', enabled: true, tooltip: 'Zoom the timeline out.' },
+      { label: 'Reset Zoom', action: 'zoom-reset', shortcut: 'Cmd+0', enabled: true, tooltip: 'Reset timeline zoom.' },
+      menuSeparator(),
+      { label: 'Show Global Tracks', action: 'toggle-global-tracks', checked: globalTracks.visible, enabled: true, tooltip: 'Show or hide the global tracks lane.' },
+      { label: 'Open Region Editor', action: 'open-region-editor', enabled: hasRegion, tooltip: hasRegion ? 'Open the selected region in the Region Editor.' : 'Select a region first.' },
+      { label: 'Open Mixer', action: 'open-mixer', enabled: true, tooltip: 'Open the bottom Mixer panel.' },
+      { label: 'Open Instrument', action: 'open-instrument', enabled: true, tooltip: 'Open the Instrument panel.' },
+      { label: 'Open Resona', action: 'open-resona', enabled: true, tooltip: 'Open the Resona panel.' }
+    ],
+    track: [
+      { label: 'Add Track...', action: 'add-track-modal', icon: '+', shortcut: 'Alt+Cmd+N', enabled: true, tooltip: 'Open the new track dialog.' },
+      { label: 'New Software Track', action: 'add-software-track', enabled: true, tooltip: 'Create a software instrument track.' },
+      { label: 'New Audio Track', action: 'add-audio-track', enabled: true, tooltip: 'Create an audio track.' },
+      menuSeparator(),
+      { label: 'Duplicate Track', action: 'duplicate-track', enabled: !!selectedTrack, tooltip: selectedTrack ? 'Duplicate the selected track.' : 'Select a track first.' },
+      { label: 'Delete Track', action: 'delete-track', enabled: canDeleteTrack, tooltip: canDeleteTrack ? 'Delete the selected track.' : 'At least one track must remain.' },
+      { label: 'Rename Track', action: 'rename-track', enabled: !!selectedTrack, tooltip: selectedTrack ? 'Open the selected track name in the inspector.' : 'Select a track first.' },
+      { label: 'Toggle Track Automation', action: 'toggle-track-automation', enabled: !!selectedTrack, tooltip: selectedTrack ? 'Show or hide automation for the selected track.' : 'Select a track first.' }
+    ],
+    mix: [
+      { label: 'Open Mixer', action: 'open-mixer', shortcut: 'X', enabled: true, tooltip: 'Open the bottom Mixer panel.' },
+      { label: 'Reset Selected Track Volume', action: 'reset-track-volume', enabled: !!selectedTrack, tooltip: selectedTrack ? 'Reset selected track volume to 72%.' : 'Select a track first.' },
+      { label: 'Center Selected Track Pan', action: 'center-track-pan', enabled: !!selectedTrack, tooltip: selectedTrack ? 'Center selected track pan.' : 'Select a track first.' },
+      menuSeparator(),
+      { label: 'Add Audio Effect...', enabled: false, tooltip: 'Use the Inspector audio effects menu for now.' },
+      { label: 'Bounce Region in Place...', enabled: false, tooltip: 'Bounce in place is not implemented yet.' }
+    ],
+    controls: [
+      { label: isPlaying ? 'Pause' : 'Play', action: 'toggle-playback', shortcut: 'Space', enabled: !(activeRecording || isCountInRunning), tooltip: 'Start or pause playback.' },
+      { label: 'Stop', action: 'stop-playback', shortcut: 'Return', enabled: true, tooltip: 'Stop playback or recording.' },
+      { label: 'Record', action: 'record', shortcut: 'R', enabled: true, tooltip: 'Start or stop recording.' },
+      menuSeparator(),
+      { label: 'Metronome', action: 'toggle-metronome', shortcut: 'K', checked: isMetronomeEnabled, enabled: true, tooltip: 'Toggle the metronome.' },
+      { label: 'Count-in', action: 'toggle-count-in', checked: isCountInEnabled, enabled: true, tooltip: 'Toggle recording count-in.' },
+      { label: `Snap (${isSnapEnabled ? `1/${snapDivision}` : 'Off'})`, action: 'toggle-snap', checked: isSnapEnabled, enabled: true, tooltip: 'Snap follows the visible high-resolution grid when enabled.' },
+      { label: 'Cycle', action: 'toggle-cycle', shortcut: 'C', checked: isCycleEnabled, enabled: true, tooltip: 'Toggle cycle playback.' },
+      { label: 'Follow Playhead', action: 'toggle-follow-playhead', checked: followPlayhead, enabled: true, tooltip: 'Keep the playhead in view during playback.' },
+      menuSeparator(),
+      { label: 'Configure Controls...', action: 'configure-controls', shortcut: 'Cmd+,', enabled: true, tooltip: 'View current Soura keyboard and transport controls.' }
+    ],
+    help: [
+      { label: 'Soura Shortcuts', action: 'configure-controls', enabled: true, tooltip: 'Show current shortcuts.' },
+      { label: 'Open Project Notes', action: 'open-notes', enabled: true, tooltip: 'Open project notes.' },
+      { label: 'Soura DSP Status', action: 'show-dsp-status', enabled: true, tooltip: 'Log current audio DSP status to the console.' },
+      menuSeparator(),
+      { label: 'Online Manual', enabled: false, tooltip: 'A Soura manual route is not available yet.' }
+    ]
+  }
+  return items[menuId] || []
+}
+function renderDawTopMenu() {
+  const menuId = getActiveTopMenu()
+  if (!menuId) return ''
+  const items = getTopMenuItems(menuId)
+  if (!items.length) return ''
+  const left = TOP_MENU_OFFSETS[menuId] ?? 0
+  return `<div class="studio-daw-menu" data-daw-menu data-menu="${esc(menuId)}" style="--menu-left:${left}px">${items.map((item)=>{
+    if (item.separator) return '<span class="studio-daw-menu-separator"></span>'
+    const disabled = item.enabled === false
+    const checked = item.checked ? '<span class="studio-daw-menu-check">*</span>' : '<span class="studio-daw-menu-check"></span>'
+    const iconMarkup = item.icon ? `<span class="studio-daw-menu-icon">${esc(item.icon)}</span>` : checked
+    const tooltip = item.tooltip ? ` data-tooltip="${esc(item.tooltip)}"` : ''
+    return `<button type="button" data-daw-menu-action="${esc(item.action || '')}" ${disabled || !item.action ? 'disabled' : ''}${tooltip}><span class="studio-daw-menu-leading">${iconMarkup}<span>${esc(item.label)}</span></span>${item.shortcut ? `<kbd>${esc(item.shortcut)}</kbd>` : '<kbd></kbd>'}</button>`
+  }).join('')}</div>`
+}
+function renderControlsConfigModal() {
+  if (!controlsConfigModalOpen) return ''
+  const rows = [
+    ['Space', 'Play / pause'],
+    ['Return', 'Go to timeline start'],
+    ['Delete / Backspace', 'Delete selected region or MIDI note'],
+    ['Arrow Left / Right', 'Move playhead by snap or fine step'],
+    ['K', 'Toggle metronome'],
+    ['C', 'Toggle cycle'],
+    ['R', 'Record using selected or armed track'],
+    ['Ctrl/Cmd + wheel', 'Zoom timeline around pointer'],
+    ['Shift + wheel', 'Scroll timeline horizontally'],
+    ['Alt + wheel', 'Resize track height']
+  ]
+  return `<div class="studio-add-track-modal studio-controls-config-modal" data-controls-config-backdrop>
+    <section class="studio-add-track-panel studio-controls-config-panel" role="dialog" aria-modal="true" aria-labelledby="studio-controls-config-title">
+      <header><div><span>Controls</span><h3 id="studio-controls-config-title">Configure Controls</h3></div><button type="button" data-close-controls-config aria-label="Close Configure Controls">Close</button></header>
+      <p>Current keyboard and timeline controls. Editable key mapping is not implemented yet.</p>
+      <div class="studio-controls-config-list">${rows.map(([keys, desc])=>`<div><kbd>${esc(keys)}</kbd><span>${esc(desc)}</span></div>`).join('')}</div>
+    </section>
+  </div>`
+}
+function getProjectManagementInfo() {
+  ensureCanonicalGlobalTracks()
+  const audioRegions = midiRegions.filter((region)=>region.type === 'audio')
+  const midiOnlyRegions = midiRegions.filter((region)=>region.type !== 'audio')
+  const storageCount = audioRegions.filter((region)=>region.audioClip?.storagePath || region.audioClip?.downloadUrl).length
+  const lengthBeats = Math.max(0, ...midiRegions.map((region)=>Number(region.endBeat) || ((Number(region.startBeat) || 0) + (Number(region.durationBeats) || 0))))
+  const wasmStatus = getSouraWasmDspStatusSnapshot?.() || {}
+  return {
+    'Project ID': projectState?.id || 'Unknown',
+    'Project name': projectState?.title || 'Untitled Project',
+    'Owner ID': projectState?.ownerId || 'Unknown',
+    'Created': projectState?.createdAt?.toDate?.()?.toLocaleString?.() || projectState?.createdAt || 'Unknown',
+    'Updated': projectState?.updatedAt?.toDate?.()?.toLocaleString?.() || projectState?.updatedAt || 'Unknown',
+    'Track count': tracks.length,
+    'Region count': midiRegions.length,
+    'Audio regions': audioRegions.length,
+    'MIDI/software regions': midiOnlyRegions.length,
+    'Audio/storage assets': storageCount,
+    'Current BPM': getTempoAtBeat(clampBeat(xToBeat(timelineState.playheadX))).bpm,
+    'Current key': formatKeySignature(getKeySignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    'Current time signature': formatTimeSignature(getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    'Global tempo events': normalizeTempoMap().length,
+    'Marker count': globalTracks.markers.length,
+    'Estimated length': `${lengthBeats.toFixed(2)} beats / ${formatAudioDuration(beatsToSeconds(lengthBeats))}`,
+    'Save status': saveStatus,
+    'WASM DSP': wasmStatus.ready ? 'Ready' : (wasmStatus.loading ? 'Loading' : 'Not loaded'),
+    'Hydration': `${audioRegions.filter((region)=>region.audioClip?.loadStatus === 'loaded').length}/${audioRegions.length} audio loaded`
+  }
+}
+function renderProjectSettingsModal() {
+  if (!projectSettingsModalOpen) return ''
+  ensureCanonicalGlobalTracks()
+  const tempo = getTempoAtBeat(0)
+  const sig = getTimeSignatureAtBeat(0)
+  const key = getKeySignatureAtBeat(0)
+  const cpu = getProjectCpuAlerts()
+  return `<div class="studio-add-track-modal studio-project-modal" data-project-settings-backdrop>
+    <form class="studio-add-track-panel studio-project-settings-panel" role="dialog" aria-modal="true" aria-labelledby="studio-project-settings-title" data-project-settings-form>
+      <header><div><span>Project Settings</span><h3 id="studio-project-settings-title">Project Settings</h3></div><button type="button" data-close-project-settings aria-label="Close Project Settings">Close</button></header>
+      <div class="studio-project-settings-grid">
+        <label>Project name<input data-project-setting="title" type="text" maxlength="120" value="${esc(projectState?.title || 'Untitled Project')}"></label>
+        <label>BPM<input data-project-setting="bpm" type="number" min="20" max="300" step="0.1" value="${Number(tempo.bpm || 140)}"></label>
+        <label>Time numerator<input data-project-setting="numerator" type="number" min="1" max="32" step="1" value="${sig.numerator || 4}"></label>
+        <label>Time denominator<select data-project-setting="denominator">${TIME_SIGNATURE_DENOMINATORS.map((value)=>`<option value="${value}" ${Number(sig.denominator)===value?'selected':''}>${value}</option>`).join('')}</select></label>
+        <label>Key root<select data-project-setting="keyRoot">${ROOT_NOTE_OPTIONS.map((root)=>`<option value="${root}" ${normalizeRootNote(key.root)===root?'selected':''}>${root}</option>`).join('')}</select></label>
+        <label>Scale / mode<select data-project-setting="keyScale">${KEY_SCALE_OPTIONS.map((scale)=>`<option value="${scale}" ${normalizeScaleMode(key.scale)===scale?'selected':''}>${scale}</option>`).join('')}</select></label>
+        <label class="studio-project-settings-toggle"><span>CPU alerts</span><input data-project-setting="cpuEnabled" type="checkbox" ${cpu.enabled ? 'checked' : ''}></label>
+        <label>CPU threshold %<input data-project-setting="cpuThreshold" type="number" min="1" max="100" step="1" value="${Math.round(cpu.thresholdPercent)}"></label>
+        <label>Sample rate<input readonly value="${audioContext?.sampleRate || instrumentAudioContext?.sampleRate || 44100} Hz"></label>
+        <label>Bit depth<input readonly value="Source dependent"></label>
+        <label>Default snap<input readonly value="${isSnapEnabled ? `1/${Math.round(1/getSnapStepBeats())}` : 'Off'}"></label>
+        <label>Project length<input readonly value="${timelineState.positiveBeats} beats"></label>
+      </div>
+      <footer><button type="button" data-cancel-project-settings>Cancel</button><button type="submit">Save / Apply</button></footer>
+    </form>
+  </div>`
+}
+function renderProjectManagementModal() {
+  if (!projectManagementModalOpen) return ''
+  const info = getProjectManagementInfo()
+  const text = Object.entries(info).map(([key, value])=>`${key}: ${value}`).join('\n')
+  return `<div class="studio-add-track-modal studio-project-modal" data-project-management-backdrop>
+    <section class="studio-add-track-panel studio-project-management-panel" role="dialog" aria-modal="true" aria-labelledby="studio-project-management-title">
+      <header><div><span>Project Management</span><h3 id="studio-project-management-title">Project Management</h3></div><button type="button" data-close-project-management aria-label="Close Project Management">Close</button></header>
+      <div class="studio-project-info-list">${Object.entries(info).map(([key, value])=>`<div><strong>${esc(key)}</strong><span>${esc(String(value))}</span></div>`).join('')}</div>
+      <textarea data-project-info-copy-source readonly>${esc(text)}</textarea>
+      <footer><button type="button" data-copy-project-info>Copy Project Info</button><button type="button" data-close-project-management>Close</button></footer>
+    </section>
+  </div>`
+}
+function upsertBeatZeroEvent(events = [], next = {}) {
+  const now = nowIso()
+  const list = Array.isArray(events) ? events.slice() : []
+  const index = list.findIndex((event)=>Math.max(0, Number(event.beat) || 0) === 0)
+  if (index >= 0) list[index] = { ...list[index], ...next, beat: 0, updatedAt: now, createdAt: list[index].createdAt || now }
+  else list.unshift({ ...next, id: next.id || makeInsertId('global'), beat: 0, createdAt: now, updatedAt: now })
+  return list.sort((a,b)=>(Number(a.beat)||0)-(Number(b.beat)||0))
+}
+function applyProjectSettingsFromForm(form) {
+  if (!form || !projectState) return
+  const field = (name) => form.querySelector(`[data-project-setting="${name}"]`)
+  const title = String(field('title')?.value || projectState.title || 'Untitled Project').trim().slice(0, 120) || 'Untitled Project'
+  const bpm = clampProjectBpm(field('bpm')?.value || projectState.bpm || 140)
+  const numerator = clamp(Math.round(Number(field('numerator')?.value) || 4), 1, 32)
+  const denominator = TIME_SIGNATURE_DENOMINATORS.includes(Number(field('denominator')?.value)) ? Number(field('denominator')?.value) : 4
+  const root = normalizeRootNote(field('keyRoot')?.value || 'C')
+  const scale = normalizeScaleMode(field('keyScale')?.value || 'minor')
+  const cpuAlerts = normalizeCpuAlerts({
+    enabled: !!field('cpuEnabled')?.checked,
+    thresholdPercent: field('cpuThreshold')?.value,
+    sustainMs: getProjectCpuAlerts().sustainMs,
+    cooldownMs: getProjectCpuAlerts().cooldownMs
+  })
+  projectState.title = title
+  projectState.bpm = bpm
+  projectState.key = `${root} ${scale}`
+  projectState.timeSignature = `${numerator}/${denominator}`
+  projectState.settings = { ...(projectState.settings || {}), cpuAlerts }
+  globalTracks.tempoEvents = upsertBeatZeroEvent(normalizeTempoMap().filter((event)=>event.id !== 'tempo-default'), { id: normalizeTempoMap()[0]?.beat === 0 ? normalizeTempoMap()[0].id : makeInsertId('tempo'), bpm, curve: 'hold' })
+  globalTracks.timeSignatureEvents = upsertBeatZeroEvent(normalizeTimeSignatureMap(), { id: normalizeTimeSignatureMap()[0]?.beat === 0 ? normalizeTimeSignatureMap()[0].id : makeInsertId('time-signature'), numerator, denominator })
+  globalTracks.keySignatureEvents = upsertBeatZeroEvent(normalizeKeySignatureMap(), { id: normalizeKeySignatureMap()[0]?.beat === 0 ? normalizeKeySignatureMap()[0].id : makeInsertId('key-signature'), root, scale, label: `${root} ${scale}` })
+  projectSettingsModalOpen = false
+  ensureCanonicalGlobalTracks()
+  scheduleEditorSave()
+  renderEditor()
+}
+function setTimelineZoomPixelsPerBeat(pixelsPerBeat = beatWidth()) {
+  souraPerformanceDiagnostics.recordViewportChange(isPlaying)
+  const scroll = captureArrangementScroll()
+  const currentBeat = xToBeatsFromBarZero(timelineState.playheadX)
+  timelineState.pixelsPerBar = clampTimelinePixelsPerBar(Number(pixelsPerBeat) * Math.max(1, Number(timelineState.beatsPerBar) || 4))
+  timelineState.playheadX = beatsFromBarZeroToX(currentBeat)
+  scheduleEditorSave()
+  renderEditorPreservingArrangementScroll(scroll)
+}
+function runDawTopMenuAction(action = '') {
+  if (!action) return
+  setActiveTopMenu('')
+  const track = getSelectedTrack()
+  const currentBeat = clampBeat(xToBeat(timelineState.playheadX))
+  if (action === 'save-project') { scheduleEditorSave(); renderEditor(); return }
+  if (action === 'import-audio') { openAudioImportPicker(); return }
+  if (action === 'undo') { undoDawEdit(); return }
+  if (action === 'redo') { redoDawEdit(); return }
+  if (action === 'copy-region') { copyMidiRegion(); renderEditor(); return }
+  if (action === 'paste-region') { pasteMidiRegion({ beat: currentBeat }); return }
+  if (action === 'duplicate-region') { duplicateSelectedRegions(); return }
+  if (action === 'delete-region') { deleteMidiRegion(); return }
+  if (action === 'select-all-regions') { setSelectedRegions(midiRegions.map((region)=>region.id), { primaryId: midiRegions[0]?.id || '' }); renderEditorPreservingArrangementScroll(); return }
+  if (action === 'deselect-regions') { clearRegionSelection(); renderEditorPreservingArrangementScroll(); return }
+  if (action === 'split-region-playhead') { splitRegionAtBeat(selectedMidiRegionId, currentBeat); return }
+  if (action === 'project-settings') { projectSettingsModalOpen = true; renderEditor(); return }
+  if (action === 'project-management') { projectManagementModalOpen = true; renderEditor(); return }
+  if (action === 'zoom-in') { setTimelineZoomPixelsPerBeat(beatWidth() * 1.4); return }
+  if (action === 'zoom-out') { setTimelineZoomPixelsPerBeat(beatWidth() / 1.4); return }
+  if (action === 'zoom-reset') { setTimelineZoomPixelsPerBeat(30); return }
+  if (action === 'toggle-global-tracks') { globalTracks.visible = !globalTracks.visible; scheduleEditorSave(); renderEditor(); return }
+  if (action === 'open-region-editor') { openRegionEditorForRegion(selectedMidiRegionId); return }
+  if (action === 'open-mixer') { if (activeBottomPanel !== 'mixer') openBottomPanel('mixer'); else renderEditor(); return }
+  if (action === 'open-instrument') { if (activeBottomPanel !== 'instrument') openBottomPanel('instrument'); else renderEditor(); return }
+  if (action === 'open-resona') { if (activeBottomPanel !== 'resona') openBottomPanel('resona'); else renderEditor(); return }
+  if (action === 'add-track-modal') { openAddTrackModal(); return }
+  if (action === 'add-software-track') { addTrack({ trackType: 'software' }); return }
+  if (action === 'add-audio-track') { addTrack({ trackType: 'audio' }); return }
+  if (action === 'duplicate-track') { duplicateSelectedTrack(); return }
+  if (action === 'delete-track') { deleteSelectedTrack(); return }
+  if (action === 'rename-track') { activeLeftPanel = 'inspector'; renderEditor(); return }
+  if (action === 'toggle-track-automation') { if (track) { ensureTrackAutomation(track); track.automationOpen = !track.automationOpen; selectedTrackAutomation = null; scheduleEditorSave() } renderEditorPreservingArrangementScroll(); return }
+  if (action === 'reset-track-volume') { if (track) { track.volume = 72; setTrackChannelVolume(track); scheduleEditorSave() } renderEditor(); return }
+  if (action === 'center-track-pan') { if (track) setTrackPan(track, 0, { save: true }); renderEditor(); return }
+  if (action === 'toggle-playback') { if (!(activeRecording || isCountInRunning)) togglePlayback(); renderEditor(); return }
+  if (action === 'stop-playback') { if (activeRecording || isCountInRunning) stopRecordingAndKeep(); else { finalizeMidiRecording(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = ''; renderEditor() } return }
+  if (action === 'record') { if (activeRecording || isCountInRunning) stopRecordingAndKeep(); else startRecordFlow(); return }
+  if (action === 'toggle-metronome') { isMetronomeEnabled = !isMetronomeEnabled; metronomeSettings.enabled = isMetronomeEnabled; if (isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor(); return }
+  if (action === 'toggle-count-in') { isCountInEnabled = !isCountInEnabled; scheduleEditorSave(); renderEditor(); return }
+  if (action === 'toggle-snap') { isSnapEnabled = !isSnapEnabled; scheduleEditorSave(); renderEditor(); return }
+  if (action === 'toggle-cycle') { setCycleEnabled(!isCycleEnabled); scheduleEditorSave(); renderEditor(); return }
+  if (action === 'toggle-follow-playhead') { followPlayhead = !followPlayhead; scheduleEditorSave(); renderEditor(); return }
+  if (action === 'configure-controls') { controlsConfigModalOpen = true; renderEditor(); return }
+  if (action === 'open-notes') { isNotesOpen = true; renderEditor(); return }
+  if (action === 'show-dsp-status') { console.info('[soura-dsp] status', getSouraWasmDspStatusSnapshot()); renderEditor(); return }
+}
+function renderFileMenu(){ return renderDawTopMenu() }
+function renderControlsMenu(){ return '' }
+function renderRegionToolRail() {
+  return `<div class="studio-right-rail-divider studio-right-rail-divider--region-tools"></div><div class="studio-region-tool-rail" role="toolbar" aria-label="Global region tools">${REGION_TOOL_ITEMS.map((tool) => {
+    const isAction = tool.mode === 'action'
+    const active = activeRegionTool === tool.id && !isAction
+    const attrs = tool.enabled
+      ? `${isAction ? `data-region-tool-action="${tool.id}"` : `data-region-tool="${tool.id}"`} aria-pressed="${String(active)}"`
+      : `disabled aria-disabled="true"`
+    const title = `${tool.title || tool.label}${tool.shortcut ? ` (${tool.shortcut})` : ''}${tool.reason ? ` - ${tool.reason}` : ''}`
+    return `<button type="button" class="studio-region-tool-button ${active ? 'is-active' : ''} ${!tool.enabled ? 'is-disabled' : ''}" ${attrs} title="${esc(title)}"><span>${esc(tool.glyph)}</span><small>${esc(tool.label)}</small></button>`
+  }).join('')}</div>`
+}
+
+function cloneRegionForState(region = {}, { persist = false } = {}) {
+  const waveform = region.waveform
+    ? {
+      ...region.waveform,
+      peaks: Array.isArray(region.waveform.peaks) ? region.waveform.peaks.slice(0, persist ? WAVEFORM_PERSISTED_MAX_PEAKS : region.waveform.peaks.length).map((peak)=>peak && typeof peak === 'object' ? { min: Number(peak.min) || 0, max: Number(peak.max) || 0, rms: Number(peak.rms) || 0 } : Number(peak) || 0) : []
+    }
+    : undefined
+  if (waveform && Array.isArray(region.waveform?.chunks) && !persist) waveform.chunks = region.waveform.chunks.map((chunk)=>({ ...chunk }))
+  const renderedWaveform = region.renderedWaveform
+    ? {
+      ...region.renderedWaveform,
+      peaks: Array.isArray(region.renderedWaveform.peaks) ? region.renderedWaveform.peaks.slice(0, persist ? WAVEFORM_PERSISTED_MAX_PEAKS : region.renderedWaveform.peaks.length).map((peak)=>peak && typeof peak === 'object' ? { min: Number(peak.min) || 0, max: Number(peak.max) || 0, rms: Number(peak.rms) || 0 } : Number(peak) || 0) : []
+    }
+    : null
+  const copy = {
+    ...region,
+    notes: (region.notes || []).map((note)=>({ ...note, ...(note.notation ? { notation: normalizeNoteNotation(note.notation) } : {}) })),
+    ...(region.score ? { score: normalizeRegionScore(region.score) } : {}),
+    waveform,
+    renderedWaveform
+  }
+  if (copy.type === 'audio') {
+    const runtimeId = copy.audioClip?.runtimeId || copy.id
+    syncAudioRegionTimeline(copy)
+    const fileDurationSeconds = getAudioFileDurationSeconds(copy)
+    const trimStartSeconds = getAudioTrimStartSeconds(copy)
+    const trimEndSeconds = Number.isFinite(Number(copy.trimEndSeconds)) ? getAudioTrimEndSeconds(copy) : null
+    const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(copy)
+    copy.clipId = copy.clipId || copy.id
+    copy.timelineStartBeats = Number(copy.timelineStartBeats ?? copy.startBeat) || 0
+    copy.timelineStartSeconds = Number(copy.timelineStartSeconds ?? getTimelineSecondsAtBeat(copy.timelineStartBeats)) || 0
+    copy.transportBpm = Number(copy.transportBpm) || Number(projectState?.bpm || 140)
+    copy.projectSampleRate = Number(copy.projectSampleRate) || Number(copy.audioContextSampleRate) || 44100
+    copy.audioContextSampleRate = Number(copy.audioContextSampleRate) || copy.projectSampleRate
+    copy.recordingStartedAtAudioContextTime = Number(copy.recordingStartedAtAudioContextTime) || 0
+    copy.recordingStartedAtPerformanceTime = Number(copy.recordingStartedAtPerformanceTime) || 0
+    copy.mediaRecorderStartedAt = Number(copy.mediaRecorderStartedAt) || 0
+    copy.sourceLatencyCompensationSeconds = Number(copy.sourceLatencyCompensationSeconds) || 0
+    copy.durationSeconds = visibleDurationSeconds
+    copy.fileDurationSeconds = fileDurationSeconds
+    copy.offsetSeconds = Number(copy.offsetSeconds) || 0
+    copy.trimStartSeconds = trimStartSeconds
+    copy.trimEndSeconds = trimEndSeconds
+    copy.visibleDurationSeconds = visibleDurationSeconds
+    copy.playbackRate = Number(copy.playbackRate) || 1
+    copy.audioEdit = normalizeAudioEdit(copy.audioEdit)
+    if (persist && copy.audioEdit?.pitchTrace?.status === 'analyzing') {
+      copy.audioEdit.pitchTrace.status = copy.audioEdit.pitchTrace.notes.length ? 'ready' : 'idle'
+      copy.audioEdit.pitchTrace.progress = 0
+    }
+    copy.stretch = normalizeAudioStretch(copy.stretch, {
+      clipId: copy.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(copy),
+      visibleDurationSeconds
+    })
+    if (persist) copy.stretch.renderedObjectUrl = null
+    if (!copy.waveform) copy.waveform = { peaks: [], resolution: 'none', durationSeconds: fileDurationSeconds, generatedAt: null }
+    if (!Array.isArray(copy.waveform.peaks)) copy.waveform.peaks = []
+    copy.audioClip = {
+      ...(copy.audioClip || {}),
+      id: copy.audioClip?.id || copy.clipId || copy.id,
+      audioAssetId: copy.audioClip?.audioAssetId || copy.audioClip?.id || copy.clipId || copy.id,
+      runtimeId,
+      source: copy.audioClip?.source || copy.source || 'recording',
+      contentType: copy.audioClip?.contentType || copy.contentType || 'audio/webm',
+      fileType: copy.audioClip?.fileType || copy.fileType || copy.audioClip?.contentType || copy.contentType || 'audio/webm',
+      fileName: copy.audioClip?.fileName || `${copy.clipId || copy.id}.${extensionForAudioType(copy.audioClip?.contentType || copy.contentType || 'audio/webm')}`,
+      fileSizeBytes: Number(copy.audioClip?.fileSizeBytes ?? copy.fileSizeBytes) || null,
+      sampleRate: Number(copy.audioClip?.sampleRate ?? copy.sampleRate ?? copy.audioContextSampleRate) || null,
+      bitDepth: Number.isFinite(Number(copy.audioClip?.bitDepth ?? copy.bitDepth)) ? Number(copy.audioClip?.bitDepth ?? copy.bitDepth) : null,
+      bitDepthSource: copy.audioClip?.bitDepthSource || copy.bitDepthSource || 'unknown',
+      channelCount: Number(copy.audioClip?.channelCount ?? copy.channelCount) || null,
+      fileDurationSeconds,
+      storagePath: copy.audioClip?.storagePath || null,
+      downloadUrl: copy.audioClip?.downloadUrl || null,
+      sessionOnly: copy.audioClip?.storagePath || copy.audioClip?.downloadUrl ? false : true,
+      missingAfterReload: copy.audioClip?.storagePath || copy.audioClip?.downloadUrl ? false : true,
+      audioReady: copy.audioClip?.audioReady === true && !persist,
+      loadStatus: copy.audioClip?.loadStatus || 'idle',
+      loadError: copy.audioClip?.loadError || null,
+      offlineReason: copy.audioClip?.offlineReason || (copy.audioClip?.storagePath || copy.audioClip?.downloadUrl ? null : 'missing_storage_path'),
+      createdAt: Number.isFinite(Number(copy.audioClip?.createdAt)) ? Number(copy.audioClip.createdAt) : null,
+      updatedAt: Number.isFinite(Number(copy.audioClip?.updatedAt)) ? Number(copy.audioClip.updatedAt) : null
+    }
+    delete copy.blob
+    delete copy.url
+    delete copy.audioBuffer
+    delete copy.recordingStartPixelX
+    if (persist) copy.missingMedia = !(copy.audioClip.storagePath || copy.audioClip.downloadUrl)
+  }
+  return copy
+}
+function normalizeLoadedRegion(region = {}) {
+  const type = region.type === 'audio' ? 'audio' : 'midi'
+  const rawFileDuration = Math.max(minAudioRegionSeconds, Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || minAudioRegionSeconds)
+  const rawTrimStart = clamp(Number(region.trimStartSeconds) || 0, 0, Math.max(0, rawFileDuration - minAudioRegionSeconds))
+  const rawTrimEnd = Number.isFinite(Number(region.trimEndSeconds)) ? clamp(Number(region.trimEndSeconds), rawTrimStart + minAudioRegionSeconds, rawFileDuration) : rawFileDuration
+  const rawSourceDuration = Math.max(minAudioRegionSeconds, rawTrimEnd - rawTrimStart)
+  const rawVisibleDuration = getRawAudioRegionVisibleDurationSeconds(region) || rawSourceDuration
+  const loadedStretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: rawSourceDuration,
+    visibleDurationSeconds: rawVisibleDuration,
+    migrateCorrupt: true
+  })
+  const hasPersistedStretchRender = !!loadedStretch.renderedStoragePath || !!loadedStretch.renderedAudioUrl
+  const stretch = loadedStretch.enabled && loadedStretch.renderStatus === 'ready' && !hasPersistedStretchRender
+    ? { ...loadedStretch, renderedRuntimeId: null, renderedObjectUrl: null, renderStatus: 'needs_render', renderError: null, renderedSessionOnly: true }
+    : loadedStretch
+  const loadedAudioEdit = type === 'audio' ? normalizeAudioEdit(region.audioEdit) : undefined
+  if (loadedAudioEdit?.pitchShift?.renderStatus === 'ready' && !(loadedAudioEdit.pitchShift.renderedStoragePath || loadedAudioEdit.pitchShift.renderedAudioUrl)) {
+    loadedAudioEdit.pitchShift = { ...loadedAudioEdit.pitchShift, renderedRuntimeId: null, renderStatus: 'needs_render', lastError: null }
+  }
+  if (loadedAudioEdit?.pitchTrace?.renderStatus === 'ready' && !(loadedAudioEdit.pitchTrace.renderedStoragePath || loadedAudioEdit.pitchTrace.renderedAudioUrl)) {
+    loadedAudioEdit.pitchTrace = { ...loadedAudioEdit.pitchTrace, renderedRuntimeId: null, renderStatus: getPitchTraceEditedNoteCount(loadedAudioEdit.pitchTrace) ? 'needs_render' : 'idle', lastError: null }
+  }
+  if (loadedAudioEdit?.reverse?.renderStatus === 'ready' && !(loadedAudioEdit.reverse.renderedStoragePath || loadedAudioEdit.reverse.renderedAudioUrl)) {
+    loadedAudioEdit.reverse = { ...loadedAudioEdit.reverse, renderedRuntimeId: null, renderStatus: loadedAudioEdit.reverse.enabled ? 'needs_render' : 'idle', lastError: null }
+  }
+  const hasPersistentMedia = !!(region.audioClip?.storagePath || region.audioClip?.downloadUrl)
+  const normalized = cloneRegionForState({
+    ...region,
+    type,
+    notes: type === 'midi' && Array.isArray(region.notes) ? region.notes.map((note)=>({ ...note })) : [],
+    trimStartSeconds: Number(region.trimStartSeconds) || 0,
+    trimEndSeconds: Number.isFinite(Number(region.trimEndSeconds)) ? Number(region.trimEndSeconds) : null,
+    visibleDurationSeconds: Number(region.visibleDurationSeconds) || Number(region.durationSeconds) || null,
+    fileDurationSeconds: Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || null,
+    playbackRate: Number(region.playbackRate) || 1,
+    offsetSeconds: Number(region.offsetSeconds) || 0,
+    audioEdit: loadedAudioEdit,
+    stretch,
+    audioClip: type === 'audio'
+      ? {
+        ...(region.audioClip || {}),
+        id: region.audioClip?.id || region.clipId || region.id,
+        audioAssetId: region.audioClip?.audioAssetId || region.audioClip?.id || region.clipId || region.id,
+        runtimeId: region.audioClip?.runtimeId || region.id,
+        source: region.audioClip?.source || region.source || 'recording',
+        fileDurationSeconds: Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || null,
+        storagePath: region.audioClip?.storagePath || null,
+        downloadUrl: region.audioClip?.downloadUrl || null,
+        contentType: region.audioClip?.contentType || region.contentType || 'audio/webm',
+        fileType: region.audioClip?.fileType || region.fileType || region.audioClip?.contentType || region.contentType || 'audio/webm',
+        fileName: region.audioClip?.fileName || `${region.id}.${extensionForAudioType(region.audioClip?.contentType || 'audio/webm')}`,
+        fileSizeBytes: Number(region.audioClip?.fileSizeBytes ?? region.fileSizeBytes) || null,
+        sampleRate: Number(region.audioClip?.sampleRate ?? region.sampleRate ?? region.audioContextSampleRate) || null,
+        bitDepth: Number.isFinite(Number(region.audioClip?.bitDepth ?? region.bitDepth)) ? Number(region.audioClip?.bitDepth ?? region.bitDepth) : null,
+        bitDepthSource: region.audioClip?.bitDepthSource || region.bitDepthSource || 'unknown',
+        channelCount: Number(region.audioClip?.channelCount ?? region.channelCount) || null,
+        sessionOnly: !hasPersistentMedia,
+        missingAfterReload: !hasPersistentMedia,
+        audioReady: false,
+        loadStatus: hasPersistentMedia ? 'pending' : 'missing',
+        loadError: hasPersistentMedia ? null : 'This region has metadata but no persistent audio file. Re-record or reconnect the audio.',
+        offlineReason: hasPersistentMedia ? null : (region.audioClip?.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
+      }
+      : undefined,
+    missingMedia: type === 'audio' ? !hasPersistentMedia : Boolean(region.missingMedia)
+  })
+  return type === 'audio' ? syncAudioRegionTimeline(normalized) : normalized
+}
+function serializeTrackForEditorState(track) {
+  ensureTrackInsertState(track)
+  const { id, name, color, colorSoft, muted, soloed, recordArmed, automationOpen, automation, volume, pan, outputLevel, midiEffects, instrument, audioEffects } = track
+  const type = normalizeTrackType(track.type)
+  const channelSettings = {
+    notes: track.notes || '',
+    monitor: !!track.monitor,
+    midiInput: track.midiInput || 'All Inputs',
+    midiChannel: track.midiChannel || 'All',
+    audioInput: track.audioInput || 'Browser default',
+    audioOutput: track.audioOutput || 'Stereo Out',
+    transpose: Number(track.transpose || 0),
+    octaveShift: Number(track.octaveShift || 0),
+    velocityOffset: Number(track.velocityOffset || 0),
+    quantize: track.quantize || 'Off',
+    gainTrim: Number(track.gainTrim || 0),
+    meterMode: track.meterMode || 'Peak + RMS',
+    midiLatencyMs: Number(track.midiLatencyMs || 0),
+    regionColorMode: track.regionColorMode || 'Track color',
+    defaultRegionLength: Number(track.defaultRegionLength || 4),
+    autoNameRegions: track.autoNameRegions !== false
+  }
+  const sourceRevision = computePortableTrackSourceRevision({
+    track,
+    regions: midiRegions,
+    tempoEvents: globalTracks.tempoEvents,
+    timeSignatureEvents: globalTracks.timeSignatureEvents
+  })
+  return {
+    id, name, type, color, colorSoft, muted, soloed, recordArmed, automationOpen,
+    automation: deepClone(automation), volume, pan, outputLevel, channelSettings,
+    midiEffects: type === 'software' ? midiEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : [],
+    instrument: type === 'software' ? serializePortableInstrument(instrument) : null,
+    audioEffects: serializeAudioEffects(audioEffects),
+    dependency: type === 'software' ? createTrackDependencyDescriptor(instrument) : null,
+    portableRender: serializePortableTrackRender(track.portableRender, sourceRevision)
+  }
+}
+function buildEditorStateForSave(){
+  ensureCanonicalGlobalTracks()
+  const tempoAtStart = getTempoAtBeat(0, globalTracks.tempoEvents)
+  const timeAtStart = getTimeSignatureAtBeat(0, globalTracks.timeSignatureEvents)
+  const keyAtStart = getKeySignatureAtBeat(0, globalTracks.keySignatureEvents)
+  return {
+    version:SOURA_EDITOR_FORMAT_VERSION,
+    projectMetadata:{
+      title: projectState?.title || 'Untitled Project',
+      bpm: tempoAtStart.bpm,
+      key: formatKeySignature(keyAtStart),
+      timeSignature: formatTimeSignature(timeAtStart)
+    },
+    settings:{
+      project:{
+        title: projectState?.title || 'Untitled Project',
+        bpm: tempoAtStart.bpm,
+        timeSignature: formatTimeSignature(timeAtStart),
+        keyRoot: keyAtStart.root,
+        keyScale: keyAtStart.scale
+      },
+      cpuAlerts: getProjectCpuAlerts()
+    },
+    timeline:{ bars: timelineState.bars, beatsPerBar: timelineState.beatsPerBar, positiveBeats: timelineState.positiveBeats, pixelsPerBar: timelineState.pixelsPerBar, preStartPixels: timelineState.preStartPixels, playheadX: timelineState.playheadX, trackHeight: timelineState.trackHeight, cycleRange: cycleRange ? { ...cycleRange } : null },
+    globalTracks:{ visible:!!globalTracks.visible, viewMode:globalTracks.viewMode||'all', arrangement:[...(globalTracks.arrangement||[])], markers:[...(globalTracks.markers||[])], tempoEvents:[...(globalTracks.tempoEvents||[])], timeSignatureEvents:[...(globalTracks.timeSignatureEvents||[])], keySignatureEvents:[...(globalTracks.keySignatureEvents||[])], signatureEvents:[...(globalTracks.signatureEvents||[])], videoRefs:[...(globalTracks.videoRefs||[])] },
+    regions:midiRegions.map((region)=>cloneRegionForState(region, { persist:true })),
+    notes:{ pages: notePages.map((p)=>({id:p.id,title:p.title,body:p.body||''})), activePageId: activeNotePageId },
+    metronome:{ ...normalizeMetronomeSettings({ ...metronomeSettings, enabled:isMetronomeEnabled }), audioEffects:serializeAudioEffects(metronomeSettings.audioEffects) },
+    tracks: tracks.map(serializeTrackForEditorState),
+    toggles:{ followPlayhead, metronome:isMetronomeEnabled, countIn:isCountInEnabled, snap:isSnapEnabled, cycle:isCycleEnabled }
+  }
+}
+function applyLoadedEditorState(editorState) {
+  if (!editorState || typeof editorState !== 'object') return
+  const tl = editorState.timeline || {}
+  if (Number.isFinite(tl.bars)) timelineState.bars = Math.max(2, Number(tl.bars))
+  if (Number.isFinite(tl.beatsPerBar)) timelineState.beatsPerBar = Math.max(1, Number(tl.beatsPerBar))
+  timelineState.positiveBeats = Number.isFinite(Number(tl.positiveBeats))
+    ? Math.max(timelineState.beatsPerBar, Math.round(Number(tl.positiveBeats)))
+    : timelineState.bars * timelineState.beatsPerBar
+  timelineState.bars = Math.max(2, Math.ceil(timelineState.positiveBeats / timelineState.beatsPerBar))
+  if (Number.isFinite(tl.pixelsPerBar)) timelineState.pixelsPerBar = clampTimelinePixelsPerBar(Number(tl.pixelsPerBar))
+  if (Number.isFinite(tl.preStartPixels)) timelineState.preStartPixels = clamp(Number(tl.preStartPixels), 0, timelineState.pixelsPerBar * 10)
+  if (Number.isFinite(tl.trackHeight)) timelineState.trackHeight = clamp(Number(tl.trackHeight), 44, 220)
+  if (tl.cycleRange && typeof tl.cycleRange === 'object') cycleRange = { startX: Number(tl.cycleRange.startX) || 0, endX: Number(tl.cycleRange.endX) || beatWidth() }
+  else ensureDefaultCycleRange()
+
+  const gt = editorState.globalTracks || {}
+  if (gt && typeof gt === 'object') {
+    globalTracks = {
+      ...globalTracks,
+      visible: !!gt.visible,
+      viewMode: GLOBAL_TRACK_VIEW_OPTIONS.some((option)=>option.value===gt.viewMode) ? gt.viewMode : (globalTracks.viewMode || 'all'),
+      arrangement: Array.isArray(gt.arrangement) ? gt.arrangement : globalTracks.arrangement,
+      markers: Array.isArray(gt.markers) ? gt.markers : globalTracks.markers,
+      tempoEvents: Array.isArray(gt.tempoEvents) ? gt.tempoEvents : globalTracks.tempoEvents,
+      timeSignatureEvents: Array.isArray(gt.timeSignatureEvents) ? gt.timeSignatureEvents : globalTracks.timeSignatureEvents,
+      keySignatureEvents: Array.isArray(gt.keySignatureEvents) ? gt.keySignatureEvents : globalTracks.keySignatureEvents,
+      signatureEvents: Array.isArray(gt.signatureEvents) ? gt.signatureEvents : globalTracks.signatureEvents,
+      videoRefs: Array.isArray(gt.videoRefs) ? gt.videoRefs : globalTracks.videoRefs
+    }
+    if (globalTracks.viewMode === 'signature') globalTracks.viewMode = 'key-signature'
+  }
+  if (projectState && editorState.settings?.cpuAlerts) projectState.settings = { ...(projectState.settings || {}), cpuAlerts: normalizeCpuAlerts(editorState.settings.cpuAlerts) }
+  if (projectState && editorState.projectMetadata) {
+    projectState.title = editorState.projectMetadata.title || projectState.title
+    projectState.bpm = Number(editorState.projectMetadata.bpm) || projectState.bpm
+    projectState.key = editorState.projectMetadata.key || projectState.key
+    projectState.timeSignature = editorState.projectMetadata.timeSignature || projectState.timeSignature
+  }
+  ensureCanonicalGlobalTracks()
+
+  const ns = editorState.notes || {}
+  if (Array.isArray(editorState.regions)) {
+    midiRegions = editorState.regions.map(normalizeLoadedRegion).filter((region)=>region.id && region.trackId)
+  }
+  if (Array.isArray(ns.pages) && ns.pages.length) notePages = ns.pages.map((x) => ({ id: String(x.id || ''), title: String(x.title || 'Page'), body: String(x.body || '') })).filter((x) => x.id) || notePages
+  if (ns.activePageId) activeNotePageId = String(ns.activePageId)
+
+  const tg = editorState.toggles || {}
+  if (typeof tg.followPlayhead === 'boolean') followPlayhead = tg.followPlayhead
+  if (typeof tg.metronome === 'boolean') isMetronomeEnabled = tg.metronome
+  if (typeof tg.countIn === 'boolean') isCountInEnabled = tg.countIn
+  if (typeof tg.snap === 'boolean') isSnapEnabled = tg.snap
+  if (typeof tg.cycle === 'boolean') isCycleEnabled = tg.cycle
+  metronomeSettings = normalizeMetronomeSettings({ ...(editorState.metronome || {}), enabled: typeof tg.metronome === 'boolean' ? tg.metronome : editorState.metronome?.enabled })
+  isMetronomeEnabled = metronomeSettings.enabled
+
+  if (Array.isArray(editorState.tracks)) {
+    editorState.tracks.forEach((saved) => {
+      if (!saved?.id) return
+      const savedType = normalizeTrackType(saved.type)
+      let t = tracks.find((x) => x.id === saved.id)
+      if (!t) {
+        t = {
+          id: String(saved.id),
+          name: saved.name || (savedType === 'audio' ? `Audio ${tracks.length + 1}` : `Software ${tracks.length + 1}`),
+          type: savedType,
+          ...nextTrackColor(tracks.length),
+          muted: false,
+          soloed: false,
+          recordArmed: false,
+          automationOpen: false,
+          volume: 72,
+          pan: 0,
+          outputLevel: 0,
+          midiEffects: [],
+          instrument: null,
+          audioEffects: []
+        }
+        tracks.push(t)
+      }
+      Object.assign(t, {
+        name: saved.name ?? t.name,
+        type: savedType,
+        icon: savedType === 'audio' ? 'audio' : 'instrument',
+        color: saved.color ?? t.color,
+        colorSoft: saved.colorSoft ?? t.colorSoft,
+        muted: !!saved.muted,
+        soloed: !!saved.soloed,
+        recordArmed: !!saved.recordArmed,
+        automationOpen: !!saved.automationOpen,
+        automation: saved.automation && typeof saved.automation === 'object' ? deepClone(saved.automation) : t.automation,
+        volume: Number.isFinite(Number(saved.volume)) ? Number(saved.volume) : t.volume,
+        pan: Number.isFinite(Number(saved.pan))
+          ? clamp(Number(editorState.version || 1) < 2 ? Number(saved.pan) * 100 : Number(saved.pan), -100, 100)
+          : t.pan,
+        outputLevel: Number.isFinite(Number(saved.outputLevel)) ? Number(saved.outputLevel) : t.outputLevel,
+        midiEffects: savedType === 'software' && Array.isArray(saved.midiEffects) ? saved.midiEffects.map((fx) => ({ ...fx, params: { ...(fx.params || {}) } })) : [],
+        instrument: savedType === 'software' && saved.instrument && typeof saved.instrument === 'object' ? { ...saved.instrument, params: { ...(saved.instrument.params || {}) } } : null,
+        audioEffects: serializeAudioEffects(saved.audioEffects),
+        dependency: saved.dependency && typeof saved.dependency === 'object' ? deepClone(saved.dependency) : createTrackDependencyDescriptor(saved.instrument),
+        portableRender: normalizePortableTrackRender(saved.portableRender)
+      })
+      if (saved.channelSettings && typeof saved.channelSettings === 'object') Object.assign(t, saved.channelSettings)
+      ensureTrackInsertState(t)
+    })
+    const savedOrder = new Map(editorState.tracks.map((track, index) => [String(track.id), index]))
+    tracks.sort((left, right) => (savedOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (savedOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER))
+    if (!tracks.some((track) => track.id === selectedTrackId)) selectedTrackId = tracks[0]?.id || selectedTrackId
+  }
+  timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
+}
+function updateEditorSaveStatus(){ app.querySelector('[data-save-status]')?.replaceChildren(document.createTextNode(saveStatus)) }
+function scheduleEditorSave(){ playbackContentRevision += 1; if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; updateEditorSaveStatus(); if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } updateEditorSaveStatus() },800) }
+
+async function hydrateRenderedAudioRegionRuntime(region) {
+  if (!region?.id || region.type !== 'audio') return false
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  if (!stretch.enabled || !(stretch.renderedStoragePath || stretch.renderedAudioUrl)) return false
+  const runtimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
+  if (audioClipRuntime.has(runtimeId)) {
+    region.stretch = { ...stretch, renderedRuntimeId: runtimeId, renderStatus: 'ready', renderedSessionOnly: false, renderError: null }
+    return true
+  }
+  console.info('[audio-hydration] loading rendered stretch', { clipId: region.id, hasStoragePath: Boolean(stretch.renderedStoragePath) })
+  const downloadUrl = stretch.renderedAudioUrl || await getStorageAssetUrl(stretch.renderedStoragePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-rendered-audio', warnOnFail: true })
+  if (!downloadUrl) return false
+  try {
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`Rendered audio fetch failed (${response.status})`)
+    const arrayBuffer = await response.arrayBuffer()
+    const ctx = getAudioContext()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    const renderedDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
+    audioClipRuntime.set(runtimeId, {
+      blob: null,
+      url: downloadUrl,
+      audioBuffer,
+      contentType: 'audio/*',
+      fileDurationSeconds: renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: false
+    })
+    region.renderedWaveform = waveform
+    region.stretch = {
+      ...stretch,
+      renderedRuntimeId: runtimeId,
+      renderedAudioUrl: stretch.renderedAudioUrl || downloadUrl,
+      renderedDurationSeconds,
+      renderedSessionOnly: false,
+      renderStatus: 'ready',
+      renderError: null
+    }
+    console.info('[audio-hydration] loaded rendered stretch', { clipId: region.id, duration: renderedDurationSeconds })
+    return true
+  } catch (err) {
+    console.warn('[audio-hydration] rendered stretch failed', { clipId: region.id, reason: err?.message || 'decode_failed' })
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Rendered audio file missing or not loaded.' }
+    return false
+  }
+}
+async function hydrateAudioEditRenderRuntime(region, mode = 'pitchShift') {
+  if (!region?.id || region.type !== 'audio') return false
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const render = mode === 'pitchTrace' ? edit.pitchTrace : mode === 'reverse' ? edit.reverse : edit.pitchShift
+  if (!(render?.renderedStoragePath || render?.renderedAudioUrl)) return false
+  const runtimeId = render.renderedRuntimeId || `${region.id}:${mode}:persisted`
+  if (audioClipRuntime.has(runtimeId)) {
+    if (mode === 'pitchTrace') edit.pitchTrace = { ...edit.pitchTrace, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
+    else if (mode === 'reverse') edit.reverse = { ...edit.reverse, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
+    else edit.pitchShift = { ...edit.pitchShift, renderedRuntimeId: runtimeId, renderStatus: 'ready', lastError: null }
+    region.audioEdit = normalizeAudioEdit(edit)
+    return true
+  }
+  console.info('[audio-hydration] loading rendered pitch audio', { clipId: region.id, mode, hasStoragePath: Boolean(render.renderedStoragePath) })
+  const downloadUrl = render.renderedAudioUrl || await getStorageAssetUrl(render.renderedStoragePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-rendered-audio', warnOnFail: true })
+  if (!downloadUrl) return false
+  try {
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`Rendered pitch audio fetch failed (${response.status})`)
+    const arrayBuffer = await response.arrayBuffer()
+    const ctx = getAudioContext()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    const renderedDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
+    audioClipRuntime.set(runtimeId, {
+      blob: null,
+      url: downloadUrl,
+      audioBuffer,
+      contentType: 'audio/*',
+      fileDurationSeconds: renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: false
+    })
+    region.renderedWaveform = waveform
+    if (mode === 'pitchTrace') {
+      edit.pitchTrace = {
+        ...edit.pitchTrace,
+        renderedRuntimeId: runtimeId,
+        renderedAudioUrl: edit.pitchTrace.renderedAudioUrl || downloadUrl,
+        renderedDurationSeconds,
+        renderStatus: 'ready',
+        lastError: null
+      }
+    } else if (mode === 'reverse') {
+      edit.reverse = {
+        ...edit.reverse,
+        renderedRuntimeId: runtimeId,
+        renderedAudioUrl: edit.reverse.renderedAudioUrl || downloadUrl,
+        renderedDurationSeconds,
+        renderStatus: 'ready',
+        lastError: null
+      }
+    } else {
+      edit.pitchShift = {
+        ...edit.pitchShift,
+        renderedRuntimeId: runtimeId,
+        renderedAudioUrl: edit.pitchShift.renderedAudioUrl || downloadUrl,
+        renderedDurationSeconds,
+        renderStatus: 'ready',
+        lastError: null
+      }
+    }
+    region.audioEdit = normalizeAudioEdit(edit)
+    console.info('[audio-hydration] loaded rendered pitch audio', { clipId: region.id, mode, duration: renderedDurationSeconds })
+    return true
+  } catch (err) {
+    console.warn('[audio-hydration] rendered pitch audio failed', { clipId: region.id, mode, reason: err?.message || 'decode_failed' })
+    if (mode === 'pitchTrace') edit.pitchTrace = { ...edit.pitchTrace, renderStatus: 'failed', lastError: 'Rendered pitch trace audio file missing or not loaded.' }
+    else if (mode === 'reverse') edit.reverse = { ...edit.reverse, renderStatus: 'failed', lastError: 'Rendered reverse audio file missing or not loaded.' }
+    else edit.pitchShift = { ...edit.pitchShift, renderStatus: 'failed', lastError: 'Rendered pitch shift audio file missing or not loaded.' }
+    region.audioEdit = normalizeAudioEdit(edit)
+    return false
+  }
+}
+async function hydrateAudioRegionRuntime(region) {
+  if (!region?.id || region.type !== 'audio') return false
+  const audioClip = region.audioClip || {}
+  console.info('[audio-hydration] loading clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, hasStoragePath: Boolean(audioClip.storagePath), contentType: audioClip.contentType || 'audio/*' })
+  if (audioClipRuntime.has(audioClip.runtimeId || region.id)) {
+    region.audioClip = { ...audioClip, audioReady: true, loadStatus: 'ready', loadError: null, offlineReason: null }
+    region.missingMedia = false
+    await hydrateRenderedAudioRegionRuntime(region)
+    await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+    await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
+    await hydrateAudioEditRenderRuntime(region, 'reverse')
+    return true
+  }
+  const downloadUrl = audioClip.downloadUrl || (audioClip.storagePath ? await getStorageAssetUrl(audioClip.storagePath, { scopeKey: `soura-project:${projectState?.id || 'project'}`, type: 'soura-audio', warnOnFail: true }) : '')
+  if (!downloadUrl) {
+    const pitchTraceReady = await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
+    const pitchShiftReady = await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+    const reverseReady = await hydrateAudioEditRenderRuntime(region, 'reverse')
+    const renderedReady = pitchTraceReady || pitchShiftReady || reverseReady || await hydrateRenderedAudioRegionRuntime(region)
+    const reason = audioClip.storagePath ? 'storage_fetch_failed' : (audioClip.sessionOnly ? 'session_only_source_lost' : 'missing_storage_path')
+    console.info('[audio-hydration] offline clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, reason })
+    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'missing', loadError: renderedReady ? 'Original audio file missing; persisted rendered audio is available.' : getAudioOfflineMessage({ audioClip: { ...audioClip, offlineReason: reason } }), offlineReason: reason }
+    region.missingMedia = !renderedReady
+    return renderedReady
+  }
+  region.audioClip = { ...audioClip, loadStatus: 'loading', loadError: null, offlineReason: null }
+  try {
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`Audio fetch failed (${response.status})`)
+    const arrayBuffer = await response.arrayBuffer()
+    const ctx = getAudioContext()
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0))
+    const fileDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
+    const waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    region.fileDurationSeconds = Number(region.fileDurationSeconds) || fileDurationSeconds
+    region.durationSeconds = Number(region.durationSeconds) || getAudioRegionVisibleDurationSeconds(region)
+    region.waveform = Array.isArray(region.waveform?.peaks) && region.waveform.peaks.length ? region.waveform : waveform
+    region.audioClip = {
+      ...audioClip,
+      runtimeId: audioClip.runtimeId || region.id,
+      downloadUrl: audioClip.downloadUrl || downloadUrl,
+      fileDurationSeconds,
+      audioReady: true,
+      loadStatus: 'ready',
+      loadError: null,
+      offlineReason: null,
+      sessionOnly: false,
+      missingAfterReload: false
+    }
+    region.missingMedia = false
+    audioClipRuntime.set(region.audioClip.runtimeId, {
+      blob: null,
+      url: downloadUrl,
+      audioBuffer,
+      contentType: audioClip.contentType || 'audio/*',
+      fileDurationSeconds,
+      waveform
+    })
+    await hydrateRenderedAudioRegionRuntime(region)
+    await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+    await hydrateAudioEditRenderRuntime(region, 'pitchTrace')
+    await hydrateAudioEditRenderRuntime(region, 'reverse')
+    console.info('[audio-hydration] loaded clip', { clipId: region.audioClip.audioAssetId || region.audioClip.id || region.id, duration: fileDurationSeconds })
+    return true
+  } catch (err) {
+    console.warn('[audio-hydration] failed clip', { clipId: audioClip.audioAssetId || audioClip.id || region.id, reason: err?.message || 'decode_failed' })
+    region.audioClip = { ...audioClip, audioReady: false, loadStatus: 'failed', loadError: 'The audio file was found but could not be decoded. Re-upload or re-record the clip.', offlineReason: 'decode_failed' }
+    region.missingMedia = true
+    return false
+  }
+}
+async function hydrateProjectAudioAssets() {
+  const regions = midiRegions.filter((region)=>{
+    const edit = normalizeAudioEdit(region.audioEdit)
+    return region.type === 'audio' && (
+      region.audioClip?.storagePath || region.audioClip?.downloadUrl ||
+      region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl ||
+      edit.pitchShift?.renderedStoragePath || edit.pitchShift?.renderedAudioUrl ||
+      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl ||
+      edit.reverse?.renderedStoragePath || edit.reverse?.renderedAudioUrl
+    )
+  })
+  if (!regions.length) return
+  recordingStatus = 'Preparing audio...'
+  updateEditorTitleStatus()
+  await Promise.allSettled(regions.map((region)=>hydrateAudioRegionRuntime(region)))
+  const missingCount = midiRegions.filter((region)=>region.type === 'audio' && region.missingMedia).length
+  recordingStatus = missingCount ? `${missingCount} audio file${missingCount === 1 ? '' : 's'} missing or not loaded.` : ''
+  renderEditor()
+}
+
+function isTextEntryTarget(target){ return target?.matches?.('input, textarea, select, [contenteditable="true"]') || !!target?.closest?.('input, textarea, select, [contenteditable="true"], .studio-notes-modal, .studio-inspector-menu, .daw-plugin-window, .daw-plugin-host-page') }
+function createInteractiveAudioContext() {
+  const Ctx = window.AudioContext || window.webkitAudioContext
+  if (!Ctx) throw new Error('Web Audio API is not supported in this browser.')
+  try {
+    return new Ctx({ latencyHint: 'interactive' })
+  } catch {
+    return new Ctx()
+  }
+}
+async function getStudioAudioEngine() { if (!studioAudioEngine) { studioAudioEngine = new StudioAudioEngine({ audioContext: getAudioContext(), useTransportWorklet: false }); await studioAudioEngine.init() } return studioAudioEngine }
+function getAudioContext(){
+  const ownedContext = souraAudioContextOwner.getContext()
+  if (audioContext && audioContext !== ownedContext) throw new Error('Soura detected multiple live AudioContexts. Reload the project before playback.')
+  audioContext = ownedContext
+  return audioContext
+}
+function getSouraAudioGraphSnapshot() {
+  const ctx = audioContext
+  const trackContexts = [...trackAudioChannels.entries()].map(([trackId, channel]) => ({
+    trackId,
+    matchesAuthoritativeContext: !ctx || channel?.input?.context === ctx
+  }))
+  const sourceContexts = [...activeAudioClipSources.entries()].map(([regionId, source]) => ({
+    regionId,
+    matchesAuthoritativeContext: !ctx || source?.source?.context === ctx
+  }))
+  return {
+    masterCreated: Boolean(masterAudioBus),
+    masterConnectedToDestination: Boolean(masterAudioBus?.connectedToDestination),
+    masterMatchesAuthoritativeContext: !masterAudioBus || masterAudioBus.input?.context === ctx,
+    masterLevel: Number(masterAudioBus?.meter?.level) || 0,
+    trackContexts,
+    sourceContexts
+  }
+}
+function publishSouraAudioDiagnostics() {
+  if (!souraAudioDiagnosticsEnabled) return
+  lastSouraAudioDiagnostics = {
+    context: souraAudioContextOwner.snapshot(),
+    graph: getSouraAudioGraphSnapshot(),
+    checkedAt: performance.now()
+  }
+  document.documentElement.dataset.souraAudioDiagnostics = JSON.stringify(lastSouraAudioDiagnostics)
+}
+function assertAuthoritativeSouraAudioGraph() {
+  const graph = getSouraAudioGraphSnapshot()
+  const mismatch = !graph.masterMatchesAuthoritativeContext
+    || graph.trackContexts.some((entry) => !entry.matchesAuthoritativeContext)
+    || graph.sourceContexts.some((entry) => !entry.matchesAuthoritativeContext)
+  if (mismatch) throw new Error('Soura audio routing crossed multiple AudioContexts. Reload the project before playback.')
+  return graph
+}
+async function ensureSouraAudioOutputRunning(reason = 'playback') {
+  const ctx = await souraAudioContextOwner.ensureRunning(reason)
+  audioContext = ctx
+  getMasterAudioBus()
+  assertAuthoritativeSouraAudioGraph()
+  publishSouraAudioDiagnostics()
+  return ctx
+}
+function getMasterAudioBus() {
+  if (masterAudioBus) return masterAudioBus
+  const ctx = getAudioContext()
+  const input = ctx.createGain()
+  const gain = ctx.createGain()
+  const analyser = ctx.createAnalyser()
+  analyser.fftSize = 512
+  analyser.smoothingTimeConstant = 0
+  input.connect(gain)
+  gain.connect(analyser)
+  analyser.connect(ctx.destination)
+  masterAudioBus = { input, gain, analyser, data: new Float32Array(analyser.fftSize), meter: updateMeterBallistics(), connectedToDestination: true }
+  publishSouraAudioDiagnostics()
+  return masterAudioBus
+}
+function getAssetAuditionGain() {
+  if (assetAuditionGain) return assetAuditionGain
+  const ctx = getAudioContext()
+  assetAuditionGain = ctx.createGain()
+  assetAuditionGain.gain.value = 1
+  assetAuditionGain.connect(getMasterAudioBus().input)
+  return assetAuditionGain
+}
+function prewarmDawAudio() {
+  if (!audioEnginePrewarmPromise) {
+    audioEnginePrewarmPromise = ensureSouraAudioOutputRunning('user-prewarm')
+      .then(() => getStudioAudioEngine())
+      .then((engine)=>engine.resume().then(()=>engine))
+      .catch((err)=>{ audioEnginePrewarmPromise = null; console.warn('[studioProject] audio engine prewarm failed', err); throw err })
+  }
+  return audioEnginePrewarmPromise
+}
+async function playSouraOutputTestTone({ frequency = 440, durationSeconds = 0.3, level = 0.06 } = {}) {
+  if (!souraAudioDiagnosticsEnabled) throw new Error('The Soura output test tone is available only in development diagnostics.')
+  const ctx = await ensureSouraAudioOutputRunning('diagnostic-test-tone')
+  const oscillator = ctx.createOscillator()
+  const gain = ctx.createGain()
+  const startAt = ctx.currentTime + 0.01
+  const stopAt = startAt + clamp(Number(durationSeconds) || 0.3, 0.05, 1)
+  oscillator.frequency.value = clamp(Number(frequency) || 440, 80, 2000)
+  gain.gain.setValueAtTime(0.0001, startAt)
+  gain.gain.exponentialRampToValueAtTime(clamp(Number(level) || 0.06, 0.001, 0.2), startAt + 0.01)
+  gain.gain.exponentialRampToValueAtTime(0.0001, stopAt)
+  oscillator.connect(gain)
+  gain.connect(getMasterAudioBus().input)
+  oscillator.onended = () => { try { oscillator.disconnect(); gain.disconnect() } catch {} }
+  oscillator.start(startAt)
+  oscillator.stop(stopAt + 0.01)
+  publishSouraAudioDiagnostics()
+  return { startAt, stopAt, context: souraAudioContextOwner.snapshot() }
+}
+function effectDbToGain(db = 0) {
+  return 10 ** (clamp(Number(db) || 0, -80, 24) / 20)
+}
+function setAudioParam(param, value, fallback = 0) {
+  if (!param) return
+  const next = Number.isFinite(Number(value)) ? Number(value) : fallback
+  try {
+    param.setTargetAtTime(next, audioContext?.currentTime || 0, 0.015)
+  } catch {
+    param.value = next
+  }
+}
+function createImpulseBuffer(ctx, params = {}) {
+  const duration = clamp(Number(params.decay) || 2.4, 0.2, 8)
+  const size = clamp(Number(params.size) || 0.62, 0.1, 1)
+  const width = clamp(Number(params.width) || 0.72, 0, 1)
+  const length = Math.max(1, Math.round(ctx.sampleRate * duration))
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate)
+  const shared = new Float32Array(length)
+  for (let index = 0; index < length; index += 1) shared[index] = Math.random() * 2 - 1
+  for (let channelIndex = 0; channelIndex < impulse.numberOfChannels; channelIndex += 1) {
+    const data = impulse.getChannelData(channelIndex)
+    for (let index = 0; index < length; index += 1) {
+      const t = index / Math.max(1, length - 1)
+      const decay = (1 - t) ** (1.8 + (size * 3.2))
+      const independent = Math.random() * 2 - 1
+      data[index] = ((shared[index] * (1 - width)) + (independent * width)) * decay
+    }
+  }
+  return impulse
+}
+function connectSerial(nodes = []) {
+  for (let index = 0; index < nodes.length - 1; index += 1) nodes[index]?.connect?.(nodes[index + 1])
+}
+function createEqEffectNodes(ctx, params = {}) {
+  const nodes = []
+  const addFilter = (type, frequency, q = 1, gain = 0) => {
+    const filter = ctx.createBiquadFilter()
+    filter.type = type
+    filter.frequency.value = clamp(Number(frequency) || 1000, 20, 20000)
+    if ('Q' in filter) filter.Q.value = clamp(Number(q) || 1, 0.1, 18)
+    if ('gain' in filter) filter.gain.value = clamp(Number(gain) || 0, -24, 24)
+    nodes.push(filter)
+  }
+  if (params.hpEnabled) addFilter('highpass', params.hpFrequency, params.hpQ)
+  if (params.lowShelfEnabled !== false) addFilter('lowshelf', params.lowShelfFrequency, 1, params.lowShelfGain)
+  if (params.bell1Enabled !== false) addFilter('peaking', params.bell1Frequency, params.bell1Q, params.bell1Gain)
+  if (params.bell2Enabled !== false) addFilter('peaking', params.bell2Frequency, params.bell2Q, params.bell2Gain)
+  if (params.bell3Enabled !== false) addFilter('peaking', params.bell3Frequency, params.bell3Q, params.bell3Gain)
+  if (params.highShelfEnabled !== false) addFilter('highshelf', params.highShelfFrequency, 1, params.highShelfGain)
+  if (params.lpEnabled) addFilter('lowpass', params.lpFrequency, params.lpQ)
+  const output = ctx.createGain()
+  output.gain.value = effectDbToGain(params.outputGain)
+  nodes.push(output)
+  connectSerial(nodes)
+  return { input: nodes[0], output, nodes }
+}
+function createReverbEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const preDelay = ctx.createDelay(0.5)
+  const convolver = ctx.createConvolver()
+  const damping = ctx.createBiquadFilter()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  preDelay.delayTime.value = clamp(Number(params.preDelay) || 0, 0, 0.25)
+  convolver.buffer = createImpulseBuffer(ctx, params)
+  damping.type = 'lowpass'
+  damping.frequency.value = clamp(Number(params.damping) || 6800, 800, 18000)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, preDelay, convolver, damping, wet, output, gain])
+  return { input, output: gain, nodes: [input, dry, wet, preDelay, convolver, damping, output, gain] }
+}
+function createDelayEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const lowCut = ctx.createBiquadFilter()
+  const highCut = ctx.createBiquadFilter()
+  const delay = ctx.createDelay(2)
+  const feedback = ctx.createGain()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  lowCut.type = 'highpass'
+  lowCut.frequency.value = clamp(Number(params.lowCut) || 120, 20, 1000)
+  highCut.type = 'lowpass'
+  highCut.frequency.value = clamp(Number(params.highCut) || 7200, 1000, 18000)
+  delay.delayTime.value = clamp(Number(params.time) || 0.28, 0.03, 1.5)
+  feedback.gain.value = clamp(Number(params.feedback) || 0, 0, 0.85)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, lowCut, highCut, delay, wet, output, gain])
+  delay.connect(feedback)
+  feedback.connect(delay)
+  return { input, output: gain, nodes: [input, dry, wet, lowCut, highCut, delay, feedback, output, gain] }
+}
+function makeDistortionCurve(amount = 0.3) {
+  const samples = 2048
+  const curve = new Float32Array(samples)
+  const drive = 1 + clamp(Number(amount) || 0, 0, 1) * 90
+  for (let index = 0; index < samples; index += 1) {
+    const x = (index * 2 / samples) - 1
+    curve[index] = ((3 + drive) * x * 20 * Math.PI / 180) / (Math.PI + drive * Math.abs(x))
+  }
+  return curve
+}
+function createCompressorEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const compressor = ctx.createDynamicsCompressor()
+  const makeup = ctx.createGain()
+  const output = ctx.createGain()
+  compressor.threshold.value = clamp(Number(params.threshold) || -24, -60, 0)
+  compressor.ratio.value = clamp(Number(params.ratio) || 3, 1, 20)
+  compressor.attack.value = clamp(Number(params.attack) || 0.012, 0.001, 0.12)
+  compressor.release.value = clamp(Number(params.release) || 0.18, 0.02, 1.2)
+  compressor.knee.value = clamp(Number(params.knee) || 18, 0, 40)
+  makeup.gain.value = effectDbToGain(params.makeupGain)
+  output.gain.value = effectDbToGain(params.outputGain)
+  connectSerial([input, compressor, makeup, output])
+  return { input, output, nodes: [input, compressor, makeup, output] }
+}
+function createLimiterEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const limiter = ctx.createDynamicsCompressor()
+  const output = ctx.createGain()
+  input.gain.value = effectDbToGain(params.inputGain)
+  limiter.threshold.value = clamp(Number(params.ceiling) || -1, -12, 0)
+  limiter.knee.value = 0
+  limiter.ratio.value = 20
+  limiter.attack.value = 0.003
+  limiter.release.value = clamp(Number(params.release) || 0.08, 0.01, 0.8)
+  output.gain.value = effectDbToGain(params.outputGain)
+  connectSerial([input, limiter, output])
+  return { input, output, nodes: [input, limiter, output] }
+}
+function createDistortionEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const shaper = ctx.createWaveShaper()
+  const tone = ctx.createBiquadFilter()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  shaper.curve = makeDistortionCurve(params.drive)
+  shaper.oversample = '4x'
+  tone.type = 'lowpass'
+  tone.frequency.value = clamp(Number(params.tone) || 6800, 800, 16000)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, shaper, tone, wet, output, gain])
+  return { input, output: gain, nodes: [input, dry, wet, shaper, tone, output, gain] }
+}
+function createModulatedDelayEffectNodes(ctx, params = {}, mode = 'chorus') {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const delay = ctx.createDelay(0.08)
+  const feedback = ctx.createGain()
+  const lfo = ctx.createOscillator()
+  const depth = ctx.createGain()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  const baseDelay = mode === 'flanger'
+    ? clamp(Number(params.delay) || 0.004, 0.001, 0.012)
+    : clamp(Number(params.delay) || 0.018, 0.004, 0.04)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  delay.delayTime.value = baseDelay
+  feedback.gain.value = clamp(Number(params.feedback) || 0, 0, mode === 'flanger' ? 0.85 : 0.65)
+  lfo.frequency.value = clamp(Number(params.rate) || 0.6, 0.03, 6)
+  depth.gain.value = (mode === 'flanger' ? 0.004 : 0.012) * clamp(Number(params.depth) || 0, 0, 1)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  input.connect(delay)
+  delay.connect(wet)
+  wet.connect(output)
+  delay.connect(feedback)
+  feedback.connect(delay)
+  lfo.connect(depth)
+  depth.connect(delay.delayTime)
+  output.connect(gain)
+  try { lfo.start() } catch {}
+  return { input, output: gain, nodes: [input, dry, wet, delay, feedback, lfo, depth, output, gain], cleanup: () => { try { lfo.stop() } catch {} } }
+}
+function createPhaserEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const feedback = ctx.createGain()
+  const feedbackDelay = ctx.createDelay(0.02)
+  const lfo = ctx.createOscillator()
+  const depth = ctx.createGain()
+  const gain = ctx.createGain()
+  const stageCount = clamp(Math.round(Number(params.stages) || 4), 2, 8)
+  const filters = Array.from({ length: stageCount }, (_, index) => {
+    const filter = ctx.createBiquadFilter()
+    filter.type = 'allpass'
+    filter.frequency.value = 320 + index * 360
+    filter.Q.value = 0.9
+    return filter
+  })
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  feedback.gain.value = clamp(Number(params.feedback) || 0, 0, 0.7)
+  feedbackDelay.delayTime.value = 0.001
+  lfo.frequency.value = clamp(Number(params.rate) || 0.42, 0.03, 4)
+  depth.gain.value = 900 * clamp(Number(params.depth) || 0, 0, 1)
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  connectSerial([input, ...filters, wet, output, gain])
+  filters[filters.length - 1]?.connect(feedback)
+  feedback.connect(feedbackDelay)
+  feedbackDelay.connect(filters[0])
+  lfo.connect(depth)
+  filters.forEach((filter) => depth.connect(filter.frequency))
+  try { lfo.start() } catch {}
+  return { input, output: gain, nodes: [input, dry, wet, feedback, feedbackDelay, lfo, depth, ...filters, output, gain], cleanup: () => { try { lfo.stop() } catch {} } }
+}
+function createTremoloEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const output = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const tremolo = ctx.createGain()
+  const lfo = ctx.createOscillator()
+  const depth = ctx.createGain()
+  const offset = ctx.createConstantSource()
+  const gain = ctx.createGain()
+  const mix = clamp(Number(params.mix) || 0, 0, 1)
+  const amount = clamp(Number(params.depth) || 0, 0, 1)
+  dry.gain.value = 1 - mix
+  wet.gain.value = mix
+  tremolo.gain.value = 0
+  lfo.frequency.value = clamp(Number(params.rate) || 4.2, 0.1, 14)
+  depth.gain.value = amount / 2
+  offset.offset.value = 1 - amount / 2
+  gain.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  input.connect(tremolo)
+  tremolo.connect(wet)
+  wet.connect(output)
+  lfo.connect(depth)
+  depth.connect(tremolo.gain)
+  offset.connect(tremolo.gain)
+  output.connect(gain)
+  try { lfo.start(); offset.start() } catch {}
+  return { input, output: gain, nodes: [input, dry, wet, tremolo, lfo, depth, offset, output, gain], cleanup: () => { try { lfo.stop(); offset.stop() } catch {} } }
+}
+function createFilterEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const filter = ctx.createBiquadFilter()
+  const output = ctx.createGain()
+  const allowed = new Set(['lowpass', 'highpass', 'bandpass', 'notch', 'lowshelf', 'highshelf', 'peaking'])
+  filter.type = allowed.has(params.type) ? params.type : 'lowpass'
+  filter.frequency.value = clamp(Number(params.cutoff) || 6800, 20, 20000)
+  filter.Q.value = clamp(Number(params.resonance) || 0.72, 0.1, 18)
+  filter.gain.value = clamp(Number(params.gain) || 0, -24, 24)
+  output.gain.value = effectDbToGain(params.outputGain)
+  connectSerial([input, filter, output])
+  return { input, output, nodes: [input, filter, output] }
+}
+function createStereoImagerEffectNodes(ctx, params = {}) {
+  const input = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const splitter = ctx.createChannelSplitter(2)
+  const merger = ctx.createChannelMerger(2)
+  const output = ctx.createGain()
+  const width = clamp(Number(params.width) || 1, 0, 2)
+  const amount = clamp(Math.abs(width - 1), 0, 1)
+  const same = (1 + width) / 2
+  const cross = (1 - width) / 2
+  const leftToLeft = ctx.createGain()
+  const rightToLeft = ctx.createGain()
+  const leftToRight = ctx.createGain()
+  const rightToRight = ctx.createGain()
+  dry.gain.value = 1 - amount
+  wet.gain.value = amount
+  leftToLeft.gain.value = same
+  rightToRight.gain.value = same
+  rightToLeft.gain.value = cross
+  leftToRight.gain.value = cross
+  output.gain.value = effectDbToGain(params.outputGain)
+  input.connect(dry)
+  dry.connect(output)
+  input.connect(splitter)
+  splitter.connect(leftToLeft, 0)
+  splitter.connect(leftToRight, 0)
+  splitter.connect(rightToLeft, 1)
+  splitter.connect(rightToRight, 1)
+  leftToLeft.connect(merger, 0, 0)
+  rightToLeft.connect(merger, 0, 0)
+  leftToRight.connect(merger, 0, 1)
+  rightToRight.connect(merger, 0, 1)
+  merger.connect(wet)
+  wet.connect(output)
+  return { input, output, nodes: [input, dry, wet, splitter, merger, leftToLeft, rightToLeft, leftToRight, rightToRight, output] }
+}
+function createAudioEffectNodes(ctx, insert = {}) {
+  const params = { ...getAudioEffectDefaultParams(insert.type), ...(insert.params || {}) }
+  if (insert.type === 'eq') return createEqEffectNodes(ctx, params)
+  if (insert.type === 'reverb') return createReverbEffectNodes(ctx, params)
+  if (insert.type === 'delay') return createDelayEffectNodes(ctx, params)
+  if (insert.type === 'compressor') return createCompressorEffectNodes(ctx, params)
+  if (insert.type === 'limiter') return createLimiterEffectNodes(ctx, params)
+  if (insert.type === 'distortion') return createDistortionEffectNodes(ctx, params)
+  if (insert.type === 'chorus') return createModulatedDelayEffectNodes(ctx, params, 'chorus')
+  if (insert.type === 'flanger') return createModulatedDelayEffectNodes(ctx, params, 'flanger')
+  if (insert.type === 'phaser') return createPhaserEffectNodes(ctx, params)
+  if (insert.type === 'tremolo') return createTremoloEffectNodes(ctx, params)
+  if (insert.type === 'filter') return createFilterEffectNodes(ctx, params)
+  if (insert.type === 'stereo-imager') return createStereoImagerEffectNodes(ctx, params)
+  return null
+}
+function setTrackChannelVolume(track = {}) {
+  const channel = trackAudioChannels.get(track?.id)
+  if (!channel?.volumeGain || !audioContext) return
+  const audible = track.id === metronomeSettings.id ? !track.muted : isTrackOutputAudible(track)
+  const level = audible ? clamp((Number(track.volume) || 0) / 100, 0, 1) : 0
+  setAudioParam(channel.volumeGain.gain, level, 0)
+  if (isNativeVst3Instrument(track.instrument) && track.instrument?.pluginInstanceId) { nativeVst3SetMix(track.instrument.pluginInstanceId, { gain: level, pan: clamp((Number(track.pan) || 0) / 100, -1, 1), muted: !audible }).catch((error) => console.warn('[Soura Native VST3] track mix sync failed', error)) }
+}
+function getAudioChannelOwner(trackId = '') {
+  return trackId === metronomeSettings.id ? metronomeSettings : tracks.find((item)=>item.id === trackId)
+}
+function rebuildTrackAudioEffectsChain(trackId = '') {
+  const channel = trackAudioChannels.get(trackId)
+  if (!channel) return
+  const ctx = getAudioContext()
+  try { channel.input.disconnect() } catch {}
+  ;(channel.effectNodes || []).forEach((node) => {
+    try { node.disconnect?.() } catch {}
+  })
+  ;(channel.effectCleanups || []).forEach((cleanup) => {
+    try { cleanup?.() } catch {}
+  })
+  channel.effectNodes = []
+  channel.effectCleanups = []
+  let current = channel.input
+  const track = trackId === metronomeSettings.id ? metronomeSettings : ensureTrackInsertState(tracks.find((item)=>item.id === trackId))
+  const inserts = (track?.audioEffects || []).filter((insert) => insert.enabled !== false && isImplementedAudioEffect(insert.type))
+  inserts.forEach((insert) => {
+    const effect = createAudioEffectNodes(ctx, insert)
+    if (!effect?.input || !effect?.output) return
+    current.connect(effect.input)
+    current = effect.output
+    channel.effectNodes.push(...(effect.nodes || []))
+    if (typeof effect.cleanup === 'function') channel.effectCleanups.push(effect.cleanup)
+  })
+  current.connect(channel.volumeGain)
+  setTrackChannelVolume(track)
+}
+function getTrackAudioChannel(trackId = selectedTrackId) {
+  const id = trackId || selectedTrackId || 'master'
+  const existing = trackAudioChannels.get(id)
+  if (existing) return existing
+  const ctx = getAudioContext()
+  const input = ctx.createGain()
+  const volumeGain = ctx.createGain()
+  const panner = ctx.createStereoPanner()
+  const analyser = ctx.createAnalyser()
+  analyser.fftSize = 512
+  analyser.smoothingTimeConstant = 0
+  const track = getAudioChannelOwner(id)
+  input.gain.value = 1
+  volumeGain.gain.value = clamp((Number(track?.volume) || 0) / 100, 0, 1)
+  panner.pan.value = clamp((Number(track?.pan) || 0) / 100, -1, 1)
+  volumeGain.connect(panner)
+  panner.connect(analyser)
+  analyser.connect(getMasterAudioBus().input)
+  const channel = { input, volumeGain, panner, analyser, effectNodes: [], effectCleanups: [], data: new Float32Array(analyser.fftSize), meter: updateMeterBallistics(), level: 0, peak: 0 }
+  trackAudioChannels.set(id, channel)
+  rebuildTrackAudioEffectsChain(id)
+  return channel
+}
+function disposeTrackAudioChannel(trackId = '') {
+  const channel = trackAudioChannels.get(trackId)
+  if (!channel) return
+  try { channel.input.disconnect() } catch {}
+  ;(channel.effectNodes || []).forEach((node) => { try { node.disconnect?.() } catch {} })
+  ;(channel.effectCleanups || []).forEach((cleanup) => { try { cleanup?.() } catch {} })
+  try { channel.volumeGain?.disconnect() } catch {}
+  try { channel.panner.disconnect() } catch {}
+  try { channel.analyser.disconnect() } catch {}
+  trackAudioChannels.delete(trackId)
+}
+function playMetronomeClick(isDownbeat, startTime = null){
+  const ctx=getAudioContext()
+  const startAt=Math.max(ctx.currentTime, Number.isFinite(Number(startTime)) ? Number(startTime) : ctx.currentTime)
+  const osc=ctx.createOscillator()
+  const gain=ctx.createGain()
+  const tone = isDownbeat ? metronomeSettings.accentTone : metronomeSettings.clickTone
+  const level = isDownbeat ? metronomeSettings.accentLevel : metronomeSettings.clickLevel
+  const pitch = isDownbeat ? metronomeSettings.accentPitch : metronomeSettings.clickPitch
+  osc.type=tone < .34 ? 'sine' : tone < .67 ? 'triangle' : 'square'
+  osc.frequency.setValueAtTime(pitch,startAt)
+  gain.gain.setValueAtTime(0.0001,startAt)
+  gain.gain.exponentialRampToValueAtTime(Math.max(.0001,.22*level),startAt+0.004)
+  const stopAt = startAt + (metronomeSettings.decayMs / 1000)
+  gain.gain.exponentialRampToValueAtTime(0.0001,stopAt)
+  osc.connect(gain)
+  gain.connect(getTrackAudioChannel(metronomeSettings.id).input)
+  activeMetronomeVoices.add(osc)
+  osc.onended = () => { activeMetronomeVoices.delete(osc); try { osc.disconnect(); gain.disconnect() } catch {} }
+  osc.start(startAt)
+  osc.stop(stopAt+0.01)
+  startTrackMeterLoop()
+}
+function stopMetronomeVoices() {
+  activeMetronomeVoices.forEach((voice) => { try { voice.stop() } catch {} })
+  activeMetronomeVoices.clear()
+}
+function maybeTickMetronome({ currentProjectSeconds = getTransportClockProjectSeconds(), tempoMap = normalizeTempoMap() } = {}){
+  if(!isPlaying||!isMetronomeEnabled) return
+  const currentBeatIndex = Math.max(0, Math.floor(secondsToBeats(currentProjectSeconds, tempoMap)))
+  const lookaheadBeatIndex = Math.max(currentBeatIndex, Math.floor(secondsToBeats(currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS, tempoMap)))
+  const beatIndices = collectMetronomeBeatIndices({ lastScheduledBeat: lastMetronomeBeat, currentBeat: currentBeatIndex, lookaheadBeat: lookaheadBeatIndex })
+  for (const beatIndex of beatIndices) {
+    const sig = getTimeSignatureAtBeat(beatIndex)
+    playMetronomeClick(beatIndex % Math.max(1, sig.numerator || 4) === 0, getTransportScheduleTimeForProjectSeconds(beatsToSeconds(beatIndex, tempoMap)))
+    lastMetronomeBeat = beatIndex
+  }
+  souraPerformanceDiagnostics.recordMetronomeBeats(beatIndices.length)
+}
+function secondsFromPlayhead(){ return beatsToSeconds(xToBeatsFromBarZero(timelineState.playheadX)) }
+function formatTimeFromPlayhead(){ const raw=secondsFromPlayhead(); const total=Math.abs(raw)<0.0005?0:raw; const isNegative=total<0; const absTotal=Math.abs(total); const m=Math.floor(absTotal/60); const s=Math.floor(absTotal%60); const ms=Math.floor((absTotal%1)*1000); const sub=Math.floor(((absTotal*1000)%1)*100); return `${isNegative?'-':''}${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}.${String(sub).padStart(2,'0')}` }
+function beatsToBarBeatDivTick(globalBeat, {
+  divisionsPerBeat = 4,
+  ticksPerBeat = 960,
+  zeroBasedBars = true
+} = {}) {
+  const divisions = Math.max(1, Math.round(Number(divisionsPerBeat) || 4))
+  const ppq = Math.max(divisions, Math.round(Number(ticksPerBeat) || 960))
+  const safeBeat = Math.max(0, Number(globalBeat) || 0)
+  const timeMap = normalizeTimeSignatureMap()
+  let barsBefore = 0
+  let segmentStart = 0
+  let activeSig = timeMap[0] || { beat: 0, numerator: 4, denominator: 4 }
+  for (let i = 0; i < timeMap.length; i += 1) {
+    activeSig = timeMap[i]
+    segmentStart = Math.max(0, Number(activeSig.beat) || 0)
+    const nextBeat = i < timeMap.length - 1 ? Math.max(segmentStart, Number(timeMap[i + 1].beat) || segmentStart) : safeBeat
+    if (safeBeat <= nextBeat) break
+    barsBefore += Math.floor((nextBeat - segmentStart) / Math.max(1, activeSig.numerator || 4))
+  }
+  const bpb = Math.max(1, Math.round(Number(activeSig.numerator) || 4))
+  const segmentBeat = Math.max(0, safeBeat - segmentStart)
+  const totalTicks = Math.max(0, Math.round(segmentBeat * ppq))
+  const ticksPerBar = bpb * ppq
+  const ticksPerDiv = ppq / divisions
+  const barIndex = Math.floor(totalTicks / ticksPerBar)
+  const ticksIntoBar = totalTicks - (barIndex * ticksPerBar)
+  const beatZeroBased = Math.floor(ticksIntoBar / ppq)
+  const ticksIntoBeat = ticksIntoBar - (beatZeroBased * ppq)
+  const divZeroBased = Math.min(divisions - 1, Math.floor(ticksIntoBeat / ticksPerDiv))
+  const ticksIntoDiv = Math.round(ticksIntoBeat - (divZeroBased * ticksPerDiv))
+  return {
+    bar: zeroBasedBars ? barsBefore + barIndex : barsBefore + barIndex + 1,
+    beat: beatZeroBased + 1,
+    div: divZeroBased + 1,
+    tick: Math.max(0, ticksIntoDiv),
+    totalTicks
+  }
+}
+function assertBarBeatDivTickMath() {
+  const cases = [
+    [0, 0, 1, 1, 0],
+    [1, 0, 2, 1, 0],
+    [2, 0, 3, 1, 0],
+    [3, 0, 4, 1, 0],
+    [4, 1, 1, 1, 0],
+    [0.25, 0, 1, 2, 0],
+    [0.5, 0, 1, 3, 0],
+    [0.75, 0, 1, 4, 0],
+    [0.999999999, 0, 2, 1, 0],
+    [1.000000001, 0, 2, 1, 0]
+  ]
+  const failures = cases
+    .map(([input, bar, beat, div, tick]) => ({ input, expected: { bar, beat, div, tick }, actual: beatsToBarBeatDivTick(input, { beatsPerBar: 4, divisionsPerBeat: 4, ticksPerBeat: 960, zeroBasedBars: true }) }))
+    .filter(({ expected, actual }) => actual.bar !== expected.bar || actual.beat !== expected.beat || actual.div !== expected.div || actual.tick !== expected.tick)
+  if (failures.length) console.warn('[soura-time-display] bar/beat/div/tick math check failed', failures)
+}
+if (import.meta.env?.DEV) assertBarBeatDivTickMath()
+function formatBarsFromPlayhead(){ const position=beatsToBarBeatDivTick(xToBeatsFromBarZero(timelineState.playheadX), { zeroBasedBars: true }); const barLabel=position.bar<0?`-${String(Math.abs(position.bar)).padStart(3,'0')}`:String(position.bar).padStart(3,'0'); return `${barLabel} ${String(position.beat).padStart(2,'0')} ${position.div} ${String(position.tick).padStart(3,'0')}` }
+function getTransportBbdtPosition(){ return beatsToBarBeatDivTick(xToBeatsFromBarZero(timelineState.playheadX), { zeroBasedBars: true }) }
+function formatTransportBarLabel(value){ return Number(value)<0?`-${String(Math.abs(Number(value))).padStart(3,'0')}`:String(Number(value)).padStart(3,'0') }
+function renderTransportInlineInput(field, value){ return `<input class="studio-logic-inline-input" data-transport-inline-input="${field}" value="${esc(value)}" autocomplete="off" spellcheck="false">` }
+function renderTransportInlineSelect(field, value, options){ return `<select class="studio-logic-inline-select" data-transport-inline-select="${field}">${options.map((option)=>`<option value="${esc(option)}" ${option===value?'selected':''}>${esc(option)}</option>`).join('')}</select>` }
+function renderTransportTimeDisplay(){
+  if (transportInlineEdit?.field === 'time') return renderTransportInlineInput('time', transportInlineEdit.value)
+  return `<strong class="studio-logic-primary studio-logic-editable" data-display-time data-transport-inline="time">${formatTimeFromPlayhead()}</strong>`
+}
+function renderTransportBarsDisplay(){
+  const pos = getTransportBbdtPosition()
+  const values = { bar: formatTransportBarLabel(pos.bar), beat: String(pos.beat).padStart(2,'0'), div: String(pos.div), tick: String(pos.tick).padStart(3,'0') }
+  const fields = ['bar','beat','div','tick']
+  return `<strong class="studio-logic-primary studio-logic-bars" data-display-bars>${fields.map((field)=>transportInlineEdit?.field===field ? renderTransportInlineInput(field, transportInlineEdit.value) : `<span class="studio-logic-editable" data-transport-inline="${field}">${values[field]}</span>`).join('<span aria-hidden="true"> </span>')}</strong>`
+}
+function renderTransportTempoDisplay(displayTempo){
+  const value = Number(displayTempo?.bpm || 140).toFixed(4)
+  if (transportInlineEdit?.field === 'tempo') return renderTransportInlineInput('tempo', transportInlineEdit.value)
+  return `<strong class="studio-logic-primary studio-logic-editable" data-display-tempo data-transport-inline="tempo">${value}</strong>`
+}
+function renderTransportTimeSignatureDisplay(displayTimeSignature){
+  const value = formatTimeSignature(displayTimeSignature)
+  if (transportInlineEdit?.field === 'timeSignature') return renderTransportInlineSelect('timeSignature', value, COMMON_TRANSPORT_TIME_SIGNATURES)
+  return `<span class="studio-logic-secondary studio-logic-editable" data-display-time-signature data-transport-inline="timeSignature">${value}</span>`
+}
+function renderTransportKeyDisplay(displayKeySignature){
+  const value = formatKeySignature(displayKeySignature)
+  if (transportInlineEdit?.field === 'key') return renderTransportInlineSelect('key', value, COMMON_TRANSPORT_KEYS)
+  return `<strong class="studio-logic-primary studio-logic-editable" data-display-key data-transport-inline="key">${esc(value)}</strong>`
+}
+function updateTransportDisplay({ force = false } = {}){
+  if (transportInlineEdit) return
+  const now = performance.now()
+  if (!force && isPlaying && now - lastTransportDisplayPaintAt < TRANSPORT_DISPLAY_INTERVAL_MS) return
+  lastTransportDisplayPaintAt = now
+  const displayBeat = clampBeat(xToBeat(timelineState.playheadX))
+  const displayTempo = getTempoAtBeat(displayBeat)
+  const displayTimeSignature = getTimeSignatureAtBeat(displayBeat)
+  const displayKeySignature = getKeySignatureAtBeat(displayBeat)
+  const time = app.querySelector('[data-display-time]')
+  if (time) time.textContent = formatTimeFromPlayhead()
+  const bars = app.querySelector('[data-display-bars]')
+  if (bars) {
+    const pos = getTransportBbdtPosition()
+    const values = [formatTransportBarLabel(pos.bar), String(pos.beat).padStart(2,'0'), String(pos.div), String(pos.tick).padStart(3,'0')]
+    bars.querySelectorAll('[data-transport-inline]').forEach((node, index)=>{ node.textContent = values[index] || node.textContent })
+  }
+  const tempo = app.querySelector('[data-display-tempo]')
+  if (tempo) tempo.textContent = Number(displayTempo.bpm || 140).toFixed(4)
+  const timeSignature = app.querySelector('[data-display-time-signature]')
+  if (timeSignature) timeSignature.textContent = formatTimeSignature(displayTimeSignature)
+  const key = app.querySelector('[data-display-key]')
+  if (key) key.textContent = formatKeySignature(displayKeySignature)
+  const footerTempo = app.querySelector('[data-footer-tempo]')
+  if (footerTempo) footerTempo.textContent = `${Number(displayTempo.bpm || 140).toFixed(1)} BPM`
+  const footerKey = app.querySelector('[data-footer-key]')
+  if (footerKey) footerKey.textContent = formatKeySignature(displayKeySignature)
+  const footerTime = app.querySelector('[data-footer-time-signature]')
+  if (footerTime) footerTime.textContent = formatTimeSignature(displayTimeSignature)
+  if (studioAudioEngine) studioAudioEngine.setBpm(Number(displayTempo.bpm || projectState?.bpm || 140))
+}
+function updateEditorTitleStatus(){ app.querySelector('[data-editor-status]')?.replaceChildren(document.createTextNode(isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded'))) }
+function updateCycleDomFromState(){ const rangeEl = app.querySelector('[data-cycle-range]'); const startGuide = app.querySelector('.studio-cycle-guide--start'); const endGuide = app.querySelector('.studio-cycle-guide--end'); if(!cycleRange){ if(rangeEl) rangeEl.style.width='0px'; return } const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); if (rangeEl){ rangeEl.style.left=`${start}px`; rangeEl.style.width=`${Math.max(beatWidth(), end-start)}px`; rangeEl.classList.toggle('is-enabled', isCycleEnabled) } if (startGuide){ startGuide.style.left=`${start}px`; startGuide.classList.toggle('is-enabled', isCycleEnabled) } if (endGuide){ endGuide.style.left=`${end}px`; endGuide.classList.toggle('is-enabled', isCycleEnabled) } }
+function updateCycleButtonDom(){ const btn=app.querySelector('[data-toggle-cycle]'); if(!btn) return; btn.classList.toggle('is-active', isCycleEnabled); btn.setAttribute('aria-pressed', String(isCycleEnabled)) }
+function updateUtilityToggleButton(selector, enabled) {
+  const button = app.querySelector(selector)
+  if (!button) return
+  button.classList.toggle('is-active', Boolean(enabled))
+  button.setAttribute('aria-pressed', String(Boolean(enabled)))
+}
+function setCycleEnabled(enabled){ isCycleEnabled=!!enabled; updateCycleDomFromState(); updateCycleButtonDom() }
+function markTimelineUserInteraction(durationMs = 900){ timelineUserInteractingUntil = Date.now() + durationMs }
+function followPlayheadIfNeeded(){ if(!followPlayhead || Date.now() < timelineUserInteractingUntil) return; const grid=app.querySelector('[data-arrangement-grid]'); if(!grid) return; const mid=grid.clientWidth*0.5; setArrangementScrollLeft(grid, timelineState.playheadX-mid, { owner: 'follow' }) }
+function getTransportClockProjectSeconds() {
+  if (!isPlaying || !transportClock) return secondsFromPlayhead()
+  const ctx = getAudioContext()
+  const elapsed = Math.max(0, ctx.currentTime - transportClock.audioContextStartTime)
+  return Math.max(0, transportClock.playheadStartSeconds + elapsed - PLAYBACK_LATENCY_COMPENSATION_SECONDS)
+}
+function getTransportClockProjectBeat() {
+  return clampBeat(secondsToBeats(getTransportClockProjectSeconds()))
+}
+function projectSecondsToTimelineX(seconds = 0, tempoMap = null) {
+  return beatsFromBarZeroToX(secondsToBeats(seconds, tempoMap))
+}
+function getTransportScheduleTimeForProjectSeconds(projectSeconds = 0) {
+  if (!transportClock) return getAudioContext().currentTime
+  return transportClock.audioContextStartTime + (Math.max(0, Number(projectSeconds) || 0) - transportClock.playheadStartSeconds)
+}
+function beginTransportClock(playheadX = timelineState.playheadX, { schedulerStartDelaySeconds = TRANSPORT_SCHEDULER_START_DELAY_SECONDS, reason = 'play' } = {}) {
+  const ctx = getAudioContext()
+  const tempoMap = normalizeTempoMap()
+  const playheadStartBeats = clampBeat(xToBeat(playheadX))
+  const playheadStartSeconds = beatsToSeconds(playheadStartBeats, tempoMap)
+  const tempo = getTempoAtBeat(playheadStartBeats, tempoMap)
+  transportClock = {
+    audioContextStartTime: ctx.currentTime + Math.max(0, schedulerStartDelaySeconds),
+    playheadStartSeconds,
+    playheadStartBeats,
+    bpm: tempo.bpm,
+    startedAtPerformanceTime: performance.now(),
+    schedulerStartDelaySeconds: Math.max(0, schedulerStartDelaySeconds),
+    baseLatencySeconds: Number(ctx.baseLatency) || 0,
+    outputLatencySeconds: Number(ctx.outputLatency) || 0
+  }
+  transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
+  lastPlaybackScheduleProjectSeconds = -Infinity
+  lastMetronomeBeat = Math.max(-1, Math.floor(playheadStartBeats) - 1)
+  souraPerformanceDiagnostics.recordTransportStart(reason)
+  console.info('[transport] play requested', {
+    playheadStartSeconds,
+    playheadStartBeats,
+    audioContextCurrentTime: ctx.currentTime,
+    audioContextStartTime: transportClock.audioContextStartTime,
+    schedulerStartDelayMs: Math.round(transportClock.schedulerStartDelaySeconds * 1000),
+    bpm: tempo.bpm,
+    baseLatencyMs: Math.round(transportClock.baseLatencySeconds * 1000),
+    outputLatencyMs: Math.round(transportClock.outputLatencySeconds * 1000),
+    playbackLatencyCompensationMs: Math.round(PLAYBACK_LATENCY_COMPENSATION_SECONDS * 1000)
+  })
+  return transportClock
+}
+function clearTransportClock() {
+  transportClock = null
+  transportDebugState = { playheadLogged: false, firstAudioScheduled: false, firstMidiScheduled: false }
+}
+function updatePlayheadFromTransportClock() {
+  const projectSeconds = getTransportClockProjectSeconds()
+  const tempoMap = normalizeTempoMap()
+  const beat = clampBeat(secondsToBeats(projectSeconds, tempoMap))
+  const x = beatsFromBarZeroToX(beat)
+  isTransportTicking = true
+  setPlayhead(x)
+  isTransportTicking = false
+  if (!transportDebugState.playheadLogged && transportClock && getAudioContext().currentTime >= transportClock.audioContextStartTime) {
+    transportDebugState.playheadLogged = true
+    console.info('[playhead]', {
+      projectSeconds,
+      audioContextCurrentTime: getAudioContext().currentTime,
+      derivedFromAudioClock: true
+    })
+  }
+  return { projectSeconds, beat, tempoMap }
+}
+function getArrangementGrid() { return app.querySelector('[data-arrangement-grid]') }
+function syncArrangementRulerScroll(left = null) {
+  const grid = getArrangementGrid()
+  const ruler = app.querySelector('[data-timeline-ruler]')
+  const globalLane = app.querySelector('[data-global-tracks]')
+  const extensionLane = app.querySelector('[data-timeline-extension-lane]')
+  const nextLeft = Number.isFinite(Number(left)) ? Number(left) : (grid?.scrollLeft || 0)
+  const transform = arrangementViewportTransforms({ scrollLeft: nextLeft }).horizontal
+  const rulerInner = ruler?.querySelector('[data-timeline-ruler-inner]')
+  const globalInner = globalLane?.querySelector('.studio-global-tracks-inner')
+  const extensionInner = extensionLane?.querySelector('[data-timeline-extension-inner]')
+  if (rulerInner) rulerInner.style.transform = transform
+  if (globalInner) globalInner.style.transform = transform
+  if (extensionInner) extensionInner.style.transform = transform
+}
+function setArrangementScrollLeft(grid, scrollLeft, { owner = 'programmatic', revision = timelineGeometryRevision } = {}) {
+  if (!grid) return 0
+  const maxScrollLeft = Math.max(0, grid.scrollWidth - grid.clientWidth)
+  const targetScrollLeft = clampArrangementViewport({ scrollLeft, maxScrollLeft }).scrollLeft
+  pendingTimelineProgrammaticScroll = Math.abs((grid.scrollLeft || 0) - targetScrollLeft) > 0.01
+    ? { owner, revision, scrollLeft: targetScrollLeft }
+    : null
+  grid.scrollLeft = targetScrollLeft
+  syncArrangementRulerScroll(targetScrollLeft)
+  return targetScrollLeft
+}
+function captureArrangementScroll() {
+  const grid = getArrangementGrid()
+  if (!grid) return { left: 0, top: 0 }
+  return { left: grid.scrollLeft || 0, top: grid.scrollTop || 0 }
+}
+function restoreArrangementScroll(scroll = null) {
+  const grid = getArrangementGrid()
+  if (!grid || !scroll) return
+  setArrangementScrollLeft(grid, Math.max(0, Number(scroll.left) || 0), { owner: 'restore' })
+  grid.scrollTop = Math.max(0, Number(scroll.top) || 0)
+  const trackListInner = app.querySelector('.studio-track-list-inner')
+  if (trackListInner) trackListInner.style.transform = arrangementViewportTransforms({ scrollTop: grid.scrollTop || 0 }).vertical
+}
+function restoreArrangementScrollSoon(scroll = null) {
+  if (!scroll) return
+  requestAnimationFrame(() => restoreArrangementScroll(scroll))
+}
+function renderEditorPreservingArrangementScroll(scroll = captureArrangementScroll()) {
+  renderEditor()
+  restoreArrangementScrollSoon(scroll)
+}
+function stopTimelineEdgeAutoScroll() {
+  if (timelineEdgeScrollRaf) cancelAnimationFrame(timelineEdgeScrollRaf)
+  timelineEdgeScrollRaf = 0
+  timelineEdgeScrollState = null
+}
+function tickTimelineEdgeAutoScroll() {
+  if (!midiRegionDrag || !timelineEdgeScrollState?.grid || !timelineEdgeScrollState.direction) {
+    stopTimelineEdgeAutoScroll()
+    return
+  }
+  const { grid, direction, intensity } = timelineEdgeScrollState
+  const maxScroll = Math.max(0, grid.scrollWidth - grid.clientWidth)
+  const delta = direction * clamp(4 + (intensity * 18), 4, 24)
+  grid.scrollLeft = clamp((grid.scrollLeft || 0) + delta, 0, maxScroll)
+  midiRegionDrag.scroll = captureArrangementScroll()
+  syncArrangementRulerScroll(grid.scrollLeft)
+  timelineEdgeScrollRaf = requestAnimationFrame(tickTimelineEdgeAutoScroll)
+}
+function updateTimelineEdgeAutoScroll(event) {
+  if (!midiRegionDrag) return
+  const grid = getArrangementGrid()
+  const rect = grid?.getBoundingClientRect?.()
+  if (!grid || !rect?.width) return
+  const localX = event.clientX - rect.left
+  const leftZone = rect.width * 0.1
+  const rightZone = rect.width * 0.9
+  let direction = 0
+  let intensity = 0
+  if (localX < leftZone) {
+    direction = -1
+    intensity = clamp((leftZone - localX) / Math.max(1, leftZone), 0, 1)
+  } else if (localX > rightZone) {
+    direction = 1
+    intensity = clamp((localX - rightZone) / Math.max(1, rect.width - rightZone), 0, 1)
+  }
+  if (!direction) {
+    stopTimelineEdgeAutoScroll()
+    return
+  }
+  timelineEdgeScrollState = { grid, direction, intensity }
+  if (!timelineEdgeScrollRaf) timelineEdgeScrollRaf = requestAnimationFrame(tickTimelineEdgeAutoScroll)
+}
+
+function renderState(message, buttonHref = ROUTES.studio) { app.innerHTML = `<main class="studio-editor-page studio-editor-state"><div><h1>${message}</h1><a class="button" href="${buttonHref}">Back to Studio</a></div></main>` }
+
+function setEditorMenuOpen(open) {
+  isEditorMenuOpen = open
+  const panel = app.querySelector('[data-editor-nav-panel]')
+  const trigger = app.querySelector('[data-editor-left-menu]')
+  if (!panel || !trigger) return
+  panel.hidden = !open
+  trigger.setAttribute('aria-expanded', String(open))
+}
+
+function clamp(value, min, max) { return Math.min(max, Math.max(min, value)) }
+function esc(value = '') {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  }[char]))
+}
+function deepClone(value) {
+  try { return structuredClone(value) } catch { return JSON.parse(JSON.stringify(value)) }
+}
+function cloneMidiRegionsForHistory() {
+  return midiRegions.map((region)=>cloneRegionForState(region))
+}
+function cloneTracksForHistory() {
+  return tracks.map((track)=>deepClone(ensureTrackInsertState(track)))
+}
+function captureDawSnapshot() {
+  return {
+    midiRegions: cloneMidiRegionsForHistory(),
+    tracks: cloneTracksForHistory(),
+    metronomeSettings: deepClone(metronomeSettings),
+    selectedSystemChannel,
+    selectedTrackId,
+    selectedMidiRegionId,
+    selectedRegionIds: getSelectedRegionIds(),
+    midiRollState: midiRollState ? { ...midiRollState } : null,
+    midiRollSelectedNoteIndex,
+    midiRollSelectedNoteIndices: [...midiRollSelectedNoteIndices]
+  }
+}
+function restoreDawSnapshot(snapshot) {
+  if (!snapshot) return
+  stopAllMidiPreviewNotes()
+  stopAllTrackInstrumentNotes()
+  stopAllPlaybackNotes()
+  stopAllAudioClipPlayback()
+  midiRegions = (snapshot.midiRegions || []).map((region)=>cloneRegionForState(region))
+  tracks.splice(0, tracks.length, ...(snapshot.tracks || []).map((track)=>ensureTrackInsertState(deepClone(track))))
+  metronomeSettings = normalizeMetronomeSettings(snapshot.metronomeSettings || metronomeSettings)
+  isMetronomeEnabled = metronomeSettings.enabled
+  selectedSystemChannel = snapshot.selectedSystemChannel || ''
+  selectedTrackId = snapshot.selectedTrackId || tracks[0]?.id || ''
+  selectedMidiRegionId = snapshot.selectedMidiRegionId || ''
+  setSelectedRegions(Array.isArray(snapshot.selectedRegionIds) ? snapshot.selectedRegionIds : (selectedMidiRegionId ? [selectedMidiRegionId] : []), { primaryId: selectedMidiRegionId })
+  midiRollState = snapshot.midiRollState ? { ...snapshot.midiRollState } : null
+  midiRollSelectedNoteIndex = Number.isInteger(snapshot.midiRollSelectedNoteIndex) ? snapshot.midiRollSelectedNoteIndex : null
+  midiRollSelectedNoteIndices = Array.isArray(snapshot.midiRollSelectedNoteIndices) ? [...snapshot.midiRollSelectedNoteIndices] : []
+  midiRegionMenuState = null
+  regionColorPickerState = null
+  regionRenameState = null
+  tracks.forEach((track) => { if (trackAudioChannels.has(track.id)) rebuildTrackAudioEffectsChain(track.id) })
+  if (trackAudioChannels.has(metronomeSettings.id)) rebuildTrackAudioEffectsChain(metronomeSettings.id)
+  scheduleEditorSave()
+  renderEditor()
+}
+function snapshotsMatch(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+function pushHistory(type, before, after) {
+  if (!before || !after || snapshotsMatch(before, after)) return
+  undoStack.push({ type, before, after, timestamp: Date.now() })
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift()
+  redoStack.length = 0
+}
+function commitHistoryMutation(type, mutator, { render = true, save = true, preserveScroll = true } = {}) {
+  const scroll = preserveScroll ? captureArrangementScroll() : null
+  const before = captureDawSnapshot()
+  mutator?.()
+  const after = captureDawSnapshot()
+  pushHistory(type, before, after)
+  if (save) scheduleEditorSave()
+  if (render) renderEditorPreservingArrangementScroll(scroll)
+}
+function undoDawEdit() {
+  const entry = undoStack.pop()
+  if (!entry) return
+  redoStack.push(entry)
+  restoreDawSnapshot(entry.before)
+}
+function redoDawEdit() {
+  const entry = redoStack.pop()
+  if (!entry) return
+  undoStack.push(entry)
+  restoreDawSnapshot(entry.after)
+}
+function getMidiRegionTrack(region) {
+  return tracks.find((track)=>track.id === region?.trackId) || getSelectedTrack()
+}
+function getMidiRegionLabel(region) {
+  const name = String(region?.name || '').trim()
+  return name || getMidiRegionTrack(region)?.name || (region?.type === 'audio' ? 'Audio Region' : 'MIDI Region')
+}
+function getMidiRollRegion() {
+  const region = midiRegions.find((item)=>item.id === midiRollState?.regionId) || midiRegions.find((item)=>item.id === selectedMidiRegionId)
+  return region?.type === 'audio' ? null : region
+}
+function getSelectedMidiRollNote() {
+  const region = getMidiRollRegion()
+  return Number.isInteger(midiRollSelectedNoteIndex) ? region?.notes?.[midiRollSelectedNoteIndex] || null : null
+}
+function getTimelineMetrics() {
+  const beatsPerBar = Math.max(1, Number(timelineState.beatsPerBar) || 4)
+  const pixelsPerBar = Math.max(1, Number(timelineState.pixelsPerBar) || 120)
+  const pixelsPerBeat = pixelsPerBar / beatsPerBar
+  const zeroX = Number(timelineState.preStartPixels) || 0
+  const maxBeat = Math.max(beatsPerBar, Number(timelineState.positiveBeats) || beatsPerBar)
+  return { beatsPerBar, pixelsPerBar, pixelsPerBeat, zeroX, maxBeat, minBeat: 0 }
+}
+function beatWidth() { return getTimelineMetrics().pixelsPerBeat }
+function timelineStartX() { return 0 }
+function barZeroX() { return getTimelineMetrics().zeroX }
+function barOneX() { return barZeroX() }
+function timelineEndX() { const metrics = getTimelineMetrics(); return timelineXForBeat({ beat: metrics.maxBeat, originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat }) }
+function timelineContentWidth() { return timelineEndX() + timelineWidthForBeats({ durationBeats: 1, pixelsPerBeat: beatWidth() }) }
+function cycleMinWidth() { return Math.max(8, beatWidth() / 2) }
+function syncBarsFromPositiveBeats(){ timelineState.bars = Math.max(2, Math.ceil(timelineState.positiveBeats / timelineState.beatsPerBar)) }
+function extendTimelineToContainBeat(beat = 0) {
+  const beatsPerBar = Math.max(1, Number(timelineState.beatsPerBar) || 4)
+  const requiredBeat = Math.max(0, Number(beat) || 0)
+  const nextBarBoundary = Math.ceil(requiredBeat / beatsPerBar) * beatsPerBar
+  const nextPositiveBeats = clamp(Math.max(beatsPerBar, nextBarBoundary), beatsPerBar, MAX_TIMELINE_POSITIVE_BEATS)
+  if (nextPositiveBeats <= timelineState.positiveBeats) return false
+  timelineState.positiveBeats = nextPositiveBeats
+  syncBarsFromPositiveBeats()
+  return true
+}
+function clampTimelineSystems() {
+  const start = timelineStartX()
+  const end = timelineEndX()
+  timelineState.playheadX = clamp(timelineState.playheadX, start, end)
+  if (cycleRange) {
+    let s = clamp(Math.min(cycleRange.startX, cycleRange.endX), start, end)
+    let e = clamp(Math.max(cycleRange.startX, cycleRange.endX), start, end)
+    if (e - s < cycleMinWidth()) {
+      e = clamp(s + cycleMinWidth(), start + cycleMinWidth(), end)
+      if (e - s < cycleMinWidth()) s = clamp(e - cycleMinWidth(), start, end - cycleMinWidth())
+    }
+    cycleRange = { startX: s, endX: e }
+  }
+}
+function beatToX(beat = 0) { const metrics = getTimelineMetrics(); return timelineXForBeat({ beat, originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat }) }
+function xToBeat(x = 0) { const metrics = getTimelineMetrics(); return beatForTimelineX({ x, originX: metrics.zeroX, pixelsPerBeat: metrics.pixelsPerBeat }) }
+function snapBeat(beat = 0, snapValue = 1) { const value = Number(snapValue) || 1; return Math.round(Number(beat || 0) / value) * value }
+function clampBeat(beat = 0) { const metrics = getTimelineMetrics(); return clamp(Number(beat) || 0, metrics.minBeat, metrics.maxBeat) }
+function snapBeatToGrid(beat = 0, stepBeats = getSnapStepBeats(), direction = 'nearest') {
+  const step = Math.max(1 / TIMELINE_ZOOM_LIMITS.deepestSnapDivision, Number(stepBeats) || 1)
+  const value = Number(beat) || 0
+  const epsilon = 1e-7
+  if (direction === 'right') return Math.ceil((value + epsilon) / step) * step
+  if (direction === 'left') return Math.floor((value - epsilon) / step) * step
+  return Math.round(value / step) * step
+}
+function normalizeTimelineStartBeat(beat = 0, { snapped = isSnapEnabled } = {}) {
+  const raw = Number.isFinite(Number(beat)) ? Number(beat) : 0
+  const next = snapped ? snapBeatToGrid(raw) : raw
+  return Math.abs(next) < 1e-6 ? 0 : clampBeat(next)
+}
+function movePlayheadByKeyboard({ currentBeat = 0, direction = 1, snapEnabled = isSnapEnabled, stepBeats = getSnapStepBeats(), event = null } = {}) {
+  const dir = direction < 0 ? -1 : 1
+  if (snapEnabled) return clampBeat(snapBeatToGrid(currentBeat, stepBeats, dir > 0 ? 'right' : 'left'))
+  const modifierStep = event?.shiftKey ? 1 : (event?.altKey ? 1 / 16 : 1 / 8)
+  return clampBeat((Number(currentBeat) || 0) + (dir * modifierStep))
+}
+function pointerEventToTimelineX(event) {
+  const gridEl = app.querySelector('[data-arrangement-grid]')
+  const rect = gridEl?.getBoundingClientRect?.()
+  if (!rect) return 0
+  return event.clientX - rect.left + (gridEl.scrollLeft || 0)
+}
+function pointerEventToTimelineBeat(event, { snapped = isSnapEnabled } = {}) {
+  const beat = clampBeat(xToBeat(pointerEventToTimelineX(event)))
+  return normalizeTimelineStartBeat(beat, { snapped })
+}
+function getTrackLaneFromY(clientY = 0) {
+  const gridEl = app.querySelector('[data-arrangement-grid]')
+  const rect = gridEl?.getBoundingClientRect?.()
+  if (!rect) return 0
+  return trackIndexAtTimelineY(clientY - rect.top + (gridEl.scrollTop || 0))
+}
+function regionPixelsToBeats(pixels = 0) { return Number(pixels || 0) / beatWidth() }
+function regionPixelsToSeconds(pixels = 0) { return beatsToSeconds(regionPixelsToBeats(pixels)) }
+function xToBeatsFromBarZero(x) { return xToBeat(x) }
+function beatsFromBarZeroToX(beats) { return beatToX(beats) }
+function xToBeatsFromBarOne(x) { return xToBeatsFromBarZero(x) }
+function beatsFromBarOneToX(beats) { return beatsFromBarZeroToX(beats) }
+function ensureDefaultCycleRange(){ if(cycleRange) return; const start = barZeroX(); cycleRange = { startX:start, endX:start + timelineState.pixelsPerBar } }
+function clearBottomPanelMotionTimer(){ if(bottomPanelMotionTimer){ clearTimeout(bottomPanelMotionTimer); bottomPanelMotionTimer=0 } }
+function getStudioEditorViewportHeight() {
+  const page = app?.querySelector?.('.studio-editor-page')
+  const rectHeight = page?.getBoundingClientRect?.().height
+  if (Number.isFinite(rectHeight) && rectHeight > 0) return rectHeight
+  return Math.max(320, window.innerHeight - (keepSiteMenuOpen ? STUDIO_NAV_OFFSET : 0))
+}
+function getStudioTransportBudgetHeight() {
+  const transport = app?.querySelector?.('.studio-editor-transport')
+  const rectHeight = transport?.getBoundingClientRect?.().height
+  if (Number.isFinite(rectHeight) && rectHeight > 0) return rectHeight
+  return window.innerWidth <= 1100 ? 96 : STUDIO_TRANSPORT_HEIGHT
+}
+function getMaxBottomPanelHeight() {
+  const viewportHeight = getStudioEditorViewportHeight()
+  const overlaysExtensionLane = activeBottomPanel === 'midi-roll'
+    || closingBottomPanel === 'midi-roll'
+    || bottomPanelResizeDrag?.panel?.matches?.('.studio-midi-roll-editor')
+  const reservedHeight = STUDIO_APPBAR_HEIGHT + getStudioTransportBudgetHeight() + STUDIO_FOOTER_HEIGHT + (overlaysExtensionLane ? 0 : STUDIO_EXTENSION_LANE_HEIGHT) + STUDIO_MIN_TIMELINE_HEIGHT
+  return Math.max(120, Math.floor(viewportHeight - reservedHeight))
+}
+function clampBottomPanelHeightPx(height = bottomPanelHeightPx) {
+  if (!height) return 0
+  const maxHeight = getMaxBottomPanelHeight()
+  const minHeight = Math.min(220, maxHeight)
+  return Math.round(clamp(Number(height) || 0, minHeight, maxHeight))
+}
+function syncBottomPanelHeightToViewport() {
+  if (!bottomPanelHeightPx) return
+  const nextHeight = clampBottomPanelHeightPx(bottomPanelHeightPx)
+  if (nextHeight !== bottomPanelHeightPx) bottomPanelHeightPx = nextHeight
+}
+function restoreRegionEditorHeightPreference() {
+  let savedHeight = 0
+  try { savedHeight = Number(window.localStorage?.getItem(REGION_EDITOR_HEIGHT_STORAGE_KEY)) } catch {}
+  if (!Number.isFinite(savedHeight) || savedHeight <= 0) return
+  bottomPanelHeightPx = clampBottomPanelHeightPx(savedHeight)
+}
+function persistRegionEditorHeightPreference() {
+  if (!Number.isFinite(bottomPanelHeightPx) || bottomPanelHeightPx <= 0) return
+  try { window.localStorage?.setItem(REGION_EDITOR_HEIGHT_STORAGE_KEY, String(clampBottomPanelHeightPx(bottomPanelHeightPx))) } catch {}
+}
+function openBottomPanel(panelId){
+  if (panelId === 'score') { activeCommandContext = 'score'; if (!bottomPanelHeightPx) bottomPanelHeightPx = 440 }
+  if (panelId === 'loops') panelId = 'asset-library'
+  clearBottomPanelMotionTimer()
+  if(activeBottomPanel===panelId){ closeBottomPanel(); return }
+  if(panelId !== 'midi-effect') activeMidiEffectEditor = null
+  activeBottomPanel=panelId
+  if (panelId === 'midi-roll') restoreRegionEditorHeightPreference()
+  syncBottomPanelHeightToViewport()
+  closingBottomPanel=''
+  bottomPanelMotion='entering'
+  renderEditor()
+  if (panelId === 'asset-library' && !assetLibraryState.loaded && !assetLibraryState.loading) refreshAssetLibrary()
+  if (panelId === 'instrument' && !studioLibraryState.loaded && !studioLibraryState.loading) loadStudioLibrary()
+  bottomPanelMotionTimer=window.setTimeout(()=>{ bottomPanelMotion=''; renderEditor() },190)
+}
+function closeBottomPanel(){
+  if(!activeBottomPanel) return
+  if (activeBottomPanel === 'asset-library') assetAuditionController.stopAndClear()
+  clearBottomPanelMotionTimer()
+  closingBottomPanel=activeBottomPanel
+  activeBottomPanel=''
+  bottomPanelMotion='exiting'
+  renderEditor()
+  bottomPanelMotionTimer=window.setTimeout(()=>{ closingBottomPanel=''; bottomPanelMotion=''; activeMidiEffectEditor=null; renderEditor() },170)
+}
+function detachBottomPanel(panelId = activeBottomPanel) {
+  const panel = panelId || activeBottomPanel
+  if (!panel) return
+  const title = panel === 'midi-roll' ? 'Region Editor' : panel === 'instrument' ? 'Instrument' : panel === 'asset-library' ? 'Asset Library' : panel.charAt(0).toUpperCase() + panel.slice(1)
+  const popup = window.open('', `melogic-${panel}-panel`, 'width=980,height=680,resizable=yes,scrollbars=yes')
+  if (!popup) return
+  const body = app.querySelector('.studio-bottom-panel')?.outerHTML || `<section><h1>${esc(title)}</h1><p>No panel content available.</p></section>`
+  popup.document.open()
+  popup.document.write(`<!doctype html><html><head><title>${esc(title)} | Melogic DAW</title><style>body{margin:0;background:#0b111d;color:#eef4ff;font-family:Inter,system-ui,sans-serif}.studio-bottom-panel{position:static!important;inset:auto!important;width:100vw!important;height:100vh!important;max-height:none!important;border:0!important}.studio-bottom-panel-resize,.studio-bottom-panel-close,[data-detach-bottom-panel]{display:none!important}</style><link rel="stylesheet" href="/src/styles/base.css"><link rel="stylesheet" href="/src/styles/studio.css"></head><body>${body}<script>document.querySelectorAll('button,input,select,textarea').forEach((el)=>{ el.disabled=true })</script></body></html>`)
+  popup.document.close()
+}
+function xToSnappedBeat(x){ const beat=xToBeatsFromBarZero(x); return isSnapEnabled ? snapBeatToGrid(beat) : beat }
+function snapXToBeat(x) { return isSnapEnabled ? beatsFromBarZeroToX(snapBeatToGrid(xToBeatsFromBarZero(x))) : x }
+function maxTimelineX() { return timelineEndX() }
+function updateMidiRollPlayheadDom() {
+  const playheadBeat = xToBeat(timelineState.playheadX)
+  scoreController?.updatePlayhead(playheadBeat, isPlaying)
+
+  const midiMarker = app.querySelector('[data-midi-roll-playhead]')
+  const midiRegion = midiMarker ? getMidiRollRegion() : null
+
+  if (midiMarker && midiRegion) {
+    midiMarker.style.left =
+      `${positionToRegionEditorX(playheadBeat, midiRegion)}px`
+  }
+
+  app
+    .querySelectorAll('[data-region-editor-viewport-playhead]')
+    .forEach((marker) => {
+      const region = midiRegions.find(
+        (item) => item.id === marker.dataset.regionEditorPlayheadRegion
+      )
+      if (!region) return
+      const pitchTraceScroll = marker.closest('.studio-audio-editor-waveform')
+        ?.querySelector('[data-pitch-trace-scroll]')
+      const scrollLeft = pitchTraceScroll?.scrollLeft || 0
+      const viewportOffset = pitchTraceScroll ? REGION_EDITOR_KEYBOARD_WIDTH : 0
+      marker.style.left = `${viewportOffset + positionToRegionEditorX(playheadBeat, region) - scrollLeft}px`
+    })
+
+  app
+    .querySelectorAll('[data-region-editor-timeline]')
+    .forEach((timeline) => {
+      const region = midiRegions.find(
+        (item) => item.id === timeline.dataset.regionEditorTimeline
+      )
+
+      const marker = timeline.querySelector(
+        '.studio-region-editor-playhead'
+      )
+
+      if (!region || !marker) return
+
+      marker.style.left =
+        `${positionToRegionEditorX(playheadBeat, region)}px`
+    })
+}
+
+if (!globalThis.__souraPitchTraceCanonicalZoomV45) {
+  globalThis.__souraPitchTraceCanonicalZoomV45 = true
+
+  document.addEventListener(
+    'soura:pitch-trace-horizontal-zoom',
+    (event) => {
+      const view = event.target?.closest?.('.studio-pitch-trace-view')
+      const editor = view?.closest?.('[data-audio-region-editor]')
+      const region = midiRegions.find(
+        (item) => item.id === editor?.dataset?.audioRegionEditor
+      )
+      const scroll = view?.querySelector?.('[data-pitch-trace-scroll]')
+
+      if (!view || !region || !scroll) return
+
+      const direction = event.detail?.direction || 'fit'
+      const rect = scroll.getBoundingClientRect()
+
+      const keyWidth =
+        view.querySelector('.studio-pitch-trace-keyboard')
+          ?.getBoundingClientRect?.().width
+        || 72
+
+      const pointerX = Number.isFinite(Number(event.detail?.clientX))
+        ? clamp(
+            Number(event.detail.clientX) - rect.left - keyWidth,
+            0,
+            Math.max(1, rect.width - keyWidth)
+          )
+        : Math.max(1, rect.width - keyWidth) / 2
+
+      const projectBeatAtPointer = regionEditorXToPosition(
+        (scroll.scrollLeft || 0) + pointerX,
+        region
+      )
+
+      if (direction === 'fit') {
+        const regionLength = Math.max(
+          0.25,
+          (Number(region.endBeat) || 0)
+          - (Number(region.startBeat) || 0)
+        )
+
+        const viewportWidth = Math.max(
+          200,
+          scroll.clientWidth - keyWidth
+        )
+
+        midiRollBeatWidth = Math.round(
+          clamp(
+            viewportWidth / regionLength,
+            12,
+            720
+          )
+        )
+      } else {
+        midiRollBeatWidth = Math.round(
+          clamp(
+            midiRollBeatWidth
+            * (direction === 'in' ? 1.18 : 1 / 1.18),
+            12,
+            720
+          )
+        )
+      }
+
+      const newScrollLeft = direction === 'fit'
+        ? 0
+        : Math.max(
+            0,
+            positionToRegionEditorX(projectBeatAtPointer, region) - pointerX
+          )
+
+      renderEditor()
+
+      requestAnimationFrame(() => {
+        const nextEditor = app.querySelector(
+          `[data-audio-region-editor="${CSS.escape(region.id)}"]`
+        )
+
+        const nextScroll = nextEditor?.querySelector(
+          '[data-pitch-trace-scroll]'
+        )
+
+        if (nextScroll) {
+          nextScroll.scrollLeft = Math.min(
+            newScrollLeft,
+            Math.max(
+              0,
+              nextScroll.scrollWidth - nextScroll.clientWidth
+            )
+          )
+
+          syncRegionEditorTimelineScroll(nextScroll.scrollLeft)
+        }
+
+        updateMidiRollPlayheadDom()
+      })
+    }
+  )
+
+  document.addEventListener(
+    'soura:pitch-trace-horizontal-scroll',
+    (event) => {
+      syncRegionEditorTimelineScroll(
+        Number(event.detail?.scrollLeft) || 0
+      )
+      updateMidiRollPlayheadDom()
+    }
+  )
+}
+
+function syncRegionEditorTimelineScroll(scrollLeft = null) {
+  const bodyScroll =
+    app.querySelector('.studio-pitch-trace-scroll')
+    || app.querySelector('.studio-midi-roll-scroll')
+
+  const left = Number.isFinite(Number(scrollLeft))
+    ? Number(scrollLeft)
+    : (bodyScroll?.scrollLeft || 0)
+
+  app
+    .querySelectorAll('[data-region-editor-timeline-viewport]')
+    .forEach((viewport) => {
+      if (
+        Math.abs(
+          (viewport.scrollLeft || 0) - left
+        ) > 0.5
+      ) {
+        viewport.scrollLeft = left
+      }
+    })
+}
+function captureMidiRollViewport() {
+  const scroll = app.querySelector('.studio-midi-roll-scroll')
+  const region = getMidiRollRegion()
+  if (!scroll || !region) return
+  syncRegionEditorTimelineScroll(scroll.scrollLeft || 0)
+  midiRollViewport = {
+    regionId: region.id,
+    scrollLeft: scroll.scrollLeft || 0,
+    scrollTop: scroll.scrollTop || 0
+  }
+}
+function restoreMidiRollViewport() {
+  const scroll = app.querySelector('.studio-midi-roll-scroll')
+  const region = getMidiRollRegion()
+  if (!scroll || !region || midiRollViewport.regionId !== region.id) return
+  scroll.scrollLeft = midiRollViewport.scrollLeft || 0
+  scroll.scrollTop = midiRollViewport.scrollTop || 0
+  syncRegionEditorTimelineScroll(scroll.scrollLeft || 0)
+}
+function captureAudioRegionToolsViewport() {
+  const scroll = app.querySelector('[data-region-editor-scroll]')
+  const region = getSelectedAudioRegion()
+  if (!scroll || !region) return audioRegionToolsViewport
+  audioRegionToolsViewport = {
+    regionId: region.id,
+    scrollTop: scroll.scrollTop || 0
+  }
+  return audioRegionToolsViewport
+}
+function restoreAudioRegionToolsViewport(viewport = audioRegionToolsViewport) {
+  const scroll = app.querySelector('[data-region-editor-scroll]')
+  const region = getSelectedAudioRegion()
+  if (!scroll || !region || viewport?.regionId !== region.id) return
+  scroll.scrollTop = viewport.scrollTop || 0
+}
+
+function studioResonaContext() {
+  const track = getSelectedTrack()
+  const region = midiRegions.find((item) => item.id === selectedMidiRegionId) || null
+  return {
+    contextSource: 'studio_daw',
+    featureArea: 'Studio DAW',
+    dawContext: {
+      projectTitle: String(projectState?.title || 'Untitled Studio Project').slice(0, 140),
+      bpm: Number(projectState?.bpm || 140),
+      key: String(projectState?.key || '').slice(0, 32),
+      selectedTrack: track ? {
+        id: String(track.id || '').slice(0, 80),
+        name: String(track.name || '').slice(0, 120),
+        type: String(track.type || '').slice(0, 60),
+        muted: track.muted === true,
+        soloed: track.soloed === true,
+        recordArmed: track.recordArmed === true,
+        volume: Number(track.volume || 0),
+        pan: Number(track.pan || 0)
+      } : null,
+      selectedMidiRegion: region ? {
+        id: String(region.id || '').slice(0, 80),
+        trackId: String(region.trackId || '').slice(0, 80),
+        name: String(region.name || '').slice(0, 120),
+        startBeat: Number(region.startBeat || 0),
+        durationBeats: Number(region.durationBeats || 0)
+      } : null,
+      trackCount: tracks.length,
+      openPanel: activeBottomPanel || activeLeftPanel || 'arrangement',
+      transport: {
+        playing: isPlaying === true,
+        recording: Boolean(activeRecording),
+        playhead: formatBarsFromPlayhead()
+      }
+    }
+  }
+}
+
+function renderStudioResonaPanel() {
+  return '<aside class="studio-resona-side-panel" data-studio-resona-panel><div data-resona-embedded="studio_daw"></div></aside>'
+}
+
+function elementVisibleInViewport(selector = '') {
+  const node = app.querySelector(selector)
+  if (!node) return false
+  const rect = node.getBoundingClientRect()
+  return rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= window.innerHeight
+}
+
+function auditSouraLayout() {
+  const rectHeight = (selector) => {
+    const node = app.querySelector(selector)
+    return node ? Math.round(node.getBoundingClientRect().height) : 0
+  }
+  const viewportHeight = window.innerHeight
+  const page = app.querySelector('.studio-editor-page')
+  app.querySelector('[data-new-track-drop-lane]')?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation() })
+  const rootHeight = page ? Math.round(page.getBoundingClientRect().height) : 0
+  const projectRangeBarVisible = elementVisibleInViewport('[data-timeline-extension-lane]')
+  const statusStripVisible = elementVisibleInViewport('.studio-editor-footer')
+  const resonaComposerVisible = elementVisibleInViewport('.studio-resona-side-panel .resona-surface-composer')
+  const overflowDetected = Boolean(page && (
+    page.scrollHeight > page.clientHeight + 1 ||
+    !projectRangeBarVisible ||
+    !statusStripVisible ||
+    (app.querySelector('.studio-resona-side-panel') && !resonaComposerVisible)
+  ))
+  const payload = {
+    viewportHeight,
+    rootHeight,
+    mainWorkspaceHeight: rectHeight('.studio-editor-workspace'),
+    timelineAreaHeight: rectHeight('[data-arrangement-grid]'),
+    regionEditorHeight: rectHeight('.studio-bottom-panel'),
+    bottomRangeBarHeight: rectHeight('[data-timeline-extension-lane]'),
+    bottomStatusStripHeight: rectHeight('.studio-editor-footer'),
+    resonaDockHeight: rectHeight('.studio-resona-side-panel'),
+    resonaComposerHeight: rectHeight('.studio-resona-side-panel .resona-surface-composer'),
+    projectRangeBarVisible,
+    statusStripVisible,
+    resonaComposerVisible,
+    overflowDetected
+  }
+  console.info('[soura-layout] viewport audit', payload)
+  return payload
+}
+
+function shouldRunSouraLayoutAudit() {
+  return import.meta.env.DEV && (
+    new URLSearchParams(window.location.search).has('souraLayoutDebug') ||
+    localStorage.getItem('melogic:souraLayoutDebug') === '1'
+  )
+}
+
+function scheduleSouraLayoutAudit() {
+  window.__auditSouraLayout = auditSouraLayout
+  if (!shouldRunSouraLayoutAudit()) return
+  requestAnimationFrame(() => requestAnimationFrame(auditSouraLayout))
+}
+
+function mountStudioResonaPanel() {
+  const root = app.querySelector('[data-resona-embedded="studio_daw"]')
+  if (!root) return
+  mountResonaChatSurface(root, {
+    variant: 'embedded',
+    contextType: 'studio_daw',
+    contextId: projectState?.id || projectIdFromPath() || '',
+    contextLabel: projectState?.title || 'Studio DAW',
+    contextSource: 'studio_daw',
+    title: 'Studio DAW',
+    roundedParent: false,
+    getContext: studioResonaContext
+  })
+}
+
+function applyStudioGuideTargets() {
+  const targets = [
+    ['.studio-editor-title', 'studio-project-title', 'Studio project title', 'daw-project-title'],
+    ['.studio-editor-transport', 'studio-transport', 'Studio transport controls', 'daw-transport'],
+    ['.studio-logic-section--tempo', 'studio-tempo-control', 'Studio tempo display', 'daw-tempo'],
+    ['.studio-logic-section--key', 'studio-key-control', 'Studio key display', 'daw-key'],
+    ['.studio-track-panel', 'studio-track-panel', 'Studio track list', 'daw-track-list'],
+    ['.studio-arrangement', 'studio-arrangement', 'Studio arrangement timeline', 'daw-arrangement'],
+    ['.studio-resona-side-panel', 'studio-resona-panel', 'Studio Resona panel', 'daw-resona-panel'],
+    ['.studio-right-rail [data-bottom-panel="mixer"]', 'studio-right-rail-mixer', 'Studio mixer tab', 'daw-panel-tab'],
+    ['.studio-right-rail [data-bottom-panel="instrument"]', 'studio-right-rail-instrument', 'Studio instrument tab', 'daw-panel-tab'],
+    ['.studio-right-rail [data-bottom-panel="resona"]', 'studio-right-rail-resona', 'Studio Resona tab', 'daw-resona-tab'],
+    ['[data-resona-surface-dock]', 'studio-resona-open-dock', 'Open Studio Resona dock', 'daw-resona-action'],
+    ['[data-site-guidance-start][data-site-guidance-context-type="studio_daw"]', 'studio-resona-enable-guidance', 'Enable Studio DAW guidance', 'daw-resona-action']
+  ]
+  targets.forEach(([selector, id, label, role]) => {
+    const element = app.querySelector(selector)
+    if (!element) return
+    element.setAttribute('data-guide-id', id)
+    element.setAttribute('data-guide-label', label)
+    element.setAttribute('data-guide-role', role)
+  })
+}
+function setPlayhead(x, { restartTransport = true, syncAudioEngine = true } = {}) {
+  timelineState.playheadX = clamp(x, timelineStartX(), maxTimelineX())
+  if (syncAudioEngine && studioAudioEngine && !isTransportTicking) {
+    const beat = clampBeat(xToBeat(timelineState.playheadX))
+    const tempo = getTempoAtBeat(beat)
+    studioAudioEngine.setBpm(Number(tempo.bpm || projectState?.bpm || 140))
+    studioAudioEngine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
+  }
+  app.querySelector('[data-arrangement]')?.style.setProperty('--playhead-x', `${timelineState.playheadX}px`)
+  updateTransportDisplay({ force: !isTransportTicking })
+  updateMidiRollPlayheadDom()
+  if (restartTransport && isPlaying && !isTransportTicking) {
+    stopAllAudioClipPlayback()
+    stopAllPlaybackNotes()
+    beginTransportClock(timelineState.playheadX, { reason: 'seek' })
+    const beat = clampBeat(xToBeat(timelineState.playheadX))
+    const schedulingContext = createPlaybackSchedulingContext()
+    updatePortableTrackPlayback(schedulingContext)
+    updateMidiRegionPlayback(beat, schedulingContext)
+    updateAudioClipPlayback(beat, schedulingContext)
+  }
+}
+function setPlayheadBeat(beat, options = {}) {
+  setPlayhead(beatToX(clampBeat(beat)), options)
+}
+function setBaseTempo(bpm) {
+  const value = clampProjectBpm(bpm)
+  const events = normalizeTempoEvents().filter((event)=>event.id !== 'tempo-default')
+  const first = events.find((event)=>Number(event.beat) === 0) || { id: 'tempo-start', beat: 0, curve: 'hold', createdAt: nowIso() }
+  const next = { ...first, beat: 0, bpm: value, curve: first.curve || 'hold', updatedAt: nowIso() }
+  globalTracks.tempoEvents = [next, ...events.filter((event)=>event.id !== first.id)].sort((a,b)=>a.beat-b.beat)
+  projectState.bpm = value
+  if (studioAudioEngine) studioAudioEngine.setBpm(value)
+}
+function setBaseTimeSignature(value) {
+  const sig = parseTimeSignature(value)
+  const events = normalizeTimeSignatureMap().filter((event)=>event.id !== 'time-signature-default')
+  const first = events.find((event)=>Number(event.beat) === 0) || { id: 'time-signature-start', beat: 0, createdAt: nowIso() }
+  globalTracks.timeSignatureEvents = [{ ...first, beat: 0, numerator: sig.numerator, denominator: sig.denominator, updatedAt: nowIso() }, ...events.filter((event)=>event.id !== first.id)].sort((a,b)=>a.beat-b.beat)
+  projectState.timeSignature = formatTimeSignature(sig)
+  timelineState.beatsPerBar = sig.numerator
+  syncBarsFromPositiveBeats()
+}
+function setBaseKeySignature(value) {
+  const parsed = parseProjectKey(value)
+  const events = normalizeKeySignatureMap().filter((event)=>event.id !== 'key-signature-default')
+  const first = events.find((event)=>Number(event.beat) === 0) || { id: 'key-signature-start', beat: 0, createdAt: nowIso() }
+  const label = `${parsed.root} ${parsed.scale}`
+  globalTracks.keySignatureEvents = [{ ...first, beat: 0, root: parsed.root, scale: parsed.scale, label, updatedAt: nowIso() }, ...events.filter((event)=>event.id !== first.id)].sort((a,b)=>a.beat-b.beat)
+  projectState.key = label
+}
+function parseTransportTimeInput(value) {
+  const raw = String(value || '').trim()
+  if (!raw) return null
+  const parts = raw.split(':').map((part)=>Number(part))
+  if (parts.some((part)=>!Number.isFinite(part))) return null
+  if (parts.length === 1) return Math.max(0, parts[0])
+  if (parts.length === 2) return Math.max(0, (parts[0] * 60) + parts[1])
+  if (parts.length === 3) return Math.max(0, (parts[0] * 3600) + (parts[1] * 60) + parts[2])
+  return null
+}
+function bbdtToBeat({ bar, beat, div, tick }) {
+  const sig = getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))
+  const beatsPerBar = Math.max(1, Number(sig.numerator) || timelineState.beatsPerBar || 4)
+  const divisions = 4
+  const ticksPerBeat = 960
+  const safeBar = Math.max(0, Math.round(Number(bar) || 0))
+  const safeBeat = clamp(Math.round(Number(beat) || 1), 1, beatsPerBar)
+  const safeDiv = clamp(Math.round(Number(div) || 1), 1, divisions)
+  const safeTick = clamp(Math.round(Number(tick) || 0), 0, Math.floor(ticksPerBeat / divisions) - 1)
+  return safeBar * beatsPerBar + (safeBeat - 1) + ((safeDiv - 1) / divisions) + (safeTick / ticksPerBeat)
+}
+function commitTransportInlineEdit(field, rawValue) {
+  const value = String(rawValue || '').trim()
+  if (!value) return false
+  if (field === 'tempo') setBaseTempo(value)
+  else if (field === 'timeSignature') setBaseTimeSignature(value)
+  else if (field === 'key') setBaseKeySignature(value)
+  else if (field === 'time') {
+    const seconds = parseTransportTimeInput(value)
+    if (seconds == null) return false
+    setPlayheadBeat(secondsToBeats(seconds), { restartTransport: false })
+  } else if (['bar','beat','div','tick'].includes(field)) {
+    const pos = getTransportBbdtPosition()
+    pos[field] = value
+    setPlayheadBeat(bbdtToBeat(pos), { restartTransport: false })
+  } else return false
+  scheduleEditorSave()
+  return true
+}
+function openTransportInlineEdit(field) {
+  const pos = getTransportBbdtPosition()
+  const values = {
+    tempo: String(Number(getTempoAtBeat(clampBeat(xToBeat(timelineState.playheadX))).bpm || 140)),
+    timeSignature: formatTimeSignature(getTimeSignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    key: formatKeySignature(getKeySignatureAtBeat(clampBeat(xToBeat(timelineState.playheadX)))),
+    time: formatTimeFromPlayhead(),
+    bar: String(pos.bar),
+    beat: String(pos.beat),
+    div: String(pos.div),
+    tick: String(pos.tick)
+  }
+  transportInlineEdit = { field, value: values[field] || '' }
+  const scroll = captureArrangementScroll()
+  renderEditorPreservingArrangementScroll(scroll)
+  requestAnimationFrame(() => {
+    const input = app.querySelector(`[data-transport-inline-input="${CSS.escape(field)}"],[data-transport-inline-select="${CSS.escape(field)}"]`)
+    input?.focus()
+    input?.select?.()
+  })
+}
+function closeTransportInlineEdit({ commit = false, value = '' } = {}) {
+  const field = transportInlineEdit?.field
+  if (commit && field) commitTransportInlineEdit(field, value)
+  transportInlineEdit = null
+  const scroll = captureArrangementScroll()
+  renderEditorPreservingArrangementScroll(scroll)
+}
+function applyTransportValueDrag(field, delta) {
+  if (!field) return
+  if (field === 'time') setPlayheadBeat(xToBeat(timelineState.playheadX) + (delta * 0.125), { restartTransport: false })
+  else if (['bar','beat','div','tick'].includes(field)) {
+    const pos = getTransportBbdtPosition()
+    const step = field === 'bar' || field === 'beat' ? 1 : (field === 'div' ? 0.25 : 1 / 960)
+    setPlayheadBeat(xToBeat(timelineState.playheadX) + (delta * step), { restartTransport: false })
+  }
+  updateTransportDisplay()
+}
+function regionEditorTimelineBeatFromEvent(event) {
+  const timeline = getRegionEditorTimelineFromEvent(event)
+  const inner = timeline?.querySelector('[data-region-editor-timeline-inner]')
+  const viewport = timeline?.querySelector('[data-region-editor-timeline-viewport]')
+  const region = midiRegions.find((item)=>item.id === timeline?.dataset.regionEditorTimeline)
+  const rect = viewport?.getBoundingClientRect?.() || inner?.getBoundingClientRect?.()
+  if (!timeline || !inner || !region || !rect) return null
+  const localX = clamp(event.clientX - rect.left + (viewport?.scrollLeft || 0), 0, inner.offsetWidth || rect.width || 0)
+  return clampBeat(regionEditorXToPosition(localX, region))
+}
+function getRegionEditorTimelineFromEvent(event) {
+  return event.target.closest?.('[data-region-editor-timeline]') || (regionEditorPlayheadDrag?.regionId ? app.querySelector(`[data-region-editor-timeline="${CSS.escape(regionEditorPlayheadDrag.regionId)}"]`) : null)
+}
+function setPlayheadFromRegionEditorTimeline(event) {
+  let beat = regionEditorTimelineBeatFromEvent(event)
+  if (beat == null) return
+  const timeline = getRegionEditorTimelineFromEvent(event)
+  const region = midiRegions.find((item)=>item.id === timeline?.dataset.regionEditorTimeline)
+  if (isSnapEnabled) beat = snapBeatToRegionEditorGrid(beat, Number(region?.startBeat) || 0)
+  setPlayheadBeat(beat, { restartTransport: false })
+  updateTransportDisplay()
+}
+function pixelsPerSecond() { const bps = 1 / getSecondsPerBeatAtBeat(clampBeat(xToBeat(timelineState.playheadX))); const ppb = timelineState.pixelsPerBar / timelineState.beatsPerBar; return bps * ppb }
+function updateTransportPlaybackUI() { const btn = app.querySelector('[data-transport-play]'); if (!btn) return; const locked = !!(activeRecording || isCountInRunning || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active); btn.classList.toggle('is-active', isPlaying); btn.classList.toggle('is-disabled', locked); btn.toggleAttribute('disabled', locked); btn.setAttribute('aria-pressed', String(isPlaying)); btn.setAttribute('aria-label', isPlaying ? 'Pause' : 'Play'); btn.innerHTML = isPlaying ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 5v14M16 5v14"/></svg>' : toolIcon('play') }
+function tickPlayback(frameTime = performance.now()) {
+  if (!isPlaying) return
+  souraPerformanceDiagnostics.recordFrame(frameTime)
+  if (souraPerformanceDiagnostics.enabled && frameTime - lastPerformanceDiagnosticsPublishAt >= 1000) {
+    lastPerformanceDiagnosticsPublishAt = frameTime
+    document.documentElement.dataset.souraPerformanceDiagnostics = JSON.stringify(souraPerformanceDiagnostics.snapshot())
+  }
+  const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null
+  let state = updatePlayheadFromTransportClock()
+  if (cycle && timelineState.playheadX >= cycle.end) {
+    stopAllPlaybackNotes()
+    stopAllAudioClipPlayback()
+    beginTransportClock(cycle.start, { schedulerStartDelaySeconds: 0, reason: 'cycle-loop' })
+    state = updatePlayheadFromTransportClock()
+  }
+  if (isCountInRunning && countInTargetX != null && timelineState.playheadX >= countInTargetX) {
+    isTransportTicking = true
+    setPlayhead(countInTargetX)
+    isTransportTicking = false
+    beginTransportClock(timelineState.playheadX, { schedulerStartDelaySeconds: 0, reason: 'count-in' })
+    state = updatePlayheadFromTransportClock()
+  }
+  if (isCountInRunning && countInTargetX != null) {
+    const nextRemaining = clamp(Math.ceil((countInTargetX - timelineState.playheadX) / Math.max(1, beatWidth())), 0, 4)
+    if (nextRemaining !== countInBeatsRemaining) {
+      countInBeatsRemaining = nextRemaining
+      updateEditorTitleStatus()
+    }
+    if (timelineState.playheadX >= countInTargetX - 0.5) {
+      const track = tracks.find((item)=>item.id === countInTargetTrackId) || getRecordingTrack()
+      isCountInRunning = false
+      countInBeatsRemaining = 0
+      countInTargetX = null
+      countInTargetTrackId = ''
+      if (isAudioTrack(track)) beginAudioRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) })
+      else beginMidiRecording(track, { startBeat: clampBeat(xToBeat(timelineState.playheadX)) })
+      playRaf = requestAnimationFrame(tickPlayback)
+      return
+    }
+  }
+  const currentBeat = state.beat
+  const scheduleDue = !Number.isFinite(lastPlaybackScheduleProjectSeconds)
+    || state.projectSeconds < lastPlaybackScheduleProjectSeconds
+    || state.projectSeconds - lastPlaybackScheduleProjectSeconds >= TRANSPORT_SCHEDULER_INTERVAL_SECONDS
+  if (scheduleDue) {
+    souraPerformanceDiagnostics.recordSchedulerPass()
+    const schedulingContext = createPlaybackSchedulingContext({
+      currentProjectSeconds: state.projectSeconds,
+      tempoMap: state.tempoMap
+    })
+    updatePortableTrackPlayback(schedulingContext)
+    updateMidiRegionPlayback(currentBeat, schedulingContext)
+    updateAudioClipPlayback(currentBeat, schedulingContext)
+    maybeTickMetronome(schedulingContext)
+    lastPlaybackScheduleProjectSeconds = state.projectSeconds
+  }
+  if (frameTime - lastMeterPaintAt >= METER_DISPLAY_INTERVAL_MS) {
+    lastMeterPaintAt = frameTime
+    updateTrackMetersFrame(frameTime)
+  }
+  lastPlaybackBeat = currentBeat
+  if(activeRecording && frameTime - lastRecordingRegionPaintAt >= TRANSPORT_DISPLAY_INTERVAL_MS) {
+    lastRecordingRegionPaintAt = frameTime
+    refreshMidiRegionDom()
+  }
+  followPlayheadIfNeeded()
+  if (timelineState.playheadX >= maxTimelineX()) return pausePlayback()
+  playRaf = requestAnimationFrame(tickPlayback)
+}
+async function hydratePortableTrackAudio(track, portableRender) {
+  const current = portableTrackRuntime.get(track.id) || {}
+  if (current.audioBuffer && current.sourceRevision === portableRender.sourceRevision) return true
+  if (current.hydrationPromise) return current.hydrationPromise
+  const hydrationPromise = (async () => {
+    const downloadUrl = portableRender.audio.downloadUrl || await getStorageAssetUrl(portableRender.audio.storagePath, {
+      scopeKey: `soura-project:${projectState?.id || 'project'}`,
+      type: 'soura-portable-track-render',
+      warnOnFail: true
+    })
+    if (!downloadUrl) throw new Error('Portable track render could not be located.')
+    const response = await fetch(downloadUrl)
+    if (!response.ok) throw new Error(`Portable track render fetch failed (${response.status}).`)
+    const arrayBuffer = await response.arrayBuffer()
+    const audioBuffer = await getAudioContext().decodeAudioData(arrayBuffer.slice(0))
+    portableTrackRuntime.set(track.id, {
+      ...portableTrackRuntime.get(track.id),
+      mode: 'portable',
+      audioBuffer,
+      downloadUrl,
+      sourceRevision: portableRender.sourceRevision,
+      hydrationPromise: null,
+      error: ''
+    })
+    return true
+  })().catch((error) => {
+    portableTrackRuntime.set(track.id, {
+      ...portableTrackRuntime.get(track.id),
+      mode: 'unavailable',
+      audioBuffer: null,
+      hydrationPromise: null,
+      error: error?.message || 'Portable track render failed to load.'
+    })
+    console.warn('[portable-track] render hydration failed', { trackId: track.id, message: error?.message })
+    return false
+  })
+  portableTrackRuntime.set(track.id, { ...current, hydrationPromise })
+  return hydrationPromise
+}
+async function preparePortableTrackPlayback() {
+  await Promise.all(tracks.filter((track) => isNativeVst3Instrument(track.instrument)).map(async (track) => {
+    let dependencyAvailable = false
+    if (souraRuntimeCapabilities.nativeVst3Host) {
+      dependencyAvailable = Boolean(await resolveNativeVst3RuntimePath(track.instrument.params || {}).catch((error) => {
+        console.warn('[portable-track] native plug-in resolution failed', { trackId: track.id, message: error?.message })
+        return ''
+      }))
+    }
+    portableTrackRuntime.set(track.id, { ...portableTrackRuntime.get(track.id), dependencyAvailable, error: '' })
+    const decision = getTrackPortablePlaybackDecision(track)
+    portableTrackRuntime.set(track.id, { ...portableTrackRuntime.get(track.id), mode: decision.mode, sourceRevision: decision.sourceRevision })
+    if (decision.mode === 'portable') await hydratePortableTrackAudio(track, decision.portableRender)
+  }))
+}
+async function prepareProjectPlayback() {
+  getAudioContext()
+  await preparePortableTrackPlayback()
+  tracks.filter((track) => isSoftwareTrack(track) && getTrackPortablePlaybackDecision(track).mode === 'live').forEach((track)=>ensureTrackInstrumentInstance(track))
+  const pendingAudio = midiRegions.filter((region)=>{
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const stretch = normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+      visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+    })
+    const stretchRuntimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
+    return region.type === 'audio' && (
+      region.audioClip?.loadStatus === 'pending' ||
+      region.audioClip?.loadStatus === 'failed' ||
+      stretch.renderStatus === 'needs_render' ||
+      (stretch.enabled && stretch.renderStatus === 'ready' && (stretch.renderedStoragePath || stretch.renderedAudioUrl) && !audioClipRuntime.has(stretchRuntimeId)) ||
+      edit.pitchShift?.renderStatus === 'needs_render' ||
+      edit.pitchTrace?.renderStatus === 'needs_render' ||
+      edit.reverse?.renderStatus === 'needs_render'
+    ) && (
+      region.audioClip?.storagePath || region.audioClip?.downloadUrl ||
+      region.stretch?.renderedStoragePath || region.stretch?.renderedAudioUrl ||
+      edit.pitchShift?.renderedStoragePath || edit.pitchShift?.renderedAudioUrl ||
+      edit.pitchTrace?.renderedStoragePath || edit.pitchTrace?.renderedAudioUrl ||
+      edit.reverse?.renderedStoragePath || edit.reverse?.renderedAudioUrl
+    )
+  })
+  if (pendingAudio.length) await Promise.allSettled(pendingAudio.map((region)=>hydrateAudioRegionRuntime(region)))
+}
+function collectAudioRenderReadinessTasks() {
+  return midiRegions.filter((region)=>region.type === 'audio').map((region)=> {
+    const stretch = normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+      visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+    })
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const choice = getAudioPlaybackRenderChoice(region, edit, stretch)
+    if (choice.needsRender) return { regionId: region.id, mode: choice.promptMode, label: getMidiRegionLabel(region) }
+    if (choice.needsStretchRender) return { regionId: region.id, mode: 'stretch', label: getMidiRegionLabel(region) }
+    return null
+  }).filter(Boolean)
+}
+async function runAudioRenderReadinessAudit() {
+  const tasks = collectAudioRenderReadinessTasks()
+  if (!tasks.length) return true
+  audioPreflightRenderState = { active: true, total: tasks.length, completed: 0, currentLabel: 'Queued', error: '', failed: [] }
+  renderEditor()
+  for (let index = 0; index < tasks.length; index += 1) {
+    const task = tasks[index]
+    audioPreflightRenderState = { ...audioPreflightRenderState, completed: index, currentLabel: `${task.label} · ${task.mode}` }
+    renderEditor()
+    const beforeErrors = midiRegions.map((region)=>({ id: region.id, edit: normalizeAudioEdit(region.audioEdit), stretch: normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: region.type === 'audio' ? getAudioSourceDurationSeconds(region) : null,
+      visibleDurationSeconds: region.type === 'audio' ? getRawAudioRegionVisibleDurationSeconds(region) : null
+    }) }))
+    if (task.mode === 'stretch') await renderAudioStretchForRegion(task.regionId)
+    else if (task.mode === 'trace') await renderPitchTraceEditsForRegion(task.regionId)
+    else if (task.mode === 'reverse') await renderAudioReverseForRegion(task.regionId)
+    else await renderAudioPitchShiftForRegion(task.regionId)
+    const region = midiRegions.find((item)=>item.id === task.regionId)
+    const edit = normalizeAudioEdit(region?.audioEdit)
+    const stretch = normalizeAudioStretch(region?.stretch, {
+      clipId: region?.id,
+      sourceDurationSeconds: region ? getAudioSourceDurationSeconds(region) : null,
+      visibleDurationSeconds: region ? getRawAudioRegionVisibleDurationSeconds(region) : null
+    })
+    const failed = task.mode === 'stretch'
+      ? stretch.renderStatus === 'failed'
+      : task.mode === 'trace'
+        ? edit.pitchTrace.renderStatus === 'failed'
+        : task.mode === 'reverse'
+          ? edit.reverse.renderStatus === 'failed'
+          : edit.pitchShift.renderStatus === 'failed'
+    if (failed) {
+      const prior = beforeErrors.find((item)=>item.id === task.regionId)
+      audioPreflightRenderState = { ...audioPreflightRenderState, active: true, error: `Render failed for ${task.label}.`, failed: [{ ...task, prior }] }
+      renderEditor()
+      return false
+    }
+  }
+  audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+  renderEditor()
+  return true
+}
+async function startPlayback({ skipRenderAudit = false } = {}) {
+  if (isPlaying || audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active) return
+  let ctx
+  try {
+    // Resume while the Play activation is still current, before project
+    // hydration or render audits introduce unrelated asynchronous waits.
+    ctx = await ensureSouraAudioOutputRunning('play-control')
+  } catch (err) {
+    recordingStatus = err?.message || 'Soura could not start browser audio. Check the output device and press Play again.'
+    console.error('[studioProject] playback blocked before transport start', err)
+    updateEditorTitleStatus()
+    updateTransportPlaybackUI()
+    return
+  }
+  const requestedPlayheadX = timelineState.playheadX
+  const cycle = isCycleEnabled && !isCountInRunning ? getNormalizedCycleRange() : null
+  if (cycle && (timelineState.playheadX < cycle.start || timelineState.playheadX >= cycle.end)) setPlayhead(cycle.start)
+  const playbackStartX = timelineState.playheadX
+  recordingStatus = 'Preparing audio...'
+  updateEditorTitleStatus()
+  await prepareProjectPlayback()
+  if (!skipRenderAudit) {
+    const ready = await runAudioRenderReadinessAudit()
+    if (!ready) {
+      recordingStatus = 'Audio render failed before playback.'
+      updateEditorTitleStatus()
+      return
+    }
+    setPlayhead(playbackStartX || requestedPlayheadX)
+  }
+  try {
+    ctx = await ensureSouraAudioOutputRunning('playback-ready')
+  } catch (err) {
+    recordingStatus = err?.message || 'Soura browser audio stopped before playback could begin.'
+    console.error('[studioProject] playback preparation lost audio output', err)
+    updateEditorTitleStatus()
+    updateTransportPlaybackUI()
+    return
+  }
+  recordingStatus = recordingStatus === 'Preparing audio...' ? '' : recordingStatus
+  beginTransportClock(timelineState.playheadX, { reason: 'play' })
+  prewarmDawAudio().then((engine) => {
+    const tempo = getTempoAtBeat(clampBeat(xToBeat(timelineState.playheadX)))
+    engine.setBpm(Number(tempo.bpm || projectState?.bpm || 140))
+    engine.setPositionBeats(xToBeatsFromBarZero(timelineState.playheadX))
+    engine.startTransport({ bpm: Number(tempo.bpm || projectState?.bpm || 140), positionBeats: xToBeatsFromBarZero(timelineState.playheadX) })
+  }).catch((err)=>console.warn('[studioProject] audio engine start failed', err))
+  isPlaying = true
+  lastPlaybackBeat = clampBeat(xToBeat(timelineState.playheadX))
+  lastPlayTimestamp = performance.now()
+  const schedulingContext = createPlaybackSchedulingContext()
+  updatePortableTrackPlayback(schedulingContext)
+  updateAudioClipPlayback(lastPlaybackBeat, schedulingContext)
+  updateMidiRegionPlayback(lastPlaybackBeat, schedulingContext)
+  maybeTickMetronome(schedulingContext)
+  lastPlaybackScheduleProjectSeconds = schedulingContext.currentProjectSeconds
+  startTrackMeterLoop()
+  playRaf = requestAnimationFrame(tickPlayback)
+  updateTransportPlaybackUI()
+  updateEditorTitleStatus()
+}
+function pausePlayback() { isPlaying = false; clearTransportClock(); stopMetronomeVoices(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); try { studioAudioEngine?.pauseTransport() } catch (err) { console.warn('[studioProject] audio engine pause failed', err) } if (playRaf) cancelAnimationFrame(playRaf); playRaf = 0; updateTransportPlaybackUI(); startTrackMeterLoop() }
+function togglePlayback(){ isPlaying ? pausePlayback() : startPlayback() }
+function stopPlayback() { pausePlayback(); audioEditPlaybackBypassRegionIds.clear(); try { studioAudioEngine?.stopTransport() } catch (err) { console.warn('[studioProject] audio engine stop failed', err) } lastMetronomeBeat = -1; if (countInTimer) clearInterval(countInTimer); countInTimer = 0; isCountInRunning = false; countInBeatsRemaining = 0; countInTargetX = null; countInTargetTrackId = '' }
+function getNormalizedCycleRange(){ if(!cycleRange) return null; const start=Math.min(cycleRange.startX,cycleRange.endX); const end=Math.max(cycleRange.startX,cycleRange.endX); return end-start>=cycleMinWidth()?{start,end}:null }
+function hasValidCycleRange(){ return !!getNormalizedCycleRange() }
+function isCycleStripPointerEvent(event, ruler){ const rect = ruler?.getBoundingClientRect?.(); if(!rect) return false; const localY = event.clientY - rect.top; return localY >= 0 && localY <= 22 }
+function handleSpaceTransport(event){ if (event.ctrlKey || event.metaKey || event.altKey || isTextEntryTarget(event.target)) return; event.preventDefault(); if (audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active) return; if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } const cycle = isCycleEnabled ? getNormalizedCycleRange() : null; if (!isPlaying) { spacePlaybackStartX = cycle ? cycle.start : timelineState.playheadX; if (cycle) setPlayhead(cycle.start); startPlayback(); return } pausePlayback(); setPlayhead(cycle ? cycle.start : (spacePlaybackStartX ?? timelineState.playheadX)) }
+
+function getMusicalTypingTrack() {
+  if (activeRecording?.trackId) return tracks.find((track)=>track.id === activeRecording.trackId) || getRecordingTrack()
+  return getSelectedTrack()
+}
+function applyTypingExpressionState() {
+  const track = getMusicalTypingTrack()
+  if (!track?.instrument?.pluginInstanceId) return
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'pitchBend', typingPitchTrigger)
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'modulation', typingModTrigger)
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'pitchFine', typingPitchFine)
+  dawInstrumentRegistry.setParam(track.instrument.pluginInstanceId, 'modFine', typingModFine)
+}
+function handleMusicalTypingKeydown(event) {
+  if (!isTypingPianoEnabled || event.altKey || event.ctrlKey || event.metaKey || isTextEntryTarget(event.target)) return false
+  const track = getMusicalTypingTrack()
+  if (!track?.instrument || track.instrument.enabled === false) return false
+  if (event.code === 'KeyZ') {
+    event.preventDefault()
+    const bounds = getInstrumentOctaveBounds(track)
+    instrumentOctaveOffset = Math.max(Math.min(bounds.min, 0), instrumentOctaveOffset - 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+    return true
+  }
+  if (event.code === 'KeyX') {
+    event.preventDefault()
+    const bounds = getInstrumentOctaveBounds(track)
+    instrumentOctaveOffset = Math.min(Math.max(bounds.max, 0), instrumentOctaveOffset + 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+    return true
+  }
+  if (event.code === 'Minus') {
+    event.preventDefault()
+    if (!event.repeat) {
+      typingExpressionTarget = typingExpressionTarget === 'pitch' ? 'mod' : 'pitch'
+      renderEditor()
+    }
+    return true
+  }
+  if (/^Digit[0-9]$/.test(event.code)) {
+    event.preventDefault()
+    if (!event.repeat) {
+      const value = event.code === 'Digit0' ? 10 : Number(event.code.slice(-1))
+      if (typingExpressionTarget === 'pitch') typingPitchFine = value
+      else typingModFine = value
+      applyTypingExpressionState()
+      renderEditor()
+    }
+    return true
+  }
+  if (['KeyC', 'KeyV', 'KeyB', 'KeyN'].includes(event.code)) {
+    event.preventDefault()
+    if (!event.repeat) {
+      if (event.code === 'KeyC') typingPitchTrigger = -1
+      if (event.code === 'KeyV') typingPitchTrigger = 1
+      if (event.code === 'KeyB') typingModTrigger = -1
+      if (event.code === 'KeyN') typingModTrigger = 1
+      applyTypingExpressionState()
+    }
+    return true
+  }
+  if (dawInstrumentKeyMap[event.code] == null) return false
+  event.preventDefault()
+  if (event.repeat || pressedDawMidiKeys.has(event.code)) return true
+  const note = dawInstrumentKeyMap[event.code] + (instrumentOctaveOffset * 12)
+  pressedDawMidiKeys.set(event.code, { trackId: track.id, note })
+  playTrackMidiNote(track, note, 0.85)
+  return true
+}
+
+
+function keyboardNoteSourceKey(trackId, midi) { return `${trackId}:${Number(midi)}` }
+function isTrackKeyboardNoteActive(trackId, midi) {
+  return !!activeKeyboardNoteSources.get(keyboardNoteSourceKey(trackId, midi))?.size
+}
+function refreshTrackKeyboardNoteDom(trackId, midi) {
+  if (trackId !== selectedTrackId) return
+  app.querySelectorAll(`[data-piano-midi="${Number(midi)}"]`).forEach((el)=>el.classList.toggle('is-pressed', isTrackKeyboardNoteActive(trackId, midi)))
+}
+function setTrackKeyboardNoteActive(trackId, midi, source, active) {
+  if (!trackId || !Number.isFinite(Number(midi)) || !source) return
+  const key = keyboardNoteSourceKey(trackId, midi)
+  const sources = activeKeyboardNoteSources.get(key) || new Set()
+  if (active) sources.add(source)
+  else sources.delete(source)
+  if (sources.size) activeKeyboardNoteSources.set(key, sources)
+  else activeKeyboardNoteSources.delete(key)
+  refreshTrackKeyboardNoteDom(trackId, midi)
+}
+function clearTrackKeyboardNotes(trackId = '') {
+  Array.from(activeKeyboardNoteSources.keys()).forEach((key) => {
+    if (!trackId || key.startsWith(`${trackId}:`)) activeKeyboardNoteSources.delete(key)
+  })
+  app.querySelectorAll('[data-piano-midi].is-pressed').forEach((key)=>key.classList.remove('is-pressed'))
+}
+function updateTrackMeterDom(track) {
+  if (!track) return
+  const meterState = trackAudioChannels.get(track.id)?.meter || {}
+  const level = clamp(Number(meterState.level ?? track.outputLevel) || 0, 0, 1)
+  const peakLevel = clamp(Number(meterState.peakLevel ?? level) || 0, 0, 1)
+  let targets = meterDomCache.get(track.id)
+  if (!targets || (targets.row && !targets.row.isConnected) || (targets.meter && !targets.meter.isConnected)) {
+    const meter = app.querySelector(`[data-track-meter="${CSS.escape(track.id)}"]`)
+    targets = {
+      row: app.querySelector(`[data-track-row="${CSS.escape(track.id)}"]`),
+      meter,
+      fill: meter?.querySelector('i') || null,
+      peak: meter?.querySelector('b') || null,
+      mixerMeters: Array.from(app.querySelectorAll(`[data-mixer-meter="${CSS.escape(track.id)}"]`))
+    }
+    meterDomCache.set(track.id, targets)
+  }
+  const { row, fill, peak, mixerMeters = [] } = targets || {}
+  row?.style.setProperty('--track-meter-level', String(level))
+  if (fill) fill.style.height = `${Math.round(level * 100)}%`
+  if (peak) peak.style.bottom = `${Math.round(peakLevel * 100)}%`
+  mixerMeters.forEach((mixerMeter) => {
+    const mixerFill = mixerMeter.querySelector('i')
+    const mixerPeak = mixerMeter.querySelector('b')
+    if (mixerFill) mixerFill.style.height = `${Math.round(level * 100)}%`
+    if (mixerPeak) mixerPeak.style.bottom = `${Math.round(peakLevel * 100)}%`
+    mixerMeter.classList.toggle('is-clipped', meterState.clipped === true)
+  })
+}
+function updateMasterMeterDom() {
+  const meterState = masterAudioBus?.meter || {}
+  const level = clamp(Number(meterState.level) || 0, 0, 1)
+  const peakLevel = clamp(Number(meterState.peakLevel ?? level) || 0, 0, 1)
+  let targets = meterDomCache.get('master')
+  if (!targets || targets.mixerMeters.some((meter) => !meter.isConnected)) {
+    targets = { mixerMeters: Array.from(app.querySelectorAll('[data-mixer-meter="master"]')) }
+    meterDomCache.set('master', targets)
+  }
+  targets.mixerMeters.forEach((meter) => {
+    const fill = meter.querySelector('i')
+    const peak = meter.querySelector('b')
+    if (fill) fill.style.height = `${Math.round(level * 100)}%`
+    if (peak) peak.style.bottom = `${Math.round(peakLevel * 100)}%`
+    meter.classList.toggle('is-clipped', meterState.clipped === true)
+  })
+}
+function updateTrackEqSpectrumDom(track, channel) {
+  if (!track?.id || !channel?.analyser) return
+  const eqShells = Array.from(app.querySelectorAll('.soura-fx-shell[data-effect-type="eq"][data-plugin-shell]'))
+    .filter((shell) => dawWindowManager.windows.get(shell.dataset.pluginShell)?.trackId === track.id)
+  if (!eqShells.length) return
+  if (!channel.spectrumData || channel.spectrumData.length !== channel.analyser.frequencyBinCount) channel.spectrumData = new Uint8Array(channel.analyser.frequencyBinCount)
+  channel.analyser.getByteFrequencyData(channel.spectrumData)
+  const width = 640
+  const height = 220
+  const left = 44
+  const right = 18
+  const top = 18
+  const bottom = 30
+  const graphWidth = width - left - right
+  const graphHeight = height - top - bottom
+  const points = Array.from({ length: 72 }, (_, index) => {
+    const ratio = index / 71
+    const bin = clamp(Math.round((ratio ** 1.85) * (channel.spectrumData.length - 1)), 0, channel.spectrumData.length - 1)
+    const value = channel.spectrumData[bin] / 255
+    const x = left + ratio * graphWidth
+    const y = height - bottom - value * graphHeight
+    return `${x.toFixed(1)},${y.toFixed(1)}`
+  }).join(' ')
+  eqShells.forEach((shell) => {
+    shell.querySelector('[data-soura-eq-spectrum]')?.setAttribute('points', points)
+  })
+}
+function getCurrentCpuUsagePercent() {
+  return clamp(cpuUsagePercent, 0, 100)
+}
+function updateCpuAlertState(usagePercent = getCurrentCpuUsagePercent()) {
+  const settings = getProjectCpuAlerts()
+  if (!settings.enabled) {
+    cpuAlertState = { ...cpuAlertState, aboveSince: 0, visible: false, message: '' }
+    return
+  }
+  const now = performance.now()
+  if (usagePercent < settings.thresholdPercent) {
+    cpuAlertState = { ...cpuAlertState, aboveSince: 0, visible: false }
+    return
+  }
+  const aboveSince = cpuAlertState.aboveSince || now
+  const sustained = now - aboveSince >= settings.sustainMs
+  const cooledDown = now - (cpuAlertState.lastAlertAt || 0) >= settings.cooldownMs
+  cpuAlertState = { ...cpuAlertState, aboveSince }
+  if (sustained && cooledDown) {
+    cpuAlertState = {
+      aboveSince,
+      lastAlertAt: now,
+      visible: true,
+      message: `Soura workload is at ${Math.round(usagePercent)}%, above your ${Math.round(settings.thresholdPercent)}% alert threshold.`
+    }
+    recordingStatus = cpuAlertState.message
+    updateEditorTitleStatus()
+  }
+}
+function updateTrackMetersFrame(now = performance.now()) {
+  const tickStart = performance.now()
+  let active = false
+  tracks.forEach((track) => {
+      const channel = trackAudioChannels.get(track.id)
+      if (channel?.analyser) {
+        channel.analyser.getFloatTimeDomainData(channel.data)
+        channel.meter = updateMeterBallistics(channel.meter, measureTimeDomainSamples(channel.data), now)
+        channel.level = channel.meter.level
+        channel.peak = channel.meter.peakLevel
+        track.outputLevel = channel.meter.level
+        updateTrackEqSpectrumDom(track, channel)
+      } else {
+        track.outputLevel = 0
+      }
+      if (track.outputLevel > 0) active = true
+      updateTrackMeterDom(track)
+  })
+  const metronomeChannel = trackAudioChannels.get(metronomeSettings.id)
+  if (metronomeChannel?.analyser) {
+      metronomeChannel.analyser.getFloatTimeDomainData(metronomeChannel.data)
+      metronomeChannel.meter = updateMeterBallistics(metronomeChannel.meter, measureTimeDomainSamples(metronomeChannel.data), now)
+      metronomeChannel.level = metronomeChannel.meter.level
+      metronomeChannel.peak = metronomeChannel.meter.peakLevel
+      metronomeSettings.outputLevel = metronomeChannel.meter.level
+      if (metronomeChannel.meter.level > 0) active = true
+      updateTrackMeterDom(metronomeSettings)
+  }
+  if (masterAudioBus?.analyser) {
+      masterAudioBus.analyser.getFloatTimeDomainData(masterAudioBus.data)
+      masterAudioBus.meter = updateMeterBallistics(masterAudioBus.meter, measureTimeDomainSamples(masterAudioBus.data), now)
+      if (masterAudioBus.meter.level > 0) active = true
+      updateMasterMeterDom()
+  }
+  const tickCostMs = performance.now() - tickStart
+  const audioActivity = tracks.reduce((sum, track)=>sum + clamp(Number(track.outputLevel) || 0, 0, 1), 0) / Math.max(1, tracks.length)
+  cpuUsagePercent = clamp((tickCostMs / METER_DISPLAY_INTERVAL_MS) * 72 + (audioActivity * 28), 0, 100)
+  updateCpuAlertState(cpuUsagePercent)
+  app.querySelector('[data-cpu-percent]')?.replaceChildren(document.createTextNode(`${Math.round(cpuUsagePercent)}%`))
+  app.querySelector('.studio-logic-section--cpu')?.style.setProperty('--soura-cpu-load', `${Math.round(cpuUsagePercent)}%`)
+  return active
+}
+function startTrackMeterLoop() {
+  if (meterRaf || isPlaying) return
+  const tick = (frameTime) => {
+    meterRaf = 0
+    if (isPlaying) return
+    if (frameTime - lastMeterPaintAt < METER_DISPLAY_INTERVAL_MS) {
+      meterRaf = requestAnimationFrame(tick)
+      return
+    }
+    lastMeterPaintAt = frameTime
+    const active = updateTrackMetersFrame(frameTime)
+    const auditionState = assetAuditionController.snapshot().playbackState
+    if (active || activeRecording || activePlaybackNotes.size || ['loading', 'playing'].includes(auditionState)) meterRaf = requestAnimationFrame(tick)
+  }
+  meterRaf = requestAnimationFrame(tick)
+}
+function midiToFrequency(midi){ return 440 * (2 ** ((midi - 69) / 12)) }
+async function ensureInstrumentAudio(){ if(!instrumentAudioContext){ instrumentAudioContext = createInteractiveAudioContext(); instrumentMasterGain = instrumentAudioContext.createGain(); instrumentPanNode = instrumentAudioContext.createStereoPanner(); instrumentMasterGain.gain.value=instrumentVolume; instrumentPanNode.pan.value=instrumentPan; instrumentPanNode.connect(instrumentMasterGain); instrumentMasterGain.connect(instrumentAudioContext.destination) } if(instrumentAudioContext.state==='suspended') await instrumentAudioContext.resume(); }
+async function startInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(activeInstrumentNotes.has(shifted)) return; try{ await ensureInstrumentAudio(); const osc=instrumentAudioContext.createOscillator(); const gain=instrumentAudioContext.createGain(); osc.type='triangle'; osc.frequency.value=midiToFrequency(shifted); gain.gain.setValueAtTime(0.0001,instrumentAudioContext.currentTime); gain.gain.exponentialRampToValueAtTime(0.16*instrumentVolume,instrumentAudioContext.currentTime+0.02); osc.connect(gain); gain.connect(instrumentPanNode); osc.start(); activeInstrumentNotes.set(shifted,{osc,gain,midi:shifted}); setTrackKeyboardNoteActive(selectedTrackId, shifted, `legacy:${shifted}`, true) }catch(err){ console.warn('[studioProject] instrument note start failed',err) } }
+function stopInstrumentNote(midi){ const shifted=midi+(instrumentOctaveOffset*12); if(isSustainEnabled) return; const voice=activeInstrumentNotes.get(shifted); if(!voice||!instrumentAudioContext) return; voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.08); voice.osc.stop(instrumentAudioContext.currentTime+0.1); activeInstrumentNotes.delete(shifted); setTrackKeyboardNoteActive(selectedTrackId, shifted, `legacy:${shifted}`, false) }
+function stopAllInstrumentNotes(){ if(!instrumentAudioContext) { activeInstrumentNotes.clear(); return } for(const [m,voice] of activeInstrumentNotes){ voice.gain.gain.cancelScheduledValues(instrumentAudioContext.currentTime); voice.gain.gain.setValueAtTime(Math.max(0.0001,voice.gain.gain.value),instrumentAudioContext.currentTime); voice.gain.gain.exponentialRampToValueAtTime(0.0001,instrumentAudioContext.currentTime+0.05); voice.osc.stop(instrumentAudioContext.currentTime+0.08); activeInstrumentNotes.delete(m); setTrackKeyboardNoteActive(selectedTrackId, voice.midi, `legacy:${voice.midi}`, false) } }
+
+function ensureTrackInstrumentInstance(track = getSelectedTrack()) {
+  const target = ensureTrackInsertState(track)
+  if (!target?.instrument) return null
+  if (isNativeVst3Instrument(target.instrument) && !souraRuntimeCapabilities.nativeVst3Host) return null
+  if (!target.instrument.pluginInstanceId) target.instrument.pluginInstanceId = `${target.instrument.type}:${target.id}`
+  const channel = getTrackAudioChannel(target.id)
+  setTrackChannelVolume(target)
+  if (channel?.panner && audioContext) channel.panner.pan.setTargetAtTime(clamp((Number(target.pan) || 0) / 100, -1, 1), audioContext.currentTime, 0.015)
+  return dawInstrumentRegistry.createOrGet({
+    id: target.instrument.pluginInstanceId,
+    type: target.instrument.type,
+    trackId: target.id,
+    params: target.instrument.params || {},
+    manifest: target.instrument.type === DAW_PLUGIN_TYPES.librarySampler
+      ? studioLibraryState.data?.instruments?.find((item) => item.id === target.instrument.params?.libraryInstrumentId)
+      : null
+  })
+}
+function warmTrackInstrument(track = getSelectedTrack(), { reason = 'selection' } = {}) {
+  const instrument = ensureTrackInstrumentInstance(track)
+  if (!instrument?.preload) return
+  const status = instrument.getStatus?.().status || ''
+  if (status !== 'loaded') {
+    console.info('[live-note] instrument loading', {
+      instrumentId: track?.instrument?.pluginInstanceId || instrument.id,
+      reason
+    })
+  }
+  instrument.preload().catch((error) => {
+    console.warn('[live-note] instrument preload failed', {
+      instrumentId: track?.instrument?.pluginInstanceId || instrument.id,
+      message: error?.message
+    })
+  })
+}
+function warmSelectedTrackInstrument(reason = 'selection') {
+  warmTrackInstrument(getSelectedTrack(), { reason })
+}
+function triggerLiveInstrumentNote(track, note, velocity = 0.85, { source = 'live', activeKey = '' } = {}) {
+  if (!track?.instrument || track.instrument.enabled === false) return
+  const inputPerformanceTime = performance.now()
+  const instrument = ensureTrackInstrumentInstance(track)
+  if (!instrument) return
+  const ctx = getAudioContext()
+  const instrumentId = track.instrument.pluginInstanceId
+  console.info('[live-note] input', {
+    note,
+    inputPerformanceTime,
+    audioContextCurrentTime: ctx.currentTime,
+    selectedTrackId: track.id,
+    instrumentId,
+    source
+  })
+  if (instrument?.preload && instrument.getStatus?.().status !== 'loaded') {
+    console.info('[live-note] instrument loading', { instrumentId, source })
+  }
+  dawInstrumentRegistry.noteOn(instrumentId, note, velocity, {
+    live: true,
+    startOffsetSeconds: LIVE_NOTE_SAFETY_OFFSET_SECONDS,
+    inputPerformanceTime,
+    selectedTrackId: track.id,
+    source
+  })
+  startTrackMeterLoop()
+  setTrackKeyboardNoteActive(track.id, note, activeKey || `live:${track.id}:${note}`, true)
+  recordMidiNoteOn(track.id, note, velocity)
+}
+function stopLiveInstrumentNote(track, note, { activeKey = '' } = {}) {
+  if (!track?.instrument) return
+  dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note, { live: true })
+  setTrackKeyboardNoteActive(track.id, note, activeKey || `live:${track.id}:${note}`, false)
+  recordMidiNoteOff(track.id, note)
+}
+function playTrackMidiNote(track, note, velocity = 0.85) {
+  triggerLiveInstrumentNote(track, note, velocity)
+}
+function stopTrackMidiNote(track, note) {
+  stopLiveInstrumentNote(track, note)
+}
+function stopMidiPreviewNote(key) {
+  const active = midiPreviewNotes.get(key)
+  if (!active) return
+  window.clearTimeout(active.timer)
+  if (active.track && active.note != null) stopTrackMidiNote(active.track, active.note)
+  if (active.fallback && audioContext) {
+    try {
+      active.fallback.gain.gain.cancelScheduledValues(audioContext.currentTime)
+      active.fallback.gain.gain.setValueAtTime(Math.max(0.0001, active.fallback.gain.gain.value), audioContext.currentTime)
+      active.fallback.gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 0.04)
+      active.fallback.osc.stop(audioContext.currentTime + 0.05)
+    } catch {}
+  }
+  midiPreviewNotes.delete(key)
+}
+function stopAllMidiPreviewNotes() {
+  Array.from(midiPreviewNotes.keys()).forEach((key)=>stopMidiPreviewNote(key))
+}
+function playMidiPreviewNote(noteNumber, { track = getMidiRegionTrack(getMidiRollRegion()) || getSelectedTrack(), velocity = 0.85, durationBeats = 0.25, key = '' } = {}) {
+  const note = clamp(Math.round(Number(noteNumber) || 60), 0, 127)
+  const previewKey = key || `midi-preview:${track?.id || 'fallback'}:${note}`
+  stopMidiPreviewNote(previewKey)
+  const durationMs = clamp(beatsToSeconds(Math.max(0.05, Number(durationBeats) || 0.25)) * 1000, 90, 850)
+  if (track?.instrument && track.instrument.enabled !== false) {
+    playTrackMidiNote(track, note, velocity)
+    const timer = window.setTimeout(() => stopMidiPreviewNote(previewKey), durationMs)
+    midiPreviewNotes.set(previewKey, { track, note, timer })
+    return
+  }
+  try {
+    const ctx = getAudioContext()
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+    osc.type = 'triangle'
+    osc.frequency.setValueAtTime(midiNoteToFrequency(note), ctx.currentTime)
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(clamp(velocity, 0.05, 1) * 0.12, ctx.currentTime + 0.012)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (durationMs / 1000))
+    osc.connect(gain)
+    gain.connect(ctx.destination)
+    osc.start(ctx.currentTime)
+    const timer = window.setTimeout(() => stopMidiPreviewNote(previewKey), durationMs)
+    midiPreviewNotes.set(previewKey, { note, timer, fallback: { osc, gain } })
+  } catch (err) {
+    console.warn('[midi-preview] failed', err)
+  }
+}
+function auditionMidiRollNote(note, region = getMidiRollRegion()) {
+  if (!note) return
+  playMidiPreviewNote(note.note, {
+    track: getMidiRegionTrack(region) || getSelectedTrack(),
+    velocity: clamp(Number(note.velocity) || 0.85, 0.01, 1),
+    durationBeats: Math.max(0.05, Number(note.durationBeats) || 0.25),
+    key: `midi-roll:${region?.id || 'region'}:${Number(note.note) || 60}`
+  })
+}
+function hasSoloedTracks() { return tracks.some((track)=>track.soloed) }
+function isTrackOutputAudible(track) {
+  if (!track || track.muted) return false
+  if (hasSoloedTracks() && !track.soloed) return false
+  return true
+}
+function isTrackAudible(track) {
+  if (!isTrackOutputAudible(track)) return false
+  if (!track.instrument || track.instrument.enabled === false) return false
+  return true
+}
+function noteIsVisibleInRegion(region, note) {
+  const start = Number(note.startBeat) || 0
+  const end = start + Math.max(0.01, Number(note.durationBeats) || 0)
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(regionStart, Number(region.endBeat) || regionStart)
+  return start >= regionStart && end <= regionEnd
+}
+function stopPlaybackNote(key) {
+  const active = activePlaybackNotes.get(key)
+  if (!active) return
+  const track = tracks.find((item)=>item.id === active.trackId)
+  if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, active.note, { immediate: true })
+  setTrackKeyboardNoteActive(active.trackId, active.note, `playback:${key}`, false)
+  activePlaybackNotes.delete(key)
+}
+function stopAllPlaybackNotes() {
+  Array.from(activePlaybackNotes.keys()).forEach((key)=>stopPlaybackNote(key))
+}
+function stopAudioClipPlayback(regionId = '') {
+  const active = activeAudioClipSources.get(regionId)
+  if (!active) return
+  try { active.source?.stop?.() } catch {}
+  if (active.stopTimer) window.clearTimeout(active.stopTimer)
+  try { active.element?.pause?.() } catch {}
+  try { active.element?.removeAttribute?.('src') } catch {}
+  try { active.source?.disconnect?.() } catch {}
+  if (active.realtimeProcessor) destroySouraRealtimeRegionProcessor(active.realtimeProcessor)
+  try { active.gainNode?.disconnect?.() } catch {}
+  try { active.mediaSource?.disconnect?.() } catch {}
+  activeAudioClipSources.delete(regionId)
+}
+function dbToGain(db = 0) {
+  return 10 ** ((Number(db) || 0) / 20)
+}
+function fadeGainValue(progress = 0, curve = 'linear', direction = 'in') {
+  const t = clamp(progress, 0, 1)
+  if (curve === 'equal-power') {
+    return direction === 'out' ? Math.cos(t * Math.PI / 2) : Math.sin(t * Math.PI / 2)
+  }
+  return direction === 'out' ? 1 - t : t
+}
+function makeFadeGainCurve({ baseGain, fromProgress = 0, toProgress = 1, curve = 'linear', direction = 'in', steps = 64 } = {}) {
+  const values = new Float32Array(steps)
+  for (let index = 0; index < steps; index += 1) {
+    const amount = steps <= 1 ? 1 : index / (steps - 1)
+    const progress = fromProgress + ((toProgress - fromProgress) * amount)
+    values[index] = Math.max(0.0001, baseGain * fadeGainValue(progress, curve, direction))
+  }
+  return values
+}
+function stopAllAudioClipPlayback() {
+  Array.from(activeAudioClipSources.keys()).forEach((regionId)=>stopAudioClipPlayback(regionId))
+  stopAllPortableTrackPlayback()
+}
+function stopPortableTrackPlayback(trackId = '') {
+  const active = activePortableTrackSources.get(trackId)
+  if (!active) return
+  try { active.source?.stop?.() } catch {}
+  try { active.source?.disconnect?.() } catch {}
+  activePortableTrackSources.delete(trackId)
+}
+function stopAllPortableTrackPlayback() {
+  Array.from(activePortableTrackSources.keys()).forEach(stopPortableTrackPlayback)
+}
+function updatePortableTrackPlayback(schedulingContext = null) {
+  if (!isPlaying || !transportClock) return
+  const ctx = getAudioContext()
+  const context = schedulingContext || createPlaybackSchedulingContext()
+  const { currentProjectSeconds, tempoMap, audibleTrackIds } = context
+  const lookaheadEndSeconds = currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS
+
+  activePortableTrackSources.forEach((active, trackId) => {
+    const track = tracks.find((item) => item.id === trackId)
+    const decision = track ? getTrackPortablePlaybackDecision(track) : null
+    if (!track || decision?.mode !== 'portable' || !audibleTrackIds.has(trackId) || currentProjectSeconds >= active.renderEndSeconds + 0.05) {
+      stopPortableTrackPlayback(trackId)
+    }
+  })
+
+  tracks.forEach((track) => {
+    if (activePortableTrackSources.has(track.id) || !audibleTrackIds.has(track.id)) return
+    const decision = getTrackPortablePlaybackDecision(track)
+    if (decision.mode !== 'portable') return
+    const runtime = portableTrackRuntime.get(track.id)
+    const audioBuffer = runtime?.audioBuffer
+    if (!audioBuffer) return
+    const audio = decision.portableRender.audio
+    const startBeat = Number(audio.startBeat) || 0
+    const renderStartSeconds = beatsToSeconds(startBeat, tempoMap)
+    const renderEndSeconds = Number.isFinite(Number(audio.endBeat))
+      ? beatsToSeconds(Number(audio.endBeat), tempoMap)
+      : renderStartSeconds + audioBuffer.duration
+    if (lookaheadEndSeconds < renderStartSeconds || currentProjectSeconds >= renderEndSeconds) return
+    try {
+      const rawScheduleTime = getTransportScheduleTimeForProjectSeconds(renderStartSeconds)
+      const scheduleTime = Math.max(ctx.currentTime, transportClock.audioContextStartTime, rawScheduleTime)
+      const projectSecondsAtSchedule = transportClock.playheadStartSeconds + Math.max(0, scheduleTime - transportClock.audioContextStartTime)
+      const offsetSeconds = Math.max(0, projectSecondsAtSchedule - renderStartSeconds)
+      const playDuration = Math.min(audioBuffer.duration - offsetSeconds, renderEndSeconds - projectSecondsAtSchedule)
+      if (playDuration <= 0.01) return
+      const source = ctx.createBufferSource()
+      source.buffer = audioBuffer
+      source.connect(getTrackAudioChannel(track.id).input)
+      source.onended = () => activePortableTrackSources.delete(track.id)
+      source.start(scheduleTime, Math.min(offsetSeconds, Math.max(0, audioBuffer.duration - 0.01)), playDuration)
+      activePortableTrackSources.set(track.id, { source, scheduleTime, renderStartSeconds, renderEndSeconds })
+      console.info('[portable-track] scheduled fallback', {
+        trackId: track.id,
+        dependency: decision.dependency?.name || 'unknown',
+        sourceRevision: decision.sourceRevision,
+        offsetSeconds
+      })
+      startTrackMeterLoop()
+    } catch (error) {
+      console.warn('[portable-track] fallback scheduling failed', { trackId: track.id, message: error?.message })
+      stopPortableTrackPlayback(track.id)
+    }
+  })
+}
+function createPendingStretchMetadata(input = {}) {
+  const sourceDurationSeconds = finitePositiveNumber(input.sourceDurationSeconds)
+  const targetDurationSeconds = finitePositiveNumber(input.targetDurationSeconds)
+  const lengthRatio = sourceDurationSeconds && targetDurationSeconds ? targetDurationSeconds / sourceDurationSeconds : 1
+  const speedPercent = sourceDurationSeconds && targetDurationSeconds ? (sourceDurationSeconds / targetDurationSeconds) * 100 : 100
+  const supported = Number.isFinite(lengthRatio) && Number.isFinite(speedPercent) && lengthRatio >= STRETCH_RATIO_MIN && lengthRatio <= STRETCH_RATIO_MAX && speedPercent >= STRETCH_SPEED_MIN && speedPercent <= STRETCH_SPEED_MAX
+  return buildCanonicalStretch({
+    enabled: true,
+    sourceDurationSeconds,
+    targetDurationSeconds,
+    renderStatus: Math.abs(lengthRatio - 1) <= 0.001 ? 'idle' : 'needs_render',
+    renderError: supported ? null : stretchErrorMessage(),
+    renderedSessionOnly: true,
+    algorithm: 'signalsmith_wasm_time_stretch_v1',
+    preservesPitch: true
+  })
+}
+async function renderAudioStretchForRegion(regionId) {
+  if (audioStretchRenderState.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  const stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  if (!stretch.enabled) {
+    scheduleEditorSave()
+    return
+  }
+  const stretchMath = getAudioStretchMath(region)
+  if (!stretchMath.supported) {
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: stretchMath.error, lastError: stretchMath.error }
+    recordingStatus = stretchMath.error
+    logStretchDebug('render failed', region.id, { ...stretchMath, renderStatus: 'failed', reason: stretchMath.error })
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) {
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: 'Original audio is offline. Reconnect or re-record before rendering stretch.', lastError: 'Original audio is offline. Reconnect or re-record before rendering stretch.' }
+    recordingStatus = region.stretch.renderError
+    logStretchDebug('render failed', region.id, { ...stretchMath, renderStatus: 'failed', reason: region.stretch.renderError })
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  stopPlayback()
+  audioStretchRenderState = { active: true, regionId, progress: null, error: '' }
+  region.stretch = { ...stretch, renderStatus: 'rendering', renderError: null }
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const pitchShift = edit.pitchShift || {}
+  const pitchActive = Math.abs(Number(pitchShift.totalSemitones) || 0) > 0.001
+  const operation = pitchActive ? SOURA_AUDIO_DSP_OPERATIONS.pitchAndStretch : SOURA_AUDIO_DSP_OPERATIONS.timeStretch
+  logStretchDebug('render start', region.id, { ...stretchMath, renderStatus: 'rendering' })
+  renderEditor()
+  try {
+    const result = await renderAudioDsp(operation, {
+      audioBuffer: runtime.audioBuffer,
+      sourceBuffer: runtime.audioBuffer,
+      sourceStartSeconds: getAudioTrimStartSeconds(region),
+      trimStartSeconds: getAudioTrimStartSeconds(region),
+      trimEndSeconds: getAudioTrimEndSeconds(region),
+      sourceDurationSeconds: stretchMath.sourceDurationSeconds,
+      targetDurationSeconds: stretchMath.targetDurationSeconds,
+      transposeSemitones: edit.transposeSemitones,
+      fineTuneCents: edit.fineTuneCents,
+      sampleRate: runtime.audioBuffer.sampleRate,
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'high',
+      onProgress: (progress) => {
+        audioStretchRenderState = { ...audioStretchRenderState, progress }
+        updateAudioPreflightProgressUI()
+      }
+    })
+    const renderedWaveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    const renderedRuntimeId = `${region.id}:${pitchActive ? 'pitch-time' : 'stretch'}:${Math.round(stretchMath.lengthRatio * 1000)}:${result.createdAt}`
+    let renderedStoragePath = null
+    let renderedSessionOnly = true
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `${pitchActive ? 'pitch-time' : 'stretch'}-${Math.round(stretchMath.lengthRatio * 1000)}`
+    })
+      .then((path) => {
+        if (!path) return
+
+        console.info('[studioProject] derived stretch render persisted in background', {
+          clipId: region.id,
+          path
+        })
+      })
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background stretch render upload failed; session render remains valid',
+          uploadErr
+        )
+      })
+    audioClipRuntime.set(renderedRuntimeId, {
+      blob: result.renderedBlob,
+      url: result.renderedObjectUrl,
+      audioBuffer: result.renderedAudioBuffer,
+      contentType: result.renderedBlob?.type || 'audio/wav',
+      fileDurationSeconds: result.renderedDurationSeconds,
+      waveform: renderedWaveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: renderedSessionOnly
+    })
+    region.visibleDurationSeconds = Math.max(minAudioRegionSeconds, result.renderedDurationSeconds)
+    region.durationSeconds = region.visibleDurationSeconds
+    region.durationBeats = secondsToBeats(region.visibleDurationSeconds)
+    region.endBeat = Number(region.startBeat || 0) + region.durationBeats
+    region.renderedWaveform = renderedWaveform
+    region.stretch = buildCanonicalStretch({
+      enabled: true,
+      sourceDurationSeconds: stretchMath.sourceDurationSeconds,
+      targetDurationSeconds: stretchMath.targetDurationSeconds,
+      renderStatus: 'ready',
+      algorithm: result.algorithm,
+      preservesPitch: result.renderedAudio?.preservesPitchForStretch ?? result.preservesPitch,
+      renderedObjectUrl: null,
+      renderedAudioUrl: null,
+      renderedStoragePath,
+      renderedRuntimeId,
+      renderedDurationSeconds: result.renderedDurationSeconds,
+      renderedAudio: result.renderedAudio,
+      renderedAt: result.createdAt,
+      renderedSessionOnly,
+      updatedAt: result.createdAt
+    })
+    region.stretchRender = {
+      implemented: true,
+      algorithm: result.algorithm,
+      preservesPitch: result.renderedAudio?.preservesPitchForStretch ?? result.preservesPitch,
+      renderedAudio: result.renderedAudio,
+      renderedRuntimeId,
+      renderedStoragePath,
+      sessionOnly: renderedSessionOnly
+    }
+    if (pitchActive) {
+      const nextEdit = normalizeAudioEdit(region.audioEdit)
+      region.audioEdit = normalizeAudioEdit({
+        ...nextEdit,
+        pitchShift: {
+          ...nextEdit.pitchShift,
+          enabled: true,
+          renderStatus: 'ready',
+          renderedRuntimeId,
+          renderedStoragePath,
+          renderedAudioUrl: null,
+          renderedDurationSeconds: result.renderedDurationSeconds,
+          algorithm: result.algorithm,
+          renderedAudio: result.renderedAudio,
+          preservesDuration: result.renderedAudio?.preservesDurationForPitch === true,
+          lastError: null,
+          renderedAt: result.createdAt
+        }
+      })
+    }
+    syncAudioRegionTimeline(region)
+    recordingStatus = pitchActive ? 'Pitch + stretch rendered.' : 'Audio stretch rendered.'
+    logStretchDebug('render success', region.id, { ...stretchMath, renderStatus: 'ready' })
+    scheduleEditorSave()
+  } catch (err) {
+    console.error('[stretch-render] failed', { clipId: region.id, reason: err?.message || 'Audio stretch render failed.' })
+    region.stretch = { ...stretch, renderStatus: 'failed', renderError: err?.message || 'Audio stretch render failed.', lastError: err?.message || 'Audio stretch render failed.' }
+    region.renderedWaveform = null
+    region.stretchRender = { implemented: false, reason: region.stretch.renderError, ratio: stretchMath.lengthRatio }
+    recordingStatus = 'Audio stretch render failed. The original audio was not changed.'
+    logStretchDebug('render failed', region.id, { ...stretchMath, renderStatus: 'failed', reason: region.stretch.renderError })
+    scheduleEditorSave()
+  } finally {
+    audioStretchRenderState = { active: false, regionId: '', progress: null, error: '' }
+    renderEditor()
+  }
+}
+async function renderAudioPitchShiftForRegion(regionId) {
+  if (audioPitchRenderState.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  let edit = normalizeAudioEdit(region.audioEdit)
+  const pitchShift = edit.pitchShift
+  if (Math.abs(Number(pitchShift.totalSemitones) || 0) <= 0.001) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...pitchShift, renderStatus: 'idle', lastError: null } })
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...pitchShift, renderStatus: 'failed', lastError: 'Original audio is offline. Reconnect or re-record before rendering pitch shift.' } })
+    recordingStatus = region.audioEdit.pitchShift.lastError
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  stopPlayback()
+  audioPitchRenderState = { active: true, regionId, mode: 'pitchShift', progress: null, error: '' }
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...pitchShift, renderStatus: 'rendering', lastError: null } })
+  renderEditor()
+  try {
+    const result = await renderAudioDsp(SOURA_AUDIO_DSP_OPERATIONS.pitchShift, {
+      audioBuffer: runtime.audioBuffer,
+      clipId: region.id,
+      transposeSemitones: edit.transposeSemitones,
+      fineTuneCents: edit.fineTuneCents,
+      sampleRate: runtime.audioBuffer.sampleRate,
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'high',
+      trimStartSeconds: getAudioTrimStartSeconds(region),
+      trimEndSeconds: getAudioTrimEndSeconds(region),
+      onProgress: (progress) => {
+        audioPitchRenderState = { ...audioPitchRenderState, progress }
+        updateAudioPreflightProgressUI()
+      }
+    })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    const renderedRuntimeId = `${region.id}:pitch-shift:${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}:${result.createdAt}`
+    // Derived audio is a non-destructive runtime cache.
+    // Playback must never wait for cloud persistence.
+    let renderedStoragePath = null
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `pitch-shift-${Math.round((result.totalSemitones ?? pitchShift.totalSemitones) * 100)}`
+    })
+      .then((path) => {
+        if (!path) return
+
+        console.info('[studioProject] derived pitch render persisted in background', {
+          clipId: region.id,
+          path
+        })
+      })
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background pitch render upload failed; session render remains valid',
+          uploadErr
+        )
+      })
+    audioClipRuntime.set(renderedRuntimeId, {
+      blob: result.renderedBlob,
+      url: result.renderedObjectUrl,
+      audioBuffer: result.renderedAudioBuffer,
+      contentType: result.renderedBlob?.type || 'audio/wav',
+      fileDurationSeconds: result.renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: !renderedStoragePath
+    })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.renderedWaveform = waveform
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchShift: {
+        ...edit.pitchShift,
+        enabled: true,
+        totalSemitones: result.totalSemitones ?? pitchShift.totalSemitones,
+        renderStatus: 'ready',
+        renderedStoragePath,
+        renderedAudioUrl: null,
+        renderedRuntimeId,
+        renderedDurationSeconds: result.renderedDurationSeconds,
+        algorithm: result.algorithm,
+        renderedAudio: result.renderedAudio,
+        preservesDuration: result.preservesDuration,
+        lastError: null,
+        renderedAt: result.createdAt
+      }
+    })
+    audioEditPlaybackPrompt = null
+    audioEditPlaybackBypassRegionIds.delete(region.id)
+    recordingStatus = 'Pitch shift rendered.'
+    scheduleEditorSave()
+  } catch (err) {
+    console.error('[pitch-render] pitch shift failed', { clipId: region.id, reason: err?.message || 'Pitch shift render failed.' })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchShift: { ...edit.pitchShift, renderStatus: 'failed', lastError: err?.message || 'Pitch shift render failed.' } })
+    recordingStatus = 'Pitch shift render failed. The original audio was not changed.'
+    scheduleEditorSave()
+  } finally {
+    audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+    renderEditor()
+  }
+}
+async function renderPitchTraceEditsForRegion(regionId) {
+  if (audioPitchRenderState.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  let edit = normalizeAudioEdit(region.audioEdit)
+  const trace = edit.pitchTrace
+  if (!trace.enabled || !trace.notes.length) return
+  const base = await resolvePitchTraceBaseRuntime(region, { ensureRendered: true })
+  if (!base?.runtime?.audioBuffer || base.error) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...trace, renderStatus: 'failed', lastError: 'Original audio is offline. Reconnect or re-record before rendering Pitch Trace edits.' } })
+    if (base?.error) region.audioEdit.pitchTrace.lastError = base.error
+    recordingStatus = region.audioEdit.pitchTrace.lastError
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  edit = normalizeAudioEdit(region.audioEdit)
+  stopPlayback()
+  audioPitchRenderState = { active: true, regionId, mode: 'trace', progress: null, error: '' }
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, renderStatus: 'rendering', lastError: null } })
+  renderEditor()
+  try {
+    const result = await renderAudioDsp(SOURA_AUDIO_DSP_OPERATIONS.pitchTrace, {
+      audioBuffer: base.runtime.audioBuffer,
+      clipId: region.id,
+      notes: edit.pitchTrace.notes,
+      transposeSemitones: 0,
+      fineTuneCents: 0,
+      sampleRate: base.runtime.audioBuffer.sampleRate,
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'high',
+      trimStartSeconds: base.trimStartSeconds,
+      trimEndSeconds: base.trimEndSeconds,
+      baseRenderSource: base.baseRenderSource,
+      stackedOnGlobalEdits: base.stackedOnGlobalEdits,
+      onProgress: (progress) => {
+        audioPitchRenderState = { ...audioPitchRenderState, progress }
+        updateAudioPreflightProgressUI()
+      }
+    })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    const renderedRuntimeId = `${region.id}:pitch-trace:${result.createdAt}`
+    let renderedStoragePath = null
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `pitch-trace-${result.createdAt}`
+    })
+      .then((path) => {
+        if (!path) return
+        console.info('[studioProject] derived pitch-trace render persisted in background', {
+          clipId: region.id,
+          path
+        })
+      })
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background pitch-trace upload failed; session render remains valid',
+          uploadErr
+        )
+      })
+    audioClipRuntime.set(renderedRuntimeId, {
+      blob: result.renderedBlob,
+      url: result.renderedObjectUrl,
+      audioBuffer: result.renderedAudioBuffer,
+      contentType: result.renderedBlob?.type || 'audio/wav',
+      fileDurationSeconds: result.renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: base.runtimeId,
+      sessionOnly: !renderedStoragePath
+    })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.renderedWaveform = waveform
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchTrace: {
+        ...edit.pitchTrace,
+        renderStatus: 'ready',
+        renderedStoragePath,
+        renderedAudioUrl: null,
+        renderedRuntimeId,
+        renderedDurationSeconds: result.renderedDurationSeconds,
+        renderAlgorithm: result.algorithm,
+        renderedAudio: result.renderedAudio,
+        baseRenderSource: base.baseRenderSource,
+        stackedOnGlobalEdits: base.stackedOnGlobalEdits,
+        preservesDuration: result.preservesDuration,
+        lastError: null,
+        renderedAt: result.createdAt,
+        notes: edit.pitchTrace.notes.map((note)=>({ ...note, renderStatus: 'ready' }))
+      }
+    })
+    audioEditPlaybackPrompt = null
+    audioEditPlaybackBypassRegionIds.delete(region.id)
+    recordingStatus = 'Pitch Trace edits rendered.'
+    scheduleEditorSave()
+  } catch (err) {
+    console.error('[pitch-render] pitch trace failed', { clipId: region.id, reason: err?.message || 'Pitch Trace render failed.' })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, renderStatus: 'failed', lastError: err?.message || 'Pitch Trace render failed.' } })
+    recordingStatus = 'Pitch Trace render failed. The original audio was not changed.'
+    scheduleEditorSave()
+  } finally {
+    audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+    renderEditor()
+  }
+}
+async function renderAudioReverseForRegion(regionId) {
+  if (audioPitchRenderState.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  let edit = normalizeAudioEdit(region.audioEdit)
+  if (!edit.reverse.enabled) {
+    scheduleEditorSave()
+    return
+  }
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  if (!runtime?.audioBuffer) {
+    region.audioEdit = normalizeAudioEdit({ ...edit, reverse: { ...edit.reverse, renderStatus: 'failed', lastError: 'Original audio is offline. Reconnect or re-record before rendering reverse.' } })
+    recordingStatus = region.audioEdit.reverse.lastError
+    scheduleEditorSave()
+    renderEditor()
+    return
+  }
+  stopPlayback()
+  audioPitchRenderState = { active: true, regionId, mode: 'reverse', progress: null, error: '' }
+  region.audioEdit = normalizeAudioEdit({ ...edit, reverse: { ...edit.reverse, renderStatus: 'rendering', lastError: null } })
+  renderEditor()
+  try {
+    const result = await renderReversedAudio({
+      audioBuffer: runtime.audioBuffer,
+      clipId: region.id,
+      trimStartSeconds: getAudioTrimStartSeconds(region),
+      trimEndSeconds: getAudioTrimEndSeconds(region),
+      sourceBitDepth: getAudioSourceBitDepth(region),
+      quality: 'lossless',
+      onProgress: (progress) => {
+        audioPitchRenderState = { ...audioPitchRenderState, progress }
+        updateAudioPreflightProgressUI()
+      }
+    })
+    const waveform = buildAudioWaveformFromBuffer(result.renderedAudioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    const renderedRuntimeId = `${region.id}:reverse:${result.createdAt}`
+    let renderedStoragePath = null
+
+    uploadSouraAudioBlob(result.renderedBlob, {
+      clipId: region.id,
+      suffix: `reverse-${result.createdAt}`
+    })
+      .then((path) => {
+        if (!path) return
+        console.info('[studioProject] derived reverse render persisted in background', {
+          clipId: region.id,
+          path
+        })
+      })
+      .catch((uploadErr) => {
+        console.warn(
+          '[studioProject] background reverse upload failed; session render remains valid',
+          uploadErr
+        )
+      })
+    audioClipRuntime.set(renderedRuntimeId, {
+      blob: result.renderedBlob,
+      url: result.renderedObjectUrl,
+      audioBuffer: result.renderedAudioBuffer,
+      contentType: result.renderedBlob?.type || 'audio/wav',
+      fileDurationSeconds: result.renderedDurationSeconds,
+      waveform,
+      sourceRuntimeId: region.audioClip?.runtimeId || region.id,
+      sessionOnly: !renderedStoragePath
+    })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.renderedWaveform = waveform
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      reverse: {
+        ...edit.reverse,
+        enabled: true,
+        renderStatus: 'ready',
+        renderedStoragePath,
+        renderedAudioUrl: null,
+        renderedRuntimeId,
+        renderedDurationSeconds: result.renderedDurationSeconds,
+        algorithm: result.algorithm,
+        renderedAudio: result.renderedAudio,
+        lastError: null,
+        renderedAt: result.createdAt
+      }
+    })
+    recordingStatus = 'Reverse rendered.'
+    scheduleEditorSave()
+  } catch (err) {
+    console.error('[reverse-render] failed', { clipId: region.id, reason: err?.message || 'Reverse render failed.' })
+    edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, reverse: { ...edit.reverse, renderStatus: 'failed', lastError: err?.message || 'Reverse render failed.' } })
+    recordingStatus = 'Reverse render failed. The original audio was not changed.'
+    scheduleEditorSave()
+  } finally {
+    audioPitchRenderState = { active: false, regionId: '', mode: '', progress: null, error: '' }
+    renderEditor()
+  }
+}
+function startStretchedAudioElement(region, runtime, track, sourceOffsetSeconds, remainingVisibleSeconds) {
+  if (!runtime?.url) return false
+  try {
+    const ctx = getAudioContext()
+    const element = new Audio(runtime.url)
+    element.currentTime = Math.max(0, sourceOffsetSeconds)
+    element.playbackRate = getAudioRegionPlaybackRate(region)
+    element.preservesPitch = true
+    element.mozPreservesPitch = true
+    element.webkitPreservesPitch = true
+    element.volume = 1
+    const mediaSource = ctx.createMediaElementSource(element)
+    mediaSource.connect(getTrackAudioChannel(track?.id || region.trackId).input)
+    const stopTimer = window.setTimeout(() => stopAudioClipPlayback(region.id), Math.max(10, remainingVisibleSeconds * 1000 + 40))
+    element.addEventListener('ended', () => stopAudioClipPlayback(region.id), { once: true })
+    element.play().catch((err) => {
+      console.warn('[studioProject] stretched audio element playback failed', err)
+      stopAudioClipPlayback(region.id)
+    })
+    activeAudioClipSources.set(region.id, { element, mediaSource, trackId: track?.id || region.trackId, stopTimer })
+    startTrackMeterLoop()
+    return true
+  } catch (err) {
+    console.warn('[studioProject] stretched audio setup failed', err)
+    return false
+  }
+}
+function getAudioPlaybackRenderChoice(region, edit, stretch) {
+  const bypassEdits=audioEditPlaybackBypassRegionIds.has(region.id)
+  const desktop=isSouraRealtimeDesktopRuntime()
+  const trace=edit.pitchTrace||{}
+  const pitchShift=edit.pitchShift||{}
+  const reverse=edit.reverse||{}
+  const pitchActive=Math.abs(Number(pitchShift.totalSemitones)||0)>.001
+  const traceEdited=trace.enabled&&Array.isArray(trace.notes)&&getPitchTraceEditedNoteCount(trace)>0
+  const stretchRuntimeId=stretch.renderedRuntimeId||`${region.id}:stretch:persisted`
+  const combined=stretch.algorithm==='signalsmith_wasm_pitch_time_v1'||stretch.renderedAudio?.operation==='combined_pitch_time'
+
+  if(!bypassEdits&&desktop){
+    if(pitchActive&&stretch.enabled&&stretch.renderStatus==='ready'&&combined&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:'combinedPitchTime'}
+    if(traceEdited&&trace.renderStatus==='ready'&&trace.renderedRuntimeId&&audioClipRuntime.has(trace.renderedRuntimeId))return{runtimeId:trace.renderedRuntimeId,mode:'pitchTrace'}
+    if(pitchActive&&!stretch.enabled&&pitchShift.renderStatus==='ready'&&pitchShift.renderedRuntimeId&&audioClipRuntime.has(pitchShift.renderedRuntimeId))return{runtimeId:pitchShift.renderedRuntimeId,mode:'pitchShift'}
+    if(stretch.enabled&&stretch.renderStatus==='ready'&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:combined?'combinedPitchTime':'stretch'}
+    if(reverse.enabled&&reverse.renderStatus==='ready'&&reverse.renderedRuntimeId&&audioClipRuntime.has(reverse.renderedRuntimeId))return{runtimeId:reverse.renderedRuntimeId,mode:'reverse'}
+    if(reverse.enabled)return{needsRender:true,promptMode:'reverse',message:'Reverse requires an explicit render. Pitch and stretch do not.'}
+    if(shouldUseRealtimeRegionProcessing(edit,stretch))return{runtimeId:region.audioClip?.runtimeId||region.id,mode:'desktopRealtime',realtime:true}
+    return{runtimeId:region.audioClip?.runtimeId||region.id,mode:'original'}
+  }
+
+  if(!bypassEdits&&pitchActive&&stretch.enabled){
+    if(stretch.renderStatus==='ready'&&combined&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:'combinedPitchTime'}
+    return{needsStretchRender:true,message:'Pitch + Stretch must be rendered before browser playback.'}
+  }
+  if(!bypassEdits&&traceEdited){
+    if(trace.renderStatus==='ready'&&trace.renderedRuntimeId&&audioClipRuntime.has(trace.renderedRuntimeId))return{runtimeId:trace.renderedRuntimeId,mode:'pitchTrace'}
+    return{needsRender:true,promptMode:'trace',message:'Pitch Trace edits must be rendered before browser playback.'}
+  }
+  if(!bypassEdits&&pitchActive){
+    if(pitchShift.renderStatus==='ready'&&pitchShift.renderedRuntimeId&&audioClipRuntime.has(pitchShift.renderedRuntimeId))return{runtimeId:pitchShift.renderedRuntimeId,mode:'pitchShift'}
+    return{needsRender:true,promptMode:'pitchShift',message:'Pitch Shift must be rendered before browser playback.'}
+  }
+  if(!bypassEdits&&stretch.enabled){
+    if(stretch.renderStatus==='ready'&&audioClipRuntime.has(stretchRuntimeId))return{runtimeId:stretchRuntimeId,mode:combined?'combinedPitchTime':'stretch'}
+    return{needsStretchRender:true,message:'This stretched audio region must render before browser playback.'}
+  }
+  if(!bypassEdits&&reverse.enabled){
+    if(reverse.renderStatus==='ready'&&reverse.renderedRuntimeId&&audioClipRuntime.has(reverse.renderedRuntimeId))return{runtimeId:reverse.renderedRuntimeId,mode:'reverse'}
+    return{needsRender:true,promptMode:'reverse',message:'Reverse must be rendered before playback.'}
+  }
+  return{runtimeId:region.audioClip?.runtimeId||region.id,mode:'original'}
+}
+const realtimeAudioRegionPending=new Set()
+
+async function scheduleDesktopRealtimeAudioRegion({region,runtime,track,edit,stretch,clipStartSeconds,clipEndSeconds,visibleDurationSeconds}){
+  if(!region||!runtime?.audioBuffer||realtimeAudioRegionPending.has(region.id)||activeAudioClipSources.has(region.id))return
+  realtimeAudioRegionPending.add(region.id)
+  let processor=null
+  try{
+    const ctx=getAudioContext()
+    const current=getTransportClockProjectSeconds()
+    if(current>=clipEndSeconds)return
+    const elapsed=Math.max(0,current-clipStartSeconds)
+    if(elapsed>=visibleDurationSeconds)return
+    const source=ctx.createBufferSource()
+    source.buffer=runtime.audioBuffer
+    const realtime=await createSouraRealtimeRegionProcessor(ctx,{channels:runtime.audioBuffer.numberOfChannels||2,edit,stretch,clipOffsetSeconds:elapsed,quality:'realtime-high'})
+    processor=realtime.node
+    const refreshed=getTransportClockProjectSeconds()
+    const refreshedElapsed=Math.max(0,refreshed-clipStartSeconds)
+    if(!isPlaying||refreshed>=clipEndSeconds||activeAudioClipSources.has(region.id)){destroySouraRealtimeRegionProcessor(processor);processor=null;return}
+    const offset=Math.min(runtime.audioBuffer.duration-.01,getAudioTrimStartSeconds(region)+refreshedElapsed)
+    const remainingVisible=Math.max(.01,visibleDurationSeconds-refreshedElapsed)
+    const remainingSource=Math.max(.01,getAudioTrimEndSeconds(region)-offset)
+    const sourceDuration=Math.max(.01,Math.min(remainingSource,remainingVisible*Math.max(.05,realtime.rate||1)))
+    const channel=getTrackAudioChannel(track?.id||region.trackId)
+    const gainNode=ctx.createGain()
+    const baseGain=dbToGain(edit.gainDb)
+    const nominal=Math.max(ctx.currentTime,getTransportScheduleTimeForProjectSeconds(refreshed))
+    const startTime=Math.max(ctx.currentTime,nominal-Math.min(.25,realtime.latencySeconds||0))
+    gainNode.gain.setValueAtTime(baseGain,startTime)
+    source.connect(processor);processor.connect(gainNode);gainNode.connect(channel.input)
+    source.onended=()=>{destroySouraRealtimeRegionProcessor(processor);activeAudioClipSources.delete(region.id)}
+    source.start(startTime,Math.max(0,offset),sourceDuration)
+    activeAudioClipSources.set(region.id,{source,gainNode,realtimeProcessor:processor,trackId:track?.id||region.trackId,scheduleTime:startTime,clipStartSeconds,clipEndSeconds,realtime:true})
+    startTrackMeterLoop()
+  }catch(error){
+    if(processor)destroySouraRealtimeRegionProcessor(processor)
+    console.warn('[soura-realtime] live processing failed',{regionId:region?.id,message:error?.message})
+    recordingStatus='Realtime processing could not start. Use Render Higher Quality or retry playback.'
+    updateEditorTitleStatus()
+  }finally{
+    realtimeAudioRegionPending.delete(region.id)
+  }
+}
+
+function createPlaybackSchedulingContext({ currentProjectSeconds = getTransportClockProjectSeconds(), tempoMap = normalizeTempoMap() } = {}) {
+  const tracksById = new Map(tracks.map((track) => [track.id, track]))
+  const hasSoloed = tracks.some((track) => track.soloed)
+  const audibleTrackIds = new Set(tracks
+    .filter((track) => !track.muted && (!hasSoloed || track.soloed))
+    .map((track) => track.id))
+  return { currentProjectSeconds, tempoMap, tracksById, audibleTrackIds }
+}
+
+function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat(), schedulingContext = null) {
+  const beat = clampBeat(currentBeat)
+  const ctx = getAudioContext()
+  const context = schedulingContext || createPlaybackSchedulingContext()
+  const { currentProjectSeconds, tempoMap, tracksById, audibleTrackIds } = context
+  const lookaheadEndSeconds = currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS
+  const lookaheadEndBeat = clampBeat(secondsToBeats(lookaheadEndSeconds, tempoMap))
+  const { byId } = getTimelineRegionIndex()
+  activeAudioClipSources.forEach((active, regionId) => {
+    const region = byId.get(regionId)
+    const trackIsAudible = audibleTrackIds.has(active.trackId || region?.trackId)
+    const regionIsMuted = Boolean(region?.muted || region?.audioEdit?.mute)
+    if (!region || regionIsMuted || !trackIsAudible || currentProjectSeconds >= Number(active.clipEndSeconds || 0) + 0.05 || lookaheadEndSeconds < Number(active.clipStartSeconds || 0)) {
+      stopAudioClipPlayback(regionId)
+    }
+  })
+  getTimelineRegionsInRange({ startBeat: beat, endBeat: lookaheadEndBeat }).forEach((region) => {
+    if (region.type !== 'audio' || activeAudioClipSources.has(region.id)) return
+    const startBeat = Number(region.startBeat) || 0
+    const endBeat = Math.max(startBeat + 0.001, Number(region.endBeat) || startBeat + 0.25)
+    const track = tracksById.get(region.trackId)
+    const trackIsAudible = audibleTrackIds.has(region.trackId)
+    const regionIsMuted = Boolean(region.muted || region.audioEdit?.mute)
+    const clipStartSeconds = beatsToSeconds(startBeat, tempoMap)
+    const roughClipEndSeconds = Math.max(clipStartSeconds, beatsToSeconds(endBeat, tempoMap))
+    if (regionIsMuted || !trackIsAudible || lookaheadEndSeconds < clipStartSeconds || currentProjectSeconds >= roughClipEndSeconds) return
+    const stretch = normalizeAudioStretch(region.stretch, {
+      clipId: region.id,
+      sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+      visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+    })
+    const edit = normalizeAudioEdit(region.audioEdit)
+    if (edit.mute || region.muted) {
+      return
+    }
+    const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(region)
+    const clipEndSeconds = clipStartSeconds + visibleDurationSeconds
+    const playbackChoice = getAudioPlaybackRenderChoice(region, edit, stretch)
+    if (playbackChoice.needsRender) {
+      if (lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds) {
+        recordingStatus = playbackChoice.message
+        updateEditorTitleStatus()
+        if (!audioPitchRenderState.active && audioEditPlaybackPrompt?.regionId !== region.id) {
+          audioEditPlaybackPrompt = { regionId: region.id, mode: playbackChoice.promptMode }
+          renderEditor()
+        }
+      }
+      return
+    }
+    if (playbackChoice.needsStretchRender) {
+      if (lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds) {
+        recordingStatus = playbackChoice.message || 'This stretched audio region must finish rendering before playback.'
+        updateEditorTitleStatus()
+        if (!audioStretchRenderState.active && stretch.renderStatus !== 'rendering' && stretchPlaybackPrompt?.regionId !== region.id) {
+          stretchPlaybackPrompt = { regionId: region.id }
+          renderEditor()
+        }
+      }
+      return
+    }
+    const runtime = audioClipRuntime.get(playbackChoice.runtimeId)
+
+    if (
+      playbackChoice.realtime
+      && runtime?.audioBuffer
+      && lookaheadEndSeconds >= clipStartSeconds
+      && currentProjectSeconds < clipEndSeconds
+    ) {
+      void scheduleDesktopRealtimeAudioRegion({ region, runtime, track, edit, stretch, clipStartSeconds, clipEndSeconds, visibleDurationSeconds })
+      return
+    }
+
+    const shouldPlay = runtime?.audioBuffer && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds
+    if (!shouldPlay) {
+      if (!runtime?.audioBuffer && lookaheadEndSeconds >= clipStartSeconds && currentProjectSeconds < clipEndSeconds) {
+        recordingStatus = 'Audio file missing or not loaded.'
+        updateEditorTitleStatus()
+        if (!audioOfflineWarnedRegionIds.has(region.id)) {
+          audioOfflineWarnedRegionIds.add(region.id)
+          console.info('[audio-playback] skipped offline clip', { clipId: region.audioClip?.audioAssetId || region.audioClip?.id || region.id, reason: region.audioClip?.offlineReason || 'buffer_missing' })
+        }
+      }
+      return
+    }
+    try {
+      const rawScheduleTime = getTransportScheduleTimeForProjectSeconds(clipStartSeconds)
+      const transportStartTime = transportClock?.audioContextStartTime || ctx.currentTime
+      const scheduleTime = Math.max(ctx.currentTime, transportStartTime, rawScheduleTime)
+      const projectSecondsAtSchedule = transportClock
+        ? transportClock.playheadStartSeconds + Math.max(0, scheduleTime - transportClock.audioContextStartTime)
+        : currentProjectSeconds
+      const elapsedVisibleSeconds = Math.max(0, projectSecondsAtSchedule - clipStartSeconds)
+      if (elapsedVisibleSeconds >= visibleDurationSeconds) return
+      const renderedMode = playbackChoice.mode === 'pitchTrace' || playbackChoice.mode === 'pitchShift' || playbackChoice.mode === 'stretch' || playbackChoice.mode === 'combinedPitchTime' || playbackChoice.mode === 'reverse'
+      if (playbackChoice.mode === 'stretch') {
+        logStretchDebug('playback source', region.id, {
+          sourceDurationSeconds: stretch.sourceDurationSeconds,
+          targetDurationSeconds: stretch.targetDurationSeconds,
+          speedPercent: stretch.speedPercent,
+          lengthRatio: stretch.lengthRatio,
+          renderStatus: stretch.renderStatus,
+          reason: playbackChoice.runtimeId
+        })
+      }
+      const playbackRate = renderedMode ? 1 : getAudioRegionPlaybackRate(region)
+      const sourceOffsetSeconds = renderedMode ? elapsedVisibleSeconds : getAudioTrimStartSeconds(region) + (elapsedVisibleSeconds * playbackRate)
+      const trimEndSeconds = renderedMode ? runtime.audioBuffer.duration : getAudioTrimEndSeconds(region)
+      const remainingVisibleSeconds = Math.max(0.01, visibleDurationSeconds - elapsedVisibleSeconds)
+      const source = ctx.createBufferSource()
+      source.buffer = runtime.audioBuffer
+      source.playbackRate.value = playbackRate
+      if (edit.loop && renderedMode) {
+        source.loop = true
+        source.loopStart = 0
+        source.loopEnd = runtime.audioBuffer.duration
+      } else if (edit.loop) {
+        source.loop = true
+        source.loopStart = getAudioTrimStartSeconds(region)
+        source.loopEnd = getAudioTrimEndSeconds(region)
+      }
+      const channel = getTrackAudioChannel(track?.id || region.trackId)
+      const gainNode = ctx.createGain()
+      const baseGain = dbToGain(edit.gainDb)
+      gainNode.gain.setValueAtTime(baseGain, scheduleTime)
+      const offsetSeconds = Math.min(runtime.audioBuffer.duration - 0.01, sourceOffsetSeconds)
+      const remainingBufferSeconds = Math.max(0.01, trimEndSeconds - offsetSeconds)
+      const playDuration = Math.max(0.01, Math.min(remainingBufferSeconds, remainingVisibleSeconds * playbackRate))
+      let fadeIn = Math.min(Math.max(0, edit.fadeInSeconds), playDuration)
+      let fadeOut = Math.min(Math.max(0, edit.fadeOutSeconds), playDuration)
+      if (fadeIn + fadeOut > playDuration) {
+        const scale = playDuration / Math.max(0.01, fadeIn + fadeOut)
+        fadeIn *= scale
+        fadeOut *= scale
+      }
+      if (fadeIn > 0 && elapsedVisibleSeconds < fadeIn) {
+        const fadeProgress = clamp(elapsedVisibleSeconds / fadeIn, 0, 1)
+        gainNode.gain.setValueAtTime(Math.max(0.0001, baseGain * fadeGainValue(fadeProgress, edit.fadeInCurve, 'in')), scheduleTime)
+        gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
+          baseGain,
+          fromProgress: fadeProgress,
+          toProgress: 1,
+          curve: edit.fadeInCurve,
+          direction: 'in'
+        }), scheduleTime, Math.max(0.01, fadeIn * (1 - fadeProgress)))
+      }
+      if (fadeOut > 0 && remainingVisibleSeconds <= fadeOut) {
+        const fadeProgress = clamp((fadeOut - remainingVisibleSeconds) / fadeOut, 0, 1)
+        gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
+          baseGain,
+          fromProgress: fadeProgress,
+          toProgress: 1,
+          curve: edit.fadeOutCurve,
+          direction: 'out'
+        }), scheduleTime, Math.max(0.01, remainingVisibleSeconds))
+      } else if (fadeOut > 0 && playDuration > fadeOut) {
+        gainNode.gain.setValueAtTime(baseGain, scheduleTime + Math.max(0.01, playDuration - fadeOut))
+        gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
+          baseGain,
+          fromProgress: 0,
+          toProgress: 1,
+          curve: edit.fadeOutCurve,
+          direction: 'out'
+        }), scheduleTime + Math.max(0.01, playDuration - fadeOut), Math.max(0.01, fadeOut))
+      }
+      source.connect(gainNode)
+      gainNode.connect(channel.input)
+      source.onended = () => activeAudioClipSources.delete(region.id)
+      const startTime = scheduleTime + Math.max(0, edit.delayMs / 1000)
+      source.start(startTime, Math.max(0, offsetSeconds), playDuration)
+      activeAudioClipSources.set(region.id, { source, gainNode, trackId: track?.id || region.trackId, scheduleTime: startTime, clipStartSeconds, clipEndSeconds })
+      if (!transportDebugState.firstAudioScheduled) {
+        transportDebugState.firstAudioScheduled = true
+        console.info('[audio-schedule]', {
+          clipId: region.audioClip?.audioAssetId || region.audioClip?.id || region.id,
+          clipTimelineStartSeconds: clipStartSeconds,
+          playheadStartSeconds: transportClock?.playheadStartSeconds ?? currentProjectSeconds,
+          scheduleTime: startTime,
+          deltaToStartMs: Math.round((startTime - ctx.currentTime) * 1000),
+          bufferOffset: offsetSeconds,
+          mode: playbackChoice.mode
+        })
+      }
+      startTrackMeterLoop()
+    } catch (err) {
+      console.warn('[studioProject] audio clip playback failed', err)
+      stopAudioClipPlayback(region.id)
+    }
+  })
+}
+function getMidiPlaybackSchedule(region) {
+  const notes = Array.isArray(region?.notes) ? region.notes : []
+  const cached = midiPlaybackScheduleCache.get(region)
+  if (cached?.revision === playbackContentRevision && cached.notesRef === notes && cached.noteCount === notes.length) return cached
+  const entries = notes
+    .map((note, index) => {
+      const startBeat = Number(note.startBeat) || 0
+      return {
+        note,
+        index,
+        startBeat,
+        endBeat: startBeat + Math.max(0.05, Number(note.durationBeats) || 0.05)
+      }
+    })
+    .filter((entry) => noteIsVisibleInRegion(region, entry.note))
+    .sort((a, b) => a.startBeat - b.startBeat)
+  const schedule = {
+    revision: playbackContentRevision,
+    notesRef: notes,
+    noteCount: notes.length,
+    entries,
+    maxDurationBeats: entries.reduce((max, entry) => Math.max(max, entry.endBeat - entry.startBeat), 0.05)
+  }
+  midiPlaybackScheduleCache.set(region, schedule)
+  return schedule
+}
+
+function findMidiPlaybackScheduleStart(entries = [], minimumStartBeat = 0) {
+  let low = 0
+  let high = entries.length
+  while (low < high) {
+    const middle = (low + high) >> 1
+    if (entries[middle].startBeat < minimumStartBeat) low = middle + 1
+    else high = middle
+  }
+  return low
+}
+
+function updateMidiRegionPlayback(currentBeat = getTransportClockProjectBeat(), schedulingContext = null) {
+  const beat = clampBeat(currentBeat)
+  const ctx = getAudioContext()
+  const context = schedulingContext || createPlaybackSchedulingContext()
+  const { currentProjectSeconds, tempoMap, tracksById, audibleTrackIds } = context
+  const lookaheadEndSeconds = currentProjectSeconds + TRANSPORT_SCHEDULE_LOOKAHEAD_SECONDS
+  const lookaheadEndBeat = clampBeat(secondsToBeats(lookaheadEndSeconds, tempoMap))
+  const { byId } = getTimelineRegionIndex()
+  activePlaybackNotes.forEach((active, key) => {
+    const region = byId.get(active.regionId)
+    const track = tracksById.get(active.trackId)
+    const activeEndSeconds = beatsToSeconds(active.endBeat, tempoMap)
+    if (!region || region.muted || !audibleTrackIds.has(active.trackId) || !track?.instrument || track.instrument.enabled === false || getTrackPortablePlaybackDecision(track).mode !== 'live' || currentProjectSeconds >= activeEndSeconds + 0.05) {
+      stopPlaybackNote(key)
+    }
+  })
+  getTimelineRegionsInRange({ startBeat: beat, endBeat: lookaheadEndBeat }).forEach((region) => {
+    if (region.type === 'audio') return
+    if (region.muted) return
+    const regionStartBeat = Number(region.startBeat) || 0
+    const regionEndBeat = Math.max(regionStartBeat, Number(region.endBeat) || regionStartBeat)
+    if (lookaheadEndBeat < regionStartBeat || beat >= regionEndBeat) return
+    const track = tracksById.get(region.trackId)
+    if (!audibleTrackIds.has(region.trackId) || !track?.instrument || track.instrument.enabled === false || getTrackPortablePlaybackDecision(track).mode !== 'live') return
+    ensureTrackInstrumentInstance(track)
+    const schedule = getMidiPlaybackSchedule(region)
+    const firstIndex = findMidiPlaybackScheduleStart(schedule.entries, beat - schedule.maxDurationBeats)
+    for (let entryIndex = firstIndex; entryIndex < schedule.entries.length; entryIndex += 1) {
+      const { note, index, startBeat, endBeat } = schedule.entries[entryIndex]
+      if (startBeat > lookaheadEndBeat) break
+      if (endBeat <= beat) continue
+      const key = `${region.id}:${index}:${note.note}`
+      const noteStartSeconds = beatsToSeconds(startBeat, tempoMap)
+      const noteEndSeconds = beatsToSeconds(endBeat, tempoMap)
+      if (lookaheadEndSeconds >= noteStartSeconds && currentProjectSeconds < noteEndSeconds && !activePlaybackNotes.has(key)) {
+        const scheduleTime = Math.max(ctx.currentTime, getTransportScheduleTimeForProjectSeconds(Math.max(noteStartSeconds, currentProjectSeconds)))
+        const stopTime = Math.max(scheduleTime + 0.01, getTransportScheduleTimeForProjectSeconds(noteEndSeconds))
+        dawInstrumentRegistry.noteOn(track.instrument.pluginInstanceId, note.note, clamp((Number(note.velocity) || 0.85), 0, 1), { startTime: scheduleTime, stopTime })
+        activePlaybackNotes.set(key, { regionId: region.id, trackId: track.id, note: note.note, startBeat, endBeat, scheduleTime, stopTime })
+        setTrackKeyboardNoteActive(track.id, note.note, `playback:${key}`, true)
+        if (!transportDebugState.firstMidiScheduled) {
+          transportDebugState.firstMidiScheduled = true
+          console.info('[midi-schedule]', {
+            noteId: note.id || key,
+            noteStartSeconds,
+            playheadStartSeconds: transportClock?.playheadStartSeconds ?? currentProjectSeconds,
+            scheduleTime,
+            deltaToStartMs: Math.round((scheduleTime - ctx.currentTime) * 1000)
+          })
+        }
+        startTrackMeterLoop()
+      }
+    }
+  })
+}
+function refreshMidiRegionDom() {
+  const scroll = midiRegionDrag?.scroll || captureArrangementScroll()
+  const gridInner = app.querySelector('[data-arrangement-grid-inner]')
+  if (!gridInner) return
+  const playhead = gridInner.querySelector('.studio-grid-playhead')
+  gridInner.querySelectorAll('[data-midi-region]').forEach((node)=>node.remove())
+  playhead?.insertAdjacentHTML('beforebegin', renderTimelineRegionElements())
+  bindMidiRegionEvents()
+  if (!timelineEdgeScrollState?.direction) restoreArrangementScroll(scroll)
+}
+function openRegionEditorForRegion(regionId = '') {
+  const region = midiRegions.find((item)=>item.id === regionId)
+  if (!region) return
+  const scroll = captureArrangementScroll()
+  selectSingleRegion(region.id)
+  selectedTrackId = region.trackId || selectedTrackId
+  midiRollState = region.type === 'audio' ? null : { regionId: region.id }
+  midiRollSelectedNoteIndex = null
+  midiRollSelectedNoteIndices = []
+  activeBottomPanel = 'midi-roll'
+  restoreRegionEditorHeightPreference()
+  closingBottomPanel = ''
+  bottomPanelMotion = 'entering'
+  midiRegionMenuState = null
+  regionColorPickerState = null
+  regionRenameState = null
+  renderEditorPreservingArrangementScroll(scroll)
+}
+function bindMidiRegionEvents() {
+  app.querySelectorAll('[data-midi-region]').forEach((region)=>{
+    if (region.dataset.timelineEventsBound === 'true') return
+    region.dataset.timelineEventsBound = 'true'
+    region.addEventListener('pointerdown',(event)=>{
+      activeCommandContext = 'arrangement'
+      const regionId = region.dataset.midiRegion
+      if (event.button !== 0) return
+      if (event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        toggleRegionSelection(regionId)
+        refreshMidiRegionDom()
+        return
+      }
+      if (!regionIsSelected(regionId)) selectSingleRegion(regionId)
+      else selectedMidiRegionId = regionId
+      syncRegionSelectionDom()
+      if (handleRegionToolPointer(event, regionId)) return
+      startMidiRegionDrag(event, regionId)
+    })
+    region.addEventListener('dblclick', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openRegionEditorForRegion(region.dataset.midiRegion)
+    })
+    region.addEventListener('contextmenu',(event)=>{
+      event.preventDefault()
+      event.stopPropagation()
+      if (!regionIsSelected(region.dataset.midiRegion)) selectSingleRegion(region.dataset.midiRegion)
+      const pos = getClampedFloatingPosition(event.clientX, event.clientY, 220, 230)
+      midiRegionMenuState = { regionId: region.dataset.midiRegion, x: pos.x, y: pos.y, pasteBeat: pointerEventToTimelineBeat(event), trackId: tracks[getTrackLaneFromY(event.clientY)]?.id || selectedTrackId }
+      renderEditor()
+    })
+  })
+}
+function getRecordingTrack() {
+  const selected = getSelectedTrack()
+  if (selected?.recordArmed || selected?.instrument || isAudioTrack(selected)) return selected
+  return tracks.find((track)=>track.recordArmed) || selected
+}
+function startRecordFlow() {
+  if (audioStretchRenderState.active) return
+  const track = getRecordingTrack()
+  if (isAudioTrack(track)) startAudioRecordFlow(track)
+  else startMidiRecordFlow(track)
+}
+async function requestAudioInputStream() {
+  try {
+    return await navigator.mediaDevices.getUserMedia({ audio: true })
+  } catch (err) {
+    console.error('[studioProject] audio input permission failed', err)
+    if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') recordingStatus = 'No audio input device was found.'
+    else if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') recordingStatus = 'Microphone access is required to record audio.'
+    else recordingStatus = 'Could not start audio recording.'
+    return null
+  }
+}
+function startMidiRecordFlow(track = getRecordingTrack()) {
+  if (!track) { recordingStatus = 'Select or arm an instrument track to record MIDI.'; renderEditor(); return }
+  if (isAudioTrack(track)) { startAudioRecordFlow(track); return }
+  if (!track.instrument) { recordingStatus = 'Choose an instrument before recording MIDI.'; activeLeftPanel = 'inspector'; renderEditor(); return }
+  if (track.instrument.enabled === false) { recordingStatus = 'Instrument is disabled.'; renderEditor(); return }
+  stopPlayback()
+  if (countInTimer) clearInterval(countInTimer)
+  countInTimer = 0
+  if (!isCountInEnabled) { beginMidiRecording(track); return }
+  const targetBeat = clampBeat(xToBeat(timelineState.playheadX))
+  const prerollBeats = 4
+  const requiredPreStart = Math.max(0, (prerollBeats - targetBeat) * beatWidth())
+  if (requiredPreStart > timelineState.preStartPixels) {
+    timelineState.preStartPixels = clamp(Math.ceil(requiredPreStart), 0, timelineState.pixelsPerBar * 10)
+    syncBarsFromPositiveBeats()
+  }
+  const targetX = beatToX(targetBeat)
+  const startX = beatToX(targetBeat - prerollBeats)
+  countInTargetX = targetX
+  countInTargetTrackId = track.id
+  isCountInRunning = true
+  countInBeatsRemaining = 4
+  recordingStatus = `Count-in for ${track.name}`
+  setPlayhead(startX)
+  startPlayback()
+  renderEditor()
+}
+function beginMidiRecording(track, { startBeat = null } = {}) {
+  if (!track) return
+  ensureTrackInstrumentInstance(track)
+  const recordStartBeat = Number.isFinite(Number(startBeat)) ? Number(startBeat) : clampBeat(xToBeat(timelineState.playheadX))
+  activeRecording = { id: makeInsertId('midi-region'), type: 'midi', trackId: track.id, name: track?.autoNameRegions === false ? '' : track.name, startBeat: recordStartBeat, endBeat: recordStartBeat, color: '#ff2d55', notes: [] }
+  activeRecordingNotes.clear()
+  recordingStatus = `Recording ${track.name}`
+  if (!isPlaying) startPlayback()
+  renderEditor()
+}
+async function startAudioRecordFlow(track = getRecordingTrack()) {
+  if (!track || !isAudioTrack(track)) { recordingStatus = 'Select or arm an audio track to record audio.'; activeLeftPanel = 'inspector'; renderEditor(); return }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { recordingStatus = 'Audio recording is not supported in this browser.'; renderEditor(); return }
+  const stream = await requestAudioInputStream()
+  if (!stream) { renderEditor(); return }
+  pendingAudioInputStream = stream
+  stopPlayback()
+  if (countInTimer) clearInterval(countInTimer)
+  countInTimer = 0
+  if (!isCountInEnabled) { beginAudioRecording(track, { stream }); return }
+  const targetBeat = clampBeat(xToBeat(timelineState.playheadX))
+  const prerollBeats = 4
+  const requiredPreStart = Math.max(0, (prerollBeats - targetBeat) * beatWidth())
+  if (requiredPreStart > timelineState.preStartPixels) {
+    timelineState.preStartPixels = clamp(Math.ceil(requiredPreStart), 0, timelineState.pixelsPerBar * 10)
+    syncBarsFromPositiveBeats()
+  }
+  const targetX = beatToX(targetBeat)
+  const startX = beatToX(targetBeat - prerollBeats)
+  countInTargetX = targetX
+  countInTargetTrackId = track.id
+  isCountInRunning = true
+  countInBeatsRemaining = 4
+  recordingStatus = `Count-in for ${track.name}`
+  setPlayhead(startX)
+  startPlayback()
+  renderEditor()
+}
+async function beginAudioRecording(track, { startBeat = null } = {}) {
+  if (!track || activeRecording) return
+  try {
+    const stream = arguments[1]?.stream || pendingAudioInputStream || await requestAudioInputStream()
+    pendingAudioInputStream = null
+    if (!stream) { renderEditor(); return }
+    const ctx = getAudioContext()
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 256
+    analyser.smoothingTimeConstant = 0.62
+    const source = ctx.createMediaStreamSource(stream)
+    source.connect(analyser)
+    if (track.monitor) source.connect(getTrackAudioChannel(track.id).input)
+    const chunks = []
+    const mediaRecorder = new MediaRecorder(stream)
+    const recordStartBeat = Number.isFinite(Number(startBeat)) ? Number(startBeat) : clampBeat(xToBeat(timelineState.playheadX))
+    const recordStartSeconds = getTimelineSecondsAtBeat(recordStartBeat)
+    const audioContextStartTime = ctx.currentTime
+    const performanceStartTime = performance.now()
+    activeRecording = {
+      id: makeInsertId('audio-region'),
+      clipId: '',
+      type: 'audio',
+      trackId: track.id,
+      name: track?.autoNameRegions === false ? '' : `${track.name} Take`,
+      startBeat: recordStartBeat,
+      endBeat: recordStartBeat,
+      recordingStartPixelX: beatsFromBarZeroToX(recordStartBeat),
+      timelineStartBeats: recordStartBeat,
+      timelineStartSeconds: recordStartSeconds,
+      transportBpm: Number(projectState?.bpm || 140),
+      projectSampleRate: Number(projectState?.sampleRate || ctx.sampleRate || 44100),
+      audioContextSampleRate: ctx.sampleRate,
+      recordingStartedAtAudioContextTime: audioContextStartTime,
+      recordingStartedAtPerformanceTime: performanceStartTime,
+      mediaRecorderStartedAt: performanceStartTime,
+      sourceLatencyCompensationSeconds: 0,
+      durationBeats: 0,
+      durationSeconds: 0,
+      fileDurationSeconds: 0,
+      offsetSeconds: 0,
+      trimStartSeconds: 0,
+      trimEndSeconds: null,
+      visibleDurationSeconds: 0,
+      playbackRate: 1,
+      audioEdit: normalizeAudioEdit(),
+      stretch: { enabled: false, ratio: 1, mode: 'none', algorithm: 'none', preservesPitch: false, renderedAudioUrl: null, renderedStoragePath: null },
+      color: '#ff2d55',
+      waveform: { peaks: [], chunks: [], sampleWindowSeconds: waveformWindowSeconds, sampleWindowMs: waveformWindowSeconds * 1000, renderStyle: 'low-poly', durationSeconds: 0, resolution: 'live' },
+      audioClip: { runtimeId: '', contentType: mediaRecorder.mimeType || 'audio/webm', sessionOnly: true, missingAfterReload: true }
+    }
+    activeRecording.clipId = activeRecording.id
+    activeRecording.audioClip.runtimeId = activeRecording.id
+    mediaRecorder.addEventListener('dataavailable', (event) => {
+      if (event.data?.size) chunks.push(event.data)
+    })
+    const data = new Uint8Array(analyser.fftSize)
+    const samplePeak = () => {
+      if (!activeRecording || activeRecording.type !== 'audio') return
+      analyser.getByteTimeDomainData(data)
+      let min = 1
+      let max = -1
+      let sum = 0
+      for (let i = 0; i < data.length; i += 1) {
+        const sample = (data[i] - 128) / 128
+        if (sample < min) min = sample
+        if (sample > max) max = sample
+        sum += sample * sample
+      }
+      const rms = Math.sqrt(sum / Math.max(1, data.length))
+      const startedAt = audioRecordingController?.startedAt || performance.now()
+      const elapsed = Math.max(0, (performance.now() - startedAt) / 1000)
+      activeRecording.durationSeconds = elapsed
+      activeRecording.durationBeats = secondsToBeats(elapsed)
+      activeRecording.visibleDurationSeconds = elapsed
+      activeRecording.fileDurationSeconds = elapsed
+      activeRecording.trimEndSeconds = elapsed
+      activeRecording.endBeat = activeRecording.startBeat + Math.max(0.05, activeRecording.durationBeats)
+      activeRecording.waveform.durationSeconds = elapsed
+      const t1Seconds = elapsed
+      const t0Seconds = Math.max(0, t1Seconds - waveformWindowSeconds)
+      activeRecording.waveform.chunks.push({ t0Seconds, t1Seconds, min: Number(clamp(min, -1, 1).toFixed(3)), max: Number(clamp(max, -1, 1).toFixed(3)), rms: Number(clamp(rms * 1.8, 0, 1).toFixed(3)) })
+      activeRecording.waveform.peaks.push({ min: Number(clamp(min, -1, 1).toFixed(3)), max: Number(clamp(max, -1, 1).toFixed(3)), rms: Number(clamp(rms * 1.8, 0, 1).toFixed(3)) })
+      if (activeRecording.waveform.chunks.length > 2400) activeRecording.waveform.chunks.shift()
+      if (activeRecording.waveform.peaks.length > 2400) activeRecording.waveform.peaks.shift()
+      refreshMidiRegionDom()
+    }
+    audioRecordingController = { mediaRecorder, stream, analyser, source, chunks, sampleTimer: 0, startedAt: performanceStartTime, trackId: track.id }
+    mediaRecorder.start(250)
+    activeRecording.mediaRecorderStartedAt = performance.now()
+    audioRecordingController.sampleTimer = window.setInterval(samplePeak, 120)
+    recordingStatus = `Recording ${track.name}`
+    if (!isPlaying) startPlayback()
+    renderEditor()
+  } catch (err) {
+    console.error('[studioProject] audio recording failed', err)
+    recordingStatus = err?.name === 'NotAllowedError' ? 'Microphone permission was denied.' : 'Could not start audio recording.'
+    cleanupAudioRecordingController()
+    activeRecording = null
+    renderEditor()
+  }
+}
+async function createAudioRegionFromFile({
+  file,
+  trackId = selectedTrackId,
+  newTrackIndex = tracks.length,
+  timelineStartBeats = clampBeat(xToBeat(timelineState.playheadX)),
+  source = 'import',
+  origin = null
+} = {}) {
+  if (!isSupportedAudioFile(file)) {
+    recordingStatus = 'Unsupported audio file.'
+    renderEditor()
+    return null
+  }
+  const before = captureDawSnapshot()
+  recordingStatus = 'Importing audio...'
+  renderEditor()
+  const clipId = makeInsertId('audio-region')
+  try {
+    const metadata = await decodeAudioFileForImport(file)
+    const fileDurationSeconds = metadata.fileDurationSeconds
+    const durationBeats = Math.max(0.25, secondsToBeats(fileDurationSeconds))
+    const now = Date.now()
+    const placementBeat = normalizeTimelineStartBeat(timelineStartBeats, { snapped: false })
+    const desktopLocalFirst = source === 'import' && isSouraDesktopRuntime()
+    const importPersistenceMode = getSouraImportPersistenceMode()
+    const localReference = desktopLocalFirst ? registerDesktopLocalAudioReference(clipId, file) : null
+    let storagePath = null
+    let backgroundUploadPromise = null
+    if (desktopLocalFirst) {
+      backgroundUploadPromise = uploadSouraAudioBlob(file, { clipId, suffix: 'import' }).then((path) => {
+        const live = midiRegions.find((item)=>item.id === clipId)
+        if (live && path) {
+          live.audioClip = { ...(live.audioClip||{}), storagePath:path, cloudBackupStatus:'ready', uploadError:null, updatedAt:Date.now() }
+          scheduleEditorSave()
+        }
+        return path
+      }).catch((error) => {
+        console.warn('[studioProject] desktop background audio upload failed', { clipId, message:error?.message })
+        const live=midiRegions.find((item)=>item.id===clipId)
+        if(live){live.audioClip={...(live.audioClip||{}),cloudBackupStatus:'failed',uploadError:error?.message||'Background upload failed.',updatedAt:Date.now()};scheduleEditorSave()}
+        return null
+      })
+    } else {
+      try {
+        if (source === 'import') beginAudioImportUpload(file)
+        storagePath = await uploadSouraAudioBlob(file, { clipId, suffix: source === 'import' ? 'import' : '', onProgress: source === 'import' ? updateAudioImportUploadProgress : null })
+      } catch (error) {
+        console.warn('[studioProject] audio import upload failed', { message:error?.message })
+        finishAudioImportUpload(); recordingStatus='Audio upload failed. Try again.'; renderEditor(); return null
+      }
+      finishAudioImportUpload()
+    }
+    const selectedAudioTrack = tracks.find((item)=>item.id === trackId)
+    const track = selectedAudioTrack && isAudioTrack(selectedAudioTrack)
+      ? selectedAudioTrack
+      : createAudioTrackForImport(metadata.fileName, { insertIndex: newTrackIndex })
+    const region = cloneRegionForState({
+      id: clipId,
+      clipId,
+      type: 'audio',
+      source,
+      trackId: track.id,
+      name: track.autoNameRegions === false ? '' : getAudioImportRegionLabel(metadata.fileName),
+      startBeat: placementBeat,
+      endBeat: placementBeat + durationBeats,
+      timelineStartBeats: placementBeat,
+      timelineStartSeconds: getTimelineSecondsAtBeat(placementBeat),
+      transportBpm: Number(projectState?.bpm || 140),
+      projectSampleRate: Number(projectState?.sampleRate || metadata.sampleRate || 44100),
+      audioContextSampleRate: metadata.sampleRate || getAudioContext().sampleRate,
+      sourceLatencyCompensationSeconds: 0,
+      durationBeats,
+      durationSeconds: fileDurationSeconds,
+      fileDurationSeconds,
+      offsetSeconds: 0,
+      trimStartSeconds: 0,
+      trimEndSeconds: fileDurationSeconds,
+      visibleDurationSeconds: fileDurationSeconds,
+      playbackRate: 1,
+      audioEdit: normalizeAudioEdit(),
+      stretch: makeDefaultAudioStretch(fileDurationSeconds),
+      color: track.color || '#58d4ff',
+      waveform: metadata.waveform,
+      sampleRate: metadata.sampleRate,
+      bitDepth: metadata.bitDepth,
+      bitDepthSource: metadata.bitDepthSource,
+      channelCount: metadata.channelCount,
+      fileName: metadata.fileName,
+      fileType: metadata.fileType,
+      contentType: metadata.contentType,
+      fileSizeBytes: metadata.fileSizeBytes,
+      createdAt: now,
+      updatedAt: now,
+      audioClip: {
+        id: clipId,
+        audioAssetId: clipId,
+        runtimeId: clipId,
+        source,
+        origin: origin && typeof origin === 'object' ? { ...origin } : null,
+        contentType: metadata.contentType,
+        fileType: metadata.fileType,
+        fileName: metadata.fileName,
+        fileSizeBytes: metadata.fileSizeBytes,
+        sampleRate: metadata.sampleRate,
+        bitDepth: metadata.bitDepth,
+        bitDepthSource: metadata.bitDepthSource,
+        channelCount: metadata.channelCount,
+        fileDurationSeconds,
+        storagePath,
+        persistenceMode: importPersistenceMode,
+        localReferenceActive: Boolean(localReference),
+        localReferenceHasNativePath: Boolean(localReference?.nativePath || getNativeFilePath(file)),
+        cloudBackupStatus: desktopLocalFirst ? 'uploading' : 'ready',
+        sessionOnly: false,
+        missingAfterReload: false,
+        uploadError: null,
+        loadStatus: 'ready',
+        audioReady: true,
+        createdAt: now,
+        updatedAt: now
+      },
+      missingMedia: false
+    })
+    audioClipRuntime.set(region.id, {
+      blob: file,
+      file,
+      url: localReference?.objectUrl || URL.createObjectURL(file),
+      localNativePath: localReference?.nativePath || getNativeFilePath(file) || '',
+      localReferenceActive: desktopLocalFirst,
+      audioBuffer: metadata.audioBuffer,
+      contentType: metadata.contentType,
+      fileDurationSeconds,
+      waveform: metadata.waveform
+    })
+    syncAudioRegionTimeline(region)
+    extendTimelineToContainBeat(region.endBeat)
+    midiRegions.push(region)
+    applyRegionPlacementWithOverlapResolution([region])
+    selectSingleRegion(region.id)
+    activeBottomPanel = 'midi-roll'
+    recordingStatus = desktopLocalFirst ? 'Audio ready from local file. Cloud backup is uploading in the background.' : ''
+    void backgroundUploadPromise
+    pushHistory('import-audio-region', before, captureDawSnapshot())
+    scheduleEditorSave()
+    renderEditor()
+    return region
+  } catch (error) {
+    console.warn('[studioProject] audio import failed', { name: error?.name, message: error?.message })
+    recordingStatus = error?.message === 'Unsupported audio file.' ? 'Unsupported audio file.' : 'Could not decode this audio file.'
+    renderEditor()
+    return null
+  }
+}
+function openAudioImportPicker() {
+  const track = getSelectedTrack()
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'audio/*'
+  input.addEventListener('change', () => {
+    const file = input.files?.[0]
+    input.remove()
+    if (file) createAudioRegionFromFile({ file, trackId: track?.id, timelineStartBeats: clampBeat(xToBeat(timelineState.playheadX)), source: 'import' })
+  }, { once: true })
+  input.click()
+}
+function getFirstAudioFileFromDataTransfer(dataTransfer) {
+  const files = Array.from(dataTransfer?.files || [])
+  const direct = files.find(isSupportedAudioFile)
+  if (direct) return direct
+  const items = Array.from(dataTransfer?.items || [])
+  return items.map((item)=>item.kind === 'file' ? item.getAsFile?.() : null).find(isSupportedAudioFile) || null
+}
+function getSouraAssetDragPayload(dataTransfer) {
+  const encoded = dataTransfer?.getData?.(SOURA_ASSET_DRAG_TYPE)
+  const parsed = parseSouraAssetDragPayload(encoded)
+  if (parsed) return parsed
+  const legacyId = dataTransfer?.getData?.('application/x-soura-asset-id')
+  return legacyId ? createSouraAssetDragPayload(souraAssetLibrary.getAsset(legacyId)) : activeAssetDragPayload
+}
+function dataTransferHasSouraAsset(dataTransfer) {
+  return Boolean(activeAssetDragPayload || dataTransfer?.types?.includes?.(SOURA_ASSET_DRAG_TYPE) || dataTransfer?.types?.includes?.('application/x-soura-asset-id'))
+}
+function getTimelineTrackAtPointer(clientY = 0) {
+  const gridEl = app.querySelector('[data-arrangement-grid]')
+  const rect = gridEl?.getBoundingClientRect?.()
+  if (!rect) return null
+  const timelineY = clientY - rect.top + (gridEl.scrollTop || 0)
+  if (timelineY < 0 || timelineY >= totalTrackLaneHeight()) return null
+  const trackIndex = trackIndexAtTimelineY(timelineY)
+  return trackIndex < 0 ? null : tracks[trackIndex] || null
+}
+function getAudioImportPlacement(event, file = null, asset = null) {
+  const forceNewTrackAtTop = Boolean(event.target?.closest?.('[data-new-track-drop-lane], [data-new-track-drop-header]'))
+  const track = getTimelineTrackAtPointer(event.clientY)
+  const rawBeat = pointerEventToTimelineBeat(event, { snapped: false })
+  const trackIndex = track ? tracks.indexOf(track) : -1
+  const plan = planAssetTimelineDrop({ rawBeat, snapEnabled: isSnapEnabled, snap: snapBeatToGrid, track, trackIndex, trackCount: tracks.length, forceNewTrackAtTop, isAudioTrack })
+  const audioTrack = plan.trackId ? track : null
+  const valid = Boolean((file && isSupportedAudioFile(file)) || isPreviewableAsset(asset))
+  return {
+    track: audioTrack,
+    trackId: plan.trackId,
+    newTrackIndex: plan.newTrackIndex,
+    startBeat: clampBeat(plan.startBeat),
+    createAudioTrack: plan.createAudioTrack,
+    forceNewTrackAtTop,
+    valid,
+    message: !valid
+      ? 'Unsupported audio file.'
+      : audioTrack
+        ? `Drop on ${audioTrack.name}.`
+        : 'A new audio track will be created for this file.'
+  }
+}
+function scheduleAudioImportPreviewRender() {
+  if (audioImportPreviewRaf) return
+  audioImportPreviewRaf = requestAnimationFrame(() => {
+    audioImportPreviewRaf = 0
+    renderEditor()
+  })
+}
+function updateAudioImportPreview(event) {
+  const file = getFirstAudioFileFromDataTransfer(event.dataTransfer)
+  if (!file) {
+    audioImportDrag = null
+    return false
+  }
+  const placement = getAudioImportPlacement(event, file)
+  const key = audioImportCacheKey(file)
+  const cached = audioImportPreviewCache.get(key)
+  audioImportDrag = {
+    active: true,
+    file,
+    fileKey: key,
+    fileName: file.name || 'Audio',
+    trackId: placement.trackId,
+    newTrackIndex: placement.newTrackIndex,
+    startBeat: placement.startBeat,
+    createAudioTrack: placement.createAudioTrack,
+    forceNewTrackAtTop: placement.forceNewTrackAtTop,
+    valid: placement.valid,
+    message: placement.message,
+    status: cached?.metadata ? 'ready' : 'loading',
+    durationSeconds: cached?.metadata?.fileDurationSeconds || minAudioRegionSeconds
+  }
+  if (!cached?.metadata && !cached?.promise) {
+    decodeAudioFileForImport(file).then((metadata) => {
+      if (audioImportDrag?.fileKey !== key) return
+      audioImportDrag = { ...audioImportDrag, status: 'ready', durationSeconds: metadata.fileDurationSeconds }
+      scheduleAudioImportPreviewRender()
+    }).catch(() => {
+      if (audioImportDrag?.fileKey !== key) return
+      audioImportDrag = { ...audioImportDrag, status: 'failed', valid: false, message: 'Could not decode this audio file.' }
+      scheduleAudioImportPreviewRender()
+    })
+  }
+  return true
+}
+async function handleAudioImportDrop(event) {
+  const file = getFirstAudioFileFromDataTransfer(event.dataTransfer)
+  audioImportDrag = null
+  if (!file) return
+  const placement = getAudioImportPlacement(event, file)
+  if (!placement.valid) {
+    recordingStatus = placement.message || 'Drop audio onto an audio track.'
+    renderEditor()
+    return
+  }
+  await createAudioRegionFromFile({ file, trackId: placement.trackId, newTrackIndex: placement.newTrackIndex, timelineStartBeats: placement.startBeat, source: 'import' })
+}
+function updateAssetLibraryImportPreview(event) {
+  const payload = getSouraAssetDragPayload(event.dataTransfer) || activeAssetDragPayload
+  const asset = souraAssetLibrary.getAsset(payload?.assetId)
+  if (!isPreviewableAsset(asset)) { audioImportDrag = null; return false }
+  const placement = getAudioImportPlacement(event, null, asset)
+  audioImportDrag = {
+    active: true,
+    assetId: asset.id,
+    fileName: asset.name || 'Audio',
+    trackId: placement.trackId,
+    newTrackIndex: placement.newTrackIndex,
+    startBeat: placement.startBeat,
+    createAudioTrack: placement.createAudioTrack,
+    forceNewTrackAtTop: placement.forceNewTrackAtTop,
+    valid: placement.valid,
+    message: placement.message,
+    status: 'ready',
+    durationSeconds: Number(asset.audio?.duration || minAudioRegionSeconds)
+  }
+  return true
+}
+async function handleAssetLibraryImportDrop(event) {
+  const payload = getSouraAssetDragPayload(event.dataTransfer) || activeAssetDragPayload
+  const asset = souraAssetLibrary.getAsset(payload?.assetId)
+  audioImportDrag = null
+  activeAssetDragPayload = null
+  if (!isPreviewableAsset(asset)) return
+  const placement = getAudioImportPlacement(event, null, asset)
+  if (!placement.valid) return
+  await insertAssetLibraryAudio(asset.id, { trackId: placement.trackId, newTrackIndex: placement.newTrackIndex, timelineStartBeats: placement.startBeat })
+}
+function cleanupAudioRecordingController() {
+  const controller = audioRecordingController
+  if (!controller) return
+  if (controller.sampleTimer) window.clearInterval(controller.sampleTimer)
+  try { controller.source?.disconnect() } catch {}
+  try { controller.stream?.getTracks?.().forEach((track)=>track.stop()) } catch {}
+  audioRecordingController = null
+}
+function cleanupPendingAudioInputStream() {
+  if (!pendingAudioInputStream) return
+  try { pendingAudioInputStream.getTracks?.().forEach((track)=>track.stop()) } catch {}
+  pendingAudioInputStream = null
+}
+async function finalizeAudioRecording({ keepEmpty = false } = {}) {
+  if (!activeRecording || activeRecording.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const recording = activeRecording
+  const controller = audioRecordingController
+  activeRecording = null
+  if (controller?.mediaRecorder && controller.mediaRecorder.state !== 'inactive') {
+    await new Promise((resolve) => {
+      controller.mediaRecorder.addEventListener('stop', resolve, { once: true })
+      try { controller.mediaRecorder.stop() } catch { resolve() }
+    })
+  }
+  cleanupAudioRecordingController()
+  const chunks = controller?.chunks || []
+  if (!chunks.length && !keepEmpty) {
+    recordingStatus = 'No audio was captured.'
+    renderEditor()
+    return
+  }
+  const blob = new Blob(chunks, { type: recording.audioClip?.contentType || chunks[0]?.type || 'audio/webm' })
+  const clipId = recording.id
+  const now = Date.now()
+  const fileName = `${clipId}.${extensionForAudioType(blob.type || 'audio/webm')}`
+  let storagePath = null
+  let uploadError = ''
+  try {
+    storagePath = await uploadSouraAudioBlob(blob, { clipId })
+  } catch (err) {
+    uploadError = err?.message || 'Audio upload failed.'
+    console.warn('[studioProject] audio recording upload failed; clip remains session-only', err)
+  }
+  const track = tracks.find((item)=>item.id === recording.trackId)
+  const region = cloneRegionForState({
+    ...recording,
+    color: track?.color || recording.color,
+    name: track?.autoNameRegions === false ? '' : (recording.name || `${track?.name || 'Audio'} Take`),
+    endBeat: Math.max(recording.startBeat + 0.25, recording.endBeat || clampBeat(xToBeat(timelineState.playheadX))),
+    audioClip: {
+      ...(recording.audioClip || {}),
+      id: clipId,
+      audioAssetId: clipId,
+      runtimeId: clipId,
+      contentType: blob.type || 'audio/webm',
+      fileName,
+      storagePath,
+      sessionOnly: !storagePath,
+      missingAfterReload: !storagePath,
+      uploadError: uploadError || null,
+      offlineReason: storagePath ? null : 'storage_upload_failed',
+      loadStatus: 'ready',
+      audioReady: true,
+      createdAt: now,
+      updatedAt: now
+    },
+    missingMedia: false
+  })
+  try {
+    const ctx = getAudioContext()
+    const buffer = await blob.arrayBuffer()
+    const audioBuffer = await ctx.decodeAudioData(buffer.slice(0))
+    const fileDurationSeconds = Math.max(minAudioRegionSeconds, audioBuffer.duration)
+    region.fileDurationSeconds = fileDurationSeconds
+    region.durationSeconds = fileDurationSeconds
+    region.visibleDurationSeconds = fileDurationSeconds
+    region.trimStartSeconds = 0
+    region.trimEndSeconds = fileDurationSeconds
+    region.durationBeats = Math.max(0.25, secondsToBeats(fileDurationSeconds))
+    region.endBeat = region.startBeat + region.durationBeats
+    region.waveform = buildAudioWaveformFromBuffer(audioBuffer, { maxPeaks: WAVEFORM_PERSISTED_MAX_PEAKS })
+    region.audioClip = {
+      ...(region.audioClip || {}),
+      id: clipId,
+      audioAssetId: clipId,
+      fileDurationSeconds,
+      runtimeId: clipId,
+      contentType: blob.type || 'audio/webm',
+      fileName,
+      storagePath,
+      sessionOnly: !storagePath,
+      missingAfterReload: !storagePath,
+      audioReady: true,
+      loadStatus: 'ready',
+      loadError: uploadError || null,
+      offlineReason: storagePath ? null : 'storage_upload_failed',
+      createdAt: now,
+      updatedAt: now
+    }
+    region.playbackRate = 1
+    region.stretch = makeDefaultAudioStretch(fileDurationSeconds)
+    const url = URL.createObjectURL(blob)
+    audioClipRuntime.set(region.id, { blob, url, audioBuffer, contentType: blob.type || 'audio/webm', fileDurationSeconds, waveform: region.waveform })
+  } catch (err) {
+    console.warn('[studioProject] audio clip decode failed; clip metadata retained', err)
+  }
+  syncAudioRegionTimeline(region)
+  region.missingMedia = false
+  midiRegions.push(region)
+  applyRegionPlacementWithOverlapResolution([region])
+  selectSingleRegion(region.id)
+  recordingStatus = uploadError ? 'Audio recorded for this session, but upload failed. It may not play after refresh.' : ''
+  pushHistory('record-audio-region', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+async function stopRecordingAndKeep() {
+  if (isCountInRunning && !activeRecording) {
+    isCountInRunning = false
+    countInBeatsRemaining = 0
+    countInTargetX = null
+    countInTargetTrackId = ''
+    cleanupPendingAudioInputStream()
+  }
+  if (activeRecording?.type === 'audio') await finalizeAudioRecording()
+  else finalizeMidiRecording()
+  stopAllTrackInstrumentNotes()
+  stopPlayback()
+  recordingStatus = ''
+  renderEditor()
+}
+function recordMidiNoteOn(trackId, note, velocity = 0.85) {
+  if (!activeRecording || activeRecording.type !== 'midi' || activeRecording.trackId !== trackId) return
+  const key = `${trackId}:${note}`
+  if (activeRecordingNotes.has(key)) return
+  activeRecordingNotes.set(key, { note, velocity, startBeat: clampBeat(xToBeat(timelineState.playheadX)) })
+  refreshMidiRegionDom()
+}
+function recordMidiNoteOff(trackId, note) {
+  if (!activeRecording || activeRecording.type !== 'midi' || activeRecording.trackId !== trackId) return
+  const key = `${trackId}:${note}`
+  const started = activeRecordingNotes.get(key)
+  if (!started) return
+  const endBeat = Math.max(started.startBeat + 0.05, clampBeat(xToBeat(timelineState.playheadX)))
+  activeRecording.notes.push({ note: started.note, velocity: started.velocity, startBeat: started.startBeat, durationBeats: endBeat - started.startBeat })
+  activeRecordingNotes.delete(key)
+  refreshMidiRegionDom()
+}
+function finalizeMidiRecording({ keepEmpty = false } = {}) {
+  if (!activeRecording || activeRecording.type !== 'midi') return
+  const before = captureDawSnapshot()
+  const endBeat = Math.max(activeRecording.startBeat + 0.25, clampBeat(xToBeat(timelineState.playheadX)))
+  activeRecordingNotes.forEach((started, key)=>{
+    activeRecording.notes.push({ note: started.note, velocity: started.velocity, startBeat: started.startBeat, durationBeats: Math.max(0.05, endBeat - started.startBeat) })
+    activeRecordingNotes.delete(key)
+  })
+  const track = tracks.find((item)=>item.id===activeRecording.trackId)
+  if (activeRecording.notes.length || keepEmpty) {
+    const region = { ...activeRecording, endBeat, color: track?.color || activeRecording.color, name: track?.autoNameRegions === false ? '' : (track?.name || '') }
+    midiRegions.push(region)
+    applyRegionPlacementWithOverlapResolution([region])
+    selectSingleRegion(region.id)
+  }
+  activeRecording = null
+  recordingStatus = ''
+  activeRecordingNotes.clear()
+  pushHistory('record-midi-region', before, captureDawSnapshot())
+  scheduleEditorSave()
+}
+function stopAllTrackInstrumentNotes() {
+  activeRecordingNotes.forEach((started)=> {
+    const track = tracks.find((item)=>item.id===activeRecording?.trackId)
+    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, started.note, { immediate: true, live: true })
+  })
+  pressedDawMidiKeys.forEach(({ trackId, note }) => {
+    const track = tracks.find((item)=>item.id===trackId)
+    if (track?.instrument?.pluginInstanceId) dawInstrumentRegistry.noteOff(track.instrument.pluginInstanceId, note, { immediate: true, live: true })
+  })
+  pressedDawMidiKeys.clear()
+  typingPitchTrigger = 0
+  typingModTrigger = 0
+  clearTrackKeyboardNotes()
+}
+function getTrackIndexFromClientY(clientY) {
+  return getTrackLaneFromY(clientY)
+}
+function startMidiRegionDrag(event, regionId) {
+  if (event.button !== 0) return
+  const region = midiRegions.find((item)=>item.id===regionId)
+  const gridEl = app.querySelector('[data-arrangement-grid]')
+  if (!region || !gridEl) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (!regionIsSelected(region.id)) selectSingleRegion(region.id)
+  else selectedMidiRegionId = region.id
+  syncRegionSelectionDom()
+  if (audioStretchRenderState.active || audioPitchRenderState.active || audioPreflightRenderState.active) {
+    if (activeBottomPanel === 'midi-roll') renderEditor()
+    return
+  }
+  const handle = event.target.closest('[data-midi-region-handle]')?.dataset?.midiRegionHandle || 'move'
+  const isAudioRegion = region.type === 'audio'
+  if (isAudioRegion) syncAudioRegionTimeline(region)
+  const altStretch = event.altKey === true || event.getModifierState?.('Alt') === true || activeRegionTool === 'stretch'
+  const editMode = isAudioRegion && ['left', 'right'].includes(handle) && altStretch ? 'stretch' : (isAudioRegion && ['left', 'right'].includes(handle) ? 'trim' : 'move')
+  const originalSourceDurationSeconds = isAudioRegion ? getAudioSourceDurationSeconds(region) : 0
+  const originalStretch = isAudioRegion ? normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: originalSourceDurationSeconds,
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  }) : null
+  const originalVisibleDurationSeconds = isAudioRegion ? getAudioRegionVisibleDurationSeconds(region) : 0
+  midiRegionDrag = {
+    id: region.id,
+    mode: handle,
+    editMode,
+    regionType: region.type || 'midi',
+    hasMoved: false,
+    before: captureDawSnapshot(),
+    startX: event.clientX,
+    startY: event.clientY,
+    scroll: captureArrangementScroll(),
+    startBeat: Number(region.startBeat) || 0,
+    endBeat: Number(region.endBeat) || ((Number(region.startBeat) || 0) + 1),
+    startTrackIndex: Math.max(0, tracks.findIndex((track)=>track.id===region.trackId)),
+    originalNotes: (region.notes || []).map((note)=>({ ...note })),
+    originalTrimStartSeconds: getAudioTrimStartSeconds(region),
+    originalTrimEndSeconds: getAudioTrimEndSeconds(region),
+    originalVisibleDurationSeconds,
+    originalSourceDurationSeconds,
+    originalTargetDurationSeconds: originalStretch?.enabled ? (originalStretch.targetDurationSeconds || originalVisibleDurationSeconds) : originalVisibleDurationSeconds,
+    timelineSecondsPerPixel: Math.max(0.000001, regionPixelsToSeconds(1)),
+    originalStretch
+  }
+  if (editMode === 'stretch') logStretchDebug('pointerdown mode', region.id, {
+    sourceDurationSeconds: originalSourceDurationSeconds,
+    targetDurationSeconds: midiRegionDrag.originalTargetDurationSeconds,
+    speedPercent: originalStretch?.speedPercent || 100,
+    lengthRatio: originalStretch?.lengthRatio || 1,
+    renderStatus: originalStretch?.renderStatus || 'idle',
+    reason: `handle_${handle}`
+  })
+  document.body.classList.add('is-studio-dragging', 'is-midi-region-dragging')
+  if (editMode === 'stretch') document.body.classList.add('is-audio-region-stretching')
+  renderEditor()
+  requestAnimationFrame(() => restoreArrangementScroll(midiRegionDrag?.scroll))
+}
+function applyAudioRegionDrag(event, region) {
+  const drag = midiRegionDrag
+  const minSeconds = minAudioRegionSeconds
+  const pointerBeat = pointerEventToTimelineBeat(event)
+  const fileDuration = getAudioFileDurationSeconds(region)
+  if (drag.mode === 'left') {
+    if (drag.editMode === 'stretch') {
+      const fixedEndBeat = drag.endBeat
+      const deltaSeconds = (event.clientX - drag.startX) * drag.timelineSecondsPerPixel
+      const minTargetSeconds = Math.max(minSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MIN)
+      const maxTargetSeconds = Math.max(minTargetSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MAX)
+      let visibleSeconds = clamp(drag.originalTargetDurationSeconds - deltaSeconds, minTargetSeconds, maxTargetSeconds)
+      const nextStartBeat = Math.max(0, fixedEndBeat - secondsToBeats(visibleSeconds))
+      visibleSeconds = Math.max(minSeconds, beatsToSeconds(fixedEndBeat - nextStartBeat))
+      region.startBeat = nextStartBeat
+      region.stretch = createPendingStretchMetadata({ sourceDurationSeconds: drag.originalSourceDurationSeconds, targetDurationSeconds: visibleSeconds })
+      region.stretchRender = null
+      region.renderedWaveform = null
+      region.visibleDurationSeconds = visibleSeconds
+      logStretchDebug('pointermove', region.id, {
+        sourceDurationSeconds: drag.originalSourceDurationSeconds,
+        targetDurationSeconds: visibleSeconds,
+        speedPercent: region.stretch.speedPercent,
+        lengthRatio: region.stretch.lengthRatio,
+        renderStatus: region.stretch.renderStatus,
+        reason: 'left_edge'
+      })
+    } else {
+      const nextStartBeat = clamp(pointerBeat, drag.startBeat - secondsToBeats(drag.originalTrimStartSeconds), drag.endBeat - secondsToBeats(minSeconds))
+      const deltaSeconds = beatsToSeconds(nextStartBeat - drag.startBeat)
+      const nextTrimStart = clamp(drag.originalTrimStartSeconds + deltaSeconds, 0, drag.originalTrimEndSeconds - minSeconds)
+      region.startBeat = nextStartBeat
+      region.trimStartSeconds = nextTrimStart
+      region.trimEndSeconds = drag.originalTrimEndSeconds
+      region.stretchRender = null
+      region.renderedWaveform = null
+      region.visibleDurationSeconds = Math.max(minSeconds, region.trimEndSeconds - region.trimStartSeconds)
+      region.stretch = makeDefaultAudioStretch(region.visibleDurationSeconds)
+    }
+  } else if (drag.mode === 'right') {
+    const visibleSeconds = Math.max(minSeconds, beatsToSeconds(pointerBeat - drag.startBeat))
+    if (drag.editMode === 'stretch') {
+      const deltaSeconds = (event.clientX - drag.startX) * drag.timelineSecondsPerPixel
+      const minTargetSeconds = Math.max(minSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MIN)
+      const maxTargetSeconds = Math.max(minTargetSeconds, drag.originalSourceDurationSeconds * STRETCH_RATIO_MAX)
+      const targetSeconds = clamp(drag.originalTargetDurationSeconds + deltaSeconds, minTargetSeconds, maxTargetSeconds)
+      region.visibleDurationSeconds = targetSeconds
+      region.stretch = createPendingStretchMetadata({ sourceDurationSeconds: drag.originalSourceDurationSeconds, targetDurationSeconds: targetSeconds })
+      region.stretchRender = null
+      region.renderedWaveform = null
+      logStretchDebug('pointermove', region.id, {
+        sourceDurationSeconds: drag.originalSourceDurationSeconds,
+        targetDurationSeconds: targetSeconds,
+        speedPercent: region.stretch.speedPercent,
+        lengthRatio: region.stretch.lengthRatio,
+        renderStatus: region.stretch.renderStatus,
+        reason: 'right_edge'
+      })
+    } else {
+      const maxVisibleSeconds = Math.max(minSeconds, fileDuration - drag.originalTrimStartSeconds)
+      region.trimStartSeconds = drag.originalTrimStartSeconds
+      region.trimEndSeconds = clamp(drag.originalTrimStartSeconds + visibleSeconds, drag.originalTrimStartSeconds + minSeconds, fileDuration)
+      region.visibleDurationSeconds = Math.min(maxVisibleSeconds, region.trimEndSeconds - region.trimStartSeconds)
+      region.stretch = makeDefaultAudioStretch(region.visibleDurationSeconds)
+      region.stretchRender = null
+      region.renderedWaveform = null
+    }
+  } else {
+    const dx = event.clientX - drag.startX
+    const deltaBeat = regionPixelsToBeats(dx)
+    const originalLength = Math.max(secondsToBeats(minSeconds), drag.endBeat - drag.startBeat)
+    const nextStart = normalizeTimelineStartBeat(drag.startBeat + deltaBeat)
+    region.startBeat = nextStart
+    region.endBeat = nextStart + originalLength
+    region.timelineStartBeats = nextStart
+    region.timelineStartSeconds = getTimelineSecondsAtBeat(nextStart)
+    const nextTrack = tracks[getTrackIndexFromClientY(event.clientY)]
+    if (nextTrack) {
+      region.trackId = nextTrack.id
+      if (!region.independentColor) region.color = nextTrack.color
+    }
+  }
+  syncAudioRegionTimeline(region)
+}
+function applyMidiRegionDrag(event) {
+  if (!midiRegionDrag) return
+  updateTimelineEdgeAutoScroll(event)
+  const region = midiRegions.find((item)=>item.id===midiRegionDrag.id)
+  if (!region) return
+  const dx = event.clientX - midiRegionDrag.startX
+  const dy = event.clientY - midiRegionDrag.startY
+  if (!midiRegionDrag.hasMoved && Math.hypot(dx, dy) < 4) return
+  midiRegionDrag.hasMoved = true
+  const deltaBeat = regionPixelsToBeats(dx)
+  const minLength = 0.25
+  const originalLength = Math.max(minLength, midiRegionDrag.endBeat - midiRegionDrag.startBeat)
+  if (region.type === 'audio') {
+    applyAudioRegionDrag(event, region)
+  } else if (midiRegionDrag.mode === 'left') {
+    const pointerBeat = pointerEventToTimelineBeat(event)
+    region.startBeat = clamp(pointerBeat, 0, midiRegionDrag.endBeat - minLength)
+  } else if (midiRegionDrag.mode === 'right') {
+    const pointerBeat = pointerEventToTimelineBeat(event)
+    region.endBeat = Math.max(midiRegionDrag.startBeat + minLength, pointerBeat)
+  } else {
+    const nextStart = normalizeTimelineStartBeat(midiRegionDrag.startBeat + deltaBeat)
+    region.startBeat = nextStart
+    region.endBeat = nextStart + originalLength
+    const noteDelta = nextStart - midiRegionDrag.startBeat
+    region.notes = midiRegionDrag.originalNotes.map((note)=>({ ...note, startBeat: (Number(note.startBeat) || 0) + noteDelta }))
+    const nextTrack = tracks[getTrackIndexFromClientY(event.clientY)]
+    if (nextTrack) {
+      region.trackId = nextTrack.id
+      if (!region.independentColor) region.color = nextTrack.color
+    }
+  }
+  refreshMidiRegionDom()
+}
+function scheduleMidiRegionDragFrame(event) {
+  pendingMidiRegionDragEvent = { clientX: event.clientX, clientY: event.clientY }
+  if (midiRegionDragRenderRaf) return
+  midiRegionDragRenderRaf = requestAnimationFrame(() => {
+    midiRegionDragRenderRaf = 0
+    const nextEvent = pendingMidiRegionDragEvent
+    pendingMidiRegionDragEvent = null
+    if (nextEvent) applyMidiRegionDrag(nextEvent)
+  })
+}
+function flushPendingMidiRegionDrag() {
+  if (midiRegionDragRenderRaf) {
+    cancelAnimationFrame(midiRegionDragRenderRaf)
+    midiRegionDragRenderRaf = 0
+  }
+  const nextEvent = pendingMidiRegionDragEvent
+  pendingMidiRegionDragEvent = null
+  if (nextEvent) applyMidiRegionDrag(nextEvent)
+}
+function finishMidiRegionDrag() {
+  if (!midiRegionDrag) return
+  flushPendingMidiRegionDrag()
+  stopTimelineEdgeAutoScroll()
+  const didMove = midiRegionDrag.hasMoved
+  const before = midiRegionDrag.before
+  const finished = { id: midiRegionDrag.id, editMode: midiRegionDrag.editMode, regionType: midiRegionDrag.regionType, scroll: midiRegionDrag.scroll }
+  const finishedRegion = midiRegions.find((region)=>region.id === midiRegionDrag.id)
+  if (didMove && finishedRegion) {
+    applyRegionPlacementWithOverlapResolution([finishedRegion])
+    if (finishedRegion.type === 'audio') syncAudioRegionTimeline(finishedRegion)
+  }
+  midiRegionDrag = null
+  document.body.classList.remove('is-studio-dragging', 'is-midi-region-dragging', 'is-audio-region-stretching')
+  if (didMove) {
+    pushHistory('edit-midi-region', before, captureDawSnapshot())
+    scheduleEditorSave()
+    if (finished.editMode === 'stretch') {
+      const region = midiRegions.find((item)=>item.id === finished.id && item.type === 'audio')
+      if (region) logStretchDebug('commit', region, { reason: 'pointerup' })
+    }
+  }
+  renderEditor()
+  requestAnimationFrame(() => restoreArrangementScroll(finished.scroll))
+}
+
+function selectMidiNote(regionId, noteIndex) {
+  const region = midiRegions.find((item)=>item.id === regionId)
+  if (!region?.notes?.[noteIndex]) return
+  midiRollState = { ...(midiRollState || {}), regionId }
+  activeCommandContext = 'midi-editor'
+  selectSingleRegion(regionId)
+  midiRollSelectedNoteIndex = noteIndex
+  midiRollStatus = ''
+  renderEditor()
+}
+function getSelectedAudioRegion() {
+  return midiRegions.find((item)=>item.id === selectedMidiRegionId && item.type === 'audio') || null
+}
+function handleAudioWaveformWheel(event) {
+  const region = getSelectedAudioRegion()
+  if (!region) return
+  event.preventDefault()
+  const viewport = event.currentTarget
+  const rect = viewport?.getBoundingClientRect?.()
+  const anchorRatio = rect?.width ? clamp((event.clientX - rect.left) / rect.width, 0, 1) : 0.5
+  if (event.shiftKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+    const current = normalizeAudioWaveformViewport(region)
+    const delta = ((Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY) / Math.max(1, rect?.width || 320)) * (current.endSeconds - current.startSeconds)
+    panAudioWaveformViewport(region, delta)
+  } else {
+    zoomAudioWaveformViewport(region, event.deltaY < 0 ? 1.18 : 1 / 1.18, anchorRatio)
+  }
+  renderEditor()
+}
+function beginAudioWaveformPan(event) {
+  const region = getSelectedAudioRegion()
+  if (!region || event.button !== 0 || event.target.closest('button, input, select, textarea')) return
+  event.preventDefault()
+  const viewport = normalizeAudioWaveformViewport(region)
+  audioWaveformPanDrag = {
+    regionId: region.id,
+    startX: event.clientX,
+    startStartSeconds: viewport.startSeconds,
+    startEndSeconds: viewport.endSeconds,
+    fullDuration: viewport.fullDuration,
+    width: Math.max(1, event.currentTarget?.getBoundingClientRect?.().width || 1)
+  }
+  document.body.classList.add('is-studio-dragging')
+}
+function applyAudioWaveformPanDrag(event) {
+  if (!audioWaveformPanDrag) return
+  const region = midiRegions.find((item)=>item.id === audioWaveformPanDrag.regionId && item.type === 'audio')
+  if (!region) return
+  const viewLength = audioWaveformPanDrag.startEndSeconds - audioWaveformPanDrag.startStartSeconds
+  const deltaSeconds = -((event.clientX - audioWaveformPanDrag.startX) / audioWaveformPanDrag.width) * viewLength
+  const start = clamp(audioWaveformPanDrag.startStartSeconds + deltaSeconds, 0, Math.max(0, audioWaveformPanDrag.fullDuration - viewLength))
+  setAudioWaveformViewport(region, { startSeconds: start, endSeconds: start + viewLength })
+  renderEditor()
+}
+function updateAudioRegionEditField(region, key, rawValue) {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const edit = normalizeAudioEdit(region.audioEdit)
+  if (key === 'mute' || key === 'loop') edit[key] = rawValue === true
+  else if (['qSwing','qStrength','transposeSemitones','fineTuneCents','gainDb','delayMs','fadeInSeconds','fadeOutSeconds'].includes(key)) edit[key] = Number(rawValue) || 0
+  else if (key === 'qRange') edit[key] = rawValue === '' ? null : Number(rawValue)
+  else if (['quantize','pitchSource','fadeInCurve','fadeOutCurve'].includes(key)) edit[key] = String(rawValue || '')
+  else if (key === 'reverse') {
+    edit.reverse = {
+      ...edit.reverse,
+      enabled: rawValue === true,
+      renderStatus: rawValue === true ? 'needs_render' : 'idle',
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      renderedRuntimeId: null,
+      renderedDurationSeconds: null,
+      lastError: null
+    }
+  }
+  if (key === 'transposeSemitones' || key === 'fineTuneCents') {
+    const totalSemitones = getAudioPitchShiftTotal(edit.transposeSemitones, edit.fineTuneCents)
+    edit.pitchShift = {
+      ...edit.pitchShift,
+      enabled: Math.abs(totalSemitones) > 0.001,
+      totalSemitones,
+      renderStatus: Math.abs(totalSemitones) > 0.001 ? 'needs_render' : 'idle',
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      renderedRuntimeId: null,
+      lastError: null
+    }
+    if (edit.pitchTrace?.renderStatus === 'ready' && edit.pitchTrace.notes?.length) {
+      edit.pitchTrace = { ...edit.pitchTrace, renderStatus: 'needs_render', renderedRuntimeId: null, renderedStoragePath: null, renderedAudioUrl: null, lastError: null }
+    }
+  }
+  region.audioEdit = normalizeAudioEdit(edit)
+  pushHistory('edit-audio-region', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function setAudioRegionPitchTrace(region, patch = {}, historyLabel = 'edit-pitch-trace') {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const edit = normalizeAudioEdit(region.audioEdit)
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: normalizePitchTrace({
+      ...edit.pitchTrace,
+      ...patch,
+      notes: patch.notes || edit.pitchTrace.notes || []
+    })
+  })
+  pushHistory(historyLabel, before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+async function getOriginalAudioRuntimeForRegion(region) {
+  let runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  if (!runtime?.audioBuffer && (region.audioClip?.storagePath || region.audioClip?.downloadUrl)) {
+    await hydrateAudioRegionRuntime(region)
+    runtime = audioClipRuntime.get(region.audioClip?.runtimeId || region.id)
+  }
+  return runtime?.audioBuffer ? {
+    runtime,
+    runtimeId: region.audioClip?.runtimeId || region.id,
+    baseRenderSource: 'original',
+    label: 'original audio',
+    stackedOnGlobalEdits: false,
+    trimStartSeconds: getAudioTrimStartSeconds(region),
+    trimEndSeconds: getAudioTrimEndSeconds(region),
+    stretchRatio: getAudioStretchRatio(region)
+  } : null
+}
+async function resolvePitchTraceBaseRuntime(region, { ensureRendered = false } = {}) {
+  if (!region || region.type !== 'audio') return null
+  const original = await getOriginalAudioRuntimeForRegion(region)
+  if (!original) return null
+  let edit = normalizeAudioEdit(region.audioEdit)
+  let stretch = normalizeAudioStretch(region.stretch, {
+    clipId: region.id,
+    sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+    visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+  })
+  const baseFromRuntime = (runtimeId, baseRenderSource, label) => {
+    const runtime = runtimeId ? audioClipRuntime.get(runtimeId) : null
+    return runtime?.audioBuffer ? {
+      runtime,
+      runtimeId,
+      baseRenderSource,
+      label,
+      stackedOnGlobalEdits: baseRenderSource !== 'original',
+      trimStartSeconds: 0,
+      trimEndSeconds: runtime.audioBuffer.duration,
+      stretchRatio: 1
+    } : null
+  }
+  const pitchActive = Math.abs(Number(edit.pitchShift?.totalSemitones) || 0) > 0.001
+  const stretchIsCombined = stretch.algorithm === 'signalsmith_wasm_pitch_time_v1' || stretch.renderedAudio?.operation === 'combined_pitch_time'
+  if (stretch.enabled) {
+    const stretchRuntimeId = stretch.renderedRuntimeId || `${region.id}:stretch:persisted`
+    if (stretch.renderStatus === 'ready' && (!pitchActive || stretchIsCombined)) {
+      const ready = baseFromRuntime(stretchRuntimeId, stretchIsCombined ? 'combined_wasm_render' : 'global_wasm_render', stretchIsCombined ? 'combined pitch + stretch render' : 'global stretch render')
+      if (ready) return ready
+      if (stretch.renderedStoragePath || stretch.renderedAudioUrl) {
+        await hydrateRenderedAudioRegionRuntime(region)
+        stretch = normalizeAudioStretch(region.stretch, {
+          clipId: region.id,
+          sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+          visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+        })
+        const hydrated = baseFromRuntime(stretch.renderedRuntimeId || stretchRuntimeId, stretchIsCombined ? 'combined_wasm_render' : 'global_wasm_render', stretchIsCombined ? 'combined pitch + stretch render' : 'global stretch render')
+        if (hydrated) return hydrated
+      }
+    }
+    if (ensureRendered) {
+      await renderAudioStretchForRegion(region.id)
+      edit = normalizeAudioEdit(region.audioEdit)
+      stretch = normalizeAudioStretch(region.stretch, {
+        clipId: region.id,
+        sourceDurationSeconds: getAudioSourceDurationSeconds(region),
+        visibleDurationSeconds: getRawAudioRegionVisibleDurationSeconds(region)
+      })
+      const renderedPitchActive = Math.abs(Number(edit.pitchShift?.totalSemitones) || 0) > 0.001
+      const rendered = baseFromRuntime(stretch.renderedRuntimeId || stretchRuntimeId, renderedPitchActive ? 'combined_wasm_render' : 'global_wasm_render', renderedPitchActive ? 'combined pitch + stretch render' : 'global stretch render')
+      if (rendered) return rendered
+      return { ...original, error: stretch.renderError || 'Global stretch render is required before Pitch Trace can stack edits.' }
+    }
+    return original
+  }
+  if (pitchActive) {
+    if (edit.pitchShift.renderStatus === 'ready') {
+      const ready = baseFromRuntime(edit.pitchShift.renderedRuntimeId, 'global_wasm_render', 'global transpose render')
+      if (ready) return ready
+      if (edit.pitchShift.renderedStoragePath || edit.pitchShift.renderedAudioUrl) {
+        await hydrateAudioEditRenderRuntime(region, 'pitchShift')
+        edit = normalizeAudioEdit(region.audioEdit)
+        const hydrated = baseFromRuntime(edit.pitchShift.renderedRuntimeId, 'global_wasm_render', 'global transpose render')
+        if (hydrated) return hydrated
+      }
+    }
+    if (ensureRendered) {
+      await renderAudioPitchShiftForRegion(region.id)
+      edit = normalizeAudioEdit(region.audioEdit)
+      const rendered = baseFromRuntime(edit.pitchShift.renderedRuntimeId, 'global_wasm_render', 'global transpose render')
+      if (rendered) return rendered
+      return { ...original, error: edit.pitchShift.lastError || 'Global transpose render is required before Pitch Trace can stack edits.' }
+    }
+    return original
+  }
+  if (edit.reverse?.enabled) {
+    if (edit.reverse.renderStatus === 'ready') {
+      const ready = baseFromRuntime(edit.reverse.renderedRuntimeId, 'global_wasm_render', 'reverse render')
+      if (ready) return ready
+      if (edit.reverse.renderedStoragePath || edit.reverse.renderedAudioUrl) {
+        await hydrateAudioEditRenderRuntime(region, 'reverse')
+        edit = normalizeAudioEdit(region.audioEdit)
+        const hydrated = baseFromRuntime(edit.reverse.renderedRuntimeId, 'global_wasm_render', 'reverse render')
+        if (hydrated) return hydrated
+      }
+    }
+    if (ensureRendered) {
+      await renderAudioReverseForRegion(region.id)
+      edit = normalizeAudioEdit(region.audioEdit)
+      const rendered = baseFromRuntime(edit.reverse.renderedRuntimeId, 'global_wasm_render', 'reverse render')
+      if (rendered) return rendered
+      return { ...original, error: edit.reverse.lastError || 'Reverse render is required before Pitch Trace can stack edits.' }
+    }
+  }
+  return original
+}
+function getAudioBufferSamplesForPitchTrace(audioBuffer, region, base = null) {
+  const trimStart = Number.isFinite(Number(base?.trimStartSeconds)) ? Number(base.trimStartSeconds) : getAudioTrimStartSeconds(region)
+  const trimEnd = Number.isFinite(Number(base?.trimEndSeconds)) ? Number(base.trimEndSeconds) : getAudioTrimEndSeconds(region)
+  const sampleRate = audioBuffer.sampleRate || 44100
+  const startSample = clamp(Math.floor(trimStart * sampleRate), 0, audioBuffer.length)
+  const endSample = clamp(Math.ceil(trimEnd * sampleRate), startSample + 1, audioBuffer.length)
+  const length = Math.max(1, endSample - startSample)
+  const samples = new Float32Array(length)
+  const channels = Math.max(1, audioBuffer.numberOfChannels || 1)
+  for (let channelIndex = 0; channelIndex < channels; channelIndex += 1) {
+    const channel = audioBuffer.getChannelData(channelIndex)
+    for (let index = 0; index < length; index += 1) samples[index] += (channel[startSample + index] || 0) / channels
+  }
+  return samples
+}
+async function analyzePitchTraceForRegion(regionId) {
+  if (pitchTraceAnalysis.active) return
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  if (!region) return
+  const base = await resolvePitchTraceBaseRuntime(region, { ensureRendered: false })
+  if (!base?.runtime?.audioBuffer) {
+    setAudioRegionPitchTrace(region, {
+      enabled: true,
+      status: 'failed',
+      error: 'Audio must be loaded before Pitch Trace analysis can run.'
+    }, 'pitch-trace-failed')
+    return
+  }
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const requestId = `${region.id}:${Date.now()}`
+  const worker = new Worker(new URL('./studio/audio/pitchTraceWorker.js', import.meta.url), { type: 'module' })
+  pitchTraceAnalysis = { active: true, regionId: region.id, requestId, worker }
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: {
+      ...edit.pitchTrace,
+      enabled: true,
+      status: 'analyzing',
+      progress: 0,
+      error: null,
+      algorithm: PITCH_TRACE_ALGORITHM,
+      analysisVersion: PITCH_TRACE_VERSION
+    }
+  })
+  renderEditor()
+  try {
+    const samples = getAudioBufferSamplesForPitchTrace(base.runtime.audioBuffer, region, base)
+    worker.onmessage = (event) => {
+      const message = event.data || {}
+      if (message.requestId !== requestId) return
+      const target = midiRegions.find((item)=>item.id === region.id && item.type === 'audio')
+      if (!target) return
+      const currentEdit = normalizeAudioEdit(target.audioEdit)
+      if (message.type === 'progress') {
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: { ...currentEdit.pitchTrace, enabled: true, status: 'analyzing', progress: Number(message.progress) || 0 }
+        })
+        renderEditor()
+        return
+      }
+      if (message.type === 'complete') {
+        worker.terminate()
+        pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: {
+            ...currentEdit.pitchTrace,
+            enabled: true,
+            status: 'ready',
+            algorithm: message.algorithm || PITCH_TRACE_ALGORITHM,
+            analysisVersion: PITCH_TRACE_VERSION,
+            analysisQuality: message.analysis?.quality || 'deep',
+            analysisFrameSize: message.analysis?.frameSize || null,
+            analysisHopSize: message.analysis?.hopSize || null,
+            analyzedAt: Date.now(),
+            analysisMode: currentEdit.pitchTrace.analysisMode,
+            sensitivity: currentEdit.pitchTrace.sensitivity,
+            minNoteSeconds: currentEdit.pitchTrace.minNoteSeconds,
+            showLowConfidence: currentEdit.pitchTrace.showLowConfidence,
+            baseRenderSource: base.baseRenderSource,
+            stackedOnGlobalEdits: base.stackedOnGlobalEdits,
+            progress: 1,
+            error: null,
+            renderStatus: 'idle',
+            renderedStoragePath: null,
+            renderedAudioUrl: null,
+            renderedRuntimeId: null,
+            renderedDurationSeconds: null,
+            renderAlgorithm: null,
+            lastError: null,
+            notes: Array.isArray(message.notes) ? message.notes : []
+          }
+        })
+        scheduleEditorSave()
+        renderEditor()
+        return
+      }
+      if (message.type === 'error') {
+        worker.terminate()
+        pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: { ...currentEdit.pitchTrace, enabled: true, status: 'failed', error: message.error || 'Pitch analysis failed.', progress: 0 }
+        })
+        scheduleEditorSave()
+        renderEditor()
+      }
+    }
+    worker.onerror = (error) => {
+      worker.terminate()
+      pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+      const target = midiRegions.find((item)=>item.id === region.id && item.type === 'audio')
+      if (target) {
+        const currentEdit = normalizeAudioEdit(target.audioEdit)
+        target.audioEdit = normalizeAudioEdit({
+          ...currentEdit,
+          pitchTrace: { ...currentEdit.pitchTrace, enabled: true, status: 'failed', error: error?.message || 'Pitch analysis failed.', progress: 0 }
+        })
+        scheduleEditorSave()
+        renderEditor()
+      }
+    }
+    worker.postMessage({
+      type: 'analyze',
+      requestId,
+      samples: samples.buffer,
+      sampleRate: base.runtime.audioBuffer.sampleRate || 44100,
+      bpm: Number(projectState?.bpm || 140),
+      regionStartBeat: Number(region.startBeat || 0),
+      stretchRatio: base.stretchRatio || 1,
+      confidenceThreshold: edit.pitchTrace.confidenceThreshold,
+      analysisMode: edit.pitchTrace.analysisMode,
+      sensitivity: edit.pitchTrace.sensitivity,
+      minNoteSeconds: edit.pitchTrace.minNoteSeconds
+    }, [samples.buffer])
+  } catch (error) {
+    worker.terminate()
+    pitchTraceAnalysis = { active: false, regionId: '', requestId: '', worker: null }
+    setAudioRegionPitchTrace(region, {
+      enabled: true,
+      status: 'failed',
+      error: error?.message || 'Pitch analysis failed.'
+    }, 'pitch-trace-failed')
+  }
+}
+function updateAudioRegionStretchTarget(region, targetDurationSeconds) {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const sourceDurationSeconds = getAudioSourceDurationSeconds(region)
+  const target = Math.max(minAudioRegionSeconds, Number(targetDurationSeconds) || sourceDurationSeconds)
+  const math = getAudioStretchMath({ ...region, stretch: { ...region.stretch, enabled: true, sourceDurationSeconds, targetDurationSeconds: target } }, target)
+  region.visibleDurationSeconds = target
+  region.durationSeconds = target
+  region.durationBeats = secondsToBeats(target)
+  region.endBeat = Number(region.startBeat || 0) + region.durationBeats
+  region.stretch = createPendingStretchMetadata({ sourceDurationSeconds, targetDurationSeconds: target })
+  region.stretchRender = null
+  region.renderedWaveform = null
+  syncAudioRegionTimeline(region)
+  logStretchDebug('control change', region.id, {
+    sourceDurationSeconds,
+    targetDurationSeconds: target,
+    speedPercent: math.speedPercent,
+    lengthRatio: math.lengthRatio,
+    renderStatus: region.stretch.renderStatus,
+    reason: math.supported ? 'target_update' : 'validation_error'
+  })
+  pushHistory('stretch-audio-region', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function enableAudioRegionStretch(region) {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const sourceDuration = Math.max(minAudioRegionSeconds, getAudioSourceDurationSeconds(region))
+  const visibleDuration = Math.max(minAudioRegionSeconds, getRawAudioRegionVisibleDurationSeconds(region) || sourceDuration)
+  region.visibleDurationSeconds = visibleDuration
+  region.durationSeconds = visibleDuration
+  region.durationBeats = secondsToBeats(visibleDuration)
+  region.endBeat = Number(region.startBeat || 0) + region.durationBeats
+  region.stretch = createPendingStretchMetadata({ sourceDurationSeconds: sourceDuration, targetDurationSeconds: visibleDuration })
+  region.stretchRender = null
+  region.renderedWaveform = null
+  syncAudioRegionTimeline(region)
+  logStretchDebug('control change', region.id, {
+    sourceDurationSeconds: sourceDuration,
+    targetDurationSeconds: visibleDuration,
+    speedPercent: region.stretch.speedPercent,
+    lengthRatio: region.stretch.lengthRatio,
+    renderStatus: region.stretch.renderStatus,
+    reason: 'enable'
+  })
+  pushHistory('enable-audio-stretch', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function resetAudioRegionStretch(region) {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const sourceDuration = getAudioSourceDurationSeconds(region)
+  region.visibleDurationSeconds = sourceDuration
+  region.durationSeconds = sourceDuration
+  region.durationBeats = secondsToBeats(sourceDuration)
+  region.endBeat = Number(region.startBeat || 0) + region.durationBeats
+  region.stretch = makeDefaultAudioStretch(sourceDuration)
+  region.stretchRender = null
+  region.renderedWaveform = null
+  syncAudioRegionTimeline(region)
+  logStretchDebug('control change', region.id, {
+    sourceDurationSeconds: sourceDuration,
+    targetDurationSeconds: sourceDuration,
+    speedPercent: 100,
+    lengthRatio: 1,
+    renderStatus: 'idle',
+    reason: 'reset'
+  })
+  pushHistory('reset-audio-stretch', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function getMidiRollSnapValue() {
+  return Math.max(0.03125, Number(midiRollState?.quantize || 0.25) || 0.25)
+}
+function getSelectedMidiRollNoteIndices(region = getMidiRollRegion()) {
+  if (!region?.notes?.length) return []
+  const indices = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  return [...new Set(indices)].filter((index) => Number.isInteger(index) && region.notes[index]).sort((a, b) => a - b)
+}
+function mutateSelectedMidiNote(type, mutator) {
+  const region = getMidiRollRegion()
+  const indices = getSelectedMidiRollNoteIndices(region)
+  if (!region || !indices.length) return
+  commitHistoryMutation(type, () => {
+    indices.forEach((index) => {
+      const note = region.notes[index]
+      if (note) mutator(note, region, index)
+    })
+  })
+}
+function deleteSelectedMidiNote() {
+  const region = getMidiRollRegion()
+  const selected = getSelectedMidiRollNoteIndices(region)
+  if (!region || !selected.some((index) => region.notes?.[index])) return false
+  commitHistoryMutation('delete-midi-note', () => {
+    selected.sort((a, b) => b - a).forEach((index) => {
+      if (region.notes?.[index]) region.notes.splice(index, 1)
+    })
+    midiRollSelectedNoteIndex = null
+    midiRollSelectedNoteIndices = []
+  })
+  return true
+}
+function isMidiEditorCommandContext() {
+  return activeCommandContext === 'midi-editor' && activeBottomPanel === 'midi-roll' && !!getMidiRollRegion()
+}
+function selectAllMidiRollNotes() {
+  const region = getMidiRollRegion()
+  if (!region?.notes?.length) return false
+  midiRollSelectedNoteIndices = region.notes.map((_, index)=>index)
+  midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+  midiRollStatus = `Selected ${midiRollSelectedNoteIndices.length} notes.`
+  renderEditor()
+  return true
+}
+function copySelectedMidiRollNotes() {
+  const region = getMidiRollRegion()
+  const indices = getSelectedMidiRollNoteIndices(region)
+  const notes = [...new Set(indices)].map((index)=>region?.notes?.[index]).filter(Boolean)
+  if (!region || !notes.length) return false
+  const earliestStartBeat = Math.min(...notes.map((note)=>Number(note.startBeat) || Number(region.startBeat) || 0))
+  midiNoteClipboard = {
+    type: 'midi-notes',
+    earliestStartBeat,
+    notes: notes.map((note)=>({
+      note: { ...note, ...(note.notation ? { notation: normalizeNoteNotation(note.notation) } : {}) },
+      relativeStartBeat: (Number(note.startBeat) || earliestStartBeat) - earliestStartBeat
+    }))
+  }
+  midiRollStatus = `Copied ${notes.length} note${notes.length === 1 ? '' : 's'}.`
+  renderEditor()
+  return true
+}
+function pasteSelectedMidiRollNotes() {
+  const region = getMidiRollRegion()
+  if (!region || !midiNoteClipboard?.notes?.length) return false
+  const regionStart = Number(region.startBeat) || 0
+  const rawPasteBeat = clamp(xToBeat(timelineState.playheadX), regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + 1))
+  const pasteBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(rawPasteBeat, regionStart) : rawPasteBeat
+  commitHistoryMutation('paste-midi-notes', () => {
+    const created = []
+    const incoming = midiNoteClipboard.notes.map((item) => {
+      const source = item.note || {}
+      const rawStartBeat = pasteBeat + Number(item.relativeStartBeat || 0)
+      const startBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(rawStartBeat, regionStart) : rawStartBeat
+      const durationBeats = Math.max(0.05, Number(source.durationBeats) || 0.25)
+      const note = { ...source, ...(source.notation ? { notation: normalizeNoteNotation(source.notation) } : {}), id: makeInsertId('note'), startBeat, durationBeats }
+      created.push(note)
+      return note
+    })
+    region.notes = [...(region.notes || []), ...incoming].sort((a,b)=>(Number(a.startBeat)||0)-(Number(b.startBeat)||0) || (Number(a.note)||0)-(Number(b.note)||0))
+    const maxEnd = Math.max(Number(region.endBeat) || regionStart, ...incoming.map((note)=>(Number(note.startBeat)||regionStart) + Math.max(0.05, Number(note.durationBeats)||0.25)))
+    region.endBeat = Math.max(Number(region.endBeat) || regionStart + 0.25, maxEnd)
+    region.durationBeats = region.endBeat - regionStart
+    midiRollSelectedNoteIndices = created.map((createdNote)=>region.notes.indexOf(createdNote)).filter((index)=>index >= 0)
+    midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    midiRollStatus = `Pasted ${incoming.length} note${incoming.length === 1 ? '' : 's'}.`
+  })
+  return true
+}
+function getMidiRollTargetNoteIndices() {
+  const region = getMidiRollRegion()
+  if (!region?.notes?.length) return []
+  const selected = midiRollSelectedNoteIndices.length ? midiRollSelectedNoteIndices : (Number.isInteger(midiRollSelectedNoteIndex) ? [midiRollSelectedNoteIndex] : [])
+  const validSelected = [...new Set(selected)].filter((index) => Number.isInteger(index) && region.notes[index])
+  return validSelected.length ? validSelected : region.notes.map((_, index) => index)
+}
+function quantizeSelectedMidiNote() {
+  const region = getMidiRollRegion()
+  const indices = getMidiRollTargetNoteIndices()
+  if (!region?.notes?.length) {
+    midiRollStatus = 'No notes available to quantize.'
+    renderEditor()
+    return
+  }
+  const selectedCount = (midiRollSelectedNoteIndices.length || Number.isInteger(midiRollSelectedNoteIndex)) ? indices.length : 0
+  const snap = getMidiRollSnapValue()
+  commitHistoryMutation('quantize-midi-notes', () => {
+    indices.forEach((index) => {
+      const note = region.notes[index]
+      if (!note) return
+      note.startBeat = clampBeat(snapBeat(Number(note.startBeat) || 0, snap))
+      note.durationBeats = Math.max(snap, snapBeat(Number(note.durationBeats) || snap, snap))
+    })
+    midiRollStatus = selectedCount ? `Quantized ${indices.length} selected note${indices.length === 1 ? '' : 's'}.` : `Quantized ${indices.length} clip note${indices.length === 1 ? '' : 's'}.`
+  })
+}
+function nudgeSelectedMidiRollNotes(event) {
+  const region = getMidiRollRegion()
+  const indices = getSelectedMidiRollNoteIndices(region)
+  if (!region || !indices.length || !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) return false
+  event.preventDefault()
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 0.25)
+  const rows = midiRollPitchRows(region)
+  const minPitch = rows[rows.length - 1]
+  const maxPitch = rows[0]
+  const pitchDelta = event.code === 'ArrowUp' ? 1 : event.code === 'ArrowDown' ? -1 : 0
+  const beatStep = event.shiftKey ? MIDI_ROLL_FINE_BEAT_STEP : getMidiRollEditSnapValue()
+  const beatDelta = event.code === 'ArrowLeft' ? -beatStep : event.code === 'ArrowRight' ? beatStep : 0
+  const snapshots = indices.map((index)=> {
+    const note = region.notes[index]
+    return {
+      index,
+      startBeat: Number(note.startBeat) || regionStart,
+      durationBeats: Math.max(0.05, Number(note.durationBeats) || 0.25),
+      note: Number(note.note) || 60
+    }
+  })
+  const minBeatDelta = Math.max(...snapshots.map((snapshot)=>regionStart - snapshot.startBeat))
+  const maxBeatDelta = Math.min(...snapshots.map((snapshot)=>regionEnd - snapshot.durationBeats - snapshot.startBeat))
+  const clampedBeatDelta = beatDelta ? clamp(beatDelta, minBeatDelta, maxBeatDelta) : 0
+  const minPitchDelta = Math.max(...snapshots.map((snapshot)=>minPitch - snapshot.note))
+  const maxPitchDelta = Math.min(...snapshots.map((snapshot)=>maxPitch - snapshot.note))
+  const clampedPitchDelta = pitchDelta ? clamp(pitchDelta, minPitchDelta, maxPitchDelta) : 0
+  if (!clampedBeatDelta && !clampedPitchDelta) return true
+  commitHistoryMutation('nudge-midi-notes', () => {
+    snapshots.forEach((snapshot) => {
+      const note = region.notes[snapshot.index]
+      if (!note) return
+      note.startBeat = snapBeat(snapshot.startBeat + clampedBeatDelta, MIDI_ROLL_FINE_BEAT_STEP)
+      note.note = clamp(snapshot.note + clampedPitchDelta, minPitch, maxPitch)
+    })
+    midiRollSelectedNoteIndices = snapshots.map((snapshot)=>snapshot.index).filter((index)=>region.notes[index])
+    midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    midiRollStatus = `${clampedPitchDelta ? 'Pitch' : 'Time'} nudged ${snapshots.length} note${snapshots.length === 1 ? '' : 's'}.`
+  })
+  const auditionIndex = midiRollSelectedNoteIndex ?? midiRollSelectedNoteIndices[0]
+  auditionMidiRollNote(region.notes[auditionIndex], region)
+  return true
+}
+function beginMidiNoteDrag(event, regionId, noteIndex) {
+  const region = midiRegions.find((item)=>item.id === regionId)
+  const note = region?.notes?.[noteIndex]
+  const grid = app.querySelector('[data-midi-roll-grid]')
+  if (!region || !note || !grid) return
+  event.preventDefault()
+  event.stopPropagation()
+  activeCommandContext = 'midi-editor'
+  selectSingleRegion(regionId)
+  auditionMidiRollNote(note, region)
+  if (event.shiftKey) {
+    const selected = new Set(midiRollSelectedNoteIndices)
+    if (selected.has(noteIndex)) selected.delete(noteIndex)
+    else selected.add(noteIndex)
+    midiRollSelectedNoteIndices = [...selected].sort((a, b) => a - b)
+    midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+    midiRollStatus = ''
+    renderEditor()
+    return
+  }
+  const existingSelection = getSelectedMidiRollNoteIndices(region)
+  if (!existingSelection.includes(noteIndex)) {
+    midiRollSelectedNoteIndex = noteIndex
+    midiRollSelectedNoteIndices = [noteIndex]
+  } else {
+    midiRollSelectedNoteIndex = noteIndex
+    midiRollSelectedNoteIndices = existingSelection
+  }
+  midiRollStatus = ''
+  const handle = event.target.closest('[data-midi-note-handle]')?.dataset?.midiNoteHandle || 'move'
+  const selectedIndices = getSelectedMidiRollNoteIndices(region)
+  midiNoteDrag = {
+    regionId,
+    noteIndex,
+    mode: handle,
+    before: captureDawSnapshot(),
+    startX: event.clientX,
+    startY: event.clientY,
+    startBeat: Number(note.startBeat) || Number(region.startBeat) || 0,
+    durationBeats: Math.max(0.05, Number(note.durationBeats) || 0.25),
+    note: Number(note.note) || 60,
+    noteSnapshots: selectedIndices.map((index) => {
+      const selectedNote = region.notes[index]
+      return {
+        index,
+        startBeat: Number(selectedNote.startBeat) || Number(region.startBeat) || 0,
+        durationBeats: Math.max(0.05, Number(selectedNote.durationBeats) || 0.25),
+        note: Number(selectedNote.note) || 60,
+        lastAuditionNote: Number(selectedNote.note) || 60
+      }
+    }),
+    hasMoved: false
+  }
+  document.body.classList.add('is-studio-dragging', 'is-midi-note-dragging')
+  renderEditor()
+}
+function applyMidiNoteDrag(event) {
+  if (!midiNoteDrag) return
+  const region = midiRegions.find((item)=>item.id === midiNoteDrag.regionId)
+  const note = region?.notes?.[midiNoteDrag.noteIndex]
+  if (!region || !note) return
+  const dx = event.clientX - midiNoteDrag.startX
+  const dy = event.clientY - midiNoteDrag.startY
+  if (!midiNoteDrag.hasMoved && Math.hypot(dx, dy) < 3) return
+  midiNoteDrag.hasMoved = true
+  const snap = getMidiRollEditSnapValue()
+  const rawDeltaBeat = regionWidthToMusicalDuration(dx, midiRollBeatWidth)
+  const deltaBeat = isSnapEnabled ? snapBeat(rawDeltaBeat, snap) : rawDeltaBeat
+  const pitchDelta = -Math.round(dy / midiRollRowHeight)
+  const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 0.25)
+  const snapshots = midiNoteDrag.noteSnapshots?.length ? midiNoteDrag.noteSnapshots : [{ index: midiNoteDrag.noteIndex, startBeat: midiNoteDrag.startBeat, durationBeats: midiNoteDrag.durationBeats, note: midiNoteDrag.note, lastAuditionNote: midiNoteDrag.note }]
+  const rows = midiRollPitchRows(region)
+  const minPitch = rows[rows.length - 1]
+  const maxPitch = rows[0]
+  if (midiNoteDrag.mode === 'left') {
+    const clampedDelta = Math.max(...snapshots.map((snapshot) => regionStart - snapshot.startBeat), Math.min(deltaBeat, ...snapshots.map((snapshot) => snapshot.durationBeats - 0.05)))
+    snapshots.forEach((snapshot) => {
+      const selectedNote = region.notes[snapshot.index]
+      if (!selectedNote) return
+      const rawStart = snapshot.startBeat + clampedDelta
+      const nextStart = isSnapEnabled ? snapBeatToRegionEditorGrid(rawStart) : rawStart
+      const noteEnd = snapshot.startBeat + snapshot.durationBeats
+      selectedNote.startBeat = clamp(nextStart, regionStart, noteEnd - 0.05)
+      selectedNote.durationBeats = Math.max(0.05, noteEnd - selectedNote.startBeat)
+    })
+  } else if (midiNoteDrag.mode === 'right') {
+    const clampedDelta = Math.min(deltaBeat, ...snapshots.map((snapshot) => regionEnd - (snapshot.startBeat + snapshot.durationBeats)))
+    snapshots.forEach((snapshot) => {
+      const selectedNote = region.notes[snapshot.index]
+      if (!selectedNote) return
+      const rawEnd = snapshot.startBeat + snapshot.durationBeats + clampedDelta
+      const nextEnd = isSnapEnabled ? snapBeatToRegionEditorGrid(rawEnd) : rawEnd
+      selectedNote.durationBeats = Math.max(0.05, clamp(nextEnd, snapshot.startBeat + 0.05, regionEnd) - snapshot.startBeat)
+    })
+  } else {
+    const minStartDelta = Math.max(...snapshots.map((snapshot) => regionStart - snapshot.startBeat))
+    const maxStartDelta = Math.min(...snapshots.map((snapshot) => regionEnd - snapshot.durationBeats - snapshot.startBeat))
+    const clampedBeatDelta = clamp(deltaBeat, minStartDelta, maxStartDelta)
+    const minPitchDelta = Math.max(...snapshots.map((snapshot) => minPitch - snapshot.note))
+    const maxPitchDelta = Math.min(...snapshots.map((snapshot) => maxPitch - snapshot.note))
+    const clampedPitchDelta = clamp(pitchDelta, minPitchDelta, maxPitchDelta)
+    snapshots.forEach((snapshot) => {
+      const selectedNote = region.notes[snapshot.index]
+      if (!selectedNote) return
+      const rawStart = snapshot.startBeat + clampedBeatDelta
+      selectedNote.startBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(rawStart) : rawStart
+      selectedNote.note = clamp(snapshot.note + clampedPitchDelta, minPitch, maxPitch)
+      if (selectedNote.note !== snapshot.lastAuditionNote) {
+        snapshot.lastAuditionNote = selectedNote.note
+        auditionMidiRollNote(selectedNote, region)
+      }
+    })
+  }
+  refreshMidiRegionDom()
+  updateMidiRollNoteDom(region, snapshots.map((snapshot)=>snapshot.index))
+}
+function finishMidiNoteDrag() {
+  if (!midiNoteDrag) return
+  const didMove = midiNoteDrag.hasMoved
+  const before = midiNoteDrag.before
+  midiNoteDrag = null
+  document.body.classList.remove('is-studio-dragging', 'is-midi-note-dragging')
+  if (didMove) {
+    pushHistory('edit-midi-note', before, captureDawSnapshot())
+    scheduleEditorSave()
+  }
+  renderEditor()
+}
+function beginPitchTraceNoteDrag(event, regionId, noteId) {
+  const region = midiRegions.find((item)=>item.id === regionId && item.type === 'audio')
+  const edit = normalizeAudioEdit(region?.audioEdit)
+  const note = edit.pitchTrace.notes.find((item)=>item.id === noteId)
+  if (!region || !note) return
+  event.preventDefault()
+  event.stopPropagation()
+  selectSingleRegion(regionId)
+  pitchTraceSelectedNoteId = noteId
+  const visibleNotes = edit.pitchTrace.notes.filter((item)=>item.confidence >= edit.pitchTrace.confidenceThreshold)
+  const noteValues = visibleNotes.map((item)=>Number(item.editedMidiNote ?? item.midiNote)).filter(Number.isFinite)
+  const minNote = Math.max(0, Math.min(48, ...(noteValues.length ? noteValues : [48])) - 2)
+  const maxNote = Math.min(127, Math.max(72, ...(noteValues.length ? noteValues : [72])) + 2)
+  const handle = event.target.closest('[data-pitch-trace-note-handle]')?.dataset?.pitchTraceNoteHandle || 'pitch'
+  pitchTraceNoteDrag = {
+    regionId,
+    noteId,
+    mode: handle,
+    before: captureDawSnapshot(),
+    startX: event.clientX,
+    startY: event.clientY,
+    startSeconds: Number(note.startSeconds) || 0,
+    durationSeconds: Math.max(0.03, Number(note.durationSeconds) || 0.03),
+    startEditedMidiNote: Number(note.editedMidiNote) || Number(note.midiNote) || 60,
+    visibleDurationSeconds: Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region)),
+    minNote,
+    maxNote,
+    rowCount: Math.max(1, maxNote - minNote + 1),
+    hasMoved: false
+  }
+  document.body.classList.add('is-studio-dragging', 'is-pitch-trace-note-dragging')
+  app.querySelectorAll('[data-pitch-trace-note]').forEach((node)=>node.classList.toggle('is-selected', node.dataset.pitchTraceNote === noteId))
+}
+function applyPitchTraceNoteDrag(event) {
+  if (!pitchTraceNoteDrag) return
+  const region = midiRegions.find((item)=>item.id === pitchTraceNoteDrag.regionId && item.type === 'audio')
+  if (!region) return
+  const dy = event.clientY - pitchTraceNoteDrag.startY
+  const dx = event.clientX - pitchTraceNoteDrag.startX
+  if (!pitchTraceNoteDrag.hasMoved && Math.hypot(dx, dy) < 3) return
+  const pitchDelta = -Math.round(dy / 14)
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const notes = edit.pitchTrace.notes.map((note)=> {
+    if (note.id !== pitchTraceNoteDrag.noteId) return note
+    if (pitchTraceNoteDrag.mode === 'left' || pitchTraceNoteDrag.mode === 'right') {
+      const deltaBeat = regionWidthToMusicalDuration(dx, midiRollBeatWidth)
+      if (pitchTraceNoteDrag.mode === 'left') {
+        const originalStartBeat = audioRegionLocalSecondsToProjectBeat(region, pitchTraceNoteDrag.startSeconds)
+        const projectBeat = originalStartBeat + deltaBeat
+        const nextProjectBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(projectBeat) : projectBeat
+        const nextStart = clamp(projectBeatToAudioRegionLocalSeconds(region, nextProjectBeat), 0, pitchTraceNoteDrag.startSeconds + pitchTraceNoteDrag.durationSeconds - 0.03)
+        const nextDuration = Math.max(0.03, pitchTraceNoteDrag.startSeconds + pitchTraceNoteDrag.durationSeconds - nextStart)
+        return {
+          ...note,
+          startSeconds: nextStart,
+          durationSeconds: nextDuration,
+          startBeat: audioRegionLocalSecondsToProjectBeat(region, nextStart),
+          durationBeats: audioRegionLocalSecondsToProjectBeat(region, nextStart + nextDuration) - audioRegionLocalSecondsToProjectBeat(region, nextStart),
+          renderStatus: 'needs_render'
+        }
+      }
+      const originalEndBeat = audioRegionLocalSecondsToProjectBeat(region, pitchTraceNoteDrag.startSeconds + pitchTraceNoteDrag.durationSeconds)
+      const projectEndBeat = originalEndBeat + deltaBeat
+      const nextProjectEndBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(projectEndBeat) : projectEndBeat
+      const nextEnd = projectBeatToAudioRegionLocalSeconds(region, nextProjectEndBeat)
+      const nextDuration = Math.max(0.03, nextEnd - pitchTraceNoteDrag.startSeconds)
+      return {
+        ...note,
+        durationSeconds: nextDuration,
+        durationBeats: audioRegionLocalSecondsToProjectBeat(region, pitchTraceNoteDrag.startSeconds + nextDuration) - audioRegionLocalSecondsToProjectBeat(region, pitchTraceNoteDrag.startSeconds),
+        renderStatus: 'needs_render'
+      }
+    }
+    const nextMidi = clamp(pitchTraceNoteDrag.startEditedMidiNote + pitchDelta, 0, 127)
+    const edited = {
+      ...note,
+      editedMidiNote: nextMidi,
+      midiNote: nextMidi,
+      noteName: formatMidiNoteName(nextMidi),
+      editedFrequencyHz: midiNoteToFrequency(nextMidi),
+      frequencyHz: midiNoteToFrequency(nextMidi),
+      renderStatus: nextMidi === note.originalMidiNote && !note.muted ? 'idle' : 'needs_render'
+    }
+    return edited
+  })
+  const nextTrace = normalizePitchTrace({
+    ...edit.pitchTrace,
+    notes,
+    renderStatus: getPitchTraceEditedNoteCount({ notes }) ? 'needs_render' : 'idle',
+    renderedRuntimeId: null,
+    renderedStoragePath: null,
+    renderedAudioUrl: null,
+    lastError: null
+  })
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: nextTrace })
+  pitchTraceNoteDrag.hasMoved = true
+  const noteEl = app.querySelector(`[data-pitch-trace-note="${CSS.escape(String(pitchTraceNoteDrag.noteId))}"]`)
+  if (noteEl) {
+    const editedNote = notes.find((note)=>note.id === pitchTraceNoteDrag.noteId)
+    if (editedNote) {
+      const noteStartBeat = audioRegionLocalSecondsToProjectBeat(region, editedNote.startSeconds)
+      const noteEndBeat = audioRegionLocalSecondsToProjectBeat(region, editedNote.startSeconds + editedNote.durationSeconds)
+      const noteLeft = positionToRegionEditorX(noteStartBeat, region)
+      noteEl.style.left = `${noteLeft.toFixed(3)}px`
+      noteEl.style.width = `${Math.max(8, positionToRegionEditorX(noteEndBeat, region) - noteLeft).toFixed(3)}px`
+      const visibleMidi = clamp(editedNote.editedMidiNote, pitchTraceNoteDrag.minNote, pitchTraceNoteDrag.maxNote)
+      const row = pitchTraceNoteDrag.maxNote - visibleMidi
+      noteEl.style.top = `${((row / pitchTraceNoteDrag.rowCount) * 100).toFixed(3)}%`
+      noteEl.classList.toggle('is-edited', editedNote.editedMidiNote !== editedNote.originalMidiNote || editedNote.source === 'manual')
+      noteEl.querySelector('b')?.replaceChildren(document.createTextNode(formatMidiNoteName(editedNote.editedMidiNote)))
+    }
+  }
+}
+function finishPitchTraceNoteDrag() {
+  if (!pitchTraceNoteDrag) return
+  const didMove = pitchTraceNoteDrag.hasMoved
+  const before = pitchTraceNoteDrag.before
+  pitchTraceNoteDrag = null
+  document.body.classList.remove('is-studio-dragging', 'is-pitch-trace-note-dragging')
+  if (didMove) {
+    pushHistory('edit-pitch-trace-note', before, captureDawSnapshot())
+    scheduleEditorSave()
+  }
+  renderEditor()
+}
+function mutatePitchTraceNote(region, noteId, mutator, historyLabel = 'edit-pitch-trace-note') {
+  if (!region || region.type !== 'audio') return
+  const before = captureDawSnapshot()
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const notes = edit.pitchTrace.notes.map((note)=> {
+    if (note.id !== noteId) return note
+    const next = { ...note }
+    mutator?.(next)
+    next.editedMidiNote = clamp(Math.round(Number(next.editedMidiNote ?? next.midiNote ?? next.originalMidiNote) || 60), 0, 127)
+    next.midiNote = next.editedMidiNote
+    next.noteName = formatMidiNoteName(next.editedMidiNote)
+    next.editedFrequencyHz = midiNoteToFrequency(next.editedMidiNote)
+    next.frequencyHz = next.editedFrequencyHz
+    next.renderStatus = next.editedMidiNote === next.originalMidiNote && !next.muted ? 'idle' : 'needs_render'
+    return next
+  })
+  const renderStatus = getPitchTraceEditedNoteCount({ notes }) ? 'needs_render' : 'idle'
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: {
+      ...edit.pitchTrace,
+      notes,
+      renderStatus,
+      renderedRuntimeId: null,
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      lastError: null
+    }
+  })
+  pushHistory(historyLabel, before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function pitchTracePointFromEvent(event) {
+  const grid = event.target.closest('[data-pitch-trace-grid]') || app.querySelector('[data-pitch-trace-grid]')
+  const view = app.querySelector('[data-pitch-trace-view]')
+  const rect = grid?.getBoundingClientRect?.()
+  if (!grid || !view || !rect?.width || !rect?.height) return null
+  const minNote = Number(view.dataset.pitchMin) || 48
+  const maxNote = Number(view.dataset.pitchMax) || 72
+  const visibleDuration = Math.max(minAudioRegionSeconds, Number(view.dataset.pitchDuration) || minAudioRegionSeconds)
+  const localX = clamp(event.clientX - rect.left, 0, rect.width)
+  const yRatio = clamp((event.clientY - rect.top) / rect.height, 0, 1)
+  const midiNote = clamp(Math.round(maxNote - (yRatio * (maxNote - minNote + 1))), 0, 127)
+  const region = getSelectedAudioRegion()
+  if (!region) return null
+  let projectBeat = regionEditorXToPosition(localX, region)
+  if (isSnapEnabled) projectBeat = snapBeatToRegionEditorGrid(projectBeat)
+  const seconds = projectBeatToAudioRegionLocalSeconds(region, projectBeat)
+  return { projectBeat, seconds: clamp(seconds, 0, visibleDuration), midiNote, visibleDuration }
+}
+function beginPitchTraceNoteDraw(event) {
+  if (pitchTraceTool !== 'pencil' || event.button !== 0 || event.target.closest('[data-pitch-trace-note]')) return
+  const region = getSelectedAudioRegion()
+  const point = pitchTracePointFromEvent(event)
+  if (!region || !point) return
+  event.preventDefault()
+  event.stopPropagation()
+  const before = captureDawSnapshot()
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const id = makeInsertId('pitch-note')
+  const initialDurationSeconds = Math.max(0.12, beatsToSeconds(getRegionEditorMusicalGridStep()))
+  const note = {
+    id,
+    startSeconds: point.seconds,
+    durationSeconds: initialDurationSeconds,
+    startBeat: point.projectBeat,
+    durationBeats: Math.max(0.001, audioRegionLocalSecondsToProjectBeat(region, point.seconds + initialDurationSeconds) - point.projectBeat),
+    originalMidiNote: point.midiNote,
+    editedMidiNote: point.midiNote,
+    originalFrequencyHz: midiNoteToFrequency(point.midiNote),
+    editedFrequencyHz: midiNoteToFrequency(point.midiNote),
+    midiNote: point.midiNote,
+    noteName: formatMidiNoteName(point.midiNote),
+    frequencyHz: midiNoteToFrequency(point.midiNote),
+    confidence: 1,
+    centsOffset: 0,
+    gainDb: 0,
+    pitchDriftStartCents: 0,
+    pitchDriftEndCents: 0,
+    vibratoAmount: 0,
+    source: 'manual',
+    lockedToAnalysis: false,
+    muted: false,
+    renderStatus: 'needs_render'
+  }
+  region.audioEdit = normalizeAudioEdit({
+    ...edit,
+    pitchTrace: {
+      ...edit.pitchTrace,
+      enabled: true,
+      status: edit.pitchTrace.status === 'idle' ? 'ready' : edit.pitchTrace.status,
+      renderStatus: 'needs_render',
+      renderedRuntimeId: null,
+      renderedStoragePath: null,
+      renderedAudioUrl: null,
+      lastError: null,
+      notes: [...edit.pitchTrace.notes, note]
+    }
+  })
+  pitchTraceSelectedNoteId = id
+  pitchTraceNoteDraw = { regionId: region.id, noteId: id, before, startSeconds: point.seconds, visibleDurationSeconds: point.visibleDuration }
+  renderEditor()
+}
+function applyPitchTraceNoteDraw(event) {
+  if (!pitchTraceNoteDraw) return
+  const region = midiRegions.find((item)=>item.id === pitchTraceNoteDraw.regionId && item.type === 'audio')
+  const point = pitchTracePointFromEvent(event)
+  if (!region || !point) return
+  const edit = normalizeAudioEdit(region.audioEdit)
+  const start = Math.min(pitchTraceNoteDraw.startSeconds, point.seconds)
+  const end = Math.max(pitchTraceNoteDraw.startSeconds + 0.03, point.seconds)
+  const notes = edit.pitchTrace.notes.map((note)=>note.id === pitchTraceNoteDraw.noteId ? {
+    ...note,
+    startSeconds: start,
+    durationSeconds: Math.max(0.03, end - start),
+    startBeat: audioRegionLocalSecondsToProjectBeat(region, start),
+    durationBeats: audioRegionLocalSecondsToProjectBeat(region, end) - audioRegionLocalSecondsToProjectBeat(region, start),
+    renderStatus: 'needs_render'
+  } : note)
+  region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, notes, renderStatus: 'needs_render' } })
+  renderEditor()
+}
+function finishPitchTraceNoteDraw() {
+  if (!pitchTraceNoteDraw) return
+  const before = pitchTraceNoteDraw.before
+  pitchTraceNoteDraw = null
+  pushHistory('draw-pitch-trace-note', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function getMidiRollGridPoint(event) {
+  const grid = app.querySelector('[data-midi-roll-grid]')
+  const rect = grid?.getBoundingClientRect?.()
+  if (!grid || !rect) return null
+  return {
+    x: clamp(event.clientX - rect.left, 0, grid.offsetWidth || 0),
+    y: clamp(event.clientY - rect.top, 0, grid.offsetHeight || 0)
+  }
+}
+function drawMidiNoteAtGridPoint(region, point) {
+  if (!region || !point) return
+  const rows = midiRollPitchRows(region)
+  const rowIndex = clamp(Math.floor(point.y / midiRollRowHeight), 0, rows.length - 1)
+  const pitch = rows[rowIndex] ?? 60
+  const snap = getMidiRollEditSnapValue()
+  const regionStart = Number(region.startBeat) || 0
+  const rawStartBeat = regionEditorXToPosition(point.x, region)
+  const startBeat = clamp(isSnapEnabled ? snapBeatToRegionEditorGrid(rawStartBeat) : rawStartBeat, regionStart, Math.max(regionStart, Number(region.endBeat) || regionStart + snap) - 0.05)
+  const before = captureDawSnapshot()
+  const note = {
+    id: makeInsertId('note'),
+    note: pitch,
+    startBeat,
+    durationBeats: Math.max(0.05, snap),
+    velocity: 0.85
+  }
+  region.notes = [...(region.notes || []), note]
+  midiRollSelectedNoteIndex = region.notes.length - 1
+  midiRollSelectedNoteIndices = [midiRollSelectedNoteIndex]
+  midiRollStatus = `Drew ${formatMidiNoteName(pitch)}.`
+  auditionMidiRollNote(note, region)
+  pushHistory('draw-midi-note', before, captureDawSnapshot())
+  scheduleEditorSave()
+  renderEditor()
+}
+function updateMidiRollNoteDom(region, indices = getSelectedMidiRollNoteIndices(region)) {
+  if (!region) return
+  const rows = midiRollPitchRows(region)
+  const regionStart = Number(region.startBeat) || 0
+  indices.forEach((index) => {
+    const note = region.notes?.[index]
+    const noteEl = app.querySelector(`[data-midi-note-index="${CSS.escape(String(index))}"]`)
+    if (!note || !noteEl) return
+    const pitchIndex = rows.indexOf(Number(note.note) || 60)
+    noteEl.style.left = `${Math.max(0, positionToRegionEditorX(Number(note.startBeat || regionStart), region))}px`
+    noteEl.style.width = `${Math.max(10, musicalDurationToRegionWidth(Number(note.durationBeats) || 0.25, midiRollBeatWidth))}px`
+    noteEl.style.top = `${Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)}px`
+    noteEl.title = `${formatMidiNoteName(note.note)} · ${Number(note.startBeat || 0).toFixed(2)} · ${Number(note.durationBeats || 0.25).toFixed(2)} beats`
+    const label = noteEl.querySelector('strong')
+    if (label) label.textContent = formatMidiNoteName(note.note)
+  })
+  const selectedPitches = new Set(getSelectedMidiRollNoteIndices(region).map((index)=>Number(region.notes?.[index]?.note)).filter(Number.isFinite))
+  app.querySelectorAll('[data-midi-roll-key-note]').forEach((key) => {
+    key.classList.toggle('is-selected-pitch', selectedPitches.has(Number(key.dataset.midiRollKeyNote)))
+  })
+}
+function beginMidiRollSelection(event) {
+  if (event.button !== 0 || event.target.closest('[data-midi-note-index]')) return
+  activeCommandContext = 'midi-editor'
+  const region = getMidiRollRegion()
+  const point = getMidiRollGridPoint(event)
+  if (!region || !point) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (midiRollTool === 'pencil') {
+    drawMidiNoteAtGridPoint(region, point)
+    return
+  }
+  midiRollSelectionDrag = { startX: point.x, startY: point.y, currentX: point.x, currentY: point.y, hasMoved: false, additive: !!event.shiftKey, existing: [...midiRollSelectedNoteIndices] }
+  if (!event.shiftKey) {
+    midiRollSelectedNoteIndex = null
+    midiRollSelectedNoteIndices = []
+    midiRollStatus = ''
+  }
+  const box = app.querySelector('[data-midi-roll-selection]')
+  if (box) {
+    box.style.left = `${point.x}px`
+    box.style.top = `${point.y}px`
+    box.style.width = '0px'
+    box.style.height = '0px'
+    box.hidden = false
+  }
+}
+function updateMidiRollSelectionDrag(event) {
+  if (!midiRollSelectionDrag) return
+  const point = getMidiRollGridPoint(event)
+  const box = app.querySelector('[data-midi-roll-selection]')
+  if (!point || !box) return
+  const drag = midiRollSelectionDrag
+  drag.currentX = point.x
+  drag.currentY = point.y
+  drag.hasMoved = drag.hasMoved || Math.hypot(point.x - drag.startX, point.y - drag.startY) > 4
+  box.style.left = `${Math.min(drag.startX, drag.currentX)}px`
+  box.style.top = `${Math.min(drag.startY, drag.currentY)}px`
+  box.style.width = `${Math.abs(drag.currentX - drag.startX)}px`
+  box.style.height = `${Math.abs(drag.currentY - drag.startY)}px`
+  box.hidden = false
+}
+function finishMidiRollSelection() {
+  if (!midiRollSelectionDrag) return
+  const drag = midiRollSelectionDrag
+  midiRollSelectionDrag = null
+  const box = app.querySelector('[data-midi-roll-selection]')
+  if (box) box.hidden = true
+  if (!drag.hasMoved) {
+    renderEditor()
+    return
+  }
+  const region = getMidiRollRegion()
+  if (!region) return
+  const rows = midiRollPitchRows()
+  const regionStart = Number(region.startBeat || 0)
+  const left = Math.min(drag.startX, drag.currentX)
+  const right = Math.max(drag.startX, drag.currentX)
+  const top = Math.min(drag.startY, drag.currentY)
+  const bottom = Math.max(drag.startY, drag.currentY)
+  const selected = []
+  ;(region.notes || []).forEach((note, index) => {
+    const pitchIndex = rows.indexOf(Number(note.note) || 60)
+    const noteLeft = Math.max(0, positionToRegionEditorX(Number(note.startBeat || regionStart), region))
+    const noteRight = noteLeft + Math.max(10, musicalDurationToRegionWidth(Number(note.durationBeats) || 0.25, midiRollBeatWidth))
+    const noteTop = Math.max(0, (pitchIndex < 0 ? rows.indexOf(60) : pitchIndex) * midiRollRowHeight + 3)
+    const noteBottom = noteTop + Math.max(10, midiRollRowHeight - 6)
+    if (noteRight >= left && noteLeft <= right && noteBottom >= top && noteTop <= bottom) selected.push(index)
+  })
+  midiRollSelectedNoteIndices = drag.additive ? [...new Set([...(drag.existing || []), ...selected])].sort((a, b) => a - b) : selected
+  midiRollSelectedNoteIndex = midiRollSelectedNoteIndices[0] ?? null
+  midiRollStatus = ''
+  renderEditor()
+}
+function handleMidiRollWheel(event) {
+  const grid = event.target.closest('[data-midi-roll-grid]')
+  if (!grid) return
+  const scroll = grid.closest('.studio-midi-roll-scroll')
+  if ((event.metaKey || event.ctrlKey) && !event.altKey) {
+    event.preventDefault()
+    const scrollRect = scroll?.getBoundingClientRect?.()
+    const pointerX = scrollRect ? event.clientX - scrollRect.left : 0
+    const region = getMidiRollRegion()
+    const projectBeatAtPointer = regionEditorXToPosition((scroll?.scrollLeft || 0) + pointerX, region)
+    midiRollBeatWidth = Math.round(clamp(midiRollBeatWidth * (event.deltaY < 0 ? 1.12 : 0.88), 28, 720))
+    pendingMidiRollViewport = {
+      regionId: region?.id || '',
+      scrollLeft: Math.max(0, positionToRegionEditorX(projectBeatAtPointer, region) - pointerX),
+      scrollTop: scroll?.scrollTop || 0
+    }
+    renderEditor()
+    return
+  }
+  if (event.altKey) {
+    event.preventDefault()
+    const scrollRect = scroll?.getBoundingClientRect?.()
+    const pointerY = scrollRect ? event.clientY - scrollRect.top : 0
+    const rowAtPointer = ((scroll?.scrollTop || 0) + pointerY) / Math.max(1, midiRollRowHeight)
+    midiRollRowHeight = Math.round(clamp(midiRollRowHeight * (event.deltaY < 0 ? 1.1 : 0.9), 16, 36))
+    pendingMidiRollViewport = {
+      regionId: getMidiRollRegion()?.id || '',
+      scrollLeft: scroll?.scrollLeft || 0,
+      scrollTop: Math.max(0, (rowAtPointer * midiRollRowHeight) - pointerY)
+    }
+    renderEditor()
+    return
+  }
+  if (event.shiftKey && scroll) {
+    event.preventDefault()
+    scroll.scrollLeft += event.deltaY
+  }
+}
+
+function beatFromGlobalEvent(event) {
+  const lane = app.querySelector('[data-global-tracks]')
+  const rect = lane?.getBoundingClientRect?.()
+  const scrollLeft = lane?.scrollLeft || 0
+  if (!rect) return 0
+  const x = clamp(event.clientX - rect.left + scrollLeft, timelineStartX(), maxTimelineX())
+  const beat = xToBeatsFromBarZero(x)
+  return Math.max(0, isSnapEnabled ? Math.round(beat) : Math.round(beat * 4) / 4)
+}
+function openGlobalTempoEditor(event, existing = null) {
+  const beat = existing?.beat ?? beatFromGlobalEvent(event)
+  const tempo = existing || { id: makeInsertId('tempo'), beat, bpm: getTempoAtBeat(beat).bpm, curve: 'hold', createdAt: nowIso(), updatedAt: nowIso() }
+  if (!existing) globalTracks.tempoEvents = [...normalizeTempoMap().filter((item)=>item.id !== 'tempo-default'), tempo].sort((a,b)=>a.beat-b.beat)
+  selectedGlobalEvent = { type: 'tempo', id: tempo.id }
+  globalTrackPopover = { type: 'tempo', ...tempo, x: event.clientX, y: event.clientY }
+  scheduleEditorSave()
+  renderEditor()
+}
+function openTimeSignatureEditor(event, existing = null) {
+  const beat = existing?.beat ?? beatFromGlobalEvent(event)
+  const current = getTimeSignatureAtBeat(beat)
+  const signature = existing || { id: makeInsertId('time-signature'), beat, numerator: current.numerator, denominator: current.denominator, createdAt: nowIso(), updatedAt: nowIso() }
+  if (!existing) globalTracks.timeSignatureEvents = [...normalizeTimeSignatureMap(), signature].sort((a,b)=>a.beat-b.beat)
+  selectedGlobalEvent = { type: 'time-signature', id: signature.id }
+  globalTrackPopover = { type: 'time-signature', ...signature, x: event.clientX, y: event.clientY }
+  scheduleEditorSave()
+  renderEditor()
+}
+function openKeySignatureEditor(event, existing = null) {
+  const beat = existing?.beat ?? beatFromGlobalEvent(event)
+  const current = getKeySignatureAtBeat(beat)
+  const key = existing || { id: makeInsertId('key-signature'), beat, root: current.root, scale: current.scale, label: formatKeySignature(current), createdAt: nowIso(), updatedAt: nowIso() }
+  if (!existing) globalTracks.keySignatureEvents = [...normalizeKeySignatureMap(), key].sort((a,b)=>a.beat-b.beat)
+  selectedGlobalEvent = { type: 'key-signature', id: key.id }
+  globalTrackPopover = { type: 'key-signature', ...key, x: event.clientX, y: event.clientY }
+  scheduleEditorSave()
+  renderEditor()
+}
+function renameGlobalArrangement(id) {
+  const item = globalTracks.arrangement.find((section)=>section.id===id)
+  if (!item) return
+  const next = window.prompt('Rename section', item.label || 'Section')
+  if (next == null) return
+  item.label = next.trim() || 'Section'
+  scheduleEditorSave()
+  renderEditor()
+}
+function renameGlobalMarker(id) {
+  const item = globalTracks.markers.find((marker)=>marker.id===id)
+  if (!item) return
+  const next = window.prompt('Rename marker', item.label || 'Marker')
+  if (next == null) return
+  item.label = next.trim() || 'Marker'
+  scheduleEditorSave()
+  renderEditor()
+}
+
+function setTrackPan(track, value, { save = false } = {}) {
+  if (!track) return
+  track.pan = clamp(Math.round(Number(value) || 0), -100, 100)
+  const channel = trackAudioChannels.get(track.id)
+  if (channel?.panner && audioContext) channel.panner.pan.setTargetAtTime(track.pan / 100, audioContext.currentTime, 0.015)
+  if (isNativeVst3Instrument(track.instrument) && track.instrument?.pluginInstanceId) { const audible = isTrackOutputAudible(track); const level = audible ? clamp((Number(track.volume) || 0) / 100, 0, 1) : 0; nativeVst3SetMix(track.instrument.pluginInstanceId, { gain: level, pan: track.pan / 100, muted: !audible }).catch((error) => console.warn('[Soura Native VST3] pan sync failed', error)) }
+  app.querySelectorAll(`[data-track-pan="${CSS.escape(track.id)}"]`).forEach((knob) => {
+    knob.style.setProperty('--pan-angle', `${(track.pan / 100) * 135}deg`)
+    knob.setAttribute('aria-label', `${track.name} pan ${track.pan}`)
+    knob.setAttribute('data-tooltip', `Pan ${track.pan}`)
+  })
+  app.querySelectorAll(`[data-track-pan-readout="${CSS.escape(track.id)}"]`).forEach((readout) => {
+    readout.textContent = formatTrackAutomationValue('pan', track.pan)
+  })
+  if (track.id === metronomeSettings.id) app.querySelectorAll('[data-metronome-pan]').forEach((knob) => knob.style.setProperty('--pan-angle', `${(track.pan / 100) * 135}deg`))
+  if (save) scheduleEditorSave()
+}
+function openInlineNumericEditor(event, { value, min, max, step = 1, label = 'Value', apply } = {}) {
+  event.preventDefault()
+  event.stopPropagation()
+  inlineNumberEditorState = {
+    x: event.clientX,
+    y: event.clientY,
+    value: Number(value),
+    min: Number(min),
+    max: Number(max),
+    step,
+    label,
+    apply
+  }
+  mountInlineNumericEditor()
+}
+function closeInlineNumericEditor({ commit = false } = {}) {
+  const state = inlineNumberEditorState
+  if (!state) return
+  const input = app.querySelector('[data-inline-number-editor] input')
+  const value = clamp(Number(input?.value ?? state.value), state.min, state.max)
+  inlineNumberEditorState = null
+  app.querySelector('[data-inline-number-editor]')?.remove()
+  if (commit) state.apply?.(value)
+}
+function mountInlineNumericEditor() {
+  const state = inlineNumberEditorState
+  if (!state) return
+  const page = app.querySelector('.studio-editor-page')
+  if (!page) return
+  app.querySelector('[data-inline-number-editor]')?.remove()
+  const position = getClampedFloatingPosition(state.x, state.y, 150, 82)
+  const form = document.createElement('form')
+  form.className = 'studio-inline-number-editor'
+  form.dataset.inlineNumberEditor = ''
+  form.style.left = `${position.x}px`
+  form.style.top = `${position.y}px`
+  form.innerHTML = `<label>${esc(state.label)}<input type="number" min="${state.min}" max="${state.max}" step="${state.step}" value="${Number(state.value)}"></label>`
+  page.append(form)
+  const input = form.querySelector('input')
+  form.addEventListener('pointerdown', (pointerEvent) => pointerEvent.stopPropagation())
+  form.addEventListener('submit', (submitEvent) => { submitEvent.preventDefault(); closeInlineNumericEditor({ commit: true }) })
+  input.addEventListener('input', () => { if (inlineNumberEditorState) inlineNumberEditorState.value = Number(input.value) })
+  input.addEventListener('keydown', (keyEvent) => {
+    if (keyEvent.key === 'Escape') { keyEvent.preventDefault(); closeInlineNumericEditor({ commit: false }) }
+  })
+  const onPointerDown = (pointerEvent) => {
+    if (!form.isConnected) {
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      return
+    }
+    if (form.contains(pointerEvent.target)) return
+    document.removeEventListener('pointerdown', onPointerDown, true)
+    closeInlineNumericEditor({ commit: true })
+  }
+  document.addEventListener('pointerdown', onPointerDown, true)
+  requestAnimationFrame(() => {
+    if (!inlineNumberEditorState || !input.isConnected) return
+    input.focus()
+    input.select()
+  })
+}
+
+function focusSelectedAssetLibraryRow() {
+  requestAnimationFrame(() => app.querySelector(`[data-asset-id="${CSS.escape(assetLibraryState.selectedAssetId || '')}"]`)?.focus({ preventScroll: true }))
+}
+function hasAssetLibraryShortcutFocus(event) {
+  if (activeBottomPanel !== 'asset-library') return false
+  return Boolean(event.target?.closest?.('[data-asset-library-panel]') || document.activeElement?.closest?.('[data-asset-library-panel]'))
+}
+function handleAssetLibraryShortcut(event) {
+  const asset = souraAssetLibrary.getAsset(assetLibraryState.selectedAssetId)
+  const candidates = getVisibleAssetLibraryRows()
+  const action = getAssetLibraryShortcutAction({
+    code: event.code,
+    focusedInsideLibrary: hasAssetLibraryShortcutFocus(event),
+    textEntry: isTextEntryTarget(event.target),
+    nativeSpaceTarget: Boolean(event.target?.closest?.('button, a, input, textarea, select, [contenteditable="true"]')),
+    modified: event.ctrlKey || event.metaKey || event.altKey,
+    selectedPreviewable: isPreviewableAsset(asset),
+    hasPreviewableRows: candidates.some(isPreviewableAsset)
+  })
+  if (action === 'toggle-audition') {
+    event.preventDefault()
+    void toggleAssetLibraryAudition(asset.id, { autoplayNavigation: true })
+    return true
+  }
+  if (!['move-up', 'move-down'].includes(action)) return false
+  event.preventDefault()
+  void assetAuditionController.moveSelection(action === 'move-up' ? -1 : 1, candidates).then((asset) => {
+    if (!asset) return
+    assetLibraryState = { ...assetLibraryState, selectedAssetId: asset.id }
+    persistAssetLibraryState()
+    renderEditor()
+    focusSelectedAssetLibraryRow()
+  }).catch((error) => { recordingStatus = error?.message || 'Asset preview failed.'; updateEditorTitleStatus() })
+  return true
+}
+function bindAssetLibraryEvents() {
+  app.querySelector('[data-refresh-asset-library]')?.addEventListener('click', () => refreshAssetLibrary())
+  app.querySelectorAll('[data-asset-folder]').forEach((button) => button.addEventListener('click', () => {
+    const id = button.dataset.assetFolder
+    if (!id) return
+    assetAuditionController.stopAndClear()
+    assetLibraryState = { ...assetLibraryState, selectedSourceId: id, selectedAssetId: '' }
+    persistAssetLibraryState(); renderEditor()
+  }))
+  app.querySelector('[data-asset-search]')?.addEventListener('change', (event) => { assetLibraryState = { ...assetLibraryState, search: event.target.value }; persistAssetLibraryState(); renderEditor() })
+  const fileInput = app.querySelector('[data-user-asset-file]')
+  app.querySelector('[data-import-user-asset]')?.addEventListener('click', () => fileInput?.click())
+  fileInput?.addEventListener('change', async () => {
+    const file = fileInput.files?.[0]
+    if (!file || !isSupportedAudioFile(file)) { recordingStatus = 'Choose a supported audio file.'; updateEditorTitleStatus(); return }
+    try { await userAssetProvider.importFile(file); assetLibraryState = { ...assetLibraryState, selectedSourceId: 'user', loaded: false }; await refreshAssetLibrary() }
+    catch (error) { recordingStatus = error?.message || 'Audio import failed.'; updateEditorTitleStatus() }
+  })
+  app.querySelector('[data-preview-selected-asset]')?.addEventListener('click', () => {
+    const asset = souraAssetLibrary.getAsset(assetLibraryState.selectedAssetId)
+    if (isPreviewableAsset(asset)) void toggleAssetLibraryAudition(asset.id, { autoplayNavigation: true })
+  })
+  app.querySelectorAll('[data-asset-id]').forEach((row) => {
+    const id = row.dataset.assetId
+    const kind = row.dataset.assetKind
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('[data-preview-asset]')) {
+        assetLibraryState = { ...assetLibraryState, selectedAssetId: id }
+        assetAuditionController.selectAsset(souraAssetLibrary.getAsset(id))
+        void toggleAssetLibraryAudition(id, { autoplayNavigation: true })
+        return
+      }
+      if (kind !== 'audio') { assetAuditionController.stopAndClear(); assetLibraryState = { ...assetLibraryState, selectedSourceId: id, selectedAssetId: '' }; persistAssetLibraryState(); renderEditor(); return }
+      assetLibraryState = { ...assetLibraryState, selectedAssetId: id }
+      assetAuditionController.selectAsset(souraAssetLibrary.getAsset(id))
+      persistAssetLibraryState(); renderEditor(); focusSelectedAssetLibraryRow()
+    })
+    if (kind === 'audio') {
+      row.addEventListener('dragstart', (event) => {
+        const payload = createSouraAssetDragPayload(souraAssetLibrary.getAsset(id))
+        if (!payload) { event.preventDefault(); return }
+        activeAssetDragPayload = payload
+        event.dataTransfer.setData(SOURA_ASSET_DRAG_TYPE, JSON.stringify(payload))
+        event.dataTransfer.setData('application/x-soura-asset-id', id)
+        event.dataTransfer.effectAllowed = 'copy'
+      })
+      row.addEventListener('dragend', () => { activeAssetDragPayload = null; audioImportDrag = null; scheduleAudioImportPreviewRender() })
+    }
+  })
+}
+
+function bindEditorEvents() {
+  editorEventBindingsCleanup?.()
+  const bindingAbortController = new AbortController()
+  const bindingSignal = bindingAbortController.signal
+  bindSmartControlsEvents()
+  const trigger = app.querySelector('[data-editor-left-menu]')
+  const leftWrap = app.querySelector('.studio-editor-left')
+  const ruler = app.querySelector('[data-timeline-ruler]')
+  const grid = app.querySelector('[data-arrangement-grid]')
+  const selectionBox = app.querySelector('[data-selection-box]')
+  const tooltip = app.querySelector('[data-studio-tooltip]')
+  bindAssetLibraryEvents()
+  app.querySelector('[data-region-editor-scroll]')?.addEventListener('scroll', () => captureAudioRegionToolsViewport(), { passive: true })
+  trigger?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); setEditorMenuOpen(!isEditorMenuOpen) })
+  app.querySelectorAll('[data-daw-menu-toggle]').forEach((button)=>button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const menuId = button.dataset.dawMenuToggle || ''
+    setActiveTopMenu(getActiveTopMenu() === menuId ? '' : menuId)
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-daw-menu-action]').forEach((button)=>button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    runDawTopMenuAction(button.dataset.dawMenuAction || '')
+  }))
+  app.querySelector('[data-controls-config-backdrop]')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) { controlsConfigModalOpen = false; renderEditor() } })
+  app.querySelector('[data-close-controls-config]')?.addEventListener('click', (event) => { event.preventDefault(); controlsConfigModalOpen = false; renderEditor() })
+  app.querySelector('[data-project-settings-backdrop]')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) { projectSettingsModalOpen = false; renderEditor() } })
+  app.querySelector('[data-close-project-settings]')?.addEventListener('click', (event) => { event.preventDefault(); projectSettingsModalOpen = false; renderEditor() })
+  app.querySelector('[data-cancel-project-settings]')?.addEventListener('click', (event) => { event.preventDefault(); projectSettingsModalOpen = false; renderEditor() })
+  app.querySelector('[data-project-settings-form]')?.addEventListener('submit', (event) => { event.preventDefault(); applyProjectSettingsFromForm(event.currentTarget) })
+  app.querySelector('[data-open-project-settings]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); projectSettingsModalOpen = true; renderEditor() })
+  app.querySelector('[data-project-management-backdrop]')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) { projectManagementModalOpen = false; renderEditor() } })
+  app.querySelectorAll('[data-close-project-management]').forEach((button)=>button.addEventListener('click', (event) => { event.preventDefault(); projectManagementModalOpen = false; renderEditor() }))
+  app.querySelector('[data-copy-project-info]')?.addEventListener('click', async (event) => {
+    event.preventDefault()
+    const text = app.querySelector('[data-project-info-copy-source]')?.value || ''
+    try { await navigator.clipboard?.writeText(text); recordingStatus = 'Project info copied.' }
+    catch { recordingStatus = text }
+    updateEditorTitleStatus()
+  })
+  app.querySelector('[data-musical-typing-toggle]')?.addEventListener('change', (event) => { setMusicalTypingEnabled(event.target.checked); renderEditor() })
+  document.onclick = (event) => { if (event.target.closest('[data-inline-number-editor]') || event.target.closest('.studio-notes-modal') || event.target.closest('.studio-notes-panel') || event.target.closest('[data-notes-input]') || event.target.closest('.studio-controls-config-modal') || event.target.closest('.studio-project-modal')) return; let changed = false; if (!event.target.closest('.studio-editor-left') && isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (!event.target.closest('[data-daw-menu]') && !event.target.closest('[data-daw-menu-toggle]') && getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (!event.target.closest('[data-track-menu]') && !event.target.closest('[data-track-options]') && trackMenuState) { trackMenuState = null; changed = true } if (!event.target.closest('[data-track-rename-form]') && renameTrackState) { renameTrackState = null; changed = true } if (!event.target.closest('[data-track-color-form]') && colorPickerState) { commitSelectedTrackColor({ render:false }); changed = true } if (!event.target.closest('[data-midi-rename-form]') && regionRenameState) { regionRenameState = null; changed = true } if (!event.target.closest('.studio-left-panel') && !event.target.closest('[data-inspector-menu]') && inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() }
+  document.onkeydown = (event) => { if (event.key === 'Alt' && event.target?.closest?.('.studio-editor-page')) event.preventDefault(); if ((event.key === 'Delete' || event.key === 'Backspace') && selectedGlobalEvent && !event.target?.matches?.('input,textarea,select')) { event.preventDefault(); if (selectedGlobalEvent.type === 'marker') globalTracks.markers = globalTracks.markers.filter((item)=>item.id !== selectedGlobalEvent.id); selectedGlobalEvent = null; scheduleEditorSave(); renderEditor(); return } if (event.key === 'Escape') { let changed = false; if (addTrackModalOpen) { addTrackModalOpen = false; changed = true } if (controlsConfigModalOpen) { controlsConfigModalOpen = false; changed = true } if (projectSettingsModalOpen) { projectSettingsModalOpen = false; changed = true } if (projectManagementModalOpen) { projectManagementModalOpen = false; changed = true } if (isEditorMenuOpen) { setEditorMenuOpen(false); changed = true } if (getActiveTopMenu()) { setActiveTopMenu(''); changed = true } if (trackMenuState) { trackMenuState = null; changed = true } if (midiRegionMenuState) { midiRegionMenuState = null; changed = true } if (regionColorPickerState) { regionColorPickerState = null; changed = true } if (regionRenameState) { regionRenameState = null; changed = true } if (renameTrackState) { renameTrackState = null; changed = true } if (colorPickerState) { cancelSelectedTrackColor({ render:false }); changed = true } if (globalTrackPopover) { globalTrackPopover = null; changed = true } if (inspectorMenu) { inspectorMenu = null; inspectorMenuPosition = null; changed = true } if (changed) renderEditor() } }
+  leftWrap?.addEventListener('click', (event) => event.stopPropagation())
+  const page = app.querySelector('.studio-editor-page')
+  page?.addEventListener('dragover', (event) => {
+    const hasAsset = dataTransferHasSouraAsset(event.dataTransfer)
+    const hasFile = Boolean(getFirstAudioFileFromDataTransfer(event.dataTransfer))
+    if (!hasAsset && !hasFile) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    if (hasAsset) updateAssetLibraryImportPreview(event)
+    else updateAudioImportPreview(event)
+    scheduleAudioImportPreviewRender()
+  })
+  page?.addEventListener('dragenter', (event) => {
+    const hasAsset = dataTransferHasSouraAsset(event.dataTransfer)
+    const hasFile = Boolean(getFirstAudioFileFromDataTransfer(event.dataTransfer))
+    if (!hasAsset && !hasFile) return
+    event.preventDefault()
+    if (hasAsset) updateAssetLibraryImportPreview(event)
+    else updateAudioImportPreview(event)
+    scheduleAudioImportPreviewRender()
+  })
+  page?.addEventListener('drop', (event) => {
+    const hasAsset = dataTransferHasSouraAsset(event.dataTransfer)
+    const hasFile = Boolean(getFirstAudioFileFromDataTransfer(event.dataTransfer))
+    if (!hasAsset && !hasFile) return
+    event.preventDefault()
+    if (hasAsset) void handleAssetLibraryImportDrop(event)
+    else void handleAudioImportDrop(event)
+  })
+  page?.addEventListener('dragleave', (event) => {
+    if (event.relatedTarget && page.contains(event.relatedTarget)) return
+    if (!audioImportDrag) return
+    audioImportDrag = null
+    scheduleAudioImportPreviewRender()
+  })
+  app.querySelectorAll('[data-meter-clip]').forEach((meter) => meter.addEventListener('click', (event) => {
+    event.preventDefault()
+    const meterId = meter.dataset.meterClip
+    const state = meterId === 'master' ? masterAudioBus?.meter : trackAudioChannels.get(meterId)?.meter
+    if (state) state.clipped = false
+    meter.classList.remove('is-clipped')
+  }))
+  app.querySelector('[data-hide-audio-import-upload]')?.addEventListener('click', () => {
+    audioImportUploadState = { ...audioImportUploadState, hidden: true }
+    app.querySelector('[data-audio-import-upload-modal]')?.remove()
+  })
+  app.querySelector('[data-keep-site-menu]')?.addEventListener('change', (e) => { keepSiteMenuOpen = e.target.checked; localStorage.setItem(PREF_KEY, keepSiteMenuOpen ? '1' : '0'); isEditorMenuOpen = false; renderEditor() })
+  app.querySelectorAll('[data-track-row]').forEach((el) => el.addEventListener('click', () => { selectedSystemChannel = ''; selectedTrackId = el.dataset.trackRow; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-select') }))
+  app.querySelectorAll('[data-track-icon]').forEach((el) => el.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); const id = el.dataset.trackIcon; if (!id) return; selectedSystemChannel = ''; selectedTrackId = id; activeLeftPanel = 'inspector'; trackMenuState = null; inspectorMenu = null; renderEditorPreservingArrangementScroll(); warmSelectedTrackInstrument('track-inspector') }))
+  app.querySelectorAll('[data-select-metronome],[data-mixer-system-channel="metronome"]').forEach((el) => el.addEventListener('click', (event) => { if (event.target.closest('input,[data-metronome-mute],[data-metronome-pan],[data-metronome-volume]')) return; event.preventDefault(); selectedSystemChannel = 'metronome'; activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditorPreservingArrangementScroll() }))
+  app.querySelectorAll('[data-metronome-mute]').forEach((button) => button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); metronomeSettings.muted = !metronomeSettings.muted; setTrackChannelVolume(metronomeSettings); scheduleEditorSave(); renderEditorPreservingArrangementScroll() }))
+  app.querySelectorAll('[data-metronome-volume]').forEach((input) => input.addEventListener('input', () => { metronomeSettings.volume = clamp(Number(input.value), 0, 100); setTrackChannelVolume(metronomeSettings); scheduleEditorSave() }))
+  app.querySelectorAll('[data-metronome-pan]').forEach((control) => control.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); panDrag = { trackId: metronomeSettings.id, startX:event.clientX, startPan:metronomeSettings.pan, knob:control }; control.setPointerCapture?.(event.pointerId) }))
+  app.querySelectorAll('[data-metronome-setting]').forEach((input) => input.addEventListener('input', () => { const key=input.dataset.metronomeSetting; metronomeSettings[key]=input.type==='range' ? Number(input.value) : input.value; if(key==='pan') setTrackPan(metronomeSettings,input.value,{save:false}); scheduleEditorSave() }))
+  app.querySelector('[data-toggle-metronome]')?.addEventListener('click', () => queueMicrotask(() => { metronomeSettings.enabled = isMetronomeEnabled }))
+  app.querySelectorAll('[data-toggle-inspector-menu]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const nextMenu = el.dataset.toggleInspectorMenu; inspectorMenu = inspectorMenu === nextMenu ? null : nextMenu; inspectorMenuPosition = null; if (inspectorMenu === 'instrument') { const rect = el.getBoundingClientRect(); inspectorMenuPosition = getClampedFloatingPosition(rect.left + rect.width / 2, rect.bottom + 8, 260, 210) } renderEditor() }))
+  app.querySelectorAll('[data-inspector-menu-choice]').forEach((el) => el.addEventListener('click', async (event) => {
+    event.stopPropagation()
+    const track = getSelectedInsertOwner()
+    if (!track) return
+    const action = el.dataset.inspectorMenuChoice
+    if (action === 'midi') {
+      const insert = createInsert(el.dataset.insertType, MIDI_EFFECT_TYPES)
+      if (insert) track.midiEffects.push(insert)
+    } else if (action === 'audio') {
+      const insert = createInsert(el.dataset.insertType, AUDIO_EFFECT_TYPES)
+      if (insert) track.audioEffects.push(insert)
+      rebuildTrackAudioEffectsChain(track.id)
+    } else if (action === 'native-vst3-browser') {
+      try {
+        const nativePlugin = await chooseInstalledNativeVst3()
+        if (!nativePlugin) return
+        if (track.instrument?.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId)
+        track.instrument = createNativeVst3TrackInstrument(nativePlugin, track.id)
+        track.type = 'software'
+        track.icon = 'instrument'
+      } catch (error) {
+        console.error('[Soura Native VST3]', error)
+        window.alert(`Unable to scan installed VST3 plug-ins: ${error?.message || error}`)
+        return
+      }
+    } else if (action === 'instrument-empty') {
+      if (track.instrument?.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId)
+      track.instrument = null
+    } else if (action === 'instrument') {
+      let pluginType = el.dataset.insertType
+      if (pluginType === SOURA_PLUGIN_IMPORT_ID) {
+        try {
+          const imported = await chooseAndImportSouraPlugin()
+          if (!imported) return
+          pluginType = imported.pluginType
+        } catch (error) {
+          console.error('[Soura Plugin Import]', error)
+          window.alert(`Unable to import Soura plugin: ${error?.message || error}`)
+          return
+        }
+      }
+      track.instrument = createTrackInstrument(pluginType, track.id)
+      track.type = 'software'
+      track.icon = 'instrument'
+    }
+    inspectorMenu = null
+    inspectorMenuPosition = null
+    scheduleEditorSave()
+    renderEditor()
+  }))
+  app.querySelector('[data-toggle-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; track.instrument.enabled = !track.instrument.enabled; if (!track.instrument.enabled) { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() } scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-remove-track-instrument]')?.addEventListener('click', (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); if (track.instrument.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId); track.instrument = null; scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-edit-track-instrument]')?.addEventListener('click', async (event) => { event.stopPropagation(); const track = ensureTrackInsertState(getSelectedTrack()); if (!track?.instrument) return; if (isNativeVst3Instrument(track.instrument)) { try { await dawInstrumentRegistry.createOrGet({ id: track.instrument.pluginInstanceId, type: track.instrument.type, trackId: track.id, params: track.instrument.params || {} })?.ensureRunning?.(); await showNativeVst3ExecutionStatus(track.instrument) } catch (error) { console.error('[Soura Native VST3]', error); window.alert(`Unable to open VST3: ${error?.message || error}`) } return } if (!track.instrument.pluginInstanceId) track.instrument.pluginInstanceId = `${track.instrument.type}:${track.id}`; dawWindowManager.openPlugin({ pluginType: track.instrument.type, trackId: track.id, instanceId: track.instrument.pluginInstanceId, params: track.instrument.params || {}, forceCenter: true }) })
+  app.querySelectorAll('[data-toggle-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = getSelectedInsertOwner(); const list = el.dataset.toggleInsert === 'midi' ? track?.midiEffects : track?.audioEffects; const insert = list?.find((item)=>item.id===el.dataset.insertId); if (!insert) return; insert.enabled = !insert.enabled; if (el.dataset.toggleInsert === 'audio') rebuildTrackAudioEffectsChain(track.id); scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-edit-insert]').forEach((el) => el.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const track = getSelectedInsertOwner()
+    if (el.dataset.editInsert === 'audio') {
+      openAudioEffectWindow(track, el.dataset.insertId)
+      return
+    }
+    if (el.dataset.editInsert !== 'midi') return
+    const insert = track?.midiEffects?.find((item)=>item.id === el.dataset.insertId)
+    if (!track || !insert) return
+    activeMidiEffectEditor = { trackId: track.id, insertId: insert.id }
+    activeBottomPanel = 'midi-effect'
+    closingBottomPanel = ''
+    bottomPanelMotion = 'entering'
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-remove-insert]').forEach((el) => el.addEventListener('click', (event) => { event.stopPropagation(); const track = getSelectedInsertOwner(); if (!track) return; if (el.dataset.removeInsert === 'midi') track.midiEffects = track.midiEffects.filter((item)=>item.id!==el.dataset.insertId); if (el.dataset.removeInsert === 'audio') { dawWindowManager.closeWindow(getAudioEffectWindowInstanceId(track.id, el.dataset.insertId)); track.audioEffects = track.audioEffects.filter((item)=>item.id!==el.dataset.insertId); rebuildTrackAudioEffectsChain(track.id) } scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-channel-setting="color"]').forEach((input)=>input.addEventListener('input', () => {
+    const track = ensureTrackInsertState(getSelectedTrack())
+    if (!track) return
+    if (!colorPickerState || colorPickerState.trackId !== track.id) beginTrackColorSession(track, { source: 'inspector' })
+    previewSelectedTrackColor(input.value)
+  }))
+  app.querySelectorAll('[data-channel-setting]').forEach((input)=>input.addEventListener('change', () => {
+    const track = ensureTrackInsertState(getSelectedTrack())
+    if (!track) return
+    const key = input.dataset.channelSetting
+    if (key === 'color') {
+      if (!colorPickerState || colorPickerState.trackId !== track.id) beginTrackColorSession(track, { source: 'inspector' })
+      previewSelectedTrackColor(input.value)
+      commitSelectedTrackColor()
+      return
+    }
+    const before = ['name', 'color'].includes(key) ? captureDawSnapshot() : null
+    if (input.type === 'checkbox') track[key] = input.checked
+    else if (input.type === 'number' || input.type === 'range') track[key] = Number(input.value)
+    else track[key] = input.value
+    if (key === 'name') track.name = input.value || track.name
+    if (key === 'pan') setTrackPan(track, input.value)
+    if (before) pushHistory(key === 'name' ? 'rename-track' : 'color-track', before, captureDawSnapshot())
+    scheduleEditorSave()
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-channel-accordion]').forEach((detail)=>detail.addEventListener('toggle', () => {
+    persistChannelAccordionState(detail.dataset.channelAccordion, detail.open)
+  }))
+  app.querySelector('[data-stop-stuck-notes]')?.addEventListener('click', () => { stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback() })
+  app.querySelector('[data-reset-track-audio]')?.addEventListener('click', () => { const track=getSelectedTrack(); if(!track) return; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); disposeTrackAudioChannel(track.id); if(track.instrument?.pluginInstanceId) dawInstrumentRegistry.dispose(track.instrument.pluginInstanceId); if(isSoftwareTrack(track)) ensureTrackInstrumentInstance(track); startTrackMeterLoop() })
+  app.querySelector('[data-disable-track-instrument]')?.addEventListener('change', (event) => { const track=ensureTrackInsertState(getSelectedTrack()); if(!track?.instrument) return; track.instrument.enabled = !event.target.checked; stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() })
+  const getTrack = (id) => id === metronomeSettings.id ? metronomeSettings : tracks.find((track) => track.id === id)
+  app.querySelectorAll('[data-track-drag-handle]').forEach((handle) => handle.addEventListener('dragstart', (event) => {
+    const trackId = handle.dataset.trackDragHandle
+    activeTrackReorder = { trackId, before: captureDawSnapshot() }
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/x-soura-track-id', trackId)
+    event.stopPropagation()
+  }))
+  app.querySelectorAll('[data-track-stack]').forEach((stack) => {
+    stack.addEventListener('dragover', (event) => {
+      if (!activeTrackReorder) return
+      event.preventDefault()
+      event.stopPropagation()
+      const rect = stack.getBoundingClientRect()
+      const after = event.clientY >= rect.top + rect.height / 2
+      app.querySelectorAll('[data-track-stack]').forEach((node) => node.classList.remove('is-reorder-before', 'is-reorder-after'))
+      stack.classList.add(after ? 'is-reorder-after' : 'is-reorder-before')
+    })
+    stack.addEventListener('drop', (event) => {
+      if (!activeTrackReorder) return
+      event.preventDefault()
+      event.stopPropagation()
+      const targetId = stack.dataset.trackStack
+      const sourceIndex = tracks.findIndex((track) => track.id === activeTrackReorder.trackId)
+      const targetIndex = tracks.findIndex((track) => track.id === targetId)
+      const rect = stack.getBoundingClientRect()
+      let destination = targetIndex + (event.clientY >= rect.top + rect.height / 2 ? 1 : 0)
+      if (destination > sourceIndex) destination -= 1
+      const drag = activeTrackReorder
+      activeTrackReorder = null
+      reorderTrack(drag.trackId, destination, drag.before)
+    })
+  })
+  app.querySelectorAll('[data-track-drag-handle]').forEach((handle) => handle.addEventListener('dragend', () => {
+    activeTrackReorder = null
+    app.querySelectorAll('[data-track-stack]').forEach((node) => node.classList.remove('is-reorder-before', 'is-reorder-after'))
+  }))
+  app.querySelectorAll('[data-insert-drag-handle]').forEach((handle) => handle.addEventListener('dragstart', (event) => {
+    activeEffectReorder = { insertId: handle.dataset.insertDragHandle, section: handle.dataset.insertSection, before: captureDawSnapshot() }
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('application/x-soura-effect-id', activeEffectReorder.insertId)
+    event.stopPropagation()
+  }))
+  app.querySelectorAll('[data-insert-drag-handle]').forEach((handle) => handle.addEventListener('dragend', () => {
+    activeEffectReorder = null
+    app.querySelectorAll('[data-insert-slot]').forEach((slot) => slot.classList.remove('is-reorder-before', 'is-reorder-after'))
+  }))
+  app.querySelectorAll('[data-insert-slot]').forEach((slot) => {
+    slot.addEventListener('dragover', (event) => {
+      if (!activeEffectReorder || slot.dataset.insertSection !== activeEffectReorder.section) return
+      event.preventDefault(); event.stopPropagation()
+      const rect = slot.getBoundingClientRect()
+      const after = event.clientY >= rect.top + rect.height / 2
+      app.querySelectorAll('[data-insert-slot]').forEach((node) => node.classList.remove('is-reorder-before', 'is-reorder-after'))
+      slot.classList.add(after ? 'is-reorder-after' : 'is-reorder-before')
+    })
+    slot.addEventListener('dragleave', () => slot.classList.remove('is-reorder-before', 'is-reorder-after'))
+    slot.addEventListener('drop', (event) => {
+      if (!activeEffectReorder || slot.dataset.insertSection !== activeEffectReorder.section) return
+      event.preventDefault(); event.stopPropagation()
+      const owner = getSelectedInsertOwner()
+      const list = activeEffectReorder.section === 'midi' ? owner?.midiEffects : owner?.audioEffects
+      const sourceIndex = list?.findIndex((insert) => insert.id === activeEffectReorder.insertId) ?? -1
+      const targetIndex = list?.findIndex((insert) => insert.id === slot.dataset.insertSlot) ?? -1
+      const rect = slot.getBoundingClientRect()
+      let destination = targetIndex + (event.clientY >= rect.top + rect.height / 2 ? 1 : 0)
+      if (destination > sourceIndex) destination -= 1
+      const drag = activeEffectReorder
+      activeEffectReorder = null
+      if (sourceIndex >= 0 && targetIndex >= 0) reorderInsert(owner, drag.section, drag.insertId, destination, drag.before)
+    })
+  })
+  app.querySelectorAll('[data-move-insert]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault(); event.stopPropagation()
+    const owner = getSelectedInsertOwner()
+    const section = button.dataset.insertSection
+    const list = section === 'midi' ? owner?.midiEffects : owner?.audioEffects
+    const index = list?.findIndex((insert) => insert.id === button.dataset.insertId) ?? -1
+    if (index >= 0) reorderInsert(owner, section, button.dataset.insertId, index + Number(button.dataset.moveInsert || 0))
+  }))
+  const showTooltip = (target) => { if (!tooltip || !target?.dataset?.tooltip) return; tooltip.textContent = target.dataset.tooltip; tooltip.hidden = false; const rect = target.getBoundingClientRect(); const trect = tooltip.getBoundingClientRect(); tooltip.style.left = `${Math.max(8, rect.left + rect.width / 2 - trect.width / 2)}px`; tooltip.style.top = `${Math.max(8, rect.top - trect.height - 8)}px` }
+  const hideTooltip = () => { if (tooltip) tooltip.hidden = true }
+  app.querySelectorAll('[data-tooltip]').forEach((target) => { target.addEventListener('pointerenter', () => showTooltip(target)); target.addEventListener('pointerleave', hideTooltip); target.addEventListener('focus', () => showTooltip(target)); target.addEventListener('blur', hideTooltip) })
+  app.querySelectorAll('[data-transport-inline]').forEach((target) => {
+    target.addEventListener('dblclick', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openTransportInlineEdit(target.dataset.transportInline)
+    })
+    target.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || ['tempo','timeSignature','key'].includes(target.dataset.transportInline)) return
+      transportValueDrag = { field: target.dataset.transportInline, startX: event.clientX, startY: event.clientY, lastStep: 0 }
+      document.body.classList.add('is-studio-dragging')
+    })
+  })
+  app.querySelectorAll('[data-transport-inline-input]').forEach((input) => {
+    input.addEventListener('keydown', (event) => {
+      if (event.code === 'Enter') { event.preventDefault(); closeTransportInlineEdit({ commit: true, value: input.value }) }
+      else if (event.code === 'Escape') { event.preventDefault(); closeTransportInlineEdit({ commit: false }) }
+    })
+    input.addEventListener('blur', () => { if (transportInlineEdit) closeTransportInlineEdit({ commit: true, value: input.value }) })
+  })
+  app.querySelectorAll('[data-transport-inline-select]').forEach((select) => {
+    select.addEventListener('change', () => closeTransportInlineEdit({ commit: true, value: select.value }))
+    select.addEventListener('keydown', (event) => {
+      if (event.code === 'Escape') { event.preventDefault(); closeTransportInlineEdit({ commit: false }) }
+    })
+    select.addEventListener('blur', () => { if (transportInlineEdit) closeTransportInlineEdit({ commit: false }) })
+  })
+  app.querySelector('[data-bottom-panel-resize]')?.addEventListener('pointerdown', (event) => {
+    const panel = event.target.closest('.studio-bottom-panel')
+    if (!panel) return
+    event.preventDefault()
+    event.stopPropagation()
+    bottomPanelResizeDrag = { startY: event.clientY, startHeight: panel.getBoundingClientRect().height, panel }
+    document.body.classList.add('is-studio-dragging', 'is-bottom-panel-resizing')
+  })
+  app.querySelectorAll('[data-detach-bottom-panel]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    detachBottomPanel(button.dataset.detachBottomPanel)
+  }))
+  app.querySelector('.studio-midi-roll-scroll')?.addEventListener('scroll', captureMidiRollViewport, { passive: true })
+  app.querySelector('[data-midi-roll-editor]')?.addEventListener('pointerdown', () => { activeCommandContext = 'midi-editor' })
+  app.querySelector('[data-audio-region-editor]')?.addEventListener('pointerdown', () => { activeCommandContext = 'audio-editor' })
+  app.querySelectorAll('[data-region-editor-timeline]').forEach((timeline) => timeline.addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    activeCommandContext = timeline.closest('[data-midi-roll-editor]') ? 'midi-editor' : 'audio-editor'
+    regionEditorPlayheadDrag = { regionId: timeline.dataset.regionEditorTimeline }
+    setPlayheadFromRegionEditorTimeline(event)
+    document.body.classList.add('is-studio-dragging')
+  }))
+  app.querySelector('[data-midi-roll-grid]')?.addEventListener('pointerdown', beginMidiRollSelection)
+  app.querySelector('[data-midi-roll-grid]')?.addEventListener('wheel', handleMidiRollWheel, { passive: false })
+  app.querySelector('[data-audio-waveform-viewport]')?.addEventListener('wheel', handleAudioWaveformWheel, { passive: false })
+  app.querySelector('[data-audio-waveform-viewport]')?.addEventListener('pointerdown', beginAudioWaveformPan)
+  app.querySelectorAll('[data-audio-waveform-zoom]').forEach((button) => button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const action = button.dataset.audioWaveformZoom
+    if (action === 'fit') setAudioWaveformViewport(region, { startSeconds: 0, endSeconds: getAudioRegionVisibleDurationSeconds(region) })
+    else zoomAudioWaveformViewport(region, action === 'in' ? 1.45 : 1 / 1.45, 0.5)
+    renderEditor()
+  }))
+  app.querySelector('[data-audio-region-name]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const before = captureDawSnapshot()
+    region.name = String(event.target.value || '').slice(0, 120)
+    pushHistory('rename-audio-region', before, captureDawSnapshot())
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelectorAll('[data-audio-edit-field]').forEach((input) => input.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region || input.disabled) return
+    const value = input.type === 'checkbox' ? input.checked : input.value
+    updateAudioRegionEditField(region, input.dataset.audioEditField, value)
+  }))
+  app.querySelectorAll('[data-audio-region-editor-mode]').forEach((button) => button.addEventListener('click', () => {
+    const mode = button.dataset.audioRegionEditorMode
+    if (!Object.values(AUDIO_REGION_EDITOR_MODES).includes(mode)) return
+    setLastAudioRegionEditorMode(mode)
+    renderEditor()
+  }))
+  app.querySelector('[data-pitch-trace-enabled]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const trace = normalizeAudioEdit(region.audioEdit).pitchTrace
+    if (event.target.checked) setLastAudioRegionEditorMode(AUDIO_REGION_EDITOR_MODES.pitchTrace)
+    setAudioRegionPitchTrace(region, {
+      ...trace,
+      enabled: event.target.checked,
+      status: event.target.checked && trace.notes.length ? 'ready' : trace.status
+    }, 'toggle-pitch-trace')
+  })
+  app.querySelector('[data-pitch-trace-threshold]')?.addEventListener('input', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchTrace: {
+        ...edit.pitchTrace,
+        confidenceThreshold: Number(event.target.value) || 0.65
+      }
+    })
+    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round((Number(event.target.value) || 0.5) * 100)}%`
+  })
+  app.querySelector('[data-pitch-trace-threshold]')?.addEventListener('change', () => { scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-pitch-trace-sensitivity]')?.addEventListener('input', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const value = clamp(Number(event.target.value) || 0, 0, 1)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, sensitivity: value } })
+    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round(value * 100)}%`
+  })
+  app.querySelector('[data-pitch-trace-sensitivity]')?.addEventListener('change', () => { scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-pitch-trace-min-note]')?.addEventListener('input', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const value = clamp(Number(event.target.value) || 0.08, 0.035, 0.35)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, minNoteSeconds: value } })
+    if (event.target.nextElementSibling) event.target.nextElementSibling.textContent = `${Math.round(value * 1000)} ms`
+  })
+  app.querySelector('[data-pitch-trace-min-note]')?.addEventListener('change', () => { scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-pitch-trace-mode]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    const analysisMode = PITCH_TRACE_ANALYSIS_MODES.includes(event.target.value) ? event.target.value : 'vocal'
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, analysisMode } })
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-pitch-trace-show-low-confidence]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({ ...edit, pitchTrace: { ...edit.pitchTrace, showLowConfidence: event.target.checked } })
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-pitch-trace-analyze]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) analyzePitchTraceForRegion(region.id)
+  })
+  app.querySelector('[data-pitch-trace-clear]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    pitchTraceSelectedNoteId = ''
+    setAudioRegionPitchTrace(region, {
+      enabled: true,
+      status: 'idle',
+      algorithm: null,
+      analyzedAt: null,
+      error: null,
+      progress: 0,
+      notes: []
+    }, 'clear-pitch-trace')
+  })
+  app.querySelector('[data-audio-render-pitch-shift]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) renderAudioPitchShiftForRegion(region.id)
+  })
+  app.querySelector('[data-pitch-trace-render]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) renderPitchTraceEditsForRegion(region.id)
+  })
+  app.querySelectorAll('[data-pitch-trace-note]').forEach((noteEl)=>noteEl.addEventListener('pointerdown', (event) => {
+    const region = getSelectedAudioRegion()
+    if (region) beginPitchTraceNoteDrag(event, region.id, noteEl.dataset.pitchTraceNote)
+  }))
+  app.querySelectorAll('[data-pitch-trace-tool]').forEach((button)=>button.addEventListener('click', () => {
+    pitchTraceTool = button.dataset.pitchTraceTool === 'pencil' ? 'pencil' : 'cursor'
+    renderEditor()
+  }))
+  app.querySelector('[data-pitch-trace-grid]')?.addEventListener('pointerdown', beginPitchTraceNoteDraw)
+  app.querySelectorAll('[data-pitch-trace-note-reset]').forEach((button)=>button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    mutatePitchTraceNote(region, button.dataset.pitchTraceNoteReset, (note) => {
+      note.editedMidiNote = note.originalMidiNote
+      note.muted = false
+    }, 'reset-pitch-trace-note')
+  }))
+  app.querySelectorAll('[data-pitch-trace-note-mute]').forEach((button)=>button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    mutatePitchTraceNote(region, button.dataset.pitchTraceNoteMute, (note) => {
+      note.muted = !note.muted
+    }, 'mute-pitch-trace-note')
+  }))
+  app.querySelectorAll('[data-pitch-trace-note-delete]').forEach((button)=>button.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const before = captureDawSnapshot()
+    const edit = normalizeAudioEdit(region.audioEdit)
+    region.audioEdit = normalizeAudioEdit({
+      ...edit,
+      pitchTrace: {
+        ...edit.pitchTrace,
+        notes: edit.pitchTrace.notes.filter((note)=>note.id !== button.dataset.pitchTraceNoteDelete),
+        renderStatus: 'needs_render',
+        renderedRuntimeId: null,
+        renderedStoragePath: null,
+        renderedAudioUrl: null
+      }
+    })
+    pitchTraceSelectedNoteId = ''
+    pushHistory('delete-pitch-trace-note', before, captureDawSnapshot())
+    scheduleEditorSave()
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-pitch-trace-note-field]').forEach((input)=>input.addEventListener('change', () => {
+    const region = getSelectedAudioRegion()
+    const noteId = pitchTraceSelectedNoteId
+    if (!region || !noteId) return
+    mutatePitchTraceNote(region, noteId, (note) => {
+      const key = input.dataset.pitchTraceNoteField
+      if (key === 'editedMidiNote') note.editedMidiNote = clamp(Math.round(Number(input.value) || note.editedMidiNote), 0, 127)
+      if (key === 'startSeconds') {
+        note.startSeconds = Math.max(0, Number(input.value) || 0)
+        note.startBeat = (Number(region.startBeat) || 0) + secondsToBeats(note.startSeconds)
+      }
+      if (key === 'durationSeconds') {
+        note.durationSeconds = Math.max(0.03, Number(input.value) || 0.03)
+        note.durationBeats = secondsToBeats(note.durationSeconds)
+      }
+    }, 'edit-pitch-trace-note-field')
+  }))
+  app.querySelector('[data-audio-stretch-enabled]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    if (!event.target.checked) resetAudioRegionStretch(region)
+    else enableAudioRegionStretch(region)
+  })
+  app.querySelector('[data-audio-stretch-speed]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const source = getAudioSourceDurationSeconds(region)
+    const speed = Number(event.target.value) || 100
+    updateAudioRegionStretchTarget(region, source / (speed / 100))
+  })
+  app.querySelector('[data-audio-stretch-length]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    updateAudioRegionStretchTarget(region, Math.max(minAudioRegionSeconds, Number(event.target.value) || getAudioSourceDurationSeconds(region)))
+  })
+  app.querySelector('[data-audio-stretch-ratio]')?.addEventListener('change', (event) => {
+    const region = getSelectedAudioRegion()
+    if (!region) return
+    const source = getAudioSourceDurationSeconds(region)
+    updateAudioRegionStretchTarget(region, source * Math.max(0.01, Number(event.target.value) || 1))
+  })
+  app.querySelector('[data-audio-render-stretch]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) renderAudioStretchForRegion(region.id)
+  })
+  app.querySelector('[data-audio-render-reverse]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) renderAudioReverseForRegion(region.id)
+  })
+  app.querySelector('[data-audio-reset-stretch]')?.addEventListener('click', () => {
+    const region = getSelectedAudioRegion()
+    if (region) resetAudioRegionStretch(region)
+  })
+  app.querySelector('[data-stretch-prompt-render]')?.addEventListener('click', () => {
+    const regionId = stretchPlaybackPrompt?.regionId
+    stretchPlaybackPrompt = null
+    if (regionId) renderAudioStretchForRegion(regionId)
+  })
+  app.querySelector('[data-stretch-prompt-cancel]')?.addEventListener('click', () => {
+    stretchPlaybackPrompt = null
+    renderEditor()
+  })
+  app.querySelector('[data-stretch-prompt-play-original]')?.addEventListener('click', () => {
+    const regionId = stretchPlaybackPrompt?.regionId
+    stretchPlaybackPrompt = null
+    if (regionId) audioEditPlaybackBypassRegionIds.add(regionId)
+    renderEditor()
+    if (isPlaying) updateAudioClipPlayback(clampBeat(xToBeat(timelineState.playheadX)))
+  })
+  app.querySelector('[data-audio-edit-prompt-render]')?.addEventListener('click', () => {
+    const prompt = audioEditPlaybackPrompt
+    audioEditPlaybackPrompt = null
+    if (!prompt?.regionId) return renderEditor()
+    if (prompt.mode === 'trace') renderPitchTraceEditsForRegion(prompt.regionId)
+    else if (prompt.mode === 'reverse') renderAudioReverseForRegion(prompt.regionId)
+    else renderAudioPitchShiftForRegion(prompt.regionId)
+  })
+  app.querySelector('[data-audio-edit-prompt-original]')?.addEventListener('click', () => {
+    const regionId = audioEditPlaybackPrompt?.regionId
+    audioEditPlaybackPrompt = null
+    if (regionId) audioEditPlaybackBypassRegionIds.add(regionId)
+    renderEditor()
+    if (isPlaying) updateAudioClipPlayback(clampBeat(xToBeat(timelineState.playheadX)))
+  })
+  app.querySelector('[data-audio-edit-prompt-cancel]')?.addEventListener('click', () => {
+    audioEditPlaybackPrompt = null
+    if (isPlaying) pausePlayback()
+    renderEditor()
+  })
+  app.querySelector('[data-preflight-retry]')?.addEventListener('click', () => {
+    audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+    renderEditor()
+    startPlayback()
+  })
+  app.querySelector('[data-preflight-play-original]')?.addEventListener('click', () => {
+    const failed = audioPreflightRenderState.failed || []
+    failed.forEach((task)=>task?.regionId && audioEditPlaybackBypassRegionIds.add(task.regionId))
+    audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+    renderEditor()
+    startPlayback({ skipRenderAudit: true })
+  })
+  app.querySelector('[data-preflight-cancel]')?.addEventListener('click', () => {
+    audioPreflightRenderState = { active: false, total: 0, completed: 0, currentLabel: '', error: '', failed: [] }
+    recordingStatus = ''
+    renderEditor()
+  })
+  app.querySelectorAll('[data-track-mute]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackMute); if (!t) return; t.muted = !t.muted; tracks.forEach(setTrackChannelVolume); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-track-solo]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackSolo); if (!t) return; t.soloed = !t.soloed; tracks.forEach(setTrackChannelVolume); stopAllTrackInstrumentNotes(); stopAllPlaybackNotes(); stopAllAudioClipPlayback(); scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-track-record]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackRecord); if (!t) return; t.recordArmed = !t.recordArmed; scheduleEditorSave(); renderEditor() }))
+  app.querySelectorAll('[data-track-volume]').forEach((el) => {
+    el.addEventListener('input', () => {
+      const t = getTrack(el.dataset.trackVolume)
+      if (!t) return
+      t.volume = clamp(Number(el.value), 0, 100)
+      app.querySelectorAll(`[data-track-volume="${CSS.escape(t.id)}"]`).forEach((input) => {
+        if (input !== el) input.value = String(t.volume)
+      })
+      app.querySelectorAll(`[data-track-volume-readout="${CSS.escape(t.id)}"]`).forEach((readout) => {
+        readout.textContent = `${Math.round(t.volume)}%`
+      })
+      setTrackChannelVolume(t)
+    })
+    el.addEventListener('change', ()=>scheduleEditorSave())
+    el.addEventListener('dblclick', (event) => {
+      const track = getTrack(el.dataset.trackVolume)
+      if (!track) return
+      openInlineNumericEditor(event, { label: 'Volume', value: track.volume, min: 0, max: 100, step: 1, apply: (value) => { track.volume = value; setTrackChannelVolume(track); scheduleEditorSave(); renderEditor() } })
+    })
+  })
+  app.querySelectorAll('[data-track-automation]').forEach((el) => el.addEventListener('click', (e) => { e.stopPropagation(); const t = getTrack(el.dataset.trackAutomation); if (!t) return; ensureTrackAutomation(t); t.automationOpen = !t.automationOpen; selectedTrackAutomation = null; scheduleEditorSave(); renderEditorPreservingArrangementScroll() }))
+  app.querySelectorAll('[data-track-automation-parameter]').forEach((select)=>select.addEventListener('change', () => {
+    const track = getTrack(select.dataset.trackAutomationParameter)
+    if (!track || select.value === 'more') return
+    const automation = ensureTrackAutomation(track)
+    automation.activeParameter = ['volume', 'pan', 'filter'].includes(select.value) ? select.value : 'volume'
+    selectedTrackAutomation = null
+    scheduleEditorSave()
+    renderEditorPreservingArrangementScroll()
+  }))
+  app.querySelectorAll('[data-track-automation-lane]').forEach((lane)=>{
+    lane.addEventListener('pointerdown', (event)=>{
+      if (event.target.closest('[data-track-automation-point], [data-track-automation-default], [data-track-automation-segment]')) return
+      selectedTrackAutomation = null
+    })
+    lane.addEventListener('click', (event)=>{
+      if (event.detail > 1 || event.target.closest('[data-track-automation-point], [data-track-automation-default], [data-track-automation-segment]')) return
+      selectedTrackAutomation = null
+      updateTimelineGridLinesDom()
+    })
+    lane.addEventListener('dblclick', (event)=>{
+      if (event.target.closest('[data-track-automation-point]')) return
+      event.preventDefault()
+      event.stopPropagation()
+      addTrackAutomationPointFromEvent(event)
+    })
+  })
+  app.querySelectorAll('[data-track-automation-default]').forEach((line)=>line.addEventListener('pointerdown', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const track = getTrack(line.dataset.trackAutomationDefault)
+    if (!track) return
+    const parameter = line.dataset.trackAutomationDefaultParameter || getTrackAutomationParameter(track)
+    trackAutomationDrag = { type: 'default', trackId: track.id, parameter }
+    document.body.classList.add('is-studio-dragging')
+  }))
+  app.querySelectorAll('[data-track-automation-point]').forEach((point)=>point.addEventListener('pointerdown', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const track = getTrack(point.dataset.trackId)
+    if (!track) return
+    const parameter = point.dataset.trackAutomationPointParameter || getTrackAutomationParameter(track)
+    selectedTrackAutomation = { trackId: track.id, parameter, pointId: point.dataset.trackAutomationPoint }
+    trackAutomationDrag = { type: 'point', trackId: track.id, parameter, pointId: point.dataset.trackAutomationPoint }
+    document.body.classList.add('is-studio-dragging')
+  }))
+  app.querySelectorAll('[data-track-automation-segment]').forEach((segment)=>segment.addEventListener('pointerdown', (event)=>{
+    if (event.detail > 1) return
+    event.preventDefault()
+    event.stopPropagation()
+    const track = getTrack(segment.dataset.trackId)
+    if (!track) return
+    const parameter = segment.dataset.trackAutomationSegmentParameter || getTrackAutomationParameter(track)
+    const data = getTrackAutomationData(track, parameter)
+    const point = data.points.find((item)=>item.id === segment.dataset.trackAutomationSegment)
+    if (!point) return
+    selectedTrackAutomation = { trackId: track.id, parameter, pointId: point.id }
+    trackAutomationDrag = { type: 'segment', trackId: track.id, parameter, pointId: point.id, startY: event.clientY, curveAmount: Number(point.curveAmount) || 0 }
+    document.body.classList.add('is-studio-dragging')
+  }))
+  app.querySelectorAll('[data-track-options]').forEach((el) => el.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const id = el.dataset.trackOptions
+    selectedTrackId = id
+    trackMenuState = { trackId: id, ...getClampedTrackMenuPosition(e.clientX, e.clientY) }
+    inspectorMenu = null
+    renderEditor()
+    warmSelectedTrackInstrument('track-options')
+  }))
+  app.querySelectorAll('[data-mixer-track-strip]').forEach((strip)=>strip.addEventListener('click', (event)=>{
+    if (event.target.closest('button,input,select,textarea')) return
+    const id = strip.dataset.mixerTrackStrip
+    if (!id) return
+    selectedSystemChannel = ''
+    selectedTrackId = id
+    renderEditorPreservingArrangementScroll()
+  }))
+  app.querySelector('[data-add-track]')?.addEventListener('click', (event) => { event.stopPropagation(); openAddTrackModal() })
+  app.querySelector('[data-close-add-track]')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); closeAddTrackModal() })
+  app.querySelector('[data-add-track-backdrop]')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) closeAddTrackModal() })
+  app.querySelectorAll('[data-create-track-type]').forEach((button)=>button.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); addTrack({ trackType: button.dataset.createTrackType === 'audio' ? 'audio' : 'software' }) }))
+  app.querySelector('[data-duplicate-track]')?.addEventListener('click', (event) => { event.stopPropagation(); duplicateSelectedTrack() })
+  app.querySelector('[data-toggle-global-tracks]')?.addEventListener('click', (event) => { event.stopPropagation(); globalTracks.visible = !globalTracks.visible; trackMenuState = null; scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-global-track-view]')?.addEventListener('change', (event) => { globalTracks.viewMode = event.target.value || 'all'; scheduleEditorSave(); renderEditor() })
+  app.querySelector('[data-global-tempo-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (!globalTrackPopover?.id) return
+    const eventId = globalTrackPopover.id
+    const events = normalizeTempoMap().filter((item)=>item.id !== 'tempo-default')
+    const existing = events.find((item)=>item.id===eventId)
+    const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
+    next.bpm = clampProjectBpm(app.querySelector('[data-global-tempo-bpm]')?.value || 140)
+    next.curve = app.querySelector('[data-global-tempo-curve]')?.value === 'linear' ? 'linear' : 'hold'
+    next.curveAmount = next.curve === 'linear' ? clamp(Number(next.curveAmount) || 0, -1, 1) : 0
+    next.updatedAt = nowIso()
+    if (!existing) events.push(next)
+    globalTracks.tempoEvents = events.sort((a,b)=>a.beat-b.beat)
+    if ((Number(next.beat) || 0) === 0) projectState.bpm = next.bpm
+    globalTrackPopover = null
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-global-time-signature-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (!globalTrackPopover?.id) return
+    const eventId = globalTrackPopover.id
+    const events = normalizeTimeSignatureMap()
+    const existing = events.find((item)=>item.id===eventId)
+    const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
+    next.numerator = clamp(Math.round(Number(app.querySelector('[data-global-time-numerator]')?.value) || 4), 1, 32)
+    next.denominator = TIME_SIGNATURE_DENOMINATORS.includes(Number(app.querySelector('[data-global-time-denominator]')?.value)) ? Number(app.querySelector('[data-global-time-denominator]')?.value) : 4
+    next.updatedAt = nowIso()
+    if (!existing) events.push(next)
+    globalTracks.timeSignatureEvents = events.sort((a,b)=>a.beat-b.beat)
+    if ((Number(next.beat) || 0) === 0) projectState.timeSignature = formatTimeSignature(next)
+    globalTrackPopover = null
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-global-key-signature-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    if (!globalTrackPopover?.id) return
+    const eventId = globalTrackPopover.id
+    const events = normalizeKeySignatureMap()
+    const existing = events.find((item)=>item.id===eventId)
+    const next = existing || { id: eventId, beat: globalTrackPopover.beat || 0 }
+    next.root = normalizeRootNote(app.querySelector('[data-global-key-root]')?.value || 'C')
+    next.scale = normalizeScaleMode(app.querySelector('[data-global-key-scale]')?.value || 'minor')
+    next.label = `${next.root} ${next.scale}`
+    next.updatedAt = nowIso()
+    if (!existing) events.push(next)
+    globalTracks.keySignatureEvents = events.sort((a,b)=>a.beat-b.beat)
+    if ((Number(next.beat) || 0) === 0) projectState.key = next.label
+    globalTrackPopover = null
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelector('[data-delete-global-event]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    const type = globalTrackPopover?.type
+    const id = globalTrackPopover?.id
+    if (!type || !id) return
+    if (type === 'tempo') globalTracks.tempoEvents = normalizeTempoMap().filter((item)=>item.id !== id || item.beat === 0)
+    if (type === 'time-signature') globalTracks.timeSignatureEvents = normalizeTimeSignatureMap().filter((item)=>item.id !== id || item.beat === 0)
+    if (type === 'key-signature') globalTracks.keySignatureEvents = normalizeKeySignatureMap().filter((item)=>item.id !== id || item.beat === 0)
+    globalTrackPopover = null
+    selectedGlobalEvent = null
+    scheduleEditorSave()
+    renderEditor()
+  })
+  app.querySelectorAll('[data-global-arrangement]').forEach((button)=>button.addEventListener('dblclick', (event)=>{ event.preventDefault(); event.stopPropagation(); renameGlobalArrangement(button.dataset.globalArrangement) }))
+  app.querySelectorAll('[data-global-marker]').forEach((button)=>{
+    button.addEventListener('pointerdown', (event)=>{
+      event.preventDefault()
+      event.stopPropagation()
+      const marker = globalTracks.markers.find((item)=>item.id===button.dataset.globalMarker)
+      if (!marker) return
+      selectedGlobalEvent = { type:'marker', id:marker.id }
+      globalTrackDrag = { type: event.shiftKey ? 'marker-duration' : 'marker', id: marker.id, startBeat: marker.beat, currentBeat: event.shiftKey ? marker.beat + Math.max(0, Number(marker.durationBeats) || 0) : marker.beat }
+      document.body.classList.add('is-studio-dragging')
+    })
+    button.addEventListener('click', (event)=>{ event.stopPropagation(); selectedGlobalEvent = { type:'marker', id:button.dataset.globalMarker }; renderEditor() })
+    button.addEventListener('dblclick', (event)=>{ event.preventDefault(); event.stopPropagation(); renameGlobalMarker(button.dataset.globalMarker) })
+  })
+  app.querySelectorAll('[data-global-time-signature]').forEach((button)=>button.addEventListener('dblclick', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const item = normalizeTimeSignatureMap().find((signature)=>signature.id===button.dataset.globalTimeSignature)
+    if (item) openTimeSignatureEditor(event, item)
+  }))
+  app.querySelectorAll('[data-global-key-signature]').forEach((button)=>button.addEventListener('dblclick', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    const item = normalizeKeySignatureMap().find((signature)=>signature.id===button.dataset.globalKeySignature)
+    if (item) openKeySignatureEditor(event, item)
+  }))
+  app.querySelectorAll('[data-global-tempo]').forEach((button)=>button.addEventListener('pointerdown', (event)=>{
+    event.preventDefault()
+    event.stopPropagation()
+    let item = normalizeTempoEvents().find((tempo)=>tempo.id===button.dataset.globalTempo)
+    if (!item) return
+    if (item.id === 'tempo-default') {
+      item = { ...item, id: makeInsertId('tempo') }
+      globalTracks.tempoEvents = [item]
+    }
+    selectedGlobalEvent = { type: 'tempo', id: item.id }
+    if (event.detail >= 2) { openGlobalTempoEditor(event, item); return }
+    globalTrackDrag = { type: 'tempo', id: item.id, startBeat: item.beat, currentBeat: item.beat, bpm: item.bpm }
+    document.body.classList.add('is-studio-dragging')
+  }))
+  app.querySelectorAll('[data-global-tempo-curve]').forEach((button)=>{
+    button.addEventListener('pointerdown', (event)=>{
+      event.preventDefault()
+      event.stopPropagation()
+      const item = normalizeTempoEvents().find((tempo)=>tempo.id===button.dataset.globalTempoCurve)
+      if (!item) return
+      selectedGlobalEvent = { type: 'tempo-curve', id: item.id }
+      globalTrackDrag = { type: 'tempo-curve', id: item.id, startY: event.clientY, curveAmount: Number(item.curveAmount) || 0 }
+      document.body.classList.add('is-studio-dragging')
+    })
+    button.addEventListener('dblclick', (event)=>{
+      event.preventDefault()
+      event.stopPropagation()
+      globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===button.dataset.globalTempoCurve ? { ...item, curve: 'linear', curveAmount: 0, updatedAt: nowIso() } : item).filter((item)=>item.id !== 'tempo-default')
+      selectedGlobalEvent = { type: 'tempo-curve', id: button.dataset.globalTempoCurve }
+      scheduleEditorSave()
+      renderEditor()
+    })
+  })
+  app.querySelectorAll('[data-global-row]').forEach((row)=> {
+    row.addEventListener('pointerdown', (event)=> {
+      if (event.target.closest('button')) return
+      if (row.dataset.globalRow === 'tempo') {
+        selectedGlobalEvent = null
+        updateGlobalTrackLaneDom()
+        return
+      }
+      if (row.dataset.globalRow !== 'arrangement') return
+      event.preventDefault()
+      const beat = beatFromGlobalEvent(event)
+      globalTrackDrag = { type: 'arrangement', startBeat: beat, currentBeat: beat }
+      document.body.classList.add('is-studio-dragging')
+      renderEditor()
+    })
+    row.addEventListener('dblclick', (event)=> {
+      if (event.target.closest('button')) return
+      event.preventDefault()
+      const beat = beatFromGlobalEvent(event)
+      if (row.dataset.globalRow === 'markers') {
+        globalTracks.markers.push({ id: makeInsertId('marker'), beat, durationBeats: 0, name: 'Marker', label: 'Marker', color: '#ffe08a', createdAt: nowIso(), updatedAt: nowIso() })
+        scheduleEditorSave()
+        renderEditor()
+      } else if (row.dataset.globalRow === 'tempo') {
+        openGlobalTempoEditor(event)
+      } else if (row.dataset.globalRow === 'time-signature') {
+        openTimeSignatureEditor(event)
+      } else if (row.dataset.globalRow === 'key-signature') {
+        openKeySignatureEditor(event)
+      }
+    })
+  })
+  app.querySelector('[data-track-rename-form]')?.addEventListener('submit', (event) => { event.preventDefault(); renameSelectedTrack(app.querySelector('[data-track-rename-input]')?.value || '') })
+  app.querySelector('[data-track-rename-cancel]')?.addEventListener('click', (event) => { event.preventDefault(); renameTrackState = null; renderEditor() })
+  app.querySelector('[data-track-color-form]')?.addEventListener('submit', (event) => { event.preventDefault(); previewSelectedTrackColor(app.querySelector('[data-track-color-input]')?.value || ''); commitSelectedTrackColor() })
+  app.querySelector('[data-track-color-input]')?.addEventListener('input', (event) => { previewSelectedTrackColor(event.target.value) })
+  app.querySelectorAll('[data-track-context-action]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    const action = button.dataset.trackContextAction
+    const menuPos = trackMenuState ? { x: trackMenuState.x, y: trackMenuState.y } : getClampedTrackMenuPosition(event.clientX, event.clientY)
+    trackMenuState = null
+    if (action === 'duplicate') duplicateSelectedTrack()
+    else if (action === 'delete') deleteSelectedTrack()
+    else if (action === 'color') { beginTrackColorSession(getSelectedTrack(), menuPos); renderEditor() }
+    else if (action === 'inspector') { activeLeftPanel = 'inspector'; inspectorMenu = null; renderEditor() }
+    else if (action === 'rename') { const track = getSelectedTrack(); renameTrackState = { ...menuPos, trackId: selectedTrackId, name: track?.name || '' }; renderEditorPreservingArrangementScroll(); requestAnimationFrame(()=>app.querySelector('[data-track-rename-input]')?.select?.()) }
+  }))
+  app.querySelectorAll('[data-track-pan]').forEach((knob) => {
+    knob.addEventListener('pointerdown', (event) => { if (event.detail > 1) return; event.preventDefault(); event.stopPropagation(); const t = getTrack(knob.dataset.trackPan); if (!t) return; panDrag = { trackId: t.id, startX: event.clientX, startPan: t.pan, knob }; knob.setPointerCapture?.(event.pointerId) })
+    knob.addEventListener('dblclick', (event) => {
+      const track = getTrack(knob.dataset.trackPan)
+      if (!track) return
+      panDrag = null
+      openInlineNumericEditor(event, { label: 'Pan', value: track.pan, min: -100, max: 100, step: 1, apply: (value) => { setTrackPan(track, value, { save: true }); renderEditor() } })
+    })
+  })
+  app.querySelectorAll('[data-midi]').forEach((key) => {
+    const midi = Number(key.dataset.midi)
+    const stop = () => stopTrackMidiNote(getSelectedTrack(), midi)
+    key.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      playTrackMidiNote(getSelectedTrack(), midi, 0.85)
+    })
+    key.addEventListener('pointerup', (event) => { event.stopImmediatePropagation(); stop() })
+    key.addEventListener('pointerleave', (event) => { event.stopImmediatePropagation(); stop() })
+  })
+  app.querySelector('[data-octave-down]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const bounds = getInstrumentOctaveBounds()
+    instrumentOctaveOffset = Math.max(Math.min(bounds.min, 0), instrumentOctaveOffset - 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+  })
+  app.querySelector('[data-octave-up]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const bounds = getInstrumentOctaveBounds()
+    instrumentOctaveOffset = Math.min(Math.max(bounds.max, 0), instrumentOctaveOffset + 1)
+    stopAllTrackInstrumentNotes()
+    renderEditor()
+  })
+  app.querySelector('[data-instrument-knob="pan"]')?.addEventListener('input', (event) => {
+    event.stopImmediatePropagation()
+    const track = getSelectedTrack()
+    const value = clamp(Number(event.target.value), -100, 100)
+    instrumentPan = value / 100
+    setTrackPan(track, value)
+    const dial = app.querySelector('[data-instrument-knob-dial="pan"]')
+    const valueEl = app.querySelector('[data-instrument-knob-value="pan"]')
+    dial?.style.setProperty('--knob-angle', `${-135 + ((value + 100) / 200) * 270}deg`)
+    if (valueEl) valueEl.textContent = String(Math.round(value))
+  })
+  app.querySelector('[data-instrument-knob="volume"]')?.addEventListener('input', (event) => {
+    event.stopImmediatePropagation()
+    const track = getSelectedTrack()
+    const value = clamp(Number(event.target.value), 0, 1)
+    instrumentVolume = value
+    if (track) {
+      track.volume = Math.round(value * 100)
+      syncSelectedTrackVolumeControl(track)
+      setTrackChannelVolume(track)
+    }
+    const dial = app.querySelector('[data-instrument-knob-dial="volume"]')
+    const valueEl = app.querySelector('[data-instrument-knob-value="volume"]')
+    dial?.style.setProperty('--knob-angle', `${-135 + (value * 270)}deg`)
+    if (valueEl) valueEl.textContent = `${Math.round(value * 100)}%`
+  })
+  app.querySelector('[data-instrument-knob="pan"]')?.addEventListener('change', (event) => {
+    event.stopImmediatePropagation()
+    scheduleEditorSave()
+  })
+  app.querySelector('[data-instrument-knob="pan"]')?.addEventListener('pointerdown', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    const input = event.currentTarget
+    const startY = event.clientY
+    const startValue = Number(input.value)
+    const onMove = (moveEvent) => {
+      input.value = String(clamp(startValue - ((moveEvent.clientY - startY) * 0.8), -100, 100))
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      scheduleEditorSave()
+    }
+    window.addEventListener('pointermove', onMove, { signal: bindingSignal })
+    window.addEventListener('pointerup', onUp, { once: true, signal: bindingSignal })
+  })
+  app.querySelectorAll('[data-instrument-knob-dial]').forEach((dial) => dial.addEventListener('dblclick', (event) => {
+    const key = dial.dataset.instrumentKnobDial
+    const track = getSelectedTrack()
+    if (!track || !['volume', 'pan'].includes(key)) return
+    const config = key === 'volume'
+      ? { label: 'Volume', value: track.volume, min: 0, max: 100 }
+      : { label: 'Pan', value: track.pan, min: -100, max: 100 }
+    openInlineNumericEditor(event, {
+      ...config,
+      step: 1,
+      apply: (value) => {
+        if (key === 'volume') {
+          track.volume = value
+          setTrackChannelVolume(track)
+        } else {
+          setTrackPan(track, value)
+        }
+        scheduleEditorSave()
+        renderEditor()
+      }
+    })
+  }))
+  const getRulerLocalX = (event) => { const rect = ruler.getBoundingClientRect(); return clamp(event.clientX - rect.left + (grid?.scrollLeft || 0), 0, maxTimelineX()) }
+  const applyCycleRange = (start, end) => { const minW = cycleMinWidth(); const min = Math.min(start, end); const max = Math.max(start, end); let s = clamp(isSnapEnabled ? snapXToBeat(min) : min, timelineStartX(), maxTimelineX()); let e = clamp(isSnapEnabled ? snapXToBeat(max) : max, timelineStartX(), maxTimelineX()); if (e - s < minW) e = clamp(s + minW, s + minW, maxTimelineX()); cycleRange = { startX: s, endX: e } }
+
+  const extensionLane = app.querySelector('[data-timeline-extension-lane]')
+  const extensionInner = app.querySelector('[data-timeline-extension-inner]')
+  const trackList = app.querySelector('.studio-track-list')
+  let extensionDrag = null
+  let didMovePlayhead = false
+  let didCycleChange = false
+  const syncTimelineScroll = () => { syncArrangementRulerScroll(grid?.scrollLeft || 0) }
+  const syncTrackVerticalScroll = () => {
+    const inner = app.querySelector('.studio-track-list-inner')
+    if (inner) inner.style.transform = arrangementViewportTransforms({ scrollTop: grid?.scrollTop || 0 }).vertical
+  }
+  const updateTimelineRulerDom = (gridModel = null) => { const rulerInner = app.querySelector('[data-timeline-ruler-inner]'); if (!rulerInner) return; const cycleStrip = rulerInner.querySelector('[data-cycle-strip]'); if (!cycleStrip) return; rulerInner.innerHTML = `<div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler(gridModel)}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span>` }
+  const updateTimelineGridLinesDom = (gridModel = null, { preserveRegions = false } = {}) => {
+    const gridInner = app.querySelector('[data-arrangement-grid-inner]')
+    if (!gridInner) return
+
+    if (preserveRegions) {
+      gridInner.querySelectorAll('[data-grid-division]').forEach((line) => line.remove())
+      const negativeZone = gridInner.querySelector('.studio-negative-zone--grid')
+      if (negativeZone) {
+        negativeZone.style.width = `${barZeroX()}px`
+        negativeZone.insertAdjacentHTML('afterend', renderTimelineLines(gridModel))
+      }
+      return
+    }
+
+    const selection = gridInner.querySelector('[data-selection-box]')
+    const selectionMarkup = '<div class="studio-selection-box" data-selection-box hidden></div>'
+    const selectionHtml = selection ? selection.outerHTML : selectionMarkup
+    gridInner.innerHTML = `${renderNewTrackDropLane()}<span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines(gridModel)}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span>${selectionHtml}`
+  }
+  /* soura-signal-deck-v1:js:begin */
+  /*
+   * The extension lane uses the same canonical musical grid model as the ruler
+   * and arrangement. Rebuild its DOM in the same live-refresh transaction.
+   */
+  const updateTimelineExtensionDom = (gridModel = null) => {
+    const inner = app.querySelector('[data-timeline-extension-inner]')
+    if (!inner) return
+
+    inner
+      .querySelectorAll('[data-extension-beat-line]')
+      .forEach((line) => line.remove())
+
+    inner.insertAdjacentHTML('afterbegin', renderTimelineExtensionBeatLines(gridModel))
+  }
+  /* soura-signal-deck-v1:js:end */
+  const updateGlobalTrackLaneDom = () => { const lane = app.querySelector('[data-global-tracks]'); if (!lane) return; const wrap = document.createElement('div'); wrap.innerHTML = renderGlobalTrackLane().trim(); const next = wrap.firstElementChild; if (next) lane.replaceWith(next) }
+  const updateGlobalTrackGeometryDom = () => {
+    const byId = (items = []) => new Map(items.map((item) => [item.id, item]))
+    const arrangements = byId(globalTracks.arrangement || [])
+    const markers = byId(globalTracks.markers || [])
+    const timeSignatures = byId(normalizeTimeSignatureMap())
+    const keySignatures = byId(normalizeKeySignatureMap())
+
+    app.querySelectorAll('[data-global-arrangement]').forEach((element) => {
+      const item = arrangements.get(element.dataset.globalArrangement)
+      if (!item) return
+      element.style.left = `${beatToX(item.startBeat)}px`
+      element.style.width = `${Math.max(48, timelineWidthForBeats({ durationBeats: Number(item.endBeat) - Number(item.startBeat), pixelsPerBeat: beatWidth() }))}px`
+    })
+    app.querySelectorAll('[data-global-marker]').forEach((element) => {
+      const item = markers.get(element.dataset.globalMarker)
+      if (!item) return
+      element.style.left = `${beatToX(item.beat)}px`
+      if (Number(item.durationBeats) > 0) element.style.width = `${Math.max(24, timelineWidthForBeats({ durationBeats: Number(item.durationBeats), pixelsPerBeat: beatWidth() }))}px`
+    })
+    app.querySelectorAll('[data-global-time-signature]').forEach((element) => {
+      const item = timeSignatures.get(element.dataset.globalTimeSignature)
+      if (item) element.style.left = `${beatToX(item.beat)}px`
+    })
+    app.querySelectorAll('[data-global-key-signature]').forEach((element) => {
+      const item = keySignatures.get(element.dataset.globalKeySignature)
+      if (item) element.style.left = `${beatToX(item.beat)}px`
+    })
+
+    const template = document.createElement('template')
+    template.innerHTML = renderTempoLane(normalizeTempoEvents())
+    const nextSvg = template.content.querySelector('.studio-global-tempo-svg')
+    const currentSvg = app.querySelector('.studio-global-tempo-svg')
+    if (nextSvg && currentSvg) currentSvg.replaceWith(nextSvg)
+    template.content.querySelectorAll('[data-global-tempo], [data-global-tempo-curve]').forEach((next) => {
+      const attribute = next.hasAttribute('data-global-tempo') ? 'data-global-tempo' : 'data-global-tempo-curve'
+      const id = next.getAttribute(attribute)
+      const current = app.querySelector(`[${attribute}="${CSS.escape(id)}"]`)
+      if (!current) return
+      current.style.left = next.style.left
+      current.style.top = next.style.top
+    })
+  }
+
+  const syncTimelineSurfaceGeometry = (geometry) => {
+    if (!geometry) return
+    const arrangement = app.querySelector('[data-arrangement]')
+    if (arrangement) {
+      arrangement.dataset.timelineGeometryRevision = String(geometry.revision)
+      arrangement.dataset.timelineScrollLeft = String(geometry.scrollLeft)
+    }
+    ;[
+      ['ruler', app.querySelector('[data-timeline-ruler-inner]')],
+      ['global', app.querySelector('[data-global-tracks-inner]')],
+      ['grid', app.querySelector('[data-arrangement-grid-inner]')],
+      ['extension', app.querySelector('[data-timeline-extension-inner]')]
+    ].forEach(([surface, element]) => {
+      if (!element) return
+      element.style.width = `${geometry.contentWidth}px`
+      element.style.minWidth = `${geometry.contentWidth}px`
+      element.style.maxWidth = 'none'
+      element.dataset.timelineGeometryRevision = String(geometry.revision)
+      element.dataset.timelineGeometrySurface = surface
+      element.dataset.timelinePixelsPerBeat = String(geometry.pixelsPerBeat)
+      element.dataset.timelineOriginX = String(geometry.originX)
+    })
+  }
+
+  const publishTimelineGeometryDiagnostics = (geometry) => {
+    if (!(import.meta.env?.DEV || new URLSearchParams(window.location.search).has('souraGeometry'))) return
+    const positions = []
+    const regionMeasurements = []
+    const durations = []
+    const viewportPositions = []
+    const bounds = []
+    const capturePosition = (element, surface, beat, viewport) => {
+      positions.push({ surface, beat, x: parseFloat(element.style.left) })
+      if (viewport) viewportPositions.push({
+        surface,
+        beat,
+        scrollLeft: grid?.scrollLeft || 0,
+        x: element.getBoundingClientRect().left - viewport.getBoundingClientRect().left
+      })
+    }
+    app.querySelectorAll('[data-ruler-grid-division][data-musical-beat], [data-extension-beat-line][data-musical-beat], [data-grid-division][data-musical-beat]').forEach((element) => {
+      const surface = element.closest('[data-timeline-ruler]') ? 'ruler' : element.closest('[data-timeline-extension-lane]') ? 'extension' : 'grid'
+      const viewport = surface === 'ruler'
+        ? element.closest('[data-timeline-ruler]')
+        : surface === 'extension'
+          ? element.closest('[data-timeline-extension-lane]')
+          : grid
+      capturePosition(element, surface, Number(element.dataset.musicalBeat), viewport)
+    })
+    const { byId } = getTimelineRegionIndex()
+    app.querySelectorAll('[data-midi-region]').forEach((element) => {
+      const region = byId.get(element.dataset.midiRegion)
+      if (region) {
+        const expected = getTimelineRegionGeometry(region, geometry)
+        capturePosition(element, 'region', expected.startBeat, grid)
+        const rect = element.getBoundingClientRect()
+        const actualTimelineLeft = rect.left - grid.getBoundingClientRect().left - grid.clientLeft + grid.scrollLeft
+        const measurement = {
+          regionId: region.id, type: region.type, ...expected,
+          pixelsPerBeat: geometry.pixelsPerBeat, originX: geometry.originX, scrollLeft: grid.scrollLeft,
+          expectedLeft: expected.left, expectedWidth: expected.width,
+          actualLeft: parseFloat(element.style.left), actualWidth: parseFloat(element.style.width),
+          boundingLeft: rect.left, boundingWidth: rect.width, actualTimelineLeft,
+          waveformWidths: [...element.querySelectorAll('.studio-audio-waveform, .studio-audio-waveform-bars')].map(node => node.getBoundingClientRect().width)
+        }
+        regionMeasurements.push(measurement)
+        durations.push({ surface: region.id, durationBeats: expected.durationBeats, width: rect.width })
+        positions.push({ surface: `${region.id}:bounding`, beat: expected.startBeat, x: actualTimelineLeft })
+      }
+      const regionRect = element.getBoundingClientRect()
+      element.querySelectorAll('.studio-audio-waveform, .studio-audio-waveform-bars').forEach((waveform) => {
+        const waveformRect = waveform.getBoundingClientRect()
+        bounds.push({ surface: 'waveform', containerLeft: regionRect.left, containerWidth: regionRect.width, left: waveformRect.left, width: waveformRect.width })
+      })
+    })
+    const markers = new Map((globalTracks.markers || []).map((marker) => [marker.id, marker]))
+    app.querySelectorAll('[data-global-marker]').forEach((element) => {
+      const marker = markers.get(element.dataset.globalMarker)
+      if (marker) capturePosition(element, 'marker', Number(marker.beat) || 0, app.querySelector('[data-global-tracks]'))
+    })
+    const arrangement = app.querySelector('[data-arrangement]')
+    positions.push({ surface: 'playhead', beat: xToBeat(timelineState.playheadX), x: parseFloat(arrangement?.style.getPropertyValue('--playhead-x')) })
+    const surfaces = [...app.querySelectorAll('[data-timeline-geometry-surface]')].map((element) => ({
+      name: element.dataset.timelineGeometrySurface,
+      width: parseFloat(element.style.width),
+      revision: Number(element.dataset.timelineGeometryRevision)
+    }))
+    const errors = collectTimelineGeometryInvariantErrors({
+      originX: geometry.originX,
+      pixelsPerBeat: geometry.pixelsPerBeat,
+      expectedContentWidth: geometry.contentWidth,
+      expectedRevision: geometry.revision,
+      surfaces,
+      positions,
+      viewportPositions,
+      durations,
+      bounds,
+      roundTripBeats: [0, 0.25, 1, geometry.maxBeat]
+    })
+    if (Math.abs((grid?.scrollLeft || 0) - geometry.scrollLeft) > 0.5) errors.push({ kind: 'scroll-position', expected: geometry.scrollLeft, actual: grid?.scrollLeft || 0 })
+    lastTimelineGeometryDiagnostics = {
+      ...geometry,
+      regions: regionMeasurements,
+      errors,
+      checkedAt: performance.now(),
+      surfaceCount: surfaces.length,
+      positionCount: positions.length,
+      viewportPositionCount: viewportPositions.length,
+      waveformBoundsCount: bounds.length
+    }
+    document.documentElement.dataset.souraTimelineGeometry = errors.length ? 'failed' : 'ok'
+  }
+
+  // Viewport geometry may move the playhead's pixels, but it must never seek or
+  // synchronize the audio engine. Musical time remains owned by the transport.
+  const applyTimelineGeometry = ({ scrollLeft = grid?.scrollLeft || 0, viewportWidth = grid?.clientWidth || 0 } = {}) => {
+    timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar)
+    syncBarsFromPositiveBeats()
+    const metrics = getTimelineMetrics()
+    const geometry = createTimelineGeometrySnapshot({
+      revision: ++timelineGeometryRevision,
+      contentWidth: timelineContentWidth(),
+      maxBeat: metrics.maxBeat,
+      originX: metrics.zeroX,
+      pixelsPerBeat: metrics.pixelsPerBeat,
+      viewportWidth,
+      scrollLeft
+    })
+    const arrangement = app.querySelector('[data-arrangement]')
+    arrangement?.style.setProperty('--bars', timelineState.bars)
+    arrangement?.style.setProperty('--pixels-per-bar', `${timelineState.pixelsPerBar}px`)
+    arrangement?.style.setProperty('--pixels-per-beat', `${metrics.pixelsPerBeat}px`)
+    arrangement?.style.setProperty('--timeline-content-width', `${geometry.contentWidth}px`)
+    syncTimelineSurfaceGeometry(geometry)
+    clampTimelineSystems()
+    updateCycleDomFromState()
+    setPlayhead(timelineState.playheadX, VIEWPORT_PLAYHEAD_UPDATE_OPTIONS)
+    return geometry
+  }
+  let renderedTimelineBeatRange = getTimelineRenderBeatRange()
+  let timelineVisualRefreshRaf = 0
+  const refreshTimelineVisualsLive = ({ preserveRegions = false, refreshGlobalTracks = true } = {}) => {
+    const geometry = applyTimelineGeometry()
+    const gridModel = buildTimelineMusicalGridModel()
+    updateTimelineRulerDom(gridModel)
+    updateTimelineGridLinesDom(gridModel, { preserveRegions })
+    updateTimelineExtensionDom(gridModel)
+    if (refreshGlobalTracks) updateGlobalTrackLaneDom()
+    else updateGlobalTrackGeometryDom()
+    syncTimelineSurfaceGeometry(geometry)
+    updateCycleDomFromState()
+    updateTransportDisplay()
+    renderedTimelineBeatRange = getTimelineRenderBeatRange()
+    syncTimelineScroll()
+    publishTimelineGeometryDiagnostics(geometry)
+    if (!preserveRegions) bindMidiRegionEvents()
+  }
+  const scheduleTimelineVisualRefresh = () => { if (timelineVisualRefreshRaf) return; timelineVisualRefreshRaf = requestAnimationFrame(() => { timelineVisualRefreshRaf = 0; refreshTimelineVisualsLive() }) }
+  const updateTrackHeightDom = () => { const page = app.querySelector('.studio-editor-page'); if (page) { page.style.setProperty('--studio-track-height', `${timelineState.trackHeight}px`); page.style.setProperty('--studio-track-lanes-height', `${totalTrackLaneHeight()}px`) } const compact = timelineState.trackHeight <= 56; app.querySelectorAll('[data-track-row]').forEach((row)=>row.classList.toggle('is-track-compact', compact));
+  page.style.setProperty('--studio-track-grid-top', `${currentNewTrackDropRowHeight()}px`) }
+  const updateTimelineRegionGeometryDom = (geometry = getRegionGeometrySnapshot()) => {
+    const { byId } = getTimelineRegionIndex()
+    app.querySelectorAll('[data-midi-region]').forEach((element) => {
+      const region = byId.get(element.dataset.midiRegion) || (element.dataset.midiRegion === 'recording' && activeRecording
+        ? { ...activeRecording, endBeat: Math.max(activeRecording.startBeat + 0.25, xToBeat(timelineState.playheadX)) } : null)
+      if (!region) return
+      const { startBeat, left, width } = getTimelineRegionGeometry(region, geometry)
+      const { top, height } = getRegionLaneGeometry(region)
+      element.dataset.timelineGeometryRevision = String(geometry.revision)
+
+      element.style.left = `${left}px`
+      element.style.top = `${top}px`
+      element.style.width = `${width}px`
+      element.style.height = `${height}px`
+      element.style.setProperty('--beat-width', `${geometry.pixelsPerBeat}px`)
+
+      if (region.type !== 'audio') {
+        const notes = Array.isArray(region.notes) ? region.notes.filter((note) => noteIsVisibleInRegion(region, note)).slice(0, 24) : []
+        const previews = element.querySelectorAll('.studio-midi-note-preview')
+        previews.forEach((preview, index) => {
+          const note = notes[index]
+          if (!note) return
+          const noteStart = Number(note.startBeat) || startBeat
+          preview.style.left = `${timelineWidthForBeats({ durationBeats: noteStart - startBeat, pixelsPerBeat: geometry.pixelsPerBeat })}px`
+          preview.style.width = `${Math.max(4, timelineWidthForBeats({ durationBeats: Number(note.durationBeats) || 0.05, pixelsPerBeat: geometry.pixelsPerBeat }))}px`
+        })
+      }
+    })
+  }
+
+  const refreshVisibleAudioWaveformsDom = () => {
+    if (!grid) return
+    const viewportLeft = grid.scrollLeft
+    const viewportRight = viewportLeft + grid.clientWidth
+    const buffer = Math.max(320, grid.clientWidth * 0.75)
+
+    const { byId } = getTimelineRegionIndex()
+    app.querySelectorAll('[data-audio-region]').forEach((element) => {
+      const region = byId.get(element.dataset.audioRegion)
+      if (!region || region.type !== 'audio') return
+      const { left: regionLeft, right: regionRight } = getTimelineRegionGeometry(region, getRegionGeometrySnapshot())
+      if (regionRight < viewportLeft - buffer || regionLeft > viewportRight + buffer) return
+
+      const template = document.createElement('template')
+      template.innerHTML = renderAudioWaveform(region).trim()
+      const nextSvg = template.content.querySelector('.studio-audio-waveform')
+      const nextBars = template.content.querySelector('.studio-audio-waveform-bars')
+      const currentSvg = element.querySelector('.studio-audio-waveform')
+      const currentBars = element.querySelector('.studio-audio-waveform-bars')
+      if (currentSvg && nextSvg) currentSvg.replaceWith(nextSvg)
+      if (currentBars && nextBars) currentBars.replaceWith(nextBars)
+    })
+  }
+
+  const reconcileVisibleTimelineRegionsDom = (range = getTimelineRenderBeatRange()) => {
+    const gridInner = app.querySelector('[data-arrangement-grid-inner]')
+    const playhead = gridInner?.querySelector('[data-grid-playhead]')
+    if (!gridInner || !playhead) return
+    const visibleRegions = getTimelineRegionsInRange(range)
+    const visibleIds = new Set(visibleRegions.map((region) => String(region.id)))
+    const mountedIds = new Set()
+    gridInner.querySelectorAll('[data-midi-region]').forEach((element) => {
+      const id = String(element.dataset.midiRegion || '')
+      if (id !== 'recording' && !visibleIds.has(id)) element.remove()
+      else mountedIds.add(id)
+    })
+    visibleRegions.forEach((region) => {
+      const id = String(region.id)
+      if (mountedIds.has(id)) return
+      playhead.insertAdjacentHTML('beforebegin', region.type === 'audio' ? renderAudioRegion(region, false) : renderMidiRegion(region, false))
+    })
+    bindMidiRegionEvents()
+  }
+
+  let timelineViewportRefreshRaf = 0
+  const scheduleTimelineViewportRefresh = ({ force = false } = {}) => {
+    const visibleRange = getTimelineRenderBeatRange({ bufferViewports: 0 })
+    if (!force && !timelineViewportNeedsRefresh(renderedTimelineBeatRange, visibleRange)) return
+    if (timelineViewportRefreshRaf) return
+    timelineViewportRefreshRaf = requestAnimationFrame(() => {
+      timelineViewportRefreshRaf = 0
+      const nextRange = getTimelineRenderBeatRange()
+      const gridModel = buildTimelineMusicalGridModel()
+      updateTimelineRulerDom(gridModel)
+      updateTimelineGridLinesDom(gridModel, { preserveRegions: true })
+      updateTimelineExtensionDom(gridModel)
+      reconcileVisibleTimelineRegionsDom(nextRange)
+      updateTimelineRegionGeometryDom()
+      updateCycleDomFromState()
+      renderedTimelineBeatRange = nextRange
+      syncTimelineScroll()
+    })
+  }
+
+  let visibleWaveformRefreshTimer = 0
+  const scheduleVisibleAudioWaveformRefresh = (delay = 90) => {
+    if (visibleWaveformRefreshTimer) window.clearTimeout(visibleWaveformRefreshTimer)
+    visibleWaveformRefreshTimer = window.setTimeout(() => {
+      visibleWaveformRefreshTimer = 0
+      refreshVisibleAudioWaveformsDom()
+    }, delay)
+  }
+
+  let timelineZoomRaf = 0
+  let pendingTimelineZoom = null
+
+  const queueTimelineZoom = ({ zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats }) => {
+    souraPerformanceDiagnostics.recordViewportChange(isPlaying)
+    if (pendingTimelineZoom) {
+      pendingTimelineZoom.zoomFactor *= zoomFactor
+      pendingTimelineZoom.mouseX = mouseX
+      pendingTimelineZoom.anchorBeat = anchorBeat
+      pendingTimelineZoom.playheadBeat = playheadBeat
+      pendingTimelineZoom.cycleBeats = cycleBeats
+    } else {
+      pendingTimelineZoom = { zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats }
+    }
+
+    if (timelineZoomRaf) return
+    timelineZoomRaf = requestAnimationFrame(() => {
+      timelineZoomRaf = 0
+      const zoom = pendingTimelineZoom
+      pendingTimelineZoom = null
+      if (!zoom || !grid) return
+
+      const frameZoomFactor = Math.exp(clamp(Math.log(Math.max(0.000001, zoom.zoomFactor)), -0.32, 0.32))
+      timelineState.pixelsPerBar = clampTimelinePixelsPerBar(timelineState.pixelsPerBar * frameZoomFactor)
+      const visualPlayheadBeat = isPlaying ? getTransportClockProjectBeat() : zoom.playheadBeat
+      timelineState.playheadX = beatsFromBarZeroToX(visualPlayheadBeat)
+      if (zoom.cycleBeats) {
+        let startBeat = zoom.cycleBeats.start
+        let endBeat = zoom.cycleBeats.end
+        if (isSnapEnabled) {
+          startBeat = snapBeatToGrid(startBeat)
+          endBeat = snapBeatToGrid(endBeat)
+        }
+        cycleRange = {
+          startX: beatsFromBarZeroToX(startBeat),
+          endX: beatsFromBarZeroToX(endBeat)
+        }
+      }
+
+      const metrics = getTimelineMetrics()
+      const contentWidth = timelineContentWidth()
+      const viewportPlan = planTimelineZoomViewport({
+        targetPixelsPerBeat: metrics.pixelsPerBeat,
+        originX: metrics.zeroX,
+        maxBeat: metrics.maxBeat,
+        contentWidth,
+        viewportWidth: grid.clientWidth,
+        pointerViewportX: zoom.mouseX,
+        pointerBeat: zoom.anchorBeat,
+        playheadBeat: visualPlayheadBeat,
+        followPlayhead,
+        playing: isPlaying
+      })
+      const geometry = applyTimelineGeometry({ scrollLeft: viewportPlan.scrollLeft, viewportWidth: grid.clientWidth })
+      geometry.scrollLeft = setArrangementScrollLeft(grid, geometry.scrollLeft, { owner: 'zoom', revision: geometry.revision })
+
+      // Native grid scrolling owns the arrangement camera. Sibling ruler/global/
+      // extension canvases mirror that camera exactly once with -scrollLeft.
+      const gridModel = buildTimelineMusicalGridModel()
+      updateTimelineRulerDom(gridModel)
+      updateTimelineGridLinesDom(gridModel, { preserveRegions: true })
+      updateTimelineExtensionDom(gridModel)
+      const nextRange = getTimelineRenderBeatRange()
+      reconcileVisibleTimelineRegionsDom(nextRange)
+      updateTimelineRegionGeometryDom(geometry)
+      scheduleVisibleAudioWaveformRefresh()
+      updateGlobalTrackGeometryDom()
+      syncTimelineSurfaceGeometry(geometry)
+      updateCycleDomFromState()
+      updateTransportDisplay()
+      renderedTimelineBeatRange = nextRange
+      syncTimelineScroll()
+      updateMidiRollPlayheadDom()
+      publishTimelineGeometryDiagnostics(geometry)
+      scheduleEditorSave()
+    })
+  }
+
+  const queueTimelineZoomAtViewport = ({ deltaY = 0, deltaMode = 0, mouseX = 0 } = {}) => {
+    if (!grid) return false
+    const oldTimelineX = grid.scrollLeft + mouseX
+    const anchorBeat = xToBeatsFromBarZero(oldTimelineX)
+    let playheadBeat = xToBeatsFromBarZero(timelineState.playheadX)
+    if (isSnapEnabled) playheadBeat = snapBeatToGrid(playheadBeat)
+    const cycleBeats = cycleRange
+      ? { start: xToBeatsFromBarZero(cycleRange.startX), end: xToBeatsFromBarZero(cycleRange.endX) }
+      : null
+    const zoomFactor = timelineZoomFactorFromWheel({
+      deltaY,
+      deltaMode,
+      pageSize: Math.max(1, grid.clientHeight || window.innerHeight * 0.85)
+    })
+    if (Math.abs(zoomFactor - 1) < 0.000001) return false
+    queueTimelineZoom({ zoomFactor, mouseX, anchorBeat, playheadBeat, cycleBeats })
+    return true
+  }
+
+  if (import.meta.env?.DEV) {
+    window.__souraTimelineViewportTest = Object.freeze({
+      zoomAt: ({ deltaY = 0, deltaMode = 0, pointerRatio = 0.5 } = {}) => queueTimelineZoomAtViewport({
+        deltaY,
+        deltaMode,
+        mouseX: grid ? grid.clientWidth * clamp(Number(pointerRatio) || 0, 0, 1) : 0
+      })
+    })
+  }
+
+  const isPinnedRight = () => !!grid && (grid.scrollLeft + grid.clientWidth >= grid.scrollWidth - 4)
+  grid?.addEventListener('wheel', (event) => { if (isTextEntryTarget(event.target)) return; const overTimeline = event.target.closest('[data-arrangement-grid], [data-timeline-ruler], [data-timeline-extension-lane], [data-arrangement]'); const zoomGesture = (event.ctrlKey || event.metaKey) && overTimeline; if (overTimeline && !zoomGesture) markTimelineUserInteraction(); const overTrackZone = event.target.closest('[data-arrangement-grid], .studio-track-panel, .studio-editor-workspace'); if (zoomGesture) {
+      event.preventDefault()
+      if (!(followPlayhead && isPlaying)) markTimelineUserInteraction()
+      const rect = grid.getBoundingClientRect()
+      const mouseX = event.clientX - rect.left
+      queueTimelineZoomAtViewport({ deltaY: event.deltaY, deltaMode: event.deltaMode, mouseX })
+      return
+    }
+    if (event.altKey && overTrackZone) { event.preventDefault(); timelineState.trackHeight = clamp(timelineState.trackHeight + (event.deltaY < 0 ? 6 : -6), 44, 220); updateTrackHeightDom(); scheduleTimelineVisualRefresh(); scheduleEditorSave(); return }
+    if (event.shiftKey && overTimeline) { event.preventDefault(); const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? normalizedWheelPixels(event, 'x') : normalizedWheelPixels(event, 'y'); grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth)); syncTimelineScroll(grid); return }
+    // Safari/macOS trackpads emit ordinary horizontal wheel gestures through deltaX.
+    // Handle them explicitly so the arrangement remains horizontally scrollable even
+    // when synchronized ruler/extension layers use transforms and overscroll containment.
+    if (overTimeline && Math.abs(event.deltaX) > 0.01) {
+      event.preventDefault()
+      const delta = normalizedWheelPixels(event, 'x')
+      grid.scrollLeft = clamp(grid.scrollLeft + delta, 0, Math.max(0, grid.scrollWidth - grid.clientWidth))
+      syncTimelineScroll(grid)
+    }
+  }, { passive:false })
+  // Keep the arrangement grid as the viewport, not as the full timeline content.
+  // A previous timeline refactor could assign the project/timeline pixel width to
+  // .studio-arrangement-grid itself. That makes clientWidth === scrollWidth and
+  // mathematically removes all horizontal scrolling. The wide project geometry
+  // belongs on .studio-arrangement-grid-inner instead.
+  const repairArrangementHorizontalViewport = () => {
+    if (!grid) return
+    const inner = grid.querySelector('.studio-arrangement-grid-inner')
+    if (!inner) return
+
+    const arrangement = grid.closest('.studio-arrangement')
+    const viewportWidth = Math.max(
+      1,
+      Math.round(arrangement?.clientWidth || grid.parentElement?.clientWidth || 0)
+    )
+    const projectWidth = Math.max(viewportWidth, timelineContentWidth())
+
+    // The arrangement itself is a one-column CSS grid. Its auto-sized column was
+    // expanding to the inner musical canvas width (e.g. 8706px), even though the
+    // arrangement's visible box was only ~921px. Constrain that grid track to the
+    // viewport so overflow happens INSIDE .studio-arrangement-grid.
+    if (arrangement) {
+      arrangement.style.gridTemplateColumns = 'minmax(0, 1fr)'
+      arrangement.style.minWidth = '0'
+      arrangement.style.maxWidth = '100%'
+      arrangement.style.overflowX = 'hidden'
+    }
+
+    // Remove any inline full-project sizing accidentally applied to the viewport.
+    grid.style.width = '100%'
+    grid.style.maxWidth = '100%'
+    grid.style.minWidth = '0'
+    grid.style.boxSizing = 'border-box'
+    grid.style.overflowX = 'auto'
+    grid.style.overscrollBehaviorX = 'contain'
+    grid.style.scrollBehavior = 'auto'
+
+    // Preserve the wide musical canvas on the inner content element.
+    const metrics = getTimelineMetrics()
+    const geometry = createTimelineGeometrySnapshot({
+      revision: timelineGeometryRevision || 1,
+      contentWidth: projectWidth,
+      maxBeat: metrics.maxBeat,
+      originX: metrics.zeroX,
+      pixelsPerBeat: metrics.pixelsPerBeat,
+      viewportWidth: grid.clientWidth,
+      scrollLeft: grid.scrollLeft
+    })
+    syncTimelineSurfaceGeometry(geometry)
+  }
+
+  repairArrangementHorizontalViewport()
+  requestAnimationFrame(repairArrangementHorizontalViewport)
+  window.addEventListener('resize', repairArrangementHorizontalViewport, { passive:true, signal: bindingSignal })
+
+  // Capture horizontal trackpad gestures at the whole arrangement level.
+  // The ruler/global/extension layers are siblings of the scrollable grid, so a
+  // listener attached only to the grid misses gestures that begin over those layers.
+  const arrangementSurface = app.querySelector('[data-arrangement]')
+  arrangementSurface?.addEventListener('wheel', (event) => {
+    if (!grid || isTextEntryTarget(event.target) || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return
+    const dx = normalizedWheelPixels(event, 'x')
+    if (Math.abs(dx) <= 0.01) return
+    const maxScroll = Math.max(0, grid.scrollWidth - grid.clientWidth)
+    if (maxScroll <= 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    markTimelineUserInteraction()
+    grid.scrollLeft = clamp((grid.scrollLeft || 0) + dx, 0, maxScroll)
+    syncTimelineScroll(grid)
+  }, { passive:false, capture:true })
+
+  grid?.addEventListener('scroll', () => {
+    const scrollPolicy = planTimelineScrollRefresh({
+      scrollLeft: grid.scrollLeft,
+      geometryRevision: timelineGeometryRevision,
+      plannedScroll: pendingTimelineProgrammaticScroll
+    })
+    pendingTimelineProgrammaticScroll = null
+    if (scrollPolicy.shouldMarkUserInteraction) markTimelineUserInteraction()
+    // Synchronize ruler/global/extension transforms immediately on every scroll.
+    syncTimelineScroll(grid)
+    syncTrackVerticalScroll(grid)
+    // A matching zoom scroll acknowledges the revision already painted above.
+    // Every other scroll remains a normal native-scroll viewport update.
+    if (scrollPolicy.shouldRefreshViewport) scheduleTimelineViewportRefresh()
+    if (scrollPolicy.shouldRefreshWaveforms) scheduleVisibleAudioWaveformRefresh()
+  }, { passive:true })
+  trackList?.addEventListener('wheel', (event) => { if (!grid) return; event.preventDefault(); markTimelineUserInteraction(); grid.scrollTop = clamp(grid.scrollTop + normalizedWheelPixels(event, 'y'), 0, Math.max(0, grid.scrollHeight - grid.clientHeight)) }, { passive:false })
+  const restoreTimelineExtensionScroll = (drag = extensionDrag) => {
+    if (!grid || !drag) return
+    const max = Math.max(0, grid.scrollWidth - grid.clientWidth)
+    grid.scrollLeft = drag.side === 'right' && drag.pinRight ? max : clamp(drag.scrollLeft || 0, 0, max)
+    syncTimelineScroll(grid)
+  }
+  const scheduleTimelineExtensionScrollRestore = (drag = extensionDrag) => requestAnimationFrame(() => restoreTimelineExtensionScroll(drag))
+  const extendTimelineWhileHeld = () => {
+    if (!extensionDrag) return
+    const pointerX = Number(extensionDrag.pointerX ?? extensionDrag.startX)
+    const distance = extensionDrag.side === 'right' ? pointerX - extensionDrag.startX : extensionDrag.startX - pointerX
+    if (Math.abs(distance) <= 2) return
+    const direction = distance < 0 ? -1 : 1
+    const beatsPerSecond = clamp(1.2 + (Math.abs(distance) / 48), 1.2, 12)
+    extensionDrag.beatCarry = (Number(extensionDrag.beatCarry) || 0) + (beatsPerSecond * 0.08)
+    const beats = Math.floor(extensionDrag.beatCarry)
+    if (beats < 1) return
+    extensionDrag.beatCarry -= beats
+    if (extensionDrag.side === 'right') {
+      timelineState.positiveBeats = clamp(timelineState.positiveBeats + (beats * direction), timelineState.beatsPerBar, MAX_TIMELINE_POSITIVE_BEATS)
+    } else {
+      const beforePre = Number(timelineState.preStartPixels) || 0
+      timelineState.preStartPixels = clamp(beforePre + (beats * direction * beatWidth()), 0, timelineState.pixelsPerBar * 10)
+      extensionDrag.scrollLeft = (Number(extensionDrag.scrollLeft) || 0) + (timelineState.preStartPixels - beforePre)
+      timelineState.playheadX = beatsFromBarOneToX(extensionDrag.startPlayheadBeats)
+      if (extensionDrag.startCycleBeats) cycleRange = { startX: beatsFromBarOneToX(extensionDrag.startCycleBeats.start), endX: beatsFromBarOneToX(extensionDrag.startCycleBeats.end) }
+    }
+    scheduleTimelineVisualRefresh()
+    scheduleTimelineExtensionScrollRestore(extensionDrag)
+  }
+  app.querySelectorAll('[data-timeline-extension-handle]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ event.preventDefault(); markTimelineUserInteraction(3200); const pinRight = isPinnedRight(); extensionDrag={ side:el.dataset.timelineExtensionHandle, startX:event.clientX, pointerX:event.clientX, beatCarry:0, startPositiveBeats:timelineState.positiveBeats, startPre:timelineState.preStartPixels, startPlayheadBeats:xToBeatsFromBarOne(timelineState.playheadX), startCycleBeats:cycleRange?{start:xToBeatsFromBarOne(cycleRange.startX),end:xToBeatsFromBarOne(cycleRange.endX)}:null, scrollLeft:grid?.scrollLeft||0, pinRight, moved:false }; if (timelineExtensionRepeatTimer) clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = window.setInterval(extendTimelineWhileHeld, 80); document.body.classList.add('is-studio-dragging') }))
+  ruler?.addEventListener('pointerdown', (event) => { const cycleHandle = event.target.closest('[data-cycle-handle]'); const cycleMove = event.target.closest('[data-cycle-drag]'); const inCycleStrip = isCycleStripPointerEvent(event, ruler); if (cycleHandle && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: cycleHandle.dataset.cycleHandle === 'start' ? 'resize-start' : 'resize-end', fixedX: cycleHandle.dataset.cycleHandle === 'start' ? cycleRange.endX : cycleRange.startX }; return } if (cycleMove && cycleRange) { event.preventDefault(); setCycleEnabled(true); const x = getRulerLocalX(event); cycleDrag = { mode: 'move', startPointerX: x, startRange: { ...cycleRange } }; return } if (inCycleStrip) { event.preventDefault(); const x = getRulerLocalX(event); setCycleEnabled(true); cycleDrag = { mode: 'create', anchorX: x }; applyCycleRange(x, x + beatWidth()); document.body.classList.add('is-studio-dragging'); return } event.preventDefault(); timelineState.isDraggingPlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); scheduleEditorSave() })
+  grid?.addEventListener('pointerdown', (event) => { activeCommandContext = 'arrangement'; if (event.target.closest('[data-midi-region]')) return; if (event.target !== grid && !event.target.closest('[data-arrangement-grid-inner]')) return; event.preventDefault(); if (!event.shiftKey) clearRegionSelection(); midiRollSelectedNoteIndex = null; app.querySelectorAll('[data-midi-region].is-selected').forEach((node)=>node.classList.remove('is-selected')); timelineState.isSelecting = true; const rect = grid.getBoundingClientRect(); timelineState.selectionBox = { startX: event.clientX - rect.left + grid.scrollLeft, startY: event.clientY - rect.top + grid.scrollTop }; if (selectionBox) { selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.style.left=`${timelineState.selectionBox.startX}px`; selectionBox.style.top=`${timelineState.selectionBox.startY}px`; selectionBox.style.width='0px'; selectionBox.style.height='0px'; selectionBox.hidden = false } })
+	  window.addEventListener('pointermove', (event) => { if (panDrag) { const t=getTrack(panDrag.trackId); if (t) setTrackPan(t, panDrag.startPan + (event.clientX-panDrag.startX)) } if (cycleDrag) { event.preventDefault(); const x = getRulerLocalX(event); if (cycleDrag.mode === 'create') { applyCycleRange(cycleDrag.anchorX, x) } else if (cycleDrag.mode === 'move' && cycleDrag.startRange) { const rawDx = x - cycleDrag.startPointerX; const width = cycleDrag.startRange.endX - cycleDrag.startRange.startX; let start = cycleDrag.startRange.startX + rawDx; let end = start + width; if (isSnapEnabled) { start = snapXToBeat(start); end = start + width } start = clamp(start, timelineState.preStartPixels, maxTimelineX() - width); applyCycleRange(start, start + width) } else if (cycleDrag.mode === 'resize-start') { const end = cycleDrag.fixedX; const start = Math.min(x, end - beatWidth()); cycleRange = { startX: clamp(snapXToBeat(start), timelineState.preStartPixels, maxTimelineX()-beatWidth()), endX: end } } else if (cycleDrag.mode === 'resize-end') { const start = cycleDrag.fixedX; const end = Math.max(x, start + beatWidth()); cycleRange = { startX: start, endX: clamp(snapXToBeat(end), start + beatWidth(), maxTimelineX()) } } didCycleChange = true; updateCycleDomFromState(); return } if (extensionDrag) { extensionDrag.pointerX = event.clientX; extensionDrag.moved = extensionDrag.moved || Math.abs(event.clientX - extensionDrag.startX) > 3; markTimelineUserInteraction(3200); return } if (timelineState.isDraggingPlayhead) { event.preventDefault(); if (grid) { const rect = grid.getBoundingClientRect(); if (event.clientX > rect.right - 40) grid.scrollLeft = Math.min(grid.scrollWidth - grid.clientWidth, grid.scrollLeft + 20); else if (event.clientX < rect.left + 40) grid.scrollLeft = Math.max(0, grid.scrollLeft - 20); if (ruler) ruler.scrollLeft = grid.scrollLeft } didMovePlayhead = true; setPlayhead(snapXToBeat(getRulerLocalX(event))); } if (timelineState.isSelecting && selectionBox && grid) { event.preventDefault(); const rect = grid.getBoundingClientRect(); const x = event.clientX - rect.left + grid.scrollLeft; const y = event.clientY - rect.top + grid.scrollTop; const sx = timelineState.selectionBox.startX; const sy = timelineState.selectionBox.startY; selectionBox.style.left = `${Math.min(sx, x)}px`; selectionBox.style.top = `${Math.min(sy, y)}px`; selectionBox.style.width = `${Math.abs(x - sx)}px`; selectionBox.style.height = `${Math.abs(y - sy)}px`; } }, { signal: bindingSignal })
+	  window.addEventListener('pointerup', () => { const hadCycle = !!cycleDrag || didCycleChange; const hadPlayhead = timelineState.isDraggingPlayhead || didMovePlayhead; const hadExtension = !!extensionDrag; const hadPan = !!panDrag; if (hadExtension) markTimelineUserInteraction(3200); if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } if (extensionDrag) restoreTimelineExtensionScroll(extensionDrag); panDrag = null; cycleDrag = null; extensionDrag = null; didCycleChange = false; didMovePlayhead = false; document.body.classList.remove('is-studio-dragging'); timelineState.isDraggingPlayhead = false; timelineState.isSelecting = false; if (selectionBox) selectionBox.hidden = true; if (hadCycle || hadPlayhead || hadExtension || hadPan) scheduleEditorSave() }, { signal: bindingSignal })
+  window.addEventListener('blur', () => { if (!extensionDrag) return; if (timelineExtensionRepeatTimer) { clearInterval(timelineExtensionRepeatTimer); timelineExtensionRepeatTimer = 0 } restoreTimelineExtensionScroll(extensionDrag); extensionDrag = null; document.body.classList.remove('is-studio-dragging'); scheduleEditorSave() }, { signal: bindingSignal })
+  window.addEventListener('pointermove', (event) => {
+    if (transportValueDrag) {
+      event.preventDefault()
+      const raw = ((event.clientX - transportValueDrag.startX) - (event.clientY - transportValueDrag.startY)) / 14
+      const step = Math.trunc(raw)
+      const delta = step - transportValueDrag.lastStep
+      if (delta) {
+        transportValueDrag.lastStep = step
+        applyTransportValueDrag(transportValueDrag.field, delta)
+      }
+      return
+    }
+    if (regionEditorPlayheadDrag) {
+      event.preventDefault()
+      setPlayheadFromRegionEditorTimeline(event)
+      return
+    }
+    if (bottomPanelResizeDrag) {
+      event.preventDefault()
+      const maxHeight = getMaxBottomPanelHeight()
+      const minHeight = Math.min(220, maxHeight)
+      const nextHeight = clamp(bottomPanelResizeDrag.startHeight + (bottomPanelResizeDrag.startY - event.clientY), minHeight, maxHeight)
+      bottomPanelHeightPx = Math.round(nextHeight)
+      bottomPanelResizeDrag.panel?.style.setProperty('height', `${bottomPanelHeightPx}px`)
+      app.querySelector('.studio-editor-page')?.style.setProperty('--studio-bottom-panel-height', `${bottomPanelHeightPx}px`)
+      bottomPanelResizeDrag.panel
+        ?.querySelector('.studio-pitch-trace-view')
+        ?.dispatchEvent(new CustomEvent('soura:pitch-trace-panel-resized', {
+          bubbles: true,
+          detail: { height: bottomPanelHeightPx }
+        }))
+      return
+    }
+    if (audioWaveformPanDrag) {
+      event.preventDefault()
+      applyAudioWaveformPanDrag(event)
+      return
+    }
+    if (midiRollSelectionDrag) {
+      event.preventDefault()
+      updateMidiRollSelectionDrag(event)
+      return
+    }
+    if (midiNoteDrag) {
+      event.preventDefault()
+      applyMidiNoteDrag(event)
+      return
+    }
+    if (pitchTraceNoteDrag) {
+      event.preventDefault()
+      applyPitchTraceNoteDrag(event)
+      return
+    }
+    if (pitchTraceNoteDraw) {
+      event.preventDefault()
+      applyPitchTraceNoteDraw(event)
+      return
+    }
+    if (midiRegionDrag) {
+      event.preventDefault()
+      scheduleMidiRegionDragFrame(event)
+      return
+    }
+    if (trackAutomationDrag) {
+      event.preventDefault()
+      const track = getTrack(trackAutomationDrag.trackId)
+      const lane = app.querySelector(`[data-track-automation-lane="${CSS.escape(trackAutomationDrag.trackId)}"]`)
+      const info = track ? trackAutomationPointer(event, lane) : null
+      if (!track || !info) return
+      if (trackAutomationDrag.type === 'default') {
+        setTrackAutomationDefault(track, trackAutomationDrag.parameter, info.value)
+      } else if (trackAutomationDrag.type === 'point') {
+        setTrackAutomationPoint(track, trackAutomationDrag.parameter, trackAutomationDrag.pointId, { beat: info.beat, value: info.value })
+        selectedTrackAutomation = { trackId: track.id, parameter: trackAutomationDrag.parameter, pointId: trackAutomationDrag.pointId }
+      } else if (trackAutomationDrag.type === 'segment') {
+        const delta = (Number(trackAutomationDrag.startY) - event.clientY) / 80
+        setTrackAutomationSegmentCurve(track, trackAutomationDrag.parameter, trackAutomationDrag.pointId, clamp((Number(trackAutomationDrag.curveAmount) || 0) + delta, -1, 1))
+        selectedTrackAutomation = { trackId: track.id, parameter: trackAutomationDrag.parameter, pointId: trackAutomationDrag.pointId }
+      }
+      updateTimelineGridLinesDom()
+      return
+    }
+    if (!globalTrackDrag) return
+    event.preventDefault()
+    globalTrackDrag.currentBeat = beatFromGlobalEvent(event)
+    if (globalTrackDrag.type === 'tempo') {
+      const row = app.querySelector('.studio-global-row--tempo')
+      const rect = row?.getBoundingClientRect?.()
+      const y = rect ? clamp(event.clientY - rect.top, 4, Math.max(8, rect.height - 4)) : 20
+      const ratio = rect ? 1 - (y / Math.max(1, rect.height)) : 0.5
+      globalTrackDrag.bpm = Math.round(clamp(20 + ratio * 280, 20, 300))
+      globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===globalTrackDrag.id ? { ...item, beat: globalTrackDrag.currentBeat, bpm: globalTrackDrag.bpm } : item).filter((item)=>item.id !== 'tempo-default').sort((a,b)=>a.beat-b.beat)
+    } else if (globalTrackDrag.type === 'tempo-curve') {
+      const delta = (globalTrackDrag.startY - event.clientY) / 80
+      const curveAmount = clamp((Number(globalTrackDrag.curveAmount) || 0) + delta, -1, 1)
+      globalTracks.tempoEvents = normalizeTempoEvents().map((item)=>item.id===globalTrackDrag.id ? { ...item, curve: 'linear', curveAmount, updatedAt: nowIso() } : item).filter((item)=>item.id !== 'tempo-default').sort((a,b)=>a.beat-b.beat)
+    } else if (globalTrackDrag.type === 'marker') {
+      globalTracks.markers = globalTracks.markers.map((item)=>item.id===globalTrackDrag.id ? { ...item, beat: globalTrackDrag.currentBeat, updatedAt: nowIso() } : item).sort((a,b)=>a.beat-b.beat)
+    } else if (globalTrackDrag.type === 'marker-duration') {
+      globalTracks.markers = globalTracks.markers.map((item)=>item.id===globalTrackDrag.id ? { ...item, durationBeats: Math.max(0, globalTrackDrag.currentBeat - globalTrackDrag.startBeat), updatedAt: nowIso() } : item).sort((a,b)=>a.beat-b.beat)
+    }
+    updateGlobalTrackLaneDom()
+  }, { signal: bindingSignal })
+  window.addEventListener('pointerup', () => {
+    if (transportValueDrag) {
+      transportValueDrag = null
+      document.body.classList.remove('is-studio-dragging')
+      scheduleEditorSave()
+      return
+    }
+    if (regionEditorPlayheadDrag) {
+      regionEditorPlayheadDrag = null
+      document.body.classList.remove('is-studio-dragging')
+      scheduleEditorSave()
+      return
+    }
+    if (bottomPanelResizeDrag) {
+      if (bottomPanelResizeDrag.panel?.matches?.('.studio-midi-roll-editor')) persistRegionEditorHeightPreference()
+      bottomPanelResizeDrag = null
+      document.body.classList.remove('is-studio-dragging', 'is-bottom-panel-resizing')
+      return
+    }
+    if (audioWaveformPanDrag) {
+      audioWaveformPanDrag = null
+      document.body.classList.remove('is-studio-dragging')
+      return
+    }
+    if (midiRollSelectionDrag) {
+      finishMidiRollSelection()
+      return
+    }
+    if (midiNoteDrag) {
+      finishMidiNoteDrag()
+      return
+    }
+    if (pitchTraceNoteDrag) {
+      finishPitchTraceNoteDrag()
+      return
+    }
+    if (pitchTraceNoteDraw) {
+      finishPitchTraceNoteDraw()
+      return
+    }
+    if (midiRegionDrag) {
+      finishMidiRegionDrag()
+      return
+    }
+    if (trackAutomationDrag) {
+      trackAutomationDrag = null
+      document.body.classList.remove('is-studio-dragging')
+      scheduleEditorSave()
+      renderEditorPreservingArrangementScroll()
+      return
+    }
+    if (!globalTrackDrag) return
+    const drag = globalTrackDrag
+    globalTrackDrag = null
+    document.body.classList.remove('is-studio-dragging')
+    if (drag.type === 'arrangement') {
+      const startBeat = Math.min(drag.startBeat, drag.currentBeat)
+      const endBeat = Math.max(drag.startBeat, drag.currentBeat)
+      if (endBeat - startBeat >= 0.25) {
+        globalTracks.arrangement.push({ id: makeInsertId('section'), startBeat, endBeat, label: 'Section', color: '#3a8bff' })
+      }
+    }
+    scheduleEditorSave()
+    renderEditor()
+  }, { signal: bindingSignal })
+  app.querySelector('[data-transport-play]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; togglePlayback() })
+  app.querySelector('[data-transport-stop]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } finalizeMidiRecording(); stopAllMidiPreviewNotes(); stopAllTrackInstrumentNotes(); stopPlayback(); recordingStatus = '' ; renderEditor() })
+  app.querySelector('[data-transport-start]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(barZeroX()); scheduleEditorSave() })
+  app.querySelector('[data-transport-end]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(maxTimelineX()); scheduleEditorSave() })
+  app.querySelector('[data-transport-rewind]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(timelineState.playheadX - (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
+  app.querySelector('[data-transport-forward]')?.addEventListener('click', (e)=>{ e.stopPropagation(); if (activeRecording || isCountInRunning) return; setPlayhead(timelineState.playheadX + (timelineState.pixelsPerBar / timelineState.beatsPerBar)); scheduleEditorSave() })
+  app.querySelector('[data-transport-record]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopImmediatePropagation()
+    if (activeRecording || isCountInRunning) stopRecordingAndKeep()
+    else startRecordFlow()
+  }, { capture: true })
+  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor(); if(activeLeftPanel==='library') loadStudioLibrary() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; updateUtilityToggleButton('[data-toggle-snap]', isSnapEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; updateUtilityToggleButton('[data-toggle-count-in]', isCountInEnabled); scheduleEditorSave() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } startRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; updateUtilityToggleButton('[data-toggle-follow-playhead]', followPlayhead); scheduleEditorSave() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); updateUtilityToggleButton('[data-toggle-metronome]', isMetronomeEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; activeInstrumentSubpage=next; renderEditor() }) })
+  app.querySelectorAll('[data-library-folder]').forEach((button)=>button.addEventListener('click',(event)=>{
+    const toggle = event.target.closest('[data-library-folder-toggle]')
+    if (toggle) {
+      const id = toggle.dataset.libraryFolderToggle || ''
+      const expanded = new Set(studioLibraryState.expandedRootIds)
+      if (expanded.has(id)) expanded.delete(id)
+      else expanded.add(id)
+      studioLibraryState.expandedRootIds = expanded
+    }
+    studioLibraryState.selectedPath = button.dataset.libraryFolder || ''
+    studioLibraryState.selectedInstrumentId = ''
+    renderEditor()
+  }))
+  app.querySelectorAll('[data-library-instrument]').forEach((button)=>button.addEventListener('click',()=>{
+    assignStudioLibraryInstrument(button.dataset.libraryInstrument || '')
+  }))
+  app.querySelector('[data-library-retry]')?.addEventListener('click',()=>{
+    studioLibraryState.loaded = false
+    loadStudioLibrary({ force:true })
+  })
+  app.querySelectorAll('[data-midi]').forEach((key)=>{ const midi=Number(key.dataset.midi); key.addEventListener('pointerdown',(e)=>{ e.preventDefault(); const track=getSelectedTrack(); playTrackMidiNote(track, midi+(instrumentOctaveOffset*12), 0.85) }); key.addEventListener('pointerup',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }); key.addEventListener('pointerleave',()=>{ const track=getSelectedTrack(); stopTrackMidiNote(track, midi+(instrumentOctaveOffset*12)) }) }); app.querySelector('[data-typing-piano-toggle]')?.addEventListener('click',()=>{ setMusicalTypingEnabled(!isTypingPianoEnabled); renderEditor() }); app.querySelector('[data-sustain-toggle]')?.addEventListener('click',()=>{ isSustainEnabled=!isSustainEnabled; if(!isSustainEnabled) stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-down]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.max(-2,instrumentOctaveOffset-1); stopAllTrackInstrumentNotes(); renderEditor() }); app.querySelector('[data-octave-up]')?.addEventListener('click',()=>{ instrumentOctaveOffset=Math.min(2,instrumentOctaveOffset+1); stopAllTrackInstrumentNotes(); renderEditor() }); bindMidiRegionEvents(); app.querySelectorAll('[data-instrument-knob]').forEach((input)=>{ input.addEventListener('input',(e)=>{ const knob=e.target.dataset.instrumentKnob; const value=Number(e.target.value); const selected=getSelectedTrack(); if(knob==='volume'){ instrumentVolume=value; if(selected){ selected.volume=Math.round(value*100); syncSelectedTrackVolumeControl(selected); if(selected.instrument?.pluginInstanceId) dawInstrumentRegistry.setParam(selected.instrument.pluginInstanceId, 'volume', value) } if(instrumentMasterGain&&instrumentAudioContext) instrumentMasterGain.gain.setValueAtTime(instrumentVolume,instrumentAudioContext.currentTime) } else if(knob==='pan'){ instrumentPan=value; if(selected) selected.pan=value; if(instrumentPanNode&&instrumentAudioContext) instrumentPanNode.pan.setValueAtTime(instrumentPan,instrumentAudioContext.currentTime); app.querySelector(`[data-track-pan="${selected?.id}"]`)?.style.setProperty('--pan-angle', `${value * 135}deg`) } const dial=app.querySelector(`[data-instrument-knob-dial="${knob}"]`); const valueEl=app.querySelector(`[data-instrument-knob-value="${knob}"]`); if(dial) dial.style.setProperty('--knob-angle',`${-135 + ((value-Number(e.target.min))/(Number(e.target.max)-Number(e.target.min)))*270}deg`); if(valueEl) valueEl.textContent = knob==='pan' ? value.toFixed(2) : `${Math.round(value*100)}%` }); input.addEventListener('change',()=>scheduleEditorSave()); input.addEventListener('pointerdown',(event)=>{ event.preventDefault(); const startY=event.clientY; const startValue=Number(input.value); const min=Number(input.min); const max=Number(input.max); const speed = input.dataset.instrumentKnob==='pan' ? 0.004 : 0.002; const onMove=(ev)=>{ const delta=-(ev.clientY-startY)*speed; const next=clamp(startValue+delta,min,max); input.value=String(next); input.dispatchEvent(new Event('input',{bubbles:true})) }; const onUp=()=>{ window.removeEventListener('pointermove',onMove); window.removeEventListener('pointerup',onUp); scheduleEditorSave() }; window.addEventListener('pointermove',onMove); window.addEventListener('pointerup',onUp,{once:true}) }) }); app.querySelectorAll('[data-preset-load]').forEach((button)=>{ button.addEventListener('click',(event)=>{ event.stopPropagation(); const preset=instrumentPresetItems.find((item)=>item.id===button.dataset.presetLoad); if(!preset) return; selectedInstrumentName=preset.name; renderEditor() }) }); app.querySelector('[data-arp-toggle]')?.addEventListener('click',()=>{ arpEnabled=!arpEnabled; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-mode]')?.addEventListener('change',(e)=>{ arpMode=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-rate]')?.addEventListener('change',(e)=>{ arpRate=e.target.value; scheduleEditorSave() }); app.querySelector('[data-arp-length]')?.addEventListener('change',(e)=>{ arpLength=Number(e.target.value)||16; if(selectedArpStepIndex>=arpLength) selectedArpStepIndex=arpLength-1; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-octave]').forEach((btn)=>btn.addEventListener('click',()=>{ const d=Number(btn.dataset.arpOctave||0); arpOctaves=clamp(arpOctaves+d,1,4); renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-gate]')?.addEventListener('input',(e)=>{ arpGate=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpGate}%` }); app.querySelector('[data-arp-swing]')?.addEventListener('input',(e)=>{ arpSwing=Number(e.target.value); e.target.nextElementSibling.textContent=`${arpSwing}%` }); app.querySelector('[data-arp-velocity]')?.addEventListener('input',(e)=>{ arpVelocity=Number(e.target.value); e.target.nextElementSibling.textContent=String(arpVelocity) }); app.querySelectorAll('[data-arp-gate],[data-arp-swing],[data-arp-velocity]').forEach((el)=>el.addEventListener('change',()=>scheduleEditorSave())); app.querySelectorAll('[data-arp-edit-mode]').forEach((button)=>{ button.addEventListener('click',()=>{ const next=button.dataset.arpEditMode; if(!next||arpEditMode===next) return; arpEditMode=next; if(next!=='note') arpNotePickerStepIndex=null; renderEditor() }) }); app.querySelectorAll('[data-arp-step]').forEach((el)=>el.addEventListener('pointerdown',(event)=>{ const i=Number(el.dataset.arpStep); if(!Number.isFinite(i)||!arpSteps[i]) return; const step=arpSteps[i]=normalizeArpStep(arpSteps[i],i); selectedArpStepIndex=i; if(event.ctrlKey||event.metaKey){ step.active=!step.active; renderEditor(); scheduleEditorSave(); return } if(event.shiftKey){ step.accent=!step.accent; renderEditor(); scheduleEditorSave(); return } if(event.altKey){ step.octave=step.octave>=2?-1:step.octave+1; renderEditor(); scheduleEditorSave(); return } if(arpEditMode==='note'){ arpNotePickerStepIndex=i; arpNotePickerOctave=step.noteOctave ?? arpNotePickerOctave; renderEditor(); return } if(arpEditMode==='velocity'){ step.active=true; step.velocity=getVelocityFromStepPointer(event, el); renderEditor(); scheduleEditorSave(); return } cycleArpStepByMode(step, arpEditMode); step.active=true; renderEditor(); scheduleEditorSave() })); app.querySelectorAll('[data-arp-note-picker-octave]').forEach((button)=>{ button.addEventListener('click',()=>{ arpNotePickerOctave=clamp(arpNotePickerOctave+Number(button.dataset.arpNotePickerOctave||0),0,8); renderEditor() }) }); app.querySelector('[data-arp-note-picker-close]')?.addEventListener('click',()=>{ arpNotePickerStepIndex=null; renderEditor() }); app.querySelectorAll('[data-arp-note-value]').forEach((button)=>{ button.addEventListener('click',()=>{ const stepIndex=arpNotePickerStepIndex; if(stepIndex==null||!arpSteps[stepIndex]) return; const st=arpSteps[stepIndex]=normalizeArpStep(arpSteps[stepIndex],stepIndex); st.note=clamp(Number(button.dataset.arpNoteValue),0,11); st.noteOctave=arpNotePickerOctave; st.active=true; selectedArpStepIndex=stepIndex; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-reset]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ ...createDefaultArpStep(i), octave:0, accent:false },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-randomize]')?.addEventListener('click',()=>{ arpSteps=arpSteps.map((_,i)=>normalizeArpStep({ active:Math.random()>.35, note:Math.floor(Math.random()*12), noteOctave:Math.floor(3+Math.random()*3), velocity:Math.floor(35+Math.random()*92), octave:[-1,0,0,1][Math.floor(Math.random()*4)], gate:[10,25,50,70,85,100][Math.floor(Math.random()*6)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.75, tie:Math.random()>.9 },i)); currentArpPatternName='Custom Pattern'; arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelectorAll('[data-arp-pattern]').forEach((el)=>el.addEventListener('click',()=>{ const name=el.dataset.arpPattern||''; if(name.includes('Straight')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:i%2===0, velocity:95, octave:0, accent:false },i)); else if(name.includes('Random')) arpSteps=arpSteps.map((s,i)=>normalizeArpStep({ ...s, active:Math.random()>.45, velocity:Math.floor(45+Math.random()*80), octave:[-1,0,1][Math.floor(Math.random()*3)], probability:[0,25,50,75,100][Math.floor(Math.random()*5)], accent:Math.random()>.8 },i)); else if(name.includes('Chord')) arpMode='Chord Repeat'; currentArpPatternName=name; renderEditor(); scheduleEditorSave() })); app.querySelector('[data-arp-step-active]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.active=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.note=clamp(Number(e.target.value)||0,0,11); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-note-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.noteOctave=clamp(Number(e.target.value)||4,0,8); arpNotePickerStepIndex=null; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-octave]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.octave=clamp(Number(e.target.value)||0,-2,4); renderEditor(); scheduleEditorSave() }); [['[data-arp-step-velocity]','velocity','[data-arp-step-velocity-value]',''],['[data-arp-step-gate]','gate','[data-arp-step-gate-value]','%'],['[data-arp-step-probability]','probability','[data-arp-step-probability-value]','%']].forEach(([sel,key,valSel,suffix])=>{ const input=app.querySelector(sel); const valueEl=app.querySelector(valSel); if(!input) return; input.addEventListener('input',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st[key]=Number(e.target.value); if(valueEl) valueEl.textContent=`${st[key]}${suffix}` }); input.addEventListener('change',()=>{ renderEditor(); scheduleEditorSave() }) }); app.querySelector('[data-arp-step-accent]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.accent=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-arp-step-tie]')?.addEventListener('change',(e)=>{ const st=arpSteps[selectedArpStepIndex]; if(!st) return; st.tie=e.target.checked; renderEditor(); scheduleEditorSave() }); app.querySelector('[data-instrument-select]')?.addEventListener('change',(e)=>{ selectedInstrumentName=e.target.value });
+  app.querySelector('.studio-editor-page')?.addEventListener('click', (event) => {
+    const regionToolButton = event.target.closest('[data-region-tool], [data-region-tool-action]')
+    if (regionToolButton) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (regionToolButton.dataset.regionTool) setActiveRegionTool(regionToolButton.dataset.regionTool)
+      else if (regionToolButton.dataset.regionToolAction) runRegionToolAction(regionToolButton.dataset.regionToolAction)
+      return
+    }
+    const actionButton = event.target.closest('[data-midi-region-action]')
+    if (actionButton) {
+      event.stopPropagation()
+      const action = actionButton.dataset.midiRegionAction
+      const regionId = midiRegionMenuState?.regionId || selectedMidiRegionId
+      const context = { ...midiRegionMenuState }
+      midiRegionMenuState = null
+      if (action === 'delete') deleteMidiRegion(regionId)
+      else if (action === 'copy') { copyMidiRegion(regionId); renderEditor() }
+      else if (action === 'paste') pasteMidiRegion({ beat: context.pasteBeat, trackId: context.trackId })
+      else if (action === 'view-roll') {
+        const region = midiRegions.find((item)=>item.id === regionId)
+        selectSingleRegion(regionId)
+        midiRollState = region?.type === 'audio' ? null : { regionId, quantize: midiRollState?.quantize || '0.25' }
+        midiRollSelectedNoteIndex = null
+        openBottomPanel('midi-roll')
+      }
+      else if (action === 'rename') { const pos = getClampedFloatingPosition(context.x || event.clientX, context.y || event.clientY, 260, 120); regionRenameState = { regionId, x: pos.x, y: pos.y }; renderEditor(); requestAnimationFrame(()=>app.querySelector('[data-midi-rename-input]')?.select?.()) }
+      else if (action === 'color') { const pos = getClampedFloatingPosition(context.x || event.clientX, context.y || event.clientY, 220, 150); regionColorPickerState = { regionId, x: pos.x, y: pos.y }; renderEditor() }
+      return
+    }
+    if (!event.target.closest('[data-midi-context-menu], [data-midi-color-form], [data-midi-rename-form], [data-midi-region]') && (midiRegionMenuState || regionColorPickerState || regionRenameState)) {
+      midiRegionMenuState = null
+      regionColorPickerState = null
+      regionRenameState = null
+      renderEditor()
+    }
+  })
+  app.querySelector('[data-midi-rename-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const regionId = regionRenameState?.regionId
+    const value = String(app.querySelector('[data-midi-rename-input]')?.value || '').trim().slice(0, 80)
+    const region = midiRegions.find((item)=>item.id === regionId)
+    if (region) {
+      commitHistoryMutation('rename-midi-region', () => {
+        region.name = value
+        regionRenameState = null
+      })
+    } else {
+      regionRenameState = null
+      renderEditor()
+    }
+  })
+  app.querySelector('[data-midi-rename-cancel]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    regionRenameState = null
+    renderEditor()
+  })
+  app.querySelector('[data-midi-color-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    const region = midiRegions.find((item)=>item.id === regionColorPickerState?.regionId)
+    const value = app.querySelector('[data-midi-region-color-input]')?.value
+    if (region && value) {
+      commitHistoryMutation('color-midi-region', () => {
+        region.independentColor = value
+        region.color = value
+        region.regionColorMode = 'custom'
+        regionColorPickerState = null
+      })
+      return
+    }
+    regionColorPickerState = null
+    renderEditor()
+  })
+  app.querySelector('[data-midi-region-reset-color]')?.addEventListener('click', () => {
+    const region = midiRegions.find((item)=>item.id === regionColorPickerState?.regionId)
+    const track = tracks.find((item)=>item.id === region?.trackId)
+    if (region) {
+      commitHistoryMutation('reset-midi-region-color', () => {
+        delete region.independentColor
+        region.color = track?.color || region.color
+        region.regionColorMode = 'inherit-track'
+        regionColorPickerState = null
+      })
+      return
+    }
+    regionColorPickerState = null
+    renderEditor()
+  })
+  app.querySelector('[data-midi-roll-editor]')?.addEventListener('pointerdown', () => {
+    activeCommandContext = 'midi-editor'
+  }, { capture: true })
+  app.querySelector('[data-audio-region-editor]')?.addEventListener('pointerdown', () => {
+    activeCommandContext = 'audio-editor'
+  }, { capture: true })
+  app.querySelectorAll('[data-region-editor-tool]').forEach((button)=>button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const toolId = button.dataset.regionEditorTool || 'select'
+    activeRegionTool = toolId === 'draw' ? 'draw' : toolId
+    midiRollTool = toolId === 'draw' ? 'pencil' : 'cursor'
+    if (toolId === 'loop') runRegionToolAction('loop')
+    renderEditorPreservingArrangementScroll()
+  }))
+  app.querySelectorAll('[data-midi-roll-key-note]').forEach((key)=> {
+    const note = Number(key.dataset.midiRollKeyNote)
+    const stopKey = `midi-key:${midiRollState?.regionId || selectedMidiRegionId}:${note}`
+    key.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      activeCommandContext = 'midi-editor'
+      playMidiPreviewNote(note, {
+        track: getMidiRegionTrack(getMidiRollRegion()) || getSelectedTrack(),
+        durationBeats: 0.25,
+        key: stopKey
+      })
+    })
+    key.addEventListener('pointerup', () => stopMidiPreviewNote(stopKey))
+    key.addEventListener('pointerleave', () => stopMidiPreviewNote(stopKey))
+  })
+  app.querySelectorAll('[data-midi-note-index]').forEach((noteEl)=>noteEl.addEventListener('pointerdown', (event) => {
+    beginMidiNoteDrag(event, midiRollState?.regionId || selectedMidiRegionId, Number(noteEl.dataset.midiNoteIndex))
+  }))
+  app.querySelector('[data-midi-note-velocity]')?.addEventListener('change', (event) => {
+    mutateSelectedMidiNote('change-midi-note-velocity', (note) => { note.velocity = clamp(Number(event.target.value) / 127, 0.01, 1) })
+  })
+  app.querySelector('[data-midi-note-length]')?.addEventListener('change', (event) => {
+    mutateSelectedMidiNote('change-midi-note-length', (note) => { note.durationBeats = Math.max(0.05, Number(event.target.value) || 0.25) })
+  })
+  app.querySelector('[data-midi-roll-quantize]')?.addEventListener('change', (event) => {
+    midiRollState = { ...(midiRollState || {}), quantize: event.target.value || '0.25' }
+    renderEditor()
+  })
+  app.querySelectorAll('[data-midi-roll-tool]').forEach((button)=>button.addEventListener('click', () => {
+    midiRollTool = button.dataset.midiRollTool === 'pencil' ? 'pencil' : 'cursor'
+    activeRegionTool = midiRollTool === 'pencil' ? 'draw' : 'select'
+    renderEditor()
+  }))
+  app.querySelector('[data-midi-quantize-note]')?.addEventListener('click', () => quantizeSelectedMidiNote())
+  app.querySelector('[data-midi-delete-note]')?.addEventListener('click', () => deleteSelectedMidiNote())
+  app.querySelectorAll('[data-midi-note-transpose]').forEach((button)=>button.addEventListener('click', () => {
+    const amount = Number(button.dataset.midiNoteTranspose) || 0
+    mutateSelectedMidiNote('transpose-midi-note', (note) => { note.note = clamp((Number(note.note) || 60) + amount, 0, 127) })
+  }))
+  app.querySelector('[data-close-bottom-panel]')?.addEventListener('click', ()=>{ closeBottomPanel() })
+  updateTransportPlaybackUI()
+  editorEventBindingsCleanup = () => {
+    bindingAbortController.abort()
+    if (timelineVisualRefreshRaf) cancelAnimationFrame(timelineVisualRefreshRaf)
+    if (timelineViewportRefreshRaf) cancelAnimationFrame(timelineViewportRefreshRaf)
+    if (timelineZoomRaf) cancelAnimationFrame(timelineZoomRaf)
+    if (visibleWaveformRefreshTimer) window.clearTimeout(visibleWaveformRefreshTimer)
+    pendingTimelineProgrammaticScroll = null
+    if (timelineExtensionRepeatTimer) {
+      window.clearInterval(timelineExtensionRepeatTimer)
+      timelineExtensionRepeatTimer = 0
+    }
+  }
+}
+
+// TODO: connect navigator.requestMIDIAccess() after MIDI permission UX is designed.
+function renderEditor() {
+  scoreMountGeneration++
+  scoreController?.destroy()
+  scoreController = null
+  const arrangementScroll = captureArrangementScroll()
+  if (pendingMidiRollViewport) {
+    midiRollViewport = pendingMidiRollViewport
+    pendingMidiRollViewport = null
+  } else {
+    captureMidiRollViewport()
+  }
+  const pendingAudioRegionToolsViewport = captureAudioRegionToolsViewport()
+  const project = projectState
+  ensureCanonicalGlobalTracks()
+  const displayBeat = clampBeat(xToBeat(timelineState.playheadX))
+  const displayTempo = getTempoAtBeat(displayBeat)
+  const displayTimeSignature = getTimeSignatureAtBeat(displayBeat)
+  const displayKeySignature = getKeySignatureAtBeat(displayBeat)
+  const cpuAlerts = getProjectCpuAlerts()
+  const cpuPercent = getCurrentCpuUsagePercent()
+  if (studioAudioEngine) studioAudioEngine.setBpm(Number(displayTempo.bpm || project?.bpm || 140))
+  document.body.classList.add('is-studio-editor')
+  Array.from(document.body.classList).forEach((className)=>{ if (className.startsWith('is-region-tool-')) document.body.classList.remove(className) })
+  document.body.classList.add(`is-region-tool-${activeRegionTool}`)
+  const showResonaPanel = activeBottomPanel === 'resona'
+  const bottomPanelId = activeBottomPanel || closingBottomPanel
+  const shouldRenderBottomPanel = Boolean(bottomPanelId && bottomPanelId !== 'resona')
+  if (shouldRenderBottomPanel) syncBottomPanelHeightToViewport()
+  const bottomPanelClass = shouldRenderBottomPanel ? 'has-bottom-panel' : ''
+  const bottomPanelHeightStyle = bottomPanelHeightPx ? `--studio-bottom-panel-height:${bottomPanelHeightPx}px;` : ''
+  let shell = `<main class="studio-editor-page ${activeLeftPanel ? "has-left-panel" : ""} ${bottomPanelClass} ${showResonaPanel ? 'has-resona-panel' : ''} ${keepSiteMenuOpen ? 'has-site-nav' : 'is-fullscreen'} ${globalTracks.visible ? 'has-global-tracks' : ''}" style="--studio-track-height:${timelineState.trackHeight}px;${bottomPanelHeightStyle}"><header class="studio-editor-appbar"><div class="studio-editor-left"><button class="studio-editor-menu-button" data-editor-left-menu aria-label="Open editor menu" aria-expanded="false">☰</button><nav class="studio-editor-menu">${renderTopMenuButtons()}</nav>${renderFileMenu()}${renderControlsMenu()}<aside class="studio-editor-nav-panel" hidden data-editor-nav-panel><label><input type="checkbox" data-keep-site-menu ${keepSiteMenuOpen ? 'checked' : ''}/> Keep site menu open</label><a href="${ROUTES.studio}">Back to Studio</a><a href="${ROUTES.home}">Home</a><a href="${ROUTES.products}">Products</a><a href="${ROUTES.community}">Community</a><a href="${ROUTES.profile}">Profile</a></aside></div><div class="studio-editor-title">${project.title}<small data-editor-status>${isCountInRunning ? `Count-in: ${countInBeatsRemaining}` : (recordingStatus || 'Project loaded')}</small></div><div class="studio-editor-right"><button>Invite</button><button disabled>Export</button></div></header><section class="studio-editor-transport"><div class="studio-tool-group studio-tool-group--left"><button data-left-panel="library" class="studio-tool-button ${activeLeftPanel==='library'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='library')}" data-tooltip="Library">${toolIcon('library')}</button><button data-left-panel="inspector" class="studio-tool-button ${activeLeftPanel==='inspector'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='inspector')}" data-tooltip="Inspector">${toolIcon('inspector')}</button><button data-open-notes class="studio-tool-button ${isNotesOpen ? 'is-active' : ''}" aria-pressed="${String(isNotesOpen)}" data-tooltip="Notes">${toolIcon('notes')}</button><button data-left-panel="smart-controls" class="studio-tool-button ${activeLeftPanel==='smart-controls'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='smart-controls')}" data-tooltip="Smart Controls">${toolIcon('sliders')}</button><button data-left-panel="loop-browser" class="studio-tool-button ${activeLeftPanel==='loop-browser'?'is-active':''}" aria-pressed="${String(activeLeftPanel==='loop-browser')}" data-tooltip="Loop Browser">${toolIcon('store')}</button></div><div class="studio-transport-center"><div class="studio-tool-group studio-tool-group--transport"><button data-transport-start class="studio-tool-button" aria-label="Go to start" data-tooltip="Go to start">${toolIcon('start')}</button> <button data-transport-rewind class="studio-tool-button" aria-label="Rewind" data-tooltip="Rewind">${toolIcon('rewind')}</button> <button data-transport-play class="studio-tool-button ${isPlaying ? 'is-active' : ''} ${activeRecording || isCountInRunning ? 'is-disabled' : ''}" ${activeRecording || isCountInRunning ? 'disabled' : ''} aria-label="${isPlaying ? 'Pause' : 'Play'}" data-tooltip="${isPlaying ? 'Pause' : 'Play'}" aria-pressed="${isPlaying}">${isPlaying ? '<svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\"><path d=\"M8 5v14M16 5v14\"/></svg>' : toolIcon('play')}</button> <button data-transport-stop class="studio-tool-button" aria-label="Stop" data-tooltip="Stop">${toolIcon('stop')}</button> <button data-transport-record class="studio-tool-button ${activeRecording || isCountInRunning ? 'is-active' : ''}" aria-label="Record" data-tooltip="Record">${toolIcon('record')}</button> <button data-transport-forward class="studio-tool-button" aria-label="Fast forward" data-tooltip="Fast forward">${toolIcon('forward')}</button> <button data-transport-end class="studio-tool-button" aria-label="Go to end" data-tooltip="Go to end">${toolIcon('end')}</button> <button data-toggle-cycle class="studio-tool-button studio-tool-button--cycle ${isCycleEnabled ? 'is-active' : ''}" aria-label="Cycle" aria-pressed="${String(isCycleEnabled)}" data-tooltip="Cycle">${toolIcon('loop')}</button></div><div class="studio-logic-display" aria-label="Project transport display"><section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section><section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section><section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section><section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section><section class="studio-logic-section studio-logic-section--midi"><strong class="studio-logic-primary" data-midi-status>No MIDI</strong><span class="studio-logic-secondary">input</span></section><section class="studio-logic-section studio-logic-section--cpu ${cpuAlerts.enabled && cpuPercent >= cpuAlerts.thresholdPercent ? 'is-warning' : ''}"><strong class="studio-logic-primary" data-cpu-percent>${Math.round(cpuPercent)}%</strong><span class="studio-logic-secondary">CPU${cpuAlerts.enabled ? ` / ${Math.round(cpuAlerts.thresholdPercent)}%` : ''}</span></section></div><div class="studio-tool-group studio-tool-group--utilities"><button data-toggle-metronome class="studio-tool-button ${isMetronomeEnabled ? 'is-active' : ''}" aria-label="Metronome" aria-pressed="${String(isMetronomeEnabled)}" data-tooltip="Metronome">${toolIcon('metro')}</button><button data-toggle-count-in class="studio-tool-button studio-tool-button--count-in ${isCountInEnabled ? 'is-active' : ''}" aria-label="Count-in" aria-pressed="${String(isCountInEnabled)}" data-tooltip="Count-in">${toolIcon('count')}</button><button data-toggle-snap class="studio-tool-button ${isSnapEnabled ? 'is-active' : ''}" aria-label="Snap" aria-pressed="${String(isSnapEnabled)}" data-tooltip="Snap">${toolIcon('snap')}</button><button data-toggle-follow-playhead class="studio-tool-button ${followPlayhead ? 'is-active' : ''}" aria-label="Follow Playhead" aria-pressed="${String(followPlayhead)}" data-tooltip="Follow Playhead"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="7"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg></button></div></div><div class="studio-transport-spacer" aria-hidden="true"></div></section><div class="studio-editor-workspace">${activeLeftPanel ? renderLeftPanel() : ""}<aside class="studio-track-panel">${renderTrackToolbar()}${renderGlobalTrackLabels()}<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div></aside><section class="studio-arrangement ${globalTracks.visible ? 'has-global-tracks' : ''}" data-arrangement style="--bars: ${timelineState.bars}; --beats-per-bar: ${timelineState.beatsPerBar}; --pixels-per-bar: ${timelineState.pixelsPerBar}px; --pixels-per-beat: ${timelineState.pixelsPerBar / timelineState.beatsPerBar}px; --playhead-x: ${timelineState.playheadX}px; --timeline-content-width: ${timelineContentWidth()}px;"><div class="studio-timeline-ruler" data-timeline-ruler><div class="studio-timeline-ruler-inner" data-timeline-ruler-inner><div class="studio-cycle-strip" data-cycle-strip>${renderCycleRange()}</div><span class="studio-negative-zone studio-negative-zone--ruler" style="width:${barZeroX()}px"></span>${renderTimelineRuler()}${renderRulerMarkerLabels()}<span class="studio-ruler-playhead" data-ruler-playhead></span></div></div>${renderGlobalTrackLane()}<div class="studio-arrangement-grid" data-arrangement-grid><div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone studio-negative-zone--grid" style="width:${barZeroX()}px"></span>${renderTimelineLines()}${renderTimelineRegions()}${renderCycleBoundaryGuides()}${renderAudioImportPreview()}<span class="studio-grid-playhead" data-grid-playhead></span><div class="studio-selection-box" data-selection-box hidden></div></div></div><div class="studio-timeline-extension-lane" data-timeline-extension-lane><div class="studio-timeline-extension-lane-inner" data-timeline-extension-inner>${renderTimelineExtensionBeatLines()}<button class="studio-timeline-extension-handle studio-timeline-extension-handle--left" data-timeline-extension-handle="left" aria-label="Adjust timeline start"></button><button class="studio-timeline-extension-handle studio-timeline-extension-handle--right" data-timeline-extension-handle="right" aria-label="Adjust timeline end"></button></div></div></section>${showResonaPanel ? renderStudioResonaPanel() : ''}<aside class="studio-right-rail" tabindex="0" aria-label="Studio editors and tools"><button data-bottom-panel="loops" class="${activeBottomPanel==='loops' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='loops')}">Loops</button><button data-bottom-panel="mixer" class="${activeBottomPanel==='mixer' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='mixer')}">Mixer</button><button data-bottom-panel="collab" class="${activeBottomPanel==='collab' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='collab')}">Collab</button><button data-bottom-panel="midi-roll" class="${activeBottomPanel==='midi-roll' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='midi-roll')}">Region Editor</button><button data-bottom-panel="score" class="${activeBottomPanel==='score' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='score')}" aria-label="Score Editor"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h18M3 10h18M3 14h18M3 18h18M15 5v10"/><ellipse cx="12" cy="16" rx="3" ry="2" fill="currentColor"/></svg>Score Editor</button><button data-bottom-panel="instrument" class="${activeBottomPanel==='instrument' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='instrument')}">Instrument</button><button data-bottom-panel="resona" class="${activeBottomPanel==='resona' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel==='resona')}">Resona</button>${activeBottomPanel==='instrument'?`<div class="studio-right-rail-divider"></div><div class="studio-right-rail-subtools" data-instrument-subtools>${instrumentSubpages.map((page)=>`<button class="studio-right-rail-subtool is-enabled ${activeInstrumentSubpage===page.id?'is-active':''}" data-instrument-subpage="${page.id}" aria-pressed="${String(activeInstrumentSubpage===page.id)}" type="button">${page.label}</button>`).join('')}</div>`:''}</aside></div>${shouldRenderBottomPanel ? renderBottomPanel(bottomPanelId, bottomPanelMotion==='entering'?'is-bottom-panel-entering':(bottomPanelMotion==='exiting'?'is-bottom-panel-exiting':'')) : ''}<section class="studio-effects-panel" hidden></section><footer class="studio-editor-footer"><span>Output</span><span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span><span>Help</span><span class="studio-footer-save-status" data-save-status>${saveStatus}</span></footer><div class="studio-tooltip-layer" data-studio-tooltip hidden></div>${renderTrackContextMenu()}${renderMidiRegionContextMenu()}${renderMidiRegionColorPopover()}${renderMidiRegionRenamePopover()}${renderTrackRenamePopover()}${renderTrackColorPopover()}${renderGlobalTrackPopover()}${renderNotesModal()}${renderAddTrackModal()}${renderControlsConfigModal()}${renderProjectSettingsModal()}${renderProjectManagementModal()}</main>`
+  shell = shell.replace(`--studio-track-height:${timelineState.trackHeight}px;`, `--studio-track-height:${timelineState.trackHeight}px;--studio-track-lanes-height:${totalTrackLaneHeight()}px;--studio-track-grid-top:${currentNewTrackDropRowHeight()}px;`)
+  shell = shell
+    .replace(/<button data-left-panel="loop-browser".*?<\/button>/, '')
+    .replace(/<button data-bottom-panel="loops".*?<\/button>/, `<button data-bottom-panel="asset-library" class="${activeBottomPanel === 'asset-library' ? 'is-active' : ''}" aria-pressed="${String(activeBottomPanel === 'asset-library')}">Asset Library</button>`)
+  shell = shell
+    .replace(`<span>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span>${formatKeySignature(displayKeySignature)}</span><span>${formatTimeSignature(displayTimeSignature)}</span>`, `<span data-footer-tempo>${Number(displayTempo.bpm || 140).toFixed(1)} BPM</span><span data-footer-key>${formatKeySignature(displayKeySignature)}</span><span data-footer-time-signature>${formatTimeSignature(displayTimeSignature)}</span>`)
+  shell = shell
+    .replace(`<section class="studio-logic-section studio-logic-section--time"><strong class="studio-logic-primary" data-display-time>${formatTimeFromPlayhead()}</strong><span class="studio-logic-secondary">time</span></section>`, `<section class="studio-logic-section studio-logic-section--time">${renderTransportTimeDisplay()}<span class="studio-logic-secondary">time</span></section>`)
+    .replace(`<section class="studio-logic-section studio-logic-section--bars"><strong class="studio-logic-primary" data-display-bars>${formatBarsFromPlayhead()}</strong><span class="studio-logic-secondary">bar beat div tick</span></section>`, `<section class="studio-logic-section studio-logic-section--bars">${renderTransportBarsDisplay()}<span class="studio-logic-secondary">bar beat div tick</span></section>`)
+    .replace(`<section class="studio-logic-section studio-logic-section--tempo"><strong class="studio-logic-primary">${Number(displayTempo.bpm || 140).toFixed(4)}</strong><span class="studio-logic-secondary">${formatTimeSignature(displayTimeSignature)} <button class="studio-display-icon-button" aria-label="Tempo settings" data-tooltip="Tempo settings" data-open-project-settings><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="m4.9 4.9 2.1 2.1"/><path d="m17 17 2.1 2.1"/><path d="M2 12h3"/><path d="M19 12h3"/><path d="m4.9 19.1 2.1-2.1"/><path d="m17 7 2.1-2.1"/></svg></button></span></section>`, `<section class="studio-logic-section studio-logic-section--tempo">${renderTransportTempoDisplay(displayTempo)}${renderTransportTimeSignatureDisplay(displayTimeSignature)}</section>`)
+    .replace(`<section class="studio-logic-section studio-logic-section--key"><strong class="studio-logic-primary">${formatKeySignature(displayKeySignature)}</strong><span class="studio-logic-secondary">key</span></section>`, `<section class="studio-logic-section studio-logic-section--key">${renderTransportKeyDisplay(displayKeySignature)}<span class="studio-logic-secondary">key</span></section>`)
+  shell = shell
+    .replace(`<div class="studio-track-list">${tracks.map(renderTrackCard).join('')}</div>`, `<div class="studio-track-list"><div class="studio-track-list-inner">${renderNewTrackDropHeader()}${tracks.map(renderTrackCard).join('')}</div></div>`)
+    .replace(`<div class="studio-arrangement-grid-inner" data-arrangement-grid-inner><span class="studio-negative-zone`, `<div class="studio-arrangement-grid-inner" data-arrangement-grid-inner>${renderNewTrackDropLane()}<span class="studio-negative-zone`)
+  meterDomCache = new Map()
+  app.innerHTML = `${keepSiteMenuOpen ? navShell({ currentPage: 'studio' }) : ''}${shell}`
+  if (detachedRegionPortalIsOpenV8()) {
+    queueMicrotask(syncDetachedRegionPortalV8)
+  }
+  if (souraDetachedRegionRequest.active) {
+    queueMicrotask(() => {
+      const livePanel = app.querySelector(
+        '.studio-bottom-panel[data-audio-region-editor], .studio-bottom-panel[data-midi-roll-editor], .studio-bottom-panel.studio-midi-roll-editor'
+      )
+      if (!livePanel || !livePanel.isConnected) return
+      livePanel.classList.add('studio-detached-region-root-panel-v7')
+      document.body.classList.add('is-soura-detached-region-root-v7')
+      if (livePanel.parentElement !== app || app.children.length !== 1) {
+        app.replaceChildren(livePanel)
+      }
+    })
+  }
+  initShellChrome()
+  const resonaRailButton = app.querySelector('.studio-right-rail [data-bottom-panel="resona"]')
+  resonaRailButton?.insertAdjacentHTML('afterend', renderRegionToolRail())
+  const railDividerAnchor = app.querySelector('.studio-region-tool-rail') || resonaRailButton
+  railDividerAnchor?.insertAdjacentHTML('afterend', '<div class="studio-right-rail-divider"></div>')
+  app.querySelectorAll('.studio-right-rail-divider + .studio-right-rail-divider').forEach((divider) => divider.remove())
+  app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', dawWindowManager.renderWindows())
+  const audioRenderModal = renderAudioStretchRenderModal()
+  if (audioRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioRenderModal)
+  const audioPitchRenderModal = renderAudioPitchRenderModal()
+  if (audioPitchRenderModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioPitchRenderModal)
+  const audioImportUploadModal = renderAudioImportUploadModal()
+  if (audioImportUploadModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioImportUploadModal)
+  const audioPreflightModal = renderAudioPreflightRenderModal()
+  if (audioPreflightModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioPreflightModal)
+  const stretchPromptModal = renderStretchPlaybackPrompt()
+  if (stretchPromptModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', stretchPromptModal)
+  const audioEditPromptModal = renderAudioEditPlaybackPrompt()
+  if (audioEditPromptModal) app.querySelector('.studio-editor-page')?.insertAdjacentHTML('beforeend', audioEditPromptModal)
+  applyStudioGuideTargets()
+  setEditorMenuOpen(isEditorMenuOpen)
+  bindEditorEvents()
+  mountScorePanel()
+  dawWindowManager.bind(app)
+  restoreMidiRollViewport()
+  restoreAudioRegionToolsViewport(pendingAudioRegionToolsViewport)
+  mountStudioResonaPanel()
+  scheduleSouraLayoutAudit()
+  applyStudioGuideTargets()
+  updateTransportPlaybackUI()
+  mountInlineNumericEditor()
+  restoreArrangementScrollSoon(arrangementScroll)
+}
+
+
+
+const dawInstrumentKeyMap = {
+  KeyA:60, KeyW:61, KeyS:62, KeyE:63, KeyD:64, KeyF:65, KeyT:66,
+  KeyG:67, KeyY:68, KeyH:69, KeyU:70, KeyJ:71, KeyK:72, KeyO:73,
+  KeyL:74, KeyP:75, Semicolon:76, Quote:77
+}
+function handleStudioKeydown(event){
+  if(handleAssetLibraryShortcut(event)) return
+  if(isTextEntryTarget(event.target)) return
+  if((event.ctrlKey || event.metaKey) && !event.altKey){
+    if(event.code === 'KeyZ'){
+      event.preventDefault()
+      if(event.shiftKey) redoDawEdit()
+      else undoDawEdit()
+      return
+    }
+    if(event.code === 'KeyY'){
+      event.preventDefault()
+      redoDawEdit()
+      return
+    }
+    if(event.code === 'KeyC'){
+      event.preventDefault()
+      if (activeCommandContext === 'audio-editor') return
+      if (isMidiEditorCommandContext() && copySelectedMidiRollNotes()) return
+      copyMidiRegion()
+      return
+    }
+    if(event.code === 'KeyV'){
+      event.preventDefault()
+      if (activeCommandContext === 'audio-editor') return
+      if (isMidiEditorCommandContext() && pasteSelectedMidiRollNotes()) return
+      pasteMidiRegion()
+      return
+    }
+    if(event.code === 'KeyX'){
+      event.preventDefault()
+      if (activeCommandContext === 'audio-editor') return
+      if (isMidiEditorCommandContext() && copySelectedMidiRollNotes()) { deleteSelectedMidiNote(); return }
+      copyMidiRegion()
+      deleteMidiRegion()
+      return
+    }
+    if(event.code === 'KeyA'){
+      event.preventDefault()
+      if (isMidiEditorCommandContext()) {
+        selectAllMidiRollNotes()
+      } else if (activeCommandContext === 'audio-editor') {
+        return
+      } else {
+        const ids = midiRegions.map((region)=>region.id)
+        setSelectedRegions(ids, { primaryId: ids[0] || '' })
+        activeCommandContext = 'arrangement'
+        renderEditor()
+      }
+      return
+    }
+    if(event.code === 'KeyD'){
+      event.preventDefault()
+      duplicateSelectedRegions()
+      return
+    }
+    return
+  }
+  if(event.altKey && !['ArrowLeft','ArrowRight'].includes(event.code)) return
+  if(event.code==='Space'){handleSpaceTransport(event); return}
+  if (isMidiEditorCommandContext() && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+    if (nudgeSelectedMidiRollNotes(event)) return
+  }
+  if(event.code==='KeyR'){
+    event.preventDefault()
+    if(activeRecording || isCountInRunning) stopRecordingAndKeep()
+    else startRecordFlow()
+    return
+  }
+  if (handleMusicalTypingKeydown(event)) return
+  if(activeRecording || isCountInRunning){
+    if(['Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','KeyC','KeyK'].includes(event.code)) event.preventDefault()
+    return
+  }
+  if(event.code==='Delete'||event.code==='Backspace'){event.preventDefault(); if(activeBottomPanel==='score') { deleteSelectedMidiNote(); return }; if(activeBottomPanel==='midi-roll'&&deleteSelectedMidiNote()) return; if(selectedMidiRegionId) deleteMidiRegion(selectedMidiRegionId)}
+  else if(event.code==='Escape'){event.preventDefault(); activeRegionTool='select'; clearRegionSelection(); renderEditor()}
+  else if(event.code==='KeyV'||event.code==='Digit1'){event.preventDefault(); setActiveRegionTool('select')}
+  else if(event.code==='KeyS'||event.code==='Digit3'){event.preventDefault(); setActiveRegionTool('split')}
+  else if(event.code==='KeyE'||event.code==='Digit4'){event.preventDefault(); setActiveRegionTool('erase')}
+  else if(event.code==='KeyM'){event.preventDefault(); toggleSelectedRegionMute()}
+  else if(event.code==='KeyL'){event.preventDefault(); loopSelectedRegions()}
+  else if(event.code==='Enter'){event.preventDefault();setPlayhead(barZeroX());scheduleEditorSave();lastMetronomeBeat=-1}
+  else if(event.code==='ArrowLeft'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: -1, event })));scheduleEditorSave()}
+  else if(event.code==='ArrowRight'){event.preventDefault();setPlayhead(beatToX(movePlayheadByKeyboard({ currentBeat: xToBeat(timelineState.playheadX), direction: 1, event })));scheduleEditorSave()}
+  else if(event.code==='KeyC'){event.preventDefault(); isCycleEnabled=!isCycleEnabled; renderEditor()}
+  else if(event.code==='KeyK'){event.preventDefault(); isMetronomeEnabled=!isMetronomeEnabled; metronomeSettings.enabled=isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); scheduleEditorSave(); renderEditor()}
+}
+if(!window.__melogicStudioKeybindsBound){ window.__melogicStudioKeybindsBound=true; document.addEventListener('keydown', handleStudioKeydown); document.addEventListener('keyup',(event)=>{
+  const held = pressedDawMidiKeys.get(event.code)
+  if (held) {
+    const track = tracks.find((item)=>item.id===held.trackId)
+    pressedDawMidiKeys.delete(event.code)
+    stopTrackMidiNote(track, held.note)
+  }
+  if (event.code === 'KeyC' && typingPitchTrigger < 0) typingPitchTrigger = 0
+  if (event.code === 'KeyV' && typingPitchTrigger > 0) typingPitchTrigger = 0
+  if (event.code === 'KeyB' && typingModTrigger < 0) typingModTrigger = 0
+  if (event.code === 'KeyN' && typingModTrigger > 0) typingModTrigger = 0
+  if (['KeyC', 'KeyV', 'KeyB', 'KeyN'].includes(event.code)) applyTypingExpressionState()
+}) }
+if(!window.__melogicDawAudioPrewarmBound){
+  window.__melogicDawAudioPrewarmBound = true
+  window.addEventListener('pointerdown', () => prewarmDawAudio().catch(()=>{}), { once:true, capture:true })
+  window.addEventListener('keydown', () => prewarmDawAudio().catch(()=>{}), { once:true, capture:true })
+}
+if(!window.__melogicStudioLayoutResizeBound){
+  window.__melogicStudioLayoutResizeBound = true
+  let layoutResizeTimer = 0
+  window.addEventListener('resize', () => {
+    window.clearTimeout(layoutResizeTimer)
+    layoutResizeTimer = window.setTimeout(() => {
+      const previousHeight = bottomPanelHeightPx
+      syncBottomPanelHeightToViewport()
+      if (previousHeight !== bottomPanelHeightPx || app.querySelector('.studio-editor-page')) renderEditor()
+    }, 80)
+  }, { passive:true })
+}
+let hasCleanedUpDawSession = false
+function cleanupDawSessionResources() {
+  if (hasCleanedUpDawSession) return
+  hasCleanedUpDawSession = true
+  editorEventBindingsCleanup?.()
+  editorEventBindingsCleanup = null
+  if (playRaf) cancelAnimationFrame(playRaf)
+  if (meterRaf) cancelAnimationFrame(meterRaf)
+  if (timelineEdgeScrollRaf) cancelAnimationFrame(timelineEdgeScrollRaf)
+  if (audioImportPreviewRaf) cancelAnimationFrame(audioImportPreviewRaf)
+  playRaf = 0
+  meterRaf = 0
+  timelineEdgeScrollRaf = 0
+  audioImportPreviewRaf = 0
+  if (saveTimer) window.clearTimeout(saveTimer)
+  if (countInTimer) window.clearInterval(countInTimer)
+  if (timelineExtensionRepeatTimer) window.clearInterval(timelineExtensionRepeatTimer)
+  try { pitchTraceAnalysis.worker?.terminate?.() } catch {}
+  assetAuditionController.stopAndClear()
+  cleanupPendingAudioInputStream()
+  cleanupAudioRecordingController()
+  stopAllMidiPreviewNotes()
+  stopAllTrackInstrumentNotes()
+  stopAllPlaybackNotes()
+  stopAllAudioClipPlayback()
+  stopMetronomeVoices()
+  dawInstrumentRegistry.disposeAll()
+  dawWindowManager.destroy()
+  Array.from(trackAudioChannels.keys()).forEach((trackId) => disposeTrackAudioChannel(trackId))
+  try { assetAuditionGain?.disconnect?.() } catch {}
+  try { masterAudioBus?.input?.disconnect?.() } catch {}
+  try { masterAudioBus?.gain?.disconnect?.() } catch {}
+  try { masterAudioBus?.analyser?.disconnect?.() } catch {}
+  for (const [runtimeId, runtime] of audioClipRuntime.entries()) {
+    if (runtime?.url?.startsWith?.('blob:')) try { URL.revokeObjectURL(runtime.url) } catch {}
+    releaseDesktopLocalAudioReference(runtimeId)
+  }
+  audioClipRuntime.clear()
+  studioAudioEngine?.destroy?.()
+  studioAudioEngine = null
+  if (instrumentAudioContext && instrumentAudioContext !== audioContext) instrumentAudioContext.close().catch(() => {})
+  instrumentAudioContext = null
+  if (audioContext) audioContext.close().catch(() => {})
+  audioContext = null
+  masterAudioBus = null
+  assetAuditionGain = null
+  meterDomCache.clear()
+}
+if(!window.__melogicDawInstrumentCleanupBound){
+  window.__melogicDawInstrumentCleanupBound=true
+  window.addEventListener('beforeunload',(event)=>{
+    if(activeRecording){
+      event.preventDefault()
+      event.returnValue='Recording is in progress. Are you sure you want to leave?'
+    }
+  })
+  window.addEventListener('pagehide', cleanupDawSessionResources, { once:true })
+}
+
+async function init() {
+  if (import.meta.env.DEV && new URLSearchParams(location.search).has('scoreEditorFixture')) {
+    const {createScoreFixture,mountScoreFixture} = await import('../test/fixtures/soura/scoreEditorFixture.js')
+    projectState = { title: 'Score Editor fixture (local only)', bpm: 120, key: 'C', timeSignature: '4/4' }
+    midiRegions = createScoreFixture(tracks[0].id)
+    selectSingleRegion('score-midi')
+    midiRollState = {regionId:'score-midi'}
+    activeBottomPanel = 'score'
+    bottomPanelHeightPx = 460
+    renderEditor()
+    mountScoreFixture({
+      select: id => { selectSingleRegion(id); activeBottomPanel='score'; renderEditor() },
+      roundtrip: () => { const state=JSON.parse(JSON.stringify(buildEditorStateForSave())); applyLoadedEditorState(state); renderEditor() },
+      state: () => ({ region:selectedMidiRegionId, notes:midiRegions.find(r=>r.id==='score-midi')?.notes, score:midiRegions.find(r=>r.id==='score-midi')?.score }),
+      dense: () => { const r=midiRegions.find(r=>r.id==='score-midi');r.endBeat=2000;r.notes=Array.from({length:4000},(_,i)=>({id:`dense-${i}`,note:48+i%36,startBeat:i*.5,durationBeats:.5,velocity:.7}));selectSingleRegion(r.id);activeBottomPanel='score';renderEditor() }
+    })
+    return
+  }
+
+  if (import.meta.env.DEV && (new URLSearchParams(location.search).has('regionGeometryFixture') || new URLSearchParams(location.search).has('regionEditorFixture'))) {
+    projectState = { title: 'Region geometry audit (local only)', bpm: 120 }
+    timelineState.pixelsPerBar = 100
+    midiRegions = [
+      { id: 'audit-audio', type: 'audio', trackId: tracks[0].id, startBeat: 4, endBeat: 12, durationBeats: 8, fileDurationSeconds: 4, trimStartSeconds: 0, trimEndSeconds: 4, waveform: { peaks: [0.2,0.8,0.4,0.6] } },
+      { id: 'audit-midi', type: 'midi', trackId: tracks[0].id, startBeat: 16, endBeat: 20, notes: [{ startBeat:16, durationBeats:2, note:60 }] }
+    ]
+    const { mountRegionGeometryFixture, createFixtureAudioBuffer } = await import('../test/fixtures/soura/regionGeometryFixture.js')
+    audioClipRuntime.set('audit-audio', { audioBuffer: createFixtureAudioBuffer(), fileDurationSeconds: 4 })
+    midiRegions[0].audioClip = { runtimeId: 'audit-audio', audioReady: true, loadStatus: 'ready' }
+    if (new URLSearchParams(location.search).has('regionEditorFixture')) {
+      midiRegions[0].audioEdit = normalizeAudioEdit({ pitchTrace: { enabled: true, status: 'ready', notes: [
+        { id: 'pitch-c4', startSeconds: 0.5, durationSeconds: 0.6, midiNote: 60, originalMidiNote: 60, editedMidiNote: 60, confidence: 0.99 },
+        { id: 'pitch-cs4', startSeconds: 1.5, durationSeconds: 0.6, midiNote: 61, originalMidiNote: 61, editedMidiNote: 61, confidence: 0.99 }
+      ] } })
+      selectSingleRegion('audit-audio')
+      activeBottomPanel = 'midi-roll'
+      bottomPanelHeightPx = 460
+    }
+    renderEditor()
+    mountRegionGeometryFixture({ regions: () => midiRegions, rerender: renderEditor })
+    return
+  }
+
+  const loader =
+    createSouraProjectLoader(app)
+
+  loader.start()
+
+  try {
+    loader.activate(
+      'session',
+      'Checking your Melogic account'
+    )
+
+    const user =
+      await waitForInitialAuthState()
+
+    if (!user) {
+      loader.fail(
+        'session',
+        'Sign in is required to open this Soura project.'
+      )
+
+      return renderState(
+        'Sign in required for Studio.',
+        authRoute({
+          redirect:
+            window.location.pathname
+        })
+      )
+    }
+
+    loader.complete(
+      'session',
+      'Account restored'
+    )
+
+    loader.activate(
+      'project',
+      'Reading project from Firestore'
+    )
+
+    const id =
+      projectIdFromPath()
+
+    if (
+      !id
+      || reserved.has(id)
+    ) {
+      loader.fail(
+        'project',
+        'Studio project not found.'
+      )
+
+      return renderState(
+        'Studio project not found.'
+      )
+    }
+
+    const project =
+      await getStudioProject(id)
+
+    if (!project) {
+      loader.fail(
+        'project',
+        'Studio project not found.'
+      )
+
+      return renderState(
+        'Studio project not found.'
+      )
+    }
+
+    if (
+      !(
+        user.uid === project.ownerId
+        || (
+          project.collaboratorIds
+          || []
+        ).includes(user.uid)
+      )
+    ) {
+      loader.fail(
+        'project',
+        'You do not have access to this Soura project.'
+      )
+
+      return renderState(
+        'You do not have access to this Studio project.'
+      )
+    }
+
+    loader.complete(
+      'project',
+      project.title || 'Project loaded'
+    )
+
+    touchStudioProject(
+      project.id
+    ).catch(() => {})
+
+    loader.activate(
+      'workspace',
+      'Restoring editor state'
+    )
+
+    projectState =
+      project
+
+    if (projectState.editorState) {
+      applyLoadedEditorState(
+        projectState.editorState
+      )
+    }
+
+    ensureDefaultCycleRange()
+
+    loader.complete(
+      'workspace',
+      'Workspace restored'
+    )
+
+    loader.activate(
+      'audio',
+      'Loading Signalsmith WASM DSP'
+    )
+
+    const dspWarmup =
+      preloadSouraWasmDsp()
+
+    const dspResult =
+      await waitForWarmup(
+        dspWarmup,
+        2200
+      )
+
+    if (
+      dspResult.status === 'complete'
+    ) {
+      loader.complete(
+        'audio',
+        'WASM DSP ready'
+      )
+    } else if (
+      dspResult.status === 'failed'
+    ) {
+      console.warn(
+        '[soura-dsp] preload failed',
+        dspResult.error
+      )
+
+      loader.warn(
+        'audio',
+        'DSP will retry when needed'
+      )
+    } else {
+      loader.warn(
+        'audio',
+        'Continuing warmup in background'
+      )
+    }
+
+    loader.activate(
+      'media',
+      'Preparing audio assets'
+    )
+
+    const mediaWarmup = Promise.all([
+      hydrateProjectAudioAssets(),
+      preparePortableTrackPlayback()
+    ])
+
+    const mediaResult =
+      await waitForWarmup(
+        mediaWarmup,
+        1800
+      )
+
+    if (
+      mediaResult.status === 'complete'
+    ) {
+      loader.complete(
+        'media',
+        'Audio assets ready'
+      )
+    } else if (
+      mediaResult.status === 'failed'
+    ) {
+      console.warn(
+        '[studioProject] audio hydration failed',
+        mediaResult.error
+      )
+
+      loader.warn(
+        'media',
+        'Media will continue loading as needed'
+      )
+    } else {
+      loader.warn(
+        'media',
+        'Continuing media load in background'
+      )
+    }
+
+    loader.finish()
+
+    isEditorLoaded = true
+
+    if (souraDetachedRegionRequest.active) {
+      const requestedRegion = midiRegions.find((region) => region.id === souraDetachedRegionRequest.regionId)
+      if (requestedRegion) {
+        selectSingleRegion(requestedRegion.id)
+        midiRollState = { ...(midiRollState || {}), regionId: requestedRegion.id }
+      }
+      activeBottomPanel = 'midi-roll'
+      bottomPanelHeightPx = null
+    }
+
+    renderEditor()
+
+    dspWarmup
+      .then(() => renderEditor())
+      .catch((err) => {
+        console.error(
+          '[soura-dsp] preload failed',
+          err
+        )
+
+        renderEditor()
+      })
+
+    mediaWarmup.catch(
+      (err) =>
+        console.warn(
+          '[studioProject] audio hydration failed',
+          err
+        )
+    )
+
+    warmSelectedTrackInstrument(
+      'project-open'
+    )
+  } catch (error) {
+    console.error(
+      '[Soura] Project initialization failed:',
+      error
+    )
+
+    loader.fail(
+      'project',
+      error?.message
+      || 'Soura could not load this project.'
+    )
+
+    renderState(
+      'Soura could not load this project.'
+    )
+  }
+}
+
+init()

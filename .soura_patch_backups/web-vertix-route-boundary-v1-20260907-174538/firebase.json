@@ -1,0 +1,678 @@
+{
+  "hosting": {
+    "site": "melogic-records",
+    "public": "dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "headers": [
+      {
+        "source": "/ads.txt",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "text/plain; charset=utf-8"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "**",
+        "headers": [
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          },
+          {
+            "key": "Referrer-Policy",
+            "value": "strict-origin-when-cross-origin"
+          },
+          {
+            "key": "Permissions-Policy",
+            "value": "camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=(), interest-cohort=()"
+          },
+          {
+            "key": "Content-Security-Policy-Report-Only",
+            "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' blob: https://www.google.com https://www.gstatic.com https://www.recaptcha.net https://apis.google.com https://www.googletagmanager.com https://*.firebaseio.com https://melogic-records-default-rtdb.firebaseio.com https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://tpc.googlesyndication.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https: https://*.googleusercontent.com https://firebasestorage.googleapis.com https://*.firebasestorage.app https://i.scdn.co https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://tpc.googlesyndication.com; font-src 'self' data: https://fonts.gstatic.com https://nexerasocial-8qogvnym.livekit.cloud wss://nexerasocial-8qogvnym.livekit.cloud; connect-src 'self' https://www.google.com https://www.recaptcha.net https://en.wikipedia.org https://*.googleapis.com https://*.firebaseio.com https://melogic-records-default-rtdb.firebaseio.com wss://*.firebaseio.com wss://melogic-records-default-rtdb.firebaseio.com https://firestore.googleapis.com https://*.firestore.googleapis.com https://firebasestorage.googleapis.com https://*.cloudfunctions.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://www.googleapis.com https://stream.melogicrecords.studio https://ingest.melogicrecords.studio https://nexerasocial-8qogvnym.livekit.cloud wss://nexerasocial-8qogvnym.livekit.cloud https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net; media-src 'self' blob: https: https://stream.melogicrecords.studio https://ingest.melogicrecords.studio https://firebasestorage.googleapis.com https://*.firebasestorage.app; frame-src 'self' https://www.google.com https://www.recaptcha.net https://*.firebaseapp.com https://accounts.google.com https://googleads.g.doubleclick.net https://tpc.googlesyndication.com; object-src 'none'; base-uri 'self'; form-action 'self'; report-uri /__/csp-report;"
+          }
+        ]
+      },
+      {
+        "source": "/wasm/**/*.wasm",
+        "headers": [
+          {
+            "key": "Content-Type",
+            "value": "application/wasm"
+          },
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "/assets/**",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=31536000, immutable"
+          }
+        ]
+      },
+      {
+        "source": "/**/*.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      },
+      {
+        "source": "/",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      }
+    ],
+    "redirects": [
+      {
+        "source": "/index.html",
+        "destination": "/home",
+        "type": 301
+      },
+      {
+        "source": "/music.html",
+        "destination": "/streaming",
+        "type": 301
+      },
+      {
+        "source": "/music",
+        "destination": "/streaming",
+        "type": 301
+      },
+      {
+        "source": "/music/:rest*",
+        "destination": "/streaming/:rest",
+        "type": 301
+      },
+      {
+        "source": "/products.html",
+        "destination": "/products",
+        "type": 301
+      },
+      {
+        "source": "/cart.html",
+        "destination": "/cart",
+        "type": 301
+      },
+      {
+        "source": "/auth.html",
+        "destination": "/auth",
+        "type": 301
+      },
+      {
+        "source": "/auth-action.html",
+        "destination": "/auth/action",
+        "type": 301
+      },
+      {
+        "source": "/profile.html",
+        "destination": "/profile",
+        "type": 301
+      },
+      {
+        "source": "/account-security.html",
+        "destination": "/account/security",
+        "type": 301
+      },
+      {
+        "source": "/billing-payouts.html",
+        "destination": "/account/billing-payouts",
+        "type": 301
+      },
+      {
+        "source": "/edit-profile.html",
+        "destination": "/profile/edit",
+        "type": 301
+      },
+      {
+        "source": "/library.html",
+        "destination": "/account/library",
+        "type": 301
+      },
+      {
+        "source": "/orders.html",
+        "destination": "/account/orders",
+        "type": 301
+      },
+      {
+        "source": "/library",
+        "destination": "/account/library",
+        "type": 301
+      },
+      {
+        "source": "/orders",
+        "destination": "/account/orders",
+        "type": 301
+      },
+      {
+        "source": "/inbox.html",
+        "destination": "/inbox",
+        "type": 301
+      },
+      {
+        "source": "/community.html",
+        "destination": "/community",
+        "type": 301
+      },
+      {
+        "source": "/live.html",
+        "destination": "/live",
+        "type": 301
+      },
+      {
+        "source": "/forms.html",
+        "destination": "/forms",
+        "type": 301
+      },
+      {
+        "source": "/faq.html",
+        "destination": "/support/faq",
+        "type": 301
+      },
+      {
+        "source": "/faq",
+        "destination": "/support/faq",
+        "type": 301
+      },
+      {
+        "source": "/support.html",
+        "destination": "/support",
+        "type": 301
+      },
+      {
+        "source": "/about.html",
+        "destination": "/support/about",
+        "type": 301
+      },
+      {
+        "source": "/about",
+        "destination": "/support/about",
+        "type": 301
+      },
+      {
+        "source": "/contact.html",
+        "destination": "/support/contact",
+        "type": 301
+      },
+      {
+        "source": "/contact",
+        "destination": "/support/contact",
+        "type": 301
+      },
+      {
+        "source": "/privacy.html",
+        "destination": "/support/privacy",
+        "type": 301
+      },
+      {
+        "source": "/privacy",
+        "destination": "/support/privacy",
+        "type": 301
+      },
+      {
+        "source": "/terms.html",
+        "destination": "/support/terms",
+        "type": 301
+      },
+      {
+        "source": "/terms",
+        "destination": "/support/terms",
+        "type": 301
+      },
+      {
+        "source": "/refund-policy.html",
+        "destination": "/support/refund-policy",
+        "type": 301
+      },
+      {
+        "source": "/refund-policy",
+        "destination": "/support/refund-policy",
+        "type": 301
+      },
+      {
+        "source": "/creator-guidelines.html",
+        "destination": "/support/creator-guidelines",
+        "type": 301
+      },
+      {
+        "source": "/creator-guidelines",
+        "destination": "/support/creator-guidelines",
+        "type": 301
+      },
+      {
+        "source": "/ad-policy.html",
+        "destination": "/support/ad-policy",
+        "type": 301
+      },
+      {
+        "source": "/ad-policy",
+        "destination": "/support/ad-policy",
+        "type": 301
+      },
+      {
+        "source": "/studio.html",
+        "destination": "/studio",
+        "type": 301
+      },
+
+      {
+        "source": "/stage.html",
+        "destination": "/vertix",
+        "type": 301
+      },
+      {
+        "source": "/stage",
+        "destination": "/vertix",
+        "type": 301
+      },
+      {
+        "source": "/studio/stagemaker",
+        "destination": "/vertix",
+        "type": 301
+      },
+      {
+        "source": "/studio/stagemaker/project/:projectId",
+        "destination": "/vertix/project/:projectId",
+        "type": 301
+      },
+
+      {
+        "source": "/studio-project.html",
+        "destination": "/studio/daw",
+        "type": 301
+      },
+      {
+        "source": "/distribution.html",
+        "destination": "/distribution",
+        "type": 301
+      },
+      {
+        "source": "/studio-demos.html",
+        "destination": "/studio/demos",
+        "type": 301
+      },
+      {
+        "source": "/studio-tutorials.html",
+        "destination": "/studio/tutorials",
+        "type": 301
+      },
+      {
+        "source": "/admin-marketplace-review.html",
+        "destination": "/admin/reviews",
+        "type": 301
+      },
+      {
+        "source": "/admin/marketplace-review",
+        "destination": "/admin/reviews",
+        "type": 301
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "/",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/home",
+        "destination": "/index.html"
+      },
+      {
+        "source": "/streaming",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/streaming/live",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/streaming/live/**",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/streaming/go-live",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/streaming/sequence",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/streaming/sequence/**",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/streaming/releases/**",
+        "destination": "/music.html"
+      },
+      {
+        "source": "/products",
+        "destination": "/products.html"
+      },
+      {
+        "source": "/products/new",
+        "destination": "/new-product.html"
+      },
+      {
+        "source": "/products/dashboard",
+        "destination": "/product-dashboard.html"
+      },
+      {
+        "source": "/admin",
+        "destination": "/admin.html"
+      },
+      {
+        "source": "/admin/**",
+        "destination": "/admin.html"
+      },
+      {
+        "source": "/products/**",
+        "destination": "/product.html"
+      },
+      {
+        "source": "/product",
+        "destination": "/product.html"
+      },
+      {
+        "source": "/cart",
+        "destination": "/cart.html"
+      },
+      {
+        "source": "/auth",
+        "destination": "/auth.html"
+      },
+      {
+        "source": "/auth/action",
+        "destination": "/auth-action.html"
+      },
+      {
+        "source": "/profile",
+        "destination": "/profile.html"
+      },
+      {
+        "source": "/profile/edit",
+        "destination": "/edit-profile.html"
+      },
+      {
+        "source": "/account/security",
+        "destination": "/account-security.html"
+      },
+      {
+        "source": "/account/billing-payouts",
+        "destination": "/billing-payouts.html"
+      },
+      {
+        "source": "/account/library",
+        "destination": "/library.html"
+      },
+      {
+        "source": "/account/orders",
+        "destination": "/orders.html"
+      },
+      {
+        "source": "/account/orders/**",
+        "destination": "/orders.html"
+      },
+      {
+        "source": "/profile/public",
+        "destination": "/profile-public.html"
+      },
+      {
+        "source": "/library",
+        "destination": "/library.html"
+      },
+      {
+        "source": "/orders",
+        "destination": "/orders.html"
+      },
+      {
+        "source": "/u/**",
+        "destination": "/profile-public.html"
+      },
+      {
+        "source": "/profiles/**",
+        "destination": "/profile-public.html"
+      },
+      {
+        "source": "/inbox",
+        "destination": "/inbox.html"
+      },
+      {
+        "source": "/inbox/**",
+        "destination": "/inbox.html"
+      },
+      {
+        "source": "/community",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/community/communities",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/community/create",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/community/c/**",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/community/post/**",
+        "destination": "/community.html"
+      },
+      {
+        "source": "/live",
+        "destination": "/live.html"
+      },
+      {
+        "source": "/forms",
+        "destination": "/forms.html"
+      },
+      {
+        "source": "/support/faq",
+        "destination": "/faq.html"
+      },
+      {
+        "source": "/support",
+        "destination": "/support.html"
+      },
+      {
+        "source": "/support/about",
+        "destination": "/about.html"
+      },
+      {
+        "source": "/support/contact",
+        "destination": "/contact.html"
+      },
+      {
+        "source": "/support/privacy",
+        "destination": "/privacy.html"
+      },
+      {
+        "source": "/support/terms",
+        "destination": "/terms.html"
+      },
+      {
+        "source": "/support/refund-policy",
+        "destination": "/refund-policy.html"
+      },
+      {
+        "source": "/support/creator-guidelines",
+        "destination": "/creator-guidelines.html"
+      },
+      {
+        "source": "/support/ad-policy",
+        "destination": "/ad-policy.html"
+      },
+      {
+        "source": "/studio",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/daw",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/daw/project/**",
+        "destination": "/studio-project.html"
+      },
+      {
+        "source": "/studio/daw/**",
+        "destination": "/studio-project.html"
+      },
+
+      {
+        "source": "/vertix/project/**",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/vertix",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/vertix/**",
+        "destination": "/stage.html"
+      },
+
+      {
+        "source": "/studio/stagemaker/project/**",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/studio/stagemaker",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/studio/stagemaker/**",
+        "destination": "/stage.html"
+      },
+
+      {
+        "source": "/studio/live",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/live/**",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/lucentra",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/lucentra/**",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/inkora",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/inkora/**",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/cineara",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/cineara/**",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/rundown-pilot",
+        "destination": "/studio.html"
+      },
+      {
+        "source": "/studio/rundown-pilot/**",
+        "destination": "/studio.html"
+      },
+
+      {
+        "source": "/stage",
+        "destination": "/stage.html"
+      },
+      {
+        "source": "/stage/**",
+        "destination": "/stage.html"
+      },
+
+      {
+        "source": "/studio/demos",
+        "destination": "/studio-demos.html"
+      },
+      {
+        "source": "/studio/tutorials",
+        "destination": "/studio-tutorials.html"
+      },
+      {
+        "source": "/studio/**",
+        "destination": "/studio-project.html"
+      },
+      {
+        "source": "/distribution",
+        "destination": "/distribution.html"
+      }
+    ]
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "database": {
+    "rules": "realtimedb.rules.json"
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": {
+    "source": "functions"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "hosting": {
+      "port": 5000
+    },
+    "storage": {
+      "port": 9199
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true
+  },
+  "auth": {
+    "providers": {
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Melogic Records",
+        "supportEmail": "support@melogicrecords.studio"
+      }
+    }
+  }
+}

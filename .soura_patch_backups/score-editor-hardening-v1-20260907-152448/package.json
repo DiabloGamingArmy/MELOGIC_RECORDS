@@ -1,0 +1,43 @@
+{
+  "name": "melogic-localfolder",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "check": "node scripts/check-config.mjs && npm run build",
+    "verify:ads": "npm run build && node scripts/verify-ads-txt.mjs",
+    "dsp:build": "node scripts/build-soura-dsp-wasm.mjs",
+    "dsp:clean": "node scripts/clean-soura-dsp-wasm.mjs",
+    "dsp:verify": "node scripts/verify-soura-wasm-dsp.mjs",
+    "build": "npm run dsp:build && npm run dsp:verify && vite build",
+    "preview": "vite preview",
+    "test:rules": "firebase emulators:exec --only firestore --project melogic-records \"node --test test/firestoreRules.test.mjs\"",
+    "storage:cors:get": "gsutil cors get gs://melogic-records.firebasestorage.app"
+  },
+  "devDependencies": {
+    "@emnapi/core": "^1.10.0",
+    "@emnapi/runtime": "^1.10.0",
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "@tauri-apps/cli": "^2.11.4",
+    "@wdio/cli": "^9.30.1",
+    "@wdio/local-runner": "^9.30.1",
+    "@wdio/mocha-framework": "^9.30.1",
+    "@wdio/spec-reporter": "^9.30.1",
+    "@wdio/tauri-service": "^1.3.0",
+    "vite": "^8.0.9"
+  },
+  "dependencies": {
+    "@livekit/components-react": "^2.9.21",
+    "@livekit/components-styles": "^1.2.0",
+    "@stripe/stripe-js": "^9.3.0",
+    "@tauri-apps/api": "^2.11.1",
+    "firebase": "^12.12.1",
+    "hls.js": "^1.6.16",
+    "jszip": "^3.10.1",
+    "livekit-client": "^2.19.2",
+    "qrcode": "^1.5.4",
+    "three": "^0.184.0",
+    "vexflow": "4.2.5"
+  }
+}

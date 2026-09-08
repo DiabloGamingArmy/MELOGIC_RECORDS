@@ -1,0 +1,3 @@
+web-vertix-route-boundary-v1
+/vertix => studio.html
+/vertix/project/** => stage.html
