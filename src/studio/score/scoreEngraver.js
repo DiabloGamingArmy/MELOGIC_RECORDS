@@ -1,3 +1,4 @@
+import { signatureDisplay } from './scoreSignatures.js'
 import { ARTICULATIONS, ORNAMENTS } from './scoreSymbols.js'
 import { planAccidentals } from './scoreAccidentals.js'
 // Single-font build: glyph paths render sharply in SVG without OS font loading.
@@ -11,7 +12,7 @@ const svgNode = (doc, type, attributes) => {
   return node
 }
 
-export function engraveMeasure(container, measure, model, settings) {
+export function engraveMeasure(container, measure, model, settings, { isSystemStart = true, previousMeasure = null } = {}) {
   const tabOnly = settings.mode === 'tab', combined = settings.mode === 'combined'
   const definitions = model.staffDefinitions || (tabOnly ? [{id:model.staffIds[0],clef:model.staffIds[0],isTab:true,settings}] : model.staffIds.map(id=>({id,clef:id,settings})))
   const notationStaffs = definitions.filter(d=>!d.isTab)
@@ -26,8 +27,12 @@ export function engraveMeasure(container, measure, model, settings) {
     const clef = measure.staffClefs?.[id] || definition.clef
     const key = clef === 'percussion' ? 'C' : measure.staffKeys?.[id] || measure.key
     const stave = isTab ? new TabStave(0, y, measure.width, { num_lines: settings.tuning.length }) : new Stave(0, y, measure.width)
-    stave.addClef(isTab ? 'tab' : clef)
-    if (!isTab) { stave.addKeySignature(key); stave.addTimeSignature(`${measure.numerator}/${measure.denominator}`) }
+    const signatures = signatureDisplay(measure, previousMeasure, definition, isSystemStart)
+    // Keep the stave's active clef even when its glyph is not printed.
+    stave.setClefLines(isTab ? 'tab' : clef)
+    if (signatures.showClef) stave.addClef(signatures.clef, signatures.smallClef ? 'small' : 'default')
+    if (signatures.showKey) stave.addKeySignature(key, signatures.cancelKey)
+    if (signatures.showTime) stave.addTimeSignature(`${measure.numerator}/${measure.denominator}`)
     stave.setContext(context)
     staves.push({ stave, clef, isTab, id, definition })
     const voices = measure.staffs[id] || []
@@ -81,7 +86,7 @@ export function engraveMeasure(container, measure, model, settings) {
   definitions.forEach((definition,index)=>makeStaff(definition,65+index*180))
   const startX = Math.max(...staves.map(s => s.stave.getNoteStartX()))
   staves.forEach(({ stave }) => { stave.setNoteStartX(startX); stave.draw() })
-  for(let i=1;i<staves.length;i++)if(staves[i].definition.trackId===staves[i-1].definition.trackId&&!staves[i].isTab&&!staves[i-1].isTab)new StaveConnector(staves[i-1].stave, staves[i].stave).setType(StaveConnector.type.BRACE).setContext(context).draw()
+  for(let i=1;i<staves.length;i++)if(isSystemStart&&staves[i].definition.trackId===staves[i-1].definition.trackId&&!staves[i].isTab&&!staves[i-1].isTab)new StaveConnector(staves[i-1].stave, staves[i].stave).setType(StaveConnector.type.BRACE).setContext(context).draw()
   const formatter = new Formatter()
   for (const staff of staves) formatter.joinVoices(groups.filter(g => g.stave === staff.stave).map(g => g.voice))
   formatter.format(allVoices, Math.max(60, measure.width - startX - 25))
@@ -121,7 +126,7 @@ export function engraveMeasure(container, measure, model, settings) {
   const points = [{ beat: measure.startBeat, x: startX }, ...timing, { beat: measure.endBeat, x: measure.width - 5 }].sort((a,b) => a.beat - b.beat)
   const unique = [...new Map(points.map(p => [p.beat, p])).values()]
   drawDirections(context.svg, measure, unique, staves, container.ownerDocument)
-  return { height, hits, points: unique, staves: staves.map(s => ({ id:s.id, trackId:s.definition.trackId, clef: s.clef, isTab: s.isTab, bottom: s.stave.getYForLine(s.isTab ? settings.tuning.length - 1 : 4), top: s.stave.getYForLine(0) })) }
+  return { height, hits, points: unique, staves: staves.map(s => ({ id:s.id, trackId:s.definition.trackId, clef: s.clef, isTab: s.isTab, bottom: s.stave.getYForLine(s.isTab ? s.definition.settings.tuning.length - 1 : 4), top: s.stave.getYForLine(0) })) }
 }
 
 export function interpolateScorePosition(points, value, from = 'beat', to = 'x') {

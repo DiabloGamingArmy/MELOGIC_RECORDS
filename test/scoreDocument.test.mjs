@@ -104,3 +104,58 @@ test('shared host edits multiple regions in one history transaction and keeps au
   host.toggleMark('articulations','accent');assert.equal(commits,2);assert.deepEqual(state.regions[0].notes[0].notation.articulations,['accent'])
   const before=structuredClone(state.regions);host.symbol({type:'dynamic',trackId:'t1',beat:0,text:'pp'});assert.deepEqual(state.regions,before)
 })
+
+// System-start/signature regression contract shared by screen and print rendering.
+import {signatureDisplay} from '../src/studio/score/scoreSignatures.js'
+const trebleStaff={id:'t/treble',clef:'treble',isTab:false}
+const signatureMeasure=(index,key='G',clef='treble',numerator=4,denominator=4)=>({index,width:240,numerator,denominator,key,staffKeys:{'t/treble':key},staffClefs:{'t/treble':clef}})
+test('ordinary measures do not repeat clef, key or time; first score measure does',()=>{
+  const first=signatureMeasure(0),second=signatureMeasure(1)
+  const initial=signatureDisplay(first,null,trebleStaff,true),ordinary=signatureDisplay(second,first,trebleStaff,false)
+  assert.deepEqual([initial.showClef,initial.showKey,initial.showTime],[true,true,true])
+  assert.deepEqual([ordinary.showClef,ordinary.showKey,ordinary.showTime],[false,false,false])
+})
+test('new systems restore clef and key while unchanged meter is not repeated',()=>{
+  const result=signatureDisplay(signatureMeasure(2),signatureMeasure(1),trebleStaff,true)
+  assert.deepEqual([result.showClef,result.showKey,result.showTime],[true,true,false])
+})
+test('mid-system clef, key and time changes print independently; key cancellation uses previous key',()=>{
+  const before=signatureMeasure(0)
+  const clef=signatureDisplay(signatureMeasure(1,'G','bass'),before,trebleStaff,false)
+  assert.deepEqual([clef.showClef,clef.showKey,clef.showTime,clef.smallClef],[true,false,false,true])
+  const key=signatureDisplay(signatureMeasure(1,'C'),before,trebleStaff,false)
+  assert.deepEqual([key.showClef,key.showKey,key.showTime,key.cancelKey],[false,true,false,'G'])
+  const meter=signatureDisplay(signatureMeasure(1,'G','treble',6,8),before,trebleStaff,false)
+  assert.deepEqual([meter.showClef,meter.showKey,meter.showTime],[false,false,true])
+  assert.equal(signatureDisplay(signatureMeasure(1,'Em'),before,trebleStaff,false).showKey,false)
+})
+test('system starts come from continuous/page layout, including manual breaks and cropped scores',()=>{
+  const model={height:250,measures:Array.from({length:6},(_,i)=>signatureMeasure(i+20))}
+  const continuous=layoutScore(model)
+  assert.deepEqual(continuous.cells.map(c=>c.isSystemStart),[true,false,false,false,false,false])
+  assert.equal(continuous.cells[0].previousMeasure,null)
+  const pages=layoutScore(model,{type:'page',breaks:[{measure:22,type:'system'},{measure:24,type:'page'}]})
+  for(let i=0;i<pages.cells.length;i++){
+    const cell=pages.cells[i]
+    assert.equal(cell.isSystemStart,i===0||cell.system!==pages.cells[i-1].system)
+    assert.equal(cell.previousMeasure,i===0?null:model.measures[i-1])
+  }
+  assert.equal(pages.cells.find(c=>c.measure.index===22).isSystemStart,true)
+  assert.equal(pages.cells.find(c=>c.measure.index===24).isSystemStart,true)
+})
+test('grand staff and different instruments evaluate their own clef/key state at a shared system boundary',()=>{
+  const before={...signatureMeasure(0),staffClefs:{a:'treble',b:'bass'},staffKeys:{a:'G',b:'Bb'}}
+  const after={...before,index:1,staffKeys:{a:'G',b:'F'}}
+  assert.equal(signatureDisplay(after,before,{id:'a',clef:'treble'},false).showKey,false)
+  assert.equal(signatureDisplay(after,before,{id:'b',clef:'bass'},false).cancelKey,'Bb')
+  for(const id of ['a','b'])assert.equal(signatureDisplay(after,before,{id,clef:before.staffClefs[id]},true).showClef,true)
+})
+test('TAB keeps system-start TAB clefs without pitched signatures; percussion retains meter',()=>{
+  const first=signatureMeasure(0),next=signatureMeasure(1)
+  const tab={id:'tab',clef:'treble',isTab:true}
+  assert.deepEqual([signatureDisplay(first,null,tab,true).showClef,signatureDisplay(first,null,tab,true).showKey,signatureDisplay(first,null,tab,true).showTime],[true,false,false])
+  assert.equal(signatureDisplay(next,first,tab,false).showClef,false)
+  const percussion={id:'drums',clef:'percussion'}
+  assert.equal(signatureDisplay(first,null,percussion,true).showKey,false)
+  assert.equal(signatureDisplay(first,null,percussion,true).showTime,true)
+})

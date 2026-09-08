@@ -20,7 +20,9 @@ export function mountScoreEditor(root,host) {
   const selected=()=>model.events.filter(e=>host.selection().includes(e.id))
   const selectedEvent=()=>selected()[0]
   const editable=()=>activePart()?.regions.some(r=>r.type!=='audio')
-  root.innerHTML=scoreToolbar(parts,doc,session)+`<div class="soura-score-inspector" data-score-inspector></div><div class="soura-score-scroll" tabindex="0" role="region" aria-label="Score notation"><div class="soura-score-paper"><svg class="soura-score-connections"></svg><div class="soura-score-playhead" hidden></div><div class="soura-score-caret" hidden></div><div class="soura-score-marquee" hidden></div></div></div><div class="soura-score-status" role="status" data-score-status></div>`
+  root.innerHTML=scoreToolbar(parts,doc,session)+`<div class="soura-score-scroll" tabindex="0" role="region" aria-label="Score notation"><div class="soura-score-paper"><svg class="soura-score-connections"></svg><div class="soura-score-playhead" hidden></div><div class="soura-score-caret" hidden></div><div class="soura-score-marquee" hidden></div></div></div><div class="soura-score-status" role="status" data-score-status></div>`
+  const sidebar=root.querySelector('.soura-score-sidebar')
+  on(root,'toggle',e=>{if(e.target.dataset.scoreSection){session.sections||={};session.sections[e.target.dataset.scoreSection]=e.target.open}},{capture:true})
   const viewport=root.querySelector('.soura-score-scroll'),paper=root.querySelector('.soura-score-paper'),overlay=root.querySelector('.soura-score-connections'),marker=root.querySelector('.soura-score-playhead'),caret=root.querySelector('.soura-score-caret'),marquee=root.querySelector('.soura-score-marquee'),status=root.querySelector('[data-score-status]')
   const say=text=>status.textContent=text
   const empty=()=>parts.length?'All staffs are hidden. Use Staffs to show an instrument.':'Select MIDI regions, choose a track, or analyze audio in Pitch Trace to see notation.'
@@ -73,8 +75,8 @@ export function mountScoreEditor(root,host) {
     for(const[id,cell]of cells)if(!ids.has(id)){cell.node.remove();cells.delete(id)}
     for(const position of visible)if(!cells.has(position.id)){
       const node=owner.createElement('div');node.className='soura-score-measure';node.dataset.measure=position.id;node.style.cssText=`left:${position.x*session.zoom}px;top:${position.y*session.zoom}px;width:${position.width}px;transform:scale(${session.zoom*position.scale})`;paper.append(node)
-      try{const measure={...position.measure,width:position.width};cells.set(position.id,{...engraveMeasure(node,measure,model,{}),node,measure,layout:position})}
-      catch(error){node.textContent=`Measure ${position.measure.number}: notation error`;console.error('Score engraving',error);say(error.message);cells.set(position.id,{node,layout:position,measure:position.measure,hits:[],points:[],staves:[]})}
+      try{const measure={...position.measure,width:position.width};cells.set(position.id,{...engraveMeasure(node,measure,model,{},position),node,measure,layout:position})}
+      catch(error){if(import.meta.env.DEV)node.dataset.scoreError=error.stack;node.textContent=`Measure ${position.measure.number}: notation error`;console.error('Score engraving',error);say(error.message);cells.set(position.id,{node,layout:position,measure:position.measure,hits:[],points:[],staves:[]})}
     }
     updateOverlays();updatePlayhead(lastBeat,lastPlaying)
   }
@@ -185,8 +187,9 @@ export function mountScoreEditor(root,host) {
     for(const c of cells.values())for(const h of c.hits)h.node.classList.toggle('is-playing',playing&&beat>=h.event.startBeat&&beat<h.event.startBeat+h.event.durationBeats)
     if(playing&&session.follow&&p){const x=p.x*session.zoom,y=p.y*session.zoom;if(x<viewport.scrollLeft||x>viewport.scrollLeft+viewport.clientWidth*.85)viewport.scrollLeft=x;if(y<viewport.scrollTop||y>viewport.scrollTop+viewport.clientHeight*.85)viewport.scrollTop=y}
   }
+  sidebar.scrollTop=session.sidebarTop||0
   renderPaper();viewport.scrollLeft=session.left;viewport.scrollTop=session.top;drawVisible();inspect()
   on(viewport,'scroll',schedule,{passive:true});const observer=new win.ResizeObserver(schedule);observer.observe(viewport)
   if(session.focus)viewport.focus({preventScroll:true})
-  return {updatePlayhead,destroy(){session.left=viewport.scrollLeft;session.top=viewport.scrollTop;session.focus=root.contains(owner.activeElement);sessions.set('score',session);destroyed=true;abort.abort();observer.disconnect();win.cancelAnimationFrame(frame)}}
+  return {updatePlayhead,destroy(){session.sidebarTop=sidebar.scrollTop;session.left=viewport.scrollLeft;session.top=viewport.scrollTop;session.focus=root.contains(owner.activeElement);sessions.set('score',session);destroyed=true;abort.abort();observer.disconnect();win.cancelAnimationFrame(frame)}}
 }

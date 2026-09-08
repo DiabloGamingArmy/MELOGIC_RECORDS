@@ -283,7 +283,7 @@ let lastTimelineGeometryDiagnostics = { revision: 0, errors: [], checkedAt: 0 }
 window.__souraTimelineGeometry = Object.freeze({
   snapshot: () => structuredClone(lastTimelineGeometryDiagnostics)
 })
-const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw', 'soura', 'stagemaker', 'vertix', 'blueprints'])
+const reserved = new Set(['demos', 'tutorials', 'project', 'distribution', 'daw', 'stagemaker'])
 const PREF_KEY = 'melogic_studio_keep_site_menu_open'
 const MUSICAL_TYPING_PREF_KEY = 'melogic:daw:musicalTyping'
 const CHANNEL_ACCORDION_PREF_KEY = 'melogic:daw:channelStripSettings:accordionState'
@@ -1457,26 +1457,10 @@ const AUDIO_EFFECT_TYPES = AUDIO_EFFECT_MANIFESTS
 
 const studioProjectModel = normalizeStudioProjectModel({ tracks, regions: timelineRegions })
 
-// studio-project-route-parsers-v1
 const projectIdFromPath = () => {
   const parts = (window.location.pathname || '').split('/').filter(Boolean)
-
-  // Canonical Soura project URL.
-  if (parts[0] === 'studio' && parts[1] === 'soura' && parts[2] === 'project') {
-    return decodeURIComponent((parts[3] || '').trim())
-  }
-
-  // Legacy compatibility inputs retained during the route migration.
-  if (parts[0] === 'studio' && parts[1] === 'daw' && parts[2] === 'project') {
-    return decodeURIComponent((parts[3] || '').trim())
-  }
-  if (parts[0] === 'studio' && parts[1] === 'project') {
-    return decodeURIComponent((parts[2] || '').trim())
-  }
-
-  // Historical fallback for older entrypoints. Do not interpret a Studio app
-  // namespace such as /studio/soura as a Firestore project document ID.
-  if (parts[0] === 'studio') return ''
+  if (parts[0] === 'studio' && parts[1] === 'daw' && parts[2] === 'project') return decodeURIComponent((parts[3] || '').trim())
+  if (parts[0] === 'studio' && parts[1] === 'project') return decodeURIComponent((parts[2] || '').trim())
   return decodeURIComponent((parts[1] || '').trim())
 }
 const icon = (name) => ({ mute:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="m11 5-5 4H3v6h3l5 4z"/><path d="m23 9-6 6"/><path d="m17 9 6 6"/></svg>', solo:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M5 14h3v6H5z"/><path d="M16 14h3v6h-3z"/></svg>', record:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/></svg>', automation:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M8 17 16 7"/></svg>', more:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>' }[name] || '')

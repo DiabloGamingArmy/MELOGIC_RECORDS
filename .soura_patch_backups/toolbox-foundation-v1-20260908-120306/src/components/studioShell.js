@@ -6,8 +6,7 @@ const STUDIO_APPS = [
   { key: 'lucentra', label: 'Lucentra', href: ROUTES.studioLucentra, icon: 'lucentra' },
   { key: 'inkora', label: 'Inkora', href: ROUTES.studioInkora, icon: 'inkora' },
   { key: 'cineara', label: 'Cineara', href: ROUTES.studioCineara, icon: 'cineara' },
-  { key: 'rundownpilot', label: 'Rundown Pilot', href: ROUTES.studioRundownPilot, icon: 'rundownpilot' },
-  { key: 'blueprints', label: 'Blueprints', href: ROUTES.studioBlueprints, icon: 'melogicblueprints', iconFile: 'blueprints' }
+  { key: 'rundownpilot', label: 'Rundown Pilot', href: ROUTES.studioRundownPilot, icon: 'rundownpilot' }
 ]
 
 function appIcon(item) {
@@ -34,7 +33,6 @@ export function studioSidebar({ active = 'projects' } = {}) {
       </div>
       <div class="studio-sidebar-group studio-sidebar-group--resources">
         <span class="studio-sidebar-group-label">Workspace</span>
-        <a class="studio-sidebar-link ${is('toolbox')}" href="${ROUTES.toolbox}" data-studio-shell-nav ${active === 'toolbox' ? 'aria-current="page"' : ''}>Toolbox</a>
         <a class="studio-sidebar-link ${is('live')}" href="${ROUTES.studioLive}" data-studio-shell-nav>Live Studio</a>
         <a class="studio-sidebar-link ${is('demos')}" href="${ROUTES.studioDemos}">Demos</a>
         <a class="studio-sidebar-link ${is('tutorials')}" href="${ROUTES.studioTutorials}">Tutorials</a>

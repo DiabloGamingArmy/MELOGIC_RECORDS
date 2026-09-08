@@ -1,3 +1,4 @@
+import { annotateSystemCells } from './scoreSignatures.js'
 export const PAPER_SIZES = { A4:[794,1123],Letter:[816,1056] }
 /** Pure layout: page/system/measure rectangles, independent of SVG and playback. */
 export function layoutScore(model, input={}) {
@@ -8,7 +9,7 @@ export function layoutScore(model, input={}) {
     let x=labelWidth
     for(const measure of model.measures){cells.push({id:String(measure.index),measure,system:0,page:0,x,y:0,width:measure.width,height,scale:1});x+=measure.width}
     systems.push({index:0,page:0,x:0,y:0,width:x,height,scale:1})
-    return {cells,systems,pages,width:x+24,height}
+    return {cells:annotateSystemCells(cells),systems,pages,width:x+24,height}
   }
   let [pageWidth,pageHeight]=PAPER_SIZES[config.paper]||PAPER_SIZES.A4
   if(config.orientation==='landscape')[pageWidth,pageHeight]=[pageHeight,pageWidth]
@@ -36,7 +37,7 @@ export function layoutScore(model, input={}) {
     row.push(measure)
   }
   flush()
-  return {cells,systems,pages,width:pageWidth,height:pages.length*(pageHeight+pageGap)-pageGap,pageWidth,pageHeight}
+  return {cells:annotateSystemCells(cells),systems,pages,width:pageWidth,height:pages.length*(pageHeight+pageGap)-pageGap,pageWidth,pageHeight}
 }
 export function visibleLayoutCells(layout,{left,top,width,height,zoom=1},overscan=250) {
   const x=left/zoom,y=top/zoom,w=width/zoom,h=height/zoom

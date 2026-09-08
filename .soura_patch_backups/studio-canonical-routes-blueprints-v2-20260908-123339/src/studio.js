@@ -441,15 +441,6 @@ const STUDIO_APP_FOUNDATIONS = {
     icon: 'cineara',
     capabilities: ['Timeline editing', 'Media bin', 'Color and effects', 'Render delivery']
   },
-  blueprints: {
-    name: 'Blueprints',
-    category: 'Tool Building',
-    description: 'A visual creator-tool building workspace for designing reusable Melogic utilities and workflows.',
-    route: ROUTES.studioBlueprints,
-    icon: 'melogicblueprints',
-    iconFile: 'blueprints',
-    capabilities: ['Visual tool graphs', 'Reusable creator workflows', 'Tool publishing', 'Community remixing']
-  },
   rundownpilot: {
     name: 'Rundown Pilot',
     category: 'Stage Management',
@@ -737,7 +728,6 @@ function currentStudioSection() {
   if (pathname.startsWith(ROUTES.studioInkora)) return 'inkora'
   if (pathname.startsWith(ROUTES.studioCineara)) return 'cineara'
   if (pathname.startsWith(ROUTES.studioRundownPilot)) return 'rundownpilot'
-  if (pathname.startsWith(ROUTES.studioBlueprints)) return 'blueprints'
   if (pathname.startsWith(ROUTES.studioLive)) return 'live'
   return 'daw'
 }

@@ -15,8 +15,7 @@
     "build": "npm run dsp:build && npm run dsp:verify && vite build",
     "preview": "vite preview",
     "test:rules": "firebase emulators:exec --only firestore --project melogic-records \"node --test test/firestoreRules.test.mjs\"",
-    "storage:cors:get": "gsutil cors get gs://melogic-records.firebasestorage.app",
-    "test:toolbox": "node --test test/toolboxRegistry.test.mjs"
+    "storage:cors:get": "gsutil cors get gs://melogic-records.firebasestorage.app"
   },
   "devDependencies": {
     "@emnapi/core": "^1.10.0",

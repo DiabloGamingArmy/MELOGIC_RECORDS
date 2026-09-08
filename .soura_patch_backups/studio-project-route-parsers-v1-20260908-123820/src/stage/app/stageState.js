@@ -200,27 +200,11 @@ export const state = {
   }
 }
 
-// studio-project-route-parsers-v1
 export const getCurrentStageProjectId = () => {
   const pathname = window.location.pathname || ''
-
-  // Canonical Vertix project URL.
-  if (pathname.startsWith('/studio/vertix/project/')) {
-    return decodeURIComponent(pathname.slice('/studio/vertix/project/'.length).split('/')[0] || '').trim()
-  }
-
-  // Legacy compatibility routes.
-  if (pathname.startsWith('/vertix/project/')) {
-    return decodeURIComponent(pathname.slice('/vertix/project/'.length).split('/')[0] || '').trim()
-  }
-  if (pathname.startsWith('/studio/stagemaker/project/')) {
-    return decodeURIComponent(pathname.slice('/studio/stagemaker/project/'.length).split('/')[0] || '').trim()
-  }
-  if (pathname.startsWith('/stage/')) {
-    return decodeURIComponent(pathname.slice('/stage/'.length).split('/')[0] || '').trim()
-  }
-
-  // Keep the historical query fallback for old links/native integrations.
+  if (pathname.startsWith('/studio/stagemaker/project/')) return decodeURIComponent(pathname.replace('/studio/stagemaker/project/', '').split('/')[0] || '').trim()
+  if (pathname.startsWith('/studio/stagemaker/')) return decodeURIComponent(pathname.replace('/studio/stagemaker/', '').split('/')[0] || '').trim()
+  if (pathname.startsWith('/stage/')) return decodeURIComponent(pathname.replace('/stage/', '').split('/')[0] || '').trim()
   return new URLSearchParams(window.location.search || '').get('projectId')?.trim() || ''
 }
 

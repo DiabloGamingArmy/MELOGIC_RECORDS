@@ -6,8 +6,7 @@ const STUDIO_APPS = [
   { key: 'lucentra', label: 'Lucentra', href: ROUTES.studioLucentra, icon: 'lucentra' },
   { key: 'inkora', label: 'Inkora', href: ROUTES.studioInkora, icon: 'inkora' },
   { key: 'cineara', label: 'Cineara', href: ROUTES.studioCineara, icon: 'cineara' },
-  { key: 'rundownpilot', label: 'Rundown Pilot', href: ROUTES.studioRundownPilot, icon: 'rundownpilot' },
-  { key: 'blueprints', label: 'Blueprints', href: ROUTES.studioBlueprints, icon: 'melogicblueprints', iconFile: 'blueprints' }
+  { key: 'rundownpilot', label: 'Rundown Pilot', href: ROUTES.studioRundownPilot, icon: 'rundownpilot' }
 ]
 
 function appIcon(item) {

@@ -64,32 +64,29 @@ export const ROUTES = {
   creatorGuidelines: '/support/creator-guidelines',
   adPolicy: '/support/ad-policy',
   studio: '/studio',
-  toolbox: '/toolbox',
-  studioDaw: '/studio/soura',
+  studioDaw: '/studio/daw',
 
-  // studio-canonical-routes-blueprints-v2
-  // Canonical Studio application routes.
-  studioVertix: '/studio/vertix',
+  // Canonical Vertix route.
+  studioVertix: '/vertix',
 
   // Compatibility alias: existing code may still refer to this property.
   // The public URL no longer exposes the StageMaker name.
-  studioStagemaker: '/studio/vertix',
+  studioStagemaker: '/vertix',
 
   studioLucentra: '/studio/lucentra',
   studioInkora: '/studio/inkora',
   studioCineara: '/studio/cineara',
   studioRundownPilot: '/studio/rundown-pilot',
-  studioBlueprints: '/studio/blueprints',
   studioLive: '/studio/live',
 
   // Legacy route kept only for compatibility/canonicalization.
   stage: '/stage',
 
-  studioProject: '/studio/soura/project',
+  studioProject: '/studio/daw/project',
   studioInstrumentHost: '/instrument-host.html',
 
   // Canonical Vertix project prefix.
-  stageProject: '/studio/vertix/project',
+  stageProject: '/vertix/project',
 
   studioDemos: '/studio/demos',
   studioTutorials: '/studio/tutorials',
@@ -147,8 +144,6 @@ const LEGACY_ROUTE_MAP = {
   '/stage.html': ROUTES.studioVertix,
 
   '/studio-project.html': ROUTES.studioDaw,
-  '/studio/daw': ROUTES.studioDaw,
-  '/vertix': ROUTES.studioVertix,
   '/studio-demos.html': ROUTES.studioDemos,
   '/studio-tutorials.html': ROUTES.studioTutorials,
   '/distribution.html': ROUTES.distribution
@@ -178,17 +173,7 @@ export function cleanRedirectTarget(path, fallback = ROUTES.profile) {
 
     // Preserve old StageMaker URLs as compatibility inputs while emitting
     // only canonical Vertix routes.
-    if (parsed.pathname === '/studio/daw') {
-      mappedPath = ROUTES.studioDaw
-    } else if (parsed.pathname.startsWith('/studio/daw/project/')) {
-      const projectId = parsed.pathname.slice('/studio/daw/project/'.length).split('/')[0]
-      mappedPath = studioProjectRoute(decodeURIComponent(projectId))
-    } else if (parsed.pathname === '/vertix') {
-      mappedPath = ROUTES.studioVertix
-    } else if (parsed.pathname.startsWith('/vertix/project/')) {
-      const projectId = parsed.pathname.slice('/vertix/project/'.length).split('/')[0]
-      mappedPath = stageProjectRoute(decodeURIComponent(projectId))
-    } else if (parsed.pathname === '/studio/stagemaker') {
+    if (parsed.pathname === '/studio/stagemaker') {
       mappedPath = ROUTES.studioVertix
     } else if (parsed.pathname.startsWith('/studio/stagemaker/project/')) {
       const projectId = parsed.pathname
@@ -311,13 +296,8 @@ export function adminReviewRoute(productId = '') {
     : ROUTES.adminReviews
 }
 
-export function toolboxToolRoute(slug = '') {
-  const clean = slugifyRouteSegment(slug)
-  return clean ? `${ROUTES.toolbox}/${encodeURIComponent(clean)}` : ROUTES.toolbox
-}
-
 export function studioProjectRoute(projectId = '') {
-  return `${ROUTES.studioDaw}/project/${encodeURIComponent(String(projectId || '').trim())}`
+  return `/studio/daw/project/${encodeURIComponent(String(projectId || '').trim())}`
 }
 
 export function stageProjectRoute(projectId = '') {
@@ -328,8 +308,8 @@ export function stageProjectRoute(projectId = '') {
   /*
     Temporary compatibility query:
     the legacy Stage engine still resolves project IDs from `projectId`
-    when the canonical /studio/vertix/project/:id pathname is used. The public path is
-    now Studio/Vertix; the query can be removed once stageState's parser is
+    when the new /vertix/project/:id pathname is used. The public path is
+    now Vertix; the query can be removed once stageState's parser is
     migrated away from legacy StageMaker paths.
   */
   const encoded = encodeURIComponent(id)

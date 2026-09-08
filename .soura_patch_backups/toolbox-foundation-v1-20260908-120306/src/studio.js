@@ -105,7 +105,6 @@ import {
 import { studioSidebar } from './components/studioShell'
 import { initStudioBrandLogo } from './components/studioBrandLogo'
 import { stageTypes, templateCards } from './stage/app/stageState'
-import { renderToolboxPage, bindToolboxPage } from './studio/toolbox/ToolboxPage.js'
 
 const app = document.querySelector('#app')
 let studioMonitorVisualizerCleanup = null
@@ -441,15 +440,6 @@ const STUDIO_APP_FOUNDATIONS = {
     icon: 'cineara',
     capabilities: ['Timeline editing', 'Media bin', 'Color and effects', 'Render delivery']
   },
-  blueprints: {
-    name: 'Blueprints',
-    category: 'Tool Building',
-    description: 'A visual creator-tool building workspace for designing reusable Melogic utilities and workflows.',
-    route: ROUTES.studioBlueprints,
-    icon: 'melogicblueprints',
-    iconFile: 'blueprints',
-    capabilities: ['Visual tool graphs', 'Reusable creator workflows', 'Tool publishing', 'Community remixing']
-  },
   rundownpilot: {
     name: 'Rundown Pilot',
     category: 'Stage Management',
@@ -731,13 +721,11 @@ const icon = (name) => {
 function currentStudioSection() {
   const pathname = window.location.pathname || ''
   if (pathname === ROUTES.studio) return 'hub'
-  if (pathname === ROUTES.toolbox || pathname.startsWith(`${ROUTES.toolbox}/`)) return 'toolbox'
   if (pathname.startsWith(ROUTES.studioStagemaker)) return 'stagemaker'
   if (pathname.startsWith(ROUTES.studioLucentra)) return 'lucentra'
   if (pathname.startsWith(ROUTES.studioInkora)) return 'inkora'
   if (pathname.startsWith(ROUTES.studioCineara)) return 'cineara'
   if (pathname.startsWith(ROUTES.studioRundownPilot)) return 'rundownpilot'
-  if (pathname.startsWith(ROUTES.studioBlueprints)) return 'blueprints'
   if (pathname.startsWith(ROUTES.studioLive)) return 'live'
   return 'daw'
 }
@@ -3949,10 +3937,8 @@ function renderShell() {
     studioProgramMixer.destroy()
     studioProgramMixer = null
   }
-  const content = active === 'toolbox'
-    ? renderToolboxPage(window.location.pathname)
-    : active === 'hub'
-      ? renderHub()
+  const content = active === 'hub'
+    ? renderHub()
     : active === 'stagemaker'
       ? renderStagemaker()
       : active === 'live'
@@ -7925,7 +7911,6 @@ function bindLiveStudioControls() {
 
 function bind() {
   if (currentStudioSection() === 'live') bindLiveStudioControls()
-  if (currentStudioSection() === 'toolbox') bindToolboxPage(app)
   app.querySelectorAll('[data-studio-shell-nav]').forEach((link) => link.addEventListener('click', (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const nextUrl = new URL(link.href, window.location.href)
