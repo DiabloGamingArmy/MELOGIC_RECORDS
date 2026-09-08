@@ -14,7 +14,7 @@ export function layoutScore(model, input={}) {
   if(config.orientation==='landscape')[pageWidth,pageHeight]=[pageHeight,pageWidth]
   const margin=Math.max(16,Math.min(120,Number(config.margin)||48)),gap=Math.max(10,Number(config.systemSpacing)||44),pageGap=Math.max(0,Number(config.pageSpacing)||24)
   const available=pageWidth-margin*2-labelWidth,scale=Math.min(1,(pageHeight-margin*2-130)/height)
-  let page=0,y=margin+100,row=[]
+  let page=0,y=margin+80,row=[]
   const makePage=()=>pages.push({index:page,x:0,y:page*(pageHeight+pageGap),width:pageWidth,height:pageHeight})
   makePage()
   const nextPage=()=>{page++;y=margin+35;makePage()}

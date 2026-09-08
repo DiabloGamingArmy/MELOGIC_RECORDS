@@ -11,7 +11,7 @@
     "dsp:clean": "node scripts/clean-soura-dsp-wasm.mjs",
     "dsp:verify": "node scripts/verify-soura-wasm-dsp.mjs",
     "test:pitch": "node --test test/highPrecisionPitchAnalyzer.test.mjs",
-    "test:score": "node --test test/scoreEditorCore.test.mjs",
+    "test:score": "node --test test/scoreEditorCore.test.mjs test/scoreDocument.test.mjs",
     "build": "npm run dsp:build && npm run dsp:verify && vite build",
     "preview": "vite preview",
     "test:rules": "firebase emulators:exec --only firestore --project melogic-records \"node --test test/firestoreRules.test.mjs\"",

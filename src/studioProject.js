@@ -14156,7 +14156,19 @@ async function init() {
     mountScoreFixture({
       select: id => { selectSingleRegion(id); activeBottomPanel='score'; renderEditor() },
       roundtrip: () => { const state=JSON.parse(JSON.stringify(buildEditorStateForSave())); applyLoadedEditorState(state); renderEditor() },
-      state: () => ({ region:selectedMidiRegionId, notes:midiRegions.find(r=>r.id==='score-midi')?.notes, score:midiRegions.find(r=>r.id==='score-midi')?.score }),
+      state: () => ({ document:scoreDocument, selection:selectedMidiNoteRefs, region:selectedMidiRegionId, notes:midiRegions.find(r=>r.id==='score-midi')?.notes, score:midiRegions.find(r=>r.id==='score-midi')?.score }),
+      ensemble: () => {
+        const base=tracks[0]
+        tracks.splice(1)
+        for(const [id,name]of [['score-brass','Trumpet'],['score-drums','Drums'],['score-guitar','Guitar']])tracks.push(ensureTrackInsertState({...deepClone(base),id,name}))
+        midiRegions=createScoreFixture(base.id)
+        for(const [trackId,pitches]of [['score-brass',[60,62,64,65,67,69,71,72]],['score-drums',[36,42,38,42,36,46,38,49]],['score-guitar',[64,67,69,71,72,71,69,67]]])midiRegions.push({id:`${trackId}-region`,trackId,type:'midi',startBeat:0,endBeat:24,notes:pitches.map((note,i)=>({id:`n${i}`,note,startBeat:i*.5,durationBeats:.5,velocity:.8}))})
+        projectState.key='C major'
+        globalTracks.keySignatureEvents=[{id:'key-c',beat:0,root:'C',scale:'major'},{id:'key-g',beat:12,root:'G',scale:'major'}]
+        globalTracks.timeSignatureEvents=[{id:'time-4',beat:0,numerator:4,denominator:4},{id:'time-6',beat:16,numerator:6,denominator:8}]
+        scoreDocument=normalizeScoreDocument({source:{mode:'full'},metadata:{title:'Soura ensemble study',composer:'Notation QA'},parts:{'score-brass':{settings:{mode:'standard',clef:'treble',concertPitch:false,instrumentTranspose:2}},'score-drums':{settings:{mode:'standard',clef:'percussion'}},'score-guitar':{settings:{mode:'tab',tuning:[64,59,55,50,45,38]}}}})
+        selectSingleRegion('score-midi');activeBottomPanel='score';renderEditor()
+      },
       dense: () => { const r=midiRegions.find(r=>r.id==='score-midi');r.endBeat=2000;r.notes=Array.from({length:4000},(_,i)=>({id:`dense-${i}`,note:48+i%36,startBeat:i*.5,durationBeats:.5,velocity:.7}));selectSingleRegion(r.id);activeBottomPanel='score';renderEditor() }
     })
     return

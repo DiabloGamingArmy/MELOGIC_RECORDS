@@ -16,7 +16,7 @@ export function createScoreFixture(trackId) {
 export function mountScoreFixture(host) {
   const panel=document.createElement('div')
   panel.style.cssText='position:fixed;top:0;right:0;z-index:10000;background:#fff;color:#000;font:11px monospace;padding:4px'
-  for (const [label,action] of [ ['MIDI',()=>host.select('score-midi')],['Raw audio',()=>host.select('score-raw')],['Analysis',()=>host.select('score-analysis')],['Save/reload',()=>host.roundtrip()],['Dense',()=>host.dense()] ]) {
+  for (const [label,action] of [ ['MIDI',()=>host.select('score-midi')],['Raw audio',()=>host.select('score-raw')],['Analysis',()=>host.select('score-analysis')],['Save/reload',()=>host.roundtrip()],['Dense',()=>host.dense()],['Ensemble',()=>host.ensemble()] ]) {
     const b=document.createElement('button');b.textContent=label;b.onclick=()=>{action();refresh()};panel.append(b)
   }
   const output=document.createElement('output');output.hidden=true;output.dataset.scoreFixtureState='';panel.append(output)

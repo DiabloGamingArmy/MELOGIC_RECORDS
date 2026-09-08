@@ -88,15 +88,14 @@ export function mountScoreEditor(root,host) {
   }
   const snapped=beat=>Math.max(0,Math.round(beat/model.quantum)*model.quantum)
   const value=key=>root.querySelector(`[data-field="${key}"]`)?.value
-  const anchor=()=>({trackId:selectedEvent()?.trackId||session.part,staff:session.staff||selectedEvent()?.notation.staff||model.staffDefinitions.find(d=>d.trackId===session.part)?.localId||'',beat:selectedEvent()?.startBeat??session.caret})
+  const anchor=()=>({trackId:selectedEvent()?.trackId||session.part,staff:selectedEvent()?.notation.staff||'',beat:selectedEvent()?.startBeat??session.caret})
   const changeDocument=patch=>{session.symbolId=null;host.updateDocument(patch)}
   const applyNote=()=>{const patch={};root.querySelectorAll('[data-note-field][data-dirty]').forEach(n=>{if(n.value!==''&&Number.isFinite(Number(n.value)))patch[n.dataset.field]=Number(n.value)});if(Object.keys(patch).length)host.edit(patch)}
   on(root,'input',e=>{if(e.target.matches('[data-note-field]'))e.target.dataset.dirty='true'})
   on(root,'click',async e=>{
-    // soura-score-codex-completion-v1: repaired Codex staff-order document update syntax; preserve shared score document/history flow.
     const button=e.target.closest('button'),action=button?.dataset.action
     if(button?.dataset.staff){session.part=button.dataset.staff;host.selectTrack(session.part);return}
-    if(button?.dataset.order){const order=parts.map(p=>p.id),i=order.indexOf(button.dataset.order),j=i+Number(button.dataset.direction);if(j>=0&&j<order.length){[order[i],order[j]]=[order[j],order[i]];changeDocument({parts:{...doc.parts,...Object.fromEntries(order.map((id,n)=>[id,{...doc.parts[id],order:n}]))}})}return}
+    if(button?.dataset.order){const order=parts.map(p=>p.id),i=order.indexOf(button.dataset.order),j=i+Number(button.dataset.direction);if(j>=0&&j<order.length){[order[i],order[j]]=[order[j],order[i]];changeDocument({parts:{...doc.parts,...Object.fromEntries(order.map((id,n)=>[id,{...doc.parts[id],order:n}]))})}return}
     if(button?.dataset.mark){host.toggleMark(button.dataset.mark,button.dataset.value);return}
     if(button?.dataset.dynamic){host.symbol({...anchor(),type:'dynamic',text:button.dataset.dynamic,placement:'below'});return}
     if(button?.dataset.line){host.symbol({...anchor(),type:button.dataset.line,endBeat:Math.max(...selected().map(n=>n.startBeat+n.durationBeats),anchor().beat+2),placement:'below'});return}
@@ -127,7 +126,7 @@ export function mountScoreEditor(root,host) {
     const n=e.target
     if(n.matches('[data-note-field]')){n.dataset.dirty='true';applyNote();return}
     if(n.dataset.session){const key=n.dataset.session;session[key]=n.type==='checkbox'?n.checked:['zoom','duration'].includes(key)?Number(n.value):n.value;if(key==='part')host.selectTrack(n.value);host.refresh();return}
-    if(n.dataset.documentControl){const key=n.dataset.documentControl;session.left=0;session.top=0;viewport.scrollLeft=0;viewport.scrollTop=0;changeDocument(key==='source'?{source:{...doc.source,mode:n.value}}:{layout:{...doc.layout,type:n.value}});return}
+    if(n.dataset.documentControl){const key=n.dataset.documentControl;changeDocument(key==='source'?{source:{...doc.source,mode:n.value}}:{layout:{...doc.layout,type:n.value}});return}
     if(n.dataset.layout){changeDocument({layout:{...doc.layout,[n.dataset.layout]:n.value}});return}
     if(n.dataset.sourceTrack){const id=n.dataset.sourceTrack;changeDocument({source:{...doc.source,trackIds:n.checked?[...new Set([...doc.source.trackIds,id])]:doc.source.trackIds.filter(v=>v!==id)}});return}
     if(n.dataset.visible){const id=n.dataset.visible;changeDocument({parts:{...doc.parts,[id]:{...doc.parts[id],visible:n.checked}}});return}
@@ -141,7 +140,7 @@ export function mountScoreEditor(root,host) {
     symbolId=null;session.symbolId=null
     const p=locate(e),target=e.target.closest('[data-score-note]');viewport.focus({preventScroll:true})
     if(!p.cell)return
-    session.caret=snapped(p.beat);session.part=p.staff.trackId;session.staff=model.staffDefinitions.find(d=>d.id===p.staff.id)?.localId
+    session.caret=snapped(p.beat);session.part=p.staff.trackId
     if(target){const hit=p.cell.hits.find(h=>h.node===target);if(!hit)return;if(e.shiftKey||!host.selection().includes(hit.event.id))host.select(hit.event.id,e.shiftKey);inspect();if(hit.event.origin==='midi'&&!e.shiftKey)drag={type:'note',x:e.clientX,y:e.clientY,point:p,hit};}
     else if(session.tool==='insert'&&editable()){
       const part=activePart(),str=Math.max(1,Math.min(part.settings.tuning.length,Math.round((p.localY-p.staff.top)/13)+1)),def=model.staffDefinitions.find(d=>d.id===p.staff.id),key=p.cell.measure.staffKeys[p.staff.id]

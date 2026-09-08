@@ -36,7 +36,7 @@ export function resolveScoreSources({ regions, tracks, selectedRegionId, selecte
 export function interpretDocument(parts, { document, timeSignatures, keySignatures, tempoEvents, secondsToProjectBeat }) {
   const visible=parts.filter(p=>p.visible)
   const regions=visible.flatMap(p=>p.regions)
-  const startBeat=Math.min(0,...regions.map(r=>Number(r.startBeat)||0))
+  const startBeat=Math.min(...regions.map(r=>Number(r.startBeat)||0), regions.length ? Infinity : 0)
   const endBeat=Math.max(4,...regions.map(r=>Number(r.endBeat)||Number(r.startBeat)+Number(r.durationBeats)||4))
   const models=visible.map(part=>{
     const events=collectScoreEvents(part.regions,{secondsToProjectBeat,showMuted:part.settings.showMuted})
