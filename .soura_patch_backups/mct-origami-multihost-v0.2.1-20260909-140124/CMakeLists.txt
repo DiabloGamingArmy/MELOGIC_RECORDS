@@ -65,9 +65,7 @@ if(ORIGAMI_BUILD_VST3)
     PRODUCT_NAME "MCT Origami"
     PLUGIN_NAME "MCT Origami"
     DESCRIPTION "MCT Origami Universal Sound Design Instrument"
-    # mct-origami-multihost-v0.2.1
-    # One processor/core, three development wrappers: VST3, Logic AU, Standalone.
-    FORMATS VST3 AU Standalone
+    FORMATS VST3
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -76,10 +74,6 @@ if(ORIGAMI_BUILD_VST3)
   )
   juce_generate_juce_header(OrigamiPlugin)
   target_sources(OrigamiPlugin PRIVATE plugin/PluginProcessor.cpp plugin/PluginProcessor.h plugin/PluginEditor.cpp plugin/PluginEditor.h)
-  target_sources(OrigamiPlugin PRIVATE
-    plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp
-    plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
-    plugin/ui/ModulationPanel.cpp plugin/ui/PerformanceKeyboard.cpp)
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(OrigamiPlugin PRIVATE cxx_std_17)
   target_compile_definitions(OrigamiPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
