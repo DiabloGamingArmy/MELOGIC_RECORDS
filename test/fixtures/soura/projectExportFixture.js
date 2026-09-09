@@ -9,6 +9,7 @@ export function createExportFixture(ctx, track) {
     { id: 'export-audio', name: 'Stereo fixture', type: 'audio', trackId: track.id, startBeat: 0, endBeat: 4, durationBeats: 4, fileDurationSeconds: 2, trimStartSeconds: 0, trimEndSeconds: 2, audioClip: { runtimeId: 'export-audio' } },
     { id: 'export-midi', name: 'Repeated pitch fixture', type: 'midi', trackId: track.id, startBeat: 0, endBeat: 4, notes: [0, 1, 2, 3].map((startBeat, i) => ({ id: `n${i}`, note: 60, startBeat, durationBeats: .5, velocity: .8 })) }
   ] }
+}
 export function mountExportFixture({ snapshot, render }) {
   const button = document.createElement('button'); button.textContent = 'Run bounce checks'; button.style.cssText = 'position:fixed;right:0;bottom:0;z-index:10000'
   const output = document.createElement('output'); output.dataset.exportChecks = ''; output.style.cssText = 'position:fixed;left:0;bottom:0;z-index:10000;background:#111;color:#fff;max-width:80vw;font:12px monospace'

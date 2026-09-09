@@ -5596,7 +5596,9 @@ async function renderProjectExport(state, plan, options, signal, progress) {
       if (state.toSeconds(region.startBeat) >= plan.end) continue
       if (region.type === 'audio') {
         const clip = state.clips.get(region.id), start = state.toSeconds(region.startBeat)
-        scheduleProjectAudioSource({ ...clip, ctx, channel: channels.get(region.trackId), scheduleTime: start, elapsedVisibleSeconds: 0, visibleDurationSeconds: Math.min(clip.visibleDurationSeconds, plan.end - start) })
+        const scheduled = scheduleProjectAudioSource({ ...clip, ctx, channel: channels.get(region.trackId), scheduleTime: start, elapsedVisibleSeconds: 0 })
+        // A cycle boundary cuts the source, without moving its authored fades.
+        if (start + clip.visibleDurationSeconds + Math.max(0, clip.edit.delayMs / 1000) > plan.end) scheduled.source.stop(plan.end)
       }
     }
     // Chronological order matters for repeated pitches and instrument voice stealing.

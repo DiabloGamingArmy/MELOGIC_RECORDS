@@ -32,6 +32,7 @@ export function openExportDialog({ name, snapshot, render, desktop, nativeRate =
     const value = String(prefs[key] ?? fallback)
     fields[key].value = [...fields[key].options].some(option => option.value === value) ? value : fallback
   }
+  if (!snapshot().cycle) fields.range.value = 'entire'
   let busy = false, controller = null
   const read = () => ({ range: fields.range.value, tail: Number(fields.tail.value), sampleRate: Number(fields.rate.value), depth: Number(fields.depth.value), normalize: fields.normalize.value === 'peak', dither: fields.dither?.value === 'tpdf' && fields.depth.value !== '32' })
   const update = () => {
@@ -66,7 +67,7 @@ export function openExportDialog({ name, snapshot, render, desktop, nativeRate =
     } catch (error) {
       console.error('[Soura export]', error)
       progress(error.name === 'AbortError' ? 'Export cancelled. No file saved.' : error.message || 'Audio rendering failed. Try a shorter range or lower sample rate.')
-    } finally { busy = false; form.querySelector('fieldset').disabled = false; form.querySelector('[type=submit]').disabled = false; dialog.querySelector('[data-cancel]').textContent = 'Close' }
+    } finally { busy = false; form.querySelector('fieldset').disabled = false; if (fields.dither) fields.dither.disabled = fields.depth.value === '32'; form.querySelector('[type=submit]').disabled = false; dialog.querySelector('[data-cancel]').textContent = 'Close' }
   }
   document.body.append(dialog); update(); dialog.showModal(); fields.name.focus()
 }
