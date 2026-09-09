@@ -1,0 +1,17 @@
+{
+  "format": "mct-origami",
+  "version": 1,
+  "name": "Init",
+  "parameters": {
+    "osc.1.waveform": 1,
+    "osc.1.level": 0.7,
+    "osc.1.pan": 0,
+    "filter.1.cutoff": 8000,
+    "filter.1.resonance": 0.1,
+    "env.1.attack": 0.01,
+    "env.1.decay": 0.15,
+    "env.1.sustain": 0.7,
+    "env.1.release": 0.25,
+    "master.gain": 0.2
+  }
+}
