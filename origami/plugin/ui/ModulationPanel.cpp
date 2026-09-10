@@ -1,3 +1,4 @@
+// mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-modulation-completion-v24
 #include "ModulationPanel.h"
@@ -142,11 +143,11 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     text(g,title,caption,9,Palette::muted());
     well(g,body);
 
-    // ENV and LFO source surfaces share the same global signal colour as the
-    // oscillator. Their visual source/origin is the bottom-centre of the graph.
+    // ENV and LFO surfaces use a uniform derived signal fill. No gradient:
+    // the complete graph surface receives one consistent low-exposure shade.
     // Function/Random remain neutral until their own visual language is defined.
     if(selected_<=6)
-        paintSignalGlow(g,body.toFloat().reduced(1.0f),0.155f,0.36f,2.0f);
+        paintSignalSurface(g,body.toFloat().reduced(1.0f),0.12f,0.30f,2.0f);
 
     auto r=body.reduced(10).toFloat();juce::Path p;
     if(selected_<=2) {

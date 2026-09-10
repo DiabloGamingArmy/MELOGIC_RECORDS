@@ -1,3 +1,4 @@
+// mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-v26.3.2-osc-process-quick-nav
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
@@ -587,10 +588,9 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             fill.closeSubPath();
         }
 
-        // Wavetable fill derives from the single global signal source colour.
-        // The global source remains maximum red; this viewport intentionally
-        // renders it at reduced exposure so the white waveform stays dominant.
-        g.setGradientFill(signalGlowGradient(wtRect,0.22f,0.46f));
+        // Flat waveform-area fill: no gradient, no hotspot. Every point
+        // between the zero axis and waveform gets the same derived red.
+        g.setColour(signalSurfaceColour(0.46f,0.22f));
         g.fillPath(fill);
 
         g.setColour(Palette::muted().withAlpha(0.30f));

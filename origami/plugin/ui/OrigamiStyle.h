@@ -1,3 +1,4 @@
+// mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-knob-mod-macro-cleanup-v22.4
@@ -27,32 +28,23 @@ inline juce::Colour signalShade(float exposure=0.32f,float alpha=1.0f) noexcept 
         .withAlpha(juce::jlimit(0.0f,1.0f,alpha));
 }
 
-inline juce::ColourGradient signalGlowGradient(juce::Rectangle<float> bounds,
-                                                float alpha=0.18f,
-                                                float exposure=0.38f) {
-    // The visual "source" is the bottom-centre point. The source colour itself
-    // remains full-bright red globally; only its rendered exposure is reduced.
-    const auto source=juce::Point<float>(bounds.getCentreX(),bounds.getBottom());
-    const auto fade=juce::Point<float>(bounds.getCentreX(),
-                                       bounds.getY()+bounds.getHeight()*0.08f);
-
-    juce::ColourGradient gradient(signalShade(exposure,alpha),
-                                  source.x,source.y,
-                                  signalShade(exposure,0.0f),
-                                  fade.x,fade.y,
-                                  true);
-    gradient.addColour(0.42,signalShade(exposure*0.82f,alpha*0.55f));
-    gradient.addColour(0.72,signalShade(exposure*0.60f,alpha*0.18f));
-    return gradient;
+// Flat signal-surface colour derived from the one global source colour.
+//
+// IMPORTANT: This intentionally has NO spatial gradient. The source red stays
+// full-bright in gSignalSourceColour; each destination simply renders a darker,
+// translucent exposure of that exact colour across its complete filled region.
+inline juce::Colour signalSurfaceColour(float exposure=0.32f,
+                                        float alpha=0.16f) noexcept {
+    return signalShade(exposure,alpha);
 }
 
-inline void paintSignalGlow(juce::Graphics& g,
-                            juce::Rectangle<float> bounds,
-                            float alpha=0.18f,
-                            float exposure=0.38f,
-                            float cornerRadius=2.0f) {
+inline void paintSignalSurface(juce::Graphics& g,
+                               juce::Rectangle<float> bounds,
+                               float alpha=0.16f,
+                               float exposure=0.32f,
+                               float cornerRadius=2.0f) {
     if(bounds.isEmpty()) return;
-    g.setGradientFill(signalGlowGradient(bounds,alpha,exposure));
+    g.setColour(signalSurfaceColour(exposure,alpha));
     g.fillRoundedRectangle(bounds,cornerRadius);
 }
 
