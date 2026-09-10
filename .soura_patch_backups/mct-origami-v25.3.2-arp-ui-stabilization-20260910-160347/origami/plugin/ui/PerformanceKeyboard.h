@@ -1,4 +1,3 @@
-// mct-origami-v25.3.2-arp-ui-stabilization
 // mct-origami-v25.3.1-arp-layout-refinement
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
@@ -20,40 +19,6 @@
 #include "../../core/InstrumentState.h"
 #include "../../core/ArpeggiatorState.h"
 namespace mct::origami::ui {
-
-class ArpSettingsIconButton final : public juce::Button {
-public:
-    ArpSettingsIconButton() : juce::Button("ARP settings") {
-        setTooltip("Open advanced arpeggiator and clock settings");
-        setMouseCursor(juce::MouseCursor::PointingHandCursor);
-    }
-
-    void paintButton(juce::Graphics& g,bool hovered,bool down) override {
-        auto r=getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour((hovered||down)?Palette::borderStrong():Palette::borderSoft());
-        g.fillRoundedRectangle(r,2.0f);
-        g.setColour(Palette::panel());
-        g.fillRoundedRectangle(r.reduced(1.0f),2.0f);
-
-        const auto c=r.getCentre();
-        const float radius=juce::jmin(r.getWidth(),r.getHeight())*0.19f;
-        const float spokeInner=radius*1.25f;
-        const float spokeOuter=radius*1.85f;
-        g.setColour((hovered||down)?Palette::text():Palette::secondary());
-        g.drawEllipse(c.x-radius,c.y-radius,radius*2.0f,radius*2.0f,1.3f);
-        g.fillEllipse(c.x-1.6f,c.y-1.6f,3.2f,3.2f);
-
-        for(int i=0;i<8;++i) {
-            const float a=juce::MathConstants<float>::twoPi*(float(i)/8.0f);
-            g.drawLine(c.x+std::cos(a)*spokeInner,
-                       c.y+std::sin(a)*spokeInner,
-                       c.x+std::cos(a)*spokeOuter,
-                       c.y+std::sin(a)*spokeOuter,
-                       1.3f);
-        }
-    }
-};
-
 class PerformanceKeyboard final : public juce::Component, public juce::SettableTooltipClient {
 public:
     using WheelSetter=std::function<void(float)>;
@@ -122,6 +87,8 @@ public:
         arpEnable_.setButtonText("ARP");
         arpEnable_.setClickingTogglesState(true);
         arpEnable_.setTooltip("Enable arpeggiator");
+        arpSettings_.setButtonText(juce::String::fromUTF8("\xE2\x9A\x99"));
+        arpSettings_.setTooltip("Open advanced arpeggiator and clock settings");
         arpClockSummary_.setJustificationType(juce::Justification::centred);
         arpClockSummary_.setColour(juce::Label::textColourId,Palette::secondary());
         arpClockSummary_.setFont(juce::FontOptions(7.2f));
@@ -164,7 +131,7 @@ private:
     juce::Slider bendRange_,glide_;
     juce::ComboBox voiceMode_,priority_;
     juce::ToggleButton legato_,arpEnable_;
-    ArpSettingsIconButton arpSettings_;
+    juce::TextButton arpSettings_;
     juce::Label arpClockSummary_,arpPatternSummary_;
     int mouseNote_=-1;int activeWheel_=0;float pitchValue_=0.0f,modValue_=0.0f;
     static constexpr int firstMidiNote=48;

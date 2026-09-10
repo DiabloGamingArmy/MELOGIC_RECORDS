@@ -1,4 +1,3 @@
-// mct-origami-v25.3.2-arp-ui-stabilization
 // mct-origami-v25.3.1-arp-layout-refinement
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
@@ -85,13 +84,13 @@ void PerformanceKeyboard::resized() {
     perf.removeFromTop(1);
     auto glideCell=perf.removeFromLeft(58);
     glide_.setBounds(glideCell.reduced(6,0));
-    auto arp=rightBay.reduced(3,2);
-    auto controls=arp.removeFromTop(22);
-    arpEnable_.setBounds(controls.removeFromLeft(62).reduced(1));
-    controls.removeFromLeft(3);
-    arpSettings_.setBounds(controls.removeFromLeft(30).reduced(1));
+    auto arp=rightBay.reduced(4,2);
+    auto controls=arp.removeFromTop(23);
+    arpEnable_.setBounds(controls.removeFromLeft(86).reduced(1));
+    controls.removeFromLeft(4);
+    arpSettings_.setBounds(controls.removeFromRight(30).reduced(1));
     arpClockSummary_.setBounds(arp.removeFromTop(12));
-    arpPatternSummary_.setBounds(arp.removeFromTop(10));
+    arpPatternSummary_.setBounds(arp.removeFromTop(11));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
