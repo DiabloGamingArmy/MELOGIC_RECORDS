@@ -1,4 +1,4 @@
-// mct-origami-v25.3.0-arp-performance-expansion
+// mct-origami-v25.2.0-arp-ux-visual-architecture
 #pragma once
 #include "OrigamiStyle.h"
 #include "../../core/ArpeggiatorState.h"
@@ -10,9 +10,8 @@ public:
     using Setter=std::function<bool(const mct::origami::ArpeggiatorState&)>;
     using Getter=std::function<mct::origami::ArpeggiatorState()>;
     using RuntimeGetter=std::function<mct::origami::ArpeggiatorRuntimeSnapshot()>;
-    using LatchClearer=std::function<void()>;
 
-    ArpeggiatorPanel(Setter,Getter,RuntimeGetter,LatchClearer);
+    ArpeggiatorPanel(Setter,Getter,RuntimeGetter);
     void syncFromModel();
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -30,16 +29,14 @@ private:
     Setter setter_;
     Getter getter_;
     RuntimeGetter runtimeGetter_;
-    LatchClearer latchClearer_;
     bool syncing_=false;
 
-    juce::ToggleButton enable_,latch_,retrigger_;
-    juce::TextButton clearLatch_;
+    juce::ToggleButton enable_,latch_;
     std::array<juce::TextButton,2> clockButtons_;
-    std::array<juce::TextButton,7> directionButtons_;
+    std::array<juce::TextButton,5> directionButtons_;
     std::array<juce::TextButton,7> rateButtons_;
     std::array<juce::TextButton,4> octaveButtons_;
-    juce::Slider tempo_,gate_,swing_,probability_,velocity_,transpose_;
+    juce::Slider tempo_,gate_,swing_;
 };
 
 } // namespace mct::origami::ui

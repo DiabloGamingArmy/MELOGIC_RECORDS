@@ -1,4 +1,3 @@
-// mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
@@ -63,7 +62,6 @@ public:
     bool setUiArpeggiatorState(const mct::origami::ArpeggiatorState&) noexcept;
     mct::origami::ArpeggiatorState getUiArpeggiatorState() const noexcept;
     mct::origami::ArpeggiatorRuntimeSnapshot getUiArpeggiatorRuntimeSnapshot() const noexcept;
-    void clearUiArpeggiatorLatch() noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
@@ -88,7 +86,6 @@ private:
     std::array<int,128> arpChannel_{},arpOrder_{};
     int arpOrderCount_=0;
     std::uint32_t arpRandomState_=0x6d2b79f5u;
-    std::uint32_t arpChanceRandomState_=0x9e3779b9u;
     std::atomic<int> arpUiActiveNote_{-1};
     std::atomic<std::uint64_t> arpUiHeldLow_{0},arpUiHeldHigh_{0};
     bool prepared_ = false;

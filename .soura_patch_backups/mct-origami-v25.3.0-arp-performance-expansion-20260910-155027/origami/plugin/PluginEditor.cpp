@@ -1,4 +1,3 @@
-// mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
@@ -48,8 +47,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
       arpeggiator_(
           [&owner](const mct::origami::ArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
           [&owner]{return owner.getUiArpeggiatorState();},
-          [&owner]{return owner.getUiArpeggiatorRuntimeSnapshot();},
-          [&owner]{owner.clearUiArpeggiatorLatch();}) {
+          [&owner]{return owner.getUiArpeggiatorRuntimeSnapshot();}) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,11> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_}};
     for(auto* component:components) addAndMakeVisible(component);

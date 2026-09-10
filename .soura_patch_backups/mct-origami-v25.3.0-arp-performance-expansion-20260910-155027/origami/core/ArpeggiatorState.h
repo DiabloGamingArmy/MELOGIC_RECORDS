@@ -1,4 +1,3 @@
-// mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
 #pragma once
@@ -12,7 +11,7 @@ struct ArpeggiatorRuntimeSnapshot {
 };
 
 struct ArpeggiatorState {
-    enum class Direction : int { Up=0, Down=1, UpDown=2, Order=3, Random=4, InsideOut=5, OutsideIn=6 };
+    enum class Direction : int { Up=0, Down=1, UpDown=2, Order=3, Random=4 };
 
     bool enabled=false;
     bool syncToDaw=true;
@@ -22,10 +21,6 @@ struct ArpeggiatorState {
     float gate=0.72f;
     float swing=0.0f;
     bool latch=false;
-    bool retriggerOnNote=true;
-    float probability=1.0f;
-    float velocityScale=1.0f;
-    int transposeSemitones=0;
     double internalTempo=120.0;
 };
 

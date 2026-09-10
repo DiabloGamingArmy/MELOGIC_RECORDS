@@ -1,4 +1,3 @@
-// mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
@@ -94,7 +93,7 @@ void OrigamiAudioProcessor::captureArpNote(const juce::MidiMessage& m,juce::Midi
         arpHeld_[noteIndex]=true;
         arpVelocity_[noteIndex]=m.getFloatVelocity();
         arpChannel_[noteIndex]=juce::jlimit(1,16,m.getChannel());
-        if(arpState_.retriggerOnNote || arpActiveNote_<0) arpStepRemaining_=0.0;
+        if(arpActiveNote_<0) arpStepRemaining_=0.0;
     } else if(m.isNoteOff()) {
         arpPhysicalHeld_[noteIndex]=false;
         if(!arpState_.latch) {
@@ -140,22 +139,6 @@ int OrigamiAudioProcessor::chooseArpNote() noexcept {
         const auto index=static_cast<std::size_t>(arpRandomState_%static_cast<std::uint32_t>(count));
         return sequence[index];
     }
-    if(arpState_.direction==mct::origami::ArpeggiatorState::Direction::InsideOut) {
-        const int step=((arpSequenceIndex_%count)+count)%count;
-        ++arpSequenceIndex_;
-        int index=0;
-        if((count%2)==0)
-            index=(step%2==0)?(count/2-1-step/2):(count/2+step/2);
-        else
-            index=(step%2==0)?(count/2-step/2):(count/2+1+step/2);
-        return sequence[static_cast<std::size_t>(juce::jlimit(0,count-1,index))];
-    }
-    if(arpState_.direction==mct::origami::ArpeggiatorState::Direction::OutsideIn) {
-        const int step=((arpSequenceIndex_%count)+count)%count;
-        ++arpSequenceIndex_;
-        const int index=(step%2==0)?(step/2):(count-1-step/2);
-        return sequence[static_cast<std::size_t>(juce::jlimit(0,count-1,index))];
-    }
     if(arpState_.direction==mct::origami::ArpeggiatorState::Direction::Down) {
         const int idx=((arpSequenceIndex_%count)+count)%count;++arpSequenceIndex_;
         return sequence[static_cast<std::size_t>(count-1-idx)];
@@ -191,26 +174,19 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
             const double stepSamples=juce::jmax(1.0,baseSamples*(arpStepParity_?(1.0+swing*0.5):(1.0-swing*0.5)));
             arpStepParity_=!arpStepParity_;arpStepRemaining_=stepSamples;
             if(chosen>=0) {
-                arpChanceRandomState_=arpChanceRandomState_*1664525u+1013904223u;
-                const float roll=static_cast<float>(arpChanceRandomState_ & 0x00ffffffu)/16777215.0f;
-                if(roll<=arpState_.probability) {
-                    int source=chosen;
-                    while(source>=128 || (source>=0 && !arpHeld_[static_cast<std::size_t>(source)])) source-=12;
-                    if(source<0 || !arpHeld_[static_cast<std::size_t>(source)]) {
-                        source=-1;
-                        for(int n=0;n<128;++n) {
-                            if(arpHeld_[static_cast<std::size_t>(n)] && n%12==chosen%12){source=n;break;}
-                        }
+                int source=chosen;
+                while(source>=128 || (source>=0 && !arpHeld_[static_cast<std::size_t>(source)])) source-=12;
+                if(source<0 || !arpHeld_[static_cast<std::size_t>(source)]) {
+                    source=-1;
+                    for(int n=0;n<128;++n) {
+                        if(arpHeld_[static_cast<std::size_t>(n)] && n%12==chosen%12){source=n;break;}
                     }
-                    const float baseVelocity=source>=0?arpVelocity_[static_cast<std::size_t>(source)]:0.85f;
-                    const float velocity=juce::jlimit(0.01f,1.0f,baseVelocity*arpState_.velocityScale);
-                    const int outputNote=juce::jlimit(0,127,chosen+arpState_.transposeSemitones);
-                    arpActiveChannel_=source>=0?arpChannel_[static_cast<std::size_t>(source)]:1;
-                    arpActiveNote_=outputNote;
-                    publishArpUiSnapshot();
-                    out.addEvent(juce::MidiMessage::noteOn(arpActiveChannel_,outputNote,velocity),cursor);
-                    arpGateRemaining_=juce::jmax(1.0,stepSamples*juce::jlimit(0.05,1.0,static_cast<double>(arpState_.gate)));
                 }
+                const float velocity=source>=0?arpVelocity_[static_cast<std::size_t>(source)]:0.85f;
+                arpActiveChannel_=source>=0?arpChannel_[static_cast<std::size_t>(source)]:1;arpActiveNote_=chosen;
+                publishArpUiSnapshot();
+                out.addEvent(juce::MidiMessage::noteOn(arpActiveChannel_,chosen,velocity),cursor);
+                arpGateRemaining_=juce::jmax(1.0,stepSamples*juce::jlimit(0.05,1.0,static_cast<double>(arpState_.gate)));
             }
         }
         double next=static_cast<double>(endSample-cursor);
@@ -378,9 +354,6 @@ bool OrigamiAudioProcessor::setUiArpeggiatorState(const mct::origami::Arpeggiato
     auto state=requested;
     state.rateIndex=juce::jlimit(0,6,state.rateIndex);state.octaveSpan=juce::jlimit(1,4,state.octaveSpan);
     state.gate=juce::jlimit(0.05f,1.0f,state.gate);state.swing=juce::jlimit(0.0f,0.75f,state.swing);
-    state.probability=juce::jlimit(0.01f,1.0f,state.probability);
-    state.velocityScale=juce::jlimit(0.25f,1.5f,state.velocityScale);
-    state.transposeSemitones=juce::jlimit(-24,24,state.transposeSemitones);
     state.internalTempo=juce::jlimit(20.0,400.0,state.internalTempo);
     const juce::ScopedLock lock(stateLock_);const juce::ScopedLock callbackLock(getCallbackLock());
     const bool timingChanged=state.rateIndex!=arpState_.rateIndex
@@ -398,11 +371,6 @@ mct::origami::ArpeggiatorRuntimeSnapshot OrigamiAudioProcessor::getUiArpeggiator
     snapshot.heldLow=arpUiHeldLow_.load(std::memory_order_acquire);
     snapshot.heldHigh=arpUiHeldHigh_.load(std::memory_order_acquire);
     return snapshot;
-}
-void OrigamiAudioProcessor::clearUiArpeggiatorLatch() noexcept {
-    const juce::ScopedLock lock(stateLock_);
-    const juce::ScopedLock callbackLock(getCallbackLock());
-    resetArpeggiatorRuntime(true);
 }
 
 juce::AudioProcessorEditor* OrigamiAudioProcessor::createEditor() { return new OrigamiAudioProcessorEditor(*this); }
