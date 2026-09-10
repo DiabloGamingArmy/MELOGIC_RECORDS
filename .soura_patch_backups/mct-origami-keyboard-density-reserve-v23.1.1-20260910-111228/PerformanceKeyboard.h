@@ -1,5 +1,3 @@
-// mct-origami-keyboard-compact-bottom-v23.1.2
-// mct-origami-keyboard-density-reserve-v23.1.1
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include "OrigamiStyle.h"
@@ -28,8 +26,6 @@ private:
     juce::MidiKeyboardState& keyboardState_;
     int mouseNote_=-1;
     static constexpr int firstMidiNote=48;
-    // V23.1.1: four-octave bed for thinner workstation-style keys.
-    // V23.1.2: five-octave visual density; compact workstation-style keys.
-    static constexpr int whiteKeyCount=35;
+    static constexpr int whiteKeyCount=21;
 };
 }

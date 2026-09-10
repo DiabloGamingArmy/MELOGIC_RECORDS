@@ -1,11 +1,10 @@
-// mct-origami-keyboard-compact-bottom-v23.1.2
 // mct-origami-keyboard-density-reserve-v23.1.1
 // mct-origami-playable-keyboard-audio-v23.1
 #include "PerformanceKeyboard.h"
 namespace mct::origami::ui {
 namespace {
-constexpr int leftReserve=250;
-constexpr int rightReserve=340;
+constexpr int leftReserve=220;
+constexpr int rightReserve=300;
 constexpr int wheelsWidth=104;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
 }
@@ -22,9 +21,7 @@ juce::Rectangle<int> PerformanceKeyboard::keyArea() const noexcept {
     // V23.1.1: reserve a dedicated left performance-control bay.
     const int left=juce::jmin(leftReserve,juce::jmax(wheelsWidth,area.getWidth()/6));
     area.removeFromLeft(left);
-    area.removeFromTop(2);
-    area.removeFromBottom(1);
-    return area.reduced(2,0);
+    return area.reduced(4,4);
 }
 
 int PerformanceKeyboard::noteAt(juce::Point<float> p) const noexcept {
@@ -91,12 +88,9 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         text(g,label,caption,8,Palette::muted(),juce::Justification::centred);
     }
 
-    auto keys=area;
-    keys.removeFromTop(2);
-    keys.removeFromBottom(1);
-    keys=keys.reduced(2,0);
+    auto keys=area.reduced(4,4);
     well(g,keys);
-    keys=keys.reduced(3,1);
+    keys=keys.reduced(5,4);
     const float width=float(keys.getWidth())/float(whiteKeyCount);
 
     for(int i=0;i<whiteKeyCount;++i) {

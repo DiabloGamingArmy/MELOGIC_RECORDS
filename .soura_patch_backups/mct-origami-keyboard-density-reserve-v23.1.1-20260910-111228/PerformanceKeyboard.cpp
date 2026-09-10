@@ -1,11 +1,8 @@
-// mct-origami-keyboard-compact-bottom-v23.1.2
-// mct-origami-keyboard-density-reserve-v23.1.1
 // mct-origami-playable-keyboard-audio-v23.1
 #include "PerformanceKeyboard.h"
 namespace mct::origami::ui {
 namespace {
-constexpr int leftReserve=250;
-constexpr int rightReserve=340;
+constexpr int rightReserve=250;
 constexpr int wheelsWidth=104;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
 }
@@ -16,15 +13,9 @@ PerformanceKeyboard::~PerformanceKeyboard() {
 
 juce::Rectangle<int> PerformanceKeyboard::keyArea() const noexcept {
     auto area=getLocalBounds().reduced(3,1);
-    const int right=juce::jmin(rightReserve,juce::jmax(0,area.getWidth()/3));
-    area.removeFromRight(right);
-
-    // V23.1.1: reserve a dedicated left performance-control bay.
-    const int left=juce::jmin(leftReserve,juce::jmax(wheelsWidth,area.getWidth()/6));
-    area.removeFromLeft(left);
-    area.removeFromTop(2);
-    area.removeFromBottom(1);
-    return area.reduced(2,0);
+    area.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,area.getWidth()/3)));
+    area.removeFromLeft(wheelsWidth);
+    return area.reduced(4,4);
 }
 
 int PerformanceKeyboard::noteAt(juce::Point<float> p) const noexcept {
@@ -69,16 +60,11 @@ void PerformanceKeyboard::mouseExit(const juce::MouseEvent& e) {
 void PerformanceKeyboard::paint(juce::Graphics& g) {
     auto area=getLocalBounds().reduced(3,1);
 
-    const int right=juce::jmin(rightReserve,juce::jmax(0,area.getWidth()/3));
-    auto future=area.removeFromRight(right);
+    auto future=area.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,area.getWidth()/3)));
     text(g,"MCT ORIGAMI",future.removeFromTop(22),10,Palette::text(),juce::Justification::centred);
     text(g,"PERFORMANCE",future.removeFromTop(16),8,Palette::muted(),juce::Justification::centred);
 
-    // V23.1.1: Pitch/Mod remain at far left. Remaining left bay intentionally
-    // stays empty for future triggers, arp, glide, bend and performance controls.
-    const int left=juce::jmin(leftReserve,juce::jmax(wheelsWidth,area.getWidth()/6));
-    auto leftControls=area.removeFromLeft(left);
-    auto wheels=leftControls.removeFromLeft(wheelsWidth);
+    auto wheels=area.removeFromLeft(wheelsWidth);
     for(const auto& label:juce::StringArray{"PITCH","MOD"}) {
         auto wheel=wheels.removeFromLeft(48).reduced(7,3);
         auto caption=wheel.removeFromBottom(14);
@@ -91,12 +77,9 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         text(g,label,caption,8,Palette::muted(),juce::Justification::centred);
     }
 
-    auto keys=area;
-    keys.removeFromTop(2);
-    keys.removeFromBottom(1);
-    keys=keys.reduced(2,0);
+    auto keys=area.reduced(4,4);
     well(g,keys);
-    keys=keys.reduced(3,1);
+    keys=keys.reduced(5,4);
     const float width=float(keys.getWidth())/float(whiteKeyCount);
 
     for(int i=0;i<whiteKeyCount;++i) {
