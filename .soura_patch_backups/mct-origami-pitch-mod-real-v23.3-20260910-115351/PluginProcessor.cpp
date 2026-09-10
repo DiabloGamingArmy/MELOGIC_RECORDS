@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
@@ -27,20 +26,12 @@ void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexc
     const auto channel = static_cast<std::uint8_t>(juce::jlimit(1, 16, message.getChannel()) - 1);
     if (message.isNoteOn()) engine_.noteOn(message.getNoteNumber(), message.getFloatVelocity(), channel, 0u);
     else if (message.isNoteOff()) engine_.noteOff(message.getNoteNumber(), channel, 0u);
-    else if (message.isPitchWheel()) engine_.pitchWheel(channel,message.getPitchWheelValue());
-    else if (message.isController() && message.getControllerNumber()==1) engine_.modWheel(channel,message.getControllerValue());
     else if (message.isAllNotesOff() || message.isAllSoundOff()) engine_.allNotesOff();
 }
 void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     juce::ScopedNoDenormals noDenormals;
     jassert(buffer.getNumChannels() >= 2);
     const int total = buffer.getNumSamples();
-
-    // V23.3: UI wheels enter the same engine MIDI dispatch contract as host events.
-    if(const int pitch=pendingUiPitch_.exchange(-1,std::memory_order_acq_rel);pitch>=0)
-        midi.addEvent(juce::MidiMessage::pitchWheel(1,pitch),0);
-    if(const int mod=pendingUiMod_.exchange(-1,std::memory_order_acq_rel);mod>=0)
-        midi.addEvent(juce::MidiMessage::controllerEvent(1,1,mod),0);
 
     // V23.1: merge on-screen keyboard events into the host MIDI buffer.
     // MidiKeyboardState is JUCE's intended UI-to-audio-thread bridge. The
@@ -149,17 +140,6 @@ bool OrigamiAudioProcessor::getUiOscillatorEnabled(mct::origami::OscillatorModul
     const juce::ScopedLock lock(stateLock_);
     return engine_.oscillatorModuleEnabled(id);
 }
-
-void OrigamiAudioProcessor::setUiPitchWheel(float normalized) noexcept {
-    normalized=juce::jlimit(-1.0f,1.0f,normalized);
-    const int value=normalized>=0 ? 8192+juce::roundToInt(normalized*8191.0f) : 8192+juce::roundToInt(normalized*8192.0f);
-    pendingUiPitch_.store(juce::jlimit(0,16383,value),std::memory_order_release);
-}
-void OrigamiAudioProcessor::setUiModWheel(float normalized) noexcept {
-    pendingUiMod_.store(juce::jlimit(0,127,juce::roundToInt(juce::jlimit(0.0f,1.0f,normalized)*127.0f)),std::memory_order_release);
-}
-bool OrigamiAudioProcessor::setUiPitchBendRange(float semitones) noexcept { const juce::ScopedLock lock(stateLock_);return engine_.setPitchBendRange(semitones); }
-float OrigamiAudioProcessor::getUiPitchBendRange() const noexcept { const juce::ScopedLock lock(stateLock_);return engine_.pitchBendRange(); }
 
 juce::AudioProcessorEditor* OrigamiAudioProcessor::createEditor() { return new OrigamiAudioProcessorEditor(*this); }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new OrigamiAudioProcessor(); }

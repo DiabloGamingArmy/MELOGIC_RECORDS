@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include <JuceHeader.h>
@@ -46,16 +45,11 @@ public:
 
     // V23.1: UI keyboard feeds the exact same MIDI path as host input.
     juce::MidiKeyboardState& uiKeyboardState() noexcept { return uiKeyboardState_; }
-    void setUiPitchWheel(float normalized) noexcept;
-    void setUiModWheel(float normalized) noexcept;
-    bool setUiPitchBendRange(float semitones) noexcept;
-    float getUiPitchBendRange() const noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
     void dispatchMidi(const juce::MidiMessage&) noexcept;
     juce::MidiKeyboardState uiKeyboardState_;
-    std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
     bool prepared_ = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessor)

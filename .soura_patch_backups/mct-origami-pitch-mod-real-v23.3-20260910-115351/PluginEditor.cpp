@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
 // mct-origami-v21-build-repair-2
 #include "PluginEditor.h"
@@ -29,11 +28,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
       filter_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);}),
       modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner)),
       macros_(modulationBindings(owner)),matrix_(modulationBindings(owner)),
-      performance_(owner.uiKeyboardState(),
-          [&owner](float v){owner.setUiPitchWheel(v);},
-          [&owner](float v){owner.setUiModWheel(v);},
-          [&owner](float v){return owner.setUiPitchBendRange(v);},
-          [&owner]{return owner.getUiPitchBendRange();}) {
+      performance_(owner.uiKeyboardState()) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,10> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_}};
     for(auto* component:components) addAndMakeVisible(component);

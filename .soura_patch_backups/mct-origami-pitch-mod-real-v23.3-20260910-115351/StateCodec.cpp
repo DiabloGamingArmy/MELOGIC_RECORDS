@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 #include "StateCodec.h"
 #include <cstring>
 #include <stdexcept>
@@ -21,7 +20,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(4);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(3);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -41,7 +40,6 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.word(r.id);w.word(r.enabled?1:0);w.word(static_cast<std::uint32_t>(r.source));
         w.word(static_cast<std::uint32_t>(r.destination.parameter));w.word(r.destination.oscillator);w.real(r.amount);
     }
-    w.real(s.performance.pitchBendRangeSemitones);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -49,7 +47,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version!=1 && version!=2 && version!=3 && version!=4) return false;
+    if(version!=1 && version!=2 && version!=3) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -73,7 +71,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             m.fineCents=r.real();m.unison=r.word();m.detuneCents=r.real();m.pan=r.real();m.level=r.real();
         }
     }
-    if(version>=3) {
+    if(version==3) {
         auto& mod=s.modulation;
         mod.lfo1.shape=static_cast<LfoShape>(r.word());mod.lfo1.mode=static_cast<LfoMode>(r.word());mod.lfo1.rateHz=r.real();
         for(auto& v:mod.macros) v=r.real();
@@ -87,7 +85,6 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             route.destination.oscillator=r.word();route.amount=r.real();
         }
     }
-    if(version>=4) s.performance.pitchBendRangeSemitones=r.real();
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;
 }

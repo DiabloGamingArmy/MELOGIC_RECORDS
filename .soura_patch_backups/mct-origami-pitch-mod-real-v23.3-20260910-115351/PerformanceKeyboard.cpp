@@ -1,11 +1,10 @@
-// mct-origami-pitch-mod-real-v23.3
 // mct-origami-keyboard-compact-bottom-v23.1.2
 // mct-origami-keyboard-density-reserve-v23.1.1
 // mct-origami-playable-keyboard-audio-v23.1
 #include "PerformanceKeyboard.h"
 namespace mct::origami::ui {
 namespace {
-constexpr int leftReserve=132;
+constexpr int leftReserve=250;
 constexpr int rightReserve=340;
 constexpr int wheelsWidth=104;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
@@ -26,28 +25,6 @@ juce::Rectangle<int> PerformanceKeyboard::keyArea() const noexcept {
     area.removeFromTop(2);
     area.removeFromBottom(1);
     return area.reduced(2,0);
-}
-
-juce::Rectangle<int> PerformanceKeyboard::pitchWheelArea() const noexcept {
-    auto a=getLocalBounds().reduced(3,1);a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
-    auto left=a.removeFromLeft(juce::jmin(leftReserve,juce::jmax(wheelsWidth,a.getWidth()/6)));
-    return left.removeFromLeft(48).reduced(7,2).withTrimmedBottom(14);
-}
-juce::Rectangle<int> PerformanceKeyboard::modWheelArea() const noexcept {
-    auto a=getLocalBounds().reduced(3,1);a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
-    auto left=a.removeFromLeft(juce::jmin(leftReserve,juce::jmax(wheelsWidth,a.getWidth()/6)));left.removeFromLeft(48);
-    return left.removeFromLeft(48).reduced(7,2).withTrimmedBottom(14);
-}
-void PerformanceKeyboard::resized() {
-    auto a=getLocalBounds().reduced(3,1);auto future=a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
-    bendRange_.setBounds(future.removeFromTop(24).reduced(72,1));
-}
-void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
-    const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
-    const float normalized=juce::jlimit(0.0f,1.0f,(float(area.getBottom())-p.y)/float(area.getHeight()));
-    if(activeWheel_==1) {pitchValue_=normalized*2.0f-1.0f;if(pitchSetter_)pitchSetter_(pitchValue_);}
-    else if(activeWheel_==2) {modValue_=normalized;if(modSetter_)modSetter_(modValue_);}
-    repaint();
 }
 
 int PerformanceKeyboard::noteAt(juce::Point<float> p) const noexcept {
@@ -82,16 +59,9 @@ void PerformanceKeyboard::setMouseNote(int note) {
     repaint();
 }
 
-void PerformanceKeyboard::mouseDown(const juce::MouseEvent& e) {
-    if(pitchWheelArea().toFloat().contains(e.position)){activeWheel_=1;updateWheel(e.position);return;}
-    if(modWheelArea().toFloat().contains(e.position)){activeWheel_=2;updateWheel(e.position);return;}
-    setMouseNote(noteAt(e.position));
-}
-void PerformanceKeyboard::mouseDrag(const juce::MouseEvent& e) {if(activeWheel_) updateWheel(e.position);else setMouseNote(noteAt(e.position));}
-void PerformanceKeyboard::mouseUp(const juce::MouseEvent&) {
-    if(activeWheel_==1){pitchValue_=0.0f;if(pitchSetter_)pitchSetter_(0.0f);repaint();}
-    activeWheel_=0;setMouseNote(-1);
-}
+void PerformanceKeyboard::mouseDown(const juce::MouseEvent& e) { setMouseNote(noteAt(e.position)); }
+void PerformanceKeyboard::mouseDrag(const juce::MouseEvent& e) { setMouseNote(noteAt(e.position)); }
+void PerformanceKeyboard::mouseUp(const juce::MouseEvent&) { setMouseNote(-1); }
 void PerformanceKeyboard::mouseExit(const juce::MouseEvent& e) {
     if(!e.mods.isAnyMouseButtonDown()) setMouseNote(-1);
 }
@@ -116,10 +86,8 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         auto track=wheel.reduced(8,4);
         g.setColour(Palette::border());g.fillRoundedRectangle(track.toFloat(),3);
         g.setColour(Palette::muted());
-        const float value=label=="PITCH"?pitchValue_:modValue_;
-        const float unit=label=="PITCH"?(value+1.0f)*0.5f:value;
-        const int y=track.getBottom()-juce::roundToInt(unit*float(track.getHeight()));
-        g.fillRoundedRectangle(juce::Rectangle<float>(float(track.getX()+2),float(y-2),float(track.getWidth()-4),4.0f),1.5f);
+        for(int i=-2;i<=2;++i)
+            g.drawHorizontalLine(track.getCentreY()+i*3,float(track.getX()+2),float(track.getRight()-2));
         text(g,label,caption,8,Palette::muted(),juce::Justification::centred);
     }
 

@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 #include "Voice.h"
 #include <algorithm>
 #include <cmath>
@@ -11,7 +10,7 @@ void Voice::start(NoteAddress address, float velocity, std::uint64_t order, cons
 }
 void Voice::release(const dsp::EnvelopeSettings& settings) noexcept { if (active_) { releasing_ = true; envelope_.noteOff(settings); } }
 Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
-    float sustain,const CompiledModulation& compiled,const LfoSettings& lfoSettings,float pitchBendSemitones,float modWheel) noexcept {
+    float sustain,const CompiledModulation& compiled,const LfoSettings& lfoSettings) noexcept {
     Samples outputs{};
     if(!active_) return outputs;
     const float envelope=envelope_.next(sustain);
@@ -20,7 +19,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     ModulationFrame local;
     const ModulationFrame* effective=&global;
     if(compiled.hasVoiceRoutes()) {
-        local=global;compiled.voiceFrame(local,envelope,lfo,modWheel,sampleRate_);effective=&local;
+        local=global;compiled.voiceFrame(local,envelope,lfo,sampleRate_);effective=&local;
     }
     const auto& modules=effective->modules;
     bool filtersQuiet=true;
@@ -36,7 +35,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         const double semitones =
             static_cast<double>(module.octave)*12.0 +
             static_cast<double>(module.semitone) +
-            static_cast<double>(module.fineCents)/100.0 + static_cast<double>(pitchBendSemitones);
+            static_cast<double>(module.fineCents)/100.0;
         const double frequencyScale=std::exp2(semitones/12.0);
         const unsigned count=std::clamp(module.unison,1u,maxUnisonVoices);
         const float spreadCents=std::clamp(module.detuneCents,0.0f,100.0f);

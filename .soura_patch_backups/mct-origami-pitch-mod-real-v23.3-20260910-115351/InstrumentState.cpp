@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 #include "InstrumentState.h"
 namespace mct::origami {
 void applyLegacyOscillatorParameters(OscillatorModuleState& m,const ParameterValues& p) noexcept {
@@ -15,7 +14,6 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
            (p.scale==ParameterScale::Choice && v!=std::round(v))) return false;
     }
     if(s.oscillators[0].id!=1 || !validModulation(s.modulation,s.oscillators)) return false;
-    if(!std::isfinite(s.performance.pitchBendRangeSemitones) || s.performance.pitchBendRangeSemitones<1.0f || s.performance.pitchBendRangeSemitones>48.0f) return false;
     OscillatorModuleId previous=0;bool empty=false;
     auto range=[](float v,float lo,float hi){return std::isfinite(v) && v>=lo && v<=hi;};
     for(const auto& m:s.oscillators) {

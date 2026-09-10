@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 #pragma once
 #include "core/OscillatorModule.h"
 #include "core/dsp/Filter.h"
@@ -6,7 +5,7 @@
 #include <atomic>
 namespace mct::origami {
 // Persisted identities: explicit values, independent of UI ordering/ParameterId.
-enum class ModSource : std::uint32_t { Env1=1, Lfo1=101, Macro1=201, Macro2=202, Macro3=203, Macro4=204, ModWheel=301 };
+enum class ModSource : std::uint32_t { Env1=1, Lfo1=101, Macro1=201, Macro2=202, Macro3=203, Macro4=204 };
 enum class ModDestination : std::uint32_t {
     Cutoff=1, Resonance=2, MasterGain=3,
     WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107
@@ -75,14 +74,14 @@ public:
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
     void advance(float smoothing) noexcept;
     void globalFrame(ModulationFrame&,const std::array<float,5>& sources,double sampleRate) const noexcept;
-    void voiceFrame(ModulationFrame&,float envelope,float lfo,float modWheel,double sampleRate) const noexcept;
+    void voiceFrame(ModulationFrame&,float envelope,float lfo,double sampleRate) const noexcept;
     bool hasVoiceRoutes() const noexcept {return voiceCount_!=0;}
     std::size_t groupCount() const noexcept {return count_;}
 private:
     struct Group {
         ModAddress address{};std::size_t slot=0;
         // LFO global, macros 1-4, ENV1, LFO per-note.
-        std::array<float,8> weight{},target{};
+        std::array<float,7> weight{},target{};
     };
     static float read(const ModulationFrame&,const Group&) noexcept;
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;

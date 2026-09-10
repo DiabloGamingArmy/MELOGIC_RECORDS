@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 #pragma once
 #include "ParameterRegistry.h"
 #include "Voice.h"
@@ -28,10 +27,6 @@ public:
     bool noteOn(int note, float velocity, std::uint8_t channel = 0, std::uint32_t noteId = 0) noexcept;
     bool noteOff(int note, std::uint8_t channel = 0, std::uint32_t noteId = 0) noexcept;
     void allNotesOff() noexcept;
-    void pitchWheel(std::uint8_t channel,int value14) noexcept;
-    void modWheel(std::uint8_t channel,int value7) noexcept;
-    bool setPitchBendRange(float semitones) noexcept;
-    float pitchBendRange() const noexcept { return pitchBendRange_.load(std::memory_order_relaxed); }
     // Replaces output, planar mono/stereo. Buffers must be distinct and valid for
     // sampleCount. Any block length is supported; zero frames is a harmless no-op.
     bool process(float* const* output, unsigned channels, std::size_t sampleCount) noexcept;
@@ -68,9 +63,6 @@ private:
     unsigned outputChannels_ = 2;
     std::size_t stealFadeSamples_ = 144;
     std::uint64_t order_ = 0;
-    std::array<float,16> pitchBendNormalized_{};
-    std::array<float,16> modWheel_{};
-    std::atomic<float> pitchBendRange_{2.0f};
     bool prepared_ = false;
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Origami requires lock-free float parameter targets");

@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 #include "ModulationMatrix.h"
 namespace mct::origami::ui {
 class ModulationMatrix::Row final : public juce::Component {
@@ -9,7 +8,6 @@ public:
         source_.setName("Route source");destination_.setName("Route destination");
         source_.addItem("ENV 1",static_cast<int>(ModSource::Env1));source_.addItem("LFO 1",static_cast<int>(ModSource::Lfo1));
         for(int i=0;i<4;++i) source_.addItem("MACRO "+juce::String(i+1),static_cast<int>(ModSource::Macro1)+i);
-        source_.addItem("MOD WHEEL",static_cast<int>(ModSource::ModWheel));
         auto add=[&](ModAddress address,const juce::String& label) {
             addresses_.push_back(address);destination_.addItem(label,static_cast<int>(addresses_.size()));
         };
@@ -81,6 +79,6 @@ void ModulationMatrix::resized() {
 }
 void ModulationMatrix::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     text(g,"SOURCE  →  DESTINATION  →  AMOUNT     |     Base values stay unchanged",body.removeFromTop(28),11,Palette::secondary());
-    if(rows_.empty()) text(g,"No modulation routes. Add a route to connect ENV 1, LFO 1, MOD WHEEL or a macro.",body.reduced(12),12,Palette::muted(),juce::Justification::centred);
+    if(rows_.empty()) text(g,"No modulation routes. Add a route to connect ENV 1, LFO 1 or a macro.",body.reduced(12),12,Palette::muted(),juce::Justification::centred);
 }
 }

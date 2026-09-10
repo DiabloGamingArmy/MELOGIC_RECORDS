@@ -1,11 +1,10 @@
-// mct-origami-pitch-mod-real-v23.3
 #include "Modulation.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami {
 namespace {
 bool range(float x,float a,float b) {return std::isfinite(x) && x>=a && x<=b;}
-bool known(ModSource s) {return s==ModSource::Env1 || s==ModSource::Lfo1 || s==ModSource::ModWheel || (s>=ModSource::Macro1 && s<=ModSource::Macro4);}
+bool known(ModSource s) {return s==ModSource::Env1 || s==ModSource::Lfo1 || (s>=ModSource::Macro1 && s<=ModSource::Macro4);}
 struct Range {float lo,hi;};
 Range limits(ModDestination d) {
     switch(d) {
@@ -85,8 +84,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         if(i==count_) {groups_[i].address=route.destination;groups_[i].slot=slot;++count_;}
         auto source=static_cast<unsigned>(route.source);
         const auto index=route.source==ModSource::Env1 ? 5u : route.source==ModSource::Lfo1 ?
-            (state.lfo1.mode==LfoMode::Free?0u:6u) : route.source==ModSource::ModWheel ? 7u :
-            source-static_cast<unsigned>(ModSource::Macro1)+1;
+            (state.lfo1.mode==LfoMode::Free?0u:6u) : source-static_cast<unsigned>(ModSource::Macro1)+1;
         groups_[i].target[index]+=route.amount;
     }
     for(std::size_t i=0;i<count_;++i) {
@@ -95,14 +93,14 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             g.weight={};
             for(std::size_t j=0;j<oldCount;++j) if(old[j].address==g.address) {g.weight=old[j].weight;break;}
         }
-        if(g.target[5]!=0 || g.target[6]!=0 || g.target[7]!=0 || g.weight[5]!=0 || g.weight[6]!=0 || g.weight[7]!=0) {
+        if(g.target[5]!=0 || g.target[6]!=0 || g.weight[5]!=0 || g.weight[6]!=0) {
             voiceGroups_[voiceCount_++]=i;
             if(g.address.parameter==ModDestination::Cutoff || g.address.parameter==ModDestination::Resonance) voiceFilter_=true;
         }
     }
 }
 void CompiledModulation::advance(float alpha) noexcept {
-    for(std::size_t i=0;i<count_;++i) for(std::size_t s=0;s<8;++s)
+    for(std::size_t i=0;i<count_;++i) for(std::size_t s=0;s<7;++s)
         groups_[i].weight[s]+=alpha*(groups_[i].target[s]-groups_[i].weight[s]);
 }
 float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept {
@@ -134,10 +132,10 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,5
     }
     f.filter=dsp::LowPassCoefficients::make(rate,f.cutoff,f.resonance);
 }
-void CompiledModulation::voiceFrame(ModulationFrame& f,float envelope,float lfo,float modWheel,double rate) const noexcept {
+void CompiledModulation::voiceFrame(ModulationFrame& f,float envelope,float lfo,double rate) const noexcept {
     for(std::size_t j=0;j<voiceCount_;++j) {
         const auto i=voiceGroups_[j];const auto& g=groups_[i];
-        write(f,g,f.normalized[i]+g.weight[5]*envelope+g.weight[6]*lfo+g.weight[7]*modWheel);
+        write(f,g,f.normalized[i]+g.weight[5]*envelope+g.weight[6]*lfo);
     }
     if(voiceFilter_) f.filter=dsp::LowPassCoefficients::make(rate,f.cutoff,f.resonance);
 }

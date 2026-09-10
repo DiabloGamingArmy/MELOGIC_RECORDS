@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 #pragma once
 #include "dsp/Wavetable.h"
 #include "dsp/Envelope.h"
@@ -18,7 +17,7 @@ public:
     void release(const dsp::EnvelopeSettings& settings) noexcept;
     struct Samples {double left=0,right=0,mono=0;};
     Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
-                        const CompiledModulation&,const LfoSettings&,float pitchBendSemitones,float modWheel) noexcept;
+                        const CompiledModulation&,const LfoSettings&) noexcept;
     VoiceInfo info() const noexcept;
 private:
     // mct-origami-unison-detune-v19.2

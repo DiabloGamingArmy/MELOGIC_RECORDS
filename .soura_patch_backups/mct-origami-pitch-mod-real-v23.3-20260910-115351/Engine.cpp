@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-real-v23.3
 // mct-origami-wt-pos-real-morph-v22.2.1
 // mct-origami-v22.1-engine-repair-1
 #include "Engine.h"
@@ -33,7 +32,6 @@ void OrigamiEngine::reset() noexcept {
     for (auto& voice : voices_) voice.reset();
     for (auto& voice : stealTails_) voice.reset();
     tailRemaining_.fill(0); order_ = 0;
-    pitchBendNormalized_.fill(0.0f);modWheel_.fill(0.0f);
     for (std::size_t i = 0; i < parameterCount; ++i) { const float v = targets_[i].load(std::memory_order_relaxed); smooth_[i] = {v,v,0,0}; }
 }
 bool OrigamiEngine::applyPatchState(const ParameterValues& values) noexcept {
@@ -48,14 +46,12 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
     state.oscillators=oscillatorModules_.snapshot();
     state.nextId=oscillatorModules_.nextId();
     state.modulation=modulation_;
-    state.performance.pitchBendRangeSemitones=pitchBendRange();
     applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
     return state;
 }
 bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcept {
     if(!validInstrumentState(state)) return false;
     modulation_=state.modulation;modulationMailbox_.publish(modulation_);
-    pitchBendRange_.store(state.performance.pitchBendRangeSemitones,std::memory_order_relaxed);
     oscillatorModules_.restore(state.oscillators,state.nextId);
     for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
     reset();return true;
@@ -110,17 +106,6 @@ bool OrigamiEngine::noteOff(int note, std::uint8_t channel, std::uint32_t noteId
     return true;
 }
 void OrigamiEngine::allNotesOff() noexcept { const auto settings = envelopeSettings(); for (auto& voice : voices_) voice.release(settings); }
-void OrigamiEngine::pitchWheel(std::uint8_t channel,int value14) noexcept {
-    if(channel>15) return;value14=std::clamp(value14,0,16383);
-    pitchBendNormalized_[channel]=static_cast<float>(value14-8192)/static_cast<float>(value14>=8192?8191:8192);
-}
-void OrigamiEngine::modWheel(std::uint8_t channel,int value7) noexcept {
-    if(channel>15) return;modWheel_[channel]=static_cast<float>(std::clamp(value7,0,127))/127.0f;
-}
-bool OrigamiEngine::setPitchBendRange(float semitones) noexcept {
-    if(!std::isfinite(semitones) || semitones<1.0f || semitones>48.0f) return false;
-    pitchBendRange_.store(semitones,std::memory_order_relaxed);return true;
-}
 void OrigamiEngine::latchParameters() noexcept {
     for (const auto& p : parameterRegistry()) {
         const auto i = static_cast<std::size_t>(p.id); const float target = targets_[i].load(std::memory_order_relaxed);
@@ -180,17 +165,13 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         const double normalization=activeModules ? 1.0/static_cast<double>(activeModules) : 1.0;
 
         for(std::size_t v=0;v<voiceCount;++v) {
-            const auto info=voices_[v].info();
-            const auto channel=std::min<std::size_t>(info.address.channel,15);
-            const float bend=pitchBendNormalized_[channel]*pitchBendRange();
-            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1,bend,modWheel_[channel]);
+            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1);
             Voice::Samples old{};
             float oldWeight=0.0f;
 
             if(tailRemaining_[v]) {
                 oldWeight=static_cast<float>(tailRemaining_[v])/static_cast<float>(stealFadeSamples_);
-                const auto oldInfo=stealTails_[v].info();const auto oldChannel=std::min<std::size_t>(oldInfo.address.channel,15);
-                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1,pitchBendNormalized_[oldChannel]*pitchBendRange(),modWheel_[oldChannel]);
+                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1);
                 if(--tailRemaining_[v]==0) stealTails_[v].reset();
             }
 
