@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-osc-interaction-rotary-cleanup-v22.5
 // mct-origami-knob-mod-macro-cleanup-v22.4
@@ -33,11 +32,10 @@ void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int widt
 }
 
 void OrigamiLookAndFeel::drawLinearSlider(juce::Graphics& g,int x,int y,int width,int height,
-    float sliderPos,float minSliderPos,float maxSliderPos,const juce::Slider::SliderStyle style,juce::Slider& slider) {
+    float sliderPos,float minSliderPos,float maxSliderPos,const juce::Slider::SliderStyle style,juce::Slider&) {
     auto b=juce::Rectangle<float>(float(x),float(y),float(width),float(height)).reduced(.5f);
     g.setColour(Palette::inset());g.fillRoundedRectangle(b,2.5f);
     g.setColour(Palette::borderSoft());g.drawRoundedRectangle(b,2.5f,1.0f);
-    if(slider.getName().startsWith("OSC TUNING")) return;
     if(style==juce::Slider::LinearBarVertical || style==juce::Slider::LinearVertical) {
         const float lo=juce::jmin(minSliderPos,maxSliderPos),hi=juce::jmax(minSliderPos,maxSliderPos);
         const float p=juce::jlimit(lo,hi,sliderPos);

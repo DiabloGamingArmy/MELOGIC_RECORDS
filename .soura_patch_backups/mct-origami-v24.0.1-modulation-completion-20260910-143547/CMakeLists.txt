@@ -1,5 +1,3 @@
-# mct-origami-v24.0.2-cmake-marker-repair
-# mct-origami-modulation-completion-v24.0.1
 cmake_minimum_required(VERSION 3.20)
 project(MCTOrigami VERSION 0.1.0 LANGUAGES C CXX)
 option(ORIGAMI_BUILD_TESTS "Build standalone tests and note renderer" ON)
@@ -92,7 +90,7 @@ if(ORIGAMI_BUILD_VST3)
     PRODUCT_NAME "MCT Origami"
     ICON_BIG "${ORIGAMI_APP_ICON}"
     ICON_SMALL "${ORIGAMI_APP_ICON}"
-    PLUGIN_NAME "Origami"
+    PLUGIN_NAME "MCT Origami"
     DESCRIPTION "MCT Origami Universal Sound Design Instrument"
     # mct-origami-multihost-v0.2.1
     # One processor/core, three development wrappers: VST3, Logic AU, Standalone.

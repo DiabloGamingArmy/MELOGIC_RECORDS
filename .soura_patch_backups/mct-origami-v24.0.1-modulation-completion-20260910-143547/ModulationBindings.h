@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 #pragma once
 #include "core/InstrumentState.h"
 #include <functional>
@@ -11,6 +10,5 @@ struct ModulationBindings {
     std::function<unsigned()> addRoute;
     std::function<bool(const ModRoute&)> route;
     std::function<bool(unsigned)> removeRoute;
-    std::function<bool(const ModulationState&)> modulation;
 };
 }

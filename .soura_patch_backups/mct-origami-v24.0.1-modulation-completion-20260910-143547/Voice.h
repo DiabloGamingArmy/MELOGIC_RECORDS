@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 #pragma once
@@ -16,12 +15,12 @@ class Voice {
 public:
     void prepare(double sampleRate) noexcept;
     void reset() noexcept;
-    void start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept;
-    void retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope) noexcept;
-    void release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept;
+    void start(NoteAddress address, float velocity, std::uint64_t order, const dsp::EnvelopeSettings& settings) noexcept;
+    void retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,float glideSeconds,bool retriggerEnvelope) noexcept;
+    void release(const dsp::EnvelopeSettings& settings) noexcept;
     struct Samples {double left=0,right=0,mono=0;};
     Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
-                        const CompiledModulation&,const ModulationState&,float pitchBendSemitones,float modWheel,float aftertouch) noexcept;
+                        const CompiledModulation&,const LfoSettings&,float pitchBendSemitones,float modWheel) noexcept;
     VoiceInfo info() const noexcept;
 private:
     // mct-origami-unison-detune-v19.2
@@ -30,8 +29,8 @@ private:
     using ModuleOscillators = std::array<dsp::WavetableOscillator, maxUnisonVoices>;
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
     std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
-    dsp::Envelope envelope_,env2_,env3_;
-    std::array<Lfo,4> noteLfos_{};
+    dsp::Envelope envelope_;
+    Lfo lfo1_;
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFilters_{};
     NoteAddress address_ {};
     std::uint64_t order_ = 0;

@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-relative-drag-linear-controls-v23.3.4
 // mct-origami-basic-shapes-identity-v22.6
 // mct-origami-osc-interaction-rotary-cleanup-v22.5
@@ -59,7 +58,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setColour(juce::Slider::textBoxBackgroundColourId,Palette::inset());
             slider->setColour(juce::Slider::textBoxOutlineColourId,Palette::borderSoft());
         }
-        octaveSlider_.setName("OSC TUNING OCT");semitoneSlider_.setName("OSC TUNING SEM");fineSlider_.setName("OSC TUNING FIN");
         octaveSlider_.setRange(-4,4,1);
         semitoneSlider_.setRange(-12,12,1);
         fineSlider_.setRange(-100,100,1);

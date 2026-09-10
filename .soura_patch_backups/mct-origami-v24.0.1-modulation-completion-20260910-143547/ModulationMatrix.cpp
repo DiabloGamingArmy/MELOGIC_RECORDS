@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-pitch-mod-real-v23.3
 #include "ModulationMatrix.h"
 namespace mct::origami::ui {
@@ -8,12 +7,9 @@ public:
         setName("Modulation route "+juce::String(route.id));
         for(auto* box:{&source_,&destination_}) {addAndMakeVisible(box);box->setScrollWheelEnabled(false);}
         source_.setName("Route source");destination_.setName("Route destination");
-        source_.addItem("ENV 1",static_cast<int>(ModSource::Env1));source_.addItem("ENV 2",static_cast<int>(ModSource::Env2));source_.addItem("ENV 3",static_cast<int>(ModSource::Env3));
-        source_.addItem("LFO 1",static_cast<int>(ModSource::Lfo1));source_.addItem("LFO 2",static_cast<int>(ModSource::Lfo2));source_.addItem("LFO 3",static_cast<int>(ModSource::Lfo3));source_.addItem("LFO 4",static_cast<int>(ModSource::Lfo4));
+        source_.addItem("ENV 1",static_cast<int>(ModSource::Env1));source_.addItem("LFO 1",static_cast<int>(ModSource::Lfo1));
         for(int i=0;i<4;++i) source_.addItem("MACRO "+juce::String(i+1),static_cast<int>(ModSource::Macro1)+i);
-        source_.addItem("VELOCITY",static_cast<int>(ModSource::Velocity));source_.addItem("MOD WHEEL",static_cast<int>(ModSource::ModWheel));
-        source_.addItem("KEYTRACK",static_cast<int>(ModSource::Keytrack));source_.addItem("AFTERTOUCH",static_cast<int>(ModSource::Aftertouch));
-        source_.addItem("RANDOM",static_cast<int>(ModSource::Random));source_.addItem("FUNCTION",static_cast<int>(ModSource::Function));
+        source_.addItem("MOD WHEEL",static_cast<int>(ModSource::ModWheel));
         auto add=[&](ModAddress address,const juce::String& label) {
             addresses_.push_back(address);destination_.addItem(label,static_cast<int>(addresses_.size()));
         };
@@ -85,6 +81,6 @@ void ModulationMatrix::resized() {
 }
 void ModulationMatrix::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     text(g,"SOURCE  →  DESTINATION  →  AMOUNT     |     Base values stay unchanged",body.removeFromTop(28),11,Palette::secondary());
-    if(rows_.empty()) text(g,"No modulation routes. Add a route to connect any envelope, LFO, macro, performance source, random or function source.",body.reduced(12),12,Palette::muted(),juce::Justification::centred);
+    if(rows_.empty()) text(g,"No modulation routes. Add a route to connect ENV 1, LFO 1, MOD WHEEL or a macro.",body.reduced(12),12,Palette::muted(),juce::Justification::centred);
 }
 }

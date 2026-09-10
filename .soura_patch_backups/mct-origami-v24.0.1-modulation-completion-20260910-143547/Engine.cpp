@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
@@ -11,8 +10,8 @@
 #include <utility>
 namespace mct::origami {
 OrigamiEngine::OrigamiEngine() noexcept {
-    for(const auto& p:parameterRegistry()) targets_[static_cast<std::size_t>(p.id)].store(p.defaultValue,std::memory_order_relaxed);
-    publishModEnvelopeTargets(modulation_);reset();
+    for (const auto& p : parameterRegistry()) targets_[static_cast<std::size_t>(p.id)].store(p.defaultValue, std::memory_order_relaxed);
+    reset();
 }
 bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, unsigned outputChannels) {
     if (!std::isfinite(sampleRate) || sampleRate < 8000 || sampleRate > 384000 || maximumBlockSize == 0 || (outputChannels != 1 && outputChannels != 2)) return false;
@@ -31,12 +30,12 @@ bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
 void OrigamiEngine::reset() noexcept {
     modulationMailbox_.consume(audioModulation_);
     audioModulation_=modulation_; // reset requires exclusive access
-    smoothedMacros_=audioModulation_.macros;for(auto& lfo:globalLfos_)lfo.reset();globalRandom_.reset();globalFunction_.reset();
+    smoothedMacros_=audioModulation_.macros;globalLfo_.reset();
     compiledModulation_.compile(audioModulation_,oscillatorModules_.snapshot(),true);
     for (auto& voice : voices_) voice.reset();
     for (auto& voice : stealTails_) voice.reset();
     tailRemaining_.fill(0); order_ = 0; clearHeldNotes();
-    pitchBendNormalized_.fill(0.0f);modWheel_.fill(0.0f);aftertouch_.fill(0.0f);
+    pitchBendNormalized_.fill(0.0f);modWheel_.fill(0.0f);
     for (std::size_t i = 0; i < parameterCount; ++i) { const float v = targets_[i].load(std::memory_order_relaxed); smooth_[i] = {v,v,0,0}; }
 }
 bool OrigamiEngine::applyPatchState(const ParameterValues& values) noexcept {
@@ -58,7 +57,7 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
 }
 bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcept {
     if(!validInstrumentState(state)) return false;
-    modulation_=state.modulation;publishModEnvelopeTargets(modulation_);modulationMailbox_.publish(modulation_);
+    modulation_=state.modulation;modulationMailbox_.publish(modulation_);
     performance_=state.performance;
     pitchBendRange_.store(state.performance.pitchBendRangeSemitones,std::memory_order_relaxed);
     oscillatorModules_.restore(state.oscillators,state.nextId);
@@ -67,7 +66,7 @@ bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcep
 }
 bool OrigamiEngine::setModulationState(const ModulationState& state) noexcept {
     if(!validModulation(state,oscillatorModules_.snapshot())) return false;
-    modulation_=state;publishModEnvelopeTargets(state);modulationMailbox_.publish(state);return true;
+    modulation_=state;modulationMailbox_.publish(state);return true;
 }
 ParameterValues OrigamiEngine::parameterState() const noexcept {
     ParameterValues values {};
@@ -80,17 +79,8 @@ bool OrigamiEngine::setParameter(ParameterId id, float physicalValue) noexcept {
 }
 bool OrigamiEngine::setParameter(std::string_view id, float physicalValue) noexcept { const auto* p = findParameter(id); return p && setParameter(p->id, physicalValue); }
 dsp::EnvelopeSettings OrigamiEngine::envelopeSettings() const noexcept {
-    auto read=[this](ParameterId id){return targets_[static_cast<std::size_t>(id)].load(std::memory_order_relaxed);};
+    auto read = [this](ParameterId id) { return targets_[static_cast<std::size_t>(id)].load(std::memory_order_relaxed); };
     return {read(ParameterId::Attack),read(ParameterId::Decay),read(ParameterId::Sustain),read(ParameterId::Release)};
-}
-void OrigamiEngine::publishModEnvelopeTargets(const ModulationState& s) noexcept {
-    const std::array<float,8> v{s.env2.attack,s.env2.decay,s.env2.sustain,s.env2.release,s.env3.attack,s.env3.decay,s.env3.sustain,s.env3.release};
-    for(std::size_t i=0;i<v.size();++i) modEnvelopeTargets_[i].store(v[i],std::memory_order_relaxed);
-}
-dsp::EnvelopeSettings OrigamiEngine::modulationEnvelopeSettings(unsigned index) const noexcept {
-    const std::size_t b=index?4u:0u;
-    return {modEnvelopeTargets_[b].load(std::memory_order_relaxed),modEnvelopeTargets_[b+1].load(std::memory_order_relaxed),
-            modEnvelopeTargets_[b+2].load(std::memory_order_relaxed),modEnvelopeTargets_[b+3].load(std::memory_order_relaxed)};
 }
 bool OrigamiEngine::sameAddress(const NoteAddress& a,const NoteAddress& b) const noexcept {
     return a.note==b.note && a.channel==b.channel && (!a.noteId || !b.noteId || a.noteId==b.noteId);
@@ -119,9 +109,9 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
         slot->held=true;slot->address={note,channel,noteId};slot->velocity=std::clamp(velocity,0.f,1.f);slot->order=++order_;
         const auto* selected=selectedMonoHeld();if(!selected) return false;
         const auto current=voices_[0].info();
-        if(!current.active) voices_[0].start(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));
-        else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),performance_.glideSeconds,!performance_.legato || !hadHeld || current.releasing);
-        else if(!performance_.legato) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),performance_.glideSeconds,true);
+        if(!current.active) voices_[0].start(selected->address,selected->velocity,selected->order,envelopeSettings());
+        else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),performance_.glideSeconds,!performance_.legato || !hadHeld || current.releasing);
+        else if(!performance_.legato) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),performance_.glideSeconds,true);
         return true;
     }
     std::size_t chosen=voiceCount;
@@ -134,7 +124,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
         }
         stealTails_[chosen]=voices_[chosen];tailRemaining_[chosen]=stealFadeSamples_;
     }
-    voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));return true;
+    voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings());return true;
 }
 bool OrigamiEngine::noteOff(int note,std::uint8_t channel,std::uint32_t noteId) noexcept {
     if(!prepared_ || note<0 || note>127 || channel>15) return false;
@@ -145,8 +135,8 @@ bool OrigamiEngine::noteOff(int note,std::uint8_t channel,std::uint32_t noteId) 
         const auto removedAddress=removed->address;removed->held=false;if(heldCount_) --heldCount_;
         const auto current=voices_[0].info();
         if(current.active && sameAddress(current.address,removedAddress)) {
-            if(const auto* selected=selectedMonoHeld()) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),performance_.glideSeconds,!performance_.legato);
-            else voices_[0].release(envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));
+            if(const auto* selected=selectedMonoHeld()) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),performance_.glideSeconds,!performance_.legato);
+            else voices_[0].release(envelopeSettings());
         }
         return true;
     }
@@ -156,18 +146,15 @@ bool OrigamiEngine::noteOff(int note,std::uint8_t channel,std::uint32_t noteId) 
         if(!info.active || info.releasing || info.address.note!=note || info.address.channel!=channel || (noteId && info.address.noteId!=noteId)) continue;
         if(chosen==voiceCount || info.order<voices_[chosen].info().order) chosen=i;
     }
-    if(chosen!=voiceCount) voices_[chosen].release(envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));return true;
+    if(chosen!=voiceCount) voices_[chosen].release(envelopeSettings());return true;
 }
-void OrigamiEngine::allNotesOff() noexcept {clearHeldNotes();const auto settings=envelopeSettings(),e2=modulationEnvelopeSettings(0),e3=modulationEnvelopeSettings(1);for(auto& voice:voices_)voice.release(settings,e2,e3);}
+void OrigamiEngine::allNotesOff() noexcept { clearHeldNotes();const auto settings=envelopeSettings();for(auto& voice:voices_) voice.release(settings); }
 void OrigamiEngine::pitchWheel(std::uint8_t channel,int value14) noexcept {
     if(channel>15) return;value14=std::clamp(value14,0,16383);
     pitchBendNormalized_[channel]=static_cast<float>(value14-8192)/static_cast<float>(value14>=8192?8191:8192);
 }
 void OrigamiEngine::modWheel(std::uint8_t channel,int value7) noexcept {
-    if(channel>15)return;modWheel_[channel]=static_cast<float>(std::clamp(value7,0,127))/127.0f;
-}
-void OrigamiEngine::aftertouch(std::uint8_t channel,int value7) noexcept {
-    if(channel>15)return;aftertouch_[channel]=static_cast<float>(std::clamp(value7,0,127))/127.0f;
+    if(channel>15) return;modWheel_[channel]=static_cast<float>(std::clamp(value7,0,127))/127.0f;
 }
 bool OrigamiEngine::setPitchBendRange(float semitones) noexcept {
     if(!std::isfinite(semitones) || semitones<1.0f || semitones>48.0f) return false;
@@ -229,11 +216,12 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         modules[0].pan=value(ParameterId::OscPan);
         modules[0].level=value(ParameterId::OscLevel);
 
-        std::array<float,CompiledModulation::globalSourceCount> sources{};
-        for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(audioModulation_,i);sources[i]=l.mode==LfoMode::Free?globalLfos_[i].next(l,sampleRate_):0.0f;}
-        for(std::size_t i=0;i<smoothedMacros_.size();++i){smoothedMacros_[i]+=modulationSmoothing_*(audioModulation_.macros[i]-smoothedMacros_[i]);sources[4+i]=smoothedMacros_[i];}
-        sources[8]=globalRandom_.next(audioModulation_.random,sampleRate_);
-        sources[9]=globalFunction_.next(audioModulation_.function,sampleRate_);
+        std::array<float,5> sources{};
+        sources[0]=globalLfo_.next(audioModulation_.lfo1,sampleRate_);
+        for(std::size_t i=0;i<smoothedMacros_.size();++i) {
+            smoothedMacros_[i]+=modulationSmoothing_*(audioModulation_.macros[i]-smoothedMacros_[i]);
+            sources[i+1]=smoothedMacros_[i];
+        }
         compiledModulation_.advance(modulationSmoothing_);
         ModulationFrame frame;
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
@@ -250,14 +238,14 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
             const auto info=voices_[v].info();
             const auto channel=std::min<std::size_t>(info.address.channel,15);
             const float bend=pitchBendNormalized_[channel]*pitchBendRange();
-            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,bend,modWheel_[channel],aftertouch_[channel]);
+            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1,bend,modWheel_[channel]);
             Voice::Samples old{};
             float oldWeight=0.0f;
 
             if(tailRemaining_[v]) {
                 oldWeight=static_cast<float>(tailRemaining_[v])/static_cast<float>(stealFadeSamples_);
                 const auto oldInfo=stealTails_[v].info();const auto oldChannel=std::min<std::size_t>(oldInfo.address.channel,15);
-                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,pitchBendNormalized_[oldChannel]*pitchBendRange(),modWheel_[oldChannel],aftertouch_[oldChannel]);
+                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1,pitchBendNormalized_[oldChannel]*pitchBendRange(),modWheel_[oldChannel]);
                 if(--tailRemaining_[v]==0) stealTails_[v].reset();
             }
 

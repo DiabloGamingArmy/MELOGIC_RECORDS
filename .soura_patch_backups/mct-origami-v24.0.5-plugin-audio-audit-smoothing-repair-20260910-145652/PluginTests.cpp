@@ -1,4 +1,3 @@
-// mct-origami-v24.0.5-plugin-audio-audit-smoothing-repair
 // mct-origami-v24.0.4-plugin-audio-audit-osc1-repair
 // mct-origami-v24.0.3-plugin-audio-gate
 // mct-origami-v23.2-literal-newline-repair-2
@@ -89,14 +88,7 @@ void playabilityAudit() {
     OrigamiAudioProcessor levelZero;
     levelZero.prepareToPlay(48000,128);disableExtraOscillators(levelZero);
     check(levelZero.setUiParameter(ParameterId::OscLevel,0.0f),"OSC1 level zero accepted");
-    // OscLevel intentionally has parameter smoothing. Allow the target to settle
-    // while no voice is active, then verify a subsequently-started note is silent.
-    {
-        juce::AudioBuffer<float> settle(2,1024);settle.clear();
-        juce::MidiBuffer noMidi;
-        levelZero.processBlock(settle,noMidi);
-    }
-    check(magnitude(renderNote(levelZero))<1.0e-7f,"OSC level zero produces silence after smoothing");
+    check(magnitude(renderNote(levelZero))<1.0e-7f,"OSC level zero produces silence");
 
     OrigamiAudioProcessor levelAudible;
     levelAudible.prepareToPlay(48000,128);disableExtraOscillators(levelAudible);

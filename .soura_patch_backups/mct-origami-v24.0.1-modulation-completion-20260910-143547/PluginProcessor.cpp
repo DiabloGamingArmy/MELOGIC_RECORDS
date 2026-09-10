@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
@@ -30,10 +29,8 @@ void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexc
     if (message.isNoteOn()) engine_.noteOn(message.getNoteNumber(), message.getFloatVelocity(), channel, 0u);
     else if (message.isNoteOff()) engine_.noteOff(message.getNoteNumber(), channel, 0u);
     else if (message.isPitchWheel()) engine_.pitchWheel(channel,message.getPitchWheelValue());
-    else if(message.isController() && message.getControllerNumber()==1) engine_.modWheel(channel,message.getControllerValue());
-    else if(message.isChannelPressure()) engine_.aftertouch(channel,message.getChannelPressureValue());
-    else if(message.isAftertouch()) engine_.aftertouch(channel,message.getAfterTouchValue());
-    else if(message.isAllNotesOff() || message.isAllSoundOff()) engine_.allNotesOff();
+    else if (message.isController() && message.getControllerNumber()==1) engine_.modWheel(channel,message.getControllerValue());
+    else if (message.isAllNotesOff() || message.isAllSoundOff()) engine_.allNotesOff();
 }
 void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     juce::ScopedNoDenormals noDenormals;
@@ -82,10 +79,9 @@ bool OrigamiAudioProcessor::setUiMacro(unsigned index,float value) noexcept {
     return engine_.setModulationState(mod);
 }
 bool OrigamiAudioProcessor::setUiLfo(const mct::origami::LfoSettings& settings) noexcept {
-    const juce::ScopedLock lock(stateLock_);auto mod=engine_.instrumentState().modulation;mod.lfo1=settings;return engine_.setModulationState(mod);
-}
-bool OrigamiAudioProcessor::setUiModulationState(const mct::origami::ModulationState& state) noexcept {
-    const juce::ScopedLock lock(stateLock_);return engine_.setModulationState(state);
+    const juce::ScopedLock lock(stateLock_);
+    auto mod=engine_.instrumentState().modulation;mod.lfo1=settings;
+    return engine_.setModulationState(mod);
 }
 unsigned OrigamiAudioProcessor::addUiRoute() noexcept {
     const juce::ScopedLock lock(stateLock_);

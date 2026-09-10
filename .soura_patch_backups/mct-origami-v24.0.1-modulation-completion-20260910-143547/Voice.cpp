@@ -1,18 +1,17 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 #include "Voice.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami {
-void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
-void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
-void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
-    reset();address_=address;velocity_=velocity;order_=order;
-    frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
-    active_=true;envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);
+void Voice::prepare(double sampleRate) noexcept { sampleRate_ = sampleRate; envelope_.prepare(sampleRate); reset(); }
+void Voice::reset() noexcept { lfo1_.reset(); for (auto& module : moduleOscillators_) for (auto& oscillator : module) oscillator.reset(); envelope_.reset(); for (auto& filter : moduleFilters_) filter.reset(); active_ = releasing_ = false; velocity_ = 0; order_ = 0; }
+void Voice::start(NoteAddress address, float velocity, std::uint64_t order, const dsp::EnvelopeSettings& settings) noexcept {
+    reset(); address_ = address; velocity_ = velocity; order_ = order;
+    frequency_ = targetFrequency_ = dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
+    active_ = true; envelope_.noteOn(settings);
 }
-void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope) noexcept {
+void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,float glideSeconds,bool retriggerEnvelope) noexcept {
     address_=address;velocity_=velocity;order_=order;active_=true;releasing_=false;
     targetFrequency_=dsp::midiFrequency(address.note);
     const auto samples=glideSeconds>0.0f ? static_cast<std::size_t>(std::round(glideSeconds*sampleRate_)) : 0u;
@@ -22,13 +21,11 @@ void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,cons
         glideRemaining_=samples;
         glideRatio_=std::exp(std::log(targetFrequency_/frequency_)/static_cast<double>(samples));
     }
-    if(retriggerEnvelope) {envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();}
+    if(retriggerEnvelope) {envelope_.noteOn(settings);lfo1_.reset();}
 }
-void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
-    if(active_){releasing_=true;envelope_.noteOff(settings);env2_.noteOff(env2);env3_.noteOff(env3);}
-}
+void Voice::release(const dsp::EnvelopeSettings& settings) noexcept { if (active_) { releasing_ = true; envelope_.noteOff(settings); } }
 Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
-    float sustain,const CompiledModulation& compiled,const ModulationState& modulation,float pitchBendSemitones,float modWheel,float aftertouch) noexcept {
+    float sustain,const CompiledModulation& compiled,const LfoSettings& lfoSettings,float pitchBendSemitones,float modWheel) noexcept {
     Samples outputs{};
     if(!active_) return outputs;
     if(glideRemaining_) {
@@ -37,15 +34,12 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     }
     const float envelope=envelope_.next(sustain);
     const float envelopeValue=envelope*velocity_;
-    const float env2=env2_.next(modulation.env2.sustain),env3=env3_.next(modulation.env3.sustain);
-    std::array<float,CompiledModulation::voiceSourceCount> voiceSources{};
-    voiceSources[0]=envelope;voiceSources[1]=env2;voiceSources[2]=env3;
-    for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode==LfoMode::NoteRetrigger?noteLfos_[i].next(l,sampleRate_):0.0f;}
-    voiceSources[7]=velocity_;voiceSources[8]=modWheel;
-    voiceSources[9]=std::clamp(static_cast<float>(address_.note)/127.0f,0.0f,1.0f);
-    voiceSources[10]=aftertouch;
-    ModulationFrame local;const ModulationFrame* effective=&global;
-    if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
+    const float lfo=lfoSettings.mode==LfoMode::NoteRetrigger ? lfo1_.next(lfoSettings,sampleRate_) : 0;
+    ModulationFrame local;
+    const ModulationFrame* effective=&global;
+    if(compiled.hasVoiceRoutes()) {
+        local=global;compiled.voiceFrame(local,envelope,lfo,modWheel,sampleRate_);effective=&local;
+    }
     const auto& modules=effective->modules;
     bool filtersQuiet=true;
 

@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
@@ -12,18 +11,14 @@ public:
     void syncFromModel();
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
-    void commitEnvelope();
-    void commitGenerator();
-    void updateVisibleControls();
     std::array<juce::TextButton,9> tabs_;
     ParameterSetter setter_;ParameterGetter getter_;ModulationBindings bindings_;
     std::array<juce::Slider,4> envSliders_;
     std::array<juce::Label,4> envLabels_;
-    juce::Slider rate_,curve_;
-    juce::Label rateLabel_,curveLabel_;
+    juce::Slider rate_;
+    juce::Label rateLabel_;
     juce::ComboBox shape_,mode_;
-    int selected_=0;
-    ModulationState cached_{};
+    LfoSettings lfo_{};
 };
 class MacroPanel final : public Panel {
 public:

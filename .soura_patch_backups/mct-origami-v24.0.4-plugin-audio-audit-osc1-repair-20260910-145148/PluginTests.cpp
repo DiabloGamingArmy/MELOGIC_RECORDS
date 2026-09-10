@@ -1,5 +1,3 @@
-// mct-origami-v24.0.5-plugin-audio-audit-smoothing-repair
-// mct-origami-v24.0.4-plugin-audio-audit-osc1-repair
 // mct-origami-v24.0.3-plugin-audio-gate
 // mct-origami-v23.2-literal-newline-repair-2
 // mct-origami-playability-audio-audit-v23.2
@@ -88,25 +86,22 @@ void playabilityAudit() {
 
     OrigamiAudioProcessor levelZero;
     levelZero.prepareToPlay(48000,128);disableExtraOscillators(levelZero);
-    check(levelZero.setUiParameter(ParameterId::OscLevel,0.0f),"OSC1 level zero accepted");
-    // OscLevel intentionally has parameter smoothing. Allow the target to settle
-    // while no voice is active, then verify a subsequently-started note is silent.
-    {
-        juce::AudioBuffer<float> settle(2,1024);settle.clear();
-        juce::MidiBuffer noMidi;
-        levelZero.processBlock(settle,noMidi);
-    }
-    check(magnitude(renderNote(levelZero))<1.0e-7f,"OSC level zero produces silence after smoothing");
+    auto osc=levelZero.getUiOscillatorState(1);osc.level=0.0f;
+    check(levelZero.setUiOscillatorState(1,osc),"OSC1 level zero accepted");
+    check(magnitude(renderNote(levelZero))<1.0e-7f,"OSC level zero produces silence");
 
     OrigamiAudioProcessor levelAudible;
     levelAudible.prepareToPlay(48000,128);disableExtraOscillators(levelAudible);
-    check(levelAudible.setUiParameter(ParameterId::OscLevel,.8f),"OSC1 audible level accepted");
+    osc=levelAudible.getUiOscillatorState(1);osc.level=.8f;
+    check(levelAudible.setUiOscillatorState(1,osc),"OSC1 audible level accepted");
     check(magnitude(renderNote(levelAudible))>1.0e-5f,"OSC level restores sound");
 
     OrigamiAudioProcessor wtA,wtB;
     wtA.prepareToPlay(48000,128);wtB.prepareToPlay(48000,128);
     disableExtraOscillators(wtA);disableExtraOscillators(wtB);
-    check(wtA.setUiParameter(ParameterId::Waveform,0.0f) && wtB.setUiParameter(ParameterId::Waveform,2.25f),"WT positions accepted");
+    auto a=wtA.getUiOscillatorState(1);auto b=wtB.getUiOscillatorState(1);
+    a.wtPosition=0.0f;b.wtPosition=.75f;
+    check(wtA.setUiOscillatorState(1,a) && wtB.setUiOscillatorState(1,b),"WT positions accepted");
     const auto wa=renderNote(wtA,69,1.0f),wb=renderNote(wtB,69,1.0f);
     bool wtDifferent=false;
     for(int i=0;i<wa.getNumSamples() && !wtDifferent;++i)
@@ -118,7 +113,9 @@ void playabilityAudit() {
     OrigamiAudioProcessor pitchA,pitchB;
     pitchA.prepareToPlay(48000,128);pitchB.prepareToPlay(48000,128);
     disableExtraOscillators(pitchA);disableExtraOscillators(pitchB);
-    check(pitchA.setUiParameter(ParameterId::OscOctave,0.0f) && pitchB.setUiParameter(ParameterId::OscOctave,1.0f),"octave states accepted");
+    a=pitchA.getUiOscillatorState(1);b=pitchB.getUiOscillatorState(1);
+    a.octave=0;b.octave=1;
+    check(pitchA.setUiOscillatorState(1,a) && pitchB.setUiOscillatorState(1,b),"octave states accepted");
     const auto pa=renderNote(pitchA),pb=renderNote(pitchB);
     bool pitchDifferent=false;
     for(int i=0;i<pa.getNumSamples() && !pitchDifferent;++i)
@@ -128,15 +125,16 @@ void playabilityAudit() {
     OrigamiAudioProcessor uniA,uniB;
     uniA.prepareToPlay(48000,128);uniB.prepareToPlay(48000,128);
     disableExtraOscillators(uniA);disableExtraOscillators(uniB);
-    check(uniA.setUiParameter(ParameterId::OscUnison,1.0f)
-          && uniB.setUiParameter(ParameterId::OscUnison,4.0f)
-          && uniB.setUiParameter(ParameterId::OscDetune,30.0f),"unison states accepted");
+    a=uniA.getUiOscillatorState(1);b=uniB.getUiOscillatorState(1);
+    a.unison=1;b.unison=4;b.detuneCents=30.0f;
+    check(uniA.setUiOscillatorState(1,a) && uniB.setUiOscillatorState(1,b),"unison states accepted");
     const auto ua=renderNote(uniA),ub=renderNote(uniB);
     check(std::abs(energy(ua)-energy(ub))>1.0e-6,"unison/detune changes rendered output");
 
     OrigamiAudioProcessor pan;
     pan.prepareToPlay(48000,128);disableExtraOscillators(pan);
-    check(pan.setUiParameter(ParameterId::OscPan,-1.0f),"hard-left pan accepted");
+    a=pan.getUiOscillatorState(1);a.pan=-1.0f;
+    check(pan.setUiOscillatorState(1,a),"hard-left pan accepted");
     const auto panAudio=renderNote(pan);
     check(panAudio.getMagnitude(0,0,panAudio.getNumSamples())>1.0e-5f,"hard-left pan keeps left output");
     check(panAudio.getMagnitude(1,0,panAudio.getNumSamples())<1.0e-7f,"hard-left pan silences right output");

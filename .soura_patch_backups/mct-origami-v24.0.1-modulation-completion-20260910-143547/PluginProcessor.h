@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
@@ -41,7 +40,6 @@ public:
     bool getUiOscillatorEnabled(mct::origami::OscillatorModuleId) const noexcept;
     bool setUiMacro(unsigned,float) noexcept;
     bool setUiLfo(const mct::origami::LfoSettings&) noexcept;
-    bool setUiModulationState(const mct::origami::ModulationState&) noexcept;
     unsigned addUiRoute() noexcept;
     bool setUiRoute(const mct::origami::ModRoute&) noexcept;
     bool removeUiRoute(unsigned) noexcept;

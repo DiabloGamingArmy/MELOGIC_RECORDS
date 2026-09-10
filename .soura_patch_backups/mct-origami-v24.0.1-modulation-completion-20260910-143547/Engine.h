@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 #pragma once
@@ -32,7 +31,6 @@ public:
     void allNotesOff() noexcept;
     void pitchWheel(std::uint8_t channel,int value14) noexcept;
     void modWheel(std::uint8_t channel,int value7) noexcept;
-    void aftertouch(std::uint8_t channel,int value7) noexcept;
     bool setPitchBendRange(float semitones) noexcept;
     float pitchBendRange() const noexcept { return pitchBendRange_.load(std::memory_order_relaxed); }
     bool setPerformanceState(const PerformanceState&) noexcept;
@@ -54,17 +52,13 @@ public:
 private:
     struct Smoothed { float value=0, target=0; double step=0; std::size_t remaining=0; };
     dsp::EnvelopeSettings envelopeSettings() const noexcept;
-    dsp::EnvelopeSettings modulationEnvelopeSettings(unsigned index) const noexcept;
-    void publishModEnvelopeTargets(const ModulationState&) noexcept;
     void latchParameters() noexcept;
     float value(ParameterId id) const noexcept { return smooth_[static_cast<std::size_t>(id)].value; }
     ModulationState modulation_{}; // non-realtime model; never read in process
     LatestStateMailbox<ModulationState> modulationMailbox_;
     ModulationState audioModulation_{};
     CompiledModulation compiledModulation_;
-    std::array<Lfo,4> globalLfos_{};
-    RandomGenerator globalRandom_{};
-    FunctionGenerator globalFunction_{};
+    Lfo globalLfo_;
     std::array<float,4> smoothedMacros_{};
     float modulationSmoothing_=1;
     OscillatorModuleBank oscillatorModules_;
@@ -82,8 +76,7 @@ private:
     const HeldNote* selectedMonoHeld() const noexcept;
     void clearHeldNotes() noexcept;
     std::array<float,16> pitchBendNormalized_{};
-    std::array<float,16> modWheel_{},aftertouch_{};
-    std::array<std::atomic<float>,8> modEnvelopeTargets_{};
+    std::array<float,16> modWheel_{};
     std::atomic<float> pitchBendRange_{2.0f};
     PerformanceState performance_{};
     std::array<HeldNote,128> heldNotes_{};

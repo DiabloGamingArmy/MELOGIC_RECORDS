@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 #include "core/Engine.h"
 #include "core/modulation/Modulation.h"
 #include "core/preset/StateCodec.h"
@@ -104,7 +103,7 @@ void compiledRoutes() {
     CompiledModulation compiled;
     compiled.compile(state,m,true);
     ModulationFrame frame;frame.modules=m;
-    std::array<float,CompiledModulation::globalSourceCount> sources{};sources[4]=.5f;
+    std::array<float,5> sources{0,.5f,0,0,0};
     compiled.globalFrame(frame,sources,48000);
 
     check(near(m[1].wtPosition,.75f),"stored oscillator base remains unchanged");
@@ -122,7 +121,7 @@ void compiledRoutes() {
     state.routes[1]=route(2,ModSource::Macro2,ModDestination::Pan,.25f,1);
     compiled.compile(state,m,true);
     frame={};frame.modules=m;
-    std::array<float,CompiledModulation::globalSourceCount> summed{};summed[4]=1;summed[5]=1;
+    std::array<float,5> summed{0,1,1,0,0};
     compiled.globalFrame(frame,summed,48000);
     check(near(frame.modules[0].pan,1.f),"same destination routes sum then clamp");
 
@@ -136,32 +135,9 @@ void compiledRoutes() {
     state.routes[0]=route(1,ModSource::Macro1,ModDestination::Cutoff,.1f);
     compiled.compile(state,m,true);
     frame={};frame.modules=m;frame.cutoff=1000;frame.resonance=.1f;frame.master=.2f;
-    std::array<float,CompiledModulation::globalSourceCount> cutoffSource{};cutoffSource[4]=1;
+    std::array<float,5> cutoffSource{0,1,0,0,0};
     compiled.globalFrame(frame,cutoffSource,48000);
     check(frame.cutoff>1000 && frame.cutoff<=20000,"global cutoff route increases effective cutoff");
-}
-
-
-void expandedSources() {
-    auto m=modules();ModulationState state;state.nextRouteId=7;
-    state.routes[0]=route(1,ModSource::Lfo2,ModDestination::Pan,.2f,1);
-    state.routes[1]=route(2,ModSource::Env2,ModDestination::Level,.3f,1);
-    state.routes[2]=route(3,ModSource::Velocity,ModDestination::WtPosition,.2f,1);
-    state.routes[3]=route(4,ModSource::Keytrack,ModDestination::Fine,.1f,1);
-    state.routes[4]=route(5,ModSource::Aftertouch,ModDestination::Cutoff,.2f);
-    state.routes[5]=route(6,ModSource::Random,ModDestination::Resonance,.1f);
-    check(validModulation(state,m),"expanded sources validate");
-    CompiledModulation compiled;compiled.compile(state,m,true);
-    ModulationFrame frame;frame.modules=m;frame.cutoff=1000;frame.resonance=.1f;frame.master=.2f;
-    std::array<float,CompiledModulation::globalSourceCount> global{};global[1]=1;global[8]=1;
-    compiled.globalFrame(frame,global,48000);
-    std::array<float,CompiledModulation::voiceSourceCount> voice{};
-    voice[1]=1;voice[7]=1;voice[9]=.75f;voice[10]=1;
-    compiled.voiceFrame(frame,voice,48000);
-    check(frame.modules[0].pan>m[0].pan,"LFO2 route reaches destination");
-    check(frame.modules[0].level>m[0].level,"ENV2 route reaches destination");
-    check(frame.modules[0].wtPosition>m[0].wtPosition,"velocity route reaches destination");
-    check(frame.cutoff>1000,"aftertouch route reaches filter");
 }
 
 void stateV3RoundTrip() {
@@ -173,9 +149,6 @@ void stateV3RoundTrip() {
     state.modulation.lfo1.shape=LfoShape::Triangle;
     state.modulation.lfo1.mode=LfoMode::NoteRetrigger;
     state.modulation.lfo1.rateHz=3.5f;
-    state.modulation.lfo2.shape=LfoShape::Square;state.modulation.lfo2.mode=LfoMode::NoteRetrigger;state.modulation.lfo2.rateHz=7.0f;
-    state.modulation.env2={.02f,.3f,.4f,.5f};state.modulation.env3={.03f,.2f,.6f,.7f};
-    state.modulation.random.rateHz=5.0f;state.modulation.function.rateHz=2.5f;state.modulation.function.curve=.4f;
     state.modulation.macros={.1f,.2f,.3f,.4f};
     state.modulation.nextRouteId=3;
     state.modulation.routes[0]=route(1,ModSource::Lfo1,ModDestination::WtPosition,.7f,osc2);
@@ -190,9 +163,6 @@ void stateV3RoundTrip() {
     check(decoded.modulation.lfo1.shape==LfoShape::Triangle,"LFO shape persisted");
     check(decoded.modulation.lfo1.mode==LfoMode::NoteRetrigger,"LFO mode persisted");
     check(near(decoded.modulation.lfo1.rateHz,3.5f),"LFO rate persisted");
-    check(decoded.modulation.lfo2.shape==LfoShape::Square && decoded.modulation.lfo2.mode==LfoMode::NoteRetrigger && near(decoded.modulation.lfo2.rateHz,7.0f),"LFO2 persisted");
-    check(near(decoded.modulation.env2.attack,.02f) && near(decoded.modulation.env3.release,.7f),"ENV2/3 persisted");
-    check(near(decoded.modulation.random.rateHz,5.0f) && near(decoded.modulation.function.curve,.4f),"random/function persisted");
     check(decoded.modulation.macros==std::array<float,4>{.1f,.2f,.3f,.4f},"macro values persisted");
     check(decoded.modulation.routes[0].destination.oscillator==osc2,"stable oscillator destination persisted");
     check(decoded.modulation.routes[1].destination.parameter==ModDestination::Cutoff,"global destination persisted");
@@ -237,7 +207,6 @@ int main() {
         lfoContract();
         normalizationContract();
         compiledRoutes();
-        expandedSources();
         stateV3RoundTrip();
         renderSeparation();
         std::cout<<"PASS: "<<checks<<" modulation foundation checks\\n";

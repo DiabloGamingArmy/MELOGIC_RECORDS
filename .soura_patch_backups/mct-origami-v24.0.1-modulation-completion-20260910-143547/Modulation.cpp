@@ -1,29 +1,11 @@
-// mct-origami-modulation-completion-v24
+// mct-origami-pitch-mod-real-v23.3
 #include "Modulation.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami {
 namespace {
 bool range(float x,float a,float b) {return std::isfinite(x) && x>=a && x<=b;}
-bool validEnvelope(const dsp::EnvelopeSettings& e) {
-    return range(e.attack,.001f,10.f) && range(e.decay,.001f,10.f) &&
-           range(e.sustain,0.f,1.f) && range(e.release,.001f,20.f);
-}
-bool validLfo(const LfoSettings& s) {
-    return s.shape>=LfoShape::Sine && s.shape<=LfoShape::Square &&
-           (s.mode==LfoMode::Free || s.mode==LfoMode::NoteRetrigger) &&
-           range(s.rateHz,.01f,40.f);
-}
-bool known(ModSource s) {
-    switch(s) {
-        case ModSource::Env1:case ModSource::Env2:case ModSource::Env3:
-        case ModSource::Lfo1:case ModSource::Lfo2:case ModSource::Lfo3:case ModSource::Lfo4:
-        case ModSource::Macro1:case ModSource::Macro2:case ModSource::Macro3:case ModSource::Macro4:
-        case ModSource::ModWheel:case ModSource::Velocity:case ModSource::Keytrack:case ModSource::Aftertouch:
-        case ModSource::Random:case ModSource::Function:return true;
-    }
-    return false;
-}
+bool known(ModSource s) {return s==ModSource::Env1 || s==ModSource::Lfo1 || s==ModSource::ModWheel || (s>=ModSource::Macro1 && s<=ModSource::Macro4);}
 struct Range {float lo,hi;};
 Range limits(ModDestination d) {
     switch(d) {
@@ -36,35 +18,11 @@ Range limits(ModDestination d) {
         default:return {0,1};
     }
 }
-std::size_t slotFor(ModSource source,const ModulationState& state) {
-    switch(source) {
-        case ModSource::Lfo1:return state.lfo1.mode==LfoMode::Free?0u:13u;
-        case ModSource::Lfo2:return state.lfo2.mode==LfoMode::Free?1u:14u;
-        case ModSource::Lfo3:return state.lfo3.mode==LfoMode::Free?2u:15u;
-        case ModSource::Lfo4:return state.lfo4.mode==LfoMode::Free?3u:16u;
-        case ModSource::Macro1:return 4u;case ModSource::Macro2:return 5u;
-        case ModSource::Macro3:return 6u;case ModSource::Macro4:return 7u;
-        case ModSource::Random:return 8u;case ModSource::Function:return 9u;
-        case ModSource::Env1:return 10u;case ModSource::Env2:return 11u;case ModSource::Env3:return 12u;
-        case ModSource::Velocity:return 17u;case ModSource::ModWheel:return 18u;
-        case ModSource::Keytrack:return 19u;case ModSource::Aftertouch:return 20u;
-    }
-    return 0u;
 }
-}
-
-const LfoSettings& lfoSettings(const ModulationState& s,std::size_t i) noexcept {
-    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
-}
-LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
-    switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
-}
-
 bool isGlobalDestination(ModDestination d) noexcept {return d>=ModDestination::Cutoff && d<=ModDestination::MasterGain;}
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
-    for(std::size_t i=0;i<4;++i) if(!validLfo(lfoSettings(s,i))) return false;
-    if(!validEnvelope(s.env2) || !validEnvelope(s.env3)) return false;
-    if(!range(s.random.rateHz,.01f,40.f) || !range(s.function.rateHz,.01f,40.f) || !range(s.function.curve,-1.f,1.f)) return false;
+    if(s.lfo1.shape<LfoShape::Sine || s.lfo1.shape>LfoShape::Square ||
+       (s.lfo1.mode!=LfoMode::Free && s.lfo1.mode!=LfoMode::NoteRetrigger) || !range(s.lfo1.rateHz,.01f,40)) return false;
     for(float v:s.macros) if(!range(v,0,1)) return false;
     std::uint32_t previous=0;bool empty=false;
     if(s.nextRouteId==0) return false;
@@ -72,9 +30,8 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
         if(!r.id) {empty=true;continue;}
         if(empty || r.id<=previous || r.id>=s.nextRouteId || !known(r.source) || !range(r.amount,-1,1)) return false;
         previous=r.id;
-        if(isGlobalDestination(r.destination.parameter)) {
-            if(r.destination.oscillator!=0) return false;
-        } else {
+        if(isGlobalDestination(r.destination.parameter)) {if(r.destination.oscillator!=0) return false;}
+        else {
             if(r.destination.parameter<ModDestination::WtPosition || r.destination.parameter>ModDestination::Level) return false;
             bool found=false;for(const auto& m:modules) if(m.id && m.id==r.destination.oscillator) found=true;
             if(!found) return false;
@@ -92,6 +49,7 @@ float modulationFromNormalized(ModDestination d,float value) noexcept {
     if(!std::isfinite(value)) value=0;
     value=std::clamp(value,0.f,1.f);const auto r=limits(d);
     if(d==ModDestination::Cutoff) return r.lo*std::pow(r.hi/r.lo,value);
+    // Pitch modulation is continuous; discrete base octave/semitone values stay intact.
     return r.lo+value*(r.hi-r.lo);
 }
 float Lfo::shape(LfoShape type,double phase) noexcept {
@@ -113,46 +71,23 @@ float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
     }
     return out;
 }
-float RandomGenerator::next(const RandomSettings& s,double sampleRate) noexcept {
-    const float out=value_;
-    if(std::isfinite(sampleRate) && sampleRate>0) {
-        phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
-        if(phase_>=1.0) {
-            phase_-=std::floor(phase_);
-            std::uint32_t x=state_;
-            x^=x<<13;x^=x>>17;x^=x<<5;state_=x;
-            value_=static_cast<float>((state_>>8)&0x00ffffffu)/16777215.0f*2.0f-1.0f;
-        }
-    }
-    return out;
-}
-float FunctionGenerator::shape(float curve,double phase) noexcept {
-    phase-=std::floor(phase);
-    const float raw=static_cast<float>(1.0-4.0*std::abs(phase-.5));
-    const float exponent=std::exp2(std::clamp(curve,-1.f,1.f)*2.0f);
-    return std::copysign(std::pow(std::abs(raw),exponent),raw);
-}
-float FunctionGenerator::next(const FunctionSettings& s,double sampleRate) noexcept {
-    const float out=shape(s.curve,phase_);
-    if(std::isfinite(sampleRate) && sampleRate>0) {
-        phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
-        phase_-=std::floor(phase_);
-    }
-    return out;
-}
-
 void CompiledModulation::compile(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules,bool immediate) noexcept {
-    const auto old=groups_;const auto oldCount=count_;count_=voiceCount_=0;voiceFilter_=false;groups_={};
+    const auto old=groups_;const auto oldCount=count_;count_=voiceCount_=0;voiceFilter_=false;
+    groups_={};
     for(const auto& route:state.routes) {
         if(!route.id || !route.enabled || route.amount==0) continue;
         std::size_t slot=0;
         if(!isGlobalDestination(route.destination.parameter)) {
             while(slot<modules.size() && modules[slot].id!=route.destination.oscillator) ++slot;
-            if(slot==modules.size()) continue;
+            if(slot==modules.size()) continue; // module removed since publication
         }
         std::size_t i=0;while(i<count_ && !(groups_[i].address==route.destination)) ++i;
         if(i==count_) {groups_[i].address=route.destination;groups_[i].slot=slot;++count_;}
-        groups_[i].target[slotFor(route.source,state)]+=route.amount;
+        auto source=static_cast<unsigned>(route.source);
+        const auto index=route.source==ModSource::Env1 ? 5u : route.source==ModSource::Lfo1 ?
+            (state.lfo1.mode==LfoMode::Free?0u:6u) : route.source==ModSource::ModWheel ? 7u :
+            source-static_cast<unsigned>(ModSource::Macro1)+1;
+        groups_[i].target[index]+=route.amount;
     }
     for(std::size_t i=0;i<count_;++i) {
         auto& g=groups_[i];g.weight=g.target;
@@ -160,17 +95,14 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             g.weight={};
             for(std::size_t j=0;j<oldCount;++j) if(old[j].address==g.address) {g.weight=old[j].weight;break;}
         }
-        bool voice=false;
-        for(std::size_t s=globalSourceCount;s<sourceSlotCount;++s)
-            voice=voice || g.target[s]!=0 || g.weight[s]!=0;
-        if(voice) {
+        if(g.target[5]!=0 || g.target[6]!=0 || g.target[7]!=0 || g.weight[5]!=0 || g.weight[6]!=0 || g.weight[7]!=0) {
             voiceGroups_[voiceCount_++]=i;
             if(g.address.parameter==ModDestination::Cutoff || g.address.parameter==ModDestination::Resonance) voiceFilter_=true;
         }
     }
 }
 void CompiledModulation::advance(float alpha) noexcept {
-    for(std::size_t i=0;i<count_;++i) for(std::size_t s=0;s<sourceSlotCount;++s)
+    for(std::size_t i=0;i<count_;++i) for(std::size_t s=0;s<8;++s)
         groups_[i].weight[s]+=alpha*(groups_[i].target[s]-groups_[i].weight[s]);
 }
 float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept {
@@ -194,20 +126,18 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
         case ModDestination::Pan:m.pan=v;break;case ModDestination::Level:m.level=v;break;
     }
 }
-void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
+void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,5>& sources,double rate) const noexcept {
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];float n=modulationToNormalized(g.address.parameter,read(f,g));
-        for(std::size_t s=0;s<globalSourceCount;++s) n+=g.weight[s]*sources[s];
+        for(std::size_t s=0;s<sources.size();++s) n+=g.weight[s]*sources[s];
         f.normalized[i]=n;write(f,g,n);
     }
     f.filter=dsp::LowPassCoefficients::make(rate,f.cutoff,f.resonance);
 }
-void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double rate) const noexcept {
+void CompiledModulation::voiceFrame(ModulationFrame& f,float envelope,float lfo,float modWheel,double rate) const noexcept {
     for(std::size_t j=0;j<voiceCount_;++j) {
         const auto i=voiceGroups_[j];const auto& g=groups_[i];
-        float n=f.normalized[i];
-        for(std::size_t s=0;s<voiceSourceCount;++s) n+=g.weight[globalSourceCount+s]*sources[s];
-        write(f,g,n);
+        write(f,g,f.normalized[i]+g.weight[5]*envelope+g.weight[6]*lfo+g.weight[7]*modWheel);
     }
     if(voiceFilter_) f.filter=dsp::LowPassCoefficients::make(rate,f.cutoff,f.resonance);
 }

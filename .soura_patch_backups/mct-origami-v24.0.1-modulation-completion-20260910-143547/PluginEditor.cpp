@@ -1,4 +1,3 @@
-// mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
@@ -13,8 +12,7 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
         [&owner](const mct::origami::LfoSettings& s){return owner.setUiLfo(s);},
         [&owner]{return owner.addUiRoute();},
         [&owner](const mct::origami::ModRoute& r){return owner.setUiRoute(r);},
-        [&owner](unsigned id){return owner.removeUiRoute(id);},
-        [&owner](const mct::origami::ModulationState& s){return owner.setUiModulationState(s);}};
+        [&owner](unsigned id){return owner.removeUiRoute(id);}};
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
