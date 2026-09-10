@@ -1,0 +1,27 @@
+#pragma once
+#include "dsp/Wavetable.h"
+#include "dsp/Envelope.h"
+#include "dsp/Filter.h"
+#include <cstdint>
+namespace mct::origami {
+struct NoteAddress { int note = 60; std::uint8_t channel = 0; std::uint32_t noteId = 0; };
+struct VoiceInfo { NoteAddress address {}; std::uint64_t order = 0; bool active = false, releasing = false; float envelope = 0; };
+class Voice {
+public:
+    void prepare(double sampleRate) noexcept;
+    void reset() noexcept;
+    void start(NoteAddress address, float velocity, std::uint64_t order, const dsp::EnvelopeSettings& settings) noexcept;
+    void release(const dsp::EnvelopeSettings& settings) noexcept;
+    float next(const dsp::Wavetable& table, float position, float sustain, const dsp::LowPassCoefficients& filter) noexcept;
+    VoiceInfo info() const noexcept;
+private:
+    dsp::WavetableOscillator oscillator_;
+    dsp::Envelope envelope_;
+    dsp::LowPassFilter filter_;
+    NoteAddress address_ {};
+    std::uint64_t order_ = 0;
+    double sampleRate_ = 48000, frequency_ = 440;
+    float velocity_ = 0;
+    bool active_ = false, releasing_ = false;
+};
+}

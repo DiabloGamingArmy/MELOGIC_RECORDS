@@ -7,9 +7,13 @@ namespace mct::origami {
 // Values and strings are persistent API identifiers. Never renumber or reuse them.
 enum class ParameterId : std::uint16_t {
     Waveform = 0, OscLevel = 1, OscPan = 2, Cutoff = 3, Resonance = 4,
-    Attack = 5, Decay = 6, Sustain = 7, Release = 8, MasterGain = 9
+    Attack = 5, Decay = 6, Sustain = 7, Release = 8, MasterGain = 9,
+    // mct-origami-tuning-engine-v17
+    OscOctave = 10, OscSemitone = 11, OscFine = 12,
+    // mct-origami-unison-detune-v19.2
+    OscUnison = 13, OscDetune = 14
 };
-constexpr std::size_t parameterCount = 10;
+constexpr std::size_t parameterCount = 15;
 enum class ParameterScale { Linear, Logarithmic, Choice };
 struct ParameterDescriptor {
     ParameterId id;

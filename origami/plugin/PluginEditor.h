@@ -14,6 +14,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
+    [[maybe_unused]] OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;
     mct::origami::ui::OscillatorRack oscillators_;

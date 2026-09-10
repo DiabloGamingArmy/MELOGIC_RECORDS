@@ -1,0 +1,85 @@
+#pragma once
+#include <JuceHeader.h>
+#include <array>
+#include <cmath>
+namespace mct::origami::ui {
+// mct-origami-visual-foundation-v1
+struct Palette {
+    static juce::Colour background()   { return juce::Colour(0xff080c0f); }
+    static juce::Colour panel()        { return juce::Colour(0xff0d1418); }
+    static juce::Colour raised()       { return juce::Colour(0xff121b20); }
+    static juce::Colour inset()        { return juce::Colour(0xff070c0f); }
+    static juce::Colour border()       { return juce::Colour(0xff26343b); }
+    static juce::Colour borderSoft()   { return juce::Colour(0xff1a272d); }
+    static juce::Colour borderStrong() { return juce::Colour(0xff34464f); }
+    static juce::Colour text()         { return juce::Colour(0xffe7edf0); }
+    static juce::Colour secondary()    { return juce::Colour(0xffb5c1c7); }
+    static juce::Colour muted()        { return juce::Colour(0xff72838c); }
+    static juce::Colour accent()       { return juce::Colour(0xff9cc9dd); }
+};
+inline void text(juce::Graphics& g, const juce::String& value, juce::Rectangle<int> bounds, float size = 11, juce::Colour colour = Palette::text(), juce::Justification alignment = juce::Justification::centredLeft) {
+    g.setColour(colour); g.setFont(juce::FontOptions(size)); g.drawText(value, bounds, alignment, true);
+}
+inline void well(juce::Graphics& g, juce::Rectangle<int> bounds) {
+    auto box=bounds.toFloat().reduced(.5f);
+    g.setColour(Palette::inset()); g.fillRoundedRectangle(box,4.5f);
+    g.setColour(Palette::borderSoft()); g.drawRoundedRectangle(box,4.5f,1.0f);
+}
+inline void dial(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& label, float position = .4f) {
+    auto labelBounds = bounds.removeFromBottom(17);
+    const float diameter = float(juce::jlimit(18,34,juce::jmin(bounds.getWidth()-8,bounds.getHeight()-3)));
+    auto circle = juce::Rectangle<float>(diameter,diameter).withCentre(bounds.toFloat().getCentre());
+    g.setColour(Palette::inset());g.fillEllipse(circle);
+    g.setColour(Palette::border().brighter(.2f));g.drawEllipse(circle,1.5f);
+    juce::Path arc;const float start=-2.35f,end=start+4.7f*position;
+    arc.addCentredArc(circle.getCentreX(),circle.getCentreY(),diameter*.43f,diameter*.43f,0,start,end,true);
+    g.setColour(Palette::accent().withAlpha(.7f));g.strokePath(arc,juce::PathStrokeType(1.4f));
+    const auto centre=circle.getCentre();
+    g.drawLine(centre.x+std::sin(end)*diameter*.22f,centre.y-std::cos(end)*diameter*.22f,centre.x+std::sin(end)*diameter*.34f,centre.y-std::cos(end)*diameter*.34f,1.5f);
+    text(g,label,labelBounds,9,Palette::muted(),juce::Justification::centred);
+}
+inline void dials(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::StringArray& labels) {
+    const int width = bounds.getWidth()/juce::jmax(1,labels.size());
+    for(int i=0;i<labels.size();++i) dial(g,bounds.removeFromLeft(width),labels[i],.25f+float(i%4)*.14f);
+}
+inline void graph(juce::Graphics& g, juce::Rectangle<int> bounds, bool envelope = false) {
+    well(g,bounds);auto inner=bounds.reduced(9);
+    g.setColour(Palette::border().withAlpha(.45f));
+    for(int i=1;i<5;++i) {auto x=float(inner.getX()+inner.getWidth()*i/5);g.drawVerticalLine(int(x),float(inner.getY()),float(inner.getBottom()));}
+    g.drawHorizontalLine(inner.getCentreY(),float(inner.getX()),float(inner.getRight()));
+    juce::Path path;
+    if(envelope) {
+        path.startNewSubPath(float(inner.getX()),float(inner.getBottom()-3));
+        path.lineTo(float(inner.getX())+inner.getWidth()*.12f,float(inner.getY()+3));
+        path.quadraticTo(float(inner.getX())+inner.getWidth()*.22f,float(inner.getCentreY()),float(inner.getX())+inner.getWidth()*.40f,float(inner.getCentreY()));
+        path.lineTo(float(inner.getX())+inner.getWidth()*.65f,float(inner.getCentreY()+4));
+        path.lineTo(float(inner.getRight()),float(inner.getBottom()-3));
+    } else {
+        for(int i=0;i<=80;++i) {float x=float(i)/80.f;float y=.5f-.28f*std::sin(x*juce::MathConstants<float>::twoPi*2.f);auto px=float(inner.getX())+x*inner.getWidth(),py=float(inner.getY())+y*inner.getHeight();if(i==0)path.startNewSubPath(px,py);else path.lineTo(px,py);}
+    }
+    g.setColour(Palette::accent().withAlpha(.7f));g.strokePath(path,juce::PathStrokeType(1.2f));
+}
+class OrigamiLookAndFeel final : public juce::LookAndFeel_V4 {
+public:
+    OrigamiLookAndFeel();
+    void drawButtonBackground(juce::Graphics&,juce::Button&,const juce::Colour&,bool,bool) override;
+    void drawButtonText(juce::Graphics&,juce::TextButton&,bool,bool) override;
+    void drawScrollbar(juce::Graphics&,juce::ScrollBar&,int,int,int,int,bool,int,int,bool,bool) override;
+};
+class Panel : public juce::Component, public juce::SettableTooltipClient {
+public:
+    explicit Panel(juce::String title): title_(std::move(title)) { setName(title_);setTooltip("Layout preview - controls are not connected to instrument parameters."); }
+    void paint(juce::Graphics& g) override {
+        auto shell=getLocalBounds().toFloat().reduced(.5f);
+        g.setColour(Palette::panel());g.fillRoundedRectangle(shell,6.0f);
+        g.setColour(Palette::borderSoft());g.drawRoundedRectangle(shell,6.0f,1.0f);
+        g.setColour(Palette::borderSoft().withAlpha(.82f));g.drawHorizontalLine(30,10.0f,float(getWidth()-10));
+        text(g,title_,{12,5,getWidth()-24,22},11,Palette::secondary());
+        paintContent(g,contentBounds());
+    }
+    juce::Rectangle<int> contentBounds() const { return getLocalBounds().reduced(10).withTrimmedTop(24); }
+protected:
+    virtual void paintContent(juce::Graphics&,juce::Rectangle<int>) {}
+    juce::String title_;
+};
+}

@@ -1,6 +1,7 @@
 #pragma once
 #include "ParameterRegistry.h"
 #include "Voice.h"
+#include "OscillatorModule.h"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -27,11 +28,21 @@ public:
     bool process(float* const* output, unsigned channels, std::size_t sampleCount) noexcept;
     VoiceInfo voiceInfo(std::size_t index) const noexcept;
     std::size_t activeVoiceCount() const noexcept;
+    // mct-origami-multi-osc-foundation-v20
+    OscillatorModuleId addOscillatorModule() noexcept;
+    bool removeOscillatorModule(OscillatorModuleId id) noexcept;
+    std::size_t oscillatorModuleCount() const noexcept { return oscillatorModules_.count(); }
+    const OscillatorModuleBank& oscillatorModules() const noexcept { return oscillatorModules_; }
+    bool setOscillatorModuleState(OscillatorModuleId id,const OscillatorModuleState& state) noexcept;
+    OscillatorModuleState oscillatorModuleState(OscillatorModuleId id) const noexcept;
+    bool setOscillatorModuleEnabled(OscillatorModuleId id,bool enabled) noexcept;
+    bool oscillatorModuleEnabled(OscillatorModuleId id) const noexcept;
 private:
     struct Smoothed { float value=0, target=0; double step=0; std::size_t remaining=0; };
     dsp::EnvelopeSettings envelopeSettings() const noexcept;
     void latchParameters() noexcept;
     float value(ParameterId id) const noexcept { return smooth_[static_cast<std::size_t>(id)].value; }
+    OscillatorModuleBank oscillatorModules_;
     std::array<std::atomic<float>, parameterCount> targets_;
     std::array<Smoothed, parameterCount> smooth_ {};
     std::array<Voice, voiceCount> voices_, stealTails_;

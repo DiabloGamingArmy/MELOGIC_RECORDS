@@ -24,6 +24,17 @@ public:
     void changeProgramName(int, const juce::String&) override {}
     void getStateInformation(juce::MemoryBlock&) override;
     void setStateInformation(const void*, int) override;
+
+    // mct-origami-functional-osc-controls-v15
+    bool setUiParameter(mct::origami::ParameterId,float) noexcept;
+    float getUiParameter(mct::origami::ParameterId) const noexcept;
+    // mct-origami-multi-osc-audio-v21
+    mct::origami::OscillatorModuleId addUiOscillator() noexcept;
+    bool removeUiOscillator(mct::origami::OscillatorModuleId) noexcept;
+    bool setUiOscillatorState(mct::origami::OscillatorModuleId,const mct::origami::OscillatorModuleState&) noexcept;
+    mct::origami::OscillatorModuleState getUiOscillatorState(mct::origami::OscillatorModuleId) const noexcept;
+    bool setUiOscillatorEnabled(mct::origami::OscillatorModuleId,bool) noexcept;
+    bool getUiOscillatorEnabled(mct::origami::OscillatorModuleId) const noexcept;
 private:
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
     void dispatchMidi(const juce::MidiMessage&) noexcept;

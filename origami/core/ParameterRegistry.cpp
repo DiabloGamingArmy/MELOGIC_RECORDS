@@ -13,7 +13,12 @@ const std::array<ParameterDescriptor, parameterCount>& parameterRegistry() noexc
         {ParameterId::Decay,"env.1.decay","ENV 1 Decay","s",.15f,.001f,10,ParameterScale::Logarithmic,0},
         {ParameterId::Sustain,"env.1.sustain","ENV 1 Sustain","linear",.7f,0,1,ParameterScale::Linear,.01f},
         {ParameterId::Release,"env.1.release","ENV 1 Release","s",.25f,.001f,20,ParameterScale::Logarithmic,0},
-        {ParameterId::MasterGain,"master.gain","Master Gain","linear",.2f,0,1,ParameterScale::Linear,.01f}
+        {ParameterId::MasterGain,"master.gain","Master Gain","linear",.2f,0,1,ParameterScale::Linear,.01f},
+        {ParameterId::OscOctave,"osc.1.octave","OSC 1 Octave","oct",0,-4,4,ParameterScale::Choice,0},
+        {ParameterId::OscSemitone,"osc.1.semitone","OSC 1 Semitone","st",0,-12,12,ParameterScale::Choice,0},
+        {ParameterId::OscFine,"osc.1.fine","OSC 1 Fine","cent",0,-100,100,ParameterScale::Linear,0},
+        {ParameterId::OscUnison,"osc.1.unison","OSC 1 Unison","voices",1,1,16,ParameterScale::Choice,0},
+        {ParameterId::OscDetune,"osc.1.detune","OSC 1 Detune","cent",12,0,100,ParameterScale::Linear,.01f}
     }};
     return registry;
 }

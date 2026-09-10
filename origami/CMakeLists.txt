@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(MCTOrigami VERSION 0.1.0 LANGUAGES C CXX)
 option(ORIGAMI_BUILD_TESTS "Build standalone tests and note renderer" ON)
 option(ORIGAMI_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
-add_library(origami_core STATIC core/Engine.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/Envelope.cpp)
+add_library(origami_core STATIC core/Engine.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(origami_core PUBLIC cxx_std_17)
@@ -37,6 +37,10 @@ if(ORIGAMI_BUILD_TESTS)
   add_test(NAME origami_foundation COMMAND origami_tests)
   add_executable(origami_render tools/render_note.cpp)
   target_link_libraries(origami_render PRIVATE origami_patch)
+  # mct-origami-wavetable-core-foundation-v22.0
+  add_executable(origami_wavetable_bank_tests tests/WavetableBankTests.cpp)
+  target_link_libraries(origami_wavetable_bank_tests PRIVATE origami_core)
+  add_test(NAME origami_wavetable_bank_foundation COMMAND origami_wavetable_bank_tests)
 endif()
 # mct-origami-vst3-host-proof-v1
 option(ORIGAMI_BUILD_VST3 "Build the MCT Origami JUCE VST3 host proof" OFF)
@@ -57,12 +61,27 @@ if(ORIGAMI_BUILD_VST3)
     message(FATAL_ERROR "ORIGAMI_BUILD_VST3=ON requires JUCE. Pass -DJUCE_DIR=/absolute/path/to/JUCE or set JUCE_DIR.")
   endif()
   add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)
+  # mct-origami-branding-v3
+  # mct-origami-header-wordmark-v6
+  juce_add_binary_data(OrigamiAssets
+    SOURCES
+      assets/branding/mct_origami_logo.png
+      assets/branding/mct_origami_wordmark.png
+  )
+  # mct-origami-native-app-icon-v21.3
+  # mct-origami-favicon-fill-v21.3.1
+  set(ORIGAMI_APP_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/branding/mct_favicon_native.png")
+  if(NOT EXISTS "${ORIGAMI_APP_ICON}")
+    message(FATAL_ERROR "MCT Origami app icon missing: ${ORIGAMI_APP_ICON}")
+  endif()
   juce_add_plugin(OrigamiPlugin
     COMPANY_NAME "Melogic Creative Technologies"
     BUNDLE_ID "studio.melogic.origami"
     PLUGIN_MANUFACTURER_CODE Mctg
     PLUGIN_CODE Orig
     PRODUCT_NAME "MCT Origami"
+    ICON_BIG "${ORIGAMI_APP_ICON}"
+    ICON_SMALL "${ORIGAMI_APP_ICON}"
     PLUGIN_NAME "MCT Origami"
     DESCRIPTION "MCT Origami Universal Sound Design Instrument"
     # mct-origami-multihost-v0.2.1
@@ -76,6 +95,11 @@ if(ORIGAMI_BUILD_VST3)
   )
   juce_generate_juce_header(OrigamiPlugin)
   target_sources(OrigamiPlugin PRIVATE plugin/PluginProcessor.cpp plugin/PluginProcessor.h plugin/PluginEditor.cpp plugin/PluginEditor.h)
+  # mct-origami-native-window-chrome-v1
+  # Standalone uses a custom JUCEApplication only to request native OS window chrome.
+  # AU/VST3 continue to use host-provided windows.
+  target_compile_definitions(OrigamiPlugin_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
+  target_sources(OrigamiPlugin_Standalone PRIVATE plugin/StandaloneApp.cpp)
   target_sources(OrigamiPlugin PRIVATE
     plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
@@ -83,5 +107,5 @@ if(ORIGAMI_BUILD_VST3)
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(OrigamiPlugin PRIVATE cxx_std_17)
   target_compile_definitions(OrigamiPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
-  target_link_libraries(OrigamiPlugin PRIVATE origami_core juce::juce_audio_utils juce::juce_gui_extra juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
+  target_link_libraries(OrigamiPlugin PRIVATE origami_core OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra juce::juce_recommended_config_flags juce::juce_recommended_lto_flags juce::juce_recommended_warning_flags)
 endif()

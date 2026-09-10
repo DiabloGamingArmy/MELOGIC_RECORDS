@@ -52,13 +52,46 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     juce::MemoryInputStream stream(data, static_cast<std::size_t>(size), false);
     if (static_cast<std::uint32_t>(stream.readIntBigEndian()) != stateMagic) return;
     if (static_cast<std::uint32_t>(stream.readIntBigEndian()) != stateVersion) return;
-    if (stream.readIntBigEndian() != static_cast<int>(mct::origami::parameterCount)) return;
+    const int storedCount = stream.readIntBigEndian();
+    constexpr int legacyFoundationCount = 10;
+    constexpr int legacyTuningCount = 13;
+    if (storedCount != legacyFoundationCount &&
+        storedCount != legacyTuningCount &&
+        storedCount != static_cast<int>(mct::origami::parameterCount)) return;
+
     auto values = mct::origami::defaultParameters();
-    for (std::size_t i = 0; i < values.size(); ++i) {
-        if (stream.getNumBytesRemaining() < sizeof(float)) return;
-        values[i] = stream.readFloatBigEndian();
+    for (int i = 0; i < storedCount; ++i) {
+        if (stream.getNumBytesRemaining() < static_cast<juce::int64>(sizeof(float))) return;
+        values[static_cast<std::size_t>(i)] = stream.readFloatBigEndian();
     }
     engine_.applyPatchState(values);
 }
+// mct-origami-functional-osc-controls-v15
+bool OrigamiAudioProcessor::setUiParameter(mct::origami::ParameterId id,float value) noexcept {
+    return engine_.setParameter(id,value);
+}
+float OrigamiAudioProcessor::getUiParameter(mct::origami::ParameterId id) const noexcept {
+    const auto state=engine_.parameterState();
+    return state[static_cast<std::size_t>(id)];
+}
+mct::origami::OscillatorModuleId OrigamiAudioProcessor::addUiOscillator() noexcept {
+    return engine_.addOscillatorModule();
+}
+bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId id) noexcept {
+    return engine_.removeOscillatorModule(id);
+}
+bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleId id,const mct::origami::OscillatorModuleState& state) noexcept {
+    return engine_.setOscillatorModuleState(id,state);
+}
+mct::origami::OscillatorModuleState OrigamiAudioProcessor::getUiOscillatorState(mct::origami::OscillatorModuleId id) const noexcept {
+    return engine_.oscillatorModuleState(id);
+}
+bool OrigamiAudioProcessor::setUiOscillatorEnabled(mct::origami::OscillatorModuleId id,bool enabled) noexcept {
+    return engine_.setOscillatorModuleEnabled(id,enabled);
+}
+bool OrigamiAudioProcessor::getUiOscillatorEnabled(mct::origami::OscillatorModuleId id) const noexcept {
+    return engine_.oscillatorModuleEnabled(id);
+}
+
 juce::AudioProcessorEditor* OrigamiAudioProcessor::createEditor() { return new OrigamiAudioProcessorEditor(*this); }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new OrigamiAudioProcessor(); }
