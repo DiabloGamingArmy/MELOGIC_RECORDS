@@ -1,4 +1,3 @@
-// mct-origami-performance-ui-refinement-v23.4.5
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-performance-strip-relayout-v23.3.2
@@ -11,8 +10,7 @@
 namespace mct::origami::ui {
 namespace {
 constexpr int leftReserve=96;
-constexpr int bendPanelWidth=54;
-constexpr int performancePanelWidth=176;
+constexpr int bendPanelWidth=58;
 constexpr int futureReserve=282;
 constexpr int rightReserve=bendPanelWidth+futureReserve;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
@@ -50,19 +48,16 @@ void PerformanceKeyboard::resized() {
     const int right=juce::jmin(rightReserve,juce::jmax(bendPanelWidth,a.getWidth()/3));
     auto rightBay=a.removeFromRight(right);
     auto bend=rightBay.removeFromLeft(bendPanelWidth).reduced(2,2);
-    bend.removeFromTop(14);bendRange_.setBounds(bend.reduced(3,1));
-
-    // Compact Origami performance cluster.
-    auto perf=rightBay.removeFromLeft(performancePanelWidth).reduced(3,2);
+    bend.removeFromTop(15);bendRange_.setBounds(bend.reduced(2,1));
+    auto perf=rightBay.removeFromLeft(182).reduced(3,2);
     auto top=perf.removeFromTop(22);
-    const int third=top.getWidth()/3;
-    voiceMode_.setBounds(top.removeFromLeft(third).reduced(1));
-    priority_.setBounds(top.removeFromLeft(third).reduced(1));
+    voiceMode_.setBounds(top.removeFromLeft(58).reduced(1));
+    priority_.setBounds(top.removeFromLeft(58).reduced(1));
     legato_.setBounds(top.reduced(1));
-
-    perf.removeFromTop(1);
-    auto glideCell=perf.removeFromLeft(58);
-    glide_.setBounds(glideCell.reduced(6,0));
+    perf.removeFromTop(2);
+    auto glideArea=perf.removeFromLeft(72);
+    glideArea.removeFromTop(8);
+    glide_.setBounds(glideArea.reduced(5,0));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
@@ -125,14 +120,11 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
     auto rightBay=area.removeFromRight(right);
     auto bendParent=rightBay.removeFromLeft(bendPanelWidth);
     well(g,bendParent.reduced(1,0));
-    text(g,"BEND",bendParent.removeFromTop(14),7.2f,Palette::muted(),juce::Justification::centred);
+    text(g,"BEND RANGE",bendParent.removeFromTop(15),7.5f,Palette::muted(),juce::Justification::centred);
 
-    auto performanceParent=rightBay.removeFromLeft(performancePanelWidth);
+    auto performanceParent=rightBay.removeFromLeft(182);
     well(g,performanceParent.reduced(1,0));
-    auto perfCaptionArea=performanceParent;
-    perfCaptionArea.removeFromTop(22);
-    auto glideCaption=perfCaptionArea.removeFromLeft(58).removeFromBottom(10);
-    text(g,"GLIDE",glideCaption,7.0f,Palette::muted(),juce::Justification::centred);
+    text(g,"VOICE / GLIDE",performanceParent.removeFromBottom(12),7.0f,Palette::muted(),juce::Justification::centred);
     auto future=rightBay;
     auto brand=future.removeFromBottom(30);
     text(g,"MCT ORIGAMI",brand.removeFromTop(17),8.5f,Palette::text(),juce::Justification::centred);

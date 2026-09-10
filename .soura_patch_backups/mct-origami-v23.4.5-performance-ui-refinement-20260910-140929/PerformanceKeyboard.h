@@ -1,4 +1,3 @@
-// mct-origami-performance-ui-refinement-v23.4.5
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-v23.4.3-performance-state-include-repair
 // mct-origami-glide-mono-legato-v23.4.3
@@ -50,16 +49,8 @@ public:
         voiceMode_.addItem("POLY",1);voiceMode_.addItem("MONO",2);voiceMode_.setScrollWheelEnabled(false);voiceMode_.setTooltip("Voice mode");
         priority_.addItem("LAST",1);priority_.addItem("HIGH",2);priority_.addItem("LOW",3);priority_.setScrollWheelEnabled(false);priority_.setTooltip("Mono note priority");
         legato_.setButtonText("LEGATO");legato_.setClickingTogglesState(true);legato_.setTooltip("Legato envelope behavior");
-        // V23.4.5: native Origami rotary glide control.
-        glide_.setName("Glide");
-        glide_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,48,14);
-        glide_.setRange(0.0,5.0,0.001);
-        glide_.setRotaryParameters(juce::MathConstants<float>::pi*1.25f,
-                                   juce::MathConstants<float>::pi*2.75f,true);
-        glide_.setScrollWheelEnabled(false);
-        glide_.setDoubleClickReturnValue(true,0.0);
-        glide_.setTooltip("Glide time — drag vertically; double-click for off");
+        glide_.setSliderStyle(juce::Slider::LinearBarVertical);glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,54,18);
+        glide_.setRange(0.0,5.0,0.001);glide_.setSliderSnapsToMousePosition(false);glide_.setScrollWheelEnabled(false);
         glide_.textFromValueFunction=[](double v){return v<0.001?"OFF":juce::String(v,3);};
         const auto initialPerformance=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
         voiceMode_.setSelectedId(initialPerformance.voiceMode==mct::origami::VoiceMode::Mono?2:1,juce::dontSendNotification);
