@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.0.0-osc-process-foundation
 #pragma once
@@ -13,6 +14,29 @@
 namespace mct::origami {
 
 using OscillatorModuleId = std::uint32_t;
+
+enum class OscRouteType : std::uint32_t {
+    Off=0,
+    PhaseMod=1,
+    FrequencyMod=2,
+    RingMod=3,
+    AmpMod=4
+};
+
+constexpr bool validOscRouteType(OscRouteType type) noexcept {
+    return static_cast<std::uint32_t>(type)<=static_cast<std::uint32_t>(OscRouteType::AmpMod);
+}
+
+inline const char* oscRouteName(OscRouteType type) noexcept {
+    switch(type) {
+        case OscRouteType::Off: return "Off";
+        case OscRouteType::PhaseMod: return "Phase Distort";
+        case OscRouteType::FrequencyMod: return "Frequency Distort";
+        case OscRouteType::RingMod: return "Ring Mod";
+        case OscRouteType::AmpMod: return "Amp Mod";
+    }
+    return "Off";
+}
 
 struct OscillatorModuleState {
     OscillatorModuleId id = 0;
@@ -31,6 +55,15 @@ struct OscillatorModuleState {
     float process1Amount = 0.0f;
     dsp::OscProcessType process2 = dsp::OscProcessType::Off;
     float process2Amount = 0.0f;
+
+    // Two serial cross-oscillator routing slots.
+    // sourceId==0 means no source / route disabled.
+    OscillatorModuleId route1SourceId = 0;
+    OscRouteType route1Type = OscRouteType::Off;
+    float route1Amount = 0.0f;
+    OscillatorModuleId route2SourceId = 0;
+    OscRouteType route2Type = OscRouteType::Off;
+    float route2Amount = 0.0f;
 };
 
 class OscillatorModuleBank {
@@ -155,6 +188,12 @@ private:
         std::atomic<float> process1Amount{0.0f};
         std::atomic<dsp::OscProcessType> process2{dsp::OscProcessType::Off};
         std::atomic<float> process2Amount{0.0f};
+        std::atomic<OscillatorModuleId> route1SourceId{0};
+        std::atomic<OscRouteType> route1Type{OscRouteType::Off};
+        std::atomic<float> route1Amount{0.0f};
+        std::atomic<OscillatorModuleId> route2SourceId{0};
+        std::atomic<OscRouteType> route2Type{OscRouteType::Off};
+        std::atomic<float> route2Amount{0.0f};
     };
 
     static void sanitize(OscillatorModuleState& s) noexcept {
@@ -183,6 +222,15 @@ private:
         if(!std::isfinite(s.process2Amount)) s.process2Amount=0.0f;
         s.process1Amount=std::clamp(s.process1Amount,dsp::oscProcessAmountMinimum(s.process1),1.0f);
         s.process2Amount=std::clamp(s.process2Amount,dsp::oscProcessAmountMinimum(s.process2),1.0f);
+
+        if(!validOscRouteType(s.route1Type)) s.route1Type=OscRouteType::Off;
+        if(!validOscRouteType(s.route2Type)) s.route2Type=OscRouteType::Off;
+        if(!std::isfinite(s.route1Amount)) s.route1Amount=0.0f;
+        if(!std::isfinite(s.route2Amount)) s.route2Amount=0.0f;
+        s.route1Amount=std::clamp(s.route1Amount,-1.0f,1.0f);
+        s.route2Amount=std::clamp(s.route2Amount,-1.0f,1.0f);
+        if(s.route1Type==OscRouteType::Off) s.route1SourceId=0;
+        if(s.route2Type==OscRouteType::Off) s.route2SourceId=0;
     }
 
     OscillatorModuleState readSlot(std::size_t i) const noexcept {
@@ -204,6 +252,12 @@ private:
         s.process1Amount=a.process1Amount.load(std::memory_order_relaxed);
         s.process2=a.process2.load(std::memory_order_relaxed);
         s.process2Amount=a.process2Amount.load(std::memory_order_relaxed);
+        s.route1SourceId=a.route1SourceId.load(std::memory_order_relaxed);
+        s.route1Type=a.route1Type.load(std::memory_order_relaxed);
+        s.route1Amount=a.route1Amount.load(std::memory_order_relaxed);
+        s.route2SourceId=a.route2SourceId.load(std::memory_order_relaxed);
+        s.route2Type=a.route2Type.load(std::memory_order_relaxed);
+        s.route2Amount=a.route2Amount.load(std::memory_order_relaxed);
         s.enabled=a.enabled.load(std::memory_order_acquire);
         return s;
     }
@@ -224,6 +278,12 @@ private:
         a.process1Amount.store(s.process1Amount,std::memory_order_relaxed);
         a.process2.store(s.process2,std::memory_order_relaxed);
         a.process2Amount.store(s.process2Amount,std::memory_order_relaxed);
+        a.route1SourceId.store(s.route1SourceId,std::memory_order_relaxed);
+        a.route1Type.store(s.route1Type,std::memory_order_relaxed);
+        a.route1Amount.store(s.route1Amount,std::memory_order_relaxed);
+        a.route2SourceId.store(s.route2SourceId,std::memory_order_relaxed);
+        a.route2Type.store(s.route2Type,std::memory_order_relaxed);
+        a.route2Amount.store(s.route2Amount,std::memory_order_relaxed);
     }
 
     std::array<AtomicSlot,capacity> slots_{};

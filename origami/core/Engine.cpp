@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-performance-audio-ui-repair-v23.4.4
@@ -294,7 +295,34 @@ OscillatorModuleId OrigamiEngine::addOscillatorModule() noexcept {
 }
 bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
     if(!oscillatorModules_.remove(id)) return false;
-    // Deletion removes addressed routes. Reused display ordinals never retarget them.
+
+    // Clear cross-oscillator routing slots whose source just disappeared.
+    // Stable module IDs are authoritative, so a later oscillator cannot inherit
+    // a stale source relationship.
+    for(const auto& existing:oscillatorModules_.snapshot()) {
+        if(existing.id==0) continue;
+        auto updatedModule=existing;
+        bool changed=false;
+
+        if(updatedModule.route1SourceId==id) {
+            updatedModule.route1SourceId=0;
+            updatedModule.route1Type=OscRouteType::Off;
+            updatedModule.route1Amount=0.0f;
+            changed=true;
+        }
+
+        if(updatedModule.route2SourceId==id) {
+            updatedModule.route2SourceId=0;
+            updatedModule.route2Type=OscRouteType::Off;
+            updatedModule.route2Amount=0.0f;
+            changed=true;
+        }
+
+        if(changed)
+            oscillatorModules_.set(existing.id,updatedModule);
+    }
+
+    // Deletion removes addressed modulation routes. Reused display ordinals never retarget them.
     auto updated=modulation_;std::size_t out=0;
     for(const auto& route:modulation_.routes)
         if(route.id && route.destination.oscillator!=id) updated.routes[out++]=route;

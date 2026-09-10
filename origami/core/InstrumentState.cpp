@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-glide-mono-legato-v23.4.3
@@ -37,7 +38,19 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
            !dsp::validOscProcessType(m.process1) ||
            !range(m.process1Amount,dsp::oscProcessAmountMinimum(m.process1),1) ||
            !dsp::validOscProcessType(m.process2) ||
-           !range(m.process2Amount,dsp::oscProcessAmountMinimum(m.process2),1)) return false;
+           !range(m.process2Amount,dsp::oscProcessAmountMinimum(m.process2),1) ||
+           !validOscRouteType(m.route1Type) || !range(m.route1Amount,-1,1) ||
+           !validOscRouteType(m.route2Type) || !range(m.route2Amount,-1,1)) return false;
+
+        const auto validRoute=[&](OscillatorModuleId source,OscRouteType type) {
+            if(type==OscRouteType::Off) return source==0;
+            if(source==0 || source==m.id) return false;
+            for(const auto& candidate:s.oscillators)
+                if(candidate.id==source) return true;
+            return false;
+        };
+        if(!validRoute(m.route1SourceId,m.route1Type) ||
+           !validRoute(m.route2SourceId,m.route2Type)) return false;
     }
     auto first=s.oscillators[0];applyLegacyOscillatorParameters(first,s.parameters);
     const auto& m=s.oscillators[0];

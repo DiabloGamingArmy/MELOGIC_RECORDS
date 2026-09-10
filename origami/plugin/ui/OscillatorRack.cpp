@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-v26.3.2-osc-process-quick-nav
@@ -20,6 +21,83 @@
 #include "NativeOscProcessMenu.h"
 // mct-origami-v19.3-visual-cleanup
 namespace mct::origami::ui {
+
+OscRouteSelector::OscRouteSelector() {
+    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    setTooltip("Choose source oscillator and cross-oscillator routing type");
+    onClick=[this]{openRouteMenu();};
+    refreshText();
+}
+
+void OscRouteSelector::setContext(OscillatorModuleId target,
+                                  std::function<InstrumentState()> snapshotGetter) {
+    targetId_=target;
+    snapshotGetter_=std::move(snapshotGetter);
+    refreshText();
+}
+
+void OscRouteSelector::setSelection(OscillatorModuleId source,OscRouteType type,
+                                    juce::NotificationType notification) {
+    const bool changed=source!=sourceId_ || type!=type_;
+    sourceId_=type==OscRouteType::Off ? 0 : source;
+    type_=type;
+    refreshText();
+    if(changed && notification!=juce::dontSendNotification && onChange) onChange();
+}
+
+void OscRouteSelector::refreshText() {
+    if(type_==OscRouteType::Off || sourceId_==0) {
+        setButtonText("Off");
+        return;
+    }
+    setButtonText("OSC "+juce::String(sourceId_)+" · "+oscRouteName(type_));
+}
+
+void OscRouteSelector::openRouteMenu() {
+    juce::PopupMenu root;
+    root.addItem(1,"Off",true,type_==OscRouteType::Off);
+    root.addSeparator();
+
+    if(snapshotGetter_) {
+        const auto state=snapshotGetter_();
+        int resultId=100;
+        for(const auto& source:state.oscillators) {
+            if(source.id==0 || source.id==targetId_) continue;
+            juce::PopupMenu sourceMenu;
+            for(auto type:{OscRouteType::PhaseMod,OscRouteType::FrequencyMod,
+                           OscRouteType::RingMod,OscRouteType::AmpMod}) {
+                sourceMenu.addItem(resultId++,oscRouteName(type),
+                                   true,source.id==sourceId_ && type==type_);
+            }
+            root.addSubMenu("OSC "+juce::String(source.id),sourceMenu);
+        }
+    }
+
+    auto safe=juce::Component::SafePointer<OscRouteSelector>(this);
+    root.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
+        [safe](int selected) {
+            if(safe==nullptr || selected<=0) return;
+            if(selected==1) {
+                safe->setSelection(0,OscRouteType::Off,juce::sendNotification);
+                return;
+            }
+            if(!safe->snapshotGetter_) return;
+
+            const auto state=safe->snapshotGetter_();
+            int resultId=100;
+            for(const auto& source:state.oscillators) {
+                if(source.id==0 || source.id==safe->targetId_) continue;
+                for(auto type:{OscRouteType::PhaseMod,OscRouteType::FrequencyMod,
+                               OscRouteType::RingMod,OscRouteType::AmpMod}) {
+                    if(resultId++==selected) {
+                        safe->setSelection(source.id,type,juce::sendNotification);
+                        return;
+                    }
+                }
+            }
+        });
+}
+
 NativeOscProcessSelector::NativeOscProcessSelector() {
     setButtonText(dsp::oscProcessName(type_));
     setTooltip("Choose oscillator process");
@@ -52,11 +130,13 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
                                std::function<bool(unsigned,bool)> enabledSetter,
                                std::function<bool(unsigned)> enabledGetter,
                                std::function<bool(unsigned,const mct::origami::OscillatorModuleState&)> moduleSetter,
-                               std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter)
+                               std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter,
+                               std::function<mct::origami::InstrumentState()> snapshotGetter)
     : Panel("OSC "+juce::String(display.ordinal)),display_(std::move(display)),
       enabledSetter_(std::move(enabledSetter)),enabledGetter_(std::move(enabledGetter)),
       parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)),
-      moduleSetter_(std::move(moduleSetter)),moduleGetter_(std::move(moduleGetter)) {
+      moduleSetter_(std::move(moduleSetter)),moduleGetter_(std::move(moduleGetter)),
+      snapshotGetter_(std::move(snapshotGetter)) {
     addAndMakeVisible(remove_);
     remove_.setTooltip("Remove this oscillator module");
     remove_.onClick=[id=display_.id,removeCallback=std::move(remove)] { removeCallback(id); };
@@ -252,6 +332,52 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     process1Amount_.onValueChange=commitProcess;
     process2Amount_.onValueChange=commitProcess;
 
+    // Cross-oscillator routing duplicates the OSC PROCESS interaction density:
+    // one dropdown + one magnitude knob per slot.
+    route1Menu_.setContext(display_.id,snapshotGetter_);
+    route2Menu_.setContext(display_.id,snapshotGetter_);
+    for(auto* menu:{&route1Menu_,&route2Menu_}) addAndMakeVisible(*menu);
+
+    for(auto* amount:{&route1Amount_,&route2Amount_}) {
+        addAndMakeVisible(*amount);
+        amount->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        amount->setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        amount->setRotaryParameters(juce::MathConstants<float>::pi*1.20f,
+                                    juce::MathConstants<float>::pi*2.80f,true);
+        amount->setRange(-1.0,1.0,0.001);
+        amount->setName("OSC PROCESS BIPOLAR");
+        amount->setMouseDragSensitivity(180);
+        amount->setTooltip("Cross-oscillator routing amount");
+    }
+    for(auto* label:{&route1AmountLabel_,&route2AmountLabel_}) {
+        addAndMakeVisible(*label);
+        label->setJustificationType(juce::Justification::centred);
+        label->setColour(juce::Label::textColourId,Palette::muted());
+        label->setFont(juce::FontOptions(7.2f));
+        label->setInterceptsMouseClicks(false,false);
+    }
+
+    auto commitRouting=[this] {
+        if(syncingProcess_ || !moduleGetter_ || !moduleSetter_) return;
+        auto state=moduleGetter_(display_.id);
+        if(!state.id) return;
+
+        state.route1SourceId=route1Menu_.sourceId();
+        state.route1Type=route1Menu_.routeType();
+        state.route1Amount=static_cast<float>(route1Amount_.getValue());
+        state.route2SourceId=route2Menu_.sourceId();
+        state.route2Type=route2Menu_.routeType();
+        state.route2Amount=static_cast<float>(route2Amount_.getValue());
+
+        moduleSetter_(display_.id,state);
+        syncFromModel();
+    };
+
+    route1Menu_.onChange=commitRouting;
+    route2Menu_.onChange=commitRouting;
+    route1Amount_.onValueChange=commitRouting;
+    route2Amount_.onValueChange=commitRouting;
+
     refreshVisibleNumber();
 
     addAndMakeVisible(power_);
@@ -324,6 +450,22 @@ void OscillatorCard::syncFromModel() {
             syncAmount(process2Amount_,process2AmountLabel_,state.process2,state.process2Amount);
             process1Amount_.setEnabled(state.process1!=dsp::OscProcessType::Off);
             process2Amount_.setEnabled(state.process2!=dsp::OscProcessType::Off);
+
+            route1Menu_.setSelection(state.route1SourceId,state.route1Type,juce::dontSendNotification);
+            route2Menu_.setSelection(state.route2SourceId,state.route2Type,juce::dontSendNotification);
+            if(!route1Amount_.isMouseButtonDown())
+                route1Amount_.setValue(state.route1Amount,juce::dontSendNotification);
+            if(!route2Amount_.isMouseButtonDown())
+                route2Amount_.setValue(state.route2Amount,juce::dontSendNotification);
+
+            auto routeLabel=[](juce::Label& label,float value) {
+                const int percent=juce::roundToInt(value*100.0f);
+                label.setText((percent>0?"+":"")+juce::String(percent)+"%",juce::dontSendNotification);
+            };
+            routeLabel(route1AmountLabel_,state.route1Amount);
+            routeLabel(route2AmountLabel_,state.route2Amount);
+            route1Amount_.setEnabled(state.route1Type!=OscRouteType::Off);
+            route2Amount_.setEnabled(state.route2Type!=OscRouteType::Off);
         }
     }
     // Compatibility-only nearest frame index; never used as wavetable identity.
@@ -360,8 +502,12 @@ void OscillatorCard::resized() {
     body.removeFromBottom(4);
 
     auto upper=body;
-    const int processWidth=juce::jlimit(104,132,upper.getWidth()*34/100);
-    auto process=upper.removeFromRight(processWidth);
+    constexpr int columnGap=7;
+    const int columnWidth=juce::jlimit(104,122,upper.getWidth()*25/100);
+    auto routing=upper.removeFromRight(columnWidth);
+    upper.removeFromRight(columnGap);
+    auto process=upper.removeFromRight(columnWidth);
+
     auto processControls=process.reduced(7,25);
     const int processSlotHeight=processControls.getHeight()/2;
 
@@ -391,7 +537,26 @@ void OscillatorCard::resized() {
     auto slot2=processControls;
     placeProcessSlot(slot2,process2Previous_,process2Menu_,process2Next_,
                      process2Amount_,process2AmountLabel_);
-    upper.removeFromRight(7);
+
+    auto routingControls=routing.reduced(7,25);
+    const int routingSlotHeight=routingControls.getHeight()/2;
+
+    auto placeRoutingSlot=[](juce::Rectangle<int> slot,
+                             OscRouteSelector& selector,
+                             RackSlider& amount,
+                             juce::Label& amountLabel) {
+        selector.setBounds(slot.removeFromTop(24));
+        auto knob=slot.reduced(8,3);
+        amount.setBounds(knob.removeFromTop(44));
+        amountLabel.setBounds(slot.removeFromBottom(13));
+    };
+
+    auto routeSlot1=routingControls.removeFromTop(routingSlotHeight);
+    placeRoutingSlot(routeSlot1,route1Menu_,route1Amount_,route1AmountLabel_);
+    auto routeSlot2=routingControls;
+    placeRoutingSlot(routeSlot2,route2Menu_,route2Amount_,route2AmountLabel_);
+
+    upper.removeFromRight(columnGap);
 
     auto tuning=upper.removeFromBottom(30);
     upper.removeFromBottom(4);
@@ -417,6 +582,9 @@ void OscillatorCard::resized() {
     auto panCell=controls.withX(controls.getX()+cellWidth*4).withWidth(cellWidth);
     auto levelCell=controls.withX(controls.getX()+cellWidth*5).withWidth(cellWidth);
     auto place=[&](juce::Rectangle<int> cell,juce::Slider& slider,juce::Label& label) {
+        // Lower performance row sits a few pixels lower for stronger visual
+        // separation from the pitch/browser section above.
+        cell.translate(0,3);
         auto labelBounds=cell.removeFromBottom(18);
         slider.setBounds(cell.reduced(5,1));
         label.setBounds(labelBounds);
@@ -443,10 +611,13 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
     auto upper=working;
 
-    // Right: oscillator-local processing.
-    const int processWidth=juce::jlimit(104,132,upper.getWidth()*34/100);
-    auto process=upper.removeFromRight(processWidth);
-    upper.removeFromRight(7);
+    // Right: oscillator-local processing + cross-oscillator routing.
+    constexpr int columnGap=7;
+    const int columnWidth=juce::jlimit(104,122,upper.getWidth()*25/100);
+    auto routing=upper.removeFromRight(columnWidth);
+    upper.removeFromRight(columnGap);
+    auto process=upper.removeFromRight(columnWidth);
+    upper.removeFromRight(columnGap);
     const int tuningHeight=30;
     auto tuning=upper.removeFromBottom(tuningHeight);
     upper.removeFromBottom(4);
@@ -493,6 +664,18 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     slotGuide.removeFromTop(24);
     g.setColour(Palette::borderSoft().withAlpha(0.45f));
     g.drawHorizontalLine(slotGuide.getCentreY(),float(slotGuide.getX()),float(slotGuide.getRight()));
+
+    // OSC ROUTING mirrors the exact visual hierarchy of OSC PROCESS.
+    auto routingBox=routing.reduced(1,0);
+    well(g,routingBox);
+    auto routingInner=routingBox.reduced(8);
+    auto routingTitle=routingInner.removeFromTop(18);
+    text(g,"OSC ROUTING",routingTitle,8.5f,Palette::secondary(),juce::Justification::centredLeft);
+
+    auto routingGuide=routingInner;
+    routingGuide.removeFromTop(24);
+    g.setColour(Palette::borderSoft().withAlpha(0.45f));
+    g.drawHorizontalLine(routingGuide.getCentreY(),float(routingGuide.getX()),float(routingGuide.getRight()));
 
     // Conventional oscillator pitch identity: OCT / SEM / FIN.
     const juce::StringArray tuneLabels{"OCT","SEM","FIN"};
@@ -715,6 +898,9 @@ void OscillatorRack::createCard(unsigned moduleId) {
         },
         [this](unsigned id) -> mct::origami::OscillatorModuleState {
             return moduleStateGetter_ ? moduleStateGetter_(id) : mct::origami::OscillatorModuleState{};
+        },
+        [this]() -> mct::origami::InstrumentState {
+            return snapshotGetter_ ? snapshotGetter_() : mct::origami::InstrumentState{};
         });
 
     content_.addAndMakeVisible(*card);
@@ -743,7 +929,7 @@ void OscillatorRack::renumberOscillators() {
 }
 void OscillatorRack::layoutCards() {
     const auto previousX=viewport_.getViewPositionX();
-    cardWidth_=336;
+    cardWidth_=420;
     const int height=juce::jmax(0,viewport_.getHeight()-12);
     int x=0;for(auto& card:cards_) {card->setBounds(x,0,cardWidth_,height);x+=cardWidth_+8;}
     addTile_.setBounds(x,0,74,height);content_.setSize(juce::jmax(viewport_.getWidth(),x+74),height);

@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
@@ -7,7 +8,7 @@
 #include <cmath>
 namespace mct::origami {
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
-void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
+void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     reset();address_=address;velocity_=velocity;order_=order;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -67,21 +68,71 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         const float spreadCents=std::clamp(module.detuneCents,0.0f,100.0f);
         const float position=module.wtPosition;
 
+        auto sourceSampleFor=[&](OscillatorModuleId sourceId) noexcept {
+            if(sourceId==0) return 0.0f;
+            for(std::size_t sourceIndex=0;sourceIndex<moduleIds_.size();++sourceIndex)
+                if(moduleIds_[sourceIndex]==sourceId)
+                    return previousOscillatorSamples_[sourceIndex];
+            return 0.0f;
+        };
+
+        double routedFrequencyScale=1.0;
+        double routedPhaseOffset=0.0;
+        float postGain=1.0f;
+
+        auto applyRoute=[&](OscillatorModuleId sourceId,OscRouteType type,float rawAmount) noexcept {
+            if(type==OscRouteType::Off || sourceId==0) return;
+            const float source=std::clamp(sourceSampleFor(sourceId),-1.0f,1.0f);
+            const float amount=std::clamp(rawAmount,-1.0f,1.0f);
+
+            switch(type) {
+                case OscRouteType::PhaseMod:
+                    // +/- half a cycle at full amount.
+                    routedPhaseOffset+=static_cast<double>(source*amount)*0.5;
+                    break;
+                case OscRouteType::FrequencyMod:
+                    // Exponential FM keeps frequency positive and musical:
+                    // full scale = +/- 24 semitones from the source waveform.
+                    routedFrequencyScale*=std::exp2(static_cast<double>(source*amount)*2.0);
+                    break;
+                case OscRouteType::RingMod:
+                    // 0 = dry, +/-1 = full signed ring multiplication.
+                    postGain*=1.0f-std::abs(amount)+source*amount;
+                    break;
+                case OscRouteType::AmpMod:
+                    // Bipolar tremolo/amplitude modulation. Clamp at zero so
+                    // AM never creates an unintended phase inversion.
+                    postGain*=std::max(0.0f,1.0f+source*amount);
+                    break;
+                case OscRouteType::Off:
+                    break;
+            }
+        };
+
+        applyRoute(module.route1SourceId,module.route1Type,module.route1Amount);
+        applyRoute(module.route2SourceId,module.route2Type,module.route2Amount);
+
+        const double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         float oscillatorMix=0.0f;
         if(count==1) {
             oscillatorMix=moduleOscillators_[m][0].next(
-                table,frequency_*frequencyScale,sampleRate_,position,
-                module.process1,module.process1Amount,module.process2,module.process2Amount);
+                table,baseFrequency,sampleRate_,position,
+                module.process1,module.process1Amount,module.process2,module.process2Amount,
+                routedPhaseOffset);
         } else {
             for(unsigned u=0;u<count;++u) {
                 const double unit=(2.0*static_cast<double>(u)/static_cast<double>(count-1))-1.0;
                 const double detuneRatio=std::exp2((unit*static_cast<double>(spreadCents))/1200.0);
                 oscillatorMix+=moduleOscillators_[m][u].next(
-                    table,frequency_*frequencyScale*detuneRatio,sampleRate_,position,
-                    module.process1,module.process1Amount,module.process2,module.process2Amount);
+                    table,baseFrequency*detuneRatio,sampleRate_,position,
+                    module.process1,module.process1Amount,module.process2,module.process2Amount,
+                    routedPhaseOffset);
             }
             oscillatorMix/=static_cast<float>(count);
         }
+
+        oscillatorMix*=postGain;
+        previousOscillatorSamples_[m]=std::clamp(oscillatorMix,-1.0f,1.0f);
 
         const float sampleValue=moduleFilters_[m].next(oscillatorMix*envelopeValue,effective->filter)*module.level;
         const double panAngle=(static_cast<double>(module.pan)+1)*.7853981633974483;

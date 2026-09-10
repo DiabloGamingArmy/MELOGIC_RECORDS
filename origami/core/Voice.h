@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
@@ -30,6 +31,12 @@ private:
     using ModuleOscillators = std::array<dsp::WavetableOscillator, maxUnisonVoices>;
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
     std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
+
+    // One-sample-delayed oscillator taps used for cross-osc routing.
+    // The delay guarantees deterministic routing with no oscillator-order
+    // dependency and prevents algebraic feedback loops.
+    std::array<float,maxOscillatorModules> previousOscillatorSamples_{};
+
     dsp::Envelope envelope_,env2_,env3_;
     std::array<Lfo,4> noteLfos_{};
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFilters_{};

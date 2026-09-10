@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-glide-mono-legato-v23.4.3
 #include "core/Engine.h"
@@ -24,12 +25,19 @@ void states() {
     m.unison=5;m.detuneCents=34.5f;m.pan=.42f;m.level=.37f;
     m.process1=dsp::OscProcessType::Sync;m.process1Amount=.625f;
     m.process2=dsp::OscProcessType::Mirror;m.process2Amount=.375f;
+    m.route1SourceId=1;m.route1Type=OscRouteType::PhaseMod;m.route1Amount=.5f;
+    m.route2SourceId=1;m.route2Type=OscRouteType::RingMod;m.route2Amount=-.25f;
     check(a.setOscillatorModuleState(third,m),"independent module controls");
     check(a.oscillatorModuleState(third).process1==dsp::OscProcessType::Sync &&
           a.oscillatorModuleState(third).process1Amount==.625f &&
           a.oscillatorModuleState(third).process2==dsp::OscProcessType::Mirror &&
           a.oscillatorModuleState(third).process2Amount==.375f,
           "oscillator process slots persist in module state");
+    check(a.oscillatorModuleState(third).route1SourceId==1 &&
+          a.oscillatorModuleState(third).route1Type==OscRouteType::PhaseMod &&
+          a.oscillatorModuleState(third).route1Amount==.5f &&
+          a.oscillatorModuleState(third).route2Type==OscRouteType::RingMod,
+          "cross oscillator routing persists in module state");
 
     auto firstModule=a.oscillatorModuleState(1);
     firstModule.process1=dsp::OscProcessType::BendBoth;firstModule.process1Amount=.5f;
@@ -66,7 +74,7 @@ void states() {
     rejects(0,0);rejects(4,99);rejects(8,10);rejects(12,0x7fc00000); // magic/unsupported-version/count/NaN
     rejects(12+4*parameterCount,1);rejects(16+4*parameterCount,17); // next ID/count
     rejects(first,2);rejects(first+4,2);rejects(first+8,99); // OSC1/boolean/table
-    rejects(first+12,0x7f800000);rejects(first+64,1); // infinity/duplicate ID in V7
+    rejects(first+12,0x7f800000);rejects(first+88,1); // infinity/duplicate ID in V8
     auto extra=bytes;extra.push_back(0);check(!decodeInstrumentState(extra.data(),extra.size(),decoded),"trailing bytes rejected");
     auto invalid=saved;invalid.oscillators[1].level=std::numeric_limits<float>::quiet_NaN();
     check(!a.restoreInstrumentState(invalid) && encodeInstrumentState(a.instrumentState())==bytes,"engine restore transactional");

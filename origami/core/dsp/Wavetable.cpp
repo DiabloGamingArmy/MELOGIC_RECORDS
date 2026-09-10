@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
@@ -239,7 +240,8 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
 
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 OscProcessType process1,float amount1,
-                                OscProcessType process2,float amount2) noexcept {
+                                OscProcessType process2,float amount2,
+                                double phaseOffsetCycles) noexcept {
     if (table.frames.empty() || sampleRate <= 0 || !std::isfinite(frequency) || !std::isfinite(position)) return 0;
     // Caller installs validated banks. Bound phase every sample, never accumulate time.
     const double increment = std::clamp(frequency / sampleRate, 0.0, .499);
@@ -250,7 +252,9 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     const float framePosition = std::clamp(position, 0.f, 1.f) * static_cast<float>(table.frames.size() - 1);
     const auto first = static_cast<std::size_t>(framePosition);
     const auto second = std::min(first + 1, table.frames.size() - 1);
-    double readPhase=processOscillatorPhase(phase_,process1,amount1);
+    double readPhase=phase_ + (std::isfinite(phaseOffsetCycles) ? phaseOffsetCycles : 0.0);
+    readPhase-=std::floor(readPhase);
+    readPhase=processOscillatorPhase(readPhase,process1,amount1);
     readPhase=processOscillatorPhase(readPhase,process2,amount2);
     const double tablePosition = readPhase * static_cast<double>(table.tableLength);
     const auto index = static_cast<std::size_t>(tablePosition);

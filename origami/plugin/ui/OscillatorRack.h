@@ -1,3 +1,4 @@
+// mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.2-osc-process-quick-nav
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.0.0-osc-process-foundation
@@ -31,6 +32,24 @@ public:
         juce::Component::mouseWheelMove(e,wheel);
     }
 };
+class OscRouteSelector final : public juce::TextButton {
+public:
+    OscRouteSelector();
+    void setContext(OscillatorModuleId target,
+                    std::function<InstrumentState()> snapshotGetter);
+    void setSelection(OscillatorModuleId source,OscRouteType type,
+                      juce::NotificationType notification);
+    OscillatorModuleId sourceId() const noexcept { return sourceId_; }
+    OscRouteType routeType() const noexcept { return type_; }
+    std::function<void()> onChange;
+private:
+    void openRouteMenu();
+    void refreshText();
+    OscillatorModuleId targetId_=0,sourceId_=0;
+    OscRouteType type_=OscRouteType::Off;
+    std::function<InstrumentState()> snapshotGetter_;
+};
+
 class NativeOscProcessSelector final : public juce::TextButton {
 public:
     NativeOscProcessSelector();
@@ -53,7 +72,8 @@ public:
                             std::function<bool(unsigned,bool)> enabledSetter={},
                             std::function<bool(unsigned)> enabledGetter={},
                             std::function<bool(unsigned,const mct::origami::OscillatorModuleState&)> moduleSetter={},
-                            std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter={});
+                            std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter={},
+                            std::function<mct::origami::InstrumentState()> snapshotGetter={});
     unsigned id() const { return display_.id; }
     unsigned ordinal() const { return display_.ordinal; }
     void setOrdinal(unsigned ordinal);
@@ -72,6 +92,7 @@ private:
     std::function<float(mct::origami::ParameterId)> parameterGetter_;
     std::function<bool(unsigned,const mct::origami::OscillatorModuleState&)> moduleSetter_;
     std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter_;
+    std::function<mct::origami::InstrumentState()> snapshotGetter_;
     RackSlider panSlider_,levelSlider_;
         // mct-origami-unison-detune-v19.2
     RackSlider wtPositionSlider_;
@@ -85,6 +106,10 @@ private:
     juce::TextButton process2Previous_{"<"},process2Next_{">"};
     RackSlider process1Amount_,process2Amount_;
     juce::Label process1AmountLabel_,process2AmountLabel_;
+
+    OscRouteSelector route1Menu_,route2Menu_;
+    RackSlider route1Amount_,route2Amount_;
+    juce::Label route1AmountLabel_,route2AmountLabel_;
     bool syncingProcess_=false;
     // mct-origami-tuning-labels-v18.3
     juce::Label octaveTitle_,semitoneTitle_,fineTitle_;
@@ -147,6 +172,6 @@ private:
     ModuleStateGetter moduleStateGetter_;
     ModuleEnabledSetter moduleEnabledSetter_;
     ModuleEnabledGetter moduleEnabledGetter_;
-    int cardWidth_=250;
+    int cardWidth_=420;
 };
 }
