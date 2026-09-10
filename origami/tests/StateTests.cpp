@@ -1,3 +1,4 @@
+// mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-glide-mono-legato-v23.4.3
@@ -26,7 +27,7 @@ void states() {
     m.process1=dsp::OscProcessType::Sync;m.process1Amount=.625f;
     m.process2=dsp::OscProcessType::Mirror;m.process2Amount=.375f;
     m.route1SourceId=1;m.route1Type=OscRouteType::PhaseMod;m.route1Amount=.5f;
-    m.route2SourceId=1;m.route2Type=OscRouteType::RingMod;m.route2Amount=-.25f;
+    m.route2SourceId=1;m.route2Type=OscRouteType::WaveFold;m.route2Amount=-.25f;
     check(a.setOscillatorModuleState(third,m),"independent module controls");
     check(a.oscillatorModuleState(third).process1==dsp::OscProcessType::Sync &&
           a.oscillatorModuleState(third).process1Amount==.625f &&
@@ -36,8 +37,12 @@ void states() {
     check(a.oscillatorModuleState(third).route1SourceId==1 &&
           a.oscillatorModuleState(third).route1Type==OscRouteType::PhaseMod &&
           a.oscillatorModuleState(third).route1Amount==.5f &&
-          a.oscillatorModuleState(third).route2Type==OscRouteType::RingMod,
-          "cross oscillator routing persists in module state");
+          a.oscillatorModuleState(third).route2Type==OscRouteType::WaveFold &&
+          a.oscillatorModuleState(third).route2Amount==-.25f,
+          "expanded cross oscillator routing persists in module state");
+    check(validOscRouteType(OscRouteType::RectifyMod) &&
+          !validOscRouteType(OscRouteType::Count),
+          "expanded routing enum bounds");
 
     auto firstModule=a.oscillatorModuleState(1);
     firstModule.process1=dsp::OscProcessType::BendBoth;firstModule.process1Amount=.5f;

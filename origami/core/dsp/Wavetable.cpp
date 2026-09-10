@@ -1,3 +1,4 @@
+// mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
@@ -241,7 +242,8 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 OscProcessType process1,float amount1,
                                 OscProcessType process2,float amount2,
-                                double phaseOffsetCycles) noexcept {
+                                double phaseOffsetCycles,
+                                double phaseSkew) noexcept {
     if (table.frames.empty() || sampleRate <= 0 || !std::isfinite(frequency) || !std::isfinite(position)) return 0;
     // Caller installs validated banks. Bound phase every sample, never accumulate time.
     const double increment = std::clamp(frequency / sampleRate, 0.0, .499);
@@ -254,6 +256,16 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     const auto second = std::min(first + 1, table.frames.size() - 1);
     double readPhase=phase_ + (std::isfinite(phaseOffsetCycles) ? phaseOffsetCycles : 0.0);
     readPhase-=std::floor(readPhase);
+
+    // Cross-oscillator PSK dynamically moves the half-cycle split point while
+    // preserving a continuous 0..1 phase domain.
+    if(std::isfinite(phaseSkew) && std::abs(phaseSkew)>1.0e-12) {
+        const double midpoint=std::clamp(0.5+phaseSkew,0.06,0.94);
+        readPhase=readPhase<midpoint
+            ? 0.5*(readPhase/midpoint)
+            : 0.5+0.5*((readPhase-midpoint)/(1.0-midpoint));
+    }
+
     readPhase=processOscillatorPhase(readPhase,process1,amount1);
     readPhase=processOscillatorPhase(readPhase,process2,amount2);
     const double tablePosition = readPhase * static_cast<double>(table.tableLength);

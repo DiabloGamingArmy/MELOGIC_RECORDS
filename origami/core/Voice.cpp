@@ -1,3 +1,4 @@
+// mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
@@ -78,39 +79,47 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
 
         double routedFrequencyScale=1.0;
         double routedPhaseOffset=0.0;
-        float postGain=1.0f;
+        double routedPhaseSkew=0.0;
 
-        auto applyRoute=[&](OscillatorModuleId sourceId,OscRouteType type,float rawAmount) noexcept {
+        // Pre-generation routing belongs in the phase/frequency domain.
+        auto applyPreRoute=[&](OscillatorModuleId sourceId,OscRouteType type,float rawAmount) noexcept {
             if(type==OscRouteType::Off || sourceId==0) return;
             const float source=std::clamp(sourceSampleFor(sourceId),-1.0f,1.0f);
             const float amount=std::clamp(rawAmount,-1.0f,1.0f);
 
             switch(type) {
                 case OscRouteType::PhaseMod:
-                    // +/- half a cycle at full amount.
+                    // PD: +/- half a cycle of source-driven phase displacement.
                     routedPhaseOffset+=static_cast<double>(source*amount)*0.5;
                     break;
+
                 case OscRouteType::FrequencyMod:
-                    // Exponential FM keeps frequency positive and musical:
-                    // full scale = +/- 24 semitones from the source waveform.
+                    // FM: exponential audio-rate frequency modulation. Full
+                    // amount spans approximately +/-24 semitones.
                     routedFrequencyScale*=std::exp2(static_cast<double>(source*amount)*2.0);
                     break;
+
+                case OscRouteType::PhaseSkew:
+                    // PSK: source dynamically bends the oscillator's internal
+                    // phase midpoint rather than merely translating phase.
+                    routedPhaseSkew+=static_cast<double>(source*amount)*0.42;
+                    routedPhaseSkew=std::clamp(routedPhaseSkew,-0.44,0.44);
+                    break;
+
                 case OscRouteType::RingMod:
-                    // 0 = dry, +/-1 = full signed ring multiplication.
-                    postGain*=1.0f-std::abs(amount)+source*amount;
-                    break;
                 case OscRouteType::AmpMod:
-                    // Bipolar tremolo/amplitude modulation. Clamp at zero so
-                    // AM never creates an unintended phase inversion.
-                    postGain*=std::max(0.0f,1.0f+source*amount);
-                    break;
+                case OscRouteType::Crossfade:
+                case OscRouteType::WaveFold:
+                case OscRouteType::LogicXor:
+                case OscRouteType::RectifyMod:
                 case OscRouteType::Off:
+                case OscRouteType::Count:
                     break;
             }
         };
 
-        applyRoute(module.route1SourceId,module.route1Type,module.route1Amount);
-        applyRoute(module.route2SourceId,module.route2Type,module.route2Amount);
+        applyPreRoute(module.route1SourceId,module.route1Type,module.route1Amount);
+        applyPreRoute(module.route2SourceId,module.route2Type,module.route2Amount);
 
         const double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         float oscillatorMix=0.0f;
@@ -118,7 +127,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             oscillatorMix=moduleOscillators_[m][0].next(
                 table,baseFrequency,sampleRate_,position,
                 module.process1,module.process1Amount,module.process2,module.process2Amount,
-                routedPhaseOffset);
+                routedPhaseOffset,routedPhaseSkew);
         } else {
             for(unsigned u=0;u<count;++u) {
                 const double unit=(2.0*static_cast<double>(u)/static_cast<double>(count-1))-1.0;
@@ -126,12 +135,83 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                 oscillatorMix+=moduleOscillators_[m][u].next(
                     table,baseFrequency*detuneRatio,sampleRate_,position,
                     module.process1,module.process1Amount,module.process2,module.process2Amount,
-                    routedPhaseOffset);
+                    routedPhaseOffset,routedPhaseSkew);
             }
             oscillatorMix/=static_cast<float>(count);
         }
 
-        oscillatorMix*=postGain;
+        // Post-generation routes are intentionally executed in slot order.
+        // This makes combinations such as WF -> XOR or RM -> RECT genuinely
+        // different from the reverse order.
+        auto applyPostRoute=[&](float signal,OscillatorModuleId sourceId,
+                                OscRouteType type,float rawAmount) noexcept {
+            if(type==OscRouteType::Off || sourceId==0) return signal;
+
+            const float source=std::clamp(sourceSampleFor(sourceId),-1.0f,1.0f);
+            const float amount=std::clamp(rawAmount,-1.0f,1.0f);
+            const float depth=std::abs(amount);
+
+            switch(type) {
+                case OscRouteType::RingMod:
+                    // RM: continuously morph dry -> signed multiplication.
+                    return signal*(1.0f-depth)+signal*source*amount;
+
+                case OscRouteType::AmpMod: {
+                    // AM: source controls gain while retaining target polarity.
+                    const float modulated=signal*std::max(0.0f,1.0f+source*amount);
+                    return signal*(1.0f-depth)+modulated*depth;
+                }
+
+                case OscRouteType::Crossfade: {
+                    // XF: replace target progressively with the source oscillator.
+                    // Negative amount crossfades toward an inverted source.
+                    const float sourceSignal=amount>=0.0f ? source : -source;
+                    return signal*(1.0f-depth)+sourceSignal*depth;
+                }
+
+                case OscRouteType::WaveFold: {
+                    // WF: source amplitude drives an audio-rate sine wavefolder.
+                    // This is deliberately aggressive while remaining bounded.
+                    const float drive=1.0f+std::abs(source)*depth*7.0f;
+                    const float folded=static_cast<float>(
+                        std::asin(std::sin(static_cast<double>(signal*drive)*1.5707963267948966))
+                        *0.6366197723675814);
+                    const float signedFold=amount>=0.0f ? folded : -folded;
+                    return signal*(1.0f-depth)+signedFold*depth;
+                }
+
+                case OscRouteType::LogicXor: {
+                    // XOR: square-polarity interaction. Unlike RM it responds
+                    // only to the source sign, producing hard digital sidebands.
+                    const float sourcePolarity=source>=0.0f ? 1.0f : -1.0f;
+                    const float polarity=amount>=0.0f ? sourcePolarity : -sourcePolarity;
+                    const float logical=signal*polarity;
+                    return signal*(1.0f-depth)+logical*depth;
+                }
+
+                case OscRouteType::RectifyMod: {
+                    // RECT: source magnitude controls how strongly the target is
+                    // driven toward positive or negative full-wave rectification.
+                    const float sourceDepth=depth*std::abs(source);
+                    const float rectified=amount>=0.0f ? std::abs(signal) : -std::abs(signal);
+                    return signal*(1.0f-sourceDepth)+rectified*sourceDepth;
+                }
+
+                case OscRouteType::PhaseMod:
+                case OscRouteType::FrequencyMod:
+                case OscRouteType::PhaseSkew:
+                case OscRouteType::Off:
+                case OscRouteType::Count:
+                    return signal;
+            }
+            return signal;
+        };
+
+        oscillatorMix=applyPostRoute(oscillatorMix,module.route1SourceId,
+                                     module.route1Type,module.route1Amount);
+        oscillatorMix=applyPostRoute(oscillatorMix,module.route2SourceId,
+                                     module.route2Type,module.route2Amount);
+
         previousOscillatorSamples_[m]=std::clamp(oscillatorMix,-1.0f,1.0f);
 
         const float sampleValue=moduleFilters_[m].next(oscillatorMix*envelopeValue,effective->filter)*module.level;

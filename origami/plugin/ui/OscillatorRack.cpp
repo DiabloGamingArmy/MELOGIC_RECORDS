@@ -1,3 +1,4 @@
+// mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
@@ -50,7 +51,9 @@ void OscRouteSelector::refreshText() {
         setButtonText("Off");
         return;
     }
-    setButtonText("OSC "+juce::String(sourceId_)+" · "+oscRouteName(type_));
+    // Compact selector text keeps the same visual density as OSC PROCESS.
+    // Full descriptive names remain in the popup.
+    setButtonText("OSC "+juce::String(sourceId_)+" · "+oscRouteShortName(type_));
 }
 
 void OscRouteSelector::openRouteMenu() {
@@ -64,8 +67,7 @@ void OscRouteSelector::openRouteMenu() {
         for(const auto& source:state.oscillators) {
             if(source.id==0 || source.id==targetId_) continue;
             juce::PopupMenu sourceMenu;
-            for(auto type:{OscRouteType::PhaseMod,OscRouteType::FrequencyMod,
-                           OscRouteType::RingMod,OscRouteType::AmpMod}) {
+            for(auto type:oscRouteTypes) {
                 sourceMenu.addItem(resultId++,oscRouteName(type),
                                    true,source.id==sourceId_ && type==type_);
             }
@@ -87,8 +89,7 @@ void OscRouteSelector::openRouteMenu() {
             int resultId=100;
             for(const auto& source:state.oscillators) {
                 if(source.id==0 || source.id==safe->targetId_) continue;
-                for(auto type:{OscRouteType::PhaseMod,OscRouteType::FrequencyMod,
-                               OscRouteType::RingMod,OscRouteType::AmpMod}) {
+                for(auto type:oscRouteTypes) {
                     if(resultId++==selected) {
                         safe->setSelection(source.id,type,juce::sendNotification);
                         return;
@@ -96,6 +97,42 @@ void OscRouteSelector::openRouteMenu() {
                 }
             }
         });
+}
+
+void OscRouteSelector::cycle(int delta) {
+    if(delta==0) return;
+
+    struct Choice {
+        OscillatorModuleId source=0;
+        OscRouteType type=OscRouteType::Off;
+    };
+
+    std::vector<Choice> choices;
+    choices.push_back({0,OscRouteType::Off});
+
+    if(snapshotGetter_) {
+        const auto state=snapshotGetter_();
+        for(const auto& source:state.oscillators) {
+            if(source.id==0 || source.id==targetId_) continue;
+            for(auto type:oscRouteTypes)
+                choices.push_back({source.id,type});
+        }
+    }
+
+    if(choices.size()<=1) return;
+
+    std::size_t current=0;
+    for(std::size_t i=0;i<choices.size();++i) {
+        if(choices[i].source==sourceId_ && choices[i].type==type_) {
+            current=i;
+            break;
+        }
+    }
+
+    const int size=static_cast<int>(choices.size());
+    const int wrapped=(static_cast<int>(current)+delta%size+size)%size;
+    const auto next=choices[static_cast<std::size_t>(wrapped)];
+    setSelection(next.source,next.type,juce::sendNotification);
 }
 
 NativeOscProcessSelector::NativeOscProcessSelector() {
@@ -338,6 +375,23 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     route2Menu_.setContext(display_.id,snapshotGetter_);
     for(auto* menu:{&route1Menu_,&route2Menu_}) addAndMakeVisible(*menu);
 
+    // Match OSC PROCESS navigation exactly: compact left/right audition arrows
+    // around both routing selectors.
+    for(auto* button:{&route1Previous_,&route1Next_,&route2Previous_,&route2Next_}) {
+        addAndMakeVisible(*button);
+        button->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        button->setConnectedEdges(juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    }
+    route1Previous_.setTooltip("Previous OSC routing combination");
+    route1Next_.setTooltip("Next OSC routing combination");
+    route2Previous_.setTooltip("Previous OSC routing combination");
+    route2Next_.setTooltip("Next OSC routing combination");
+
+    route1Previous_.onClick=[this]{route1Menu_.cycle(-1);};
+    route1Next_.onClick=[this]{route1Menu_.cycle(1);};
+    route2Previous_.onClick=[this]{route2Menu_.cycle(-1);};
+    route2Next_.onClick=[this]{route2Menu_.cycle(1);};
+
     for(auto* amount:{&route1Amount_,&route2Amount_}) {
         addAndMakeVisible(*amount);
         amount->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -542,19 +596,30 @@ void OscillatorCard::resized() {
     const int routingSlotHeight=routingControls.getHeight()/2;
 
     auto placeRoutingSlot=[](juce::Rectangle<int> slot,
+                             juce::TextButton& previous,
                              OscRouteSelector& selector,
+                             juce::TextButton& next,
                              RackSlider& amount,
                              juce::Label& amountLabel) {
-        selector.setBounds(slot.removeFromTop(24));
+        auto selectorRow=slot.removeFromTop(24);
+        constexpr int arrowWidth=19;
+        previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
+        selectorRow.removeFromLeft(2);
+        next.setBounds(selectorRow.removeFromRight(arrowWidth));
+        selectorRow.removeFromRight(2);
+        selector.setBounds(selectorRow);
+
         auto knob=slot.reduced(8,3);
         amount.setBounds(knob.removeFromTop(44));
         amountLabel.setBounds(slot.removeFromBottom(13));
     };
 
     auto routeSlot1=routingControls.removeFromTop(routingSlotHeight);
-    placeRoutingSlot(routeSlot1,route1Menu_,route1Amount_,route1AmountLabel_);
+    placeRoutingSlot(routeSlot1,route1Previous_,route1Menu_,route1Next_,
+                     route1Amount_,route1AmountLabel_);
     auto routeSlot2=routingControls;
-    placeRoutingSlot(routeSlot2,route2Menu_,route2Amount_,route2AmountLabel_);
+    placeRoutingSlot(routeSlot2,route2Previous_,route2Menu_,route2Next_,
+                     route2Amount_,route2AmountLabel_);
 
     upper.removeFromRight(columnGap);
 

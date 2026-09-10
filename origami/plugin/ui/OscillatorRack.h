@@ -1,3 +1,4 @@
+// mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.2-osc-process-quick-nav
 // mct-origami-v26.2.0-native-process-library
@@ -39,6 +40,7 @@ public:
                     std::function<InstrumentState()> snapshotGetter);
     void setSelection(OscillatorModuleId source,OscRouteType type,
                       juce::NotificationType notification);
+    void cycle(int delta);
     OscillatorModuleId sourceId() const noexcept { return sourceId_; }
     OscRouteType routeType() const noexcept { return type_; }
     std::function<void()> onChange;
@@ -108,6 +110,8 @@ private:
     juce::Label process1AmountLabel_,process2AmountLabel_;
 
     OscRouteSelector route1Menu_,route2Menu_;
+    juce::TextButton route1Previous_{"<"},route1Next_{">"};
+    juce::TextButton route2Previous_{"<"},route2Next_{">"};
     RackSlider route1Amount_,route2Amount_;
     juce::Label route1AmountLabel_,route2AmountLabel_;
     bool syncingProcess_=false;

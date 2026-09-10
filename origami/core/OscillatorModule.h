@@ -1,3 +1,4 @@
+// mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.0.0-osc-process-foundation
@@ -16,24 +17,68 @@ namespace mct::origami {
 using OscillatorModuleId = std::uint32_t;
 
 enum class OscRouteType : std::uint32_t {
+    // V27.0 serialized IDs — never renumber.
     Off=0,
     PhaseMod=1,
     FrequencyMod=2,
     RingMod=3,
-    AmpMod=4
+    AmpMod=4,
+
+    // V27.1 additions.
+    Crossfade=5,
+    WaveFold=6,
+    LogicXor=7,
+    PhaseSkew=8,
+    RectifyMod=9,
+    Count=10
 };
 
 constexpr bool validOscRouteType(OscRouteType type) noexcept {
-    return static_cast<std::uint32_t>(type)<=static_cast<std::uint32_t>(OscRouteType::AmpMod);
+    return static_cast<std::uint32_t>(type)<static_cast<std::uint32_t>(OscRouteType::Count);
+}
+
+inline constexpr std::array<OscRouteType,9> oscRouteTypes{{
+    OscRouteType::PhaseMod,
+    OscRouteType::FrequencyMod,
+    OscRouteType::RingMod,
+    OscRouteType::AmpMod,
+    OscRouteType::Crossfade,
+    OscRouteType::WaveFold,
+    OscRouteType::LogicXor,
+    OscRouteType::PhaseSkew,
+    OscRouteType::RectifyMod
+}};
+
+inline const char* oscRouteShortName(OscRouteType type) noexcept {
+    switch(type) {
+        case OscRouteType::Off: return "OFF";
+        case OscRouteType::PhaseMod: return "PD";
+        case OscRouteType::FrequencyMod: return "FM";
+        case OscRouteType::RingMod: return "RM";
+        case OscRouteType::AmpMod: return "AM";
+        case OscRouteType::Crossfade: return "XF";
+        case OscRouteType::WaveFold: return "WF";
+        case OscRouteType::LogicXor: return "XOR";
+        case OscRouteType::PhaseSkew: return "PSK";
+        case OscRouteType::RectifyMod: return "RECT";
+        case OscRouteType::Count: break;
+    }
+    return "OFF";
 }
 
 inline const char* oscRouteName(OscRouteType type) noexcept {
     switch(type) {
         case OscRouteType::Off: return "Off";
-        case OscRouteType::PhaseMod: return "Phase Distort";
-        case OscRouteType::FrequencyMod: return "Frequency Distort";
-        case OscRouteType::RingMod: return "Ring Mod";
-        case OscRouteType::AmpMod: return "Amp Mod";
+        case OscRouteType::PhaseMod: return "PD - Phase Distort";
+        case OscRouteType::FrequencyMod: return "FM - Frequency Modulate";
+        case OscRouteType::RingMod: return "RM - Ring Modulate";
+        case OscRouteType::AmpMod: return "AM - Amp Modulate";
+        case OscRouteType::Crossfade: return "XF - Osc Crossfade";
+        case OscRouteType::WaveFold: return "WF - Source Wavefold";
+        case OscRouteType::LogicXor: return "XOR - Logic Mod";
+        case OscRouteType::PhaseSkew: return "PSK - Phase Skew";
+        case OscRouteType::RectifyMod: return "RECT - Rectify Mod";
+        case OscRouteType::Count: break;
     }
     return "Off";
 }

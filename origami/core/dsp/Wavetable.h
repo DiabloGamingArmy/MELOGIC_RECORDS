@@ -1,3 +1,4 @@
+// mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
@@ -100,7 +101,8 @@ public:
     float next(const Wavetable& table,double frequency,double sampleRate,float position,
                OscProcessType process1=OscProcessType::Off,float amount1=0.0f,
                OscProcessType process2=OscProcessType::Off,float amount2=0.0f,
-               double phaseOffsetCycles=0.0) noexcept;
+               double phaseOffsetCycles=0.0,
+               double phaseSkew=0.0) noexcept;
     double phase() const noexcept { return phase_; }
 private:
     double phase_ = 0;
