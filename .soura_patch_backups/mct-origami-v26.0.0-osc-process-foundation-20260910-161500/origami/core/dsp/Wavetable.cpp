@@ -1,4 +1,3 @@
-// mct-origami-v26.0.0-osc-process-foundation
 #include "Wavetable.h"
 #include <algorithm>
 #include <cmath>
@@ -48,53 +47,7 @@ Wavetable Wavetable::builtIns() {
     return table;
 }
 void WavetableOscillator::reset(double phase) noexcept { phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; }
-
-namespace {
-double processPhase(double phase,OscProcessType type,float rawAmount) noexcept {
-    const double p=std::clamp(phase,0.0,std::nextafter(1.0,0.0));
-    const double amount=std::clamp(static_cast<double>(rawAmount),0.0,1.0);
-    if(amount<=0.0 || type==OscProcessType::Off) return p;
-
-    switch(type) {
-        case OscProcessType::BendPlus: {
-            const double shaped=std::pow(p,1.0+amount*4.0);
-            return p+(shaped-p)*amount;
-        }
-        case OscProcessType::BendMinus: {
-            const double shaped=1.0-std::pow(1.0-p,1.0+amount*4.0);
-            return p+(shaped-p)*amount;
-        }
-        case OscProcessType::BendBoth: {
-            const double exponent=1.0+amount*4.0;
-            const double shaped=p<0.5
-                ? 0.5*std::pow(p*2.0,exponent)
-                : 1.0-0.5*std::pow((1.0-p)*2.0,exponent);
-            return p+(shaped-p)*amount;
-        }
-        case OscProcessType::Sync: {
-            const double cycles=1.0+amount*7.0;
-            const double synced=p*cycles;
-            return synced-std::floor(synced);
-        }
-        case OscProcessType::Mirror: {
-            const double mirrored=1.0-std::abs(p*2.0-1.0);
-            return std::clamp(p+(mirrored-p)*amount,0.0,std::nextafter(1.0,0.0));
-        }
-        case OscProcessType::Asym: {
-            const double midpoint=0.5-amount*0.38;
-            if(p<midpoint) return 0.5*(p/midpoint);
-            return 0.5+0.5*((p-midpoint)/(1.0-midpoint));
-        }
-        case OscProcessType::Off:
-        default:
-            return p;
-    }
-}
-}
-
-float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
-                                OscProcessType process1,float amount1,
-                                OscProcessType process2,float amount2) noexcept {
+float WavetableOscillator::next(const Wavetable& table, double frequency, double sampleRate, float position) noexcept {
     if (table.frames.empty() || sampleRate <= 0 || !std::isfinite(frequency) || !std::isfinite(position)) return 0;
     // Caller installs validated banks. Bound phase every sample, never accumulate time.
     const double increment = std::clamp(frequency / sampleRate, 0.0, .499);
@@ -105,9 +58,7 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     const float framePosition = std::clamp(position, 0.f, 1.f) * static_cast<float>(table.frames.size() - 1);
     const auto first = static_cast<std::size_t>(framePosition);
     const auto second = std::min(first + 1, table.frames.size() - 1);
-    double readPhase=processPhase(phase_,process1,amount1);
-    readPhase=processPhase(readPhase,process2,amount2);
-    const double tablePosition = readPhase * static_cast<double>(table.tableLength);
+    const double tablePosition = phase_ * static_cast<double>(table.tableLength);
     const auto index = static_cast<std::size_t>(tablePosition);
     const auto nextIndex = (index + 1) % table.tableLength;
     const float fraction = static_cast<float>(tablePosition - static_cast<double>(index));

@@ -1,4 +1,3 @@
-// mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-relative-drag-linear-controls-v23.3.4
 // mct-origami-basic-shapes-identity-v22.6
@@ -16,13 +15,10 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
                                std::function<bool(mct::origami::ParameterId,float)> setter,
                                std::function<float(mct::origami::ParameterId)> getter,
                                std::function<bool(unsigned,bool)> enabledSetter,
-                               std::function<bool(unsigned)> enabledGetter,
-                               std::function<bool(unsigned,const mct::origami::OscillatorModuleState&)> moduleSetter,
-                               std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter)
+                               std::function<bool(unsigned)> enabledGetter)
     : Panel("OSC "+juce::String(display.ordinal)),display_(std::move(display)),
       enabledSetter_(std::move(enabledSetter)),enabledGetter_(std::move(enabledGetter)),
-      parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)),
-      moduleSetter_(std::move(moduleSetter)),moduleGetter_(std::move(moduleGetter)) {
+      parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)) {
     addAndMakeVisible(remove_);
     remove_.setTooltip("Remove this oscillator module");
     remove_.onClick=[id=display_.id,removeCallback=std::move(remove)] { removeCallback(id); };
@@ -146,51 +142,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         levelLabel_.setText("LEVEL",juce::dontSendNotification);
     }
 
-    const std::array<std::pair<const char*,int>,7> processItems{{
-        {"OFF",1},{"BEND +",2},{"BEND -",3},{"BEND +/-",4},
-        {"SYNC",5},{"MIRROR",6},{"ASYM",7}
-    }};
-    for(auto* menu:{&process1Menu_,&process2Menu_}) {
-        addAndMakeVisible(*menu);
-        for(const auto& item:processItems) menu->addItem(item.first,item.second);
-        menu->setScrollWheelEnabled(false);
-        menu->setTooltip("Oscillator phase process");
-    }
-    for(auto* amount:{&process1Amount_,&process2Amount_}) {
-        addAndMakeVisible(*amount);
-        amount->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        amount->setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
-        amount->setRotaryParameters(juce::MathConstants<float>::pi*1.20f,
-                                    juce::MathConstants<float>::pi*2.80f,true);
-        amount->setRange(0.0,1.0,0.001);
-        amount->setMouseDragSensitivity(180);
-        amount->setTooltip("Process magnitude");
-    }
-    for(auto* label:{&process1AmountLabel_,&process2AmountLabel_}) {
-        addAndMakeVisible(*label);
-        label->setJustificationType(juce::Justification::centred);
-        label->setColour(juce::Label::textColourId,Palette::muted());
-        label->setFont(juce::FontOptions(7.2f));
-        label->setInterceptsMouseClicks(false,false);
-    }
-    auto commitProcess=[this] {
-        if(syncingProcess_ || !moduleGetter_ || !moduleSetter_) return;
-        auto state=moduleGetter_(display_.id);
-        if(!state.id) return;
-        state.process1=static_cast<mct::origami::dsp::OscProcessType>(
-            juce::jlimit(0,6,process1Menu_.getSelectedId()-1));
-        state.process2=static_cast<mct::origami::dsp::OscProcessType>(
-            juce::jlimit(0,6,process2Menu_.getSelectedId()-1));
-        state.process1Amount=static_cast<float>(process1Amount_.getValue());
-        state.process2Amount=static_cast<float>(process2Amount_.getValue());
-        moduleSetter_(display_.id,state);
-        syncFromModel();
-    };
-    process1Menu_.onChange=commitProcess;
-    process2Menu_.onChange=commitProcess;
-    process1Amount_.onValueChange=commitProcess;
-    process2Amount_.onValueChange=commitProcess;
-
     refreshVisibleNumber();
 
     addAndMakeVisible(power_);
@@ -234,24 +185,6 @@ void OscillatorCard::syncFromModel() {
     sync(panSlider_,ParameterId::OscPan);sync(levelSlider_,ParameterId::OscLevel);
     sync(octaveSlider_,ParameterId::OscOctave);sync(semitoneSlider_,ParameterId::OscSemitone);
     sync(fineSlider_,ParameterId::OscFine);
-    if(moduleGetter_ && !process1Menu_.isPopupActive() && !process2Menu_.isPopupActive()) {
-        const auto state=moduleGetter_(display_.id);
-        if(state.id) {
-            const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
-            process1Menu_.setSelectedId(static_cast<int>(state.process1)+1,juce::dontSendNotification);
-            process2Menu_.setSelectedId(static_cast<int>(state.process2)+1,juce::dontSendNotification);
-            if(!process1Amount_.isMouseButtonDown())
-                process1Amount_.setValue(state.process1Amount,juce::dontSendNotification);
-            if(!process2Amount_.isMouseButtonDown())
-                process2Amount_.setValue(state.process2Amount,juce::dontSendNotification);
-            process1Amount_.setEnabled(state.process1!=dsp::OscProcessType::Off);
-            process2Amount_.setEnabled(state.process2!=dsp::OscProcessType::Off);
-            process1AmountLabel_.setText(juce::String(juce::roundToInt(state.process1Amount*100.0f))+"%",
-                                         juce::dontSendNotification);
-            process2AmountLabel_.setText(juce::String(juce::roundToInt(state.process2Amount*100.0f))+"%",
-                                         juce::dontSendNotification);
-        }
-    }
     // Compatibility-only nearest frame index; never used as wavetable identity.
     waveformIndex_=juce::jlimit(0,3,juce::roundToInt(parameterGetter_(ParameterId::Waveform)));
     if(enabledGetter_) power_.setToggleState(enabledGetter_(display_.id),juce::dontSendNotification);
@@ -288,18 +221,7 @@ void OscillatorCard::resized() {
     auto upper=body;
     const int processWidth=juce::jlimit(104,132,upper.getWidth()*34/100);
     auto process=upper.removeFromRight(processWidth);
-    auto processControls=process.reduced(9,25);
-    const int processSlotHeight=processControls.getHeight()/2;
-    auto slot1=processControls.removeFromTop(processSlotHeight);
-    process1Menu_.setBounds(slot1.removeFromTop(24));
-    auto knob1=slot1.reduced(8,3);
-    process1Amount_.setBounds(knob1.removeFromTop(44));
-    process1AmountLabel_.setBounds(slot1.removeFromBottom(13));
-    auto slot2=processControls;
-    process2Menu_.setBounds(slot2.removeFromTop(24));
-    auto knob2=slot2.reduced(8,3);
-    process2Amount_.setBounds(knob2.removeFromTop(44));
-    process2AmountLabel_.setBounds(slot2.removeFromBottom(13));
+    juce::ignoreUnused(process);
     upper.removeFromRight(7);
 
     auto tuning=upper.removeFromBottom(30);
@@ -398,10 +320,20 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     auto processTitle=processInner.removeFromTop(18);
     text(g,"OSC PROCESS",processTitle,8.5f,Palette::secondary(),juce::Justification::centredLeft);
 
-    auto slotGuide=processInner;
-    slotGuide.removeFromTop(24);
-    g.setColour(Palette::borderSoft().withAlpha(0.45f));
-    g.drawHorizontalLine(slotGuide.getCentreY(),float(slotGuide.getX()),float(slotGuide.getRight()));
+    auto modeRow=processInner.removeFromTop(24);
+    well(g,modeRow);
+    text(g,"BEND +",modeRow.reduced(7,0),8.5f,Palette::text(),juce::Justification::centredLeft);
+    text(g,"v",modeRow.reduced(7,0),8.5f,Palette::muted(),juce::Justification::centredRight);
+
+    processInner.removeFromTop(6);
+    const int dialRowHeight=processInner.getHeight()/2;
+    auto topRow=processInner.removeFromTop(dialRowHeight);
+    auto bottomRow=processInner;
+
+    dial(g,topRow.removeFromLeft(topRow.getWidth()/2),"PHASE",.42f);
+    dial(g,topRow,"WARP",.58f);
+    dial(g,bottomRow.removeFromLeft(bottomRow.getWidth()/2),"ASYM",.35f);
+    dial(g,bottomRow,"MIX",.72f);
 
     // Conventional oscillator pitch identity: OCT / SEM / FIN.
     const juce::StringArray tuneLabels{"OCT","SEM","FIN"};
@@ -575,12 +507,6 @@ void OscillatorRack::createCard(unsigned moduleId) {
         },
         [this,moduleId](unsigned) -> bool {
             return moduleEnabledGetter_ ? moduleEnabledGetter_(moduleId) : true;
-        },
-        [this](unsigned id,const mct::origami::OscillatorModuleState& state) -> bool {
-            return moduleStateSetter_ ? moduleStateSetter_(id,state) : false;
-        },
-        [this](unsigned id) -> mct::origami::OscillatorModuleState {
-            return moduleStateGetter_ ? moduleStateGetter_(id) : mct::origami::OscillatorModuleState{};
         });
 
     content_.addAndMakeVisible(*card);

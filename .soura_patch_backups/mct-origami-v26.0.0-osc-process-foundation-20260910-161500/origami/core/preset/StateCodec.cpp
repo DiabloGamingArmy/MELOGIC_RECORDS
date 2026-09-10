@@ -1,4 +1,3 @@
-// mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
@@ -24,7 +23,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(7);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(6);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -33,8 +32,6 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.word(m.id);w.word(m.enabled?1:0);w.word(m.tableId);
         w.real(m.wtPosition);w.real(m.waveform);w.real(m.octave);w.real(m.semitone);
         w.real(m.fineCents);w.word(m.unison);w.real(m.detuneCents);w.real(m.pan);w.real(m.level);
-        w.word(static_cast<std::uint32_t>(m.process1));w.real(m.process1Amount);
-        w.word(static_cast<std::uint32_t>(m.process2));w.real(m.process2Amount);
     }
     const auto& mod=s.modulation;
     w.word(static_cast<std::uint32_t>(mod.lfo1.shape));w.word(static_cast<std::uint32_t>(mod.lfo1.mode));w.real(mod.lfo1.rateHz);
@@ -61,7 +58,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>7) return false;
+    if(version!=1 && version!=2 && version!=3 && version!=4 && version!=5 && version!=6) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -83,10 +80,6 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             m.enabled=enabled==1;m.tableId=r.word();
             m.wtPosition=r.real();m.waveform=r.real();m.octave=r.real();m.semitone=r.real();
             m.fineCents=r.real();m.unison=r.word();m.detuneCents=r.real();m.pan=r.real();m.level=r.real();
-            if(version>=7) {
-                m.process1=static_cast<dsp::OscProcessType>(r.word());m.process1Amount=r.real();
-                m.process2=static_cast<dsp::OscProcessType>(r.word());m.process2Amount=r.real();
-            }
         }
     }
     if(version>=3) {

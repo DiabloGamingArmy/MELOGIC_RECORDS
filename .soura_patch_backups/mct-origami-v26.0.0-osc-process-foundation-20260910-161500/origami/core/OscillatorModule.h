@@ -1,4 +1,3 @@
-// mct-origami-v26.0.0-osc-process-foundation
 #pragma once
 #include <array>
 #include <algorithm>
@@ -26,10 +25,6 @@ struct OscillatorModuleState {
     float detuneCents = 12.0f;
     float pan = 0.0f;
     float level = 0.7f;
-    dsp::OscProcessType process1 = dsp::OscProcessType::BendPlus;
-    float process1Amount = 0.0f;
-    dsp::OscProcessType process2 = dsp::OscProcessType::Off;
-    float process2Amount = 0.0f;
 };
 
 class OscillatorModuleBank {
@@ -150,10 +145,6 @@ private:
         std::atomic<float> waveform{0},octave{0},semitone{0},fineCents{0};
         std::atomic<unsigned> unison{1};
         std::atomic<float> detuneCents{12},pan{0},level{0.7f};
-        std::atomic<dsp::OscProcessType> process1{dsp::OscProcessType::BendPlus};
-        std::atomic<float> process1Amount{0.0f};
-        std::atomic<dsp::OscProcessType> process2{dsp::OscProcessType::Off};
-        std::atomic<float> process2Amount{0.0f};
     };
 
     static void sanitize(OscillatorModuleState& s) noexcept {
@@ -176,12 +167,6 @@ private:
         if(s.pan>1) s.pan=1;
         if(s.level<0) s.level=0;
         if(s.level>1) s.level=1;
-        if(!dsp::validOscProcessType(s.process1)) s.process1=dsp::OscProcessType::Off;
-        if(!dsp::validOscProcessType(s.process2)) s.process2=dsp::OscProcessType::Off;
-        if(!std::isfinite(s.process1Amount)) s.process1Amount=0.0f;
-        if(!std::isfinite(s.process2Amount)) s.process2Amount=0.0f;
-        s.process1Amount=std::clamp(s.process1Amount,0.0f,1.0f);
-        s.process2Amount=std::clamp(s.process2Amount,0.0f,1.0f);
     }
 
     OscillatorModuleState readSlot(std::size_t i) const noexcept {
@@ -199,10 +184,6 @@ private:
         s.detuneCents=a.detuneCents.load(std::memory_order_relaxed);
         s.pan=a.pan.load(std::memory_order_relaxed);
         s.level=a.level.load(std::memory_order_relaxed);
-        s.process1=a.process1.load(std::memory_order_relaxed);
-        s.process1Amount=a.process1Amount.load(std::memory_order_relaxed);
-        s.process2=a.process2.load(std::memory_order_relaxed);
-        s.process2Amount=a.process2Amount.load(std::memory_order_relaxed);
         s.enabled=a.enabled.load(std::memory_order_acquire);
         return s;
     }
@@ -219,10 +200,6 @@ private:
         a.detuneCents.store(s.detuneCents,std::memory_order_relaxed);
         a.pan.store(s.pan,std::memory_order_relaxed);
         a.level.store(s.level,std::memory_order_relaxed);
-        a.process1.store(s.process1,std::memory_order_relaxed);
-        a.process1Amount.store(s.process1Amount,std::memory_order_relaxed);
-        a.process2.store(s.process2,std::memory_order_relaxed);
-        a.process2Amount.store(s.process2Amount,std::memory_order_relaxed);
     }
 
     std::array<AtomicSlot,capacity> slots_{};

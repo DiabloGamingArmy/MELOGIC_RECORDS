@@ -1,4 +1,3 @@
-// mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-glide-mono-legato-v23.4.3
@@ -302,18 +301,13 @@ bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
     setModulationState(updated);return true;
 }
 bool OrigamiEngine::setOscillatorModuleState(OscillatorModuleId id,const OscillatorModuleState& state) noexcept {
-    if(oscillatorModules_.state(id).id==0) return false;
+    if(id==1 || oscillatorModules_.state(id).id==0) return false;
     auto canonical=state;
     const auto old=oscillatorModules_.state(id);
-
-    if(id==1) {
-        applyLegacyOscillatorParameters(canonical,parameterState());
-    } else {
-        if(canonical.wtPosition==old.wtPosition && canonical.waveform!=old.waveform)
-            canonical.wtPosition=canonical.waveform/3.0f;
-        canonical.waveform=canonical.wtPosition*3.0f;
-    }
-
+    // Legacy callers changed waveform alone. New callers use normalized WT position.
+    if(canonical.wtPosition==old.wtPosition && canonical.waveform!=old.waveform)
+        canonical.wtPosition=canonical.waveform/3.0f;
+    canonical.waveform=canonical.wtPosition*3.0f;
     auto candidate=instrumentState();
     for(auto& m:candidate.oscillators) if(m.id==id) {canonical.id=id;canonical.enabled=m.enabled;m=canonical;}
     if(!validInstrumentState(candidate)) return false;

@@ -1,4 +1,3 @@
-// mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-v21.1-build-repair-1
 #pragma once
 #include "OrigamiStyle.h"
@@ -34,10 +33,8 @@ public:
     explicit OscillatorCard(OscillatorDisplay display,std::function<void(unsigned)> remove,
                             std::function<bool(mct::origami::ParameterId,float)> setter={},
                             std::function<float(mct::origami::ParameterId)> getter={},
-                            std::function<bool(unsigned,bool)> enabledSetter={},
-                            std::function<bool(unsigned)> enabledGetter={},
-                            std::function<bool(unsigned,const mct::origami::OscillatorModuleState&)> moduleSetter={},
-                            std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter={});
+                   std::function<bool(unsigned,bool)> enabledSetter={},
+                   std::function<bool(unsigned)> enabledGetter={});
     unsigned id() const { return display_.id; }
     unsigned ordinal() const { return display_.ordinal; }
     void setOrdinal(unsigned ordinal);
@@ -54,8 +51,6 @@ private:
     std::function<bool(unsigned)> enabledGetter_;
     std::function<bool(mct::origami::ParameterId,float)> parameterSetter_;
     std::function<float(mct::origami::ParameterId)> parameterGetter_;
-    std::function<bool(unsigned,const mct::origami::OscillatorModuleState&)> moduleSetter_;
-    std::function<mct::origami::OscillatorModuleState(unsigned)> moduleGetter_;
     RackSlider panSlider_,levelSlider_;
         // mct-origami-unison-detune-v19.2
     RackSlider wtPositionSlider_;
@@ -64,10 +59,6 @@ private:
     juce::Label unisonLabel_, detuneLabel_;
 // mct-origami-tuning-engine-v17
     RackSlider octaveSlider_,semitoneSlider_,fineSlider_;
-    juce::ComboBox process1Menu_,process2Menu_;
-    RackSlider process1Amount_,process2Amount_;
-    juce::Label process1AmountLabel_,process2AmountLabel_;
-    bool syncingProcess_=false;
     // mct-origami-tuning-labels-v18.3
     juce::Label octaveTitle_,semitoneTitle_,fineTitle_;
     juce::Label panLabel_,levelLabel_;

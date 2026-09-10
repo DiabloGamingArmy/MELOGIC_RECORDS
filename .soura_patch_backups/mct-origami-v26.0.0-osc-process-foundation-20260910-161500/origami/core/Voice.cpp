@@ -1,4 +1,3 @@
-// mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
@@ -70,15 +69,13 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         float oscillatorMix=0.0f;
         if(count==1) {
             oscillatorMix=moduleOscillators_[m][0].next(
-                table,frequency_*frequencyScale,sampleRate_,position,
-                module.process1,module.process1Amount,module.process2,module.process2Amount);
+                table,frequency_*frequencyScale,sampleRate_,position);
         } else {
             for(unsigned u=0;u<count;++u) {
                 const double unit=(2.0*static_cast<double>(u)/static_cast<double>(count-1))-1.0;
                 const double detuneRatio=std::exp2((unit*static_cast<double>(spreadCents))/1200.0);
                 oscillatorMix+=moduleOscillators_[m][u].next(
-                    table,frequency_*frequencyScale*detuneRatio,sampleRate_,position,
-                    module.process1,module.process1Amount,module.process2,module.process2Amount);
+                    table,frequency_*frequencyScale*detuneRatio,sampleRate_,position);
             }
             oscillatorMix/=static_cast<float>(count);
         }
