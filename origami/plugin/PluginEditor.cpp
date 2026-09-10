@@ -1,3 +1,4 @@
+// mct-origami-v26.3.1-postcommit-compile-repair
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
@@ -110,15 +111,7 @@ juce::Slider* OrigamiAudioProcessorEditor::sliderFromMouseEvent(const juce::Mous
 }
 
 bool OrigamiAudioProcessorEditor::isKnob(const juce::Slider& slider) noexcept {
-    switch(slider.getSliderStyle()) {
-        case juce::Slider::Rotary:
-        case juce::Slider::RotaryHorizontalDrag:
-        case juce::Slider::RotaryVerticalDrag:
-        case juce::Slider::RotaryHorizontalVerticalDrag:
-            return true;
-        default:
-            return false;
-    }
+    return slider.isRotary();
 }
 
 double OrigamiAudioProcessorEditor::defaultForKnob(juce::Slider& slider) const noexcept {
@@ -205,8 +198,8 @@ void OrigamiAudioProcessorEditor::openKnobValueEditor(juce::Slider& slider) {
         editor->selectAll();
     }
 
-    dialog->addButton("Apply",1,juce::KeyPress::returnKey);
-    dialog->addButton("Cancel",0,juce::KeyPress::escapeKey);
+    dialog->addButton("Apply",1,juce::KeyPress(juce::KeyPress::returnKey));
+    dialog->addButton("Cancel",0,juce::KeyPress(juce::KeyPress::escapeKey));
 
     auto safeSlider=juce::Component::SafePointer<juce::Slider>(&slider);
     dialog->enterModalState(

@@ -1,3 +1,4 @@
+// mct-origami-v26.3.1-postcommit-compile-repair
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v25.1.0-arp-advanced-page
 #pragma once
@@ -12,8 +13,7 @@
 #include "ui/OrigamiLayout.h"
 class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
-                                         private juce::Timer,
-                                         private juce::MouseListener {
+                                         private juce::Timer {
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
