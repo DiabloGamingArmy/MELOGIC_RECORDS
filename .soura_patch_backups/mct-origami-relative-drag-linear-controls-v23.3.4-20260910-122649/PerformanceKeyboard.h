@@ -1,4 +1,3 @@
-// mct-origami-relative-drag-linear-controls-v23.3.4
 // mct-origami-bend-range-number-only-v23.3.3
 // mct-origami-performance-strip-relayout-v23.3.2
 // mct-origami-pitch-mod-ui-refine-v23.3.1
@@ -24,8 +23,6 @@ public:
         bendRange_.setSliderStyle(juce::Slider::LinearBarVertical);
         bendRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,62,18);
         bendRange_.setRange(1.0,48.0,1.0);
-        // V23.3.4: relative drag. Clicking does not teleport the value.
-        bendRange_.setSliderSnapsToMousePosition(false);
         bendRange_.setScrollWheelEnabled(false);
         bendRange_.setDoubleClickReturnValue(true,2.0);
         bendRange_.setTooltip("Bend Range — click/drag vertically or type a semitone value");

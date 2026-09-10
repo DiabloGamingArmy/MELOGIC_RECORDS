@@ -1,4 +1,3 @@
-// mct-origami-relative-drag-linear-controls-v23.3.4
 // mct-origami-basic-shapes-identity-v22.6
 // mct-origami-osc-interaction-rotary-cleanup-v22.5
 // mct-origami-osc1-smooth-basic-shapes-v22.3
@@ -49,8 +48,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             addAndMakeVisible(slider);
             slider->setSliderStyle(juce::Slider::LinearBarVertical);
             slider->setTextBoxStyle(juce::Slider::TextBoxBelow,false,38,14);
-            // V23.3.4: OCT/SEM/FIN preserve their current value on mouse-down.
-            slider->setSliderSnapsToMousePosition(false);
             slider->setColour(juce::Slider::backgroundColourId,Palette::inset());
             slider->setColour(juce::Slider::trackColourId,Palette::borderStrong());
             slider->setColour(juce::Slider::thumbColourId,Palette::text());
