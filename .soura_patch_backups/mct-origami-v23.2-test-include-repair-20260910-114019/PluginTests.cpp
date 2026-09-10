@@ -1,11 +1,8 @@
-// mct-origami-playability-audio-audit-v23.2
-#include "plugin/PluginProcessor.h"
+// mct-origami-playability-audio-audit-v23.2\n#include "plugin/PluginProcessor.h"
 #include "plugin/PluginEditor.h"
 #include "core/preset/StateCodec.h"
 #include <iostream>
 #include <stdexcept>
-#include <array>
-#include <cmath>
 using namespace mct::origami;
 namespace {
 unsigned checks=0;
