@@ -1,4 +1,3 @@
-// mct-origami-v23.2-literal-newline-repair-2
 // mct-origami-playability-audio-audit-v23.2
 #include "plugin/PluginProcessor.h"
 #include "plugin/PluginEditor.h"
@@ -165,8 +164,7 @@ void playabilityAudit() {
     check(two.setUiOscillatorState(2,second),"OSC2 independent state accepted");
     const auto oneAudio=renderNote(one),twoAudio=renderNote(two);
     check(std::abs(energy(oneAudio)-energy(twoAudio))>1.0e-6,"enabled OSC2 contributes to rendered sound");
-}
-void run() {
+}\nvoid run() {
     OrigamiAudioProcessor p;check(p.getUiInstrumentState().oscillators[3].id==4,"processor owns initial four modules");
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
     auto& r=rack(*editor);check(r.count()==4,"editor mirrors model");
