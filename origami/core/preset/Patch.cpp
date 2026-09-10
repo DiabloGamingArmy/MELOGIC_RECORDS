@@ -121,7 +121,13 @@ bool parsePatch(std::string_view json, Patch& output, std::string& error) {
                     require(p->scale!=ParameterScale::Choice || value==std::round(value),"Choice parameter must be an integer");
                     patch.parameters[index]=static_cast<float>(value);
                 } while(reader.take(','));
-                reader.expect('}');for(bool present:parameters) require(present,"Missing parameter ID");
+                reader.expect('}');
+                // v1 shipped with 10, then 13, then 15 parameters. Only complete
+                // historical sets may omit appended fields; defaults migrate them.
+                std::size_t count=0;for(bool present:parameters) if(present) ++count;
+                require(count==10 || count==13 || count==parameterCount,"Missing parameter ID");
+                for(std::size_t i=0;i<parameters.size();++i)
+                    require(parameters[i]==(i<count),"Missing parameter ID");
             } else throw std::invalid_argument("Unknown patch field");
             require(!(seen&bit),"Duplicate patch field");seen|=bit;
         } while(reader.take(','));

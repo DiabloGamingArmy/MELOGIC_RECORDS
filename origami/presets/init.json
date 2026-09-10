@@ -12,6 +12,11 @@
     "env.1.decay": 0.15,
     "env.1.sustain": 0.7,
     "env.1.release": 0.25,
-    "master.gain": 0.2
+    "master.gain": 0.2,
+    "osc.1.octave": 0,
+    "osc.1.semitone": 0,
+    "osc.1.fine": 0,
+    "osc.1.unison": 1,
+    "osc.1.detune": 12
   }
 }

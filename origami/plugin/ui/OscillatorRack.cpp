@@ -17,7 +17,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
       enabledSetter_(std::move(enabledSetter)),enabledGetter_(std::move(enabledGetter)),
       parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)) {
     addAndMakeVisible(remove_);
-    remove_.setTooltip("Remove this layout module (does not change audio)");
+    remove_.setTooltip("Remove this oscillator module");
     remove_.onClick=[id=display_.id,removeCallback=std::move(remove)] { removeCallback(id); };
 
     engineBacked_ = static_cast<bool>(parameterSetter_) && static_cast<bool>(parameterGetter_);
@@ -29,7 +29,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setRotaryParameters(juce::MathConstants<float>::pi*1.20f,
                                         juce::MathConstants<float>::pi*2.80f,true);
             slider->setMouseDragSensitivity(180);
-            slider->setScrollWheelEnabled(false);
         }
 
         addAndMakeVisible(waveformPrevious_);
@@ -52,7 +51,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setColour(juce::Slider::textBoxTextColourId,Palette::text());
             slider->setColour(juce::Slider::textBoxBackgroundColourId,Palette::inset());
             slider->setColour(juce::Slider::textBoxOutlineColourId,Palette::borderSoft());
-            slider->setScrollWheelEnabled(false);
         }
         octaveSlider_.setRange(-4,4,1);
         semitoneSlider_.setRange(-12,12,1);
@@ -94,7 +92,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setRotaryParameters(juce::MathConstants<float>::pi * 1.20f,
                                         juce::MathConstants<float>::pi * 2.80f, true);
             slider->setMouseDragSensitivity(180);
-            slider->setScrollWheelEnabled(false);
         }
 
         unisonSlider_.setRange(1.0, 16.0, 1.0);
@@ -124,9 +121,9 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             label->setInterceptsMouseClicks(false, false);
         }
         auto applyWaveform=[this](int delta) {
-            waveformIndex_=(waveformIndex_+delta+4)%4;
+            waveformIndex_=(juce::roundToInt(parameterGetter_(mct::origami::ParameterId::Waveform))+delta+4)%4;
             parameterSetter_(mct::origami::ParameterId::Waveform,float(waveformIndex_));
-            repaint();
+            syncFromModel();
         };
         waveformPrevious_.onClick=[applyWaveform]{ applyWaveform(-1); };
         waveformNext_.onClick=[applyWaveform]{ applyWaveform(1); };
@@ -146,7 +143,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     addAndMakeVisible(power_);
     power_.setClickingTogglesState(true);
     power_.setTooltip("Enable / disable this oscillator module");
-    power_.setName("Power OSC "+juce::String(display_.id));
+    power_.setName("Power OSC "+juce::String(display_.ordinal));
     power_.setToggleState(enabledGetter_ ? enabledGetter_(display_.id) : true,juce::dontSendNotification);
     power_.onClick=[this] {
         const bool requested=power_.getToggleState();
@@ -159,7 +156,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     wtPositionSlider_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     wtPositionSlider_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
     wtPositionSlider_.setRange(0.0,1.0,0.0);
-    wtPositionSlider_.setScrollWheelEnabled(false);
     wtPositionSlider_.setName("WT POS");
     wtPositionSlider_.setTooltip("Position inside the selected wavetable");
     wtPositionLabel_.setText("WT POS",juce::dontSendNotification);
@@ -171,13 +167,31 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     wtPositionSlider_.onValueChange=[this] {
         if(parameterSetter_)
             parameterSetter_(mct::origami::ParameterId::Waveform,float(wtPositionSlider_.getValue()*3.0));
-        repaint();
+        syncFromModel();
     };}
+
+void OscillatorCard::syncFromModel() {
+    if(!parameterGetter_) return;
+    auto sync=[&](RackSlider& slider,ParameterId id,double scale=1.0) {
+        if(!slider.isMouseButtonDown() && !slider.isEditingText())
+            slider.setValue(double(parameterGetter_(id))*scale,juce::dontSendNotification);
+    };
+    sync(wtPositionSlider_,ParameterId::Waveform,1.0/3.0);
+    sync(unisonSlider_,ParameterId::OscUnison);sync(detuneSlider_,ParameterId::OscDetune);
+    sync(panSlider_,ParameterId::OscPan);sync(levelSlider_,ParameterId::OscLevel);
+    sync(octaveSlider_,ParameterId::OscOctave);sync(semitoneSlider_,ParameterId::OscSemitone);
+    sync(fineSlider_,ParameterId::OscFine);
+    waveformIndex_=juce::jlimit(0,3,juce::roundToInt(parameterGetter_(ParameterId::Waveform)));
+    if(enabledGetter_) power_.setToggleState(enabledGetter_(display_.id),juce::dontSendNotification);
+    repaint();
+}
 
 void OscillatorCard::refreshVisibleNumber() {
     title_="OSC "+juce::String(display_.ordinal);
     setName(title_);
     remove_.setName("Remove "+title_);
+    remove_.setEnabled(display_.id!=1);
+    power_.setName("Power "+title_);
     repaint();
 }
 
@@ -187,9 +201,7 @@ void OscillatorCard::setOrdinal(unsigned ordinal) {
     refreshVisibleNumber();
 }
 void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
-    display_.ordinal=ordinal;
-    setTitle("OSC "+juce::String(ordinal));
-    repaint();
+    setOrdinal(ordinal);
 }
 void OscillatorCard::resized() {
     remove_.setBounds(getWidth()-31,6,24,21);
@@ -287,19 +299,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     g.setColour(Palette::borderStrong().withAlpha(.34f));
     g.drawHorizontalLine(inner.getCentreY(),float(inner.getX()),float(inner.getRight()));
 
-    // Exactly one oscillator cycle for the current placeholder waveform.
-    juce::Path wave;
-    for(int i=0;i<=96;++i) {
-        const float t=float(i)/96.0f;
-        const float y=.5f-.30f*std::sin(t*juce::MathConstants<float>::twoPi);
-        const float px=float(inner.getX())+t*inner.getWidth();
-        const float py=float(inner.getY())+y*inner.getHeight();
-        if(i==0) wave.startNewSubPath(px,py); else wave.lineTo(px,py);
-    }
-    g.setColour(Palette::accent().withAlpha(.94f));
-    g.strokePath(wave,juce::PathStrokeType(1.55f));
-
-    // Wavetable/browser identity strip. Visual scaffold only for now.
+    // Basic Shapes anchor label for the live continuous position.
     auto browserBox=browser.withX(preview.getX()).withWidth(preview.getWidth());
     well(g,browserBox);
     text(g,"<",browserBox.removeFromLeft(18),8.5f,Palette::muted(),juce::Justification::centred);
@@ -347,40 +347,10 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         }
     }
 
-    // Core oscillator controls remain compact and subordinate to the source view.
-    if(engineBacked_) {
-        auto firstFour=controls;
-        firstFour.setWidth(controls.getWidth()*4/6);
-        dials(g,firstFour,{"WT POS","UNISON","DETUNE","BLEND"});
-    } else {
-        if(engineBacked_) {
-        const int w=controls.getWidth()/6;
-        dial(g,controls.withX(controls.getX()).withWidth(w),"WT POS",.15f);
-        dial(g,controls.withX(controls.getX()+w*3).withWidth(w),"BLEND",.55f);
-    } else {
-        if(engineBacked_) {
-        const int cellWidth=controls.getWidth()/6;
-        dial(g,controls.withX(controls.getX()).withWidth(cellWidth),"WT POS",.15f);
-        dial(g,controls.withX(controls.getX()+cellWidth*3).withWidth(cellWidth),"BLEND",.55f);
-    } else {
-        if(engineBacked_) {
-        // mct-origami-osc1-duplicate-knob-fix-v19.5.1
-        const int cellWidth=controls.getWidth()/6;
-        dial(g,controls.withX(controls.getX()).withWidth(cellWidth),"WT POS",.15f);
-        dial(g,controls.withX(controls.getX()+cellWidth*3).withWidth(cellWidth),"BLEND",.55f);
-    } else {   // WT POS / UNISON / DETUNE / PAN / LEVEL are live child controls.
-    // BLEND remains preview-only until its DSP contract is implemented.
-    {
-        const int cellWidth=controls.getWidth()/6;
-        auto blendCell=controls.withX(controls.getX()+cellWidth*3).withWidth(cellWidth);
-        dial(g,blendCell,"BLEND",.35f);
-    
-    }
-    }
-    }
-    }
-}
-
+    // Live child sliders own WT POS / UNISON / DETUNE / PAN / LEVEL painting.
+    // Only BLEND is still a preview control.
+    const int cellWidth=controls.getWidth()/6;
+    dial(g,controls.withX(controls.getX()+cellWidth*3).withWidth(cellWidth),"BLEND",.35f);
 
     // V22.2.1 live WT POS overlay. Uses the actual preview rectangle detected
     // from this source file rather than hard-coded layout geometry.
@@ -429,32 +399,50 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
                                    ModuleAdder moduleAdder,ModuleRemover moduleRemover,
-                                   ModuleStateSetter moduleStateSetter,ModuleStateGetter moduleStateGetter,ModuleEnabledSetter moduleEnabledSetter,ModuleEnabledGetter moduleEnabledGetter)
-    : Panel("OSCILLATORS"),parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)),
+                                   ModuleStateSetter moduleStateSetter,ModuleStateGetter moduleStateGetter,ModuleEnabledSetter moduleEnabledSetter,ModuleEnabledGetter moduleEnabledGetter,
+                                   std::function<InstrumentState()> snapshotGetter)
+    : Panel("OSCILLATORS"),snapshotGetter_(std::move(snapshotGetter)),parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)),
       moduleAdder_(std::move(moduleAdder)),moduleRemover_(std::move(moduleRemover)),
       moduleStateSetter_(std::move(moduleStateSetter)),moduleStateGetter_(std::move(moduleStateGetter)),
       moduleEnabledSetter_(std::move(moduleEnabledSetter)),moduleEnabledGetter_(std::move(moduleEnabledGetter)) {
     addAndMakeVisible(viewport_);viewport_.setViewedComponent(&content_,false);
+    content_.addMouseListener(&viewport_,true);
     viewport_.setScrollBarsShown(false,true);viewport_.setScrollBarThickness(10);
     viewport_.setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::nonHover);
     for(auto* button:{&add_,&left_,&right_}) addAndMakeVisible(button);
-    add_.setTooltip("Add a visual oscillator module. Additional oscillator DSP is not implemented.");addTile_.setTooltip(add_.getTooltip());
+    add_.setTooltip("Add an independent oscillator module");addTile_.setTooltip(add_.getTooltip());
     addTile_.setName("Add oscillator module");content_.addAndMakeVisible(addTile_);
     add_.onClick=[this]{addOscillator();};addTile_.onClick=add_.onClick;
     left_.setName("Scroll oscillators left");right_.setName("Scroll oscillators right");
     left_.onClick=[this]{viewport_.setViewPosition(juce::jmax(0,viewport_.getViewPositionX()-cardWidth_-8),0);};
     right_.onClick=[this]{viewport_.setViewPosition(viewport_.getViewPositionX()+cardWidth_+8,0);};
-    for(int i=0;i<4;++i) addOscillator();
+    timerCallback();
+    startTimerHz(15);
 }
-OscillatorRack::~OscillatorRack() {viewport_.setViewedComponent(nullptr,false);}
+OscillatorRack::~OscillatorRack() {stopTimer();content_.removeMouseListener(&viewport_);viewport_.setViewedComponent(nullptr,false);}
 void OscillatorRack::addOscillator() {
-    unsigned moduleId=1;
-    if(!cards_.empty()) {
-        if(!moduleAdder_) return;
-        moduleId=moduleAdder_();
-        if(moduleId==0) return;
+    if(!moduleAdder_ || moduleAdder_()==0) return;
+    timerCallback();
+    viewport_.setViewPosition(juce::jmax(0,content_.getWidth()-viewport_.getMaximumVisibleWidth()),0);
+}
+void OscillatorRack::syncFromModel() {
+    if(!snapshotGetter_) return;
+    const auto state=snapshotGetter_();
+    std::vector<unsigned> ids;
+    for(const auto& m:state.oscillators) if(m.id) ids.push_back(m.id);
+    bool changed=ids.size()!=cards_.size();
+    for(std::size_t i=0;!changed && i<ids.size();++i) changed=ids[i]!=cards_[i]->id();
+    if(changed) {
+        const auto x=viewport_.getViewPositionX();
+        cards_.clear();
+        for(auto id:ids) createCard(id);
+        layoutCards();viewport_.setViewPosition(x,0);repaint();
     }
-
+    for(auto& card:cards_) card->syncFromModel();
+    add_.setEnabled(ids.size()<OscillatorModuleBank::capacity);
+    addTile_.setEnabled(add_.isEnabled());
+}
+void OscillatorRack::createCard(unsigned moduleId) {
     juce::Component::SafePointer<OscillatorRack> safe(this);
     auto card=std::make_unique<OscillatorCard>(
         OscillatorDisplay{moduleId,static_cast<unsigned>(cards_.size()+1),"Basic Shapes"},
@@ -510,6 +498,7 @@ void OscillatorRack::addOscillator() {
                 case mct::origami::ParameterId::MasterGain:
                     return 0.0f;
             }
+            return 0.0f;
         },
         [this,moduleId](unsigned,bool enabled) -> bool {
             return moduleEnabledSetter_ ? moduleEnabledSetter_(moduleId,enabled) : false;
@@ -522,9 +511,7 @@ void OscillatorRack::addOscillator() {
     cards_.push_back(std::move(card));
     layoutCards();
     repaint();
-    if(viewport_.getWidth()>0)
-        viewport_.setViewPosition(
-            juce::jmax(0,content_.getWidth()-viewport_.getMaximumVisibleWidth()),0);
+
 }
 void OscillatorRack::removeOscillator(unsigned id) {
     if(id==1) return;

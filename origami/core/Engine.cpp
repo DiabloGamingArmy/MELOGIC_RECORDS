@@ -35,6 +35,20 @@ bool OrigamiEngine::applyPatchState(const ParameterValues& values) noexcept {
     for (std::size_t i = 0; i < parameterCount; ++i) targets_[i].store(sanitized[i], std::memory_order_relaxed);
     reset(); return true;
 }
+InstrumentState OrigamiEngine::instrumentState() const noexcept {
+    InstrumentState state;
+    state.parameters=parameterState();
+    state.oscillators=oscillatorModules_.snapshot();
+    state.nextId=oscillatorModules_.nextId();
+    applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
+    return state;
+}
+bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcept {
+    if(!validInstrumentState(state)) return false;
+    oscillatorModules_.restore(state.oscillators,state.nextId);
+    for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
+    reset();return true;
+}
 ParameterValues OrigamiEngine::parameterState() const noexcept {
     ParameterValues values {};
     for (std::size_t i = 0; i < parameterCount; ++i) values[i] = targets_[i].load(std::memory_order_relaxed);
@@ -99,14 +113,6 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
 
     latchParameters();
     auto modules=oscillatorModules_.snapshot();
-    // V22.1 normalized WT position adapter
-    for(auto& module:modules) {
-        if(module.id==0) continue;
-        // V22.2.1: waveform remains the proven render-domain authority.
-        module.waveform=std::clamp(module.waveform,0.0f,3.0f);
-        module.wtPosition=module.waveform/3.0f;
-    }
-
     for(std::size_t sample=0;sample<sampleCount;++sample) {
         for(auto& s:smooth_) if(s.remaining) {
             s.value+=static_cast<float>(s.step);
@@ -188,11 +194,22 @@ bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
     return oscillatorModules_.remove(id);
 }
 bool OrigamiEngine::setOscillatorModuleState(OscillatorModuleId id,const OscillatorModuleState& state) noexcept {
-    if(id==1) return false;
-    return oscillatorModules_.set(id,state);
+    if(id==1 || oscillatorModules_.state(id).id==0) return false;
+    auto canonical=state;
+    const auto old=oscillatorModules_.state(id);
+    // Legacy callers changed waveform alone. New callers use normalized WT position.
+    if(canonical.wtPosition==old.wtPosition && canonical.waveform!=old.waveform)
+        canonical.wtPosition=canonical.waveform/3.0f;
+    canonical.waveform=canonical.wtPosition*3.0f;
+    auto candidate=instrumentState();
+    for(auto& m:candidate.oscillators) if(m.id==id) {canonical.id=id;canonical.enabled=m.enabled;m=canonical;}
+    if(!validInstrumentState(candidate)) return false;
+    return oscillatorModules_.set(id,canonical);
 }
 OscillatorModuleState OrigamiEngine::oscillatorModuleState(OscillatorModuleId id) const noexcept {
-    return oscillatorModules_.state(id);
+    auto state=oscillatorModules_.state(id);
+    if(id==1) applyLegacyOscillatorParameters(state,parameterState());
+    return state;
 }
 bool OrigamiEngine::setOscillatorModuleEnabled(OscillatorModuleId id,bool enabled) noexcept {
     return oscillatorModules_.setEnabled(id,enabled);

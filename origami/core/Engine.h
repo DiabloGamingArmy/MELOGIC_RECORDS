@@ -2,6 +2,7 @@
 #include "ParameterRegistry.h"
 #include "Voice.h"
 #include "OscillatorModule.h"
+#include "InstrumentState.h"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -14,6 +15,8 @@ public:
     bool prepare(double sampleRate, std::size_t maximumBlockSize, unsigned outputChannels);
     bool installWavetable(dsp::Wavetable table); // validate/move with processing stopped
     bool applyPatchState(const ParameterValues& values) noexcept; // exclusive, resets voices
+    InstrumentState instrumentState() const noexcept; // serialize writers externally
+    bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
     ParameterValues parameterState() const noexcept;
     // Atomic targets are the sole cross-thread API. Multi-parameter patch commits
     // require exclusive access; hosts dispatch MIDI/process/reset on the audio thread.

@@ -26,6 +26,7 @@ private:
     static constexpr unsigned maxUnisonVoices = 16;
     using ModuleOscillators = std::array<dsp::WavetableOscillator, maxUnisonVoices>;
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
+    std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
     dsp::Envelope envelope_;
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFilters_{};
     NoteAddress address_ {};

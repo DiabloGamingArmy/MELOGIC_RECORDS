@@ -35,7 +35,9 @@ public:
     mct::origami::OscillatorModuleState getUiOscillatorState(mct::origami::OscillatorModuleId) const noexcept;
     bool setUiOscillatorEnabled(mct::origami::OscillatorModuleId,bool) noexcept;
     bool getUiOscillatorEnabled(mct::origami::OscillatorModuleId) const noexcept;
+    mct::origami::InstrumentState getUiInstrumentState() const noexcept;
 private:
+    mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
     void dispatchMidi(const juce::MidiMessage&) noexcept;
     mct::origami::OrigamiEngine engine_;

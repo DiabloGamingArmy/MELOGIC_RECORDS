@@ -1,5 +1,7 @@
 #pragma once
 #include <array>
+#include <algorithm>
+#include <limits>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -49,6 +51,10 @@ public:
     std::array<OscillatorModuleState,capacity> snapshot() const noexcept {
         std::array<OscillatorModuleState,capacity> out{};
         for(std::size_t i=0;i<capacity;++i) out[i]=readSlot(i);
+        // Stable creation order, independent of reused storage slots. OSC1 is first.
+        std::sort(out.begin(),out.end(),[](const auto& a,const auto& b) {
+            return a.id!=0 && (b.id==0 || a.id<b.id);
+        });
         return out;
     }
 
@@ -62,17 +68,18 @@ public:
     }
 
     OscillatorModuleId add(const OscillatorModuleState& templateState={}) noexcept {
-        const auto newId=nextId_.fetch_add(1,std::memory_order_relaxed);
+        // Non-realtime writers are serialized by the owner. Publish identity last.
+        const auto newId=nextId_.load(std::memory_order_relaxed);
+        if(newId==0 || newId==std::numeric_limits<OscillatorModuleId>::max()) return 0;
         for(std::size_t i=0;i<capacity;++i) {
-            OscillatorModuleId expected=0;
-            if(!slots_[i].id.compare_exchange_strong(expected,newId,std::memory_order_acq_rel))
-                continue;
+            if(slots_[i].id.load(std::memory_order_acquire)!=0) continue;
             OscillatorModuleState s=templateState;
             s.id=newId; s.enabled=true;
             sanitize(s);
-            slots_[i].enabled.store(false,std::memory_order_relaxed);
             writeSlotValues(i,s);
-            slots_[i].enabled.store(true,std::memory_order_release);
+            slots_[i].enabled.store(true,std::memory_order_relaxed);
+            slots_[i].id.store(newId,std::memory_order_release);
+            nextId_.store(newId+1,std::memory_order_relaxed);
             return newId;
         }
         return 0;
@@ -119,6 +126,16 @@ public:
         return false;
     }
 
+    OscillatorModuleId nextId() const noexcept { return nextId_.load(std::memory_order_relaxed); }
+    // Exclusive, validated whole-instrument commit only (never in process()).
+    void restore(const std::array<OscillatorModuleState,capacity>& states,OscillatorModuleId next) noexcept {
+        for(std::size_t i=0;i<capacity;++i) {
+            writeSlotValues(i,states[i]);
+            slots_[i].enabled.store(states[i].id!=0 && states[i].enabled,std::memory_order_relaxed);
+            slots_[i].id.store(states[i].id,std::memory_order_release);
+        }
+        nextId_.store(next,std::memory_order_relaxed);
+    }
 private:
     struct AtomicSlot {
         std::atomic<OscillatorModuleId> id{0};
@@ -133,15 +150,23 @@ private:
     static void sanitize(OscillatorModuleState& s) noexcept {
         if(s.tableId==0) s.tableId=dsp::BuiltinWavetableId::BasicShapes;
         if(!std::isfinite(s.wtPosition)) s.wtPosition=0.0f;
-        if(s.wtPosition<0) s.wtPosition=0; if(s.wtPosition>1) s.wtPosition=1;
-        if(s.waveform<0) s.waveform=0; if(s.waveform>3) s.waveform=3;
-        if(s.octave<-4) s.octave=-4; if(s.octave>4) s.octave=4;
-        if(s.semitone<-12) s.semitone=-12; if(s.semitone>12) s.semitone=12;
-        if(s.fineCents<-100) s.fineCents=-100; if(s.fineCents>100) s.fineCents=100;
-        if(s.unison<1) s.unison=1; if(s.unison>16) s.unison=16;
-        if(s.detuneCents<0) s.detuneCents=0; if(s.detuneCents>100) s.detuneCents=100;
-        if(s.pan<-1) s.pan=-1; if(s.pan>1) s.pan=1;
-        if(s.level<0) s.level=0; if(s.level>1) s.level=1;
+        if(s.wtPosition<0) s.wtPosition=0;
+        if(s.wtPosition>1) s.wtPosition=1;
+        s.waveform=s.wtPosition*3.0f; // compatibility alias, never a second source of truth
+        if(s.octave<-4) s.octave=-4;
+        if(s.octave>4) s.octave=4;
+        if(s.semitone<-12) s.semitone=-12;
+        if(s.semitone>12) s.semitone=12;
+        if(s.fineCents<-100) s.fineCents=-100;
+        if(s.fineCents>100) s.fineCents=100;
+        if(s.unison<1) s.unison=1;
+        if(s.unison>16) s.unison=16;
+        if(s.detuneCents<0) s.detuneCents=0;
+        if(s.detuneCents>100) s.detuneCents=100;
+        if(s.pan<-1) s.pan=-1;
+        if(s.pan>1) s.pan=1;
+        if(s.level<0) s.level=0;
+        if(s.level>1) s.level=1;
     }
 
     OscillatorModuleState readSlot(std::size_t i) const noexcept {

@@ -12,7 +12,8 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner](unsigned id,const mct::origami::OscillatorModuleState& state) -> bool { return owner.setUiOscillatorState(id,state); },
           [&owner](unsigned id) -> mct::origami::OscillatorModuleState { return owner.getUiOscillatorState(id); },
           [&owner](unsigned id,bool enabled) -> bool { return owner.setUiOscillatorEnabled(id,enabled); },
-          [&owner](unsigned id) -> bool { return owner.getUiOscillatorEnabled(id); }) {
+          [&owner](unsigned id) -> bool { return owner.getUiOscillatorEnabled(id); },
+          [&owner] { return owner.getUiInstrumentState(); }) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,9> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_}};
     for(auto* component:components) addAndMakeVisible(component);

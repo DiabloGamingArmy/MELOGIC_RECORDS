@@ -3,15 +3,30 @@
 #include "OrigamiStyle.h"
 #include "core/OscillatorModule.h"
 #include "core/ParameterRegistry.h"
+#include "core/InstrumentState.h"
 #include <memory>
 #include <vector>
 namespace mct::origami::ui {
-// Editor-local display model; intentionally not an engine layer or patch parameter.
+// Display ordinals are derived from the engine-owned stable module IDs.
 // mct-origami-oscillator-live-numbering-v5
 struct OscillatorDisplay {
     unsigned id;
     unsigned ordinal;
     juce::String source;
+};
+// Rack controls delegate every wheel event to the component ancestry. JUCE's
+// Viewport retains native axis/modifier handling; explicit slider drags are unchanged.
+// Use this type for future editable rack sliders, including pitch text boxes.
+class RackSlider final : public juce::Slider {
+public:
+    bool isEditingText() const {
+        for(auto* child:getChildren())
+            if(auto* label=dynamic_cast<juce::Label*>(child)) if(label->isBeingEdited()) return true;
+        return false;
+    }
+    void mouseWheelMove(const juce::MouseEvent& e,const juce::MouseWheelDetails& wheel) override {
+        juce::Component::mouseWheelMove(e,wheel);
+    }
 };
 class OscillatorCard final : public Panel {
 public:
@@ -24,6 +39,7 @@ public:
     unsigned ordinal() const { return display_.ordinal; }
     void setOrdinal(unsigned ordinal);
     void resized() override;
+    void syncFromModel();
     void setDisplayOrdinal(unsigned ordinal);
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
@@ -35,14 +51,14 @@ private:
     std::function<bool(unsigned)> enabledGetter_;
     std::function<bool(mct::origami::ParameterId,float)> parameterSetter_;
     std::function<float(mct::origami::ParameterId)> parameterGetter_;
-    juce::Slider panSlider_,levelSlider_;
+    RackSlider panSlider_,levelSlider_;
         // mct-origami-unison-detune-v19.2
-    juce::Slider wtPositionSlider_;
+    RackSlider wtPositionSlider_;
     juce::Label wtPositionLabel_;
-    juce::Slider unisonSlider_, detuneSlider_;
+    RackSlider unisonSlider_, detuneSlider_;
     juce::Label unisonLabel_, detuneLabel_;
 // mct-origami-tuning-engine-v17
-    juce::Slider octaveSlider_,semitoneSlider_,fineSlider_;
+    RackSlider octaveSlider_,semitoneSlider_,fineSlider_;
     // mct-origami-tuning-labels-v18.3
     juce::Label octaveTitle_,semitoneTitle_,fineTitle_;
     juce::Label panLabel_,levelLabel_;
@@ -50,7 +66,20 @@ private:
     bool engineBacked_=false;
     int waveformIndex_=0;
 };
-class OscillatorRack final : public Panel {
+// Observe native wheel delivery across all content descendants, including JUCE
+// SliderLabelComp (which swallows mouseWheelMove). Ignore their bubbled copy;
+// the recursive listener delivers the original exactly once. Keep JUCE's native
+// axis, modifier, edge and inertia policy in Viewport.
+class RackViewport final : public juce::Viewport {
+public:
+    void mouseWheelMove(const juce::MouseEvent& e,const juce::MouseWheelDetails& wheel) override {
+        auto* content=getViewedComponent();
+        const bool fromContent=content && (e.originalComponent==content || content->isParentOf(e.originalComponent));
+        if(e.eventComponent==this && fromContent) return;
+        juce::Viewport::mouseWheelMove(e.getEventRelativeTo(this),wheel);
+    }
+};
+class OscillatorRack final : public Panel, private juce::Timer {
 public:
     using ParameterSetter=std::function<bool(mct::origami::ParameterId,float)>;
     using ParameterGetter=std::function<float(mct::origami::ParameterId)>;
@@ -63,18 +92,23 @@ public:
     OscillatorRack(ParameterSetter setter={},ParameterGetter getter={},
                    ModuleAdder moduleAdder={},ModuleRemover moduleRemover={},
                    ModuleStateSetter moduleStateSetter={},ModuleStateGetter moduleStateGetter={},
-                   ModuleEnabledSetter moduleEnabledSetter={},ModuleEnabledGetter moduleEnabledGetter={});
+                   ModuleEnabledSetter moduleEnabledSetter={},ModuleEnabledGetter moduleEnabledGetter={},
+                   std::function<InstrumentState()> snapshotGetter={});
     ~OscillatorRack() override;
     void resized() override;
+    void syncFromModel();
     void addOscillator();
     void removeOscillator(unsigned id);
     int count() const { return static_cast<int>(cards_.size()); }
     const juce::Viewport& viewport() const { return viewport_; }
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
+    void timerCallback() override { syncFromModel(); }
+    void createCard(unsigned moduleId);
+    std::function<InstrumentState()> snapshotGetter_;
     void renumberOscillators();
     void layoutCards();
-    juce::Viewport viewport_;
+    RackViewport viewport_;
     juce::Component content_;
     juce::TextButton add_{"+ ADD OSCILLATOR"},addTile_{"+"},left_{"<"},right_{">"};
     std::vector<std::unique_ptr<OscillatorCard>> cards_;

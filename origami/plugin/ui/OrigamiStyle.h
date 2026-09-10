@@ -27,34 +27,31 @@ inline void well(juce::Graphics& g, juce::Rectangle<int> bounds) {
     g.setColour(Palette::inset()); g.fillRoundedRectangle(box,2.5f);
     g.setColour(Palette::borderSoft()); g.drawRoundedRectangle(box,2.5f,1.0f);
 }
+// Shared visual contract: one magnitude arc outside the body, one pointer.
+inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float position,float start,float end) {
+    const float diameter=circle.getWidth();
+    const auto c=circle.getCentre();
+    const float angle=start+juce::jlimit(0.0f,1.0f,position)*(end-start);
+    g.setColour(Palette::raised());g.fillEllipse(circle);
+    const auto inner=circle.reduced(diameter*.15f);
+    g.setColour(Palette::background().withAlpha(.45f));g.fillEllipse(inner);
+    g.setColour(Palette::borderSoft().brighter(.08f));g.drawEllipse(inner,.8f);
+    juce::Path active;
+    active.addCentredArc(c.x,c.y,diameter*.54f,diameter*.54f,0,start,angle,true);
+    g.setColour(Palette::accent().withAlpha(.90f));g.strokePath(active,juce::PathStrokeType(2.1f));
+    g.setColour(Palette::text().withAlpha(.94f));
+    g.drawLine(c.x+std::sin(angle)*diameter*.10f,c.y-std::cos(angle)*diameter*.10f,
+               c.x+std::sin(angle)*diameter*.34f,c.y-std::cos(angle)*diameter*.34f,1.7f);
+    g.setColour(Palette::borderStrong());g.fillEllipse(juce::Rectangle<float>(2.8f,2.8f).withCentre(c));
+}
 // mct-origami-control-surface-v2.1
 inline void dial(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& label, float position = .4f) {
     auto labelBounds=bounds.removeFromBottom(18);
     const float diameter=float(juce::jlimit(20,36,juce::jmin(bounds.getWidth()-8,bounds.getHeight()-4)));
     auto circle=juce::Rectangle<float>(diameter,diameter).withCentre(bounds.toFloat().getCentre());
     constexpr float start=-2.35f, sweep=4.70f;
-    const float end=start+sweep*juce::jlimit(0.0f,1.0f,position);
 
-    // V22.4: one magnitude indicator only. The previous full-range track
-    // visually read as a second magnitude line beneath the active arc.
-    juce::Path active;
-    active.addCentredArc(circle.getCentreX(),circle.getCentreY(),diameter*.50f,diameter*.50f,0,start,end,true);
-    g.setColour(Palette::accent().withAlpha(.92f));
-    g.strokePath(active,juce::PathStrokeType(2.2f));
-
-    g.setColour(Palette::raised());g.fillEllipse(circle);
-    g.setColour(Palette::borderStrong());g.drawEllipse(circle,1.0f);
-    auto inner=circle.reduced(diameter*.15f);
-    g.setColour(Palette::background().withAlpha(.42f));g.fillEllipse(inner);
-    g.setColour(Palette::borderSoft().brighter(.08f));g.drawEllipse(inner,.8f);
-
-    const auto centre=circle.getCentre();
-    g.setColour(Palette::text().withAlpha(.92f));
-    g.drawLine(centre.x+std::sin(end)*diameter*.10f,centre.y-std::cos(end)*diameter*.10f,
-               centre.x+std::sin(end)*diameter*.34f,centre.y-std::cos(end)*diameter*.34f,1.7f);
-
-    g.setColour(Palette::borderStrong());
-    g.fillEllipse(juce::Rectangle<float>(2.8f,2.8f).withCentre(centre));
+    paintKnob(g,circle,position,start,start+sweep);
     text(g,label,labelBounds,8.7f,Palette::muted(),juce::Justification::centred);
 }
 inline void dials(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::StringArray& labels) {

@@ -27,34 +27,7 @@ void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int widt
     auto bounds=juce::Rectangle<float>(float(x),float(y),float(width),float(height)).reduced(3.0f);
     const float diameter=juce::jmin(bounds.getWidth(),bounds.getHeight());
     auto circle=juce::Rectangle<float>(diameter,diameter).withCentre(bounds.getCentre());
-    const float angle=rotaryStartAngle+sliderPos*(rotaryEndAngle-rotaryStartAngle);
-
-    // mct-origami-single-magnitude-arc-v19.4
-    // No fixed full-range arc: only the live magnitude arc is drawn.
-juce::Path active;
-    // V22.4: keep the live magnitude arc physically distinct from the knob
-    // outline so the two strokes cannot read as a doubled magnitude line.
-    active.addCentredArc(circle.getCentreX(),circle.getCentreY(),diameter*.54f,diameter*.54f,0.0f,
-                         rotaryStartAngle,angle,true);
-    g.setColour(Palette::accent().withAlpha(.90f));
-    g.strokePath(active,juce::PathStrokeType(2.1f));
-
-    g.setColour(Palette::raised()); g.fillEllipse(circle);
-    // V22.5: no competing full outer outline. The live magnitude arc above
-    // is the single authoritative outer stroke for real rotary controls.
-    auto inner=circle.reduced(diameter*.15f);
-    g.setColour(Palette::background().withAlpha(.45f)); g.fillEllipse(inner);
-    g.setColour(Palette::borderSoft().brighter(.08f)); g.drawEllipse(inner,.8f);
-
-    const auto c=circle.getCentre();
-    g.setColour(Palette::text().withAlpha(.94f));
-    g.drawLine(c.x+std::sin(angle)*diameter*.10f,
-               c.y-std::cos(angle)*diameter*.10f,
-               c.x+std::sin(angle)*diameter*.34f,
-               c.y-std::cos(angle)*diameter*.34f,1.7f);
-
-    g.setColour(Palette::borderStrong());
-    g.fillEllipse(juce::Rectangle<float>(2.8f,2.8f).withCentre(c));
+    paintKnob(g,circle,sliderPos,rotaryStartAngle,rotaryEndAngle);
 }
 
 void OrigamiLookAndFeel::drawScrollbar(juce::Graphics& g,juce::ScrollBar&,int x,int y,int width,int height,bool vertical,int start,int size,bool over,bool) {

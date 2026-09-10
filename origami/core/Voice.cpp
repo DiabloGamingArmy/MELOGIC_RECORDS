@@ -22,7 +22,11 @@ Voice::ModuleSamples Voice::nextModules(
 
     for(std::size_t m=0;m<modules.size();++m) {
         const auto& module=modules[m];
-        if(!module.enabled) continue;
+        if(moduleIds_[m]!=module.id) {
+            for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
+            moduleFilters_[m].reset();moduleIds_[m]=module.id;
+        }
+        if(module.id==0 || !module.enabled) continue;
 
         const double semitones =
             static_cast<double>(module.octave)*12.0 +
@@ -31,7 +35,7 @@ Voice::ModuleSamples Voice::nextModules(
         const double frequencyScale=std::exp2(semitones/12.0);
         const unsigned count=std::clamp(module.unison,1u,maxUnisonVoices);
         const float spreadCents=std::clamp(module.detuneCents,0.0f,100.0f);
-        const float position=std::clamp(module.waveform/3.0f,0.0f,1.0f);
+        const float position=module.wtPosition;
 
         float oscillatorMix=0.0f;
         if(count==1) {
