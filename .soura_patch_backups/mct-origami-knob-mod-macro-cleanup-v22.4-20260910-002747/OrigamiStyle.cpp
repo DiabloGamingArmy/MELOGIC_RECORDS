@@ -1,4 +1,3 @@
-// mct-origami-knob-mod-macro-cleanup-v22.4
 #include "OrigamiStyle.h"
 namespace mct::origami::ui {
 OrigamiLookAndFeel::OrigamiLookAndFeel() {
@@ -31,9 +30,7 @@ void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int widt
     // mct-origami-single-magnitude-arc-v19.4
     // No fixed full-range arc: only the live magnitude arc is drawn.
 juce::Path active;
-    // V22.4: keep the live magnitude arc physically distinct from the knob
-    // outline so the two strokes cannot read as a doubled magnitude line.
-    active.addCentredArc(circle.getCentreX(),circle.getCentreY(),diameter*.54f,diameter*.54f,0.0f,
+    active.addCentredArc(circle.getCentreX(),circle.getCentreY(),diameter*.50f,diameter*.50f,0.0f,
                          rotaryStartAngle,angle,true);
     g.setColour(Palette::accent().withAlpha(.90f));
     g.strokePath(active,juce::PathStrokeType(2.1f));

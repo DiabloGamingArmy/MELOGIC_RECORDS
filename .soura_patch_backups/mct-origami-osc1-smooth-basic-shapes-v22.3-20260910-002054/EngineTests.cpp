@@ -1,4 +1,3 @@
-// mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "core/Engine.h"
 #include "core/preset/Patch.h"
 #include <algorithm>
@@ -45,10 +44,6 @@ void registryAndPatches() {
     check(!engine.setParameter(ParameterId::Cutoff,std::numeric_limits<float>::quiet_NaN()),"reject NaN");
     check(!engine.setParameter(ParameterId::MasterGain,std::numeric_limits<float>::infinity()),"reject infinity");
     set(engine,ParameterId::MasterGain,50);check(engine.parameterState()[9]==1,"gain clamped");
-    // V22.3 regression: OSC1 WT POS must remain continuous.
-    set(engine,ParameterId::Waveform,0.5f);
-    check(std::abs(engine.parameterState()[static_cast<std::size_t>(ParameterId::Waveform)]-0.5f)<1e-6f,
-          "OSC1 WT position preserves fractional values");
     std::ifstream input(ORIGAMI_INIT_PATCH);std::ostringstream text;text<<input.rdbuf();check(bool(input),"read canonical Init");
     Patch patch;std::string error;check(parsePatch(text.str(),patch,error),"parse Init");check(patch.parameters==defaultParameters(),"Init equals defaults");
     Patch decoded;check(parsePatch(serializePatch(patch),decoded,error),"JSON round trip");check(decoded.parameters==patch.parameters && decoded.name=="Init","exact float round trip");
@@ -126,13 +121,6 @@ void signalBehavior() {
         set(engine,ParameterId::Waveform,static_cast<float>(waveform));engine.reset();engine.noteOn(69,1);
         check(energy(render(engine,4000))>.001,"each waveform audible");
     }
-    // V22.3: a fractional OSC1 position must render as an interpolated
-    // Basic Shapes position rather than being rounded to an anchor.
-    set(engine,ParameterId::Waveform,0.5f);engine.reset();engine.noteOn(69,1);
-    const auto morphA=render(engine,1024);
-    set(engine,ParameterId::Waveform,1.0f);engine.reset();engine.noteOn(69,1);
-    const auto anchorA=render(engine,1024);
-    check(morphA!=anchorA,"OSC1 fractional WT position changes rendered waveform");
     engine.reset();engine.noteOn(69,1);const auto loud=energy(render(engine,5000));
     engine.reset();engine.noteOn(69,.5f);const auto quiet=energy(render(engine,5000));
     check(std::abs(quiet/loud-.25)<1e-5,"linear velocity amplitude");

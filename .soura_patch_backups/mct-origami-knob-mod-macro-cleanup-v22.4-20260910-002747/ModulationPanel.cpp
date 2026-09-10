@@ -1,4 +1,3 @@
-// mct-origami-knob-mod-macro-cleanup-v22.4
 #include "ModulationPanel.h"
 namespace mct::origami::ui {
 ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter)
@@ -102,11 +101,9 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     text(g,tabs_[static_cast<std::size_t>(selected_)].getButtonText()+" / DISPLAY",
          graphCaption,9,Palette::muted());
     graph(g,main,selected_<3);
-    // V22.4: ENV1 has real JUCE sliders laid out over this rectangle.
-    // Do not paint placeholder dials underneath them. Non-ENV pages remain
-    // visual-only for now, so their preview controls are retained.
-    if(selected_>=3)
-        dials(g,controls,juce::StringArray{"RATE","SHAPE","PHASE","SMOOTH"});
+    dials(g,controls,selected_<3
+        ? juce::StringArray{"ATTACK","DECAY","SUSTAIN","RELEASE"}
+        : juce::StringArray{"RATE","SHAPE","PHASE","SMOOTH"});
 
     auto lfoControls=lfo.removeFromBottom(juce::jmin(58,lfo.getHeight()/3+8)); (void)lfoControls;
     auto lfoOptions=lfo.removeFromBottom(25);

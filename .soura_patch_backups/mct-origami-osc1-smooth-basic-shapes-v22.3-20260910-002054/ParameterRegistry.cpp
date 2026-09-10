@@ -1,11 +1,10 @@
-// mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "ParameterRegistry.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami {
 const std::array<ParameterDescriptor, parameterCount>& parameterRegistry() noexcept {
     static constexpr std::array<ParameterDescriptor, parameterCount> registry {{
-        {ParameterId::Waveform,"osc.1.waveform","OSC 1 WT Position","",1,0,3,ParameterScale::Linear,.005f},
+        {ParameterId::Waveform,"osc.1.waveform","OSC 1 Waveform","",1,0,3,ParameterScale::Choice,.005f},
         {ParameterId::OscLevel,"osc.1.level","OSC 1 Level","linear",.7f,0,1,ParameterScale::Linear,.01f},
         {ParameterId::OscPan,"osc.1.pan","OSC 1 Pan","",0,-1,1,ParameterScale::Linear,.01f},
         {ParameterId::Cutoff,"filter.1.cutoff","Filter 1 Cutoff","Hz",8000,20,20000,ParameterScale::Logarithmic,.01f},

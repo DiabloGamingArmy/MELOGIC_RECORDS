@@ -1,4 +1,3 @@
-// mct-origami-knob-mod-macro-cleanup-v22.4
 #pragma once
 #include <JuceHeader.h>
 namespace mct::origami::ui {
@@ -26,17 +25,15 @@ struct EditorLayout {
         area.removeFromTop(6);
 
         auto lower=area;
-        // V22.4: Macros is the terminal panel on the lower row.
-        // Keep the existing approximate widths, but order the row:
-        // MODULATION | FILTER | MACROS.
-        const int macroWidth=juce::roundToInt(lower.getWidth()*.12f);
-        result.macros=lower.removeFromRight(macroWidth);
-        lower.removeFromRight(6);
-
-        result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.31f));
+        result.filter=lower.removeFromRight(juce::roundToInt(lower.getWidth()*.31f));
         lower.removeFromRight(6);
 
         result.modulation=lower;
+        const int macroWidth=juce::roundToInt(result.modulation.getWidth()*.18f);
+        auto modArea=result.modulation;
+        result.macros=modArea.removeFromRight(macroWidth);
+        modArea.removeFromRight(6);
+        result.modulation=modArea;
 
         result.mixer={};
         result.fxPre={};

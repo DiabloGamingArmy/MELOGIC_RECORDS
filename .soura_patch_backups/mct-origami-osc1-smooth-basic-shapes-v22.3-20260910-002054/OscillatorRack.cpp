@@ -1,4 +1,3 @@
-// mct-origami-osc1-smooth-basic-shapes-v22.3
 // mct-origami-wt-pos-real-morph-v22.2.1
 // mct-origami-v22.1-ui-scope-repair-1
 #include <cmath>
@@ -32,8 +31,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
 
         addAndMakeVisible(waveformPrevious_);
         addAndMakeVisible(waveformNext_);
-        waveformPrevious_.setTooltip("Previous anchor frame in Basic Shapes");
-        waveformNext_.setTooltip("Next anchor frame in Basic Shapes");
+        waveformPrevious_.setTooltip("Previous built-in waveform");
+        waveformNext_.setTooltip("Next built-in waveform");
         panSlider_.setRange(-1.0,1.0,0.001);
         levelSlider_.setRange(0.0,1.0,0.001);
         panSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscPan),juce::dontSendNotification);
@@ -452,7 +451,7 @@ void OscillatorRack::addOscillator() {
 
     juce::Component::SafePointer<OscillatorRack> safe(this);
     auto card=std::make_unique<OscillatorCard>(
-        OscillatorDisplay{moduleId,static_cast<unsigned>(cards_.size()+1),"Basic Shapes"},
+        OscillatorDisplay{moduleId,static_cast<unsigned>(cards_.size()+1),"Wavetable"},
         [safe](unsigned id) {
             juce::MessageManager::callAsync([safe,id] {
                 if(safe!=nullptr) safe->removeOscillator(id);

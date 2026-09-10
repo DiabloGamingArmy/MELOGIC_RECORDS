@@ -1,4 +1,3 @@
-// mct-origami-knob-mod-macro-cleanup-v22.4
 #pragma once
 #include <JuceHeader.h>
 #include <array>
@@ -35,8 +34,11 @@ inline void dial(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::Str
     constexpr float start=-2.35f, sweep=4.70f;
     const float end=start+sweep*juce::jlimit(0.0f,1.0f,position);
 
-    // V22.4: one magnitude indicator only. The previous full-range track
-    // visually read as a second magnitude line beneath the active arc.
+    juce::Path track;
+    track.addCentredArc(circle.getCentreX(),circle.getCentreY(),diameter*.50f,diameter*.50f,0,start,start+sweep,true);
+    g.setColour(Palette::borderSoft().brighter(.18f));
+    g.strokePath(track,juce::PathStrokeType(2.2f));
+
     juce::Path active;
     active.addCentredArc(circle.getCentreX(),circle.getCentreY(),diameter*.50f,diameter*.50f,0,start,end,true);
     g.setColour(Palette::accent().withAlpha(.92f));
