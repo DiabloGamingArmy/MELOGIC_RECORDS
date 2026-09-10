@@ -1,4 +1,3 @@
-// mct-origami-osc-interaction-rotary-cleanup-v22.5
 // mct-origami-knob-mod-macro-cleanup-v22.4
 #include "OrigamiStyle.h"
 namespace mct::origami::ui {
@@ -40,8 +39,8 @@ juce::Path active;
     g.strokePath(active,juce::PathStrokeType(2.1f));
 
     g.setColour(Palette::raised()); g.fillEllipse(circle);
-    // V22.5: no competing full outer outline. The live magnitude arc above
-    // is the single authoritative outer stroke for real rotary controls.
+    g.setColour(Palette::borderStrong()); g.drawEllipse(circle,1.0f);
+
     auto inner=circle.reduced(diameter*.15f);
     g.setColour(Palette::background().withAlpha(.45f)); g.fillEllipse(inner);
     g.setColour(Palette::borderSoft().brighter(.08f)); g.drawEllipse(inner,.8f);

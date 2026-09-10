@@ -1,4 +1,3 @@
-// mct-origami-osc-interaction-rotary-cleanup-v22.5
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 // mct-origami-wt-pos-real-morph-v22.2.1
 // mct-origami-v22.1-ui-scope-repair-1
@@ -14,8 +13,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
                                std::function<bool(unsigned,bool)> enabledSetter,
                                std::function<bool(unsigned)> enabledGetter)
     : Panel("OSC "+juce::String(display.ordinal)),display_(std::move(display)),
-      enabledSetter_(std::move(enabledSetter)),enabledGetter_(std::move(enabledGetter)),
-      parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)) {
+      parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)),
+      enabledSetter_(std::move(enabledSetter)),enabledGetter_(std::move(enabledGetter)) {
     addAndMakeVisible(remove_);
     remove_.setTooltip("Remove this layout module (does not change audio)");
     remove_.onClick=[id=display_.id,removeCallback=std::move(remove)] { removeCallback(id); };
@@ -29,7 +28,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setRotaryParameters(juce::MathConstants<float>::pi*1.20f,
                                         juce::MathConstants<float>::pi*2.80f,true);
             slider->setMouseDragSensitivity(180);
-            slider->setScrollWheelEnabled(false);
         }
 
         addAndMakeVisible(waveformPrevious_);
@@ -52,7 +50,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setColour(juce::Slider::textBoxTextColourId,Palette::text());
             slider->setColour(juce::Slider::textBoxBackgroundColourId,Palette::inset());
             slider->setColour(juce::Slider::textBoxOutlineColourId,Palette::borderSoft());
-            slider->setScrollWheelEnabled(false);
         }
         octaveSlider_.setRange(-4,4,1);
         semitoneSlider_.setRange(-12,12,1);
@@ -94,7 +91,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setRotaryParameters(juce::MathConstants<float>::pi * 1.20f,
                                         juce::MathConstants<float>::pi * 2.80f, true);
             slider->setMouseDragSensitivity(180);
-            slider->setScrollWheelEnabled(false);
         }
 
         unisonSlider_.setRange(1.0, 16.0, 1.0);
@@ -159,7 +155,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     wtPositionSlider_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
     wtPositionSlider_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
     wtPositionSlider_.setRange(0.0,1.0,0.0);
-    wtPositionSlider_.setScrollWheelEnabled(false);
     wtPositionSlider_.setName("WT POS");
     wtPositionSlider_.setTooltip("Position inside the selected wavetable");
     wtPositionLabel_.setText("WT POS",juce::dontSendNotification);
