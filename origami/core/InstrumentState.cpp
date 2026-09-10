@@ -1,3 +1,4 @@
+// mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
@@ -33,8 +34,10 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
            !range(m.semitone,-12,12) || m.semitone!=std::round(m.semitone) ||
            !range(m.fineCents,-100,100) || m.unison<1 || m.unison>16 ||
            !range(m.detuneCents,0,100) || !range(m.pan,-1,1) || !range(m.level,0,1) ||
-           !dsp::validOscProcessType(m.process1) || !range(m.process1Amount,0,1) ||
-           !dsp::validOscProcessType(m.process2) || !range(m.process2Amount,0,1)) return false;
+           !dsp::validOscProcessType(m.process1) ||
+           !range(m.process1Amount,dsp::oscProcessAmountMinimum(m.process1),1) ||
+           !dsp::validOscProcessType(m.process2) ||
+           !range(m.process2Amount,dsp::oscProcessAmountMinimum(m.process2),1)) return false;
     }
     auto first=s.oscillators[0];applyLegacyOscillatorParameters(first,s.parameters);
     const auto& m=s.oscillators[0];

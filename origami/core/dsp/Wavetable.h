@@ -1,3 +1,4 @@
+// mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
@@ -21,6 +22,26 @@ enum class OscProcessType : std::uint32_t {
 
 constexpr bool validOscProcessType(OscProcessType type) noexcept {
     return static_cast<std::uint32_t>(type)<static_cast<std::uint32_t>(OscProcessType::Count);
+}
+
+constexpr bool oscProcessIsBipolar(OscProcessType type) noexcept {
+    switch(type) {
+        case OscProcessType::Asym:
+        case OscProcessType::PhaseShift:
+        case OscProcessType::SineWarp:
+        case OscProcessType::Ripple:
+        case OscProcessType::Twist:
+        case OscProcessType::Window:
+        case OscProcessType::PulseWarp:
+        case OscProcessType::Shred:
+            return true;
+        default:
+            return false;
+    }
+}
+
+constexpr float oscProcessAmountMinimum(OscProcessType type) noexcept {
+    return oscProcessIsBipolar(type) ? -1.0f : 0.0f;
 }
 
 const char* oscProcessName(OscProcessType type) noexcept;

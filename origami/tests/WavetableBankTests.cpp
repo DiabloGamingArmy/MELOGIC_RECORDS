@@ -1,3 +1,4 @@
+// mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
 #include "core/dsp/WavetableBank.h"
 #include <cmath>
@@ -74,11 +75,25 @@ int main() {
     for(std::uint32_t raw=0;raw<static_cast<std::uint32_t>(OscProcessType::Count);++raw) {
         const auto type=static_cast<OscProcessType>(raw);
         expect(validOscProcessType(type),"expanded OSC process catalog type validates");
+
+        const std::array<float,7> amounts=oscProcessIsBipolar(type)
+            ? std::array<float,7>{-1.0f,-0.65f,-0.15f,0.0f,0.15f,0.65f,1.0f}
+            : std::array<float,7>{0.0f,0.0f,0.0f,0.0f,0.15f,0.65f,1.0f};
+
         for(double phase:{0.0,0.001,0.125,0.25,0.499,0.5,0.731,0.999}) {
-            for(float amount:{0.0f,0.15f,0.5f,0.85f,1.0f}) {
+            const double neutral=processOscillatorPhase(phase,type,0.0f);
+            expect(std::abs(neutral-phase)<1.0e-12,"OSC process zero amount is neutral");
+
+            for(float amount:amounts) {
                 const double processed=processOscillatorPhase(phase,type,amount);
                 expect(std::isfinite(processed),"OSC process output finite");
                 expect(processed>=0.0 && processed<1.0,"OSC process output phase-bounded");
+            }
+
+            if(!oscProcessIsBipolar(type)) {
+                const double negative=processOscillatorPhase(phase,type,-0.5f);
+                expect(std::abs(negative-phase)<1.0e-12,
+                       "unipolar OSC process rejects negative magnitude as neutral");
             }
         }
     }

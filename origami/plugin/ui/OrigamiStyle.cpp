@@ -1,3 +1,4 @@
+// mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-osc-interaction-rotary-cleanup-v22.5
@@ -25,10 +26,47 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
 // mct-origami-native-knob-waveform-v16
 void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int width,int height,
                                           float sliderPos,float rotaryStartAngle,float rotaryEndAngle,
-                                          juce::Slider&) {
+                                          juce::Slider& slider) {
     auto bounds=juce::Rectangle<float>(float(x),float(y),float(width),float(height)).reduced(3.0f);
     const float diameter=juce::jmin(bounds.getWidth(),bounds.getHeight());
     auto circle=juce::Rectangle<float>(diameter,diameter).withCentre(bounds.getCentre());
+
+    if(slider.getName()=="OSC PROCESS BIPOLAR") {
+        // Bipolar process amounts use the physical top of the knob as 0.
+        // The magnitude arc grows away from that neutral point in either direction.
+        const auto c=circle.getCentre();
+        const float angle=rotaryStartAngle+juce::jlimit(0.0f,1.0f,sliderPos)
+                                             *(rotaryEndAngle-rotaryStartAngle);
+        const float neutral=(rotaryStartAngle+rotaryEndAngle)*0.5f;
+
+        g.setColour(Palette::raised());
+        g.fillEllipse(circle);
+        const auto inner=circle.reduced(diameter*.15f);
+        g.setColour(Palette::background().withAlpha(.45f));
+        g.fillEllipse(inner);
+        g.setColour(Palette::borderSoft().brighter(.08f));
+        g.drawEllipse(inner,.8f);
+
+        juce::Path active;
+        if(angle<neutral)
+            active.addCentredArc(c.x,c.y,diameter*.54f,diameter*.54f,0,angle,neutral,true);
+        else
+            active.addCentredArc(c.x,c.y,diameter*.54f,diameter*.54f,0,neutral,angle,true);
+        g.setColour(Palette::accent().withAlpha(.90f));
+        g.strokePath(active,juce::PathStrokeType(2.1f));
+
+        // Neutral tick: exact 0 reference at 12 o'clock.
+        g.setColour(Palette::secondary().withAlpha(.72f));
+        g.drawLine(c.x,c.y-diameter*.47f,c.x,c.y-diameter*.39f,1.2f);
+
+        g.setColour(Palette::text().withAlpha(.94f));
+        g.drawLine(c.x+std::sin(angle)*diameter*.10f,c.y-std::cos(angle)*diameter*.10f,
+                   c.x+std::sin(angle)*diameter*.34f,c.y-std::cos(angle)*diameter*.34f,1.7f);
+        g.setColour(Palette::borderStrong());
+        g.fillEllipse(juce::Rectangle<float>(2.8f,2.8f).withCentre(c));
+        return;
+    }
+
     paintKnob(g,circle,sliderPos,rotaryStartAngle,rotaryEndAngle);
 }
 

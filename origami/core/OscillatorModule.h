@@ -1,3 +1,4 @@
+// mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.0.0-osc-process-foundation
 #pragma once
 #include <array>
@@ -180,8 +181,8 @@ private:
         if(!dsp::validOscProcessType(s.process2)) s.process2=dsp::OscProcessType::Off;
         if(!std::isfinite(s.process1Amount)) s.process1Amount=0.0f;
         if(!std::isfinite(s.process2Amount)) s.process2Amount=0.0f;
-        s.process1Amount=std::clamp(s.process1Amount,0.0f,1.0f);
-        s.process2Amount=std::clamp(s.process2Amount,0.0f,1.0f);
+        s.process1Amount=std::clamp(s.process1Amount,dsp::oscProcessAmountMinimum(s.process1),1.0f);
+        s.process2Amount=std::clamp(s.process2Amount,dsp::oscProcessAmountMinimum(s.process2),1.0f);
     }
 
     OscillatorModuleState readSlot(std::size_t i) const noexcept {

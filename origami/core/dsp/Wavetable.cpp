@@ -1,3 +1,4 @@
+// mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
@@ -110,8 +111,10 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
     const auto quantize=[](double x,int steps) noexcept { return std::floor(x*steps)/static_cast<double>(steps); };
 
     const double p=std::clamp(phase,0.0,std::nextafter(1.0,0.0));
-    const double amount=std::clamp(static_cast<double>(rawAmount),0.0,1.0);
-    if(amount<=0.0 || type==OscProcessType::Off) return p;
+    const double amount=std::clamp(static_cast<double>(rawAmount),
+                                   static_cast<double>(oscProcessAmountMinimum(type)),1.0);
+    if(std::abs(amount)<=std::numeric_limits<double>::epsilon() || type==OscProcessType::Off)
+        return p;
 
     switch(type) {
         case OscProcessType::BendPlus: {
@@ -139,7 +142,8 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             return std::clamp(p+(mirrored-p)*amount,0.0,std::nextafter(1.0,0.0));
         }
         case OscProcessType::Asym: {
-            const double midpoint=0.5-amount*0.38;
+            // Bipolar: negative moves the split left; positive moves it right.
+            const double midpoint=0.5+amount*0.38;
             if(p<midpoint) return 0.5*(p/midpoint);
             return 0.5+0.5*((p-midpoint)/(1.0-midpoint));
         }
@@ -181,10 +185,15 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             const double target=(s+(s%2?1.0-local:local))/4.0;
             return std::clamp(mix(p,target,amount),0.0,std::nextafter(1.0,0.0));
         }
-        case OscProcessType::PhaseShift:return wrap01(p+amount);
-        case OscProcessType::SineWarp:return wrap01(p+std::sin(2.0*pi*p)*amount*0.16);
-        case OscProcessType::Ripple:return wrap01(p+std::sin(4.0*pi*p)*amount*0.10);
-        case OscProcessType::Twist:return wrap01(p+(std::sin(2.0*pi*p)*0.10+std::sin(6.0*pi*p)*0.055)*amount);
+        case OscProcessType::PhaseShift:
+            // +/- 180 degrees; 0 is the physical top/center of the amount knob.
+            return wrap01(p+amount*0.5);
+        case OscProcessType::SineWarp:
+            return wrap01(p+std::sin(2.0*pi*p)*amount*0.16);
+        case OscProcessType::Ripple:
+            return wrap01(p+std::sin(4.0*pi*p)*amount*0.10);
+        case OscProcessType::Twist:
+            return wrap01(p+(std::sin(2.0*pi*p)*0.10+std::sin(6.0*pi*p)*0.055)*amount);
         case OscProcessType::ZigZag:return std::clamp(mix(p,triangle(p*3.0),amount),0.0,std::nextafter(1.0,0.0));
         case OscProcessType::Staircase: {
             const int steps=2+static_cast<int>(std::round(amount*14.0));
@@ -201,12 +210,20 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             return std::clamp(mix(p,(perm[s]+local)/4.0,amount),0.0,std::nextafter(1.0,0.0));
         }
         case OscProcessType::Chaos:return std::clamp(mix(p,4.0*p*(1.0-p),amount),0.0,std::nextafter(1.0,0.0));
-        case OscProcessType::Window:return wrap01(0.5+(p-0.5)*(1.0+amount*5.0));
+        case OscProcessType::Window: {
+            // Positive expands outward; negative compresses inward.
+            const double scale=amount>=0.0
+                ? 1.0+amount*5.0
+                : 1.0/(1.0+std::abs(amount)*5.0);
+            return wrap01(0.5+(p-0.5)*scale);
+        }
         case OscProcessType::PulseWarp: {
+            // Bipolar pulse-width style skew around the neutral midpoint.
             const double midpoint=0.5+std::sin(amount*pi*0.5)*0.42;
             return p<midpoint ? 0.5*(p/midpoint) : 0.5+0.5*((p-midpoint)/(1.0-midpoint));
         }
-        case OscProcessType::Shred:return wrap01(p+std::sin(16.0*pi*p)*amount*0.095);
+        case OscProcessType::Shred:
+            return wrap01(p+std::sin(16.0*pi*p)*amount*0.095);
         case OscProcessType::Off:
         case OscProcessType::Count:
         default:return p;

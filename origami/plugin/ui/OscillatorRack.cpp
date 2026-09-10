@@ -1,3 +1,4 @@
+// mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
@@ -205,8 +206,12 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,process1Menu_.getSelectedId()-1));
         state.process2=static_cast<mct::origami::dsp::OscProcessType>(
             juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,process2Menu_.getSelectedId()-1));
-        state.process1Amount=static_cast<float>(process1Amount_.getValue());
-        state.process2Amount=static_cast<float>(process2Amount_.getValue());
+        const auto type1=state.process1;
+        const auto type2=state.process2;
+        state.process1Amount=juce::jlimit(dsp::oscProcessAmountMinimum(type1),1.0f,
+                                          static_cast<float>(process1Amount_.getValue()));
+        state.process2Amount=juce::jlimit(dsp::oscProcessAmountMinimum(type2),1.0f,
+                                          static_cast<float>(process2Amount_.getValue()));
         moduleSetter_(display_.id,state);
         syncFromModel();
     };
@@ -264,16 +269,28 @@ void OscillatorCard::syncFromModel() {
             const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
             process1Menu_.setSelectedId(static_cast<int>(state.process1)+1,juce::dontSendNotification);
             process2Menu_.setSelectedId(static_cast<int>(state.process2)+1,juce::dontSendNotification);
-            if(!process1Amount_.isMouseButtonDown())
-                process1Amount_.setValue(state.process1Amount,juce::dontSendNotification);
-            if(!process2Amount_.isMouseButtonDown())
-                process2Amount_.setValue(state.process2Amount,juce::dontSendNotification);
+
+            auto syncAmount=[](RackSlider& slider,juce::Label& label,
+                               dsp::OscProcessType type,float value) {
+                const bool bipolar=dsp::oscProcessIsBipolar(type);
+                const double minimum=static_cast<double>(dsp::oscProcessAmountMinimum(type));
+                if(slider.getMinimum()!=minimum || slider.getMaximum()!=1.0)
+                    slider.setRange(minimum,1.0,0.001);
+                slider.setName(bipolar ? "OSC PROCESS BIPOLAR" : "OSC PROCESS UNIPOLAR");
+
+                if(!slider.isMouseButtonDown())
+                    slider.setValue(juce::jlimit(minimum,1.0,static_cast<double>(value)),
+                                    juce::dontSendNotification);
+
+                const int percent=juce::roundToInt(value*100.0f);
+                const juce::String prefix=(bipolar && percent>0) ? "+" : "";
+                label.setText(prefix+juce::String(percent)+"%",juce::dontSendNotification);
+            };
+
+            syncAmount(process1Amount_,process1AmountLabel_,state.process1,state.process1Amount);
+            syncAmount(process2Amount_,process2AmountLabel_,state.process2,state.process2Amount);
             process1Amount_.setEnabled(state.process1!=dsp::OscProcessType::Off);
             process2Amount_.setEnabled(state.process2!=dsp::OscProcessType::Off);
-            process1AmountLabel_.setText(juce::String(juce::roundToInt(state.process1Amount*100.0f))+"%",
-                                         juce::dontSendNotification);
-            process2AmountLabel_.setText(juce::String(juce::roundToInt(state.process2Amount*100.0f))+"%",
-                                         juce::dontSendNotification);
         }
     }
     // Compatibility-only nearest frame index; never used as wavetable identity.
