@@ -1,4 +1,3 @@
-// mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-performance-strip-relayout-v23.3.2
 // mct-origami-pitch-mod-ui-refine-v23.3.1
@@ -49,15 +48,12 @@ void PerformanceKeyboard::resized() {
     auto rightBay=a.removeFromRight(right);
     auto bend=rightBay.removeFromLeft(bendPanelWidth).reduced(2,2);
     bend.removeFromTop(15);bendRange_.setBounds(bend.reduced(2,1));
-    auto perf=rightBay.removeFromLeft(182).reduced(3,2);
-    auto top=perf.removeFromTop(22);
+    auto perf=rightBay.removeFromLeft(182).reduced(2,2);
+    auto top=perf.removeFromTop(25);
     voiceMode_.setBounds(top.removeFromLeft(58).reduced(1));
     priority_.setBounds(top.removeFromLeft(58).reduced(1));
     legato_.setBounds(top.reduced(1));
-    perf.removeFromTop(2);
-    auto glideArea=perf.removeFromLeft(72);
-    glideArea.removeFromTop(8);
-    glide_.setBounds(glideArea.reduced(5,0));
+    perf.removeFromTop(2);glide_.setBounds(perf.removeFromLeft(62).reduced(3,1));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;

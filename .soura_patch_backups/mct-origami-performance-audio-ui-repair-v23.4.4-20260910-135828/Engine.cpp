@@ -1,4 +1,3 @@
-// mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-wt-pos-real-morph-v22.2.1
@@ -165,12 +164,7 @@ bool OrigamiEngine::setPerformanceState(const PerformanceState& state) noexcept 
     if(!validInstrumentState(probe)) return false;
     const bool modeChanged=performance_.voiceMode!=state.voiceMode;
     performance_=state;pitchBendRange_.store(state.pitchBendRangeSemitones,std::memory_order_relaxed);
-    if(modeChanged) {
-        clearHeldNotes();
-        for(auto& voice:voices_) voice.reset();
-        for(auto& voice:stealTails_) voice.reset();
-        tailRemaining_.fill(0);
-    }
+    if(modeChanged) reset();
     return true;
 }
 PerformanceState OrigamiEngine::performanceState() const noexcept {

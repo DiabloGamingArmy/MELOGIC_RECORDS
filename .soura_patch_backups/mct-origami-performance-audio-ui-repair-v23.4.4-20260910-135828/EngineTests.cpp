@@ -1,4 +1,3 @@
-// mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-v23.4.3-engine-tests-newline-repair-2
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-osc1-smooth-basic-shapes-v22.3
@@ -123,9 +122,7 @@ void performanceModes() {
     OrigamiEngine engine;prepare(engine);
     PerformanceState p;p.voiceMode=VoiceMode::Mono;p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=.05f;
     check(engine.setPerformanceState(p),"mono state accepted");
-    engine.noteOn(60,1);
-    check(energy(render(engine,2048))>.001,"mono mode produces audible signal");
-    engine.noteOn(64,1);
+    engine.noteOn(60,1);engine.noteOn(64,1);
     check(engine.activeVoiceCount()==1 && engine.voiceInfo(0).address.note==64,"mono last priority");
     engine.noteOff(64);check(engine.voiceInfo(0).address.note==60 && !engine.voiceInfo(0).releasing,"mono fallback");
     engine.noteOff(60);check(engine.voiceInfo(0).releasing,"mono final release");
@@ -133,9 +130,6 @@ void performanceModes() {
     engine.reset();p.notePriority=NotePriority::Low;check(engine.setPerformanceState(p),"low priority accepted");engine.noteOn(60,1);engine.noteOn(72,1);check(engine.voiceInfo(0).address.note==60,"low priority");
     OrigamiEngine a,b;prepare(a);prepare(b);p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=0;check(a.setPerformanceState(p),"zero glide");p.glideSeconds=.2f;check(b.setPerformanceState(p),"glide accepted");
     a.noteOn(60,1);b.noteOn(60,1);render(a,512);render(b,512);a.noteOn(72,1);b.noteOn(72,1);check(render(a,512)!=render(b,512),"glide changes transition");
-    PerformanceState poly=p;poly.voiceMode=VoiceMode::Poly;poly.glideSeconds=0;
-    check(engine.setPerformanceState(poly),"poly state accepted after mono");
-    engine.noteOn(67,1);check(energy(render(engine,2048))>.001,"poly mode remains audible after mono");
     PerformanceState bad=p;bad.glideSeconds=6;check(!engine.setPerformanceState(bad),"invalid glide rejected");
 }
 void signalBehavior() {

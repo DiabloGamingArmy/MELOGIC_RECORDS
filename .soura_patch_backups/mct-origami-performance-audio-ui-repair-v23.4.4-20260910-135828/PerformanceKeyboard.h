@@ -1,4 +1,3 @@
-// mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-v23.4.3-performance-state-include-repair
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-relative-drag-linear-controls-v23.3.4
@@ -46,9 +45,9 @@ public:
             if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getValue()));
         };
         addAndMakeVisible(voiceMode_);addAndMakeVisible(priority_);addAndMakeVisible(legato_);addAndMakeVisible(glide_);
-        voiceMode_.addItem("POLY",1);voiceMode_.addItem("MONO",2);voiceMode_.setScrollWheelEnabled(false);voiceMode_.setTooltip("Voice mode");
-        priority_.addItem("LAST",1);priority_.addItem("HIGH",2);priority_.addItem("LOW",3);priority_.setScrollWheelEnabled(false);priority_.setTooltip("Mono note priority");
-        legato_.setButtonText("LEGATO");legato_.setClickingTogglesState(true);legato_.setTooltip("Legato envelope behavior");
+        voiceMode_.addItem("POLY",1);voiceMode_.addItem("MONO",2);voiceMode_.setScrollWheelEnabled(false);
+        priority_.addItem("LAST",1);priority_.addItem("HIGH",2);priority_.addItem("LOW",3);priority_.setScrollWheelEnabled(false);
+        legato_.setButtonText("LEGATO");legato_.setClickingTogglesState(true);
         glide_.setSliderStyle(juce::Slider::LinearBarVertical);glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,54,18);
         glide_.setRange(0.0,5.0,0.001);glide_.setSliderSnapsToMousePosition(false);glide_.setScrollWheelEnabled(false);
         glide_.textFromValueFunction=[](double v){return v<0.001?"OFF":juce::String(v,3);};

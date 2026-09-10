@@ -1,4 +1,3 @@
-// mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-knob-mod-macro-cleanup-v22.4
 #pragma once
 #include <JuceHeader.h>
@@ -100,10 +99,6 @@ public:
     void drawButtonText(juce::Graphics&,juce::TextButton&,bool,bool) override;
     // mct-origami-native-knob-waveform-v16
     void drawRotarySlider(juce::Graphics&,int,int,int,int,float,float,float,juce::Slider&) override;
-    void drawLinearSlider(juce::Graphics&,int,int,int,int,float,float,float,const juce::Slider::SliderStyle,juce::Slider&) override;
-    void drawComboBox(juce::Graphics&,int,int,bool,int,int,int,int,juce::ComboBox&) override;
-    void positionComboBoxText(juce::ComboBox&,juce::Label&) override;
-    void drawToggleButton(juce::Graphics&,juce::ToggleButton&,bool,bool) override;
     void drawScrollbar(juce::Graphics&,juce::ScrollBar&,int,int,int,int,bool,int,int,bool,bool) override;
 };
 class Panel : public juce::Component, public juce::SettableTooltipClient {
