@@ -1,4 +1,3 @@
-// mct-origami-v25.0.0-arp-internal-clock
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
@@ -39,9 +38,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner](float v){return owner.setUiPitchBendRange(v);},
           [&owner]{return owner.getUiPitchBendRange();},
           [&owner](const mct::origami::PerformanceState& p){return owner.setUiPerformanceState(p);},
-          [&owner]{return owner.getUiPerformanceState();},
-          [&owner](const OrigamiArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
-          [&owner]{return owner.getUiArpeggiatorState();}) {
+          [&owner]{return owner.getUiPerformanceState();}) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,10> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_}};
     for(auto* component:components) addAndMakeVisible(component);

@@ -1,4 +1,3 @@
-// mct-origami-v25.0.0-arp-internal-clock
 // mct-origami-performance-ui-refinement-v23.4.5
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-glide-mono-legato-v23.4.3
@@ -64,9 +63,6 @@ void PerformanceKeyboard::resized() {
     perf.removeFromTop(1);
     auto glideCell=perf.removeFromLeft(58);
     glide_.setBounds(glideCell.reduced(6,0));
-    auto arp=rightBay.reduced(3,2);auto row1=arp.removeFromTop(22);auto row2=arp.removeFromTop(22);
-    const int w1=row1.getWidth()/4;arpEnable_.setBounds(row1.removeFromLeft(w1).reduced(1));arpSync_.setBounds(row1.removeFromLeft(w1).reduced(1));arpRate_.setBounds(row1.removeFromLeft(w1).reduced(1));arpDirection_.setBounds(row1.reduced(1));
-    const int w2=row2.getWidth()/5;arpOctaves_.setBounds(row2.removeFromLeft(w2).reduced(1));arpGate_.setBounds(row2.removeFromLeft(w2).reduced(1));arpSwing_.setBounds(row2.removeFromLeft(w2).reduced(1));arpLatch_.setBounds(row2.removeFromLeft(w2).reduced(1));arpTempo_.setBounds(row2.reduced(1));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
@@ -138,8 +134,9 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
     auto glideCaption=perfCaptionArea.removeFromLeft(58).removeFromBottom(10);
     text(g,"GLIDE",glideCaption,7.0f,Palette::muted(),juce::Justification::centred);
     auto future=rightBay;
-    well(g,future.reduced(1,0));
-    text(g,"ARP / CLOCK",future.removeFromBottom(14),7.0f,Palette::muted(),juce::Justification::centred);
+    auto brand=future.removeFromBottom(30);
+    text(g,"MCT ORIGAMI",brand.removeFromTop(17),8.5f,Palette::text(),juce::Justification::centred);
+    text(g,"PERFORMANCE",brand,7.0f,Palette::muted(),juce::Justification::centred);
 
     auto leftControls=area.removeFromLeft(leftReserve);
     for(const auto& label:juce::StringArray{"PITCH","MOD"}) {
