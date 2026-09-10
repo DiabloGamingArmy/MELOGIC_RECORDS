@@ -1,4 +1,3 @@
-// mct-origami-v25.1.0-arp-advanced-page
 #pragma once
 #include "OrigamiStyle.h"
 namespace mct::origami::ui {
@@ -6,7 +5,6 @@ class OrigamiHeader final : public juce::Component {
 public:
     OrigamiHeader();
     std::function<void(bool)> onMatrixSelected;
-    void selectSynth();
     void paint(juce::Graphics&) override;
     void resized() override;
 private:

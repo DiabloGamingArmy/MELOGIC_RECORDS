@@ -1,4 +1,3 @@
-// mct-origami-v25.1.0-arp-advanced-page
 #pragma once
 #include <JuceHeader.h>
 #include "ui/OrigamiHeader.h"
@@ -7,7 +6,6 @@
 #include "ui/ModulationPanel.h"
 #include "ui/ModulationMatrix.h"
 #include "ui/PerformanceKeyboard.h"
-#include "ui/ArpeggiatorPanel.h"
 #include "ui/OrigamiLayout.h"
 class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor, private juce::Timer {
@@ -19,7 +17,6 @@ public:
 private:
     void timerCallback() override;
     bool matrixSelected_=false;
-    bool arpSelected_=false;
     [[maybe_unused]] OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;
@@ -31,7 +28,6 @@ private:
     mct::origami::ui::MacroPanel macros_;
     mct::origami::ui::ModulationMatrix matrix_;
     mct::origami::ui::PerformanceKeyboard performance_;
-    mct::origami::ui::ArpeggiatorPanel arpeggiator_;
     juce::TooltipWindow tooltips_{this,650};
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessorEditor)
 };

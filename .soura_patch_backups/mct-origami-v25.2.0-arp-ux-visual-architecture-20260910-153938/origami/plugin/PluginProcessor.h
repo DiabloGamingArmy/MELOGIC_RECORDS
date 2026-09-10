@@ -1,4 +1,3 @@
-// mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
 // mct-origami-modulation-completion-v24.0.1
@@ -61,7 +60,6 @@ public:
     mct::origami::PerformanceState getUiPerformanceState() const noexcept;
     bool setUiArpeggiatorState(const mct::origami::ArpeggiatorState&) noexcept;
     mct::origami::ArpeggiatorState getUiArpeggiatorState() const noexcept;
-    mct::origami::ArpeggiatorRuntimeSnapshot getUiArpeggiatorRuntimeSnapshot() const noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
@@ -72,7 +70,6 @@ private:
     void captureArpNote(const juce::MidiMessage&, juce::MidiBuffer&, int samplePosition) noexcept;
     void advanceArpeggiator(juce::MidiBuffer&, int startSample, int endSample, double bpm) noexcept;
     int chooseArpNote() noexcept;
-    void publishArpUiSnapshot() noexcept;
     juce::MidiKeyboardState uiKeyboardState_;
     std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
@@ -86,8 +83,6 @@ private:
     std::array<int,128> arpChannel_{},arpOrder_{};
     int arpOrderCount_=0;
     std::uint32_t arpRandomState_=0x6d2b79f5u;
-    std::atomic<int> arpUiActiveNote_{-1};
-    std::atomic<std::uint64_t> arpUiHeldLow_{0},arpUiHeldHigh_{0};
     bool prepared_ = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessor)
 };

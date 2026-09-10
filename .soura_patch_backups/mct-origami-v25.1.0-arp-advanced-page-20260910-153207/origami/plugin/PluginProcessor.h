@@ -1,5 +1,3 @@
-// mct-origami-v25.2.0-arp-ux-visual-architecture
-// mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
@@ -8,7 +6,19 @@
 #pragma once
 #include <JuceHeader.h>
 #include "core/Engine.h"
-#include "core/ArpeggiatorState.h"
+
+struct OrigamiArpeggiatorState {
+    enum class Direction : int { Up=0, Down=1, UpDown=2, Order=3, Random=4 };
+    bool enabled=false;
+    bool syncToDaw=true;
+    int rateIndex=2;
+    Direction direction=Direction::Up;
+    int octaveSpan=1;
+    float gate=0.72f;
+    float swing=0.0f;
+    bool latch=false;
+    double internalTempo=120.0;
+};
 
 class OrigamiAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -59,9 +69,8 @@ public:
     float getUiPitchBendRange() const noexcept;
     bool setUiPerformanceState(const mct::origami::PerformanceState&) noexcept;
     mct::origami::PerformanceState getUiPerformanceState() const noexcept;
-    bool setUiArpeggiatorState(const mct::origami::ArpeggiatorState&) noexcept;
-    mct::origami::ArpeggiatorState getUiArpeggiatorState() const noexcept;
-    mct::origami::ArpeggiatorRuntimeSnapshot getUiArpeggiatorRuntimeSnapshot() const noexcept;
+    bool setUiArpeggiatorState(const OrigamiArpeggiatorState&) noexcept;
+    OrigamiArpeggiatorState getUiArpeggiatorState() const noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
@@ -72,11 +81,10 @@ private:
     void captureArpNote(const juce::MidiMessage&, juce::MidiBuffer&, int samplePosition) noexcept;
     void advanceArpeggiator(juce::MidiBuffer&, int startSample, int endSample, double bpm) noexcept;
     int chooseArpNote() noexcept;
-    void publishArpUiSnapshot() noexcept;
     juce::MidiKeyboardState uiKeyboardState_;
     std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
-    mct::origami::ArpeggiatorState arpState_{};
+    OrigamiArpeggiatorState arpState_{};
     double sampleRate_=44100.0;
     double arpStepRemaining_=0.0,arpGateRemaining_=-1.0;
     int arpActiveNote_=-1,arpActiveChannel_=1,arpSequenceIndex_=0,arpBounceDirection_=1;
@@ -86,8 +94,6 @@ private:
     std::array<int,128> arpChannel_{},arpOrder_{};
     int arpOrderCount_=0;
     std::uint32_t arpRandomState_=0x6d2b79f5u;
-    std::atomic<int> arpUiActiveNote_{-1};
-    std::atomic<std::uint64_t> arpUiHeldLow_{0},arpUiHeldHigh_{0};
     bool prepared_ = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessor)
 };

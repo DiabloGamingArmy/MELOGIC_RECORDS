@@ -1,4 +1,3 @@
-# mct-origami-v25.1.0-arp-advanced-page
 # mct-origami-v24.0.2-cmake-marker-repair
 # mct-origami-modulation-completion-v24.0.1
 cmake_minimum_required(VERSION 3.20)
@@ -114,8 +113,7 @@ if(ORIGAMI_BUILD_VST3)
   target_sources(OrigamiPlugin PRIVATE
     plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
-    plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp
-    plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp)
+    plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp plugin/ui/PerformanceKeyboard.cpp)
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(OrigamiPlugin PRIVATE cxx_std_17)
   target_compile_definitions(OrigamiPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)

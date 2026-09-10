@@ -1,4 +1,3 @@
-// mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
 // mct-origami-performance-ui-refinement-v23.4.5
@@ -87,16 +86,15 @@ public:
         arpEnable_.setTooltip("Enable arpeggiator");
         arpSettings_.setButtonText("SETTINGS");
         arpSettings_.setTooltip("Open advanced arpeggiator and clock settings");
-        arpSettings_.setConnectedEdges(juce::Button::ConnectedOnLeft);
         arpClockSummary_.setJustificationType(juce::Justification::centred);
         arpClockSummary_.setColour(juce::Label::textColourId,Palette::muted());
         arpClockSummary_.setFont(juce::FontOptions(7.0f));
         syncArpFromModel();
         arpEnable_.onClick=[this]{
             if(!arpSetter_) return;
-            auto arpState=arpGetter_?arpGetter_():mct::origami::ArpeggiatorState{};
-            arpState.enabled=arpEnable_.getToggleState();
-            arpSetter_(arpState);
+            auto state=arpGetter_?arpGetter_():mct::origami::ArpeggiatorState{};
+            state.enabled=arpEnable_.getToggleState();
+            arpSetter_(state);
             syncArpFromModel();
         };
         arpSettings_.onClick=[this]{if(onArpSettingsRequested) onArpSettingsRequested();};

@@ -1,5 +1,3 @@
-// mct-origami-v25.2.0-arp-ux-visual-architecture
-// mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
 // mct-origami-performance-ui-refinement-v23.4.5
 // mct-origami-performance-audio-ui-repair-v23.4.4
@@ -23,16 +21,6 @@ constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
 
 PerformanceKeyboard::~PerformanceKeyboard() {
     if(mouseNote_>=0) keyboardState_.noteOff(1,mouseNote_,0.0f);
-}
-
-void PerformanceKeyboard::syncArpFromModel() {
-    if(!arpGetter_) return;
-    const auto state=arpGetter_();
-    arpEnable_.setToggleState(state.enabled,juce::dontSendNotification);
-    const auto summary=state.syncToDaw
-        ? juce::String("DAW SYNC")
-        : juce::String("INT  ") + juce::String(state.internalTempo,1) + " BPM";
-    arpClockSummary_.setText(summary,juce::dontSendNotification);
 }
 
 juce::Rectangle<int> PerformanceKeyboard::keyArea() const noexcept {
@@ -76,12 +64,9 @@ void PerformanceKeyboard::resized() {
     perf.removeFromTop(1);
     auto glideCell=perf.removeFromLeft(58);
     glide_.setBounds(glideCell.reduced(6,0));
-    auto arp=rightBay.reduced(4,3);
-    auto controls=arp.removeFromTop(25);
-    arpEnable_.setBounds(controls.removeFromLeft(72).reduced(1));
-    controls.removeFromLeft(4);
-    arpSettings_.setBounds(controls.removeFromLeft(108).reduced(1));
-    arpClockSummary_.setBounds(arp.removeFromTop(18));
+    auto arp=rightBay.reduced(3,2);auto row1=arp.removeFromTop(22);auto row2=arp.removeFromTop(22);
+    const int w1=row1.getWidth()/4;arpEnable_.setBounds(row1.removeFromLeft(w1).reduced(1));arpSync_.setBounds(row1.removeFromLeft(w1).reduced(1));arpRate_.setBounds(row1.removeFromLeft(w1).reduced(1));arpDirection_.setBounds(row1.reduced(1));
+    const int w2=row2.getWidth()/5;arpOctaves_.setBounds(row2.removeFromLeft(w2).reduced(1));arpGate_.setBounds(row2.removeFromLeft(w2).reduced(1));arpSwing_.setBounds(row2.removeFromLeft(w2).reduced(1));arpLatch_.setBounds(row2.removeFromLeft(w2).reduced(1));arpTempo_.setBounds(row2.reduced(1));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;

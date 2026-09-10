@@ -1,5 +1,3 @@
-// mct-origami-v25.2.0-arp-ux-visual-architecture
-// mct-origami-v25.1.0-arp-advanced-page
 // mct-origami-v25.0.0-arp-internal-clock
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
@@ -42,32 +40,15 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{return owner.getUiPitchBendRange();},
           [&owner](const mct::origami::PerformanceState& p){return owner.setUiPerformanceState(p);},
           [&owner]{return owner.getUiPerformanceState();},
-          [&owner](const mct::origami::ArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
-          [&owner]{return owner.getUiArpeggiatorState();}),
-      arpeggiator_(
-          [&owner](const mct::origami::ArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
-          [&owner]{return owner.getUiArpeggiatorState();},
-          [&owner]{return owner.getUiArpeggiatorRuntimeSnapshot();}) {
+          [&owner](const OrigamiArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
+          [&owner]{return owner.getUiArpeggiatorState();}) {
     setLookAndFeel(&theme_);
-    const std::array<juce::Component*,11> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_}};
+    const std::array<juce::Component*,10> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_}};
     for(auto* component:components) addAndMakeVisible(component);
     // mct-origami-fixed-ratio-zoom-v1
     // Resize behaves as whole-interface zoom: the editor is constrained to one
     // canonical 16:10 canvas and every child is scaled from that same design space.
-    header_.onMatrixSelected=[this](bool selected){
-        matrixSelected_=selected;
-        arpSelected_=false;
-        resized();
-    };
-    performance_.onArpSettingsRequested=[this]{
-        arpSelected_=!arpSelected_;
-        if(arpSelected_) {
-            matrixSelected_=false;
-            header_.selectSynth();
-            arpeggiator_.syncFromModel();
-        }
-        resized();
-    };
+    header_.onMatrixSelected=[this](bool selected){matrixSelected_=selected;resized();};
     startTimerHz(15);
     setResizable(true,true);
     setResizeLimits(EditorLayout::minWidth,EditorLayout::minHeight,EditorLayout::maxWidth,EditorLayout::maxHeight);
@@ -78,8 +59,6 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
 OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {stopTimer();setLookAndFeel(nullptr);}
 void OrigamiAudioProcessorEditor::timerCallback() {
     modulation_.syncFromModel();macros_.syncFromModel();matrix_.syncFromModel();filter_.syncFromModel();
-    performance_.syncArpFromModel();
-    if(arpSelected_) arpeggiator_.syncFromModel();
 }
 void OrigamiAudioProcessorEditor::paint(juce::Graphics& g) {g.fillAll(Palette::background());}
 void OrigamiAudioProcessorEditor::resized() {
@@ -93,14 +72,9 @@ void OrigamiAudioProcessorEditor::resized() {
     filter_.setBounds(layout.filter);
     macros_.setBounds(layout.macros);
     performance_.setBounds(layout.performance);
-    const auto mainArea=layout.oscillators.getUnion(layout.modulation).getUnion(layout.filter).getUnion(layout.macros);
-    matrix_.setBounds(mainArea);
-    arpeggiator_.setBounds(mainArea);
-    matrix_.setVisible(matrixSelected_ && !arpSelected_);
-    arpeggiator_.setVisible(arpSelected_);
-    const bool synthVisible=!matrixSelected_ && !arpSelected_;
-    for(auto* component:std::array<juce::Component*,4>{{&oscillators_,&modulation_,&filter_,&macros_}})
-        component->setVisible(synthVisible);
+    matrix_.setBounds(layout.oscillators.getUnion(layout.modulation).getUnion(layout.filter).getUnion(layout.macros));
+    matrix_.setVisible(matrixSelected_);
+    for(auto* component:std::array<juce::Component*,4>{{&oscillators_,&modulation_,&filter_,&macros_}}) component->setVisible(!matrixSelected_);
 
     mixer_.setVisible(false);
     fxPre_.setVisible(false);
@@ -114,8 +88,8 @@ void OrigamiAudioProcessorEditor::resized() {
     const float scale=juce::jmin(sx,sy);
 
     const auto transform=juce::AffineTransform::scale(scale);
-    const std::array<juce::Component*,8> visibleComponents{{
-        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_
+    const std::array<juce::Component*,7> visibleComponents{{
+        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_
     }};
 
     for(auto* component:visibleComponents)
