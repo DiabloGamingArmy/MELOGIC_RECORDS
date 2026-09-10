@@ -1,3 +1,4 @@
+// mct-origami-v26.3.2-osc-process-quick-nav
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-v21.1-build-repair-1
@@ -80,6 +81,8 @@ private:
 // mct-origami-tuning-engine-v17
     RackSlider octaveSlider_,semitoneSlider_,fineSlider_;
     NativeOscProcessSelector process1Menu_,process2Menu_;
+    juce::TextButton process1Previous_{"<"},process1Next_{">"};
+    juce::TextButton process2Previous_{"<"},process2Next_{">"};
     RackSlider process1Amount_,process2Amount_;
     juce::Label process1AmountLabel_,process2AmountLabel_;
     bool syncingProcess_=false;

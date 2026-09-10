@@ -1,3 +1,4 @@
+// mct-origami-v26.3.2-osc-process-quick-nav
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
@@ -182,6 +183,34 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         menu->setScrollWheelEnabled(false);
         menu->setTooltip("Oscillator phase process — native system menu");
     }
+
+    auto configureProcessArrow=[](juce::TextButton& button,const juce::String& tooltip) {
+        button.setTooltip(tooltip);
+        button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        button.setConnectedEdges(juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    };
+    for(auto* button:{&process1Previous_,&process1Next_,&process2Previous_,&process2Next_})
+        addAndMakeVisible(*button);
+
+    configureProcessArrow(process1Previous_,"Previous oscillator process");
+    configureProcessArrow(process1Next_,"Next oscillator process");
+    configureProcessArrow(process2Previous_,"Previous oscillator process");
+    configureProcessArrow(process2Next_,"Next oscillator process");
+
+    auto cycleProcess=[](NativeOscProcessSelector& selector,int delta) {
+        constexpr int firstId=1;
+        const int count=static_cast<int>(dsp::OscProcessType::Count);
+        const int current=juce::jlimit(firstId,count,selector.getSelectedId());
+        const int zeroBased=current-firstId;
+        const int wrapped=(zeroBased+delta+count)%count;
+        selector.setSelectedId(wrapped+firstId,juce::sendNotification);
+    };
+
+    process1Previous_.onClick=[this,cycleProcess]{cycleProcess(process1Menu_,-1);};
+    process1Next_.onClick=[this,cycleProcess]{cycleProcess(process1Menu_,1);};
+    process2Previous_.onClick=[this,cycleProcess]{cycleProcess(process2Menu_,-1);};
+    process2Next_.onClick=[this,cycleProcess]{cycleProcess(process2Menu_,1);};
+
     for(auto* amount:{&process1Amount_,&process2Amount_}) {
         addAndMakeVisible(*amount);
         amount->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -331,18 +360,35 @@ void OscillatorCard::resized() {
     auto upper=body;
     const int processWidth=juce::jlimit(104,132,upper.getWidth()*34/100);
     auto process=upper.removeFromRight(processWidth);
-    auto processControls=process.reduced(9,25);
+    auto processControls=process.reduced(7,25);
     const int processSlotHeight=processControls.getHeight()/2;
+
+    auto placeProcessSlot=[](juce::Rectangle<int> slot,
+                             juce::TextButton& previous,
+                             NativeOscProcessSelector& selector,
+                             juce::TextButton& next,
+                             RackSlider& amount,
+                             juce::Label& amountLabel) {
+        auto selectorRow=slot.removeFromTop(24);
+        constexpr int arrowWidth=19;
+        previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
+        selectorRow.removeFromLeft(2);
+        next.setBounds(selectorRow.removeFromRight(arrowWidth));
+        selectorRow.removeFromRight(2);
+        selector.setBounds(selectorRow);
+
+        auto knob=slot.reduced(8,3);
+        amount.setBounds(knob.removeFromTop(44));
+        amountLabel.setBounds(slot.removeFromBottom(13));
+    };
+
     auto slot1=processControls.removeFromTop(processSlotHeight);
-    process1Menu_.setBounds(slot1.removeFromTop(24));
-    auto knob1=slot1.reduced(8,3);
-    process1Amount_.setBounds(knob1.removeFromTop(44));
-    process1AmountLabel_.setBounds(slot1.removeFromBottom(13));
+    placeProcessSlot(slot1,process1Previous_,process1Menu_,process1Next_,
+                     process1Amount_,process1AmountLabel_);
+
     auto slot2=processControls;
-    process2Menu_.setBounds(slot2.removeFromTop(24));
-    auto knob2=slot2.reduced(8,3);
-    process2Amount_.setBounds(knob2.removeFromTop(44));
-    process2AmountLabel_.setBounds(slot2.removeFromBottom(13));
+    placeProcessSlot(slot2,process2Previous_,process2Menu_,process2Next_,
+                     process2Amount_,process2AmountLabel_);
     upper.removeFromRight(7);
 
     auto tuning=upper.removeFromBottom(30);
