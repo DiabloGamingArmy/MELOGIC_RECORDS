@@ -1,3 +1,4 @@
+// mct-origami-v26.4.2-curve-cropped-signal-fills
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-modulation-completion-v24
@@ -143,12 +144,9 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     text(g,title,caption,9,Palette::muted());
     well(g,body);
 
-    // ENV and LFO surfaces use a uniform derived signal fill. No gradient:
-    // the complete graph surface receives one consistent low-exposure shade.
+    // ENV/LFO use a flat derived red, but it is geometrically clipped by
+    // the modulation curve. The bottom edge is the visual source/baseline.
     // Function/Random remain neutral until their own visual language is defined.
-    if(selected_<=6)
-        paintSignalSurface(g,body.toFloat().reduced(1.0f),0.12f,0.30f,2.0f);
-
     auto r=body.reduced(10).toFloat();juce::Path p;
     if(selected_<=2) {
         const auto e=readEnvelope(envSliders_);const double hold=.25,total=e.attack+e.decay+hold+e.release;
@@ -169,7 +167,22 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
             const float y=r.getCentreY()-last*r.getHeight()*.45f,y2=r.getCentreY()-next*r.getHeight()*.45f;
             if(i==0)p.startNewSubPath(x0,y);p.lineTo(x1,y);p.lineTo(x1,y2);last=next;}
     }
-    g.setColour(Palette::accent());g.strokePath(p,juce::PathStrokeType(1.5f));
+    if(selected_<=6 && !p.isEmpty()) {
+        juce::Path fill=p;
+
+        // Close the curve against the bottom edge of the graph. This produces
+        // one uniform red region UNDER the actual ENV/LFO line rather than
+        // tinting the entire viewport.
+        fill.lineTo(r.getRight(),r.getBottom());
+        fill.lineTo(r.getX(),r.getBottom());
+        fill.closeSubPath();
+
+        g.setColour(signalSurfaceColour(0.30f,0.12f));
+        g.fillPath(fill);
+    }
+
+    g.setColour(Palette::accent());
+    g.strokePath(p,juce::PathStrokeType(1.5f));
 }
 
 MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {

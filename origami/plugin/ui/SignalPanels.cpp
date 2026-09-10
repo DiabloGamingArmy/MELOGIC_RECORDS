@@ -1,3 +1,4 @@
+// mct-origami-v26.4.2-curve-cropped-signal-fills
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 #include "SignalPanels.h"
@@ -95,10 +96,6 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
     well(g,body);
 
-    // Uniform signal-surface fill. The filter graph now receives a complete
-    // low-exposure red field rather than a bottom-centre gradient hotspot.
-    paintSignalSurface(g,body.toFloat().reduced(1.0f),0.12f,0.30f,2.0f);
-
     auto graphArea=body.reduced(8);
     g.setColour(Palette::border().withAlpha(.7f));
     for(int i=1;i<5;++i)
@@ -110,6 +107,18 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     response.cubicTo(float(graphArea.getX())+graphArea.getWidth()*.65f,float(graphArea.getY()),
                      float(graphArea.getX())+graphArea.getWidth()*.72f,float(graphArea.getBottom()),
                      float(graphArea.getRight()),float(graphArea.getBottom()-2));
+    // Fill ONLY the response area down to the graph's bottom/source edge.
+    // No gradient and no whole-viewport tint.
+    {
+        juce::Path fill=response;
+        fill.lineTo(float(graphArea.getRight()),float(graphArea.getBottom()));
+        fill.lineTo(float(graphArea.getX()),float(graphArea.getBottom()));
+        fill.closeSubPath();
+
+        g.setColour(signalSurfaceColour(0.30f,0.12f));
+        g.fillPath(fill);
+    }
+
     g.setColour(Palette::accent());
     g.strokePath(response,juce::PathStrokeType(1.3f));
 
