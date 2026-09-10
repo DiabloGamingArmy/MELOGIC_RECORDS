@@ -1,4 +1,3 @@
-// mct-origami-performance-strip-relayout-v23.3.2
 // mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-keyboard-compact-bottom-v23.1.2
@@ -19,12 +18,11 @@ public:
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
         addAndMakeVisible(bendRange_);
         bendRange_.setName("Pitch bend range");
-        bendRange_.setSliderStyle(juce::Slider::LinearBarVertical);
-        bendRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,62,18);
+        bendRange_.setSliderStyle(juce::Slider::LinearHorizontal);
+        bendRange_.setTextBoxStyle(juce::Slider::TextBoxLeft,false,58,18);
         bendRange_.setRange(1.0,48.0,1.0);
         bendRange_.setScrollWheelEnabled(false);
         bendRange_.setDoubleClickReturnValue(true,2.0);
-        bendRange_.setTooltip("Bend Range — click/drag vertically or type a semitone value");
         bendRange_.textFromValueFunction=[](double value) {
             return "±"+juce::String(juce::roundToInt(value))+" st";
         };
