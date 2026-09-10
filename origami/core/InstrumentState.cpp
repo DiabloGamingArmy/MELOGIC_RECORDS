@@ -13,7 +13,7 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
         if(!std::isfinite(v) || v<p.minimum || v>p.maximum ||
            (p.scale==ParameterScale::Choice && v!=std::round(v))) return false;
     }
-    if(s.oscillators[0].id!=1) return false;
+    if(s.oscillators[0].id!=1 || !validModulation(s.modulation,s.oscillators)) return false;
     OscillatorModuleId previous=0;bool empty=false;
     auto range=[](float v,float lo,float hi){return std::isfinite(v) && v>=lo && v<=hi;};
     for(const auto& m:s.oscillators) {

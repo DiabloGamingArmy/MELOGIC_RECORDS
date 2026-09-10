@@ -1,25 +1,34 @@
 #pragma once
 #include "OrigamiStyle.h"
-#include "core/ParameterRegistry.h"
+#include "ModulationBindings.h"
 namespace mct::origami::ui {
 class ModulationPanel final : public Panel {
 public:
-    using ParameterSetter=std::function<bool(mct::origami::ParameterId,float)>;
-    using ParameterGetter=std::function<float(mct::origami::ParameterId)>;
-    // mct-origami-core-controls-v18.2
-    ModulationPanel(ParameterSetter setter={},ParameterGetter getter={});
+    using ParameterSetter=std::function<bool(ParameterId,float)>;
+    using ParameterGetter=std::function<float(ParameterId)>;
+    ModulationPanel(ParameterSetter={},ParameterGetter={},ModulationBindings={});
     void resized() override;
+    void syncFromModel();
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     std::array<juce::TextButton,9> tabs_;
-    int selected_=0;
-    ParameterSetter setter_;
-    ParameterGetter getter_;
+    ParameterSetter setter_;ParameterGetter getter_;ModulationBindings bindings_;
     std::array<juce::Slider,4> envSliders_;
     std::array<juce::Label,4> envLabels_;
+    juce::Slider rate_;
+    juce::Label rateLabel_;
+    juce::ComboBox shape_,mode_;
+    LfoSettings lfo_{};
 };
 class MacroPanel final : public Panel {
-public: MacroPanel():Panel("MACROS") {}
-private: void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
+public:
+    explicit MacroPanel(ModulationBindings={});
+    void resized() override;
+    void syncFromModel();
+private:
+    void paintContent(juce::Graphics&,juce::Rectangle<int>) override {}
+    ModulationBindings bindings_;
+    std::array<juce::Slider,4> sliders_;
+    std::array<juce::Label,4> labels_;
 };
 }

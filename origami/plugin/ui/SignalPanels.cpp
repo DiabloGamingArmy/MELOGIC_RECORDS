@@ -62,6 +62,12 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter)
     resonanceLabel_.setText("RESONANCE",juce::dontSendNotification);
 }
 
+void FilterPanel::syncFromModel() {
+    if(!getter_) return;
+    if(!cutoff_.isMouseButtonDown()) cutoff_.setValue(getter_(ParameterId::Cutoff),juce::dontSendNotification);
+    if(!resonance_.isMouseButtonDown()) resonance_.setValue(getter_(ParameterId::Resonance),juce::dontSendNotification);
+    repaint();
+}
 void FilterPanel::resized() {
     auto body=contentBounds();
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));

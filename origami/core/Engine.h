@@ -17,6 +17,7 @@ public:
     bool applyPatchState(const ParameterValues& values) noexcept; // exclusive, resets voices
     InstrumentState instrumentState() const noexcept; // serialize writers externally
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
+    bool setModulationState(const ModulationState&) noexcept; // serialized non-realtime writer
     ParameterValues parameterState() const noexcept;
     // Atomic targets are the sole cross-thread API. Multi-parameter patch commits
     // require exclusive access; hosts dispatch MIDI/process/reset on the audio thread.
@@ -45,6 +46,13 @@ private:
     dsp::EnvelopeSettings envelopeSettings() const noexcept;
     void latchParameters() noexcept;
     float value(ParameterId id) const noexcept { return smooth_[static_cast<std::size_t>(id)].value; }
+    ModulationState modulation_{}; // non-realtime model; never read in process
+    LatestStateMailbox<ModulationState> modulationMailbox_;
+    ModulationState audioModulation_{};
+    CompiledModulation compiledModulation_;
+    Lfo globalLfo_;
+    std::array<float,4> smoothedMacros_{};
+    float modulationSmoothing_=1;
     OscillatorModuleBank oscillatorModules_;
     std::array<std::atomic<float>, parameterCount> targets_;
     std::array<Smoothed, parameterCount> smooth_ {};

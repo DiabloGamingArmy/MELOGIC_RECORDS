@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(MCTOrigami VERSION 0.1.0 LANGUAGES C CXX)
 option(ORIGAMI_BUILD_TESTS "Build standalone tests and note renderer" ON)
 option(ORIGAMI_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
-add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
+add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(origami_core PUBLIC cxx_std_17)
@@ -106,7 +106,7 @@ if(ORIGAMI_BUILD_VST3)
   target_sources(OrigamiPlugin PRIVATE
     plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
-    plugin/ui/ModulationPanel.cpp plugin/ui/PerformanceKeyboard.cpp)
+    plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp plugin/ui/PerformanceKeyboard.cpp)
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(OrigamiPlugin PRIVATE cxx_std_17)
   target_compile_definitions(OrigamiPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)

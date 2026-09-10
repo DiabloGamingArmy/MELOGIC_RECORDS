@@ -4,6 +4,7 @@ namespace mct::origami::ui {
 class OrigamiHeader final : public juce::Component {
 public:
     OrigamiHeader();
+    std::function<void(bool)> onMatrixSelected;
     void paint(juce::Graphics&) override;
     void resized() override;
 private:

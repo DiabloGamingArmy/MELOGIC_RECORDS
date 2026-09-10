@@ -3,6 +3,7 @@
 #include "dsp/Envelope.h"
 #include "dsp/Filter.h"
 #include "OscillatorModule.h"
+#include "modulation/Modulation.h"
 #include <cstdint>
 #include <array>
 namespace mct::origami {
@@ -14,11 +15,9 @@ public:
     void reset() noexcept;
     void start(NoteAddress address, float velocity, std::uint64_t order, const dsp::EnvelopeSettings& settings) noexcept;
     void release(const dsp::EnvelopeSettings& settings) noexcept;
-    using ModuleSamples = std::array<float,16>;
-    ModuleSamples nextModules(const dsp::Wavetable& table,
-                              const std::array<OscillatorModuleState,16>& modules,
-                              float sustain,
-                              const dsp::LowPassCoefficients& filter) noexcept;
+    struct Samples {double left=0,right=0,mono=0;};
+    Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
+                        const CompiledModulation&,const LfoSettings&) noexcept;
     VoiceInfo info() const noexcept;
 private:
     // mct-origami-unison-detune-v19.2
@@ -28,6 +27,7 @@ private:
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
     std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
     dsp::Envelope envelope_;
+    Lfo lfo1_;
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFilters_{};
     NoteAddress address_ {};
     std::uint64_t order_ = 0;

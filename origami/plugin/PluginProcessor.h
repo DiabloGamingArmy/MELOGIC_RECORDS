@@ -35,6 +35,11 @@ public:
     mct::origami::OscillatorModuleState getUiOscillatorState(mct::origami::OscillatorModuleId) const noexcept;
     bool setUiOscillatorEnabled(mct::origami::OscillatorModuleId,bool) noexcept;
     bool getUiOscillatorEnabled(mct::origami::OscillatorModuleId) const noexcept;
+    bool setUiMacro(unsigned,float) noexcept;
+    bool setUiLfo(const mct::origami::LfoSettings&) noexcept;
+    unsigned addUiRoute() noexcept;
+    bool setUiRoute(const mct::origami::ModRoute&) noexcept;
+    bool removeUiRoute(unsigned) noexcept;
     mct::origami::InstrumentState getUiInstrumentState() const noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only

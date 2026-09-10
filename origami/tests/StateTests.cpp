@@ -47,7 +47,7 @@ void states() {
         check(encodeInstrumentState(out)==bytes,"malformed decode transactional");
     };
     constexpr std::size_t first=20+parameterCount*4;
-    rejects(0,0);rejects(4,3);rejects(8,10);rejects(12,0x7fc00000); // magic/version/count/NaN
+    rejects(0,0);rejects(4,4);rejects(8,10);rejects(12,0x7fc00000); // magic/version/count/NaN
     rejects(12+4*parameterCount,1);rejects(16+4*parameterCount,17); // next ID/count
     rejects(first,2);rejects(first+4,2);rejects(first+8,99); // OSC1/boolean/table
     rejects(first+12,0x7f800000);rejects(first+48,1); // infinity/duplicate ID

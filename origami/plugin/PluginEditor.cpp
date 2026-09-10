@@ -2,6 +2,16 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 using namespace mct::origami::ui;
+namespace {
+ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
+    return {[&owner]{return owner.getUiInstrumentState();},
+        [&owner](unsigned i,float v){return owner.setUiMacro(i,v);},
+        [&owner](const mct::origami::LfoSettings& s){return owner.setUiLfo(s);},
+        [&owner]{return owner.addUiRoute();},
+        [&owner](const mct::origami::ModRoute& r){return owner.setUiRoute(r);},
+        [&owner](unsigned id){return owner.removeUiRoute(id);}};
+}
+}
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
     : AudioProcessorEditor(&owner), processor_(owner),
       oscillators_(
@@ -13,20 +23,28 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner](unsigned id) -> mct::origami::OscillatorModuleState { return owner.getUiOscillatorState(id); },
           [&owner](unsigned id,bool enabled) -> bool { return owner.setUiOscillatorEnabled(id,enabled); },
           [&owner](unsigned id) -> bool { return owner.getUiOscillatorEnabled(id); },
-          [&owner] { return owner.getUiInstrumentState(); }) {
+          [&owner] { return owner.getUiInstrumentState(); }),
+      filter_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);}),
+      modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner)),
+      macros_(modulationBindings(owner)),matrix_(modulationBindings(owner)) {
     setLookAndFeel(&theme_);
-    const std::array<juce::Component*,9> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_}};
+    const std::array<juce::Component*,10> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_}};
     for(auto* component:components) addAndMakeVisible(component);
     // mct-origami-fixed-ratio-zoom-v1
     // Resize behaves as whole-interface zoom: the editor is constrained to one
     // canonical 16:10 canvas and every child is scaled from that same design space.
+    header_.onMatrixSelected=[this](bool selected){matrixSelected_=selected;resized();};
+    startTimerHz(15);
     setResizable(true,true);
     setResizeLimits(EditorLayout::minWidth,EditorLayout::minHeight,EditorLayout::maxWidth,EditorLayout::maxHeight);
     if (auto* constrainer=getConstrainer())
         constrainer->setFixedAspectRatio(EditorLayout::aspectRatio);
     setSize(EditorLayout::defaultWidth,EditorLayout::defaultHeight);
 }
-OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {setLookAndFeel(nullptr);}
+OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {stopTimer();setLookAndFeel(nullptr);}
+void OrigamiAudioProcessorEditor::timerCallback() {
+    modulation_.syncFromModel();macros_.syncFromModel();matrix_.syncFromModel();filter_.syncFromModel();
+}
 void OrigamiAudioProcessorEditor::paint(juce::Graphics& g) {g.fillAll(Palette::background());}
 void OrigamiAudioProcessorEditor::resized() {
     // mct-origami-consistent-resize-v11
@@ -39,6 +57,9 @@ void OrigamiAudioProcessorEditor::resized() {
     filter_.setBounds(layout.filter);
     macros_.setBounds(layout.macros);
     performance_.setBounds(layout.performance);
+    matrix_.setBounds(layout.oscillators.getUnion(layout.modulation).getUnion(layout.filter).getUnion(layout.macros));
+    matrix_.setVisible(matrixSelected_);
+    for(auto* component:std::array<juce::Component*,4>{{&oscillators_,&modulation_,&filter_,&macros_}}) component->setVisible(!matrixSelected_);
 
     mixer_.setVisible(false);
     fxPre_.setVisible(false);
@@ -52,8 +73,8 @@ void OrigamiAudioProcessorEditor::resized() {
     const float scale=juce::jmin(sx,sy);
 
     const auto transform=juce::AffineTransform::scale(scale);
-    const std::array<juce::Component*,6> visibleComponents{{
-        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_
+    const std::array<juce::Component*,7> visibleComponents{{
+        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_
     }};
 
     for(auto* component:visibleComponents)

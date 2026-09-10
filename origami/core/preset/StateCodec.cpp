@@ -20,7 +20,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(2);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(3);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -30,6 +30,16 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.real(m.wtPosition);w.real(m.waveform);w.real(m.octave);w.real(m.semitone);
         w.real(m.fineCents);w.word(m.unison);w.real(m.detuneCents);w.real(m.pan);w.real(m.level);
     }
+    const auto& mod=s.modulation;
+    w.word(static_cast<std::uint32_t>(mod.lfo1.shape));w.word(static_cast<std::uint32_t>(mod.lfo1.mode));w.real(mod.lfo1.rateHz);
+    for(float v:mod.macros) w.real(v);
+    w.word(mod.nextRouteId);
+    std::uint32_t routes=0;for(const auto& r:mod.routes) if(r.id) ++routes;
+    w.word(routes);
+    for(const auto& r:mod.routes) if(r.id) {
+        w.word(r.id);w.word(r.enabled?1:0);w.word(static_cast<std::uint32_t>(r.source));
+        w.word(static_cast<std::uint32_t>(r.destination.parameter));w.word(r.destination.oscillator);w.real(r.amount);
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -37,7 +47,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version!=1 && version!=2) return false;
+    if(version!=1 && version!=2 && version!=3) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -59,6 +69,20 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             m.enabled=enabled==1;m.tableId=r.word();
             m.wtPosition=r.real();m.waveform=r.real();m.octave=r.real();m.semitone=r.real();
             m.fineCents=r.real();m.unison=r.word();m.detuneCents=r.real();m.pan=r.real();m.level=r.real();
+        }
+    }
+    if(version==3) {
+        auto& mod=s.modulation;
+        mod.lfo1.shape=static_cast<LfoShape>(r.word());mod.lfo1.mode=static_cast<LfoMode>(r.word());mod.lfo1.rateHz=r.real();
+        for(auto& v:mod.macros) v=r.real();
+        mod.nextRouteId=r.word();const auto routes=r.word();
+        if(routes>mod.routes.size()) return false;
+        for(std::size_t i=0;i<routes;++i) {
+            auto& route=mod.routes[i];route.id=r.word();const auto enabled=r.word();
+            if(!route.id || enabled>1) return false;
+            route.enabled=enabled==1;route.source=static_cast<ModSource>(r.word());
+            route.destination.parameter=static_cast<ModDestination>(r.word());
+            route.destination.oscillator=r.word();route.amount=r.real();
         }
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;

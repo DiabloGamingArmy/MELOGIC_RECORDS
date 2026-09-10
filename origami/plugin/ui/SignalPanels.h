@@ -13,6 +13,7 @@ public:
     // mct-origami-core-controls-v18.2
     FilterPanel(ParameterSetter setter={},ParameterGetter getter={});
     void resized() override;
+    void syncFromModel();
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     ParameterSetter setter_;

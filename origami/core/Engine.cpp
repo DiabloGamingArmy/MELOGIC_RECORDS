@@ -13,6 +13,7 @@ OrigamiEngine::OrigamiEngine() noexcept {
 bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, unsigned outputChannels) {
     if (!std::isfinite(sampleRate) || sampleRate < 8000 || sampleRate > 384000 || maximumBlockSize == 0 || (outputChannels != 1 && outputChannels != 2)) return false;
     if (wavetable_.frames.empty()) wavetable_ = dsp::Wavetable::builtIns();
+    modulationSmoothing_=static_cast<float>(1.0-std::exp(-1.0/(sampleRate*.005)));
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);
@@ -24,6 +25,10 @@ bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
     wavetable_ = std::move(table); reset(); return true;
 }
 void OrigamiEngine::reset() noexcept {
+    modulationMailbox_.consume(audioModulation_);
+    audioModulation_=modulation_; // reset requires exclusive access
+    smoothedMacros_=audioModulation_.macros;globalLfo_.reset();
+    compiledModulation_.compile(audioModulation_,oscillatorModules_.snapshot(),true);
     for (auto& voice : voices_) voice.reset();
     for (auto& voice : stealTails_) voice.reset();
     tailRemaining_.fill(0); order_ = 0;
@@ -40,14 +45,20 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
     state.parameters=parameterState();
     state.oscillators=oscillatorModules_.snapshot();
     state.nextId=oscillatorModules_.nextId();
+    state.modulation=modulation_;
     applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
     return state;
 }
 bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcept {
     if(!validInstrumentState(state)) return false;
+    modulation_=state.modulation;modulationMailbox_.publish(modulation_);
     oscillatorModules_.restore(state.oscillators,state.nextId);
     for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
     reset();return true;
+}
+bool OrigamiEngine::setModulationState(const ModulationState& state) noexcept {
+    if(!validModulation(state,oscillatorModules_.snapshot())) return false;
+    modulation_=state;modulationMailbox_.publish(state);return true;
 }
 ParameterValues OrigamiEngine::parameterState() const noexcept {
     ParameterValues values {};
@@ -113,6 +124,9 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
 
     latchParameters();
     auto modules=oscillatorModules_.snapshot();
+    modulationMailbox_.consume(audioModulation_);
+    // Resolve stable IDs only once per block; at most 32 routes / 16 modules.
+    compiledModulation_.compile(audioModulation_,modules);
     for(std::size_t sample=0;sample<sampleCount;++sample) {
         for(auto& s:smooth_) if(s.remaining) {
             s.value+=static_cast<float>(s.step);
@@ -132,8 +146,17 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         modules[0].pan=value(ParameterId::OscPan);
         modules[0].level=value(ParameterId::OscLevel);
 
-        const auto filter=dsp::LowPassCoefficients::make(
-            sampleRate_,value(ParameterId::Cutoff),value(ParameterId::Resonance));
+        std::array<float,5> sources{};
+        sources[0]=globalLfo_.next(audioModulation_.lfo1,sampleRate_);
+        for(std::size_t i=0;i<smoothedMacros_.size();++i) {
+            smoothedMacros_[i]+=modulationSmoothing_*(audioModulation_.macros[i]-smoothedMacros_[i]);
+            sources[i+1]=smoothedMacros_[i];
+        }
+        compiledModulation_.advance(modulationSmoothing_);
+        ModulationFrame frame;
+        frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
+        frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
+        compiledModulation_.globalFrame(frame,sources,sampleRate_);
         const float sustain=value(ParameterId::Sustain);
 
         double left=0.0,right=0.0,mono=0.0;
@@ -142,30 +165,22 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         const double normalization=activeModules ? 1.0/static_cast<double>(activeModules) : 1.0;
 
         for(std::size_t v=0;v<voiceCount;++v) {
-            auto fresh=voices_[v].nextModules(wavetable_,modules,sustain,filter);
-            Voice::ModuleSamples old{};
+            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1);
+            Voice::Samples old{};
             float oldWeight=0.0f;
 
             if(tailRemaining_[v]) {
                 oldWeight=static_cast<float>(tailRemaining_[v])/static_cast<float>(stealFadeSamples_);
-                old=stealTails_[v].nextModules(wavetable_,modules,sustain,filter);
+                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_.lfo1);
                 if(--tailRemaining_[v]==0) stealTails_[v].reset();
             }
 
-            for(std::size_t m=0;m<modules.size();++m) {
-                if(!modules[m].enabled) continue;
-                const float sampleValue=(fresh[m]*(1.0f-oldWeight)+old[m]*oldWeight)*modules[m].level;
-                if(channels==1) {
-                    mono+=sampleValue;
-                } else {
-                    const double angle=(static_cast<double>(modules[m].pan)+1.0)*0.7853981633974483;
-                    left+=sampleValue*std::cos(angle);
-                    right+=sampleValue*std::sin(angle);
-                }
-            }
+            left+=fresh.left*(1-oldWeight)+old.left*oldWeight;
+            right+=fresh.right*(1-oldWeight)+old.right*oldWeight;
+            mono+=fresh.mono*(1-oldWeight)+old.mono*oldWeight;
         }
 
-        const float master=value(ParameterId::MasterGain)*static_cast<float>(normalization);
+        const float master=static_cast<float>(normalization);
         if(channels==1) output[0][sample]=static_cast<float>(mono)*master;
         else {
             output[0][sample]=static_cast<float>(left)*master;
@@ -191,7 +206,13 @@ OscillatorModuleId OrigamiEngine::addOscillatorModule() noexcept {
     return oscillatorModules_.add(s);
 }
 bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
-    return oscillatorModules_.remove(id);
+    if(!oscillatorModules_.remove(id)) return false;
+    // Deletion removes addressed routes. Reused display ordinals never retarget them.
+    auto updated=modulation_;std::size_t out=0;
+    for(const auto& route:modulation_.routes)
+        if(route.id && route.destination.oscillator!=id) updated.routes[out++]=route;
+    while(out<updated.routes.size()) updated.routes[out++]={};
+    setModulationState(updated);return true;
 }
 bool OrigamiEngine::setOscillatorModuleState(OscillatorModuleId id,const OscillatorModuleState& state) noexcept {
     if(id==1 || oscillatorModules_.state(id).id==0) return false;
