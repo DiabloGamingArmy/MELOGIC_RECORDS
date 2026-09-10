@@ -1,4 +1,3 @@
-// mct-origami-bend-range-number-only-v23.3.3
 // mct-origami-performance-strip-relayout-v23.3.2
 // mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-pitch-mod-real-v23.3
@@ -27,7 +26,7 @@ public:
         bendRange_.setDoubleClickReturnValue(true,2.0);
         bendRange_.setTooltip("Bend Range — click/drag vertically or type a semitone value");
         bendRange_.textFromValueFunction=[](double value) {
-            return juce::String(juce::roundToInt(value));
+            return "±"+juce::String(juce::roundToInt(value))+" st";
         };
         bendRange_.valueFromTextFunction=[](const juce::String& value) {
             return value.retainCharacters("0123456789.-").getDoubleValue();
