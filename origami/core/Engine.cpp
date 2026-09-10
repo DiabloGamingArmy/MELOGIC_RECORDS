@@ -1,3 +1,4 @@
+// mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
@@ -83,16 +84,34 @@ bool OrigamiEngine::setParameter(ParameterId id, float physicalValue) noexcept {
 bool OrigamiEngine::setParameter(std::string_view id, float physicalValue) noexcept { const auto* p = findParameter(id); return p && setParameter(p->id, physicalValue); }
 dsp::EnvelopeSettings OrigamiEngine::envelopeSettings() const noexcept {
     auto read=[this](ParameterId id){return targets_[static_cast<std::size_t>(id)].load(std::memory_order_relaxed);};
-    return {read(ParameterId::Attack),read(ParameterId::Decay),read(ParameterId::Sustain),read(ParameterId::Release)};
+    dsp::EnvelopeSettings e{read(ParameterId::Attack),read(ParameterId::Decay),read(ParameterId::Sustain),read(ParameterId::Release)};
+    e.attackCurve=modEnvelopeTargets_[0].load(std::memory_order_relaxed);
+    e.decayCurve=modEnvelopeTargets_[1].load(std::memory_order_relaxed);
+    e.releaseCurve=modEnvelopeTargets_[2].load(std::memory_order_relaxed);
+    return e;
 }
 void OrigamiEngine::publishModEnvelopeTargets(const ModulationState& s) noexcept {
-    const std::array<float,8> v{s.env2.attack,s.env2.decay,s.env2.sustain,s.env2.release,s.env3.attack,s.env3.decay,s.env3.sustain,s.env3.release};
+    const std::array<float,17> v{
+        s.env1Curves[0],s.env1Curves[1],s.env1Curves[2],
+        s.env2.attack,s.env2.decay,s.env2.sustain,s.env2.release,
+        s.env2.attackCurve,s.env2.decayCurve,s.env2.releaseCurve,
+        s.env3.attack,s.env3.decay,s.env3.sustain,s.env3.release,
+        s.env3.attackCurve,s.env3.decayCurve,s.env3.releaseCurve
+    };
     for(std::size_t i=0;i<v.size();++i) modEnvelopeTargets_[i].store(v[i],std::memory_order_relaxed);
 }
 dsp::EnvelopeSettings OrigamiEngine::modulationEnvelopeSettings(unsigned index) const noexcept {
-    const std::size_t b=index?4u:0u;
-    return {modEnvelopeTargets_[b].load(std::memory_order_relaxed),modEnvelopeTargets_[b+1].load(std::memory_order_relaxed),
-            modEnvelopeTargets_[b+2].load(std::memory_order_relaxed),modEnvelopeTargets_[b+3].load(std::memory_order_relaxed)};
+    const std::size_t b=index?10u:3u;
+    dsp::EnvelopeSettings e{
+        modEnvelopeTargets_[b].load(std::memory_order_relaxed),
+        modEnvelopeTargets_[b+1].load(std::memory_order_relaxed),
+        modEnvelopeTargets_[b+2].load(std::memory_order_relaxed),
+        modEnvelopeTargets_[b+3].load(std::memory_order_relaxed)
+    };
+    e.attackCurve=modEnvelopeTargets_[b+4].load(std::memory_order_relaxed);
+    e.decayCurve=modEnvelopeTargets_[b+5].load(std::memory_order_relaxed);
+    e.releaseCurve=modEnvelopeTargets_[b+6].load(std::memory_order_relaxed);
+    return e;
 }
 bool OrigamiEngine::sameAddress(const NoteAddress& a,const NoteAddress& b) const noexcept {
     return a.note==b.note && a.channel==b.channel && (!a.noteId || !b.noteId || a.noteId==b.noteId);

@@ -1,3 +1,4 @@
+// mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
 #pragma once
 #include "core/OscillatorModule.h"
@@ -42,6 +43,7 @@ struct ModRoute {
 struct ModulationState {
     static constexpr std::size_t capacity=32;
     LfoSettings lfo1{},lfo2{},lfo3{},lfo4{};
+    std::array<float,3> env1Curves{};
     dsp::EnvelopeSettings env2{},env3{};
     RandomSettings random{};
     FunctionSettings function{};

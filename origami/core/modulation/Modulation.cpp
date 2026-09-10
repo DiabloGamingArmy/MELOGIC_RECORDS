@@ -1,3 +1,4 @@
+// mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
 #include "Modulation.h"
 #include <algorithm>
@@ -7,7 +8,9 @@ namespace {
 bool range(float x,float a,float b) {return std::isfinite(x) && x>=a && x<=b;}
 bool validEnvelope(const dsp::EnvelopeSettings& e) {
     return range(e.attack,.001f,10.f) && range(e.decay,.001f,10.f) &&
-           range(e.sustain,0.f,1.f) && range(e.release,.001f,20.f);
+           range(e.sustain,0.f,1.f) && range(e.release,.001f,20.f) &&
+           range(e.attackCurve,-1.f,1.f) && range(e.decayCurve,-1.f,1.f) &&
+           range(e.releaseCurve,-1.f,1.f);
 }
 bool validLfo(const LfoSettings& s) {
     return s.shape>=LfoShape::Sine && s.shape<=LfoShape::Square &&
@@ -64,6 +67,7 @@ bool isGlobalDestination(ModDestination d) noexcept {return d>=ModDestination::C
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
     for(std::size_t i=0;i<4;++i) if(!validLfo(lfoSettings(s,i))) return false;
     if(!validEnvelope(s.env2) || !validEnvelope(s.env3)) return false;
+    for(float c:s.env1Curves) if(!range(c,-1.f,1.f)) return false;
     if(!range(s.random.rateHz,.01f,40.f) || !range(s.function.rateHz,.01f,40.f) || !range(s.function.curve,-1.f,1.f)) return false;
     for(float v:s.macros) if(!range(v,0,1)) return false;
     std::uint32_t previous=0;bool empty=false;

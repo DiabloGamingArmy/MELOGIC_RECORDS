@@ -1,3 +1,4 @@
+// mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
@@ -25,7 +26,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(8);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(9);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -57,6 +58,10 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     w.word(static_cast<std::uint32_t>(s.performance.notePriority));
     w.word(s.performance.legato?1u:0u);
     w.real(s.performance.glideSeconds);
+    for(float c:mod.env1Curves) w.real(c);
+    for(const auto* e:{&mod.env2,&mod.env3}) {
+        w.real(e->attackCurve);w.real(e->decayCurve);w.real(e->releaseCurve);
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -64,7 +69,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>8) return false;
+    if(version<1 || version>9) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -121,6 +126,12 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         s.performance.notePriority=static_cast<NotePriority>(r.word());
         const auto legato=r.word();if(legato>1) return false;s.performance.legato=legato==1;
         s.performance.glideSeconds=r.real();
+    }
+    if(version>=9) {
+        for(auto& c:s.modulation.env1Curves) c=r.real();
+        for(auto* e:{&s.modulation.env2,&s.modulation.env3}) {
+            e->attackCurve=r.real();e->decayCurve=r.real();e->releaseCurve=r.real();
+        }
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;

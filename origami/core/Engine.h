@@ -1,3 +1,4 @@
+// mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
@@ -83,7 +84,7 @@ private:
     void clearHeldNotes() noexcept;
     std::array<float,16> pitchBendNormalized_{};
     std::array<float,16> modWheel_{},aftertouch_{};
-    std::array<std::atomic<float>,8> modEnvelopeTargets_{};
+    std::array<std::atomic<float>,17> modEnvelopeTargets_{};
     std::atomic<float> pitchBendRange_{2.0f};
     PerformanceState performance_{};
     std::array<HeldNote,128> heldNotes_{};

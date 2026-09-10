@@ -1,3 +1,4 @@
+// mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-modulation-completion-v24.0.1
@@ -13,12 +14,19 @@ OrigamiLookAndFeel::OrigamiLookAndFeel() {
 void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& button,const juce::Colour&,bool over,bool down) {
     const auto bounds=button.getLocalBounds().toFloat().reduced(.5f);
     const bool active=button.getToggleState();
+    const bool oscillatorPower=button.getName().startsWithIgnoreCase("Power OSC");
     auto fill=active?Palette::raised():Palette::inset();
     if(over) fill=fill.brighter(.08f);
     if(down) fill=fill.brighter(.13f);
     g.setColour(fill);g.fillRoundedRectangle(bounds,4.5f);
-    g.setColour(active?Palette::borderStrong():Palette::borderSoft());g.drawRoundedRectangle(bounds,4.5f,1.0f);
-    if(active) {g.setColour(Palette::accent().withAlpha(.95f));g.fillRect(bounds.getX()+9,bounds.getBottom()-2.0f,bounds.getWidth()-18,1.5f);}
+    g.setColour(active && oscillatorPower ? signalSourceColour()
+                                          : (active?Palette::borderStrong():Palette::borderSoft()));
+    g.drawRoundedRectangle(bounds,4.5f,active && oscillatorPower ? 1.35f : 1.0f);
+    if(active) {
+        g.setColour(oscillatorPower ? signalSourceColour() : Palette::accent().withAlpha(.95f));
+        g.fillRoundedRectangle(bounds.getX()+9.0f,bounds.getBottom()-2.2f,
+                               bounds.getWidth()-18.0f,1.55f,0.7f);
+    }
 }
 void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& button,bool,bool) {
     text(g,button.getButtonText(),button.getLocalBounds().reduced(3),11,button.isEnabled()?Palette::text():Palette::muted(),juce::Justification::centred);
