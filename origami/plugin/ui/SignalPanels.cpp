@@ -1,3 +1,4 @@
+// mct-origami-v26.4.3-match-signal-fill-exposure
 // mct-origami-v26.4.2-curve-cropped-signal-fills
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
@@ -115,7 +116,7 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         fill.lineTo(float(graphArea.getX()),float(graphArea.getBottom()));
         fill.closeSubPath();
 
-        g.setColour(signalSurfaceColour(0.30f,0.12f));
+        g.setColour(signalSurfaceColour(0.46f,0.22f));
         g.fillPath(fill);
     }
 
