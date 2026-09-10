@@ -1,4 +1,3 @@
-// mct-origami-v24.0.6-plugin-audio-audit-pan-smoothing-repair
 // mct-origami-v24.0.5-plugin-audio-audit-smoothing-repair
 // mct-origami-v24.0.4-plugin-audio-audit-osc1-repair
 // mct-origami-v24.0.3-plugin-audio-gate
@@ -138,16 +137,9 @@ void playabilityAudit() {
     OrigamiAudioProcessor pan;
     pan.prepareToPlay(48000,128);disableExtraOscillators(pan);
     check(pan.setUiParameter(ParameterId::OscPan,-1.0f),"hard-left pan accepted");
-    // OscPan is intentionally smoothed. Let the pan target settle with no
-    // active voice before asserting channel isolation on a fresh note.
-    {
-        juce::AudioBuffer<float> settle(2,1024);settle.clear();
-        juce::MidiBuffer noMidi;
-        pan.processBlock(settle,noMidi);
-    }
     const auto panAudio=renderNote(pan);
     check(panAudio.getMagnitude(0,0,panAudio.getNumSamples())>1.0e-5f,"hard-left pan keeps left output");
-    check(panAudio.getMagnitude(1,0,panAudio.getNumSamples())<1.0e-7f,"hard-left pan silences right output after smoothing");
+    check(panAudio.getMagnitude(1,0,panAudio.getNumSamples())<1.0e-7f,"hard-left pan silences right output");
 
     OrigamiAudioProcessor filterLow,filterHigh;
     filterLow.prepareToPlay(48000,128);filterHigh.prepareToPlay(48000,128);
