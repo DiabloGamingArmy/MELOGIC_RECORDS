@@ -1,5 +1,4 @@
-// mct-origami-playable-keyboard-audio-v23.1
-#include "PluginProcessor.h"
+// mct-origami-playable-keyboard-audio-v23.1\n#include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <array>
 #include <limits>

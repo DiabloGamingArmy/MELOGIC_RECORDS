@@ -1,4 +1,3 @@
-// mct-origami-playable-keyboard-audio-v23.1
 // mct-origami-knob-mod-macro-cleanup-v22.4
 #pragma once
 #include <JuceHeader.h>
@@ -18,9 +17,7 @@ struct EditorLayout {
         result.header=area.removeFromTop(72);
         area.removeFromTop(6);
 
-        // V23.1: thinner performance keyboard; reclaimed vertical space
-        // returns to the main synth workspace.
-        result.performance=area.removeFromBottom(72);
+        result.performance=area.removeFromBottom(94);
         area.removeFromBottom(6);
 
         const int usable=area.getHeight()-6;

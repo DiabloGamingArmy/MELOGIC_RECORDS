@@ -1,5 +1,4 @@
-// mct-origami-playable-keyboard-audio-v23.1
-#include "PerformanceKeyboard.h"
+// mct-origami-playable-keyboard-audio-v23.1\n#include "PerformanceKeyboard.h"
 namespace mct::origami::ui {
 namespace {
 constexpr int rightReserve=250;

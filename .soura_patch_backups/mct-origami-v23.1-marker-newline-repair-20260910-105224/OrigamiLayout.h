@@ -1,5 +1,4 @@
-// mct-origami-playable-keyboard-audio-v23.1
-// mct-origami-knob-mod-macro-cleanup-v22.4
+// mct-origami-playable-keyboard-audio-v23.1\n// mct-origami-knob-mod-macro-cleanup-v22.4
 #pragma once
 #include <JuceHeader.h>
 namespace mct::origami::ui {

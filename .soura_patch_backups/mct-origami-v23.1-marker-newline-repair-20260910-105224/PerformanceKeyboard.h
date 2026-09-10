@@ -1,5 +1,4 @@
-// mct-origami-playable-keyboard-audio-v23.1
-#pragma once
+// mct-origami-playable-keyboard-audio-v23.1\n#pragma once
 #include "OrigamiStyle.h"
 namespace mct::origami::ui {
 class PerformanceKeyboard final : public juce::Component, public juce::SettableTooltipClient {

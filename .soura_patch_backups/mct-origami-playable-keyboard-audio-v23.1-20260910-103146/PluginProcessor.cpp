@@ -1,4 +1,3 @@
-// mct-origami-playable-keyboard-audio-v23.1
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <array>
@@ -31,14 +30,8 @@ void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexc
 void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     juce::ScopedNoDenormals noDenormals;
     jassert(buffer.getNumChannels() >= 2);
-    const int total = buffer.getNumSamples();
-
-    // V23.1: merge on-screen keyboard events into the host MIDI buffer.
-    // MidiKeyboardState is JUCE's intended UI-to-audio-thread bridge. The
-    // resulting events flow through dispatchMidi() exactly like host MIDI.
-    uiKeyboardState_.processNextMidiBuffer(midi,0,total,true);
-
     int cursor = 0;
+    const int total = buffer.getNumSamples();
     for (const auto metadata : midi) {
         const int eventSample = juce::jlimit(cursor, total, metadata.samplePosition);
         renderRange(buffer, cursor, eventSample - cursor);

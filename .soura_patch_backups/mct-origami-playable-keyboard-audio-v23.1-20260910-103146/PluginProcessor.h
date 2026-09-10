@@ -1,4 +1,3 @@
-// mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include <JuceHeader.h>
 #include "core/Engine.h"
@@ -42,14 +41,10 @@ public:
     bool setUiRoute(const mct::origami::ModRoute&) noexcept;
     bool removeUiRoute(unsigned) noexcept;
     mct::origami::InstrumentState getUiInstrumentState() const noexcept;
-
-    // V23.1: UI keyboard feeds the exact same MIDI path as host input.
-    juce::MidiKeyboardState& uiKeyboardState() noexcept { return uiKeyboardState_; }
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
     void dispatchMidi(const juce::MidiMessage&) noexcept;
-    juce::MidiKeyboardState uiKeyboardState_;
     mct::origami::OrigamiEngine engine_;
     bool prepared_ = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessor)

@@ -1,4 +1,3 @@
-// mct-origami-basic-shapes-identity-v22.6
 // mct-origami-osc-interaction-rotary-cleanup-v22.5
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 // mct-origami-wt-pos-real-morph-v22.2.1
@@ -34,10 +33,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
 
         addAndMakeVisible(waveformPrevious_);
         addAndMakeVisible(waveformNext_);
-        waveformPrevious_.setTooltip("Previous wavetable (only Basic Shapes is currently installed)");
-        waveformNext_.setTooltip("Next wavetable (only Basic Shapes is currently installed)");
-        waveformPrevious_.setEnabled(false);
-        waveformNext_.setEnabled(false);
+        waveformPrevious_.setTooltip("Previous anchor frame in Basic Shapes");
+        waveformNext_.setTooltip("Next anchor frame in Basic Shapes");
         panSlider_.setRange(-1.0,1.0,0.001);
         levelSlider_.setRange(0.0,1.0,0.001);
         panSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscPan),juce::dontSendNotification);
@@ -123,9 +120,13 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             label->setFont(juce::FontOptions(8.0f));
             label->setInterceptsMouseClicks(false, false);
         }
-        // V22.6: browser arrows are reserved for wavetable selection.
-        // Basic Shapes is currently the only installed table, so they remain disabled.
-        // WT POS alone controls interpolation between frames inside Basic Shapes.
+        auto applyWaveform=[this](int delta) {
+            waveformIndex_=(juce::roundToInt(parameterGetter_(mct::origami::ParameterId::Waveform))+delta+4)%4;
+            parameterSetter_(mct::origami::ParameterId::Waveform,float(waveformIndex_));
+            syncFromModel();
+        };
+        waveformPrevious_.onClick=[applyWaveform]{ applyWaveform(-1); };
+        waveformNext_.onClick=[applyWaveform]{ applyWaveform(1); };
 
         for(auto* label:{&panLabel_,&levelLabel_}) {
             addAndMakeVisible(label);
@@ -180,7 +181,6 @@ void OscillatorCard::syncFromModel() {
     sync(panSlider_,ParameterId::OscPan);sync(levelSlider_,ParameterId::OscLevel);
     sync(octaveSlider_,ParameterId::OscOctave);sync(semitoneSlider_,ParameterId::OscSemitone);
     sync(fineSlider_,ParameterId::OscFine);
-    // Compatibility-only nearest frame index; never used as wavetable identity.
     waveformIndex_=juce::jlimit(0,3,juce::roundToInt(parameterGetter_(ParameterId::Waveform)));
     if(enabledGetter_) power_.setToggleState(enabledGetter_(display_.id),juce::dontSendNotification);
     repaint();
@@ -304,9 +304,12 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     well(g,browserBox);
     text(g,"<",browserBox.removeFromLeft(18),8.5f,Palette::muted(),juce::Justification::centred);
     text(g,">",browserBox.removeFromRight(18),8.5f,Palette::muted(),juce::Justification::centred);
-    // V22.6: this strip names the selected wavetable, not the current frame.
-    // Sine/Saw/Square/Triangle are internal anchor frames within Basic Shapes.
-    text(g,"BASIC SHAPES",browserBox,8.2f,Palette::secondary(),juce::Justification::centred);
+    juce::String waveformName="BASIC SHAPES";
+    if(engineBacked_) {
+        static const juce::StringArray waveformNames{"SINE","SAW","SQUARE","TRIANGLE"};
+        waveformName=waveformNames[juce::jlimit(0,3,waveformIndex_)];
+    }
+    text(g,waveformName,browserBox,8.2f,Palette::secondary(),juce::Justification::centred);
 
     // OSC PROCESS stays dense and local to the source.
     auto processBox=process.reduced(1,0);

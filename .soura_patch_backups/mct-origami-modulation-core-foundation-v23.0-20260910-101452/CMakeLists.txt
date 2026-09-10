@@ -44,11 +44,6 @@ if(ORIGAMI_BUILD_TESTS)
   add_executable(origami_wavetable_bank_tests tests/WavetableBankTests.cpp)
   target_link_libraries(origami_wavetable_bank_tests PRIVATE origami_core)
   add_test(NAME origami_wavetable_bank_foundation COMMAND origami_wavetable_bank_tests)
-
-  # mct-origami-modulation-core-foundation-v23.0
-  add_executable(origami_modulation_tests tests/ModulationTests.cpp)
-  target_link_libraries(origami_modulation_tests PRIVATE origami_patch)
-  add_test(NAME origami_modulation_core COMMAND origami_modulation_tests)
 endif()
 # mct-origami-vst3-host-proof-v1
 option(ORIGAMI_BUILD_VST3 "Build the MCT Origami JUCE VST3 host proof" OFF)
