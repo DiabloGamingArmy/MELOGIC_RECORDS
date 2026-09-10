@@ -1,3 +1,4 @@
+// mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-performance-audio-ui-repair-v23.4.4
@@ -103,13 +104,36 @@ void OrigamiLookAndFeel::positionComboBoxText(juce::ComboBox& box,juce::Label& l
 }
 void OrigamiLookAndFeel::drawToggleButton(juce::Graphics& g,juce::ToggleButton& button,bool over,bool down) {
     auto b=button.getLocalBounds().toFloat().reduced(.5f);
-    auto fill=button.getToggleState()?Palette::raised():Palette::inset();
-    if(over) fill=fill.brighter(.07f);if(down) fill=fill.brighter(.10f);
-    g.setColour(fill);g.fillRoundedRectangle(b,3.0f);
-    g.setColour(button.getToggleState()?Palette::borderStrong():Palette::borderSoft());g.drawRoundedRectangle(b,3.0f,1.0f);
-    if(button.getToggleState()) {g.setColour(Palette::accent());g.fillRect(b.getX()+5,b.getBottom()-2,b.getWidth()-10,1.2f);}
+    const bool active=button.getToggleState();
+    const bool oscillatorPower=button.getName().startsWithIgnoreCase("Power OSC");
+
+    auto fill=active?Palette::raised():Palette::inset();
+    if(over) fill=fill.brighter(.07f);
+    if(down) fill=fill.brighter(.10f);
+
+    g.setColour(fill);
+    g.fillRoundedRectangle(b,3.0f);
+
+    // Oscillator power is the primary signal-source activity indicator.
+    // Keep every other toggle monochrome, but drive this outline from the
+    // shared full-bright global signal colour.
+    const auto outline=active
+        ? (oscillatorPower ? signalSourceColour() : Palette::borderStrong())
+        : Palette::borderSoft();
+
+    g.setColour(outline);
+    g.drawRoundedRectangle(b,3.0f,oscillatorPower && active ? 1.25f : 1.0f);
+
+    if(active) {
+        // Existing bottom "pill" indicator becomes full-bright source red for
+        // oscillator power; non-power toggles retain the monochrome contract.
+        g.setColour(oscillatorPower ? signalSourceColour() : Palette::accent());
+        g.fillRoundedRectangle(b.getX()+5.0f,b.getBottom()-2.1f,
+                               b.getWidth()-10.0f,1.35f,0.65f);
+    }
+
     text(g,button.getButtonText(),button.getLocalBounds().reduced(3),8.0f,
-         button.getToggleState()?Palette::text():Palette::muted(),juce::Justification::centred);
+         active?Palette::text():Palette::muted(),juce::Justification::centred);
 }
 
 void OrigamiLookAndFeel::drawScrollbar(juce::Graphics& g,juce::ScrollBar&,int x,int y,int width,int height,bool vertical,int start,int size,bool over,bool) {

@@ -1,3 +1,4 @@
+// mct-origami-v26.4.0-global-signal-colour-system
 #include "SignalPanels.h"
 namespace mct::origami::ui {
 void MixerPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
@@ -92,6 +93,12 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     body.removeFromRight(8);
 
     well(g,body);
+
+    // Filter response graph uses the same global signal-source shading.
+    // As with ENV/LFO, the brightest point of the reduced-exposure field is
+    // anchored at the bottom-centre and fades upward/outward.
+    paintSignalGlow(g,body.toFloat().reduced(1.0f),0.15f,0.35f,2.0f);
+
     auto graphArea=body.reduced(8);
     g.setColour(Palette::border().withAlpha(.7f));
     for(int i=1;i<5;++i)

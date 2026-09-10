@@ -1,3 +1,4 @@
+// mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-modulation-completion-v24
 #include "ModulationPanel.h"
 #include <cmath>
@@ -138,7 +139,15 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     else if(selected_>=3 && selected_<=6) title="LFO "+juce::String(selected_-2)+" / "+(lfoSettings(cached_,static_cast<std::size_t>(selected_-3)).mode==LfoMode::Free?"FREE":"PER NOTE");
     else if(selected_==7) title="FUNCTION / CURVED BIPOLAR";
     else title="RANDOM / SAMPLE + HOLD";
-    text(g,title,caption,9,Palette::muted());well(g,body);
+    text(g,title,caption,9,Palette::muted());
+    well(g,body);
+
+    // ENV and LFO source surfaces share the same global signal colour as the
+    // oscillator. Their visual source/origin is the bottom-centre of the graph.
+    // Function/Random remain neutral until their own visual language is defined.
+    if(selected_<=6)
+        paintSignalGlow(g,body.toFloat().reduced(1.0f),0.155f,0.36f,2.0f);
+
     auto r=body.reduced(10).toFloat();juce::Path p;
     if(selected_<=2) {
         const auto e=readEnvelope(envSliders_);const double hold=.25,total=e.attack+e.decay+hold+e.release;

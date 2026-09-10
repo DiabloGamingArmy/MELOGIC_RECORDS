@@ -1,3 +1,4 @@
+// mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-v26.3.2-osc-process-quick-nav
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
@@ -586,7 +587,10 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             fill.closeSubPath();
         }
 
-        g.setColour(juce::Colour::fromRGBA(190,38,46,42));
+        // Wavetable fill derives from the single global signal source colour.
+        // The global source remains maximum red; this viewport intentionally
+        // renders it at reduced exposure so the white waveform stays dominant.
+        g.setGradientFill(signalGlowGradient(wtRect,0.22f,0.46f));
         g.fillPath(fill);
 
         g.setColour(Palette::muted().withAlpha(0.30f));

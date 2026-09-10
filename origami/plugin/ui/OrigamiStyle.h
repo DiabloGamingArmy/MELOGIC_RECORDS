@@ -1,3 +1,4 @@
+// mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-knob-mod-macro-cleanup-v22.4
 #pragma once
@@ -7,6 +8,54 @@
 namespace mct::origami::ui {
 // mct-origami-visual-foundation-v1
 // mct-origami-monochrome-oscillator-v4
+// Single global source colour for signal/activity visuals.
+//
+// This is intentionally the BRIGHTEST source value. Individual graph surfaces
+// derive darker/exposure-reduced shades from this rather than hard-coding
+// separate reds throughout the UI.
+//
+// Change this one variable to recolour the complete signal-visual system.
+inline juce::Colour gSignalSourceColour = juce::Colour(0xffff0000);
+
+inline juce::Colour signalSourceColour() noexcept {
+    return gSignalSourceColour;
+}
+
+inline juce::Colour signalShade(float exposure=0.32f,float alpha=1.0f) noexcept {
+    return gSignalSourceColour
+        .withMultipliedBrightness(juce::jlimit(0.0f,1.0f,exposure))
+        .withAlpha(juce::jlimit(0.0f,1.0f,alpha));
+}
+
+inline juce::ColourGradient signalGlowGradient(juce::Rectangle<float> bounds,
+                                                float alpha=0.18f,
+                                                float exposure=0.38f) {
+    // The visual "source" is the bottom-centre point. The source colour itself
+    // remains full-bright red globally; only its rendered exposure is reduced.
+    const auto source=juce::Point<float>(bounds.getCentreX(),bounds.getBottom());
+    const auto fade=juce::Point<float>(bounds.getCentreX(),
+                                       bounds.getY()+bounds.getHeight()*0.08f);
+
+    juce::ColourGradient gradient(signalShade(exposure,alpha),
+                                  source.x,source.y,
+                                  signalShade(exposure,0.0f),
+                                  fade.x,fade.y,
+                                  true);
+    gradient.addColour(0.42,signalShade(exposure*0.82f,alpha*0.55f));
+    gradient.addColour(0.72,signalShade(exposure*0.60f,alpha*0.18f));
+    return gradient;
+}
+
+inline void paintSignalGlow(juce::Graphics& g,
+                            juce::Rectangle<float> bounds,
+                            float alpha=0.18f,
+                            float exposure=0.38f,
+                            float cornerRadius=2.0f) {
+    if(bounds.isEmpty()) return;
+    g.setGradientFill(signalGlowGradient(bounds,alpha,exposure));
+    g.fillRoundedRectangle(bounds,cornerRadius);
+}
+
 struct Palette {
     static juce::Colour background()   { return juce::Colour(0xff090909); }
     static juce::Colour panel()        { return juce::Colour(0xff111111); }
