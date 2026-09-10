@@ -1,4 +1,3 @@
-// mct-origami-v23.4.3-performance-state-include-repair
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-relative-drag-linear-controls-v23.3.4
 // mct-origami-bend-range-number-only-v23.3.3
@@ -10,7 +9,6 @@
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include "OrigamiStyle.h"
-#include "../../core/InstrumentState.h"
 namespace mct::origami::ui {
 class PerformanceKeyboard final : public juce::Component, public juce::SettableTooltipClient {
 public:
@@ -51,16 +49,16 @@ public:
         glide_.setSliderStyle(juce::Slider::LinearBarVertical);glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,54,18);
         glide_.setRange(0.0,5.0,0.001);glide_.setSliderSnapsToMousePosition(false);glide_.setScrollWheelEnabled(false);
         glide_.textFromValueFunction=[](double v){return v<0.001?"OFF":juce::String(v,3);};
-        const auto initialPerformance=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
-        voiceMode_.setSelectedId(initialPerformance.voiceMode==mct::origami::VoiceMode::Mono?2:1,juce::dontSendNotification);
-        priority_.setSelectedId(initialPerformance.notePriority==mct::origami::NotePriority::High?2:initialPerformance.notePriority==mct::origami::NotePriority::Low?3:1,juce::dontSendNotification);
-        legato_.setToggleState(initialPerformance.legato,juce::dontSendNotification);glide_.setValue(initialPerformance.glideSeconds,juce::dontSendNotification);
+        const auto p=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
+        voiceMode_.setSelectedId(p.voiceMode==mct::origami::VoiceMode::Mono?2:1,juce::dontSendNotification);
+        priority_.setSelectedId(p.notePriority==mct::origami::NotePriority::High?2:p.notePriority==mct::origami::NotePriority::Low?3:1,juce::dontSendNotification);
+        legato_.setToggleState(p.legato,juce::dontSendNotification);glide_.setValue(p.glideSeconds,juce::dontSendNotification);
         auto commit=[this]{
             if(!performanceSetter_) return;
-            auto performance=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
-            performance.voiceMode=voiceMode_.getSelectedId()==2?mct::origami::VoiceMode::Mono:mct::origami::VoiceMode::Poly;
-            performance.notePriority=priority_.getSelectedId()==2?mct::origami::NotePriority::High:priority_.getSelectedId()==3?mct::origami::NotePriority::Low:mct::origami::NotePriority::Last;
-            performance.legato=legato_.getToggleState();performance.glideSeconds=static_cast<float>(glide_.getValue());performanceSetter_(performance);
+            auto p=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
+            p.voiceMode=voiceMode_.getSelectedId()==2?mct::origami::VoiceMode::Mono:mct::origami::VoiceMode::Poly;
+            p.notePriority=priority_.getSelectedId()==2?mct::origami::NotePriority::High:priority_.getSelectedId()==3?mct::origami::NotePriority::Low:mct::origami::NotePriority::Last;
+            p.legato=legato_.getToggleState();p.glideSeconds=static_cast<float>(glide_.getValue());performanceSetter_(p);
         };
         voiceMode_.onChange=commit;priority_.onChange=commit;legato_.onClick=commit;glide_.onValueChange=commit;
     }

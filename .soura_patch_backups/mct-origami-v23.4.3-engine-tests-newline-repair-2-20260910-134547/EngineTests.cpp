@@ -1,4 +1,3 @@
-// mct-origami-v23.4.3-engine-tests-newline-repair-2
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "core/Engine.h"
@@ -131,8 +130,7 @@ void performanceModes() {
     OrigamiEngine a,b;prepare(a);prepare(b);p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=0;check(a.setPerformanceState(p),"zero glide");p.glideSeconds=.2f;check(b.setPerformanceState(p),"glide accepted");
     a.noteOn(60,1);b.noteOn(60,1);render(a,512);render(b,512);a.noteOn(72,1);b.noteOn(72,1);check(render(a,512)!=render(b,512),"glide changes transition");
     PerformanceState bad=p;bad.glideSeconds=6;check(!engine.setPerformanceState(bad),"invalid glide rejected");
-}
-void signalBehavior() {
+}\nvoid signalBehavior() {
     OrigamiEngine engine;
     float empty[8]; std::fill_n(empty,8,1.f); float* emptyPointer=empty;
     check(!engine.process(&emptyPointer,1,8) && std::all_of(std::begin(empty),std::end(empty),[](float v){return v==0;}),"unprepared output silent");
