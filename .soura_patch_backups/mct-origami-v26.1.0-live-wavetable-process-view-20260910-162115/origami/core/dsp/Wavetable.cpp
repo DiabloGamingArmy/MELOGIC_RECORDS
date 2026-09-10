@@ -1,4 +1,3 @@
-// mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
 #include "Wavetable.h"
 #include <algorithm>
@@ -50,7 +49,8 @@ Wavetable Wavetable::builtIns() {
 }
 void WavetableOscillator::reset(double phase) noexcept { phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; }
 
-double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) noexcept {
+namespace {
+double processPhase(double phase,OscProcessType type,float rawAmount) noexcept {
     const double p=std::clamp(phase,0.0,std::nextafter(1.0,0.0));
     const double amount=std::clamp(static_cast<double>(rawAmount),0.0,1.0);
     if(amount<=0.0 || type==OscProcessType::Off) return p;
@@ -90,6 +90,7 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             return p;
     }
 }
+}
 
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 OscProcessType process1,float amount1,
@@ -104,8 +105,8 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     const float framePosition = std::clamp(position, 0.f, 1.f) * static_cast<float>(table.frames.size() - 1);
     const auto first = static_cast<std::size_t>(framePosition);
     const auto second = std::min(first + 1, table.frames.size() - 1);
-    double readPhase=processOscillatorPhase(phase_,process1,amount1);
-    readPhase=processOscillatorPhase(readPhase,process2,amount2);
+    double readPhase=processPhase(phase_,process1,amount1);
+    readPhase=processPhase(readPhase,process2,amount2);
     const double tablePosition = readPhase * static_cast<double>(table.tableLength);
     const auto index = static_cast<std::size_t>(tablePosition);
     const auto nextIndex = (index + 1) % table.tableLength;

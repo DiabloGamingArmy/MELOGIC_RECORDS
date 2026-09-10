@@ -1,4 +1,3 @@
-// mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-relative-drag-linear-controls-v23.3.4
@@ -453,59 +452,18 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         }
         g.drawHorizontalLine(int(wtRect.getCentreY()),wtRect.getX(),wtRect.getRight());
 
-        const auto moduleState=moduleGetter_
-            ? moduleGetter_(display_.id)
-            : mct::origami::OscillatorModuleState{};
-
-        auto processedSample=[&](float sourcePhase) {
-            double phase=static_cast<double>(sourcePhase);
-            if(moduleState.id) {
-                phase=dsp::processOscillatorPhase(
-                    phase,moduleState.process1,moduleState.process1Amount);
-                phase=dsp::processOscillatorPhase(
-                    phase,moduleState.process2,moduleState.process2Amount);
-            }
-            const float visualPhase=static_cast<float>(phase);
-            const float ya=shape(a,visualPhase);
-            const float yb=shape(next,visualPhase);
-            return ya+(yb-ya)*blend;
-        };
-
-        constexpr int points=384;
-        std::array<juce::Point<float>,points> plot{};
-        juce::Path outline;
-
+        juce::Path p;
+        constexpr int points=256;
         for(int i=0;i<points;++i) {
-            const float sourcePhase=float(i)/float(points-1);
-            const float sample=processedSample(sourcePhase);
+            const float phase=float(i)/float(points-1);
+            const float ya=shape(a,phase);
+            const float yb=shape(next,phase);
+            const float yv=juce::jmap(ya+(yb-ya)*blend,-1.0f,1.0f,wtRect.getBottom(),wtRect.getY());
             const float x=juce::jmap(float(i),0.0f,float(points-1),wtRect.getX(),wtRect.getRight());
-            const float y=juce::jmap(sample,-1.0f,1.0f,wtRect.getBottom(),wtRect.getY());
-            plot[static_cast<std::size_t>(i)]={x,y};
-            if(i==0) outline.startNewSubPath(x,y); else outline.lineTo(x,y);
+            if(i==0) p.startNewSubPath(x,yv); else p.lineTo(x,yv);
         }
-
-        juce::Path fill;
-        const float zeroY=wtRect.getCentreY();
-        for(int i=0;i<points-1;++i) {
-            const auto p0=plot[static_cast<std::size_t>(i)];
-            const auto p1=plot[static_cast<std::size_t>(i+1)];
-            if(std::abs(p0.y-zeroY)<0.01f && std::abs(p1.y-zeroY)<0.01f) continue;
-
-            fill.startNewSubPath(p0.x,zeroY);
-            fill.lineTo(p0.x,p0.y);
-            fill.lineTo(p1.x,p1.y);
-            fill.lineTo(p1.x,zeroY);
-            fill.closeSubPath();
-        }
-
-        g.setColour(juce::Colour::fromRGBA(190,38,46,42));
-        g.fillPath(fill);
-
-        g.setColour(Palette::muted().withAlpha(0.30f));
-        g.drawHorizontalLine(int(zeroY),wtRect.getX(),wtRect.getRight());
-
         g.setColour(Palette::text());
-        g.strokePath(outline,juce::PathStrokeType(1.5f));
+        g.strokePath(p,juce::PathStrokeType(1.5f));
     }
 }
 

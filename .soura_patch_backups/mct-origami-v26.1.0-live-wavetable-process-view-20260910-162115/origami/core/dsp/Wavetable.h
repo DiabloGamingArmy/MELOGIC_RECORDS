@@ -1,4 +1,3 @@
-// mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
 #pragma once
 #include <cstddef>
@@ -14,8 +13,6 @@ enum class OscProcessType : std::uint32_t {
 constexpr bool validOscProcessType(OscProcessType type) noexcept {
     return static_cast<std::uint32_t>(type)<=static_cast<std::uint32_t>(OscProcessType::Asym);
 }
-
-double processOscillatorPhase(double phase,OscProcessType type,float amount) noexcept;
 // Owned, immutable during rendering. Samples contain one cycle (no guard sample).
 // Frames share band limits and table length. Future importers can populate this
 // representation off-thread; hosts must keep the bank alive until processing stops.
