@@ -1,4 +1,3 @@
-// mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
 #pragma once
@@ -9,22 +8,13 @@
 namespace mct::origami::dsp {
 
 enum class OscProcessType : std::uint32_t {
-    Off=0, BendPlus=1, BendMinus=2, BendBoth=3, Sync=4, Mirror=5, Asym=6,
-    SCurve=7, Pinch=8, Expand=9, CenterPull=10, EdgePull=11,
-    Sync2=12, Sync3=13, Sync4=14, Sync16=15,
-    Fold=16, SoftFold=17, ReflectLeft=18, ReflectRight=19, AlternateReflect=20,
-    PhaseShift=21, SineWarp=22, Ripple=23, Twist=24, ZigZag=25, Staircase=26, Reverse=27,
-    Quantize4=28, Quantize8=29, Quantize16=30, Scramble2=31, Scramble4=32,
-    Chaos=33, Window=34, PulseWarp=35, Shred=36,
-    Count=37
+    Off=0, BendPlus=1, BendMinus=2, BendBoth=3, Sync=4, Mirror=5, Asym=6
 };
 
 constexpr bool validOscProcessType(OscProcessType type) noexcept {
-    return static_cast<std::uint32_t>(type)<static_cast<std::uint32_t>(OscProcessType::Count);
+    return static_cast<std::uint32_t>(type)<=static_cast<std::uint32_t>(OscProcessType::Asym);
 }
 
-const char* oscProcessName(OscProcessType type) noexcept;
-const char* oscProcessCategory(OscProcessType type) noexcept;
 double processOscillatorPhase(double phase,OscProcessType type,float amount) noexcept;
 // Owned, immutable during rendering. Samples contain one cycle (no guard sample).
 // Frames share band limits and table length. Future importers can populate this

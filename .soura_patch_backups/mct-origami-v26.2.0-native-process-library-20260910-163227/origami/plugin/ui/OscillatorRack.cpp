@@ -1,4 +1,3 @@
-// mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-modulation-completion-v24.0.1
@@ -12,35 +11,8 @@
 // mct-origami-wt-position-wiring-v22.1
 // mct-origami-osc-power-compact-pitch-v21.4.1
 #include "OscillatorRack.h"
-#include "NativeOscProcessMenu.h"
 // mct-origami-v19.3-visual-cleanup
 namespace mct::origami::ui {
-NativeOscProcessSelector::NativeOscProcessSelector() {
-    setButtonText(dsp::oscProcessName(type_));
-    setTooltip("Choose oscillator process");
-    setMouseCursor(juce::MouseCursor::PointingHandCursor);
-    onClick=[this]{openProcessMenu();};
-}
-void NativeOscProcessSelector::setSelectedId(int id,juce::NotificationType notification) {
-    const int raw=juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,id-1);
-    const auto next=static_cast<dsp::OscProcessType>(raw);
-    const bool changed=next!=type_;
-    type_=next;
-    setButtonText(dsp::oscProcessName(type_));
-    if(changed && notification!=juce::dontSendNotification && onChange) onChange();
-}
-void NativeOscProcessSelector::openProcessMenu() {
-    if(popupActive_) return;
-    popupActive_=true;
-    auto safe=juce::Component::SafePointer<NativeOscProcessSelector>(this);
-    showNativeOscProcessMenu(*this,type_,[safe](dsp::OscProcessType selected) {
-        if(safe==nullptr) return;
-        safe->popupActive_=false;
-        safe->setSelectedId(static_cast<int>(selected)+1,juce::sendNotification);
-    });
-    if(safe!=nullptr) safe->popupActive_=false;
-}
-
 OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsigned)> remove,
                                std::function<bool(mct::origami::ParameterId,float)> setter,
                                std::function<float(mct::origami::ParameterId)> getter,
@@ -175,10 +147,15 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         levelLabel_.setText("LEVEL",juce::dontSendNotification);
     }
 
+    const std::array<std::pair<const char*,int>,7> processItems{{
+        {"OFF",1},{"BEND +",2},{"BEND -",3},{"BEND +/-",4},
+        {"SYNC",5},{"MIRROR",6},{"ASYM",7}
+    }};
     for(auto* menu:{&process1Menu_,&process2Menu_}) {
         addAndMakeVisible(*menu);
+        for(const auto& item:processItems) menu->addItem(item.first,item.second);
         menu->setScrollWheelEnabled(false);
-        menu->setTooltip("Oscillator phase process — native system menu");
+        menu->setTooltip("Oscillator phase process");
     }
     for(auto* amount:{&process1Amount_,&process2Amount_}) {
         addAndMakeVisible(*amount);
@@ -202,9 +179,9 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         auto state=moduleGetter_(display_.id);
         if(!state.id) return;
         state.process1=static_cast<mct::origami::dsp::OscProcessType>(
-            juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,process1Menu_.getSelectedId()-1));
+            juce::jlimit(0,6,process1Menu_.getSelectedId()-1));
         state.process2=static_cast<mct::origami::dsp::OscProcessType>(
-            juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,process2Menu_.getSelectedId()-1));
+            juce::jlimit(0,6,process2Menu_.getSelectedId()-1));
         state.process1Amount=static_cast<float>(process1Amount_.getValue());
         state.process2Amount=static_cast<float>(process2Amount_.getValue());
         moduleSetter_(display_.id,state);

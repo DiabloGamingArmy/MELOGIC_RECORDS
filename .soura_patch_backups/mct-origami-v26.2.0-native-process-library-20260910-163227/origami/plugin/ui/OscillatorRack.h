@@ -1,4 +1,3 @@
-// mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-v21.1-build-repair-1
 #pragma once
@@ -30,20 +29,6 @@ public:
         juce::Component::mouseWheelMove(e,wheel);
     }
 };
-class NativeOscProcessSelector final : public juce::TextButton {
-public:
-    NativeOscProcessSelector();
-    int getSelectedId() const noexcept { return static_cast<int>(type_)+1; }
-    void setSelectedId(int id,juce::NotificationType notification);
-    bool isPopupActive() const noexcept { return popupActive_; }
-    void setScrollWheelEnabled(bool) noexcept {}
-    std::function<void()> onChange;
-private:
-    void openProcessMenu();
-    dsp::OscProcessType type_=dsp::OscProcessType::Off;
-    bool popupActive_=false;
-};
-
 class OscillatorCard final : public Panel {
 public:
     explicit OscillatorCard(OscillatorDisplay display,std::function<void(unsigned)> remove,
@@ -79,7 +64,7 @@ private:
     juce::Label unisonLabel_, detuneLabel_;
 // mct-origami-tuning-engine-v17
     RackSlider octaveSlider_,semitoneSlider_,fineSlider_;
-    NativeOscProcessSelector process1Menu_,process2Menu_;
+    juce::ComboBox process1Menu_,process2Menu_;
     RackSlider process1Amount_,process2Amount_;
     juce::Label process1AmountLabel_,process2AmountLabel_;
     bool syncingProcess_=false;

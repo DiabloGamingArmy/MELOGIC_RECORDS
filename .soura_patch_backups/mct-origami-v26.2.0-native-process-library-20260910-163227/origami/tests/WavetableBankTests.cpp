@@ -1,4 +1,3 @@
-// mct-origami-v26.2.0-native-process-library
 #include "core/dsp/WavetableBank.h"
 #include <cmath>
 #include <iostream>
@@ -69,18 +68,6 @@ int main() {
         const float b = oscillator.next(*table, 220.0, 48000.0, 1.0f);
         expect(std::isfinite(a) && std::isfinite(b), "endpoint renders finite");
         expect(std::abs(a-b) > 1.0e-5f, "WT position changes rendered frame");
-    }
-
-    for(std::uint32_t raw=0;raw<static_cast<std::uint32_t>(OscProcessType::Count);++raw) {
-        const auto type=static_cast<OscProcessType>(raw);
-        expect(validOscProcessType(type),"expanded OSC process catalog type validates");
-        for(double phase:{0.0,0.001,0.125,0.25,0.499,0.5,0.731,0.999}) {
-            for(float amount:{0.0f,0.15f,0.5f,0.85f,1.0f}) {
-                const double processed=processOscillatorPhase(phase,type,amount);
-                expect(std::isfinite(processed),"OSC process output finite");
-                expect(processed>=0.0 && processed<1.0,"OSC process output phase-bounded");
-            }
-        }
     }
 
     if (failures) {

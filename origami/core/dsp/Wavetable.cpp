@@ -1,3 +1,4 @@
+// mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
 #include "Wavetable.h"
@@ -50,7 +51,64 @@ Wavetable Wavetable::builtIns() {
 }
 void WavetableOscillator::reset(double phase) noexcept { phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; }
 
+const char* oscProcessName(OscProcessType type) noexcept {
+    switch(type) {
+        case OscProcessType::Off:return "Off"; case OscProcessType::BendPlus:return "Bend +";
+        case OscProcessType::BendMinus:return "Bend -"; case OscProcessType::BendBoth:return "Bend +/-";
+        case OscProcessType::Sync:return "Sync 8x"; case OscProcessType::Mirror:return "Mirror";
+        case OscProcessType::Asym:return "Asym"; case OscProcessType::SCurve:return "S-Curve";
+        case OscProcessType::Pinch:return "Pinch"; case OscProcessType::Expand:return "Expand";
+        case OscProcessType::CenterPull:return "Center Pull"; case OscProcessType::EdgePull:return "Edge Pull";
+        case OscProcessType::Sync2:return "Sync 2x"; case OscProcessType::Sync3:return "Sync 3x";
+        case OscProcessType::Sync4:return "Sync 4x"; case OscProcessType::Sync16:return "Sync 16x";
+        case OscProcessType::Fold:return "Phase Fold"; case OscProcessType::SoftFold:return "Soft Fold";
+        case OscProcessType::ReflectLeft:return "Reflect Left"; case OscProcessType::ReflectRight:return "Reflect Right";
+        case OscProcessType::AlternateReflect:return "Alt Reflect"; case OscProcessType::PhaseShift:return "Phase Shift";
+        case OscProcessType::SineWarp:return "Sine Warp"; case OscProcessType::Ripple:return "Ripple";
+        case OscProcessType::Twist:return "Twist"; case OscProcessType::ZigZag:return "Zig-Zag";
+        case OscProcessType::Staircase:return "Staircase"; case OscProcessType::Reverse:return "Reverse Blend";
+        case OscProcessType::Quantize4:return "Quantize 4"; case OscProcessType::Quantize8:return "Quantize 8";
+        case OscProcessType::Quantize16:return "Quantize 16"; case OscProcessType::Scramble2:return "Scramble 2";
+        case OscProcessType::Scramble4:return "Scramble 4"; case OscProcessType::Chaos:return "Chaos";
+        case OscProcessType::Window:return "Window"; case OscProcessType::PulseWarp:return "Pulse Warp";
+        case OscProcessType::Shred:return "Shred"; case OscProcessType::Count:break;
+    }
+    return "Off";
+}
+
+const char* oscProcessCategory(OscProcessType type) noexcept {
+    switch(type) {
+        case OscProcessType::BendPlus: case OscProcessType::BendMinus: case OscProcessType::BendBoth:
+        case OscProcessType::SCurve: case OscProcessType::Pinch: case OscProcessType::Expand:
+        case OscProcessType::CenterPull: case OscProcessType::EdgePull: return "Curve / Warp";
+
+        case OscProcessType::Sync: case OscProcessType::Sync2: case OscProcessType::Sync3:
+        case OscProcessType::Sync4: case OscProcessType::Sync16: return "Sync / Repeat";
+
+        case OscProcessType::Mirror: case OscProcessType::Fold: case OscProcessType::SoftFold:
+        case OscProcessType::ReflectLeft: case OscProcessType::ReflectRight:
+        case OscProcessType::AlternateReflect: return "Fold / Reflect";
+
+        case OscProcessType::Asym: case OscProcessType::PhaseShift: case OscProcessType::SineWarp:
+        case OscProcessType::Ripple: case OscProcessType::Twist: case OscProcessType::ZigZag:
+        case OscProcessType::Staircase: case OscProcessType::Reverse: return "Phase / Motion";
+
+        case OscProcessType::Quantize4: case OscProcessType::Quantize8: case OscProcessType::Quantize16:
+        case OscProcessType::Scramble2: case OscProcessType::Scramble4: case OscProcessType::Chaos:
+        case OscProcessType::Window: case OscProcessType::PulseWarp: case OscProcessType::Shred:
+            return "Digital / Experimental";
+
+        case OscProcessType::Off: case OscProcessType::Count: return "";
+    }
+    return "";
+}
+
 double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) noexcept {
+    const auto wrap01=[](double x) noexcept { x-=std::floor(x); return std::clamp(x,0.0,std::nextafter(1.0,0.0)); };
+    const auto mix=[](double a,double b,double t) noexcept { return a+(b-a)*t; };
+    const auto triangle=[](double x) noexcept { x-=std::floor(x/2.0)*2.0; return 1.0-std::abs(x-1.0); };
+    const auto quantize=[](double x,int steps) noexcept { return std::floor(x*steps)/static_cast<double>(steps); };
+
     const double p=std::clamp(phase,0.0,std::nextafter(1.0,0.0));
     const double amount=std::clamp(static_cast<double>(rawAmount),0.0,1.0);
     if(amount<=0.0 || type==OscProcessType::Off) return p;
@@ -85,9 +143,73 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             if(p<midpoint) return 0.5*(p/midpoint);
             return 0.5+0.5*((p-midpoint)/(1.0-midpoint));
         }
+        case OscProcessType::SCurve: {
+            const double s=p*p*(3.0-2.0*p);
+            return std::clamp(mix(p,s,amount),0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::Pinch: {
+            const double x=p*2.0-1.0;
+            const double y=std::copysign(std::pow(std::abs(x),1.0+amount*5.0),x);
+            return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::Expand: {
+            const double x=p*2.0-1.0;
+            const double y=std::copysign(std::pow(std::abs(x),1.0/(1.0+amount*4.0)),x);
+            return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::CenterPull:
+            return std::clamp(0.5+(p-0.5)*(1.0-amount*0.88),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::EdgePull: {
+            const double k=1.0-amount*0.88;
+            return std::clamp(p<0.5 ? p*k : 1.0-(1.0-p)*k,0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::Sync2:return wrap01(p*(1.0+amount));
+        case OscProcessType::Sync3:return wrap01(p*(1.0+amount*2.0));
+        case OscProcessType::Sync4:return wrap01(p*(1.0+amount*3.0));
+        case OscProcessType::Sync16:return wrap01(p*(1.0+amount*15.0));
+        case OscProcessType::Fold:return std::clamp(triangle(p*(1.0+amount*5.0)),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::SoftFold: {
+            const double f=triangle(p*(1.0+amount*4.0));
+            return std::clamp(0.5-0.5*std::cos(f*pi),0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::ReflectLeft:
+            return std::clamp(mix(p,p<0.5?p:1.0-p,amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::ReflectRight:
+            return std::clamp(mix(p,p<0.5?1.0-p:p,amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::AlternateReflect: {
+            const int s=std::min(3,static_cast<int>(p*4.0)); const double local=p*4.0-s;
+            const double target=(s+(s%2?1.0-local:local))/4.0;
+            return std::clamp(mix(p,target,amount),0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::PhaseShift:return wrap01(p+amount);
+        case OscProcessType::SineWarp:return wrap01(p+std::sin(2.0*pi*p)*amount*0.16);
+        case OscProcessType::Ripple:return wrap01(p+std::sin(4.0*pi*p)*amount*0.10);
+        case OscProcessType::Twist:return wrap01(p+(std::sin(2.0*pi*p)*0.10+std::sin(6.0*pi*p)*0.055)*amount);
+        case OscProcessType::ZigZag:return std::clamp(mix(p,triangle(p*3.0),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Staircase: {
+            const int steps=2+static_cast<int>(std::round(amount*14.0));
+            return std::clamp(mix(p,quantize(p,steps),amount),0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::Reverse:return std::clamp(mix(p,1.0-p,amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Quantize4:return std::clamp(mix(p,quantize(p,4),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Quantize8:return std::clamp(mix(p,quantize(p,8),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Quantize16:return std::clamp(mix(p,quantize(p,16),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Scramble2:return wrap01(mix(p,wrap01(p+0.5),amount));
+        case OscProcessType::Scramble4: {
+            static constexpr int perm[4]={2,0,3,1};
+            const int s=std::min(3,static_cast<int>(p*4.0)); const double local=p*4.0-s;
+            return std::clamp(mix(p,(perm[s]+local)/4.0,amount),0.0,std::nextafter(1.0,0.0));
+        }
+        case OscProcessType::Chaos:return std::clamp(mix(p,4.0*p*(1.0-p),amount),0.0,std::nextafter(1.0,0.0));
+        case OscProcessType::Window:return wrap01(0.5+(p-0.5)*(1.0+amount*5.0));
+        case OscProcessType::PulseWarp: {
+            const double midpoint=0.5+std::sin(amount*pi*0.5)*0.42;
+            return p<midpoint ? 0.5*(p/midpoint) : 0.5+0.5*((p-midpoint)/(1.0-midpoint));
+        }
+        case OscProcessType::Shred:return wrap01(p+std::sin(16.0*pi*p)*amount*0.095);
         case OscProcessType::Off:
-        default:
-            return p;
+        case OscProcessType::Count:
+        default:return p;
     }
 }
 

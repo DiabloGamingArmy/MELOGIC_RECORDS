@@ -1,12 +1,8 @@
-# mct-origami-v26.2.0-native-process-library
 # mct-origami-v25.1.0-arp-advanced-page
 # mct-origami-v24.0.2-cmake-marker-repair
 # mct-origami-modulation-completion-v24.0.1
 cmake_minimum_required(VERSION 3.20)
 project(MCTOrigami VERSION 0.1.0 LANGUAGES C CXX)
-if(APPLE)
-  enable_language(OBJCXX)
-endif()
 option(ORIGAMI_BUILD_TESTS "Build standalone tests and note renderer" ON)
 option(ORIGAMI_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
 add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
@@ -120,11 +116,6 @@ if(ORIGAMI_BUILD_VST3)
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
     plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp
     plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp)
-  if(APPLE)
-    target_sources(OrigamiPlugin PRIVATE plugin/ui/NativeOscProcessMenu_mac.mm)
-  else()
-    target_sources(OrigamiPlugin PRIVATE plugin/ui/NativeOscProcessMenu.cpp)
-  endif()
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(OrigamiPlugin PRIVATE cxx_std_17)
   target_compile_definitions(OrigamiPlugin PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_VST3_CAN_REPLACE_VST2=0)
