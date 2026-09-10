@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-keyboard-compact-bottom-v23.1.2
 // mct-origami-playable-keyboard-audio-v23.1
 // mct-origami-knob-mod-macro-cleanup-v22.4
@@ -22,9 +21,8 @@ struct EditorLayout {
 
         // V23.1: thinner performance keyboard; reclaimed vertical space
         // returns to the main synth workspace.
-        // V23.3.1: taller performance strip for usable Pitch/Mod travel.
-        // Keyboard remains compact via its internal top reserve.
-        result.performance=area.removeFromBottom(76);
+        // V23.1.2: compact performance strip; keyboard is utility, not focus.
+        result.performance=area.removeFromBottom(58);
         area.removeFromBottom(6);
 
         const int usable=area.getHeight()-6;

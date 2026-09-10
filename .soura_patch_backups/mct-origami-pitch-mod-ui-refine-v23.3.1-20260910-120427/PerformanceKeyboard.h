@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-keyboard-compact-bottom-v23.1.2
 // mct-origami-keyboard-density-reserve-v23.1.1
@@ -16,23 +15,10 @@ public:
         setName("Performance keyboard");
         setTooltip("Click or drag across keys to play MCT Origami.");
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
-        addAndMakeVisible(bendRange_);
-        bendRange_.setName("Pitch bend range");
-        bendRange_.setSliderStyle(juce::Slider::LinearHorizontal);
-        bendRange_.setTextBoxStyle(juce::Slider::TextBoxLeft,false,58,18);
-        bendRange_.setRange(1.0,48.0,1.0);
-        bendRange_.setScrollWheelEnabled(false);
-        bendRange_.setDoubleClickReturnValue(true,2.0);
-        bendRange_.textFromValueFunction=[](double value) {
-            return "±"+juce::String(juce::roundToInt(value))+" st";
-        };
-        bendRange_.valueFromTextFunction=[](const juce::String& value) {
-            return value.retainCharacters("0123456789.-").getDoubleValue();
-        };
-        bendRange_.setValue(rangeGetter_?rangeGetter_():2.0f,juce::dontSendNotification);
-        bendRange_.onValueChange=[this]{
-            if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getValue()));
-        };
+        addAndMakeVisible(bendRange_);bendRange_.setName("Pitch bend range");bendRange_.setScrollWheelEnabled(false);
+        for(int value:{2,3,5,7,12,24,48}) bendRange_.addItem("±"+juce::String(value)+" st",value);
+        const int current=juce::roundToInt(rangeGetter_?rangeGetter_():2.0f);bendRange_.setSelectedId(current,juce::dontSendNotification);
+        bendRange_.onChange=[this]{if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getSelectedId()));};
     }
     ~PerformanceKeyboard() override;
 
@@ -53,7 +39,7 @@ private:
 
     juce::MidiKeyboardState& keyboardState_;
     WheelSetter pitchSetter_,modSetter_;RangeSetter rangeSetter_;RangeGetter rangeGetter_;
-    juce::Slider bendRange_;
+    juce::ComboBox bendRange_;
     int mouseNote_=-1;int activeWheel_=0;float pitchValue_=0.0f,modValue_=0.0f;
     static constexpr int firstMidiNote=48;
     // V23.1.1: four-octave bed for thinner workstation-style keys.

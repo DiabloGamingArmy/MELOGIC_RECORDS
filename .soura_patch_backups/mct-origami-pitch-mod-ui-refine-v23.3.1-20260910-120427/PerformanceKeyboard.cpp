@@ -1,4 +1,3 @@
-// mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-keyboard-compact-bottom-v23.1.2
 // mct-origami-keyboard-density-reserve-v23.1.1
@@ -6,7 +5,7 @@
 #include "PerformanceKeyboard.h"
 namespace mct::origami::ui {
 namespace {
-constexpr int leftReserve=104;
+constexpr int leftReserve=132;
 constexpr int rightReserve=340;
 constexpr int wheelsWidth=104;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
@@ -21,37 +20,27 @@ juce::Rectangle<int> PerformanceKeyboard::keyArea() const noexcept {
     const int right=juce::jmin(rightReserve,juce::jmax(0,area.getWidth()/3));
     area.removeFromRight(right);
 
-    // V23.3.1: keyboard begins immediately after the Pitch/Mod parent.
-    area.removeFromLeft(leftReserve);
-    area.removeFromTop(19);
+    // V23.1.1: reserve a dedicated left performance-control bay.
+    const int left=juce::jmin(leftReserve,juce::jmax(wheelsWidth,area.getWidth()/6));
+    area.removeFromLeft(left);
+    area.removeFromTop(2);
     area.removeFromBottom(1);
     return area.reduced(2,0);
 }
 
 juce::Rectangle<int> PerformanceKeyboard::pitchWheelArea() const noexcept {
-    auto a=getLocalBounds().reduced(3,1);
-    a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
-    auto left=a.removeFromLeft(leftReserve).reduced(3,2);
-    left.removeFromTop(19);
-    auto wheel=left.removeFromLeft(48).reduced(6,1);
-    wheel.removeFromBottom(12);
-    return wheel;
+    auto a=getLocalBounds().reduced(3,1);a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
+    auto left=a.removeFromLeft(juce::jmin(leftReserve,juce::jmax(wheelsWidth,a.getWidth()/6)));
+    return left.removeFromLeft(48).reduced(7,2).withTrimmedBottom(14);
 }
 juce::Rectangle<int> PerformanceKeyboard::modWheelArea() const noexcept {
-    auto a=getLocalBounds().reduced(3,1);
-    a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
-    auto left=a.removeFromLeft(leftReserve).reduced(3,2);
-    left.removeFromTop(19);
-    left.removeFromLeft(48);
-    auto wheel=left.removeFromLeft(48).reduced(6,1);
-    wheel.removeFromBottom(12);
-    return wheel;
+    auto a=getLocalBounds().reduced(3,1);a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
+    auto left=a.removeFromLeft(juce::jmin(leftReserve,juce::jmax(wheelsWidth,a.getWidth()/6)));left.removeFromLeft(48);
+    return left.removeFromLeft(48).reduced(7,2).withTrimmedBottom(14);
 }
 void PerformanceKeyboard::resized() {
-    auto a=getLocalBounds().reduced(3,1);
-    a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
-    auto left=a.removeFromLeft(leftReserve).reduced(3,2);
-    bendRange_.setBounds(left.removeFromTop(18).reduced(2,0));
+    auto a=getLocalBounds().reduced(3,1);auto future=a.removeFromRight(juce::jmin(rightReserve,juce::jmax(0,a.getWidth()/3)));
+    bendRange_.setBounds(future.removeFromTop(24).reduced(72,1));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
@@ -112,31 +101,30 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
 
     const int right=juce::jmin(rightReserve,juce::jmax(0,area.getWidth()/3));
     auto future=area.removeFromRight(right);
-    auto brand=future.removeFromBottom(32);
-    text(g,"MCT ORIGAMI",brand.removeFromTop(18),9,Palette::text(),juce::Justification::centred);
-    text(g,"PERFORMANCE",brand,7.5f,Palette::muted(),juce::Justification::centred);
+    text(g,"MCT ORIGAMI",future.removeFromTop(22),10,Palette::text(),juce::Justification::centred);
+    text(g,"PERFORMANCE",future.removeFromTop(16),8,Palette::muted(),juce::Justification::centred);
 
-    // V23.3.1: one compact parent for Pitch/Mod. Bend range is the
-    // text-editable, drag-slidable control across the parent header.
-    auto leftControls=area.removeFromLeft(leftReserve);
-    well(g,leftControls.reduced(1,0));
-    auto wheelBody=leftControls.reduced(3,2);
-    wheelBody.removeFromTop(19);
+    // V23.1.1: Pitch/Mod remain at far left. Remaining left bay intentionally
+    // stays empty for future triggers, arp, glide, bend and performance controls.
+    const int left=juce::jmin(leftReserve,juce::jmax(wheelsWidth,area.getWidth()/6));
+    auto leftControls=area.removeFromLeft(left);
+    auto wheels=leftControls.removeFromLeft(wheelsWidth);
     for(const auto& label:juce::StringArray{"PITCH","MOD"}) {
-        auto wheel=wheelBody.removeFromLeft(48).reduced(6,1);
-        auto caption=wheel.removeFromBottom(12);
-        auto track=wheel.reduced(7,1);
+        auto wheel=wheels.removeFromLeft(48).reduced(7,3);
+        auto caption=wheel.removeFromBottom(14);
+        well(g,wheel);
+        auto track=wheel.reduced(8,4);
         g.setColour(Palette::border());g.fillRoundedRectangle(track.toFloat(),3);
         g.setColour(Palette::muted());
         const float value=label=="PITCH"?pitchValue_:modValue_;
         const float unit=label=="PITCH"?(value+1.0f)*0.5f:value;
         const int y=track.getBottom()-juce::roundToInt(unit*float(track.getHeight()));
         g.fillRoundedRectangle(juce::Rectangle<float>(float(track.getX()+2),float(y-2),float(track.getWidth()-4),4.0f),1.5f);
-        text(g,label,caption,7.5f,Palette::muted(),juce::Justification::centred);
+        text(g,label,caption,8,Palette::muted(),juce::Justification::centred);
     }
 
     auto keys=area;
-    keys.removeFromTop(19);
+    keys.removeFromTop(2);
     keys.removeFromBottom(1);
     keys=keys.reduced(2,0);
     well(g,keys);
