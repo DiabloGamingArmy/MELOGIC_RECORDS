@@ -1,3 +1,4 @@
+// mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
@@ -26,6 +27,7 @@ constexpr bool validOscProcessType(OscProcessType type) noexcept {
 
 constexpr bool oscProcessIsBipolar(OscProcessType type) noexcept {
     switch(type) {
+        case OscProcessType::BendBoth:
         case OscProcessType::Asym:
         case OscProcessType::PhaseShift:
         case OscProcessType::SineWarp:
@@ -35,9 +37,41 @@ constexpr bool oscProcessIsBipolar(OscProcessType type) noexcept {
         case OscProcessType::PulseWarp:
         case OscProcessType::Shred:
             return true;
-        default:
+
+        case OscProcessType::Off:
+        case OscProcessType::BendPlus:
+        case OscProcessType::BendMinus:
+        case OscProcessType::Sync:
+        case OscProcessType::Mirror:
+        case OscProcessType::SCurve:
+        case OscProcessType::Pinch:
+        case OscProcessType::Expand:
+        case OscProcessType::CenterPull:
+        case OscProcessType::EdgePull:
+        case OscProcessType::Sync2:
+        case OscProcessType::Sync3:
+        case OscProcessType::Sync4:
+        case OscProcessType::Sync16:
+        case OscProcessType::Fold:
+        case OscProcessType::SoftFold:
+        case OscProcessType::ReflectLeft:
+        case OscProcessType::ReflectRight:
+        case OscProcessType::AlternateReflect:
+        case OscProcessType::ZigZag:
+        case OscProcessType::Staircase:
+        case OscProcessType::Reverse:
+        case OscProcessType::Quantize4:
+        case OscProcessType::Quantize8:
+        case OscProcessType::Quantize16:
+        case OscProcessType::Scramble2:
+        case OscProcessType::Scramble4:
+        case OscProcessType::Chaos:
+            return false;
+
+        case OscProcessType::Count:
             return false;
     }
+    return false;
 }
 
 constexpr float oscProcessAmountMinimum(OscProcessType type) noexcept {

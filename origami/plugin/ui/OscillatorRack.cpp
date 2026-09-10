@@ -1,3 +1,4 @@
+// mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
@@ -274,7 +275,8 @@ void OscillatorCard::syncFromModel() {
                                dsp::OscProcessType type,float value) {
                 const bool bipolar=dsp::oscProcessIsBipolar(type);
                 const double minimum=static_cast<double>(dsp::oscProcessAmountMinimum(type));
-                if(slider.getMinimum()!=minimum || slider.getMaximum()!=1.0)
+                if(std::abs(slider.getMinimum()-minimum)>1.0e-9 ||
+                   std::abs(slider.getMaximum()-1.0)>1.0e-9)
                     slider.setRange(minimum,1.0,0.001);
                 slider.setName(bipolar ? "OSC PROCESS BIPOLAR" : "OSC PROCESS UNIPOLAR");
 

@@ -1,3 +1,4 @@
+// mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
@@ -126,11 +127,17 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
             return p+(shaped-p)*amount;
         }
         case OscProcessType::BendBoth: {
-            const double exponent=1.0+amount*4.0;
+            // True bipolar bend. Positive values pinch phase toward the outer
+            // edges; negative values expand it toward the centre. The mapping
+            // is monotonic on both halves and exactly neutral at 0.
+            const double magnitude=std::abs(amount);
+            const double exponent=amount>=0.0
+                ? 1.0+magnitude*4.0
+                : 1.0/(1.0+magnitude*4.0);
             const double shaped=p<0.5
                 ? 0.5*std::pow(p*2.0,exponent)
                 : 1.0-0.5*std::pow((1.0-p)*2.0,exponent);
-            return p+(shaped-p)*amount;
+            return std::clamp(shaped,0.0,std::nextafter(1.0,0.0));
         }
         case OscProcessType::Sync: {
             const double cycles=1.0+amount*7.0;

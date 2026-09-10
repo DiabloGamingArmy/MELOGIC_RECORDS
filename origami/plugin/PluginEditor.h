@@ -1,3 +1,4 @@
+// mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v25.1.0-arp-advanced-page
 #pragma once
 #include <JuceHeader.h>
@@ -10,7 +11,9 @@
 #include "ui/ArpeggiatorPanel.h"
 #include "ui/OrigamiLayout.h"
 class OrigamiAudioProcessor;
-class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor, private juce::Timer {
+class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                         private juce::Timer,
+                                         private juce::MouseListener {
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
@@ -18,6 +21,14 @@ public:
     void resized() override;
 private:
     void timerCallback() override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
+    static juce::Slider* sliderFromMouseEvent(const juce::MouseEvent&) noexcept;
+    static bool isKnob(const juce::Slider&) noexcept;
+    void registerKnobDefaults(juce::Component&);
+    double defaultForKnob(juce::Slider&) const noexcept;
+    void openKnobValueEditor(juce::Slider&);
+
     bool matrixSelected_=false;
     bool arpSelected_=false;
     [[maybe_unused]] OrigamiAudioProcessor& processor_;

@@ -1,3 +1,4 @@
+// mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
@@ -9,6 +10,7 @@
 // mct-origami-v21-build-repair-2
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include <cmath>
 using namespace mct::origami::ui;
 namespace {
 ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
@@ -76,12 +78,157 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     if (auto* constrainer=getConstrainer())
         constrainer->setFixedAspectRatio(EditorLayout::aspectRatio);
     setSize(EditorLayout::defaultWidth,EditorLayout::defaultHeight);
+
+    // Global knob interaction policy. Register as a recursive mouse listener so
+    // every current and future rotary Slider in the editor gets the same UX.
+    addMouseListener(this,true);
+    registerKnobDefaults(*this);
 }
-OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {stopTimer();setLookAndFeel(nullptr);}
+OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {
+    removeMouseListener(this);
+    stopTimer();
+    setLookAndFeel(nullptr);
+}
 void OrigamiAudioProcessorEditor::timerCallback() {
+    // Dynamic oscillator cards can introduce new knobs after editor creation.
+    // Register them lazily without disturbing existing defaults.
+    registerKnobDefaults(*this);
+
     modulation_.syncFromModel();macros_.syncFromModel();matrix_.syncFromModel();filter_.syncFromModel();
     performance_.syncArpFromModel();
     if(arpSelected_) arpeggiator_.syncFromModel();
+}
+
+juce::Slider* OrigamiAudioProcessorEditor::sliderFromMouseEvent(const juce::MouseEvent& event) noexcept {
+    juce::Component* component=event.originalComponent;
+    while(component!=nullptr) {
+        if(auto* slider=dynamic_cast<juce::Slider*>(component))
+            return slider;
+        component=component->getParentComponent();
+    }
+    return nullptr;
+}
+
+bool OrigamiAudioProcessorEditor::isKnob(const juce::Slider& slider) noexcept {
+    switch(slider.getSliderStyle()) {
+        case juce::Slider::Rotary:
+        case juce::Slider::RotaryHorizontalDrag:
+        case juce::Slider::RotaryVerticalDrag:
+        case juce::Slider::RotaryHorizontalVerticalDrag:
+            return true;
+        default:
+            return false;
+    }
+}
+
+double OrigamiAudioProcessorEditor::defaultForKnob(juce::Slider& slider) const noexcept {
+    // Preserve any control-specific default already declared by the UI.
+    if(slider.isDoubleClickReturnEnabled())
+        return slider.getDoubleClickReturnValue();
+
+    const auto name=slider.getName().toLowerCase();
+
+    // Engine-backed canonical defaults.
+    if(name.contains("wt pos")) return 1.0/3.0;
+    if(name.contains("unison")) return 1.0;
+    if(name.contains("detune")) return 12.0;
+    if(name.contains("pan")) return 0.0;
+    if(name.contains("level")) return 0.7;
+    if(name.contains("cutoff")) return 8000.0;
+    if(name.contains("resonance")) return 0.1;
+    if(name.contains("attack")) return 0.01;
+    if(name.contains("decay")) return 0.15;
+    if(name.contains("sustain")) return 0.7;
+    if(name.contains("release")) return 0.25;
+    if(name.contains("macro")) return 0.0;
+    if(name.contains("route amount")) return 0.0;
+    if(name.contains("glide")) return 0.0;
+
+    // OSC PROCESS magnitude is always neutral at 0, whether its selected type
+    // is unipolar or bipolar.
+    if(name.contains("osc process")) return 0.0;
+
+    // Unknown future knob: capture its construction-time value as its default.
+    return slider.getValue();
+}
+
+void OrigamiAudioProcessorEditor::registerKnobDefaults(juce::Component& root) {
+    if(auto* slider=dynamic_cast<juce::Slider*>(&root); slider!=nullptr && isKnob(*slider)) {
+        auto& props=slider->getProperties();
+        if(!props.contains("mct.origami.knobDefault")) {
+            props.set("mct.origami.knobDefault",defaultForKnob(*slider));
+
+            // Double-click is reserved globally for typed entry. Disable JUCE's
+            // native double-click-reset after preserving its declared default.
+            slider->setDoubleClickReturnValue(false,defaultForKnob(*slider),
+                                               juce::ModifierKeys::noModifiers);
+        }
+    }
+
+    for(auto* child:root.getChildren())
+        if(child!=nullptr)
+            registerKnobDefaults(*child);
+}
+
+void OrigamiAudioProcessorEditor::mouseDown(const juce::MouseEvent& event) {
+    auto* slider=sliderFromMouseEvent(event);
+    if(slider==nullptr || !isKnob(*slider) || !event.mods.isShiftDown())
+        return;
+
+    auto& props=slider->getProperties();
+    if(!props.contains("mct.origami.knobDefault"))
+        registerKnobDefaults(*slider);
+
+    const double reset=static_cast<double>(props["mct.origami.knobDefault"]);
+    slider->setValue(juce::jlimit(slider->getMinimum(),slider->getMaximum(),reset),
+                     juce::sendNotificationSync);
+}
+
+void OrigamiAudioProcessorEditor::mouseDoubleClick(const juce::MouseEvent& event) {
+    auto* slider=sliderFromMouseEvent(event);
+    if(slider==nullptr || !isKnob(*slider))
+        return;
+    openKnobValueEditor(*slider);
+}
+
+void OrigamiAudioProcessorEditor::openKnobValueEditor(juce::Slider& slider) {
+    auto* dialog=new juce::AlertWindow(
+        "Enter Knob Value",
+        slider.getName().isNotEmpty() ? slider.getName() : juce::String("Numeric value"),
+        juce::MessageBoxIconType::NoIcon);
+
+    dialog->addTextEditor("value",
+                          juce::String(slider.getValue(),6).trimCharactersAtEnd("0").trimCharactersAtEnd("."),
+                          "Value:");
+    if(auto* editor=dialog->getTextEditor("value")) {
+        editor->setInputRestrictions(0,"0123456789.-+");
+        editor->selectAll();
+    }
+
+    dialog->addButton("Apply",1,juce::KeyPress::returnKey);
+    dialog->addButton("Cancel",0,juce::KeyPress::escapeKey);
+
+    auto safeSlider=juce::Component::SafePointer<juce::Slider>(&slider);
+    dialog->enterModalState(
+        true,
+        juce::ModalCallbackFunction::create(
+            [safeSlider,dialog](int result) {
+                if(result==1 && safeSlider!=nullptr) {
+                    const auto raw=dialog->getTextEditorContents("value").trim();
+                    if(raw.isNotEmpty()) {
+                        const double parsed=raw.getDoubleValue();
+                        if(std::isfinite(parsed)) {
+                            const double constrained=juce::jlimit(
+                                safeSlider->getMinimum(),
+                                safeSlider->getMaximum(),
+                                parsed);
+                            safeSlider->setValue(constrained,juce::sendNotificationSync);
+                        }
+                    }
+                }
+                delete dialog;
+            }),
+        false);
 }
 void OrigamiAudioProcessorEditor::paint(juce::Graphics& g) {g.fillAll(Palette::background());}
 void OrigamiAudioProcessorEditor::resized() {
