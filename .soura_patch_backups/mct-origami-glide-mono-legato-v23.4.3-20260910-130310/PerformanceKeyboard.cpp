@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-performance-strip-relayout-v23.3.2
 // mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-pitch-mod-real-v23.3
@@ -9,8 +8,8 @@
 namespace mct::origami::ui {
 namespace {
 constexpr int leftReserve=96;
-constexpr int bendPanelWidth=58;
-constexpr int futureReserve=282;
+constexpr int bendPanelWidth=86;
+constexpr int futureReserve=254;
 constexpr int rightReserve=bendPanelWidth+futureReserve;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
 }
@@ -46,14 +45,9 @@ void PerformanceKeyboard::resized() {
     auto a=getLocalBounds().reduced(3,1);
     const int right=juce::jmin(rightReserve,juce::jmax(bendPanelWidth,a.getWidth()/3));
     auto rightBay=a.removeFromRight(right);
-    auto bend=rightBay.removeFromLeft(bendPanelWidth).reduced(2,2);
-    bend.removeFromTop(15);bendRange_.setBounds(bend.reduced(2,1));
-    auto perf=rightBay.removeFromLeft(182).reduced(2,2);
-    auto top=perf.removeFromTop(25);
-    voiceMode_.setBounds(top.removeFromLeft(58).reduced(1));
-    priority_.setBounds(top.removeFromLeft(58).reduced(1));
-    legato_.setBounds(top.reduced(1));
-    perf.removeFromTop(2);glide_.setBounds(perf.removeFromLeft(62).reduced(3,1));
+    auto bend=rightBay.removeFromLeft(bendPanelWidth).reduced(3,2);
+    bend.removeFromTop(15);
+    bendRange_.setBounds(bend.reduced(3,1));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
@@ -118,9 +112,6 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
     well(g,bendParent.reduced(1,0));
     text(g,"BEND RANGE",bendParent.removeFromTop(15),7.5f,Palette::muted(),juce::Justification::centred);
 
-    auto performanceParent=rightBay.removeFromLeft(182);
-    well(g,performanceParent.reduced(1,0));
-    text(g,"VOICE / GLIDE",performanceParent.removeFromBottom(12),7.0f,Palette::muted(),juce::Justification::centred);
     auto future=rightBay;
     auto brand=future.removeFromBottom(30);
     text(g,"MCT ORIGAMI",brand.removeFromTop(17),8.5f,Palette::text(),juce::Justification::centred);

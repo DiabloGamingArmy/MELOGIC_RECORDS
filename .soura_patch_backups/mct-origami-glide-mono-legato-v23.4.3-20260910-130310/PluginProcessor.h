@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
@@ -51,8 +50,6 @@ public:
     void setUiModWheel(float normalized) noexcept;
     bool setUiPitchBendRange(float semitones) noexcept;
     float getUiPitchBendRange() const noexcept;
-    bool setUiPerformanceState(const mct::origami::PerformanceState&) noexcept;
-    mct::origami::PerformanceState getUiPerformanceState() const noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;

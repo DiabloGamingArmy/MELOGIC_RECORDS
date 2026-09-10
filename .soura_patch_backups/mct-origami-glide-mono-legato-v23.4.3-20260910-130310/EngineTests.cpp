@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "core/Engine.h"
 #include "core/preset/Patch.h"
@@ -117,20 +116,7 @@ void voicesAndRealtime() {
     set(engine,ParameterId::OscPan,-1);engine.reset();engine.noteOn(69,1);engine.process(buffers,2,1024);check(std::all_of(std::begin(right),std::end(right),[](float v){return v==0;}),"pan left");
     set(engine,ParameterId::MasterGain,0);engine.reset();engine.noteOn(60,1);engine.process(buffers,2,1024);check(std::all_of(std::begin(left),std::end(left),[](float v){return v==0;}),"master zero");
 }
-void performanceModes() {
-    OrigamiEngine engine;prepare(engine);
-    PerformanceState p;p.voiceMode=VoiceMode::Mono;p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=.05f;
-    check(engine.setPerformanceState(p),"mono state accepted");
-    engine.noteOn(60,1);engine.noteOn(64,1);
-    check(engine.activeVoiceCount()==1 && engine.voiceInfo(0).address.note==64,"mono last priority");
-    engine.noteOff(64);check(engine.voiceInfo(0).address.note==60 && !engine.voiceInfo(0).releasing,"mono fallback");
-    engine.noteOff(60);check(engine.voiceInfo(0).releasing,"mono final release");
-    engine.reset();p.notePriority=NotePriority::High;check(engine.setPerformanceState(p),"high priority accepted");engine.noteOn(72,1);engine.noteOn(60,1);check(engine.voiceInfo(0).address.note==72,"high priority");
-    engine.reset();p.notePriority=NotePriority::Low;check(engine.setPerformanceState(p),"low priority accepted");engine.noteOn(60,1);engine.noteOn(72,1);check(engine.voiceInfo(0).address.note==60,"low priority");
-    OrigamiEngine a,b;prepare(a);prepare(b);p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=0;check(a.setPerformanceState(p),"zero glide");p.glideSeconds=.2f;check(b.setPerformanceState(p),"glide accepted");
-    a.noteOn(60,1);b.noteOn(60,1);render(a,512);render(b,512);a.noteOn(72,1);b.noteOn(72,1);check(render(a,512)!=render(b,512),"glide changes transition");
-    PerformanceState bad=p;bad.glideSeconds=6;check(!engine.setPerformanceState(bad),"invalid glide rejected");
-}\nvoid signalBehavior() {
+void signalBehavior() {
     OrigamiEngine engine;
     float empty[8]; std::fill_n(empty,8,1.f); float* emptyPointer=empty;
     check(!engine.process(&emptyPointer,1,8) && std::all_of(std::begin(empty),std::end(empty),[](float v){return v==0;}),"unprepared output silent");
@@ -174,6 +160,6 @@ void oscillatorAndFilter() {
 }
 }
 int main() {
-    try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"performance modes\n";performanceModes();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}
+    try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}
     catch(const std::exception& error) {guardAllocations.store(false);std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}
 }

@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
 #include "PluginProcessor.h"
@@ -161,12 +160,6 @@ void OrigamiAudioProcessor::setUiModWheel(float normalized) noexcept {
 }
 bool OrigamiAudioProcessor::setUiPitchBendRange(float semitones) noexcept { const juce::ScopedLock lock(stateLock_);return engine_.setPitchBendRange(semitones); }
 float OrigamiAudioProcessor::getUiPitchBendRange() const noexcept { const juce::ScopedLock lock(stateLock_);return engine_.pitchBendRange(); }
-bool OrigamiAudioProcessor::setUiPerformanceState(const mct::origami::PerformanceState& state) noexcept {
-    const juce::ScopedLock lock(stateLock_);const juce::ScopedLock callbackLock(getCallbackLock());return engine_.setPerformanceState(state);
-}
-mct::origami::PerformanceState OrigamiAudioProcessor::getUiPerformanceState() const noexcept {
-    const juce::ScopedLock lock(stateLock_);return engine_.performanceState();
-}
 
 juce::AudioProcessorEditor* OrigamiAudioProcessor::createEditor() { return new OrigamiAudioProcessorEditor(*this); }
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter() { return new OrigamiAudioProcessor(); }

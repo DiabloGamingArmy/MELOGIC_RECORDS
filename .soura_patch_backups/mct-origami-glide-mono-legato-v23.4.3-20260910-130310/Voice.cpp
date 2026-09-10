@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 #include "Voice.h"
 #include <algorithm>
@@ -8,30 +7,13 @@ void Voice::prepare(double sampleRate) noexcept { sampleRate_ = sampleRate; enve
 void Voice::reset() noexcept { lfo1_.reset(); for (auto& module : moduleOscillators_) for (auto& oscillator : module) oscillator.reset(); envelope_.reset(); for (auto& filter : moduleFilters_) filter.reset(); active_ = releasing_ = false; velocity_ = 0; order_ = 0; }
 void Voice::start(NoteAddress address, float velocity, std::uint64_t order, const dsp::EnvelopeSettings& settings) noexcept {
     reset(); address_ = address; velocity_ = velocity; order_ = order;
-    frequency_ = targetFrequency_ = dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
-    active_ = true; envelope_.noteOn(settings);
-}
-void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,float glideSeconds,bool retriggerEnvelope) noexcept {
-    address_=address;velocity_=velocity;order_=order;active_=true;releasing_=false;
-    targetFrequency_=dsp::midiFrequency(address.note);
-    const auto samples=glideSeconds>0.0f ? static_cast<std::size_t>(std::round(glideSeconds*sampleRate_)) : 0u;
-    if(samples==0 || frequency_<=0.0 || targetFrequency_<=0.0) {
-        frequency_=targetFrequency_;glideRatio_=1.0;glideRemaining_=0;
-    } else {
-        glideRemaining_=samples;
-        glideRatio_=std::exp(std::log(targetFrequency_/frequency_)/static_cast<double>(samples));
-    }
-    if(retriggerEnvelope) {envelope_.noteOn(settings);lfo1_.reset();}
+    frequency_ = dsp::midiFrequency(address.note); active_ = true; envelope_.noteOn(settings);
 }
 void Voice::release(const dsp::EnvelopeSettings& settings) noexcept { if (active_) { releasing_ = true; envelope_.noteOff(settings); } }
 Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const LfoSettings& lfoSettings,float pitchBendSemitones,float modWheel) noexcept {
     Samples outputs{};
     if(!active_) return outputs;
-    if(glideRemaining_) {
-        frequency_*=glideRatio_;
-        if(--glideRemaining_==0) {frequency_=targetFrequency_;glideRatio_=1.0;}
-    }
     const float envelope=envelope_.next(sustain);
     const float envelopeValue=envelope*velocity_;
     const float lfo=lfoSettings.mode==LfoMode::NoteRetrigger ? lfo1_.next(lfoSettings,sampleRate_) : 0;

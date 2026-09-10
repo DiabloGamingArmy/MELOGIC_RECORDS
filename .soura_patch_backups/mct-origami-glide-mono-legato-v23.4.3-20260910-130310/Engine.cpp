@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-wt-pos-real-morph-v22.2.1
 // mct-origami-v22.1-engine-repair-1
@@ -33,7 +32,7 @@ void OrigamiEngine::reset() noexcept {
     compiledModulation_.compile(audioModulation_,oscillatorModules_.snapshot(),true);
     for (auto& voice : voices_) voice.reset();
     for (auto& voice : stealTails_) voice.reset();
-    tailRemaining_.fill(0); order_ = 0; clearHeldNotes();
+    tailRemaining_.fill(0); order_ = 0;
     pitchBendNormalized_.fill(0.0f);modWheel_.fill(0.0f);
     for (std::size_t i = 0; i < parameterCount; ++i) { const float v = targets_[i].load(std::memory_order_relaxed); smooth_[i] = {v,v,0,0}; }
 }
@@ -49,7 +48,6 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
     state.oscillators=oscillatorModules_.snapshot();
     state.nextId=oscillatorModules_.nextId();
     state.modulation=modulation_;
-    state.performance=performance_;
     state.performance.pitchBendRangeSemitones=pitchBendRange();
     applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
     return state;
@@ -57,7 +55,6 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
 bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcept {
     if(!validInstrumentState(state)) return false;
     modulation_=state.modulation;modulationMailbox_.publish(modulation_);
-    performance_=state.performance;
     pitchBendRange_.store(state.performance.pitchBendRangeSemitones,std::memory_order_relaxed);
     oscillatorModules_.restore(state.oscillators,state.nextId);
     for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
@@ -81,73 +78,38 @@ dsp::EnvelopeSettings OrigamiEngine::envelopeSettings() const noexcept {
     auto read = [this](ParameterId id) { return targets_[static_cast<std::size_t>(id)].load(std::memory_order_relaxed); };
     return {read(ParameterId::Attack),read(ParameterId::Decay),read(ParameterId::Sustain),read(ParameterId::Release)};
 }
-bool OrigamiEngine::sameAddress(const NoteAddress& a,const NoteAddress& b) const noexcept {
-    return a.note==b.note && a.channel==b.channel && (!a.noteId || !b.noteId || a.noteId==b.noteId);
-}
-void OrigamiEngine::clearHeldNotes() noexcept { for(auto& n:heldNotes_) n={};heldCount_=0; }
-const OrigamiEngine::HeldNote* OrigamiEngine::selectedMonoHeld() const noexcept {
-    const HeldNote* selected=nullptr;
-    for(const auto& n:heldNotes_) if(n.held) {
-        if(!selected) {selected=&n;continue;}
-        if(performance_.notePriority==NotePriority::Last && n.order>selected->order) selected=&n;
-        else if(performance_.notePriority==NotePriority::High && (n.address.note>selected->address.note || (n.address.note==selected->address.note && n.order>selected->order))) selected=&n;
-        else if(performance_.notePriority==NotePriority::Low && (n.address.note<selected->address.note || (n.address.note==selected->address.note && n.order>selected->order))) selected=&n;
-    }
-    return selected;
-}
-bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uint32_t noteId) noexcept {
-    if(!prepared_ || note<0 || note>127 || channel>15 || !std::isfinite(velocity)) return false;
-    if(velocity<=0) {noteOff(note,channel,noteId);return true;}
-    if(performance_.voiceMode==VoiceMode::Mono) {
-        HeldNote* slot=nullptr;
-        for(auto& h:heldNotes_) if(h.held && sameAddress(h.address,{note,channel,noteId})) {slot=&h;break;}
-        if(!slot) for(auto& h:heldNotes_) if(!h.held) {slot=&h;break;}
-        if(!slot) return false;
-        const bool hadHeld=heldCount_>0;
-        if(!slot->held) ++heldCount_;
-        slot->held=true;slot->address={note,channel,noteId};slot->velocity=std::clamp(velocity,0.f,1.f);slot->order=++order_;
-        const auto* selected=selectedMonoHeld();if(!selected) return false;
-        const auto current=voices_[0].info();
-        if(!current.active) voices_[0].start(selected->address,selected->velocity,selected->order,envelopeSettings());
-        else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),performance_.glideSeconds,!performance_.legato || !hadHeld || current.releasing);
-        else if(!performance_.legato) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),performance_.glideSeconds,true);
-        return true;
-    }
-    std::size_t chosen=voiceCount;
-    for(std::size_t i=0;i<voiceCount;++i) if(!voices_[i].info().active) {chosen=i;break;}
-    if(chosen==voiceCount) {
-        chosen=0;
-        for(std::size_t i=1;i<voiceCount;++i) {
-            const auto candidate=voices_[i].info(),best=voices_[chosen].info();
-            if((candidate.releasing && !best.releasing) || (candidate.releasing && best.releasing && candidate.envelope<best.envelope) || (candidate.releasing==best.releasing && (!candidate.releasing || candidate.envelope==best.envelope) && candidate.order<best.order)) chosen=i;
+bool OrigamiEngine::noteOn(int note, float velocity, std::uint8_t channel, std::uint32_t noteId) noexcept {
+    if (!prepared_ || note < 0 || note > 127 || channel > 15 || !std::isfinite(velocity)) return false;
+    if (velocity <= 0) { noteOff(note, channel, noteId); return true; }
+    std::size_t chosen = voiceCount;
+    for (std::size_t i = 0; i < voiceCount; ++i) if (!voices_[i].info().active) { chosen = i; break; }
+    if (chosen == voiceCount) {
+        // Prefer the quietest releasing voice, then oldest held voice; lowest slot
+        // breaks ties. One fixed three-ms tail per slot bounds stealing cost.
+        chosen = 0;
+        for (std::size_t i = 1; i < voiceCount; ++i) {
+            const auto candidate = voices_[i].info(), best = voices_[chosen].info();
+            if ((candidate.releasing && !best.releasing) ||
+                (candidate.releasing && best.releasing && candidate.envelope < best.envelope) ||
+                (candidate.releasing == best.releasing && (!candidate.releasing || candidate.envelope == best.envelope) && candidate.order < best.order)) chosen = i;
         }
-        stealTails_[chosen]=voices_[chosen];tailRemaining_[chosen]=stealFadeSamples_;
+        stealTails_[chosen] = voices_[chosen]; tailRemaining_[chosen] = stealFadeSamples_;
     }
-    voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings());return true;
+    voices_[chosen].start({note,channel,noteId}, std::clamp(velocity,0.f,1.f), ++order_, envelopeSettings());
+    return true;
 }
-bool OrigamiEngine::noteOff(int note,std::uint8_t channel,std::uint32_t noteId) noexcept {
-    if(!prepared_ || note<0 || note>127 || channel>15) return false;
-    if(performance_.voiceMode==VoiceMode::Mono) {
-        HeldNote* removed=nullptr;
-        for(auto& h:heldNotes_) if(h.held && h.address.note==note && h.address.channel==channel && (!noteId || h.address.noteId==noteId) && (!removed || h.order<removed->order)) removed=&h;
-        if(!removed) return true;
-        const auto removedAddress=removed->address;removed->held=false;if(heldCount_) --heldCount_;
-        const auto current=voices_[0].info();
-        if(current.active && sameAddress(current.address,removedAddress)) {
-            if(const auto* selected=selectedMonoHeld()) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),performance_.glideSeconds,!performance_.legato);
-            else voices_[0].release(envelopeSettings());
-        }
-        return true;
+bool OrigamiEngine::noteOff(int note, std::uint8_t channel, std::uint32_t noteId) noexcept {
+    if (!prepared_ || note < 0 || note > 127 || channel > 15) return false;
+    std::size_t chosen = voiceCount;
+    for (std::size_t i = 0; i < voiceCount; ++i) {
+        const auto info = voices_[i].info();
+        if (!info.active || info.releasing || info.address.note != note || info.address.channel != channel || (noteId && info.address.noteId != noteId)) continue;
+        if (chosen == voiceCount || info.order < voices_[chosen].info().order) chosen = i;
     }
-    std::size_t chosen=voiceCount;
-    for(std::size_t i=0;i<voiceCount;++i) {
-        const auto info=voices_[i].info();
-        if(!info.active || info.releasing || info.address.note!=note || info.address.channel!=channel || (noteId && info.address.noteId!=noteId)) continue;
-        if(chosen==voiceCount || info.order<voices_[chosen].info().order) chosen=i;
-    }
-    if(chosen!=voiceCount) voices_[chosen].release(envelopeSettings());return true;
+    if (chosen != voiceCount) voices_[chosen].release(envelopeSettings());
+    return true;
 }
-void OrigamiEngine::allNotesOff() noexcept { clearHeldNotes();const auto settings=envelopeSettings();for(auto& voice:voices_) voice.release(settings); }
+void OrigamiEngine::allNotesOff() noexcept { const auto settings = envelopeSettings(); for (auto& voice : voices_) voice.release(settings); }
 void OrigamiEngine::pitchWheel(std::uint8_t channel,int value14) noexcept {
     if(channel>15) return;value14=std::clamp(value14,0,16383);
     pitchBendNormalized_[channel]=static_cast<float>(value14-8192)/static_cast<float>(value14>=8192?8191:8192);
@@ -158,17 +120,6 @@ void OrigamiEngine::modWheel(std::uint8_t channel,int value7) noexcept {
 bool OrigamiEngine::setPitchBendRange(float semitones) noexcept {
     if(!std::isfinite(semitones) || semitones<1.0f || semitones>48.0f) return false;
     pitchBendRange_.store(semitones,std::memory_order_relaxed);return true;
-}
-bool OrigamiEngine::setPerformanceState(const PerformanceState& state) noexcept {
-    InstrumentState probe=instrumentState();probe.performance=state;
-    if(!validInstrumentState(probe)) return false;
-    const bool modeChanged=performance_.voiceMode!=state.voiceMode;
-    performance_=state;pitchBendRange_.store(state.pitchBendRangeSemitones,std::memory_order_relaxed);
-    if(modeChanged) reset();
-    return true;
-}
-PerformanceState OrigamiEngine::performanceState() const noexcept {
-    auto s=performance_;s.pitchBendRangeSemitones=pitchBendRange();return s;
 }
 void OrigamiEngine::latchParameters() noexcept {
     for (const auto& p : parameterRegistry()) {

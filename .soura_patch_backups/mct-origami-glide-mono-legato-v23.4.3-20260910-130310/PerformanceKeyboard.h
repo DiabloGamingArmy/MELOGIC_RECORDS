@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-relative-drag-linear-controls-v23.3.4
 // mct-origami-bend-range-number-only-v23.3.3
 // mct-origami-performance-strip-relayout-v23.3.2
@@ -15,10 +14,8 @@ public:
     using WheelSetter=std::function<void(float)>;
     using RangeSetter=std::function<bool(float)>;
     using RangeGetter=std::function<float()>;
-    using PerformanceSetter=std::function<bool(const mct::origami::PerformanceState&)>;
-    using PerformanceGetter=std::function<mct::origami::PerformanceState()>;
-    PerformanceKeyboard(juce::MidiKeyboardState& state,WheelSetter pitch,WheelSetter mod,RangeSetter rangeSetter,RangeGetter rangeGetter,PerformanceSetter performanceSetter,PerformanceGetter performanceGetter)
-        : keyboardState_(state),pitchSetter_(std::move(pitch)),modSetter_(std::move(mod)),rangeSetter_(std::move(rangeSetter)),rangeGetter_(std::move(rangeGetter)),performanceSetter_(std::move(performanceSetter)),performanceGetter_(std::move(performanceGetter)) {
+    PerformanceKeyboard(juce::MidiKeyboardState& state,WheelSetter pitch,WheelSetter mod,RangeSetter rangeSetter,RangeGetter rangeGetter)
+        : keyboardState_(state),pitchSetter_(std::move(pitch)),modSetter_(std::move(mod)),rangeSetter_(std::move(rangeSetter)),rangeGetter_(std::move(rangeGetter)) {
         setName("Performance keyboard");
         setTooltip("Click or drag across keys to play MCT Origami.");
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
@@ -42,25 +39,6 @@ public:
         bendRange_.onValueChange=[this]{
             if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getValue()));
         };
-        addAndMakeVisible(voiceMode_);addAndMakeVisible(priority_);addAndMakeVisible(legato_);addAndMakeVisible(glide_);
-        voiceMode_.addItem("POLY",1);voiceMode_.addItem("MONO",2);voiceMode_.setScrollWheelEnabled(false);
-        priority_.addItem("LAST",1);priority_.addItem("HIGH",2);priority_.addItem("LOW",3);priority_.setScrollWheelEnabled(false);
-        legato_.setButtonText("LEGATO");legato_.setClickingTogglesState(true);
-        glide_.setSliderStyle(juce::Slider::LinearBarVertical);glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,54,18);
-        glide_.setRange(0.0,5.0,0.001);glide_.setSliderSnapsToMousePosition(false);glide_.setScrollWheelEnabled(false);
-        glide_.textFromValueFunction=[](double v){return v<0.001?"OFF":juce::String(v,3);};
-        const auto p=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
-        voiceMode_.setSelectedId(p.voiceMode==mct::origami::VoiceMode::Mono?2:1,juce::dontSendNotification);
-        priority_.setSelectedId(p.notePriority==mct::origami::NotePriority::High?2:p.notePriority==mct::origami::NotePriority::Low?3:1,juce::dontSendNotification);
-        legato_.setToggleState(p.legato,juce::dontSendNotification);glide_.setValue(p.glideSeconds,juce::dontSendNotification);
-        auto commit=[this]{
-            if(!performanceSetter_) return;
-            auto p=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
-            p.voiceMode=voiceMode_.getSelectedId()==2?mct::origami::VoiceMode::Mono:mct::origami::VoiceMode::Poly;
-            p.notePriority=priority_.getSelectedId()==2?mct::origami::NotePriority::High:priority_.getSelectedId()==3?mct::origami::NotePriority::Low:mct::origami::NotePriority::Last;
-            p.legato=legato_.getToggleState();p.glideSeconds=static_cast<float>(glide_.getValue());performanceSetter_(p);
-        };
-        voiceMode_.onChange=commit;priority_.onChange=commit;legato_.onClick=commit;glide_.onValueChange=commit;
     }
     ~PerformanceKeyboard() override;
 
@@ -81,10 +59,7 @@ private:
 
     juce::MidiKeyboardState& keyboardState_;
     WheelSetter pitchSetter_,modSetter_;RangeSetter rangeSetter_;RangeGetter rangeGetter_;
-    PerformanceSetter performanceSetter_;PerformanceGetter performanceGetter_;
-    juce::Slider bendRange_,glide_;
-    juce::ComboBox voiceMode_,priority_;
-    juce::ToggleButton legato_;
+    juce::Slider bendRange_;
     int mouseNote_=-1;int activeWheel_=0;float pitchValue_=0.0f,modValue_=0.0f;
     static constexpr int firstMidiNote=48;
     // V23.1.1: four-octave bed for thinner workstation-style keys.

@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 #pragma once
 #include "dsp/Wavetable.h"
@@ -16,7 +15,6 @@ public:
     void prepare(double sampleRate) noexcept;
     void reset() noexcept;
     void start(NoteAddress address, float velocity, std::uint64_t order, const dsp::EnvelopeSettings& settings) noexcept;
-    void retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,float glideSeconds,bool retriggerEnvelope) noexcept;
     void release(const dsp::EnvelopeSettings& settings) noexcept;
     struct Samples {double left=0,right=0,mono=0;};
     Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
@@ -34,8 +32,7 @@ private:
     std::array<dsp::LowPassFilter,maxOscillatorModules> moduleFilters_{};
     NoteAddress address_ {};
     std::uint64_t order_ = 0;
-    double sampleRate_ = 48000, frequency_ = 440, targetFrequency_ = 440, glideRatio_ = 1;
-    std::size_t glideRemaining_ = 0;
+    double sampleRate_ = 48000, frequency_ = 440;
     float velocity_ = 0;
     bool active_ = false, releasing_ = false;
 };

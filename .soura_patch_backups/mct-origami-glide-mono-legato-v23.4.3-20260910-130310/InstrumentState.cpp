@@ -1,4 +1,3 @@
-// mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
 #include "InstrumentState.h"
 namespace mct::origami {
@@ -17,9 +16,6 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
     }
     if(s.oscillators[0].id!=1 || !validModulation(s.modulation,s.oscillators)) return false;
     if(!std::isfinite(s.performance.pitchBendRangeSemitones) || s.performance.pitchBendRangeSemitones<1.0f || s.performance.pitchBendRangeSemitones>48.0f) return false;
-    if(s.performance.voiceMode!=VoiceMode::Poly && s.performance.voiceMode!=VoiceMode::Mono) return false;
-    if(s.performance.notePriority!=NotePriority::Last && s.performance.notePriority!=NotePriority::High && s.performance.notePriority!=NotePriority::Low) return false;
-    if(!std::isfinite(s.performance.glideSeconds) || s.performance.glideSeconds<0.0f || s.performance.glideSeconds>5.0f) return false;
     OscillatorModuleId previous=0;bool empty=false;
     auto range=[](float v,float lo,float hi){return std::isfinite(v) && v>=lo && v<=hi;};
     for(const auto& m:s.oscillators) {
