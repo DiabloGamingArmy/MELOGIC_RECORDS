@@ -1,3 +1,4 @@
+// mct-origami-v29.2.1-osc-route-display-ordinals
 // mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.1-rand-amp-smooth-morph-seed-button
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
@@ -55,9 +56,32 @@ void OscRouteSelector::refreshText() {
         setButtonText("Off");
         return;
     }
-    // Compact selector text keeps the same visual density as OSC PROCESS.
-    // Full descriptive names remain in the popup.
-    setButtonText("OSC "+juce::String(sourceId_)+" · "+oscRouteShortName(type_));
+
+    // IMPORTANT: sourceId_ is the engine's stable module identity, NOT the
+    // user-visible oscillator number. IDs intentionally keep increasing after
+    // modules are removed/re-added (e.g. internal IDs 13/14/15 can visibly be
+    // OSC 1/2/3). Resolve the current display ordinal from the live snapshot.
+    unsigned displayOrdinal=0;
+    if(snapshotGetter_) {
+        const auto state=snapshotGetter_();
+        unsigned ordinal=0;
+        for(const auto& oscillator:state.oscillators) {
+            if(oscillator.id==0) continue;
+            ++ordinal;
+            if(oscillator.id==sourceId_) {
+                displayOrdinal=ordinal;
+                break;
+            }
+        }
+    }
+
+    // Defensive fallback only if the referenced source disappeared between
+    // state synchronization and this repaint.
+    const auto labelNumber=displayOrdinal!=0
+        ? juce::String(displayOrdinal)
+        : juce::String("?");
+
+    setButtonText("OSC "+labelNumber+" · "+oscRouteShortName(type_));
 }
 
 void OscRouteSelector::openRouteMenu() {

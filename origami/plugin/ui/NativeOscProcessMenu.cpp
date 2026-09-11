@@ -1,3 +1,4 @@
+// mct-origami-v29.2.1-osc-route-display-ordinals
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v26.2.0-native-process-library
 #include "NativeOscProcessMenu.h"
@@ -41,13 +42,19 @@ void showNativeOscRouteMenu(juce::Component& anchor,
     root.addItem(1,"Off",true,currentType==OscRouteType::Off);
     root.addSeparator();
     int resultId=100;
+    unsigned displayOrdinal=0;
     for(const auto& source:state.oscillators) {
-        if(source.id==0 || source.id==target) continue;
+        if(source.id==0) continue;
+        ++displayOrdinal;
+        if(source.id==target) continue;
+
         juce::PopupMenu folder;
         for(auto type:oscRouteTypes)
             folder.addItem(resultId++,oscRouteName(type),true,
                            source.id==currentSource && type==currentType);
-        root.addSubMenu("OSC "+juce::String(source.id),folder);
+
+        // Never expose stable internal module IDs in presentation text.
+        root.addSubMenu("OSC "+juce::String(displayOrdinal),folder);
     }
     auto safe=juce::Component::SafePointer<juce::Component>(&anchor);
     root.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor),
