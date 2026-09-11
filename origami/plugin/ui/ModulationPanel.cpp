@@ -15,6 +15,7 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v33.1.0-lfo-mseg-editing-tools
 // mct-origami-v33.0.2-lfo-mseg-editor-foundation
+// mct-origami-v34.0.1-random-controls-layout
 // mct-origami-v34.0.0-random-lfo
 #include "ModulationPanel.h"
 #include "ModulationUiTelemetry.h"
@@ -157,18 +158,18 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     rotary(*this,randomSmooth_,randomSmoothLabel_,"SMOOTH");
     randomSmooth_.setRange(0.0,1.0,.001);
-    randomSmooth_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
+    randomSmooth_.setTextBoxStyle(juce::Slider::TextBoxRight,false,54,18);
     randomSmooth_.setTooltip("0 = hard sample-and-hold; 100% = continuous glide");
 
     rotary(*this,randomHold_,randomHoldLabel_,"HOLD");
     randomHold_.setRange(0.0,.98,.001);
-    randomHold_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
+    randomHold_.setTextBoxStyle(juce::Slider::TextBoxRight,false,54,18);
     randomHold_.setTooltip("Fraction of each random cycle held before smoothing begins");
 
     rotary(*this,randomDelay_,randomDelayLabel_,"DELAY / s");
     randomDelay_.setRange(0.0,5.0,.001);
     randomDelay_.setSkewFactorFromMidPoint(.35);
-    randomDelay_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
+    randomDelay_.setTextBoxStyle(juce::Slider::TextBoxRight,false,54,18);
     randomDelay_.setTooltip("Initial delay before Random modulation starts");
 
     shape_.addItem("MSEG",1);
@@ -944,19 +945,30 @@ void ModulationPanel::resized() {
     } else {
         envCanvas_={};
         if(selected_==8) {
-            // Random is a first-class modulation generator. Keep its control
-            // strip visually equivalent to ENV/LFO: evenly spaced, compact
-            // rotary controls under a large output viewport.
-            const int cellWidth=juce::jmax(92,controls.getWidth()/4);
-            auto placeRandom=[&](juce::Slider& slider,juce::Label& label){
-                auto cell=controls.removeFromLeft(juce::jmin(cellWidth,controls.getWidth()));
+            // Match ENV/LFO control language: full-width cells, large rotary
+            // body, readable inline value field, and identical bottom labels.
+            // Do NOT squeeze TextBoxRight sliders into 46px bounds; doing so
+            // leaves almost no room for the actual knob and produces the
+            // tiny-knob / "..." value boxes seen in V34.0.0.
+            constexpr int gap=8;
+            const int available=controls.getWidth()-gap*3;
+            const int cellWidth=juce::jmax(118,available/4);
+
+            auto placeRandom=[&](juce::Slider& slider,juce::Label& label,bool last){
+                const int width=last ? controls.getWidth()
+                                     : juce::jmin(cellWidth,controls.getWidth());
+                auto cell=controls.removeFromLeft(width);
+                if(!last && controls.getWidth()>0)
+                    controls.removeFromLeft(juce::jmin(gap,controls.getWidth()));
+
                 label.setBounds(cell.removeFromBottom(17));
-                slider.setBounds(cell.withSizeKeepingCentre(46,42));
+                slider.setBounds(cell.reduced(2,0));
             };
-            placeRandom(rate_,rateLabel_);
-            placeRandom(randomSmooth_,randomSmoothLabel_);
-            placeRandom(randomHold_,randomHoldLabel_);
-            placeRandom(randomDelay_,randomDelayLabel_);
+
+            placeRandom(rate_,rateLabel_,false);
+            placeRandom(randomSmooth_,randomSmoothLabel_,false);
+            placeRandom(randomHold_,randomHoldLabel_,false);
+            placeRandom(randomDelay_,randomDelayLabel_,true);
         } else {
             auto left=controls.removeFromLeft(120);
             rateLabel_.setBounds(left.removeFromBottom(17));rate_.setBounds(left);
