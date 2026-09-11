@@ -1,3 +1,4 @@
+// mct-origami-v29.1.1-rand-amp-smooth-morph-seed-button
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
@@ -475,9 +476,9 @@ void OscillatorCard::syncFromModel() {
                 const bool bipolar=dsp::oscProcessIsBipolar(type);
                 const bool randAmp=type==dsp::OscProcessType::RandAmp;
                 const double minimum=static_cast<double>(dsp::oscProcessAmountMinimum(type));
-                const double interval=randAmp
-                    ? 1.0/static_cast<double>(dsp::randAmpVariantCount()-1)
-                    : 0.001;
+                // Rand Amp has 12 named/visual anchor states, but the knob is
+                // continuous so interpolation between those anchors can glide.
+                const double interval=0.001;
 
                 if(std::abs(slider.getMinimum()-minimum)>1.0e-9 ||
                    std::abs(slider.getMaximum()-1.0)>1.0e-9 ||
@@ -510,10 +511,22 @@ void OscillatorCard::syncFromModel() {
             process2Amount_.setEnabled(state.process2!=dsp::OscProcessType::Off);
             const bool process1Seeded=dsp::oscProcessUsesSeed(state.process1);
             const bool process2Seeded=dsp::oscProcessUsesSeed(state.process2);
+
+            // Visibility changes alter the process-slot geometry: seeded modes
+            // shift the knob left and place the re-seed button on its right.
+            // Previously visibility changed after the last resized() pass, so
+            // the button could become visible while still owning empty bounds.
+            const bool processLayoutChanged=
+                process1Randomize_.isVisible()!=process1Seeded ||
+                process2Randomize_.isVisible()!=process2Seeded;
+
             process1Randomize_.setEnabled(process1Seeded);
             process2Randomize_.setEnabled(process2Seeded);
             process1Randomize_.setVisible(process1Seeded);
             process2Randomize_.setVisible(process2Seeded);
+
+            if(processLayoutChanged)
+                resized();
 
             route1Menu_.setSelection(state.route1SourceId,state.route1Type,juce::dontSendNotification);
             route2Menu_.setSelection(state.route2SourceId,state.route2Type,juce::dontSendNotification);
