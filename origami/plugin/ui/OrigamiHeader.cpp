@@ -1,12 +1,14 @@
+// mct-origami-v34.5.0-ui-rebrand
 // mct-origami-v25.1.0-arp-advanced-page
 #include "OrigamiHeader.h"
 #include <BinaryData.h>
 namespace mct::origami::ui {
 OrigamiHeader::OrigamiHeader() {
-    logo_=juce::ImageCache::getFromMemory(BinaryData::mct_origami_logo_png,
-                                         BinaryData::mct_origami_logo_pngSize);
-    wordmark_=juce::ImageCache::getFromMemory(BinaryData::mct_origami_wordmark_png,
-                                             BinaryData::mct_origami_wordmark_pngSize);
+    // V34.5: one authoritative, precomposed MCT Origami header asset.
+    // BinaryData keeps AU/VST3/Standalone independent of runtime disk paths.
+    logo_=juce::ImageCache::getFromMemory(BinaryData::oragami_header_png,
+                                         BinaryData::oragami_header_pngSize);
+    wordmark_={};
     for(auto* button:{&previous_,&next_,&preset_,&browse_,&save_,&settings_}) {addAndMakeVisible(button);button->setEnabled(false);button->setTooltip("Preset and utility controls are reserved for a later release.");}
     const juce::StringArray labels{"SYNTH","MIXER","FX","MATRIX","GLOBAL"};
     for(int i=0;i<5;++i) {auto& button=modes_[static_cast<std::size_t>(i)];button.setButtonText(labels[i]);button.setToggleState(i==0,juce::dontSendNotification);button.setEnabled(i==0 || i==3);button.setTooltip(i==0?"Synthesizer":i==3?"Modulation routing":"Not implemented");addAndMakeVisible(button);
@@ -17,17 +19,15 @@ void OrigamiHeader::selectSynth() {
         modes_[i].setToggleState(i==0,juce::dontSendNotification);
 }
 void OrigamiHeader::paint(juce::Graphics& g) {
-    const juce::Rectangle<int> logoBounds{10,8,46,46};
+    // Supplied artwork is 800x182. Display the complete composition without
+    // cropping or stretching inside the existing 72px header.
+    const juce::Rectangle<int> brandBounds{10,4,286,64};
     if(logo_.isValid()) {
         g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
-        g.drawImageWithin(logo_,logoBounds.getX(),logoBounds.getY(),logoBounds.getWidth(),logoBounds.getHeight(),
-                          juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize);
-    }
-
-    if(wordmark_.isValid()) {
-        g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
-        g.drawImageWithin(wordmark_,68,8,228,46,
-                          juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize);
+        g.drawImageWithin(logo_,brandBounds.getX(),brandBounds.getY(),
+                          brandBounds.getWidth(),brandBounds.getHeight(),
+                          (juce::RectanglePlacement::xLeft | juce::RectanglePlacement::yMid) |
+                          juce::RectanglePlacement::onlyReduceInSize);
     }
 
     g.setColour(Palette::borderSoft());

@@ -1,3 +1,4 @@
+// mct-origami-v34.5.0-ui-rebrand
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v26.4.1-flat-signal-fills
@@ -53,6 +54,9 @@ inline void paintSignalSurface(juce::Graphics& g,
 struct Palette {
     static juce::Colour background()   { return juce::Colour(0xff090909); }
     static juce::Colour panel()        { return juce::Colour(0xff111111); }
+    // V34.5 oscillator-only hierarchy: neutral greys, zero saturation.
+    static juce::Colour oscillatorRack() { return juce::Colour(0xff151515); }
+    static juce::Colour oscillatorCard() { return juce::Colour(0xff1a1a1a); }
     static juce::Colour raised()       { return juce::Colour(0xff181818); }
     static juce::Colour inset()        { return juce::Colour(0xff070707); }
     static juce::Colour border()       { return juce::Colour(0xff303030); }
@@ -163,7 +167,15 @@ public:
     explicit Panel(juce::String title): title_(std::move(title)) { setName(title_);setTooltip("Layout preview - controls are not connected to instrument parameters."); }
     void paint(juce::Graphics& g) override {
         auto shell=getLocalBounds().toFloat().reduced(.5f);
-        g.setColour(Palette::panel());g.fillRoundedRectangle(shell,3.0f);
+
+        // Keep the global dark theme unchanged. Only the oscillator hierarchy
+        // receives extra luminance: rack parent first, individual cards second.
+        const bool oscillatorRack = title_ == "OSCILLATORS";
+        const bool oscillatorCard = title_.startsWith("OSC ");
+        const auto surface = oscillatorCard ? Palette::oscillatorCard()
+                           : oscillatorRack ? Palette::oscillatorRack()
+                                            : Palette::panel();
+        g.setColour(surface);g.fillRoundedRectangle(shell,3.0f);
         g.setColour(Palette::borderSoft());g.drawRoundedRectangle(shell,3.0f,1.0f);
         g.setColour(Palette::borderSoft().withAlpha(.82f));g.drawHorizontalLine(30,10.0f,float(getWidth()-10));
         text(g,title_,{12,5,getWidth()-24,22},11,Palette::secondary());

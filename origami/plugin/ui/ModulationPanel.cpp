@@ -220,6 +220,24 @@ bool ModulationPanel::sourceTabActive(std::size_t index) const noexcept {
     return false;
 }
 
+bool ModulationPanel::revealSourceAtParentPoint(juce::Point<int> parentPoint) {
+    auto* parent=getParentComponent();
+    if(parent==nullptr) return false;
+    const auto local=getLocalPoint(parent,parentPoint);
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        if(!sourceTabActive(i) || !tabs_[i].isShowing()) continue;
+        const auto bounds=getLocalArea(&tabs_[i],tabs_[i].getLocalBounds());
+        if(!bounds.contains(local)) continue;
+        if(selected_==static_cast<int>(i)) return true;
+        selected_=static_cast<int>(i);
+        for(std::size_t j=0;j<tabs_.size();++j)
+            tabs_[j].setToggleState(j==i,juce::dontSendNotification);
+        sourceRemove_.setEnabled(i!=0);scrollSeconds_=0.0;
+        syncFromModel();resized();repaint();return true;
+    }
+    return false;
+}
+
 void ModulationPanel::showAddSourceMenu() {
     const std::vector<NativeChoiceItem> choices{
         {1,"Envelope",true,""},

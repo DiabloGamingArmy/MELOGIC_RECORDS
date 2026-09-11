@@ -72,6 +72,9 @@ struct ModRoute {
     ModSource source=ModSource::Lfo1;
     ModAddress destination{};
     float amount=0;
+    // False is the modern default. Signed generators are mapped from [-1,+1]
+    // into [0,1] before depth is applied. True restores centre-crossing motion.
+    bool bipolar=false;
 };
 struct ModulationState {
     static constexpr std::size_t capacity=32;
@@ -211,6 +214,7 @@ private:
     struct Group {
         ModAddress address{};std::size_t slot=0;
         std::array<float,sourceSlotCount> weight{},target{};
+        std::array<bool,sourceSlotCount> bipolar{};
         std::array<std::uint8_t,globalSourceCount> globalSlots{};
         std::array<std::uint8_t,voiceSourceCount> voiceSlots{};
         std::uint8_t globalSlotCount=0,voiceSlotCount=0;

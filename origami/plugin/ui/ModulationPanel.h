@@ -32,6 +32,7 @@ public:
 
     void resized() override;
     void syncFromModel();
+    bool revealSourceAtParentPoint(juce::Point<int> parentPoint);
 
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;

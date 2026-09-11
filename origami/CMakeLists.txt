@@ -1,3 +1,4 @@
+# mct-origami-v34.5.0-ui-rebrand
 # mct-origami-v30.1.0-env-sync-native-menus-retrigger
 # mct-origami-v26.2.0-native-process-library
 # mct-origami-v25.1.0-arp-advanced-page
@@ -83,6 +84,7 @@ if(ORIGAMI_BUILD_VST3)
     SOURCES
       assets/branding/mct_origami_logo.png
       assets/branding/mct_origami_wordmark.png
+      assets/synthui/oragami_header.png
   )
   # mct-origami-native-app-icon-v21.3
   # mct-origami-favicon-fill-v21.3.1

@@ -75,8 +75,11 @@ public:
             for(const auto& spec:oscillatorDestinations)
                 add(group,{spec.destination,m.id},spec.label);
         }
-        addAndMakeVisible(enabled_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
-        enabled_.setClickingTogglesState(true);enabled_.setName("Route enabled");remove_.setName("Delete route");
+        addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
+        enabled_.setClickingTogglesState(true);enabled_.setName("Route enabled");
+        bipolar_.setClickingTogglesState(true);bipolar_.setName("Bipolar modulation");
+        bipolar_.setTooltip("Off: unipolar 0 to +depth. On: bipolar -depth to +depth.");
+        remove_.setName("Delete route");
         amount_.setName("Route amount");amount_.setSliderStyle(juce::Slider::LinearHorizontal);
         amount_.setTextBoxStyle(juce::Slider::TextBoxRight,false,75,22);amount_.setRange(-100,100,.1);amount_.setTextValueSuffix(" %");amount_.setScrollWheelEnabled(false);
         amount_.setTooltip("Signed fraction of destination range; cutoff uses a logarithmic range");
@@ -85,10 +88,12 @@ public:
             const int selected=destination_.getSelectedId()-1;
             if(selected<0 || selected>=static_cast<int>(addresses_.size())) return;
             route_.source=static_cast<ModSource>(source_.getSelectedId());route_.destination=addresses_[static_cast<std::size_t>(selected)];
-            route_.enabled=enabled_.getToggleState();route_.amount=static_cast<float>(amount_.getValue()/100.0);
+            route_.enabled=enabled_.getToggleState();route_.bipolar=bipolar_.getToggleState();
+            route_.amount=static_cast<float>(amount_.getValue()/100.0);
             if(bindings_.route) bindings_.route(route_);
         };
-        source_.onChange=update;destination_.onChange=update;enabled_.onClick=update;amount_.onValueChange=update;
+        source_.onChange=update;destination_.onChange=update;enabled_.onClick=update;
+        bipolar_.onClick=update;amount_.onValueChange=update;
         remove_.onClick=[this]{if(bindings_.removeRoute) bindings_.removeRoute(route_.id);};
     }
     unsigned id() const {return route_.id;}
@@ -96,18 +101,20 @@ public:
         route_=route;source_.setSelectedId(static_cast<int>(route.source),juce::dontSendNotification);
         for(std::size_t i=0;i<addresses_.size();++i) if(addresses_[i]==route.destination) destination_.setSelectedId(static_cast<int>(i+1),juce::dontSendNotification);
         enabled_.setToggleState(route.enabled,juce::dontSendNotification);
+        bipolar_.setToggleState(route.bipolar,juce::dontSendNotification);
         if(!amount_.isMouseButtonDown() && !amount_.hasKeyboardFocus(true)) amount_.setValue(route.amount*100.0,juce::dontSendNotification);
     }
     void resized() override {
-        auto b=getLocalBounds().reduced(10,8);enabled_.setBounds(b.removeFromLeft(50));b.removeFromLeft(14);
-        source_.setBounds(b.removeFromLeft(170));b.removeFromLeft(24);destination_.setBounds(b.removeFromLeft(280));b.removeFromLeft(20);
-        remove_.setBounds(b.removeFromRight(40));b.removeFromRight(15);amount_.setBounds(b);
+        auto b=getLocalBounds().reduced(10,8);enabled_.setBounds(b.removeFromLeft(50));b.removeFromLeft(10);
+        bipolar_.setBounds(b.removeFromLeft(92));b.removeFromLeft(12);
+        source_.setBounds(b.removeFromLeft(160));b.removeFromLeft(16);destination_.setBounds(b.removeFromLeft(250));b.removeFromLeft(16);
+        remove_.setBounds(b.removeFromRight(40));b.removeFromRight(12);amount_.setBounds(b);
     }
     void paint(juce::Graphics& g) override {well(g,getLocalBounds());}
 private:
     ModRoute route_;ModulationBindings bindings_;std::vector<ModAddress> addresses_;
     NativeComboBox source_,destination_;
-    juce::TextButton enabled_{"ON"},remove_{"-"};juce::Slider amount_;
+    juce::TextButton enabled_{"ON"},bipolar_{"BIPOLAR"},remove_{"-"};juce::Slider amount_;
 };
 ModulationMatrix::ModulationMatrix(ModulationBindings bindings):Panel("MODULATION MATRIX"),bindings_(std::move(bindings)) {
     addAndMakeVisible(viewport_);viewport_.setViewedComponent(&content_,false);viewport_.setScrollBarsShown(true,false);
@@ -145,7 +152,7 @@ void ModulationMatrix::resized() {
     for(auto& row:rows_) {row->setBounds(0,y,width,48);y+=56;}content_.setSize(width,juce::jmax(y,viewport_.getHeight()));
 }
 void ModulationMatrix::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    text(g,"SOURCE  →  DESTINATION  →  AMOUNT     |     Base values stay unchanged",body.removeFromTop(28),11,Palette::secondary());
+    text(g,"POLARITY  →  SOURCE  →  DESTINATION  →  AMOUNT     |     Base values stay unchanged",body.removeFromTop(28),11,Palette::secondary());
     if(rows_.empty()) text(g,"No modulation routes. Add a route to connect any envelope, LFO, macro, performance source, random or function source.",body.reduced(12),12,Palette::muted(),juce::Justification::centred);
 }
 }

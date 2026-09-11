@@ -136,6 +136,7 @@ void OrigamiAudioProcessorEditor::itemDragEnter(const SourceDetails& details) {
 void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
     mct::origami::ModSource source{};
     if(!decodeDraggedModSource(details.description,source)) return;
+    modulation_.revealSourceAtParentPoint(details.localPosition.toInt());
     auto* target=modulationDropTargetAt(details.localPosition);
     if(target!=dragPreviewTarget_.getComponent()) {
         dragPreviewTarget_=target;

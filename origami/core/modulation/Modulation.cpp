@@ -308,6 +308,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         if(i==count_) {groups_[i].address=route.destination;groups_[i].slot=slot;++count_;}
         const auto sourceSlot=slotFor(route.source,state);
         groups_[i].target[sourceSlot]+=route.amount;
+        groups_[i].bipolar[sourceSlot]=route.bipolar;
         if(sourceSlot<globalSourceCount) globalSourceUsed_[sourceSlot]=true;
     }
     for(std::size_t i=0;i<count_;++i) {
@@ -392,13 +393,24 @@ const dsp::LowPassCoefficients& CompiledModulation::globalFilter(
     return cachedFilter_;
 }
 
+namespace {
+inline bool signedGeneratorSlot(std::size_t slot) noexcept {
+    return slot<=3u || (slot>=8u && slot<=12u) || (slot>=16u && slot<=19u);
+}
+inline float routeSourceValue(std::size_t slot,float raw,bool bipolar) noexcept {
+    if(!std::isfinite(raw)) return 0.0f;
+    if(!signedGeneratorSlot(slot) || bipolar) return raw;
+    return std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
+}
+}
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
     f.filterEnabled=filterEnabled_;
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];float n=modulationToNormalized(g.address.parameter,read(f,g));
         for(std::size_t k=0;k<g.globalSlotCount;++k) {
             const auto s=static_cast<std::size_t>(g.globalSlots[k]);
-            n+=(std::isfinite(g.weight[s])?g.weight[s]:0.0f)*(std::isfinite(sources[s])?sources[s]:0.0f);
+            const float src=routeSourceValue(s,sources[s],g.bipolar[s]);
+            n+=(std::isfinite(g.weight[s])?g.weight[s]:0.0f)*src;
         }
         if(!std::isfinite(n)) n=0.0f;
         f.normalized[i]=std::clamp(n,-4.0f,4.0f);write(f,g,n);
@@ -411,8 +423,10 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
         float n=std::isfinite(f.normalized[i])?f.normalized[i]:0.0f;
         for(std::size_t k=0;k<g.voiceSlotCount;++k) {
             const auto s=static_cast<std::size_t>(g.voiceSlots[k]);
-            const float w=g.weight[globalSourceCount+s];
-            n+=(std::isfinite(w)?w:0.0f)*(std::isfinite(sources[s])?sources[s]:0.0f);
+            const auto slot=globalSourceCount+s;
+            const float w=g.weight[slot];
+            const float src=routeSourceValue(slot,sources[s],g.bipolar[slot]);
+            n+=(std::isfinite(w)?w:0.0f)*src;
         }
         if(!std::isfinite(n)) n=0.0f;write(f,g,n);
     }
