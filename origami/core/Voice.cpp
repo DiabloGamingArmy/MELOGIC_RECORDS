@@ -130,7 +130,9 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         applyPreRoute(module.route1SourceId,module.route1Type,module.route1Amount);
         applyPreRoute(module.route2SourceId,module.route2Type,module.route2Amount);
 
-        const double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
+        double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
+        if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
+        baseFrequency=std::clamp(baseFrequency,1.0,std::max(20.0,sampleRate_*0.49));
         float oscillatorMix=0.0f;
         if(count==1) {
             oscillatorMix=moduleOscillators_[m][0].next(
@@ -229,6 +231,10 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         oscillatorMix=applyPostRoute(oscillatorMix,module.route2SourceId,
                                      module.route2Type,module.route2Amount);
 
+        if(!std::isfinite(oscillatorMix)) {
+            for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
+            moduleBlendCenters_[m].reset();oscillatorMix=0.0f;
+        }
         previousOscillatorSamples_[m]=std::clamp(oscillatorMix,-1.0f,1.0f);
 
         float sampleValue=oscillatorMix*envelopeValue;
@@ -238,8 +244,11 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         } else {
             moduleFilters_[m].reset();
         }
-        sampleValue*=module.level;
-        const double panAngle=(static_cast<double>(module.pan)+1)*.7853981633974483;
+        const float safeLevel=std::isfinite(module.level)?std::clamp(module.level,0.0f,1.0f):0.0f;
+        sampleValue*=safeLevel;
+        if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
+        const float safePan=std::isfinite(module.pan)?std::clamp(module.pan,-1.0f,1.0f):0.0f;
+        const double panAngle=(static_cast<double>(safePan)+1)*.7853981633974483;
         outputs.left+=sampleValue*std::cos(panAngle);
         outputs.right+=sampleValue*std::sin(panAngle);
         outputs.mono+=sampleValue;

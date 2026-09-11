@@ -361,7 +361,8 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
 
         const float master=static_cast<float>(normalization);
         const auto finite=[](double value) noexcept {
-            return std::isfinite(value) ? static_cast<float>(value) : 0.0f;
+            if(!std::isfinite(value)) return 0.0f;
+            return static_cast<float>(std::clamp(value,-8.0,8.0));
         };
         if(channels==1) {
             output[0][sample]=finite(mono*master);

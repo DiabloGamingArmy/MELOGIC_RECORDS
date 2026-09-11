@@ -211,6 +211,9 @@ private:
     struct Group {
         ModAddress address{};std::size_t slot=0;
         std::array<float,sourceSlotCount> weight{},target{};
+        std::array<std::uint8_t,globalSourceCount> globalSlots{};
+        std::array<std::uint8_t,voiceSourceCount> voiceSlots{};
+        std::uint8_t globalSlotCount=0,voiceSlotCount=0;
     };
     static float read(const ModulationFrame&,const Group&) noexcept;
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;

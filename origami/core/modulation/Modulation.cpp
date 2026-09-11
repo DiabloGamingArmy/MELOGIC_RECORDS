@@ -319,9 +319,12 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             for(std::size_t s=0;s<sourceSlotCount;++s)
                 if(std::abs(g.target[s]-g.weight[s])>1.0e-6f) smoothingActive_=true;
         }
-        bool voice=false;
-        for(std::size_t s=globalSourceCount;s<sourceSlotCount;++s)
-            voice=voice || g.target[s]!=0 || g.weight[s]!=0;
+        g.globalSlotCount=0;g.voiceSlotCount=0;
+        for(std::size_t s=0;s<globalSourceCount;++s)
+            if(g.target[s]!=0.0f || g.weight[s]!=0.0f) g.globalSlots[g.globalSlotCount++]=static_cast<std::uint8_t>(s);
+        for(std::size_t s=0;s<voiceSourceCount;++s)
+            if(g.target[globalSourceCount+s]!=0.0f || g.weight[globalSourceCount+s]!=0.0f) g.voiceSlots[g.voiceSlotCount++]=static_cast<std::uint8_t>(s);
+        const bool voice=g.voiceSlotCount!=0;
         if(voice) {
             voiceGroups_[voiceCount_++]=i;
             if(g.address.parameter==ModDestination::Cutoff || g.address.parameter==ModDestination::Resonance) voiceFilter_=true;
@@ -378,12 +381,13 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
 }
 const dsp::LowPassCoefficients& CompiledModulation::globalFilter(
     double rate,float cutoff,float resonance) const noexcept {
-    if(rate!=cachedFilterRate_ || cutoff!=cachedFilterCutoff_ ||
-       resonance!=cachedFilterResonance_) {
-        cachedFilter_=dsp::LowPassCoefficients::make(rate,cutoff,resonance);
-        cachedFilterRate_=rate;
-        cachedFilterCutoff_=cutoff;
-        cachedFilterResonance_=resonance;
+    const float safeCutoff=std::isfinite(cutoff)?std::clamp(cutoff,20.0f,20000.0f):8000.0f;
+    const float safeRes=std::isfinite(resonance)?std::clamp(resonance,0.0f,1.0f):0.1f;
+    const float cutoffKey=std::round(safeCutoff*0.25f)*4.0f;
+    const float resKey=std::round(safeRes*4096.0f)/4096.0f;
+    if(rate!=cachedFilterRate_ || cutoffKey!=cachedFilterCutoff_ || resKey!=cachedFilterResonance_) {
+        cachedFilter_=dsp::LowPassCoefficients::make(rate,safeCutoff,safeRes);
+        cachedFilterRate_=rate;cachedFilterCutoff_=cutoffKey;cachedFilterResonance_=resKey;
     }
     return cachedFilter_;
 }
@@ -392,18 +396,25 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
     f.filterEnabled=filterEnabled_;
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];float n=modulationToNormalized(g.address.parameter,read(f,g));
-        for(std::size_t s=0;s<globalSourceCount;++s)
-            if(globalSourceUsed_[s]) n+=g.weight[s]*sources[s];
-        f.normalized[i]=n;write(f,g,n);
+        for(std::size_t k=0;k<g.globalSlotCount;++k) {
+            const auto s=static_cast<std::size_t>(g.globalSlots[k]);
+            n+=(std::isfinite(g.weight[s])?g.weight[s]:0.0f)*(std::isfinite(sources[s])?sources[s]:0.0f);
+        }
+        if(!std::isfinite(n)) n=0.0f;
+        f.normalized[i]=std::clamp(n,-4.0f,4.0f);write(f,g,n);
     }
     if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
 }
 void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double rate) const noexcept {
     for(std::size_t j=0;j<voiceCount_;++j) {
         const auto i=voiceGroups_[j];const auto& g=groups_[i];
-        float n=f.normalized[i];
-        for(std::size_t s=0;s<voiceSourceCount;++s) n+=g.weight[globalSourceCount+s]*sources[s];
-        write(f,g,n);
+        float n=std::isfinite(f.normalized[i])?f.normalized[i]:0.0f;
+        for(std::size_t k=0;k<g.voiceSlotCount;++k) {
+            const auto s=static_cast<std::size_t>(g.voiceSlots[k]);
+            const float w=g.weight[globalSourceCount+s];
+            n+=(std::isfinite(w)?w:0.0f)*(std::isfinite(sources[s])?sources[s]:0.0f);
+        }
+        if(!std::isfinite(n)) n=0.0f;write(f,g,n);
     }
     if(voiceFilter_) f.filter=dsp::LowPassCoefficients::make(rate,f.cutoff,f.resonance);
 }
