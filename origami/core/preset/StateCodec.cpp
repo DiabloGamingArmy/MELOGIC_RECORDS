@@ -9,6 +9,7 @@
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v33.1.2-osc-blend-engine
+// mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 #include "StateCodec.h"
 #include <cstring>
 #include <stdexcept>
@@ -31,7 +32,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(14);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(15);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -81,14 +82,23 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     w.real(mod.random.smoothing);
     w.real(mod.random.hold);
     w.real(mod.random.delaySeconds);
+    for(std::size_t i=0;i<4;++i) {
+        const auto& l=lfoSettings(mod,i);
+        w.word(l.pointCount);
+        for(std::size_t p=0;p<l.pointCount;++p) {
+            w.real(l.points[p].x);
+            w.real(l.points[p].y);
+            w.real(l.points[p].curve);
+        }
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
-    if(!data || size<12 || size>4096) return false;
+    if(!data || size<12 || size>8192) return false;
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>14) return false;
+    if(version<1 || version>15) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -174,6 +184,18 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         s.modulation.random.smoothing=r.real();
         s.modulation.random.hold=r.real();
         s.modulation.random.delaySeconds=r.real();
+    }
+    if(version>=15) {
+        for(std::size_t i=0;i<4;++i) {
+            auto& l=lfoSettings(s.modulation,i);
+            l.pointCount=r.word();
+            if(l.pointCount>l.points.size() || l.pointCount==1) return false;
+            for(std::size_t p=0;p<l.pointCount;++p) {
+                l.points[p].x=r.real();
+                l.points[p].y=r.real();
+                l.points[p].curve=r.real();
+            }
+        }
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;

@@ -4,6 +4,7 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
 // mct-origami-v34.0.0-random-lfo
+// mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 #include "Modulation.h"
 #include <algorithm>
 #include <cmath>
@@ -17,9 +18,19 @@ bool validEnvelope(const dsp::EnvelopeSettings& e) {
            range(e.releaseCurve,-1.f,1.f);
 }
 bool validLfo(const LfoSettings& s) {
-    return s.shape>=LfoShape::Sine && s.shape<=LfoShape::Square &&
-           (s.mode==LfoMode::Free || s.mode==LfoMode::NoteRetrigger) &&
-           range(s.rateHz,.01f,40.f);
+    if(!(s.shape>=LfoShape::Sine && s.shape<=LfoShape::Square) ||
+       !(s.mode==LfoMode::Free || s.mode==LfoMode::NoteRetrigger) ||
+       !range(s.rateHz,.01f,40.f) ||
+       s.pointCount>s.points.size() || s.pointCount==1)
+        return false;
+    float previousX=-1.0f;
+    for(std::size_t i=0;i<s.pointCount;++i) {
+        const auto& p=s.points[i];
+        if(!range(p.x,0.0f,1.0f) || !range(p.y,-1.0f,1.0f) ||
+           !range(p.curve,-1.0f,1.0f) || p.x<=previousX) return false;
+        previousX=p.x;
+    }
+    return true;
 }
 bool known(ModSource s) {
     switch(s) {
@@ -133,8 +144,28 @@ float Lfo::shape(LfoShape type,double phase) noexcept {
     }
     return 0;
 }
+float Lfo::mseg(const LfoSettings& s,double phase) noexcept {
+    if(s.pointCount<2 || s.pointCount>s.points.size()) return shape(s.shape,phase);
+    phase-=std::floor(phase);
+    const float x=static_cast<float>(phase);
+    if(x<=s.points[0].x) return s.points[0].y;
+    if(x>=s.points[s.pointCount-1].x) return s.points[s.pointCount-1].y;
+
+    std::size_t hi=1;
+    while(hi<s.pointCount && x>s.points[hi].x) ++hi;
+    hi=std::min<std::size_t>(hi,s.pointCount-1);
+
+    const auto& a=s.points[hi-1];
+    const auto& b=s.points[hi];
+    float t=std::clamp((x-a.x)/std::max(0.0001f,b.x-a.x),0.0f,1.0f);
+    const float cv=std::clamp(b.curve,-1.0f,1.0f);
+    if(cv>0.0f) t=std::pow(t,1.0f+cv*4.0f);
+    else if(cv<0.0f) t=1.0f-std::pow(1.0f-t,1.0f+(-cv)*4.0f);
+    return std::clamp(a.y+(b.y-a.y)*t,-1.0f,1.0f);
+}
+
 float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
-    const float out=shape(s.shape,phase_);
+    const float out=mseg(s,phase_);
     if(std::isfinite(sampleRate) && sampleRate>0 && std::isfinite(s.rateHz)) {
         phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
         phase_-=std::floor(phase_);

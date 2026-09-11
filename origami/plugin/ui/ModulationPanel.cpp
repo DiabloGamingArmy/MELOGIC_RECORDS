@@ -18,6 +18,7 @@
 // mct-origami-v34.0.3-mod-route-gauges
 // mct-origami-v34.0.1-random-controls-layout
 // mct-origami-v34.0.0-random-lfo
+// mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 #include "ModulationPanel.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
@@ -343,9 +344,17 @@ void ModulationPanel::commitGenerator() {
     auto mod=bindings_.snapshot().modulation;
     if(selected_>=3 && selected_<=6) {
         auto& l=lfoSettings(mod,static_cast<std::size_t>(selected_-3));
-        l.shape=static_cast<LfoShape>(shape_.getSelectedId());
+        l.shape=LfoShape::Sine;
         l.mode=static_cast<LfoMode>(mode_.getSelectedId());
         l.rateHz=static_cast<float>(rate_.getValue());
+
+        const auto& editor=lfoMseg_[static_cast<std::size_t>(selected_-3)];
+        l.pointCount=static_cast<std::uint32_t>(std::min(editor.count,l.points.size()));
+        for(std::size_t i=0;i<l.pointCount;++i) {
+            l.points[i].x=editor.points[i].x;
+            l.points[i].y=editor.points[i].y;
+            l.points[i].curve=editor.points[i].curve;
+        }
     } else if(selected_==7) {
         mod.function.rateHz=static_cast<float>(rate_.getValue());
         mod.function.curve=static_cast<float>(curve_.getValue());
@@ -410,7 +419,8 @@ void ModulationPanel::syncFromModel() {
                 envSliders_[i].setValue(v[i],juce::dontSendNotification);
     } else if(selected_>=3 && selected_<=6) {
         const auto& l=lfoSettings(cached_,static_cast<std::size_t>(selected_-3));
-        shape_.setSelectedId(static_cast<int>(l.shape),juce::dontSendNotification);
+        loadMsegShapeFromSettings(lfoMseg_[static_cast<std::size_t>(selected_-3)],l);
+        shape_.setSelectedId(1,juce::dontSendNotification);
         mode_.setSelectedId(static_cast<int>(l.mode),juce::dontSendNotification);
         if(!rate_.isMouseButtonDown()) rate_.setValue(l.rateHz,juce::dontSendNotification);
     } else if(selected_==7) {
@@ -593,6 +603,7 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
         const auto index=static_cast<std::size_t>(hit);
         for(std::size_t i=index;i+1<shape.count;++i) shape.points[i]=shape.points[i+1];
         --shape.count;
+        commitMsegShape();
         repaint();return;
     }
 
@@ -610,6 +621,7 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
     for(std::size_t i=shape.count;i>insert;--i) shape.points[i]=shape.points[i-1];
     shape.points[insert]={x,y,0.0f};
     ++shape.count;
+    commitMsegShape();
     repaint();
 }
 
@@ -649,6 +661,7 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
             const auto i=static_cast<std::size_t>(lfoCurveDrag_);
             shape.points[i].curve=curveForHandleY(lfoDragStartShape_,i,e.position.y);
         }
+        commitMsegShape();
         repaint();return;
     }
     if(dragTarget_==DragTarget::None || selected_>2) return;
@@ -1005,6 +1018,59 @@ void ModulationPanel::resized() {
     updateVisibleControls();
 }
 
+void ModulationPanel::loadMsegShapeFromSettings(MsegShape& shape,const LfoSettings& s) noexcept {
+    if(s.pointCount>=2 && s.pointCount<=s.points.size()) {
+        shape={};
+        shape.count=s.pointCount;
+        for(std::size_t i=0;i<shape.count;++i)
+            shape.points[i]={s.points[i].x,s.points[i].y,s.points[i].curve};
+        return;
+    }
+
+    shape={};
+    switch(s.shape) {
+        case LfoShape::Saw:
+            shape.count=2;
+            shape.points[0]={0,-1,0}; shape.points[1]={1,1,0};
+            break;
+        case LfoShape::Triangle:
+            shape.count=3;
+            shape.points[0]={0,-1,0}; shape.points[1]={.5f,1,0}; shape.points[2]={1,-1,0};
+            break;
+        case LfoShape::Square:
+            shape.count=4;
+            shape.points[0]={0,1,0}; shape.points[1]={.4995f,1,0};
+            shape.points[2]={.5f,-1,0}; shape.points[3]={1,-1,0};
+            break;
+        case LfoShape::Sine:
+        default:
+            shape.count=16;
+            for(std::size_t i=0;i<shape.count;++i) {
+                const float x=static_cast<float>(i)/static_cast<float>(shape.count-1);
+                shape.points[i]={x,
+                    static_cast<float>(std::sin(x*juce::MathConstants<float>::twoPi)),0};
+            }
+            break;
+    }
+}
+
+bool ModulationPanel::commitMsegShape() {
+    if(selected_<3 || selected_>6 || !bindings_.snapshot || !bindings_.modulation)
+        return false;
+
+    auto mod=bindings_.snapshot().modulation;
+    auto& l=lfoSettings(mod,static_cast<std::size_t>(selected_-3));
+    const auto& editor=lfoMseg_[static_cast<std::size_t>(selected_-3)];
+
+    l.pointCount=static_cast<std::uint32_t>(std::min(editor.count,l.points.size()));
+    for(std::size_t i=0;i<l.pointCount;++i)
+        l.points[i]={editor.points[i].x,editor.points[i].y,editor.points[i].curve};
+
+    if(!bindings_.modulation(mod)) return false;
+    cached_=mod;
+    return true;
+}
+
 void ModulationPanel::resetMsegShape(MsegShape& shape) noexcept {
     shape={};
     shape.count=5;
@@ -1091,6 +1157,7 @@ void ModulationPanel::showLfoToolsMenu() {
             } else if(id==5) {
                 for(std::size_t i=1;i<shape.count;++i) shape.points[i].curve=0.0f;
             }
+            safe->commitMsegShape();
             safe->repaint();
         });
 }
@@ -1365,6 +1432,8 @@ juce::Rectangle<float> ModulationPanel::routeDotBounds(
 
 std::optional<std::uint32_t> ModulationPanel::routeDotAt(
     juce::Point<float> point) const noexcept {
+    if(!sourceViewport_.getBounds().toFloat().contains(point))
+        return std::nullopt;
     for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
         const auto source=sourceForTab(tabIndex);
         std::array<const ModRoute*,ModulationState::capacity> matches{};
@@ -1462,6 +1531,9 @@ void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
 
     if(!modulationUiTelemetry().synthActive) return;
 
+    juce::Graphics::ScopedSaveState viewportClip(g);
+    g.reduceClipRegion(sourceViewport_.getBounds());
+
     for(std::size_t i=0;i<tabs_.size();++i) {
         auto b=getLocalArea(&sourceContent_,tabs_[i].getBounds())
                    .toFloat().reduced(0.75f);
@@ -1491,6 +1563,9 @@ void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
 }
 
 void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
+    juce::Graphics::ScopedSaveState viewportClip(g);
+    g.reduceClipRegion(sourceViewport_.getBounds());
+
     for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
         const auto source=sourceForTab(tabIndex);
         std::array<const ModRoute*,ModulationState::capacity> matches{};

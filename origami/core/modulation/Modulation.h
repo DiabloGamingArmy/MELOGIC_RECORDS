@@ -4,6 +4,7 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
 // mct-origami-v34.0.0-random-lfo
+// mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 #pragma once
 #include "core/OscillatorModule.h"
 #include "core/dsp/Filter.h"
@@ -31,7 +32,14 @@ enum class ModDestination : std::uint32_t {
 enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
 enum class LfoMode : std::uint32_t { Free=1, NoteRetrigger=2 };
 
-struct LfoSettings { LfoShape shape=LfoShape::Sine; LfoMode mode=LfoMode::Free; float rateHz=1; };
+struct LfoPoint { float x=0.0f,y=0.0f,curve=0.0f; };
+struct LfoSettings {
+    LfoShape shape=LfoShape::Sine;
+    LfoMode mode=LfoMode::Free;
+    float rateHz=1.0f;
+    std::array<LfoPoint,16> points{};
+    std::uint32_t pointCount=0;
+};
 struct RandomSettings {
     float rateHz=2.0f;
     // 0 = classic hard sample-and-hold, 1 = fully continuous glide to the
@@ -99,6 +107,7 @@ public:
     void reset() noexcept {phase_=0;}
     float next(const LfoSettings&,double sampleRate) noexcept;
     static float shape(LfoShape,double phase) noexcept;
+    static float mseg(const LfoSettings&,double phase) noexcept;
 private: double phase_=0;
 };
 

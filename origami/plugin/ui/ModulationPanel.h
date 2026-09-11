@@ -11,6 +11,7 @@
 // mct-origami-v33.1.0-lfo-mseg-editing-tools
 // mct-origami-v33.0.2-lfo-mseg-editor-foundation
 // mct-origami-v34.0.0-random-lfo
+// mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
@@ -131,6 +132,8 @@ private:
     MsegShape lfoDragStartShape_{};
 
     void resetMsegShape(MsegShape&) noexcept;
+    void loadMsegShapeFromSettings(MsegShape&,const LfoSettings&) noexcept;
+    bool commitMsegShape();
     void showLfoToolsMenu();
     float msegValue(const MsegShape&,float) const noexcept;
     juce::Point<float> msegPixel(const MsegPoint&) const noexcept;
