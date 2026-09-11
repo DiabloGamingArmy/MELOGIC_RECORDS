@@ -1,3 +1,4 @@
+// mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.2.0-native-menu-include-repair
@@ -161,7 +162,11 @@ void showNativeOscRouteMenu(juce::Component& anchor,
     NSInteger resultId=100;
     for(const auto& source:state.oscillators) {
         if(source.id==0 || source.id==targetId) continue;
-        NSString* title=[NSString stringWithFormat:@"OSC %u",source.id];
+        // OscillatorModuleId is a narrow integer type. Explicitly promote it
+        // for the Objective-C varargs formatter; passing the narrow value
+        // directly to %u can produce corrupted labels such as "OSC 12".
+        NSString* title=[NSString stringWithFormat:@"OSC %u",
+                         static_cast<unsigned>(source.id)];
         NSMenuItem* parent=[[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
         NSMenu* submenu=[[NSMenu alloc] initWithTitle:title];
         [submenu setAutoenablesItems:NO];

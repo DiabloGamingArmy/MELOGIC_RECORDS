@@ -1,3 +1,4 @@
+// mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v26.4.0-global-signal-colour-system
@@ -31,6 +32,27 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
 }
 void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& button,bool,bool) {
     auto bounds=button.getLocalBounds().reduced(3);
+
+    // Custom dice icon for seeded spectral re-randomization. Drawing it
+    // geometrically avoids Unicode/font fallback issues.
+    if(button.getName()=="OSC PROCESS RESEED") {
+        const auto colour=button.isEnabled()?Palette::text():Palette::muted();
+        auto die=button.getLocalBounds().toFloat()
+                    .withSizeKeepingCentre(11.0f,11.0f);
+
+        g.setColour(colour.withAlpha(button.isEnabled()?0.92f:0.48f));
+        g.drawRoundedRectangle(die,2.0f,1.1f);
+
+        const float pip=1.65f;
+        const auto drawPip=[&](float x,float y) {
+            g.fillEllipse(juce::Rectangle<float>(pip,pip).withCentre({x,y}));
+        };
+
+        drawPip(die.getX()+3.0f,die.getY()+3.0f);
+        drawPip(die.getCentreX(),die.getCentreY());
+        drawPip(die.getRight()-3.0f,die.getBottom()-3.0f);
+        return;
+    }
 
     // OSC PROCESS uses overlaid left/right navigation end-caps. Keep the
     // selector itself full-width for maximum label space, but reserve exactly

@@ -1,3 +1,4 @@
+// mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.1-rand-amp-smooth-morph-seed-button
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v29.0.0-spectral-process-native-routing
@@ -290,6 +291,10 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     configureProcessArrow(process2Next_,"Next oscillator process");
     configureProcessArrow(process1Randomize_,"Re-seed random spectral process");
     configureProcessArrow(process2Randomize_,"Re-seed random spectral process");
+    process1Randomize_.setName("OSC PROCESS RESEED");
+    process2Randomize_.setName("OSC PROCESS RESEED");
+    process1Randomize_.setButtonText({});
+    process2Randomize_.setButtonText({});
 
     auto cycleProcess=[](NativeOscProcessSelector& selector,int delta) {
         constexpr int firstId=1;
@@ -474,10 +479,12 @@ void OscillatorCard::syncFromModel() {
             auto syncAmount=[](RackSlider& slider,juce::Label& label,
                                dsp::OscProcessType type,float value) {
                 const bool bipolar=dsp::oscProcessIsBipolar(type);
-                const bool randAmp=type==dsp::OscProcessType::RandAmp;
+                const bool randomVariant=
+                    type==dsp::OscProcessType::RandAmp ||
+                    type==dsp::OscProcessType::RandSparse;
                 const double minimum=static_cast<double>(dsp::oscProcessAmountMinimum(type));
-                // Rand Amp has 12 named/visual anchor states, but the knob is
-                // continuous so interpolation between those anchors can glide.
+                // Seeded random spectral modes have 12 visual anchor states,
+                // but the knob is continuous so interpolation can glide.
                 const double interval=0.001;
 
                 if(std::abs(slider.getMinimum()-minimum)>1.0e-9 ||
@@ -491,7 +498,7 @@ void OscillatorCard::syncFromModel() {
                     slider.setValue(juce::jlimit(minimum,1.0,static_cast<double>(value)),
                                     juce::dontSendNotification);
 
-                if(randAmp) {
+                if(randomVariant) {
                     const int variant=dsp::randAmpVariantIndex(
                         static_cast<float>(slider.getValue()))+1;
                     label.setText(juce::String(variant)+"/"+

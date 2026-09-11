@@ -1,3 +1,4 @@
+// mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.1-rand-amp-smooth-morph-seed-button
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v29.0.0-spectral-process-native-routing
@@ -86,10 +87,10 @@ float quantizedSpectralAmount(OscProcessType type,float amount) noexcept {
     if(!oscProcessIsSpectral(type)) return amount;
     const float a=std::clamp(amount,0.0f,1.0f);
 
-    // Rand Amp has 12 anchor masks, but its control must remain continuous.
-    // Keep a fine cache quantisation so audio/preview can MORPH between adjacent
-    // random masks rather than snapping from one complete spectrum to another.
-    if(type==OscProcessType::RandAmp)
+    // Seeded random spectral modes use 12 anchor masks, but their controls
+    // remain continuous. Fine cache quantisation allows smooth morphing between
+    // adjacent random spectra instead of snapping mask-to-mask.
+    if(type==OscProcessType::RandAmp || type==OscProcessType::RandSparse)
         return std::round(a*256.0f)/256.0f;
 
     return std::round(a*256.0f)/256.0f;
@@ -407,11 +408,12 @@ void renderProcessedFrame2048(const float* input,float* output,
     const double a1=oscProcessIsSpectral(process1)?quantizedSpectralAmount(process1,amount1):0.0;
     const double a2=oscProcessIsSpectral(process2)?quantizedSpectralAmount(process2,amount2):0.0;
 
-    // Rand Amp exposes 12 full-strength random spectral anchors. The amount
-    // control moves CONTINUOUSLY between them: each harmonic crossfades from
-    // mask N to N+1. This preserves the "multiple random amps" behavior while
-    // removing the hard spectral/waveform snap between positions.
-    auto randAmpTarget=[](std::size_t harmonic,std::uint32_t baseSeed,float amount) noexcept {
+    // Rand Amp and Rand Sparse both expose 12 full-strength seeded anchor
+    // spectra. The knob morphs continuously between adjacent masks.
+    auto randomVariantTarget=[](OscProcessType type,
+                                std::size_t harmonic,
+                                std::uint32_t baseSeed,
+                                float amount) noexcept {
         const float position=std::clamp(amount,0.0f,1.0f)*
                              static_cast<float>(randAmpVariantCount()-1);
         const int lower=static_cast<int>(std::floor(position));
@@ -423,27 +425,32 @@ void renderProcessedFrame2048(const float* input,float* output,
                    (0x9e3779b9u*static_cast<std::uint32_t>(variant+1));
         };
 
-        const double a=fullSpectralGain(
-            OscProcessType::RandAmp,harmonic,seedFor(lower));
-        const double b=fullSpectralGain(
-            OscProcessType::RandAmp,harmonic,seedFor(upper));
+        const double a=fullSpectralGain(type,harmonic,seedFor(lower));
+        const double b=fullSpectralGain(type,harmonic,seedFor(upper));
         return a+(b-a)*blend;
+    };
+
+    const auto isRandomVariant=[](OscProcessType type) noexcept {
+        return type==OscProcessType::RandAmp ||
+               type==OscProcessType::RandSparse;
     };
 
     bins[0]=Complex{};
     for(std::size_t h=1;h<spectralSize/2;++h) {
         double gain=1.0;
         if(oscProcessIsSpectral(process1)) {
-            const double target=process1==OscProcessType::RandAmp
-                ? randAmpTarget(h,seed1,static_cast<float>(a1))
+            const bool randomVariant=isRandomVariant(process1);
+            const double target=randomVariant
+                ? randomVariantTarget(process1,h,seed1,static_cast<float>(a1))
                 : fullSpectralGain(process1,h,seed1);
-            gain*=process1==OscProcessType::RandAmp ? target : 1.0+a1*(target-1.0);
+            gain*=randomVariant ? target : 1.0+a1*(target-1.0);
         }
         if(oscProcessIsSpectral(process2)) {
-            const double target=process2==OscProcessType::RandAmp
-                ? randAmpTarget(h,seed2,static_cast<float>(a2))
+            const bool randomVariant=isRandomVariant(process2);
+            const double target=randomVariant
+                ? randomVariantTarget(process2,h,seed2,static_cast<float>(a2))
                 : fullSpectralGain(process2,h,seed2);
-            gain*=process2==OscProcessType::RandAmp ? target : 1.0+a2*(target-1.0);
+            gain*=randomVariant ? target : 1.0+a2*(target-1.0);
         }
         bins[h]*=gain;
         bins[spectralSize-h]*=gain;
