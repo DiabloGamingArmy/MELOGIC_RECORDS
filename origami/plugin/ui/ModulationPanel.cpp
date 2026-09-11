@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v31.1.0-mod-source-visual-matrix-controls
@@ -12,6 +13,7 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 #include "ModulationPanel.h"
 #include "ModulationUiTelemetry.h"
+#include "NativeChoiceMenu.h"
 #include <algorithm>
 #include <cmath>
 
@@ -69,23 +71,23 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         tab.setToggleState(i==0,juce::dontSendNotification);
         tab.addMouseListener(this,false);
         tab.onClick=[this,i]{
+            if(!sourceTabActive(static_cast<std::size_t>(i))) return;
             selected_=i;
             for(std::size_t j=0;j<tabs_.size();++j)
                 tabs_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);
             scrollSeconds_=0.0;
+            sourceRemove_.setEnabled(i==1 || i==2 || (i>=3 && i<=6));
             syncFromModel();
             resized();
             repaint();
         };
     }
 
-    // V30 architecture scaffold. These controls deliberately do not mutate the
-    // modulation model yet; this pass separates collection UX from the current
-    // fixed engine storage so dynamic source allocation can land cleanly later.
-    for(auto* button:{&sourceAdd_,&sourceRemove_}) {
-        addAndMakeVisible(*button);
-        button->setTooltip("Dynamic ENV/LFO source allocation — reserved for the next engine pass");
-    }
+    for(auto* button:{&sourceAdd_,&sourceRemove_}) addAndMakeVisible(*button);
+    sourceAdd_.setTooltip("Add an Envelope or LFO");
+    sourceRemove_.setTooltip("Remove the selected Envelope/LFO and its Matrix routes");
+    sourceAdd_.onClick=[this]{showAddSourceMenu();};
+    sourceRemove_.onClick=[this]{removeSelectedSource();};
 
     const juce::StringArray envNames{"ATTACK","DECAY","SUSTAIN","RELEASE"};
     for(std::size_t i=0;i<4;++i) {
@@ -158,6 +160,85 @@ ModulationPanel::~ModulationPanel() {
     stopTimer();
     envScroll_.removeListener(this);
     for(auto& tab:tabs_) tab.removeMouseListener(this);
+}
+
+bool ModulationPanel::sourceTabActive(std::size_t index) const noexcept {
+    if(index<=2) return (cached_.envActiveMask&(1u<<index))!=0;
+    if(index>=3 && index<=6) return (cached_.lfoActiveMask&(1u<<(index-3)))!=0;
+    return true;
+}
+
+void ModulationPanel::showAddSourceMenu() {
+    const std::vector<NativeChoiceItem> choices{
+        {1,"Envelope",true,""},
+        {2,"LFO",true,""}
+    };
+    showNativeChoiceMenu(sourceAdd_,"ADD MOD SOURCE",choices,0,
+        [safe=juce::Component::SafePointer<ModulationPanel>(this)](int id) {
+            if(safe!=nullptr) safe->allocateSource(id==1);
+        });
+}
+
+void ModulationPanel::allocateSource(bool envelope) {
+    if(!bindings_.snapshot || !bindings_.modulation) return;
+    auto mod=bindings_.snapshot().modulation;
+    int slot=-1;
+
+    if(envelope) {
+        for(int i=1;i<=2;++i) {
+            if((mod.envActiveMask&(1u<<i))==0) {
+                mod.envActiveMask|=(1u<<i); slot=i; break;
+            }
+        }
+    } else {
+        for(int i=0;i<4;++i) {
+            if((mod.lfoActiveMask&(1u<<i))==0) {
+                mod.lfoActiveMask|=(1u<<i); slot=3+i; break;
+            }
+        }
+    }
+    if(slot<0 || !bindings_.modulation(mod)) return;
+
+    cached_=mod;
+    selected_=slot;
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        tabs_[i].setVisible(sourceTabActive(i));
+        tabs_[i].setToggleState(i==static_cast<std::size_t>(slot),juce::dontSendNotification);
+    }
+    sourceRemove_.setEnabled(true);
+    updateVisibleControls();
+    resized();
+    repaint();
+}
+
+void ModulationPanel::removeSelectedSource() {
+    if(!bindings_.snapshot || !bindings_.modulation) return;
+    if(!(selected_==1 || selected_==2 || (selected_>=3 && selected_<=6))) return;
+
+    const auto removed=sourceForTab(static_cast<std::size_t>(selected_));
+    auto mod=bindings_.snapshot().modulation;
+
+    if(selected_<=2) mod.envActiveMask&=~(1u<<selected_);
+    else mod.lfoActiveMask&=~(1u<<(selected_-3));
+
+    // Compact away Matrix edges from the removed source.
+    std::array<ModRoute,ModulationState::capacity> compact{};
+    std::size_t write=0;
+    for(const auto& route:mod.routes)
+        if(route.id!=0 && route.source!=removed) compact[write++]=route;
+    mod.routes=compact;
+
+    if(!bindings_.modulation(mod)) return;
+    cached_=mod;
+    selected_=0;
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        tabs_[i].setVisible(sourceTabActive(i));
+        tabs_[i].setToggleState(i==0,juce::dontSendNotification);
+    }
+    sourceRemove_.setEnabled(false);
+    updateVisibleControls();
+    resized();
+    repaint();
 }
 
 dsp::EnvelopeSettings ModulationPanel::currentEnvelope() const {
@@ -238,6 +319,10 @@ void ModulationPanel::updateVisibleControls() {
 
 void ModulationPanel::syncFromModel() {
     if(bindings_.snapshot) cached_=bindings_.snapshot().modulation;
+    if(!sourceTabActive(static_cast<std::size_t>(selected_))) selected_=0;
+    for(std::size_t i=0;i<tabs_.size();++i)
+        tabs_[i].setVisible(sourceTabActive(i));
+    sourceRemove_.setEnabled(selected_==1 || selected_==2 || (selected_>=3 && selected_<=6));
     if(selected_==0) {
         if(getter_) for(std::size_t i=0;i<4;++i)
             if(!envSliders_[i].isMouseButtonDown())
@@ -632,11 +717,18 @@ void ModulationPanel::resized() {
         }
     }
 
-    float weights=9.0f;
-    for(std::size_t i=3;i<=6;++i) if(routed[i]) weights+=0.48f;
-    const float unit=juce::jlimit(22.0f,34.0f,float(rail.getHeight())/weights);
+    float weights=0.0f;
+    for(std::size_t i=0;i<tabs_.size();++i)
+        if(sourceTabActive(i)) weights+=routed[i]?1.48f:1.0f;
+    const float unit=weights>0.0f
+        ? juce::jlimit(22.0f,34.0f,float(rail.getHeight())/weights)
+        : 22.0f;
 
     for(std::size_t i=0;i<tabs_.size();++i) {
+        if(!sourceTabActive(i)) {
+            tabs_[i].setBounds({});
+            continue;
+        }
         const int h=juce::jmax(22,juce::roundToInt(unit*(routed[i]?1.48f:1.0f)));
         tabs_[i].setBounds(rail.removeFromTop(juce::jmin(h,rail.getHeight())).reduced(0,1));
     }

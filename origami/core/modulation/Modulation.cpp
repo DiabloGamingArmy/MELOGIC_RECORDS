@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
@@ -73,6 +74,8 @@ LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
 
 bool isGlobalDestination(ModDestination d) noexcept {return d>=ModDestination::Cutoff && d<=ModDestination::MasterGain;}
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
+    if((s.envActiveMask&~0x7u)!=0 || (s.envActiveMask&0x1u)==0) return false;
+    if((s.lfoActiveMask&~0xFu)!=0) return false;
     for(std::size_t i=0;i<4;++i) if(!validLfo(lfoSettings(s,i))) return false;
     if(!validEnvelope(s.env2) || !validEnvelope(s.env3)) return false;
     for(float c:s.env1Curves) if(!range(c,-1.f,1.f)) return false;
@@ -155,6 +158,7 @@ float FunctionGenerator::next(const FunctionSettings& s,double sampleRate) noexc
 
 void CompiledModulation::compile(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules,bool immediate) noexcept {
     const auto old=groups_;const auto oldCount=count_;count_=voiceCount_=0;voiceFilter_=false;groups_={};
+    filterEnabled_=state.filterEnabled;
     for(const auto& route:state.routes) {
         if(!route.id || !route.enabled || route.amount==0) continue;
         std::size_t slot=0;
@@ -215,6 +219,7 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
     }
 }
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
+    f.filterEnabled=filterEnabled_;
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];float n=modulationToNormalized(g.address.parameter,read(f,g));
         for(std::size_t s=0;s<globalSourceCount;++s) n+=g.weight[s]*sources[s];

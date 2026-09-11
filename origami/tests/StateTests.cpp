@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
@@ -57,11 +58,21 @@ void states() {
     a.setOscillatorModuleEnabled(1,false);a.setOscillatorModuleEnabled(third,false);
     a.removeOscillatorModule(removed);const auto fourth=a.addOscillatorModule();
     check(fourth>third,"monotonic identities after hole reuse");
+    auto dynamic=a.instrumentState();
+    dynamic.modulation.envActiveMask=0x3u;
+    dynamic.modulation.lfoActiveMask=0x5u;
+    dynamic.modulation.filterEnabled=false;
+    check(a.restoreInstrumentState(dynamic),"dynamic source/filter allocation state accepted");
+
     const auto saved=a.instrumentState();
     check(saved.oscillators[1].id==third && saved.oscillators[2].id==fourth,"creation order independent of slots");
     const auto bytes=encodeInstrumentState(saved);
     InstrumentState decoded;check(decodeInstrumentState(bytes.data(),bytes.size(),decoded),"decode v2");
     OrigamiEngine b;check(b.restoreInstrumentState(decoded),"restore full engine state");
+    check(decoded.modulation.envActiveMask==0x3u &&
+          decoded.modulation.lfoActiveMask==0x5u &&
+          !decoded.modulation.filterEnabled,
+          "dynamic source/filter allocation survives StateCodec v11");
     check(encodeInstrumentState(b.instrumentState())==bytes,"exact full model round trip");
     check(!b.oscillatorModuleEnabled(1) && !b.oscillatorModuleEnabled(third),"disabled modules preserved");
     check(!b.oscillatorModuleState(removed).id,"removed module absent");

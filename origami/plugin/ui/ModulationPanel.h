@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -70,6 +71,10 @@ private:
     void zoomBy(float,juce::Point<float> anchor = {});
 
     static ModSource sourceForTab(std::size_t) noexcept;
+    bool sourceTabActive(std::size_t) const noexcept;
+    void showAddSourceMenu();
+    void allocateSource(bool envelope);
+    void removeSelectedSource();
     std::optional<std::uint32_t> routeDotAt(juce::Point<float>) const noexcept;
     juce::Rectangle<float> routeDotBounds(std::size_t tabIndex,
                                           std::size_t dotIndex,

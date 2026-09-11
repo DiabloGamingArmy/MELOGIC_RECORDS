@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.1.0-env-hold-live-tracer
@@ -220,12 +221,18 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
 
         previousOscillatorSamples_[m]=std::clamp(oscillatorMix,-1.0f,1.0f);
 
-        const float sampleValue=moduleFilters_[m].next(oscillatorMix*envelopeValue,effective->filter)*module.level;
+        float sampleValue=oscillatorMix*envelopeValue;
+        if(effective->filterEnabled) {
+            sampleValue=moduleFilters_[m].next(sampleValue,effective->filter);
+            filtersQuiet=filtersQuiet && moduleFilters_[m].quiet();
+        } else {
+            moduleFilters_[m].reset();
+        }
+        sampleValue*=module.level;
         const double panAngle=(static_cast<double>(module.pan)+1)*.7853981633974483;
         outputs.left+=sampleValue*std::cos(panAngle);
         outputs.right+=sampleValue*std::sin(panAngle);
         outputs.mono+=sampleValue;
-        filtersQuiet=filtersQuiet && moduleFilters_[m].quiet();
     }
 
     if(envelope_.stage()==dsp::Envelope::Stage::Idle && filtersQuiet) reset();

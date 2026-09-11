@@ -1,7 +1,9 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 #pragma once
 #include "OrigamiStyle.h"
+#include "ModulationBindings.h"
 #include "core/ParameterRegistry.h"
 namespace mct::origami::ui {
 class MixerPanel final : public Panel {
@@ -13,7 +15,7 @@ public:
     using ParameterSetter=std::function<bool(mct::origami::ParameterId,float)>;
     using ParameterGetter=std::function<float(mct::origami::ParameterId)>;
     // mct-origami-core-controls-v18.2
-    FilterPanel(ParameterSetter setter={},ParameterGetter getter={});
+    FilterPanel(ParameterSetter setter={},ParameterGetter getter={},ModulationBindings bindings={});
     void resized() override;
     void syncFromModel();
 private:
@@ -21,6 +23,8 @@ private:
     void paintOverChildren(juce::Graphics&) override;
     ParameterSetter setter_;
     ParameterGetter getter_;
+    ModulationBindings bindings_;
+    bool filterEnabled_=true;
     juce::Slider cutoff_,resonance_;
     juce::Label cutoffLabel_,resonanceLabel_;
     juce::TextButton filter1_{"FILTER 1"},filterAdd_{"+"},filterRemove_{"-"};

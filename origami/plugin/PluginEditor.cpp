@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
@@ -41,7 +42,9 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner](unsigned id,bool enabled) -> bool { return owner.setUiOscillatorEnabled(id,enabled); },
           [&owner](unsigned id) -> bool { return owner.getUiOscillatorEnabled(id); },
           [&owner] { return owner.getUiInstrumentState(); }),
-      filter_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);}),
+      filter_([&owner](auto id,float v){return owner.setUiParameter(id,v);},
+              [&owner](auto id){return owner.getUiParameter(id);},
+              modulationBindings(owner)),
       modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner)),
       macros_(modulationBindings(owner)),matrix_(modulationBindings(owner)),
       performance_(owner.uiKeyboardState(),
@@ -224,6 +227,15 @@ void OrigamiAudioProcessorEditor::openKnobValueEditor(juce::Slider& slider) {
 
     dialog->addButton("Apply",1,juce::KeyPress(juce::KeyPress::returnKey));
     dialog->addButton("Cancel",0,juce::KeyPress(juce::KeyPress::escapeKey));
+
+    for(const auto& name:juce::StringArray{"Apply","Cancel"}) {
+        if(auto* button=dialog->getButton(name)) {
+            button->setColour(juce::TextButton::buttonColourId,juce::Colour(0xff151515));
+            button->setColour(juce::TextButton::buttonOnColourId,juce::Colour(0xff202020));
+            button->setColour(juce::TextButton::textColourOffId,juce::Colours::white);
+            button->setColour(juce::TextButton::textColourOnId,juce::Colours::white);
+        }
+    }
 
     auto safeSlider=juce::Component::SafePointer<juce::Slider>(&slider);
     dialog->enterModalState(

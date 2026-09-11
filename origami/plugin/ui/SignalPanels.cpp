@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -32,8 +33,9 @@ void MixerPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     }
 }
 // mct-origami-core-controls-v18.2
-FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter)
-    : Panel("FILTER"),setter_(std::move(setter)),getter_(std::move(getter)) {
+FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter,ModulationBindings bindings)
+    : Panel("FILTER"),setter_(std::move(setter)),getter_(std::move(getter)),
+      bindings_(std::move(bindings)) {
     for(auto* slider:{&cutoff_,&resonance_}) {
         addAndMakeVisible(slider);
         slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -70,21 +72,63 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter)
     cutoffLabel_.setText("CUTOFF",juce::dontSendNotification);
     resonanceLabel_.setText("RESONANCE",juce::dontSendNotification);
 
-    // V30 dynamic-filter UI scaffold. Filter 1 remains the exact same existing
-    // engine filter; +/- are collection affordances only in this layout pass.
     for(auto* button:{&filter1_,&filterAdd_,&filterRemove_}) addAndMakeVisible(*button);
     filter1_.setName("FILTER SOURCE TAB");
     filter1_.setClickingTogglesState(true);
     filter1_.setToggleState(true,juce::dontSendNotification);
     filter1_.setTooltip("Current engine Filter 1");
-    filterAdd_.setTooltip("Dynamic filter allocation — reserved for the next engine pass");
-    filterRemove_.setTooltip("Dynamic filter removal — reserved for the next engine pass");
+    filterAdd_.setTooltip("Add Filter 1 when the collection is empty");
+    filterRemove_.setTooltip("Remove/bypass Filter 1 and its Matrix routes");
+
+    filterAdd_.onClick=[this] {
+        if(!bindings_.snapshot || !bindings_.modulation) return;
+        auto mod=bindings_.snapshot().modulation;
+        if(mod.filterEnabled) return;
+        mod.filterEnabled=true;
+        if(bindings_.modulation(mod)) {
+            filterEnabled_=true;
+            syncFromModel(); resized(); repaint();
+        }
+    };
+
+    filterRemove_.onClick=[this] {
+        if(!bindings_.snapshot || !bindings_.modulation) return;
+        auto mod=bindings_.snapshot().modulation;
+        if(!mod.filterEnabled) return;
+        mod.filterEnabled=false;
+
+        std::array<ModRoute,ModulationState::capacity> compact{};
+        std::size_t write=0;
+        for(const auto& route:mod.routes) {
+            const bool targetsFilter=
+                route.destination.parameter==ModDestination::Cutoff ||
+                route.destination.parameter==ModDestination::Resonance;
+            if(route.id!=0 && !targetsFilter) compact[write++]=route;
+        }
+        mod.routes=compact;
+
+        if(bindings_.modulation(mod)) {
+            filterEnabled_=false;
+            syncFromModel(); resized(); repaint();
+        }
+    };
 }
 
 void FilterPanel::syncFromModel() {
-    if(!getter_) return;
-    if(!cutoff_.isMouseButtonDown()) cutoff_.setValue(getter_(ParameterId::Cutoff),juce::dontSendNotification);
-    if(!resonance_.isMouseButtonDown()) resonance_.setValue(getter_(ParameterId::Resonance),juce::dontSendNotification);
+    if(bindings_.snapshot) filterEnabled_=bindings_.snapshot().modulation.filterEnabled;
+
+    filter1_.setVisible(filterEnabled_);
+    filterRemove_.setEnabled(filterEnabled_);
+    filterAdd_.setEnabled(!filterEnabled_);
+    cutoff_.setVisible(filterEnabled_);
+    resonance_.setVisible(filterEnabled_);
+    cutoffLabel_.setVisible(filterEnabled_);
+    resonanceLabel_.setVisible(filterEnabled_);
+
+    if(getter_) {
+        if(!cutoff_.isMouseButtonDown()) cutoff_.setValue(getter_(ParameterId::Cutoff),juce::dontSendNotification);
+        if(!resonance_.isMouseButtonDown()) resonance_.setValue(getter_(ParameterId::Resonance),juce::dontSendNotification);
+    }
     repaint();
 }
 void FilterPanel::resized() {
@@ -101,7 +145,8 @@ void FilterPanel::resized() {
     collectionControls.removeFromLeft(3);
     filterAdd_.setBounds(collectionControls);
     rail.removeFromBottom(5);
-    filter1_.setBounds(rail.removeFromTop(35).reduced(0,1));
+    filter1_.setBounds(filterEnabled_ ? rail.removeFromTop(35).reduced(0,1)
+                                      : juce::Rectangle<int>{});
 
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     const int w=controls.getWidth()/6;
@@ -122,6 +167,12 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
     well(g,rail);
     text(g,"FILTERS",rail.removeFromTop(18).reduced(5,0),8.0f,Palette::muted());
+
+    if(!filterEnabled_) {
+        text(g,"NO FILTER — PRESS + TO ADD FILTER 1",body.reduced(12),10.5f,
+             Palette::muted(),juce::Justification::centred);
+        return;
+    }
 
     text(g,"LOW-PASS",{body.getX()+4,5,100,24},10,Palette::muted());
     text(g,"ROUTING",{body.getRight()-96,5,90,24},9,Palette::muted(),juce::Justification::centredRight);

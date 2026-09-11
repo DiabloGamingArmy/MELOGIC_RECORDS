@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
@@ -53,6 +54,12 @@ struct ModulationState {
     std::array<float,4> macros{};
     std::array<ModRoute,capacity> routes{};
     std::uint32_t nextRouteId=1;
+
+    // V32 runtime collection state. Existing DSP storage remains bounded at
+    // 3 ENV / 4 LFO / 1 Filter while collection semantics come online.
+    std::uint32_t envActiveMask=0x7u;
+    std::uint32_t lfoActiveMask=0xFu;
+    bool filterEnabled=true;
 };
 
 const LfoSettings& lfoSettings(const ModulationState&,std::size_t index) noexcept;
@@ -111,6 +118,7 @@ struct ModulationFrame {
     std::array<OscillatorModuleState,16> modules{};
     float cutoff=8000,resonance=.1f,master=.2f;
     dsp::LowPassCoefficients filter{};
+    bool filterEnabled=true;
     std::array<float,ModulationState::capacity> normalized{};
 };
 
@@ -136,5 +144,6 @@ private:
     std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
     std::size_t count_=0,voiceCount_=0;
     bool voiceFilter_=false;
+    bool filterEnabled_=true;
 };
 }

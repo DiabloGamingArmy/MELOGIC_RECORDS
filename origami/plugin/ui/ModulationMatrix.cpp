@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-modulation-completion-v24.0.1
@@ -14,14 +15,14 @@ public:
             source_.addNativeItem(group,label,static_cast<int>(source));
         };
 
-        sourceItem("Envelopes","ENV 1",ModSource::Env1);
-        sourceItem("Envelopes","ENV 2",ModSource::Env2);
-        sourceItem("Envelopes","ENV 3",ModSource::Env3);
+        if(state.modulation.envActiveMask&0x1u) sourceItem("Envelopes","ENV 1",ModSource::Env1);
+        if(state.modulation.envActiveMask&0x2u) sourceItem("Envelopes","ENV 2",ModSource::Env2);
+        if(state.modulation.envActiveMask&0x4u) sourceItem("Envelopes","ENV 3",ModSource::Env3);
 
-        sourceItem("LFOs","LFO 1",ModSource::Lfo1);
-        sourceItem("LFOs","LFO 2",ModSource::Lfo2);
-        sourceItem("LFOs","LFO 3",ModSource::Lfo3);
-        sourceItem("LFOs","LFO 4",ModSource::Lfo4);
+        if(state.modulation.lfoActiveMask&0x1u) sourceItem("LFOs","LFO 1",ModSource::Lfo1);
+        if(state.modulation.lfoActiveMask&0x2u) sourceItem("LFOs","LFO 2",ModSource::Lfo2);
+        if(state.modulation.lfoActiveMask&0x4u) sourceItem("LFOs","LFO 3",ModSource::Lfo3);
+        if(state.modulation.lfoActiveMask&0x8u) sourceItem("LFOs","LFO 4",ModSource::Lfo4);
 
         sourceItem("Macros","MACRO 1",ModSource::Macro1);
         sourceItem("Macros","MACRO 2",ModSource::Macro2);
@@ -42,8 +43,10 @@ public:
             destination_.addNativeItem(group,label,static_cast<int>(addresses_.size()));
         };
 
-        add("Filter",{ModDestination::Cutoff,0},"CUTOFF");
-        add("Filter",{ModDestination::Resonance,0},"RESONANCE");
+        if(state.modulation.filterEnabled) {
+            add("Filter",{ModDestination::Cutoff,0},"CUTOFF");
+            add("Filter",{ModDestination::Resonance,0},"RESONANCE");
+        }
         add("Global",{ModDestination::MasterGain,0},"MASTER GAIN");
 
         struct OscDestinationSpec { ModDestination destination; const char* label; };
@@ -112,10 +115,17 @@ void ModulationMatrix::syncFromModel() {
     if(!bindings_.snapshot) return;const auto state=bindings_.snapshot();
     std::vector<unsigned> modules,ids;for(const auto& m:state.oscillators) if(m.id) modules.push_back(m.id);
     for(const auto& r:state.modulation.routes) if(r.id) ids.push_back(r.id);
-    bool rebuild=modules!=moduleIds_ || ids.size()!=rows_.size();
+    bool rebuild=modules!=moduleIds_ || ids.size()!=rows_.size() ||
+                 envMask_!=state.modulation.envActiveMask ||
+                 lfoMask_!=state.modulation.lfoActiveMask ||
+                 filterEnabled_!=state.modulation.filterEnabled;
     for(std::size_t i=0;!rebuild && i<ids.size();++i) rebuild=rows_[i]->id()!=ids[i];
     if(rebuild) {
-        moduleIds_=modules;rows_.clear();
+        moduleIds_=modules;
+        envMask_=state.modulation.envActiveMask;
+        lfoMask_=state.modulation.lfoActiveMask;
+        filterEnabled_=state.modulation.filterEnabled;
+        rows_.clear();
         for(const auto& route:state.modulation.routes) if(route.id) {
             auto row=std::make_unique<Row>(route,state,bindings_);content_.addAndMakeVisible(*row);rows_.push_back(std::move(row));
         }

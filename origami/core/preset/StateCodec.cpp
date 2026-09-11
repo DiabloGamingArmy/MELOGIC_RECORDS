@@ -1,3 +1,4 @@
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -27,7 +28,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(10);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(11);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -64,6 +65,9 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     for(const auto* e:{&mod.env2,&mod.env3}) {
         w.real(e->attackCurve);w.real(e->decayCurve);w.real(e->releaseCurve);
     }
+    w.word(mod.envActiveMask);
+    w.word(mod.lfoActiveMask);
+    w.word(mod.filterEnabled?1u:0u);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -71,7 +75,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>10) return false;
+    if(version<1 || version>11) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -137,6 +141,13 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         for(auto* e:{&s.modulation.env2,&s.modulation.env3}) {
             e->attackCurve=r.real();e->decayCurve=r.real();e->releaseCurve=r.real();
         }
+    }
+    if(version>=11) {
+        s.modulation.envActiveMask=r.word();
+        s.modulation.lfoActiveMask=r.word();
+        const auto filterEnabled=r.word();
+        if(filterEnabled>1u) return false;
+        s.modulation.filterEnabled=filterEnabled==1u;
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;
