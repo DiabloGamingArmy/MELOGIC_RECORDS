@@ -1,3 +1,4 @@
+// mct-origami-v30.0.1-env-toolbar-bottom
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.1.2-env-underbeam-tail
@@ -519,19 +520,39 @@ void ModulationPanel::resized() {
 
     auto controls=body.removeFromBottom(62);
     if(selected_<=2) {
+        // V30.0.1: ENV utility controls belong with the parameter controls, not
+        // inside the graph viewport. Keep ATTACK/DECAY/SUSTAIN/RELEASE on the
+        // left of the bottom strip and dock SNAP / grid / tempo / zoom to their
+        // right. This gives the envelope graph its full vertical canvas.
+        constexpr int gap=4;
+        const bool tempoVisible=gridModeValue_==GridMode::Tempo;
+        const int toolbarWidth=
+            58 + gap + 70 + gap +
+            (tempoVisible ? 86 + gap : 0) +
+            28 + 2 + 28;
+
+        auto toolbar=controls.removeFromRight(
+            juce::jmin(toolbarWidth+8,juce::jmax(0,controls.getWidth()/2)));
+        controls.removeFromRight(6);
+        toolbar=toolbar.reduced(4,8);
+
         const int cell=controls.getWidth()/4;
         for(std::size_t i=0;i<4;++i)
             place(controls.removeFromLeft(cell),envSliders_[i],envLabels_[i]);
 
-        body.removeFromTop(17);
-        auto toolbar=body.removeFromTop(26).reduced(4,2);
-        snap_.setBounds(toolbar.removeFromLeft(58));toolbar.removeFromLeft(4);
-        gridMode_.setBounds(toolbar.removeFromLeft(70));toolbar.removeFromLeft(4);
-        if(gridModeValue_==GridMode::Tempo) {
-            tempo_.setBounds(toolbar.removeFromLeft(86));toolbar.removeFromLeft(4);
+        snap_.setBounds(toolbar.removeFromLeft(58));toolbar.removeFromLeft(gap);
+        gridMode_.setBounds(toolbar.removeFromLeft(70));toolbar.removeFromLeft(gap);
+        if(tempoVisible) {
+            tempo_.setBounds(toolbar.removeFromLeft(86));toolbar.removeFromLeft(gap);
+        } else {
+            tempo_.setBounds({});
         }
         zoomOut_.setBounds(toolbar.removeFromLeft(28));toolbar.removeFromLeft(2);
         zoomIn_.setBounds(toolbar.removeFromLeft(28));
+
+        // Only the caption remains above the graph. Horizontal scrolling stays
+        // immediately below the graph, preserving the existing zoom/scroll math.
+        body.removeFromTop(17);
         envScroll_.setBounds(body.removeFromBottom(12).reduced(2,0));
         envCanvas_=body.reduced(10,6).toFloat();
         updateScrollbar();
