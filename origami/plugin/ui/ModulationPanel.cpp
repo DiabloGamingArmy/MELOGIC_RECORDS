@@ -1,3 +1,4 @@
+// mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.1-env-toolbar-bottom
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
@@ -60,8 +61,10 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         auto& tab=tabs_[static_cast<std::size_t>(i)];
         addAndMakeVisible(tab);
         tab.setButtonText(names[i]);
+        tab.setName("MOD SOURCE TAB "+juce::String(i+1));
         tab.setClickingTogglesState(true);
         tab.setToggleState(i==0,juce::dontSendNotification);
+        tab.addMouseListener(this,false);
         tab.onClick=[this,i]{
             selected_=i;
             for(std::size_t j=0;j<tabs_.size();++j)
@@ -151,6 +154,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 ModulationPanel::~ModulationPanel() {
     stopTimer();
     envScroll_.removeListener(this);
+    for(auto& tab:tabs_) tab.removeMouseListener(this);
 }
 
 dsp::EnvelopeSettings ModulationPanel::currentEnvelope() const {
@@ -349,12 +353,31 @@ ModulationPanel::DragTarget ModulationPanel::hitHandle(juce::Point<float> p) con
 }
 
 void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
+    const auto local=e.getEventRelativeTo(this);
+    if(const auto routeId=routeDotAt(local.position)) {
+        routeDragId_=*routeId;
+        routeDragStartY_=local.position.y;
+        routeDragStartAmount_=0.0f;
+        for(const auto& route:cached_.routes)
+            if(route.id==routeDragId_) {routeDragStartAmount_=route.amount;break;}
+        return;
+    }
+    if(e.eventComponent!=this) return;
+
     if(selected_>2 || !envCanvas_.contains(e.position)) return;
     dragTarget_=hitHandle(e.position);
     dragStart_=e.position;dragEnvelope_=currentEnvelope();dragCurves_=currentCurves();
 }
 
 void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
+    if(routeDragId_!=0) {
+        const auto local=e.getEventRelativeTo(this);
+        const float amount=juce::jlimit(-1.0f,1.0f,
+            routeDragStartAmount_+(routeDragStartY_-local.position.y)/42.0f);
+        setRouteAmount(routeDragId_,amount);
+        return;
+    }
+
     if(dragTarget_==DragTarget::None || selected_>2) return;
     auto env=dragEnvelope_;auto curves=dragCurves_;
     const double t=snapped(xToTime(e.position.x));
@@ -404,7 +427,10 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
     updateScrollbar();repaint();
 }
 
-void ModulationPanel::mouseUp(const juce::MouseEvent&) {dragTarget_=DragTarget::None;}
+void ModulationPanel::mouseUp(const juce::MouseEvent&) {
+    dragTarget_=DragTarget::None;
+    routeDragId_=0;
+}
 
 void ModulationPanel::mouseWheelMove(const juce::MouseEvent& e,
                                      const juce::MouseWheelDetails& w) {
@@ -474,6 +500,7 @@ juce::Point<float> ModulationPanel::tracerPoint(const EnvelopeRuntimeInfo& r,
 
 void ModulationPanel::timerCallback() {
     constexpr float dt=1.0f/60.0f;
+    updateSourceHistory(dt);
     for(auto& s:traceTail_) s.age+=dt;
     while(!traceTail_.empty() && traceTail_.front().age>0.34f) traceTail_.pop_front();
 
@@ -529,7 +556,7 @@ void ModulationPanel::resized() {
     sourceAdd_.setBounds(collectionControls);
 
     rail.removeFromBottom(5);
-    const int rowHeight=juce::jmax(20,juce::jmin(25,rail.getHeight()/9));
+    const int rowHeight=juce::jmax(26,juce::jmin(34,rail.getHeight()/9));
     for(auto& tab:tabs_) {
         tab.setBounds(rail.removeFromTop(rowHeight).reduced(0,1));
     }
@@ -598,6 +625,7 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     // The rail is intentionally structural rather than another tab bar. It is
     // the future dynamic ENV/LFO collection surface.
     well(g,rail);
+    paintSourceHistoryBackgrounds(g);
     text(g,"SOURCES",rail.removeFromTop(18).reduced(5,0),8.0f,Palette::muted());
 
     body.removeFromBottom(66);auto caption=body.removeFromTop(17);
@@ -760,6 +788,233 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
         g.setColour(signalSurfaceColour(.46f,.22f));g.fillPath(fill);
     }
     g.setColour(Palette::accent());g.strokePath(p,juce::PathStrokeType(1.5f));
+}
+
+
+ModSource ModulationPanel::sourceForTab(std::size_t index) noexcept {
+    static constexpr std::array<ModSource,9> sources{
+        ModSource::Env1,ModSource::Env2,ModSource::Env3,
+        ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
+        ModSource::Function,ModSource::Random
+    };
+    return sources[juce::jmin(index,sources.size()-1)];
+}
+
+juce::Rectangle<float> ModulationPanel::routeDotBounds(
+    std::size_t tabIndex,std::size_t dotIndex,std::size_t dotCount) const noexcept {
+    if(tabIndex>=tabs_.size() || dotCount==0) return {};
+    auto b=tabs_[tabIndex].getBounds().toFloat().reduced(5.0f,1.5f);
+    auto dotArea=b.withTrimmedTop(16.0f);
+    constexpr float diameter=8.5f;
+    constexpr float gap=4.0f;
+    const auto shown=juce::jmin<std::size_t>(dotCount,6);
+    const float total=shown*diameter+(shown>0 ? (shown-1)*gap : 0.0f);
+    const float x0=dotArea.getCentreX()-total*0.5f;
+    return {x0+static_cast<float>(dotIndex)*(diameter+gap),
+            dotArea.getCentreY()-diameter*0.5f,diameter,diameter};
+}
+
+std::optional<std::uint32_t> ModulationPanel::routeDotAt(
+    juce::Point<float> point) const noexcept {
+    for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
+        const auto source=sourceForTab(tabIndex);
+        std::array<const ModRoute*,ModulationState::capacity> matches{};
+        std::size_t count=0;
+        for(const auto& route:cached_.routes)
+            if(route.id!=0 && route.enabled && route.source==source)
+                matches[count++]=&route;
+
+        const auto shown=juce::jmin<std::size_t>(count,6);
+        for(std::size_t dot=0;dot<shown;++dot)
+            if(routeDotBounds(tabIndex,dot,count).expanded(2.0f).contains(point))
+                return matches[dot]->id;
+    }
+    return std::nullopt;
+}
+
+void ModulationPanel::setRouteAmount(std::uint32_t routeId,float amount) {
+    if(routeId==0 || !bindings_.route) return;
+    for(auto& route:cached_.routes) {
+        if(route.id!=routeId) continue;
+        auto updated=route;
+        updated.amount=juce::jlimit(-1.0f,1.0f,amount);
+        if(bindings_.route(updated)) {
+            route=updated;
+            repaint();
+        }
+        return;
+    }
+}
+
+void ModulationPanel::updateSourceHistory(float) {
+    if(bindings_.snapshot)
+        cached_=bindings_.snapshot().modulation;
+
+    if(bindings_.envelopeTrace)
+        sourceTrace_=bindings_.envelopeTrace();
+
+    const bool newNote=sourceTrace_.active &&
+                       sourceTrace_.order!=0 &&
+                       sourceTrace_.order!=sourceTraceOrder_;
+    if(newNote) {
+        sourceTraceOrder_=sourceTrace_.order;
+        for(std::size_t i=0;i<sourceMonitorLfos_.size();++i)
+            if(lfoSettings(cached_,i).mode==LfoMode::NoteRetrigger)
+                sourceMonitorLfos_[i].reset();
+    }
+
+    std::array<float,9> samples{};
+    for(std::size_t i=0;i<3;++i)
+        samples[i]=sourceTrace_.active
+            ? juce::jlimit(0.0f,1.0f,sourceTrace_.envelopes[i].value)
+            : 0.0f;
+
+    for(std::size_t i=0;i<4;++i)
+        samples[3+i]=std::abs(sourceMonitorLfos_[i].next(lfoSettings(cached_,i),60.0));
+
+    samples[7]=std::abs(sourceMonitorFunction_.next(cached_.function,60.0));
+    samples[8]=std::abs(sourceMonitorRandom_.next(cached_.random,60.0));
+
+    for(std::size_t i=0;i<sourceHistory_.size();++i) {
+        auto& history=sourceHistory_[i];
+        history.push_back(juce::jlimit(0.0f,1.0f,samples[i]));
+        while(history.size()>sourceHistoryLength_) history.pop_front();
+    }
+}
+
+void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
+    const auto red=signalSourceColour();
+    const auto white=Palette::text();
+
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        auto b=tabs_[i].getBounds().toFloat().reduced(0.75f);
+        if(b.isEmpty()) continue;
+
+        g.setColour(juce::Colours::black.withAlpha(0.86f));
+        g.fillRoundedRectangle(b,3.5f);
+
+        const auto& history=sourceHistory_[i];
+        if(history.empty()) continue;
+
+        const std::size_t count=history.size();
+        const float strip=juce::jmax(1.0f,b.getWidth()/static_cast<float>(sourceHistoryLength_));
+        const float right=b.getRight();
+
+        for(std::size_t h=0;h<count;++h) {
+            const float magnitude=juce::jlimit(0.0f,1.0f,history[h]);
+            auto colour=magnitude<=0.5f
+                ? juce::Colours::black.interpolatedWith(red,magnitude*2.0f)
+                : red.interpolatedWith(white,(magnitude-0.5f)*2.0f);
+
+            const float x=right-strip*static_cast<float>(count-h);
+            g.setColour(colour.withAlpha(0.34f+0.26f*magnitude));
+            g.fillRect(juce::Rectangle<float>(x,b.getY(),strip+0.5f,b.getHeight()));
+        }
+    }
+}
+
+void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
+    for(std::size_t tabIndex=0;tabIndex<tabs_.size();++tabIndex) {
+        const auto source=sourceForTab(tabIndex);
+        std::array<const ModRoute*,ModulationState::capacity> matches{};
+        std::size_t count=0;
+        for(const auto& route:cached_.routes)
+            if(route.id!=0 && route.enabled && route.source==source)
+                matches[count++]=&route;
+
+        if(count==0) continue;
+
+        const auto tab=tabs_[tabIndex].getBounds().toFloat().reduced(4.0f,1.0f);
+        const float dividerY=tab.getY()+15.0f;
+        g.setColour(Palette::borderStrong().withAlpha(0.58f));
+        g.drawLine(tab.getX()+4.0f,dividerY,tab.getRight()-4.0f,dividerY,0.75f);
+
+        const auto shown=juce::jmin<std::size_t>(count,6);
+        for(std::size_t dot=0;dot<shown;++dot) {
+            const auto circle=routeDotBounds(tabIndex,dot,count);
+            const float amount=juce::jlimit(-1.0f,1.0f,matches[dot]->amount);
+            const float magnitude=std::abs(amount);
+
+            g.setColour(Palette::background().withAlpha(0.92f));
+            g.fillEllipse(circle);
+            g.setColour(Palette::borderStrong());
+            g.drawEllipse(circle,0.9f);
+
+            if(magnitude>0.001f) {
+                const auto c=circle.getCentre();
+                const float start=-juce::MathConstants<float>::halfPi;
+                const float finish=start+juce::MathConstants<float>::twoPi*magnitude;
+                juce::Path pie;
+                pie.startNewSubPath(c);
+                pie.lineTo(c.x+std::cos(start)*circle.getWidth()*0.5f,
+                           c.y+std::sin(start)*circle.getHeight()*0.5f);
+                pie.addCentredArc(c.x,c.y,circle.getWidth()*0.5f,circle.getHeight()*0.5f,
+                                  0.0f,start,finish,false);
+                pie.closeSubPath();
+
+                auto colour=signalSourceColour();
+                if(amount<0.0f) colour=colour.darker(0.34f);
+                g.setColour(colour.withAlpha(0.94f));
+                g.fillPath(pie);
+            }
+
+            g.setColour(Palette::text().withAlpha(0.82f));
+            g.fillEllipse(circle.withSizeKeepingCentre(1.7f,1.7f));
+        }
+
+        if(count>shown) {
+            g.setColour(Palette::muted());
+            g.setFont(juce::FontOptions(7.0f));
+            g.drawText("+"+juce::String(static_cast<int>(count-shown)),
+                       tab.getRight()-18.0f,dividerY+1.0f,16.0f,11.0f,
+                       juce::Justification::centred);
+        }
+    }
+}
+
+void ModulationPanel::paintEnvelopeTimeMarkers(juce::Graphics& g) const {
+    if(selected_>2 || envCanvas_.isEmpty()) return;
+
+    double majorStep=1.0;
+    if(gridModeValue_==GridMode::Tempo)
+        majorStep=60.0/std::max(1.0,tempo_.getValue());
+    else if(gridModeValue_==GridMode::Daw)
+        majorStep=gridStepSeconds();
+
+    majorStep=std::max(0.01,majorStep);
+    const double visibleEnd=scrollSeconds_+
+        static_cast<double>(envCanvas_.getWidth())/pixelsPerSecond_;
+    double t=std::ceil(scrollSeconds_/majorStep)*majorStep;
+    float lastLabelX=-1000.0f;
+    int index=static_cast<int>(std::llround(t/majorStep));
+
+    g.setFont(juce::FontOptions(8.0f));
+    for(;t<=visibleEnd+1.0e-8;t+=majorStep,++index) {
+        const float x=timeToX(t);
+        if(x<envCanvas_.getX()-1.0f || x>envCanvas_.getRight()+1.0f) continue;
+
+        g.setColour(Palette::borderStrong().withAlpha(0.60f));
+        g.drawLine(x,envCanvas_.getY(),x,envCanvas_.getY()+5.0f,0.8f);
+
+        if(x-lastLabelX<34.0f) continue;
+        juce::String label;
+        if(gridModeValue_==GridMode::Seconds)
+            label=juce::String(t,t<10.0?1:0)+"s";
+        else if(gridModeValue_==GridMode::Tempo)
+            label=juce::String(index)+"b";
+        else
+            label=juce::String(index);
+
+        g.setColour(Palette::muted().withAlpha(0.82f));
+        g.drawText(label,juce::Rectangle<float>(x+3.0f,envCanvas_.getY()+2.0f,31.0f,10.0f),
+                   juce::Justification::centredLeft);
+        lastLabelX=x;
+    }
+}
+
+void ModulationPanel::paintOverChildren(juce::Graphics& g) {
+    paintSourceRouteOverlays(g);
+    paintEnvelopeTimeMarkers(g);
 }
 
 MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {

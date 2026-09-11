@@ -1,3 +1,4 @@
+// mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v28.1.0-env-hold-live-tracer
@@ -7,6 +8,7 @@
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
 #include <deque>
+#include <optional>
 
 namespace mct::origami::ui {
 
@@ -64,6 +66,18 @@ private:
     void updateScrollbar();
     void zoomBy(float,juce::Point<float> anchor = {});
 
+    static ModSource sourceForTab(std::size_t) noexcept;
+    std::optional<std::uint32_t> routeDotAt(juce::Point<float>) const noexcept;
+    juce::Rectangle<float> routeDotBounds(std::size_t tabIndex,
+                                          std::size_t dotIndex,
+                                          std::size_t dotCount) const noexcept;
+    void setRouteAmount(std::uint32_t routeId,float amount);
+    void updateSourceHistory(float dt);
+    void paintSourceHistoryBackgrounds(juce::Graphics&);
+    void paintSourceRouteOverlays(juce::Graphics&);
+    void paintEnvelopeTimeMarkers(juce::Graphics&) const;
+    void paintOverChildren(juce::Graphics&) override;
+
     std::array<juce::TextButton,9> tabs_;
     juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
     juce::Rectangle<int> sourceRail_{};
@@ -96,6 +110,18 @@ private:
     EnvelopeTraceSnapshot trace_{};
     std::deque<TraceSample> traceTail_;
     std::uint64_t lastTraceOrder_=0;
+
+    static constexpr std::size_t sourceHistoryLength_=72;
+    std::array<std::deque<float>,9> sourceHistory_{};
+    EnvelopeTraceSnapshot sourceTrace_{};
+    std::uint64_t sourceTraceOrder_=0;
+    std::array<Lfo,4> sourceMonitorLfos_{};
+    RandomGenerator sourceMonitorRandom_{};
+    FunctionGenerator sourceMonitorFunction_{};
+
+    std::uint32_t routeDragId_=0;
+    float routeDragStartY_=0.0f;
+    float routeDragStartAmount_=0.0f;
 
     DragTarget dragTarget_=DragTarget::None;
     juce::Point<float> dragStart_{};

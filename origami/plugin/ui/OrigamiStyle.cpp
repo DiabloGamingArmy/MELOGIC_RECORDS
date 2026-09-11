@@ -1,3 +1,4 @@
+// mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v29.2.0-randsparse-reseed-routefix
@@ -42,6 +43,17 @@ OrigamiLookAndFeel::OrigamiLookAndFeel() {
 void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& button,const juce::Colour&,bool over,bool down) {
     const auto bounds=button.getLocalBounds().toFloat().reduced(.5f);
     const bool active=button.getToggleState();
+
+    if(button.getName().startsWith("MOD SOURCE TAB")) {
+        if(over || down) {
+            g.setColour(Palette::raised().withAlpha(down?0.28f:0.16f));
+            g.fillRoundedRectangle(bounds,3.5f);
+        }
+        g.setColour(active ? signalSourceColour()
+                           : Palette::borderSoft().withAlpha(0.88f));
+        g.drawRoundedRectangle(bounds,3.5f,active?1.25f:0.8f);
+        return;
+    }
     const bool oscillatorPower=button.getName().startsWithIgnoreCase("Power OSC");
     auto fill=active?Palette::raised():Palette::inset();
     if(over) fill=fill.brighter(.08f);
@@ -58,6 +70,14 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
 }
 void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& button,bool,bool) {
     auto bounds=button.getLocalBounds().reduced(3);
+
+    if(button.getName().startsWith("MOD SOURCE TAB")) {
+        auto title=button.getLocalBounds().removeFromTop(15).reduced(4,1);
+        text(g,button.getButtonText(),title,8.2f,
+             button.isEnabled()?Palette::text():Palette::muted(),
+             juce::Justification::centred);
+        return;
+    }
 
     // Custom dice icon for seeded spectral re-randomization. Drawing it
     // geometrically avoids Unicode/font fallback issues.
