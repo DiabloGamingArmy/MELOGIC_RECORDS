@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
@@ -20,7 +21,8 @@ enum class OscProcessType : std::uint32_t {
     PhaseShift=21, SineWarp=22, Ripple=23, Twist=24, ZigZag=25, Staircase=26, Reverse=27,
     Quantize4=28, Quantize8=29, Quantize16=30, Scramble2=31, Scramble4=32,
     Chaos=33, Window=34, PulseWarp=35, Shred=36,
-    Count=37
+    RandAmp=37, RandSparse=38, OddFocus=39, SpectralComb=40, HarmonicTilt=41, FormantPeaks=42,
+    Count=43
 };
 
 constexpr bool validOscProcessType(OscProcessType type) noexcept {
@@ -68,6 +70,12 @@ constexpr bool oscProcessIsBipolar(OscProcessType type) noexcept {
         case OscProcessType::Scramble2:
         case OscProcessType::Scramble4:
         case OscProcessType::Chaos:
+        case OscProcessType::RandAmp:
+        case OscProcessType::RandSparse:
+        case OscProcessType::OddFocus:
+        case OscProcessType::SpectralComb:
+        case OscProcessType::HarmonicTilt:
+        case OscProcessType::FormantPeaks:
             return false;
 
         case OscProcessType::Count:
@@ -80,9 +88,29 @@ constexpr float oscProcessAmountMinimum(OscProcessType type) noexcept {
     return oscProcessIsBipolar(type) ? -1.0f : 0.0f;
 }
 
+constexpr bool oscProcessIsSpectral(OscProcessType type) noexcept {
+    switch(type) {
+        case OscProcessType::RandAmp:
+        case OscProcessType::RandSparse:
+        case OscProcessType::OddFocus:
+        case OscProcessType::SpectralComb:
+        case OscProcessType::HarmonicTilt:
+        case OscProcessType::FormantPeaks:
+            return true;
+        default:
+            return false;
+    }
+}
+constexpr bool oscProcessUsesSeed(OscProcessType type) noexcept {
+    return type==OscProcessType::RandAmp || type==OscProcessType::RandSparse;
+}
+
 const char* oscProcessName(OscProcessType type) noexcept;
 const char* oscProcessCategory(OscProcessType type) noexcept;
 double processOscillatorPhase(double phase,OscProcessType type,float amount) noexcept;
+void renderProcessedFrame2048(const float* input,float* output,
+                              OscProcessType process1,float amount1,std::uint32_t seed1,
+                              OscProcessType process2,float amount2,std::uint32_t seed2) noexcept;
 // Owned, immutable during rendering. Samples contain one cycle (no guard sample).
 // Frames share band limits and table length. Future importers can populate this
 // representation off-thread; hosts must keep the bank alive until processing stops.
@@ -102,7 +130,9 @@ public:
                OscProcessType process1=OscProcessType::Off,float amount1=0.0f,
                OscProcessType process2=OscProcessType::Off,float amount2=0.0f,
                double phaseOffsetCycles=0.0,
-               double phaseSkew=0.0) noexcept;
+               double phaseSkew=0.0,
+               std::uint32_t process1Seed=0x13579bdfu,
+               std::uint32_t process2Seed=0x2468ace1u) noexcept;
     double phase() const noexcept { return phase_; }
 private:
     double phase_ = 0;

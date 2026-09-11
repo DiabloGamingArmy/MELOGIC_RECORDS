@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
@@ -98,8 +99,10 @@ struct OscillatorModuleState {
     float level = 0.7f;
     dsp::OscProcessType process1 = dsp::OscProcessType::BendPlus;
     float process1Amount = 0.0f;
+    std::uint32_t process1Seed = 0x13579bdfu;
     dsp::OscProcessType process2 = dsp::OscProcessType::Off;
     float process2Amount = 0.0f;
+    std::uint32_t process2Seed = 0x2468ace1u;
 
     // Two serial cross-oscillator routing slots.
     // sourceId==0 means no source / route disabled.
@@ -231,8 +234,10 @@ private:
         std::atomic<float> detuneCents{12},pan{0},level{0.7f};
         std::atomic<dsp::OscProcessType> process1{dsp::OscProcessType::BendPlus};
         std::atomic<float> process1Amount{0.0f};
+        std::atomic<std::uint32_t> process1Seed{0x13579bdfu};
         std::atomic<dsp::OscProcessType> process2{dsp::OscProcessType::Off};
         std::atomic<float> process2Amount{0.0f};
+        std::atomic<std::uint32_t> process2Seed{0x2468ace1u};
         std::atomic<OscillatorModuleId> route1SourceId{0};
         std::atomic<OscRouteType> route1Type{OscRouteType::Off};
         std::atomic<float> route1Amount{0.0f};
@@ -295,8 +300,10 @@ private:
         s.level=a.level.load(std::memory_order_relaxed);
         s.process1=a.process1.load(std::memory_order_relaxed);
         s.process1Amount=a.process1Amount.load(std::memory_order_relaxed);
+        s.process1Seed=a.process1Seed.load(std::memory_order_relaxed);
         s.process2=a.process2.load(std::memory_order_relaxed);
         s.process2Amount=a.process2Amount.load(std::memory_order_relaxed);
+        s.process2Seed=a.process2Seed.load(std::memory_order_relaxed);
         s.route1SourceId=a.route1SourceId.load(std::memory_order_relaxed);
         s.route1Type=a.route1Type.load(std::memory_order_relaxed);
         s.route1Amount=a.route1Amount.load(std::memory_order_relaxed);
@@ -321,8 +328,10 @@ private:
         a.level.store(s.level,std::memory_order_relaxed);
         a.process1.store(s.process1,std::memory_order_relaxed);
         a.process1Amount.store(s.process1Amount,std::memory_order_relaxed);
+        a.process1Seed.store(s.process1Seed,std::memory_order_relaxed);
         a.process2.store(s.process2,std::memory_order_relaxed);
         a.process2Amount.store(s.process2Amount,std::memory_order_relaxed);
+        a.process2Seed.store(s.process2Seed,std::memory_order_relaxed);
         a.route1SourceId.store(s.route1SourceId,std::memory_order_relaxed);
         a.route1Type.store(s.route1Type,std::memory_order_relaxed);
         a.route1Amount.store(s.route1Amount,std::memory_order_relaxed);

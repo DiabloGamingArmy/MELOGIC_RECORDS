@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.2.0-native-menu-include-repair
 // mct-origami-v26.2.0-objc-global-scope-repair
@@ -79,7 +80,8 @@ void showNativeOscProcessMenu(juce::Component& anchor,
         "Sync / Repeat",
         "Fold / Reflect",
         "Phase / Motion",
-        "Digital / Experimental"
+        "Digital / Experimental",
+        "Spectral / Harmonics"
     };
 
     for(const char* category:categories) {
@@ -123,6 +125,87 @@ void showNativeOscProcessMenu(juce::Component& anchor,
        selected<static_cast<NSInteger>(dsp::OscProcessType::Count) &&
        onSelected) {
         onSelected(static_cast<dsp::OscProcessType>(selected));
+    }
+
+#if !__has_feature(objc_arc)
+    [menu release];
+    [target release];
+#endif
+}
+
+
+void showNativeOscRouteMenu(juce::Component& anchor,
+                            OscillatorModuleId targetId,
+                            OscillatorModuleId currentSource,
+                            OscRouteType currentType,
+                            const InstrumentState& state,
+                            std::function<void(OscillatorModuleId,OscRouteType)> onSelected) {
+    auto* peer=anchor.getPeer();
+    if(peer==nullptr || peer->getNativeHandle()==nullptr) return;
+    NSView* view=(__bridge NSView*)peer->getNativeHandle();
+    if(view==nil || view.window==nil) return;
+
+    MCTOrigamiProcessMenuTarget* target=[[MCTOrigamiProcessMenuTarget alloc] init];
+    NSMenu* menu=[[NSMenu alloc] initWithTitle:@"OSC ROUTING"];
+    [menu setAutoenablesItems:NO];
+
+    NSMenuItem* off=[[NSMenuItem alloc] initWithTitle:@"Off" action:@selector(chooseProcess:) keyEquivalent:@""];
+    [off setTarget:target];[off setTag:1];
+    [off setState:currentType==OscRouteType::Off ? NSControlStateValueOn : NSControlStateValueOff];
+    [menu addItem:off];
+#if !__has_feature(objc_arc)
+    [off release];
+#endif
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    NSInteger resultId=100;
+    for(const auto& source:state.oscillators) {
+        if(source.id==0 || source.id==targetId) continue;
+        NSString* title=[NSString stringWithFormat:@"OSC %u",source.id];
+        NSMenuItem* parent=[[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+        NSMenu* submenu=[[NSMenu alloc] initWithTitle:title];
+        [submenu setAutoenablesItems:NO];
+
+        for(auto type:oscRouteTypes) {
+            NSMenuItem* item=[[NSMenuItem alloc] initWithTitle:toNS(oscRouteName(type))
+                                                       action:@selector(chooseProcess:)
+                                                keyEquivalent:@""];
+            [item setTarget:target];[item setTag:resultId++];
+            [item setState:(source.id==currentSource && type==currentType)
+                ? NSControlStateValueOn : NSControlStateValueOff];
+            [submenu addItem:item];
+#if !__has_feature(objc_arc)
+            [item release];
+#endif
+        }
+        [parent setSubmenu:submenu];[menu addItem:parent];
+#if !__has_feature(objc_arc)
+        [submenu release];[parent release];
+#endif
+    }
+
+    const NSPoint screen=[NSEvent mouseLocation];
+    const NSPoint window=[view.window convertPointFromScreen:screen];
+    const NSPoint local=[view convertPoint:window fromView:nil];
+    [menu popUpMenuPositioningItem:nil atLocation:local inView:view];
+
+    const NSInteger selected=target->selectedTag_;
+    if(selected==1 && onSelected) {
+        onSelected(0,OscRouteType::Off);
+    } else if(selected>=100 && onSelected) {
+        NSInteger cursor=100;
+        bool done=false;
+        for(const auto& source:state.oscillators) {
+            if(done) break;
+            if(source.id==0 || source.id==targetId) continue;
+            for(auto type:oscRouteTypes) {
+                if(cursor++==selected) {
+                    onSelected(source.id,type);
+                    done=true;
+                    break;
+                }
+            }
+        }
     }
 
 #if !__has_feature(objc_arc)

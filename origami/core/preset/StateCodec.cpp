@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
@@ -26,7 +27,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(9);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(10);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -37,6 +38,7 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.real(m.fineCents);w.word(m.unison);w.real(m.detuneCents);w.real(m.pan);w.real(m.level);
         w.word(static_cast<std::uint32_t>(m.process1));w.real(m.process1Amount);
         w.word(static_cast<std::uint32_t>(m.process2));w.real(m.process2Amount);
+        w.word(m.process1Seed);w.word(m.process2Seed);
         w.word(m.route1SourceId);w.word(static_cast<std::uint32_t>(m.route1Type));w.real(m.route1Amount);
         w.word(m.route2SourceId);w.word(static_cast<std::uint32_t>(m.route2Type));w.real(m.route2Amount);
     }
@@ -69,7 +71,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>9) return false;
+    if(version<1 || version>10) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -94,6 +96,9 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             if(version>=7) {
                 m.process1=static_cast<dsp::OscProcessType>(r.word());m.process1Amount=r.real();
                 m.process2=static_cast<dsp::OscProcessType>(r.word());m.process2Amount=r.real();
+            }
+            if(version>=10) {
+                m.process1Seed=r.word();m.process2Seed=r.word();
             }
             if(version>=8) {
                 m.route1SourceId=r.word();m.route1Type=static_cast<OscRouteType>(r.word());m.route1Amount=r.real();

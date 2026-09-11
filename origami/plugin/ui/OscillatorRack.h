@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.2-osc-process-quick-nav
@@ -104,8 +105,8 @@ private:
 // mct-origami-tuning-engine-v17
     RackSlider octaveSlider_,semitoneSlider_,fineSlider_;
     NativeOscProcessSelector process1Menu_,process2Menu_;
-    juce::TextButton process1Previous_{"<"},process1Next_{">"};
-    juce::TextButton process2Previous_{"<"},process2Next_{">"};
+    juce::TextButton process1Previous_{"<"},process1Next_{">"},process1Randomize_{"↻"};
+    juce::TextButton process2Previous_{"<"},process2Next_{">"},process2Randomize_{"↻"};
     RackSlider process1Amount_,process2Amount_;
     juce::Label process1AmountLabel_,process2AmountLabel_;
 

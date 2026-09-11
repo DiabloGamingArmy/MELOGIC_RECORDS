@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
@@ -8,8 +9,127 @@
 #include "Wavetable.h"
 #include <algorithm>
 #include <cmath>
+#include <array>
+#include <complex>
+#include <limits>
 namespace mct::origami::dsp {
 constexpr double pi = 3.14159265358979323846;
+
+namespace {
+constexpr std::size_t spectralSize=2048;
+using Complex=std::complex<double>;
+
+void fft2048(std::array<Complex,spectralSize>& data,bool inverse) noexcept {
+    for(std::size_t i=1,j=0;i<spectralSize;++i) {
+        std::size_t bit=spectralSize>>1;
+        for(;j&bit;bit>>=1) j^=bit;
+        j^=bit;
+        if(i<j) std::swap(data[i],data[j]);
+    }
+    for(std::size_t len=2;len<=spectralSize;len<<=1) {
+        const double angle=(inverse?2.0:-2.0)*pi/static_cast<double>(len);
+        const Complex wlen{std::cos(angle),std::sin(angle)};
+        for(std::size_t i=0;i<spectralSize;i+=len) {
+            Complex w{1.0,0.0};
+            for(std::size_t j=0;j<len/2;++j) {
+                const Complex u=data[i+j];
+                const Complex v=data[i+j+len/2]*w;
+                data[i+j]=u+v;
+                data[i+j+len/2]=u-v;
+                w*=wlen;
+            }
+        }
+    }
+    if(inverse)
+        for(auto& v:data) v/=static_cast<double>(spectralSize);
+}
+
+std::uint32_t spectralHash(std::uint32_t seed,std::uint32_t bin) noexcept {
+    std::uint32_t x=seed ^ (bin*0x9e3779b9u) ^ 0x85ebca6bu;
+    x^=x>>16;x*=0x7feb352du;x^=x>>15;x*=0x846ca68bu;x^=x>>16;
+    return x;
+}
+double random01(std::uint32_t seed,std::uint32_t bin) noexcept {
+    return static_cast<double>(spectralHash(seed,bin)&0x00ffffffu)/16777215.0;
+}
+double fullSpectralGain(OscProcessType type,std::size_t harmonic,std::uint32_t seed) noexcept {
+    if(harmonic==0) return 0.0;
+    const double h=static_cast<double>(harmonic);
+    const double norm=std::clamp(h/1024.0,0.0,1.0);
+    switch(type) {
+        case OscProcessType::RandAmp: {
+            const double r=random01(seed,static_cast<std::uint32_t>(harmonic));
+            if(r<0.18) return 0.0;
+            return std::pow((r-0.18)/0.82,0.72);
+        }
+        case OscProcessType::RandSparse:
+            return random01(seed,static_cast<std::uint32_t>(harmonic))<0.48 ? 0.0 : 1.0;
+        case OscProcessType::OddFocus:
+            return (harmonic&1u)!=0u ? 1.0 : 0.08;
+        case OscProcessType::SpectralComb:
+            return (harmonic%4u)==1u ? 1.0 : ((harmonic%4u)==0u ? 0.30 : 0.06);
+        case OscProcessType::HarmonicTilt:
+            return std::max(0.035,1.0-0.965*std::pow(norm,0.62));
+        case OscProcessType::FormantPeaks: {
+            const auto bell=[&](double centre,double width) {
+                const double d=(h-centre)/width;
+                return std::exp(-0.5*d*d);
+            };
+            return std::clamp(0.055+0.95*std::max({bell(7.0,3.2),bell(23.0,7.5),bell(61.0,17.0)}),0.0,1.0);
+        }
+        default: return 1.0;
+    }
+}
+float quantizedSpectralAmount(OscProcessType type,float amount) noexcept {
+    if(!oscProcessIsSpectral(type)) return amount;
+    const float a=std::clamp(amount,0.0f,1.0f);
+    return std::round(a*256.0f)/256.0f;
+}
+float readCycle(const float* input,double phase) noexcept {
+    phase-=std::floor(phase);
+    const double pos=phase*static_cast<double>(spectralSize);
+    const auto i=static_cast<std::size_t>(pos)%spectralSize;
+    const auto j=(i+1)%spectralSize;
+    const float f=static_cast<float>(pos-static_cast<double>(static_cast<std::size_t>(pos)));
+    return input[i]+f*(input[j]-input[i]);
+}
+struct SpectralCacheEntry {
+    const Wavetable* table=nullptr;
+    std::size_t frame=0,band=0;
+    OscProcessType p1=OscProcessType::Off,p2=OscProcessType::Off;
+    float a1=0.0f,a2=0.0f;
+    std::uint32_t s1=0,s2=0;
+    std::array<float,spectralSize> samples{};
+    std::uint64_t age=0;
+    bool valid=false;
+};
+thread_local std::array<SpectralCacheEntry,32> spectralCache{};
+thread_local std::uint64_t spectralClock=1;
+
+SpectralCacheEntry& processedBand(const Wavetable& table,std::size_t frame,std::size_t band,
+                                  OscProcessType p1,float a1,std::uint32_t s1,
+                                  OscProcessType p2,float a2,std::uint32_t s2) noexcept {
+    a1=quantizedSpectralAmount(p1,a1);
+    a2=quantizedSpectralAmount(p2,a2);
+    for(auto& e:spectralCache) {
+        if(e.valid && e.table==&table && e.frame==frame && e.band==band &&
+           e.p1==p1 && e.p2==p2 && e.a1==a1 && e.a2==a2 && e.s1==s1 && e.s2==s2) {
+            e.age=spectralClock++;
+            return e;
+        }
+    }
+    auto* victim=&spectralCache[0];
+    for(auto& e:spectralCache)
+        if(!e.valid || e.age<victim->age) victim=&e;
+    const auto& source=table.frames[frame].bands[band].samples;
+    renderProcessedFrame2048(source.data(),victim->samples.data(),p1,a1,s1,p2,a2,s2);
+    victim->table=&table;victim->frame=frame;victim->band=band;
+    victim->p1=p1;victim->p2=p2;victim->a1=a1;victim->a2=a2;
+    victim->s1=s1;victim->s2=s2;victim->age=spectralClock++;victim->valid=true;
+    return *victim;
+}
+} // namespace
+
 bool Wavetable::valid() const noexcept {
     if (tableLength < 2 || tableLength > 65536 || frames.empty() || frames.size() > 256 || frames[0].bands.empty()) return false;
     const auto& reference = frames[0].bands;
@@ -75,7 +195,14 @@ const char* oscProcessName(OscProcessType type) noexcept {
         case OscProcessType::Quantize16:return "Quantize 16"; case OscProcessType::Scramble2:return "Scramble 2";
         case OscProcessType::Scramble4:return "Scramble 4"; case OscProcessType::Chaos:return "Chaos";
         case OscProcessType::Window:return "Window"; case OscProcessType::PulseWarp:return "Pulse Warp";
-        case OscProcessType::Shred:return "Shred"; case OscProcessType::Count:break;
+        case OscProcessType::Shred:return "Shred";
+        case OscProcessType::RandAmp:return "Rand Amp";
+        case OscProcessType::RandSparse:return "Rand Sparse";
+        case OscProcessType::OddFocus:return "Odd Focus";
+        case OscProcessType::SpectralComb:return "Spectral Comb";
+        case OscProcessType::HarmonicTilt:return "Harmonic Tilt";
+        case OscProcessType::FormantPeaks:return "Formant Peaks";
+        case OscProcessType::Count:break;
     }
     return "Off";
 }
@@ -101,6 +228,10 @@ const char* oscProcessCategory(OscProcessType type) noexcept {
         case OscProcessType::Scramble2: case OscProcessType::Scramble4: case OscProcessType::Chaos:
         case OscProcessType::Window: case OscProcessType::PulseWarp: case OscProcessType::Shred:
             return "Digital / Experimental";
+        case OscProcessType::RandAmp: case OscProcessType::RandSparse:
+        case OscProcessType::OddFocus: case OscProcessType::SpectralComb:
+        case OscProcessType::HarmonicTilt: case OscProcessType::FormantPeaks:
+            return "Spectral / Harmonics";
 
         case OscProcessType::Off: case OscProcessType::Count: return "";
     }
@@ -233,17 +364,66 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
         }
         case OscProcessType::Shred:
             return wrap01(p+std::sin(16.0*pi*p)*amount*0.095);
+        case OscProcessType::RandAmp:
+        case OscProcessType::RandSparse:
+        case OscProcessType::OddFocus:
+        case OscProcessType::SpectralComb:
+        case OscProcessType::HarmonicTilt:
+        case OscProcessType::FormantPeaks:
+            return p;
         case OscProcessType::Off:
         case OscProcessType::Count:
         default:return p;
     }
 }
 
+
+void renderProcessedFrame2048(const float* input,float* output,
+                              OscProcessType process1,float amount1,std::uint32_t seed1,
+                              OscProcessType process2,float amount2,std::uint32_t seed2) noexcept {
+    if(input==nullptr || output==nullptr) return;
+    std::array<Complex,spectralSize> bins{};
+    for(std::size_t i=0;i<spectralSize;++i) {
+        double phase=static_cast<double>(i)/static_cast<double>(spectralSize);
+        if(!oscProcessIsSpectral(process1)) phase=processOscillatorPhase(phase,process1,amount1);
+        if(!oscProcessIsSpectral(process2)) phase=processOscillatorPhase(phase,process2,amount2);
+        bins[i]=Complex{static_cast<double>(readCycle(input,phase)),0.0};
+    }
+    if(!oscProcessIsSpectral(process1) && !oscProcessIsSpectral(process2)) {
+        for(std::size_t i=0;i<spectralSize;++i) output[i]=static_cast<float>(bins[i].real());
+        return;
+    }
+
+    fft2048(bins,false);
+    const double a1=oscProcessIsSpectral(process1)?quantizedSpectralAmount(process1,amount1):0.0;
+    const double a2=oscProcessIsSpectral(process2)?quantizedSpectralAmount(process2,amount2):0.0;
+    bins[0]=Complex{};
+    for(std::size_t h=1;h<spectralSize/2;++h) {
+        double gain=1.0;
+        if(oscProcessIsSpectral(process1))
+            gain*=1.0+a1*(fullSpectralGain(process1,h,seed1)-1.0);
+        if(oscProcessIsSpectral(process2))
+            gain*=1.0+a2*(fullSpectralGain(process2,h,seed2)-1.0);
+        bins[h]*=gain;
+        bins[spectralSize-h]*=gain;
+    }
+    bins[spectralSize/2]=Complex{};
+    fft2048(bins,true);
+
+    double peak=1.0e-12;
+    for(const auto& v:bins) peak=std::max(peak,std::abs(v.real()));
+    const double normalise=peak>1.25?1.25/peak:1.0;
+    for(std::size_t i=0;i<spectralSize;++i)
+        output[i]=static_cast<float>(bins[i].real()*normalise);
+}
+
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 OscProcessType process1,float amount1,
                                 OscProcessType process2,float amount2,
                                 double phaseOffsetCycles,
-                                double phaseSkew) noexcept {
+                                double phaseSkew,
+                                std::uint32_t process1Seed,
+                                std::uint32_t process2Seed) noexcept {
     if (table.frames.empty() || sampleRate <= 0 || !std::isfinite(frequency) || !std::isfinite(position)) return 0;
     // Caller installs validated banks. Bound phase every sample, never accumulate time.
     const double increment = std::clamp(frequency / sampleRate, 0.0, .499);
@@ -266,14 +446,27 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
             : 0.5+0.5*((readPhase-midpoint)/(1.0-midpoint));
     }
 
-    readPhase=processOscillatorPhase(readPhase,process1,amount1);
-    readPhase=processOscillatorPhase(readPhase,process2,amount2);
-    const double tablePosition = readPhase * static_cast<double>(table.tableLength);
-    const auto index = static_cast<std::size_t>(tablePosition);
-    const auto nextIndex = (index + 1) % table.tableLength;
-    const float fraction = static_cast<float>(tablePosition - static_cast<double>(index));
-    auto read = [&](std::size_t frame) { const auto& samples = table.frames[frame].bands[bandIndex].samples; return samples[index] + fraction * (samples[nextIndex] - samples[index]); };
-    const float a = read(first), b = read(second);
+    const bool spectral=table.tableLength==spectralSize &&
+        (oscProcessIsSpectral(process1) || oscProcessIsSpectral(process2));
+    if(!spectral) {
+        readPhase=processOscillatorPhase(readPhase,process1,amount1);
+        readPhase=processOscillatorPhase(readPhase,process2,amount2);
+    }
+    const double tablePosition=readPhase*static_cast<double>(table.tableLength);
+    const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength;
+    const auto nextIndex=(index+1)%table.tableLength;
+    const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
+    auto read=[&](std::size_t frame) {
+        if(spectral) {
+            const auto& processed=processedBand(table,frame,bandIndex,
+                                                process1,amount1,process1Seed,
+                                                process2,amount2,process2Seed).samples;
+            return processed[index]+fraction*(processed[nextIndex]-processed[index]);
+        }
+        const auto& samples=table.frames[frame].bands[bandIndex].samples;
+        return samples[index]+fraction*(samples[nextIndex]-samples[index]);
+    };
+    const float a=read(first),b=read(second);
     const float output = a + (framePosition - static_cast<float>(first)) * (b - a);
     phase_ += increment; if (phase_ >= 1) phase_ -= 1;
     return frequency >= sampleRate * .5 ? 0 : output;

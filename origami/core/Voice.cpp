@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -128,7 +129,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             oscillatorMix=moduleOscillators_[m][0].next(
                 table,baseFrequency,sampleRate_,position,
                 module.process1,module.process1Amount,module.process2,module.process2Amount,
-                routedPhaseOffset,routedPhaseSkew);
+                routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
         } else {
             for(unsigned u=0;u<count;++u) {
                 const double unit=(2.0*static_cast<double>(u)/static_cast<double>(count-1))-1.0;
@@ -136,7 +137,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                 oscillatorMix+=moduleOscillators_[m][u].next(
                     table,baseFrequency*detuneRatio,sampleRate_,position,
                     module.process1,module.process1Amount,module.process2,module.process2Amount,
-                    routedPhaseOffset,routedPhaseSkew);
+                    routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
             }
             oscillatorMix/=static_cast<float>(count);
         }

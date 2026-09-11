@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.1.2-env-underbeam-tail
 // mct-origami-v28.1.1-env-tracer-path-lock
 // mct-origami-v28.1.0-env-hold-live-tracer
@@ -590,24 +591,25 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
                     // This derives from the same global source red, but at a
                     // deliberately deeper exposure than the main signal colour.
                     if(!traceTail_.empty()){
-                        for(const auto& sample:traceTail_){
-                            const float freshness=juce::jlimit(
-                                0.0f,1.0f,1.0f-sample.age/.34f);
-                            if(freshness<=0.0f) continue;
-
-                            const float x=sample.point.x;
-                            const float y=juce::jlimit(
-                                envCanvas_.getY(),envCanvas_.getBottom(),sample.point.y);
-
-                            // Soft outer glow.
-                            g.setColour(signalShade(.34f,.025f+.10f*freshness));
-                            g.drawLine(x,y,x,envCanvas_.getBottom(),
-                                       2.0f+4.0f*freshness);
-
-                            // Darker, denser inner beam.
-                            g.setColour(signalShade(.46f,.07f+.28f*freshness));
-                            g.drawLine(x,y,x,envCanvas_.getBottom(),
-                                       .8f+1.8f*freshness);
+                        for(std::size_t tailIndex=0;tailIndex<traceTail_.size();++tailIndex){
+                            const auto& a=traceTail_[tailIndex];
+                            const auto& b=(tailIndex+1<traceTail_.size())
+                                ? traceTail_[tailIndex+1] : traceTail_[tailIndex];
+                            const float dx=std::abs(b.point.x-a.point.x);
+                            const int columns=juce::jlimit(1,32,static_cast<int>(std::ceil(dx/1.6f)));
+                            for(int column=0;column<=columns;++column){
+                                const float t=static_cast<float>(column)/static_cast<float>(columns);
+                                const float age=a.age+(b.age-a.age)*t;
+                                const float freshness=juce::jlimit(0.0f,1.0f,1.0f-age/.34f);
+                                if(freshness<=0.0f) continue;
+                                const float x=a.point.x+(b.point.x-a.point.x)*t;
+                                const float rawY=a.point.y+(b.point.y-a.point.y)*t;
+                                const float y=juce::jlimit(envCanvas_.getY(),envCanvas_.getBottom(),rawY);
+                                g.setColour(signalShade(.34f,.025f+.10f*freshness));
+                                g.drawLine(x,y,x,envCanvas_.getBottom(),2.4f+4.6f*freshness);
+                                g.setColour(signalShade(.46f,.07f+.30f*freshness));
+                                g.drawLine(x,y,x,envCanvas_.getBottom(),1.0f+2.15f*freshness);
+                            }
                         }
 
                         // Give the current underside column a slightly stronger

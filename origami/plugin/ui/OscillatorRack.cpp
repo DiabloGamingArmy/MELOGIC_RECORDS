@@ -1,3 +1,4 @@
+// mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.4.1-flat-signal-fills
@@ -57,45 +58,13 @@ void OscRouteSelector::refreshText() {
 }
 
 void OscRouteSelector::openRouteMenu() {
-    juce::PopupMenu root;
-    root.addItem(1,"Off",true,type_==OscRouteType::Off);
-    root.addSeparator();
-
-    if(snapshotGetter_) {
-        const auto state=snapshotGetter_();
-        int resultId=100;
-        for(const auto& source:state.oscillators) {
-            if(source.id==0 || source.id==targetId_) continue;
-            juce::PopupMenu sourceMenu;
-            for(auto type:oscRouteTypes) {
-                sourceMenu.addItem(resultId++,oscRouteName(type),
-                                   true,source.id==sourceId_ && type==type_);
-            }
-            root.addSubMenu("OSC "+juce::String(source.id),sourceMenu);
-        }
-    }
-
+    if(!snapshotGetter_) return;
+    const auto state=snapshotGetter_();
     auto safe=juce::Component::SafePointer<OscRouteSelector>(this);
-    root.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this),
-        [safe](int selected) {
-            if(safe==nullptr || selected<=0) return;
-            if(selected==1) {
-                safe->setSelection(0,OscRouteType::Off,juce::sendNotification);
-                return;
-            }
-            if(!safe->snapshotGetter_) return;
-
-            const auto state=safe->snapshotGetter_();
-            int resultId=100;
-            for(const auto& source:state.oscillators) {
-                if(source.id==0 || source.id==safe->targetId_) continue;
-                for(auto type:oscRouteTypes) {
-                    if(resultId++==selected) {
-                        safe->setSelection(source.id,type,juce::sendNotification);
-                        return;
-                    }
-                }
-            }
+    showNativeOscRouteMenu(*this,targetId_,sourceId_,type_,state,
+        [safe](OscillatorModuleId source,OscRouteType type) {
+            if(safe==nullptr) return;
+            safe->setSelection(source,type,juce::sendNotification);
         });
 }
 
@@ -308,13 +277,16 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         button.setMouseCursor(juce::MouseCursor::PointingHandCursor);
         button.setConnectedEdges(juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     };
-    for(auto* button:{&process1Previous_,&process1Next_,&process2Previous_,&process2Next_})
+    for(auto* button:{&process1Previous_,&process1Next_,&process2Previous_,&process2Next_,
+                       &process1Randomize_,&process2Randomize_})
         addAndMakeVisible(*button);
 
     configureProcessArrow(process1Previous_,"Previous oscillator process");
     configureProcessArrow(process1Next_,"Next oscillator process");
     configureProcessArrow(process2Previous_,"Previous oscillator process");
     configureProcessArrow(process2Next_,"Next oscillator process");
+    configureProcessArrow(process1Randomize_,"Re-seed random spectral process");
+    configureProcessArrow(process2Randomize_,"Re-seed random spectral process");
 
     auto cycleProcess=[](NativeOscProcessSelector& selector,int delta) {
         constexpr int firstId=1;
@@ -329,6 +301,20 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     process1Next_.onClick=[this,cycleProcess]{cycleProcess(process1Menu_,1);};
     process2Previous_.onClick=[this,cycleProcess]{cycleProcess(process2Menu_,-1);};
     process2Next_.onClick=[this,cycleProcess]{cycleProcess(process2Menu_,1);};
+
+    auto reseed=[this](int slot) {
+        if(!moduleGetter_ || !moduleSetter_) return;
+        auto state=moduleGetter_(display_.id);
+        if(!state.id) return;
+        auto seed=static_cast<std::uint32_t>(juce::Random::getSystemRandom().nextInt());
+        if(seed==0) seed=0x6d2b79f5u;
+        if(slot==0) state.process1Seed=seed; else state.process2Seed=seed;
+        moduleSetter_(display_.id,state);
+        syncFromModel();
+        repaint();
+    };
+    process1Randomize_.onClick=[reseed]{reseed(0);};
+    process2Randomize_.onClick=[reseed]{reseed(1);};
 
     for(auto* amount:{&process1Amount_,&process2Amount_}) {
         addAndMakeVisible(*amount);
@@ -504,6 +490,10 @@ void OscillatorCard::syncFromModel() {
             syncAmount(process2Amount_,process2AmountLabel_,state.process2,state.process2Amount);
             process1Amount_.setEnabled(state.process1!=dsp::OscProcessType::Off);
             process2Amount_.setEnabled(state.process2!=dsp::OscProcessType::Off);
+            process1Randomize_.setEnabled(dsp::oscProcessUsesSeed(state.process1));
+            process2Randomize_.setEnabled(dsp::oscProcessUsesSeed(state.process2));
+            process1Randomize_.setAlpha(dsp::oscProcessUsesSeed(state.process1)?1.0f:0.28f);
+            process2Randomize_.setAlpha(dsp::oscProcessUsesSeed(state.process2)?1.0f:0.28f);
 
             route1Menu_.setSelection(state.route1SourceId,state.route1Type,juce::dontSendNotification);
             route2Menu_.setSelection(state.route2SourceId,state.route2Type,juce::dontSendNotification);
@@ -569,12 +559,15 @@ void OscillatorCard::resized() {
                              juce::TextButton& previous,
                              NativeOscProcessSelector& selector,
                              juce::TextButton& next,
+                             juce::TextButton& randomize,
                              RackSlider& amount,
                              juce::Label& amountLabel) {
         auto selectorRow=slot.removeFromTop(24);
         constexpr int arrowWidth=19;
         previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
         selectorRow.removeFromLeft(2);
+        randomize.setBounds(selectorRow.removeFromRight(arrowWidth));
+        selectorRow.removeFromRight(2);
         next.setBounds(selectorRow.removeFromRight(arrowWidth));
         selectorRow.removeFromRight(2);
         selector.setBounds(selectorRow);
@@ -585,11 +578,11 @@ void OscillatorCard::resized() {
     };
 
     auto slot1=processControls.removeFromTop(processSlotHeight);
-    placeProcessSlot(slot1,process1Previous_,process1Menu_,process1Next_,
+    placeProcessSlot(slot1,process1Previous_,process1Menu_,process1Next_,process1Randomize_,
                      process1Amount_,process1AmountLabel_);
 
     auto slot2=processControls;
-    placeProcessSlot(slot2,process2Previous_,process2Menu_,process2Next_,
+    placeProcessSlot(slot2,process2Previous_,process2Menu_,process2Next_,process2Randomize_,
                      process2Amount_,process2AmountLabel_);
 
     auto routingControls=routing.reduced(7,25);
@@ -795,17 +788,37 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             ? moduleGetter_(display_.id)
             : mct::origami::OscillatorModuleState{};
 
+        constexpr std::size_t previewSize=2048;
+        std::array<float,previewSize> previewSource{},previewProcessed{};
+        const bool spectralPreview=moduleState.id &&
+            (dsp::oscProcessIsSpectral(moduleState.process1) ||
+             dsp::oscProcessIsSpectral(moduleState.process2));
+        if(spectralPreview) {
+            for(std::size_t sampleIndex=0;sampleIndex<previewSize;++sampleIndex) {
+                const float phase=static_cast<float>(sampleIndex)/static_cast<float>(previewSize);
+                const float ya=shape(a,phase),yb=shape(next,phase);
+                previewSource[sampleIndex]=ya+(yb-ya)*blend;
+            }
+            dsp::renderProcessedFrame2048(previewSource.data(),previewProcessed.data(),
+                moduleState.process1,moduleState.process1Amount,moduleState.process1Seed,
+                moduleState.process2,moduleState.process2Amount,moduleState.process2Seed);
+        }
         auto processedSample=[&](float sourcePhase) {
+            if(spectralPreview) {
+                const float wrapped=sourcePhase-std::floor(sourcePhase);
+                const float pos=wrapped*static_cast<float>(previewSize);
+                const auto i=static_cast<std::size_t>(pos)%previewSize;
+                const auto j=(i+1)%previewSize;
+                const float fraction=pos-static_cast<float>(static_cast<std::size_t>(pos));
+                return previewProcessed[i]+fraction*(previewProcessed[j]-previewProcessed[i]);
+            }
             double phase=static_cast<double>(sourcePhase);
             if(moduleState.id) {
-                phase=dsp::processOscillatorPhase(
-                    phase,moduleState.process1,moduleState.process1Amount);
-                phase=dsp::processOscillatorPhase(
-                    phase,moduleState.process2,moduleState.process2Amount);
+                phase=dsp::processOscillatorPhase(phase,moduleState.process1,moduleState.process1Amount);
+                phase=dsp::processOscillatorPhase(phase,moduleState.process2,moduleState.process2Amount);
             }
             const float visualPhase=static_cast<float>(phase);
-            const float ya=shape(a,visualPhase);
-            const float yb=shape(next,visualPhase);
+            const float ya=shape(a,visualPhase),yb=shape(next,visualPhase);
             return ya+(yb-ya)*blend;
         };
 
