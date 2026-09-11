@@ -1,3 +1,4 @@
+// mct-origami-v28.1.1-env-tracer-path-lock
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-compile-repair
 // mct-origami-v28.0.0-interactive-envelope-editor
@@ -399,16 +400,47 @@ void ModulationPanel::scrollBarMoved(juce::ScrollBar*,double start) {
 
 juce::Point<float> ModulationPanel::tracerPoint(const EnvelopeRuntimeInfo& r,
                                                  const dsp::EnvelopeSettings& e) const noexcept {
-    const float p=juce::jlimit(0.0f,1.0f,r.progress); double t=0.0;
+    // The tracer is a visual cursor for the EDITOR PATH. Derive both axes from
+    // the same segment equations used by envelopePath(), rather than mixing
+    // editor X with the runtime amplitude Y. This guarantees that the head and
+    // every tail sample remain exactly on the displayed ENV line.
+    //
+    // This distinction matters on an early note-off: the DSP release begins
+    // from the instantaneous amplitude, while the canonical ADSR editor draws
+    // Release from Sustain. Projecting the cursor onto the canonical editor
+    // path prevents the visual from floating above/below the line.
+    const float p=juce::jlimit(0.0f,1.0f,r.progress);
+    double t=0.0;
+    float value=0.0f;
+
     switch(r.stage){
-        case dsp::Envelope::Stage::Attack:t=e.attack*p;break;
-        case dsp::Envelope::Stage::Decay:t=e.attack+e.decay*p;break;
-        case dsp::Envelope::Stage::Sustain:t=e.attack+e.decay;break;
-        case dsp::Envelope::Stage::Release:t=e.attack+e.decay+visualHoldSeconds()+e.release*p;break;
-        case dsp::Envelope::Stage::Idle:break;
+        case dsp::Envelope::Stage::Attack: {
+            t=double(e.attack)*p;
+            value=curveShape(p,e.attackCurve);
+            break;
+        }
+        case dsp::Envelope::Stage::Decay: {
+            t=double(e.attack)+double(e.decay)*p;
+            const float shaped=curveShape(p,e.decayCurve);
+            value=1.0f+(e.sustain-1.0f)*shaped;
+            break;
+        }
+        case dsp::Envelope::Stage::Sustain:
+            t=double(e.attack)+double(e.decay);
+            value=e.sustain;
+            break;
+        case dsp::Envelope::Stage::Release: {
+            t=double(e.attack)+double(e.decay)+visualHoldSeconds()+double(e.release)*p;
+            const float shaped=curveShape(p,e.releaseCurve);
+            value=e.sustain*(1.0f-shaped);
+            break;
+        }
+        case dsp::Envelope::Stage::Idle:
+            break;
     }
+
     const float y=envCanvas_.getBottom()
-        -juce::jlimit(0.0f,1.0f,r.value)*envCanvas_.getHeight();
+        -juce::jlimit(0.0f,1.0f,value)*envCanvas_.getHeight();
     return {timeToX(t),y};
 }
 
@@ -548,23 +580,35 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
                     g.drawVerticalLine(juce::roundToInt(head.x),envCanvas_.getY(),envCanvas_.getBottom());
 
                     if(traceTail_.size()>1){
-                        for(std::size_t i=1;i<traceTail_.size();++i){
-                            const auto& a=traceTail_[i-1]; const auto& b=traceTail_[i];
+                        for(std::size_t tailIndex=1;tailIndex<traceTail_.size();++tailIndex){
+                            const auto& a=traceTail_[tailIndex-1];
+                            const auto& b=traceTail_[tailIndex];
                             const float f=juce::jlimit(0.0f,1.0f,1.0f-b.age/.34f);
-                            if(f<=0) continue;
-                            g.setColour(signalSourceColour().withAlpha(.05f+.35f*f));
-                            g.drawLine(a.point.x,a.point.y,b.point.x,b.point.y,.7f+3.0f*f);
+                            if(f<=0.0f) continue;
+
+                            // White tracer trail: substantially thicker than
+                            // V28.1, with a soft outer pass and a bright core.
+                            g.setColour(juce::Colours::white.withAlpha(.055f+.16f*f));
+                            g.drawLine(a.point.x,a.point.y,b.point.x,b.point.y,3.0f+5.0f*f);
+
+                            g.setColour(juce::Colours::white.withAlpha(.20f+.68f*f));
+                            g.drawLine(a.point.x,a.point.y,b.point.x,b.point.y,1.35f+3.0f*f);
                         }
                     }
 
-                    g.setColour(signalSourceColour().withAlpha(.045f));
-                    g.fillEllipse(juce::Rectangle<float>(24,24).withCentre(head));
-                    g.setColour(signalSourceColour().withAlpha(.09f));
-                    g.fillEllipse(juce::Rectangle<float>(15,15).withCentre(head));
-                    g.setColour(signalSourceColour().withAlpha(.22f));
-                    g.fillEllipse(juce::Rectangle<float>(9,9).withCentre(head));
-                    g.setColour(signalSourceColour());
-                    g.fillEllipse(juce::Rectangle<float>(4.5f,4.5f).withCentre(head));
+                    // White fuzzy tracer head. Multiple concentric passes keep
+                    // the center crisp while producing a visible bloom without
+                    // introducing another colour into the signal palette.
+                    g.setColour(juce::Colours::white.withAlpha(.035f));
+                    g.fillEllipse(juce::Rectangle<float>(34,34).withCentre(head));
+                    g.setColour(juce::Colours::white.withAlpha(.075f));
+                    g.fillEllipse(juce::Rectangle<float>(23,23).withCentre(head));
+                    g.setColour(juce::Colours::white.withAlpha(.16f));
+                    g.fillEllipse(juce::Rectangle<float>(14,14).withCentre(head));
+                    g.setColour(juce::Colours::white.withAlpha(.42f));
+                    g.fillEllipse(juce::Rectangle<float>(8.5f,8.5f).withCentre(head));
+                    g.setColour(juce::Colours::white);
+                    g.fillEllipse(juce::Rectangle<float>(5.5f,5.5f).withCentre(head));
                 }
             }
         }
