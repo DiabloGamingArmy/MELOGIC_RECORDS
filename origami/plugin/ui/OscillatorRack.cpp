@@ -1,3 +1,4 @@
+// mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v29.2.1-osc-route-display-ordinals
 // mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.1-rand-amp-smooth-morph-seed-button
@@ -25,6 +26,7 @@
 // mct-origami-osc-power-compact-pitch-v21.4.1
 #include "OscillatorRack.h"
 #include "NativeOscProcessMenu.h"
+#include "ModulationUiTelemetry.h"
 // mct-origami-v19.3-visual-cleanup
 namespace mct::origami::ui {
 
@@ -845,9 +847,15 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     // V22.2.1 live WT POS overlay. Uses the actual preview rectangle detected
     // from this source file rather than hard-coded layout geometry.
     {
-        const float physical=parameterGetter_
+        float physical=parameterGetter_
             ? juce::jlimit(0.0f,3.0f,parameterGetter_(mct::origami::ParameterId::Waveform))
             : 0.0f;
+
+        // Matrix modulation must be visible in the source viewport, not merely
+        // audible. WT Position is normalized 0..1 in the modulation engine.
+        physical=juce::jlimit(0.0f,3.0f,
+            physical+modulationUiAllRoutesValue(ModDestination::WtPosition,display_.id)*3.0f);
+
         const int a=juce::jlimit(0,3,int(std::floor(physical)));
         const int next=juce::jmin(3,a+1);
         const float blend=physical-float(a);
@@ -872,9 +880,27 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         }
         g.drawHorizontalLine(int(wtRect.getCentreY()),wtRect.getX(),wtRect.getRight());
 
-        const auto moduleState=moduleGetter_
+        auto moduleState=moduleGetter_
             ? moduleGetter_(display_.id)
             : mct::origami::OscillatorModuleState{};
+
+        if(moduleState.id) {
+            const auto modAmount=[&](ModDestination destination,float base,float minimum) {
+                const float span=1.0f-minimum;
+                return juce::jlimit(minimum,1.0f,
+                    base+modulationUiAllRoutesValue(destination,display_.id)*span);
+            };
+            moduleState.process1Amount=modAmount(
+                ModDestination::Process1Amount,moduleState.process1Amount,
+                dsp::oscProcessAmountMinimum(moduleState.process1));
+            moduleState.process2Amount=modAmount(
+                ModDestination::Process2Amount,moduleState.process2Amount,
+                dsp::oscProcessAmountMinimum(moduleState.process2));
+            moduleState.route1Amount=juce::jlimit(-1.0f,1.0f,
+                moduleState.route1Amount+modulationUiAllRoutesValue(ModDestination::Route1Amount,display_.id));
+            moduleState.route2Amount=juce::jlimit(-1.0f,1.0f,
+                moduleState.route2Amount+modulationUiAllRoutesValue(ModDestination::Route2Amount,display_.id));
+        }
 
         constexpr std::size_t previewSize=2048;
         std::array<float,previewSize> previewSource{},previewProcessed{};
@@ -957,6 +983,84 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         g.strokePath(outline,juce::PathStrokeType(1.5f));
         g.restoreState();
     }
+}
+
+void OscillatorCard::paintOverChildren(juce::Graphics& g) {
+    const auto& telemetry=modulationUiTelemetry();
+    if(!telemetry.synthActive) return;
+
+    const auto drawRotary=[&](juce::Slider& slider,ModDestination destination) {
+        const float depth=modulationUiSelectedRouteAmount(destination,display_.id);
+        if(std::abs(depth)<1.0e-4f) return;
+
+        const double min=slider.getMinimum(),max=slider.getMaximum();
+        if(max<=min) return;
+        const float base=static_cast<float>((slider.getValue()-min)/(max-min));
+        const bool bipolar=modulationUiSourceIsBipolar(telemetry.selectedSource);
+        const float extent=std::abs(depth);
+        const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
+        const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
+        const float current=juce::jlimit(0.0f,1.0f,
+            base+depth*modulationUiSourceValue(telemetry.selectedSource));
+
+        auto circle=slider.getBounds().toFloat().reduced(1.0f).expanded(2.0f);
+        const float d=juce::jmin(circle.getWidth(),circle.getHeight());
+        circle=juce::Rectangle<float>(d,d).withCentre(circle.getCentre());
+        const float start=juce::MathConstants<float>::pi*1.20f;
+        const float end=juce::MathConstants<float>::pi*2.80f;
+        const auto angle=[&](float n){return start+n*(end-start);};
+
+        juce::Path range;
+        range.addCentredArc(circle.getCentreX(),circle.getCentreY(),
+                            circle.getWidth()*.51f,circle.getHeight()*.51f,0.0f,
+                            angle(lo),angle(hi),true);
+        g.setColour(signalSourceColour().withAlpha(.94f));
+        g.strokePath(range,juce::PathStrokeType(2.0f));
+
+        const float a=angle(current);
+        const auto c=circle.getCentre();
+        const auto p=juce::Point<float>(
+            c.x+std::sin(a)*circle.getWidth()*.51f,
+            c.y-std::cos(a)*circle.getHeight()*.51f);
+        g.setColour(Palette::text());
+        g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
+    };
+
+    const auto drawLinear=[&](juce::Slider& slider,ModDestination destination) {
+        const float depth=modulationUiSelectedRouteAmount(destination,display_.id);
+        if(std::abs(depth)<1.0e-4f) return;
+        const double min=slider.getMinimum(),max=slider.getMaximum();
+        if(max<=min) return;
+        const float base=static_cast<float>((slider.getValue()-min)/(max-min));
+        const bool bipolar=modulationUiSourceIsBipolar(telemetry.selectedSource);
+        const float extent=std::abs(depth);
+        const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
+        const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
+        const float current=juce::jlimit(0.0f,1.0f,
+            base+depth*modulationUiSourceValue(telemetry.selectedSource));
+
+        auto b=slider.getBounds().toFloat().reduced(3.0f);
+        const float y=b.getBottom()+1.0f;
+        const float x0=b.getX()+b.getWidth()*lo;
+        const float x1=b.getX()+b.getWidth()*hi;
+        const float xc=b.getX()+b.getWidth()*current;
+        g.setColour(signalSourceColour().withAlpha(.94f));
+        g.drawLine(x0,y,x1,y,2.0f);
+        g.setColour(Palette::text());
+        g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre({xc,y}));
+    };
+
+    drawRotary(wtPositionSlider_,ModDestination::WtPosition);
+    drawLinear(octaveSlider_,ModDestination::Octave);
+    drawLinear(semitoneSlider_,ModDestination::Semitone);
+    drawLinear(fineSlider_,ModDestination::Fine);
+    drawRotary(detuneSlider_,ModDestination::Detune);
+    drawRotary(panSlider_,ModDestination::Pan);
+    drawRotary(levelSlider_,ModDestination::Level);
+    drawRotary(process1Amount_,ModDestination::Process1Amount);
+    drawRotary(process2Amount_,ModDestination::Process2Amount);
+    drawRotary(route1Amount_,ModDestination::Route1Amount);
+    drawRotary(route2Amount_,ModDestination::Route2Amount);
 }
 
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,

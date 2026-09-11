@@ -1,3 +1,4 @@
+// mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v26.4.3-match-signal-fill-exposure
@@ -5,6 +6,7 @@
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 #include "SignalPanels.h"
+#include "ModulationUiTelemetry.h"
 namespace mct::origami::ui {
 void MixerPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     const juce::StringArray channels{"OSC 1","OSC 2","OSC 3","OSC 4","SUB","NOISE"};
@@ -70,6 +72,7 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter)
     // V30 dynamic-filter UI scaffold. Filter 1 remains the exact same existing
     // engine filter; +/- are collection affordances only in this layout pass.
     for(auto* button:{&filter1_,&filterAdd_,&filterRemove_}) addAndMakeVisible(*button);
+    filter1_.setName("FILTER SOURCE TAB");
     filter1_.setClickingTogglesState(true);
     filter1_.setToggleState(true,juce::dontSendNotification);
     filter1_.setTooltip("Current engine Filter 1");
@@ -97,7 +100,7 @@ void FilterPanel::resized() {
     collectionControls.removeFromLeft(3);
     filterAdd_.setBounds(collectionControls);
     rail.removeFromBottom(5);
-    filter1_.setBounds(rail.removeFromTop(25).reduced(0,1));
+    filter1_.setBounds(rail.removeFromTop(35).reduced(0,1));
 
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     const int w=controls.getWidth()/6;
@@ -166,6 +169,51 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     remaining.removeFromLeft((controls.getWidth()/6)*2);
     dials(g,remaining,{"DRIVE","KEYTRACK","ENV AMT","MIX"});
 }
+void FilterPanel::paintOverChildren(juce::Graphics& g) {
+    const auto& telemetry=modulationUiTelemetry();
+    if(!telemetry.synthActive) return;
+
+    const auto drawRing=[&](juce::Slider& slider,ModDestination destination) {
+        const float depth=modulationUiSelectedRouteAmount(destination,0);
+        if(std::abs(depth)<1.0e-4f) return;
+
+        const double min=slider.getMinimum(),max=slider.getMaximum();
+        if(max<=min) return;
+        const float base=static_cast<float>((slider.getValue()-min)/(max-min));
+        const bool bipolar=modulationUiSourceIsBipolar(telemetry.selectedSource);
+        const float extent=std::abs(depth);
+        const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
+        const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
+        const float current=juce::jlimit(0.0f,1.0f,
+            base+depth*modulationUiSourceValue(telemetry.selectedSource));
+
+        auto circle=slider.getBounds().toFloat().reduced(1.0f).expanded(2.0f);
+        const float d=juce::jmin(circle.getWidth(),circle.getHeight());
+        circle=juce::Rectangle<float>(d,d).withCentre(circle.getCentre());
+        const float start=juce::MathConstants<float>::pi*1.20f;
+        const float end=juce::MathConstants<float>::pi*2.80f;
+        const auto angle=[&](float n){return start+n*(end-start);};
+
+        juce::Path range;
+        range.addCentredArc(circle.getCentreX(),circle.getCentreY(),
+                            circle.getWidth()*.51f,circle.getHeight()*.51f,0.0f,
+                            angle(lo),angle(hi),true);
+        g.setColour(signalSourceColour().withAlpha(.92f));
+        g.strokePath(range,juce::PathStrokeType(2.0f));
+
+        const float a=angle(current);
+        const auto c=circle.getCentre();
+        const auto p=juce::Point<float>(
+            c.x+std::sin(a)*circle.getWidth()*.51f,
+            c.y-std::cos(a)*circle.getHeight()*.51f);
+        g.setColour(Palette::text());
+        g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
+    };
+
+    drawRing(cutoff_,ModDestination::Cutoff);
+    drawRing(resonance_,ModDestination::Resonance);
+}
+
 void FxPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     if(pre_) {
         const int height=body.getHeight()/3;

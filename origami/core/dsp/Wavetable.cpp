@@ -1,3 +1,4 @@
+// mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.1-rand-amp-smooth-morph-seed-button
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
@@ -62,11 +63,21 @@ double fullSpectralGain(OscProcessType type,std::size_t harmonic,std::uint32_t s
     switch(type) {
         case OscProcessType::RandAmp: {
             const double r=random01(seed,static_cast<std::uint32_t>(harmonic));
-            if(r<0.18) return 0.0;
-            return std::pow((r-0.18)/0.82,0.72);
+            // Stronger deletion in the lows/mids while progressively protecting
+            // upper harmonics. Survivors remain intentionally stark rather than
+            // collapsing into a soft low-pass-like attenuation field.
+            const double killThreshold=0.42-0.27*std::pow(norm,0.72);
+            if(r<killThreshold) return 0.0;
+            const double survivor=(r-killThreshold)/(1.0-killThreshold);
+            return 0.34+0.66*std::pow(survivor,0.52);
         }
-        case OscProcessType::RandSparse:
-            return random01(seed,static_cast<std::uint32_t>(harmonic))<0.48 ? 0.0 : 1.0;
+        case OscProcessType::RandSparse: {
+            const double r=random01(seed,static_cast<std::uint32_t>(harmonic));
+            // True hard-gated sparsity. Low/mid bins are aggressively removed;
+            // very high bins have a substantially better survival probability.
+            const double killThreshold=0.76-0.54*std::pow(norm,0.68);
+            return r<killThreshold ? 0.0 : 1.0;
+        }
         case OscProcessType::OddFocus:
             return (harmonic&1u)!=0u ? 1.0 : 0.08;
         case OscProcessType::SpectralComb:
@@ -452,6 +463,8 @@ void renderProcessedFrame2048(const float* input,float* output,
                 : fullSpectralGain(process2,h,seed2);
             gain*=randomVariant ? target : 1.0+a2*(target-1.0);
         }
+        // gain is a real scalar applied to the existing complex FFT value:
+        // magnitude changes, phase angle is preserved exactly.
         bins[h]*=gain;
         bins[spectralSize-h]*=gain;
     }
@@ -461,9 +474,18 @@ void renderProcessedFrame2048(const float* input,float* output,
     double peak=1.0e-12;
     for(const auto& v:bins) peak=std::max(peak,std::abs(v.real()));
 
-    // Keep reconstructed single-cycle data inside the canonical [-1, +1]
-    // display/audio range. This also prevents waveform preview spill.
-    const double normalise=peak>0.985 ? 0.985/peak : 1.0;
+    const bool randomAmplitudePass=
+        process1==OscProcessType::RandAmp || process1==OscProcessType::RandSparse ||
+        process2==OscProcessType::RandAmp || process2==OscProcessType::RandSparse;
+
+    // Random spectral deletion often removes substantial energy. For Rand Amp /
+    // Rand Sparse, always apply post-IFFT make-up normalization so the strongest
+    // remaining partial reaches the canonical preview/audio peak again. Other
+    // spectral processes retain the prior safety-only attenuation behavior.
+    const double normalise=randomAmplitudePass
+        ? (peak>1.0e-12 ? 0.985/peak : 1.0)
+        : (peak>0.985 ? 0.985/peak : 1.0);
+
     for(std::size_t i=0;i<spectralSize;++i)
         output[i]=static_cast<float>(
             std::clamp(bins[i].real()*normalise,-0.985,0.985));

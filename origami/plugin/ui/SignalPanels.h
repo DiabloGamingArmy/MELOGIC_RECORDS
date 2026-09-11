@@ -1,3 +1,4 @@
+// mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 #pragma once
 #include "OrigamiStyle.h"
@@ -17,6 +18,7 @@ public:
     void syncFromModel();
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
+    void paintOverChildren(juce::Graphics&) override;
     ParameterSetter setter_;
     ParameterGetter getter_;
     juce::Slider cutoff_,resonance_;

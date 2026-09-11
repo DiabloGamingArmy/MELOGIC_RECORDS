@@ -1,3 +1,4 @@
+// mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -85,6 +86,7 @@ public:
     void setDisplayOrdinal(unsigned ordinal);
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
+    void paintOverChildren(juce::Graphics&) override;
     void refreshVisibleNumber();
     OscillatorDisplay display_;
     juce::TextButton remove_{"-"};

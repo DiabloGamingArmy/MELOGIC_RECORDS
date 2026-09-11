@@ -1,3 +1,4 @@
+// mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.1-env-toolbar-bottom
@@ -9,6 +10,7 @@
 // mct-origami-v28.0.0-compile-repair
 // mct-origami-v28.0.0-interactive-envelope-editor
 #include "ModulationPanel.h"
+#include "ModulationUiTelemetry.h"
 #include <algorithm>
 #include <cmath>
 
@@ -804,9 +806,9 @@ juce::Rectangle<float> ModulationPanel::routeDotBounds(
     std::size_t tabIndex,std::size_t dotIndex,std::size_t dotCount) const noexcept {
     if(tabIndex>=tabs_.size() || dotCount==0) return {};
     auto b=tabs_[tabIndex].getBounds().toFloat().reduced(5.0f,1.5f);
-    auto dotArea=b.withTrimmedTop(16.0f);
-    constexpr float diameter=8.5f;
-    constexpr float gap=4.0f;
+    auto dotArea=b.withTrimmedTop(17.5f);
+    constexpr float diameter=13.0f;
+    constexpr float gap=5.0f;
     const auto shown=juce::jmin<std::size_t>(dotCount,6);
     const float total=shown*diameter+(shown>0 ? (shown-1)*gap : 0.0f);
     const float x0=dotArea.getCentreX()-total*0.5f;
@@ -863,21 +865,33 @@ void ModulationPanel::updateSourceHistory(float) {
                 sourceMonitorLfos_[i].reset();
     }
 
+    auto& telemetry=modulationUiTelemetry();
+    telemetry.state=cached_;
+    telemetry.selectedSource=sourceForTab(static_cast<std::size_t>(selected_));
+    telemetry.synthActive=sourceTrace_.active;
+
+    // No audible/active envelope means no source-history display. Free-running
+    // LFOs may continue mathematically, but the synth has no output to modulate.
+    if(!sourceTrace_.active) {
+        telemetry.sourceValues.fill(0.0f);
+        for(auto& history:sourceHistory_) history.clear();
+        return;
+    }
+
     std::array<float,9> samples{};
     for(std::size_t i=0;i<3;++i)
-        samples[i]=sourceTrace_.active
-            ? juce::jlimit(0.0f,1.0f,sourceTrace_.envelopes[i].value)
-            : 0.0f;
+        samples[i]=juce::jlimit(0.0f,1.0f,sourceTrace_.envelopes[i].value);
 
     for(std::size_t i=0;i<4;++i)
-        samples[3+i]=std::abs(sourceMonitorLfos_[i].next(lfoSettings(cached_,i),60.0));
+        samples[3+i]=sourceMonitorLfos_[i].next(lfoSettings(cached_,i),60.0);
 
-    samples[7]=std::abs(sourceMonitorFunction_.next(cached_.function,60.0));
-    samples[8]=std::abs(sourceMonitorRandom_.next(cached_.random,60.0));
+    samples[7]=sourceMonitorFunction_.next(cached_.function,60.0);
+    samples[8]=sourceMonitorRandom_.next(cached_.random,60.0);
+    telemetry.sourceValues=samples;
 
     for(std::size_t i=0;i<sourceHistory_.size();++i) {
         auto& history=sourceHistory_[i];
-        history.push_back(juce::jlimit(0.0f,1.0f,samples[i]));
+        history.push_back(juce::jlimit(0.0f,1.0f,std::abs(samples[i])));
         while(history.size()>sourceHistoryLength_) history.pop_front();
     }
 }
@@ -885,6 +899,8 @@ void ModulationPanel::updateSourceHistory(float) {
 void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
     const auto red=signalSourceColour();
     const auto white=Palette::text();
+
+    if(!modulationUiTelemetry().synthActive) return;
 
     for(std::size_t i=0;i<tabs_.size();++i) {
         auto b=tabs_[i].getBounds().toFloat().reduced(0.75f);
@@ -925,7 +941,7 @@ void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
         if(count==0) continue;
 
         const auto tab=tabs_[tabIndex].getBounds().toFloat().reduced(4.0f,1.0f);
-        const float dividerY=tab.getY()+15.0f;
+        const float dividerY=tab.getY()+16.5f;
         g.setColour(Palette::borderStrong().withAlpha(0.58f));
         g.drawLine(tab.getX()+4.0f,dividerY,tab.getRight()-4.0f,dividerY,0.75f);
 
@@ -959,7 +975,7 @@ void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
             }
 
             g.setColour(Palette::text().withAlpha(0.82f));
-            g.fillEllipse(circle.withSizeKeepingCentre(1.7f,1.7f));
+            g.fillEllipse(circle.withSizeKeepingCentre(2.4f,2.4f));
         }
 
         if(count>shown) {

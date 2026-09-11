@@ -1,3 +1,4 @@
+// mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -44,7 +45,8 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
     const auto bounds=button.getLocalBounds().toFloat().reduced(.5f);
     const bool active=button.getToggleState();
 
-    if(button.getName().startsWith("MOD SOURCE TAB")) {
+    if(button.getName().startsWith("MOD SOURCE TAB") ||
+       button.getName()=="FILTER SOURCE TAB") {
         if(over || down) {
             g.setColour(Palette::raised().withAlpha(down?0.28f:0.16f));
             g.fillRoundedRectangle(bounds,3.5f);
@@ -72,8 +74,14 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
     auto bounds=button.getLocalBounds().reduced(3);
 
     if(button.getName().startsWith("MOD SOURCE TAB")) {
-        auto title=button.getLocalBounds().removeFromTop(15).reduced(4,1);
-        text(g,button.getButtonText(),title,8.2f,
+        auto title=button.getLocalBounds().removeFromTop(17).reduced(4,1);
+        text(g,button.getButtonText(),title,10.4f,
+             button.isEnabled()?Palette::text():Palette::muted(),
+             juce::Justification::centred);
+        return;
+    }
+    if(button.getName()=="FILTER SOURCE TAB") {
+        text(g,button.getButtonText(),button.getLocalBounds().reduced(5,2),10.6f,
              button.isEnabled()?Palette::text():Palette::muted(),
              juce::Justification::centred);
         return;
