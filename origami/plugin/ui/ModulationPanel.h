@@ -1,3 +1,4 @@
+// mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-compile-repair
 // mct-origami-v28.0.0-interactive-envelope-editor
@@ -63,6 +64,8 @@ private:
     void zoomBy(float,juce::Point<float> anchor = {});
 
     std::array<juce::TextButton,9> tabs_;
+    juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
+    juce::Rectangle<int> sourceRail_{};
     ParameterSetter setter_;
     ParameterGetter getter_;
     ModulationBindings bindings_;

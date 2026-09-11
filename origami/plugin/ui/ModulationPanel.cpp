@@ -1,3 +1,4 @@
+// mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.1.2-env-underbeam-tail
 // mct-origami-v28.1.1-env-tracer-path-lock
@@ -68,6 +69,14 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
             resized();
             repaint();
         };
+    }
+
+    // V30 architecture scaffold. These controls deliberately do not mutate the
+    // modulation model yet; this pass separates collection UX from the current
+    // fixed engine storage so dynamic source allocation can land cleanly later.
+    for(auto* button:{&sourceAdd_,&sourceRemove_}) {
+        addAndMakeVisible(*button);
+        button->setTooltip("Dynamic ENV/LFO source allocation — reserved for the next engine pass");
     }
 
     const juce::StringArray envNames{"ATTACK","DECAY","SUSTAIN","RELEASE"};
@@ -487,11 +496,28 @@ void ModulationPanel::updateScrollbar() {
 }
 
 void ModulationPanel::resized() {
-    auto bar=getLocalBounds().withTrimmedLeft(120).withTrimmedRight(10).removeFromTop(29).reduced(0,4);
-    const int w=bar.getWidth()/9;
-    for(auto& tab:tabs_) tab.setBounds(bar.removeFromLeft(w).reduced(1,0));
+    auto body=contentBounds();
 
-    auto body=contentBounds();auto controls=body.removeFromBottom(62);
+    // Mixed modulation-source collection. ENV + LFO + generator sources share
+    // one vertical rail so the editor area always represents ONE selected source.
+    constexpr int railWidth=92;
+    sourceRail_=body.removeFromLeft(railWidth);
+    body.removeFromLeft(6);
+
+    auto rail=sourceRail_.reduced(4,5);
+    auto collectionControls=rail.removeFromBottom(24);
+    sourceRemove_.setBounds(collectionControls.removeFromLeft(
+        (collectionControls.getWidth()-3)/2));
+    collectionControls.removeFromLeft(3);
+    sourceAdd_.setBounds(collectionControls);
+
+    rail.removeFromBottom(5);
+    const int rowHeight=juce::jmax(20,juce::jmin(25,rail.getHeight()/9));
+    for(auto& tab:tabs_) {
+        tab.setBounds(rail.removeFromTop(rowHeight).reduced(0,1));
+    }
+
+    auto controls=body.removeFromBottom(62);
     if(selected_<=2) {
         const int cell=controls.getWidth()/4;
         for(std::size_t i=0;i<4;++i)
@@ -525,6 +551,15 @@ void ModulationPanel::resized() {
 }
 
 void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
+    constexpr int railWidth=92;
+    auto rail=body.removeFromLeft(railWidth);
+    body.removeFromLeft(6);
+
+    // The rail is intentionally structural rather than another tab bar. It is
+    // the future dynamic ENV/LFO collection surface.
+    well(g,rail);
+    text(g,"SOURCES",rail.removeFromTop(18).reduced(5,0),8.0f,Palette::muted());
+
     body.removeFromBottom(66);auto caption=body.removeFromTop(17);
     juce::String title;
     if(selected_<=2) title="ENV "+juce::String(selected_+1)+(selected_==0?" / AMP + SOURCE":" / MOD SOURCE");

@@ -1,3 +1,4 @@
+// mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v26.4.3-match-signal-fill-exposure
 // mct-origami-v26.4.2-curve-cropped-signal-fills
 // mct-origami-v26.4.1-flat-signal-fills
@@ -64,6 +65,15 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter)
     }
     cutoffLabel_.setText("CUTOFF",juce::dontSendNotification);
     resonanceLabel_.setText("RESONANCE",juce::dontSendNotification);
+
+    // V30 dynamic-filter UI scaffold. Filter 1 remains the exact same existing
+    // engine filter; +/- are collection affordances only in this layout pass.
+    for(auto* button:{&filter1_,&filterAdd_,&filterRemove_}) addAndMakeVisible(*button);
+    filter1_.setClickingTogglesState(true);
+    filter1_.setToggleState(true,juce::dontSendNotification);
+    filter1_.setTooltip("Current engine Filter 1");
+    filterAdd_.setTooltip("Dynamic filter allocation — reserved for the next engine pass");
+    filterRemove_.setTooltip("Dynamic filter removal — reserved for the next engine pass");
 }
 
 void FilterPanel::syncFromModel() {
@@ -74,6 +84,20 @@ void FilterPanel::syncFromModel() {
 }
 void FilterPanel::resized() {
     auto body=contentBounds();
+
+    constexpr int railWidth=78;
+    filterRail_=body.removeFromLeft(railWidth);
+    body.removeFromLeft(6);
+
+    auto rail=filterRail_.reduced(4,5);
+    auto collectionControls=rail.removeFromBottom(24);
+    filterRemove_.setBounds(collectionControls.removeFromLeft(
+        (collectionControls.getWidth()-3)/2));
+    collectionControls.removeFromLeft(3);
+    filterAdd_.setBounds(collectionControls);
+    rail.removeFromBottom(5);
+    filter1_.setBounds(rail.removeFromTop(25).reduced(0,1));
+
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     const int w=controls.getWidth()/6;
     auto place=[&](int idx,juce::Slider& slider,juce::Label& label){
@@ -87,8 +111,15 @@ void FilterPanel::resized() {
 }
 
 void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    text(g,"LOW-PASS",{90,5,100,24},10,Palette::muted());
-    text(g,"ROUTING",{getWidth()-106,5,90,24},9,Palette::muted(),juce::Justification::centredRight);
+    constexpr int railWidth=78;
+    auto rail=body.removeFromLeft(railWidth);
+    body.removeFromLeft(6);
+
+    well(g,rail);
+    text(g,"FILTERS",rail.removeFromTop(18).reduced(5,0),8.0f,Palette::muted());
+
+    text(g,"LOW-PASS",{body.getX()+4,5,100,24},10,Palette::muted());
+    text(g,"ROUTING",{body.getRight()-96,5,90,24},9,Palette::muted(),juce::Justification::centredRight);
 
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     body.removeFromBottom(7);

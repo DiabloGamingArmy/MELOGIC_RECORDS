@@ -1,3 +1,4 @@
+// mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-keyboard-compact-bottom-v23.1.2
 // mct-origami-playable-keyboard-audio-v23.1
@@ -29,20 +30,23 @@ struct EditorLayout {
 
         const int usable=area.getHeight()-6;
 
-        result.oscillators=area.removeFromTop(juce::roundToInt(usable*.52f));
+        // V30: MACROS becomes the fixed top-left utility bay. OSCILLATORS uses
+        // the remaining horizontal space, giving the top row a modular rack
+        // hierarchy instead of dedicating the lower-right column to macros.
+        auto upper=area.removeFromTop(juce::roundToInt(usable*.52f));
+        const int macroWidth=juce::jlimit(150,190,juce::roundToInt(bounds.getWidth()*.12f));
+        result.macros=upper.removeFromLeft(macroWidth);
+        upper.removeFromLeft(6);
+        result.oscillators=upper;
+
         area.removeFromTop(6);
 
+        // Lower row is now two independently-scaffolded collections:
+        // MODULATION SOURCES | editor    and    FILTERS | editor.
+        // The rails themselves live inside those panels.
         auto lower=area;
-        // V22.4: Macros is the terminal panel on the lower row.
-        // Keep the existing approximate widths, but order the row:
-        // MODULATION | FILTER | MACROS.
-        const int macroWidth=juce::roundToInt(lower.getWidth()*.12f);
-        result.macros=lower.removeFromRight(macroWidth);
+        result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.35f));
         lower.removeFromRight(6);
-
-        result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.31f));
-        lower.removeFromRight(6);
-
         result.modulation=lower;
 
         result.mixer={};

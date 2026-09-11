@@ -1,3 +1,4 @@
+// mct-origami-v30.0.0-dynamic-source-layout-scaffold
 #pragma once
 #include "OrigamiStyle.h"
 #include "core/ParameterRegistry.h"
@@ -20,6 +21,8 @@ private:
     ParameterGetter getter_;
     juce::Slider cutoff_,resonance_;
     juce::Label cutoffLabel_,resonanceLabel_;
+    juce::TextButton filter1_{"FILTER 1"},filterAdd_{"+"},filterRemove_{"-"};
+    juce::Rectangle<int> filterRail_{};
 };
 class FxPanel final : public Panel {
 public: explicit FxPanel(bool pre):Panel(pre?"FX PRE":"FX POST"),pre_(pre) {}
