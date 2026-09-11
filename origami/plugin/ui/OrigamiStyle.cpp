@@ -1,3 +1,4 @@
+// mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
@@ -29,7 +30,17 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
     }
 }
 void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& button,bool,bool) {
-    text(g,button.getButtonText(),button.getLocalBounds().reduced(3),11,button.isEnabled()?Palette::text():Palette::muted(),juce::Justification::centred);
+    auto bounds=button.getLocalBounds().reduced(3);
+
+    // OSC PROCESS uses overlaid left/right navigation end-caps. Keep the
+    // selector itself full-width for maximum label space, but reserve exactly
+    // the arrow footprints so text can never disappear underneath them.
+    if(button.getName()=="OSC PROCESS SELECTOR")
+        bounds=button.getLocalBounds().withTrimmedLeft(21).withTrimmedRight(21).reduced(2,3);
+
+    text(g,button.getButtonText(),bounds,11,
+         button.isEnabled()?Palette::text():Palette::muted(),
+         juce::Justification::centred);
 }
 
 // mct-origami-native-knob-waveform-v16

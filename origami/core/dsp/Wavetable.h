@@ -1,3 +1,4 @@
+// mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -97,12 +98,56 @@ constexpr bool oscProcessIsSpectral(OscProcessType type) noexcept {
         case OscProcessType::HarmonicTilt:
         case OscProcessType::FormantPeaks:
             return true;
-        default:
+
+        case OscProcessType::Off:
+        case OscProcessType::BendPlus:
+        case OscProcessType::BendMinus:
+        case OscProcessType::BendBoth:
+        case OscProcessType::Sync:
+        case OscProcessType::Mirror:
+        case OscProcessType::Asym:
+        case OscProcessType::SCurve:
+        case OscProcessType::Pinch:
+        case OscProcessType::Expand:
+        case OscProcessType::CenterPull:
+        case OscProcessType::EdgePull:
+        case OscProcessType::Sync2:
+        case OscProcessType::Sync3:
+        case OscProcessType::Sync4:
+        case OscProcessType::Sync16:
+        case OscProcessType::Fold:
+        case OscProcessType::SoftFold:
+        case OscProcessType::ReflectLeft:
+        case OscProcessType::ReflectRight:
+        case OscProcessType::AlternateReflect:
+        case OscProcessType::PhaseShift:
+        case OscProcessType::SineWarp:
+        case OscProcessType::Ripple:
+        case OscProcessType::Twist:
+        case OscProcessType::ZigZag:
+        case OscProcessType::Staircase:
+        case OscProcessType::Reverse:
+        case OscProcessType::Quantize4:
+        case OscProcessType::Quantize8:
+        case OscProcessType::Quantize16:
+        case OscProcessType::Scramble2:
+        case OscProcessType::Scramble4:
+        case OscProcessType::Chaos:
+        case OscProcessType::Window:
+        case OscProcessType::PulseWarp:
+        case OscProcessType::Shred:
+        case OscProcessType::Count:
             return false;
     }
+    return false;
 }
 constexpr bool oscProcessUsesSeed(OscProcessType type) noexcept {
     return type==OscProcessType::RandAmp || type==OscProcessType::RandSparse;
+}
+constexpr int randAmpVariantCount() noexcept { return 12; }
+constexpr int randAmpVariantIndex(float amount) noexcept {
+    const float clamped=amount<0.0f?0.0f:(amount>1.0f?1.0f:amount);
+    return static_cast<int>(clamped*static_cast<float>(randAmpVariantCount()-1)+0.5f);
 }
 
 const char* oscProcessName(OscProcessType type) noexcept;

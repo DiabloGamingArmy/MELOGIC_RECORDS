@@ -1,3 +1,4 @@
+// mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -83,6 +84,15 @@ double fullSpectralGain(OscProcessType type,std::size_t harmonic,std::uint32_t s
 float quantizedSpectralAmount(OscProcessType type,float amount) noexcept {
     if(!oscProcessIsSpectral(type)) return amount;
     const float a=std::clamp(amount,0.0f,1.0f);
+
+    // Rand Amp's knob is a 12-position random-mask selector, not dry/wet.
+    // Each position is a full-strength seeded harmonic amplitude pattern.
+    if(type==OscProcessType::RandAmp) {
+        const int variant=randAmpVariantIndex(a);
+        return static_cast<float>(variant)/
+               static_cast<float>(randAmpVariantCount()-1);
+    }
+
     return std::round(a*256.0f)/256.0f;
 }
 float readCycle(const float* input,double phase) noexcept {
@@ -397,13 +407,25 @@ void renderProcessedFrame2048(const float* input,float* output,
     fft2048(bins,false);
     const double a1=oscProcessIsSpectral(process1)?quantizedSpectralAmount(process1,amount1):0.0;
     const double a2=oscProcessIsSpectral(process2)?quantizedSpectralAmount(process2,amount2):0.0;
+
+    // Rand Amp uses the amount control to select one of 12 deterministic random
+    // harmonic masks. The re-seed button changes the family of those 12 masks.
+    const int variant1=process1==OscProcessType::RandAmp ? randAmpVariantIndex(amount1) : 0;
+    const int variant2=process2==OscProcessType::RandAmp ? randAmpVariantIndex(amount2) : 0;
+    const std::uint32_t effectiveSeed1=seed1 ^ (0x9e3779b9u*static_cast<std::uint32_t>(variant1+1));
+    const std::uint32_t effectiveSeed2=seed2 ^ (0x85ebca6bu*static_cast<std::uint32_t>(variant2+1));
+
     bins[0]=Complex{};
     for(std::size_t h=1;h<spectralSize/2;++h) {
         double gain=1.0;
-        if(oscProcessIsSpectral(process1))
-            gain*=1.0+a1*(fullSpectralGain(process1,h,seed1)-1.0);
-        if(oscProcessIsSpectral(process2))
-            gain*=1.0+a2*(fullSpectralGain(process2,h,seed2)-1.0);
+        if(oscProcessIsSpectral(process1)) {
+            const double target=fullSpectralGain(process1,h,effectiveSeed1);
+            gain*=process1==OscProcessType::RandAmp ? target : 1.0+a1*(target-1.0);
+        }
+        if(oscProcessIsSpectral(process2)) {
+            const double target=fullSpectralGain(process2,h,effectiveSeed2);
+            gain*=process2==OscProcessType::RandAmp ? target : 1.0+a2*(target-1.0);
+        }
         bins[h]*=gain;
         bins[spectralSize-h]*=gain;
     }
@@ -412,9 +434,13 @@ void renderProcessedFrame2048(const float* input,float* output,
 
     double peak=1.0e-12;
     for(const auto& v:bins) peak=std::max(peak,std::abs(v.real()));
-    const double normalise=peak>1.25?1.25/peak:1.0;
+
+    // Keep reconstructed single-cycle data inside the canonical [-1, +1]
+    // display/audio range. This also prevents waveform preview spill.
+    const double normalise=peak>0.985 ? 0.985/peak : 1.0;
     for(std::size_t i=0;i<spectralSize;++i)
-        output[i]=static_cast<float>(bins[i].real()*normalise);
+        output[i]=static_cast<float>(
+            std::clamp(bins[i].real()*normalise,-0.985,0.985));
 }
 
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,

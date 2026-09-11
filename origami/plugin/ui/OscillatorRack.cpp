@@ -1,3 +1,4 @@
+// mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -105,6 +106,7 @@ void OscRouteSelector::cycle(int delta) {
 }
 
 NativeOscProcessSelector::NativeOscProcessSelector() {
+    setName("OSC PROCESS SELECTOR");
     setButtonText(dsp::oscProcessName(type_));
     setTooltip("Choose oscillator process");
     setMouseCursor(juce::MouseCursor::PointingHandCursor);
@@ -471,15 +473,31 @@ void OscillatorCard::syncFromModel() {
             auto syncAmount=[](RackSlider& slider,juce::Label& label,
                                dsp::OscProcessType type,float value) {
                 const bool bipolar=dsp::oscProcessIsBipolar(type);
+                const bool randAmp=type==dsp::OscProcessType::RandAmp;
                 const double minimum=static_cast<double>(dsp::oscProcessAmountMinimum(type));
+                const double interval=randAmp
+                    ? 1.0/static_cast<double>(dsp::randAmpVariantCount()-1)
+                    : 0.001;
+
                 if(std::abs(slider.getMinimum()-minimum)>1.0e-9 ||
-                   std::abs(slider.getMaximum()-1.0)>1.0e-9)
-                    slider.setRange(minimum,1.0,0.001);
+                   std::abs(slider.getMaximum()-1.0)>1.0e-9 ||
+                   std::abs(slider.getInterval()-interval)>1.0e-9)
+                    slider.setRange(minimum,1.0,interval);
+
                 slider.setName(bipolar ? "OSC PROCESS BIPOLAR" : "OSC PROCESS UNIPOLAR");
 
                 if(!slider.isMouseButtonDown())
                     slider.setValue(juce::jlimit(minimum,1.0,static_cast<double>(value)),
                                     juce::dontSendNotification);
+
+                if(randAmp) {
+                    const int variant=dsp::randAmpVariantIndex(
+                        static_cast<float>(slider.getValue()))+1;
+                    label.setText(juce::String(variant)+"/"+
+                                  juce::String(dsp::randAmpVariantCount()),
+                                  juce::dontSendNotification);
+                    return;
+                }
 
                 const int percent=juce::roundToInt(value*100.0f);
                 const juce::String prefix=(bipolar && percent>0) ? "+" : "";
@@ -490,10 +508,12 @@ void OscillatorCard::syncFromModel() {
             syncAmount(process2Amount_,process2AmountLabel_,state.process2,state.process2Amount);
             process1Amount_.setEnabled(state.process1!=dsp::OscProcessType::Off);
             process2Amount_.setEnabled(state.process2!=dsp::OscProcessType::Off);
-            process1Randomize_.setEnabled(dsp::oscProcessUsesSeed(state.process1));
-            process2Randomize_.setEnabled(dsp::oscProcessUsesSeed(state.process2));
-            process1Randomize_.setAlpha(dsp::oscProcessUsesSeed(state.process1)?1.0f:0.28f);
-            process2Randomize_.setAlpha(dsp::oscProcessUsesSeed(state.process2)?1.0f:0.28f);
+            const bool process1Seeded=dsp::oscProcessUsesSeed(state.process1);
+            const bool process2Seeded=dsp::oscProcessUsesSeed(state.process2);
+            process1Randomize_.setEnabled(process1Seeded);
+            process2Randomize_.setEnabled(process2Seeded);
+            process1Randomize_.setVisible(process1Seeded);
+            process2Randomize_.setVisible(process2Seeded);
 
             route1Menu_.setSelection(state.route1SourceId,state.route1Type,juce::dontSendNotification);
             route2Menu_.setSelection(state.route2SourceId,state.route2Type,juce::dontSendNotification);
@@ -564,16 +584,40 @@ void OscillatorCard::resized() {
                              juce::Label& amountLabel) {
         auto selectorRow=slot.removeFromTop(24);
         constexpr int arrowWidth=19;
-        previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
-        selectorRow.removeFromLeft(2);
-        randomize.setBounds(selectorRow.removeFromRight(arrowWidth));
-        selectorRow.removeFromRight(2);
-        next.setBounds(selectorRow.removeFromRight(arrowWidth));
-        selectorRow.removeFromRight(2);
-        selector.setBounds(selectorRow);
 
-        auto knob=slot.reduced(8,3);
-        amount.setBounds(knob.removeFromTop(44));
+        // Selector owns the full width. Navigation arrows sit ON its left/right
+        // edges like integrated end-caps. LookAndFeel reserves text padding so
+        // long process names never render underneath them.
+        selector.setBounds(selectorRow);
+        previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
+        next.setBounds(selectorRow.removeFromRight(arrowWidth));
+        previous.toFront(false);
+        next.toFront(false);
+
+        auto knobArea=slot.reduced(4,3);
+        knobArea.removeFromBottom(13);
+        const int knobSize=44;
+
+        if(randomize.isVisible()) {
+            // Seeded processes shift the knob left only while the seed control
+            // is actually required. No permanent empty right-side gap.
+            constexpr int randomWidth=22;
+            constexpr int spacing=3;
+            const int groupWidth=knobSize+spacing+randomWidth;
+            auto group=juce::Rectangle<int>(
+                knobArea.getCentreX()-groupWidth/2,knobArea.getY(),
+                groupWidth,juce::jmin(knobSize,knobArea.getHeight()));
+
+            amount.setBounds(group.removeFromLeft(knobSize));
+            group.removeFromLeft(spacing);
+            randomize.setBounds(
+                group.removeFromLeft(randomWidth).withSizeKeepingCentre(randomWidth,22));
+        } else {
+            amount.setBounds(
+                juce::Rectangle<int>(knobSize,knobSize).withCentre(knobArea.getCentre()));
+            randomize.setBounds({});
+        }
+
         amountLabel.setBounds(slot.removeFromBottom(13));
     };
 
@@ -828,9 +872,14 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
         for(int i=0;i<points;++i) {
             const float sourcePhase=float(i)/float(points-1);
-            const float sample=processedSample(sourcePhase);
+
+            // Preview is a bounded viewport. Even experimental/spectral
+            // processes must not draw beyond its physical frame.
+            const float sample=juce::jlimit(-1.0f,1.0f,processedSample(sourcePhase));
             const float x=juce::jmap(float(i),0.0f,float(points-1),wtRect.getX(),wtRect.getRight());
-            const float y=juce::jmap(sample,-1.0f,1.0f,wtRect.getBottom(),wtRect.getY());
+            const float y=juce::jlimit(
+                wtRect.getY(),wtRect.getBottom(),
+                juce::jmap(sample,-1.0f,1.0f,wtRect.getBottom(),wtRect.getY()));
             plot[static_cast<std::size_t>(i)]={x,y};
             if(i==0) outline.startNewSubPath(x,y); else outline.lineTo(x,y);
         }
@@ -851,6 +900,9 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
         // Flat waveform-area fill: no gradient, no hotspot. Every point
         // between the zero axis and waveform gets the same derived red.
+        // Clip both fill and stroke to the physical wavetable viewport.
+        g.saveState();
+        g.reduceClipRegion(wtRect.getSmallestIntegerContainer());
         g.setColour(signalSurfaceColour(0.46f,0.22f));
         g.fillPath(fill);
 
@@ -859,6 +911,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
         g.setColour(Palette::text());
         g.strokePath(outline,juce::PathStrokeType(1.5f));
+        g.restoreState();
     }
 }
 
