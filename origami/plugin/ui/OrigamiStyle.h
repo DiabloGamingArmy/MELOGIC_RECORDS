@@ -164,7 +164,7 @@ public:
 };
 class Panel : public juce::Component, public juce::SettableTooltipClient {
 public:
-    explicit Panel(juce::String title): title_(std::move(title)) { setName(title_);setTooltip("Layout preview - controls are not connected to instrument parameters."); }
+    explicit Panel(juce::String title): title_(std::move(title)) { setName(title_); }
     void paint(juce::Graphics& g) override {
         auto shell=getLocalBounds().toFloat().reduced(.5f);
 
@@ -176,8 +176,14 @@ public:
                            : oscillatorRack ? Palette::oscillatorRack()
                                             : Palette::panel();
         g.setColour(surface);g.fillRoundedRectangle(shell,3.0f);
+
+        // Subtle monochrome title shelf. Derive it from the active surface so
+        // the brighter V34.5 oscillator hierarchy remains intact.
+        auto header=shell.withHeight(31.0f).reduced(1.0f);
+        g.setColour(surface.brighter(0.055f));g.fillRoundedRectangle(header,2.5f);
+
         g.setColour(Palette::borderSoft());g.drawRoundedRectangle(shell,3.0f,1.0f);
-        g.setColour(Palette::borderSoft().withAlpha(.82f));g.drawHorizontalLine(30,10.0f,float(getWidth()-10));
+        g.setColour(Palette::borderStrong().withAlpha(.34f));g.drawHorizontalLine(30,10.0f,float(getWidth()-10));
         text(g,title_,{12,5,getWidth()-24,22},11,Palette::secondary());
         paintContent(g,contentBounds());
     }

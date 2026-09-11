@@ -137,6 +137,8 @@ void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
     mct::origami::ModSource source{};
     if(!decodeDraggedModSource(details.description,source)) return;
     modulation_.revealSourceAtParentPoint(details.localPosition.toInt());
+    // Keep the JUCE drag alive while source tabs also act as navigation targets.
+    modulation_.revealSourceAtParentPoint(details.localPosition);
     auto* target=modulationDropTargetAt(details.localPosition);
     if(target!=dragPreviewTarget_.getComponent()) {
         dragPreviewTarget_=target;
@@ -170,6 +172,7 @@ bool OrigamiAudioProcessorEditor::createDraggedRoute(
            existing.destination.oscillator==static_cast<unsigned>(oscillatorRaw)) {
             auto route=existing;
             route.enabled=true;
+            route.bipolar=false;
             route.amount=dragPreviewAmount_;
             return dragBindings_.route(route);
         }
@@ -185,6 +188,7 @@ bool OrigamiAudioProcessorEditor::createDraggedRoute(
         route.source=source;
         route.destination={destination,static_cast<unsigned>(oscillatorRaw)};
         route.enabled=true;
+        route.bipolar=false;
         route.amount=dragPreviewAmount_;
         return dragBindings_.route(route);
     }
