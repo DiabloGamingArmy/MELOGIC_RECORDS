@@ -11,6 +11,7 @@
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-wt-pos-real-morph-v22.2.1
 // mct-origami-v22.1-engine-repair-1
+// mct-origami-v34.2.1-performance-reinforcement
 #include "Engine.h"
 #include <algorithm>
 #include <cmath>
@@ -41,7 +42,9 @@ void OrigamiEngine::reset() noexcept {
     smoothedMacros_=audioModulation_.macros;
     for(auto& lfo:globalLfos_) lfo.reset();
     globalRandom_.reset();globalFunction_.reset();globalChaos_.reset();globalDrift_.reset();globalSequencer_.reset();
-    compiledModulation_.compile(audioModulation_,oscillatorModules_.snapshot(),true);
+    const auto resetModules=oscillatorModules_.snapshot();
+    compiledModulation_.compile(audioModulation_,resetModules,true);
+    for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) voice.reset();
     for (auto& voice : stealTails_) voice.reset();
     tailRemaining_.fill(0); order_ = 0; clearHeldNotes();
@@ -254,9 +257,28 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
 
     latchParameters();
     auto modules=oscillatorModules_.snapshot();
-    modulationMailbox_.consume(audioModulation_);
-    // Resolve stable IDs only once per block; at most 32 routes / 16 modules.
-    compiledModulation_.compile(audioModulation_,modules);
+    const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
+
+    bool moduleTopologyChanged=false;
+    for(std::size_t i=0;i<modules.size();++i) {
+        if(compiledModuleIds_[i]!=modules[i].id) {
+            moduleTopologyChanged=true;
+            compiledModuleIds_[i]=modules[i].id;
+        }
+    }
+
+    // Compiling routes copies and resolves the complete Matrix graph. Previously
+    // this ran on every host block even when neither Matrix nor oscillator
+    // topology changed. Keep it strictly event-driven.
+    if(modulationChanged || moduleTopologyChanged)
+        compiledModulation_.compile(audioModulation_,modules);
+
+    std::size_t activeModules=0;
+    for(const auto& m:modules) if(m.enabled) ++activeModules;
+    const double normalization=activeModules
+        ? 1.0/static_cast<double>(activeModules) : 1.0;
+    const float bendRange=pitchBendRange();
+
     for(std::size_t sample=0;sample<sampleCount;++sample) {
         for(auto& s:smooth_) if(s.remaining) {
             s.value+=static_cast<float>(s.step);
@@ -277,18 +299,30 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         modules[0].level=value(ParameterId::OscLevel);
 
         std::array<float,CompiledModulation::globalSourceCount> sources{};
-        for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(audioModulation_,i);sources[i]=l.mode==LfoMode::Free?globalLfos_[i].next(l,sampleRate_):0.0f;}
-        for(std::size_t i=0;i<smoothedMacros_.size();++i){smoothedMacros_[i]+=modulationSmoothing_*(audioModulation_.macros[i]-smoothedMacros_[i]);sources[4+i]=smoothedMacros_[i];}
-        sources[8]=(audioModulation_.generatorActiveMask&0x02u)
-            ? globalRandom_.next(audioModulation_.random,sampleRate_) : 0.0f;
-        sources[9]=(audioModulation_.generatorActiveMask&0x01u)
-            ? globalFunction_.next(audioModulation_.function,sampleRate_) : 0.0f;
-        sources[10]=(audioModulation_.generatorActiveMask&0x04u)
-            ? globalChaos_.next(audioModulation_.chaos,sampleRate_) : 0.0f;
-        sources[11]=(audioModulation_.generatorActiveMask&0x08u)
-            ? globalDrift_.next(audioModulation_.drift,sampleRate_) : 0.0f;
-        sources[12]=(audioModulation_.generatorActiveMask&0x10u)
-            ? globalSequencer_.next(audioModulation_.sequencer,sampleRate_) : 0.0f;
+        for(std::size_t i=0;i<4;++i) {
+            if(!compiledModulation_.usesGlobalSource(i)) continue;
+            const auto& l=lfoSettings(audioModulation_,i);
+            sources[i]=l.mode==LfoMode::Free ? globalLfos_[i].next(l,sampleRate_) : 0.0f;
+        }
+        for(std::size_t i=0;i<smoothedMacros_.size();++i) {
+            if(!compiledModulation_.usesGlobalSource(4+i)) {
+                smoothedMacros_[i]=audioModulation_.macros[i];
+                continue;
+            }
+            smoothedMacros_[i]+=modulationSmoothing_*
+                (audioModulation_.macros[i]-smoothedMacros_[i]);
+            sources[4+i]=smoothedMacros_[i];
+        }
+        if(compiledModulation_.usesGlobalSource(8) && (audioModulation_.generatorActiveMask&0x02u))
+            sources[8]=globalRandom_.next(audioModulation_.random,sampleRate_);
+        if(compiledModulation_.usesGlobalSource(9) && (audioModulation_.generatorActiveMask&0x01u))
+            sources[9]=globalFunction_.next(audioModulation_.function,sampleRate_);
+        if(compiledModulation_.usesGlobalSource(10) && (audioModulation_.generatorActiveMask&0x04u))
+            sources[10]=globalChaos_.next(audioModulation_.chaos,sampleRate_);
+        if(compiledModulation_.usesGlobalSource(11) && (audioModulation_.generatorActiveMask&0x08u))
+            sources[11]=globalDrift_.next(audioModulation_.drift,sampleRate_);
+        if(compiledModulation_.usesGlobalSource(12) && (audioModulation_.generatorActiveMask&0x10u))
+            sources[12]=globalSequencer_.next(audioModulation_.sequencer,sampleRate_);
         compiledModulation_.advance(modulationSmoothing_);
         ModulationFrame frame;
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
@@ -297,14 +331,13 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         const float sustain=value(ParameterId::Sustain);
 
         double left=0.0,right=0.0,mono=0.0;
-        std::size_t activeModules=0;
-        for(const auto& m:modules) if(m.enabled) ++activeModules;
-        const double normalization=activeModules ? 1.0/static_cast<double>(activeModules) : 1.0;
 
         for(std::size_t v=0;v<voiceCount;++v) {
             const auto info=voices_[v].info();
+            if(!info.active && tailRemaining_[v]==0) continue;
+
             const auto channel=std::min<std::size_t>(info.address.channel,15);
-            const float bend=pitchBendNormalized_[channel]*pitchBendRange();
+            const float bend=pitchBendNormalized_[channel]*bendRange;
             auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
                                                 modWheel_[channel],aftertouch_[channel]);
@@ -315,7 +348,7 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
                 oldWeight=static_cast<float>(tailRemaining_[v])/static_cast<float>(stealFadeSamples_);
                 const auto oldInfo=stealTails_[v].info();const auto oldChannel=std::min<std::size_t>(oldInfo.address.channel,15);
                 old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
-                                                pitchBendNormalized_[oldChannel]*pitchBendRange(),
+                                                pitchBendNormalized_[oldChannel]*bendRange,
                                                 pitchBendNormalized_[oldChannel],
                                                 modWheel_[oldChannel],aftertouch_[oldChannel]);
                 if(--tailRemaining_[v]==0) stealTails_[v].reset();
@@ -327,10 +360,14 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         }
 
         const float master=static_cast<float>(normalization);
-        if(channels==1) output[0][sample]=static_cast<float>(mono)*master;
-        else {
-            output[0][sample]=static_cast<float>(left)*master;
-            output[1][sample]=static_cast<float>(right)*master;
+        const auto finite=[](double value) noexcept {
+            return std::isfinite(value) ? static_cast<float>(value) : 0.0f;
+        };
+        if(channels==1) {
+            output[0][sample]=finite(mono*master);
+        } else {
+            output[0][sample]=finite(left*master);
+            output[1][sample]=finite(right*master);
         }
     }
     return true;

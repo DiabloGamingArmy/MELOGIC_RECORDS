@@ -5,6 +5,7 @@
 // mct-origami-modulation-completion-v24
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
+// mct-origami-v34.2.1-performance-reinforcement
 #include "Modulation.h"
 #include <algorithm>
 #include <cmath>
@@ -280,7 +281,9 @@ float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noe
 }
 
 void CompiledModulation::compile(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules,bool immediate) noexcept {
-    const auto old=groups_;const auto oldCount=count_;count_=voiceCount_=0;voiceFilter_=false;groups_={};
+    const auto old=groups_;const auto oldCount=count_;
+    count_=voiceCount_=0;voiceFilter_=false;groups_={};globalSourceUsed_.fill(false);
+    smoothingActive_=false;
     filterEnabled_=state.filterEnabled;
     for(const auto& route:state.routes) {
         if(!route.id || !route.enabled || route.amount==0) continue;
@@ -291,13 +294,18 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         }
         std::size_t i=0;while(i<count_ && !(groups_[i].address==route.destination)) ++i;
         if(i==count_) {groups_[i].address=route.destination;groups_[i].slot=slot;++count_;}
-        groups_[i].target[slotFor(route.source,state)]+=route.amount;
+        const auto sourceSlot=slotFor(route.source,state);
+        groups_[i].target[sourceSlot]+=route.amount;
+        if(sourceSlot<globalSourceCount) globalSourceUsed_[sourceSlot]=true;
     }
     for(std::size_t i=0;i<count_;++i) {
         auto& g=groups_[i];g.weight=g.target;
         if(!immediate) {
             g.weight={};
-            for(std::size_t j=0;j<oldCount;++j) if(old[j].address==g.address) {g.weight=old[j].weight;break;}
+            for(std::size_t j=0;j<oldCount;++j)
+                if(old[j].address==g.address) {g.weight=old[j].weight;break;}
+            for(std::size_t s=0;s<sourceSlotCount;++s)
+                if(std::abs(g.target[s]-g.weight[s])>1.0e-6f) smoothingActive_=true;
         }
         bool voice=false;
         for(std::size_t s=globalSourceCount;s<sourceSlotCount;++s)
@@ -309,8 +317,23 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     }
 }
 void CompiledModulation::advance(float alpha) noexcept {
-    for(std::size_t i=0;i<count_;++i) for(std::size_t s=0;s<sourceSlotCount;++s)
-        groups_[i].weight[s]+=alpha*(groups_[i].target[s]-groups_[i].weight[s]);
+    if(!smoothingActive_) return;
+    bool stillMoving=false;
+    for(std::size_t i=0;i<count_;++i) {
+        for(std::size_t s=0;s<sourceSlotCount;++s) {
+            auto& value=groups_[i].weight[s];
+            const float target=groups_[i].target[s];
+            const float delta=target-value;
+            if(std::abs(delta)<=1.0e-5f) {
+                value=target;
+                continue;
+            }
+            value+=alpha*delta;
+            if(std::abs(target-value)>1.0e-5f) stillMoving=true;
+            else value=target;
+        }
+    }
+    smoothingActive_=stillMoving;
 }
 float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept {
     const auto& m=f.modules[g.slot];
@@ -341,14 +364,27 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
         case ModDestination::Route2Amount:m.route2Amount=v;break;
     }
 }
+const dsp::LowPassCoefficients& CompiledModulation::globalFilter(
+    double rate,float cutoff,float resonance) const noexcept {
+    if(rate!=cachedFilterRate_ || cutoff!=cachedFilterCutoff_ ||
+       resonance!=cachedFilterResonance_) {
+        cachedFilter_=dsp::LowPassCoefficients::make(rate,cutoff,resonance);
+        cachedFilterRate_=rate;
+        cachedFilterCutoff_=cutoff;
+        cachedFilterResonance_=resonance;
+    }
+    return cachedFilter_;
+}
+
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
     f.filterEnabled=filterEnabled_;
     for(std::size_t i=0;i<count_;++i) {
         const auto& g=groups_[i];float n=modulationToNormalized(g.address.parameter,read(f,g));
-        for(std::size_t s=0;s<globalSourceCount;++s) n+=g.weight[s]*sources[s];
+        for(std::size_t s=0;s<globalSourceCount;++s)
+            if(globalSourceUsed_[s]) n+=g.weight[s]*sources[s];
         f.normalized[i]=n;write(f,g,n);
     }
-    f.filter=dsp::LowPassCoefficients::make(rate,f.cutoff,f.resonance);
+    if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
 }
 void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double rate) const noexcept {
     for(std::size_t j=0;j<voiceCount_;++j) {

@@ -5,6 +5,7 @@
 // mct-origami-modulation-completion-v24
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
+// mct-origami-v34.2.1-performance-reinforcement
 #pragma once
 #include "core/OscillatorModule.h"
 #include "core/dsp/Filter.h"
@@ -199,6 +200,9 @@ public:
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
     void voiceFrame(ModulationFrame&,const std::array<float,voiceSourceCount>&,double sampleRate) const noexcept;
     bool hasVoiceRoutes() const noexcept {return voiceCount_!=0;}
+    bool usesGlobalSource(std::size_t index) const noexcept {
+        return index<globalSourceCount && globalSourceUsed_[index];
+    }
     std::size_t groupCount() const noexcept {return count_;}
 private:
     struct Group {
@@ -209,8 +213,18 @@ private:
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;
     std::array<Group,ModulationState::capacity> groups_{};
     std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
+    std::array<bool,globalSourceCount> globalSourceUsed_{};
     std::size_t count_=0,voiceCount_=0;
     bool voiceFilter_=false;
     bool filterEnabled_=true;
+    bool smoothingActive_=false;
+
+    // Filter coefficient generation contains tan(). Cache the common global
+    // coefficient set so modulation of unrelated destinations does not pay
+    // transcendental filter setup every audio sample.
+    mutable double cachedFilterRate_=0.0;
+    mutable float cachedFilterCutoff_=-1.0f,cachedFilterResonance_=-1.0f;
+    mutable dsp::LowPassCoefficients cachedFilter_{};
+    const dsp::LowPassCoefficients& globalFilter(double,float,float) const noexcept;
 };
 }

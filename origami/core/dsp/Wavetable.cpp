@@ -10,6 +10,7 @@
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
+// mct-origami-v34.2.1-performance-reinforcement
 #include "Wavetable.h"
 #include <algorithm>
 #include <cmath>
@@ -98,13 +99,16 @@ float quantizedSpectralAmount(OscProcessType type,float amount) noexcept {
     if(!oscProcessIsSpectral(type)) return amount;
     const float a=std::clamp(amount,0.0f,1.0f);
 
-    // Seeded random spectral modes use 12 anchor masks, but their controls
-    // remain continuous. Fine cache quantisation allows smooth morphing between
-    // adjacent random spectra instead of snapping mask-to-mask.
-    if(type==OscProcessType::RandAmp || type==OscProcessType::RandSparse)
-        return std::round(a*256.0f)/256.0f;
-
-    return std::round(a*256.0f)/256.0f;
+    // IMPORTANT REAL-TIME RULE:
+    // A cache miss performs a 2048-point FFT + IFFT. 1/256 amount keys allowed
+    // a fast LFO to create hundreds of unique keys per second on the AUDIO
+    // thread, continuously evicting the tiny cache and eventually starving the
+    // callback. Spectral control is intentionally control-rate quantised to 33
+    // anchor positions. The audible waveform still interpolates continuously
+    // in time through oscillator phase; only the expensive spectral transform
+    // state is bounded.
+    constexpr float spectralSteps=32.0f;
+    return std::round(a*spectralSteps)/spectralSteps;
 }
 float readCycle(const float* input,double phase) noexcept {
     phase-=std::floor(phase);
@@ -124,7 +128,11 @@ struct SpectralCacheEntry {
     std::uint64_t age=0;
     bool valid=false;
 };
-thread_local std::array<SpectralCacheEntry,32> spectralCache{};
+// 256 entries ~= 2 MiB of sample storage per audio thread. This is a
+// deliberate CPU-for-memory trade: enough residency for multiple oscillators,
+// adjacent wavetable frames, pitch bands and the bounded spectral amount grid,
+// without heap allocation or locks in process().
+thread_local std::array<SpectralCacheEntry,256> spectralCache{};
 thread_local std::uint64_t spectralClock=1;
 
 SpectralCacheEntry& processedBand(const Wavetable& table,std::size_t frame,std::size_t band,

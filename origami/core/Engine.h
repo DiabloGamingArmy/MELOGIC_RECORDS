@@ -3,6 +3,7 @@
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
+// mct-origami-v34.2.1-performance-reinforcement
 #pragma once
 #include "ParameterRegistry.h"
 #include "Voice.h"
@@ -64,6 +65,7 @@ private:
     LatestStateMailbox<ModulationState> modulationMailbox_;
     ModulationState audioModulation_{};
     CompiledModulation compiledModulation_;
+    std::array<OscillatorModuleId,16> compiledModuleIds_{};
     std::array<Lfo,4> globalLfos_{};
     RandomGenerator globalRandom_{};
     FunctionGenerator globalFunction_{};

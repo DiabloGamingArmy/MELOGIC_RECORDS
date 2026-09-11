@@ -24,6 +24,7 @@
 // mct-origami-wt-pos-real-morph-v22.2.1
 // mct-origami-v22.1-ui-scope-repair-1
 // mct-origami-v33.1.2-osc-blend-engine
+// mct-origami-v34.2.1-performance-reinforcement
 #include <cmath>
 // mct-origami-wt-position-wiring-v22.1
 // mct-origami-osc-power-compact-pitch-v21.4.1
@@ -949,28 +950,68 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         }
 
         constexpr std::size_t previewSize=2048;
-        std::array<float,previewSize> previewSource{},previewProcessed{};
         const bool spectralPreview=moduleState.id &&
             (dsp::oscProcessIsSpectral(moduleState.process1) ||
              dsp::oscProcessIsSpectral(moduleState.process2));
         if(spectralPreview) {
-            for(std::size_t sampleIndex=0;sampleIndex<previewSize;++sampleIndex) {
-                const float phase=static_cast<float>(sampleIndex)/static_cast<float>(previewSize);
-                const float ya=shape(a,phase),yb=shape(next,phase);
-                previewSource[sampleIndex]=ya+(yb-ya)*blend;
+            // Quantise the VISUAL cache key only. This prevents repaint-driven
+            // FFT storms while preserving more resolution than the viewport can
+            // physically display.
+            const int wtKey=juce::roundToInt(physical*128.0f);
+            const int amount1Key=juce::roundToInt(moduleState.process1Amount*64.0f);
+            const int amount2Key=juce::roundToInt(moduleState.process2Amount*64.0f);
+            const bool stale=!spectralPreviewValid_ ||
+                spectralPreviewWtKey_!=wtKey ||
+                spectralPreviewAmount1Key_!=amount1Key ||
+                spectralPreviewAmount2Key_!=amount2Key ||
+                spectralPreviewProcess1_!=moduleState.process1 ||
+                spectralPreviewProcess2_!=moduleState.process2 ||
+                spectralPreviewSeed1_!=moduleState.process1Seed ||
+                spectralPreviewSeed2_!=moduleState.process2Seed;
+
+            if(stale) {
+                std::array<float,previewSize> previewSource{};
+                const float visualPhysical=static_cast<float>(wtKey)/128.0f;
+                const int va=juce::jlimit(0,3,int(std::floor(visualPhysical)));
+                const int vb=juce::jmin(3,va+1);
+                const float vblend=visualPhysical-float(va);
+
+                for(std::size_t sampleIndex=0;sampleIndex<previewSize;++sampleIndex) {
+                    const float phase=static_cast<float>(sampleIndex)/static_cast<float>(previewSize);
+                    const float ya=shape(va,phase),yb=shape(vb,phase);
+                    previewSource[sampleIndex]=ya+(yb-ya)*vblend;
+                }
+                dsp::renderProcessedFrame2048(
+                    previewSource.data(),spectralPreviewCache_.data(),
+                    moduleState.process1,
+                    static_cast<float>(amount1Key)/64.0f,
+                    moduleState.process1Seed,
+                    moduleState.process2,
+                    static_cast<float>(amount2Key)/64.0f,
+                    moduleState.process2Seed);
+
+                spectralPreviewWtKey_=wtKey;
+                spectralPreviewAmount1Key_=amount1Key;
+                spectralPreviewAmount2Key_=amount2Key;
+                spectralPreviewProcess1_=moduleState.process1;
+                spectralPreviewProcess2_=moduleState.process2;
+                spectralPreviewSeed1_=moduleState.process1Seed;
+                spectralPreviewSeed2_=moduleState.process2Seed;
+                spectralPreviewValid_=true;
             }
-            dsp::renderProcessedFrame2048(previewSource.data(),previewProcessed.data(),
-                moduleState.process1,moduleState.process1Amount,moduleState.process1Seed,
-                moduleState.process2,moduleState.process2Amount,moduleState.process2Seed);
+        } else {
+            spectralPreviewValid_=false;
         }
+
         auto processedSample=[&](float sourcePhase) {
-            if(spectralPreview) {
+            if(spectralPreview && spectralPreviewValid_) {
                 const float wrapped=sourcePhase-std::floor(sourcePhase);
                 const float pos=wrapped*static_cast<float>(previewSize);
                 const auto i=static_cast<std::size_t>(pos)%previewSize;
                 const auto j=(i+1)%previewSize;
                 const float fraction=pos-static_cast<float>(static_cast<std::size_t>(pos));
-                return previewProcessed[i]+fraction*(previewProcessed[j]-previewProcessed[i]);
+                return spectralPreviewCache_[i]+
+                    fraction*(spectralPreviewCache_[j]-spectralPreviewCache_[i]);
             }
             double phase=static_cast<double>(sourcePhase);
             if(moduleState.id) {
@@ -1148,7 +1189,8 @@ OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
     left_.onClick=[this]{viewport_.setViewPosition(juce::jmax(0,viewport_.getViewPositionX()-cardWidth_-8),0);};
     right_.onClick=[this]{viewport_.setViewPosition(viewport_.getViewPositionX()+cardWidth_+8,0);};
     timerCallback();
-    startTimerHz(15);
+    // Model polling/animated overlays do not need audio-rate cadence.
+    startTimerHz(12);
 }
 OscillatorRack::~OscillatorRack() {stopTimer();content_.removeMouseListener(&viewport_);viewport_.setViewedComponent(nullptr,false);}
 void OscillatorRack::addOscillator() {
@@ -1169,7 +1211,13 @@ void OscillatorRack::syncFromModel() {
         for(auto id:ids) createCard(id);
         layoutCards();viewport_.setViewPosition(x,0);repaint();
     }
-    for(auto& card:cards_) card->syncFromModel();
+    const auto visible=juce::Rectangle<int>(
+        viewport_.getViewPositionX(),viewport_.getViewPositionY(),
+        viewport_.getWidth(),viewport_.getHeight()).expanded(24,0);
+    for(auto& card:cards_) {
+        if(card->getBounds().intersects(visible))
+            card->syncFromModel();
+    }
     add_.setEnabled(ids.size()<OscillatorModuleBank::capacity);
     addTile_.setEnabled(add_.isEnabled());
 }

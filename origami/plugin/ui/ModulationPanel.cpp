@@ -19,6 +19,7 @@
 // mct-origami-v34.0.1-random-controls-layout
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
+// mct-origami-v34.2.1-performance-reinforcement
 #include "ModulationPanel.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
@@ -192,7 +193,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     syncFromModel();
     updateVisibleControls();
-    startTimerHz(60);
+    // 30 FPS is enough for modulation telemetry while halving message-thread
+    // path construction, history bookkeeping and repaint pressure.
+    startTimerHz(30);
 }
 
 ModulationPanel::~ModulationPanel() {
@@ -844,7 +847,8 @@ juce::Point<float> ModulationPanel::tracerPoint(const EnvelopeRuntimeInfo& r,
 }
 
 void ModulationPanel::timerCallback() {
-    constexpr float dt=1.0f/60.0f;
+    if(!isShowing()) return;
+    constexpr float dt=1.0f/30.0f;
     updateSourceHistory(dt);
     for(auto& s:traceTail_) s.age+=dt;
     while(!traceTail_.empty() && traceTail_.front().age>0.34f) traceTail_.pop_front();
@@ -1244,7 +1248,10 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
                             const auto& b=(tailIndex+1<traceTail_.size())
                                 ? traceTail_[tailIndex+1] : traceTail_[tailIndex];
                             const float dx=std::abs(b.point.x-a.point.x);
-                            const int columns=juce::jlimit(1,32,static_cast<int>(std::ceil(dx/1.6f)));
+                            // The glow is visually continuous at ~3 px
+                            // spacing. The old 1.6 px / 32-column pass could
+                            // emit ~900 line draws per frame for one envelope.
+                            const int columns=juce::jlimit(1,12,static_cast<int>(std::ceil(dx/3.0f)));
                             for(int column=0;column<=columns;++column){
                                 const float t=static_cast<float>(column)/static_cast<float>(columns);
                                 const float age=a.age+(b.age-a.age)*t;
@@ -1499,26 +1506,33 @@ void ModulationPanel::updateSourceHistory(float) {
     for(std::size_t i=0;i<3;++i)
         samples[i]=juce::jlimit(0.0f,1.0f,sourceTrace_.envelopes[i].value);
 
+    constexpr double monitorRate=30.0;
     for(std::size_t i=0;i<4;++i)
-        samples[3+i]=sourceMonitorLfos_[i].next(lfoSettings(cached_,i),60.0);
+        samples[3+i]=sourceMonitorLfos_[i].next(lfoSettings(cached_,i),monitorRate);
 
     samples[7]=(cached_.generatorActiveMask&0x01u)
-        ? sourceMonitorFunction_.next(cached_.function,60.0) : 0.0f;
+        ? sourceMonitorFunction_.next(cached_.function,monitorRate) : 0.0f;
     samples[8]=(cached_.generatorActiveMask&0x02u)
-        ? sourceMonitorRandom_.next(cached_.random,60.0) : 0.0f;
+        ? sourceMonitorRandom_.next(cached_.random,monitorRate) : 0.0f;
     samples[9]=(cached_.generatorActiveMask&0x04u)
-        ? sourceMonitorChaos_.next(cached_.chaos,60.0) : 0.0f;
+        ? sourceMonitorChaos_.next(cached_.chaos,monitorRate) : 0.0f;
     samples[10]=(cached_.generatorActiveMask&0x08u)
-        ? sourceMonitorDrift_.next(cached_.drift,60.0) : 0.0f;
+        ? sourceMonitorDrift_.next(cached_.drift,monitorRate) : 0.0f;
     samples[11]=(cached_.generatorActiveMask&0x10u)
-        ? sourceMonitorSequencer_.next(cached_.sequencer,60.0) : 0.0f;
+        ? sourceMonitorSequencer_.next(cached_.sequencer,monitorRate) : 0.0f;
     telemetry.sourceValues=samples;
 
     randomViewportHistory_.push_back(juce::jlimit(-1.0f,1.0f,samples[8]));
     while(randomViewportHistory_.size()>randomHistoryLength_)
         randomViewportHistory_.pop_front();
 
+    const auto visibleRail=sourceViewport_.getBounds().toFloat();
     for(std::size_t i=0;i<sourceHistory_.size();++i) {
+        // Histories exist only to paint the list cards. Do not maintain rolling
+        // buffers for cards that are currently scrolled out of view.
+        const auto card=getLocalArea(&sourceContent_,tabs_[i].getBounds()).toFloat();
+        if(!card.intersects(visibleRail)) continue;
+
         auto& history=sourceHistory_[i];
         history.push_back(juce::jlimit(0.0f,1.0f,std::abs(samples[i])));
         while(history.size()>sourceHistoryLength_) history.pop_front();
@@ -1537,7 +1551,7 @@ void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
     for(std::size_t i=0;i<tabs_.size();++i) {
         auto b=getLocalArea(&sourceContent_,tabs_[i].getBounds())
                    .toFloat().reduced(0.75f);
-        if(b.isEmpty()) continue;
+        if(b.isEmpty() || !b.intersects(sourceViewport_.getBounds().toFloat())) continue;
 
         g.setColour(juce::Colours::black.withAlpha(0.86f));
         g.fillRoundedRectangle(b,3.5f);
