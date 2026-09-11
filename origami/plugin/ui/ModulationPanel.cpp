@@ -15,6 +15,7 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v33.1.0-lfo-mseg-editing-tools
 // mct-origami-v33.0.2-lfo-mseg-editor-foundation
+// mct-origami-v34.0.0-random-lfo
 #include "ModulationPanel.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
@@ -154,6 +155,22 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     curve_.setRange(-1,1,.001);
     curve_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
 
+    rotary(*this,randomSmooth_,randomSmoothLabel_,"SMOOTH");
+    randomSmooth_.setRange(0.0,1.0,.001);
+    randomSmooth_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
+    randomSmooth_.setTooltip("0 = hard sample-and-hold; 100% = continuous glide");
+
+    rotary(*this,randomHold_,randomHoldLabel_,"HOLD");
+    randomHold_.setRange(0.0,.98,.001);
+    randomHold_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
+    randomHold_.setTooltip("Fraction of each random cycle held before smoothing begins");
+
+    rotary(*this,randomDelay_,randomDelayLabel_,"DELAY / s");
+    randomDelay_.setRange(0.0,5.0,.001);
+    randomDelay_.setSkewFactorFromMidPoint(.35);
+    randomDelay_.setTextBoxStyle(juce::Slider::TextBoxRight,false,50,18);
+    randomDelay_.setTooltip("Initial delay before Random modulation starts");
+
     shape_.addItem("MSEG",1);
     mode_.addItem("Free running",1);mode_.addItem("Note retrigger",2);
     for(auto* box:{&shape_,&mode_}) {addAndMakeVisible(*box);box->setScrollWheelEnabled(false);}
@@ -166,6 +183,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     lfoTools_.onClick=[this]{showLfoToolsMenu();};
     auto update=[this]{commitGenerator();repaint();};
     mode_.onChange=update;rate_.onValueChange=update;curve_.onValueChange=update;
+    randomSmooth_.onValueChange=update;
+    randomHold_.onValueChange=update;
+    randomDelay_.onValueChange=update;
 
     syncFromModel();
     updateVisibleControls();
@@ -329,6 +349,9 @@ void ModulationPanel::commitGenerator() {
         mod.function.curve=static_cast<float>(curve_.getValue());
     } else if(selected_==8) {
         mod.random.rateHz=static_cast<float>(rate_.getValue());
+        mod.random.smoothing=static_cast<float>(randomSmooth_.getValue());
+        mod.random.hold=static_cast<float>(randomHold_.getValue());
+        mod.random.delaySeconds=static_cast<float>(randomDelay_.getValue());
     } else if(selected_==9) {
         mod.chaos.rateHz=static_cast<float>(rate_.getValue());
     } else if(selected_==10) {
@@ -362,6 +385,9 @@ void ModulationPanel::updateVisibleControls() {
     rateLabel_.setVisible(lfo||function||rateGenerator);
     shape_.setVisible(lfo);mode_.setVisible(lfo);
     curve_.setVisible(function);curveLabel_.setVisible(function);
+    randomSmooth_.setVisible(random);randomSmoothLabel_.setVisible(random);
+    randomHold_.setVisible(random);randomHoldLabel_.setVisible(random);
+    randomDelay_.setVisible(random);randomDelayLabel_.setVisible(random);
 }
 
 void ModulationPanel::syncFromModel() {
@@ -390,6 +416,9 @@ void ModulationPanel::syncFromModel() {
         if(!curve_.isMouseButtonDown()) curve_.setValue(cached_.function.curve,juce::dontSendNotification);
     } else if(selected_==8) {
         if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.random.rateHz,juce::dontSendNotification);
+        if(!randomSmooth_.isMouseButtonDown()) randomSmooth_.setValue(cached_.random.smoothing,juce::dontSendNotification);
+        if(!randomHold_.isMouseButtonDown()) randomHold_.setValue(cached_.random.hold,juce::dontSendNotification);
+        if(!randomDelay_.isMouseButtonDown()) randomDelay_.setValue(cached_.random.delaySeconds,juce::dontSendNotification);
     } else if(selected_==9) {
         rate_.setValue(cached_.chaos.rateHz,juce::dontSendNotification);
     } else if(selected_==10) {
@@ -793,7 +822,7 @@ void ModulationPanel::timerCallback() {
             }
         }
     }
-    if(selected_<=2) repaint();
+    if(selected_<=2 || selected_==8) repaint();
 }
 
 void ModulationPanel::zoomBy(float factor,juce::Point<float> anchor) {
@@ -914,11 +943,27 @@ void ModulationPanel::resized() {
         updateScrollbar();
     } else {
         envCanvas_={};
-        auto left=controls.removeFromLeft(120);
-        rateLabel_.setBounds(left.removeFromBottom(17));rate_.setBounds(left);
-        if(selected_==7) {
-            auto cell=controls.removeFromLeft(120);
-            curveLabel_.setBounds(cell.removeFromBottom(17));curve_.setBounds(cell);
+        if(selected_==8) {
+            // Random is a first-class modulation generator. Keep its control
+            // strip visually equivalent to ENV/LFO: evenly spaced, compact
+            // rotary controls under a large output viewport.
+            const int cellWidth=juce::jmax(92,controls.getWidth()/4);
+            auto placeRandom=[&](juce::Slider& slider,juce::Label& label){
+                auto cell=controls.removeFromLeft(juce::jmin(cellWidth,controls.getWidth()));
+                label.setBounds(cell.removeFromBottom(17));
+                slider.setBounds(cell.withSizeKeepingCentre(46,42));
+            };
+            placeRandom(rate_,rateLabel_);
+            placeRandom(randomSmooth_,randomSmoothLabel_);
+            placeRandom(randomHold_,randomHoldLabel_);
+            placeRandom(randomDelay_,randomDelayLabel_);
+        } else {
+            auto left=controls.removeFromLeft(120);
+            rateLabel_.setBounds(left.removeFromBottom(17));rate_.setBounds(left);
+            if(selected_==7) {
+                auto cell=controls.removeFromLeft(120);
+                curveLabel_.setBounds(cell.removeFromBottom(17));curve_.setBounds(cell);
+            }
         }
     }
     updateVisibleControls();
@@ -1198,7 +1243,51 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
             const float x=float(i)/255.f,y=r.getCentreY()-FunctionGenerator::shape(cached_.function.curve,x*2)*r.getHeight()*.45f;
             if(i==0)p.startNewSubPath(r.getX(),y);else p.lineTo(r.getX()+x*r.getWidth(),y);
         }
+    } else if(selected_==8) {
+        // Live Random-LFO output scope. Old samples travel RIGHT -> LEFT as
+        // each new output value enters at the right edge.
+        g.setColour(Palette::borderSoft().withAlpha(.24f));
+        for(int i=0;i<=8;++i) {
+            const float x=r.getX()+r.getWidth()*float(i)/8.0f;
+            g.drawVerticalLine(juce::roundToInt(x),r.getY(),r.getBottom());
+        }
+        g.setColour(Palette::borderSoft().withAlpha(.52f));
+        g.drawHorizontalLine(juce::roundToInt(r.getCentreY()),r.getX(),r.getRight());
+
+        const auto count=randomViewportHistory_.size();
+        if(count>0) {
+            const float dx=r.getWidth()/float(randomHistoryLength_-1);
+            const float startX=r.getRight()-dx*float(count-1);
+            std::size_t i=0;
+            for(const float sample:randomViewportHistory_) {
+                const float x=startX+dx*float(i++);
+                const float y=r.getCentreY()-sample*r.getHeight()*.45f;
+                if(i==1) p.startNewSubPath(x,y); else p.lineTo(x,y);
+            }
+
+            juce::Path fill=p;
+            const float endX=r.getRight();
+            fill.lineTo(endX,r.getCentreY());
+            fill.lineTo(startX,r.getCentreY());
+            fill.closeSubPath();
+            g.setColour(signalSurfaceColour(.46f,.22f));
+            g.fillPath(fill);
+
+            // Bright latest-output head makes the viewport read like a live
+            // modulation scope rather than a static random-shape preview.
+            const float latest=randomViewportHistory_.back();
+            const juce::Point<float> head{
+                r.getRight(),
+                r.getCentreY()-latest*r.getHeight()*.45f
+            };
+            g.setColour(signalSourceColour().withAlpha(.15f));
+            g.fillEllipse(juce::Rectangle<float>(15,15).withCentre(head));
+            g.setColour(juce::Colours::white);
+            g.fillEllipse(juce::Rectangle<float>(4.5f,4.5f).withCentre(head));
+        }
     } else {
+        // Keep the compact preview for Chaos / Drift / Sequencer until their
+        // dedicated editors are promoted in later passes.
         std::uint32_t seed=0x6d2b79f5u;float last=0;
         for(int i=0;i<16;++i) {
             seed^=seed<<13;seed^=seed>>17;seed^=seed<<5;
@@ -1208,11 +1297,8 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
             if(i==0)p.startNewSubPath(x0,y);p.lineTo(x1,y);p.lineTo(x1,y2);last=next;
         }
     }
-    if(selected_<=6 && !p.isEmpty()) {
-        juce::Path fill=p;fill.lineTo(r.getRight(),r.getBottom());fill.lineTo(r.getX(),r.getBottom());fill.closeSubPath();
-        g.setColour(signalSurfaceColour(.46f,.22f));g.fillPath(fill);
-    }
-    g.setColour(Palette::accent());g.strokePath(p,juce::PathStrokeType(1.5f));
+    g.setColour(Palette::accent());
+    if(!p.isEmpty()) g.strokePath(p,juce::PathStrokeType(selected_==8?1.8f:1.5f));
 }
 
 
@@ -1299,6 +1385,7 @@ void ModulationPanel::updateSourceHistory(float) {
     if(!sourceTrace_.active) {
         telemetry.sourceValues.fill(0.0f);
         for(auto& history:sourceHistory_) history.clear();
+        randomViewportHistory_.clear();
         return;
     }
 
@@ -1320,6 +1407,10 @@ void ModulationPanel::updateSourceHistory(float) {
     samples[11]=(cached_.generatorActiveMask&0x10u)
         ? sourceMonitorSequencer_.next(cached_.sequencer,60.0) : 0.0f;
     telemetry.sourceValues=samples;
+
+    randomViewportHistory_.push_back(juce::jlimit(-1.0f,1.0f,samples[8]));
+    while(randomViewportHistory_.size()>randomHistoryLength_)
+        randomViewportHistory_.pop_front();
 
     for(std::size_t i=0;i<sourceHistory_.size();++i) {
         auto& history=sourceHistory_[i];

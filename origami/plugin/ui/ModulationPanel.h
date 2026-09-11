@@ -10,6 +10,7 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v33.1.0-lfo-mseg-editing-tools
 // mct-origami-v33.0.2-lfo-mseg-editor-foundation
+// mct-origami-v34.0.0-random-lfo
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
@@ -114,6 +115,8 @@ private:
 
     juce::Slider rate_,curve_;
     juce::Label rateLabel_,curveLabel_;
+    juce::Slider randomSmooth_,randomHold_,randomDelay_;
+    juce::Label randomSmoothLabel_,randomHoldLabel_,randomDelayLabel_;
     NativeComboBox shape_,mode_;
     juce::ToggleButton lfoLoop_{"LOOP"};
     juce::TextButton lfoTools_{"TOOLS"};
@@ -150,6 +153,11 @@ private:
 
     static constexpr std::size_t sourceHistoryLength_=72;
     std::array<std::deque<float>,12> sourceHistory_{};
+    // Signed Random output history for the large Random-LFO viewport.
+    // Oldest is at the front/left; newest enters on the right and pushes the
+    // existing trace leftward.
+    static constexpr std::size_t randomHistoryLength_=240;
+    std::deque<float> randomViewportHistory_{};
     EnvelopeTraceSnapshot sourceTrace_{};
     std::uint64_t sourceTraceOrder_=0;
     std::array<Lfo,4> sourceMonitorLfos_{};

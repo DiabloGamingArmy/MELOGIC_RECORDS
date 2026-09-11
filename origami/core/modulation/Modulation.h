@@ -3,6 +3,7 @@
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
+// mct-origami-v34.0.0-random-lfo
 #pragma once
 #include "core/OscillatorModule.h"
 #include "core/dsp/Filter.h"
@@ -31,7 +32,16 @@ enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
 enum class LfoMode : std::uint32_t { Free=1, NoteRetrigger=2 };
 
 struct LfoSettings { LfoShape shape=LfoShape::Sine; LfoMode mode=LfoMode::Free; float rateHz=1; };
-struct RandomSettings { float rateHz=2.0f; };
+struct RandomSettings {
+    float rateHz=2.0f;
+    // 0 = classic hard sample-and-hold, 1 = fully continuous glide to the
+    // next random target during the transition portion of each cycle.
+    float smoothing=0.0f;
+    // Fraction of each cycle held flat before the optional glide begins.
+    float hold=0.72f;
+    // Initial silence after generator reset, useful for delayed random motion.
+    float delaySeconds=0.0f;
+};
 struct FunctionSettings { float rateHz=1.0f; float curve=0.0f; };
 struct ChaosSettings { float rateHz=1.25f; };
 struct DriftSettings { float rateHz=0.35f; };
@@ -94,12 +104,18 @@ private: double phase_=0;
 
 class RandomGenerator {
 public:
-    void reset() noexcept {phase_=0;state_=0x6d2b79f5u;value_=0;}
+    void reset() noexcept {
+        phase_=0;delayElapsed_=0;state_=0x6d2b79f5u;
+        current_=next_=value_=0;initialized_=false;
+    }
     float next(const RandomSettings&,double sampleRate) noexcept;
 private:
+    float randomValue() noexcept;
     double phase_=0;
+    double delayElapsed_=0;
     std::uint32_t state_=0x6d2b79f5u;
-    float value_=0;
+    float current_=0,next_=0,value_=0;
+    bool initialized_=false;
 };
 
 class FunctionGenerator {

@@ -3,6 +3,7 @@
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
+// mct-origami-v34.0.0-random-lfo
 #include "Modulation.h"
 #include <algorithm>
 #include <cmath>
@@ -84,6 +85,9 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     if(!validEnvelope(s.env2) || !validEnvelope(s.env3)) return false;
     for(float c:s.env1Curves) if(!range(c,-1.f,1.f)) return false;
     if(!range(s.random.rateHz,.01f,40.f) ||
+       !range(s.random.smoothing,0.f,1.f) ||
+       !range(s.random.hold,0.f,.98f) ||
+       !range(s.random.delaySeconds,0.f,5.f) ||
        !range(s.function.rateHz,.01f,40.f) || !range(s.function.curve,-1.f,1.f) ||
        !range(s.chaos.rateHz,.01f,40.f) ||
        !range(s.drift.rateHz,.01f,40.f) ||
@@ -137,18 +141,56 @@ float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
     }
     return out;
 }
+float RandomGenerator::randomValue() noexcept {
+    std::uint32_t x=state_;
+    x^=x<<13;x^=x>>17;x^=x<<5;state_=x;
+    return static_cast<float>((state_>>8)&0x00ffffffu)/16777215.0f*2.0f-1.0f;
+}
+
 float RandomGenerator::next(const RandomSettings& s,double sampleRate) noexcept {
-    const float out=value_;
-    if(std::isfinite(sampleRate) && sampleRate>0) {
-        phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
-        if(phase_>=1.0) {
-            phase_-=std::floor(phase_);
-            std::uint32_t x=state_;
-            x^=x<<13;x^=x>>17;x^=x<<5;state_=x;
-            value_=static_cast<float>((state_>>8)&0x00ffffffu)/16777215.0f*2.0f-1.0f;
-        }
+    if(!std::isfinite(sampleRate) || sampleRate<=0) return value_;
+
+    const double delay=std::clamp(double(s.delaySeconds),0.0,5.0);
+    if(delayElapsed_<delay) {
+        delayElapsed_+=1.0/sampleRate;
+        value_=0.0f;
+        return value_;
     }
-    return out;
+
+    if(!initialized_) {
+        current_=randomValue();
+        next_=randomValue();
+        value_=current_;
+        initialized_=true;
+        phase_=0.0;
+    }
+
+    const double rate=std::clamp(double(s.rateHz),.01,40.0);
+    phase_+=rate/sampleRate;
+    while(phase_>=1.0) {
+        phase_-=1.0;
+        current_=next_;
+        next_=randomValue();
+    }
+
+    const float hold=std::clamp(s.hold,0.0f,.98f);
+    const float smoothing=std::clamp(s.smoothing,0.0f,1.0f);
+
+    // With Smooth at zero this is a true sample-and-hold. Increasing Smooth
+    // progressively morphs the held value toward the NEXT random target after
+    // the Hold portion of the cycle. At 100% the transition is continuous
+    // across cycle boundaries.
+    if(smoothing<=1.0e-5f || phase_<=hold) {
+        value_=current_;
+    } else {
+        const float t=std::clamp(
+            (static_cast<float>(phase_)-hold)/std::max(1.0e-5f,1.0f-hold),
+            0.0f,1.0f);
+        const float eased=t*t*(3.0f-2.0f*t);
+        value_=current_+(next_-current_)*(eased*smoothing);
+    }
+
+    return std::clamp(value_,-1.0f,1.0f);
 }
 float FunctionGenerator::shape(float curve,double phase) noexcept {
     phase-=std::floor(phase);

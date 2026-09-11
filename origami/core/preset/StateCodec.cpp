@@ -7,6 +7,7 @@
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
+// mct-origami-v34.0.0-random-lfo
 // mct-origami-v33.1.2-osc-blend-engine
 #include "StateCodec.h"
 #include <cstring>
@@ -30,7 +31,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(13);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(14);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -76,6 +77,10 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     w.real(mod.drift.rateHz);
     w.real(mod.sequencer.rateHz);
     for(float step:mod.sequencer.steps) w.real(step);
+    // V14: extended Random LFO controls. Appended so v1-v13 layouts remain intact.
+    w.real(mod.random.smoothing);
+    w.real(mod.random.hold);
+    w.real(mod.random.delaySeconds);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -83,7 +88,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>13) return false;
+    if(version<1 || version>14) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -164,6 +169,11 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         s.modulation.drift.rateHz=r.real();
         s.modulation.sequencer.rateHz=r.real();
         for(auto& step:s.modulation.sequencer.steps) step=r.real();
+    }
+    if(version>=14) {
+        s.modulation.random.smoothing=r.real();
+        s.modulation.random.hold=r.real();
+        s.modulation.random.delaySeconds=r.real();
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;
