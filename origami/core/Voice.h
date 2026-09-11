@@ -4,6 +4,7 @@
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
+// mct-origami-v33.1.2-osc-blend-engine
 #pragma once
 #include "dsp/Wavetable.h"
 #include "dsp/Envelope.h"
@@ -50,6 +51,7 @@ private:
     static constexpr unsigned maxUnisonVoices = 16;
     using ModuleOscillators = std::array<dsp::WavetableOscillator, maxUnisonVoices>;
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
+    std::array<dsp::WavetableOscillator,maxOscillatorModules> moduleBlendCenters_{};
     std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
 
     // One-sample-delayed oscillator taps used for cross-osc routing.

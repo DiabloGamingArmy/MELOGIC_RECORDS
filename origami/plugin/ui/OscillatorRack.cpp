@@ -23,6 +23,7 @@
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 // mct-origami-wt-pos-real-morph-v22.2.1
 // mct-origami-v22.1-ui-scope-repair-1
+// mct-origami-v33.1.2-osc-blend-engine
 #include <cmath>
 // mct-origami-wt-position-wiring-v22.1
 // mct-origami-osc-power-compact-pitch-v21.4.1
@@ -263,7 +264,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             repaint();
         };
 
-        for (auto* slider : {&unisonSlider_, &detuneSlider_}) {
+        for (auto* slider : {&unisonSlider_, &detuneSlider_, &blendSlider_}) {
             addAndMakeVisible(*slider);
             slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
             slider->setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
@@ -274,10 +275,16 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
 
         unisonSlider_.setRange(1.0, 16.0, 1.0);
         detuneSlider_.setRange(0.0, 100.0, 0.1);
+        blendSlider_.setRange(0.0,1.0,0.001);
+        blendSlider_.setTooltip("Unison blend — centre oscillator to full detuned stack");
         detuneSlider_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Detune));
         detuneSlider_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
         unisonSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscUnison), juce::dontSendNotification);
         detuneSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscDetune), juce::dontSendNotification);
+        if(moduleGetter_) {
+            const auto state=moduleGetter_(display_.id);
+            if(state.id) blendSlider_.setValue(state.blend,juce::dontSendNotification);
+        }
 
         unisonSlider_.onValueChange = [this] {
             parameterSetter_(mct::origami::ParameterId::OscUnison,
@@ -289,12 +296,22 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
                              static_cast<float>(detuneSlider_.getValue()));
             repaint();
         };
+        blendSlider_.onValueChange=[this] {
+            if(!moduleGetter_ || !moduleSetter_) return;
+            auto state=moduleGetter_(display_.id);
+            if(!state.id) return;
+            state.blend=static_cast<float>(blendSlider_.getValue());
+            moduleSetter_(display_.id,state);
+            repaint();
+        };
 
         addAndMakeVisible(unisonLabel_);
         addAndMakeVisible(detuneLabel_);
+        addAndMakeVisible(blendLabel_);
         unisonLabel_.setText("UNISON", juce::dontSendNotification);
         detuneLabel_.setText("DETUNE", juce::dontSendNotification);
-        for (auto* label : {&unisonLabel_, &detuneLabel_}) {
+        blendLabel_.setText("BLEND",juce::dontSendNotification);
+        for (auto* label : {&unisonLabel_, &detuneLabel_, &blendLabel_}) {
             label->setJustificationType(juce::Justification::centred);
             label->setColour(juce::Label::textColourId, Palette::muted());
             label->setFont(juce::FontOptions(8.0f));
@@ -526,6 +543,8 @@ void OscillatorCard::syncFromModel() {
     if(moduleGetter_ && !process1Menu_.isPopupActive() && !process2Menu_.isPopupActive()) {
         const auto state=moduleGetter_(display_.id);
         if(state.id) {
+            if(!blendSlider_.isMouseButtonDown() && !blendSlider_.isEditingText())
+                blendSlider_.setValue(state.blend,juce::dontSendNotification);
             const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
             process1Menu_.setSelectedId(static_cast<int>(state.process1)+1,juce::dontSendNotification);
             process2Menu_.setSelectedId(static_cast<int>(state.process2)+1,juce::dontSendNotification);
@@ -755,6 +774,7 @@ void OscillatorCard::resized() {
     auto wtPositionCell=controls.withX(controls.getX()).withWidth(cellWidth);
     auto unisonCell=controls.withX(controls.getX()+cellWidth).withWidth(cellWidth);
     auto detuneCell=controls.withX(controls.getX()+cellWidth*2).withWidth(cellWidth);
+    auto blendCell=controls.withX(controls.getX()+cellWidth*3).withWidth(cellWidth);
     auto panCell=controls.withX(controls.getX()+cellWidth*4).withWidth(cellWidth);
     auto levelCell=controls.withX(controls.getX()+cellWidth*5).withWidth(cellWidth);
     auto place=[&](juce::Rectangle<int> cell,juce::Slider& slider,juce::Label& label) {
@@ -768,6 +788,7 @@ void OscillatorCard::resized() {
     place(wtPositionCell,wtPositionSlider_,wtPositionLabel_);
     place(unisonCell,unisonSlider_,unisonLabel_);
     place(detuneCell,detuneSlider_,detuneLabel_);
+    place(blendCell,blendSlider_,blendLabel_);
     place(panCell,panSlider_,panLabel_);
     place(levelCell,levelSlider_,levelLabel_);
 }
@@ -867,10 +888,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         }
     }
 
-    // Live child sliders own WT POS / UNISON / DETUNE / PAN / LEVEL painting.
-    // Only BLEND is still a preview control.
-    const int cellWidth=controls.getWidth()/6;
-    dial(g,controls.withX(controls.getX()+cellWidth*3).withWidth(cellWidth),"BLEND",.35f);
+    // Live child sliders own WT POS / UNISON / DETUNE / BLEND / PAN / LEVEL.
 
     // V22.2.1 live WT POS overlay. Uses the actual preview rectangle detected
     // from this source file rather than hard-coded layout geometry.

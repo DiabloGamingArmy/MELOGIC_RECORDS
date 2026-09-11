@@ -6,6 +6,7 @@
 // mct-origami-v26.2.0-native-process-library
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-v21.1-build-repair-1
+// mct-origami-v33.1.2-osc-blend-engine
 #pragma once
 #include "OrigamiStyle.h"
 #include "core/OscillatorModule.h"
@@ -102,8 +103,8 @@ private:
         // mct-origami-unison-detune-v19.2
     RackSlider wtPositionSlider_;
     juce::Label wtPositionLabel_;
-    RackSlider unisonSlider_, detuneSlider_;
-    juce::Label unisonLabel_, detuneLabel_;
+    RackSlider unisonSlider_, detuneSlider_, blendSlider_;
+    juce::Label unisonLabel_, detuneLabel_, blendLabel_;
 // mct-origami-tuning-engine-v17
     RackSlider octaveSlider_,semitoneSlider_,fineSlider_;
     NativeOscProcessSelector process1Menu_,process2Menu_;

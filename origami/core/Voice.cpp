@@ -8,12 +8,13 @@
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
+// mct-origami-v33.1.2-osc-blend-engine
 #include "Voice.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami {
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
-void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
+void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     reset();address_=address;velocity_=velocity;order_=order;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -63,6 +64,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         const auto& module=modules[m];
         if(moduleIds_[m]!=module.id) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
+            moduleBlendCenters_[m].reset();
             moduleFilters_[m].reset();moduleIds_[m]=module.id;
         }
         if(module.id==0 || !module.enabled) continue;
@@ -136,15 +138,23 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                 module.process1,module.process1Amount,module.process2,module.process2Amount,
                 routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
         } else {
+            float unisonStack=0.0f;
             for(unsigned u=0;u<count;++u) {
                 const double unit=(2.0*static_cast<double>(u)/static_cast<double>(count-1))-1.0;
                 const double detuneRatio=std::exp2((unit*static_cast<double>(spreadCents))/1200.0);
-                oscillatorMix+=moduleOscillators_[m][u].next(
+                unisonStack+=moduleOscillators_[m][u].next(
                     table,baseFrequency*detuneRatio,sampleRate_,position,
                     module.process1,module.process1Amount,module.process2,module.process2Amount,
                     routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
             }
-            oscillatorMix/=static_cast<float>(count);
+            unisonStack/=static_cast<float>(count);
+
+            const float centre=moduleBlendCenters_[m].next(
+                table,baseFrequency,sampleRate_,position,
+                module.process1,module.process1Amount,module.process2,module.process2Amount,
+                routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
+            const float blend=std::clamp(module.blend,0.0f,1.0f);
+            oscillatorMix=centre+(unisonStack-centre)*blend;
         }
 
         // Post-generation routes are intentionally executed in slot order.

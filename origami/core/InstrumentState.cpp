@@ -3,6 +3,7 @@
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-pitch-mod-real-v23.3
+// mct-origami-v33.1.2-osc-blend-engine
 #include "InstrumentState.h"
 namespace mct::origami {
 void applyLegacyOscillatorParameters(OscillatorModuleState& m,const ParameterValues& p) noexcept {
@@ -34,7 +35,8 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
            !range(m.octave,-4,4) || m.octave!=std::round(m.octave) ||
            !range(m.semitone,-12,12) || m.semitone!=std::round(m.semitone) ||
            !range(m.fineCents,-100,100) || m.unison<1 || m.unison>16 ||
-           !range(m.detuneCents,0,100) || !range(m.pan,-1,1) || !range(m.level,0,1) ||
+           !range(m.detuneCents,0,100) || !range(m.blend,0,1) ||
+           !range(m.pan,-1,1) || !range(m.level,0,1) ||
            !dsp::validOscProcessType(m.process1) ||
            !range(m.process1Amount,dsp::oscProcessAmountMinimum(m.process1),1) ||
            !dsp::validOscProcessType(m.process2) ||

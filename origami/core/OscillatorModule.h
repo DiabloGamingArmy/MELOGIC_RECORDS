@@ -3,6 +3,7 @@
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.3.0-bipolar-osc-process-amounts
 // mct-origami-v26.0.0-osc-process-foundation
+// mct-origami-v33.1.2-osc-blend-engine
 #pragma once
 #include <array>
 #include <algorithm>
@@ -95,6 +96,7 @@ struct OscillatorModuleState {
     float fineCents = 0.0f;
     unsigned unison = 1;
     float detuneCents = 12.0f;
+    float blend = 0.35f;
     float pan = 0.0f;
     float level = 0.7f;
     dsp::OscProcessType process1 = dsp::OscProcessType::BendPlus;
@@ -231,7 +233,7 @@ private:
         std::atomic<float> wtPosition{0.0f};
         std::atomic<float> waveform{0},octave{0},semitone{0},fineCents{0};
         std::atomic<unsigned> unison{1};
-        std::atomic<float> detuneCents{12},pan{0},level{0.7f};
+        std::atomic<float> detuneCents{12},blend{0.35f},pan{0},level{0.7f};
         std::atomic<dsp::OscProcessType> process1{dsp::OscProcessType::BendPlus};
         std::atomic<float> process1Amount{0.0f};
         std::atomic<std::uint32_t> process1Seed{0x13579bdfu};
@@ -262,6 +264,8 @@ private:
         if(s.unison>16) s.unison=16;
         if(s.detuneCents<0) s.detuneCents=0;
         if(s.detuneCents>100) s.detuneCents=100;
+        if(!std::isfinite(s.blend)) s.blend=0.35f;
+        s.blend=std::clamp(s.blend,0.0f,1.0f);
         if(s.pan<-1) s.pan=-1;
         if(s.pan>1) s.pan=1;
         if(s.level<0) s.level=0;
@@ -296,6 +300,7 @@ private:
         s.fineCents=a.fineCents.load(std::memory_order_relaxed);
         s.unison=a.unison.load(std::memory_order_relaxed);
         s.detuneCents=a.detuneCents.load(std::memory_order_relaxed);
+        s.blend=a.blend.load(std::memory_order_relaxed);
         s.pan=a.pan.load(std::memory_order_relaxed);
         s.level=a.level.load(std::memory_order_relaxed);
         s.process1=a.process1.load(std::memory_order_relaxed);
@@ -324,6 +329,7 @@ private:
         a.fineCents.store(s.fineCents,std::memory_order_relaxed);
         a.unison.store(s.unison,std::memory_order_relaxed);
         a.detuneCents.store(s.detuneCents,std::memory_order_relaxed);
+        a.blend.store(s.blend,std::memory_order_relaxed);
         a.pan.store(s.pan,std::memory_order_relaxed);
         a.level.store(s.level,std::memory_order_relaxed);
         a.process1.store(s.process1,std::memory_order_relaxed);
