@@ -1,3 +1,4 @@
+// mct-origami-v30.1.1-filter-width-rebalance
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-pitch-mod-ui-refine-v23.3.1
@@ -46,7 +47,10 @@ struct EditorLayout {
         // MODULATION SOURCES | editor    and    FILTERS | editor.
         // The rails themselves live inside those panels.
         auto lower=area;
-        result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.40f));
+        // V30.1.1: rebalance the lower workspace toward FILTER. The modulation
+        // editor remains the larger single panel, but FILTER now has enough
+        // horizontal room for its graph/routing controls to breathe.
+        result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.46f));
         lower.removeFromRight(6);
         result.modulation=lower;
 
