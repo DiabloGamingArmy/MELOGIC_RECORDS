@@ -15,6 +15,7 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v33.1.0-lfo-mseg-editing-tools
 // mct-origami-v33.0.2-lfo-mseg-editor-foundation
+// mct-origami-v34.0.3-mod-route-gauges
 // mct-origami-v34.0.1-random-controls-layout
 // mct-origami-v34.0.0-random-lfo
 #include "ModulationPanel.h"
@@ -560,6 +561,29 @@ void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
 }
 
 void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
+    const auto local=e.getEventRelativeTo(this);
+
+    // Double-clicking a route gauge removes only that Matrix assignment.
+    if(const auto routeId=routeDotAt(local.position)) {
+        if(bindings_.modulation) {
+            auto mod=bindings_.snapshot ? bindings_.snapshot().modulation : cached_;
+
+            std::array<ModRoute,ModulationState::capacity> compact{};
+            std::size_t write=0;
+            for(const auto& route:mod.routes)
+                if(route.id!=0 && route.id!=*routeId)
+                    compact[write++]=route;
+
+            mod.routes=compact;
+            if(bindings_.modulation(mod)) {
+                cached_=mod;
+                routeDragId_=0;
+                repaint();
+            }
+        }
+        return;
+    }
+
     if(e.eventComponent!=this || selected_<3 || selected_>6 || !envCanvas_.contains(e.position)) return;
     auto& shape=lfoMseg_[static_cast<std::size_t>(selected_-3)];
     const int hit=hitMsegPoint(e.position);
@@ -1329,7 +1353,8 @@ juce::Rectangle<float> ModulationPanel::routeDotBounds(
     auto b=getLocalArea(&sourceContent_,tabs_[tabIndex].getBounds())
                .toFloat().reduced(5.0f,1.5f);
     auto dotArea=b.withTrimmedTop(17.5f);
-    constexpr float diameter=13.0f;
+    // Route gauges need enough visual area to read as controls, not status LEDs.
+    constexpr float diameter=16.0f;
     constexpr float gap=5.0f;
     const auto shown=juce::jmin<std::size_t>(dotCount,6);
     const float total=shown*diameter+(shown>0 ? (shown-1)*gap : 0.0f);
@@ -1488,31 +1513,61 @@ void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
             const float amount=juce::jlimit(-1.0f,1.0f,matches[dot]->amount);
             const float magnitude=std::abs(amount);
 
-            g.setColour(Palette::background().withAlpha(0.92f));
-            g.fillEllipse(circle);
-            g.setColour(Palette::borderStrong());
-            g.drawEllipse(circle,0.9f);
+            const auto c=circle.getCentre();
+            const float radius=circle.getWidth()*0.5f-1.75f;
 
+            g.setColour(Palette::background().withAlpha(0.96f));
+            g.fillEllipse(circle);
+            g.setColour(Palette::borderStrong().withAlpha(0.72f));
+            g.drawEllipse(circle.reduced(1.15f),1.25f);
+
+            // 0% reference is always 12 o'clock.
+            g.setColour(Palette::text().withAlpha(0.56f));
+            g.drawLine(c.x,c.y-radius,
+                       c.x,c.y-radius+3.1f,1.15f);
+
+            // Clockwise magnitude ring. Explicit screen-space trig keeps the
+            // direction unambiguous: -pi/2 is 12 o'clock and increasing angle
+            // moves clockwise because screen Y increases downward.
             if(magnitude>0.001f) {
-                const auto c=circle.getCentre();
-                const float start=-juce::MathConstants<float>::halfPi;
-                const float finish=start+juce::MathConstants<float>::twoPi*magnitude;
-                juce::Path pie;
-                pie.startNewSubPath(c);
-                pie.lineTo(c.x+std::cos(start)*circle.getWidth()*0.5f,
-                           c.y+std::sin(start)*circle.getHeight()*0.5f);
-                pie.addCentredArc(c.x,c.y,circle.getWidth()*0.5f,circle.getHeight()*0.5f,
-                                  0.0f,start,finish,false);
-                pie.closeSubPath();
+                constexpr int segments=48;
+                const int used=juce::jmax(1,juce::roundToInt(magnitude*segments));
+                juce::Path arc;
+
+                for(int step=0;step<=used;++step) {
+                    const float localT=magnitude*
+                        (static_cast<float>(step)/static_cast<float>(used));
+                    const float angle=-juce::MathConstants<float>::halfPi+
+                                      juce::MathConstants<float>::twoPi*localT;
+                    const juce::Point<float> p{
+                        c.x+std::cos(angle)*radius,
+                        c.y+std::sin(angle)*radius
+                    };
+                    if(step==0) arc.startNewSubPath(p);
+                    else arc.lineTo(p);
+                }
 
                 auto colour=signalSourceColour();
                 if(amount<0.0f) colour=colour.darker(0.34f);
-                g.setColour(colour.withAlpha(0.94f));
-                g.fillPath(pie);
-            }
+                g.setColour(colour.withAlpha(0.98f));
+                g.strokePath(arc,juce::PathStrokeType(
+                    2.75f,
+                    juce::PathStrokeType::curved,
+                    juce::PathStrokeType::rounded));
 
-            g.setColour(Palette::text().withAlpha(0.82f));
-            g.fillEllipse(circle.withSizeKeepingCentre(2.4f,2.4f));
+                const float endAngle=-juce::MathConstants<float>::halfPi+
+                                     juce::MathConstants<float>::twoPi*magnitude;
+                const juce::Point<float> endpoint{
+                    c.x+std::cos(endAngle)*radius,
+                    c.y+std::sin(endAngle)*radius
+                };
+                g.setColour(Palette::text().withAlpha(0.95f));
+                g.fillEllipse(juce::Rectangle<float>(3.2f,3.2f).withCentre(endpoint));
+            } else {
+                g.setColour(Palette::text().withAlpha(0.84f));
+                g.fillEllipse(juce::Rectangle<float>(3.0f,3.0f)
+                                  .withCentre({c.x,c.y-radius}));
+            }
         }
 
         if(count>shown) {
