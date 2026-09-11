@@ -1,3 +1,4 @@
+// mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.0.0-interactive-envelope-editor
@@ -144,7 +145,14 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
         const auto current=voices_[0].info();
         if(!current.active) voices_[0].start(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));
         else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),performance_.glideSeconds,!performance_.legato || !hadHeld || current.releasing);
-        else if(!performance_.legato) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),performance_.glideSeconds,true);
+        else if(current.releasing || !performance_.legato)
+            // Same pitch during a release tail is a NEW articulation even when
+            // mono-legato is enabled. The old code treated "same address" as
+            // already-held and silently left the envelope releasing.
+            voices_[0].retarget(selected->address,selected->velocity,selected->order,
+                                envelopeSettings(),modulationEnvelopeSettings(0),
+                                modulationEnvelopeSettings(1),
+                                performance_.glideSeconds,true);
         return true;
     }
     std::size_t chosen=voiceCount;

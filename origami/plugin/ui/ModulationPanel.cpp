@@ -1,3 +1,4 @@
+// mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -434,6 +435,64 @@ void ModulationPanel::mouseUp(const juce::MouseEvent&) {
     routeDragId_=0;
 }
 
+juce::String ModulationPanel::routeTargetLabel(std::uint32_t routeId) const {
+    const ModRoute* found=nullptr;
+    for(const auto& route:cached_.routes)
+        if(route.id==routeId) {found=&route;break;}
+    if(!found) return {};
+
+    juce::String target;
+    switch(found->destination.parameter) {
+        case ModDestination::Cutoff:target="FILTER / CUTOFF";break;
+        case ModDestination::Resonance:target="FILTER / RESONANCE";break;
+        case ModDestination::MasterGain:target="GLOBAL / MASTER GAIN";break;
+        case ModDestination::WtPosition:target="WT POSITION";break;
+        case ModDestination::Octave:target="OCTAVE";break;
+        case ModDestination::Semitone:target="SEMITONE";break;
+        case ModDestination::Fine:target="FINE";break;
+        case ModDestination::Detune:target="DETUNE";break;
+        case ModDestination::Pan:target="PAN";break;
+        case ModDestination::Level:target="LEVEL";break;
+        case ModDestination::Process1Amount:target="PROCESS 1 AMOUNT";break;
+        case ModDestination::Process2Amount:target="PROCESS 2 AMOUNT";break;
+        case ModDestination::Route1Amount:target="ROUTE 1 AMOUNT";break;
+        case ModDestination::Route2Amount:target="ROUTE 2 AMOUNT";break;
+    }
+
+    if(found->destination.oscillator!=0 && bindings_.snapshot) {
+        const auto state=bindings_.snapshot();
+        unsigned ordinal=0;
+        for(const auto& osc:state.oscillators) {
+            if(!osc.id) continue;
+            ++ordinal;
+            if(osc.id==found->destination.oscillator) {
+                target="OSC "+juce::String(ordinal)+" / "+target;
+                break;
+            }
+        }
+    }
+
+    return target;
+}
+
+void ModulationPanel::mouseMove(const juce::MouseEvent& e) {
+    const auto local=e.getEventRelativeTo(this);
+    const auto hit=routeDotAt(local.position);
+    const auto id=hit.value_or(0);
+    if(id!=routeHoverId_ || (id!=0 && local.position.getDistanceFrom(routeHoverPoint_)>2.0f)) {
+        routeHoverId_=id;
+        routeHoverPoint_=local.position;
+        repaint();
+    }
+}
+
+void ModulationPanel::mouseExit(const juce::MouseEvent&) {
+    if(routeHoverId_!=0) {
+        routeHoverId_=0;
+        repaint();
+    }
+}
+
 void ModulationPanel::mouseWheelMove(const juce::MouseEvent& e,
                                      const juce::MouseWheelDetails& w) {
     if(selected_<=2 && envCanvas_.contains(e.position)) {
@@ -558,9 +617,28 @@ void ModulationPanel::resized() {
     sourceAdd_.setBounds(collectionControls);
 
     rail.removeFromBottom(5);
-    const int rowHeight=juce::jmax(26,juce::jmin(34,rail.getHeight()/9));
-    for(auto& tab:tabs_) {
-        tab.setBounds(rail.removeFromTop(rowHeight).reduced(0,1));
+
+    // Routed LFO cards need extra vertical space for the larger magnitude dot.
+    // Weight only LFO rows that actually own an enabled Matrix route, then fit
+    // the whole collection back into the same rail without overflow.
+    std::array<bool,9> routed{};
+    for(std::size_t i=3;i<=6;++i) {
+        const auto source=sourceForTab(i);
+        for(const auto& route:cached_.routes) {
+            if(route.id!=0 && route.enabled && route.source==source) {
+                routed[i]=true;
+                break;
+            }
+        }
+    }
+
+    float weights=9.0f;
+    for(std::size_t i=3;i<=6;++i) if(routed[i]) weights+=0.48f;
+    const float unit=juce::jlimit(22.0f,34.0f,float(rail.getHeight())/weights);
+
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        const int h=juce::jmax(22,juce::roundToInt(unit*(routed[i]?1.48f:1.0f)));
+        tabs_[i].setBounds(rail.removeFromTop(juce::jmin(h,rail.getHeight())).reduced(0,1));
     }
 
     auto controls=body.removeFromBottom(62);
@@ -982,7 +1060,7 @@ void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
             g.setColour(Palette::muted());
             g.setFont(juce::FontOptions(7.0f));
             g.drawText("+"+juce::String(static_cast<int>(count-shown)),
-                       tab.getRight()-18.0f,dividerY+1.0f,16.0f,11.0f,
+                       juce::Rectangle<float>(tab.getRight()-18.0f,dividerY+1.0f,16.0f,11.0f),
                        juce::Justification::centred);
         }
     }
@@ -1031,6 +1109,30 @@ void ModulationPanel::paintEnvelopeTimeMarkers(juce::Graphics& g) const {
 void ModulationPanel::paintOverChildren(juce::Graphics& g) {
     paintSourceRouteOverlays(g);
     paintEnvelopeTimeMarkers(g);
+
+    if(routeHoverId_!=0) {
+        const auto label=routeTargetLabel(routeHoverId_);
+        if(label.isNotEmpty()) {
+            g.setFont(juce::FontOptions(9.0f));
+            // Avoid JUCE Font width APIs here: this project is building against
+            // a JUCE revision where both getStringWidthFloat() and getStringWidth()
+            // are unavailable. This tooltip is short, fixed-font UI text, so a
+            // deterministic character-width estimate is sufficient and portable.
+            const int w=juce::jlimit(92,220,18+label.length()*7);
+            juce::Rectangle<float> box(routeHoverPoint_.x+12.0f,routeHoverPoint_.y-30.0f,
+                                       float(w),24.0f);
+            const auto bounds=getLocalBounds().toFloat().reduced(4.0f);
+            if(box.getRight()>bounds.getRight()) box.setX(routeHoverPoint_.x-float(w)-12.0f);
+            if(box.getY()<bounds.getY()) box.setY(routeHoverPoint_.y+12.0f);
+
+            g.setColour(juce::Colours::black.withAlpha(.94f));
+            g.fillRoundedRectangle(box,4.0f);
+            g.setColour(Palette::borderStrong());
+            g.drawRoundedRectangle(box,4.0f,.9f);
+            g.setColour(Palette::text());
+            g.drawText(label,box.reduced(8.0f,2.0f),juce::Justification::centredLeft);
+        }
+    }
 }
 
 MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {

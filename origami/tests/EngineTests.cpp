@@ -1,3 +1,4 @@
+// mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-v23.4.3-engine-tests-newline-repair-2
@@ -135,6 +136,14 @@ void performanceModes() {
     check(engine.activeVoiceCount()==1 && engine.voiceInfo(0).address.note==64,"mono last priority");
     engine.noteOff(64);check(engine.voiceInfo(0).address.note==60 && !engine.voiceInfo(0).releasing,"mono fallback");
     engine.noteOff(60);check(engine.voiceInfo(0).releasing,"mono final release");
+
+    // V31.2.1 regression: mono + legato must still retrigger the SAME note
+    // while its previous articulation is releasing.
+    engine.noteOn(60,1);
+    check(engine.voiceInfo(0).active && !engine.voiceInfo(0).releasing &&
+          engine.voiceInfo(0).address.note==60,
+          "mono legato same note retriggers during release");
+
     engine.reset();p.notePriority=NotePriority::High;check(engine.setPerformanceState(p),"high priority accepted");engine.noteOn(72,1);engine.noteOn(60,1);check(engine.voiceInfo(0).address.note==72,"high priority");
     engine.reset();p.notePriority=NotePriority::Low;check(engine.setPerformanceState(p),"low priority accepted");engine.noteOn(60,1);engine.noteOn(72,1);check(engine.voiceInfo(0).address.note==60,"low priority");
     OrigamiEngine a,b;prepare(a);prepare(b);p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=0;check(a.setPerformanceState(p),"zero glide");p.glideSeconds=.2f;check(b.setPerformanceState(p),"glide accepted");

@@ -1,3 +1,4 @@
+// mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.1.0-mod-source-visual-matrix-controls
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
@@ -27,6 +28,8 @@ public:
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails&) override;
 
 private:
@@ -77,6 +80,7 @@ private:
     void paintSourceRouteOverlays(juce::Graphics&);
     void paintEnvelopeTimeMarkers(juce::Graphics&) const;
     void paintOverChildren(juce::Graphics&) override;
+    juce::String routeTargetLabel(std::uint32_t routeId) const;
 
     std::array<juce::TextButton,9> tabs_;
     juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
@@ -122,6 +126,8 @@ private:
     std::uint32_t routeDragId_=0;
     float routeDragStartY_=0.0f;
     float routeDragStartAmount_=0.0f;
+    std::uint32_t routeHoverId_=0;
+    juce::Point<float> routeHoverPoint_{};
 
     DragTarget dragTarget_=DragTarget::None;
     juce::Point<float> dragStart_{};

@@ -1,3 +1,4 @@
+// mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
@@ -171,11 +172,11 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 }
 void FilterPanel::paintOverChildren(juce::Graphics& g) {
     const auto& telemetry=modulationUiTelemetry();
-    if(!telemetry.synthActive) return;
 
     const auto drawRing=[&](juce::Slider& slider,ModDestination destination) {
         const float depth=modulationUiSelectedRouteAmount(destination,0);
-        if(std::abs(depth)<1.0e-4f) return;
+        const bool anyRoute=modulationUiHasAnyRoute(destination,0);
+        if(std::abs(depth)<1.0e-4f && !anyRoute) return;
 
         const double min=slider.getMinimum(),max=slider.getMaximum();
         if(max<=min) return;
@@ -194,20 +195,31 @@ void FilterPanel::paintOverChildren(juce::Graphics& g) {
         const float end=juce::MathConstants<float>::pi*2.80f;
         const auto angle=[&](float n){return start+n*(end-start);};
 
-        juce::Path range;
-        range.addCentredArc(circle.getCentreX(),circle.getCentreY(),
-                            circle.getWidth()*.51f,circle.getHeight()*.51f,0.0f,
-                            angle(lo),angle(hi),true);
-        g.setColour(signalSourceColour().withAlpha(.92f));
-        g.strokePath(range,juce::PathStrokeType(2.0f));
+        if(std::abs(depth)>=1.0e-4f) {
+            juce::Path range;
+            range.addCentredArc(circle.getCentreX(),circle.getCentreY(),
+                                circle.getWidth()*.51f,circle.getHeight()*.51f,0.0f,
+                                angle(lo),angle(hi),true);
+            g.setColour(signalSourceColour().withAlpha(.96f));
+            g.strokePath(range,juce::PathStrokeType(2.2f));
 
-        const float a=angle(current);
-        const auto c=circle.getCentre();
-        const auto p=juce::Point<float>(
-            c.x+std::sin(a)*circle.getWidth()*.51f,
-            c.y-std::cos(a)*circle.getHeight()*.51f);
-        g.setColour(Palette::text());
-        g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
+            if(telemetry.synthActive) {
+                const float a=angle(current);
+                const auto c=circle.getCentre();
+                const auto p=juce::Point<float>(
+                    c.x+std::sin(a)*circle.getWidth()*.51f,
+                    c.y-std::cos(a)*circle.getHeight()*.51f);
+                g.setColour(Palette::text());
+                g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
+            }
+        } else {
+            juce::Path automated;
+            automated.addCentredArc(circle.getCentreX(),circle.getCentreY(),
+                                    circle.getWidth()*.51f,circle.getHeight()*.51f,0.0f,
+                                    start,end,true);
+            g.setColour(signalSourceColour().darker(.72f).withAlpha(.88f));
+            g.strokePath(automated,juce::PathStrokeType(1.7f));
+        }
     };
 
     drawRing(cutoff_,ModDestination::Cutoff);
