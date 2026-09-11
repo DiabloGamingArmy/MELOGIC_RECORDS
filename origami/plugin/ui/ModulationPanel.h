@@ -8,6 +8,7 @@
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-compile-repair
 // mct-origami-v28.0.0-interactive-envelope-editor
+// mct-origami-v33.0.2-lfo-mseg-editor-foundation
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
@@ -112,6 +113,20 @@ private:
     juce::Slider rate_,curve_;
     juce::Label rateLabel_,curveLabel_;
     NativeComboBox shape_,mode_;
+    juce::ToggleButton lfoLoop_{"LOOP"};
+    struct MsegPoint { float x=0.0f,y=0.0f,curve=0.0f; };
+    std::array<std::array<MsegPoint,5>,4> lfoMseg_{{
+        {{{0,0,0},{.25f,1,0},{.5f,0,0},{.75f,-1,0},{1,0,0}}},
+        {{{0,0,0},{.25f,1,0},{.5f,0,0},{.75f,-1,0},{1,0,0}}},
+        {{{0,0,0},{.25f,1,0},{.5f,0,0},{.75f,-1,0},{1,0,0}}},
+        {{{0,0,0},{.25f,1,0},{.5f,0,0},{.75f,-1,0},{1,0,0}}}
+    }};
+    int lfoPointDrag_=-1,lfoCurveDrag_=-1;
+    std::array<MsegPoint,5> lfoDragStartPoints_{};
+    float msegValue(const std::array<MsegPoint,5>&,float) const noexcept;
+    juce::Point<float> msegPixel(const MsegPoint&) const noexcept;
+    int hitMsegPoint(juce::Point<float>) const noexcept;
+    int hitMsegCurve(juce::Point<float>) const noexcept;
 
     int selected_=0;
     ModulationState cached_{};
