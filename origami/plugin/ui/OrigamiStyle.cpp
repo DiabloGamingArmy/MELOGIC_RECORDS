@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
@@ -12,11 +13,21 @@
 #include "NativeChoiceMenu.h"
 namespace mct::origami::ui {
 
+void NativeComboBox::addNativeItem(const juce::String& group,const juce::String& label,int id) {
+    addItem(label,id);
+    nativeGroups_.push_back({id,group});
+}
+
 void NativeComboBox::mouseDown(const juce::MouseEvent&) {
     std::vector<NativeChoiceItem> items;
     items.reserve(static_cast<std::size_t>(getNumItems()));
-    for(int i=0;i<getNumItems();++i)
-        items.push_back({getItemId(i),getItemText(i),true});
+    for(int i=0;i<getNumItems();++i) {
+        const int id=getItemId(i);
+        juce::String group;
+        for(const auto& entry:nativeGroups_)
+            if(entry.first==id) {group=entry.second;break;}
+        items.push_back({id,getItemText(i),true,group});
+    }
     showNativeChoiceMenu(*this,getName().isNotEmpty()?getName():juce::String("Select"),
                          items,getSelectedId(),
         [safe=juce::Component::SafePointer<NativeComboBox>(this)](int id) {

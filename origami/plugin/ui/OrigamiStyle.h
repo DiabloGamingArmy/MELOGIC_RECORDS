@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
@@ -138,7 +139,10 @@ inline void graph(juce::Graphics& g, juce::Rectangle<int> bounds, bool envelope 
 class NativeComboBox : public juce::ComboBox {
 public:
     using juce::ComboBox::ComboBox;
+    void addNativeItem(const juce::String& group,const juce::String& label,int id);
     void mouseDown(const juce::MouseEvent&) override;
+private:
+    std::vector<std::pair<int,juce::String>> nativeGroups_;
 };
 
 class OrigamiLookAndFeel final : public juce::LookAndFeel_V4 {

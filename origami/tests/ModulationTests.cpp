@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-modulation-completion-v24.0.1
 #include "core/Engine.h"
 #include "core/modulation/Modulation.h"
@@ -143,25 +144,29 @@ void compiledRoutes() {
 
 
 void expandedSources() {
-    auto m=modules();ModulationState state;state.nextRouteId=7;
+    auto m=modules();ModulationState state;state.nextRouteId=9;
     state.routes[0]=route(1,ModSource::Lfo2,ModDestination::Pan,.2f,1);
     state.routes[1]=route(2,ModSource::Env2,ModDestination::Level,.3f,1);
     state.routes[2]=route(3,ModSource::Velocity,ModDestination::WtPosition,.2f,1);
     state.routes[3]=route(4,ModSource::Keytrack,ModDestination::Fine,.1f,1);
     state.routes[4]=route(5,ModSource::Aftertouch,ModDestination::Cutoff,.2f);
     state.routes[5]=route(6,ModSource::Random,ModDestination::Resonance,.1f);
+    state.routes[6]=route(7,ModSource::PitchBend,ModDestination::Process1Amount,.4f,1);
+    state.routes[7]=route(8,ModSource::NoteGate,ModDestination::Route1Amount,.5f,1);
     check(validModulation(state,m),"expanded sources validate");
     CompiledModulation compiled;compiled.compile(state,m,true);
     ModulationFrame frame;frame.modules=m;frame.cutoff=1000;frame.resonance=.1f;frame.master=.2f;
     std::array<float,CompiledModulation::globalSourceCount> global{};global[1]=1;global[8]=1;
     compiled.globalFrame(frame,global,48000);
     std::array<float,CompiledModulation::voiceSourceCount> voice{};
-    voice[1]=1;voice[7]=1;voice[9]=.75f;voice[10]=1;
+    voice[1]=1;voice[7]=1;voice[9]=.75f;voice[10]=1;voice[11]=1;voice[12]=1;
     compiled.voiceFrame(frame,voice,48000);
     check(frame.modules[0].pan>m[0].pan,"LFO2 route reaches destination");
     check(frame.modules[0].level>m[0].level,"ENV2 route reaches destination");
     check(frame.modules[0].wtPosition>m[0].wtPosition,"velocity route reaches destination");
     check(frame.cutoff>1000,"aftertouch route reaches filter");
+    check(frame.modules[0].process1Amount>m[0].process1Amount,"pitch bend reaches OSC process amount");
+    check(frame.modules[0].route1Amount>m[0].route1Amount,"note gate reaches OSC routing amount");
 }
 
 void stateV3RoundTrip() {

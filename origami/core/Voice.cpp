@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v27.1.0-expanded-cross-osc-routing
@@ -33,7 +34,8 @@ void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSet
     if(active_){releasing_=true;envelope_.noteOff(settings);env2_.noteOff(env2);env3_.noteOff(env3);}
 }
 Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
-    float sustain,const CompiledModulation& compiled,const ModulationState& modulation,float pitchBendSemitones,float modWheel,float aftertouch) noexcept {
+    float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
+    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch) noexcept {
     Samples outputs{};
     if(!active_) return outputs;
     if(glideRemaining_) {
@@ -49,6 +51,8 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     voiceSources[7]=velocity_;voiceSources[8]=modWheel;
     voiceSources[9]=std::clamp(static_cast<float>(address_.note)/127.0f,0.0f,1.0f);
     voiceSources[10]=aftertouch;
+    voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
+    voiceSources[12]=releasing_ ? 0.0f : 1.0f;
     ModulationFrame local;const ModulationFrame* effective=&global;
     if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
     const auto& modules=effective->modules;

@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -285,14 +286,19 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
             const auto info=voices_[v].info();
             const auto channel=std::min<std::size_t>(info.address.channel,15);
             const float bend=pitchBendNormalized_[channel]*pitchBendRange();
-            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,bend,modWheel_[channel],aftertouch_[channel]);
+            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
+                                                bend,pitchBendNormalized_[channel],
+                                                modWheel_[channel],aftertouch_[channel]);
             Voice::Samples old{};
             float oldWeight=0.0f;
 
             if(tailRemaining_[v]) {
                 oldWeight=static_cast<float>(tailRemaining_[v])/static_cast<float>(stealFadeSamples_);
                 const auto oldInfo=stealTails_[v].info();const auto oldChannel=std::min<std::size_t>(oldInfo.address.channel,15);
-                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,pitchBendNormalized_[oldChannel]*pitchBendRange(),modWheel_[oldChannel],aftertouch_[oldChannel]);
+                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
+                                                pitchBendNormalized_[oldChannel]*pitchBendRange(),
+                                                pitchBendNormalized_[oldChannel],
+                                                modWheel_[oldChannel],aftertouch_[oldChannel]);
                 if(--tailRemaining_[v]==0) stealTails_[v].reset();
             }
 

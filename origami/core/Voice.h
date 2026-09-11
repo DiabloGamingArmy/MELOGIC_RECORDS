@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-modulation-completion-v24.0.1
@@ -39,7 +40,9 @@ public:
     void release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept;
     struct Samples {double left=0,right=0,mono=0;};
     Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
-                        const CompiledModulation&,const ModulationState&,float pitchBendSemitones,float modWheel,float aftertouch) noexcept;
+                        const CompiledModulation&,const ModulationState&,
+                        float pitchBendSemitones,float pitchBendNormalized,
+                        float modWheel,float aftertouch) noexcept;
     VoiceInfo info() const noexcept;
 private:
     // mct-origami-unison-detune-v19.2

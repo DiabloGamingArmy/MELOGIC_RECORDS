@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-pitch-mod-real-v23.3
@@ -9,20 +10,63 @@ public:
         setName("Modulation route "+juce::String(route.id));
         for(auto* box:{&source_,&destination_}) {addAndMakeVisible(box);box->setScrollWheelEnabled(false);}
         source_.setName("Route source");destination_.setName("Route destination");
-        source_.addItem("ENV 1",static_cast<int>(ModSource::Env1));source_.addItem("ENV 2",static_cast<int>(ModSource::Env2));source_.addItem("ENV 3",static_cast<int>(ModSource::Env3));
-        source_.addItem("LFO 1",static_cast<int>(ModSource::Lfo1));source_.addItem("LFO 2",static_cast<int>(ModSource::Lfo2));source_.addItem("LFO 3",static_cast<int>(ModSource::Lfo3));source_.addItem("LFO 4",static_cast<int>(ModSource::Lfo4));
-        for(int i=0;i<4;++i) source_.addItem("MACRO "+juce::String(i+1),static_cast<int>(ModSource::Macro1)+i);
-        source_.addItem("VELOCITY",static_cast<int>(ModSource::Velocity));source_.addItem("MOD WHEEL",static_cast<int>(ModSource::ModWheel));
-        source_.addItem("KEYTRACK",static_cast<int>(ModSource::Keytrack));source_.addItem("AFTERTOUCH",static_cast<int>(ModSource::Aftertouch));
-        source_.addItem("RANDOM",static_cast<int>(ModSource::Random));source_.addItem("FUNCTION",static_cast<int>(ModSource::Function));
-        auto add=[&](ModAddress address,const juce::String& label) {
-            addresses_.push_back(address);destination_.addItem(label,static_cast<int>(addresses_.size()));
+        auto sourceItem=[&](const juce::String& group,const juce::String& label,ModSource source) {
+            source_.addNativeItem(group,label,static_cast<int>(source));
         };
-        add({ModDestination::Cutoff,0},"FILTER CUTOFF");add({ModDestination::Resonance,0},"FILTER RESONANCE");add({ModDestination::MasterGain,0},"MASTER GAIN");
-        const juce::StringArray names{"WT POS","OCTAVE","SEMITONE","FINE","DETUNE","PAN","LEVEL"};
-        unsigned ordinal=0;for(const auto& m:state.oscillators) if(m.id) {
-            ++ordinal;for(int i=0;i<names.size();++i)
-                add({static_cast<ModDestination>(static_cast<unsigned>(ModDestination::WtPosition)+static_cast<unsigned>(i)),m.id},"OSC "+juce::String(ordinal)+" / "+names[i]);
+
+        sourceItem("Envelopes","ENV 1",ModSource::Env1);
+        sourceItem("Envelopes","ENV 2",ModSource::Env2);
+        sourceItem("Envelopes","ENV 3",ModSource::Env3);
+
+        sourceItem("LFOs","LFO 1",ModSource::Lfo1);
+        sourceItem("LFOs","LFO 2",ModSource::Lfo2);
+        sourceItem("LFOs","LFO 3",ModSource::Lfo3);
+        sourceItem("LFOs","LFO 4",ModSource::Lfo4);
+
+        sourceItem("Macros","MACRO 1",ModSource::Macro1);
+        sourceItem("Macros","MACRO 2",ModSource::Macro2);
+        sourceItem("Macros","MACRO 3",ModSource::Macro3);
+        sourceItem("Macros","MACRO 4",ModSource::Macro4);
+
+        sourceItem("Performance","VELOCITY",ModSource::Velocity);
+        sourceItem("Performance","MOD WHEEL",ModSource::ModWheel);
+        sourceItem("Performance","KEYTRACK",ModSource::Keytrack);
+        sourceItem("Performance","AFTERTOUCH",ModSource::Aftertouch);
+        sourceItem("Performance","PITCH BEND",ModSource::PitchBend);
+        sourceItem("Performance","NOTE GATE",ModSource::NoteGate);
+
+        sourceItem("Generators","RANDOM",ModSource::Random);
+        sourceItem("Generators","FUNCTION",ModSource::Function);
+        auto add=[&](const juce::String& group,ModAddress address,const juce::String& label) {
+            addresses_.push_back(address);
+            destination_.addNativeItem(group,label,static_cast<int>(addresses_.size()));
+        };
+
+        add("Filter",{ModDestination::Cutoff,0},"CUTOFF");
+        add("Filter",{ModDestination::Resonance,0},"RESONANCE");
+        add("Global",{ModDestination::MasterGain,0},"MASTER GAIN");
+
+        struct OscDestinationSpec { ModDestination destination; const char* label; };
+        static constexpr OscDestinationSpec oscillatorDestinations[] {
+            {ModDestination::WtPosition,"WT POSITION"},
+            {ModDestination::Octave,"OCTAVE"},
+            {ModDestination::Semitone,"SEMITONE"},
+            {ModDestination::Fine,"FINE"},
+            {ModDestination::Detune,"DETUNE"},
+            {ModDestination::Pan,"PAN"},
+            {ModDestination::Level,"LEVEL"},
+            {ModDestination::Process1Amount,"PROCESS 1 AMOUNT"},
+            {ModDestination::Process2Amount,"PROCESS 2 AMOUNT"},
+            {ModDestination::Route1Amount,"ROUTE 1 AMOUNT"},
+            {ModDestination::Route2Amount,"ROUTE 2 AMOUNT"}
+        };
+
+        unsigned ordinal=0;
+        for(const auto& m:state.oscillators) if(m.id) {
+            ++ordinal;
+            const auto group="OSC "+juce::String(ordinal);
+            for(const auto& spec:oscillatorDestinations)
+                add(group,{spec.destination,m.id},spec.label);
         }
         addAndMakeVisible(enabled_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
         enabled_.setClickingTogglesState(true);enabled_.setName("Route enabled");remove_.setName("Delete route");

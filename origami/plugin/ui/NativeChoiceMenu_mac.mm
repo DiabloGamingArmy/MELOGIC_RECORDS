@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 #import <Cocoa/Cocoa.h>
 #include "NativeChoiceMenu.h"
@@ -11,12 +12,42 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,cons
     auto* peer=anchor.getPeer();if(!peer||!peer->getNativeHandle())return;
     NSView* view=(__bridge NSView*)peer->getNativeHandle();if(!view||!view.window)return;
     auto* target=[[MCTOrigamiChoiceTarget alloc]init];
-    NSMenu* menu=[[NSMenu alloc]initWithTitle:[NSString stringWithUTF8String:title.toRawUTF8()]];
+    NSString* rootTitle=[NSString stringWithUTF8String:title.toRawUTF8()];
+    if(rootTitle==nil) rootTitle=@"Select";
+    NSMenu* menu=[[NSMenu alloc]initWithTitle:rootTitle];
     [menu setAutoenablesItems:NO];
+
+    juce::String activeGroup;
+    NSMenu* activeMenu=menu;
+    std::vector<NSMenu*> ownedSubmenus;
+
     for(const auto& choice:items) {
-        NSMenuItem* item=[[NSMenuItem alloc]initWithTitle:[NSString stringWithUTF8String:choice.text.toRawUTF8()] action:@selector(choose:) keyEquivalent:@""];
+        if(choice.group!=activeGroup) {
+            activeGroup=choice.group;
+            activeMenu=menu;
+
+            if(activeGroup.isNotEmpty()) {
+                NSString* groupTitle=[NSString stringWithUTF8String:activeGroup.toRawUTF8()];
+                if(groupTitle==nil) groupTitle=@"Other";
+                NSMenuItem* parent=[[NSMenuItem alloc]initWithTitle:groupTitle action:nil keyEquivalent:@""];
+                NSMenu* submenu=[[NSMenu alloc]initWithTitle:groupTitle];
+                [submenu setAutoenablesItems:NO];
+                [parent setSubmenu:submenu];
+                [menu addItem:parent];
+                activeMenu=submenu;
+                ownedSubmenus.push_back(submenu);
+#if !__has_feature(objc_arc)
+                [parent release];
+#endif
+            }
+        }
+
+        NSString* itemTitle=[NSString stringWithUTF8String:choice.text.toRawUTF8()];
+        if(itemTitle==nil) itemTitle=@"";
+        NSMenuItem* item=[[NSMenuItem alloc]initWithTitle:itemTitle action:@selector(choose:) keyEquivalent:@""];
         [item setTarget:target];[item setTag:choice.id];[item setEnabled:choice.enabled?YES:NO];
-        [item setState:choice.id==current?NSControlStateValueOn:NSControlStateValueOff];[menu addItem:item];
+        [item setState:choice.id==current?NSControlStateValueOn:NSControlStateValueOff];
+        [activeMenu addItem:item];
 #if !__has_feature(objc_arc)
         [item release];
 #endif
@@ -25,6 +56,7 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,cons
     [menu popUpMenuPositioningItem:nil atLocation:local inView:view];
     if(target->selectedId_>=0&&callback)callback(static_cast<int>(target->selectedId_));
 #if !__has_feature(objc_arc)
+    for(auto* submenu:ownedSubmenus) [submenu release];
     [menu release];[target release];
 #endif
 }

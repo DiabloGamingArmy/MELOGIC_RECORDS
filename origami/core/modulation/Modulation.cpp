@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
 #include "Modulation.h"
@@ -23,6 +24,7 @@ bool known(ModSource s) {
         case ModSource::Lfo1:case ModSource::Lfo2:case ModSource::Lfo3:case ModSource::Lfo4:
         case ModSource::Macro1:case ModSource::Macro2:case ModSource::Macro3:case ModSource::Macro4:
         case ModSource::ModWheel:case ModSource::Velocity:case ModSource::Keytrack:case ModSource::Aftertouch:
+        case ModSource::PitchBend:case ModSource::NoteGate:
         case ModSource::Random:case ModSource::Function:return true;
     }
     return false;
@@ -35,7 +37,12 @@ Range limits(ModDestination d) {
         case ModDestination::Semitone:return {-12,12};
         case ModDestination::Fine:return {-100,100};
         case ModDestination::Detune:return {0,100};
-        case ModDestination::Pan:return {-1,1};
+        case ModDestination::Pan:
+        case ModDestination::Process1Amount:
+        case ModDestination::Process2Amount:
+        case ModDestination::Route1Amount:
+        case ModDestination::Route2Amount:
+            return {-1,1};
         default:return {0,1};
     }
 }
@@ -51,6 +58,7 @@ std::size_t slotFor(ModSource source,const ModulationState& state) {
         case ModSource::Env1:return 10u;case ModSource::Env2:return 11u;case ModSource::Env3:return 12u;
         case ModSource::Velocity:return 17u;case ModSource::ModWheel:return 18u;
         case ModSource::Keytrack:return 19u;case ModSource::Aftertouch:return 20u;
+        case ModSource::PitchBend:return 21u;case ModSource::NoteGate:return 22u;
     }
     return 0u;
 }
@@ -79,7 +87,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
         if(isGlobalDestination(r.destination.parameter)) {
             if(r.destination.oscillator!=0) return false;
         } else {
-            if(r.destination.parameter<ModDestination::WtPosition || r.destination.parameter>ModDestination::Level) return false;
+            if(r.destination.parameter<ModDestination::WtPosition || r.destination.parameter>ModDestination::Route2Amount) return false;
             bool found=false;for(const auto& m:modules) if(m.id && m.id==r.destination.oscillator) found=true;
             if(!found) return false;
         }
@@ -185,6 +193,10 @@ float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept
         case ModDestination::Octave:return m.octave;case ModDestination::Semitone:return m.semitone;
         case ModDestination::Fine:return m.fineCents;case ModDestination::Detune:return m.detuneCents;
         case ModDestination::Pan:return m.pan;case ModDestination::Level:return m.level;
+        case ModDestination::Process1Amount:return m.process1Amount;
+        case ModDestination::Process2Amount:return m.process2Amount;
+        case ModDestination::Route1Amount:return m.route1Amount;
+        case ModDestination::Route2Amount:return m.route2Amount;
     }
     return 0;
 }
@@ -196,6 +208,10 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
         case ModDestination::Octave:m.octave=v;break;case ModDestination::Semitone:m.semitone=v;break;
         case ModDestination::Fine:m.fineCents=v;break;case ModDestination::Detune:m.detuneCents=v;break;
         case ModDestination::Pan:m.pan=v;break;case ModDestination::Level:m.level=v;break;
+        case ModDestination::Process1Amount:m.process1Amount=v;break;
+        case ModDestination::Process2Amount:m.process2Amount=v;break;
+        case ModDestination::Route1Amount:m.route1Amount=v;break;
+        case ModDestination::Route2Amount:m.route2Amount=v;break;
     }
 }
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {

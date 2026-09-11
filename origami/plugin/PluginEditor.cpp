@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v26.3.1-postcommit-compile-repair
@@ -119,11 +120,16 @@ bool OrigamiAudioProcessorEditor::isKnob(const juce::Slider& slider) noexcept {
 }
 
 double OrigamiAudioProcessorEditor::defaultForKnob(juce::Slider& slider) const noexcept {
-    // Preserve any control-specific default already declared by the UI.
+    const auto name=slider.getName().toLowerCase();
+
+    // PAN is a hard canonical centre default. Resolve this BEFORE inspecting
+    // any legacy per-control JUCE double-click default so a stale constructed
+    // value can never become the global Shift+click reset point.
+    if(name.contains("pan")) return 0.0;
+
+    // Preserve any other control-specific default already declared by the UI.
     if(slider.isDoubleClickReturnEnabled())
         return slider.getDoubleClickReturnValue();
-
-    const auto name=slider.getName().toLowerCase();
 
     // Engine-backed canonical defaults.
     if(name.contains("wt pos")) return 1.0/3.0;
@@ -194,11 +200,25 @@ void OrigamiAudioProcessorEditor::openKnobValueEditor(juce::Slider& slider) {
         slider.getName().isNotEmpty() ? slider.getName() : juce::String("Numeric value"),
         juce::MessageBoxIconType::NoIcon);
 
+    // Keep typed knob entry intentionally plain/OEM-looking: true black surface,
+    // neutral white typography, minimal outline. This avoids the blue-grey JUCE
+    // alert appearance while retaining the native editor workflow.
+    dialog->setColour(juce::AlertWindow::backgroundColourId,juce::Colours::black);
+    dialog->setColour(juce::AlertWindow::textColourId,juce::Colours::white);
+    dialog->setColour(juce::AlertWindow::outlineColourId,juce::Colour(0xff383838));
+
     dialog->addTextEditor("value",
                           juce::String(slider.getValue(),6).trimCharactersAtEnd("0").trimCharactersAtEnd("."),
                           "Value:");
     if(auto* editor=dialog->getTextEditor("value")) {
         editor->setInputRestrictions(0,"0123456789.-+");
+        editor->setFont(juce::Font(juce::FontOptions("Arial",14.0f,juce::Font::plain)));
+        editor->setColour(juce::TextEditor::backgroundColourId,juce::Colours::black);
+        editor->setColour(juce::TextEditor::textColourId,juce::Colours::white);
+        editor->setColour(juce::TextEditor::highlightColourId,juce::Colour(0xff3f3f3f));
+        editor->setColour(juce::TextEditor::highlightedTextColourId,juce::Colours::white);
+        editor->setColour(juce::TextEditor::outlineColourId,juce::Colour(0xff454545));
+        editor->setColour(juce::TextEditor::focusedOutlineColourId,juce::Colour(0xff707070));
         editor->selectAll();
     }
 

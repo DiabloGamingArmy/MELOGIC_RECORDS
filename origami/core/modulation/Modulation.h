@@ -1,3 +1,4 @@
+// mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24
 #pragma once
@@ -15,11 +16,13 @@ enum class ModSource : std::uint32_t {
     Lfo1=101, Lfo2=102, Lfo3=103, Lfo4=104,
     Macro1=201, Macro2=202, Macro3=203, Macro4=204,
     ModWheel=301, Velocity=302, Keytrack=303, Aftertouch=304,
+    PitchBend=305, NoteGate=306,
     Random=401, Function=501
 };
 enum class ModDestination : std::uint32_t {
     Cutoff=1, Resonance=2, MasterGain=3,
-    WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107
+    WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107,
+    Process1Amount=108, Process2Amount=109, Route1Amount=110, Route2Amount=111
 };
 enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
 enum class LfoMode : std::uint32_t { Free=1, NoteRetrigger=2 };
@@ -114,7 +117,7 @@ struct ModulationFrame {
 class CompiledModulation {
 public:
     static constexpr std::size_t globalSourceCount=10;
-    static constexpr std::size_t voiceSourceCount=11;
+    static constexpr std::size_t voiceSourceCount=13;
     static constexpr std::size_t sourceSlotCount=globalSourceCount+voiceSourceCount;
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
     void advance(float smoothing) noexcept;
