@@ -6,6 +6,7 @@
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 // mct-origami-v34.2.1-performance-reinforcement
+// mct-origami-v34.3.0-lfo-interaction-mod-properties
 #include "Modulation.h"
 #include <algorithm>
 #include <cmath>
@@ -20,7 +21,7 @@ bool validEnvelope(const dsp::EnvelopeSettings& e) {
 }
 bool validLfo(const LfoSettings& s) {
     if(!(s.shape>=LfoShape::Sine && s.shape<=LfoShape::Square) ||
-       !(s.mode==LfoMode::Free || s.mode==LfoMode::NoteRetrigger) ||
+       !(s.mode==LfoMode::Free || s.mode==LfoMode::Loop || s.mode==LfoMode::Envelope) ||
        !range(s.rateHz,.01f,40.f) ||
        s.pointCount>s.points.size() || s.pointCount==1)
         return false;
@@ -166,10 +167,21 @@ float Lfo::mseg(const LfoSettings& s,double phase) noexcept {
 }
 
 float Lfo::next(const LfoSettings& s,double sampleRate) noexcept {
+    // Envelope mode is a one-shot MSEG: after reaching the right endpoint it
+    // remains there until reset by the next note. Loop and Free wrap normally.
+    if(s.mode==LfoMode::Envelope && phase_>=1.0) {
+        if(s.pointCount>=2 && s.pointCount<=s.points.size())
+            return s.points[s.pointCount-1].y;
+        return shape(s.shape,0.999999);
+    }
+
     const float out=mseg(s,phase_);
     if(std::isfinite(sampleRate) && sampleRate>0 && std::isfinite(s.rateHz)) {
         phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
-        phase_-=std::floor(phase_);
+        if(s.mode==LfoMode::Envelope)
+            phase_=std::min(1.0,phase_);
+        else
+            phase_-=std::floor(phase_);
     }
     return out;
 }

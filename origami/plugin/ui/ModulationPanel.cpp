@@ -20,6 +20,7 @@
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 // mct-origami-v34.2.1-performance-reinforcement
+// mct-origami-v34.3.0-lfo-interaction-mod-properties
 #include "ModulationPanel.h"
 #include "ModulationUiTelemetry.h"
 #include "NativeChoiceMenu.h"
@@ -176,13 +177,16 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     randomDelay_.setTooltip("Initial delay before Random modulation starts");
 
     shape_.addItem("MSEG",1);
-    mode_.addItem("Free running",1);mode_.addItem("Note retrigger",2);
+    // Three explicit playback behaviours. IDs preserve legacy serialization:
+    // Free=1, Loop (old NoteRetrigger)=2, Envelope=3.
+    mode_.addItem("Loop",2);
+    mode_.addItem("Free",1);
+    mode_.addItem("Envelope",3);
     for(auto* box:{&shape_,&mode_}) {addAndMakeVisible(*box);box->setScrollWheelEnabled(false);}
     addAndMakeVisible(lfoLoop_);
     addAndMakeVisible(lfoTools_);
     lfoLoop_.setToggleState(true,juce::dontSendNotification);
-    lfoLoop_.setTooltip("Loop MSEG continuously");
-    lfoTools_.setTooltip("MSEG tools");
+    lfoLoop_.setVisible(false);
     for(auto& shape:lfoMseg_) resetMsegShape(shape);
     lfoTools_.onClick=[this]{showLfoToolsMenu();};
     auto update=[this]{commitGenerator();repaint();};
@@ -392,7 +396,7 @@ void ModulationPanel::updateVisibleControls() {
     division_.setVisible(graphEditor && gridModeValue_==GridMode::Daw);
     zoomOut_.setVisible(graphEditor);zoomIn_.setVisible(graphEditor);
     tempo_.setVisible(graphEditor && gridModeValue_==GridMode::Tempo);
-    envScroll_.setVisible(env);lfoLoop_.setVisible(lfo);lfoTools_.setVisible(lfo);
+    envScroll_.setVisible(env);lfoLoop_.setVisible(false);lfoTools_.setVisible(lfo);
 
     const bool rateGenerator=random||chaos||drift||sequencer;
     rate_.setVisible(lfo||function||rateGenerator);
@@ -422,7 +426,8 @@ void ModulationPanel::syncFromModel() {
                 envSliders_[i].setValue(v[i],juce::dontSendNotification);
     } else if(selected_>=3 && selected_<=6) {
         const auto& l=lfoSettings(cached_,static_cast<std::size_t>(selected_-3));
-        loadMsegShapeFromSettings(lfoMseg_[static_cast<std::size_t>(selected_-3)],l);
+        if(lfoPointDrag_<0 && lfoCurveDrag_<0)
+            loadMsegShapeFromSettings(lfoMseg_[static_cast<std::size_t>(selected_-3)],l);
         shape_.setSelectedId(1,juce::dontSendNotification);
         mode_.setSelectedId(static_cast<int>(l.mode),juce::dontSendNotification);
         if(!rate_.isMouseButtonDown()) rate_.setValue(l.rateHz,juce::dontSendNotification);
@@ -604,6 +609,8 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
     if(hit>=0) {
         if(shape.count<=2) return;
         const auto index=static_cast<std::size_t>(hit);
+        // Endpoints define the loop seam and are structural: never delete them.
+        if(index==0 || index+1==shape.count) return;
         for(std::size_t i=index;i+1<shape.count;++i) shape.points[i]=shape.points[i+1];
         --shape.count;
         commitMsegShape();
@@ -654,12 +661,24 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
         auto& shape=lfoMseg_[static_cast<std::size_t>(selected_-3)];
         if(lfoPointDrag_>=0) {
             const auto i=static_cast<std::size_t>(lfoPointDrag_);
-            if(i>0 && i+1<shape.count) {
-                float x=(e.position.x-envCanvas_.getX())/juce::jmax(1.0f,envCanvas_.getWidth());
+            const auto local=e.getEventRelativeTo(this).position;
+            const float y=juce::jlimit(-1.0f,1.0f,
+                (envCanvas_.getCentreY()-local.y)/juce::jmax(1.0f,envCanvas_.getHeight()*.46f));
+
+            if(i==0 || i+1==shape.count) {
+                // Loop seam endpoints are vertically movable only, and are
+                // always locked to the same value.
+                shape.points[0].x=0.0f;
+                shape.points[shape.count-1].x=1.0f;
+                shape.points[0].y=y;
+                shape.points[shape.count-1].y=y;
+            } else {
+                float x=(local.x-envCanvas_.getX())/juce::jmax(1.0f,envCanvas_.getWidth());
                 if(snap_.getToggleState()) x=std::round(x*16.0f)/16.0f;
-                shape.points[i].x=juce::jlimit(shape.points[i-1].x+.005f,shape.points[i+1].x-.005f,x);
+                shape.points[i].x=juce::jlimit(
+                    shape.points[i-1].x+.005f,shape.points[i+1].x-.005f,x);
+                shape.points[i].y=y;
             }
-            shape.points[i].y=juce::jlimit(-1.0f,1.0f,(envCanvas_.getCentreY()-e.position.y)/juce::jmax(1.0f,envCanvas_.getHeight()*.46f));
         } else {
             const auto i=static_cast<std::size_t>(lfoCurveDrag_);
             shape.points[i].curve=curveForHandleY(lfoDragStartShape_,i,e.position.y);
@@ -853,6 +872,24 @@ void ModulationPanel::timerCallback() {
     for(auto& s:traceTail_) s.age+=dt;
     while(!traceTail_.empty() && traceTail_.front().age>0.34f) traceTail_.pop_front();
 
+    for(auto& s:lfoTraceTail_) s.age+=dt;
+    while(!lfoTraceTail_.empty() && lfoTraceTail_.front().age>0.34f)
+        lfoTraceTail_.pop_front();
+
+    if(selected_>=3 && selected_<=6 && !envCanvas_.isEmpty() &&
+       modulationUiTelemetry().synthActive) {
+        const auto& shape=lfoMseg_[static_cast<std::size_t>(selected_-3)];
+        const float phase=juce::jlimit(0.0f,1.0f,lfoTracePhase_);
+        if(lastLfoTracePhase_>=0.0f && phase+0.25f<lastLfoTracePhase_)
+            lfoTraceTail_.clear(); // loop seam: never draw across right -> left
+        lastLfoTracePhase_=phase;
+        lfoTraceTail_.push_back({msegPixel({phase,msegValue(shape,phase),0.0f}),0.0f});
+        while(lfoTraceTail_.size()>28) lfoTraceTail_.pop_front();
+    } else if(selected_<3 || selected_>6 || !modulationUiTelemetry().synthActive) {
+        lfoTraceTail_.clear();
+        lastLfoTracePhase_=-1.0f;
+    }
+
     if(selected_<=2 && bindings_.envelopeTrace && !envCanvas_.isEmpty()){
         trace_=bindings_.envelopeTrace();
         if(trace_.active){
@@ -864,7 +901,7 @@ void ModulationPanel::timerCallback() {
             }
         }
     }
-    if(selected_<=2 || selected_==8) repaint();
+    if(selected_<=8) repaint();
 }
 
 void ModulationPanel::zoomBy(float factor,juce::Point<float> anchor) {
@@ -962,9 +999,9 @@ void ModulationPanel::resized() {
             for(std::size_t i=0;i<4;++i) place(controls.removeFromLeft(cell),envSliders_[i],envLabels_[i]);
         } else {
             auto rc=controls.removeFromLeft(120);rateLabel_.setBounds(rc.removeFromBottom(17));rate_.setBounds(rc);
-            controls.removeFromLeft(6);lfoLoop_.setBounds(controls.removeFromLeft(60).reduced(2,9));
-            controls.removeFromLeft(6);lfoTools_.setBounds(controls.removeFromLeft(66).reduced(2,9));
-            controls.removeFromLeft(6);mode_.setBounds(controls.removeFromLeft(112).reduced(2,18));shape_.setBounds({});
+            lfoLoop_.setBounds({});
+            controls.removeFromLeft(8);lfoTools_.setBounds(controls.removeFromLeft(70).reduced(2,9));
+            controls.removeFromLeft(8);mode_.setBounds(controls.removeFromLeft(132).reduced(2,18));shape_.setBounds({});
         }
         snap_.setBounds(toolbar.removeFromLeft(58));toolbar.removeFromLeft(gap);
         gridMode_.setBounds(toolbar.removeFromLeft(70));toolbar.removeFromLeft(gap);
@@ -1048,12 +1085,15 @@ void ModulationPanel::loadMsegShapeFromSettings(MsegShape& shape,const LfoSettin
             break;
         case LfoShape::Sine:
         default:
-            shape.count=16;
-            for(std::size_t i=0;i<shape.count;++i) {
-                const float x=static_cast<float>(i)/static_cast<float>(shape.count-1);
-                shape.points[i]={x,
-                    static_cast<float>(std::sin(x*juce::MathConstants<float>::twoPi)),0};
-            }
+            // Minimal sine MSEG: endpoints plus exactly three internal nodes.
+            // Curvature approximates the quarter-wave easing without a forest
+            // of points.
+            shape.count=5;
+            shape.points[0]={0.00f, 0.00f, 0.00f};
+            shape.points[1]={0.25f, 1.00f,-0.42f};
+            shape.points[2]={0.50f, 0.00f, 0.42f};
+            shape.points[3]={0.75f,-1.00f,-0.42f};
+            shape.points[4]={1.00f, 0.00f, 0.42f};
             break;
     }
 }
@@ -1064,7 +1104,12 @@ bool ModulationPanel::commitMsegShape() {
 
     auto mod=bindings_.snapshot().modulation;
     auto& l=lfoSettings(mod,static_cast<std::size_t>(selected_-3));
-    const auto& editor=lfoMseg_[static_cast<std::size_t>(selected_-3)];
+    auto& editor=lfoMseg_[static_cast<std::size_t>(selected_-3)];
+    if(editor.count>=2) {
+        editor.points[0].x=0.0f;
+        editor.points[editor.count-1].x=1.0f;
+        editor.points[editor.count-1].y=editor.points[0].y;
+    }
 
     l.pointCount=static_cast<std::uint32_t>(std::min(editor.count,l.points.size()));
     for(std::size_t i=0;i<l.pointCount;++i)
@@ -1078,11 +1123,11 @@ bool ModulationPanel::commitMsegShape() {
 void ModulationPanel::resetMsegShape(MsegShape& shape) noexcept {
     shape={};
     shape.count=5;
-    shape.points[0]={0.00f,0.00f,0.0f};
-    shape.points[1]={0.25f,1.00f,0.0f};
-    shape.points[2]={0.50f,0.00f,0.0f};
-    shape.points[3]={0.75f,-1.00f,0.0f};
-    shape.points[4]={1.00f,0.00f,0.0f};
+    shape.points[0]={0.00f, 0.00f, 0.00f};
+    shape.points[1]={0.25f, 1.00f,-0.42f};
+    shape.points[2]={0.50f, 0.00f, 0.42f};
+    shape.points[3]={0.75f,-1.00f,-0.42f};
+    shape.points[4]={1.00f, 0.00f, 0.42f};
 }
 float ModulationPanel::msegValue(const MsegShape& shape,float x) const noexcept {
     if(shape.count==0) return 0.0f;
@@ -1181,8 +1226,11 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     juce::String title;
     if(selected_<=2) title="ENV "+juce::String(selected_+1)+(selected_==0?" / AMP + SOURCE":" / MOD SOURCE");
     else if(selected_>=3 && selected_<=6)
-        title="LFO "+juce::String(selected_-2)+" / "+
-            (lfoSettings(cached_,static_cast<std::size_t>(selected_-3)).mode==LfoMode::Free?"FREE":"PER NOTE");
+        {
+            const auto mode=lfoSettings(cached_,static_cast<std::size_t>(selected_-3)).mode;
+            const char* modeName=mode==LfoMode::Free?"FREE":mode==LfoMode::Envelope?"ENVELOPE":"LOOP";
+            title="LFO "+juce::String(selected_-2)+" / "+modeName;
+        }
     else if(selected_==7) title="FUNCTION / CURVED BIPOLAR";
     else title="RANDOM / SAMPLE + HOLD";
     text(g,title,caption,9,Palette::muted());well(g,body);
@@ -1345,6 +1393,36 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
                 g.setColour(Palette::secondary());g.drawEllipse(h,1.1f);
             }
         }
+
+        // LFO playback tracer: same visual language as ENV, rendered only for
+        // the currently visible LFO editor.
+        if(!lfoTraceTail_.empty()) {
+            const auto head=lfoTraceTail_.back().point;
+            g.setColour(signalSourceColour().withAlpha(.10f));
+            g.drawVerticalLine(juce::roundToInt(head.x),r.getY(),r.getBottom());
+
+            for(std::size_t i=1;i<lfoTraceTail_.size();++i) {
+                const auto& a=lfoTraceTail_[i-1];
+                const auto& b=lfoTraceTail_[i];
+                const float fresh=juce::jlimit(0.0f,1.0f,1.0f-b.age/.34f);
+                if(fresh<=0.0f) continue;
+
+                g.setColour(signalShade(.34f,.025f+.10f*fresh));
+                g.drawLine(b.point.x,b.point.y,b.point.x,r.getBottom(),2.2f+3.6f*fresh);
+
+                g.setColour(juce::Colours::white.withAlpha(.06f+.17f*fresh));
+                g.drawLine(a.point.x,a.point.y,b.point.x,b.point.y,3.0f+4.5f*fresh);
+                g.setColour(juce::Colours::white.withAlpha(.24f+.70f*fresh));
+                g.drawLine(a.point.x,a.point.y,b.point.x,b.point.y,1.3f+2.7f*fresh);
+            }
+
+            g.setColour(juce::Colours::white.withAlpha(.05f));
+            g.fillEllipse(juce::Rectangle<float>(30,30).withCentre(head));
+            g.setColour(juce::Colours::white.withAlpha(.13f));
+            g.fillEllipse(juce::Rectangle<float>(16,16).withCentre(head));
+            g.setColour(juce::Colours::white);
+            g.fillEllipse(juce::Rectangle<float>(5.5f,5.5f).withCentre(head));
+        }
         return;
     }
     auto r=body.reduced(10).toFloat();juce::Path p;
@@ -1484,7 +1562,7 @@ void ModulationPanel::updateSourceHistory(float) {
     if(newNote) {
         sourceTraceOrder_=sourceTrace_.order;
         for(std::size_t i=0;i<sourceMonitorLfos_.size();++i)
-            if(lfoSettings(cached_,i).mode==LfoMode::NoteRetrigger)
+            if(lfoSettings(cached_,i).mode!=LfoMode::Free)
                 sourceMonitorLfos_[i].reset();
     }
 
@@ -1507,8 +1585,11 @@ void ModulationPanel::updateSourceHistory(float) {
         samples[i]=juce::jlimit(0.0f,1.0f,sourceTrace_.envelopes[i].value);
 
     constexpr double monitorRate=30.0;
-    for(std::size_t i=0;i<4;++i)
+    for(std::size_t i=0;i<4;++i) {
         samples[3+i]=sourceMonitorLfos_[i].next(lfoSettings(cached_,i),monitorRate);
+        if(selected_==static_cast<int>(3+i))
+            lfoTracePhase_=static_cast<float>(sourceMonitorLfos_[i].phase());
+    }
 
     samples[7]=(cached_.generatorActiveMask&0x01u)
         ? sourceMonitorFunction_.next(cached_.function,monitorRate) : 0.0f;

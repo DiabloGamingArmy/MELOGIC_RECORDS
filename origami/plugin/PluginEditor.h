@@ -38,6 +38,7 @@ private:
     void registerKnobDefaults(juce::Component&);
     double defaultForKnob(juce::Slider&) const noexcept;
     void openKnobValueEditor(juce::Slider&);
+    void openKnobProperties(juce::Slider&);
     juce::Slider* modulationDropTargetAt(juce::Point<int>) const noexcept;
     static bool decodeDraggedModSource(const juce::var&,mct::origami::ModSource&) noexcept;
     bool createDraggedRoute(mct::origami::ModSource,juce::Slider&);
@@ -59,6 +60,7 @@ private:
     mct::origami::ui::ModulationMatrix matrix_;
     mct::origami::ui::PerformanceKeyboard performance_;
     mct::origami::ui::ArpeggiatorPanel arpeggiator_;
-    juce::TooltipWindow tooltips_{this,650};
+    // Tooltips intentionally disabled. Origami now relies on direct labels,
+    // native context menus and explicit controls instead of stale hover copy.
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessorEditor)
 };

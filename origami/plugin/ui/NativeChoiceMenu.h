@@ -10,6 +10,7 @@ struct NativeChoiceItem {
     juce::String text;
     bool enabled=true;
     juce::String group;
+    bool checked=false;
 };
 void showNativeChoiceMenu(juce::Component&,const juce::String&,const std::vector<NativeChoiceItem>&,int,std::function<void(int)>);
 }

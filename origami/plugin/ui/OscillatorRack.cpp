@@ -198,6 +198,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         waveformNext_.setTooltip("Next wavetable (only Basic Shapes is currently installed)");
         waveformPrevious_.setEnabled(false);
         waveformNext_.setEnabled(false);
+        panSlider_.setName("OSC PAN");
+        panSlider_.getProperties().set("mct.origami.knobDefault",0.0);
         panSlider_.setRange(-1.0,1.0,0.001);
         levelSlider_.setRange(0.0,1.0,0.001);
         panSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscPan),juce::dontSendNotification);

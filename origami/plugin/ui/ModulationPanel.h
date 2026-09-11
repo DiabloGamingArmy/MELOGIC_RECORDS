@@ -12,6 +12,7 @@
 // mct-origami-v33.0.2-lfo-mseg-editor-foundation
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
+// mct-origami-v34.3.0-lfo-interaction-mod-properties
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
@@ -153,6 +154,12 @@ private:
     EnvelopeTraceSnapshot trace_{};
     std::deque<TraceSample> traceTail_;
     std::uint64_t lastTraceOrder_=0;
+
+    // Selected-LFO playback tracer. Maintained only while the LFO editor is
+    // visible, keeping this visual feature off the audio thread.
+    std::deque<TraceSample> lfoTraceTail_;
+    float lfoTracePhase_=0.0f;
+    float lastLfoTracePhase_=-1.0f;
 
     static constexpr std::size_t sourceHistoryLength_=72;
     std::array<std::deque<float>,12> sourceHistory_{};

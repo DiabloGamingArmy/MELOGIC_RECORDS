@@ -16,6 +16,7 @@
 // mct-origami-v21-build-repair-2
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
+#include "ui/NativeChoiceMenu.h"
 #include <cmath>
 #include <cstring>
 using namespace mct::origami::ui;
@@ -319,8 +320,15 @@ void OrigamiAudioProcessorEditor::registerKnobDefaults(juce::Component& root) {
 
 void OrigamiAudioProcessorEditor::mouseDown(const juce::MouseEvent& event) {
     auto* slider=sliderFromMouseEvent(event);
-    if(slider==nullptr || !isKnob(*slider) || !event.mods.isShiftDown())
+    if(slider==nullptr || !isKnob(*slider))
         return;
+
+    if(event.mods.isPopupMenu()) {
+        openKnobProperties(*slider);
+        return;
+    }
+
+    if(!event.mods.isShiftDown()) return;
 
     auto& props=slider->getProperties();
     if(!props.contains("mct.origami.knobDefault"))
@@ -336,6 +344,72 @@ void OrigamiAudioProcessorEditor::mouseDoubleClick(const juce::MouseEvent& event
     if(slider==nullptr || !isKnob(*slider))
         return;
     openKnobValueEditor(*slider);
+}
+
+void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
+    if(!slider.getProperties().contains("mct.mod.destination") || !dragBindings_.snapshot)
+        return;
+
+    const auto destination=static_cast<mct::origami::ModDestination>(
+        static_cast<int>(slider.getProperties()["mct.mod.destination"]));
+    const unsigned oscillator=slider.getProperties().contains("mct.mod.oscillator")
+        ? static_cast<unsigned>(static_cast<int>(slider.getProperties()["mct.mod.oscillator"])) : 0u;
+
+    const auto state=dragBindings_.snapshot();
+    std::vector<mct::origami::ModRoute> matches;
+    for(const auto& route:state.modulation.routes) {
+        if(route.id!=0 && route.enabled &&
+           route.destination.parameter==destination &&
+           route.destination.oscillator==oscillator)
+            matches.push_back(route);
+    }
+
+    auto sourceName=[](mct::origami::ModSource s)->juce::String {
+        using S=mct::origami::ModSource;
+        switch(s) {
+            case S::Env1:return "ENV 1"; case S::Env2:return "ENV 2"; case S::Env3:return "ENV 3";
+            case S::Lfo1:return "LFO 1"; case S::Lfo2:return "LFO 2"; case S::Lfo3:return "LFO 3"; case S::Lfo4:return "LFO 4";
+            case S::Macro1:return "MACRO 1"; case S::Macro2:return "MACRO 2"; case S::Macro3:return "MACRO 3"; case S::Macro4:return "MACRO 4";
+            case S::Random:return "RANDOM"; case S::Function:return "FUNCTION";
+            case S::Chaos:return "CHAOS"; case S::Drift:return "DRIFT"; case S::Sequencer:return "SEQUENCER";
+            case S::ModWheel:return "MOD WHEEL"; case S::Velocity:return "VELOCITY"; case S::Keytrack:return "KEYTRACK";
+            case S::Aftertouch:return "AFTERTOUCH"; case S::PitchBend:return "PITCH BEND"; case S::NoteGate:return "NOTE GATE";
+        }
+        return "MODULATOR";
+    };
+    auto groupName=[](mct::origami::ModSource s)->juce::String {
+        const auto raw=static_cast<std::uint32_t>(s);
+        if(raw>=1 && raw<100) return "Envelopes";
+        if(raw>=100 && raw<200) return "LFOs";
+        if(raw>=200 && raw<300) return "Macros";
+        if(raw>=300 && raw<400) return "Performance";
+        return "Generators";
+    };
+
+    std::vector<mct::origami::ui::NativeChoiceItem> items;
+    if(matches.empty()) {
+        items.push_back({1,"No Modulators",false,"",false});
+    } else {
+        items.push_back({1,"Remove All Modulators",true,"",false});
+        int menuId=100;
+        for(const auto& route:matches)
+            items.push_back({menuId++,sourceName(route.source),true,groupName(route.source),true});
+    }
+
+    auto safe=juce::Component::SafePointer<juce::Slider>(&slider);
+    showNativeChoiceMenu(slider,"KNOB PROPERTIES",items,0,
+        [this,safe,matches](int id) {
+            if(safe==nullptr || !dragBindings_.removeRoute) return;
+            if(id==1) {
+                for(const auto& route:matches) dragBindings_.removeRoute(route.id);
+            } else if(id>=100) {
+                const auto index=static_cast<std::size_t>(id-100);
+                if(index<matches.size()) dragBindings_.removeRoute(matches[index].id);
+            }
+            modulation_.syncFromModel();
+            matrix_.syncFromModel();
+            repaint();
+        });
 }
 
 void OrigamiAudioProcessorEditor::openKnobValueEditor(juce::Slider& slider) {

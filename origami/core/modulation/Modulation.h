@@ -6,6 +6,7 @@
 // mct-origami-v34.0.0-random-lfo
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 // mct-origami-v34.2.1-performance-reinforcement
+// mct-origami-v34.3.0-lfo-interaction-mod-properties
 #pragma once
 #include "core/OscillatorModule.h"
 #include "core/dsp/Filter.h"
@@ -31,7 +32,8 @@ enum class ModDestination : std::uint32_t {
     Process1Amount=108, Process2Amount=109, Route1Amount=110, Route2Amount=111
 };
 enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
-enum class LfoMode : std::uint32_t { Free=1, NoteRetrigger=2 };
+// Preserve serialized values: legacy NoteRetrigger (2) is now named Loop.
+enum class LfoMode : std::uint32_t { Free=1, Loop=2, Envelope=3 };
 
 struct LfoPoint { float x=0.0f,y=0.0f,curve=0.0f; };
 struct LfoSettings {
@@ -109,6 +111,7 @@ public:
     float next(const LfoSettings&,double sampleRate) noexcept;
     static float shape(LfoShape,double phase) noexcept;
     static float mseg(const LfoSettings&,double phase) noexcept;
+    double phase() const noexcept { return phase_; }
 private: double phase_=0;
 };
 

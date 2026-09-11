@@ -46,7 +46,7 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String& title,cons
         if(itemTitle==nil) itemTitle=@"";
         NSMenuItem* item=[[NSMenuItem alloc]initWithTitle:itemTitle action:@selector(choose:) keyEquivalent:@""];
         [item setTarget:target];[item setTag:choice.id];[item setEnabled:choice.enabled?YES:NO];
-        [item setState:choice.id==current?NSControlStateValueOn:NSControlStateValueOff];
+        [item setState:(choice.checked || choice.id==current)?NSControlStateValueOn:NSControlStateValueOff];
         [activeMenu addItem:item];
 #if !__has_feature(objc_arc)
         [item release];
