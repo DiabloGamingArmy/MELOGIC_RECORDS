@@ -1,3 +1,4 @@
+# mct-origami-v30.1.0-env-sync-native-menus-retrigger
 # mct-origami-v26.2.0-native-process-library
 # mct-origami-v25.1.0-arp-advanced-page
 # mct-origami-v24.0.2-cmake-marker-repair
@@ -121,9 +122,9 @@ if(ORIGAMI_BUILD_VST3)
     plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp
     plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp)
   if(APPLE)
-    target_sources(OrigamiPlugin PRIVATE plugin/ui/NativeOscProcessMenu_mac.mm)
+    target_sources(OrigamiPlugin PRIVATE plugin/ui/NativeOscProcessMenu_mac.mm plugin/ui/NativeChoiceMenu_mac.mm)
   else()
-    target_sources(OrigamiPlugin PRIVATE plugin/ui/NativeOscProcessMenu.cpp)
+    target_sources(OrigamiPlugin PRIVATE plugin/ui/NativeOscProcessMenu.cpp plugin/ui/NativeChoiceMenu.cpp)
   endif()
   target_include_directories(OrigamiPlugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
   target_compile_features(OrigamiPlugin PRIVATE cxx_std_17)

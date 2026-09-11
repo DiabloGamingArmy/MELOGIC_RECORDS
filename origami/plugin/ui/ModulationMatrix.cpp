@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-pitch-mod-real-v23.3
 #include "ModulationMatrix.h"
@@ -54,7 +55,7 @@ public:
     void paint(juce::Graphics& g) override {well(g,getLocalBounds());}
 private:
     ModRoute route_;ModulationBindings bindings_;std::vector<ModAddress> addresses_;
-    juce::ComboBox source_,destination_;
+    NativeComboBox source_,destination_;
     juce::TextButton enabled_{"ON"},remove_{"-"};juce::Slider amount_;
 };
 ModulationMatrix::ModulationMatrix(ModulationBindings bindings):Panel("MODULATION MATRIX"),bindings_(std::move(bindings)) {

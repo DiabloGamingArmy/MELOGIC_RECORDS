@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
@@ -65,6 +66,7 @@ public:
     mct::origami::ArpeggiatorState getUiArpeggiatorState() const noexcept;
     mct::origami::ArpeggiatorRuntimeSnapshot getUiArpeggiatorRuntimeSnapshot() const noexcept;
     mct::origami::EnvelopeTraceSnapshot getUiEnvelopeTraceSnapshot() const noexcept;
+    double getUiHostBpm() noexcept;
     void clearUiArpeggiatorLatch() noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only

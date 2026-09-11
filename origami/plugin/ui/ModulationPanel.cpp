@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.1-env-toolbar-bottom
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v29.0.0-spectral-process-native-routing
@@ -94,12 +95,20 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     snap_.setToggleState(true,juce::dontSendNotification);
 
     addAndMakeVisible(gridMode_);
-    gridMode_.addItem("BPM",1); gridMode_.addItem("SEC",2);
+    gridMode_.setName("ENV GRID MODE");
+    gridMode_.addItem("BPM",1);gridMode_.addItem("SEC",2);gridMode_.addItem("DAW",3);
     gridMode_.setSelectedId(1,juce::dontSendNotification);
     gridMode_.onChange=[this]{
-        gridModeValue_=gridMode_.getSelectedId()==2?GridMode::Seconds:GridMode::Tempo;
-        updateVisibleControls(); updateScrollbar(); repaint();
+        gridModeValue_=gridMode_.getSelectedId()==2?GridMode::Seconds:
+                       gridMode_.getSelectedId()==3?GridMode::Daw:GridMode::Tempo;
+        updateVisibleControls();resized();updateScrollbar();repaint();
     };
+    addAndMakeVisible(division_);
+    division_.setName("ENV DAW DIVISION");
+    for(const auto& item:std::initializer_list<std::pair<const char*,int>>{{"1/1",1},{"1/2",2},{"1/4",3},{"1/8",4},{"1/16",5},{"1/32",6},{"1/8T",7},{"1/16T",8}})
+        division_.addItem(item.first,item.second);
+    division_.setSelectedId(3,juce::dontSendNotification);
+    division_.onChange=[this]{updateScrollbar();repaint();};
 
     addAndMakeVisible(tempo_);
     tempo_.setSliderStyle(juce::Slider::LinearBar);
@@ -210,6 +219,7 @@ void ModulationPanel::updateVisibleControls() {
     for(auto& s:envSliders_) s.setVisible(env);
     for(auto& l:envLabels_) l.setVisible(env);
     snap_.setVisible(env);gridMode_.setVisible(env);
+    division_.setVisible(env && gridModeValue_==GridMode::Daw);
     zoomOut_.setVisible(env);zoomIn_.setVisible(env);
     tempo_.setVisible(env && gridModeValue_==GridMode::Tempo);
     envScroll_.setVisible(env);
@@ -247,7 +257,13 @@ void ModulationPanel::syncFromModel() {
 
 double ModulationPanel::gridStepSeconds() const noexcept {
     if(gridModeValue_==GridMode::Seconds) return .25;
-    return 60.0/std::max(1.0,tempo_.getValue())/4.0;
+    double bpm=tempo_.getValue(),beats=.25;
+    if(gridModeValue_==GridMode::Daw) {
+        bpm=bindings_.hostBpm?bindings_.hostBpm():120.0;
+        static constexpr double divisionBeats[]{4.0,2.0,1.0,.5,.25,.125,1.0/3.0,1.0/6.0};
+        beats=divisionBeats[static_cast<std::size_t>(juce::jlimit(0,7,division_.getSelectedId()-1))];
+    }
+    return 60.0/std::max(1.0,bpm)*beats;
 }
 
 double ModulationPanel::visualHoldSeconds() const noexcept {
@@ -501,7 +517,7 @@ void ModulationPanel::resized() {
 
     // Mixed modulation-source collection. ENV + LFO + generator sources share
     // one vertical rail so the editor area always represents ONE selected source.
-    constexpr int railWidth=92;
+    constexpr int railWidth=116;
     sourceRail_=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
 
@@ -526,9 +542,11 @@ void ModulationPanel::resized() {
         // right. This gives the envelope graph its full vertical canvas.
         constexpr int gap=4;
         const bool tempoVisible=gridModeValue_==GridMode::Tempo;
+        const bool divisionVisible=gridModeValue_==GridMode::Daw;
         const int toolbarWidth=
             58 + gap + 70 + gap +
             (tempoVisible ? 86 + gap : 0) +
+            (divisionVisible ? 70 + gap : 0) +
             28 + 2 + 28;
 
         auto toolbar=controls.removeFromRight(
@@ -544,9 +562,10 @@ void ModulationPanel::resized() {
         gridMode_.setBounds(toolbar.removeFromLeft(70));toolbar.removeFromLeft(gap);
         if(tempoVisible) {
             tempo_.setBounds(toolbar.removeFromLeft(86));toolbar.removeFromLeft(gap);
-        } else {
-            tempo_.setBounds({});
-        }
+        } else tempo_.setBounds({});
+        if(divisionVisible) {
+            division_.setBounds(toolbar.removeFromLeft(70));toolbar.removeFromLeft(gap);
+        } else division_.setBounds({});
         zoomOut_.setBounds(toolbar.removeFromLeft(28));toolbar.removeFromLeft(2);
         zoomIn_.setBounds(toolbar.removeFromLeft(28));
 
@@ -572,7 +591,7 @@ void ModulationPanel::resized() {
 }
 
 void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    constexpr int railWidth=92;
+    constexpr int railWidth=116;
     auto rail=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
 

@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v26.3.1-postcommit-compile-repair
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
@@ -23,7 +24,8 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
         [&owner](const mct::origami::ModRoute& r){return owner.setUiRoute(r);},
         [&owner](unsigned id){return owner.removeUiRoute(id);},
         [&owner](const mct::origami::ModulationState& s){return owner.setUiModulationState(s);},
-        [&owner]{return owner.getUiEnvelopeTraceSnapshot();}};
+        [&owner]{return owner.getUiEnvelopeTraceSnapshot();},
+        [&owner]{return owner.getUiHostBpm();}};
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)

@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
@@ -44,6 +45,16 @@ void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexc
     else if(message.isChannelPressure()) engine_.aftertouch(channel,message.getChannelPressureValue());
     else if(message.isAftertouch()) engine_.aftertouch(channel,message.getAfterTouchValue());
     else if(message.isAllNotesOff() || message.isAllSoundOff()) engine_.allNotesOff();
+}
+
+double OrigamiAudioProcessor::getUiHostBpm() noexcept {
+    if(auto* playHead=getPlayHead()) {
+        if(const auto position=playHead->getPosition()) {
+            if(const auto hostBpm=position->getBpm())
+                return juce::jlimit(20.0,400.0,*hostBpm);
+        }
+    }
+    return 120.0;
 }
 
 double OrigamiAudioProcessor::currentArpBpm() const noexcept {

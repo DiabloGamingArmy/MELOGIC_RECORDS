@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
@@ -146,7 +147,20 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
         return true;
     }
     std::size_t chosen=voiceCount;
-    for(std::size_t i=0;i<voiceCount;++i) if(!voices_[i].info().active) {chosen=i;break;}
+    for(std::size_t i=0;i<voiceCount;++i) {
+        const auto info=voices_[i].info();
+        if(info.active && info.releasing &&
+           info.address.note==note && info.address.channel==channel &&
+           (!noteId || !info.address.noteId || info.address.noteId==noteId)) {
+            chosen=i;
+            stealTails_[chosen]=voices_[chosen];
+            tailRemaining_[chosen]=stealFadeSamples_;
+            break;
+        }
+    }
+    if(chosen==voiceCount)
+        for(std::size_t i=0;i<voiceCount;++i)
+            if(!voices_[i].info().active) {chosen=i;break;}
     if(chosen==voiceCount) {
         chosen=0;
         for(std::size_t i=1;i<voiceCount;++i) {

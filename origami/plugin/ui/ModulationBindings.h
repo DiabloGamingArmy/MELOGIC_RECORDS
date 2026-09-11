@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-trace-type-visibility-repair
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-modulation-completion-v24.0.1
@@ -16,5 +17,6 @@ struct ModulationBindings {
     std::function<bool(unsigned)> removeRoute;
     std::function<bool(const ModulationState&)> modulation;
     std::function<EnvelopeTraceSnapshot()> envelopeTrace;
+    std::function<double()> hostBpm;
 };
 }

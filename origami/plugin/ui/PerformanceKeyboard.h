@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v25.3.2-arp-ui-stabilization
 // mct-origami-v25.3.1-arp-layout-refinement
 // mct-origami-v25.2.0-arp-ux-visual-architecture
@@ -162,7 +163,7 @@ private:
     PerformanceSetter performanceSetter_;PerformanceGetter performanceGetter_;
     ArpSetter arpSetter_;ArpGetter arpGetter_;
     juce::Slider bendRange_,glide_;
-    juce::ComboBox voiceMode_,priority_;
+    NativeComboBox voiceMode_,priority_;
     juce::ToggleButton legato_,arpEnable_;
     ArpSettingsIconButton arpSettings_;
     juce::Label arpClockSummary_,arpPatternSummary_;

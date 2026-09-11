@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-performance-audio-ui-repair-v23.4.4
 // mct-origami-v23.4.3-engine-tests-newline-repair-2
 // mct-origami-glide-mono-legato-v23.4.3
@@ -99,6 +100,11 @@ void voicesAndRealtime() {
     for(int i=0;i<16;++i) engine.noteOn(48+i,.5f);
     check(engine.activeVoiceCount()==16,"16 voices");engine.noteOn(90,.8f);check(engine.voiceInfo(0).address.note==90,"oldest voice stolen");
     engine.noteOff(55);engine.noteOn(91,.8f);check(engine.voiceInfo(7).address.note==91,"releasing voice stolen first");
+    engine.reset();set(engine,ParameterId::Release,2.0f);engine.noteOn(64,.8f);render(engine,256);engine.noteOff(64);
+    check(engine.voiceInfo(0).releasing,"same-note fixture enters release");
+    engine.noteOn(64,.9f);
+    check(engine.voiceInfo(0).active && !engine.voiceInfo(0).releasing && engine.voiceInfo(0).address.note==64,
+          "same note retriggers during release");
     engine.reset();engine.noteOn(60,.5f,0,100);engine.noteOn(60,.5f,0,101);engine.noteOff(60,0,101);check(!engine.voiceInfo(0).releasing && engine.voiceInfo(1).releasing,"note identity");engine.allNotesOff();check(engine.voiceInfo(0).releasing,"all notes off releases");
     float left[1024]{},right[1024]{};float* buffers[]{left,right};check(engine.prepare(48000,64,2),"stereo prepare");
     allocations.store(0);guardAllocations.store(true);

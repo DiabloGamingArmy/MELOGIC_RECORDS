@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v26.4.3-match-signal-fill-exposure
 // mct-origami-v26.4.2-curve-cropped-signal-fills
@@ -85,7 +86,7 @@ void FilterPanel::syncFromModel() {
 void FilterPanel::resized() {
     auto body=contentBounds();
 
-    constexpr int railWidth=78;
+    constexpr int railWidth=116;
     filterRail_=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
 
@@ -111,7 +112,7 @@ void FilterPanel::resized() {
 }
 
 void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    constexpr int railWidth=78;
+    constexpr int railWidth=116;
     auto rail=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
 

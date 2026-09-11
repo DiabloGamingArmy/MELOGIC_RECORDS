@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-compile-repair
@@ -27,7 +28,7 @@ public:
     void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails&) override;
 
 private:
-    enum class GridMode { Tempo, Seconds };
+    enum class GridMode { Tempo, Seconds, Daw };
     enum class DragTarget {
         None, Attack, Decay, Sustain, SustainHold, Release,
         AttackCurve, DecayCurve, ReleaseCurve
@@ -74,14 +75,14 @@ private:
     std::array<juce::Label,4> envLabels_;
 
     juce::ToggleButton snap_{"SNAP"};
-    juce::ComboBox gridMode_;
+    NativeComboBox gridMode_,division_;
     juce::Slider tempo_;
     juce::TextButton zoomOut_{"-"},zoomIn_{"+"};
     juce::ScrollBar envScroll_{false};
 
     juce::Slider rate_,curve_;
     juce::Label rateLabel_,curveLabel_;
-    juce::ComboBox shape_,mode_;
+    NativeComboBox shape_,mode_;
 
     int selected_=0;
     ModulationState cached_{};

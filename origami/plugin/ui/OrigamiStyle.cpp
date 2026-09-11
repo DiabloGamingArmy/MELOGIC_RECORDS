@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.0-rand-amp-variants-ui-polish
 // mct-origami-v28.0.0-interactive-envelope-editor
@@ -8,7 +9,21 @@
 // mct-origami-osc-interaction-rotary-cleanup-v22.5
 // mct-origami-knob-mod-macro-cleanup-v22.4
 #include "OrigamiStyle.h"
+#include "NativeChoiceMenu.h"
 namespace mct::origami::ui {
+
+void NativeComboBox::mouseDown(const juce::MouseEvent&) {
+    std::vector<NativeChoiceItem> items;
+    items.reserve(static_cast<std::size_t>(getNumItems()));
+    for(int i=0;i<getNumItems();++i)
+        items.push_back({getItemId(i),getItemText(i),true});
+    showNativeChoiceMenu(*this,getName().isNotEmpty()?getName():juce::String("Select"),
+                         items,getSelectedId(),
+        [safe=juce::Component::SafePointer<NativeComboBox>(this)](int id) {
+            if(safe!=nullptr && id>0) safe->setSelectedId(id,juce::sendNotificationSync);
+        });
+}
+
 OrigamiLookAndFeel::OrigamiLookAndFeel() {
     setColour(juce::TextButton::buttonColourId,Palette::inset());setColour(juce::TextButton::textColourOffId,Palette::text());
     setColour(juce::ScrollBar::thumbColourId,Palette::muted());setColour(juce::ScrollBar::backgroundColourId,Palette::inset());
@@ -118,6 +133,7 @@ void OrigamiLookAndFeel::drawLinearSlider(juce::Graphics& g,int x,int y,int widt
     g.setColour(Palette::inset());g.fillRoundedRectangle(b,2.5f);
     g.setColour(Palette::borderSoft());g.drawRoundedRectangle(b,2.5f,1.0f);
     if(slider.getName().startsWith("OSC TUNING")) return;
+    if(slider.getName()=="ENV GRID BPM") return;
     if(style==juce::Slider::LinearBarVertical || style==juce::Slider::LinearVertical) {
         const float lo=juce::jmin(minSliderPos,maxSliderPos),hi=juce::jmax(minSliderPos,maxSliderPos);
         const float p=juce::jlimit(lo,hi,sliderPos);

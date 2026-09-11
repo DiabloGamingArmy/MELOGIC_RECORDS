@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 // mct-origami-performance-audio-ui-repair-v23.4.4
@@ -134,6 +135,12 @@ inline void graph(juce::Graphics& g, juce::Rectangle<int> bounds, bool envelope 
     g.setColour(Palette::accent().withAlpha(.92f));
     g.strokePath(path,juce::PathStrokeType(1.45f));
 }
+class NativeComboBox : public juce::ComboBox {
+public:
+    using juce::ComboBox::ComboBox;
+    void mouseDown(const juce::MouseEvent&) override;
+};
+
 class OrigamiLookAndFeel final : public juce::LookAndFeel_V4 {
 public:
     OrigamiLookAndFeel();

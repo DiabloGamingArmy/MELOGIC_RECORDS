@@ -1,3 +1,4 @@
+// mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
 // mct-origami-pitch-mod-ui-refine-v23.3.1
 // mct-origami-keyboard-compact-bottom-v23.1.2
@@ -45,7 +46,7 @@ struct EditorLayout {
         // MODULATION SOURCES | editor    and    FILTERS | editor.
         // The rails themselves live inside those panels.
         auto lower=area;
-        result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.35f));
+        result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.40f));
         lower.removeFromRight(6);
         result.modulation=lower;
 
