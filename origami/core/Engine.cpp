@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -37,7 +38,9 @@ bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
 void OrigamiEngine::reset() noexcept {
     modulationMailbox_.consume(audioModulation_);
     audioModulation_=modulation_; // reset requires exclusive access
-    smoothedMacros_=audioModulation_.macros;for(auto& lfo:globalLfos_)lfo.reset();globalRandom_.reset();globalFunction_.reset();
+    smoothedMacros_=audioModulation_.macros;
+    for(auto& lfo:globalLfos_) lfo.reset();
+    globalRandom_.reset();globalFunction_.reset();globalChaos_.reset();globalDrift_.reset();globalSequencer_.reset();
     compiledModulation_.compile(audioModulation_,oscillatorModules_.snapshot(),true);
     for (auto& voice : voices_) voice.reset();
     for (auto& voice : stealTails_) voice.reset();
@@ -276,8 +279,16 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
         std::array<float,CompiledModulation::globalSourceCount> sources{};
         for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(audioModulation_,i);sources[i]=l.mode==LfoMode::Free?globalLfos_[i].next(l,sampleRate_):0.0f;}
         for(std::size_t i=0;i<smoothedMacros_.size();++i){smoothedMacros_[i]+=modulationSmoothing_*(audioModulation_.macros[i]-smoothedMacros_[i]);sources[4+i]=smoothedMacros_[i];}
-        sources[8]=globalRandom_.next(audioModulation_.random,sampleRate_);
-        sources[9]=globalFunction_.next(audioModulation_.function,sampleRate_);
+        sources[8]=(audioModulation_.generatorActiveMask&0x02u)
+            ? globalRandom_.next(audioModulation_.random,sampleRate_) : 0.0f;
+        sources[9]=(audioModulation_.generatorActiveMask&0x01u)
+            ? globalFunction_.next(audioModulation_.function,sampleRate_) : 0.0f;
+        sources[10]=(audioModulation_.generatorActiveMask&0x04u)
+            ? globalChaos_.next(audioModulation_.chaos,sampleRate_) : 0.0f;
+        sources[11]=(audioModulation_.generatorActiveMask&0x08u)
+            ? globalDrift_.next(audioModulation_.drift,sampleRate_) : 0.0f;
+        sources[12]=(audioModulation_.generatorActiveMask&0x10u)
+            ? globalSequencer_.next(audioModulation_.sequencer,sampleRate_) : 0.0f;
         compiledModulation_.advance(modulationSmoothing_);
         ModulationFrame frame;
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);

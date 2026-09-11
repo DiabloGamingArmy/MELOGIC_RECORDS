@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
@@ -72,7 +73,9 @@ void states() {
     check(decoded.modulation.envActiveMask==0x3u &&
           decoded.modulation.lfoActiveMask==0x5u &&
           !decoded.modulation.filterEnabled,
-          "dynamic source/filter allocation survives StateCodec v11");
+          "dynamic source/filter allocation survives StateCodec v12");
+    check(decoded.modulation.generatorActiveMask==dynamic.modulation.generatorActiveMask,
+          "generator allocation survives StateCodec v12");
     check(encodeInstrumentState(b.instrumentState())==bytes,"exact full model round trip");
     check(!b.oscillatorModuleEnabled(1) && !b.oscillatorModuleEnabled(third),"disabled modules preserved");
     check(!b.oscillatorModuleState(removed).id,"removed module absent");

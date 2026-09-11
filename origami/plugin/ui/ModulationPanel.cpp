@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
@@ -60,9 +61,11 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
      bindings_(std::move(bindings)) {
 
     const juce::StringArray names{
-        "ENV 1","ENV 2","ENV 3","LFO 1","LFO 2","LFO 3","LFO 4","FUNCTIONS","RANDOM"
+        "ENV 1","ENV 2","ENV 3",
+        "LFO 1","LFO 2","LFO 3","LFO 4",
+        "FUNCTION","RANDOM","CHAOS","DRIFT","SEQ"
     };
-    for(int i=0;i<9;++i) {
+    for(int i=0;i<12;++i) {
         auto& tab=tabs_[static_cast<std::size_t>(i)];
         addAndMakeVisible(tab);
         tab.setButtonText(names[i]);
@@ -76,7 +79,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
             for(std::size_t j=0;j<tabs_.size();++j)
                 tabs_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);
             scrollSeconds_=0.0;
-            sourceRemove_.setEnabled(i==1 || i==2 || (i>=3 && i<=6));
+            sourceRemove_.setEnabled(i!=0);
             syncFromModel();
             resized();
             repaint();
@@ -84,8 +87,8 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     }
 
     for(auto* button:{&sourceAdd_,&sourceRemove_}) addAndMakeVisible(*button);
-    sourceAdd_.setTooltip("Add an Envelope or LFO");
-    sourceRemove_.setTooltip("Remove the selected Envelope/LFO and its Matrix routes");
+    sourceAdd_.setTooltip("Add a modulation source");
+    sourceRemove_.setTooltip("Remove the selected modulation source and its Matrix routes");
     sourceAdd_.onClick=[this]{showAddSourceMenu();};
     sourceRemove_.onClick=[this]{removeSelectedSource();};
 
@@ -165,36 +168,50 @@ ModulationPanel::~ModulationPanel() {
 bool ModulationPanel::sourceTabActive(std::size_t index) const noexcept {
     if(index<=2) return (cached_.envActiveMask&(1u<<index))!=0;
     if(index>=3 && index<=6) return (cached_.lfoActiveMask&(1u<<(index-3)))!=0;
-    return true;
+    if(index==7) return (cached_.generatorActiveMask&0x01u)!=0;
+    if(index==8) return (cached_.generatorActiveMask&0x02u)!=0;
+    if(index==9) return (cached_.generatorActiveMask&0x04u)!=0;
+    if(index==10) return (cached_.generatorActiveMask&0x08u)!=0;
+    if(index==11) return (cached_.generatorActiveMask&0x10u)!=0;
+    return false;
 }
 
 void ModulationPanel::showAddSourceMenu() {
     const std::vector<NativeChoiceItem> choices{
         {1,"Envelope",true,""},
-        {2,"LFO",true,""}
+        {2,"LFO",true,""},
+        {3,"Random",true,""},
+        {4,"Chaos",true,""},
+        {5,"Drift",true,""},
+        {6,"Sequencer",true,""},
+        {7,"Function",true,""}
     };
     showNativeChoiceMenu(sourceAdd_,"ADD MOD SOURCE",choices,0,
         [safe=juce::Component::SafePointer<ModulationPanel>(this)](int id) {
-            if(safe!=nullptr) safe->allocateSource(id==1);
+            if(safe!=nullptr) safe->allocateSource(id);
         });
 }
 
-void ModulationPanel::allocateSource(bool envelope) {
+void ModulationPanel::allocateSource(int sourceType) {
     if(!bindings_.snapshot || !bindings_.modulation) return;
     auto mod=bindings_.snapshot().modulation;
     int slot=-1;
 
-    if(envelope) {
-        for(int i=1;i<=2;++i) {
-            if((mod.envActiveMask&(1u<<i))==0) {
-                mod.envActiveMask|=(1u<<i); slot=i; break;
-            }
+    if(sourceType==1) {
+        for(int i=1;i<=2;++i) if((mod.envActiveMask&(1u<<i))==0) {
+            mod.envActiveMask|=(1u<<i);slot=i;break;
+        }
+    } else if(sourceType==2) {
+        for(int i=0;i<4;++i) if((mod.lfoActiveMask&(1u<<i))==0) {
+            mod.lfoActiveMask|=(1u<<i);slot=3+i;break;
         }
     } else {
-        for(int i=0;i<4;++i) {
-            if((mod.lfoActiveMask&(1u<<i))==0) {
-                mod.lfoActiveMask|=(1u<<i); slot=3+i; break;
-            }
+        struct GeneratorSlot {int type;int tab;std::uint32_t bit;};
+        static constexpr std::array<GeneratorSlot,5> generators{{
+            {7,7,0x01u},{3,8,0x02u},{4,9,0x04u},{5,10,0x08u},{6,11,0x10u}
+        }};
+        for(const auto& g:generators) if(g.type==sourceType && (mod.generatorActiveMask&g.bit)==0) {
+            mod.generatorActiveMask|=g.bit;slot=g.tab;break;
         }
     }
     if(slot<0 || !bindings_.modulation(mod)) return;
@@ -213,13 +230,17 @@ void ModulationPanel::allocateSource(bool envelope) {
 
 void ModulationPanel::removeSelectedSource() {
     if(!bindings_.snapshot || !bindings_.modulation) return;
-    if(!(selected_==1 || selected_==2 || (selected_>=3 && selected_<=6))) return;
+    if(selected_==0 || selected_<0 || selected_>=static_cast<int>(tabs_.size())) return;
 
     const auto removed=sourceForTab(static_cast<std::size_t>(selected_));
     auto mod=bindings_.snapshot().modulation;
 
     if(selected_<=2) mod.envActiveMask&=~(1u<<selected_);
-    else mod.lfoActiveMask&=~(1u<<(selected_-3));
+    else if(selected_<=6) mod.lfoActiveMask&=~(1u<<(selected_-3));
+    else {
+        static constexpr std::array<std::uint32_t,5> bits{{0x01u,0x02u,0x04u,0x08u,0x10u}};
+        mod.generatorActiveMask&=~bits[static_cast<std::size_t>(selected_-7)];
+    }
 
     // Compact away Matrix edges from the removed source.
     std::array<ModRoute,ModulationState::capacity> compact{};
@@ -294,6 +315,12 @@ void ModulationPanel::commitGenerator() {
         mod.function.curve=static_cast<float>(curve_.getValue());
     } else if(selected_==8) {
         mod.random.rateHz=static_cast<float>(rate_.getValue());
+    } else if(selected_==9) {
+        mod.chaos.rateHz=static_cast<float>(rate_.getValue());
+    } else if(selected_==10) {
+        mod.drift.rateHz=static_cast<float>(rate_.getValue());
+    } else if(selected_==11) {
+        mod.sequencer.rateHz=static_cast<float>(rate_.getValue());
     } else return;
     if(bindings_.modulation(mod)) cached_=mod;
 }
@@ -303,6 +330,9 @@ void ModulationPanel::updateVisibleControls() {
     const bool lfo=selected_>=3 && selected_<=6;
     const bool function=selected_==7;
     const bool random=selected_==8;
+    const bool chaos=selected_==9;
+    const bool drift=selected_==10;
+    const bool sequencer=selected_==11;
 
     for(auto& s:envSliders_) s.setVisible(env);
     for(auto& l:envLabels_) l.setVisible(env);
@@ -312,7 +342,9 @@ void ModulationPanel::updateVisibleControls() {
     tempo_.setVisible(env && gridModeValue_==GridMode::Tempo);
     envScroll_.setVisible(env);
 
-    rate_.setVisible(lfo||function||random);rateLabel_.setVisible(lfo||function||random);
+    const bool rateGenerator=random||chaos||drift||sequencer;
+    rate_.setVisible(lfo||function||rateGenerator);
+    rateLabel_.setVisible(lfo||function||rateGenerator);
     shape_.setVisible(lfo);mode_.setVisible(lfo);
     curve_.setVisible(function);curveLabel_.setVisible(function);
 }
@@ -322,7 +354,7 @@ void ModulationPanel::syncFromModel() {
     if(!sourceTabActive(static_cast<std::size_t>(selected_))) selected_=0;
     for(std::size_t i=0;i<tabs_.size();++i)
         tabs_[i].setVisible(sourceTabActive(i));
-    sourceRemove_.setEnabled(selected_==1 || selected_==2 || (selected_>=3 && selected_<=6));
+    sourceRemove_.setEnabled(selected_!=0);
     if(selected_==0) {
         if(getter_) for(std::size_t i=0;i<4;++i)
             if(!envSliders_[i].isMouseButtonDown())
@@ -343,6 +375,12 @@ void ModulationPanel::syncFromModel() {
         if(!curve_.isMouseButtonDown()) curve_.setValue(cached_.function.curve,juce::dontSendNotification);
     } else if(selected_==8) {
         if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.random.rateHz,juce::dontSendNotification);
+    } else if(selected_==9) {
+        rate_.setValue(cached_.chaos.rateHz,juce::dontSendNotification);
+    } else if(selected_==10) {
+        rate_.setValue(cached_.drift.rateHz,juce::dontSendNotification);
+    } else if(selected_==11) {
+        rate_.setValue(cached_.sequencer.rateHz,juce::dontSendNotification);
     }
     updateVisibleControls();updateScrollbar();repaint();
 }
@@ -964,10 +1002,10 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
 
 
 ModSource ModulationPanel::sourceForTab(std::size_t index) noexcept {
-    static constexpr std::array<ModSource,9> sources{
+    static constexpr std::array<ModSource,12> sources{
         ModSource::Env1,ModSource::Env2,ModSource::Env3,
         ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
-        ModSource::Function,ModSource::Random
+        ModSource::Function,ModSource::Random,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer
     };
     return sources[juce::jmin(index,sources.size()-1)];
 }
@@ -1048,15 +1086,23 @@ void ModulationPanel::updateSourceHistory(float) {
         return;
     }
 
-    std::array<float,9> samples{};
+    std::array<float,12> samples{};
     for(std::size_t i=0;i<3;++i)
         samples[i]=juce::jlimit(0.0f,1.0f,sourceTrace_.envelopes[i].value);
 
     for(std::size_t i=0;i<4;++i)
         samples[3+i]=sourceMonitorLfos_[i].next(lfoSettings(cached_,i),60.0);
 
-    samples[7]=sourceMonitorFunction_.next(cached_.function,60.0);
-    samples[8]=sourceMonitorRandom_.next(cached_.random,60.0);
+    samples[7]=(cached_.generatorActiveMask&0x01u)
+        ? sourceMonitorFunction_.next(cached_.function,60.0) : 0.0f;
+    samples[8]=(cached_.generatorActiveMask&0x02u)
+        ? sourceMonitorRandom_.next(cached_.random,60.0) : 0.0f;
+    samples[9]=(cached_.generatorActiveMask&0x04u)
+        ? sourceMonitorChaos_.next(cached_.chaos,60.0) : 0.0f;
+    samples[10]=(cached_.generatorActiveMask&0x08u)
+        ? sourceMonitorDrift_.next(cached_.drift,60.0) : 0.0f;
+    samples[11]=(cached_.generatorActiveMask&0x10u)
+        ? sourceMonitorSequencer_.next(cached_.sequencer,60.0) : 0.0f;
     telemetry.sourceValues=samples;
 
     for(std::size_t i=0;i<sourceHistory_.size();++i) {

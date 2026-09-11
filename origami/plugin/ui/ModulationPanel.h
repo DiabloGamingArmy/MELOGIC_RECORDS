@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.1.0-mod-source-visual-matrix-controls
@@ -73,7 +74,7 @@ private:
     static ModSource sourceForTab(std::size_t) noexcept;
     bool sourceTabActive(std::size_t) const noexcept;
     void showAddSourceMenu();
-    void allocateSource(bool envelope);
+    void allocateSource(int sourceType);
     void removeSelectedSource();
     std::optional<std::uint32_t> routeDotAt(juce::Point<float>) const noexcept;
     juce::Rectangle<float> routeDotBounds(std::size_t tabIndex,
@@ -87,7 +88,7 @@ private:
     void paintOverChildren(juce::Graphics&) override;
     juce::String routeTargetLabel(std::uint32_t routeId) const;
 
-    std::array<juce::TextButton,9> tabs_;
+    std::array<juce::TextButton,12> tabs_;
     juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
     juce::Rectangle<int> sourceRail_{};
     ParameterSetter setter_;
@@ -121,12 +122,15 @@ private:
     std::uint64_t lastTraceOrder_=0;
 
     static constexpr std::size_t sourceHistoryLength_=72;
-    std::array<std::deque<float>,9> sourceHistory_{};
+    std::array<std::deque<float>,12> sourceHistory_{};
     EnvelopeTraceSnapshot sourceTrace_{};
     std::uint64_t sourceTraceOrder_=0;
     std::array<Lfo,4> sourceMonitorLfos_{};
     RandomGenerator sourceMonitorRandom_{};
     FunctionGenerator sourceMonitorFunction_{};
+    ChaosGenerator sourceMonitorChaos_{};
+    DriftGenerator sourceMonitorDrift_{};
+    SequencerGenerator sourceMonitorSequencer_{};
 
     std::uint32_t routeDragId_=0;
     float routeDragStartY_=0.0f;

@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
@@ -18,7 +19,8 @@ enum class ModSource : std::uint32_t {
     Macro1=201, Macro2=202, Macro3=203, Macro4=204,
     ModWheel=301, Velocity=302, Keytrack=303, Aftertouch=304,
     PitchBend=305, NoteGate=306,
-    Random=401, Function=501
+    Random=401, Function=501,
+    Chaos=601, Drift=602, Sequencer=603
 };
 enum class ModDestination : std::uint32_t {
     Cutoff=1, Resonance=2, MasterGain=3,
@@ -31,6 +33,12 @@ enum class LfoMode : std::uint32_t { Free=1, NoteRetrigger=2 };
 struct LfoSettings { LfoShape shape=LfoShape::Sine; LfoMode mode=LfoMode::Free; float rateHz=1; };
 struct RandomSettings { float rateHz=2.0f; };
 struct FunctionSettings { float rateHz=1.0f; float curve=0.0f; };
+struct ChaosSettings { float rateHz=1.25f; };
+struct DriftSettings { float rateHz=0.35f; };
+struct SequencerSettings {
+    float rateHz=4.0f;
+    std::array<float,8> steps{{-1.0f,-0.25f,0.65f,0.15f,1.0f,-0.55f,0.35f,0.0f}};
+};
 
 struct ModAddress {
     ModDestination parameter=ModDestination::Cutoff;
@@ -51,6 +59,9 @@ struct ModulationState {
     dsp::EnvelopeSettings env2{},env3{};
     RandomSettings random{};
     FunctionSettings function{};
+    ChaosSettings chaos{};
+    DriftSettings drift{};
+    SequencerSettings sequencer{};
     std::array<float,4> macros{};
     std::array<ModRoute,capacity> routes{};
     std::uint32_t nextRouteId=1;
@@ -59,6 +70,9 @@ struct ModulationState {
     // 3 ENV / 4 LFO / 1 Filter while collection semantics come online.
     std::uint32_t envActiveMask=0x7u;
     std::uint32_t lfoActiveMask=0xFu;
+    // bit0 Function, bit1 Random, bit2 Chaos, bit3 Drift, bit4 Sequencer.
+    // ENV1 is the only source that cannot be removed.
+    std::uint32_t generatorActiveMask=0x1Fu;
     bool filterEnabled=true;
 };
 
@@ -96,6 +110,34 @@ public:
 private: double phase_=0;
 };
 
+class ChaosGenerator {
+public:
+    void reset() noexcept {phase_=0;x_=0.413f;target_=0;value_=0;}
+    float next(const ChaosSettings&,double sampleRate) noexcept;
+private:
+    double phase_=0;
+    float x_=0.413f,target_=0,value_=0;
+};
+
+class DriftGenerator {
+public:
+    void reset() noexcept {phase_=0;state_=0x9e3779b9u;target_=0;value_=0;}
+    float next(const DriftSettings&,double sampleRate) noexcept;
+private:
+    double phase_=0;
+    std::uint32_t state_=0x9e3779b9u;
+    float target_=0,value_=0;
+};
+
+class SequencerGenerator {
+public:
+    void reset() noexcept {phase_=0;step_=0;}
+    float next(const SequencerSettings&,double sampleRate) noexcept;
+private:
+    double phase_=0;
+    std::size_t step_=0;
+};
+
 template<class T> class LatestStateMailbox {
 public:
     void publish(const T& state) noexcept {
@@ -124,7 +166,7 @@ struct ModulationFrame {
 
 class CompiledModulation {
 public:
-    static constexpr std::size_t globalSourceCount=10;
+    static constexpr std::size_t globalSourceCount=13;
     static constexpr std::size_t voiceSourceCount=13;
     static constexpr std::size_t sourceSlotCount=globalSourceCount+voiceSourceCount;
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;

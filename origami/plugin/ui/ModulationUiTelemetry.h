@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 #pragma once
@@ -10,7 +11,7 @@ namespace mct::origami::ui {
 struct ModulationUiTelemetry {
     ModulationState state{};
     ModSource selectedSource=ModSource::Env1;
-    std::array<float,9> sourceValues{};
+    std::array<float,12> sourceValues{};
     bool synthActive=false;
 };
 
@@ -30,6 +31,9 @@ inline int modulationUiSourceIndex(ModSource source) noexcept {
         case ModSource::Lfo4:return 6;
         case ModSource::Function:return 7;
         case ModSource::Random:return 8;
+        case ModSource::Chaos:return 9;
+        case ModSource::Drift:return 10;
+        case ModSource::Sequencer:return 11;
         case ModSource::Macro1:
         case ModSource::Macro2:
         case ModSource::Macro3:
@@ -73,6 +77,9 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
         case ModSource::NoteGate:
         case ModSource::Random:
         case ModSource::Function:
+        case ModSource::Chaos:
+        case ModSource::Drift:
+        case ModSource::Sequencer:
             return 0.0f;
     }
     return 0.0f;
@@ -86,6 +93,9 @@ inline bool modulationUiSourceIsBipolar(ModSource source) noexcept {
         case ModSource::Lfo4:
         case ModSource::Function:
         case ModSource::Random:
+        case ModSource::Chaos:
+        case ModSource::Drift:
+        case ModSource::Sequencer:
         case ModSource::PitchBend:
             return true;
 

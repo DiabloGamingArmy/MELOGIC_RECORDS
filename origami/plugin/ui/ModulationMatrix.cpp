@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -36,8 +37,11 @@ public:
         sourceItem("Performance","PITCH BEND",ModSource::PitchBend);
         sourceItem("Performance","NOTE GATE",ModSource::NoteGate);
 
-        sourceItem("Generators","RANDOM",ModSource::Random);
-        sourceItem("Generators","FUNCTION",ModSource::Function);
+        if(state.modulation.generatorActiveMask&0x02u) sourceItem("Generators","RANDOM",ModSource::Random);
+        if(state.modulation.generatorActiveMask&0x01u) sourceItem("Generators","FUNCTION",ModSource::Function);
+        if(state.modulation.generatorActiveMask&0x04u) sourceItem("Generators","CHAOS",ModSource::Chaos);
+        if(state.modulation.generatorActiveMask&0x08u) sourceItem("Generators","DRIFT",ModSource::Drift);
+        if(state.modulation.generatorActiveMask&0x10u) sourceItem("Generators","SEQUENCER",ModSource::Sequencer);
         auto add=[&](const juce::String& group,ModAddress address,const juce::String& label) {
             addresses_.push_back(address);
             destination_.addNativeItem(group,label,static_cast<int>(addresses_.size()));
@@ -118,12 +122,14 @@ void ModulationMatrix::syncFromModel() {
     bool rebuild=modules!=moduleIds_ || ids.size()!=rows_.size() ||
                  envMask_!=state.modulation.envActiveMask ||
                  lfoMask_!=state.modulation.lfoActiveMask ||
+                 generatorMask_!=state.modulation.generatorActiveMask ||
                  filterEnabled_!=state.modulation.filterEnabled;
     for(std::size_t i=0;!rebuild && i<ids.size();++i) rebuild=rows_[i]->id()!=ids[i];
     if(rebuild) {
         moduleIds_=modules;
         envMask_=state.modulation.envActiveMask;
         lfoMask_=state.modulation.lfoActiveMask;
+        generatorMask_=state.modulation.generatorActiveMask;
         filterEnabled_=state.modulation.filterEnabled;
         rows_.clear();
         for(const auto& route:state.modulation.routes) if(route.id) {

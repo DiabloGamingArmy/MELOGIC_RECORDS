@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v28.0.0-interactive-envelope-editor
@@ -26,7 +27,8 @@ bool known(ModSource s) {
         case ModSource::Macro1:case ModSource::Macro2:case ModSource::Macro3:case ModSource::Macro4:
         case ModSource::ModWheel:case ModSource::Velocity:case ModSource::Keytrack:case ModSource::Aftertouch:
         case ModSource::PitchBend:case ModSource::NoteGate:
-        case ModSource::Random:case ModSource::Function:return true;
+        case ModSource::Random:case ModSource::Function:
+        case ModSource::Chaos:case ModSource::Drift:case ModSource::Sequencer:return true;
     }
     return false;
 }
@@ -49,17 +51,18 @@ Range limits(ModDestination d) {
 }
 std::size_t slotFor(ModSource source,const ModulationState& state) {
     switch(source) {
-        case ModSource::Lfo1:return state.lfo1.mode==LfoMode::Free?0u:13u;
-        case ModSource::Lfo2:return state.lfo2.mode==LfoMode::Free?1u:14u;
-        case ModSource::Lfo3:return state.lfo3.mode==LfoMode::Free?2u:15u;
-        case ModSource::Lfo4:return state.lfo4.mode==LfoMode::Free?3u:16u;
+        case ModSource::Lfo1:return state.lfo1.mode==LfoMode::Free?0u:16u;
+        case ModSource::Lfo2:return state.lfo2.mode==LfoMode::Free?1u:17u;
+        case ModSource::Lfo3:return state.lfo3.mode==LfoMode::Free?2u:18u;
+        case ModSource::Lfo4:return state.lfo4.mode==LfoMode::Free?3u:19u;
         case ModSource::Macro1:return 4u;case ModSource::Macro2:return 5u;
         case ModSource::Macro3:return 6u;case ModSource::Macro4:return 7u;
         case ModSource::Random:return 8u;case ModSource::Function:return 9u;
-        case ModSource::Env1:return 10u;case ModSource::Env2:return 11u;case ModSource::Env3:return 12u;
-        case ModSource::Velocity:return 17u;case ModSource::ModWheel:return 18u;
-        case ModSource::Keytrack:return 19u;case ModSource::Aftertouch:return 20u;
-        case ModSource::PitchBend:return 21u;case ModSource::NoteGate:return 22u;
+        case ModSource::Chaos:return 10u;case ModSource::Drift:return 11u;case ModSource::Sequencer:return 12u;
+        case ModSource::Env1:return 13u;case ModSource::Env2:return 14u;case ModSource::Env3:return 15u;
+        case ModSource::Velocity:return 20u;case ModSource::ModWheel:return 21u;
+        case ModSource::Keytrack:return 22u;case ModSource::Aftertouch:return 23u;
+        case ModSource::PitchBend:return 24u;case ModSource::NoteGate:return 25u;
     }
     return 0u;
 }
@@ -76,10 +79,16 @@ bool isGlobalDestination(ModDestination d) noexcept {return d>=ModDestination::C
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
     if((s.envActiveMask&~0x7u)!=0 || (s.envActiveMask&0x1u)==0) return false;
     if((s.lfoActiveMask&~0xFu)!=0) return false;
+    if((s.generatorActiveMask&~0x1Fu)!=0) return false;
     for(std::size_t i=0;i<4;++i) if(!validLfo(lfoSettings(s,i))) return false;
     if(!validEnvelope(s.env2) || !validEnvelope(s.env3)) return false;
     for(float c:s.env1Curves) if(!range(c,-1.f,1.f)) return false;
-    if(!range(s.random.rateHz,.01f,40.f) || !range(s.function.rateHz,.01f,40.f) || !range(s.function.curve,-1.f,1.f)) return false;
+    if(!range(s.random.rateHz,.01f,40.f) ||
+       !range(s.function.rateHz,.01f,40.f) || !range(s.function.curve,-1.f,1.f) ||
+       !range(s.chaos.rateHz,.01f,40.f) ||
+       !range(s.drift.rateHz,.01f,40.f) ||
+       !range(s.sequencer.rateHz,.01f,40.f)) return false;
+    for(float step:s.sequencer.steps) if(!range(step,-1.f,1.f)) return false;
     for(float v:s.macros) if(!range(v,0,1)) return false;
     std::uint32_t previous=0;bool empty=false;
     if(s.nextRouteId==0) return false;
@@ -152,6 +161,47 @@ float FunctionGenerator::next(const FunctionSettings& s,double sampleRate) noexc
     if(std::isfinite(sampleRate) && sampleRate>0) {
         phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
         phase_-=std::floor(phase_);
+    }
+    return out;
+}
+
+float ChaosGenerator::next(const ChaosSettings& s,double sampleRate) noexcept {
+    if(!std::isfinite(sampleRate) || sampleRate<=0) return value_;
+    const double rate=std::clamp(double(s.rateHz),.01,40.);
+    phase_+=rate/sampleRate;
+    if(phase_>=1.0) {
+        phase_-=std::floor(phase_);
+        x_=std::clamp(3.93f*x_*(1.0f-x_),0.0001f,0.9999f);
+        target_=x_*2.0f-1.0f;
+    }
+    const float alpha=static_cast<float>(1.0-std::exp(-(rate*7.0)/sampleRate));
+    value_+=alpha*(target_-value_);
+    return std::clamp(value_,-1.0f,1.0f);
+}
+
+float DriftGenerator::next(const DriftSettings& s,double sampleRate) noexcept {
+    if(!std::isfinite(sampleRate) || sampleRate<=0) return value_;
+    const double rate=std::clamp(double(s.rateHz),.01,40.);
+    phase_+=rate/sampleRate;
+    if(phase_>=1.0) {
+        phase_-=std::floor(phase_);
+        std::uint32_t x=state_;
+        x^=x<<13;x^=x>>17;x^=x<<5;state_=x;
+        target_=static_cast<float>((x>>8)&0x00ffffffu)/16777215.0f*2.0f-1.0f;
+    }
+    const float alpha=static_cast<float>(1.0-std::exp(-(rate*2.2)/sampleRate));
+    value_+=alpha*(target_-value_);
+    return std::clamp(value_,-1.0f,1.0f);
+}
+
+float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noexcept {
+    const float out=s.steps[step_%s.steps.size()];
+    if(std::isfinite(sampleRate) && sampleRate>0) {
+        phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
+        while(phase_>=1.0) {
+            phase_-=1.0;
+            step_=(step_+1)%s.steps.size();
+        }
     }
     return out;
 }

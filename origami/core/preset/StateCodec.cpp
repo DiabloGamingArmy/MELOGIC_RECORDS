@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v29.0.0-spectral-process-native-routing
 // mct-origami-v28.0.0-interactive-envelope-editor
@@ -28,7 +29,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(11);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(12);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -68,6 +69,11 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     w.word(mod.envActiveMask);
     w.word(mod.lfoActiveMask);
     w.word(mod.filterEnabled?1u:0u);
+    w.word(mod.generatorActiveMask);
+    w.real(mod.chaos.rateHz);
+    w.real(mod.drift.rateHz);
+    w.real(mod.sequencer.rateHz);
+    for(float step:mod.sequencer.steps) w.real(step);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -75,7 +81,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>11) return false;
+    if(version<1 || version>12) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -148,6 +154,13 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         const auto filterEnabled=r.word();
         if(filterEnabled>1u) return false;
         s.modulation.filterEnabled=filterEnabled==1u;
+    }
+    if(version>=12) {
+        s.modulation.generatorActiveMask=r.word();
+        s.modulation.chaos.rateHz=r.real();
+        s.modulation.drift.rateHz=r.real();
+        s.modulation.sequencer.rateHz=r.real();
+        for(auto& step:s.modulation.sequencer.steps) step=r.real();
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;

@@ -1,3 +1,4 @@
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
@@ -66,6 +67,9 @@ private:
     std::array<Lfo,4> globalLfos_{};
     RandomGenerator globalRandom_{};
     FunctionGenerator globalFunction_{};
+    ChaosGenerator globalChaos_{};
+    DriftGenerator globalDrift_{};
+    SequencerGenerator globalSequencer_{};
     std::array<float,4> smoothedMacros_{};
     float modulationSmoothing_=1;
     OscillatorModuleBank oscillatorModules_;
