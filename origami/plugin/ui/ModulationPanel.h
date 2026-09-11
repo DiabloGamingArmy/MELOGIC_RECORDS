@@ -1,3 +1,4 @@
+// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
@@ -90,7 +91,11 @@ private:
 
     std::array<juce::TextButton,12> tabs_;
     juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
+    juce::Viewport sourceViewport_;
+    juce::Component sourceContent_;
     juce::Rectangle<int> sourceRail_{};
+    int sourceDragTab_=-1;
+    juce::Point<float> sourceDragStart_{};
     ParameterSetter setter_;
     ParameterGetter getter_;
     ModulationBindings bindings_;

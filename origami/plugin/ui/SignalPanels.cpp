@@ -1,3 +1,4 @@
+// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
@@ -49,6 +50,11 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter,Modulatio
     cutoff_.setSkewFactorFromMidPoint(1000.0);
     resonance_.setRange(0.0,1.0,0.001);
 
+    cutoff_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Cutoff));
+    cutoff_.getProperties().set("mct.mod.oscillator",0);
+    resonance_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Resonance));
+    resonance_.getProperties().set("mct.mod.oscillator",0);
+
     if(getter_) {
         cutoff_.setValue(getter_(mct::origami::ParameterId::Cutoff),juce::dontSendNotification);
         resonance_.setValue(getter_(mct::origami::ParameterId::Resonance),juce::dontSendNotification);
@@ -72,7 +78,12 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter,Modulatio
     cutoffLabel_.setText("CUTOFF",juce::dontSendNotification);
     resonanceLabel_.setText("RESONANCE",juce::dontSendNotification);
 
-    for(auto* button:{&filter1_,&filterAdd_,&filterRemove_}) addAndMakeVisible(*button);
+    addAndMakeVisible(filterViewport_);
+    filterViewport_.setViewedComponent(&filterContent_,false);
+    filterViewport_.setScrollBarsShown(true,false);
+    filterViewport_.setScrollBarThickness(6);
+    filterContent_.addAndMakeVisible(filter1_);
+    for(auto* button:{&filterAdd_,&filterRemove_}) addAndMakeVisible(*button);
     filter1_.setName("FILTER SOURCE TAB");
     filter1_.setClickingTogglesState(true);
     filter1_.setToggleState(true,juce::dontSendNotification);
@@ -145,8 +156,12 @@ void FilterPanel::resized() {
     collectionControls.removeFromLeft(3);
     filterAdd_.setBounds(collectionControls);
     rail.removeFromBottom(5);
-    filter1_.setBounds(filterEnabled_ ? rail.removeFromTop(35).reduced(0,1)
+    filterViewport_.setBounds(rail);
+    constexpr int filterRowHeight=38;
+    const int contentWidth=juce::jmax(1,filterViewport_.getWidth()-6);
+    filter1_.setBounds(filterEnabled_ ? juce::Rectangle<int>(0,0,contentWidth,filterRowHeight-2)
                                       : juce::Rectangle<int>{});
+    filterContent_.setSize(contentWidth,juce::jmax(filterRowHeight,filterViewport_.getHeight()));
 
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     const int w=controls.getWidth()/6;

@@ -1,3 +1,4 @@
+// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v29.2.1-osc-route-display-ordinals
@@ -199,6 +200,14 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         levelSlider_.setRange(0.0,1.0,0.001);
         panSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscPan),juce::dontSendNotification);
         levelSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscLevel),juce::dontSendNotification);
+
+        const auto tagDestination=[this](juce::Slider& slider,ModDestination destination) {
+            slider.getProperties().set("mct.mod.destination",static_cast<int>(destination));
+            slider.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+        };
+        tagDestination(panSlider_,ModDestination::Pan);
+        tagDestination(levelSlider_,ModDestination::Level);
+
         waveformIndex_=juce::jlimit(0,3,juce::roundToInt(parameterGetter_(mct::origami::ParameterId::Waveform)));
 
         for(auto* slider:{&octaveSlider_,&semitoneSlider_,&fineSlider_}) {
@@ -215,6 +224,12 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setColour(juce::Slider::textBoxOutlineColourId,Palette::borderSoft());
         }
         octaveSlider_.setName("OSC TUNING OCT");semitoneSlider_.setName("OSC TUNING SEM");fineSlider_.setName("OSC TUNING FIN");
+        octaveSlider_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Octave));
+        octaveSlider_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+        semitoneSlider_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Semitone));
+        semitoneSlider_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+        fineSlider_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Fine));
+        fineSlider_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
         octaveSlider_.setRange(-4,4,1);
         semitoneSlider_.setRange(-12,12,1);
         fineSlider_.setRange(-100,100,1);
@@ -259,6 +274,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
 
         unisonSlider_.setRange(1.0, 16.0, 1.0);
         detuneSlider_.setRange(0.0, 100.0, 0.1);
+        detuneSlider_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Detune));
+        detuneSlider_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
         unisonSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscUnison), juce::dontSendNotification);
         detuneSlider_.setValue(parameterGetter_(mct::origami::ParameterId::OscDetune), juce::dontSendNotification);
 
@@ -351,6 +368,10 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     process1Randomize_.onClick=[reseed]{reseed(0);};
     process2Randomize_.onClick=[reseed]{reseed(1);};
 
+    process1Amount_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Process1Amount));
+    process1Amount_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+    process2Amount_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Process2Amount));
+    process2Amount_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
     for(auto* amount:{&process1Amount_,&process2Amount_}) {
         addAndMakeVisible(*amount);
         amount->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -413,6 +434,10 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     route2Previous_.onClick=[this]{route2Menu_.cycle(-1);};
     route2Next_.onClick=[this]{route2Menu_.cycle(1);};
 
+    route1Amount_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Route1Amount));
+    route1Amount_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+    route2Amount_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::Route2Amount));
+    route2Amount_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
     for(auto* amount:{&route1Amount_,&route2Amount_}) {
         addAndMakeVisible(*amount);
         amount->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -472,7 +497,9 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     wtPositionSlider_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
     wtPositionSlider_.setRange(0.0,1.0,0.0);
     wtPositionSlider_.setName("WT POS");
-    wtPositionSlider_.setTooltip("Position inside the selected wavetable");
+    wtPositionSlider_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::WtPosition));
+    wtPositionSlider_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+    wtPositionSlider_.setTooltip("Continuous position through Basic Shapes");
     wtPositionLabel_.setText("WT POS",juce::dontSendNotification);
     wtPositionLabel_.setJustificationType(juce::Justification::centred);
     wtPositionLabel_.setFont(juce::FontOptions(8.0f));

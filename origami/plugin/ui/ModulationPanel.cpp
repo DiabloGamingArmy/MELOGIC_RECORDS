@@ -1,3 +1,4 @@
+// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
@@ -60,6 +61,12 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     :Panel("MODULATION"),setter_(std::move(setter)),getter_(std::move(getter)),
      bindings_(std::move(bindings)) {
 
+    addAndMakeVisible(sourceViewport_);
+    sourceViewport_.setViewedComponent(&sourceContent_,false);
+    sourceViewport_.setScrollBarsShown(true,false);
+    sourceViewport_.setScrollBarThickness(6);
+    sourceViewport_.setWantsKeyboardFocus(false);
+
     const juce::StringArray names{
         "ENV 1","ENV 2","ENV 3",
         "LFO 1","LFO 2","LFO 3","LFO 4",
@@ -67,7 +74,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     };
     for(int i=0;i<12;++i) {
         auto& tab=tabs_[static_cast<std::size_t>(i)];
-        addAndMakeVisible(tab);
+        sourceContent_.addAndMakeVisible(tab);
         tab.setButtonText(names[i]);
         tab.setName("MOD SOURCE TAB "+juce::String(i+1));
         tab.setClickingTogglesState(true);
@@ -163,6 +170,7 @@ ModulationPanel::~ModulationPanel() {
     stopTimer();
     envScroll_.removeListener(this);
     for(auto& tab:tabs_) tab.removeMouseListener(this);
+    sourceViewport_.setViewedComponent(nullptr,false);
 }
 
 bool ModulationPanel::sourceTabActive(std::size_t index) const noexcept {
@@ -480,7 +488,18 @@ ModulationPanel::DragTarget ModulationPanel::hitHandle(juce::Point<float> p) con
 
 void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
     const auto local=e.getEventRelativeTo(this);
+
+    sourceDragTab_=-1;
+    for(std::size_t i=0;i<tabs_.size();++i) {
+        if(e.eventComponent==&tabs_[i] && sourceTabActive(i)) {
+            sourceDragTab_=static_cast<int>(i);
+            sourceDragStart_=local.position;
+            break;
+        }
+    }
+
     if(const auto routeId=routeDotAt(local.position)) {
+        sourceDragTab_=-1;
         routeDragId_=*routeId;
         routeDragStartY_=local.position.y;
         routeDragStartAmount_=0.0f;
@@ -502,6 +521,19 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
             routeDragStartAmount_+(routeDragStartY_-local.position.y)/42.0f);
         setRouteAmount(routeDragId_,amount);
         return;
+    }
+
+    if(sourceDragTab_>=0) {
+        const auto local=e.getEventRelativeTo(this);
+        if(local.position.getDistanceFrom(sourceDragStart_)>7.0f) {
+            if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) {
+                const auto source=sourceForTab(static_cast<std::size_t>(sourceDragTab_));
+                const juce::String description="MCT_MOD_SOURCE:"+juce::String(static_cast<int>(source));
+                container->startDragging(description,&tabs_[static_cast<std::size_t>(sourceDragTab_)]);
+            }
+            sourceDragTab_=-1;
+        }
+        if(sourceDragTab_>=0) return;
     }
 
     if(dragTarget_==DragTarget::None || selected_>2) return;
@@ -556,6 +588,7 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
 void ModulationPanel::mouseUp(const juce::MouseEvent&) {
     dragTarget_=DragTarget::None;
     routeDragId_=0;
+    sourceDragTab_=-1;
 }
 
 juce::String ModulationPanel::routeTargetLabel(std::uint32_t routeId) const {
@@ -738,14 +771,15 @@ void ModulationPanel::resized() {
         (collectionControls.getWidth()-3)/2));
     collectionControls.removeFromLeft(3);
     sourceAdd_.setBounds(collectionControls);
-
     rail.removeFromBottom(5);
 
-    // Routed LFO cards need extra vertical space for the larger magnitude dot.
-    // Weight only LFO rows that actually own an enabled Matrix route, then fit
-    // the whole collection back into the same rail without overflow.
-    std::array<bool,9> routed{};
-    for(std::size_t i=3;i<=6;++i) {
+    // V32.2: source cards no longer shrink to fit the rail. The list is a real
+    // scrolling collection with stable item geometry. A route-bearing item gets
+    // additional height only for its divider + magnitude-circle chamber.
+    sourceViewport_.setBounds(rail);
+
+    std::array<bool,12> routed{};
+    for(std::size_t i=0;i<tabs_.size();++i) {
         const auto source=sourceForTab(i);
         for(const auto& route:cached_.routes) {
             if(route.id!=0 && route.enabled && route.source==source) {
@@ -755,21 +789,20 @@ void ModulationPanel::resized() {
         }
     }
 
-    float weights=0.0f;
-    for(std::size_t i=0;i<tabs_.size();++i)
-        if(sourceTabActive(i)) weights+=routed[i]?1.48f:1.0f;
-    const float unit=weights>0.0f
-        ? juce::jlimit(22.0f,34.0f,float(rail.getHeight())/weights)
-        : 22.0f;
-
+    constexpr int baseRowHeight=36;
+    constexpr int routedRowHeight=54;
+    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth()-6);
+    int y=0;
     for(std::size_t i=0;i<tabs_.size();++i) {
         if(!sourceTabActive(i)) {
             tabs_[i].setBounds({});
             continue;
         }
-        const int h=juce::jmax(22,juce::roundToInt(unit*(routed[i]?1.48f:1.0f)));
-        tabs_[i].setBounds(rail.removeFromTop(juce::jmin(h,rail.getHeight())).reduced(0,1));
+        const int h=routed[i]?routedRowHeight:baseRowHeight;
+        tabs_[i].setBounds(0,y,contentWidth,h-2);
+        y+=h;
     }
+    sourceContent_.setSize(contentWidth,juce::jmax(y,sourceViewport_.getHeight()));
 
     auto controls=body.removeFromBottom(62);
     if(selected_<=2) {
@@ -1013,7 +1046,8 @@ ModSource ModulationPanel::sourceForTab(std::size_t index) noexcept {
 juce::Rectangle<float> ModulationPanel::routeDotBounds(
     std::size_t tabIndex,std::size_t dotIndex,std::size_t dotCount) const noexcept {
     if(tabIndex>=tabs_.size() || dotCount==0) return {};
-    auto b=tabs_[tabIndex].getBounds().toFloat().reduced(5.0f,1.5f);
+    auto b=getLocalArea(&sourceContent_,tabs_[tabIndex].getBounds())
+               .toFloat().reduced(5.0f,1.5f);
     auto dotArea=b.withTrimmedTop(17.5f);
     constexpr float diameter=13.0f;
     constexpr float gap=5.0f;
@@ -1119,7 +1153,8 @@ void ModulationPanel::paintSourceHistoryBackgrounds(juce::Graphics& g) {
     if(!modulationUiTelemetry().synthActive) return;
 
     for(std::size_t i=0;i<tabs_.size();++i) {
-        auto b=tabs_[i].getBounds().toFloat().reduced(0.75f);
+        auto b=getLocalArea(&sourceContent_,tabs_[i].getBounds())
+                   .toFloat().reduced(0.75f);
         if(b.isEmpty()) continue;
 
         g.setColour(juce::Colours::black.withAlpha(0.86f));
@@ -1156,7 +1191,8 @@ void ModulationPanel::paintSourceRouteOverlays(juce::Graphics& g) {
 
         if(count==0) continue;
 
-        const auto tab=tabs_[tabIndex].getBounds().toFloat().reduced(4.0f,1.0f);
+        const auto tab=getLocalArea(&sourceContent_,tabs_[tabIndex].getBounds())
+                           .toFloat().reduced(4.0f,1.0f);
         const float dividerY=tab.getY()+16.5f;
         g.setColour(Palette::borderStrong().withAlpha(0.58f));
         g.drawLine(tab.getX()+4.0f,dividerY,tab.getRight()-4.0f,dividerY,0.75f);

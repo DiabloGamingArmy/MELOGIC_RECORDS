@@ -1,3 +1,4 @@
+// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v30.0.0-dynamic-source-layout-scaffold
@@ -28,6 +29,8 @@ private:
     juce::Slider cutoff_,resonance_;
     juce::Label cutoffLabel_,resonanceLabel_;
     juce::TextButton filter1_{"FILTER 1"},filterAdd_{"+"},filterRemove_{"-"};
+    juce::Viewport filterViewport_;
+    juce::Component filterContent_;
     juce::Rectangle<int> filterRail_{};
 };
 class FxPanel final : public Panel {

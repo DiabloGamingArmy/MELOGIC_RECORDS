@@ -1,3 +1,4 @@
+// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v26.3.1-postcommit-compile-repair
 // mct-origami-v26.3.1-bend-bipolar-global-knob-shortcuts
 // mct-origami-v25.1.0-arp-advanced-page
@@ -13,12 +14,21 @@
 #include "ui/OrigamiLayout.h"
 class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                         public juce::DragAndDropContainer,
+                                         public juce::DragAndDropTarget,
                                          private juce::Timer {
 public:
     explicit OrigamiAudioProcessorEditor(OrigamiAudioProcessor&);
     ~OrigamiAudioProcessorEditor() override;
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
+
+    bool isInterestedInDragSource(const SourceDetails&) override;
+    void itemDragEnter(const SourceDetails&) override;
+    void itemDragMove(const SourceDetails&) override;
+    void itemDragExit(const SourceDetails&) override;
+    void itemDropped(const SourceDetails&) override;
 private:
     void timerCallback() override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -28,6 +38,12 @@ private:
     void registerKnobDefaults(juce::Component&);
     double defaultForKnob(juce::Slider&) const noexcept;
     void openKnobValueEditor(juce::Slider&);
+    juce::Slider* modulationDropTargetAt(juce::Point<int>) const noexcept;
+    static bool decodeDraggedModSource(const juce::var&,mct::origami::ModSource&) noexcept;
+    bool createDraggedRoute(mct::origami::ModSource,juce::Slider&);
+    mct::origami::ui::ModulationBindings dragBindings_;
+    juce::Component::SafePointer<juce::Slider> dragPreviewTarget_;
+    float dragPreviewAmount_=0.5f;
 
     bool matrixSelected_=false;
     bool arpSelected_=false;

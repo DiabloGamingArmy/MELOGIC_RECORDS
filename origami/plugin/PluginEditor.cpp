@@ -1,3 +1,4 @@
+// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -16,6 +17,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include <cmath>
+#include <cstring>
 using namespace mct::origami::ui;
 namespace {
 ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
@@ -31,7 +33,7 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
-    : AudioProcessorEditor(&owner), processor_(owner),
+    : AudioProcessorEditor(&owner), dragBindings_(modulationBindings(owner)), processor_(owner),
       oscillators_(
           [&owner](mct::origami::ParameterId id,float value) { return owner.setUiParameter(id,value); },
           [&owner](mct::origami::ParameterId id) { return owner.getUiParameter(id); },
@@ -98,6 +100,145 @@ OrigamiAudioProcessorEditor::~OrigamiAudioProcessorEditor() {
     stopTimer();
     setLookAndFeel(nullptr);
 }
+bool OrigamiAudioProcessorEditor::decodeDraggedModSource(
+    const juce::var& description,mct::origami::ModSource& source) noexcept {
+    const auto text=description.toString();
+    constexpr auto prefix="MCT_MOD_SOURCE:";
+    if(!text.startsWith(prefix)) return false;
+    const int raw=text.substring(static_cast<int>(std::strlen(prefix))).getIntValue();
+    source=static_cast<mct::origami::ModSource>(raw);
+    return raw>0;
+}
+
+juce::Slider* OrigamiAudioProcessorEditor::modulationDropTargetAt(
+    juce::Point<int> point) const noexcept {
+    juce::Component* component=const_cast<OrigamiAudioProcessorEditor*>(this)->getComponentAt(point);
+    while(component!=nullptr && component!=this) {
+        if(auto* slider=dynamic_cast<juce::Slider*>(component)) {
+            if(slider->getProperties().contains("mct.mod.destination"))
+                return slider;
+        }
+        component=component->getParentComponent();
+    }
+    return nullptr;
+}
+
+bool OrigamiAudioProcessorEditor::isInterestedInDragSource(const SourceDetails& details) {
+    mct::origami::ModSource source{};
+    return decodeDraggedModSource(details.description,source);
+}
+
+void OrigamiAudioProcessorEditor::itemDragEnter(const SourceDetails& details) {
+    itemDragMove(details);
+}
+
+void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
+    mct::origami::ModSource source{};
+    if(!decodeDraggedModSource(details.description,source)) return;
+    auto* target=modulationDropTargetAt(details.localPosition);
+    if(target!=dragPreviewTarget_.getComponent()) {
+        dragPreviewTarget_=target;
+        repaint();
+    }
+}
+
+void OrigamiAudioProcessorEditor::itemDragExit(const SourceDetails&) {
+    dragPreviewTarget_=nullptr;
+    repaint();
+}
+
+bool OrigamiAudioProcessorEditor::createDraggedRoute(
+    mct::origami::ModSource source,juce::Slider& target) {
+    if(!dragBindings_.addRoute || !dragBindings_.snapshot || !dragBindings_.route)
+        return false;
+
+    const int destinationRaw=static_cast<int>(
+        target.getProperties()["mct.mod.destination"]);
+    const int oscillatorRaw=target.getProperties().contains("mct.mod.oscillator")
+        ? static_cast<int>(target.getProperties()["mct.mod.oscillator"]) : 0;
+
+    const auto destination=static_cast<mct::origami::ModDestination>(destinationRaw);
+    const auto stateBefore=dragBindings_.snapshot();
+
+    // If this exact source -> destination edge already exists, select/update it
+    // rather than creating duplicate Matrix rows.
+    for(const auto& existing:stateBefore.modulation.routes) {
+        if(existing.id!=0 && existing.source==source &&
+           existing.destination.parameter==destination &&
+           existing.destination.oscillator==static_cast<unsigned>(oscillatorRaw)) {
+            auto route=existing;
+            route.enabled=true;
+            route.amount=dragPreviewAmount_;
+            return dragBindings_.route(route);
+        }
+    }
+
+    const unsigned id=dragBindings_.addRoute();
+    if(id==0) return false;
+
+    const auto state=dragBindings_.snapshot();
+    for(const auto& existing:state.modulation.routes) {
+        if(existing.id!=id) continue;
+        auto route=existing;
+        route.source=source;
+        route.destination={destination,static_cast<unsigned>(oscillatorRaw)};
+        route.enabled=true;
+        route.amount=dragPreviewAmount_;
+        return dragBindings_.route(route);
+    }
+    return false;
+}
+
+void OrigamiAudioProcessorEditor::itemDropped(const SourceDetails& details) {
+    mct::origami::ModSource source{};
+    auto* target=modulationDropTargetAt(details.localPosition);
+    if(target!=nullptr && decodeDraggedModSource(details.description,source))
+        createDraggedRoute(source,*target);
+    dragPreviewTarget_=nullptr;
+    modulation_.syncFromModel();
+    matrix_.syncFromModel();
+    repaint();
+}
+
+void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {
+    auto* slider=dragPreviewTarget_.getComponent();
+    if(slider==nullptr) return;
+
+    const auto b=getLocalArea(slider,slider->getLocalBounds()).toFloat();
+    auto colour=mct::origami::ui::signalSourceColour().withAlpha(.94f);
+
+    if(slider->isRotary()) {
+        auto circle=b.reduced(1.0f).expanded(3.0f);
+        const float d=juce::jmin(circle.getWidth(),circle.getHeight());
+        circle=juce::Rectangle<float>(d,d).withCentre(circle.getCentre());
+        const float start=juce::MathConstants<float>::pi*1.20f;
+        const float end=juce::MathConstants<float>::pi*2.80f;
+        const float base=static_cast<float>(
+            (slider->getValue()-slider->getMinimum())/
+            juce::jmax(1.0e-9,slider->getMaximum()-slider->getMinimum()));
+        const float lo=juce::jlimit(0.0f,1.0f,base-dragPreviewAmount_);
+        const float hi=juce::jlimit(0.0f,1.0f,base+dragPreviewAmount_);
+        juce::Path arc;
+        arc.addCentredArc(circle.getCentreX(),circle.getCentreY(),
+                          circle.getWidth()*.51f,circle.getHeight()*.51f,0.0f,
+                          start+lo*(end-start),start+hi*(end-start),true);
+        g.setColour(colour);
+        g.strokePath(arc,juce::PathStrokeType(2.4f));
+    } else {
+        auto line=b.reduced(3.0f);
+        const float base=static_cast<float>(
+            (slider->getValue()-slider->getMinimum())/
+            juce::jmax(1.0e-9,slider->getMaximum()-slider->getMinimum()));
+        const float x0=line.getX()+line.getWidth()*juce::jlimit(0.0f,1.0f,base-dragPreviewAmount_);
+        const float x1=line.getX()+line.getWidth()*juce::jlimit(0.0f,1.0f,base+dragPreviewAmount_);
+        g.setColour(colour);
+        g.drawLine(x0,line.getBottom()+1.0f,x1,line.getBottom()+1.0f,2.4f);
+    }
+
+    g.setColour(juce::Colours::white.withAlpha(.95f));
+    g.drawRoundedRectangle(b.expanded(3.0f),4.0f,1.0f);
+}
+
 void OrigamiAudioProcessorEditor::timerCallback() {
     // Dynamic oscillator cards can introduce new knobs after editor creation.
     // Register them lazily without disturbing existing defaults.
