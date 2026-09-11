@@ -1,3 +1,4 @@
+// mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-glide-mono-legato-v23.4.3
@@ -12,7 +13,23 @@
 #include <array>
 namespace mct::origami {
 struct NoteAddress { int note = 60; std::uint8_t channel = 0; std::uint32_t noteId = 0; };
-struct VoiceInfo { NoteAddress address {}; std::uint64_t order = 0; bool active = false, releasing = false; float envelope = 0; };
+struct EnvelopeRuntimeInfo {
+    dsp::Envelope::Stage stage=dsp::Envelope::Stage::Idle;
+    float progress=0.0f;
+    float value=0.0f;
+};
+struct VoiceInfo {
+    NoteAddress address{};
+    std::uint64_t order=0;
+    bool active=false,releasing=false;
+    float envelope=0.0f;
+    std::array<EnvelopeRuntimeInfo,3> envelopes{};
+};
+struct EnvelopeTraceSnapshot {
+    bool active=false;
+    std::uint64_t order=0;
+    std::array<EnvelopeRuntimeInfo,3> envelopes{};
+};
 class Voice {
 public:
     void prepare(double sampleRate) noexcept;

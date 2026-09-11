@@ -1,3 +1,4 @@
+// mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
@@ -32,6 +33,7 @@ void OrigamiAudioProcessor::renderRange(juce::AudioBuffer<float>& buffer, int st
     std::array<float*, 2> channels { buffer.getWritePointer(0, start), buffer.getWritePointer(1, start) };
     if (!prepared_ || !engine_.process(channels.data(), 2u, static_cast<std::size_t>(count)))
         buffer.clear(start, count);
+    publishEnvelopeUiSnapshot();
 }
 void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexcept {
     const auto channel = static_cast<std::uint8_t>(juce::jlimit(1, 16, message.getChannel()) - 1);
@@ -60,6 +62,23 @@ double OrigamiAudioProcessor::arpStepBeats() const noexcept {
     static constexpr double beats[] {1.0,0.5,0.25,0.125,1.0/3.0,1.0/6.0,0.75};
     return beats[juce::jlimit(0,6,arpState_.rateIndex)];
 }
+void OrigamiAudioProcessor::publishEnvelopeUiSnapshot() noexcept {
+    mct::origami::VoiceInfo newest{}; bool found=false;
+    for(std::size_t i=0;i<mct::origami::OrigamiEngine::voiceCount;++i) {
+        const auto info=engine_.voiceInfo(i);
+        if(!info.active) continue;
+        if(!found || info.order>=newest.order){newest=info;found=true;}
+    }
+    if(!found){envUiActive_.store(false,std::memory_order_release);return;}
+    envUiOrder_.store(newest.order,std::memory_order_relaxed);
+    for(std::size_t i=0;i<3;++i){
+        envUiStage_[i].store(static_cast<std::uint32_t>(newest.envelopes[i].stage),std::memory_order_relaxed);
+        envUiProgress_[i].store(newest.envelopes[i].progress,std::memory_order_relaxed);
+        envUiValue_[i].store(newest.envelopes[i].value,std::memory_order_relaxed);
+    }
+    envUiActive_.store(true,std::memory_order_release);
+}
+
 void OrigamiAudioProcessor::publishArpUiSnapshot() noexcept {
     std::uint64_t low=0,high=0;
     for(int note=0;note<64;++note)
@@ -399,6 +418,19 @@ mct::origami::ArpeggiatorRuntimeSnapshot OrigamiAudioProcessor::getUiArpeggiator
     snapshot.heldHigh=arpUiHeldHigh_.load(std::memory_order_acquire);
     return snapshot;
 }
+mct::origami::EnvelopeTraceSnapshot OrigamiAudioProcessor::getUiEnvelopeTraceSnapshot() const noexcept {
+    mct::origami::EnvelopeTraceSnapshot s;
+    s.active=envUiActive_.load(std::memory_order_acquire);
+    if(!s.active) return s;
+    s.order=envUiOrder_.load(std::memory_order_relaxed);
+    for(std::size_t i=0;i<3;++i){
+        s.envelopes[i].stage=static_cast<mct::origami::dsp::Envelope::Stage>(envUiStage_[i].load(std::memory_order_relaxed));
+        s.envelopes[i].progress=envUiProgress_[i].load(std::memory_order_relaxed);
+        s.envelopes[i].value=envUiValue_[i].load(std::memory_order_relaxed);
+    }
+    return s;
+}
+
 void OrigamiAudioProcessor::clearUiArpeggiatorLatch() noexcept {
     const juce::ScopedLock lock(stateLock_);
     const juce::ScopedLock callbackLock(getCallbackLock());

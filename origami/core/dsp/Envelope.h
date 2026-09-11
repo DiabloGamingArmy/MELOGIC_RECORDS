@@ -1,3 +1,4 @@
+// mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-interactive-envelope-editor
 #pragma once
 #include <cstdint>
@@ -16,6 +17,12 @@ public:
     float next(float sustain) noexcept;
     Stage stage() const noexcept { return stage_; }
     float value() const noexcept { return value_; }
+    float stageProgress() const noexcept {
+        if(stage_==Stage::Idle) return 0.0f;
+        if(stage_==Stage::Sustain) return 1.0f;
+        if(totalSamples_==0) return 0.0f;
+        return 1.0f-static_cast<float>(remaining_)/static_cast<float>(totalSamples_);
+    }
 private:
     void segment(Stage,float,float,float) noexcept;
     static float shape(float,float) noexcept;

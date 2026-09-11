@@ -1,3 +1,4 @@
+// mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-compile-repair
 // mct-origami-v28.0.0-interactive-envelope-editor
 #include "ModulationPanel.h"
@@ -122,9 +123,11 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     syncFromModel();
     updateVisibleControls();
+    startTimerHz(60);
 }
 
 ModulationPanel::~ModulationPanel() {
+    stopTimer();
     envScroll_.removeListener(this);
 }
 
@@ -235,9 +238,7 @@ double ModulationPanel::gridStepSeconds() const noexcept {
 }
 
 double ModulationPanel::visualHoldSeconds() const noexcept {
-    return gridModeValue_==GridMode::Tempo
-        ? 60.0/std::max(1.0,tempo_.getValue())
-        : .5;
+    return visualHoldSeconds_[static_cast<std::size_t>(juce::jlimit(0,2,selected_))];
 }
 
 double ModulationPanel::totalEnvelopeSeconds(const dsp::EnvelopeSettings& e) const noexcept {
@@ -309,6 +310,8 @@ ModulationPanel::DragTarget ModulationPanel::hitHandle(juce::Point<float> p) con
     if(p.getDistanceFrom(n[0])<10) return DragTarget::Attack;
     if(p.getDistanceFrom(n[1])<10) return DragTarget::Decay;
     if(p.getDistanceFrom(n[2])<10) return DragTarget::Sustain;
+    const juce::Point<float> holdMid{(n[1].x+n[2].x)*0.5f,n[1].y};
+    if(p.getDistanceFrom(holdMid)<8) return DragTarget::SustainHold;
     if(p.getDistanceFrom(n[3])<10) return DragTarget::Release;
     if(p.getDistanceFrom(m[0])<8) return DragTarget::AttackCurve;
     if(p.getDistanceFrom(m[1])<8) return DragTarget::DecayCurve;
@@ -335,8 +338,19 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
         case DragTarget::Decay:
             env.decay=static_cast<float>(juce::jlimit(.001,10.0,t-env.attack));
             env.sustain=level;break;
-        case DragTarget::Sustain:
-            env.sustain=level;break;
+        case DragTarget::Sustain: {
+            env.sustain=level;
+            const double start=double(env.attack)+double(env.decay);
+            visualHoldSeconds_[static_cast<std::size_t>(selected_)]=
+                juce::jlimit(gridStepSeconds(),30.0,snapped(t)-start);
+            break;
+        }
+        case DragTarget::SustainHold: {
+            const double start=double(env.attack)+double(env.decay);
+            visualHoldSeconds_[static_cast<std::size_t>(selected_)]=
+                juce::jlimit(gridStepSeconds(),30.0,snapped(t)-start);
+            updateScrollbar();repaint();return;
+        }
         case DragTarget::Release:
             env.release=static_cast<float>(juce::jlimit(.001,20.0,
                 t-double(env.attack)-double(env.decay)-visualHoldSeconds()));break;
@@ -345,8 +359,10 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
         case DragTarget::ReleaseCurve: {
             const int idx=dragTarget_==DragTarget::AttackCurve?0:
                           dragTarget_==DragTarget::DecayCurve?1:2;
+            const float dy=(e.position.y-dragStart_.y)/80.0f;
+            const float delta=(idx==0)?dy:-dy;
             curves[static_cast<std::size_t>(idx)]=juce::jlimit(-1.0f,1.0f,
-                dragCurves_[static_cast<std::size_t>(idx)]-(e.position.y-dragStart_.y)/80.0f);
+                dragCurves_[static_cast<std::size_t>(idx)]+delta);
             setCurrentCurves(curves);repaint();return;
         }
         case DragTarget::None:return;
@@ -379,6 +395,40 @@ void ModulationPanel::mouseWheelMove(const juce::MouseEvent& e,
 
 void ModulationPanel::scrollBarMoved(juce::ScrollBar*,double start) {
     scrollSeconds_=start;repaint();
+}
+
+juce::Point<float> ModulationPanel::tracerPoint(const EnvelopeRuntimeInfo& r,
+                                                 const dsp::EnvelopeSettings& e) const noexcept {
+    const float p=juce::jlimit(0.0f,1.0f,r.progress); double t=0.0;
+    switch(r.stage){
+        case dsp::Envelope::Stage::Attack:t=e.attack*p;break;
+        case dsp::Envelope::Stage::Decay:t=e.attack+e.decay*p;break;
+        case dsp::Envelope::Stage::Sustain:t=e.attack+e.decay;break;
+        case dsp::Envelope::Stage::Release:t=e.attack+e.decay+visualHoldSeconds()+e.release*p;break;
+        case dsp::Envelope::Stage::Idle:break;
+    }
+    const float y=envCanvas_.getBottom()
+        -juce::jlimit(0.0f,1.0f,r.value)*envCanvas_.getHeight();
+    return {timeToX(t),y};
+}
+
+void ModulationPanel::timerCallback() {
+    constexpr float dt=1.0f/60.0f;
+    for(auto& s:traceTail_) s.age+=dt;
+    while(!traceTail_.empty() && traceTail_.front().age>0.34f) traceTail_.pop_front();
+
+    if(selected_<=2 && bindings_.envelopeTrace && !envCanvas_.isEmpty()){
+        trace_=bindings_.envelopeTrace();
+        if(trace_.active){
+            const auto& r=trace_.envelopes[static_cast<std::size_t>(selected_)];
+            if(r.stage!=dsp::Envelope::Stage::Idle){
+                if(trace_.order!=lastTraceOrder_){traceTail_.clear();lastTraceOrder_=trace_.order;}
+                traceTail_.push_back({tracerPoint(r,currentEnvelope()),0.0f});
+                while(traceTail_.size()>28) traceTail_.pop_front();
+            }
+        }
+    }
+    if(selected_<=2) repaint();
 }
 
 void ModulationPanel::zoomBy(float factor,juce::Point<float> anchor) {
@@ -477,11 +527,48 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
             g.setColour(Palette::background());g.fillEllipse(c);
             g.setColour(signalSourceColour());g.drawEllipse(c,1.4f);
         }
+        const juce::Point<float> holdMid{(nodes[1].x+nodes[2].x)*0.5f,nodes[1].y};
+        {
+            auto c=juce::Rectangle<float>(7,7).withCentre(holdMid);
+            g.setColour(Palette::background());g.fillEllipse(c);
+            g.setColour(signalSourceColour().withAlpha(.72f));g.drawEllipse(c,1.1f);
+        }
         for(const auto& pt:curveNodes(env,curves)) {
             auto c=juce::Rectangle<float>(7,7).withCentre(pt);
             g.setColour(Palette::background());g.fillEllipse(c);
             g.setColour(Palette::secondary());g.drawEllipse(c,1.1f);
         }
+
+        if(trace_.active){
+            const auto& r=trace_.envelopes[static_cast<std::size_t>(selected_)];
+            if(r.stage!=dsp::Envelope::Stage::Idle){
+                const auto head=tracerPoint(r,env);
+                if(envCanvas_.contains(head)){
+                    g.setColour(signalSourceColour().withAlpha(.15f));
+                    g.drawVerticalLine(juce::roundToInt(head.x),envCanvas_.getY(),envCanvas_.getBottom());
+
+                    if(traceTail_.size()>1){
+                        for(std::size_t i=1;i<traceTail_.size();++i){
+                            const auto& a=traceTail_[i-1]; const auto& b=traceTail_[i];
+                            const float f=juce::jlimit(0.0f,1.0f,1.0f-b.age/.34f);
+                            if(f<=0) continue;
+                            g.setColour(signalSourceColour().withAlpha(.05f+.35f*f));
+                            g.drawLine(a.point.x,a.point.y,b.point.x,b.point.y,.7f+3.0f*f);
+                        }
+                    }
+
+                    g.setColour(signalSourceColour().withAlpha(.045f));
+                    g.fillEllipse(juce::Rectangle<float>(24,24).withCentre(head));
+                    g.setColour(signalSourceColour().withAlpha(.09f));
+                    g.fillEllipse(juce::Rectangle<float>(15,15).withCentre(head));
+                    g.setColour(signalSourceColour().withAlpha(.22f));
+                    g.fillEllipse(juce::Rectangle<float>(9,9).withCentre(head));
+                    g.setColour(signalSourceColour());
+                    g.fillEllipse(juce::Rectangle<float>(4.5f,4.5f).withCentre(head));
+                }
+            }
+        }
+
         g.restoreState();return;
     }
 

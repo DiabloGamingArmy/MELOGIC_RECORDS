@@ -1,3 +1,4 @@
+// mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v27.1.0-expanded-cross-osc-routing
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
@@ -226,5 +227,15 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     outputs.left*=effective->master;outputs.right*=effective->master;outputs.mono*=effective->master;
     return outputs;
 }
-VoiceInfo Voice::info() const noexcept { return {address_, order_, active_, releasing_, envelope_.value()}; }
+VoiceInfo Voice::info() const noexcept {
+    VoiceInfo info;
+    info.address=address_;info.order=order_;info.active=active_;info.releasing=releasing_;
+    info.envelope=envelope_.value();
+    info.envelopes={{
+        {envelope_.stage(),envelope_.stageProgress(),envelope_.value()},
+        {env2_.stage(),env2_.stageProgress(),env2_.value()},
+        {env3_.stage(),env3_.stageProgress(),env3_.value()}
+    }};
+    return info;
+}
 }

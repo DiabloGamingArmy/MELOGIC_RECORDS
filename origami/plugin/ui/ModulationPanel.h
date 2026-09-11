@@ -1,12 +1,16 @@
+// mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-compile-repair
 // mct-origami-v28.0.0-interactive-envelope-editor
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
+#include <deque>
 
 namespace mct::origami::ui {
 
-class ModulationPanel final : public Panel, private juce::ScrollBar::Listener {
+class ModulationPanel final : public Panel,
+                              private juce::ScrollBar::Listener,
+                              private juce::Timer {
 public:
     using ParameterSetter=std::function<bool(ParameterId,float)>;
     using ParameterGetter=std::function<float(ParameterId)>;
@@ -24,12 +28,13 @@ public:
 private:
     enum class GridMode { Tempo, Seconds };
     enum class DragTarget {
-        None, Attack, Decay, Sustain, Release,
+        None, Attack, Decay, Sustain, SustainHold, Release,
         AttackCurve, DecayCurve, ReleaseCurve
     };
 
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void scrollBarMoved(juce::ScrollBar*,double) override;
+    void timerCallback() override;
 
     void commitEnvelope();
     void commitGenerator();
@@ -53,6 +58,7 @@ private:
     juce::Path envelopePath(const dsp::EnvelopeSettings&,const std::array<float,3>&) const;
 
     DragTarget hitHandle(juce::Point<float>) const noexcept;
+    juce::Point<float> tracerPoint(const EnvelopeRuntimeInfo&,const dsp::EnvelopeSettings&) const noexcept;
     void updateScrollbar();
     void zoomBy(float,juce::Point<float> anchor = {});
 
@@ -80,7 +86,12 @@ private:
     GridMode gridModeValue_=GridMode::Tempo;
     float pixelsPerSecond_=190.0f;
     double scrollSeconds_=0.0;
+    std::array<double,3> visualHoldSeconds_{{0.50,0.50,0.50}};
     juce::Rectangle<float> envCanvas_{};
+    struct TraceSample {juce::Point<float> point{}; float age=0.0f;};
+    EnvelopeTraceSnapshot trace_{};
+    std::deque<TraceSample> traceTail_;
+    std::uint64_t lastTraceOrder_=0;
 
     DragTarget dragTarget_=DragTarget::None;
     juce::Point<float> dragStart_{};

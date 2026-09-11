@@ -1,3 +1,4 @@
+// mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v25.3.0-arp-performance-expansion
 // mct-origami-v25.2.0-arp-ux-visual-architecture
 // mct-origami-v25.1.0-arp-advanced-page
@@ -63,6 +64,7 @@ public:
     bool setUiArpeggiatorState(const mct::origami::ArpeggiatorState&) noexcept;
     mct::origami::ArpeggiatorState getUiArpeggiatorState() const noexcept;
     mct::origami::ArpeggiatorRuntimeSnapshot getUiArpeggiatorRuntimeSnapshot() const noexcept;
+    mct::origami::EnvelopeTraceSnapshot getUiEnvelopeTraceSnapshot() const noexcept;
     void clearUiArpeggiatorLatch() noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
@@ -75,6 +77,7 @@ private:
     void advanceArpeggiator(juce::MidiBuffer&, int startSample, int endSample, double bpm) noexcept;
     int chooseArpNote() noexcept;
     void publishArpUiSnapshot() noexcept;
+    void publishEnvelopeUiSnapshot() noexcept;
     juce::MidiKeyboardState uiKeyboardState_;
     std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
@@ -91,6 +94,11 @@ private:
     std::uint32_t arpChanceRandomState_=0x9e3779b9u;
     std::atomic<int> arpUiActiveNote_{-1};
     std::atomic<std::uint64_t> arpUiHeldLow_{0},arpUiHeldHigh_{0};
+    std::atomic<bool> envUiActive_{false};
+    std::atomic<std::uint64_t> envUiOrder_{0};
+    std::array<std::atomic<std::uint32_t>,3> envUiStage_{};
+    std::array<std::atomic<float>,3> envUiProgress_{};
+    std::array<std::atomic<float>,3> envUiValue_{};
     bool prepared_ = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessor)
 };
