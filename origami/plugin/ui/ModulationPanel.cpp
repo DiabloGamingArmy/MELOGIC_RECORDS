@@ -1,3 +1,4 @@
+// mct-origami-v28.1.2-env-underbeam-tail
 // mct-origami-v28.1.1-env-tracer-path-lock
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v28.0.0-compile-repair
@@ -576,8 +577,47 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
             if(r.stage!=dsp::Envelope::Stage::Idle){
                 const auto head=tracerPoint(r,env);
                 if(envCanvas_.contains(head)){
-                    g.setColour(signalSourceColour().withAlpha(.15f));
-                    g.drawVerticalLine(juce::roundToInt(head.x),envCanvas_.getY(),envCanvas_.getBottom());
+                    // Primary timing beam remains a restrained full-height red line.
+                    g.setColour(signalSourceColour().withAlpha(.11f));
+                    g.drawVerticalLine(juce::roundToInt(head.x),
+                                       envCanvas_.getY(),envCanvas_.getBottom());
+
+                    // Secondary "under-beam" tracer: every historical tracer
+                    // position also owns a vertical segment from the ENV curve
+                    // down to the bottom of the viewport. Older segments fade
+                    // and thin out, creating a volumetric tail UNDER the ENV.
+                    //
+                    // This derives from the same global source red, but at a
+                    // deliberately deeper exposure than the main signal colour.
+                    if(!traceTail_.empty()){
+                        for(const auto& sample:traceTail_){
+                            const float freshness=juce::jlimit(
+                                0.0f,1.0f,1.0f-sample.age/.34f);
+                            if(freshness<=0.0f) continue;
+
+                            const float x=sample.point.x;
+                            const float y=juce::jlimit(
+                                envCanvas_.getY(),envCanvas_.getBottom(),sample.point.y);
+
+                            // Soft outer glow.
+                            g.setColour(signalShade(.34f,.025f+.10f*freshness));
+                            g.drawLine(x,y,x,envCanvas_.getBottom(),
+                                       2.0f+4.0f*freshness);
+
+                            // Darker, denser inner beam.
+                            g.setColour(signalShade(.46f,.07f+.28f*freshness));
+                            g.drawLine(x,y,x,envCanvas_.getBottom(),
+                                       .8f+1.8f*freshness);
+                        }
+
+                        // Give the current underside column a slightly stronger
+                        // head so the vertical tail feels physically attached
+                        // to the moving white tracer point.
+                        g.setColour(signalShade(.34f,.16f));
+                        g.drawLine(head.x,head.y,head.x,envCanvas_.getBottom(),7.0f);
+                        g.setColour(signalShade(.50f,.48f));
+                        g.drawLine(head.x,head.y,head.x,envCanvas_.getBottom(),2.3f);
+                    }
 
                     if(traceTail_.size()>1){
                         for(std::size_t tailIndex=1;tailIndex<traceTail_.size();++tailIndex){
@@ -586,8 +626,8 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
                             const float f=juce::jlimit(0.0f,1.0f,1.0f-b.age/.34f);
                             if(f<=0.0f) continue;
 
-                            // White tracer trail: substantially thicker than
-                            // V28.1, with a soft outer pass and a bright core.
+                            // White tracer trail stays above the red under-beam
+                            // layer, preserving a clear bright playback cursor.
                             g.setColour(juce::Colours::white.withAlpha(.055f+.16f*f));
                             g.drawLine(a.point.x,a.point.y,b.point.x,b.point.y,3.0f+5.0f*f);
 
