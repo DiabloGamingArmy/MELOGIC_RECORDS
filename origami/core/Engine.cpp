@@ -32,6 +32,7 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     dsp::prepareSpectralCompiler();
     modulationSmoothing_=static_cast<float>(1.0-std::exp(-1.0/(sampleRate*.005)));
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
+    hostModules_=oscillatorModules_.snapshot();
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);
     prepared_ = true; reset(); return true;
@@ -258,7 +259,9 @@ void OrigamiEngine::latchParameters() noexcept {
 bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     if(hostBlockActive_ || !prepared_ || channels<1 || channels>2 || channels!=outputChannels_) return false;
     latchParameters();
-    hostModules_=oscillatorModules_.snapshot();
+    const bool oscillatorGenerationChanged=
+        oscillatorModules_.consumeSnapshot(hostModules_,hostModuleGeneration_);
+    (void)oscillatorGenerationChanged;
     const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
     bool moduleTopologyChanged=false;
     for(std::size_t i=0;i<hostModules_.size();++i) {

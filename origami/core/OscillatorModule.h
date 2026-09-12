@@ -116,6 +116,7 @@ struct OscillatorModuleState {
     float route2Amount = 0.0f;
 };
 
+// mct-origami-deep-audit-p05-coherent-osc-generations
 class OscillatorModuleBank {
 public:
     static constexpr std::size_t capacity = 16;
@@ -124,51 +125,49 @@ public:
         OscillatorModuleState s{};
         s.id=1; s.enabled=true;
         sanitize(s);
-        writeSlotValues(0,s);
-        slots_[0].id.store(1,std::memory_order_relaxed);
-        slots_[0].enabled.store(true,std::memory_order_release);
-        nextId_.store(2,std::memory_order_relaxed);
+        model_.states[0]=s;
+        model_.nextId=2;
+        publish();
     }
 
     std::size_t count() const noexcept {
         std::size_t n=0;
-        for(const auto& slot:slots_)
-            if(slot.id.load(std::memory_order_acquire)!=0) ++n;
+        for(const auto& s:model_.states) if(s.id!=0) ++n;
         return n;
     }
 
     std::array<OscillatorModuleState,capacity> snapshot() const noexcept {
-        std::array<OscillatorModuleState,capacity> out{};
-        for(std::size_t i=0;i<capacity;++i) out[i]=readSlot(i);
-        // Stable creation order, independent of reused storage slots. OSC1 is first.
-        std::sort(out.begin(),out.end(),[](const auto& a,const auto& b) {
-            return a.id!=0 && (b.id==0 || a.id<b.id);
-        });
+        auto out=model_.states;
+        sortStates(out);
         return out;
+    }
+
+    bool consumeSnapshot(std::array<OscillatorModuleState,capacity>& out,
+                         std::uint64_t& generation) noexcept {
+        if(!(middle_.load(std::memory_order_acquire)&dirty)) return false;
+        front_=middle_.exchange(front_,std::memory_order_acq_rel)&mask;
+        out=published_[front_].states;
+        generation=published_[front_].generation;
+        return true;
     }
 
     OscillatorModuleState state(OscillatorModuleId id) const noexcept {
         if(id==0) return {};
-        for(std::size_t i=0;i<capacity;++i) {
-            const auto s=readSlot(i);
-            if(s.id==id) return s;
-        }
+        for(const auto& s:model_.states) if(s.id==id) return s;
         return {};
     }
 
     OscillatorModuleId add(const OscillatorModuleState& templateState={}) noexcept {
-        // Non-realtime writers are serialized by the owner. Publish identity last.
-        const auto newId=nextId_.load(std::memory_order_relaxed);
+        const auto newId=model_.nextId;
         if(newId==0 || newId==std::numeric_limits<OscillatorModuleId>::max()) return 0;
-        for(std::size_t i=0;i<capacity;++i) {
-            if(slots_[i].id.load(std::memory_order_acquire)!=0) continue;
-            OscillatorModuleState s=templateState;
+        for(auto& slot:model_.states) {
+            if(slot.id!=0) continue;
+            auto s=templateState;
             s.id=newId; s.enabled=true;
             sanitize(s);
-            writeSlotValues(i,s);
-            slots_[i].enabled.store(true,std::memory_order_relaxed);
-            slots_[i].id.store(newId,std::memory_order_release);
-            nextId_.store(newId+1,std::memory_order_relaxed);
+            slot=s;
+            model_.nextId=newId+1;
+            publish();
             return newId;
         }
         return 0;
@@ -176,10 +175,10 @@ public:
 
     bool remove(OscillatorModuleId id) noexcept {
         if(id==0 || id==1 || count()<=1) return false;
-        for(auto& slot:slots_) {
-            if(slot.id.load(std::memory_order_acquire)!=id) continue;
-            slot.enabled.store(false,std::memory_order_release);
-            slot.id.store(0,std::memory_order_release);
+        for(auto& slot:model_.states) {
+            if(slot.id!=id) continue;
+            slot={};
+            publish();
             return true;
         }
         return false;
@@ -187,9 +186,10 @@ public:
 
     bool setEnabled(OscillatorModuleId id,bool enabled) noexcept {
         if(id==0) return false;
-        for(auto& slot:slots_) {
-            if(slot.id.load(std::memory_order_acquire)!=id) continue;
-            slot.enabled.store(enabled,std::memory_order_release);
+        for(auto& slot:model_.states) {
+            if(slot.id!=id) continue;
+            slot.enabled=enabled;
+            publish();
             return true;
         }
         return false;
@@ -197,86 +197,69 @@ public:
 
     bool enabled(OscillatorModuleId id) const noexcept {
         if(id==0) return false;
-        for(const auto& slot:slots_)
-            if(slot.id.load(std::memory_order_acquire)==id)
-                return slot.enabled.load(std::memory_order_acquire);
+        for(const auto& slot:model_.states) if(slot.id==id) return slot.enabled;
         return false;
     }
 
     bool set(OscillatorModuleId id,OscillatorModuleState state) noexcept {
         if(id==0) return false;
         sanitize(state);
-        for(std::size_t i=0;i<capacity;++i) {
-            if(slots_[i].id.load(std::memory_order_acquire)!=id) continue;
+        for(auto& slot:model_.states) {
+            if(slot.id!=id) continue;
             state.id=id;
-            writeSlotValues(i,state);
+            slot=state;
+            publish();
             return true;
         }
         return false;
     }
 
-    OscillatorModuleId nextId() const noexcept { return nextId_.load(std::memory_order_relaxed); }
-    // Exclusive, validated whole-instrument commit only (never in process()).
-    void restore(const std::array<OscillatorModuleState,capacity>& states,OscillatorModuleId next) noexcept {
-        for(std::size_t i=0;i<capacity;++i) {
-            writeSlotValues(i,states[i]);
-            slots_[i].enabled.store(states[i].id!=0 && states[i].enabled,std::memory_order_relaxed);
-            slots_[i].id.store(states[i].id,std::memory_order_release);
+    OscillatorModuleId nextId() const noexcept { return model_.nextId; }
+
+    void restore(const std::array<OscillatorModuleState,capacity>& states,
+                 OscillatorModuleId next) noexcept {
+        model_.states=states;
+        for(auto& state:model_.states) {
+            if(state.id==0) { state={}; continue; }
+            sanitize(state);
         }
-        nextId_.store(next,std::memory_order_relaxed);
+        model_.nextId=next;
+        publish();
     }
+
 private:
-    struct AtomicSlot {
-        std::atomic<OscillatorModuleId> id{0};
-        std::atomic<bool> enabled{false};
-        std::atomic<dsp::WavetableId> tableId{dsp::BuiltinWavetableId::BasicShapes};
-        std::atomic<float> wtPosition{0.0f};
-        std::atomic<float> waveform{0},octave{0},semitone{0},fineCents{0};
-        std::atomic<unsigned> unison{1};
-        std::atomic<float> detuneCents{12},blend{0.35f},pan{0},level{0.7f};
-        std::atomic<dsp::OscProcessType> process1{dsp::OscProcessType::BendPlus};
-        std::atomic<float> process1Amount{0.0f};
-        std::atomic<std::uint32_t> process1Seed{0x13579bdfu};
-        std::atomic<dsp::OscProcessType> process2{dsp::OscProcessType::Off};
-        std::atomic<float> process2Amount{0.0f};
-        std::atomic<std::uint32_t> process2Seed{0x2468ace1u};
-        std::atomic<OscillatorModuleId> route1SourceId{0};
-        std::atomic<OscRouteType> route1Type{OscRouteType::Off};
-        std::atomic<float> route1Amount{0.0f};
-        std::atomic<OscillatorModuleId> route2SourceId{0};
-        std::atomic<OscRouteType> route2Type{OscRouteType::Off};
-        std::atomic<float> route2Amount{0.0f};
+    struct BankState {
+        std::array<OscillatorModuleState,capacity> states{};
+        OscillatorModuleId nextId=1;
+        std::uint64_t generation=0;
     };
+
+    static void sortStates(std::array<OscillatorModuleState,capacity>& states) noexcept {
+        std::sort(states.begin(),states.end(),[](const auto& a,const auto& b) {
+            return a.id!=0 && (b.id==0 || a.id<b.id);
+        });
+    }
 
     static void sanitize(OscillatorModuleState& s) noexcept {
         if(s.tableId==0) s.tableId=dsp::BuiltinWavetableId::BasicShapes;
         if(!std::isfinite(s.wtPosition)) s.wtPosition=0.0f;
-        if(s.wtPosition<0) s.wtPosition=0;
-        if(s.wtPosition>1) s.wtPosition=1;
-        s.waveform=s.wtPosition*3.0f; // compatibility alias, never a second source of truth
-        if(s.octave<-4) s.octave=-4;
-        if(s.octave>4) s.octave=4;
-        if(s.semitone<-12) s.semitone=-12;
-        if(s.semitone>12) s.semitone=12;
-        if(s.fineCents<-100) s.fineCents=-100;
-        if(s.fineCents>100) s.fineCents=100;
-        if(s.unison<1) s.unison=1;
-        if(s.unison>16) s.unison=16;
-        if(s.detuneCents<0) s.detuneCents=0;
-        if(s.detuneCents>100) s.detuneCents=100;
+        s.wtPosition=std::clamp(s.wtPosition,0.0f,1.0f);
+        s.waveform=s.wtPosition*3.0f;
+        s.octave=std::clamp(s.octave,-4.0f,4.0f);
+        s.semitone=std::clamp(s.semitone,-12.0f,12.0f);
+        s.fineCents=std::clamp(s.fineCents,-100.0f,100.0f);
+        s.unison=std::clamp(s.unison,1u,16u);
+        s.detuneCents=std::clamp(s.detuneCents,0.0f,100.0f);
         if(!std::isfinite(s.blend)) s.blend=0.35f;
         s.blend=std::clamp(s.blend,0.0f,1.0f);
-        if(s.pan<-1) s.pan=-1;
-        if(s.pan>1) s.pan=1;
-        if(s.level<0) s.level=0;
-        if(s.level>1) s.level=1;
+        s.pan=std::clamp(s.pan,-1.0f,1.0f);
+        s.level=std::clamp(s.level,0.0f,1.0f);
         if(!dsp::validOscProcessType(s.process1)) s.process1=dsp::OscProcessType::Off;
         if(!dsp::validOscProcessType(s.process2)) s.process2=dsp::OscProcessType::Off;
         if(!std::isfinite(s.process1Amount)) s.process1Amount=0.0f;
         if(!std::isfinite(s.process2Amount)) s.process2Amount=0.0f;
         s.process1Amount=std::clamp(s.process1Amount,dsp::oscProcessAmountMinimum(s.process1),1.0f);
         s.process2Amount=std::clamp(s.process2Amount,dsp::oscProcessAmountMinimum(s.process2),1.0f);
-
         if(!validOscRouteType(s.route1Type)) s.route1Type=OscRouteType::Off;
         if(!validOscRouteType(s.route2Type)) s.route2Type=OscRouteType::Off;
         if(!std::isfinite(s.route1Amount)) s.route1Amount=0.0f;
@@ -287,70 +270,21 @@ private:
         if(s.route2Type==OscRouteType::Off) s.route2SourceId=0;
     }
 
-    OscillatorModuleState readSlot(std::size_t i) const noexcept {
-        const auto& a=slots_[i];
-        OscillatorModuleState s{};
-        s.id=a.id.load(std::memory_order_acquire);
-        if(s.id==0) return s;
-        s.tableId=a.tableId.load(std::memory_order_relaxed);
-        s.wtPosition=a.wtPosition.load(std::memory_order_relaxed);
-        s.waveform=a.waveform.load(std::memory_order_relaxed);
-        s.octave=a.octave.load(std::memory_order_relaxed);
-        s.semitone=a.semitone.load(std::memory_order_relaxed);
-        s.fineCents=a.fineCents.load(std::memory_order_relaxed);
-        s.unison=a.unison.load(std::memory_order_relaxed);
-        s.detuneCents=a.detuneCents.load(std::memory_order_relaxed);
-        s.blend=a.blend.load(std::memory_order_relaxed);
-        s.pan=a.pan.load(std::memory_order_relaxed);
-        s.level=a.level.load(std::memory_order_relaxed);
-        s.process1=a.process1.load(std::memory_order_relaxed);
-        s.process1Amount=a.process1Amount.load(std::memory_order_relaxed);
-        s.process1Seed=a.process1Seed.load(std::memory_order_relaxed);
-        s.process2=a.process2.load(std::memory_order_relaxed);
-        s.process2Amount=a.process2Amount.load(std::memory_order_relaxed);
-        s.process2Seed=a.process2Seed.load(std::memory_order_relaxed);
-        s.route1SourceId=a.route1SourceId.load(std::memory_order_relaxed);
-        s.route1Type=a.route1Type.load(std::memory_order_relaxed);
-        s.route1Amount=a.route1Amount.load(std::memory_order_relaxed);
-        s.route2SourceId=a.route2SourceId.load(std::memory_order_relaxed);
-        s.route2Type=a.route2Type.load(std::memory_order_relaxed);
-        s.route2Amount=a.route2Amount.load(std::memory_order_relaxed);
-        s.enabled=a.enabled.load(std::memory_order_acquire);
-        return s;
+    void publish() noexcept {
+        auto generation=model_;
+        sortStates(generation.states);
+        generation.generation=++generationCounter_;
+        published_[back_]=generation;
+        back_=middle_.exchange(back_|dirty,std::memory_order_acq_rel)&mask;
     }
 
-    void writeSlotValues(std::size_t i,const OscillatorModuleState& s) noexcept {
-        auto& a=slots_[i];
-        a.tableId.store(s.tableId,std::memory_order_relaxed);
-        a.wtPosition.store(s.wtPosition,std::memory_order_relaxed);
-        a.waveform.store(s.waveform,std::memory_order_relaxed);
-        a.octave.store(s.octave,std::memory_order_relaxed);
-        a.semitone.store(s.semitone,std::memory_order_relaxed);
-        a.fineCents.store(s.fineCents,std::memory_order_relaxed);
-        a.unison.store(s.unison,std::memory_order_relaxed);
-        a.detuneCents.store(s.detuneCents,std::memory_order_relaxed);
-        a.blend.store(s.blend,std::memory_order_relaxed);
-        a.pan.store(s.pan,std::memory_order_relaxed);
-        a.level.store(s.level,std::memory_order_relaxed);
-        a.process1.store(s.process1,std::memory_order_relaxed);
-        a.process1Amount.store(s.process1Amount,std::memory_order_relaxed);
-        a.process1Seed.store(s.process1Seed,std::memory_order_relaxed);
-        a.process2.store(s.process2,std::memory_order_relaxed);
-        a.process2Amount.store(s.process2Amount,std::memory_order_relaxed);
-        a.process2Seed.store(s.process2Seed,std::memory_order_relaxed);
-        a.route1SourceId.store(s.route1SourceId,std::memory_order_relaxed);
-        a.route1Type.store(s.route1Type,std::memory_order_relaxed);
-        a.route1Amount.store(s.route1Amount,std::memory_order_relaxed);
-        a.route2SourceId.store(s.route2SourceId,std::memory_order_relaxed);
-        a.route2Type.store(s.route2Type,std::memory_order_relaxed);
-        a.route2Amount.store(s.route2Amount,std::memory_order_relaxed);
-    }
-
-    std::array<AtomicSlot,capacity> slots_{};
-    std::atomic<OscillatorModuleId> nextId_{1};
+    static constexpr unsigned dirty=4,mask=3;
+    BankState model_{};
+    std::array<BankState,3> published_{};
+    unsigned front_=0,back_=2;
+    std::atomic<unsigned> middle_{1};
+    std::uint64_t generationCounter_=0;
 };
 
-static_assert(std::atomic<float>::is_always_lock_free,
-              "Origami oscillator module state requires lock-free float atomics");
 
 }

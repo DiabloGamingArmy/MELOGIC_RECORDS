@@ -258,7 +258,48 @@ void spectralPreparationBoundaryAudit() {
     check(after.fallbackReads>=before.fallbackReads+1,"spectral miss used realtime-safe fallback");
 }
 
+void oscillatorGenerationCoherenceAudit() {
+    const auto root=std::filesystem::path(__FILE__).parent_path().parent_path();
+    auto read=[](const std::filesystem::path& path) {
+        std::ifstream f(path);
+        return std::string(std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>());
+    };
+    const auto bank=read(root/"core/OscillatorModule.h");
+    const auto engine=read(root/"core/Engine.cpp");
+
+    check(bank.find("std::array<AtomicSlot") == std::string::npos,
+          "oscillator bank no longer publishes field-by-field atomics");
+    check(bank.find("consumeSnapshot(") != std::string::npos,
+          "oscillator bank exposes whole-generation consumer");
+    check(bank.find("middle_.exchange(") != std::string::npos,
+          "oscillator generation publication uses ownership exchange");
+    check(engine.find("consumeSnapshot(hostModules_,hostModuleGeneration_)") != std::string::npos,
+          "host callback consumes coherent oscillator generation");
+
+    OscillatorModuleBank bankModel;
+    std::array<OscillatorModuleState,OscillatorModuleBank::capacity> first{};
+    std::uint64_t g1=0,g2=0;
+    check(bankModel.consumeSnapshot(first,g1),
+          "initial oscillator generation is published");
+
+    auto s=bankModel.state(1);
+    s.unison=7;
+    s.detuneCents=41.0f;
+    s.pan=-0.5f;
+    check(bankModel.set(1,s),"oscillator generation edit accepted");
+
+    std::array<OscillatorModuleState,OscillatorModuleBank::capacity> second{};
+    check(bankModel.consumeSnapshot(second,g2),
+          "edited oscillator generation is published");
+    check(g2>g1,"oscillator generations are monotonic");
+    check(second[0].unison==7 && second[0].detuneCents==41.0f && second[0].pan==-0.5f,
+          "consumer receives one complete oscillator state generation");
+    check(!bankModel.consumeSnapshot(second,g2),
+          "consumer performs no work when no new oscillator generation exists");
+}
+
 int main() {
+    oscillatorGenerationCoherenceAudit();
     spectralPreparationBoundaryAudit();
     realtimeThreadPolicyAudit();
     try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"performance modes\n";performanceModes();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}

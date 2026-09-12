@@ -82,6 +82,7 @@ private:
     std::array<float,4> smoothedMacros_{};
     float modulationSmoothing_=1;
     OscillatorModuleBank oscillatorModules_;
+    std::uint64_t hostModuleGeneration_=0;
     std::array<std::atomic<float>, parameterCount> targets_;
     std::array<Smoothed, parameterCount> smooth_ {};
     std::array<OscillatorModuleState, OscillatorModuleBank::capacity> hostModules_ {};
