@@ -1,4 +1,3 @@
-// mct-origami-v40.3.1-sequence-expression
 // mct-origami-v40.2.0-sequence-transport
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
@@ -146,9 +145,6 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
        !range(s.sequencer.rateHz,.01f,40.f) || s.sequencer.activeSteps<1 || s.sequencer.activeSteps>s.sequencer.steps.size() ||
        !(s.sequencer.direction==SequenceDirection::Forward || s.sequencer.direction==SequenceDirection::Reverse || s.sequencer.direction==SequenceDirection::PingPong)) return false;
     for(float step:s.sequencer.steps) if(!range(step,-1.f,1.f)) return false;
-    for(float probability:s.sequencer.probability) if(!range(probability,0.f,1.f)) return false;
-    for(auto ratchet:s.sequencer.ratchets) if(ratchet<1u || ratchet>4u) return false;
-    if(!range(s.sequencer.humanize,0.f,.35f)) return false;
     for(float v:s.macros) if(!range(v,0,1)) return false;
     std::uint32_t previous=0;bool empty=false;
     if(s.nextRouteId==0) return false;
@@ -391,22 +387,19 @@ float DriftGenerator::next(const DriftSettings& s,double sampleRate) noexcept {
 
 float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noexcept {
     const std::size_t count=std::clamp<std::size_t>(s.activeSteps,1,s.steps.size());
-    if(step_>=count) { step_=(s.direction==SequenceDirection::Reverse)?count-1:0; forward_=s.direction!=SequenceDirection::Reverse; finished_=false; phase_=0.0; substep_=0; }
-    auto random01=[this]() noexcept { rng_=rng_*1664525u+1013904223u; return static_cast<float>(rng_&0x00ffffffu)/16777215.0f; };
-    auto beginStep=[&]() noexcept { const float chance=std::clamp(s.probability[step_],0.0f,1.0f); held_=(random01()<=chance)?s.steps[step_]:0.0f; const float jitter=(random01()*2.0f-1.0f)*std::clamp(s.humanize,0.0f,0.35f); stepScale_=std::clamp(1.0+static_cast<double>(jitter),0.65,1.35); substep_=0; };
-    if(phase_==0.0 && substep_==0) beginStep();
-    const float out=held_;
+    if(step_>=count) { step_=(s.direction==SequenceDirection::Reverse)?count-1:0; forward_=s.direction!=SequenceDirection::Reverse; finished_=false; }
+    const float out=s.steps[step_];
     if(finished_ || !std::isfinite(sampleRate) || sampleRate<=0) return out;
-    const auto ratchet=std::clamp<std::uint32_t>(s.ratchets[step_],1u,4u);
-    phase_+=std::clamp(double(s.rateHz),.01,40.)*double(ratchet)/(sampleRate*stepScale_);
+    phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
     while(phase_>=1.0) {
-        phase_-=1.0; ++substep_;
-        if(substep_<ratchet) { const float chance=std::clamp(s.probability[step_],0.0f,1.0f); held_=(random01()<=chance)?s.steps[step_]:0.0f; continue; }
-        substep_=0;
+        phase_-=1.0;
         if(s.direction==SequenceDirection::Forward) { if(step_+1<count) ++step_; else if(s.loop) step_=0; else finished_=true; }
         else if(s.direction==SequenceDirection::Reverse) { if(step_>0) --step_; else if(s.loop) step_=count-1; else finished_=true; }
-        else { if(count==1) { if(!s.loop) finished_=true; } else if(forward_) { if(step_+1<count) ++step_; else { forward_=false;step_=count-2;if(!s.loop) finished_=true; } } else { if(step_>0) --step_; else { forward_=true;step_=1;if(!s.loop) finished_=true; } } }
-        if(!finished_) beginStep();
+        else {
+            if(count==1) { if(!s.loop) finished_=true; }
+            else if(forward_) { if(step_+1<count) ++step_; else { forward_=false; step_=count-2; if(!s.loop) finished_=true; } }
+            else { if(step_>0) --step_; else { forward_=true; step_=1; if(!s.loop) finished_=true; } }
+        }
     }
     return out;
 }

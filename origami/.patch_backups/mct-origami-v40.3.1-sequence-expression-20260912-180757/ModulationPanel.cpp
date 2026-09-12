@@ -1,4 +1,3 @@
-// mct-origami-v40.3.1-sequence-expression-ui
 // mct-origami-v40.2.0-sequence-transport-ui
 // mct-origami-v40.1.0-sequencer-per-step-editor
 // mct-origami-v40.0.0-sequencer-structural-redesign\n// mct-origami-v39.2.1-sequence-editor-corrected
@@ -249,7 +248,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         const auto accent=Palette::accent();
         const auto bounds=sequenceContent_.getLocalBounds().toFloat();
         const float meterTop=22.0f;
-        const float meterBottom=juce::jmax(meterTop+4.0f,bounds.getBottom()-44.0f);
+        const float meterBottom=juce::jmax(meterTop+4.0f,bounds.getBottom()-26.0f);
         const float meterHeight=meterBottom-meterTop;
         const float zeroY=meterTop+meterHeight*0.5f;
         const std::size_t active=juce::jmin<std::size_t>(sequenceSteps_.size()-1,sourceMonitorSequencer_.currentStep());
@@ -317,20 +316,12 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         auto& gate=sequenceGatePreview_[i];
         sequenceContent_.addAndMakeVisible(gate);
         gate.setSliderStyle(juce::Slider::LinearHorizontal);
-        gate.setRange(0.0,1.0,.01);gate.setValue(1.0,juce::dontSendNotification);
-        gate.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
-        gate.setPopupDisplayEnabled(true,true,&sequenceContent_,700);
+        gate.setRange(.05,1.0,.01);gate.setValue(1.0,juce::dontSendNotification);
+        gate.setTextBoxStyle(juce::Slider::TextBoxRight,false,38,16);
         gate.setScrollWheelEnabled(false);
-        gate.setTooltip("Step probability");
-        auto& ratchet=sequenceRatchet_[i];
-        sequenceContent_.addAndMakeVisible(ratchet);
-        ratchet.addItem("1x",1);ratchet.addItem("2x",2);ratchet.addItem("3x",3);ratchet.addItem("4x",4);
-        ratchet.setSelectedId(1,juce::dontSendNotification);
-        ratchet.setTooltip("Ratchet pulses inside this step");
+        gate.setTooltip("Gate/length preview — reserved for the audited timing-engine pass");
+        gate.setEnabled(false);
     }
-    addAndMakeVisible(sequenceHumanize_);addAndMakeVisible(sequenceHumanizeLabel_);
-    sequenceHumanize_.setSliderStyle(juce::Slider::LinearHorizontal);sequenceHumanize_.setRange(0.0,0.35,0.005);sequenceHumanize_.setValue(0.0,juce::dontSendNotification);sequenceHumanize_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);sequenceHumanize_.setPopupDisplayEnabled(true,true,this,700);
-    sequenceHumanizeLabel_.setText("HUMAN",juce::dontSendNotification);sequenceHumanizeLabel_.setFont(juce::FontOptions(8.0f));sequenceHumanizeLabel_.setColour(juce::Label::textColourId,Palette::muted());
     for(auto* b:{&sequenceRandomize_,&sequenceInvert_,&sequenceClear_,&sequenceAllOn_,&sequenceAlternate_})
         addAndMakeVisible(*b);
     sequenceRandomize_.setTooltip("Generate a new bipolar modulation pattern");
@@ -373,15 +364,6 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     };
     auto commitSequenceTransport=[this]{ if(selected_!=11 || !bindings_.snapshot || !bindings_.modulation) return; auto mod=bindings_.snapshot().modulation; mod.sequencer.activeSteps=static_cast<std::uint32_t>(juce::jlimit(1,8,sequenceStepCount_.getSelectedId())); mod.sequencer.direction=static_cast<SequenceDirection>(juce::jlimit(1,3,sequenceDirection_.getSelectedId())); mod.sequencer.loop=sequenceLoopMode_.getSelectedId()!=2; if(bindings_.modulation(mod)){cached_=mod;sourceMonitorSequencer_.reset();sequenceContent_.repaint();} };
     sequenceStepCount_.onChange=commitSequenceTransport;sequenceDirection_.onChange=commitSequenceTransport;sequenceLoopMode_.onChange=commitSequenceTransport;
-    auto commitSequenceExpression=[this]{
-        if(selected_!=11 || !bindings_.snapshot || !bindings_.modulation) return;
-        auto mod=bindings_.snapshot().modulation;
-        for(std::size_t i=0;i<sequenceSteps_.size();++i) { mod.sequencer.probability[i]=static_cast<float>(sequenceGatePreview_[i].getValue()); mod.sequencer.ratchets[i]=static_cast<std::uint32_t>(juce::jlimit(1,4,sequenceRatchet_[i].getSelectedId())); }
-        mod.sequencer.humanize=static_cast<float>(sequenceHumanize_.getValue());
-        if(bindings_.modulation(mod)){cached_=mod;sourceMonitorSequencer_.reset();sequenceContent_.repaint();}
-    };
-    for(std::size_t i=0;i<sequenceSteps_.size();++i) { sequenceGatePreview_[i].onValueChange=commitSequenceExpression; sequenceRatchet_[i].onChange=commitSequenceExpression; }
-    sequenceHumanize_.onValueChange=commitSequenceExpression;
 
     shape_.addItem("MSEG",1);
     // Three explicit playback behaviours. IDs preserve legacy serialization:
@@ -686,11 +668,9 @@ void ModulationPanel::updateVisibleControls() {
     for(auto& label:sequenceStepLabels_) label.setVisible(sequencer);
     for(auto& power:sequencePower_) power.setVisible(sequencer);
     for(auto& gate:sequenceGatePreview_) gate.setVisible(sequencer);
-    for(auto& ratchet:sequenceRatchet_) ratchet.setVisible(sequencer);
     sequenceRandomize_.setVisible(sequencer);sequenceInvert_.setVisible(sequencer);
     sequenceClear_.setVisible(sequencer);sequenceAllOn_.setVisible(sequencer);
     sequenceAlternate_.setVisible(sequencer);
-    sequenceHumanize_.setVisible(sequencer);sequenceHumanizeLabel_.setVisible(sequencer);
     sequenceViewport_.setVisible(sequencer);
     sequenceStepsCaption_.setVisible(sequencer);sequenceStepCount_.setVisible(sequencer);
     sequenceDirectionCaption_.setVisible(sequencer);sequenceDirection_.setVisible(sequencer);
@@ -748,10 +728,7 @@ void ModulationPanel::syncFromModel() {
         sequenceStepCount_.setSelectedId(static_cast<int>(cached_.sequencer.activeSteps),juce::dontSendNotification);
         sequenceDirection_.setSelectedId(static_cast<int>(cached_.sequencer.direction),juce::dontSendNotification);
         sequenceLoopMode_.setSelectedId(cached_.sequencer.loop?1:2,juce::dontSendNotification);
-        sequenceHumanize_.setValue(cached_.sequencer.humanize,juce::dontSendNotification);
         for(std::size_t i=0;i<sequenceSteps_.size();++i) {
-            sequenceGatePreview_[i].setValue(cached_.sequencer.probability[i],juce::dontSendNotification);
-            sequenceRatchet_[i].setSelectedId(static_cast<int>(cached_.sequencer.ratchets[i]),juce::dontSendNotification);
             if(sequenceSteps_[i].isMouseButtonDown()) continue;
             if(sequencePower_[i].getToggleState()) {
                 sequenceStoredValue_[i]=cached_.sequencer.steps[i];
@@ -1523,8 +1500,6 @@ void ModulationPanel::resized() {
             auto rateCell=controls.removeFromLeft(102);
             rateLabel_.setBounds(rateCell.removeFromBottom(17));rate_.setBounds(rateCell);
             controls.removeFromLeft(8);
-            auto humanCell=controls.removeFromLeft(84);sequenceHumanizeLabel_.setBounds(humanCell.removeFromBottom(14));sequenceHumanize_.setBounds(humanCell);
-            controls.removeFromLeft(8);
             sequenceRandomize_.setBounds(controls.removeFromLeft(86).reduced(1,11));
             controls.removeFromLeft(4);
             sequenceInvert_.setBounds(controls.removeFromLeft(64).reduced(1,11));
@@ -1551,8 +1526,8 @@ void ModulationPanel::resized() {
                 auto laneHeader=lane.removeFromTop(20);
                 sequenceStepLabels_[i].setBounds(laneHeader.removeFromLeft(22));
                 sequencePower_[i].setBounds(laneHeader.removeFromRight(15).withSizeKeepingCentre(12,12));
-                auto expression=lane.removeFromBottom(42);auto ratchet=expression.removeFromBottom(20);
-                sequenceRatchet_[i].setBounds(ratchet.reduced(3,1));sequenceGatePreview_[i].setBounds(expression.reduced(3,3));
+                auto gate=lane.removeFromBottom(24);
+                sequenceGatePreview_[i].setBounds(gate.reduced(3,4));
                 sequenceSteps_[i].setBounds(lane.reduced(3,2));
                 if(i+1<sequenceSteps_.size()) lanes.removeFromLeft(laneGap);
             }

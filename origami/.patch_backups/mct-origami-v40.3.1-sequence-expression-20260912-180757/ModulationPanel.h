@@ -1,4 +1,3 @@
-// mct-origami-v40.3.1-sequence-expression-ui
 // mct-origami-v40.1.0-sequencer-per-step-editor
 // mct-origami-v40.0.0-sequencer-structural-redesign\n// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
@@ -135,9 +134,6 @@ private:
     std::array<juce::ToggleButton,8> sequencePower_{};
     std::array<float,8> sequenceStoredValue_{{-1.0f,-0.25f,0.65f,0.15f,1.0f,-0.55f,0.35f,0.0f}};
     std::array<juce::Slider,8> sequenceGatePreview_{};
-    std::array<NativeComboBox,8> sequenceRatchet_{};
-    juce::Slider sequenceHumanize_{};
-    juce::Label sequenceHumanizeLabel_{};
     juce::TextButton sequenceRandomize_{"RANDOMIZE"};
     juce::TextButton sequenceInvert_{"INVERT"};
     juce::TextButton sequenceClear_{"CLEAR"};

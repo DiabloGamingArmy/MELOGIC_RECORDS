@@ -1,4 +1,3 @@
-// mct-origami-v40.3.1-sequence-expression
 // mct-origami-v40.2.0-sequence-transport
 // mct-origami-v39.2.1-sequence-ui-monitor
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
@@ -78,9 +77,6 @@ struct SequencerSettings {
     std::uint32_t activeSteps=8;
     SequenceDirection direction=SequenceDirection::Forward;
     bool loop=true;
-    std::array<float,8> probability{{1,1,1,1,1,1,1,1}};
-    std::array<std::uint32_t,8> ratchets{{1,1,1,1,1,1,1,1}};
-    float humanize=0.0f;
 };
 struct PerformanceSourcePoint { float x=0.0f,y=0.0f,curve=0.0f; };
 struct PerformanceSourceCurve {
@@ -200,7 +196,7 @@ private:
 
 class SequencerGenerator {
 public:
-    void reset() noexcept {phase_=0;step_=0;forward_=true;finished_=false;held_=0.0f;substep_=0;rng_=0x8f7011eeu;stepScale_=1.0;}
+    void reset() noexcept {phase_=0;step_=0;forward_=true;finished_=false;}
     float next(const SequencerSettings&,double sampleRate) noexcept;
     std::size_t currentStep() const noexcept { return step_; } // UI monitor inspection only
 private:
@@ -208,10 +204,6 @@ private:
     std::size_t step_=0;
     bool forward_=true;
     bool finished_=false;
-    float held_=0.0f;
-    std::uint32_t substep_=0;
-    std::uint32_t rng_=0x8f7011eeu;
-    double stepScale_=1.0;
 };
 
 template<class T> class LatestStateMailbox {
