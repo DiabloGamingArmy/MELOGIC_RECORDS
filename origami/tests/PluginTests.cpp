@@ -156,25 +156,31 @@ void globalQosBoundaryAudit() {
           "QoS controller contains no wait/lock/heap operations");
 }
 
-// mct-origami-audio-reengineer-p17-fix1-qos-aware-arp-audit
+// mct-origami-audio-reengineer-p17-fix2-function-local-arp-audit
 void arpTelemetryBoundaryAudit() {
     const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory().getChildFile("plugin/PluginProcessor.cpp");
     const auto text=f.loadFileAsString();
     check(text.isNotEmpty(),"PluginProcessor.cpp available for ARP telemetry audit");
 
     const int capture=text.indexOf("void OrigamiAudioProcessor::captureArpNote");
+    const int choose=text.indexOf(capture,"int OrigamiAudioProcessor::chooseArpNote");
     const int service=text.indexOf("void OrigamiAudioProcessor::serviceVisualTelemetry");
-    const int publish=text.indexOf("void OrigamiAudioProcessor::publishArpUiSnapshot");
+    const int finalize=text.indexOf(service,"void OrigamiAudioProcessor::finalizeRenderBudget");
     const int process=text.indexOf("void OrigamiAudioProcessor::processBlock");
     const int state=text.indexOf(process,"void OrigamiAudioProcessor::getStateInformation");
 
-    check(capture>=0 && service>capture && publish>service && process>publish && state>process,
-          "ARP telemetry source bounds found");
+    check(capture>=0 && choose>capture,
+          "ARP event function bounds found");
+    check(service>=0 && finalize>service,
+          "QoS telemetry service bounds found");
+    check(process>=0 && state>process,
+          "processBlock telemetry boundary bounds found");
 
-    check(!text.substring(capture,service).contains("publishArpUiSnapshot();"),
+    const auto captureBody=text.substring(capture,choose);
+    check(!captureBody.contains("publishArpUiSnapshot();"),
           "ARP event paths contain no direct UI publication");
 
-    const auto serviceBody=text.substring(service,publish);
+    const auto serviceBody=text.substring(service,finalize);
     check(serviceBody.contains("arpUiDirty_.exchange("),
           "QoS telemetry service owns ARP dirty-state coalescing");
     check(serviceBody.contains("publishArpUiSnapshot();"),
