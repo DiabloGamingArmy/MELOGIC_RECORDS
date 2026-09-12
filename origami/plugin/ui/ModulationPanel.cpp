@@ -1,3 +1,4 @@
+// mct-origami-v39.2.1-sequence-editor-corrected
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
@@ -202,9 +203,11 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         step.setName("SEQ STEP "+juce::String(static_cast<int>(i+1)));
         step.setSliderStyle(juce::Slider::LinearBarVertical);
         step.setRange(-1.0,1.0,.001);
-        step.setDoubleClickReturnValue(true,0.0);
+        step.setDoubleClickReturnValue(false,0.0);
         step.setScrollWheelEnabled(false);
-        step.setTextBoxStyle(juce::Slider::TextBoxBelow,false,48,17);
+        step.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        step.setPopupDisplayEnabled(true,true,this,900);
+        step.setSliderSnapsToMousePosition(false);
         step.setMouseDragSensitivity(180);
         label.setText(juce::String(static_cast<int>(i+1)),juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
@@ -218,8 +221,11 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
         auto& power=sequencePower_[i];
         addAndMakeVisible(power);
-        power.setButtonText("PWR");
+        power.setButtonText({});
+        power.setClickingTogglesState(true);
         power.setToggleState(true,juce::dontSendNotification);
+        power.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff080808));
+        power.setColour(juce::TextButton::buttonOnColourId,Palette::accent());
         power.setTooltip("Mute this sequence lane without destroying its stored value");
         power.onClick=[this,i]{
             if(sequencePower_[i].getToggleState()) {
@@ -636,9 +642,13 @@ void ModulationPanel::syncFromModel() {
         rate_.setValue(cached_.drift.rateHz,juce::dontSendNotification);
     } else if(selected_==11) {
         if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.sequencer.rateHz,juce::dontSendNotification);
-        for(std::size_t i=0;i<sequenceSteps_.size();++i)
-            if(!sequenceSteps_[i].isMouseButtonDown())
+        for(std::size_t i=0;i<sequenceSteps_.size();++i) {
+            if(sequenceSteps_[i].isMouseButtonDown()) continue;
+            if(sequencePower_[i].getToggleState()) {
+                sequenceStoredValue_[i]=cached_.sequencer.steps[i];
                 sequenceSteps_[i].setValue(cached_.sequencer.steps[i],juce::dontSendNotification);
+            }
+        }
     } else if(selected_==12 || selected_==13) {
         if(performancePointDrag_<0 && performanceCurveDrag_<0)
             loadPerformanceShape(performanceMseg_[static_cast<std::size_t>(selected_-12)],
@@ -743,6 +753,15 @@ ModulationPanel::DragTarget ModulationPanel::hitHandle(juce::Point<float> p) con
 }
 
 void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
+    if(selected_==11 && e.mods.isShiftDown()) {
+        for(std::size_t i=0;i<sequenceSteps_.size();++i) {
+            if(e.eventComponent==&sequenceSteps_[i]) {
+                sequenceStoredValue_[i]=0.0f;
+                sequenceSteps_[i].setValue(0.0,juce::sendNotificationSync);
+                return;
+            }
+        }
+    }
     dragStart_=e.position;
     const auto local=e.getEventRelativeTo(this);
     if((selected_==12 || selected_==13) && performanceCurveCanvas_.contains(local.position)) {
@@ -785,6 +804,15 @@ void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
 }
 
 void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
+    if(selected_==11) {
+        for(auto& step:sequenceSteps_) {
+            if(e.eventComponent==&step) {
+                step.setTextBoxStyle(juce::Slider::TextBoxBelow,false,54,18);
+                step.showTextBox();
+                return;
+            }
+        }
+    }
     const auto local=e.getEventRelativeTo(this);
 
     // Double-clicking a route gauge removes only that Matrix assignment.
@@ -1392,12 +1420,12 @@ void ModulationPanel::resized() {
                 const int width=(i+1==sequenceSteps_.size())?lanes.getWidth():
                     juce::jmin(laneWidth,lanes.getWidth());
                 auto lane=lanes.removeFromLeft(width);
-                auto header=lane.removeFromTop(24);
-                sequenceStepLabels_[i].setBounds(header.removeFromLeft(20));
-                sequencePower_[i].setBounds(header.reduced(1,1));
-                auto gate=lane.removeFromBottom(25);
-                sequenceGatePreview_[i].setBounds(gate.reduced(1,2));
-                sequenceSteps_[i].setBounds(lane.reduced(2,2));
+                auto header=lane.removeFromTop(18);
+                sequenceStepLabels_[i].setBounds(header.removeFromLeft(18));
+                sequencePower_[i].setBounds(header.removeFromRight(14).withSizeKeepingCentre(12,12));
+                auto gate=lane.removeFromBottom(19);
+                sequenceGatePreview_[i].setBounds(gate.reduced(1,3));
+                sequenceSteps_[i].setBounds(lane.reduced(1,1));
                 if(i+1<sequenceSteps_.size() && lanes.getWidth()>0)
                     lanes.removeFromLeft(juce::jmin(laneGap,lanes.getWidth()));
             }
@@ -1613,13 +1641,46 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
         if(graph.getWidth()>2.0f && graph.getHeight()>2.0f) {
             g.setColour(Palette::borderSoft().withAlpha(.12f));
             g.drawHorizontalLine(juce::roundToInt(graph.getCentreY()),graph.getX(),graph.getRight());
-            g.setColour(signalSourceColour().withAlpha(.07f));
             for(int i=1;i<4;++i) {
                 const float y=graph.getY()+graph.getHeight()*float(i)/4.0f;
                 g.drawHorizontalLine(juce::roundToInt(y),graph.getX(),graph.getRight());
             }
-            text(g,"SEQUENCE  /  VALUE · PWR · GATE LENGTH",
-                 graph.removeFromTop(16).toNearestInt(),8.0f,Palette::muted());
+
+            auto lanes=graph.toNearestInt();
+            constexpr int laneGap=5;
+            const int laneWidth=juce::jmax(42,(lanes.getWidth()-laneGap*7)/8);
+            const std::size_t active=juce::jmin<std::size_t>(7,sourceMonitorSequencer_.currentStep());
+
+            for(std::size_t i=0;i<sequenceSteps_.size();++i) {
+                const int width=(i+1==sequenceSteps_.size())?lanes.getWidth():
+                    juce::jmin(laneWidth,lanes.getWidth());
+                auto lane=lanes.removeFromLeft(width);
+                lane.removeFromTop(18);
+                lane.removeFromBottom(19);
+                auto meter=lane.reduced(2,2).toFloat();
+
+                const float value=static_cast<float>(sequenceSteps_[i].getValue());
+                const float zero=meter.getCentreY();
+                const float y=juce::jmap(juce::jlimit(-1.0f,1.0f,value),
+                                         -1.0f,1.0f,meter.getBottom(),meter.getY());
+                const juce::Rectangle<float> fill=value>=0.0f
+                    ? juce::Rectangle<float>{meter.getX(),y,meter.getWidth(),zero-y}
+                    : juce::Rectangle<float>{meter.getX(),zero,meter.getWidth(),y-zero};
+
+                const bool enabled=sequencePower_[i].getToggleState();
+                g.setColour(Palette::accent().withAlpha(enabled?.28f:.055f));
+                g.fillRect(fill);
+                g.setColour(Palette::accent().withAlpha(enabled?.95f:.24f));
+                g.drawHorizontalLine(juce::roundToInt(y),meter.getX()+2.0f,meter.getRight()-2.0f);
+
+                if(i==active) {
+                    g.setColour(Palette::accent());
+                    g.drawRoundedRectangle(meter.expanded(1.0f),2.0f,1.6f);
+                }
+
+                if(i+1<sequenceSteps_.size() && lanes.getWidth()>0)
+                    lanes.removeFromLeft(juce::jmin(laneGap,lanes.getWidth()));
+            }
         }
         return;
     }

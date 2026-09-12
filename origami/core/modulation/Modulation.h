@@ -1,3 +1,4 @@
+// mct-origami-v39.2.1-sequence-ui-monitor
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
@@ -192,6 +193,7 @@ class SequencerGenerator {
 public:
     void reset() noexcept {phase_=0;step_=0;}
     float next(const SequencerSettings&,double sampleRate) noexcept;
+    std::size_t currentStep() const noexcept { return step_; } // UI monitor inspection only
 private:
     double phase_=0;
     std::size_t step_=0;
