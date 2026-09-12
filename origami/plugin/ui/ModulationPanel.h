@@ -123,6 +123,15 @@ private:
     juce::Slider chaosAmount_,chaosFlow_,chaosDamping_,chaosWarp_,chaosSmooth_;
     juce::Label chaosAmountLabel_,chaosFlowLabel_,chaosDampingLabel_,chaosWarpLabel_,chaosSmoothLabel_;
     NativeComboBox chaosAxis_,chaosMethod_;
+    // V39 Sequence editor: JUCE controls stay entirely in the UI layer while
+    // DSP consumes the existing fixed, allocation-free SequencerSettings.
+    std::array<juce::Slider,8> sequenceSteps_{};
+    std::array<juce::Label,8> sequenceStepLabels_{};
+    juce::TextButton sequenceRandomize_{"RANDOMIZE"};
+    juce::TextButton sequenceInvert_{"INVERT"};
+    juce::TextButton sequenceClear_{"CLEAR"};
+    juce::Rectangle<float> sequenceCanvas_{};
+    bool commitSequenceSteps();
     NativeComboBox shape_,mode_;
     juce::ToggleButton lfoLoop_{"LOOP"};
     juce::TextButton lfoTools_{"TOOLS"};

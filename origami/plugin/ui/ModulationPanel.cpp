@@ -196,6 +196,41 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     chaosAxis_.addItem("X",1);chaosAxis_.addItem("Y",2);chaosAxis_.addItem("Z",3);
     chaosAxis_.setSelectedId(1,juce::dontSendNotification);chaosAxis_.setScrollWheelEnabled(false);
 
+    for(std::size_t i=0;i<sequenceSteps_.size();++i) {
+        auto& step=sequenceSteps_[i]; auto& label=sequenceStepLabels_[i];
+        addAndMakeVisible(step);addAndMakeVisible(label);
+        step.setName("SEQ STEP "+juce::String(static_cast<int>(i+1)));
+        step.setSliderStyle(juce::Slider::LinearBarVertical);
+        step.setRange(-1.0,1.0,.001);
+        step.setDoubleClickReturnValue(true,0.0);
+        step.setScrollWheelEnabled(false);
+        step.setTextBoxStyle(juce::Slider::TextBoxBelow,false,48,17);
+        step.setMouseDragSensitivity(180);
+        label.setText(juce::String(static_cast<int>(i+1)),juce::dontSendNotification);
+        label.setJustificationType(juce::Justification::centred);
+        label.setFont(juce::FontOptions(9.0f));
+        label.setColour(juce::Label::textColourId,Palette::muted());
+        step.onValueChange=[this]{commitSequenceSteps();repaint();};
+    }
+    for(auto* b:{&sequenceRandomize_,&sequenceInvert_,&sequenceClear_}) addAndMakeVisible(*b);
+    sequenceRandomize_.setTooltip("Generate a new bipolar modulation pattern");
+    sequenceInvert_.setTooltip("Invert every step around the zero line");
+    sequenceClear_.setTooltip("Reset every step to zero");
+    sequenceRandomize_.onClick=[this]{
+        juce::Random rng;
+        for(auto& step:sequenceSteps_)
+            step.setValue(rng.nextFloat()*2.0f-1.0f,juce::dontSendNotification);
+        commitSequenceSteps();repaint();
+    };
+    sequenceInvert_.onClick=[this]{
+        for(auto& step:sequenceSteps_) step.setValue(-step.getValue(),juce::dontSendNotification);
+        commitSequenceSteps();repaint();
+    };
+    sequenceClear_.onClick=[this]{
+        for(auto& step:sequenceSteps_) step.setValue(0.0,juce::dontSendNotification);
+        commitSequenceSteps();repaint();
+    };
+
     shape_.addItem("MSEG",1);
     // Three explicit playback behaviours. IDs preserve legacy serialization:
     // Free=1, Loop (old NoteRetrigger)=2, Envelope=3.
@@ -412,6 +447,15 @@ void ModulationPanel::commitEnvelope() {
     if(bindings_.modulation(mod)) cached_=mod;
 }
 
+bool ModulationPanel::commitSequenceSteps() {
+    if(selected_!=11 || !bindings_.snapshot || !bindings_.modulation) return false;
+    auto mod=bindings_.snapshot().modulation;
+    for(std::size_t i=0;i<sequenceSteps_.size();++i)
+        mod.sequencer.steps[i]=static_cast<float>(sequenceSteps_[i].getValue());
+    if(!bindings_.modulation(mod)) return false;
+    cached_=mod; return true;
+}
+
 void ModulationPanel::commitGenerator() {
     if(!bindings_.snapshot || !bindings_.modulation) return;
     auto mod=bindings_.snapshot().modulation;
@@ -486,6 +530,10 @@ void ModulationPanel::updateVisibleControls() {
     chaosWarp_.setVisible(chaos);chaosWarpLabel_.setVisible(chaos);
     chaosSmooth_.setVisible(chaos);chaosSmoothLabel_.setVisible(chaos);
     chaosAxis_.setVisible(chaos);chaosMethod_.setVisible(chaos);
+    for(auto& step:sequenceSteps_) step.setVisible(sequencer);
+    for(auto& label:sequenceStepLabels_) label.setVisible(sequencer);
+    sequenceRandomize_.setVisible(sequencer);sequenceInvert_.setVisible(sequencer);
+    sequenceClear_.setVisible(sequencer);
     performanceTools_.setVisible(performance);
     performanceSnap_.setVisible(performance);
     performanceInputLabel_.setVisible(performance);
@@ -534,7 +582,10 @@ void ModulationPanel::syncFromModel() {
     } else if(selected_==10) {
         rate_.setValue(cached_.drift.rateHz,juce::dontSendNotification);
     } else if(selected_==11) {
-        rate_.setValue(cached_.sequencer.rateHz,juce::dontSendNotification);
+        if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.sequencer.rateHz,juce::dontSendNotification);
+        for(std::size_t i=0;i<sequenceSteps_.size();++i)
+            if(!sequenceSteps_[i].isMouseButtonDown())
+                sequenceSteps_[i].setValue(cached_.sequencer.steps[i],juce::dontSendNotification);
     } else if(selected_==12 || selected_==13) {
         if(performancePointDrag_<0 && performanceCurveDrag_<0)
             loadPerformanceShape(performanceMseg_[static_cast<std::size_t>(selected_-12)],
@@ -1136,6 +1187,7 @@ void ModulationPanel::updateScrollbar() {
 void ModulationPanel::resized() {
     auto body=contentBounds();
     performanceCurveCanvas_={};
+    sequenceCanvas_={};
 
     // Mixed modulation-source collection. ENV + LFO + generator sources share
     // one vertical rail so the editor area always represents ONE selected source.
@@ -1264,6 +1316,30 @@ void ModulationPanel::resized() {
             placeRandom(randomSmooth_,randomSmoothLabel_,false);
             placeRandom(randomHold_,randomHoldLabel_,false);
             placeRandom(randomDelay_,randomDelayLabel_,true);
+        } else if(selected_==11) {
+            auto rateCell=controls.removeFromLeft(120);
+            rateLabel_.setBounds(rateCell.removeFromBottom(17));rate_.setBounds(rateCell);
+            controls.removeFromLeft(10);
+            sequenceRandomize_.setBounds(controls.removeFromLeft(92).reduced(2,12));
+            controls.removeFromLeft(5);
+            sequenceInvert_.setBounds(controls.removeFromLeft(72).reduced(2,12));
+            controls.removeFromLeft(5);
+            sequenceClear_.setBounds(controls.removeFromLeft(62).reduced(2,12));
+
+            body.removeFromTop(24);
+            sequenceCanvas_=body.reduced(12,8).toFloat();
+            auto lanes=sequenceCanvas_.toNearestInt();
+            constexpr int laneGap=5;
+            const int laneWidth=juce::jmax(38,(lanes.getWidth()-laneGap*7)/8);
+            for(std::size_t i=0;i<sequenceSteps_.size();++i) {
+                const int width=(i+1==sequenceSteps_.size())?lanes.getWidth():
+                    juce::jmin(laneWidth,lanes.getWidth());
+                auto lane=lanes.removeFromLeft(width);
+                sequenceStepLabels_[i].setBounds(lane.removeFromTop(16));
+                sequenceSteps_[i].setBounds(lane.reduced(2,2));
+                if(i+1<sequenceSteps_.size() && lanes.getWidth()>0)
+                    lanes.removeFromLeft(juce::jmin(laneGap,lanes.getWidth()));
+            }
         } else if(selected_==9) {
             constexpr int gap=5;
             const int cellWidth=juce::jmax(76,(controls.getWidth()-gap*6)/7);
@@ -1470,6 +1546,22 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     else title="MODULATION SOURCE";
     text(g,title,caption,9,Palette::muted());well(g,body);
     if(selected_==12 || selected_==13) { paintPerformanceCurve(g); return; }
+
+    if(selected_==11) {
+        auto graph=sequenceCanvas_.isEmpty()?body.toFloat().reduced(12.0f,10.0f):sequenceCanvas_;
+        if(graph.getWidth()>2.0f && graph.getHeight()>2.0f) {
+            g.setColour(Palette::borderSoft().withAlpha(.12f));
+            g.drawHorizontalLine(juce::roundToInt(graph.getCentreY()),graph.getX(),graph.getRight());
+            g.setColour(signalSourceColour().withAlpha(.07f));
+            for(int i=1;i<4;++i) {
+                const float y=graph.getY()+graph.getHeight()*float(i)/4.0f;
+                g.drawHorizontalLine(juce::roundToInt(y),graph.getX(),graph.getRight());
+            }
+            text(g,"BIPOLAR STEP MODULATOR  /  -1 TO +1",
+                 graph.removeFromTop(16).toNearestInt(),8.0f,Palette::muted());
+        }
+        return;
+    }
 
     if(selected_==9) {
         auto graph=body.toFloat().reduced(12.0f,10.0f);
