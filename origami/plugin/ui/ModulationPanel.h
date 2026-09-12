@@ -127,9 +127,17 @@ private:
     // DSP consumes the existing fixed, allocation-free SequencerSettings.
     std::array<juce::Slider,8> sequenceSteps_{};
     std::array<juce::Label,8> sequenceStepLabels_{};
+    // V39.1 editor-only workflow state. PWR is intentionally implemented as
+    // non-destructive value muting: the DSP contract remains the audited
+    // fixed 8-step SequencerSettings until the dedicated timing-engine pass.
+    std::array<juce::ToggleButton,8> sequencePower_{};
+    std::array<float,8> sequenceStoredValue_{{-1.0f,-0.25f,0.65f,0.15f,1.0f,-0.55f,0.35f,0.0f}};
+    std::array<juce::Slider,8> sequenceGatePreview_{};
     juce::TextButton sequenceRandomize_{"RANDOMIZE"};
     juce::TextButton sequenceInvert_{"INVERT"};
     juce::TextButton sequenceClear_{"CLEAR"};
+    juce::TextButton sequenceAllOn_{"ALL ON"};
+    juce::TextButton sequenceAlternate_{"ALT"};
     juce::Rectangle<float> sequenceCanvas_{};
     bool commitSequenceSteps();
     NativeComboBox shape_,mode_;

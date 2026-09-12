@@ -210,9 +210,38 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         label.setJustificationType(juce::Justification::centred);
         label.setFont(juce::FontOptions(9.0f));
         label.setColour(juce::Label::textColourId,Palette::muted());
-        step.onValueChange=[this]{commitSequenceSteps();repaint();};
+        step.onValueChange=[this,i]{
+            if(sequencePower_[i].getToggleState())
+                sequenceStoredValue_[i]=static_cast<float>(sequenceSteps_[i].getValue());
+            commitSequenceSteps();repaint();
+        };
+
+        auto& power=sequencePower_[i];
+        addAndMakeVisible(power);
+        power.setButtonText("PWR");
+        power.setToggleState(true,juce::dontSendNotification);
+        power.setTooltip("Mute this sequence lane without destroying its stored value");
+        power.onClick=[this,i]{
+            if(sequencePower_[i].getToggleState()) {
+                sequenceSteps_[i].setValue(sequenceStoredValue_[i],juce::dontSendNotification);
+            } else {
+                sequenceStoredValue_[i]=static_cast<float>(sequenceSteps_[i].getValue());
+                sequenceSteps_[i].setValue(0.0,juce::dontSendNotification);
+            }
+            commitSequenceSteps();repaint();
+        };
+
+        auto& gate=sequenceGatePreview_[i];
+        addAndMakeVisible(gate);
+        gate.setSliderStyle(juce::Slider::LinearHorizontal);
+        gate.setRange(.05,1.0,.01);gate.setValue(1.0,juce::dontSendNotification);
+        gate.setTextBoxStyle(juce::Slider::TextBoxRight,false,38,16);
+        gate.setScrollWheelEnabled(false);
+        gate.setTooltip("Gate/length preview — reserved for the audited timing-engine pass");
+        gate.setEnabled(false);
     }
-    for(auto* b:{&sequenceRandomize_,&sequenceInvert_,&sequenceClear_}) addAndMakeVisible(*b);
+    for(auto* b:{&sequenceRandomize_,&sequenceInvert_,&sequenceClear_,&sequenceAllOn_,&sequenceAlternate_})
+        addAndMakeVisible(*b);
     sequenceRandomize_.setTooltip("Generate a new bipolar modulation pattern");
     sequenceInvert_.setTooltip("Invert every step around the zero line");
     sequenceClear_.setTooltip("Reset every step to zero");
@@ -227,7 +256,28 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         commitSequenceSteps();repaint();
     };
     sequenceClear_.onClick=[this]{
-        for(auto& step:sequenceSteps_) step.setValue(0.0,juce::dontSendNotification);
+        for(std::size_t i=0;i<sequenceSteps_.size();++i) {
+            sequenceStoredValue_[i]=0.0f;
+            sequenceSteps_[i].setValue(0.0,juce::dontSendNotification);
+        }
+        commitSequenceSteps();repaint();
+    };
+    sequenceAllOn_.setTooltip("Enable every sequence lane");
+    sequenceAllOn_.onClick=[this]{
+        for(std::size_t i=0;i<sequencePower_.size();++i) {
+            sequencePower_[i].setToggleState(true,juce::dontSendNotification);
+            sequenceSteps_[i].setValue(sequenceStoredValue_[i],juce::dontSendNotification);
+        }
+        commitSequenceSteps();repaint();
+    };
+    sequenceAlternate_.setTooltip("Create an alternating enabled/muted rhythm");
+    sequenceAlternate_.onClick=[this]{
+        for(std::size_t i=0;i<sequencePower_.size();++i) {
+            const bool on=(i%2u)==0u;
+            if(!on) sequenceStoredValue_[i]=static_cast<float>(sequenceSteps_[i].getValue());
+            sequencePower_[i].setToggleState(on,juce::dontSendNotification);
+            sequenceSteps_[i].setValue(on?sequenceStoredValue_[i]:0.0,juce::dontSendNotification);
+        }
         commitSequenceSteps();repaint();
     };
 
@@ -532,8 +582,11 @@ void ModulationPanel::updateVisibleControls() {
     chaosAxis_.setVisible(chaos);chaosMethod_.setVisible(chaos);
     for(auto& step:sequenceSteps_) step.setVisible(sequencer);
     for(auto& label:sequenceStepLabels_) label.setVisible(sequencer);
+    for(auto& power:sequencePower_) power.setVisible(sequencer);
+    for(auto& gate:sequenceGatePreview_) gate.setVisible(sequencer);
     sequenceRandomize_.setVisible(sequencer);sequenceInvert_.setVisible(sequencer);
-    sequenceClear_.setVisible(sequencer);
+    sequenceClear_.setVisible(sequencer);sequenceAllOn_.setVisible(sequencer);
+    sequenceAlternate_.setVisible(sequencer);
     performanceTools_.setVisible(performance);
     performanceSnap_.setVisible(performance);
     performanceInputLabel_.setVisible(performance);
@@ -1317,25 +1370,33 @@ void ModulationPanel::resized() {
             placeRandom(randomHold_,randomHoldLabel_,false);
             placeRandom(randomDelay_,randomDelayLabel_,true);
         } else if(selected_==11) {
-            auto rateCell=controls.removeFromLeft(120);
+            auto rateCell=controls.removeFromLeft(102);
             rateLabel_.setBounds(rateCell.removeFromBottom(17));rate_.setBounds(rateCell);
-            controls.removeFromLeft(10);
-            sequenceRandomize_.setBounds(controls.removeFromLeft(92).reduced(2,12));
-            controls.removeFromLeft(5);
-            sequenceInvert_.setBounds(controls.removeFromLeft(72).reduced(2,12));
-            controls.removeFromLeft(5);
-            sequenceClear_.setBounds(controls.removeFromLeft(62).reduced(2,12));
+            controls.removeFromLeft(8);
+            sequenceRandomize_.setBounds(controls.removeFromLeft(86).reduced(1,11));
+            controls.removeFromLeft(4);
+            sequenceInvert_.setBounds(controls.removeFromLeft(64).reduced(1,11));
+            controls.removeFromLeft(4);
+            sequenceClear_.setBounds(controls.removeFromLeft(54).reduced(1,11));
+            controls.removeFromLeft(4);
+            sequenceAllOn_.setBounds(controls.removeFromLeft(60).reduced(1,11));
+            controls.removeFromLeft(4);
+            sequenceAlternate_.setBounds(controls.removeFromLeft(46).reduced(1,11));
 
             body.removeFromTop(24);
-            sequenceCanvas_=body.reduced(12,8).toFloat();
+            sequenceCanvas_=body.reduced(10,6).toFloat();
             auto lanes=sequenceCanvas_.toNearestInt();
             constexpr int laneGap=5;
-            const int laneWidth=juce::jmax(38,(lanes.getWidth()-laneGap*7)/8);
+            const int laneWidth=juce::jmax(42,(lanes.getWidth()-laneGap*7)/8);
             for(std::size_t i=0;i<sequenceSteps_.size();++i) {
                 const int width=(i+1==sequenceSteps_.size())?lanes.getWidth():
                     juce::jmin(laneWidth,lanes.getWidth());
                 auto lane=lanes.removeFromLeft(width);
-                sequenceStepLabels_[i].setBounds(lane.removeFromTop(16));
+                auto header=lane.removeFromTop(24);
+                sequenceStepLabels_[i].setBounds(header.removeFromLeft(20));
+                sequencePower_[i].setBounds(header.reduced(1,1));
+                auto gate=lane.removeFromBottom(25);
+                sequenceGatePreview_[i].setBounds(gate.reduced(1,2));
                 sequenceSteps_[i].setBounds(lane.reduced(2,2));
                 if(i+1<sequenceSteps_.size() && lanes.getWidth()>0)
                     lanes.removeFromLeft(juce::jmin(laneGap,lanes.getWidth()));
@@ -1557,7 +1618,7 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
                 const float y=graph.getY()+graph.getHeight()*float(i)/4.0f;
                 g.drawHorizontalLine(juce::roundToInt(y),graph.getX(),graph.getRight());
             }
-            text(g,"BIPOLAR STEP MODULATOR  /  -1 TO +1",
+            text(g,"SEQUENCE  /  VALUE · PWR · GATE LENGTH",
                  graph.removeFromTop(16).toNearestInt(),8.0f,Palette::muted());
         }
         return;
