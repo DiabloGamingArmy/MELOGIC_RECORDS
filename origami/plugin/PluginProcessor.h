@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p10-persistent-preallocated-midi
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v25.3.0-arp-performance-expansion
@@ -12,6 +13,10 @@
 #include <JuceHeader.h>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
+
+// mct-origami-audio-reengineer-p04-ui-telemetry-decimation
+
+// mct-origami-audio-reengineer-p03-midi-preallocation
 
 class OrigamiAudioProcessor final : public juce::AudioProcessor {
 public:
@@ -81,6 +86,10 @@ private:
     void publishArpUiSnapshot() noexcept;
     void publishEnvelopeUiSnapshot() noexcept;
     juce::MidiKeyboardState uiKeyboardState_;
+    // Persistent realtime MIDI workspaces; storage is committed in prepareToPlay().
+    juce::MidiBuffer inputMidiScratch_;
+    juce::MidiBuffer scheduledMidiScratch_;
+    static constexpr std::size_t midiScratchBytes_ = 256u * 1024u;
     std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
     mct::origami::ArpeggiatorState arpState_{};
@@ -101,6 +110,10 @@ private:
     std::array<std::atomic<std::uint32_t>,3> envUiStage_{};
     std::array<std::atomic<float>,3> envUiProgress_{};
     std::array<std::atomic<float>,3> envUiValue_{};
+    // UI telemetry is intentionally control-rate, not render-span-rate.
+    // Countdown is audio-thread-owned; publication remains lock-free atomics.
+    std::int64_t envUiSamplesUntilPublish_=0;
+    static constexpr double envelopeUiPublishHz_=60.0;
     bool prepared_ = false;
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessor)
 };

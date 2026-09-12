@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p08-compiled-route-indices
+// mct-origami-audio-reengineer-p07-prepared-oscillator-modules
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-v29.0.0-spectral-process-native-routing
@@ -14,7 +16,7 @@
 #include <cmath>
 namespace mct::origami {
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
-void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
+void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& prepared:preparedModules_)prepared.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     reset();address_=address;velocity_=velocity;order_=order;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -66,34 +68,30 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
             moduleBlendCenters_[m].reset();
             moduleFilters_[m].reset();moduleIds_[m]=module.id;
+            preparedModules_[m].invalidate();
+            // A topology identity change can invalidate routes in every module.
+            for(auto& preparedRoute:preparedModules_) preparedRoute.routesValid=false;
         }
         if(module.id==0 || !module.enabled) continue;
 
-        const double semitones =
-            static_cast<double>(module.octave)*12.0 +
-            static_cast<double>(module.semitone) +
-            static_cast<double>(module.fineCents)/100.0 + static_cast<double>(pitchBendSemitones);
-        const double frequencyScale=std::exp2(semitones/12.0);
-        const unsigned count=std::clamp(module.unison,1u,maxUnisonVoices);
-        const float spreadCents=std::clamp(module.detuneCents,0.0f,100.0f);
+        auto& prepared=preparedModules_[m];
+        prepared.update(module);
+        prepared.compileRoutes(module,moduleIds_);
+        // Pitch bend stays exact/audio-rate; static module tuning is prepared.
+        const double pitchBendScale=std::exp2(static_cast<double>(pitchBendSemitones)/12.0);
+        const double frequencyScale=prepared.pitchScale*pitchBendScale;
+        const unsigned count=prepared.unison;
         const float position=module.wtPosition;
-
-        auto sourceSampleFor=[&](OscillatorModuleId sourceId) noexcept {
-            if(sourceId==0) return 0.0f;
-            for(std::size_t sourceIndex=0;sourceIndex<moduleIds_.size();++sourceIndex)
-                if(moduleIds_[sourceIndex]==sourceId)
-                    return previousOscillatorSamples_[sourceIndex];
-            return 0.0f;
-        };
 
         double routedFrequencyScale=1.0;
         double routedPhaseOffset=0.0;
         double routedPhaseSkew=0.0;
 
         // Pre-generation routing belongs in the phase/frequency domain.
-        auto applyPreRoute=[&](OscillatorModuleId sourceId,OscRouteType type,float rawAmount) noexcept {
-            if(type==OscRouteType::Off || sourceId==0) return;
-            const float source=std::clamp(sourceSampleFor(sourceId),-1.0f,1.0f);
+        auto applyPreRoute=[&](int sourceIndex,OscRouteType type,float rawAmount) noexcept {
+            if(type==OscRouteType::Off || sourceIndex<0 ||
+               sourceIndex>=static_cast<int>(previousOscillatorSamples_.size())) return;
+            const float source=std::clamp(previousOscillatorSamples_[static_cast<std::size_t>(sourceIndex)],-1.0f,1.0f);
             const float amount=std::clamp(rawAmount,-1.0f,1.0f);
 
             switch(type) {
@@ -127,8 +125,8 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             }
         };
 
-        applyPreRoute(module.route1SourceId,module.route1Type,module.route1Amount);
-        applyPreRoute(module.route2SourceId,module.route2Type,module.route2Amount);
+        applyPreRoute(prepared.route1SourceIndex,module.route1Type,module.route1Amount);
+        applyPreRoute(prepared.route2SourceIndex,module.route2Type,module.route2Amount);
 
         double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
@@ -142,10 +140,8 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         } else {
             float unisonStack=0.0f;
             for(unsigned u=0;u<count;++u) {
-                const double unit=(2.0*static_cast<double>(u)/static_cast<double>(count-1))-1.0;
-                const double detuneRatio=std::exp2((unit*static_cast<double>(spreadCents))/1200.0);
                 unisonStack+=moduleOscillators_[m][u].next(
-                    table,baseFrequency*detuneRatio,sampleRate_,position,
+                    table,baseFrequency*prepared.detuneRatios[u],sampleRate_,position,
                     module.process1,module.process1Amount,module.process2,module.process2Amount,
                     routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
             }
@@ -155,18 +151,18 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                 table,baseFrequency,sampleRate_,position,
                 module.process1,module.process1Amount,module.process2,module.process2Amount,
                 routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
-            const float blend=std::clamp(module.blend,0.0f,1.0f);
-            oscillatorMix=centre+(unisonStack-centre)*blend;
+            oscillatorMix=centre+(unisonStack-centre)*prepared.blend;
         }
 
         // Post-generation routes are intentionally executed in slot order.
         // This makes combinations such as WF -> XOR or RM -> RECT genuinely
         // different from the reverse order.
-        auto applyPostRoute=[&](float signal,OscillatorModuleId sourceId,
+        auto applyPostRoute=[&](float signal,int sourceIndex,
                                 OscRouteType type,float rawAmount) noexcept {
-            if(type==OscRouteType::Off || sourceId==0) return signal;
+            if(type==OscRouteType::Off || sourceIndex<0 ||
+               sourceIndex>=static_cast<int>(previousOscillatorSamples_.size())) return signal;
 
-            const float source=std::clamp(sourceSampleFor(sourceId),-1.0f,1.0f);
+            const float source=std::clamp(previousOscillatorSamples_[static_cast<std::size_t>(sourceIndex)],-1.0f,1.0f);
             const float amount=std::clamp(rawAmount,-1.0f,1.0f);
             const float depth=std::abs(amount);
 
@@ -226,9 +222,9 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             return signal;
         };
 
-        oscillatorMix=applyPostRoute(oscillatorMix,module.route1SourceId,
+        oscillatorMix=applyPostRoute(oscillatorMix,prepared.route1SourceIndex,
                                      module.route1Type,module.route1Amount);
-        oscillatorMix=applyPostRoute(oscillatorMix,module.route2SourceId,
+        oscillatorMix=applyPostRoute(oscillatorMix,prepared.route2SourceIndex,
                                      module.route2Type,module.route2Amount);
 
         if(!std::isfinite(oscillatorMix)) {
@@ -244,13 +240,10 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         } else {
             moduleFilters_[m].reset();
         }
-        const float safeLevel=std::isfinite(module.level)?std::clamp(module.level,0.0f,1.0f):0.0f;
-        sampleValue*=safeLevel;
+        sampleValue*=prepared.level;
         if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
-        const float safePan=std::isfinite(module.pan)?std::clamp(module.pan,-1.0f,1.0f):0.0f;
-        const double panAngle=(static_cast<double>(safePan)+1)*.7853981633974483;
-        outputs.left+=sampleValue*std::cos(panAngle);
-        outputs.right+=sampleValue*std::sin(panAngle);
+        outputs.left+=sampleValue*prepared.panLeft;
+        outputs.right+=sampleValue*prepared.panRight;
         outputs.mono+=sampleValue;
     }
 

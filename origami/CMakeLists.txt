@@ -61,6 +61,12 @@ if(ORIGAMI_BUILD_TESTS)
 endif()
 # mct-origami-vst3-host-proof-v1
 option(ORIGAMI_BUILD_VST3 "Build the MCT Origami JUCE VST3 host proof" OFF)
+# mct-origami-audio-reengineer-p05.2-plugin-test-target-contract
+# Modern alias for the historical VST3-named switch, which now builds VST3, AU and Standalone.
+option(ORIGAMI_BUILD_PLUGIN "Build the MCT Origami JUCE plugin wrappers and plugin tests" OFF)
+if(ORIGAMI_BUILD_PLUGIN)
+  set(ORIGAMI_BUILD_VST3 ON)
+endif()
 set(JUCE_DIR "" CACHE PATH "Path to a JUCE checkout containing CMakeLists.txt")
 if(ORIGAMI_BUILD_VST3)
   if(NOT JUCE_DIR AND DEFINED ENV{JUCE_DIR})
@@ -137,8 +143,16 @@ if(ORIGAMI_BUILD_VST3)
     get_target_property(origami_plugin_definitions OrigamiPlugin COMPILE_DEFINITIONS)
     list(FILTER origami_plugin_definitions EXCLUDE REGEX "^JUCE_STANDALONE_APPLICATION=")
     target_compile_definitions(origami_plugin_tests PRIVATE ${origami_plugin_definitions})
+    # Patch 05/19: sanitizer builds leave allocator interception to ASan/UBSan.
+    if(ORIGAMI_SANITIZE)
+      target_compile_definitions(origami_plugin_tests PRIVATE ORIGAMI_SANITIZED=1)
+    endif()
     target_include_directories(origami_plugin_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/OrigamiPlugin_artefacts/JuceLibraryCode")
     target_link_libraries(origami_plugin_tests PRIVATE OrigamiPlugin origami_patch OrigamiAssets juce::juce_audio_utils juce::juce_gui_extra)
     add_test(NAME origami_plugin_ui COMMAND origami_plugin_tests)
+    add_custom_target(origami_plugin_rt_gate
+      COMMAND $<TARGET_FILE:origami_plugin_tests>
+      DEPENDS origami_plugin_tests
+      COMMENT "Running MCT Origami plugin realtime allocation gate")
   endif()
 endif()

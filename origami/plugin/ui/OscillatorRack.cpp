@@ -276,6 +276,12 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             slider->setMouseDragSensitivity(180);
         }
 
+        // mct-origami-audio-reengineer-p05.6-control-identity
+        levelSlider_.setName("OSC LEVEL");
+        unisonSlider_.setName("OSC UNISON");
+        detuneSlider_.setName("OSC DETUNE");
+        blendSlider_.setName("OSC BLEND");
+
         unisonSlider_.setRange(1.0, 16.0, 1.0);
         detuneSlider_.setRange(0.0, 100.0, 0.1);
         blendSlider_.setRange(0.0,1.0,0.001);
@@ -1190,7 +1196,10 @@ OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
     left_.setName("Scroll oscillators left");right_.setName("Scroll oscillators right");
     left_.onClick=[this]{viewport_.setViewPosition(juce::jmax(0,viewport_.getViewPositionX()-cardWidth_-8),0);};
     right_.onClick=[this]{viewport_.setViewPosition(viewport_.getViewPositionX()+cardWidth_+8,0);};
-    timerCallback();
+    // mct-origami-audio-reengineer-p05.4-initial-editor-model-sync
+    // Hidden timer polling stays suppressed, but construction requires one
+    // unconditional model -> card topology synchronization.
+    syncFromModel();
     // Model polling/animated overlays do not need audio-rate cadence.
     startTimerHz(12);
 }

@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p05.6-control-identity
+// mct-origami-audio-reengineer-p05-plugin-rt-allocation-gate
 // mct-origami-v24.0.6-plugin-audio-audit-pan-smoothing-repair
 // mct-origami-v24.0.5-plugin-audio-audit-smoothing-repair
 // mct-origami-v24.0.4-plugin-audio-audit-osc1-repair
@@ -9,9 +11,29 @@
 #include "core/preset/StateCodec.h"
 #include <iostream>
 #include <stdexcept>
+#include <atomic>
+#include <cstdlib>
+#include <new>
 #include <array>
 #include <cmath>
 using namespace mct::origami;
+namespace {
+std::atomic<bool> pluginGuardAllocations{false};
+std::atomic<unsigned> pluginAllocations{0};
+}
+#ifndef ORIGAMI_SANITIZED
+void* operator new(std::size_t size) {
+    if(pluginGuardAllocations.load(std::memory_order_relaxed))
+        pluginAllocations.fetch_add(1,std::memory_order_relaxed);
+    if(void* p=std::malloc(size?size:1)) return p;
+    throw std::bad_alloc();
+}
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void operator delete(void* p) noexcept { std::free(p); }
+void operator delete[](void* p) noexcept { std::free(p); }
+void operator delete(void* p,std::size_t) noexcept { std::free(p); }
+void operator delete[](void* p,std::size_t) noexcept { std::free(p); }
+#endif
 namespace {
 unsigned checks=0;
 void check(bool b,const char* label){++checks;if(!b) throw std::runtime_error(label);}
@@ -177,7 +199,63 @@ void playabilityAudit() {
     const auto oneAudio=renderNote(one),twoAudio=renderNote(two);
     check(std::abs(energy(oneAudio)-energy(twoAudio))>1.0e-6,"enabled OSC2 contributes to rendered sound");
 }
+// Patch 05/19: allocation regression gate around the actual AudioProcessor callback.
+void pluginRealtimeAllocationGate() {
+    OrigamiAudioProcessor p;
+    p.prepareToPlay(48000.0,512);
+
+    juce::AudioBuffer<float> audio64(2,64), audio17(2,17), audio128(2,128);
+    juce::AudioBuffer<float> audio1(2,1), audio93(2,93), audio0(2,0);
+    juce::AudioBuffer<float> audio512(2,512), audio11(2,11), audio768(2,768);
+    std::array<juce::AudioBuffer<float>*,10> audio{{
+        &audio64,&audio64,&audio17,&audio128,&audio1,
+        &audio93,&audio0,&audio512,&audio11,&audio768
+    }};
+    std::array<juce::MidiBuffer,10> midi;
+    for(std::size_t b=0;b<midi.size();++b) {
+        midi[b].ensureSize(64u*1024u);
+        const int n=audio[b]->getNumSamples();
+        if(n>0) {
+            const int last=n-1;
+            const int note=48+int(b%12);
+            midi[b].addEvent(juce::MidiMessage::noteOn(1,note,0.7f),0);
+            midi[b].addEvent(juce::MidiMessage::pitchWheel(1,8192+int(b)*97),last/3);
+            midi[b].addEvent(juce::MidiMessage::controllerEvent(1,1,int((b*13)%128)),last/2);
+            midi[b].addEvent(juce::MidiMessage::channelPressureChange(1,int((b*17)%128)),last/2);
+            midi[b].addEvent(juce::MidiMessage::noteOff(1,note),last);
+        }
+        audio[b]->clear();
+    }
+
+    juce::AudioBuffer<float> warm(2,512); warm.clear();
+    juce::MidiBuffer warmMidi; warmMidi.ensureSize(64u*1024u);
+    warmMidi.addEvent(juce::MidiMessage::noteOn(1,60,0.8f),0);
+    p.processBlock(warm,warmMidi);
+    warmMidi.clear();
+    warmMidi.addEvent(juce::MidiMessage::noteOff(1,60),0);
+    p.processBlock(warm,warmMidi);
+
+#ifndef ORIGAMI_SANITIZED
+    pluginAllocations.store(0,std::memory_order_relaxed);
+    pluginGuardAllocations.store(true,std::memory_order_release);
+#endif
+    for(std::size_t b=0;b<audio.size();++b)
+        p.processBlock(*audio[b],midi[b]);
+#ifndef ORIGAMI_SANITIZED
+    pluginGuardAllocations.store(false,std::memory_order_release);
+    check(pluginAllocations.load(std::memory_order_relaxed)==0,
+          "AudioProcessor::processBlock wrapper allocates no heap");
+#endif
+
+    for(const auto* block:audio)
+        for(int ch=0;ch<block->getNumChannels();++ch)
+            for(int i=0;i<block->getNumSamples();++i)
+                check(std::isfinite(block->getSample(ch,i)),
+                      "plugin realtime stress output remains finite");
+}
+
 void run() {
+    pluginRealtimeAllocationGate();
     // V24.0.3: the comprehensive processor/keyboard audio audit existed since
     // V23.2 but was never invoked by run(), so plugin builds could regress to
     // silence while the test executable still passed.
@@ -211,7 +289,36 @@ void run() {
             check(encodeInstrumentState(p.getUiInstrumentState())==encodeInstrumentState(state),"rack slider policy overrides wheel flag");
         }
     }
-    check(sliders==32,"all eight live controls on all four oscillators audited");
+    // mct-origami-audio-reengineer-p05.5-semantic-control-audit
+    // Keep behavioral coverage for every discovered RackSlider, but verify the
+    // required baseline controls semantically rather than freezing the UI at
+    // exactly 32 descendants forever.
+    for(unsigned osc=1;osc<=4;++osc) {
+        ui::OscillatorCard* card=nullptr;
+        walk(r,[&](auto& component) {
+            if(auto* candidate=dynamic_cast<ui::OscillatorCard*>(&component))
+                if(candidate->id()==osc) card=candidate;
+        });
+        check(card!=nullptr,"oscillator card present for baseline control audit");
+        const std::array<juce::String,8> requiredNames{{
+            "OSC PAN","OSC LEVEL","OSC TUNING OCT","OSC TUNING SEM",
+            "OSC TUNING FIN","OSC UNISON","OSC DETUNE","OSC BLEND"
+        }};
+        std::array<unsigned,8> matches{};
+        walk(*card,[&](auto& component) {
+            if(auto* slider=dynamic_cast<ui::RackSlider*>(&component)) {
+                for(std::size_t i=0;i<requiredNames.size();++i)
+                    if(slider->getName()==requiredNames[i]) ++matches[i];
+            }
+        });
+        for(std::size_t i=0;i<requiredNames.size();++i) {
+            if(matches[i]!=1)
+                std::cerr<<"OSC "<<osc<<" control identity "<<requiredNames[i]
+                         <<" count="<<matches[i]<<"\n";
+            check(matches[i]==1,"baseline oscillator control identity present exactly once");
+        }
+    }
+    check(sliders>=32,"at least the baseline live oscillator controls were behaviorally audited");
     viewport.setViewPosition(0,0);
     // Compare parent-only painting with child painting. The live rotary bounds must
     // contain only panel background beneath the actual child slider.
@@ -222,16 +329,47 @@ void run() {
     for(auto* c:first->getChildren()) if(auto* s=dynamic_cast<ui::RackSlider*>(c)) {
         if(s->isRotary()) liveBounds.push_back(s->getBounds());
     }
-    std::vector<juce::Component*> visible;
-    for(auto* c:first->getChildren()) if(c->isVisible()) {visible.push_back(c);c->setVisible(false);}
-    const auto parent=first->createComponentSnapshot(first->getLocalBounds());
-    for(auto bounds:liveBounds) {
-        bool clean=true;
-        for(int y=bounds.getY();y<bounds.getBottom();++y) for(int x=bounds.getX();x<bounds.getRight();++x)
-            clean=clean && parent.getPixelAt(x,y)==ui::Palette::panel();
-        check(clean,"no static dial beneath any live rotary");
+    // mct-origami-audio-reengineer-p05.7-static-dial-gate
+    // Paint only the OscillatorCard parent. Neutral OEM hierarchy shading/wells
+    // are legitimate beneath child controls, so exact Palette::panel() equality
+    // is not a valid proxy for duplicate static knob artwork.
+    juce::Image parentOnly(juce::Image::ARGB,first->getWidth(),first->getHeight(),true);
+    {
+        juce::Graphics parentGraphics(parentOnly);
+        first->paint(parentGraphics);
     }
-    for(auto* c:visible) c->setVisible(true);
+
+    for(auto bounds:liveBounds) {
+        const auto clipped=bounds.getIntersection(first->getLocalBounds()).reduced(3);
+        if(clipped.getWidth()<8 || clipped.getHeight()<8) continue;
+
+        const int cx=clipped.getCentreX(), cy=clipped.getCentreY();
+        const int radius=juce::jmax(3,juce::jmin(clipped.getWidth(),clipped.getHeight())/2-2);
+        int radialPairs=0, matchingPairs=0, contrastSamples=0;
+        auto dist=[](juce::Colour a,juce::Colour b) {
+            return std::abs(int(a.getRed())-int(b.getRed()))+
+                   std::abs(int(a.getGreen())-int(b.getGreen()))+
+                   std::abs(int(a.getBlue())-int(b.getBlue()));
+        };
+        const auto centre=parentOnly.getPixelAt(cx,cy);
+        for(int d=2;d<=radius;++d) {
+            const auto l=parentOnly.getPixelAt(cx-d,cy);
+            const auto r=parentOnly.getPixelAt(cx+d,cy);
+            const auto u=parentOnly.getPixelAt(cx,cy-d);
+            const auto dn=parentOnly.getPixelAt(cx,cy+d);
+            ++radialPairs;
+            if(dist(l,r)<12 && dist(u,dn)<12) ++matchingPairs;
+            if(dist(l,centre)>42 || dist(r,centre)>42 ||
+               dist(u,centre)>42 || dist(dn,centre)>42) ++contrastSamples;
+        }
+        const bool suspiciousDial =
+            radialPairs>4 &&
+            matchingPairs*100/radialPairs>=80 &&
+            contrastSamples*100/radialPairs>=45;
+        if(suspiciousDial)
+            std::cerr<<"static-dial suspicion at "<<bounds.toString()<<"\n";
+        check(!suspiciousDial,"no static dial beneath any live rotary");
+    }
     const auto screenshot=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.5f);
     juce::FileOutputStream output(juce::File("/tmp/origami-audit-ui.png"));juce::PNGImageFormat{}.writeImageToStream(screenshot,output);
     const auto initial=encodeInstrumentState(p.getUiInstrumentState());

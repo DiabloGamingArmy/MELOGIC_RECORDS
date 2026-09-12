@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p09-lightweight-voice-steal
+// mct-origami-audio-reengineer-p06.3-local-source
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v28.0.0-interactive-envelope-editor
 // mct-origami-modulation-completion-v24.0.1
@@ -43,6 +45,9 @@ public:
     // Replaces output, planar mono/stereo. Buffers must be distinct and valid for
     // sampleCount. Any block length is supported; zero frames is a harmless no-op.
     bool process(float* const* output, unsigned channels, std::size_t sampleCount) noexcept;
+    bool beginHostBlock(unsigned channels) noexcept;
+    bool processSpan(float* const* output, unsigned channels, std::size_t sampleCount) noexcept;
+    void endHostBlock() noexcept;
     VoiceInfo voiceInfo(std::size_t index) const noexcept;
     std::size_t activeVoiceCount() const noexcept;
     // mct-origami-multi-osc-foundation-v20
@@ -77,8 +82,18 @@ private:
     OscillatorModuleBank oscillatorModules_;
     std::array<std::atomic<float>, parameterCount> targets_;
     std::array<Smoothed, parameterCount> smooth_ {};
-    std::array<Voice, voiceCount> voices_, stealTails_;
-    std::array<std::size_t, voiceCount> tailRemaining_ {};
+    std::array<OscillatorModuleState, OscillatorModuleBank::capacity> hostModules_ {};
+    double hostNormalization_ = 1.0;
+    float hostBendRange_ = 2.0f;
+    unsigned hostChannels_ = 0;
+    bool hostBlockActive_ = false;
+    std::array<Voice, voiceCount> voices_;
+    // Patch 09/19: voice stealing must not clone and double-render a complete
+    // wavetable/modulation/filter Voice at the exact moment polyphony is saturated.
+    // Preserve click-free continuity with a tiny residual sample tail instead.
+    std::array<Voice::Samples, voiceCount> lastVoiceSamples_{};
+    std::array<Voice::Samples, voiceCount> stealResidual_{};
+    std::array<std::size_t, voiceCount> tailRemaining_{};
     dsp::Wavetable wavetable_;
     double sampleRate_ = 48000;
     unsigned outputChannels_ = 2;

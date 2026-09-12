@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p10-persistent-preallocated-midi
+// mct-origami-audio-reengineer-p06.3-local-source
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
 // mct-origami-v25.3.0-arp-performance-expansion
@@ -9,6 +11,8 @@
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-playable-keyboard-audio-v23.1
 #include "PluginProcessor.h"
+// mct-origami-audio-reengineer-p04-ui-telemetry-decimation
+// mct-origami-audio-reengineer-p03-midi-preallocation
 #include "PluginEditor.h"
 #include <array>
 #include <algorithm>
@@ -22,7 +26,13 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
 }
 void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     sampleRate_=sampleRate>1.0?sampleRate:44100.0;
+    envUiSamplesUntilPublish_=0;
     prepared_ = engine_.prepare(sampleRate_, static_cast<std::size_t>(juce::jmax(1, samplesPerBlock)), 2u);
+    // Patch 03/19: commit scheduler storage before realtime rendering begins.
+    inputMidiScratch_.clear();
+    scheduledMidiScratch_.clear();
+    inputMidiScratch_.ensureSize(midiScratchBytes_);
+    scheduledMidiScratch_.ensureSize(midiScratchBytes_);
     resetArpeggiatorRuntime(false);
 }
 bool OrigamiAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const {
@@ -32,9 +42,10 @@ bool OrigamiAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) c
 void OrigamiAudioProcessor::renderRange(juce::AudioBuffer<float>& buffer, int start, int count) noexcept {
     if (count <= 0) return;
     std::array<float*, 2> channels { buffer.getWritePointer(0, start), buffer.getWritePointer(1, start) };
-    if (!prepared_ || !engine_.process(channels.data(), 2u, static_cast<std::size_t>(count)))
+    if (!prepared_ || !engine_.processSpan(channels.data(), 2u, static_cast<std::size_t>(count)))
         buffer.clear(start, count);
-    publishEnvelopeUiSnapshot();
+    // Patch 04/19: DSP span only. UI telemetry is published at a bounded
+    // control rate from the host-block boundary below.
 }
 void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexcept {
     const auto channel = static_cast<std::uint8_t>(juce::jlimit(1, 16, message.getChannel()) - 1);
@@ -256,21 +267,26 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     jassert(buffer.getNumChannels() >= 2);
     const int total = buffer.getNumSamples();
 
-    // V23.3: UI wheels enter the same engine MIDI dispatch contract as host events.
+    // Patch 03/19: reuse capacity-prepared MIDI workspaces. Do not grow/mutate
+    // the host wrapper's MIDI buffer with Origami-generated events.
+    auto& inputMidi=inputMidiScratch_;
+    auto& scheduled=scheduledMidiScratch_;
+    inputMidi.clear();
+    scheduled.clear();
+    inputMidi.addEvents(midi,0,-1,0);
+
     if(const int pitch=pendingUiPitch_.exchange(-1,std::memory_order_acq_rel);pitch>=0)
-        midi.addEvent(juce::MidiMessage::pitchWheel(1,pitch),0);
+        inputMidi.addEvent(juce::MidiMessage::pitchWheel(1,pitch),0);
     if(const int mod=pendingUiMod_.exchange(-1,std::memory_order_acq_rel);mod>=0)
-        midi.addEvent(juce::MidiMessage::controllerEvent(1,1,mod),0);
+        inputMidi.addEvent(juce::MidiMessage::controllerEvent(1,1,mod),0);
 
-    // V23.1: merge on-screen keyboard events into the host MIDI buffer.
-    uiKeyboardState_.processNextMidiBuffer(midi,0,total,true);
+    uiKeyboardState_.processNextMidiBuffer(inputMidi,0,total,true);
 
-    juce::MidiBuffer scheduled;
     if(arpState_.enabled) {
         if(!arpWasEnabled_){resetArpeggiatorRuntime(true);arpWasEnabled_=true;}
         const double bpm=currentArpBpm();
         int schedulerCursor=0;
-        for(const auto metadata:midi) {
+        for(const auto metadata:inputMidi) {
             const int eventSample=juce::jlimit(schedulerCursor,total,metadata.samplePosition);
             advanceArpeggiator(scheduled,schedulerCursor,eventSample,bpm);
             const auto& message=metadata.getMessage();
@@ -281,17 +297,46 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         advanceArpeggiator(scheduled,schedulerCursor,total,bpm);
     } else {
         if(arpWasEnabled_){resetArpeggiatorRuntime(true);arpWasEnabled_=false;}
-        scheduled.swapWith(midi);
+        scheduled.addEvents(inputMidi,0,-1,0);
     }
 
-    int cursor=0;
-    for(const auto metadata:scheduled) {
-        const int eventSample=juce::jlimit(cursor,total,metadata.samplePosition);
-        renderRange(buffer,cursor,eventSample-cursor);
-        dispatchMidi(metadata.getMessage());
-        cursor=eventSample;
+    // mct-origami-audio-reengineer-p06.3-local-source
+    // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
+    if(!prepared_ || !engine_.beginHostBlock(2u)) {
+        buffer.clear();
+        return;
     }
-    renderRange(buffer,cursor,total-cursor);
+
+    const auto renderScheduled=[&](const juce::MidiBuffer& events) noexcept {
+        int cursor=0;
+        for(const auto metadata:events) {
+            const int eventSample=juce::jlimit(cursor,total,metadata.samplePosition);
+            renderRange(buffer,cursor,eventSample-cursor);
+            dispatchMidi(metadata.getMessage());
+            cursor=eventSample;
+        }
+        renderRange(buffer,cursor,total-cursor);
+    };
+    // Patch 10/19 FIX5: render the post-merge stream, not raw host MIDI.
+    // inputMidi contains host MIDI + UI pitch/mod + MidiKeyboardState notes.
+    // scheduled contains the transformed ARP output.
+    if(arpState_.enabled) renderScheduled(scheduled);
+    else renderScheduled(inputMidi);
+    engine_.endHostBlock();
+
+    // Patch 04/19: visualization telemetry is not sample-accurate DSP state.
+    // Decimate it to ~60 Hz and publish only at a host-block boundary. This
+    // prevents MIDI/ARP event density from multiplying voice scans + atomics.
+    envUiSamplesUntilPublish_-=static_cast<std::int64_t>(total);
+    if(envUiSamplesUntilPublish_<=0) {
+        publishEnvelopeUiSnapshot();
+        const auto interval=static_cast<std::int64_t>(
+            juce::jmax(1.0, sampleRate_/envelopeUiPublishHz_));
+        // Advance from the existing phase rather than resetting from zero, which
+        // keeps the average cadence stable across irregular host block sizes.
+        do envUiSamplesUntilPublish_+=interval;
+        while(envUiSamplesUntilPublish_<=0);
+    }
 }
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
     const juce::ScopedLock lock(stateLock_);

@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p09-lightweight-voice-steal
+// mct-origami-audio-reengineer-p06.3-local-source
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.0.0-matrix-routing-expansion
@@ -29,7 +31,6 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);
-    for (auto& voice : stealTails_) voice.prepare(sampleRate);
     prepared_ = true; reset(); return true;
 }
 bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
@@ -46,7 +47,8 @@ void OrigamiEngine::reset() noexcept {
     compiledModulation_.compile(audioModulation_,resetModules,true);
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) voice.reset();
-    for (auto& voice : stealTails_) voice.reset();
+    lastVoiceSamples_.fill({});
+    stealResidual_.fill({});
     tailRemaining_.fill(0); order_ = 0; clearHeldNotes();
     pitchBendNormalized_.fill(0.0f);modWheel_.fill(0.0f);aftertouch_.fill(0.0f);
     for (std::size_t i = 0; i < parameterCount; ++i) { const float v = targets_[i].load(std::memory_order_relaxed); smooth_[i] = {v,v,0,0}; }
@@ -168,7 +170,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
            info.address.note==note && info.address.channel==channel &&
            (!noteId || !info.address.noteId || info.address.noteId==noteId)) {
             chosen=i;
-            stealTails_[chosen]=voices_[chosen];
+            stealResidual_[chosen]=lastVoiceSamples_[chosen];
             tailRemaining_[chosen]=stealFadeSamples_;
             break;
         }
@@ -182,7 +184,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
             const auto candidate=voices_[i].info(),best=voices_[chosen].info();
             if((candidate.releasing && !best.releasing) || (candidate.releasing && best.releasing && candidate.envelope<best.envelope) || (candidate.releasing==best.releasing && (!candidate.releasing || candidate.envelope==best.envelope) && candidate.order<best.order)) chosen=i;
         }
-        stealTails_[chosen]=voices_[chosen];tailRemaining_[chosen]=stealFadeSamples_;
+        stealResidual_[chosen]=lastVoiceSamples_[chosen];tailRemaining_[chosen]=stealFadeSamples_;
     }
     voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));return true;
 }
@@ -231,7 +233,8 @@ bool OrigamiEngine::setPerformanceState(const PerformanceState& state) noexcept 
     if(modeChanged) {
         clearHeldNotes();
         for(auto& voice:voices_) voice.reset();
-        for(auto& voice:stealTails_) voice.reset();
+        lastVoiceSamples_.fill({});
+        stealResidual_.fill({});
         tailRemaining_.fill(0);
     }
     return true;
@@ -248,36 +251,51 @@ void OrigamiEngine::latchParameters() noexcept {
         else s.value = target;
     }
 }
+bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
+    if(hostBlockActive_ || !prepared_ || channels<1 || channels>2 || channels!=outputChannels_) return false;
+    latchParameters();
+    hostModules_=oscillatorModules_.snapshot();
+    const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
+    bool moduleTopologyChanged=false;
+    for(std::size_t i=0;i<hostModules_.size();++i) {
+        if(compiledModuleIds_[i]!=hostModules_[i].id) {
+            moduleTopologyChanged=true;
+            compiledModuleIds_[i]=hostModules_[i].id;
+        }
+    }
+    if(modulationChanged || moduleTopologyChanged)
+        compiledModulation_.compile(audioModulation_,hostModules_);
+    std::size_t activeModules=0;
+    for(const auto& m:hostModules_) if(m.enabled) ++activeModules;
+    hostNormalization_=activeModules ? 1.0/static_cast<double>(activeModules) : 1.0;
+    hostBendRange_=pitchBendRange();
+    hostChannels_=channels;
+    hostBlockActive_=true;
+    return true;
+}
+
+void OrigamiEngine::endHostBlock() noexcept {
+    hostBlockActive_=false;
+    hostChannels_=0;
+}
+
 bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t sampleCount) noexcept {
     if(!sampleCount) return true;
+    if(!beginHostBlock(channels)) return false;
+    const bool ok=processSpan(output,channels,sampleCount);
+    endHostBlock();
+    return ok;
+}
+
+bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size_t sampleCount) noexcept {
+    if(!sampleCount) return true;
+    if(!hostBlockActive_ || channels!=hostChannels_) return false;
     if(!output || channels<1 || channels>2) return false;
     for(unsigned c=0;c<channels;++c) if(!output[c]) return false;
     for(unsigned c=0;c<channels;++c) std::fill_n(output[c],sampleCount,0.f);
-    if(!prepared_ || channels!=outputChannels_) return false;
-
-    latchParameters();
-    auto modules=oscillatorModules_.snapshot();
-    const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
-
-    bool moduleTopologyChanged=false;
-    for(std::size_t i=0;i<modules.size();++i) {
-        if(compiledModuleIds_[i]!=modules[i].id) {
-            moduleTopologyChanged=true;
-            compiledModuleIds_[i]=modules[i].id;
-        }
-    }
-
-    // Compiling routes copies and resolves the complete Matrix graph. Previously
-    // this ran on every host block even when neither Matrix nor oscillator
-    // topology changed. Keep it strictly event-driven.
-    if(modulationChanged || moduleTopologyChanged)
-        compiledModulation_.compile(audioModulation_,modules);
-
-    std::size_t activeModules=0;
-    for(const auto& m:modules) if(m.enabled) ++activeModules;
-    const double normalization=activeModules
-        ? 1.0/static_cast<double>(activeModules) : 1.0;
-    const float bendRange=pitchBendRange();
+    auto modules=hostModules_;
+    const double normalization=hostNormalization_;
+    const float bendRange=hostBendRange_;
 
     for(std::size_t sample=0;sample<sampleCount;++sample) {
         for(auto& s:smooth_) if(s.remaining) {
@@ -341,22 +359,24 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
             auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
                                                 modWheel_[channel],aftertouch_[channel]);
-            Voice::Samples old{};
-            float oldWeight=0.0f;
+            lastVoiceSamples_[v]=fresh;
 
+            float oldWeight=0.0f;
+            Voice::Samples residual{};
             if(tailRemaining_[v]) {
-                oldWeight=static_cast<float>(tailRemaining_[v])/static_cast<float>(stealFadeSamples_);
-                const auto oldInfo=stealTails_[v].info();const auto oldChannel=std::min<std::size_t>(oldInfo.address.channel,15);
-                old=stealTails_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
-                                                pitchBendNormalized_[oldChannel]*bendRange,
-                                                pitchBendNormalized_[oldChannel],
-                                                modWheel_[oldChannel],aftertouch_[oldChannel]);
-                if(--tailRemaining_[v]==0) stealTails_[v].reset();
+                const float linear=static_cast<float>(tailRemaining_[v])/
+                                   static_cast<float>(stealFadeSamples_);
+                // A squared residual envelope drops the frozen boundary sample
+                // rapidly enough to avoid an audible DC-like tail, while the
+                // fresh voice receives the complementary ramp.
+                oldWeight=linear*linear;
+                residual=stealResidual_[v];
+                if(--tailRemaining_[v]==0) stealResidual_[v]={};
             }
 
-            left+=fresh.left*(1-oldWeight)+old.left*oldWeight;
-            right+=fresh.right*(1-oldWeight)+old.right*oldWeight;
-            mono+=fresh.mono*(1-oldWeight)+old.mono*oldWeight;
+            left+=fresh.left*(1.0f-oldWeight)+residual.left*oldWeight;
+            right+=fresh.right*(1.0f-oldWeight)+residual.right*oldWeight;
+            mono+=fresh.mono*(1.0f-oldWeight)+residual.mono*oldWeight;
         }
 
         const float master=static_cast<float>(normalization);
