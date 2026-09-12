@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p11-full-wrapper-rt-guard
 // mct-origami-audio-reengineer-p08-compiled-route-indices
 // mct-origami-audio-reengineer-p07-prepared-oscillator-modules
 // mct-origami-v31.0.0-matrix-routing-expansion
@@ -15,6 +16,8 @@
 #include "modulation/Modulation.h"
 #include <cstdint>
 #include <array>
+#include <bit>
+#include <cstdint>
 #include <cmath>
 #include <algorithm>
 namespace mct::origami {
@@ -85,9 +88,13 @@ private:
             const float l=std::isfinite(m.level)?std::clamp(m.level,0.0f,1.0f):0.0f;
             const float b=std::isfinite(m.blend)?std::clamp(m.blend,0.0f,1.0f):0.0f;
             const unsigned u=std::clamp(m.unison,1u,maxUnisonVoices);
-            const bool pitchChanged=!valid||id!=m.id||octave!=o||semitone!=s||fineCents!=f;
-            const bool detuneChanged=!valid||id!=m.id||unison!=u||detuneCents!=d;
-            const bool panChanged=!valid||id!=m.id||pan!=p;
+            // Patch 11/19: exact identity is intentional for cached sanitized controls.
+            const auto changed=[](float a,float b) noexcept {
+                return std::bit_cast<std::uint32_t>(a)!=std::bit_cast<std::uint32_t>(b);
+            };
+            const bool pitchChanged=!valid||id!=m.id||changed(octave,o)||changed(semitone,s)||changed(fineCents,f);
+            const bool detuneChanged=!valid||id!=m.id||unison!=u||changed(detuneCents,d);
+            const bool panChanged=!valid||id!=m.id||changed(pan,p);
             if(pitchChanged) pitchScale=std::exp2((double(o)*12.0+double(s)+double(f)/100.0)/12.0);
             if(detuneChanged) {
                 detuneRatios.fill(1.0);

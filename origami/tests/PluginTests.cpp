@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p11-full-wrapper-rt-guard
 // mct-origami-audio-reengineer-p05.6-control-identity
 // mct-origami-audio-reengineer-p05-plugin-rt-allocation-gate
 // mct-origami-v24.0.6-plugin-audio-audit-pan-smoothing-repair
@@ -252,6 +253,49 @@ void pluginRealtimeAllocationGate() {
             for(int i=0;i<block->getNumSamples();++i)
                 check(std::isfinite(block->getSample(ch,i)),
                       "plugin realtime stress output remains finite");
+
+    // Patch 11/19: adversarial whole-wrapper realtime pass.
+    OrigamiAudioProcessor stress;
+    stress.prepareToPlay(48000.0,128);
+    juce::AudioBuffer<float> stressAudio(2,1024);
+    std::array<juce::MidiBuffer,8> stressMidi;
+    for(auto& m:stressMidi) m.ensureSize(256u*1024u);
+    for(std::size_t b=0;b<stressMidi.size();++b) {
+        auto& m=stressMidi[b];
+        constexpr int n=1024;
+        for(int note=36;note<100;++note) {
+            const int pos=(note*13+int(b)*17)%n;
+            m.addEvent(juce::MidiMessage::noteOn(1,note,0.7f),pos);
+            m.addEvent(juce::MidiMessage::noteOff(1,note),(pos+511)%n);
+        }
+        for(int i=0;i<128;++i) {
+            const int pos=(i*7+int(b)*19)%n;
+            m.addEvent(juce::MidiMessage::controllerEvent(1,1,i),pos);
+            m.addEvent(juce::MidiMessage::pitchWheel(1,(8192+i*43)&16383),pos);
+            m.addEvent(juce::MidiMessage::channelPressureChange(1,i),pos);
+        }
+    }
+    stressAudio.clear(); stress.processBlock(stressAudio,stressMidi[0]);
+    stress.uiKeyboardState().noteOn(1,72,0.8f);
+    stressAudio.clear(); stress.processBlock(stressAudio,stressMidi[1]);
+    stress.uiKeyboardState().noteOff(1,72,0.0f);
+#ifndef ORIGAMI_SANITIZED
+    pluginAllocations.store(0,std::memory_order_relaxed);
+    pluginGuardAllocations.store(true,std::memory_order_release);
+#endif
+    for(int pass=0;pass<16;++pass) {
+        stressAudio.clear();
+        stress.processBlock(stressAudio,stressMidi[static_cast<std::size_t>(pass)%stressMidi.size()]);
+    }
+#ifndef ORIGAMI_SANITIZED
+    pluginGuardAllocations.store(false,std::memory_order_release);
+    check(pluginAllocations.load(std::memory_order_relaxed)==0,
+          "adversarial AudioProcessor::processBlock remains heap-allocation free");
+#endif
+    for(int ch=0;ch<stressAudio.getNumChannels();++ch)
+        for(int i=0;i<stressAudio.getNumSamples();++i)
+            check(std::isfinite(stressAudio.getSample(ch,i)),
+                  "adversarial realtime output remains finite");
 }
 
 void run() {
