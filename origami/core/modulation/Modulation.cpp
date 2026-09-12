@@ -8,6 +8,7 @@
 // mct-origami-v34.2.1-performance-reinforcement
 // mct-origami-v34.3.0-lfo-interaction-mod-properties
 #include "Modulation.h"
+#include "core/dsp/FastMath.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami {
@@ -132,14 +133,14 @@ float modulationToNormalized(ModDestination d,float value) noexcept {
 float modulationFromNormalized(ModDestination d,float value) noexcept {
     if(!std::isfinite(value)) value=0;
     value=std::clamp(value,0.f,1.f);const auto r=limits(d);
-    if(d==ModDestination::Cutoff) return r.lo*std::pow(r.hi/r.lo,value);
+    if(d==ModDestination::Cutoff) return r.lo*static_cast<float>(dsp::fastExp2Audio(static_cast<double>(value)*9.965784284662087));
     return r.lo+value*(r.hi-r.lo);
 }
 float Lfo::shape(LfoShape type,double phase) noexcept {
     if(!std::isfinite(phase)) return 0;
     phase-=std::floor(phase);
     switch(type) {
-        case LfoShape::Sine:return static_cast<float>(std::sin(phase*6.283185307179586));
+        case LfoShape::Sine:return static_cast<float>(dsp::fastSinCycle(phase));
         case LfoShape::Triangle:return static_cast<float>(1-4*std::abs(phase-.5));
         case LfoShape::Saw:return static_cast<float>(2*phase-1);
         case LfoShape::Square:return phase<.5?1.f:-1.f;
@@ -161,8 +162,8 @@ float Lfo::mseg(const LfoSettings& s,double phase) noexcept {
     const auto& b=s.points[hi];
     float t=std::clamp((x-a.x)/std::max(0.0001f,b.x-a.x),0.0f,1.0f);
     const float cv=std::clamp(b.curve,-1.0f,1.0f);
-    if(cv>0.0f) t=std::pow(t,1.0f+cv*4.0f);
-    else if(cv<0.0f) t=1.0f-std::pow(1.0f-t,1.0f+(-cv)*4.0f);
+    if(cv>0.0f) t=static_cast<float>(dsp::fastPow01(t,1.0f+cv*4.0f));
+    else if(cv<0.0f) t=1.0f-static_cast<float>(dsp::fastPow01(1.0f-t,1.0f+(-cv)*4.0f));
     return std::clamp(a.y+(b.y-a.y)*t,-1.0f,1.0f);
 }
 
@@ -239,8 +240,8 @@ float RandomGenerator::next(const RandomSettings& s,double sampleRate) noexcept 
 float FunctionGenerator::shape(float curve,double phase) noexcept {
     phase-=std::floor(phase);
     const float raw=static_cast<float>(1.0-4.0*std::abs(phase-.5));
-    const float exponent=std::exp2(std::clamp(curve,-1.f,1.f)*2.0f);
-    return std::copysign(std::pow(std::abs(raw),exponent),raw);
+    const float exponent=static_cast<float>(dsp::fastExp2Audio(std::clamp(curve,-1.f,1.f)*2.0f));
+    return std::copysign(static_cast<float>(dsp::fastPow01(std::abs(raw),exponent)),raw);
 }
 float FunctionGenerator::next(const FunctionSettings& s,double sampleRate) noexcept {
     const float out=shape(s.curve,phase_);
@@ -260,7 +261,7 @@ float ChaosGenerator::next(const ChaosSettings& s,double sampleRate) noexcept {
         x_=std::clamp(3.93f*x_*(1.0f-x_),0.0001f,0.9999f);
         target_=x_*2.0f-1.0f;
     }
-    const float alpha=static_cast<float>(1.0-std::exp(-(rate*7.0)/sampleRate));
+    const float alpha=dsp::fastOneMinusExpNeg((rate*7.0)/sampleRate);
     value_+=alpha*(target_-value_);
     return std::clamp(value_,-1.0f,1.0f);
 }
@@ -275,7 +276,7 @@ float DriftGenerator::next(const DriftSettings& s,double sampleRate) noexcept {
         x^=x<<13;x^=x>>17;x^=x<<5;state_=x;
         target_=static_cast<float>((x>>8)&0x00ffffffu)/16777215.0f*2.0f-1.0f;
     }
-    const float alpha=static_cast<float>(1.0-std::exp(-(rate*2.2)/sampleRate));
+    const float alpha=dsp::fastOneMinusExpNeg((rate*2.2)/sampleRate);
     value_+=alpha*(target_-value_);
     return std::clamp(value_,-1.0f,1.0f);
 }
@@ -380,6 +381,13 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
         case ModDestination::Route2Amount:m.route2Amount=v;break;
     }
 }
+void CompiledModulation::prepare(double sampleRate) noexcept {
+    filterTable_.prepare(sampleRate);
+    cachedFilterRate_=0.0;
+    cachedFilterCutoff_=-1.0f;
+    cachedFilterResonance_=-1.0f;
+    cachedFilter_={};
+}
 const dsp::LowPassCoefficients& CompiledModulation::globalFilter(
     double rate,float cutoff,float resonance) const noexcept {
     const float safeCutoff=std::isfinite(cutoff)?std::clamp(cutoff,20.0f,20000.0f):8000.0f;
@@ -387,7 +395,7 @@ const dsp::LowPassCoefficients& CompiledModulation::globalFilter(
     const float cutoffKey=std::round(safeCutoff*0.25f)*4.0f;
     const float resKey=std::round(safeRes*4096.0f)/4096.0f;
     if(rate!=cachedFilterRate_ || cutoffKey!=cachedFilterCutoff_ || resKey!=cachedFilterResonance_) {
-        cachedFilter_=dsp::LowPassCoefficients::make(rate,safeCutoff,safeRes);
+        cachedFilter_=filterTable_.make(safeCutoff,safeRes);
         cachedFilterRate_=rate;cachedFilterCutoff_=cutoffKey;cachedFilterResonance_=resKey;
     }
     return cachedFilter_;
@@ -430,6 +438,6 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
         }
         if(!std::isfinite(n)) n=0.0f;write(f,g,n);
     }
-    if(voiceFilter_) f.filter=dsp::LowPassCoefficients::make(rate,f.cutoff,f.resonance);
+    if(voiceFilter_) f.filter=filterTable_.make(f.cutoff,f.resonance);
 }
 }

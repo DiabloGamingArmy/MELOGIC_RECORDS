@@ -5,6 +5,8 @@
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "core/Engine.h"
+#include "core/dsp/FastMath.h"
+#include "core/dsp/Filter.h"
 #include "core/RealtimeThreadPolicy.h"
 #include "core/preset/Patch.h"
 #include <algorithm>
@@ -298,7 +300,95 @@ void oscillatorGenerationCoherenceAudit() {
           "consumer performs no work when no new oscillator generation exists");
 }
 
+void audioRateFastMathAudit() {
+    // Numerical accuracy: these are audio DSP approximations, not arbitrary
+    // "fast math" compiler flags.
+    double exp2Worst=0.0;
+    for(int i=0;i<=8000;++i) {
+        const double x=-4.0+8.0*static_cast<double>(i)/8000.0;
+        const double exact=std::exp2(x);
+        const double fast=dsp::fastExp2Audio(x);
+        exp2Worst=std::max(exp2Worst,std::abs(fast-exact)/exact);
+    }
+    check(exp2Worst<2.0e-6,"fast audio exp2 accuracy");
+
+    double sinWorst=0.0;
+    for(int i=0;i<=8192;++i) {
+        const double phase=static_cast<double>(i)/8192.0;
+        sinWorst=std::max(sinWorst,std::abs(
+            dsp::fastSinCycle(phase)-std::sin(phase*6.28318530717958647692)));
+    }
+    check(sinWorst<2.0e-6,"fast audio sine accuracy");
+
+    double powWorst=0.0;
+    for(int xi=1;xi<=1000;++xi) {
+        const double x=static_cast<double>(xi)/1000.0;
+        for(double exponent:{0.25,0.5,1.0,2.0,3.5,5.0,6.0})
+            powWorst=std::max(powWorst,std::abs(
+                dsp::fastPow01(x,exponent)-std::pow(x,exponent)));
+    }
+    check(powWorst<2.0e-6,"fast audio curve-power accuracy");
+
+    double foldWorst=0.0;
+    for(int i=-8000;i<=8000;++i) {
+        const double x=static_cast<double>(i)/1000.0;
+        const double exact=std::asin(std::sin(x*1.57079632679489661923))
+            *0.63661977236758134308;
+        foldWorst=std::max(foldWorst,std::abs(
+            static_cast<double>(dsp::triangleFold(static_cast<float>(x)))-exact));
+    }
+    check(foldWorst<2.0e-6,"triangle wavefold matches asin(sin()) transfer");
+
+    for(double rate:{44100.0,48000.0,96000.0}) {
+        dsp::LowPassCoefficientTable table;
+        table.prepare(rate);
+        check(table.prepared(),"filter coefficient table prepares off RT");
+        for(float cutoff:{20.0f,37.0f,440.0f,1000.0f,8000.0f,16000.0f,19500.0f})
+            for(float resonance:{0.0f,0.2f,0.7f,1.0f}) {
+                const auto fast=table.make(cutoff,resonance);
+                const auto exact=dsp::LowPassCoefficients::make(rate,cutoff,resonance);
+                check(std::abs(fast.g-exact.g)<1.0e-5,
+                      "prepared filter g matches exact tan coefficient");
+                check(std::abs(fast.a1-exact.a1)<1.0e-5,
+                      "prepared filter a1 matches exact coefficient");
+            }
+    }
+
+    const auto root=std::filesystem::path(__FILE__).parent_path().parent_path();
+    auto read=[](const std::filesystem::path& path) {
+        std::ifstream f(path);
+        return std::string(std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>());
+    };
+    const auto voice=read(root/"core/Voice.cpp");
+    const auto modulation=read(root/"core/modulation/Modulation.cpp");
+    const auto envelope=read(root/"core/dsp/Envelope.cpp");
+    const auto wavetable=read(root/"core/dsp/Wavetable.cpp");
+
+    const auto voiceStart=voice.find("Voice::Samples Voice::nextModules");
+    const auto voiceEnd=voice.find("VoiceInfo Voice::info",voiceStart);
+    const auto voiceBody=voice.substr(voiceStart,voiceEnd-voiceStart);
+    check(voiceBody.find("std::exp2")==std::string::npos,
+          "voice hot loop contains no std::exp2");
+    check(voiceBody.find("std::sin")==std::string::npos &&
+          voiceBody.find("std::asin")==std::string::npos,
+          "voice hot loop contains no trig wavefold");
+
+    const auto vf=modulation.find("void CompiledModulation::voiceFrame");
+    const auto vfEnd=modulation.find("\\n}",vf);
+    const auto voiceFrameBody=modulation.substr(vf,vfEnd-vf);
+    check(voiceFrameBody.find("LowPassCoefficients::make")==std::string::npos,
+          "voice filter modulation contains no realtime tan constructor");
+    check(envelope.find("std::pow(")==std::string::npos,
+          "envelope audio curve contains no std::pow");
+
+    const auto phaseStart=wavetable.find("double processOscillatorPhase");
+    const auto phaseEnd=wavetable.find("void renderProcessedFrame2048",phaseStart);
+    const auto phaseBody=wavetable.substr(phaseStart,phaseEnd-phaseStart);
+    check(phaseBody.find("std::pow(")==std::string::npos,
+          "oscillator phase processes contain no std::pow");
+}
 int main() {
+    audioRateFastMathAudit();
     oscillatorGenerationCoherenceAudit();
     spectralPreparationBoundaryAudit();
     realtimeThreadPolicyAudit();

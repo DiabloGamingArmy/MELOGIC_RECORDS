@@ -32,6 +32,7 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     dsp::prepareSpectralCompiler();
     modulationSmoothing_=static_cast<float>(1.0-std::exp(-1.0/(sampleRate*.005)));
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
+    compiledModulation_.prepare(sampleRate_);
     hostModules_=oscillatorModules_.snapshot();
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);

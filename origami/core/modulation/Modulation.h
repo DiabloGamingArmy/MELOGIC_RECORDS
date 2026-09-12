@@ -201,6 +201,7 @@ public:
     static constexpr std::size_t globalSourceCount=13;
     static constexpr std::size_t voiceSourceCount=13;
     static constexpr std::size_t sourceSlotCount=globalSourceCount+voiceSourceCount;
+    void prepare(double sampleRate) noexcept;
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
     void advance(float smoothing) noexcept;
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
@@ -229,9 +230,8 @@ private:
     bool filterEnabled_=true;
     bool smoothingActive_=false;
 
-    // Filter coefficient generation contains tan(). Cache the common global
-    // coefficient set so modulation of unrelated destinations does not pay
-    // transcendental filter setup every audio sample.
+    // P06: tan() is prepared into a fixed coefficient basis table off RT.
+    dsp::LowPassCoefficientTable filterTable_{};
     mutable double cachedFilterRate_=0.0;
     mutable float cachedFilterCutoff_=-1.0f,cachedFilterResonance_=-1.0f;
     mutable dsp::LowPassCoefficients cachedFilter_{};

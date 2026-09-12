@@ -12,6 +12,7 @@
 // mct-origami-pitch-mod-real-v23.3
 // mct-origami-v33.1.2-osc-blend-engine
 #include "Voice.h"
+#include "dsp/FastMath.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami {
@@ -61,6 +62,8 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
     const auto& modules=effective->modules;
     bool filtersQuiet=true;
+    // One bend ratio per voice/sample, not one exp2 per active oscillator module.
+    const double pitchBendScale=dsp::fastExp2Audio(static_cast<double>(pitchBendSemitones)/12.0);
 
     for(std::size_t m=0;m<modules.size();++m) {
         const auto& module=modules[m];
@@ -77,8 +80,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         auto& prepared=preparedModules_[m];
         prepared.update(module);
         prepared.compileRoutes(module,moduleIds_);
-        // Pitch bend stays exact/audio-rate; static module tuning is prepared.
-        const double pitchBendScale=std::exp2(static_cast<double>(pitchBendSemitones)/12.0);
+        // Pitch bend remains audio-rate; the ratio uses bounded fast exp2.
         const double frequencyScale=prepared.pitchScale*pitchBendScale;
         const unsigned count=prepared.unison;
         const float position=module.wtPosition;
@@ -103,7 +105,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                 case OscRouteType::FrequencyMod:
                     // FM: exponential audio-rate frequency modulation. Full
                     // amount spans approximately +/-24 semitones.
-                    routedFrequencyScale*=std::exp2(static_cast<double>(source*amount)*2.0);
+                    routedFrequencyScale*=dsp::fastExp2Audio(static_cast<double>(source*amount)*2.0);
                     break;
 
                 case OscRouteType::PhaseSkew:
@@ -188,9 +190,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                     // WF: source amplitude drives an audio-rate sine wavefolder.
                     // This is deliberately aggressive while remaining bounded.
                     const float drive=1.0f+std::abs(source)*depth*7.0f;
-                    const float folded=static_cast<float>(
-                        std::asin(std::sin(static_cast<double>(signal*drive)*1.5707963267948966))
-                        *0.6366197723675814);
+                    const float folded=dsp::triangleFold(signal*drive);
                     const float signedFold=amount>=0.0f ? folded : -folded;
                     return signal*(1.0f-depth)+signedFold*depth;
                 }

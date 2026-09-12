@@ -1,5 +1,6 @@
 // mct-origami-v28.0.0-interactive-envelope-editor
 #include "Envelope.h"
+#include "FastMath.h"
 #include <algorithm>
 #include <cmath>
 namespace mct::origami::dsp {
@@ -10,8 +11,8 @@ void Envelope::reset() noexcept {
 float Envelope::shape(float t,float c) noexcept {
     t=std::clamp(t,0.0f,1.0f);c=std::clamp(c,-1.0f,1.0f);
     if(std::abs(c)<1.0e-6f) return t;
-    if(c>0) return std::pow(t,1.0f+c*4.0f);
-    return 1.0f-std::pow(1.0f-t,1.0f+(-c)*4.0f);
+    if(c>0) return static_cast<float>(fastPow01(t,1.0f+c*4.0f));
+    return 1.0f-static_cast<float>(fastPow01(1.0f-t,1.0f+(-c)*4.0f));
 }
 void Envelope::segment(Stage stage,float target,float seconds,float curve) noexcept {
     stage_=stage;target_=target;startValue_=value_;curve_=std::clamp(curve,-1.0f,1.0f);

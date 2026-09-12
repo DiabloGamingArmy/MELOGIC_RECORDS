@@ -13,6 +13,7 @@
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-v34.2.1-performance-reinforcement
 #include "Wavetable.h"
+#include "FastMath.h"
 #include <algorithm>
 #include <cmath>
 #include <array>
@@ -447,11 +448,11 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
 
     switch(type) {
         case OscProcessType::BendPlus: {
-            const double shaped=std::pow(p,1.0+amount*4.0);
+            const double shaped=fastPow01(p,1.0+amount*4.0);
             return p+(shaped-p)*amount;
         }
         case OscProcessType::BendMinus: {
-            const double shaped=1.0-std::pow(1.0-p,1.0+amount*4.0);
+            const double shaped=1.0-fastPow01(1.0-p,1.0+amount*4.0);
             return p+(shaped-p)*amount;
         }
         case OscProcessType::BendBoth: {
@@ -463,8 +464,8 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
                 ? 1.0+magnitude*4.0
                 : 1.0/(1.0+magnitude*4.0);
             const double shaped=p<0.5
-                ? 0.5*std::pow(p*2.0,exponent)
-                : 1.0-0.5*std::pow((1.0-p)*2.0,exponent);
+                ? 0.5*fastPow01(p*2.0,exponent)
+                : 1.0-0.5*fastPow01((1.0-p)*2.0,exponent);
             return std::clamp(shaped,0.0,std::nextafter(1.0,0.0));
         }
         case OscProcessType::Sync: {
@@ -488,12 +489,12 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
         }
         case OscProcessType::Pinch: {
             const double x=p*2.0-1.0;
-            const double y=std::copysign(std::pow(std::abs(x),1.0+amount*5.0),x);
+            const double y=std::copysign(fastPow01(std::abs(x),1.0+amount*5.0),x);
             return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
         }
         case OscProcessType::Expand: {
             const double x=p*2.0-1.0;
-            const double y=std::copysign(std::pow(std::abs(x),1.0/(1.0+amount*4.0)),x);
+            const double y=std::copysign(fastPow01(std::abs(x),1.0/(1.0+amount*4.0)),x);
             return std::clamp(y*0.5+0.5,0.0,std::nextafter(1.0,0.0));
         }
         case OscProcessType::CenterPull:
