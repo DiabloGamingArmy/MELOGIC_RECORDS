@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-deep-audit-p01-no-rt-spectral-build
 // mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p09-lightweight-voice-steal
@@ -144,6 +145,26 @@ const OrigamiEngine::HeldNote* OrigamiEngine::selectedMonoHeld() const noexcept 
     }
     return selected;
 }
+std::size_t OrigamiEngine::selectVoiceStealCandidate() const noexcept {
+    std::size_t chosen=voiceCount;
+    for(std::size_t i=0;i<voiceCount;++i) {
+        const auto candidate=voices_[i].info();
+        if(!candidate.active) continue;
+        if(chosen==voiceCount) { chosen=i; continue; }
+        const auto best=voices_[chosen].info();
+        if((candidate.releasing && !best.releasing)
+           || (candidate.releasing && best.releasing && candidate.envelope<best.envelope)
+           || (candidate.releasing==best.releasing
+               && (!candidate.releasing || candidate.envelope==best.envelope)
+               && candidate.order<best.order))
+            chosen=i;
+    }
+    return chosen;
+}
+
+void OrigamiEngine::setVoiceAdmissionCeiling(std::size_t ceiling) noexcept {
+    voiceAdmissionCeiling_=std::clamp<std::size_t>(ceiling,1u,voiceCount);
+}
 bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uint32_t noteId) noexcept {
     if(!prepared_ || note<0 || note>127 || channel>15 || !std::isfinite(velocity)) return false;
     if(velocity<=0) {noteOff(note,channel,noteId);return true;}
@@ -181,16 +202,29 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
             break;
         }
     }
+
+    // Deep Audit P07: under measured Critical pressure, do not increase
+    // concurrent polyphonic work above the current admission ceiling. Preserve
+    // responsiveness by replacing the normal steal candidate instead of
+    // dropping the incoming MIDI note. Existing sounding voices are not killed
+    // merely because the ceiling changed.
+    if(chosen==voiceCount && activeVoiceCount()>=voiceAdmissionCeiling_) {
+        chosen=selectVoiceStealCandidate();
+        if(chosen<voiceCount) {
+            stealResidual_[chosen]=lastVoiceSamples_[chosen];
+            tailRemaining_[chosen]=stealFadeSamples_;
+        }
+    }
+
     if(chosen==voiceCount)
         for(std::size_t i=0;i<voiceCount;++i)
             if(!voices_[i].info().active) {chosen=i;break;}
+
     if(chosen==voiceCount) {
-        chosen=0;
-        for(std::size_t i=1;i<voiceCount;++i) {
-            const auto candidate=voices_[i].info(),best=voices_[chosen].info();
-            if((candidate.releasing && !best.releasing) || (candidate.releasing && best.releasing && candidate.envelope<best.envelope) || (candidate.releasing==best.releasing && (!candidate.releasing || candidate.envelope==best.envelope) && candidate.order<best.order)) chosen=i;
-        }
-        stealResidual_[chosen]=lastVoiceSamples_[chosen];tailRemaining_[chosen]=stealFadeSamples_;
+        chosen=selectVoiceStealCandidate();
+        if(chosen==voiceCount) return false;
+        stealResidual_[chosen]=lastVoiceSamples_[chosen];
+        tailRemaining_[chosen]=stealFadeSamples_;
     }
     voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));return true;
 }

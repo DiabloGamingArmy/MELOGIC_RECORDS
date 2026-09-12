@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-deep-audit-p03-fix2-canonical-state-repair
 // mct-origami-deep-audit-p03-canonical-state
 // mct-origami-deep-audit-p02-lockfree-ui-midi
@@ -202,6 +203,7 @@ void OrigamiAudioProcessor::finalizeRenderBudget(std::int64_t startTicks,
     qosModules_.store(snapshot.load.activeModules,std::memory_order_relaxed);
     qosUnison_.store(snapshot.load.totalUnison,std::memory_order_relaxed);
     qosOscEvals_.store(snapshot.load.oscillatorEvaluationsPerSample,std::memory_order_relaxed);
+    qosVoiceCeiling_.store(snapshot.voiceAdmissionCeiling,std::memory_order_relaxed);
     qosDeadlineMisses_.store(snapshot.deadlineMisses,std::memory_order_release);
 }
 
@@ -399,6 +401,12 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     }
     if(pendingClearArpLatch_.exchange(false,std::memory_order_acq_rel))
         resetArpeggiatorRuntime(true);
+
+    // Deep Audit P07: enforce the PREVIOUS completed callback's admission
+    // decision for this callback. This avoids self-referential timing and makes
+    // the policy deterministic at a host-block boundary.
+    engine_.setVoiceAdmissionCeiling(
+        static_cast<std::size_t>(renderBudget_.snapshot().voiceAdmissionCeiling));
 
     // Patch 13/19: sample host-owned playhead context exactly once per callback.
     float hostBpm=120.0f;
@@ -717,6 +725,7 @@ mct::origami::RenderBudgetSnapshot OrigamiAudioProcessor::getUiRenderBudgetSnaps
     snapshot.peakDeadlineFraction=qosPeak_.load(std::memory_order_relaxed);
     snapshot.headroomFraction=juce::jlimit(0.0f,1.0f,1.0f-snapshot.smoothedDeadlineFraction);
     snapshot.deadlineMisses=qosDeadlineMisses_.load(std::memory_order_acquire);
+    snapshot.voiceAdmissionCeiling=qosVoiceCeiling_.load(std::memory_order_relaxed);
 
     const auto rawLevel=qosLevel_.load(std::memory_order_relaxed);
     snapshot.level=rawLevel>=static_cast<std::uint32_t>(mct::origami::RenderQoSLevel::Critical)
@@ -728,6 +737,8 @@ mct::origami::RenderBudgetSnapshot OrigamiAudioProcessor::getUiRenderBudgetSnaps
     snapshot.reduceOptionalEffectQuality=(flags&(1u<<2))!=0;
     snapshot.restrictNewHighCostVoices=(flags&(1u<<3))!=0;
     snapshot.bypassNewestOptionalEffect=(flags&(1u<<4))!=0;
+    snapshot.voiceAdmissionActive=snapshot.restrictNewHighCostVoices
+        && snapshot.voiceAdmissionCeiling<mct::origami::GlobalRenderBudget::maximumSynthVoices;
     return snapshot;
 }
 

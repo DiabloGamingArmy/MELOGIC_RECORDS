@@ -52,6 +52,8 @@ public:
     VoiceInfo voiceInfo(std::size_t index) const noexcept;
     std::size_t activeVoiceCount() const noexcept;
     RenderLoad renderLoad() const noexcept;
+    void setVoiceAdmissionCeiling(std::size_t ceiling) noexcept;
+    std::size_t voiceAdmissionCeiling() const noexcept { return voiceAdmissionCeiling_; }
     // mct-origami-multi-osc-foundation-v20
     OscillatorModuleId addOscillatorModule() noexcept;
     bool removeOscillatorModule(OscillatorModuleId id) noexcept;
@@ -105,6 +107,7 @@ private:
     struct HeldNote { NoteAddress address{}; float velocity=0; std::uint64_t order=0; bool held=false; };
     bool sameAddress(const NoteAddress&,const NoteAddress&) const noexcept;
     const HeldNote* selectedMonoHeld() const noexcept;
+    std::size_t selectVoiceStealCandidate() const noexcept;
     void clearHeldNotes() noexcept;
     std::array<float,16> pitchBendNormalized_{};
     std::array<float,16> modWheel_{},aftertouch_{};
@@ -113,6 +116,9 @@ private:
     PerformanceState performance_{};
     std::array<HeldNote,128> heldNotes_{};
     std::size_t heldCount_=0;
+    // Deep Audit P07: this limits only future polyphonic admissions. Existing
+    // voices are never terminated when the ceiling drops.
+    std::size_t voiceAdmissionCeiling_=voiceCount;
     bool prepared_ = false;
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Origami requires lock-free float parameter targets");

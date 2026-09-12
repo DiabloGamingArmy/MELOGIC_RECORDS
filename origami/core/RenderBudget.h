@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-audio-reengineer-p17-global-qos-budget
 #pragma once
 
@@ -37,12 +38,24 @@ struct RenderBudgetSnapshot {
     bool reduceOptionalEffectQuality = false;
     bool restrictNewHighCostVoices = false;
     bool bypassNewestOptionalEffect = false;
+
+    // Deep Audit P07: actual synth admission control.
+    //
+    // The ceiling applies only to NEW polyphonic admissions. Existing sounding
+    // voices are never killed merely because QoS entered Critical. If the
+    // active count is already at/above this ceiling, a new articulation replaces
+    // one existing voice instead of increasing concurrent DSP work.
+    bool voiceAdmissionActive = false;
+    std::uint32_t voiceAdmissionCeiling = 16;
 };
 
 class GlobalRenderBudget {
 public:
+    static constexpr std::uint32_t maximumSynthVoices = 16;
+
     void reset() noexcept {
         snapshot_ = {};
+        snapshot_.voiceAdmissionCeiling = maximumSynthVoices;
         level_ = RenderQoSLevel::Nominal;
         overloadStreak_ = 0;
     }
@@ -51,7 +64,7 @@ public:
 
     const RenderBudgetSnapshot& observe(float callbackDeadlineFraction,
                                         RenderLoad load) noexcept {
-        float instant = std::isfinite(callbackDeadlineFraction)
+        const float instant = std::isfinite(callbackDeadlineFraction)
             ? std::clamp(callbackDeadlineFraction, 0.0f, 8.0f)
             : 1.0f;
 
@@ -88,12 +101,34 @@ public:
         snapshot_.peakDeadlineFraction = peak;
         snapshot_.headroomFraction = std::clamp(1.0f - smoothed, 0.0f, 1.0f);
 
+        // Ordered degradation. These flags are policy outputs; P07 makes the
+        // voice-admission stage enforceable instead of advisory.
         snapshot_.suppressVisualTelemetry = level_ != RenderQoSLevel::Nominal;
         snapshot_.reduceControlRate = level_ != RenderQoSLevel::Nominal;
         snapshot_.reduceOptionalEffectQuality = level_ == RenderQoSLevel::Critical;
         snapshot_.restrictNewHighCostVoices = level_ == RenderQoSLevel::Critical;
         snapshot_.bypassNewestOptionalEffect =
             level_ == RenderQoSLevel::Critical && overloadStreak_ >= 3u;
+
+        snapshot_.voiceAdmissionActive = false;
+        snapshot_.voiceAdmissionCeiling = maximumSynthVoices;
+
+        if (level_ == RenderQoSLevel::Critical && load.activeVoices > 0u) {
+            // This is deliberately measurement-derived, not a static "CPU cost
+            // point" score. Target approximately 55% callback occupancy before
+            // allowing concurrency to grow again. Existing voices keep sounding;
+            // only future admissions are constrained.
+            constexpr float targetFraction = 0.55f;
+            const float pressure = std::max({instant, smoothed, targetFraction});
+            const float ratio = std::clamp(targetFraction / pressure, 0.25f, 1.0f);
+            const auto proposed = static_cast<std::uint32_t>(
+                std::floor(static_cast<float>(load.activeVoices) * ratio));
+
+            snapshot_.voiceAdmissionActive = true;
+            snapshot_.voiceAdmissionCeiling = std::clamp(
+                std::min(load.activeVoices, std::max(1u, proposed)),
+                1u, maximumSynthVoices);
+        }
 
         return snapshot_;
     }

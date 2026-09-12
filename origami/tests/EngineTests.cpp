@@ -387,7 +387,41 @@ void audioRateFastMathAudit() {
     check(phaseBody.find("std::pow(")==std::string::npos,
           "oscillator phase processes contain no std::pow");
 }
+void qosVoiceAdmissionAudit() {
+    OrigamiEngine engine;
+    check(engine.prepare(48000.0,128,2),"QoS admission engine prepares");
+
+    engine.setVoiceAdmissionCeiling(4);
+    check(engine.voiceAdmissionCeiling()==4,
+          "engine accepts bounded QoS voice ceiling");
+
+    for(int note=60;note<64;++note)
+        check(engine.noteOn(note,0.8f,0,0),"initial QoS-limited voices admit");
+    check(engine.activeVoiceCount()==4,
+          "QoS ceiling permits initial voices up to ceiling");
+
+    // A fifth articulation must remain responsive, but it must replace one of
+    // those voices rather than increasing concurrent workload to five.
+    check(engine.noteOn(72,0.8f,0,0),
+          "QoS admission replaces a voice instead of dropping note-on");
+    check(engine.activeVoiceCount()==4,
+          "critical QoS admission prevents polyphony growth above ceiling");
+
+    bool foundNew=false;
+    for(std::size_t i=0;i<OrigamiEngine::voiceCount;++i) {
+        const auto info=engine.voiceInfo(i);
+        if(info.active && info.address.note==72) foundNew=true;
+    }
+    check(foundNew,"incoming note remains musically responsive under QoS admission");
+
+    engine.setVoiceAdmissionCeiling(16);
+    check(engine.noteOn(73,0.8f,0,0),"released QoS ceiling admits growth again");
+    check(engine.activeVoiceCount()==5,
+          "polyphony can grow again after QoS pressure clears");
+}
+
 int main() {
+    qosVoiceAdmissionAudit();
     audioRateFastMathAudit();
     oscillatorGenerationCoherenceAudit();
     spectralPreparationBoundaryAudit();

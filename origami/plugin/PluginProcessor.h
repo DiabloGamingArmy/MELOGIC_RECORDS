@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-deep-audit-p03-fix2-canonical-state-repair
 // mct-origami-deep-audit-p03-canonical-state
 // mct-origami-deep-audit-p02-lockfree-ui-midi
@@ -155,7 +156,7 @@ private:
     double highResolutionTicksPerSecond_=1.0;
     std::atomic<float> qosInstant_{0.0f},qosSmoothed_{0.0f},qosPeak_{0.0f};
     std::atomic<std::uint32_t> qosLevel_{0},qosFlags_{0};
-    std::atomic<std::uint32_t> qosVoices_{0},qosModules_{0},qosUnison_{0},qosOscEvals_{0};
+    std::atomic<std::uint32_t> qosVoices_{0},qosModules_{0},qosUnison_{0},qosOscEvals_{0},qosVoiceCeiling_{16};
     std::atomic<std::uint64_t> qosDeadlineMisses_{0};
 
     // UI telemetry is intentionally control-rate, not render-span-rate.

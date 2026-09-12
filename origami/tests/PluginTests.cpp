@@ -154,6 +154,11 @@ void renderBudgetPolicyAudit() {
     check(budget.snapshot().reduceOptionalEffectQuality
           && budget.snapshot().restrictNewHighCostVoices,
           "critical QoS exposes effect-quality and new-voice admission hooks");
+    check(budget.snapshot().voiceAdmissionActive,
+          "critical QoS actively enables synth voice admission control");
+    check(budget.snapshot().voiceAdmissionCeiling>=1
+          && budget.snapshot().voiceAdmissionCeiling<load.activeVoices,
+          "critical QoS derives a lower admission ceiling from measured pressure");
 
     const auto misses=budget.snapshot().deadlineMisses;
     budget.observe(1.05f,load);
@@ -184,6 +189,12 @@ void globalQosBoundaryAudit() {
           "engine exports synth load from the latched host-block topology");
     check(engine.contains("hostModules_"),
           "QoS load accounting reuses the existing host-block module snapshot");
+    check(engine.contains("voiceAdmissionCeiling_"),
+          "engine enforces measured QoS admission ceiling");
+    check(processor.contains("engine_.setVoiceAdmissionCeiling("),
+          "processor applies QoS admission policy at host-block boundary");
+    check(budget.contains("voiceAdmissionCeiling"),
+          "global budget emits enforceable synth admission policy");
     check(!budget.contains("sleep_for") && !budget.contains("mutex")
           && !budget.contains("operator new"),
           "QoS controller contains no wait/lock/heap operations");
