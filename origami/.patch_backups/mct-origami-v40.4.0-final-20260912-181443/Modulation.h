@@ -1,0 +1,284 @@
+// mct-origami-v40.3.1-sequence-expression
+// mct-origami-v40.2.0-sequence-transport
+// mct-origami-v39.2.1-sequence-ui-monitor
+// mct-origami-v32.1.1-extended-mod-sources-hotfix
+// mct-origami-v32.0.0-dynamic-mod-filter-collections
+// mct-origami-v31.0.0-matrix-routing-expansion
+// mct-origami-v28.0.0-interactive-envelope-editor
+// mct-origami-modulation-completion-v24
+// mct-origami-v34.0.0-random-lfo
+// mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
+// mct-origami-v34.2.1-performance-reinforcement
+// mct-origami-v34.3.0-lfo-interaction-mod-properties
+#pragma once
+#include "core/OscillatorModule.h"
+#include "core/dsp/Filter.h"
+#include "core/dsp/Envelope.h"
+#include <array>
+#include <atomic>
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+namespace mct::origami {
+
+enum class ModSource : std::uint32_t {
+    Env1=1, Env2=2, Env3=3,
+    Lfo1=101, Lfo2=102, Lfo3=103, Lfo4=104,
+    Macro1=201, Macro2=202, Macro3=203, Macro4=204,
+    ModWheel=301, Velocity=302, Keytrack=303, Aftertouch=304,
+    PitchBend=305, NoteGate=306,
+    Random=401, Function=501,
+    Chaos=601, Drift=602, Sequencer=603
+};
+enum class ModDestination : std::uint32_t {
+    Cutoff=1, Resonance=2, MasterGain=3,
+    WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107,
+    Process1Amount=108, Process2Amount=109, Route1Amount=110, Route2Amount=111
+};
+enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
+// Preserve serialized values: legacy NoteRetrigger (2) is now named Loop.
+enum class LfoMode : std::uint32_t { Free=1, Loop=2, Envelope=3 };
+
+struct LfoPoint { float x=0.0f,y=0.0f,curve=0.0f; };
+struct LfoSettings {
+    LfoShape shape=LfoShape::Sine;
+    LfoMode mode=LfoMode::Free;
+    float rateHz=1.0f;
+    std::array<LfoPoint,16> points{};
+    std::uint32_t pointCount=0;
+};
+struct RandomSettings {
+    float rateHz=2.0f;
+    // 0 = classic hard sample-and-hold, 1 = fully continuous glide to the
+    // next random target during the transition portion of each cycle.
+    float smoothing=0.0f;
+    // Fraction of each cycle held flat before the optional glide begins.
+    float hold=0.72f;
+    // Initial silence after generator reset, useful for delayed random motion.
+    float delaySeconds=0.0f;
+};
+struct FunctionSettings { float rateHz=1.0f; float curve=0.0f; };
+enum class ChaosAxis : std::uint32_t { X=1, Y=2, Z=3 };
+enum class ChaosMethod : std::uint32_t { Lorenz=1, Rossler=2, Thomas=3 };
+struct ChaosSettings {
+    float rateHz=8.0f;
+    float chaos=0.32f;
+    float flow=0.286f;
+    float damping=0.211f;
+    float warp=0.0f;
+    float smoothing=0.08f;
+    ChaosAxis axis=ChaosAxis::X;
+    ChaosMethod method=ChaosMethod::Lorenz;
+};
+struct DriftSettings { float rateHz=0.35f; };
+enum class SequenceDirection : std::uint32_t { Forward=1, Reverse=2, PingPong=3 };
+struct SequencerSettings {
+    float rateHz=4.0f;
+    std::array<float,8> steps{{-1.0f,-0.25f,0.65f,0.15f,1.0f,-0.55f,0.35f,0.0f}};
+    std::uint32_t activeSteps=8;
+    SequenceDirection direction=SequenceDirection::Forward;
+    bool loop=true;
+    std::array<float,8> probability{{1,1,1,1,1,1,1,1}};
+    std::array<std::uint32_t,8> ratchets{{1,1,1,1,1,1,1,1}};
+    float humanize=0.0f;
+};
+struct PerformanceSourcePoint { float x=0.0f,y=0.0f,curve=0.0f; };
+struct PerformanceSourceCurve {
+    std::array<PerformanceSourcePoint,16> points{{
+        {0.0f,0.0f,0.0f},{0.5f,0.5f,0.0f},{1.0f,1.0f,0.0f}
+    }};
+    std::uint32_t pointCount=3;
+};
+float performanceSourceCurveValue(const PerformanceSourceCurve&,float input) noexcept;
+
+struct ModAddress {
+    ModDestination parameter=ModDestination::Cutoff;
+    OscillatorModuleId oscillator=0;
+    bool operator==(const ModAddress& o) const noexcept {return parameter==o.parameter && oscillator==o.oscillator;}
+};
+struct ModRoute {
+    std::uint32_t id=0;
+    bool enabled=true;
+    ModSource source=ModSource::Lfo1;
+    ModAddress destination{};
+    float amount=0;
+    // False is the modern default. Signed generators are mapped from [-1,+1]
+    // into [0,1] before depth is applied. True restores centre-crossing motion.
+    bool bipolar=false;
+};
+struct ModulationState {
+    static constexpr std::size_t capacity=32;
+    LfoSettings lfo1{},lfo2{},lfo3{},lfo4{};
+    std::array<float,3> env1Curves{};
+    dsp::EnvelopeSettings env2{},env3{};
+    RandomSettings random{};
+    FunctionSettings function{};
+    ChaosSettings chaos{};
+    DriftSettings drift{};
+    SequencerSettings sequencer{};
+    PerformanceSourceCurve velocityCurve{},noteCurve{};
+    std::uint32_t performanceSourceActiveMask=0u; // bit0 Velocity, bit1 Note
+    std::array<float,4> macros{};
+    std::array<ModRoute,capacity> routes{};
+    std::uint32_t nextRouteId=1;
+
+    // V32 runtime collection state. Existing DSP storage remains bounded at
+    // 3 ENV / 4 LFO / 1 Filter while collection semantics come online.
+    std::uint32_t envActiveMask=0x7u;
+    std::uint32_t lfoActiveMask=0xFu;
+    // bit0 Function, bit1 Random, bit2 Chaos, bit3 Drift, bit4 Sequencer.
+    // ENV1 is the only source that cannot be removed.
+    std::uint32_t generatorActiveMask=0x1Fu;
+    bool filterEnabled=true;
+};
+
+const LfoSettings& lfoSettings(const ModulationState&,std::size_t index) noexcept;
+LfoSettings& lfoSettings(ModulationState&,std::size_t index) noexcept;
+
+bool isGlobalDestination(ModDestination) noexcept;
+bool validModulation(const ModulationState&,const std::array<OscillatorModuleState,16>&) noexcept;
+float modulationToNormalized(ModDestination,float) noexcept;
+float modulationFromNormalized(ModDestination,float) noexcept;
+
+class Lfo {
+public:
+    void reset() noexcept {phase_=0;}
+    float next(const LfoSettings&,double sampleRate) noexcept;
+    static float shape(LfoShape,double phase) noexcept;
+    static float mseg(const LfoSettings&,double phase) noexcept;
+    double phase() const noexcept { return phase_; }
+private: double phase_=0;
+};
+
+class RandomGenerator {
+public:
+    void reset() noexcept {
+        phase_=0;delayElapsed_=0;state_=0x6d2b79f5u;
+        current_=next_=value_=0;initialized_=false;
+    }
+    float next(const RandomSettings&,double sampleRate) noexcept;
+private:
+    float randomValue() noexcept;
+    double phase_=0;
+    double delayElapsed_=0;
+    std::uint32_t state_=0x6d2b79f5u;
+    float current_=0,next_=0,value_=0;
+    bool initialized_=false;
+};
+
+class FunctionGenerator {
+public:
+    void reset() noexcept {phase_=0;}
+    float next(const FunctionSettings&,double sampleRate) noexcept;
+    static float shape(float curve,double phase) noexcept;
+private: double phase_=0;
+};
+
+class ChaosGenerator {
+public:
+    void reset() noexcept {x_=0.11f;y_=0.0f;z_=0.0f;value_=0.0f;method_=ChaosMethod::Lorenz;}
+    float next(const ChaosSettings&,double sampleRate) noexcept;
+    float xNormalized() const noexcept;
+    float yNormalized() const noexcept;
+    float zNormalized() const noexcept;
+private:
+    void resetForMethod(ChaosMethod) noexcept;
+    void integrate(const ChaosSettings&,float dt) noexcept;
+    float x_=0.11f,y_=0.0f,z_=0.0f,value_=0.0f;
+    ChaosMethod method_=ChaosMethod::Lorenz;
+};
+
+class DriftGenerator {
+public:
+    void reset() noexcept {phase_=0;state_=0x9e3779b9u;target_=0;value_=0;}
+    float next(const DriftSettings&,double sampleRate) noexcept;
+private:
+    double phase_=0;
+    std::uint32_t state_=0x9e3779b9u;
+    float target_=0,value_=0;
+};
+
+class SequencerGenerator {
+public:
+    void reset() noexcept {phase_=0;step_=0;forward_=true;finished_=false;held_=0.0f;substep_=0;rng_=0x8f7011eeu;stepScale_=1.0;}
+    float next(const SequencerSettings&,double sampleRate) noexcept;
+    std::size_t currentStep() const noexcept { return step_; } // UI monitor inspection only
+private:
+    double phase_=0;
+    std::size_t step_=0;
+    bool forward_=true;
+    bool finished_=false;
+    float held_=0.0f;
+    std::uint32_t substep_=0;
+    std::uint32_t rng_=0x8f7011eeu;
+    double stepScale_=1.0;
+};
+
+template<class T> class LatestStateMailbox {
+public:
+    void publish(const T& state) noexcept {
+        slots_[back_]=state;
+        back_=middle_.exchange(back_|dirty,std::memory_order_acq_rel)&mask;
+    }
+    bool consume(T& state) noexcept {
+        if(!(middle_.load(std::memory_order_acquire)&dirty)) return false;
+        front_=middle_.exchange(front_,std::memory_order_acq_rel)&mask;
+        state=slots_[front_];return true;
+    }
+private:
+    static constexpr unsigned dirty=4,mask=3;
+    std::array<T,3> slots_{};
+    unsigned front_=0,back_=2;
+    std::atomic<unsigned> middle_{1};
+};
+
+struct ModulationFrame {
+    std::array<OscillatorModuleState,16> modules{};
+    float cutoff=8000,resonance=.1f,master=.2f;
+    dsp::LowPassCoefficients filter{};
+    bool filterEnabled=true;
+    std::array<float,ModulationState::capacity> normalized{};
+};
+
+class CompiledModulation {
+public:
+    static constexpr std::size_t globalSourceCount=13;
+    static constexpr std::size_t voiceSourceCount=13;
+    static constexpr std::size_t sourceSlotCount=globalSourceCount+voiceSourceCount;
+    void prepare(double sampleRate) noexcept;
+    void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
+    void advance(float smoothing) noexcept;
+    void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
+    void voiceFrame(ModulationFrame&,const std::array<float,voiceSourceCount>&,double sampleRate) const noexcept;
+    bool hasVoiceRoutes() const noexcept {return voiceCount_!=0;}
+    bool usesGlobalSource(std::size_t index) const noexcept {
+        return index<globalSourceCount && globalSourceUsed_[index];
+    }
+    std::size_t groupCount() const noexcept {return count_;}
+private:
+    struct Group {
+        ModAddress address{};std::size_t slot=0;
+        std::array<float,sourceSlotCount> weight{},target{};
+        std::array<bool,sourceSlotCount> bipolar{};
+        std::array<std::uint8_t,globalSourceCount> globalSlots{};
+        std::array<std::uint8_t,voiceSourceCount> voiceSlots{};
+        std::uint8_t globalSlotCount=0,voiceSlotCount=0;
+    };
+    static float read(const ModulationFrame&,const Group&) noexcept;
+    static void write(ModulationFrame&,const Group&,float normalized) noexcept;
+    std::array<Group,ModulationState::capacity> groups_{};
+    std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
+    std::array<bool,globalSourceCount> globalSourceUsed_{};
+    std::size_t count_=0,voiceCount_=0;
+    bool voiceFilter_=false;
+    bool filterEnabled_=true;
+    bool smoothingActive_=false;
+
+    // P06: tan() is prepared into a fixed coefficient basis table off RT.
+    dsp::LowPassCoefficientTable filterTable_{};
+    mutable double cachedFilterRate_=0.0;
+    mutable float cachedFilterCutoff_=-1.0f,cachedFilterResonance_=-1.0f;
+    mutable dsp::LowPassCoefficients cachedFilter_{};
+    const dsp::LowPassCoefficients& globalFilter(double,float,float) const noexcept;
+};
+}
