@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p15-state-io-suspension
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
 // mct-origami-audio-reengineer-p13-audioplayhead-boundary
@@ -111,7 +112,7 @@ void OrigamiAudioProcessor::resetArpeggiatorRuntime(bool silenceVoice) noexcept 
     arpStepRemaining_=0.0;arpGateRemaining_=-1.0;arpActiveNote_=-1;
     arpSequenceIndex_=0;arpBounceDirection_=1;arpStepParity_=false;arpOrderCount_=0;
     arpHeld_.fill(false);arpPhysicalHeld_.fill(false);arpVelocity_.fill(0.0f);arpChannel_.fill(1);
-    publishArpUiSnapshot();
+    arpUiDirty_.store(true,std::memory_order_release);
 }
 void OrigamiAudioProcessor::captureArpNote(const juce::MidiMessage& m,juce::MidiBuffer& out,int samplePosition) noexcept {
     const int note=juce::jlimit(0,127,m.getNoteNumber());
@@ -146,7 +147,7 @@ void OrigamiAudioProcessor::captureArpNote(const juce::MidiMessage& m,juce::Midi
             }
         }
     }
-    publishArpUiSnapshot();
+    arpUiDirty_.store(true,std::memory_order_release);
 }
 int OrigamiAudioProcessor::chooseArpNote() noexcept {
     std::array<int,512> sequence{};
@@ -212,7 +213,7 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
         if(arpGateRemaining_>=0.0 && arpGateRemaining_<=0.000001 && arpActiveNote_>=0) {
             out.addEvent(juce::MidiMessage::noteOff(arpActiveChannel_,arpActiveNote_),cursor);
             arpActiveNote_=-1;arpGateRemaining_=-1.0;
-            publishArpUiSnapshot();
+            arpUiDirty_.store(true,std::memory_order_release);
         }
         if(arpStepRemaining_<=0.000001) {
             if(arpActiveNote_>=0) {
@@ -241,7 +242,7 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
                     const int outputNote=juce::jlimit(0,127,chosen+arpState_.transposeSemitones);
                     arpActiveChannel_=source>=0?arpChannel_[static_cast<std::size_t>(source)]:1;
                     arpActiveNote_=outputNote;
-                    publishArpUiSnapshot();
+                    arpUiDirty_.store(true,std::memory_order_release);
                     out.addEvent(juce::MidiMessage::noteOn(arpActiveChannel_,outputNote,velocity),cursor);
                     arpGateRemaining_=juce::jmax(1.0,stepSamples*juce::jlimit(0.05,1.0,static_cast<double>(arpState_.gate)));
                 }
@@ -323,6 +324,7 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
     if(!prepared_ || !engine_.beginHostBlock(2u)) {
         buffer.clear();
+        if(arpUiDirty_.exchange(false,std::memory_order_acq_rel)) publishArpUiSnapshot();
         // Patch 12/19: telemetry is host-block bookkeeping, not DSP-span work.
         envUiSamplesUntilPublish_-=static_cast<std::int64_t>(total);
         if(envUiSamplesUntilPublish_<=0) {
@@ -349,6 +351,10 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     if(arpState_.enabled) renderScheduled(scheduled);
     else renderScheduled(inputMidi);
     engine_.endHostBlock();
+
+    // Patch 16/19: coalesce ARP visualization to one publication per host block.
+    if(arpUiDirty_.exchange(false,std::memory_order_acq_rel))
+        publishArpUiSnapshot();
 
     // Patch 04/19: visualization telemetry is not sample-accurate DSP state.
     // Decimate it to ~60 Hz and publish only at a host-block boundary. This

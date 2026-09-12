@@ -91,8 +91,8 @@ private:
             // canonicalized before comparison. Exact value comparison is the
             // intended dirty-state rule; spell it through std::equal_to so the
             // project remains C++17-compatible without -Wfloat-equal noise.
-            const auto changed=[](float a,float b) noexcept {
-                return !std::equal_to<float>{}(a,b);
+            const auto changed=[](float lhs,float rhs) noexcept {
+                return !std::equal_to<float>{}(lhs,rhs);
             };
             const bool pitchChanged=!valid||id!=m.id||changed(octave,o)||changed(semitone,s)||changed(fineCents,f);
             const bool detuneChanged=!valid||id!=m.id||unison!=u||changed(detuneCents,d);

@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
 // mct-origami-audio-reengineer-p13-audioplayhead-boundary
 // mct-origami-audio-reengineer-p10-persistent-preallocated-midi
@@ -116,6 +117,7 @@ private:
     std::uint32_t arpChanceRandomState_=0x9e3779b9u;
     std::atomic<int> arpUiActiveNote_{-1};
     std::atomic<std::uint64_t> arpUiHeldLow_{0},arpUiHeldHigh_{0};
+    std::atomic<bool> arpUiDirty_{true};
     std::atomic<bool> envUiActive_{false};
     std::atomic<std::uint64_t> envUiOrder_{0};
     std::array<std::atomic<std::uint32_t>,3> envUiStage_{};

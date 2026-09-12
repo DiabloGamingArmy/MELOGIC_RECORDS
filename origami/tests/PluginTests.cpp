@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p15-state-io-suspension
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
 // mct-origami-audio-reengineer-p13-audioplayhead-boundary
@@ -90,6 +91,20 @@ void disableExtraOscillators(OrigamiAudioProcessor& p) {
     for(unsigned id=2;id<=4;++id)
         p.setUiOscillatorEnabled(id,false);
 }
+void arpTelemetryBoundaryAudit() {
+    const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory().getChildFile("plugin/PluginProcessor.cpp");
+    const auto text=f.loadFileAsString();
+    check(text.isNotEmpty(),"PluginProcessor.cpp available for ARP telemetry audit");
+    const int capture=text.indexOf("void OrigamiAudioProcessor::captureArpNote");
+    const int process=text.indexOf("void OrigamiAudioProcessor::processBlock");
+    check(capture>=0 && process>capture,"ARP telemetry source bounds found");
+    check(!text.substring(capture,process).contains("publishArpUiSnapshot();"),"ARP event paths contain no direct UI publication");
+    const int state=text.indexOf(process,"void OrigamiAudioProcessor::getStateInformation");
+    const auto body=text.substring(process,state);
+    check(body.contains("arpUiDirty_.exchange("),"processBlock owns ARP telemetry coalescing");
+    check(body.contains("publishArpUiSnapshot();"),"processBlock publishes dirty ARP snapshot");
+}
+
 void stateIoBoundaryAudit() {
     const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory()
         .getChildFile("plugin/PluginProcessor.cpp");
@@ -378,6 +393,7 @@ void run() {
     // V24.0.3: the comprehensive processor/keyboard audio audit existed since
     // V23.2 but was never invoked by run(), so plugin builds could regress to
     // silence while the test executable still passed.
+    arpTelemetryBoundaryAudit();
     stateIoBoundaryAudit();
     callbackLockBoundaryAudit();
     playheadBoundaryAudit();

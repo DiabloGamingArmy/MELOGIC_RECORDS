@@ -812,7 +812,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     working.removeFromTop(2);
 
     const int controlsHeight=56;
-    auto controls=working.removeFromBottom(controlsHeight);
+    working.removeFromBottom(controlsHeight);
     working.removeFromBottom(4);
 
     auto upper=working;
