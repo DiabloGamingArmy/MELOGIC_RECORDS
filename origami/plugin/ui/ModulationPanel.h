@@ -120,9 +120,9 @@ private:
     juce::Label rateLabel_,curveLabel_;
     juce::Slider randomSmooth_,randomHold_,randomDelay_;
     juce::Label randomSmoothLabel_,randomHoldLabel_,randomDelayLabel_;
-    juce::Slider chaosAmount_,chaosFlow_,chaosDamping_;
-    juce::Label chaosAmountLabel_,chaosFlowLabel_,chaosDampingLabel_;
-    NativeComboBox chaosAxis_;
+    juce::Slider chaosAmount_,chaosFlow_,chaosDamping_,chaosWarp_,chaosSmooth_;
+    juce::Label chaosAmountLabel_,chaosFlowLabel_,chaosDampingLabel_,chaosWarpLabel_,chaosSmoothLabel_;
+    NativeComboBox chaosAxis_,chaosMethod_;
     NativeComboBox shape_,mode_;
     juce::ToggleButton lfoLoop_{"LOOP"};
     juce::TextButton lfoTools_{"TOOLS"};

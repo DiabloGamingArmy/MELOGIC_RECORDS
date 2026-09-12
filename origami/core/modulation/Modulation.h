@@ -56,12 +56,16 @@ struct RandomSettings {
 };
 struct FunctionSettings { float rateHz=1.0f; float curve=0.0f; };
 enum class ChaosAxis : std::uint32_t { X=1, Y=2, Z=3 };
+enum class ChaosMethod : std::uint32_t { Lorenz=1, Rossler=2, Thomas=3 };
 struct ChaosSettings {
-    float rateHz=1.25f;
+    float rateHz=8.0f;
     float chaos=0.32f;
     float flow=0.286f;
     float damping=0.211f;
+    float warp=0.0f;
+    float smoothing=0.08f;
     ChaosAxis axis=ChaosAxis::X;
+    ChaosMethod method=ChaosMethod::Lorenz;
 };
 struct DriftSettings { float rateHz=0.35f; };
 struct SequencerSettings {
@@ -162,13 +166,16 @@ private: double phase_=0;
 
 class ChaosGenerator {
 public:
-    void reset() noexcept {x_=0.11f;y_=0.0f;z_=0.0f;value_=0.0f;}
+    void reset() noexcept {x_=0.11f;y_=0.0f;z_=0.0f;value_=0.0f;method_=ChaosMethod::Lorenz;}
     float next(const ChaosSettings&,double sampleRate) noexcept;
-    float xNormalized() const noexcept {return std::clamp(x_/24.0f,-1.0f,1.0f);}
-    float yNormalized() const noexcept {return std::clamp(y_/32.0f,-1.0f,1.0f);}
-    float zNormalized() const noexcept {return std::clamp((z_-24.0f)/24.0f,-1.0f,1.0f);}
+    float xNormalized() const noexcept;
+    float yNormalized() const noexcept;
+    float zNormalized() const noexcept;
 private:
+    void resetForMethod(ChaosMethod) noexcept;
+    void integrate(const ChaosSettings&,float dt) noexcept;
     float x_=0.11f,y_=0.0f,z_=0.0f,value_=0.0f;
+    ChaosMethod method_=ChaosMethod::Lorenz;
 };
 
 class DriftGenerator {

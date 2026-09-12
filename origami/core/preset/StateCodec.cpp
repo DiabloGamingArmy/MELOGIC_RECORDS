@@ -33,7 +33,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(19);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(20);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -109,6 +109,8 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     // V19: Lorenz Chaos parameters. Rate remains in its original V12 field.
     w.real(mod.chaos.chaos);w.real(mod.chaos.flow);w.real(mod.chaos.damping);
     w.word(static_cast<std::uint32_t>(mod.chaos.axis));
+    w.word(static_cast<std::uint32_t>(mod.chaos.method));
+    w.real(mod.chaos.warp);w.real(mod.chaos.smoothing);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -116,7 +118,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>19) return false;
+    if(version<1 || version>20) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -244,6 +246,10 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         s.modulation.chaos.chaos=r.real();s.modulation.chaos.flow=r.real();
         s.modulation.chaos.damping=r.real();
         s.modulation.chaos.axis=static_cast<ChaosAxis>(r.word());
+    }
+    if(version>=20) {
+        s.modulation.chaos.method=static_cast<ChaosMethod>(r.word());
+        s.modulation.chaos.warp=r.real();s.modulation.chaos.smoothing=r.real();
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;

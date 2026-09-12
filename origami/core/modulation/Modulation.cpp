@@ -135,8 +135,11 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
        !range(s.function.rateHz,.01f,40.f) || !range(s.function.curve,-1.f,1.f) ||
        !range(s.chaos.rateHz,.01f,40.f) ||
        !range(s.chaos.chaos,0.f,1.f) || !range(s.chaos.flow,0.f,1.f) ||
-       !range(s.chaos.damping,0.f,1.f) ||
+       !range(s.chaos.damping,0.f,1.f) || !range(s.chaos.warp,0.f,1.f) ||
+       !range(s.chaos.smoothing,0.f,1.f) ||
        !(s.chaos.axis==ChaosAxis::X || s.chaos.axis==ChaosAxis::Y || s.chaos.axis==ChaosAxis::Z) ||
+       !(s.chaos.method==ChaosMethod::Lorenz || s.chaos.method==ChaosMethod::Rossler ||
+         s.chaos.method==ChaosMethod::Thomas) ||
        !range(s.drift.rateHz,.01f,40.f) ||
        !range(s.sequencer.rateHz,.01f,40.f)) return false;
     for(float step:s.sequencer.steps) if(!range(step,-1.f,1.f)) return false;
@@ -285,25 +288,78 @@ float FunctionGenerator::next(const FunctionSettings& s,double sampleRate) noexc
     return out;
 }
 
+void ChaosGenerator::resetForMethod(ChaosMethod method) noexcept {
+    method_=method;value_=0.0f;
+    switch(method) {
+        case ChaosMethod::Rossler:x_=0.1f;y_=0.0f;z_=0.0f;break;
+        case ChaosMethod::Thomas:x_=0.1f;y_=0.0f;z_=-0.1f;break;
+        case ChaosMethod::Lorenz:default:x_=0.11f;y_=0.0f;z_=0.0f;break;
+    }
+}
+void ChaosGenerator::integrate(const ChaosSettings& s,float dt) noexcept {
+    float dx=0.0f,dy=0.0f,dz=0.0f;
+    switch(s.method) {
+        case ChaosMethod::Rossler: {
+            const float a=0.10f+std::clamp(s.flow,0.0f,1.0f)*0.28f;
+            const float b=0.10f+std::clamp(s.damping,0.0f,1.0f)*0.30f;
+            const float c=4.2f+std::clamp(s.chaos,0.0f,1.0f)*4.0f;
+            dx=-y_-z_;dy=x_+a*y_;dz=b+z_*(x_-c);break;
+        }
+        case ChaosMethod::Thomas: {
+            const float b=0.235f-std::clamp(s.chaos,0.0f,1.0f)*0.085f;
+            const float coupling=0.75f+std::clamp(s.flow,0.0f,1.0f)*0.50f;
+            const float loss=0.72f+std::clamp(s.damping,0.0f,1.0f)*0.56f;
+            dx=coupling*std::sin(y_)-b*loss*x_;
+            dy=coupling*std::sin(z_)-b*loss*y_;
+            dz=coupling*std::sin(x_)-b*loss*z_;break;
+        }
+        case ChaosMethod::Lorenz:default: {
+            const float sigma=6.0f+std::clamp(s.flow,0.0f,1.0f)*14.0f;
+            const float rho=24.0f+std::clamp(s.chaos,0.0f,1.0f)*21.0f;
+            const float beta=1.5f+std::clamp(s.damping,0.0f,1.0f)*5.5f;
+            dx=sigma*(y_-x_);dy=x_*(rho-z_)-y_;dz=x_*y_-beta*z_;break;
+        }
+    }
+    x_+=dx*dt;y_+=dy*dt;z_+=dz*dt;
+}
+float ChaosGenerator::xNormalized() const noexcept {
+    if(method_==ChaosMethod::Thomas) return std::clamp(x_/3.0f,-1.0f,1.0f);
+    if(method_==ChaosMethod::Rossler) return std::clamp((x_-2.0f)/12.0f,-1.0f,1.0f);
+    return std::clamp(x_/24.0f,-1.0f,1.0f);
+}
+float ChaosGenerator::yNormalized() const noexcept {
+    if(method_==ChaosMethod::Thomas) return std::clamp(y_/3.0f,-1.0f,1.0f);
+    if(method_==ChaosMethod::Rossler) return std::clamp((y_+2.0f)/12.0f,-1.0f,1.0f);
+    return std::clamp(y_/32.0f,-1.0f,1.0f);
+}
+float ChaosGenerator::zNormalized() const noexcept {
+    if(method_==ChaosMethod::Thomas) return std::clamp(z_/3.0f,-1.0f,1.0f);
+    if(method_==ChaosMethod::Rossler) return std::clamp((z_-6.0f)/12.0f,-1.0f,1.0f);
+    return std::clamp((z_-24.0f)/24.0f,-1.0f,1.0f);
+}
 float ChaosGenerator::next(const ChaosSettings& s,double sampleRate) noexcept {
     if(!std::isfinite(sampleRate) || sampleRate<=0.0) return value_;
-    const float sigma=6.0f+std::clamp(s.flow,0.0f,1.0f)*14.0f;
-    const float rho=24.0f+std::clamp(s.chaos,0.0f,1.0f)*21.0f;
-    const float beta=1.5f+std::clamp(s.damping,0.0f,1.0f)*5.5f;
+    if(s.method!=method_) resetForMethod(s.method);
     const float rate=std::clamp(s.rateHz,0.01f,40.0f);
-    const float dt=std::min(0.0025f,rate*0.55f/static_cast<float>(sampleRate));
-    const float dx=sigma*(y_-x_);
-    const float dy=x_*(rho-z_)-y_;
-    const float dz=x_*y_-beta*z_;
-    x_+=dx*dt;y_+=dy*dt;z_+=dz*dt;
+    const float elapsed=rate*0.55f/static_cast<float>(sampleRate);
+    const int steps=std::clamp(static_cast<int>(std::ceil(elapsed/0.0025f)),1,384);
+    const float dt=elapsed/static_cast<float>(steps);
+    for(int i=0;i<steps;++i) integrate(s,dt);
     if(!std::isfinite(x_)||!std::isfinite(y_)||!std::isfinite(z_)||
-       std::abs(x_)>1000.0f||std::abs(y_)>1000.0f||std::abs(z_)>1000.0f) reset();
-    switch(s.axis) {
-        case ChaosAxis::Y:value_=yNormalized();break;
-        case ChaosAxis::Z:value_=zNormalized();break;
-        case ChaosAxis::X:default:value_=xNormalized();break;
+       std::abs(x_)>1000.0f||std::abs(y_)>1000.0f||std::abs(z_)>1000.0f)
+        resetForMethod(s.method);
+    float raw=xNormalized();
+    if(s.axis==ChaosAxis::Y) raw=yNormalized();
+    else if(s.axis==ChaosAxis::Z) raw=zNormalized();
+    const float warp=std::clamp(s.warp,0.0f,1.0f);
+    if(warp>1.0e-5f) {
+        const float drive=1.0f+warp*5.0f;
+        raw=std::tanh(raw*drive)/std::tanh(drive);
     }
-    return value_;
+    const float smooth=std::clamp(s.smoothing,0.0f,1.0f);
+    const float alpha=1.0f-smooth*0.985f;
+    value_+=alpha*(raw-value_);
+    return std::clamp(value_,-1.0f,1.0f);
 }
 
 float DriftGenerator::next(const DriftSettings& s,double sampleRate) noexcept {
