@@ -32,7 +32,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(16);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(17);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -93,6 +93,10 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     }
     // V16: route polarity, appended so v1-v15 layouts remain readable.
     for(const auto& route:mod.routes) if(route.id) w.word(route.bipolar?1u:0u);
+    // V17: editable Velocity / Note response curves and UI activation.
+    w.real(mod.velocityCurve.midpoint);
+    w.real(mod.noteCurve.midpoint);
+    w.word(mod.performanceSourceActiveMask);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -100,7 +104,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>16) return false;
+    if(version<1 || version>17) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -205,6 +209,11 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             if(bipolar>1u) return false;
             route.bipolar=bipolar==1u;
         }
+    }
+    if(version>=17) {
+        s.modulation.velocityCurve.midpoint=r.real();
+        s.modulation.noteCurve.midpoint=r.real();
+        s.modulation.performanceSourceActiveMask=r.word();
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;

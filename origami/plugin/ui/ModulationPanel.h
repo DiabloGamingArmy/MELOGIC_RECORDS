@@ -96,7 +96,7 @@ private:
     void paintOverChildren(juce::Graphics&) override;
     juce::String routeTargetLabel(std::uint32_t routeId) const;
 
-    std::array<juce::TextButton,12> tabs_;
+    std::array<juce::TextButton,14> tabs_;
     juce::TextButton sourceAdd_{"+"},sourceRemove_{"-"};
     juce::Viewport sourceViewport_;
     juce::Component sourceContent_;
@@ -151,6 +151,10 @@ private:
     double scrollSeconds_=0.0;
     std::array<double,3> visualHoldSeconds_{{0.50,0.50,0.50}};
     juce::Rectangle<float> envCanvas_{};
+    juce::Rectangle<float> performanceCurveCanvas_{};
+    bool performanceCurveDrag_=false;
+    void commitPerformanceCurve(float midpoint);
+    void paintPerformanceCurve(juce::Graphics&);
     struct TraceSample {juce::Point<float> point{}; float age=0.0f;};
     EnvelopeTraceSnapshot trace_{};
     std::deque<TraceSample> traceTail_;
@@ -163,7 +167,7 @@ private:
     float lastLfoTracePhase_=-1.0f;
 
     static constexpr std::size_t sourceHistoryLength_=72;
-    std::array<std::deque<float>,12> sourceHistory_{};
+    std::array<std::deque<float>,14> sourceHistory_{};
     // Signed Random output history for the large Random-LFO viewport.
     // Oldest is at the front/left; newest enters on the right and pushes the
     // existing trace leftward.

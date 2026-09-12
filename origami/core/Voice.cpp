@@ -53,8 +53,11 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     std::array<float,CompiledModulation::voiceSourceCount> voiceSources{};
     voiceSources[0]=envelope;voiceSources[1]=env2;voiceSources[2]=env3;
     for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_):0.0f;}
-    voiceSources[7]=velocity_;voiceSources[8]=modWheel;
-    voiceSources[9]=std::clamp(static_cast<float>(address_.note)/127.0f,0.0f,1.0f);
+    voiceSources[7]=performanceSourceCurveValue(modulation.velocityCurve,velocity_);
+    voiceSources[8]=modWheel;
+    voiceSources[9]=performanceSourceCurveValue(
+        modulation.noteCurve,
+        std::clamp(static_cast<float>(address_.note)/127.0f,0.0f,1.0f));
     voiceSources[10]=aftertouch;
     voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
     voiceSources[12]=releasing_ ? 0.0f : 1.0f;

@@ -60,6 +60,8 @@ struct SequencerSettings {
     float rateHz=4.0f;
     std::array<float,8> steps{{-1.0f,-0.25f,0.65f,0.15f,1.0f,-0.55f,0.35f,0.0f}};
 };
+struct PerformanceSourceCurve { float midpoint=0.5f; };
+float performanceSourceCurveValue(const PerformanceSourceCurve&,float input) noexcept;
 
 struct ModAddress {
     ModDestination parameter=ModDestination::Cutoff;
@@ -86,6 +88,8 @@ struct ModulationState {
     ChaosSettings chaos{};
     DriftSettings drift{};
     SequencerSettings sequencer{};
+    PerformanceSourceCurve velocityCurve{},noteCurve{};
+    std::uint32_t performanceSourceActiveMask=0u; // bit0 Velocity, bit1 Note
     std::array<float,4> macros{};
     std::array<ModRoute,capacity> routes{};
     std::uint32_t nextRouteId=1;

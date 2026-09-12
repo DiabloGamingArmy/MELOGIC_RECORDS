@@ -78,9 +78,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     const juce::StringArray names{
         "ENV 1","ENV 2","ENV 3",
         "LFO 1","LFO 2","LFO 3","LFO 4",
-        "FUNCTION","RANDOM","CHAOS","DRIFT","SEQ"
+        "FUNCTION","RANDOM","CHAOS","DRIFT","SEQ","VELOCITY","NOTE"
     };
-    for(int i=0;i<12;++i) {
+    for(int i=0;i<14;++i) {
         auto& tab=tabs_[static_cast<std::size_t>(i)];
         sourceContent_.addAndMakeVisible(tab);
         tab.setButtonText(names[i]);
@@ -217,6 +217,8 @@ bool ModulationPanel::sourceTabActive(std::size_t index) const noexcept {
     if(index==9) return (cached_.generatorActiveMask&0x04u)!=0;
     if(index==10) return (cached_.generatorActiveMask&0x08u)!=0;
     if(index==11) return (cached_.generatorActiveMask&0x10u)!=0;
+    if(index==12) return (cached_.performanceSourceActiveMask&0x1u)!=0;
+    if(index==13) return (cached_.performanceSourceActiveMask&0x2u)!=0;
     return false;
 }
 
@@ -246,7 +248,9 @@ void ModulationPanel::showAddSourceMenu() {
         {4,"Chaos",true,""},
         {5,"Drift",true,""},
         {6,"Sequencer",true,""},
-        {7,"Function",true,""}
+        {7,"Function",true,""},
+        {8,"Velocity",true,""},
+        {9,"Note",true,""}
     };
     showNativeChoiceMenu(sourceAdd_,"ADD MOD SOURCE",choices,0,
         [safe=juce::Component::SafePointer<ModulationPanel>(this)](int id) {
@@ -266,6 +270,14 @@ void ModulationPanel::allocateSource(int sourceType) {
     } else if(sourceType==2) {
         for(int i=0;i<4;++i) if((mod.lfoActiveMask&(1u<<i))==0) {
             mod.lfoActiveMask|=(1u<<i);slot=3+i;break;
+        }
+    } else if(sourceType==8) {
+        if((mod.performanceSourceActiveMask&0x1u)==0) {
+            mod.performanceSourceActiveMask|=0x1u;slot=12;
+        }
+    } else if(sourceType==9) {
+        if((mod.performanceSourceActiveMask&0x2u)==0) {
+            mod.performanceSourceActiveMask|=0x2u;slot=13;
         }
     } else {
         struct GeneratorSlot {int type;int tab;std::uint32_t bit;};
@@ -299,6 +311,8 @@ void ModulationPanel::removeSelectedSource() {
 
     if(selected_<=2) mod.envActiveMask&=~(1u<<selected_);
     else if(selected_<=6) mod.lfoActiveMask&=~(1u<<(selected_-3));
+    else if(selected_==12) mod.performanceSourceActiveMask&=~0x1u;
+    else if(selected_==13) mod.performanceSourceActiveMask&=~0x2u;
     else {
         static constexpr std::array<std::uint32_t,5> bits{{0x01u,0x02u,0x04u,0x08u,0x10u}};
         mod.generatorActiveMask&=~bits[static_cast<std::size_t>(selected_-7)];
@@ -563,6 +577,15 @@ ModulationPanel::DragTarget ModulationPanel::hitHandle(juce::Point<float> p) con
 void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
     dragStart_=e.position;
     const auto local=e.getEventRelativeTo(this);
+    if((selected_==12 || selected_==13) && performanceCurveCanvas_.contains(local.position)) {
+        const float midX=performanceCurveCanvas_.getCentreX();
+        const float currentMid=selected_==12?cached_.velocityCurve.midpoint:cached_.noteCurve.midpoint;
+        const float midY=performanceCurveCanvas_.getBottom()-currentMid*performanceCurveCanvas_.getHeight();
+        if(local.position.getDistanceFrom({midX,midY})<=18.0f) {
+            performanceCurveDrag_=true;
+            return;
+        }
+    }
 
     sourceDragTab_=-1;
     for(std::size_t i=0;i<tabs_.size();++i) {
@@ -654,6 +677,16 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
 }
 
 void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
+    if(performanceCurveDrag_ && (selected_==12 || selected_==13)) {
+        const auto local=e.getEventRelativeTo(this);
+        const float y=juce::jlimit(performanceCurveCanvas_.getY(),
+                                   performanceCurveCanvas_.getBottom(),
+                                   local.position.y);
+        const float midpoint=juce::jlimit(0.01f,0.99f,
+            (performanceCurveCanvas_.getBottom()-y)/performanceCurveCanvas_.getHeight());
+        commitPerformanceCurve(midpoint);
+        return;
+    }
     if(routeDragId_!=0) {
         const auto local=e.getEventRelativeTo(this);
         const float amount=juce::jlimit(-1.0f,1.0f,
@@ -754,6 +787,7 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
 }
 
 void ModulationPanel::mouseUp(const juce::MouseEvent&) {
+    performanceCurveDrag_=false;
     dragTarget_=DragTarget::None;lfoPointDrag_=-1;lfoCurveDrag_=-1;
     routeDragId_=0;
     sourceDragTab_=-1;
@@ -945,6 +979,7 @@ void ModulationPanel::updateScrollbar() {
 
 void ModulationPanel::resized() {
     auto body=contentBounds();
+    performanceCurveCanvas_=body.toFloat().withTrimmedLeft(132.0f).reduced(12.0f,18.0f);
 
     // Mixed modulation-source collection. ENV + LFO + generator sources share
     // one vertical rail so the editor area always represents ONE selected source.
@@ -1231,6 +1266,7 @@ void ModulationPanel::showLfoToolsMenu() {
 
 void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     constexpr int railWidth=116;
+    if(selected_==12 || selected_==13) paintPerformanceCurve(g);
     auto rail=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
 
@@ -1509,10 +1545,11 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
 
 
 ModSource ModulationPanel::sourceForTab(std::size_t index) noexcept {
-    static constexpr std::array<ModSource,12> sources{
+    static constexpr std::array<ModSource,14> sources{
         ModSource::Env1,ModSource::Env2,ModSource::Env3,
         ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
-        ModSource::Function,ModSource::Random,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer
+        ModSource::Function,ModSource::Random,ModSource::Chaos,ModSource::Drift,ModSource::Sequencer,
+        ModSource::Velocity,ModSource::Keytrack
     };
     return sources[juce::jmin(index,sources.size()-1)];
 }
@@ -1835,6 +1872,50 @@ void ModulationPanel::paintOverChildren(juce::Graphics& g) {
             g.drawText(label,box.reduced(8.0f,2.0f),juce::Justification::centredLeft);
         }
     }
+}
+
+
+void ModulationPanel::commitPerformanceCurve(float midpoint) {
+    if(!bindings_.snapshot || !bindings_.modulation) return;
+    auto mod=bindings_.snapshot().modulation;
+    if(selected_==12) mod.velocityCurve.midpoint=juce::jlimit(0.01f,0.99f,midpoint);
+    else if(selected_==13) mod.noteCurve.midpoint=juce::jlimit(0.01f,0.99f,midpoint);
+    else return;
+    if(bindings_.modulation(mod)) cached_=mod;
+    repaint();
+}
+
+void ModulationPanel::paintPerformanceCurve(juce::Graphics& g) {
+    if(performanceCurveCanvas_.isEmpty()) return;
+    auto r=performanceCurveCanvas_;
+    g.setColour(Palette::panel().brighter(0.08f));
+    g.fillRoundedRectangle(r,3.0f);
+    g.setColour(Palette::border());
+    g.drawRoundedRectangle(r,3.0f,1.0f);
+    g.setColour(Palette::border().withAlpha(0.55f));
+    for(int i=1;i<4;++i) {
+        const float x=r.getX()+r.getWidth()*static_cast<float>(i)/4.0f;
+        const float y=r.getY()+r.getHeight()*static_cast<float>(i)/4.0f;
+        g.drawVerticalLine(juce::roundToInt(x),r.getY(),r.getBottom());
+        g.drawHorizontalLine(juce::roundToInt(y),r.getX(),r.getRight());
+    }
+    const auto& curve=selected_==12?cached_.velocityCurve:cached_.noteCurve;
+    juce::Path path;
+    constexpr int segments=128;
+    for(int i=0;i<=segments;++i) {
+        const float x=static_cast<float>(i)/segments;
+        const float y=performanceSourceCurveValue(curve,x);
+        const juce::Point<float> p{r.getX()+x*r.getWidth(),r.getBottom()-y*r.getHeight()};
+        if(i==0) path.startNewSubPath(p); else path.lineTo(p);
+    }
+    g.setColour(Palette::accent());
+    g.strokePath(path,juce::PathStrokeType(2.0f));
+    const juce::Point<float> handle{r.getCentreX(),r.getBottom()-curve.midpoint*r.getHeight()};
+    g.fillEllipse(juce::Rectangle<float>(10.0f,10.0f).withCentre(handle));
+    g.setColour(Palette::text());
+    g.setFont(juce::FontOptions(10.0f));
+    g.drawText(selected_==12?"VELOCITY RESPONSE":"NOTE RESPONSE",
+               r.removeFromTop(18.0f),juce::Justification::centredLeft,false);
 }
 
 MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {

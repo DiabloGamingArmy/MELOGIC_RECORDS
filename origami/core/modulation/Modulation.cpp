@@ -83,6 +83,14 @@ std::size_t slotFor(ModSource source,const ModulationState& state) {
 }
 }
 
+float performanceSourceCurveValue(const PerformanceSourceCurve& curve,float input) noexcept {
+    const float x=std::clamp(std::isfinite(input)?input:0.0f,0.0f,1.0f);
+    const float midpoint=std::clamp(std::isfinite(curve.midpoint)?curve.midpoint:0.5f,0.01f,0.99f);
+    if(x<=0.0f || x>=1.0f) return x;
+    const double gamma=std::log(static_cast<double>(midpoint))/std::log(0.5);
+    return std::clamp(static_cast<float>(std::pow(static_cast<double>(x),gamma)),0.0f,1.0f);
+}
+
 const LfoSettings& lfoSettings(const ModulationState& s,std::size_t i) noexcept {
     switch(i) {case 0:return s.lfo1;case 1:return s.lfo2;case 2:return s.lfo3;default:return s.lfo4;}
 }
@@ -95,6 +103,8 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     if((s.envActiveMask&~0x7u)!=0 || (s.envActiveMask&0x1u)==0) return false;
     if((s.lfoActiveMask&~0xFu)!=0) return false;
     if((s.generatorActiveMask&~0x1Fu)!=0) return false;
+    if((s.performanceSourceActiveMask&~0x3u)!=0) return false;
+    if(!range(s.velocityCurve.midpoint,.01f,.99f) || !range(s.noteCurve.midpoint,.01f,.99f)) return false;
     for(std::size_t i=0;i<4;++i) if(!validLfo(lfoSettings(s,i))) return false;
     if(!validEnvelope(s.env2) || !validEnvelope(s.env3)) return false;
     for(float c:s.env1Curves) if(!range(c,-1.f,1.f)) return false;

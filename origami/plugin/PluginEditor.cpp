@@ -189,7 +189,8 @@ bool OrigamiAudioProcessorEditor::createDraggedRoute(
         route.source=source;
         route.destination={destination,static_cast<unsigned>(oscillatorRaw)};
         route.enabled=true;
-        route.bipolar=false;
+        route.bipolar=(source>=mct::origami::ModSource::Lfo1
+                        && source<=mct::origami::ModSource::Lfo4);
         route.amount=dragPreviewAmount_;
         return dragBindings_.route(route);
     }

@@ -420,7 +420,30 @@ void qosVoiceAdmissionAudit() {
           "polyphony can grow again after QoS pressure clears");
 }
 
+
+void performanceSourceCurveAudit() {
+    PerformanceSourceCurve linear{};
+    check(std::abs(performanceSourceCurveValue(linear,0.0f)-0.0f)<1.0e-6f,
+          "performance curve preserves zero endpoint");
+    check(std::abs(performanceSourceCurveValue(linear,0.5f)-0.5f)<1.0e-6f,
+          "default performance curve is linear at midpoint");
+    check(std::abs(performanceSourceCurveValue(linear,1.0f)-1.0f)<1.0e-6f,
+          "performance curve preserves one endpoint");
+    PerformanceSourceCurve sensitive{0.75f};
+    check(std::abs(performanceSourceCurveValue(sensitive,0.5f)-0.75f)<1.0e-5f,
+          "raised midpoint increases velocity/note sensitivity");
+    PerformanceSourceCurve gentle{0.25f};
+    check(std::abs(performanceSourceCurveValue(gentle,0.5f)-0.25f)<1.0e-5f,
+          "lowered midpoint decreases velocity/note sensitivity");
+    const float base=0.5f,depth=0.5f;
+    check(std::abs(std::clamp(base-depth,0.0f,1.0f))<1.0e-6f,
+          "50 percent bipolar LFO depth reaches oscillator level zero");
+    check(std::abs(std::clamp(base+depth,0.0f,1.0f)-1.0f)<1.0e-6f,
+          "50 percent bipolar LFO depth reaches oscillator level full scale");
+}
+
 int main() {
+    performanceSourceCurveAudit();
     qosVoiceAdmissionAudit();
     audioRateFastMathAudit();
     oscillatorGenerationCoherenceAudit();
