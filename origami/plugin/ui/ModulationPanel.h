@@ -1,4 +1,4 @@
-// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
+// mct-origami-v40.0.0-sequencer-structural-redesign\n// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
@@ -139,6 +139,12 @@ private:
     juce::TextButton sequenceAllOn_{"ALL ON"};
     juce::TextButton sequenceAlternate_{"ALT"};
     juce::Rectangle<float> sequenceCanvas_{};
+    // V40 concept-art sequencer shell. UI-only controls for Patch 1.
+    juce::Viewport sequenceViewport_{};
+    juce::Component sequenceContent_{};
+    juce::Label sequenceStepsCaption_{},sequenceDirectionCaption_{},sequenceLoopCaption_{};
+    NativeComboBox sequenceStepCount_{},sequenceDirection_{},sequenceLoopMode_{};
+    juce::ToggleButton sequenceSync_{"SYNC"};
     bool commitSequenceSteps();
     NativeComboBox shape_,mode_;
     juce::ToggleButton lfoLoop_{"LOOP"};

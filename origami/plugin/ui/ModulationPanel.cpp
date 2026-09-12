@@ -1,4 +1,4 @@
-// mct-origami-v39.2.1-sequence-editor-corrected
+// mct-origami-v40.0.0-sequencer-structural-redesign\n// mct-origami-v39.2.1-sequence-editor-corrected
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
@@ -197,9 +197,54 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     chaosAxis_.addItem("X",1);chaosAxis_.addItem("Y",2);chaosAxis_.addItem("Z",3);
     chaosAxis_.setSelectedId(1,juce::dontSendNotification);chaosAxis_.setScrollWheelEnabled(false);
 
+    // V40 Patch 1: structural sequencer shell.
+    // Viewport scrolling is message-thread UI work, isolated from realtime DSP.
+    addAndMakeVisible(sequenceStepsCaption_);
+    sequenceStepsCaption_.setText("STEPS",juce::dontSendNotification);
+    sequenceStepsCaption_.setColour(juce::Label::textColourId,Palette::muted());
+    sequenceStepsCaption_.setFont(juce::FontOptions(8.0f));
+    addAndMakeVisible(sequenceStepCount_);
+    sequenceStepCount_.setName("SEQ STEP COUNT");
+    sequenceStepCount_.addItem("8",1);
+    sequenceStepCount_.setSelectedId(1,juce::dontSendNotification);
+    sequenceStepCount_.setEnabled(false);
+    sequenceStepCount_.setTooltip("8-step engine in Patch 1; expanded counts arrive with the data-model pass");
+
+    addAndMakeVisible(sequenceDirectionCaption_);
+    sequenceDirectionCaption_.setText("DIRECTION",juce::dontSendNotification);
+    sequenceDirectionCaption_.setColour(juce::Label::textColourId,Palette::muted());
+    sequenceDirectionCaption_.setFont(juce::FontOptions(8.0f));
+    addAndMakeVisible(sequenceDirection_);
+    sequenceDirection_.setName("SEQ DIRECTION");
+    sequenceDirection_.addItem("FORWARD",1);
+    sequenceDirection_.setSelectedId(1,juce::dontSendNotification);
+    sequenceDirection_.setEnabled(false);
+
+    addAndMakeVisible(sequenceLoopCaption_);
+    sequenceLoopCaption_.setText("LOOP",juce::dontSendNotification);
+    sequenceLoopCaption_.setColour(juce::Label::textColourId,Palette::muted());
+    sequenceLoopCaption_.setFont(juce::FontOptions(8.0f));
+    addAndMakeVisible(sequenceLoopMode_);
+    sequenceLoopMode_.setName("SEQ LOOP MODE");
+    sequenceLoopMode_.addItem("LOOP",1);
+    sequenceLoopMode_.setSelectedId(1,juce::dontSendNotification);
+    sequenceLoopMode_.setEnabled(false);
+
+    addAndMakeVisible(sequenceSync_);
+    sequenceSync_.setToggleState(false,juce::dontSendNotification);
+    sequenceSync_.setEnabled(false);
+    sequenceSync_.setTooltip("Host sync arrives in the transport/behavior pass");
+
+    addAndMakeVisible(sequenceViewport_);
+    sequenceViewport_.setViewedComponent(&sequenceContent_,false);
+    sequenceViewport_.setScrollBarsShown(false,true);
+    sequenceViewport_.setScrollBarThickness(6);
+    sequenceViewport_.setWantsKeyboardFocus(false);
+    sequenceViewport_.setSingleStepSizes(96,1);
+
     for(std::size_t i=0;i<sequenceSteps_.size();++i) {
         auto& step=sequenceSteps_[i]; auto& label=sequenceStepLabels_[i];
-        addAndMakeVisible(step);addAndMakeVisible(label);
+        sequenceContent_.addAndMakeVisible(step);sequenceContent_.addAndMakeVisible(label);
         step.setName("SEQ STEP "+juce::String(static_cast<int>(i+1)));
         step.setSliderStyle(juce::Slider::LinearBarVertical);
         step.setRange(-1.0,1.0,.001);
@@ -220,7 +265,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         };
 
         auto& power=sequencePower_[i];
-        addAndMakeVisible(power);
+        sequenceContent_.addAndMakeVisible(power);
         power.setButtonText({});
         power.setClickingTogglesState(true);
         power.setToggleState(true,juce::dontSendNotification);
@@ -238,7 +283,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         };
 
         auto& gate=sequenceGatePreview_[i];
-        addAndMakeVisible(gate);
+        sequenceContent_.addAndMakeVisible(gate);
         gate.setSliderStyle(juce::Slider::LinearHorizontal);
         gate.setRange(.05,1.0,.01);gate.setValue(1.0,juce::dontSendNotification);
         gate.setTextBoxStyle(juce::Slider::TextBoxRight,false,38,16);
@@ -593,6 +638,11 @@ void ModulationPanel::updateVisibleControls() {
     sequenceRandomize_.setVisible(sequencer);sequenceInvert_.setVisible(sequencer);
     sequenceClear_.setVisible(sequencer);sequenceAllOn_.setVisible(sequencer);
     sequenceAlternate_.setVisible(sequencer);
+    sequenceViewport_.setVisible(sequencer);
+    sequenceStepsCaption_.setVisible(sequencer);sequenceStepCount_.setVisible(sequencer);
+    sequenceDirectionCaption_.setVisible(sequencer);sequenceDirection_.setVisible(sequencer);
+    sequenceLoopCaption_.setVisible(sequencer);sequenceLoopMode_.setVisible(sequencer);
+    sequenceSync_.setVisible(sequencer);
     performanceTools_.setVisible(performance);
     performanceSnap_.setVisible(performance);
     performanceInputLabel_.setVisible(performance);
@@ -1398,6 +1448,18 @@ void ModulationPanel::resized() {
             placeRandom(randomHold_,randomHoldLabel_,false);
             placeRandom(randomDelay_,randomDelayLabel_,true);
         } else if(selected_==11) {
+            auto header=body.removeFromTop(42).reduced(6,3);
+            auto capCell=[&](juce::Label& cap,juce::Component& control,int width) {
+                auto cell=header.removeFromLeft(juce::jmin(width,header.getWidth()));
+                cap.setBounds(cell.removeFromTop(12));
+                control.setBounds(cell.reduced(0,1));
+                if(header.getWidth()>0) header.removeFromLeft(8);
+            };
+            capCell(sequenceStepsCaption_,sequenceStepCount_,72);
+            capCell(sequenceDirectionCaption_,sequenceDirection_,112);
+            capCell(sequenceLoopCaption_,sequenceLoopMode_,88);
+            sequenceSync_.setBounds(header.removeFromLeft(64).reduced(1,7));
+
             auto rateCell=controls.removeFromLeft(102);
             rateLabel_.setBounds(rateCell.removeFromBottom(17));rate_.setBounds(rateCell);
             controls.removeFromLeft(8);
@@ -1411,23 +1473,26 @@ void ModulationPanel::resized() {
             controls.removeFromLeft(4);
             sequenceAlternate_.setBounds(controls.removeFromLeft(46).reduced(1,11));
 
-            body.removeFromTop(24);
-            sequenceCanvas_=body.reduced(10,6).toFloat();
-            auto lanes=sequenceCanvas_.toNearestInt();
-            constexpr int laneGap=5;
-            const int laneWidth=juce::jmax(42,(lanes.getWidth()-laneGap*7)/8);
+            auto viewportBounds=body.reduced(8,4);
+            sequenceViewport_.setBounds(viewportBounds);
+            constexpr int laneGap=7;
+            constexpr int laneWidth=78;
+            constexpr int minVisibleWidth=8*laneWidth+7*laneGap;
+            const int contentWidth=juce::jmax(minVisibleWidth,viewportBounds.getWidth());
+            const int contentHeight=juce::jmax(1,viewportBounds.getHeight()-6);
+            sequenceContent_.setSize(contentWidth,contentHeight);
+            sequenceCanvas_={0.0f,0.0f,static_cast<float>(contentWidth),static_cast<float>(contentHeight)};
+
+            auto lanes=sequenceContent_.getLocalBounds();
             for(std::size_t i=0;i<sequenceSteps_.size();++i) {
-                const int width=(i+1==sequenceSteps_.size())?lanes.getWidth():
-                    juce::jmin(laneWidth,lanes.getWidth());
-                auto lane=lanes.removeFromLeft(width);
-                auto header=lane.removeFromTop(18);
-                sequenceStepLabels_[i].setBounds(header.removeFromLeft(18));
-                sequencePower_[i].setBounds(header.removeFromRight(14).withSizeKeepingCentre(12,12));
-                auto gate=lane.removeFromBottom(19);
-                sequenceGatePreview_[i].setBounds(gate.reduced(1,3));
-                sequenceSteps_[i].setBounds(lane.reduced(1,1));
-                if(i+1<sequenceSteps_.size() && lanes.getWidth()>0)
-                    lanes.removeFromLeft(juce::jmin(laneGap,lanes.getWidth()));
+                auto lane=lanes.removeFromLeft(laneWidth);
+                auto laneHeader=lane.removeFromTop(20);
+                sequenceStepLabels_[i].setBounds(laneHeader.removeFromLeft(22));
+                sequencePower_[i].setBounds(laneHeader.removeFromRight(15).withSizeKeepingCentre(12,12));
+                auto gate=lane.removeFromBottom(24);
+                sequenceGatePreview_[i].setBounds(gate.reduced(3,4));
+                sequenceSteps_[i].setBounds(lane.reduced(3,2));
+                if(i+1<sequenceSteps_.size()) lanes.removeFromLeft(laneGap);
             }
         } else if(selected_==9) {
             constexpr int gap=5;
@@ -1637,51 +1702,7 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     if(selected_==12 || selected_==13) { paintPerformanceCurve(g); return; }
 
     if(selected_==11) {
-        auto graph=sequenceCanvas_.isEmpty()?body.toFloat().reduced(12.0f,10.0f):sequenceCanvas_;
-        if(graph.getWidth()>2.0f && graph.getHeight()>2.0f) {
-            g.setColour(Palette::borderSoft().withAlpha(.12f));
-            g.drawHorizontalLine(juce::roundToInt(graph.getCentreY()),graph.getX(),graph.getRight());
-            for(int i=1;i<4;++i) {
-                const float y=graph.getY()+graph.getHeight()*float(i)/4.0f;
-                g.drawHorizontalLine(juce::roundToInt(y),graph.getX(),graph.getRight());
-            }
-
-            auto lanes=graph.toNearestInt();
-            constexpr int laneGap=5;
-            const int laneWidth=juce::jmax(42,(lanes.getWidth()-laneGap*7)/8);
-            const std::size_t active=juce::jmin<std::size_t>(7,sourceMonitorSequencer_.currentStep());
-
-            for(std::size_t i=0;i<sequenceSteps_.size();++i) {
-                const int width=(i+1==sequenceSteps_.size())?lanes.getWidth():
-                    juce::jmin(laneWidth,lanes.getWidth());
-                auto lane=lanes.removeFromLeft(width);
-                lane.removeFromTop(18);
-                lane.removeFromBottom(19);
-                auto meter=lane.reduced(2,2).toFloat();
-
-                const float value=static_cast<float>(sequenceSteps_[i].getValue());
-                const float zero=meter.getCentreY();
-                const float y=juce::jmap(juce::jlimit(-1.0f,1.0f,value),
-                                         -1.0f,1.0f,meter.getBottom(),meter.getY());
-                const juce::Rectangle<float> fill=value>=0.0f
-                    ? juce::Rectangle<float>{meter.getX(),y,meter.getWidth(),zero-y}
-                    : juce::Rectangle<float>{meter.getX(),zero,meter.getWidth(),y-zero};
-
-                const bool enabled=sequencePower_[i].getToggleState();
-                g.setColour(Palette::accent().withAlpha(enabled?.28f:.055f));
-                g.fillRect(fill);
-                g.setColour(Palette::accent().withAlpha(enabled?.95f:.24f));
-                g.drawHorizontalLine(juce::roundToInt(y),meter.getX()+2.0f,meter.getRight()-2.0f);
-
-                if(i==active) {
-                    g.setColour(Palette::accent());
-                    g.drawRoundedRectangle(meter.expanded(1.0f),2.0f,1.6f);
-                }
-
-                if(i+1<sequenceSteps_.size() && lanes.getWidth()>0)
-                    lanes.removeFromLeft(juce::jmin(laneGap,lanes.getWidth()));
-            }
-        }
+        // Scrollable lane painting is introduced with the per-step editor pass.
         return;
     }
 
