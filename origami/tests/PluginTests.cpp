@@ -100,7 +100,7 @@ void telemetryBoundaryAudit() {
     check(!renderBody.contains("publishEnvelopeUiSnapshot("),
           "renderRange contains no envelope UI publication");
     const int processStart=text.indexOf("void OrigamiAudioProcessor::processBlock");
-    const int stateStart=text.indexOf("void OrigamiAudioProcessor::getStateInformation",processStart);
+    const int stateStart=text.indexOf(processStart,"void OrigamiAudioProcessor::getStateInformation");
     check(processStart>=0 && stateStart>processStart,"processBlock source bounds found");
     const auto processBody=text.substring(processStart,stateStart);
     check(processBody.contains("envUiSamplesUntilPublish_"),
