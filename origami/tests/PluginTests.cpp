@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p15-state-io-suspension
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
 // mct-origami-audio-reengineer-p13-audioplayhead-boundary
 // mct-origami-audio-reengineer-p12-host-block-ui-telemetry
@@ -89,13 +90,32 @@ void disableExtraOscillators(OrigamiAudioProcessor& p) {
     for(unsigned id=2;id<=4;++id)
         p.setUiOscillatorEnabled(id,false);
 }
+void stateIoBoundaryAudit() {
+    const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory()
+        .getChildFile("plugin/PluginProcessor.cpp");
+    const auto text=f.loadFileAsString();
+    check(text.isNotEmpty(),"PluginProcessor.cpp available for state-I/O audit");
+    const int gs=text.indexOf("void OrigamiAudioProcessor::getStateInformation");
+    const int ss=text.indexOf("void OrigamiAudioProcessor::setStateInformation");
+    const int um=text.indexOf("bool OrigamiAudioProcessor::setUiMacro");
+    check(gs>=0 && ss>gs && um>ss,"state-I/O source bounds found");
+    const auto gb=text.substring(gs,ss); const auto sb=text.substring(ss,um);
+    check(gb.contains("suspendProcessing(true)"),"state save uses processing suspension");
+    check(sb.contains("suspendProcessing(true)"),"state restore uses processing suspension");
+    check(!gb.contains("getCallbackLock()") && !sb.contains("getCallbackLock()"),"state I/O contains no callback lock");
+    const int decode=sb.indexOf("decodeInstrumentState(");
+    const int suspend=sb.indexOf("suspendProcessing(true)");
+    check(decode>=0 && suspend>decode,"preset decode occurs before audio suspension");
+    check(sb.contains("uiPerformanceState_=state.performance"),"preset restore synchronizes UI performance mirror");
+}
+
 void callbackLockBoundaryAudit() {
     const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory().getChildFile("plugin/PluginProcessor.cpp");
     const auto text=f.loadFileAsString();
     check(text.isNotEmpty(),"PluginProcessor.cpp available for callback-lock audit");
     int search=0,count=0;
     while((search=text.indexOf(search,"getCallbackLock()"))>=0){++count;search+=17;}
-    check(count==1,"only heavyweight preset restore retains JUCE callback lock");
+    check(count==0,"processor implementation contains no JUCE callback-lock acquisition");
     const int perf=text.indexOf("bool OrigamiAudioProcessor::setUiPerformanceState");
     const int editor=text.indexOf("juce::AudioProcessorEditor* OrigamiAudioProcessor::createEditor");
     check(perf>=0 && editor>perf,"routine UI state source bounds found");
@@ -358,6 +378,7 @@ void run() {
     // V24.0.3: the comprehensive processor/keyboard audio audit existed since
     // V23.2 but was never invoked by run(), so plugin builds could regress to
     // silence while the test executable still passed.
+    stateIoBoundaryAudit();
     callbackLockBoundaryAudit();
     playheadBoundaryAudit();
     telemetryBoundaryAudit();

@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p15-state-io-suspension
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
 // mct-origami-audio-reengineer-p13-audioplayhead-boundary
 // mct-origami-audio-reengineer-p12-host-block-ui-telemetry
@@ -364,19 +365,31 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     }
 }
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
-    const juce::ScopedLock lock(stateLock_);
-    const auto bytes=mct::origami::encodeInstrumentState(engine_.instrumentState());
-    dest.replaceAll(bytes.data(),bytes.size());
+    // Patch 15/19: heavyweight state I/O stops processing instead of blocking it.
+    const bool wasSuspended=isSuspended();
+    if(!wasSuspended) suspendProcessing(true);
+    {
+        const juce::ScopedLock lock(stateLock_);
+        const auto bytes=mct::origami::encodeInstrumentState(engine_.instrumentState());
+        dest.replaceAll(bytes.data(),bytes.size());
+    }
+    if(!wasSuspended) suspendProcessing(false);
 }
 void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     if(size<=0) return;
+    // Decode and validate before touching the live engine or suspending audio.
     mct::origami::InstrumentState state;
     if(!mct::origami::decodeInstrumentState(data,static_cast<std::size_t>(size),state)) return;
-    const juce::ScopedLock lock(stateLock_);
-    // JUCE hosts/wrappers hold the callback lock around processing. No codec or
-    // additional lock is introduced in processBlock; the commit resets voices.
-    const juce::ScopedLock callbackLock(getCallbackLock());
-    engine_.restoreInstrumentState(state);
+    const bool wasSuspended=isSuspended();
+    if(!wasSuspended) suspendProcessing(true);
+    {
+        const juce::ScopedLock lock(stateLock_);
+        if(engine_.restoreInstrumentState(state)) {
+            uiPerformanceState_=state.performance;
+            performanceMailbox_.publish(uiPerformanceState_);
+        }
+    }
+    if(!wasSuspended) suspendProcessing(false);
 }
 bool OrigamiAudioProcessor::setUiMacro(unsigned index,float value) noexcept {
     const juce::ScopedLock lock(stateLock_);
