@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p14-callback-lock-mailboxes
+// mct-origami-audio-reengineer-p13-audioplayhead-boundary
 // mct-origami-audio-reengineer-p12-host-block-ui-telemetry
 // mct-origami-audio-reengineer-p10-persistent-preallocated-midi
 // mct-origami-audio-reengineer-p06.3-local-source
@@ -24,6 +26,8 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
     // Preserve the established four-module initial layout in the model, once.
     for(int i=0;i<3;++i) engine_.addOscillatorModule();
+    uiPerformanceState_=engine_.performanceState();
+    uiArpState_=arpState_;
 }
 void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     sampleRate_=sampleRate>1.0?sampleRate:44100.0;
@@ -60,26 +64,13 @@ void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexc
 }
 
 double OrigamiAudioProcessor::getUiHostBpm() noexcept {
-    if(auto* playHead=getPlayHead()) {
-        if(const auto position=playHead->getPosition()) {
-            if(const auto hostBpm=position->getBpm())
-                return juce::jlimit(20.0,400.0,*hostBpm);
-        }
-    }
-    return 120.0;
+    return static_cast<double>(cachedHostBpm_.load(std::memory_order_acquire));
 }
 
 double OrigamiAudioProcessor::currentArpBpm() const noexcept {
     double bpm=juce::jlimit(20.0,400.0,arpState_.internalTempo);
-    if(arpState_.syncToDaw) {
-        if(auto* playHead=getPlayHead()) {
-            if(const auto position=playHead->getPosition()) {
-                if(const auto hostBpm=position->getBpm())
-                    bpm=juce::jlimit(20.0,400.0,*hostBpm);
-            }
-        }
-    }
-    return bpm;
+    if(arpState_.syncToDaw) bpm=static_cast<double>(cachedHostBpm_.load(std::memory_order_relaxed));
+    return juce::jlimit(20.0,400.0,bpm);
 }
 double OrigamiAudioProcessor::arpStepBeats() const noexcept {
     static constexpr double beats[] {1.0,0.5,0.25,0.125,1.0/3.0,1.0/6.0,0.75};
@@ -268,6 +259,32 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     jassert(buffer.getNumChannels() >= 2);
     const int total = buffer.getNumSamples();
 
+    // Patch 14/19: consume latest UI state at the host-block boundary.
+    mct::origami::PerformanceState pendingPerformance;
+    if(performanceMailbox_.consume(pendingPerformance))
+        engine_.setPerformanceState(pendingPerformance);
+    mct::origami::ArpeggiatorState pendingArp;
+    if(arpMailbox_.consume(pendingArp)) {
+        const bool timingChanged=pendingArp.rateIndex!=arpState_.rateIndex
+            || std::abs(pendingArp.swing-arpState_.swing)>1.0e-6f
+            || pendingArp.syncToDaw!=arpState_.syncToDaw
+            || std::abs(pendingArp.internalTempo-arpState_.internalTempo)>1.0e-9;
+        arpState_=pendingArp;
+        if(timingChanged) arpStepRemaining_=0.0;
+    }
+    if(pendingClearArpLatch_.exchange(false,std::memory_order_acq_rel))
+        resetArpeggiatorRuntime(true);
+
+    // Patch 13/19: sample host-owned playhead context exactly once per callback.
+    float hostBpm=120.0f;
+    if(auto* playHead=getPlayHead()) {
+        if(const auto position=playHead->getPosition()) {
+            if(const auto bpm=position->getBpm(); bpm && std::isfinite(*bpm))
+                hostBpm=static_cast<float>(juce::jlimit(20.0,400.0,*bpm));
+        }
+    }
+    cachedHostBpm_.store(hostBpm,std::memory_order_release);
+
     // Patch 03/19: reuse capacity-prepared MIDI workspaces. Do not grow/mutate
     // the host wrapper's MIDI buffer with Origami-generated events.
     auto& inputMidi=inputMidiScratch_;
@@ -452,10 +469,14 @@ void OrigamiAudioProcessor::setUiModWheel(float normalized) noexcept {
 bool OrigamiAudioProcessor::setUiPitchBendRange(float semitones) noexcept { const juce::ScopedLock lock(stateLock_);return engine_.setPitchBendRange(semitones); }
 float OrigamiAudioProcessor::getUiPitchBendRange() const noexcept { const juce::ScopedLock lock(stateLock_);return engine_.pitchBendRange(); }
 bool OrigamiAudioProcessor::setUiPerformanceState(const mct::origami::PerformanceState& state) noexcept {
-    const juce::ScopedLock lock(stateLock_);const juce::ScopedLock callbackLock(getCallbackLock());return engine_.setPerformanceState(state);
+    const juce::ScopedLock lock(stateLock_);
+    uiPerformanceState_=state;
+    performanceMailbox_.publish(uiPerformanceState_);
+    return true;
 }
 mct::origami::PerformanceState OrigamiAudioProcessor::getUiPerformanceState() const noexcept {
-    const juce::ScopedLock lock(stateLock_);return engine_.performanceState();
+    const juce::ScopedLock lock(stateLock_);
+    return uiPerformanceState_;
 }
 bool OrigamiAudioProcessor::setUiArpeggiatorState(const mct::origami::ArpeggiatorState& requested) noexcept {
     auto state=requested;
@@ -465,15 +486,14 @@ bool OrigamiAudioProcessor::setUiArpeggiatorState(const mct::origami::Arpeggiato
     state.velocityScale=juce::jlimit(0.25f,1.5f,state.velocityScale);
     state.transposeSemitones=juce::jlimit(-24,24,state.transposeSemitones);
     state.internalTempo=juce::jlimit(20.0,400.0,state.internalTempo);
-    const juce::ScopedLock lock(stateLock_);const juce::ScopedLock callbackLock(getCallbackLock());
-    const bool timingChanged=state.rateIndex!=arpState_.rateIndex
-        || std::abs(state.swing-arpState_.swing)>1.0e-6f
-        || state.syncToDaw!=arpState_.syncToDaw
-        || std::abs(state.internalTempo-arpState_.internalTempo)>1.0e-9;
-    arpState_=state;if(timingChanged) arpStepRemaining_=0.0;return true;
+    const juce::ScopedLock lock(stateLock_);
+    uiArpState_=state;
+    arpMailbox_.publish(uiArpState_);
+    return true;
 }
 mct::origami::ArpeggiatorState OrigamiAudioProcessor::getUiArpeggiatorState() const noexcept {
-    const juce::ScopedLock lock(stateLock_);return arpState_;
+    const juce::ScopedLock lock(stateLock_);
+    return uiArpState_;
 }
 mct::origami::ArpeggiatorRuntimeSnapshot OrigamiAudioProcessor::getUiArpeggiatorRuntimeSnapshot() const noexcept {
     mct::origami::ArpeggiatorRuntimeSnapshot snapshot;
@@ -496,9 +516,8 @@ mct::origami::EnvelopeTraceSnapshot OrigamiAudioProcessor::getUiEnvelopeTraceSna
 }
 
 void OrigamiAudioProcessor::clearUiArpeggiatorLatch() noexcept {
-    const juce::ScopedLock lock(stateLock_);
-    const juce::ScopedLock callbackLock(getCallbackLock());
-    resetArpeggiatorRuntime(true);
+    // Coalescing command: multiple clears before the next callback equal one.
+    pendingClearArpLatch_.store(true,std::memory_order_release);
 }
 
 juce::AudioProcessorEditor* OrigamiAudioProcessor::createEditor() { return new OrigamiAudioProcessorEditor(*this); }

@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p14-callback-lock-mailboxes
+// mct-origami-audio-reengineer-p13-audioplayhead-boundary
 // mct-origami-audio-reengineer-p10-persistent-preallocated-midi
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v28.1.0-env-hold-live-tracer
@@ -92,8 +94,17 @@ private:
     static constexpr std::size_t midiScratchBytes_ = 256u * 1024u;
     std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
+    // Patch 14/19: non-blocking UI -> audio state transfer.
+    mct::origami::PerformanceState uiPerformanceState_{};
+    mct::origami::LatestStateMailbox<mct::origami::PerformanceState> performanceMailbox_;
+    mct::origami::ArpeggiatorState uiArpState_{};
+    mct::origami::LatestStateMailbox<mct::origami::ArpeggiatorState> arpMailbox_;
+    std::atomic<bool> pendingClearArpLatch_{false};
+    // Audio-thread-owned runtime state.
     mct::origami::ArpeggiatorState arpState_{};
     double sampleRate_=44100.0;
+    std::atomic<float> cachedHostBpm_{120.0f};
+    static_assert(std::atomic<float>::is_always_lock_free, "Origami requires lock-free float telemetry atomics");
     double arpStepRemaining_=0.0,arpGateRemaining_=-1.0;
     int arpActiveNote_=-1,arpActiveChannel_=1,arpSequenceIndex_=0,arpBounceDirection_=1;
     bool arpStepParity_=false,arpWasEnabled_=false;

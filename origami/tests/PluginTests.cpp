@@ -1,3 +1,5 @@
+// mct-origami-audio-reengineer-p14-callback-lock-mailboxes
+// mct-origami-audio-reengineer-p13-audioplayhead-boundary
 // mct-origami-audio-reengineer-p12-host-block-ui-telemetry
 // mct-origami-audio-reengineer-p11-full-wrapper-rt-guard
 // mct-origami-audio-reengineer-p05.6-control-identity
@@ -87,6 +89,36 @@ void disableExtraOscillators(OrigamiAudioProcessor& p) {
     for(unsigned id=2;id<=4;++id)
         p.setUiOscillatorEnabled(id,false);
 }
+void callbackLockBoundaryAudit() {
+    const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory().getChildFile("plugin/PluginProcessor.cpp");
+    const auto text=f.loadFileAsString();
+    check(text.isNotEmpty(),"PluginProcessor.cpp available for callback-lock audit");
+    int search=0,count=0;
+    while((search=text.indexOf(search,"getCallbackLock()"))>=0){++count;search+=17;}
+    check(count==1,"only heavyweight preset restore retains JUCE callback lock");
+    const int perf=text.indexOf("bool OrigamiAudioProcessor::setUiPerformanceState");
+    const int editor=text.indexOf("juce::AudioProcessorEditor* OrigamiAudioProcessor::createEditor");
+    check(perf>=0 && editor>perf,"routine UI state source bounds found");
+    check(!text.substring(perf,editor).contains("getCallbackLock()"),"routine performance/ARP UI operations contain no callback lock");
+    check(text.contains("performanceMailbox_.consume("),"performance state consumed through mailbox");
+    check(text.contains("arpMailbox_.consume("),"ARP state consumed through mailbox");
+    check(text.contains("pendingClearArpLatch_.exchange("),"ARP clear consumed as non-blocking command");
+}
+
+void playheadBoundaryAudit() {
+    const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory().getChildFile("plugin/PluginProcessor.cpp");
+    const auto text=f.loadFileAsString();
+    check(text.isNotEmpty(),"PluginProcessor.cpp available for playhead architecture audit");
+    const int ps=text.indexOf("void OrigamiAudioProcessor::processBlock");
+    const int pe=text.indexOf(ps,"void OrigamiAudioProcessor::getStateInformation");
+    int search=0,count=0; bool inside=true;
+    while((search=text.indexOf(search,"getPlayHead()"))>=0){++count;if(search<ps||search>=pe)inside=false;search+=12;}
+    check(count==1,"AudioPlayHead queried exactly once in processor implementation");
+    check(inside,"AudioPlayHead access exists only inside processBlock");
+    check(text.contains("cachedHostBpm_.store("),"processBlock publishes cached host BPM");
+    check(text.contains("cachedHostBpm_.load("),"UI/ARP consume cached host BPM");
+}
+
 void telemetryBoundaryAudit() {
     // Regression guard: MIDI event density must never multiply UI publication.
     const auto processorFile=juce::File(__FILE__).getParentDirectory().getParentDirectory()
@@ -326,6 +358,8 @@ void run() {
     // V24.0.3: the comprehensive processor/keyboard audio audit existed since
     // V23.2 but was never invoked by run(), so plugin builds could regress to
     // silence while the test executable still passed.
+    callbackLockBoundaryAudit();
+    playheadBoundaryAudit();
     telemetryBoundaryAudit();
     playabilityAudit();
 
