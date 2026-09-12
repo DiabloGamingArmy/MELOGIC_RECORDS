@@ -17,6 +17,7 @@ struct ModulationBindings {
     std::function<bool(unsigned)> removeRoute;
     std::function<bool(const ModulationState&)> modulation;
     std::function<EnvelopeTraceSnapshot()> envelopeTrace;
+    std::function<PerformanceInputSnapshot()> performanceInput;
     std::function<double()> hostBpm;
 };
 }

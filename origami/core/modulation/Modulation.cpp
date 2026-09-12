@@ -85,10 +85,19 @@ std::size_t slotFor(ModSource source,const ModulationState& state) {
 
 float performanceSourceCurveValue(const PerformanceSourceCurve& curve,float input) noexcept {
     const float x=std::clamp(std::isfinite(input)?input:0.0f,0.0f,1.0f);
-    const float midpoint=std::clamp(std::isfinite(curve.midpoint)?curve.midpoint:0.5f,0.01f,0.99f);
-    if(x<=0.0f || x>=1.0f) return x;
-    const double gamma=std::log(static_cast<double>(midpoint))/std::log(0.5);
-    return std::clamp(static_cast<float>(std::pow(static_cast<double>(x),gamma)),0.0f,1.0f);
+    const std::size_t count=std::min<std::size_t>(curve.pointCount,curve.points.size());
+    if(count<2) return x;
+    std::size_t hi=1;
+    while(hi<count && x>curve.points[hi].x) ++hi;
+    hi=std::min(hi,count-1);
+    const auto& a=curve.points[hi-1];
+    const auto& b=curve.points[hi];
+    const float span=std::max(1.0e-5f,b.x-a.x);
+    float t=std::clamp((x-a.x)/span,0.0f,1.0f);
+    const float cv=std::clamp(b.curve,-1.0f,1.0f);
+    if(cv>0.0f) t=std::pow(t,1.0f+cv*4.0f);
+    else if(cv<0.0f) t=1.0f-std::pow(1.0f-t,1.0f+(-cv)*4.0f);
+    return std::clamp(a.y+(b.y-a.y)*t,0.0f,1.0f);
 }
 
 const LfoSettings& lfoSettings(const ModulationState& s,std::size_t i) noexcept {
@@ -104,7 +113,18 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     if((s.lfoActiveMask&~0xFu)!=0) return false;
     if((s.generatorActiveMask&~0x1Fu)!=0) return false;
     if((s.performanceSourceActiveMask&~0x3u)!=0) return false;
-    if(!range(s.velocityCurve.midpoint,.01f,.99f) || !range(s.noteCurve.midpoint,.01f,.99f)) return false;
+    for(const auto* curve:{&s.velocityCurve,&s.noteCurve}) {
+        if(curve->pointCount<2 || curve->pointCount>curve->points.size()) return false;
+        float previous=-1.0f;
+        for(std::size_t i=0;i<curve->pointCount;++i) {
+            const auto& p=curve->points[i];
+            if(!range(p.x,0.0f,1.0f)||!range(p.y,0.0f,1.0f)||!range(p.curve,-1.0f,1.0f)) return false;
+            if(i>0 && p.x<=previous) return false;
+            previous=p.x;
+        }
+        if(std::abs(curve->points[0].x)>1.0e-6f ||
+           std::abs(curve->points[curve->pointCount-1].x-1.0f)>1.0e-6f) return false;
+    }
     for(std::size_t i=0;i<4;++i) if(!validLfo(lfoSettings(s,i))) return false;
     if(!validEnvelope(s.env2) || !validEnvelope(s.env3)) return false;
     for(float c:s.env1Curves) if(!range(c,-1.f,1.f)) return false;

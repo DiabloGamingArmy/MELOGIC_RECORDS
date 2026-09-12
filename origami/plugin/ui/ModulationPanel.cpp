@@ -189,6 +189,15 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     lfoLoop_.setVisible(false);
     for(auto& shape:lfoMseg_) resetMsegShape(shape);
     lfoTools_.onClick=[this]{showLfoToolsMenu();};
+    addAndMakeVisible(performanceTools_);
+    addAndMakeVisible(performanceSnap_);
+    addAndMakeVisible(performanceInputLabel_);
+    performanceTools_.onClick=[this]{showPerformanceToolsMenu();};
+    performanceSnap_.setToggleState(true,juce::dontSendNotification);
+    performanceInputLabel_.setJustificationType(juce::Justification::centredLeft);
+    performanceInputLabel_.setFont(juce::FontOptions(10.0f));
+    performanceInputLabel_.setColour(juce::Label::textColourId,Palette::muted());
+    for(auto& shape:performanceMseg_) resetPerformanceShape(shape);
     auto update=[this]{commitGenerator();repaint();};
     mode_.onChange=update;rate_.onValueChange=update;curve_.onValueChange=update;
     randomSmooth_.onValueChange=update;
@@ -422,6 +431,7 @@ void ModulationPanel::updateVisibleControls() {
     const bool chaos=selected_==9;
     const bool drift=selected_==10;
     const bool sequencer=selected_==11;
+    const bool performance=selected_==12 || selected_==13;
 
     for(auto& s:envSliders_) s.setVisible(env);
     for(auto& l:envLabels_) l.setVisible(env);
@@ -440,6 +450,9 @@ void ModulationPanel::updateVisibleControls() {
     randomSmooth_.setVisible(random);randomSmoothLabel_.setVisible(random);
     randomHold_.setVisible(random);randomHoldLabel_.setVisible(random);
     randomDelay_.setVisible(random);randomDelayLabel_.setVisible(random);
+    performanceTools_.setVisible(performance);
+    performanceSnap_.setVisible(performance);
+    performanceInputLabel_.setVisible(performance);
 }
 
 void ModulationPanel::syncFromModel() {
@@ -479,6 +492,10 @@ void ModulationPanel::syncFromModel() {
         rate_.setValue(cached_.drift.rateHz,juce::dontSendNotification);
     } else if(selected_==11) {
         rate_.setValue(cached_.sequencer.rateHz,juce::dontSendNotification);
+    } else if(selected_==12 || selected_==13) {
+        if(performancePointDrag_<0 && performanceCurveDrag_<0)
+            loadPerformanceShape(performanceMseg_[static_cast<std::size_t>(selected_-12)],
+                                 selected_==12?cached_.velocityCurve:cached_.noteCurve);
     }
     updateVisibleControls();updateScrollbar();repaint();
 }
@@ -580,13 +597,10 @@ void ModulationPanel::mouseDown(const juce::MouseEvent& e) {
     dragStart_=e.position;
     const auto local=e.getEventRelativeTo(this);
     if((selected_==12 || selected_==13) && performanceCurveCanvas_.contains(local.position)) {
-        const float midX=performanceCurveCanvas_.getCentreX();
-        const float currentMid=selected_==12?cached_.velocityCurve.midpoint:cached_.noteCurve.midpoint;
-        const float midY=performanceCurveCanvas_.getBottom()-currentMid*performanceCurveCanvas_.getHeight();
-        if(local.position.getDistanceFrom({midX,midY})<=18.0f) {
-            performanceCurveDrag_=true;
-            return;
-        }
+        performanceDragStartShape_=performanceMseg_[static_cast<std::size_t>(selected_-12)];
+        performancePointDrag_=hitPerformancePoint(local.position);
+        if(performancePointDrag_<0) performanceCurveDrag_=hitPerformanceCurve(local.position);
+        return;
     }
 
     sourceDragTab_=-1;
@@ -645,6 +659,31 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
         return;
     }
 
+    if(e.eventComponent==this && (selected_==12 || selected_==13) &&
+       performanceCurveCanvas_.contains(local.position)) {
+        auto& shape=performanceMseg_[static_cast<std::size_t>(selected_-12)];
+        const int hit=hitPerformancePoint(local.position);
+        if(hit>=0) {
+            if(shape.count<=2) return;
+            const auto index=static_cast<std::size_t>(hit);
+            if(index==0 || index+1==shape.count) return;
+            for(std::size_t i=index;i+1<shape.count;++i) shape.points[i]=shape.points[i+1];
+            --shape.count;commitPerformanceShape();repaint();return;
+        }
+        if(shape.count>=shape.points.size()) return;
+        float x=juce::jlimit(0.0f,1.0f,(local.position.x-performanceCurveCanvas_.getX())/
+            juce::jmax(1.0f,performanceCurveCanvas_.getWidth()));
+        if(performanceSnap_.getToggleState()) x=std::round(x*16.0f)/16.0f;
+        const float y=juce::jlimit(0.0f,1.0f,(performanceCurveCanvas_.getBottom()-local.position.y)/
+            juce::jmax(1.0f,performanceCurveCanvas_.getHeight()));
+        std::size_t insert=0;while(insert<shape.count && shape.points[insert].x<x) ++insert;
+        if(insert>0 && std::abs(shape.points[insert-1].x-x)<.004f) return;
+        if(insert<shape.count && std::abs(shape.points[insert].x-x)<.004f) return;
+        for(std::size_t i=shape.count;i>insert;--i) shape.points[i]=shape.points[i-1];
+        shape.points[insert]={x,y,0.0f};++shape.count;
+        commitPerformanceShape();repaint();return;
+    }
+
     if(e.eventComponent!=this || selected_<3 || selected_>6 || !envCanvas_.contains(e.position)) return;
     auto& shape=lfoMseg_[static_cast<std::size_t>(selected_-3)];
     const int hit=hitMsegPoint(e.position);
@@ -679,15 +718,24 @@ void ModulationPanel::mouseDoubleClick(const juce::MouseEvent& e) {
 }
 
 void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
-    if(performanceCurveDrag_ && (selected_==12 || selected_==13)) {
-        const auto local=e.getEventRelativeTo(this);
-        const float y=juce::jlimit(performanceCurveCanvas_.getY(),
-                                   performanceCurveCanvas_.getBottom(),
-                                   local.position.y);
-        const float midpoint=juce::jlimit(0.01f,0.99f,
-            (performanceCurveCanvas_.getBottom()-y)/performanceCurveCanvas_.getHeight());
-        commitPerformanceCurve(midpoint);
-        return;
+    if((selected_==12 || selected_==13) && (performancePointDrag_>=0 || performanceCurveDrag_>=0)) {
+        auto& shape=performanceMseg_[static_cast<std::size_t>(selected_-12)];
+        const auto local=e.getEventRelativeTo(this).position;
+        if(performancePointDrag_>=0) {
+            const auto i=static_cast<std::size_t>(performancePointDrag_);
+            float x=(local.x-performanceCurveCanvas_.getX())/juce::jmax(1.0f,performanceCurveCanvas_.getWidth());
+            if(performanceSnap_.getToggleState()) x=std::round(x*16.0f)/16.0f;
+            const float y=juce::jlimit(0.0f,1.0f,(performanceCurveCanvas_.getBottom()-local.y)/
+                juce::jmax(1.0f,performanceCurveCanvas_.getHeight()));
+            if(i==0) shape.points[i].x=0.0f;
+            else if(i+1==shape.count) shape.points[i].x=1.0f;
+            else shape.points[i].x=juce::jlimit(shape.points[i-1].x+.005f,shape.points[i+1].x-.005f,x);
+            shape.points[i].y=y;
+        } else {
+            const auto i=static_cast<std::size_t>(performanceCurveDrag_);
+            shape.points[i].curve=performanceCurveForHandleY(performanceDragStartShape_,i,local.y);
+        }
+        commitPerformanceShape();repaint();return;
     }
     if(routeDragId_!=0) {
         const auto local=e.getEventRelativeTo(this);
@@ -789,7 +837,7 @@ void ModulationPanel::mouseDrag(const juce::MouseEvent& e) {
 }
 
 void ModulationPanel::mouseUp(const juce::MouseEvent&) {
-    performanceCurveDrag_=false;
+    performancePointDrag_=-1;performanceCurveDrag_=-1;
     dragTarget_=DragTarget::None;lfoPointDrag_=-1;lfoCurveDrag_=-1;
     routeDragId_=0;
     sourceDragTab_=-1;
@@ -955,7 +1003,7 @@ void ModulationPanel::timerCallback() {
             }
         }
     }
-    if(selected_<=8) repaint();
+    if(selected_<=8 || selected_==12 || selected_==13) repaint();
 }
 
 void ModulationPanel::zoomBy(float factor,juce::Point<float> anchor) {
@@ -981,7 +1029,7 @@ void ModulationPanel::updateScrollbar() {
 
 void ModulationPanel::resized() {
     auto body=contentBounds();
-    performanceCurveCanvas_=body.toFloat().withTrimmedLeft(132.0f).reduced(12.0f,18.0f);
+    performanceCurveCanvas_={};
 
     // Mixed modulation-source collection. ENV + LFO + generator sources share
     // one vertical rail so the editor area always represents ONE selected source.
@@ -1077,7 +1125,15 @@ void ModulationPanel::resized() {
         updateScrollbar();
     } else {
         envCanvas_={};
-        if(selected_==8) {
+        if(selected_==12 || selected_==13) {
+            auto tools=controls.removeFromLeft(72);performanceTools_.setBounds(tools.reduced(2,10));
+            controls.removeFromLeft(8);
+            auto snapCell=controls.removeFromLeft(64);performanceSnap_.setBounds(snapCell.reduced(2,10));
+            controls.removeFromLeft(8);
+            performanceInputLabel_.setBounds(controls.reduced(4,10));
+            body.removeFromTop(17);
+            performanceCurveCanvas_=body.reduced(10,6).toFloat();
+        } else if(selected_==8) {
             // Match ENV/LFO control language: full-width cells, large rotary
             // body, readable inline value field, and identical bottom labels.
             // Do NOT squeeze TextBoxRight sliders into 46px bounds; doing so
@@ -1268,7 +1324,6 @@ void ModulationPanel::showLfoToolsMenu() {
 
 void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     constexpr int railWidth=116;
-    if(selected_==12 || selected_==13) paintPerformanceCurve(g);
     auto rail=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
 
@@ -1288,8 +1343,12 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
             title="LFO "+juce::String(selected_-2)+" / "+modeName;
         }
     else if(selected_==7) title="FUNCTION / CURVED BIPOLAR";
-    else title="RANDOM / SAMPLE + HOLD";
+    else if(selected_==8) title="RANDOM / SAMPLE + HOLD";
+    else if(selected_==12) title="VELOCITY / RESPONSE MSEG";
+    else if(selected_==13) title="NOTE / KEYTRACK MSEG";
+    else title="MODULATION SOURCE";
     text(g,title,caption,9,Palette::muted());well(g,body);
+    if(selected_==12 || selected_==13) { paintPerformanceCurve(g); return; }
 
     if(selected_<=2) {
         if(envCanvas_.isEmpty()) return;
@@ -1627,6 +1686,22 @@ void ModulationPanel::updateSourceHistory(float) {
     telemetry.state=cached_;
     telemetry.selectedSource=sourceForTab(static_cast<std::size_t>(selected_));
     telemetry.synthActive=sourceTrace_.active;
+    telemetry.performanceInputActive=false;
+    telemetry.velocityValue=0.0f;
+    telemetry.keytrackValue=0.0f;
+    if(bindings_.performanceInput) {
+        const auto input=bindings_.performanceInput();
+        for(int note=127;note>=0;--note) {
+            const bool held=note<64 ? ((input.heldLow>>note)&1u)!=0
+                                    : ((input.heldHigh>>(note-64))&1u)!=0;
+            if(!held) continue;
+            telemetry.performanceInputActive=true;
+            const float rawVelocity=static_cast<float>(input.velocity[static_cast<std::size_t>(note)])/127.0f;
+            telemetry.velocityValue=performanceSourceCurveValue(cached_.velocityCurve,juce::jlimit(0.0f,1.0f,rawVelocity));
+            telemetry.keytrackValue=performanceSourceCurveValue(cached_.noteCurve,static_cast<float>(note)/127.0f);
+            break;
+        }
+    }
 
     // No audible/active envelope means no source-history display. Free-running
     // LFOs may continue mathematically, but the synth has no output to modulate.
@@ -1634,6 +1709,7 @@ void ModulationPanel::updateSourceHistory(float) {
         telemetry.sourceValues.fill(0.0f);
         for(auto& history:sourceHistory_) history.clear();
         randomViewportHistory_.clear();
+        telemetry.synthActive=telemetry.performanceInputActive;
         return;
     }
 
@@ -1877,47 +1953,150 @@ void ModulationPanel::paintOverChildren(juce::Graphics& g) {
 }
 
 
-void ModulationPanel::commitPerformanceCurve(float midpoint) {
-    if(!bindings_.snapshot || !bindings_.modulation) return;
-    auto mod=bindings_.snapshot().modulation;
-    if(selected_==12) mod.velocityCurve.midpoint=juce::jlimit(0.01f,0.99f,midpoint);
-    else if(selected_==13) mod.noteCurve.midpoint=juce::jlimit(0.01f,0.99f,midpoint);
-    else return;
-    if(bindings_.modulation(mod)) cached_=mod;
-    repaint();
+void ModulationPanel::resetPerformanceShape(MsegShape& shape) noexcept {
+    shape={};shape.count=3;
+    shape.points[0]={0.0f,0.0f,0.0f};
+    shape.points[1]={0.5f,0.5f,0.0f};
+    shape.points[2]={1.0f,1.0f,0.0f};
 }
-
+void ModulationPanel::loadPerformanceShape(MsegShape& shape,const PerformanceSourceCurve& curve) noexcept {
+    if(curve.pointCount<2 || curve.pointCount>curve.points.size()){resetPerformanceShape(shape);return;}
+    shape={};shape.count=curve.pointCount;
+    for(std::size_t i=0;i<shape.count;++i)
+        shape.points[i]={curve.points[i].x,curve.points[i].y,curve.points[i].curve};
+}
+bool ModulationPanel::commitPerformanceShape() {
+    if((selected_!=12 && selected_!=13)||!bindings_.snapshot||!bindings_.modulation) return false;
+    auto mod=bindings_.snapshot().modulation;
+    auto& dst=selected_==12?mod.velocityCurve:mod.noteCurve;
+    auto& src=performanceMseg_[static_cast<std::size_t>(selected_-12)];
+    if(src.count<2) return false;
+    src.points[0].x=0.0f;src.points[src.count-1].x=1.0f;
+    dst.pointCount=static_cast<std::uint32_t>(std::min(src.count,dst.points.size()));
+    for(std::size_t i=0;i<dst.pointCount;++i)
+        dst.points[i]={src.points[i].x,juce::jlimit(0.0f,1.0f,src.points[i].y),src.points[i].curve};
+    if(!bindings_.modulation(mod)) return false;
+    cached_=mod;return true;
+}
+float ModulationPanel::performanceMsegValue(const MsegShape& shape,float x) const noexcept {
+    if(shape.count<2) return juce::jlimit(0.0f,1.0f,x);
+    x=juce::jlimit(0.0f,1.0f,x);std::size_t hi=1;
+    while(hi<shape.count && x>shape.points[hi].x) ++hi;
+    hi=juce::jmin(hi,shape.count-1);
+    const auto& a=shape.points[hi-1];const auto& b=shape.points[hi];
+    float t=juce::jlimit(0.0f,1.0f,(x-a.x)/juce::jmax(.0001f,b.x-a.x));
+    const float cv=juce::jlimit(-1.0f,1.0f,b.curve);
+    if(cv>0.0f)t=std::pow(t,1.0f+cv*4.0f);
+    else if(cv<0.0f)t=1.0f-std::pow(1.0f-t,1.0f+(-cv)*4.0f);
+    return juce::jlimit(0.0f,1.0f,a.y+(b.y-a.y)*t);
+}
+juce::Point<float> ModulationPanel::performancePixel(const MsegPoint& p) const noexcept {
+    return {performanceCurveCanvas_.getX()+p.x*performanceCurveCanvas_.getWidth(),
+            performanceCurveCanvas_.getBottom()-p.y*performanceCurveCanvas_.getHeight()};
+}
+int ModulationPanel::hitPerformancePoint(juce::Point<float> p) const noexcept {
+    if(selected_!=12&&selected_!=13)return -1;
+    const auto& shape=performanceMseg_[static_cast<std::size_t>(selected_-12)];
+    for(std::size_t i=0;i<shape.count;++i)
+        if(p.getDistanceFrom(performancePixel(shape.points[i]))<11.0f)return static_cast<int>(i);
+    return -1;
+}
+int ModulationPanel::hitPerformanceCurve(juce::Point<float> p) const noexcept {
+    if(selected_!=12&&selected_!=13)return -1;
+    const auto& shape=performanceMseg_[static_cast<std::size_t>(selected_-12)];
+    for(std::size_t i=1;i<shape.count;++i){
+        const float x=(shape.points[i-1].x+shape.points[i].x)*.5f;
+        const auto q=performancePixel({x,performanceMsegValue(shape,x),0.0f});
+        if(p.getDistanceFrom(q)<10.0f)return static_cast<int>(i);
+    }return -1;
+}
+float ModulationPanel::performanceCurveForHandleY(const MsegShape& source,std::size_t segment,float targetY) const noexcept {
+    if(segment==0||segment>=source.count)return 0.0f;
+    const float x=(source.points[segment-1].x+source.points[segment].x)*.5f;
+    float best=source.points[segment].curve,distance=std::numeric_limits<float>::max();
+    MsegShape trial=source;
+    for(int step=-100;step<=100;++step){
+        const float c=float(step)/100.0f;trial.points[segment].curve=c;
+        const float y=performancePixel({x,performanceMsegValue(trial,x),0.0f}).y;
+        const float d=std::abs(y-targetY);if(d<distance){distance=d;best=c;}
+    }return best;
+}
+void ModulationPanel::showPerformanceToolsMenu() {
+    if(selected_!=12&&selected_!=13)return;
+    const std::vector<NativeChoiceItem> items{
+        {1,"Init diagonal",true,""},{2,"Flip vertical",true,""},
+        {3,"Quantize points to 1/16",true,""},{4,"Flatten segment curves",true,""}
+    };
+    showNativeChoiceMenu(performanceTools_,selected_==12?"VELOCITY TOOLS":"NOTE TOOLS",items,0,
+        [safe=juce::Component::SafePointer<ModulationPanel>(this)](int id){
+            if(safe==nullptr||(safe->selected_!=12&&safe->selected_!=13))return;
+            auto& s=safe->performanceMseg_[static_cast<std::size_t>(safe->selected_-12)];
+            if(id==1)safe->resetPerformanceShape(s);
+            else if(id==2)for(std::size_t i=0;i<s.count;++i)s.points[i].y=1.0f-s.points[i].y;
+            else if(id==3){
+                for(std::size_t i=1;i+1<s.count;++i)s.points[i].x=std::round(s.points[i].x*16.0f)/16.0f;
+                for(std::size_t i=1;i+1<s.count;++i)s.points[i].x=juce::jlimit(s.points[i-1].x+.002f,s.points[i+1].x-.002f,s.points[i].x);
+            }else if(id==4)for(std::size_t i=1;i<s.count;++i)s.points[i].curve=0.0f;
+            safe->commitPerformanceShape();safe->repaint();
+        });
+}
 void ModulationPanel::paintPerformanceCurve(juce::Graphics& g) {
-    if(performanceCurveCanvas_.isEmpty()) return;
-    auto r=performanceCurveCanvas_;
-    g.setColour(Palette::panel().brighter(0.08f));
-    g.fillRoundedRectangle(r,3.0f);
-    g.setColour(Palette::border());
-    g.drawRoundedRectangle(r,3.0f,1.0f);
-    g.setColour(Palette::border().withAlpha(0.55f));
-    for(int i=1;i<4;++i) {
-        const float x=r.getX()+r.getWidth()*static_cast<float>(i)/4.0f;
-        const float y=r.getY()+r.getHeight()*static_cast<float>(i)/4.0f;
+    if(performanceCurveCanvas_.isEmpty()||(selected_!=12&&selected_!=13))return;
+    const auto r=performanceCurveCanvas_;
+    g.setColour(Palette::borderSoft().withAlpha(.32f));
+    for(int i=1;i<8;++i){
+        const float x=r.getX()+r.getWidth()*float(i)/8.0f;
         g.drawVerticalLine(juce::roundToInt(x),r.getY(),r.getBottom());
+    }
+    for(int i=1;i<4;++i){
+        const float y=r.getY()+r.getHeight()*float(i)/4.0f;
         g.drawHorizontalLine(juce::roundToInt(y),r.getX(),r.getRight());
     }
-    const auto& curve=selected_==12?cached_.velocityCurve:cached_.noteCurve;
+    const auto& shape=performanceMseg_[static_cast<std::size_t>(selected_-12)];
     juce::Path path;
-    constexpr int segments=128;
-    for(int i=0;i<=segments;++i) {
-        const float x=static_cast<float>(i)/segments;
-        const float y=performanceSourceCurveValue(curve,x);
-        const juce::Point<float> p{r.getX()+x*r.getWidth(),r.getBottom()-y*r.getHeight()};
-        if(i==0) path.startNewSubPath(p); else path.lineTo(p);
+    constexpr int segments=192;
+    for(int i=0;i<=segments;++i){
+        const float x=float(i)/segments;
+        const auto p=performancePixel({x,performanceMsegValue(shape,x),0.0f});
+        if(i==0)path.startNewSubPath(p);else path.lineTo(p);
     }
-    g.setColour(Palette::accent());
-    g.strokePath(path,juce::PathStrokeType(2.0f));
-    const juce::Point<float> handle{r.getCentreX(),r.getBottom()-curve.midpoint*r.getHeight()};
-    g.fillEllipse(juce::Rectangle<float>(10.0f,10.0f).withCentre(handle));
-    g.setColour(Palette::text());
-    g.setFont(juce::FontOptions(10.0f));
-    g.drawText(selected_==12?"VELOCITY RESPONSE":"NOTE RESPONSE",
-               r.removeFromTop(18.0f),juce::Justification::centredLeft,false);
+    juce::Path fill=path;fill.lineTo(r.getRight(),r.getBottom());fill.lineTo(r.getX(),r.getBottom());fill.closeSubPath();
+    g.setColour(signalSurfaceColour(.46f,.20f));g.fillPath(fill);
+    g.setColour(Palette::accent());g.strokePath(path,juce::PathStrokeType(1.5f));
+    for(std::size_t i=0;i<shape.count;++i){
+        const auto p=performancePixel(shape.points[i]);
+        auto c=juce::Rectangle<float>(10,10).withCentre(p);
+        g.setColour(Palette::background());g.fillEllipse(c);
+        g.setColour(signalSourceColour());g.drawEllipse(c,1.4f);
+        if(i>0){
+            const float x=(shape.points[i-1].x+shape.points[i].x)*.5f;
+            const auto q=performancePixel({x,performanceMsegValue(shape,x),0.0f});
+            auto h=juce::Rectangle<float>(7,7).withCentre(q);
+            g.setColour(Palette::background());g.fillEllipse(h);
+            g.setColour(Palette::secondary());g.drawEllipse(h,1.1f);
+        }
+    }
+
+    // Event markers are discrete by design: no trail, no interpolation in time.
+    if(bindings_.performanceInput){
+        const auto input=bindings_.performanceInput();
+        int count=0;float lastValue=0.0f;
+        for(int note=0;note<128;++note){
+            const bool held=note<64?((input.heldLow>>note)&1u)!=0:((input.heldHigh>>(note-64))&1u)!=0;
+            if(!held)continue;
+            const float x=selected_==13?float(note)/127.0f:float(input.velocity[static_cast<std::size_t>(note)])/127.0f;
+            const float y=performanceMsegValue(shape,x);
+            const auto p=performancePixel({x,y,0.0f});
+            g.setColour(juce::Colours::white.withAlpha(.16f));g.fillEllipse(juce::Rectangle<float>(18,18).withCentre(p));
+            g.setColour(juce::Colours::white.withAlpha(.92f));g.fillEllipse(juce::Rectangle<float>(6,6).withCentre(p));
+            ++count;lastValue=x;
+        }
+        if(count>0) performanceInputLabel_.setText(
+            (selected_==12?"INPUT VELOCITY ":"INPUT NOTE ")+juce::String(lastValue,3)+
+            (count>1?"  / "+juce::String(count)+" HELD":""),
+            juce::dontSendNotification);
+        else performanceInputLabel_.setText(selected_==12?"INPUT VELOCITY —":"INPUT NOTE —",juce::dontSendNotification);
+    }
 }
 
 MacroPanel::MacroPanel(ModulationBindings bindings):Panel("MACROS"),bindings_(std::move(bindings)) {

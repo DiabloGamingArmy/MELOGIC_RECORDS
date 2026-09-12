@@ -13,6 +13,7 @@
 #include "StateCodec.h"
 #include <cstring>
 #include <stdexcept>
+#include <algorithm>
 namespace mct::origami {
 namespace {
 constexpr std::uint32_t magic=0x4d43544fu;
@@ -32,7 +33,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(17);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(18);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -93,10 +94,18 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     }
     // V16: route polarity, appended so v1-v15 layouts remain readable.
     for(const auto& route:mod.routes) if(route.id) w.word(route.bipolar?1u:0u);
-    // V17: editable Velocity / Note response curves and UI activation.
-    w.real(mod.velocityCurve.midpoint);
-    w.real(mod.noteCurve.midpoint);
+    // V17 compatibility fields. V18 readers ignore these midpoint values in
+    // favour of the full MSEG data appended below.
+    w.real(0.5f);
+    w.real(0.5f);
     w.word(mod.performanceSourceActiveMask);
+    // V18: full editable Velocity / Note MSEG curves.
+    for(const auto* curve:{&mod.velocityCurve,&mod.noteCurve}) {
+        w.word(curve->pointCount);
+        for(std::size_t i=0;i<curve->pointCount;++i) {
+            w.real(curve->points[i].x);w.real(curve->points[i].y);w.real(curve->points[i].curve);
+        }
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -104,7 +113,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>17) return false;
+    if(version<1 || version>18) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -211,9 +220,22 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         }
     }
     if(version>=17) {
-        s.modulation.velocityCurve.midpoint=r.real();
-        s.modulation.noteCurve.midpoint=r.real();
+        const float legacyVelocityMid=r.real();
+        const float legacyNoteMid=r.real();
         s.modulation.performanceSourceActiveMask=r.word();
+        if(version==17) {
+            s.modulation.velocityCurve.points[1].y=std::clamp(legacyVelocityMid,0.0f,1.0f);
+            s.modulation.noteCurve.points[1].y=std::clamp(legacyNoteMid,0.0f,1.0f);
+        }
+    }
+    if(version>=18) {
+        for(auto* curve:{&s.modulation.velocityCurve,&s.modulation.noteCurve}) {
+            curve->pointCount=r.word();
+            if(curve->pointCount<2 || curve->pointCount>curve->points.size()) return false;
+            for(std::size_t i=0;i<curve->pointCount;++i) {
+                curve->points[i].x=r.real();curve->points[i].y=r.real();curve->points[i].curve=r.real();
+            }
+        }
     }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;

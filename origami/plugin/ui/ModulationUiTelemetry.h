@@ -12,6 +12,9 @@ struct ModulationUiTelemetry {
     ModulationState state{};
     ModSource selectedSource=ModSource::Env1;
     std::array<float,12> sourceValues{};
+    float velocityValue=0.0f;
+    float keytrackValue=0.0f;
+    bool performanceInputActive=false;
     bool synthActive=false;
 };
 
@@ -61,6 +64,8 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
         case ModSource::Macro2:return telemetry.state.macros[1];
         case ModSource::Macro3:return telemetry.state.macros[2];
         case ModSource::Macro4:return telemetry.state.macros[3];
+        case ModSource::Velocity:return telemetry.performanceInputActive ? telemetry.velocityValue : 0.0f;
+        case ModSource::Keytrack:return telemetry.performanceInputActive ? telemetry.keytrackValue : 0.0f;
 
         case ModSource::Env1:
         case ModSource::Env2:
@@ -70,8 +75,6 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
         case ModSource::Lfo3:
         case ModSource::Lfo4:
         case ModSource::ModWheel:
-        case ModSource::Velocity:
-        case ModSource::Keytrack:
         case ModSource::Aftertouch:
         case ModSource::PitchBend:
         case ModSource::NoteGate:

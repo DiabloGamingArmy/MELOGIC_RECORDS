@@ -80,6 +80,7 @@ public:
     mct::origami::ArpeggiatorState getUiArpeggiatorState() const noexcept;
     mct::origami::ArpeggiatorRuntimeSnapshot getUiArpeggiatorRuntimeSnapshot() const noexcept;
     mct::origami::EnvelopeTraceSnapshot getUiEnvelopeTraceSnapshot() const noexcept;
+    mct::origami::PerformanceInputSnapshot getUiPerformanceInputSnapshot() const noexcept;
     mct::origami::RenderBudgetSnapshot getUiRenderBudgetSnapshot() const noexcept;
     double getUiHostBpm() noexcept;
     void clearUiArpeggiatorLatch() noexcept;
@@ -146,6 +147,8 @@ private:
     std::atomic<int> arpUiActiveNote_{-1};
     std::atomic<std::uint64_t> arpUiHeldLow_{0},arpUiHeldHigh_{0};
     std::atomic<bool> arpUiDirty_{true};
+    std::atomic<std::uint64_t> performanceUiHeldLow_{0},performanceUiHeldHigh_{0};
+    std::array<std::atomic<std::uint8_t>,128> performanceUiVelocity_{};
     std::atomic<bool> envUiActive_{false};
     std::atomic<std::uint64_t> envUiOrder_{0};
     std::array<std::atomic<std::uint32_t>,3> envUiStage_{};

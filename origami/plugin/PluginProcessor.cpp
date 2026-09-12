@@ -435,6 +435,25 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // CriticalSection can ever enter processBlock().
     drainUiKeyboardMidi(inputMidi);
 
+    // V36: publish raw performance input independently of ARP state. The UI
+    // consumes only lock-free atomics; the audio thread never waits on it.
+    auto heldLow=performanceUiHeldLow_.load(std::memory_order_relaxed);
+    auto heldHigh=performanceUiHeldHigh_.load(std::memory_order_relaxed);
+    for(const auto metadata:inputMidi) {
+        const auto& message=metadata.getMessage();
+        if(!message.isNoteOnOrOff()) continue;
+        const int note=juce::jlimit(0,127,message.getNoteNumber());
+        const bool on=message.isNoteOn();
+        const std::uint64_t bit=std::uint64_t{1}<<(note&63);
+        if(note<64) { if(on) heldLow|=bit; else heldLow&=~bit; }
+        else { if(on) heldHigh|=bit; else heldHigh&=~bit; }
+        if(on) performanceUiVelocity_[static_cast<std::size_t>(note)].store(
+            static_cast<std::uint8_t>(juce::jlimit(1,127,juce::roundToInt(message.getFloatVelocity()*127.0f))),
+            std::memory_order_relaxed);
+    }
+    performanceUiHeldLow_.store(heldLow,std::memory_order_release);
+    performanceUiHeldHigh_.store(heldHigh,std::memory_order_release);
+
     if(arpState_.enabled) {
         if(!arpWasEnabled_){resetArpeggiatorRuntime(true);arpWasEnabled_=true;}
         const double bpm=currentArpBpm();
@@ -712,6 +731,15 @@ mct::origami::EnvelopeTraceSnapshot OrigamiAudioProcessor::getUiEnvelopeTraceSna
         s.envelopes[i].value=envUiValue_[i].load(std::memory_order_relaxed);
     }
     return s;
+}
+
+mct::origami::PerformanceInputSnapshot OrigamiAudioProcessor::getUiPerformanceInputSnapshot() const noexcept {
+    mct::origami::PerformanceInputSnapshot snapshot;
+    snapshot.heldLow=performanceUiHeldLow_.load(std::memory_order_acquire);
+    snapshot.heldHigh=performanceUiHeldHigh_.load(std::memory_order_acquire);
+    for(std::size_t i=0;i<snapshot.velocity.size();++i)
+        snapshot.velocity[i]=performanceUiVelocity_[i].load(std::memory_order_relaxed);
+    return snapshot;
 }
 
 mct::origami::RenderBudgetSnapshot OrigamiAudioProcessor::getUiRenderBudgetSnapshot() const noexcept {

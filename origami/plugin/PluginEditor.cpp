@@ -31,6 +31,7 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
         [&owner](unsigned id){return owner.removeUiRoute(id);},
         [&owner](const mct::origami::ModulationState& s){return owner.setUiModulationState(s);},
         [&owner]{return owner.getUiEnvelopeTraceSnapshot();},
+        [&owner]{return owner.getUiPerformanceInputSnapshot();},
         [&owner]{return owner.getUiHostBpm();}};
 }
 }

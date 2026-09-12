@@ -38,6 +38,10 @@ struct EnvelopeTraceSnapshot {
     std::uint64_t order=0;
     std::array<EnvelopeRuntimeInfo,3> envelopes{};
 };
+struct PerformanceInputSnapshot {
+    std::uint64_t heldLow=0,heldHigh=0;
+    std::array<std::uint8_t,128> velocity{};
+};
 class Voice {
 public:
     void prepare(double sampleRate) noexcept;

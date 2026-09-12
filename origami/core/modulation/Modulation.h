@@ -60,7 +60,13 @@ struct SequencerSettings {
     float rateHz=4.0f;
     std::array<float,8> steps{{-1.0f,-0.25f,0.65f,0.15f,1.0f,-0.55f,0.35f,0.0f}};
 };
-struct PerformanceSourceCurve { float midpoint=0.5f; };
+struct PerformanceSourcePoint { float x=0.0f,y=0.0f,curve=0.0f; };
+struct PerformanceSourceCurve {
+    std::array<PerformanceSourcePoint,16> points{{
+        {0.0f,0.0f,0.0f},{0.5f,0.5f,0.0f},{1.0f,1.0f,0.0f}
+    }};
+    std::uint32_t pointCount=3;
+};
 float performanceSourceCurveValue(const PerformanceSourceCurve&,float input) noexcept;
 
 struct ModAddress {
