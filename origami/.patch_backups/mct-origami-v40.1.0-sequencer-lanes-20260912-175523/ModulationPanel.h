@@ -1,4 +1,3 @@
-// mct-origami-v40.1.0-sequencer-per-step-editor
 // mct-origami-v40.0.0-sequencer-structural-redesign\n// mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
@@ -140,13 +139,9 @@ private:
     juce::TextButton sequenceAllOn_{"ALL ON"};
     juce::TextButton sequenceAlternate_{"ALT"};
     juce::Rectangle<float> sequenceCanvas_{};
-    // V40 concept-art sequencer. Viewport painting is UI/message-thread only.
-    struct SequenceContent final : juce::Component {
-        std::function<void(juce::Graphics&)> painter;
-        void paint(juce::Graphics& g) override { if(painter) painter(g); }
-    };
+    // V40 concept-art sequencer shell. UI-only controls for Patch 1.
     juce::Viewport sequenceViewport_{};
-    SequenceContent sequenceContent_{};
+    juce::Component sequenceContent_{};
     juce::Label sequenceStepsCaption_{},sequenceDirectionCaption_{},sequenceLoopCaption_{};
     NativeComboBox sequenceStepCount_{},sequenceDirection_{},sequenceLoopMode_{};
     juce::ToggleButton sequenceSync_{"SYNC"};

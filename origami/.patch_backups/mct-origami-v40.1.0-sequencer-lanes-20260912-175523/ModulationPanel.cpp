@@ -1,4 +1,3 @@
-// mct-origami-v40.1.0-sequencer-per-step-editor
 // mct-origami-v40.0.0-sequencer-structural-redesign\n// mct-origami-v39.2.1-sequence-editor-corrected
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
@@ -243,42 +242,11 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     sequenceViewport_.setWantsKeyboardFocus(false);
     sequenceViewport_.setSingleStepSizes(96,1);
 
-    // V40 Patch 2: purpose-built per-step lane artwork. UI-only.
-    sequenceContent_.painter=[this](juce::Graphics& g) {
-        constexpr float laneWidth=78.0f, laneGap=7.0f;
-        const auto accent=Palette::accent();
-        const auto bounds=sequenceContent_.getLocalBounds().toFloat();
-        const float meterTop=22.0f;
-        const float meterBottom=juce::jmax(meterTop+4.0f,bounds.getBottom()-26.0f);
-        const float meterHeight=meterBottom-meterTop;
-        const float zeroY=meterTop+meterHeight*0.5f;
-        const std::size_t active=juce::jmin<std::size_t>(sequenceSteps_.size()-1,sourceMonitorSequencer_.currentStep());
-        for(std::size_t i=0;i<sequenceSteps_.size();++i) {
-            const float x=float(i)*(laneWidth+laneGap);
-            auto lane=juce::Rectangle<float>(x,meterTop,laneWidth,meterHeight).reduced(3.0f,0.0f);
-            const bool enabled=sequencePower_[i].getToggleState();
-            const float value=static_cast<float>(sequenceSteps_[i].getValue());
-            const float y=juce::jmap(juce::jlimit(-1.0f,1.0f,value),-1.0f,1.0f,lane.getBottom(),lane.getY());
-            g.setColour(juce::Colour(0xff080808)); g.fillRoundedRectangle(lane,2.0f);
-            g.setColour(Palette::borderSoft().withAlpha(.55f)); g.drawRoundedRectangle(lane,2.0f,1.0f);
-            g.setColour(Palette::borderSoft().withAlpha(.18f)); g.drawHorizontalLine(juce::roundToInt(zeroY),lane.getX()+2.0f,lane.getRight()-2.0f);
-            juce::Rectangle<float> fill;
-            if(value>=0.0f) fill={lane.getX()+1.0f,y,lane.getWidth()-2.0f,juce::jmax(0.0f,zeroY-y)};
-            else fill={lane.getX()+1.0f,zeroY,lane.getWidth()-2.0f,juce::jmax(0.0f,y-zeroY)};
-            g.setColour(accent.withAlpha(enabled?.30f:.055f)); g.fillRect(fill);
-            g.setColour(accent.withAlpha(enabled?.98f:.25f)); g.fillRect(lane.getX()+4.0f,y-1.0f,lane.getWidth()-8.0f,2.0f);
-            if(i==active) { g.setColour(accent); g.drawRoundedRectangle(lane.expanded(2.0f),3.0f,1.7f); }
-        }
-    };
-
     for(std::size_t i=0;i<sequenceSteps_.size();++i) {
         auto& step=sequenceSteps_[i]; auto& label=sequenceStepLabels_[i];
         sequenceContent_.addAndMakeVisible(step);sequenceContent_.addAndMakeVisible(label);
         step.setName("SEQ STEP "+juce::String(static_cast<int>(i+1)));
         step.setSliderStyle(juce::Slider::LinearBarVertical);
-        step.setColour(juce::Slider::backgroundColourId,juce::Colours::transparentBlack);
-        step.setColour(juce::Slider::trackColourId,juce::Colours::transparentBlack);
-        step.setColour(juce::Slider::thumbColourId,juce::Colours::transparentBlack);
         step.setRange(-1.0,1.0,.001);
         step.setDoubleClickReturnValue(false,0.0);
         step.setScrollWheelEnabled(false);
@@ -293,7 +261,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         step.onValueChange=[this,i]{
             if(sequencePower_[i].getToggleState())
                 sequenceStoredValue_[i]=static_cast<float>(sequenceSteps_[i].getValue());
-            commitSequenceSteps();sequenceContent_.repaint();repaint();
+            commitSequenceSteps();repaint();
         };
 
         auto& power=sequencePower_[i];
@@ -311,7 +279,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
                 sequenceStoredValue_[i]=static_cast<float>(sequenceSteps_[i].getValue());
                 sequenceSteps_[i].setValue(0.0,juce::dontSendNotification);
             }
-            commitSequenceSteps();sequenceContent_.repaint();repaint();
+            commitSequenceSteps();repaint();
         };
 
         auto& gate=sequenceGatePreview_[i];
@@ -332,18 +300,18 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         juce::Random rng;
         for(auto& step:sequenceSteps_)
             step.setValue(rng.nextFloat()*2.0f-1.0f,juce::dontSendNotification);
-        commitSequenceSteps();sequenceContent_.repaint();repaint();
+        commitSequenceSteps();repaint();
     };
     sequenceInvert_.onClick=[this]{
         for(auto& step:sequenceSteps_) step.setValue(-step.getValue(),juce::dontSendNotification);
-        commitSequenceSteps();sequenceContent_.repaint();repaint();
+        commitSequenceSteps();repaint();
     };
     sequenceClear_.onClick=[this]{
         for(std::size_t i=0;i<sequenceSteps_.size();++i) {
             sequenceStoredValue_[i]=0.0f;
             sequenceSteps_[i].setValue(0.0,juce::dontSendNotification);
         }
-        commitSequenceSteps();sequenceContent_.repaint();repaint();
+        commitSequenceSteps();repaint();
     };
     sequenceAllOn_.setTooltip("Enable every sequence lane");
     sequenceAllOn_.onClick=[this]{
@@ -351,7 +319,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
             sequencePower_[i].setToggleState(true,juce::dontSendNotification);
             sequenceSteps_[i].setValue(sequenceStoredValue_[i],juce::dontSendNotification);
         }
-        commitSequenceSteps();sequenceContent_.repaint();repaint();
+        commitSequenceSteps();repaint();
     };
     sequenceAlternate_.setTooltip("Create an alternating enabled/muted rhythm");
     sequenceAlternate_.onClick=[this]{
@@ -361,7 +329,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
             sequencePower_[i].setToggleState(on,juce::dontSendNotification);
             sequenceSteps_[i].setValue(on?sequenceStoredValue_[i]:0.0,juce::dontSendNotification);
         }
-        commitSequenceSteps();sequenceContent_.repaint();repaint();
+        commitSequenceSteps();repaint();
     };
 
     shape_.addItem("MSEG",1);
@@ -1323,8 +1291,7 @@ void ModulationPanel::timerCallback() {
             havePreviousVisualEnvelopeRuntime_[envIndex]=false;
         }
     }
-    if(selected_==11) sequenceContent_.repaint();
-    if(selected_<=9 || selected_==11 || selected_==12 || selected_==13) repaint();
+    if(selected_<=9 || selected_==12 || selected_==13) repaint();
 }
 
 void ModulationPanel::zoomBy(float factor,juce::Point<float> anchor) {
@@ -1511,10 +1478,10 @@ void ModulationPanel::resized() {
             constexpr int laneGap=7;
             constexpr int laneWidth=78;
             constexpr int minVisibleWidth=8*laneWidth+7*laneGap;
-            const int sequenceContentWidth=juce::jmax(minVisibleWidth,viewportBounds.getWidth());
+            const int contentWidth=juce::jmax(minVisibleWidth,viewportBounds.getWidth());
             const int contentHeight=juce::jmax(1,viewportBounds.getHeight()-6);
-            sequenceContent_.setSize(sequenceContentWidth,contentHeight);
-            sequenceCanvas_={0.0f,0.0f,static_cast<float>(sequenceContentWidth),static_cast<float>(contentHeight)};
+            sequenceContent_.setSize(contentWidth,contentHeight);
+            sequenceCanvas_={0.0f,0.0f,static_cast<float>(contentWidth),static_cast<float>(contentHeight)};
 
             auto lanes=sequenceContent_.getLocalBounds();
             for(std::size_t i=0;i<sequenceSteps_.size();++i) {
