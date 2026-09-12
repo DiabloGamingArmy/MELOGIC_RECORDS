@@ -16,8 +16,7 @@
 #include "modulation/Modulation.h"
 #include <cstdint>
 #include <array>
-#include <bit>
-#include <cstdint>
+#include <functional>
 #include <cmath>
 #include <algorithm>
 namespace mct::origami {
@@ -88,9 +87,12 @@ private:
             const float l=std::isfinite(m.level)?std::clamp(m.level,0.0f,1.0f):0.0f;
             const float b=std::isfinite(m.blend)?std::clamp(m.blend,0.0f,1.0f):0.0f;
             const unsigned u=std::clamp(m.unison,1u,maxUnisonVoices);
-            // Patch 11/19: exact identity is intentional for cached sanitized controls.
+            // Patch 11/19 FIX1: these sanitized cache inputs are finite and
+            // canonicalized before comparison. Exact value comparison is the
+            // intended dirty-state rule; spell it through std::equal_to so the
+            // project remains C++17-compatible without -Wfloat-equal noise.
             const auto changed=[](float a,float b) noexcept {
-                return std::bit_cast<std::uint32_t>(a)!=std::bit_cast<std::uint32_t>(b);
+                return !std::equal_to<float>{}(a,b);
             };
             const bool pitchChanged=!valid||id!=m.id||changed(octave,o)||changed(semitone,s)||changed(fineCents,f);
             const bool detuneChanged=!valid||id!=m.id||unison!=u||changed(detuneCents,d);
