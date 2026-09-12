@@ -156,18 +156,37 @@ void globalQosBoundaryAudit() {
           "QoS controller contains no wait/lock/heap operations");
 }
 
+// mct-origami-audio-reengineer-p17-fix1-qos-aware-arp-audit
 void arpTelemetryBoundaryAudit() {
     const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory().getChildFile("plugin/PluginProcessor.cpp");
     const auto text=f.loadFileAsString();
     check(text.isNotEmpty(),"PluginProcessor.cpp available for ARP telemetry audit");
+
     const int capture=text.indexOf("void OrigamiAudioProcessor::captureArpNote");
+    const int service=text.indexOf("void OrigamiAudioProcessor::serviceVisualTelemetry");
+    const int publish=text.indexOf("void OrigamiAudioProcessor::publishArpUiSnapshot");
     const int process=text.indexOf("void OrigamiAudioProcessor::processBlock");
-    check(capture>=0 && process>capture,"ARP telemetry source bounds found");
-    check(!text.substring(capture,process).contains("publishArpUiSnapshot();"),"ARP event paths contain no direct UI publication");
     const int state=text.indexOf(process,"void OrigamiAudioProcessor::getStateInformation");
-    const auto body=text.substring(process,state);
-    check(body.contains("arpUiDirty_.exchange("),"processBlock owns ARP telemetry coalescing");
-    check(body.contains("publishArpUiSnapshot();"),"processBlock publishes dirty ARP snapshot");
+
+    check(capture>=0 && service>capture && publish>service && process>publish && state>process,
+          "ARP telemetry source bounds found");
+
+    check(!text.substring(capture,service).contains("publishArpUiSnapshot();"),
+          "ARP event paths contain no direct UI publication");
+
+    const auto serviceBody=text.substring(service,publish);
+    check(serviceBody.contains("arpUiDirty_.exchange("),
+          "QoS telemetry service owns ARP dirty-state coalescing");
+    check(serviceBody.contains("publishArpUiSnapshot();"),
+          "QoS telemetry service publishes dirty ARP snapshot");
+    check(serviceBody.contains("suppressVisualTelemetry"),
+          "ARP telemetry publication obeys global QoS policy");
+
+    const auto processBody=text.substring(process,state);
+    check(processBody.contains("serviceVisualTelemetry(total);"),
+          "processBlock services ARP/UI telemetry at host-block boundary");
+    check(!processBody.contains("publishArpUiSnapshot();"),
+          "processBlock contains no duplicate direct ARP publication");
 }
 
 void stateIoBoundaryAudit() {
