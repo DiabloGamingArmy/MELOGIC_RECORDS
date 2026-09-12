@@ -1043,23 +1043,60 @@ void ModulationPanel::timerCallback() {
 
                 const auto env=currentEnvelope();
                 const auto& previous=previousVisualEnvelopeRuntime_[envIndex];
-                const bool sameContinuousStage=
-                    havePreviousVisualEnvelopeRuntime_[envIndex] &&
-                    previous.stage==r.stage &&
-                    r.progress>=previous.progress;
 
-                if(sameContinuousStage) {
-                    // Keep audio/runtime telemetry rate-limited. Re-evaluate the
-                    // exact canonical editor-path equation at 64 intermediate
-                    // progress values entirely inside the UI visualization.
+                // V38.4: reconstruct the canonical path across ADSR stage
+                // boundaries that can occur between rate-limited UI snapshots.
+                auto appendStageSpan=[&](dsp::Envelope::Stage stage,
+                                         float fromProgress,float toProgress) {
+                    fromProgress=juce::jlimit(0.0f,1.0f,fromProgress);
+                    toProgress=juce::jlimit(0.0f,1.0f,toProgress);
+                    if(toProgress<fromProgress) return;
                     for(int sub=1;sub<=visualTraceSubsteps_;++sub) {
-                        auto visual=r;
-                        const float t=float(sub)/float(visualTraceSubsteps_);
-                        visual.progress=previous.progress+(r.progress-previous.progress)*t;
+                        EnvelopeRuntimeInfo visual{};
+                        visual.stage=stage;
+                        const float alpha=float(sub)/float(visualTraceSubsteps_);
+                        visual.progress=fromProgress+(toProgress-fromProgress)*alpha;
                         traceTail_.push_back({tracerPoint(visual,env),0.0f});
                     }
+                };
+                const auto stageRank=[](dsp::Envelope::Stage stage) noexcept {
+                    switch(stage) {
+                        case dsp::Envelope::Stage::Attack: return 0;
+                        case dsp::Envelope::Stage::Decay: return 1;
+                        case dsp::Envelope::Stage::Sustain: return 2;
+                        case dsp::Envelope::Stage::Release: return 3;
+                        case dsp::Envelope::Stage::Idle: return 4;
+                    }
+                    return 4;
+                };
+
+                if(havePreviousVisualEnvelopeRuntime_[envIndex] &&
+                   r.progress>=previous.progress && r.stage==previous.stage) {
+                    appendStageSpan(r.stage,previous.progress,r.progress);
+                } else if(havePreviousVisualEnvelopeRuntime_[envIndex] &&
+                          stageRank(r.stage)>stageRank(previous.stage)) {
+                    if(previous.stage!=dsp::Envelope::Stage::Sustain)
+                        appendStageSpan(previous.stage,previous.progress,1.0f);
+
+                    const int first=stageRank(previous.stage)+1;
+                    const int last=stageRank(r.stage);
+                    for(int rank=first;rank<last;++rank) {
+                        const auto skipped=
+                            rank==1 ? dsp::Envelope::Stage::Decay :
+                            rank==2 ? dsp::Envelope::Stage::Sustain :
+                            dsp::Envelope::Stage::Release;
+                        if(skipped==dsp::Envelope::Stage::Sustain) {
+                            EnvelopeRuntimeInfo visual{};
+                            visual.stage=skipped; visual.progress=0.0f;
+                            traceTail_.push_back({tracerPoint(visual,env),0.0f});
+                        } else appendStageSpan(skipped,0.0f,1.0f);
+                    }
+
+                    if(r.stage==dsp::Envelope::Stage::Sustain)
+                        traceTail_.push_back({tracerPoint(r,env),0.0f});
+                    else if(r.stage!=dsp::Envelope::Stage::Idle)
+                        appendStageSpan(r.stage,0.0f,r.progress);
                 } else {
-                    // Never invent a bridge across stage/retrigger boundaries.
                     traceTail_.push_back({tracerPoint(r,env),0.0f});
                 }
                 previousVisualEnvelopeRuntime_[envIndex]=r;
