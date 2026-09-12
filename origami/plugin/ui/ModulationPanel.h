@@ -175,12 +175,19 @@ private:
     EnvelopeTraceSnapshot trace_{};
     std::deque<TraceSample> traceTail_;
     std::uint64_t lastTraceOrder_=0;
+    // UI-only ENV supersampling state. Audio telemetry remains rate-limited;
+    // the visualizer reconstructs canonical editor-path motion between
+    // consecutive runtime snapshots without feeding anything back to DSP.
+    std::array<EnvelopeRuntimeInfo,3> previousVisualEnvelopeRuntime_{};
+    std::array<bool,3> havePreviousVisualEnvelopeRuntime_{{false,false,false}};
 
     // Selected-LFO playback tracer. Maintained only while the LFO editor is
     // visible, keeping this visual feature off the audio thread.
     std::deque<TraceSample> lfoTraceTail_;
     float lfoTracePhase_=0.0f;
     float lastLfoTracePhase_=-1.0f;
+    static constexpr int visualTraceSubsteps_=64;
+    static constexpr std::size_t visualTraceMaxPoints_=768;
 
     static constexpr std::size_t sourceHistoryLength_=72;
     std::array<std::deque<float>,14> sourceHistory_{};
