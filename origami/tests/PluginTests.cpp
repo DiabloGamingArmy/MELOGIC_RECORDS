@@ -1,3 +1,5 @@
+// mct-origami-deep-audit-p03-fix2-canonical-state-repair
+// mct-origami-deep-audit-p03-canonical-state
 // mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p15-state-io-suspension
@@ -227,22 +229,58 @@ void arpTelemetryBoundaryAudit() {
 }
 
 void stateIoBoundaryAudit() {
-    const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory()
-        .getChildFile("plugin/PluginProcessor.cpp");
-    const auto text=f.loadFileAsString();
-    check(text.isNotEmpty(),"PluginProcessor.cpp available for state-I/O audit");
+    const auto root=juce::File(__FILE__).getParentDirectory().getParentDirectory();
+    const auto text=root.getChildFile("plugin/PluginProcessor.cpp").loadFileAsString();
+    const auto header=root.getChildFile("plugin/PluginProcessor.h").loadFileAsString();
+    check(text.isNotEmpty() && header.isNotEmpty(),
+          "Patch 03 state-I/O sources are available");
+
     const int gs=text.indexOf("void OrigamiAudioProcessor::getStateInformation");
     const int ss=text.indexOf("void OrigamiAudioProcessor::setStateInformation");
     const int um=text.indexOf("bool OrigamiAudioProcessor::setUiMacro");
     check(gs>=0 && ss>gs && um>ss,"state-I/O source bounds found");
-    const auto gb=text.substring(gs,ss); const auto sb=text.substring(ss,um);
-    check(gb.contains("suspendProcessing(true)"),"state save uses processing suspension");
-    check(sb.contains("suspendProcessing(true)"),"state restore uses processing suspension");
-    check(!gb.contains("getCallbackLock()") && !sb.contains("getCallbackLock()"),"state I/O contains no callback lock");
-    const int decode=sb.indexOf("decodeInstrumentState(");
-    const int suspend=sb.indexOf("suspendProcessing(true)");
-    check(decode>=0 && suspend>decode,"preset decode occurs before audio suspension");
-    check(sb.contains("uiPerformanceState_=state.performance"),"preset restore synchronizes UI performance mirror");
+    const auto gb=text.substring(gs,ss);
+    const auto sb=text.substring(ss,um);
+
+    check(!gb.contains("suspendProcessing(") && !sb.contains("suspendProcessing("),
+          "normal state I/O never suspends processing");
+    check(!gb.contains("getCallbackLock()") && !sb.contains("getCallbackLock()"),
+          "state I/O contains no callback lock");
+    check(!gb.contains("engine_.instrumentState()"),
+          "autosave does not interrogate live renderer state");
+    check(gb.contains("snapshot=uiInstrumentState_"),
+          "state save snapshots canonical non-RT model");
+    check(sb.contains("decodeInstrumentState("),
+          "preset restore decodes before publication");
+    check(sb.contains("restoreMailbox_.publish"),
+          "state restore publishes one complete model generation");
+    check(sb.contains("uiPerformanceState_=state.performance"),
+          "preset restore synchronizes UI performance mirror");
+    check(header.contains("LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_"),
+          "processor owns complete-state restore mailbox");
+
+    OrigamiAudioProcessor p;
+    p.prepareToPlay(48000.0,128);
+    disableExtraOscillators(p);
+
+    juce::AudioBuffer<float> first(2,128); first.clear();
+    juce::MidiBuffer on;
+    on.addEvent(juce::MidiMessage::noteOn(1,60,0.8f),0);
+    p.processBlock(first,on);
+    check(magnitude(first)>1.0e-5f,"pre-autosave note is audible");
+
+    juce::MemoryBlock saved;
+    p.getStateInformation(saved);
+    check(!p.isSuspended(),"autosave does not suspend processor");
+
+    juce::AudioBuffer<float> after(2,128); after.clear();
+    juce::MidiBuffer none;
+    p.processBlock(after,none);
+    check(magnitude(after)>1.0e-5f,
+          "autosave does not create an audible processing hole");
+
+    p.setStateInformation(saved.getData(),static_cast<int>(saved.getSize()));
+    check(!p.isSuspended(),"state recall does not suspend processor");
 }
 
 void callbackLockBoundaryAudit() {
