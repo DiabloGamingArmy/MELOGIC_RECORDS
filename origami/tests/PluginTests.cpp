@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p15-state-io-suspension
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
@@ -91,6 +92,70 @@ void disableExtraOscillators(OrigamiAudioProcessor& p) {
     for(unsigned id=2;id<=4;++id)
         p.setUiOscillatorEnabled(id,false);
 }
+void renderBudgetPolicyAudit() {
+    GlobalRenderBudget budget;
+    RenderLoad load{};
+    load.activeVoices=8;
+    load.activeModules=4;
+    load.totalUnison=16;
+    load.oscillatorEvaluationsPerSample=160;
+
+    for(int i=0;i<12;++i) budget.observe(0.25f,load);
+    check(budget.snapshot().level==RenderQoSLevel::Nominal,
+          "QoS stays nominal with strong callback headroom");
+    check(!budget.snapshot().suppressVisualTelemetry,
+          "nominal QoS preserves visualization telemetry");
+
+    budget.observe(0.65f,load);
+    check(budget.snapshot().level==RenderQoSLevel::Guarded,
+          "QoS enters guarded state before deadline danger");
+    check(budget.snapshot().suppressVisualTelemetry
+          && budget.snapshot().reduceControlRate,
+          "guarded QoS sheds nonessential/control-rate work first");
+    check(!budget.snapshot().reduceOptionalEffectQuality,
+          "guarded QoS does not prematurely degrade optional effects");
+
+    budget.observe(0.90f,load);
+    check(budget.snapshot().level==RenderQoSLevel::Critical,
+          "QoS enters critical state under callback pressure");
+    check(budget.snapshot().reduceOptionalEffectQuality
+          && budget.snapshot().restrictNewHighCostVoices,
+          "critical QoS exposes effect-quality and new-voice admission hooks");
+
+    const auto misses=budget.snapshot().deadlineMisses;
+    budget.observe(1.05f,load);
+    check(budget.snapshot().deadlineMisses==misses+1,
+          "QoS counts hard callback deadline misses");
+
+    budget.observe(0.99f,load);
+    budget.observe(0.99f,load);
+    check(budget.snapshot().bypassNewestOptionalEffect,
+          "optional-effect bypass requires sustained emergency pressure");
+}
+
+void globalQosBoundaryAudit() {
+    const auto root=juce::File(__FILE__).getParentDirectory().getParentDirectory();
+    const auto processor=root.getChildFile("plugin/PluginProcessor.cpp").loadFileAsString();
+    const auto engine=root.getChildFile("core/Engine.cpp").loadFileAsString();
+    const auto budget=root.getChildFile("core/RenderBudget.h").loadFileAsString();
+    check(processor.isNotEmpty() && engine.isNotEmpty() && budget.isNotEmpty(),
+          "Patch 17 QoS sources are available");
+
+    check(processor.contains("getHighResolutionTicks()"),
+          "processBlock QoS measures actual callback elapsed time");
+    check(processor.contains("finalizeRenderBudget(callbackStartTicks,total)"),
+          "callbacks finalize the global budget");
+    check(processor.contains("renderBudget_.snapshot().suppressVisualTelemetry"),
+          "visual telemetry obeys the global QoS decision");
+    check(engine.contains("RenderLoad OrigamiEngine::renderLoad() const noexcept"),
+          "engine exports synth load from the latched host-block topology");
+    check(engine.contains("hostModules_"),
+          "QoS load accounting reuses the existing host-block module snapshot");
+    check(!budget.contains("sleep_for") && !budget.contains("mutex")
+          && !budget.contains("operator new"),
+          "QoS controller contains no wait/lock/heap operations");
+}
+
 void arpTelemetryBoundaryAudit() {
     const auto f=juce::File(__FILE__).getParentDirectory().getParentDirectory().getChildFile("plugin/PluginProcessor.cpp");
     const auto text=f.loadFileAsString();
@@ -389,6 +454,8 @@ void pluginRealtimeAllocationGate() {
 }
 
 void run() {
+    renderBudgetPolicyAudit();
+    globalQosBoundaryAudit();
     pluginRealtimeAllocationGate();
     // V24.0.3: the comprehensive processor/keyboard audio audit existed since
     // V23.2 but was never invoked by run(), so plugin builds could regress to

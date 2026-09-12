@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p09-lightweight-voice-steal
 // mct-origami-audio-reengineer-p06.3-local-source
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
@@ -477,4 +478,19 @@ bool OrigamiEngine::oscillatorModuleEnabled(OscillatorModuleId id) const noexcep
 
 VoiceInfo OrigamiEngine::voiceInfo(std::size_t index) const noexcept { return index < voiceCount ? voices_[index].info() : VoiceInfo{}; }
 std::size_t OrigamiEngine::activeVoiceCount() const noexcept { std::size_t count=0; for (const auto& voice : voices_) if (voice.info().active) ++count; return count; }
+
+RenderLoad OrigamiEngine::renderLoad() const noexcept {
+    RenderLoad load{};
+    load.activeVoices=static_cast<std::uint32_t>(activeVoiceCount());
+    std::uint32_t lanesPerVoice=0;
+    for(const auto& module:hostModules_) {
+        if(module.id==0 || !module.enabled) continue;
+        ++load.activeModules;
+        const auto unison=std::clamp(module.unison,1u,16u);
+        load.totalUnison+=unison;
+        lanesPerVoice+=unison+1u;
+    }
+    load.oscillatorEvaluationsPerSample=load.activeVoices*lanesPerVoice;
+    return load;
+}
 }

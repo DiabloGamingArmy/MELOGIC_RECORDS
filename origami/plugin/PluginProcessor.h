@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
 // mct-origami-audio-reengineer-p13-audioplayhead-boundary
@@ -74,6 +75,7 @@ public:
     mct::origami::ArpeggiatorState getUiArpeggiatorState() const noexcept;
     mct::origami::ArpeggiatorRuntimeSnapshot getUiArpeggiatorRuntimeSnapshot() const noexcept;
     mct::origami::EnvelopeTraceSnapshot getUiEnvelopeTraceSnapshot() const noexcept;
+    mct::origami::RenderBudgetSnapshot getUiRenderBudgetSnapshot() const noexcept;
     double getUiHostBpm() noexcept;
     void clearUiArpeggiatorLatch() noexcept;
 private:
@@ -88,6 +90,8 @@ private:
     int chooseArpNote() noexcept;
     void publishArpUiSnapshot() noexcept;
     void publishEnvelopeUiSnapshot() noexcept;
+    void serviceVisualTelemetry(int hostBlockSamples) noexcept;
+    void finalizeRenderBudget(std::int64_t startTicks,int hostBlockSamples) noexcept;
     juce::MidiKeyboardState uiKeyboardState_;
     // Persistent realtime MIDI workspaces; storage is committed in prepareToPlay().
     juce::MidiBuffer inputMidiScratch_;
@@ -123,6 +127,14 @@ private:
     std::array<std::atomic<std::uint32_t>,3> envUiStage_{};
     std::array<std::atomic<float>,3> envUiProgress_{};
     std::array<std::atomic<float>,3> envUiValue_{};
+    // Patch 17/19: audio-thread-owned global callback budget.
+    mct::origami::GlobalRenderBudget renderBudget_;
+    double highResolutionTicksPerSecond_=1.0;
+    std::atomic<float> qosInstant_{0.0f},qosSmoothed_{0.0f},qosPeak_{0.0f};
+    std::atomic<std::uint32_t> qosLevel_{0},qosFlags_{0};
+    std::atomic<std::uint32_t> qosVoices_{0},qosModules_{0},qosUnison_{0},qosOscEvals_{0};
+    std::atomic<std::uint64_t> qosDeadlineMisses_{0};
+
     // UI telemetry is intentionally control-rate, not render-span-rate.
     // Countdown is audio-thread-owned; publication remains lock-free atomics.
     std::int64_t envUiSamplesUntilPublish_=0;

@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p15-state-io-suspension
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
@@ -34,6 +35,9 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
 void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     sampleRate_=sampleRate>1.0?sampleRate:44100.0;
     envUiSamplesUntilPublish_=0;
+    highResolutionTicksPerSecond_=static_cast<double>(juce::Time::getHighResolutionTicksPerSecond());
+    if(!(highResolutionTicksPerSecond_>0.0)) highResolutionTicksPerSecond_=1.0;
+    renderBudget_.reset();
     prepared_ = engine_.prepare(sampleRate_, static_cast<std::size_t>(juce::jmax(1, samplesPerBlock)), 2u);
     // Patch 03/19: commit scheduler storage before realtime rendering begins.
     inputMidiScratch_.clear();
@@ -93,6 +97,64 @@ void OrigamiAudioProcessor::publishEnvelopeUiSnapshot() noexcept {
         envUiValue_[i].store(newest.envelopes[i].value,std::memory_order_relaxed);
     }
     envUiActive_.store(true,std::memory_order_release);
+}
+
+void OrigamiAudioProcessor::serviceVisualTelemetry(int hostBlockSamples) noexcept {
+    const bool allowed=!renderBudget_.snapshot().suppressVisualTelemetry;
+
+    if(allowed && arpUiDirty_.exchange(false,std::memory_order_acq_rel))
+        publishArpUiSnapshot();
+
+    envUiSamplesUntilPublish_-=static_cast<std::int64_t>(hostBlockSamples);
+    if(envUiSamplesUntilPublish_>0) return;
+
+    const auto interval=static_cast<std::int64_t>(
+        juce::jmax(1.0,sampleRate_/envelopeUiPublishHz_));
+
+    if(!allowed) {
+        envUiSamplesUntilPublish_=0;
+        return;
+    }
+
+    publishEnvelopeUiSnapshot();
+    do envUiSamplesUntilPublish_+=interval;
+    while(envUiSamplesUntilPublish_<=0);
+}
+
+void OrigamiAudioProcessor::finalizeRenderBudget(std::int64_t startTicks,
+                                                 int hostBlockSamples) noexcept {
+    if(hostBlockSamples<=0 || !(sampleRate_>0.0)) return;
+
+    const auto endTicks=juce::Time::getHighResolutionTicks();
+    const auto elapsedTicks=endTicks-startTicks;
+    const double elapsedSeconds=static_cast<double>(juce::jmax<std::int64_t>(0,elapsedTicks))
+        / highResolutionTicksPerSecond_;
+    const double deadlineSeconds=static_cast<double>(hostBlockSamples)/sampleRate_;
+    const float deadlineFraction=deadlineSeconds>0.0
+        ? static_cast<float>(elapsedSeconds/deadlineSeconds)
+        : 0.0f;
+
+    auto load=engine_.renderLoad();
+    const auto& snapshot=renderBudget_.observe(deadlineFraction,load);
+
+    qosInstant_.store(snapshot.callbackDeadlineFraction,std::memory_order_relaxed);
+    qosSmoothed_.store(snapshot.smoothedDeadlineFraction,std::memory_order_relaxed);
+    qosPeak_.store(snapshot.peakDeadlineFraction,std::memory_order_relaxed);
+    qosLevel_.store(static_cast<std::uint32_t>(snapshot.level),std::memory_order_relaxed);
+
+    std::uint32_t flags=0;
+    if(snapshot.suppressVisualTelemetry) flags|=1u<<0;
+    if(snapshot.reduceControlRate) flags|=1u<<1;
+    if(snapshot.reduceOptionalEffectQuality) flags|=1u<<2;
+    if(snapshot.restrictNewHighCostVoices) flags|=1u<<3;
+    if(snapshot.bypassNewestOptionalEffect) flags|=1u<<4;
+    qosFlags_.store(flags,std::memory_order_relaxed);
+
+    qosVoices_.store(snapshot.load.activeVoices,std::memory_order_relaxed);
+    qosModules_.store(snapshot.load.activeModules,std::memory_order_relaxed);
+    qosUnison_.store(snapshot.load.totalUnison,std::memory_order_relaxed);
+    qosOscEvals_.store(snapshot.load.oscillatorEvaluationsPerSample,std::memory_order_relaxed);
+    qosDeadlineMisses_.store(snapshot.deadlineMisses,std::memory_order_release);
 }
 
 void OrigamiAudioProcessor::publishArpUiSnapshot() noexcept {
@@ -257,6 +319,7 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
 }
 
 void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
+    const auto callbackStartTicks=juce::Time::getHighResolutionTicks();
     juce::ScopedNoDenormals noDenormals;
     jassert(buffer.getNumChannels() >= 2);
     const int total = buffer.getNumSamples();
@@ -324,14 +387,8 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
     if(!prepared_ || !engine_.beginHostBlock(2u)) {
         buffer.clear();
-        if(arpUiDirty_.exchange(false,std::memory_order_acq_rel)) publishArpUiSnapshot();
-        // Patch 12/19: telemetry is host-block bookkeeping, not DSP-span work.
-        envUiSamplesUntilPublish_-=static_cast<std::int64_t>(total);
-        if(envUiSamplesUntilPublish_<=0) {
-            publishEnvelopeUiSnapshot();
-            const auto interval=static_cast<std::int64_t>(juce::jmax(1.0,sampleRate_/envelopeUiPublishHz_));
-            do envUiSamplesUntilPublish_+=interval; while(envUiSamplesUntilPublish_<=0);
-        }
+        serviceVisualTelemetry(total);
+        finalizeRenderBudget(callbackStartTicks,total);
         return;
     }
 
@@ -352,23 +409,8 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     else renderScheduled(inputMidi);
     engine_.endHostBlock();
 
-    // Patch 16/19: coalesce ARP visualization to one publication per host block.
-    if(arpUiDirty_.exchange(false,std::memory_order_acq_rel))
-        publishArpUiSnapshot();
-
-    // Patch 04/19: visualization telemetry is not sample-accurate DSP state.
-    // Decimate it to ~60 Hz and publish only at a host-block boundary. This
-    // prevents MIDI/ARP event density from multiplying voice scans + atomics.
-    envUiSamplesUntilPublish_-=static_cast<std::int64_t>(total);
-    if(envUiSamplesUntilPublish_<=0) {
-        publishEnvelopeUiSnapshot();
-        const auto interval=static_cast<std::int64_t>(
-            juce::jmax(1.0, sampleRate_/envelopeUiPublishHz_));
-        // Advance from the existing phase rather than resetting from zero, which
-        // keeps the average cadence stable across irregular host block sizes.
-        do envUiSamplesUntilPublish_+=interval;
-        while(envUiSamplesUntilPublish_<=0);
-    }
+    serviceVisualTelemetry(total);
+    finalizeRenderBudget(callbackStartTicks,total);
 }
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
     // Patch 15/19: heavyweight state I/O stops processing instead of blocking it.
@@ -532,6 +574,31 @@ mct::origami::EnvelopeTraceSnapshot OrigamiAudioProcessor::getUiEnvelopeTraceSna
         s.envelopes[i].value=envUiValue_[i].load(std::memory_order_relaxed);
     }
     return s;
+}
+
+mct::origami::RenderBudgetSnapshot OrigamiAudioProcessor::getUiRenderBudgetSnapshot() const noexcept {
+    mct::origami::RenderBudgetSnapshot snapshot{};
+    snapshot.load.activeVoices=qosVoices_.load(std::memory_order_relaxed);
+    snapshot.load.activeModules=qosModules_.load(std::memory_order_relaxed);
+    snapshot.load.totalUnison=qosUnison_.load(std::memory_order_relaxed);
+    snapshot.load.oscillatorEvaluationsPerSample=qosOscEvals_.load(std::memory_order_relaxed);
+    snapshot.callbackDeadlineFraction=qosInstant_.load(std::memory_order_relaxed);
+    snapshot.smoothedDeadlineFraction=qosSmoothed_.load(std::memory_order_relaxed);
+    snapshot.peakDeadlineFraction=qosPeak_.load(std::memory_order_relaxed);
+    snapshot.headroomFraction=juce::jlimit(0.0f,1.0f,1.0f-snapshot.smoothedDeadlineFraction);
+    snapshot.deadlineMisses=qosDeadlineMisses_.load(std::memory_order_acquire);
+
+    const auto rawLevel=qosLevel_.load(std::memory_order_relaxed);
+    snapshot.level=rawLevel>=static_cast<std::uint32_t>(mct::origami::RenderQoSLevel::Critical)
+        ? mct::origami::RenderQoSLevel::Critical
+        : static_cast<mct::origami::RenderQoSLevel>(rawLevel);
+    const auto flags=qosFlags_.load(std::memory_order_relaxed);
+    snapshot.suppressVisualTelemetry=(flags&(1u<<0))!=0;
+    snapshot.reduceControlRate=(flags&(1u<<1))!=0;
+    snapshot.reduceOptionalEffectQuality=(flags&(1u<<2))!=0;
+    snapshot.restrictNewHighCostVoices=(flags&(1u<<3))!=0;
+    snapshot.bypassNewestOptionalEffect=(flags&(1u<<4))!=0;
+    return snapshot;
 }
 
 void OrigamiAudioProcessor::clearUiArpeggiatorLatch() noexcept {

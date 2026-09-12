@@ -11,6 +11,7 @@
 #include "Voice.h"
 #include "OscillatorModule.h"
 #include "InstrumentState.h"
+#include "RenderBudget.h"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -50,6 +51,7 @@ public:
     void endHostBlock() noexcept;
     VoiceInfo voiceInfo(std::size_t index) const noexcept;
     std::size_t activeVoiceCount() const noexcept;
+    RenderLoad renderLoad() const noexcept;
     // mct-origami-multi-osc-foundation-v20
     OscillatorModuleId addOscillatorModule() noexcept;
     bool removeOscillatorModule(OscillatorModuleId id) noexcept;
