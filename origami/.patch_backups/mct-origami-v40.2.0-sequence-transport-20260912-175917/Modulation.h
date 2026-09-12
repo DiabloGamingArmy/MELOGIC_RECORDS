@@ -1,4 +1,3 @@
-// mct-origami-v40.2.0-sequence-transport
 // mct-origami-v39.2.1-sequence-ui-monitor
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
@@ -70,13 +69,9 @@ struct ChaosSettings {
     ChaosMethod method=ChaosMethod::Lorenz;
 };
 struct DriftSettings { float rateHz=0.35f; };
-enum class SequenceDirection : std::uint32_t { Forward=1, Reverse=2, PingPong=3 };
 struct SequencerSettings {
     float rateHz=4.0f;
     std::array<float,8> steps{{-1.0f,-0.25f,0.65f,0.15f,1.0f,-0.55f,0.35f,0.0f}};
-    std::uint32_t activeSteps=8;
-    SequenceDirection direction=SequenceDirection::Forward;
-    bool loop=true;
 };
 struct PerformanceSourcePoint { float x=0.0f,y=0.0f,curve=0.0f; };
 struct PerformanceSourceCurve {
@@ -196,14 +191,12 @@ private:
 
 class SequencerGenerator {
 public:
-    void reset() noexcept {phase_=0;step_=0;forward_=true;finished_=false;}
+    void reset() noexcept {phase_=0;step_=0;}
     float next(const SequencerSettings&,double sampleRate) noexcept;
     std::size_t currentStep() const noexcept { return step_; } // UI monitor inspection only
 private:
     double phase_=0;
     std::size_t step_=0;
-    bool forward_=true;
-    bool finished_=false;
 };
 
 template<class T> class LatestStateMailbox {

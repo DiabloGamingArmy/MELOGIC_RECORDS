@@ -1,4 +1,3 @@
-// mct-origami-v40.2.0-sequence-transport
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
@@ -142,8 +141,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
        !(s.chaos.method==ChaosMethod::Lorenz || s.chaos.method==ChaosMethod::Rossler ||
          s.chaos.method==ChaosMethod::Thomas) ||
        !range(s.drift.rateHz,.01f,40.f) ||
-       !range(s.sequencer.rateHz,.01f,40.f) || s.sequencer.activeSteps<1 || s.sequencer.activeSteps>s.sequencer.steps.size() ||
-       !(s.sequencer.direction==SequenceDirection::Forward || s.sequencer.direction==SequenceDirection::Reverse || s.sequencer.direction==SequenceDirection::PingPong)) return false;
+       !range(s.sequencer.rateHz,.01f,40.f)) return false;
     for(float step:s.sequencer.steps) if(!range(step,-1.f,1.f)) return false;
     for(float v:s.macros) if(!range(v,0,1)) return false;
     std::uint32_t previous=0;bool empty=false;
@@ -386,19 +384,12 @@ float DriftGenerator::next(const DriftSettings& s,double sampleRate) noexcept {
 }
 
 float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noexcept {
-    const std::size_t count=std::clamp<std::size_t>(s.activeSteps,1,s.steps.size());
-    if(step_>=count) { step_=(s.direction==SequenceDirection::Reverse)?count-1:0; forward_=s.direction!=SequenceDirection::Reverse; finished_=false; }
-    const float out=s.steps[step_];
-    if(finished_ || !std::isfinite(sampleRate) || sampleRate<=0) return out;
-    phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
-    while(phase_>=1.0) {
-        phase_-=1.0;
-        if(s.direction==SequenceDirection::Forward) { if(step_+1<count) ++step_; else if(s.loop) step_=0; else finished_=true; }
-        else if(s.direction==SequenceDirection::Reverse) { if(step_>0) --step_; else if(s.loop) step_=count-1; else finished_=true; }
-        else {
-            if(count==1) { if(!s.loop) finished_=true; }
-            else if(forward_) { if(step_+1<count) ++step_; else { forward_=false; step_=count-2; if(!s.loop) finished_=true; } }
-            else { if(step_>0) --step_; else { forward_=true; step_=1; if(!s.loop) finished_=true; } }
+    const float out=s.steps[step_%s.steps.size()];
+    if(std::isfinite(sampleRate) && sampleRate>0) {
+        phase_+=std::clamp(double(s.rateHz),.01,40.)/sampleRate;
+        while(phase_>=1.0) {
+            phase_-=1.0;
+            step_=(step_+1)%s.steps.size();
         }
     }
     return out;

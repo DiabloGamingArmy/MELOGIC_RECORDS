@@ -1,4 +1,3 @@
-// mct-origami-v40.2.0-sequence-transport-state-v21
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v29.0.0-spectral-process-native-routing
@@ -34,7 +33,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(21);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(20);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -112,7 +111,6 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     w.word(static_cast<std::uint32_t>(mod.chaos.axis));
     w.word(static_cast<std::uint32_t>(mod.chaos.method));
     w.real(mod.chaos.warp);w.real(mod.chaos.smoothing);
-    w.word(mod.sequencer.activeSteps);w.word(static_cast<std::uint32_t>(mod.sequencer.direction));w.word(mod.sequencer.loop?1u:0u);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -120,7 +118,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>21) return false;
+    if(version<1 || version>20) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -253,7 +251,6 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
         s.modulation.chaos.method=static_cast<ChaosMethod>(r.word());
         s.modulation.chaos.warp=r.real();s.modulation.chaos.smoothing=r.real();
     }
-    if(version>=21) { s.modulation.sequencer.activeSteps=r.word();s.modulation.sequencer.direction=static_cast<SequenceDirection>(r.word());const auto loop=r.word();if(loop>1u) return false;s.modulation.sequencer.loop=loop==1u; }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;
 }

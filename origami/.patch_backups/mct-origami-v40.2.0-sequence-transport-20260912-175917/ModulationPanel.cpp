@@ -1,4 +1,3 @@
-// mct-origami-v40.2.0-sequence-transport-ui
 // mct-origami-v40.1.0-sequencer-per-step-editor
 // mct-origami-v40.0.0-sequencer-structural-redesign\n// mct-origami-v39.2.1-sequence-editor-corrected
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
@@ -207,10 +206,10 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     sequenceStepsCaption_.setFont(juce::FontOptions(8.0f));
     addAndMakeVisible(sequenceStepCount_);
     sequenceStepCount_.setName("SEQ STEP COUNT");
-    for(int steps=1;steps<=8;++steps) sequenceStepCount_.addItem(juce::String(steps),steps);
-    sequenceStepCount_.setSelectedId(8,juce::dontSendNotification);
-    sequenceStepCount_.setEnabled(true);
-    sequenceStepCount_.setTooltip("Number of active sequence steps");
+    sequenceStepCount_.addItem("8",1);
+    sequenceStepCount_.setSelectedId(1,juce::dontSendNotification);
+    sequenceStepCount_.setEnabled(false);
+    sequenceStepCount_.setTooltip("8-step engine in Patch 1; expanded counts arrive with the data-model pass");
 
     addAndMakeVisible(sequenceDirectionCaption_);
     sequenceDirectionCaption_.setText("DIRECTION",juce::dontSendNotification);
@@ -218,8 +217,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     sequenceDirectionCaption_.setFont(juce::FontOptions(8.0f));
     addAndMakeVisible(sequenceDirection_);
     sequenceDirection_.setName("SEQ DIRECTION");
-    sequenceDirection_.addItem("FORWARD",1);sequenceDirection_.addItem("REVERSE",2);sequenceDirection_.addItem("PING-PONG",3);
-    sequenceDirection_.setSelectedId(1,juce::dontSendNotification);sequenceDirection_.setEnabled(true);
+    sequenceDirection_.addItem("FORWARD",1);
+    sequenceDirection_.setSelectedId(1,juce::dontSendNotification);
+    sequenceDirection_.setEnabled(false);
 
     addAndMakeVisible(sequenceLoopCaption_);
     sequenceLoopCaption_.setText("LOOP",juce::dontSendNotification);
@@ -227,8 +227,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     sequenceLoopCaption_.setFont(juce::FontOptions(8.0f));
     addAndMakeVisible(sequenceLoopMode_);
     sequenceLoopMode_.setName("SEQ LOOP MODE");
-    sequenceLoopMode_.addItem("LOOP",1);sequenceLoopMode_.addItem("ONE SHOT",2);
-    sequenceLoopMode_.setSelectedId(1,juce::dontSendNotification);sequenceLoopMode_.setEnabled(true);
+    sequenceLoopMode_.addItem("LOOP",1);
+    sequenceLoopMode_.setSelectedId(1,juce::dontSendNotification);
+    sequenceLoopMode_.setEnabled(false);
 
     addAndMakeVisible(sequenceSync_);
     sequenceSync_.setToggleState(false,juce::dontSendNotification);
@@ -362,8 +363,6 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         }
         commitSequenceSteps();sequenceContent_.repaint();repaint();
     };
-    auto commitSequenceTransport=[this]{ if(selected_!=11 || !bindings_.snapshot || !bindings_.modulation) return; auto mod=bindings_.snapshot().modulation; mod.sequencer.activeSteps=static_cast<std::uint32_t>(juce::jlimit(1,8,sequenceStepCount_.getSelectedId())); mod.sequencer.direction=static_cast<SequenceDirection>(juce::jlimit(1,3,sequenceDirection_.getSelectedId())); mod.sequencer.loop=sequenceLoopMode_.getSelectedId()!=2; if(bindings_.modulation(mod)){cached_=mod;sourceMonitorSequencer_.reset();sequenceContent_.repaint();} };
-    sequenceStepCount_.onChange=commitSequenceTransport;sequenceDirection_.onChange=commitSequenceTransport;sequenceLoopMode_.onChange=commitSequenceTransport;
 
     shape_.addItem("MSEG",1);
     // Three explicit playback behaviours. IDs preserve legacy serialization:
@@ -725,9 +724,6 @@ void ModulationPanel::syncFromModel() {
         rate_.setValue(cached_.drift.rateHz,juce::dontSendNotification);
     } else if(selected_==11) {
         if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.sequencer.rateHz,juce::dontSendNotification);
-        sequenceStepCount_.setSelectedId(static_cast<int>(cached_.sequencer.activeSteps),juce::dontSendNotification);
-        sequenceDirection_.setSelectedId(static_cast<int>(cached_.sequencer.direction),juce::dontSendNotification);
-        sequenceLoopMode_.setSelectedId(cached_.sequencer.loop?1:2,juce::dontSendNotification);
         for(std::size_t i=0;i<sequenceSteps_.size();++i) {
             if(sequenceSteps_[i].isMouseButtonDown()) continue;
             if(sequencePower_[i].getToggleState()) {
