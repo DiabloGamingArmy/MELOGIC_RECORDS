@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p03-canonical-state
 // mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p16-arp-ui-coalescing
@@ -113,6 +114,13 @@ private:
     static constexpr std::size_t midiScratchBytes_ = 256u * 1024u;
     std::atomic<int> pendingUiPitch_{-1},pendingUiMod_{-1};
     mct::origami::OrigamiEngine engine_;
+
+    // Deep Audit P03: host/UI model state is canonical outside the renderer.
+    // getStateInformation() serializes this snapshot without interrogating or
+    // suspending live DSP. Full restores cross to audio only at a block boundary.
+    mct::origami::InstrumentState uiInstrumentState_{};
+    mct::origami::LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_;
+
     // Patch 14/19: non-blocking UI -> audio state transfer.
     mct::origami::PerformanceState uiPerformanceState_{};
     mct::origami::LatestStateMailbox<mct::origami::PerformanceState> performanceMailbox_;
