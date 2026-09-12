@@ -1837,7 +1837,12 @@ void ModulationPanel::updateSourceHistory(float) {
             // 30-Hz repainting is too sparse for a fast strange attractor:
             // connecting frame endpoints creates false straight chords.
             // Supersample the actual ODE trajectory on the message thread.
-            constexpr int trajectorySamplesPerFrame=16;
+            // V38.2: high-density VISUAL trajectory integration.
+            // This monitor is independent from the audio engine. 64 genuine
+            // attractor states per 30-Hz UI tick gives 1920 visual samples/s,
+            // greatly reducing visible polygonal cornering without increasing
+            // audio-thread work or coupling rendering cadence to DSP cadence.
+            constexpr int trajectorySamplesPerFrame=64;
             constexpr double trajectoryMonitorRate=monitorRate*trajectorySamplesPerFrame;
             for(int i=0;i<trajectorySamplesPerFrame;++i) {
                 samples[9]=sourceMonitorChaos_.next(cached_.chaos,trajectoryMonitorRate);

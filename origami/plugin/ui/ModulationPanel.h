@@ -189,7 +189,9 @@ private:
     // existing trace leftward.
     static constexpr std::size_t randomHistoryLength_=240;
     std::deque<float> randomViewportHistory_{};
-    static constexpr std::size_t chaosHistoryLength_=360;
+    // V38.2: 0.75 s of the UI-only 1920 Hz chaos trajectory.
+    // Keep this history entirely in the visualization pipeline.
+    static constexpr std::size_t chaosHistoryLength_=1440;
     std::deque<juce::Point<float>> chaosViewportHistory_{};
     EnvelopeTraceSnapshot sourceTrace_{};
     std::uint64_t sourceTraceOrder_=0;
