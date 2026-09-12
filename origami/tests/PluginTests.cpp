@@ -327,12 +327,15 @@ void playabilityAudit() {
     OrigamiAudioProcessor ui;
     ui.prepareToPlay(48000,128);
     disableExtraOscillators(ui);
-    ui.uiKeyboardState().noteOn(1,60,.8f);
+    // mct-origami-deep-audit-p02-fix1-test-api
+    check(ui.enqueueUiKeyboardNote(60,true,.8f),
+          "UI note-on enters fixed realtime-safe queue");
     juce::AudioBuffer<float> uiAudio(2,1024);uiAudio.clear();
     juce::MidiBuffer emptyMidi;
     ui.processBlock(uiAudio,emptyMidi);
     check(magnitude(uiAudio)>1.0e-5f,"on-screen keyboard note produces audio");
-    ui.uiKeyboardState().noteOff(1,60,0.0f);
+    check(ui.enqueueUiKeyboardNote(60,false,0.0f),
+          "UI note-off enters fixed realtime-safe queue");
 
     OrigamiAudioProcessor power;
     power.prepareToPlay(48000,128);
@@ -507,9 +510,11 @@ void pluginRealtimeAllocationGate() {
         }
     }
     stressAudio.clear(); stress.processBlock(stressAudio,stressMidi[0]);
-    stress.uiKeyboardState().noteOn(1,72,0.8f);
+    check(stress.enqueueUiKeyboardNote(72,true,0.8f),
+          "stress UI note-on enters fixed realtime-safe queue");
     stressAudio.clear(); stress.processBlock(stressAudio,stressMidi[1]);
-    stress.uiKeyboardState().noteOff(1,72,0.0f);
+    check(stress.enqueueUiKeyboardNote(72,false,0.0f),
+          "stress UI note-off enters fixed realtime-safe queue");
 #ifndef ORIGAMI_SANITIZED
     pluginAllocations.store(0,std::memory_order_relaxed);
     pluginGuardAllocations.store(true,std::memory_order_release);
