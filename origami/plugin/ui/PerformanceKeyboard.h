@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
 // mct-origami-v25.3.2-arp-ui-stabilization
 // mct-origami-v25.3.1-arp-layout-refinement
@@ -57,6 +58,7 @@ public:
 
 class PerformanceKeyboard final : public juce::Component, public juce::SettableTooltipClient {
 public:
+    using NoteSetter=std::function<bool(int,bool,float)>;
     using WheelSetter=std::function<void(float)>;
     using RangeSetter=std::function<bool(float)>;
     using RangeGetter=std::function<float()>;
@@ -64,8 +66,8 @@ public:
     using PerformanceGetter=std::function<mct::origami::PerformanceState()>;
     using ArpSetter=std::function<bool(const mct::origami::ArpeggiatorState&)>;
     using ArpGetter=std::function<mct::origami::ArpeggiatorState()>;
-    PerformanceKeyboard(juce::MidiKeyboardState& state,WheelSetter pitch,WheelSetter mod,RangeSetter rangeSetter,RangeGetter rangeGetter,PerformanceSetter performanceSetter,PerformanceGetter performanceGetter,ArpSetter arpSetter,ArpGetter arpGetter)
-        : keyboardState_(state),pitchSetter_(std::move(pitch)),modSetter_(std::move(mod)),rangeSetter_(std::move(rangeSetter)),rangeGetter_(std::move(rangeGetter)),performanceSetter_(std::move(performanceSetter)),performanceGetter_(std::move(performanceGetter)),arpSetter_(std::move(arpSetter)),arpGetter_(std::move(arpGetter)) {
+    PerformanceKeyboard(NoteSetter noteSetter,WheelSetter pitch,WheelSetter mod,RangeSetter rangeSetter,RangeGetter rangeGetter,PerformanceSetter performanceSetter,PerformanceGetter performanceGetter,ArpSetter arpSetter,ArpGetter arpGetter)
+        : noteSetter_(std::move(noteSetter)),pitchSetter_(std::move(pitch)),modSetter_(std::move(mod)),rangeSetter_(std::move(rangeSetter)),rangeGetter_(std::move(rangeGetter)),performanceSetter_(std::move(performanceSetter)),performanceGetter_(std::move(performanceGetter)),arpSetter_(std::move(arpSetter)),arpGetter_(std::move(arpGetter)) {
         setName("Performance keyboard");
         setTooltip("Click or drag across keys to play MCT Origami.");
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
@@ -158,7 +160,7 @@ private:
     juce::Rectangle<int> modWheelArea() const noexcept;
     void updateWheel(juce::Point<float>);
 
-    juce::MidiKeyboardState& keyboardState_;
+    NoteSetter noteSetter_;
     WheelSetter pitchSetter_,modSetter_;RangeSetter rangeSetter_;RangeGetter rangeGetter_;
     PerformanceSetter performanceSetter_;PerformanceGetter performanceGetter_;
     ArpSetter arpSetter_;ArpGetter arpGetter_;

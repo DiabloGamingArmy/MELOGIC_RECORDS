@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.0.0-matrix-routing-expansion
@@ -50,7 +51,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
               modulationBindings(owner)),
       modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner)),
       macros_(modulationBindings(owner)),matrix_(modulationBindings(owner)),
-      performance_(owner.uiKeyboardState(),
+      performance_([&owner](int note,bool on,float velocity){return owner.enqueueUiKeyboardNote(note,on,velocity);},
           [&owner](float v){owner.setUiPitchWheel(v);},
           [&owner](float v){owner.setUiModWheel(v);},
           [&owner](float v){return owner.setUiPitchBendRange(v);},

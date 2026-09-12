@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p14-callback-lock-mailboxes
@@ -63,8 +64,9 @@ public:
     bool removeUiRoute(unsigned) noexcept;
     mct::origami::InstrumentState getUiInstrumentState() const noexcept;
 
-    // V23.1: UI keyboard feeds the exact same MIDI path as host input.
-    juce::MidiKeyboardState& uiKeyboardState() noexcept { return uiKeyboardState_; }
+    // Deep Audit P02: UI notes enter the audio domain through a fixed SPSC
+    // queue. MidiKeyboardState is no longer an audio-thread bridge.
+    bool enqueueUiKeyboardNote(int note,bool noteOn,float velocity=0.85f) noexcept;
     void setUiPitchWheel(float normalized) noexcept;
     void setUiModWheel(float normalized) noexcept;
     bool setUiPitchBendRange(float semitones) noexcept;
@@ -92,7 +94,19 @@ private:
     void publishEnvelopeUiSnapshot() noexcept;
     void serviceVisualTelemetry(int hostBlockSamples) noexcept;
     void finalizeRenderBudget(std::int64_t startTicks,int hostBlockSamples) noexcept;
-    juce::MidiKeyboardState uiKeyboardState_;
+    void drainUiKeyboardMidi(juce::MidiBuffer&) noexcept;
+
+    struct UiMidiEvent {
+        std::uint8_t note=0;
+        std::uint8_t velocity=0;
+        bool noteOn=false;
+    };
+    static constexpr std::uint32_t uiMidiCapacity_=1024;
+    std::array<UiMidiEvent,uiMidiCapacity_> uiMidiQueue_{};
+    std::atomic<std::uint32_t> uiMidiWrite_{0},uiMidiRead_{0};
+    std::atomic<std::uint64_t> uiMidiDropped_{0};
+    std::atomic<bool> uiMidiOverflowRecovery_{false};
+
     // Persistent realtime MIDI workspaces; storage is committed in prepareToPlay().
     juce::MidiBuffer inputMidiScratch_;
     juce::MidiBuffer scheduledMidiScratch_;

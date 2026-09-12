@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-v25.3.2-arp-ui-stabilization
 // mct-origami-v25.3.1-arp-layout-refinement
 // mct-origami-v25.2.0-arp-ux-visual-architecture
@@ -24,7 +25,7 @@ constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
 }
 
 PerformanceKeyboard::~PerformanceKeyboard() {
-    if(mouseNote_>=0) keyboardState_.noteOff(1,mouseNote_,0.0f);
+    if(mouseNote_>=0 && noteSetter_) noteSetter_(mouseNote_,false,0.0f);
 }
 
 void PerformanceKeyboard::syncArpFromModel() {
@@ -127,9 +128,9 @@ int PerformanceKeyboard::noteAt(juce::Point<float> p) const noexcept {
 
 void PerformanceKeyboard::setMouseNote(int note) {
     if(note==mouseNote_) return;
-    if(mouseNote_>=0) keyboardState_.noteOff(1,mouseNote_,0.0f);
+    if(mouseNote_>=0 && noteSetter_) noteSetter_(mouseNote_,false,0.0f);
     mouseNote_=note;
-    if(mouseNote_>=0) keyboardState_.noteOn(1,mouseNote_,0.85f);
+    if(mouseNote_>=0 && noteSetter_) noteSetter_(mouseNote_,true,0.85f);
     repaint();
 }
 
@@ -191,7 +192,7 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         const int note=firstMidiNote+(i/7)*12+whiteOffsets[i%7];
         juce::Rectangle<float> key(float(keys.getX())+float(i)*width,float(keys.getY()),
                                    width-1,float(keys.getHeight()));
-        const bool down=keyboardState_.isNoteOnForChannels(0xffff,note);
+        const bool down=(note==mouseNote_);
         g.setColour(down?juce::Colour(0xffaeb8be):juce::Colour(0xffcdd5d9));
         g.fillRoundedRectangle(key,1.5f);
         g.setColour(juce::Colour(0xff8b969e));g.drawRoundedRectangle(key,.8f,.7f);
@@ -207,7 +208,7 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         auto key=juce::Rectangle<float>(
             float(keys.getX())+(float(i)+1)*width-width*.31f,
             float(keys.getY()),width*.62f,float(keys.getHeight())*.60f);
-        const bool down=keyboardState_.isNoteOnForChannels(0xffff,note);
+        const bool down=(note==mouseNote_);
         g.setColour(down?juce::Colour(0xff30373b):juce::Colour(0xff0c1115));
         g.fillRoundedRectangle(key,1.5f);
         g.setColour(Palette::border());g.drawRoundedRectangle(key.reduced(.5f),1.5f,1);

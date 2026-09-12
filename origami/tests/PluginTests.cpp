@@ -92,6 +92,37 @@ void disableExtraOscillators(OrigamiAudioProcessor& p) {
     for(unsigned id=2;id<=4;++id)
         p.setUiOscillatorEnabled(id,false);
 }
+void uiKeyboardRealtimeBoundaryAudit() {
+    const auto root=juce::File(__FILE__).getParentDirectory().getParentDirectory();
+    const auto processor=root.getChildFile("plugin/PluginProcessor.cpp").loadFileAsString();
+    const auto header=root.getChildFile("plugin/PluginProcessor.h").loadFileAsString();
+    const auto keyboard=root.getChildFile("plugin/ui/PerformanceKeyboard.cpp").loadFileAsString();
+    check(processor.isNotEmpty() && header.isNotEmpty() && keyboard.isNotEmpty(),
+          "UI keyboard realtime-boundary sources are available");
+
+    const int processStart=processor.indexOf("void OrigamiAudioProcessor::processBlock");
+    const int stateStart=processor.indexOf(processStart,"void OrigamiAudioProcessor::getStateInformation");
+    check(processStart>=0 && stateStart>processStart,"processBlock keyboard audit bounds found");
+    const auto processBody=processor.substring(processStart,stateStart);
+
+    check(!processBody.contains("processNextMidiBuffer"),
+          "processBlock contains no MidiKeyboardState lock bridge");
+    check(!processBody.contains("uiKeyboardState_"),
+          "processBlock does not access MidiKeyboardState");
+    check(processBody.contains("drainUiKeyboardMidi(inputMidi);"),
+          "processBlock drains fixed UI MIDI queue");
+    check(header.contains("uiMidiCapacity_=1024"),
+          "UI MIDI bridge is fixed-capacity");
+    check(header.contains("std::atomic<std::uint32_t> uiMidiWrite_"),
+          "UI MIDI bridge uses atomic SPSC cursors");
+    check(!header.contains("juce::MidiKeyboardState uiKeyboardState_"),
+          "processor owns no MidiKeyboardState");
+    check(keyboard.contains("noteSetter_(mouseNote_,true,0.85f)"),
+          "performance keyboard publishes note-on through lock-free bridge");
+    check(keyboard.contains("noteSetter_(mouseNote_,false,0.0f)"),
+          "performance keyboard publishes note-off through lock-free bridge");
+}
+
 void renderBudgetPolicyAudit() {
     GlobalRenderBudget budget;
     RenderLoad load{};
@@ -499,6 +530,7 @@ void pluginRealtimeAllocationGate() {
 }
 
 void run() {
+    uiKeyboardRealtimeBoundaryAudit();
     renderBudgetPolicyAudit();
     globalQosBoundaryAudit();
     pluginRealtimeAllocationGate();

@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p16-arp-ui-coalescing
 // mct-origami-audio-reengineer-p15-state-io-suspension
@@ -67,6 +68,49 @@ void OrigamiAudioProcessor::dispatchMidi(const juce::MidiMessage& message) noexc
     else if(message.isChannelPressure()) engine_.aftertouch(channel,message.getChannelPressureValue());
     else if(message.isAftertouch()) engine_.aftertouch(channel,message.getAfterTouchValue());
     else if(message.isAllNotesOff() || message.isAllSoundOff()) engine_.allNotesOff();
+}
+
+bool OrigamiAudioProcessor::enqueueUiKeyboardNote(int note,bool noteOn,float velocity) noexcept {
+    if(note<0 || note>127 || !std::isfinite(velocity)) return false;
+    const auto write=uiMidiWrite_.load(std::memory_order_relaxed);
+    const auto read=uiMidiRead_.load(std::memory_order_acquire);
+    if(write-read>=uiMidiCapacity_) {
+        uiMidiDropped_.fetch_add(1,std::memory_order_relaxed);
+        // Never risk a permanently stuck UI note if a pathological producer
+        // outruns 1024 pending events. The audio side performs an all-notes-off
+        // safety recovery at the next block boundary.
+        uiMidiOverflowRecovery_.store(true,std::memory_order_release);
+        return false;
+    }
+
+    auto& event=uiMidiQueue_[write%uiMidiCapacity_];
+    event.note=static_cast<std::uint8_t>(note);
+    event.velocity=static_cast<std::uint8_t>(juce::jlimit(
+        0,127,juce::roundToInt(velocity*127.0f)));
+    event.noteOn=noteOn;
+    uiMidiWrite_.store(write+1,std::memory_order_release);
+    return true;
+}
+
+void OrigamiAudioProcessor::drainUiKeyboardMidi(juce::MidiBuffer& target) noexcept {
+    auto read=uiMidiRead_.load(std::memory_order_relaxed);
+    const auto write=uiMidiWrite_.load(std::memory_order_acquire);
+    while(read<write) {
+        const auto event=uiMidiQueue_[read%uiMidiCapacity_];
+        if(event.noteOn) {
+            target.addEvent(juce::MidiMessage::noteOn(
+                1,static_cast<int>(event.note),
+                static_cast<juce::uint8>(event.velocity)),0);
+        } else {
+            target.addEvent(juce::MidiMessage::noteOff(
+                1,static_cast<int>(event.note)),0);
+        }
+        ++read;
+    }
+    uiMidiRead_.store(read,std::memory_order_release);
+
+    if(uiMidiOverflowRecovery_.exchange(false,std::memory_order_acq_rel))
+        target.addEvent(juce::MidiMessage::allNotesOff(1),0);
 }
 
 double OrigamiAudioProcessor::getUiHostBpm() noexcept {
@@ -363,7 +407,9 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     if(const int mod=pendingUiMod_.exchange(-1,std::memory_order_acq_rel);mod>=0)
         inputMidi.addEvent(juce::MidiMessage::controllerEvent(1,1,mod),0);
 
-    uiKeyboardState_.processNextMidiBuffer(inputMidi,0,total,true);
+    // Deep Audit P02: fixed SPSC drain only. No MidiKeyboardState
+    // CriticalSection can ever enter processBlock().
+    drainUiKeyboardMidi(inputMidi);
 
     if(arpState_.enabled) {
         if(!arpWasEnabled_){resetArpeggiatorRuntime(true);arpWasEnabled_=true;}
