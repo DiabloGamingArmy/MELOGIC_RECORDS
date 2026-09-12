@@ -341,7 +341,13 @@ float ChaosGenerator::next(const ChaosSettings& s,double sampleRate) noexcept {
     if(!std::isfinite(sampleRate) || sampleRate<=0.0) return value_;
     if(s.method!=method_) resetForMethod(s.method);
     const float rate=std::clamp(s.rateHz,0.01f,40.0f);
-    const float elapsed=rate*0.55f/static_cast<float>(sampleRate);
+    // Each attractor has a substantially different natural time scale.
+    // RATE is a musician-facing common control, so normalize method speed
+    // here rather than forcing Rossler/Thomas to feel much slower than Lorenz.
+    float methodTimeScale=0.55f;
+    if(s.method==ChaosMethod::Rossler) methodTimeScale=2.20f;
+    else if(s.method==ChaosMethod::Thomas) methodTimeScale=4.50f;
+    const float elapsed=rate*methodTimeScale/static_cast<float>(sampleRate);
     const int steps=std::clamp(static_cast<int>(std::ceil(elapsed/0.0025f)),1,384);
     const float dt=elapsed/static_cast<float>(steps);
     for(int i=0;i<steps;++i) integrate(s,dt);

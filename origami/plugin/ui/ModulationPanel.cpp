@@ -1831,10 +1831,25 @@ void ModulationPanel::updateSourceHistory(float) {
         ? sourceMonitorFunction_.next(cached_.function,monitorRate) : 0.0f;
     samples[8]=(cached_.generatorActiveMask&0x02u)
         ? sourceMonitorRandom_.next(cached_.random,monitorRate) : 0.0f;
-    samples[9]=(cached_.generatorActiveMask&0x04u)
-        ? sourceMonitorChaos_.next(cached_.chaos,monitorRate) : 0.0f;
+    samples[9]=0.0f;
     if((cached_.generatorActiveMask&0x04u)!=0u) {
-        chaosViewportHistory_.push_back({sourceMonitorChaos_.xNormalized(),sourceMonitorChaos_.yNormalized()});
+        if(selected_==9) {
+            // 30-Hz repainting is too sparse for a fast strange attractor:
+            // connecting frame endpoints creates false straight chords.
+            // Supersample the actual ODE trajectory on the message thread.
+            constexpr int trajectorySamplesPerFrame=16;
+            constexpr double trajectoryMonitorRate=monitorRate*trajectorySamplesPerFrame;
+            for(int i=0;i<trajectorySamplesPerFrame;++i) {
+                samples[9]=sourceMonitorChaos_.next(cached_.chaos,trajectoryMonitorRate);
+                chaosViewportHistory_.push_back({
+                    sourceMonitorChaos_.xNormalized(),
+                    sourceMonitorChaos_.yNormalized()
+                });
+            }
+        } else {
+            // Hidden monitor stays cheap while advancing identical elapsed time.
+            samples[9]=sourceMonitorChaos_.next(cached_.chaos,monitorRate);
+        }
         while(chaosViewportHistory_.size()>chaosHistoryLength_) chaosViewportHistory_.pop_front();
     }
     samples[10]=(cached_.generatorActiveMask&0x08u)
