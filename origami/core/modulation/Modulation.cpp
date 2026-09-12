@@ -425,7 +425,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
     }
     if(f.filterEnabled) f.filter=globalFilter(rate,f.cutoff,f.resonance);
 }
-void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double rate) const noexcept {
+void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,double /*rate*/) const noexcept {
     for(std::size_t j=0;j<voiceCount_;++j) {
         const auto i=voiceGroups_[j];const auto& g=groups_[i];
         float n=std::isfinite(f.normalized[i])?f.normalized[i]:0.0f;
