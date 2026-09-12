@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p01-no-rt-spectral-build
 // mct-origami-audio-reengineer-p17-global-qos-budget
 // mct-origami-audio-reengineer-p09-lightweight-voice-steal
 // mct-origami-audio-reengineer-p06.3-local-source
@@ -28,6 +29,7 @@ OrigamiEngine::OrigamiEngine() noexcept {
 bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, unsigned outputChannels) {
     if (!std::isfinite(sampleRate) || sampleRate < 8000 || sampleRate > 384000 || maximumBlockSize == 0 || (outputChannels != 1 && outputChannels != 2)) return false;
     if (wavetable_.frames.empty()) wavetable_ = dsp::Wavetable::builtIns();
+    dsp::prepareSpectralCompiler();
     modulationSmoothing_=static_cast<float>(1.0-std::exp(-1.0/(sampleRate*.005)));
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
@@ -36,6 +38,7 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
 }
 bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
     if (!table.valid()) return false;
+    dsp::assignWavetableGeneration(table);
     wavetable_ = std::move(table); reset(); return true;
 }
 void OrigamiEngine::reset() noexcept {

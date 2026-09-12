@@ -6,6 +6,8 @@
 # mct-origami-modulation-completion-v24.0.1
 cmake_minimum_required(VERSION 3.20)
 project(MCTOrigami VERSION 0.1.0 LANGUAGES C CXX)
+# mct-origami-deep-audit-p01-no-rt-spectral-build
+find_package(Threads REQUIRED)
 if(APPLE)
   enable_language(OBJCXX)
 endif()
@@ -35,6 +37,7 @@ endif()
 add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(origami_core PUBLIC Threads::Threads)
 target_compile_features(origami_core PUBLIC cxx_std_17)
 set_target_properties(origami_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 add_library(origami_patch STATIC core/preset/Patch.cpp core/preset/StateCodec.cpp)

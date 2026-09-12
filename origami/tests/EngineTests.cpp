@@ -15,6 +15,8 @@
 #include <iostream>
 #include <limits>
 #include <new>
+#include <chrono>
+#include <thread>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -224,7 +226,40 @@ void realtimeThreadPolicyAudit() {
           "voice render source contains no accidental auxiliary-thread primitives");
 }
 
+void spectralPreparationBoundaryAudit() {
+    const auto root=std::filesystem::path(__FILE__).parent_path().parent_path();
+    std::ifstream sourceFile(root/"core/dsp/Wavetable.cpp");
+    const std::string source((std::istreambuf_iterator<char>(sourceFile)),std::istreambuf_iterator<char>());
+    check(!source.empty(),"Wavetable.cpp available for spectral RT audit");
+    const auto nextStart=source.find("float WavetableOscillator::next");
+    const auto nextEnd=source.find("double midiFrequency",nextStart);
+    check(nextStart!=std::string::npos && nextEnd>nextStart,"spectral oscillator source bounds found");
+    const auto nextBody=source.substr(nextStart,nextEnd-nextStart);
+    check(nextBody.find("renderProcessedFrame2048(")==std::string::npos,
+          "WavetableOscillator::next contains no FFT/IFFT construction");
+    check(prepareSpectralCompiler(),"spectral preparation worker starts off RT");
+    auto table=Wavetable::builtIns();
+    WavetableOscillator oscillator;
+    const auto before=spectralCompilerStats();
+    const float first=oscillator.next(table,220.0,48000.0,0.25f,
+        OscProcessType::FormantPeaks,0.75f,OscProcessType::Off,0.0f);
+    check(std::isfinite(first),"spectral miss produces finite fallback audio");
+    bool prepared=false;
+    for(int i=0;i<200 && !prepared;++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        prepared=spectralCompilerStats().prepared>before.prepared;
+    }
+    check(prepared,"spectral miss is prepared asynchronously");
+    const float later=oscillator.next(table,220.0,48000.0,0.25f,
+        OscProcessType::FormantPeaks,0.75f,OscProcessType::Off,0.0f);
+    check(std::isfinite(later),"prepared spectral playback remains finite");
+    const auto after=spectralCompilerStats();
+    check(after.requests>=before.requests+1,"spectral miss emitted bounded preparation request");
+    check(after.fallbackReads>=before.fallbackReads+1,"spectral miss used realtime-safe fallback");
+}
+
 int main() {
+    spectralPreparationBoundaryAudit();
     realtimeThreadPolicyAudit();
     try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"performance modes\n";performanceModes();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}
     catch(const std::exception& error) {guardAllocations.store(false);std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}

@@ -1,3 +1,4 @@
+// mct-origami-deep-audit-p01-no-rt-spectral-build
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 // mct-origami-v29.2.0-randsparse-reseed-routefix
 // mct-origami-v29.1.1-rand-amp-smooth-morph-seed-button
@@ -15,8 +16,13 @@
 #include <algorithm>
 #include <cmath>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <complex>
+#include <cstring>
 #include <limits>
+#include <mutex>
+#include <thread>
 namespace mct::origami::dsp {
 constexpr double pi = 3.14159265358979323846;
 
@@ -118,46 +124,205 @@ float readCycle(const float* input,double phase) noexcept {
     const float f=static_cast<float>(pos-static_cast<double>(static_cast<std::size_t>(pos)));
     return input[i]+f*(input[j]-input[i]);
 }
-struct SpectralCacheEntry {
+struct SpectralKey {
     const Wavetable* table=nullptr;
-    std::size_t frame=0,band=0;
+    std::uint64_t generation=0;
+    std::uint16_t frame=0,band=0;
     OscProcessType p1=OscProcessType::Off,p2=OscProcessType::Off;
     float a1=0.0f,a2=0.0f;
     std::uint32_t s1=0,s2=0;
-    std::array<float,spectralSize> samples{};
-    std::uint64_t age=0;
-    bool valid=false;
 };
-// 256 entries ~= 2 MiB of sample storage per audio thread. This is a
-// deliberate CPU-for-memory trade: enough residency for multiple oscillators,
-// adjacent wavetable frames, pitch bands and the bounded spectral amount grid,
-// without heap allocation or locks in process().
-thread_local std::array<SpectralCacheEntry,256> spectralCache{};
-thread_local std::uint64_t spectralClock=1;
-
-SpectralCacheEntry& processedBand(const Wavetable& table,std::size_t frame,std::size_t band,
-                                  OscProcessType p1,float a1,std::uint32_t s1,
-                                  OscProcessType p2,float a2,std::uint32_t s2) noexcept {
-    a1=quantizedSpectralAmount(p1,a1);
-    a2=quantizedSpectralAmount(p2,a2);
-    for(auto& e:spectralCache) {
-        if(e.valid && e.table==&table && e.frame==frame && e.band==band &&
-           e.p1==p1 && e.p2==p2 && e.a1==a1 && e.a2==a2 && e.s1==s1 && e.s2==s2) {
-            e.age=spectralClock++;
-            return e;
+bool sameSpectralKey(const SpectralKey& a,const SpectralKey& b) noexcept {
+    return a.table==b.table && a.generation==b.generation &&
+           a.frame==b.frame && a.band==b.band &&
+           a.p1==b.p1 && a.p2==b.p2 &&
+           a.a1==b.a1 && a.a2==b.a2 && a.s1==b.s1 && a.s2==b.s2;
+}
+std::uint64_t spectralKeyHash(const SpectralKey& k) noexcept {
+    auto mix=[](std::uint64_t h,std::uint64_t v) noexcept {
+        v^=v>>33;v*=0xff51afd7ed558ccduLL;v^=v>>33;
+        h^=v+0x9e3779b97f4a7c15uLL+(h<<6)+(h>>2);
+        return h;
+    };
+    std::uint64_t h=0xcbf29ce484222325uLL;
+    h=mix(h,static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(k.table)));
+    h=mix(h,k.generation);h=mix(h,k.frame);h=mix(h,k.band);
+    h=mix(h,static_cast<std::uint32_t>(k.p1));h=mix(h,static_cast<std::uint32_t>(k.p2));
+    std::uint32_t f1=0,f2=0;
+    std::memcpy(&f1,&k.a1,sizeof(f1));std::memcpy(&f2,&k.a2,sizeof(f2));
+    h=mix(h,f1);h=mix(h,f2);h=mix(h,k.s1);h=mix(h,k.s2);
+    return h ? h : 1u;
+}
+struct SpectralRequest {
+    SpectralKey key{};
+    std::uint64_t hash=0;
+    std::array<float,spectralSize> source{};
+};
+class SpectralCompiler {
+public:
+    static constexpr std::size_t cacheWays=8,cacheBuckets=64,cacheSize=cacheWays*cacheBuckets;
+    static constexpr std::size_t queueSize=64,pendingSize=256;
+    ~SpectralCompiler() {
+        stop_.store(true,std::memory_order_release);
+        if(worker_.joinable()) worker_.join();
+    }
+    bool start() noexcept {
+        std::lock_guard<std::mutex> guard(startMutex_);
+        if(started_) return true;
+        try { worker_=std::thread([this]{workerLoop();});started_=true;return true; }
+        catch(...) { return false; }
+    }
+    float readOrRequest(const Wavetable& table,std::size_t frame,std::size_t band,
+                        OscProcessType p1,float a1,std::uint32_t s1,
+                        OscProcessType p2,float a2,std::uint32_t s2,
+                        std::size_t index,std::size_t nextIndex,float fraction,
+                        double fallbackPhase) noexcept {
+        SpectralKey key{&table,table.generation,
+                        static_cast<std::uint16_t>(frame),static_cast<std::uint16_t>(band),
+                        p1,p2,quantizedSpectralAmount(p1,a1),quantizedSpectralAmount(p2,a2),s1,s2};
+        const auto hash=spectralKeyHash(key);
+        const auto bucket=(hash%cacheBuckets)*cacheWays;
+        for(std::size_t w=0;w<cacheWays;++w) {
+            auto& slot=cache_[bucket+w];
+            if(slot.state.load(std::memory_order_acquire)!=ready) continue;
+            slot.readers.fetch_add(1,std::memory_order_acquire);
+            if(slot.state.load(std::memory_order_acquire)!=ready) {
+                slot.readers.fetch_sub(1,std::memory_order_release);continue;
+            }
+            if(sameSpectralKey(slot.key,key)) {
+                const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
+                slot.age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+                slot.readers.fetch_sub(1,std::memory_order_release);
+                return value;
+            }
+            slot.readers.fetch_sub(1,std::memory_order_release);
+        }
+        fallbackReads_.fetch_add(1,std::memory_order_relaxed);
+        request(table,key,hash);
+        const auto& source=table.frames[frame].bands[band].samples;
+        const double pos=(fallbackPhase-std::floor(fallbackPhase))*static_cast<double>(table.tableLength);
+        const auto i=static_cast<std::size_t>(pos)%table.tableLength;
+        const auto j=(i+1)%table.tableLength;
+        const float f=static_cast<float>(pos-static_cast<double>(static_cast<std::size_t>(pos)));
+        return source[i]+f*(source[j]-source[i]);
+    }
+    SpectralCompilerStats stats() const noexcept {
+        return {requests_.load(std::memory_order_relaxed),prepared_.load(std::memory_order_relaxed),
+                fallbackReads_.load(std::memory_order_relaxed),dropped_.load(std::memory_order_relaxed)};
+    }
+private:
+    enum : std::uint8_t {empty=0,building=1,ready=2,retiring=3};
+    struct CacheSlot {
+        std::atomic<std::uint8_t> state{empty};
+        std::atomic<std::uint32_t> readers{0};
+        std::atomic<std::uint64_t> age{0};
+        SpectralKey key{};
+        std::array<float,spectralSize> samples{};
+    };
+    struct QueueSlot { std::atomic<bool> readyFlag{false}; SpectralRequest request{}; };
+    void request(const Wavetable& table,const SpectralKey& key,std::uint64_t hash) noexcept {
+        const auto pendingIndex=hash%pendingSize;
+        std::uint64_t expected=0;
+        if(!pending_[pendingIndex].compare_exchange_strong(expected,hash,std::memory_order_acq_rel,std::memory_order_relaxed))
+            return;
+        std::uint64_t write=write_.load(std::memory_order_relaxed);
+        for(;;) {
+            const auto read=read_.load(std::memory_order_acquire);
+            if(write-read>=queueSize) {
+                pending_[pendingIndex].store(0,std::memory_order_release);
+                dropped_.fetch_add(1,std::memory_order_relaxed);return;
+            }
+            if(write_.compare_exchange_weak(write,write+1,std::memory_order_acq_rel,std::memory_order_relaxed))
+                break;
+        }
+        auto& slot=queue_[write%queueSize];
+        slot.request.key=key;slot.request.hash=hash;
+        const auto& source=table.frames[key.frame].bands[key.band].samples;
+        std::copy_n(source.data(),spectralSize,slot.request.source.data());
+        slot.readyFlag.store(true,std::memory_order_release);
+        requests_.fetch_add(1,std::memory_order_relaxed);
+    }
+    bool pop(SpectralRequest& requestValue) noexcept {
+        const auto read=read_.load(std::memory_order_relaxed);
+        if(read>=write_.load(std::memory_order_acquire)) return false;
+        auto& slot=queue_[read%queueSize];
+        if(!slot.readyFlag.load(std::memory_order_acquire)) return false;
+        requestValue=slot.request;
+        slot.readyFlag.store(false,std::memory_order_release);
+        read_.store(read+1,std::memory_order_release);
+        return true;
+    }
+    CacheSlot* claimSlot(const SpectralKey& key,std::uint64_t hash) noexcept {
+        const auto bucket=(hash%cacheBuckets)*cacheWays;
+        CacheSlot* oldest=nullptr;
+        std::uint64_t oldestAge=std::numeric_limits<std::uint64_t>::max();
+        for(std::size_t w=0;w<cacheWays;++w) {
+            auto& slot=cache_[bucket+w];
+            auto state=slot.state.load(std::memory_order_acquire);
+            if(state==ready) {
+                slot.readers.fetch_add(1,std::memory_order_acquire);
+                if(slot.state.load(std::memory_order_acquire)==ready && sameSpectralKey(slot.key,key)) {
+                    slot.readers.fetch_sub(1,std::memory_order_release);return nullptr;
+                }
+                slot.readers.fetch_sub(1,std::memory_order_release);
+                const auto age=slot.age.load(std::memory_order_relaxed);
+                if(age<oldestAge){oldestAge=age;oldest=&slot;}
+            } else if(state==empty) {
+                std::uint8_t expected=empty;
+                if(slot.state.compare_exchange_strong(expected,building,std::memory_order_acq_rel,std::memory_order_relaxed))
+                    return &slot;
+            }
+        }
+        if(oldest) {
+            std::uint8_t expected=ready;
+            if(oldest->state.compare_exchange_strong(expected,retiring,std::memory_order_acq_rel,std::memory_order_relaxed)) {
+                while(oldest->readers.load(std::memory_order_acquire)!=0) std::this_thread::yield();
+                oldest->state.store(building,std::memory_order_release);
+                return oldest;
+            }
+        }
+        return nullptr;
+    }
+    void workerLoop() noexcept {
+        SpectralRequest requestValue{};
+        while(!stop_.load(std::memory_order_acquire)) {
+            if(!pop(requestValue)) {
+                std::this_thread::sleep_for(std::chrono::microseconds(250));continue;
+            }
+            if(auto* slot=claimSlot(requestValue.key,requestValue.hash)) {
+                renderProcessedFrame2048(requestValue.source.data(),slot->samples.data(),
+                    requestValue.key.p1,requestValue.key.a1,requestValue.key.s1,
+                    requestValue.key.p2,requestValue.key.a2,requestValue.key.s2);
+                slot->key=requestValue.key;
+                slot->age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+                slot->state.store(ready,std::memory_order_release);
+                prepared_.fetch_add(1,std::memory_order_relaxed);
+            }
+            const auto pendingIndex=requestValue.hash%pendingSize;
+            auto expected=requestValue.hash;
+            pending_[pendingIndex].compare_exchange_strong(expected,0,std::memory_order_acq_rel,std::memory_order_relaxed);
         }
     }
-    auto* victim=&spectralCache[0];
-    for(auto& e:spectralCache)
-        if(!e.valid || e.age<victim->age) victim=&e;
-    const auto& source=table.frames[frame].bands[band].samples;
-    renderProcessedFrame2048(source.data(),victim->samples.data(),p1,a1,s1,p2,a2,s2);
-    victim->table=&table;victim->frame=frame;victim->band=band;
-    victim->p1=p1;victim->p2=p2;victim->a1=a1;victim->a2=a2;
-    victim->s1=s1;victim->s2=s2;victim->age=spectralClock++;victim->valid=true;
-    return *victim;
-}
+    std::array<CacheSlot,cacheSize> cache_{};
+    std::array<QueueSlot,queueSize> queue_{};
+    std::array<std::atomic<std::uint64_t>,pendingSize> pending_{};
+    std::atomic<std::uint64_t> write_{0},read_{0},clock_{1};
+    std::atomic<std::uint64_t> requests_{0},prepared_{0},fallbackReads_{0},dropped_{0};
+    std::atomic<bool> stop_{false};
+    std::mutex startMutex_;
+    std::thread worker_;
+    bool started_=false;
+};
+SpectralCompiler& spectralCompiler() noexcept { static SpectralCompiler compiler; return compiler; }
+std::atomic<std::uint64_t> wavetableGeneration{1};
 } // namespace
+
+bool prepareSpectralCompiler() noexcept { return spectralCompiler().start(); }
+void assignWavetableGeneration(Wavetable& table) noexcept {
+    table.generation=wavetableGeneration.fetch_add(1,std::memory_order_relaxed);
+    if(table.generation==0) table.generation=wavetableGeneration.fetch_add(1,std::memory_order_relaxed);
+}
+SpectralCompilerStats spectralCompilerStats() noexcept { return spectralCompiler().stats(); }
 
 bool Wavetable::valid() const noexcept {
     if (tableLength < 2 || tableLength > 65536 || frames.empty() || frames.size() > 256 || frames[0].bands.empty()) return false;
@@ -200,6 +365,7 @@ Wavetable Wavetable::builtIns() {
             table.frames[frame].bands.push_back(std::move(band));
         }
     }
+    assignWavetableGeneration(table);
     return table;
 }
 void WavetableOscillator::reset(double phase) noexcept { phase_ = std::isfinite(phase) ? phase - std::floor(phase) : 0; }
@@ -540,10 +706,12 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
     auto read=[&](std::size_t frame) {
         if(spectral) {
-            const auto& processed=processedBand(table,frame,bandIndex,
-                                                process1,amount1,process1Seed,
-                                                process2,amount2,process2Seed).samples;
-            return processed[index]+fraction*(processed[nextIndex]-processed[index]);
+            double fallbackPhase=readPhase;
+            if(!oscProcessIsSpectral(process1)) fallbackPhase=processOscillatorPhase(fallbackPhase,process1,amount1);
+            if(!oscProcessIsSpectral(process2)) fallbackPhase=processOscillatorPhase(fallbackPhase,process2,amount2);
+            return spectralCompiler().readOrRequest(table,frame,bandIndex,
+                process1,amount1,process1Seed,process2,amount2,process2Seed,
+                index,nextIndex,fraction,fallbackPhase);
         }
         const auto& samples=table.frames[frame].bands[bandIndex].samples;
         return samples[index]+fraction*(samples[nextIndex]-samples[index]);

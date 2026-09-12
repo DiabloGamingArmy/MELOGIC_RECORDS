@@ -156,6 +156,14 @@ double processOscillatorPhase(double phase,OscProcessType type,float amount) noe
 void renderProcessedFrame2048(const float* input,float* output,
                               OscProcessType process1,float amount1,std::uint32_t seed1,
                               OscProcessType process2,float amount2,std::uint32_t seed2) noexcept;
+
+// mct-origami-deep-audit-p01-no-rt-spectral-build
+bool prepareSpectralCompiler() noexcept;
+void assignWavetableGeneration(struct Wavetable&) noexcept;
+struct SpectralCompilerStats {
+    std::uint64_t requests=0,prepared=0,fallbackReads=0,droppedRequests=0;
+};
+SpectralCompilerStats spectralCompilerStats() noexcept;
 // Owned, immutable during rendering. Samples contain one cycle (no guard sample).
 // Frames share band limits and table length. Future importers can populate this
 // representation off-thread; hosts must keep the bank alive until processing stops.
@@ -164,6 +172,7 @@ struct WavetableFrame { std::vector<WavetableBand> bands; };
 struct Wavetable {
     std::string name;
     std::size_t tableLength = 0;
+    std::uint64_t generation = 0;
     std::vector<WavetableFrame> frames;
     bool valid() const noexcept;
     static Wavetable builtIns(); // Non-realtime generation only.
