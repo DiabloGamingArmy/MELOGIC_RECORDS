@@ -244,26 +244,46 @@ void playheadBoundaryAudit() {
     check(text.contains("cachedHostBpm_.load("),"UI/ARP consume cached host BPM");
 }
 
+// mct-origami-audio-reengineer-p17-fix3-qos-aware-envelope-audit
 void telemetryBoundaryAudit() {
     // Regression guard: MIDI event density must never multiply UI publication.
     const auto processorFile=juce::File(__FILE__).getParentDirectory().getParentDirectory()
         .getChildFile("plugin/PluginProcessor.cpp");
     const auto text=processorFile.loadFileAsString();
     check(text.isNotEmpty(),"PluginProcessor.cpp available for telemetry architecture audit");
+
     const int renderStart=text.indexOf("void OrigamiAudioProcessor::renderRange");
     const int dispatchStart=text.indexOf("void OrigamiAudioProcessor::dispatchMidi");
     check(renderStart>=0 && dispatchStart>renderStart,"renderRange source bounds found");
     const auto renderBody=text.substring(renderStart,dispatchStart);
     check(!renderBody.contains("publishEnvelopeUiSnapshot("),
           "renderRange contains no envelope UI publication");
+
+    // Patch 17 moved the host-block telemetry cadence into the QoS-aware
+    // serviceVisualTelemetry() helper. Audit that helper directly rather than
+    // requiring cadence variables to remain textually inside processBlock().
+    const int serviceStart=text.indexOf("void OrigamiAudioProcessor::serviceVisualTelemetry");
+    const int finalizeStart=text.indexOf(serviceStart,"void OrigamiAudioProcessor::finalizeRenderBudget");
+    check(serviceStart>=0 && finalizeStart>serviceStart,
+          "visual telemetry service source bounds found");
+    const auto serviceBody=text.substring(serviceStart,finalizeStart);
+    check(serviceBody.contains("envUiSamplesUntilPublish_"),
+          "QoS telemetry service owns envelope telemetry cadence");
+    check(serviceBody.contains("envelopeUiPublishHz_"),
+          "envelope telemetry remains rate-limited");
+    check(serviceBody.contains("publishEnvelopeUiSnapshot();"),
+          "QoS telemetry service publishes envelope snapshot");
+    check(serviceBody.contains("suppressVisualTelemetry"),
+          "envelope telemetry publication obeys global QoS policy");
+
     const int processStart=text.indexOf("void OrigamiAudioProcessor::processBlock");
     const int stateStart=text.indexOf(processStart,"void OrigamiAudioProcessor::getStateInformation");
     check(processStart>=0 && stateStart>processStart,"processBlock source bounds found");
     const auto processBody=text.substring(processStart,stateStart);
-    check(processBody.contains("envUiSamplesUntilPublish_"),
-          "processBlock owns envelope telemetry cadence");
-    check(processBody.contains("envelopeUiPublishHz_"),
-          "processBlock envelope telemetry remains rate-limited");
+    check(processBody.contains("serviceVisualTelemetry(total);"),
+          "processBlock services envelope telemetry at host-block boundary");
+    check(!processBody.contains("publishEnvelopeUiSnapshot();"),
+          "processBlock contains no duplicate direct envelope publication");
 }
 
 void playabilityAudit() {
