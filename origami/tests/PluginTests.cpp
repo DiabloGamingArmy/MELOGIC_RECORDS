@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p12-host-block-ui-telemetry
 // mct-origami-audio-reengineer-p11-full-wrapper-rt-guard
 // mct-origami-audio-reengineer-p05.6-control-identity
 // mct-origami-audio-reengineer-p05-plugin-rt-allocation-gate
@@ -86,6 +87,28 @@ void disableExtraOscillators(OrigamiAudioProcessor& p) {
     for(unsigned id=2;id<=4;++id)
         p.setUiOscillatorEnabled(id,false);
 }
+void telemetryBoundaryAudit() {
+    // Regression guard: MIDI event density must never multiply UI publication.
+    const auto processorFile=juce::File(__FILE__).getParentDirectory().getParentDirectory()
+        .getChildFile("plugin/PluginProcessor.cpp");
+    const auto text=processorFile.loadFileAsString();
+    check(text.isNotEmpty(),"PluginProcessor.cpp available for telemetry architecture audit");
+    const int renderStart=text.indexOf("void OrigamiAudioProcessor::renderRange");
+    const int dispatchStart=text.indexOf("void OrigamiAudioProcessor::dispatchMidi");
+    check(renderStart>=0 && dispatchStart>renderStart,"renderRange source bounds found");
+    const auto renderBody=text.substring(renderStart,dispatchStart);
+    check(!renderBody.contains("publishEnvelopeUiSnapshot("),
+          "renderRange contains no envelope UI publication");
+    const int processStart=text.indexOf("void OrigamiAudioProcessor::processBlock");
+    const int stateStart=text.indexOf("void OrigamiAudioProcessor::getStateInformation",processStart);
+    check(processStart>=0 && stateStart>processStart,"processBlock source bounds found");
+    const auto processBody=text.substring(processStart,stateStart);
+    check(processBody.contains("envUiSamplesUntilPublish_"),
+          "processBlock owns envelope telemetry cadence");
+    check(processBody.contains("envelopeUiPublishHz_"),
+          "processBlock envelope telemetry remains rate-limited");
+}
+
 void playabilityAudit() {
     OrigamiAudioProcessor host;
     host.prepareToPlay(48000,128);
@@ -303,6 +326,7 @@ void run() {
     // V24.0.3: the comprehensive processor/keyboard audio audit existed since
     // V23.2 but was never invoked by run(), so plugin builds could regress to
     // silence while the test executable still passed.
+    telemetryBoundaryAudit();
     playabilityAudit();
 
     OrigamiAudioProcessor p;check(p.getUiInstrumentState().oscillators[3].id==4,"processor owns initial four modules");

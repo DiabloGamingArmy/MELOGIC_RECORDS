@@ -1,3 +1,4 @@
+// mct-origami-audio-reengineer-p12-host-block-ui-telemetry
 // mct-origami-audio-reengineer-p10-persistent-preallocated-midi
 // mct-origami-audio-reengineer-p06.3-local-source
 // mct-origami-v30.1.0-env-sync-native-menus-retrigger
@@ -304,6 +305,13 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
     if(!prepared_ || !engine_.beginHostBlock(2u)) {
         buffer.clear();
+        // Patch 12/19: telemetry is host-block bookkeeping, not DSP-span work.
+        envUiSamplesUntilPublish_-=static_cast<std::int64_t>(total);
+        if(envUiSamplesUntilPublish_<=0) {
+            publishEnvelopeUiSnapshot();
+            const auto interval=static_cast<std::int64_t>(juce::jmax(1.0,sampleRate_/envelopeUiPublishHz_));
+            do envUiSamplesUntilPublish_+=interval; while(envUiSamplesUntilPublish_<=0);
+        }
         return;
     }
 
