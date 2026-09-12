@@ -249,6 +249,8 @@ void ModulationPanel::showAddSourceMenu() {
         {5,"Drift",true,""},
         {6,"Sequencer",true,""},
         {7,"Function",true,""},
+        // V35 performance sources. If absent at runtime after this build,
+        // the running standalone process is stale and must be restarted.
         {8,"Velocity",true,""},
         {9,"Note",true,""}
     };

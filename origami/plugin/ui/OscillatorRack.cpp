@@ -1091,12 +1091,12 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         const double min=slider.getMinimum(),max=slider.getMaximum();
         if(max<=min) return;
         const float base=static_cast<float>((slider.getValue()-min)/(max-min));
-        const bool bipolar=modulationUiSourceIsBipolar(telemetry.selectedSource);
+        const bool bipolar=modulationUiSelectedRouteIsBipolar(destination,display_.id);
         const float extent=std::abs(depth);
         const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
         const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
         const float current=juce::jlimit(0.0f,1.0f,
-            base+depth*modulationUiSourceValue(telemetry.selectedSource));
+            base+depth*modulationUiRouteDisplaySourceValue(telemetry.selectedSource,bipolar));
 
         auto circle=slider.getBounds().toFloat().reduced(1.0f).expanded(2.0f);
         const float d=juce::jmin(circle.getWidth(),circle.getHeight());
@@ -1139,12 +1139,12 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         const double min=slider.getMinimum(),max=slider.getMaximum();
         if(max<=min) return;
         const float base=static_cast<float>((slider.getValue()-min)/(max-min));
-        const bool bipolar=modulationUiSourceIsBipolar(telemetry.selectedSource);
+        const bool bipolar=modulationUiSelectedRouteIsBipolar(destination,display_.id);
         const float extent=std::abs(depth);
         const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
         const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
         const float current=juce::jlimit(0.0f,1.0f,
-            base+depth*modulationUiSourceValue(telemetry.selectedSource));
+            base+depth*modulationUiRouteDisplaySourceValue(telemetry.selectedSource,bipolar));
 
         auto b=slider.getBounds().toFloat().reduced(3.0f);
         const float y=b.getBottom()+1.0f;

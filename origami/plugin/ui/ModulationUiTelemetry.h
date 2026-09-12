@@ -116,6 +116,30 @@ inline bool modulationUiSourceIsBipolar(ModSource source) noexcept {
     return false;
 }
 
+inline bool modulationUiSelectedRouteIsBipolar(ModDestination destination,
+                                                OscillatorModuleId oscillator=0) noexcept {
+    const auto& telemetry=modulationUiTelemetry();
+    bool found=false;
+    bool bipolar=false;
+    for(const auto& route:telemetry.state.routes) {
+        if(route.id==0 || !route.enabled || route.source!=telemetry.selectedSource) continue;
+        if(route.destination.parameter!=destination || route.destination.oscillator!=oscillator) continue;
+        if(!found) {
+            bipolar=route.bipolar;
+            found=true;
+        } else if(route.bipolar!=bipolar) {
+            return true;
+        }
+    }
+    return found && bipolar;
+}
+
+inline float modulationUiRouteDisplaySourceValue(ModSource source,bool bipolar) noexcept {
+    const float raw=modulationUiSourceValue(source);
+    if(bipolar || !modulationUiSourceIsBipolar(source)) return raw;
+    return juce::jlimit(0.0f,1.0f,raw*0.5f+0.5f);
+}
+
 inline float modulationUiSelectedRouteAmount(ModDestination destination,
                                              OscillatorModuleId oscillator=0) noexcept {
     const auto& telemetry=modulationUiTelemetry();
