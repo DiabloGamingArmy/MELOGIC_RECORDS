@@ -1,0 +1,68 @@
+# mct-origami-deep-audit-p04-native-ci
+name: Origami Native Audio CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "origami/**"
+      - ".github/workflows/origami-native-ci.yml"
+  pull_request:
+    paths:
+      - "origami/**"
+      - ".github/workflows/origami-native-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: origami-native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JUCE_DIR: ${{ github.workspace }}/.ci/JUCE
+  PLUGINVAL_VERSION: v1.0.4
+
+jobs:
+  realtime-gate:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 9.0.2
+          path: .ci/JUCE
+      - run: |
+          chmod +x origami/scripts/run-rt-gate.sh
+          ./origami/scripts/run-rt-gate.sh
+
+  sanitizers:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 9.0.2
+          path: .ci/JUCE
+      - run: |
+          chmod +x origami/scripts/run-sanitizers.sh
+          ./origami/scripts/run-sanitizers.sh
+
+  plugin-validation:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: 9.0.2
+          path: .ci/JUCE
+      - run: |
+          chmod +x origami/scripts/validate-plugins-macos.sh
+          ./origami/scripts/validate-plugins-macos.sh
