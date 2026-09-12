@@ -134,6 +134,9 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
        !range(s.random.delaySeconds,0.f,5.f) ||
        !range(s.function.rateHz,.01f,40.f) || !range(s.function.curve,-1.f,1.f) ||
        !range(s.chaos.rateHz,.01f,40.f) ||
+       !range(s.chaos.chaos,0.f,1.f) || !range(s.chaos.flow,0.f,1.f) ||
+       !range(s.chaos.damping,0.f,1.f) ||
+       !(s.chaos.axis==ChaosAxis::X || s.chaos.axis==ChaosAxis::Y || s.chaos.axis==ChaosAxis::Z) ||
        !range(s.drift.rateHz,.01f,40.f) ||
        !range(s.sequencer.rateHz,.01f,40.f)) return false;
     for(float step:s.sequencer.steps) if(!range(step,-1.f,1.f)) return false;
@@ -283,17 +286,24 @@ float FunctionGenerator::next(const FunctionSettings& s,double sampleRate) noexc
 }
 
 float ChaosGenerator::next(const ChaosSettings& s,double sampleRate) noexcept {
-    if(!std::isfinite(sampleRate) || sampleRate<=0) return value_;
-    const double rate=std::clamp(double(s.rateHz),.01,40.);
-    phase_+=rate/sampleRate;
-    if(phase_>=1.0) {
-        phase_-=std::floor(phase_);
-        x_=std::clamp(3.93f*x_*(1.0f-x_),0.0001f,0.9999f);
-        target_=x_*2.0f-1.0f;
+    if(!std::isfinite(sampleRate) || sampleRate<=0.0) return value_;
+    const float sigma=6.0f+std::clamp(s.flow,0.0f,1.0f)*14.0f;
+    const float rho=24.0f+std::clamp(s.chaos,0.0f,1.0f)*21.0f;
+    const float beta=1.5f+std::clamp(s.damping,0.0f,1.0f)*5.5f;
+    const float rate=std::clamp(s.rateHz,0.01f,40.0f);
+    const float dt=std::min(0.0025f,rate*0.55f/static_cast<float>(sampleRate));
+    const float dx=sigma*(y_-x_);
+    const float dy=x_*(rho-z_)-y_;
+    const float dz=x_*y_-beta*z_;
+    x_+=dx*dt;y_+=dy*dt;z_+=dz*dt;
+    if(!std::isfinite(x_)||!std::isfinite(y_)||!std::isfinite(z_)||
+       std::abs(x_)>1000.0f||std::abs(y_)>1000.0f||std::abs(z_)>1000.0f) reset();
+    switch(s.axis) {
+        case ChaosAxis::Y:value_=yNormalized();break;
+        case ChaosAxis::Z:value_=zNormalized();break;
+        case ChaosAxis::X:default:value_=xNormalized();break;
     }
-    const float alpha=dsp::fastOneMinusExpNeg((rate*7.0)/sampleRate);
-    value_+=alpha*(target_-value_);
-    return std::clamp(value_,-1.0f,1.0f);
+    return value_;
 }
 
 float DriftGenerator::next(const DriftSettings& s,double sampleRate) noexcept {

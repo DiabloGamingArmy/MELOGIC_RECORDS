@@ -120,6 +120,9 @@ private:
     juce::Label rateLabel_,curveLabel_;
     juce::Slider randomSmooth_,randomHold_,randomDelay_;
     juce::Label randomSmoothLabel_,randomHoldLabel_,randomDelayLabel_;
+    juce::Slider chaosAmount_,chaosFlow_,chaosDamping_;
+    juce::Label chaosAmountLabel_,chaosFlowLabel_,chaosDampingLabel_;
+    NativeComboBox chaosAxis_;
     NativeComboBox shape_,mode_;
     juce::ToggleButton lfoLoop_{"LOOP"};
     juce::TextButton lfoTools_{"TOOLS"};
@@ -186,6 +189,8 @@ private:
     // existing trace leftward.
     static constexpr std::size_t randomHistoryLength_=240;
     std::deque<float> randomViewportHistory_{};
+    static constexpr std::size_t chaosHistoryLength_=360;
+    std::deque<juce::Point<float>> chaosViewportHistory_{};
     EnvelopeTraceSnapshot sourceTrace_{};
     std::uint64_t sourceTraceOrder_=0;
     std::array<Lfo,4> sourceMonitorLfos_{};

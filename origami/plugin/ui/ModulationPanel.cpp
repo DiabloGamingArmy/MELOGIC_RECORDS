@@ -176,6 +176,19 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     randomDelay_.setTextBoxStyle(juce::Slider::TextBoxRight,false,54,18);
     randomDelay_.setTooltip("Initial delay before Random modulation starts");
 
+    rotary(*this,chaosAmount_,chaosAmountLabel_,"CHAOS");
+    chaosAmount_.setRange(0.0,1.0,.001);chaosAmount_.setTextBoxStyle(juce::Slider::TextBoxRight,false,54,18);
+    chaosAmount_.setTooltip("Lorenz rho: higher values expand and destabilize the attractor");
+    rotary(*this,chaosFlow_,chaosFlowLabel_,"FLOW");
+    chaosFlow_.setRange(0.0,1.0,.001);chaosFlow_.setTextBoxStyle(juce::Slider::TextBoxRight,false,54,18);
+    chaosFlow_.setTooltip("Lorenz sigma: how strongly X follows Y");
+    rotary(*this,chaosDamping_,chaosDampingLabel_,"DAMP");
+    chaosDamping_.setRange(0.0,1.0,.001);chaosDamping_.setTextBoxStyle(juce::Slider::TextBoxRight,false,54,18);
+    chaosDamping_.setTooltip("Lorenz beta: Z-axis damping/compression");
+    addAndMakeVisible(chaosAxis_);chaosAxis_.setName("CHAOS OUTPUT AXIS");
+    chaosAxis_.addItem("X",1);chaosAxis_.addItem("Y",2);chaosAxis_.addItem("Z",3);
+    chaosAxis_.setSelectedId(1,juce::dontSendNotification);chaosAxis_.setScrollWheelEnabled(false);
+
     shape_.addItem("MSEG",1);
     // Three explicit playback behaviours. IDs preserve legacy serialization:
     // Free=1, Loop (old NoteRetrigger)=2, Envelope=3.
@@ -203,6 +216,8 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     randomSmooth_.onValueChange=update;
     randomHold_.onValueChange=update;
     randomDelay_.onValueChange=update;
+    chaosAmount_.onValueChange=update;chaosFlow_.onValueChange=update;
+    chaosDamping_.onValueChange=update;chaosAxis_.onChange=update;
 
     syncFromModel();
     updateVisibleControls();
@@ -415,6 +430,10 @@ void ModulationPanel::commitGenerator() {
         mod.random.delaySeconds=static_cast<float>(randomDelay_.getValue());
     } else if(selected_==9) {
         mod.chaos.rateHz=static_cast<float>(rate_.getValue());
+        mod.chaos.chaos=static_cast<float>(chaosAmount_.getValue());
+        mod.chaos.flow=static_cast<float>(chaosFlow_.getValue());
+        mod.chaos.damping=static_cast<float>(chaosDamping_.getValue());
+        mod.chaos.axis=static_cast<ChaosAxis>(chaosAxis_.getSelectedId());
     } else if(selected_==10) {
         mod.drift.rateHz=static_cast<float>(rate_.getValue());
     } else if(selected_==11) {
@@ -450,6 +469,10 @@ void ModulationPanel::updateVisibleControls() {
     randomSmooth_.setVisible(random);randomSmoothLabel_.setVisible(random);
     randomHold_.setVisible(random);randomHoldLabel_.setVisible(random);
     randomDelay_.setVisible(random);randomDelayLabel_.setVisible(random);
+    chaosAmount_.setVisible(chaos);chaosAmountLabel_.setVisible(chaos);
+    chaosFlow_.setVisible(chaos);chaosFlowLabel_.setVisible(chaos);
+    chaosDamping_.setVisible(chaos);chaosDampingLabel_.setVisible(chaos);
+    chaosAxis_.setVisible(chaos);
     performanceTools_.setVisible(performance);
     performanceSnap_.setVisible(performance);
     performanceInputLabel_.setVisible(performance);
@@ -487,7 +510,11 @@ void ModulationPanel::syncFromModel() {
         if(!randomHold_.isMouseButtonDown()) randomHold_.setValue(cached_.random.hold,juce::dontSendNotification);
         if(!randomDelay_.isMouseButtonDown()) randomDelay_.setValue(cached_.random.delaySeconds,juce::dontSendNotification);
     } else if(selected_==9) {
-        rate_.setValue(cached_.chaos.rateHz,juce::dontSendNotification);
+        if(!rate_.isMouseButtonDown()) rate_.setValue(cached_.chaos.rateHz,juce::dontSendNotification);
+        if(!chaosAmount_.isMouseButtonDown()) chaosAmount_.setValue(cached_.chaos.chaos,juce::dontSendNotification);
+        if(!chaosFlow_.isMouseButtonDown()) chaosFlow_.setValue(cached_.chaos.flow,juce::dontSendNotification);
+        if(!chaosDamping_.isMouseButtonDown()) chaosDamping_.setValue(cached_.chaos.damping,juce::dontSendNotification);
+        chaosAxis_.setSelectedId(static_cast<int>(cached_.chaos.axis),juce::dontSendNotification);
     } else if(selected_==10) {
         rate_.setValue(cached_.drift.rateHz,juce::dontSendNotification);
     } else if(selected_==11) {
@@ -1003,7 +1030,7 @@ void ModulationPanel::timerCallback() {
             }
         }
     }
-    if(selected_<=8 || selected_==12 || selected_==13) repaint();
+    if(selected_<=9 || selected_==12 || selected_==13) repaint();
 }
 
 void ModulationPanel::zoomBy(float factor,juce::Point<float> anchor) {
@@ -1158,6 +1185,17 @@ void ModulationPanel::resized() {
             placeRandom(randomSmooth_,randomSmoothLabel_,false);
             placeRandom(randomHold_,randomHoldLabel_,false);
             placeRandom(randomDelay_,randomDelayLabel_,true);
+        } else if(selected_==9) {
+            constexpr int gap=7;
+            const int cellWidth=juce::jmax(92,(controls.getWidth()-gap*4)/5);
+            auto placeChaos=[&](juce::Slider& slider,juce::Label& label){
+                auto cell=controls.removeFromLeft(juce::jmin(cellWidth,controls.getWidth()));
+                label.setBounds(cell.removeFromBottom(17));slider.setBounds(cell.reduced(2,0));
+                if(controls.getWidth()>0) controls.removeFromLeft(juce::jmin(gap,controls.getWidth()));
+            };
+            placeChaos(rate_,rateLabel_);placeChaos(chaosAmount_,chaosAmountLabel_);
+            placeChaos(chaosFlow_,chaosFlowLabel_);placeChaos(chaosDamping_,chaosDampingLabel_);
+            chaosAxis_.setBounds(controls.reduced(6,15));
         } else {
             auto left=controls.removeFromLeft(120);
             rateLabel_.setBounds(left.removeFromBottom(17));rate_.setBounds(left);
@@ -1344,11 +1382,36 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
         }
     else if(selected_==7) title="FUNCTION / CURVED BIPOLAR";
     else if(selected_==8) title="RANDOM / SAMPLE + HOLD";
+    else if(selected_==9) title="CHAOS / LORENZ ATTRACTOR";
     else if(selected_==12) title="VELOCITY / RESPONSE MSEG";
     else if(selected_==13) title="NOTE / KEYTRACK MSEG";
     else title="MODULATION SOURCE";
     text(g,title,caption,9,Palette::muted());well(g,body);
     if(selected_==12 || selected_==13) { paintPerformanceCurve(g); return; }
+
+    if(selected_==9) {
+        auto graph=body.toFloat().reduced(12.0f,10.0f);
+        const float cx=graph.getCentreX(),cy=graph.getCentreY();
+        g.setColour(Palette::borderSoft().withAlpha(.20f));
+        g.drawVerticalLine(juce::roundToInt(cx),graph.getY(),graph.getBottom());
+        g.drawHorizontalLine(juce::roundToInt(cy),graph.getX(),graph.getRight());
+        if(chaosViewportHistory_.size()>1) {
+            juce::Path orbit;bool first=true;
+            for(const auto& v:chaosViewportHistory_) {
+                const float x=cx+juce::jlimit(-1.0f,1.0f,v.x)*graph.getWidth()*.43f;
+                const float y=cy-juce::jlimit(-1.0f,1.0f,v.y)*graph.getHeight()*.43f;
+                if(first){orbit.startNewSubPath(x,y);first=false;}else orbit.lineTo(x,y);
+            }
+            g.setColour(signalSourceColour().withAlpha(.13f));g.strokePath(orbit,juce::PathStrokeType(5.0f));
+            g.setColour(Palette::text().withAlpha(.84f));g.strokePath(orbit,juce::PathStrokeType(1.25f));
+            const auto& v=chaosViewportHistory_.back();
+            const juce::Point<float> p{cx+v.x*graph.getWidth()*.43f,cy-v.y*graph.getHeight()*.43f};
+            g.setColour(signalSourceColour().withAlpha(.30f));g.fillEllipse(juce::Rectangle<float>(18,18).withCentre(p));
+            g.setColour(Palette::text());g.fillEllipse(juce::Rectangle<float>(5,5).withCentre(p));
+        }
+        text(g,"X / Y PHASE PORTRAIT",graph.removeFromTop(16).toNearestInt(),8.0f,Palette::muted());
+        return;
+    }
 
     if(selected_<=2) {
         if(envCanvas_.isEmpty()) return;
@@ -1708,7 +1771,7 @@ void ModulationPanel::updateSourceHistory(float) {
     if(!sourceTrace_.active) {
         telemetry.sourceValues.fill(0.0f);
         for(auto& history:sourceHistory_) history.clear();
-        randomViewportHistory_.clear();
+        randomViewportHistory_.clear();chaosViewportHistory_.clear();
         telemetry.synthActive=telemetry.performanceInputActive;
         return;
     }
@@ -1730,6 +1793,10 @@ void ModulationPanel::updateSourceHistory(float) {
         ? sourceMonitorRandom_.next(cached_.random,monitorRate) : 0.0f;
     samples[9]=(cached_.generatorActiveMask&0x04u)
         ? sourceMonitorChaos_.next(cached_.chaos,monitorRate) : 0.0f;
+    if((cached_.generatorActiveMask&0x04u)!=0u) {
+        chaosViewportHistory_.push_back({sourceMonitorChaos_.xNormalized(),sourceMonitorChaos_.yNormalized()});
+        while(chaosViewportHistory_.size()>chaosHistoryLength_) chaosViewportHistory_.pop_front();
+    }
     samples[10]=(cached_.generatorActiveMask&0x08u)
         ? sourceMonitorDrift_.next(cached_.drift,monitorRate) : 0.0f;
     samples[11]=(cached_.generatorActiveMask&0x10u)
