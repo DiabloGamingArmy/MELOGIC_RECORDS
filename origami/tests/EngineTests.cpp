@@ -5,6 +5,7 @@
 // mct-origami-glide-mono-legato-v23.4.3
 // mct-origami-osc1-smooth-basic-shapes-v22.3
 #include "core/Engine.h"
+#include "core/RealtimeThreadPolicy.h"
 #include "core/preset/Patch.h"
 #include <algorithm>
 #include <atomic>
@@ -196,7 +197,35 @@ void oscillatorAndFilter() {
     }
 }
 }
+void realtimeThreadPolicyAudit() {
+    check(!RealtimeThreadPolicy::auxiliaryRenderThreadsEnabled,
+          "Patch 19 keeps auxiliary realtime rendering disabled by default");
+    check(!RealtimeThreadPolicy::audioCallbackMayBlockForWorker,
+          "audio callback may not block waiting for auxiliary workers");
+    check(!RealtimeThreadPolicy::perDspObjectWorkersAllowed,
+          "worker-per-DSP-object architecture is forbidden");
+
+    const auto root=std::filesystem::path(__FILE__).parent_path().parent_path();
+    const auto readText=[](const std::filesystem::path& p) {
+        std::ifstream f(p);
+        return std::string(std::istreambuf_iterator<char>(f),
+                           std::istreambuf_iterator<char>());
+    };
+
+    const auto engine=readText(root/"core/Engine.cpp");
+    const auto voice=readText(root/"core/Voice.cpp");
+    check(engine.find("std::thread")==std::string::npos
+          && engine.find("std::async")==std::string::npos
+          && engine.find("std::condition_variable")==std::string::npos,
+          "engine render source contains no accidental auxiliary-thread primitives");
+    check(voice.find("std::thread")==std::string::npos
+          && voice.find("std::async")==std::string::npos
+          && voice.find("std::condition_variable")==std::string::npos,
+          "voice render source contains no accidental auxiliary-thread primitives");
+}
+
 int main() {
+    realtimeThreadPolicyAudit();
     try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"performance modes\n";performanceModes();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}
     catch(const std::exception& error) {guardAllocations.store(false);std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}
 }

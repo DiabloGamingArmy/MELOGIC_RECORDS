@@ -18,6 +18,20 @@ option(ORIGAMI_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
 option(ORIGAMI_BUILD_DSP_PROFILE "Build the standalone Origami DSP profiling harness" OFF)
 option(ORIGAMI_VECTOR_REPORTS "Emit compiler auto-vectorization diagnostics for origami_core" OFF)
 option(ORIGAMI_DISABLE_AUTOVECTORIZATION "Disable compiler auto-vectorization for A/B profiling" OFF)
+
+# mct-origami-audio-reengineer-p19-aux-rt-thread-decision-gate
+# The default and current production architecture is exactly one realtime DSP
+# thread: the host callback. Auxiliary realtime rendering is intentionally not
+# implemented merely because more cores exist.
+option(ORIGAMI_ENABLE_AUX_RT_THREADS "EXPERIMENTAL: auxiliary realtime DSP workers" OFF)
+if(ORIGAMI_ENABLE_AUX_RT_THREADS)
+  message(FATAL_ERROR
+    "Auxiliary realtime DSP threads are intentionally gated. "
+    "Run Patch 18 profiling and docs/AUXILIARY_RT_THREADING_DECISION.md first. "
+    "A future implementation must provide bounded work partitioning, a no-wait "
+    "deadline fallback, and platform realtime scheduling integration "
+    "(Audio Workgroups on Apple / appropriate pro-audio scheduling on Windows).")
+endif()
 add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
