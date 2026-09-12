@@ -11,6 +11,13 @@ if(APPLE)
 endif()
 option(ORIGAMI_BUILD_TESTS "Build standalone tests and note renderer" ON)
 option(ORIGAMI_SANITIZE "Enable address and undefined behavior sanitizers" OFF)
+
+# mct-origami-audio-reengineer-p18-simd-profiling
+# Patch 18 is measurement infrastructure, not an unconditional SIMD rewrite.
+# The audit explicitly requires Release/LTO evidence before changing DSP layout.
+option(ORIGAMI_BUILD_DSP_PROFILE "Build the standalone Origami DSP profiling harness" OFF)
+option(ORIGAMI_VECTOR_REPORTS "Emit compiler auto-vectorization diagnostics for origami_core" OFF)
+option(ORIGAMI_DISABLE_AUTOVECTORIZATION "Disable compiler auto-vectorization for A/B profiling" OFF)
 add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -30,6 +37,43 @@ foreach(target origami_core origami_patch)
     target_link_options(${target} PUBLIC -fsanitize=address,undefined)
   endif()
 endforeach()
+
+# Patch 18/19: compiler-vectorization evidence belongs on the core DSP target.
+# Keep all of this opt-in so normal production/test builds remain unchanged.
+if(CMAKE_CXX_COMPILER_ID MATCHES "AppleClang|Clang")
+  if(ORIGAMI_VECTOR_REPORTS)
+    target_compile_options(origami_core PRIVATE
+      -Rpass=loop-vectorize
+      -Rpass-missed=loop-vectorize
+      -Rpass-analysis=loop-vectorize
+      -Rpass=slp-vectorizer
+      -Rpass-missed=slp-vectorizer)
+  endif()
+  if(ORIGAMI_DISABLE_AUTOVECTORIZATION)
+    target_compile_options(origami_core PRIVATE -fno-vectorize -fno-slp-vectorize)
+  endif()
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  if(ORIGAMI_VECTOR_REPORTS)
+    target_compile_options(origami_core PRIVATE -fopt-info-vec-optimized -fopt-info-vec-missed)
+  endif()
+  if(ORIGAMI_DISABLE_AUTOVECTORIZATION)
+    target_compile_options(origami_core PRIVATE -fno-tree-vectorize)
+  endif()
+elseif(MSVC)
+  if(ORIGAMI_VECTOR_REPORTS)
+    message(STATUS "ORIGAMI_VECTOR_REPORTS: use MSVC vectorization diagnostics for the selected toolchain")
+  endif()
+  if(ORIGAMI_DISABLE_AUTOVECTORIZATION)
+    message(WARNING "ORIGAMI_DISABLE_AUTOVECTORIZATION is not forced for MSVC; use the toolchain vectorization controls for A/B profiling")
+  endif()
+endif()
+
+if(ORIGAMI_BUILD_DSP_PROFILE)
+  add_executable(origami_dsp_profile tools/profile_simd.cpp)
+  target_link_libraries(origami_dsp_profile PRIVATE origami_core)
+  target_compile_features(origami_dsp_profile PRIVATE cxx_std_17)
+endif()
+
 if(ORIGAMI_BUILD_TESTS)
   enable_testing()
   add_executable(origami_state_tests tests/StateTests.cpp)
