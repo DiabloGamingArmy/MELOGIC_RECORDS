@@ -1,4 +1,3 @@
-// mct-origami-v40.5.3-sequencer-transparent-hit-target
 // mct-origami-v40.5.2-sequencer-color-layout
 // mct-origami-v40.5.1-sequencer-reference-ui
 // mct-origami-v40.3.1-sequence-expression-ui
@@ -286,8 +285,6 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         sequenceContent_.addAndMakeVisible(step);sequenceContent_.addAndMakeVisible(label);
         step.setName("SEQ STEP "+juce::String(static_cast<int>(i+1)));
         step.setSliderStyle(juce::Slider::LinearVertical);
-        // V40.5.3: Slider is interaction-only; custom painter owns visuals.
-        step.setAlpha(0.001f);
         step.setColour(juce::Slider::backgroundColourId,juce::Colours::transparentBlack);
         step.setColour(juce::Slider::trackColourId,juce::Colours::transparentBlack);
         step.setColour(juce::Slider::thumbColourId,juce::Colours::transparentBlack);
@@ -297,7 +294,6 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         step.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
         step.setPopupDisplayEnabled(true,true,this,900);
         step.setSliderSnapsToMousePosition(false);
-        step.setWantsKeyboardFocus(false);
         step.setMouseDragSensitivity(180);
         label.setText(juce::String(static_cast<int>(i+1)),juce::dontSendNotification);
         label.setJustificationType(juce::Justification::centred);
