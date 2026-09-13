@@ -1,5 +1,3 @@
-// mct-origami-v40.5.2-sequencer-color-layout
-// mct-origami-v40.5.1-sequencer-reference-ui
 // mct-origami-v40.3.1-sequence-expression-ui
 // mct-origami-v40.2.0-sequence-transport-ui
 // mct-origami-v40.1.0-sequencer-per-step-editor
@@ -52,7 +50,7 @@ void rotary(juce::Component& parent,juce::Slider& slider,juce::Label& label,
     label.setText(name,juce::dontSendNotification);
     label.setJustificationType(juce::Justification::centred);
     label.setFont(juce::FontOptions(8.0f));
-    label.setColour(juce::Label::textColourId,Palette::text().withAlpha(.82f));
+    label.setColour(juce::Label::textColourId,Palette::muted());
 }
 
 void place(juce::Rectangle<int> cell,juce::Slider& slider,juce::Label& label) {
@@ -206,7 +204,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
     // Viewport scrolling is message-thread UI work, isolated from realtime DSP.
     addAndMakeVisible(sequenceStepsCaption_);
     sequenceStepsCaption_.setText("STEPS",juce::dontSendNotification);
-    sequenceStepsCaption_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
+    sequenceStepsCaption_.setColour(juce::Label::textColourId,Palette::muted());
     sequenceStepsCaption_.setFont(juce::FontOptions(8.0f));
     addAndMakeVisible(sequenceStepCount_);
     sequenceStepCount_.setName("SEQ STEP COUNT");
@@ -217,7 +215,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     addAndMakeVisible(sequenceDirectionCaption_);
     sequenceDirectionCaption_.setText("DIRECTION",juce::dontSendNotification);
-    sequenceDirectionCaption_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
+    sequenceDirectionCaption_.setColour(juce::Label::textColourId,Palette::muted());
     sequenceDirectionCaption_.setFont(juce::FontOptions(8.0f));
     addAndMakeVisible(sequenceDirection_);
     sequenceDirection_.setName("SEQ DIRECTION");
@@ -226,7 +224,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     addAndMakeVisible(sequenceLoopCaption_);
     sequenceLoopCaption_.setText("LOOP",juce::dontSendNotification);
-    sequenceLoopCaption_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
+    sequenceLoopCaption_.setColour(juce::Label::textColourId,Palette::muted());
     sequenceLoopCaption_.setFont(juce::FontOptions(8.0f));
     addAndMakeVisible(sequenceLoopMode_);
     sequenceLoopMode_.setName("SEQ LOOP MODE");
@@ -235,22 +233,19 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     addAndMakeVisible(sequenceSync_);
     sequenceSync_.setToggleState(false,juce::dontSendNotification);
-    sequenceSync_.setColour(juce::ToggleButton::tickColourId,Palette::accent());
-    sequenceSync_.setColour(juce::ToggleButton::textColourId,Palette::text());
     sequenceSync_.setEnabled(false);
     sequenceSync_.setTooltip("Host sync arrives in the transport/behavior pass");
 
     addAndMakeVisible(sequenceViewport_);
     sequenceViewport_.setViewedComponent(&sequenceContent_,false);
     sequenceViewport_.setScrollBarsShown(false,true);
-    sequenceViewport_.setScrollBarThickness(4);
+    sequenceViewport_.setScrollBarThickness(6);
     sequenceViewport_.setWantsKeyboardFocus(false);
-    sequenceViewport_.setSingleStepSizes(88,1);
-    sequenceViewport_.setScrollOnDragMode(juce::Viewport::ScrollOnDragMode::never);
+    sequenceViewport_.setSingleStepSizes(96,1);
 
     // V40 Patch 2: purpose-built per-step lane artwork. UI-only.
     sequenceContent_.painter=[this](juce::Graphics& g) {
-        constexpr float laneWidth=84.0f, laneGap=5.0f;
+        constexpr float laneWidth=78.0f, laneGap=7.0f;
         const auto accent=Palette::accent();
         const auto bounds=sequenceContent_.getLocalBounds().toFloat();
         const float meterTop=22.0f;
@@ -270,13 +265,9 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
             juce::Rectangle<float> fill;
             if(value>=0.0f) fill={lane.getX()+1.0f,y,lane.getWidth()-2.0f,juce::jmax(0.0f,zeroY-y)};
             else fill={lane.getX()+1.0f,zeroY,lane.getWidth()-2.0f,juce::jmax(0.0f,y-zeroY)};
-            g.setColour(accent.withAlpha(enabled?.48f:.055f)); g.fillRect(fill);
-            g.setColour(accent.withAlpha(enabled?.98f:.20f));
-            g.fillRoundedRectangle(lane.getX()+7.0f,y-2.0f,lane.getWidth()-14.0f,4.0f,2.0f);
-            if(i==active) {
-                g.setColour(accent.withAlpha(.18f)); g.drawRoundedRectangle(lane.expanded(3.0f),4.0f,3.0f);
-                g.setColour(accent); g.drawRoundedRectangle(lane.expanded(1.5f),3.5f,1.5f);
-            }
+            g.setColour(accent.withAlpha(enabled?.30f:.055f)); g.fillRect(fill);
+            g.setColour(accent.withAlpha(enabled?.98f:.25f)); g.fillRect(lane.getX()+4.0f,y-1.0f,lane.getWidth()-8.0f,2.0f);
+            if(i==active) { g.setColour(accent); g.drawRoundedRectangle(lane.expanded(2.0f),3.0f,1.7f); }
         }
     };
 
@@ -284,7 +275,7 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         auto& step=sequenceSteps_[i]; auto& label=sequenceStepLabels_[i];
         sequenceContent_.addAndMakeVisible(step);sequenceContent_.addAndMakeVisible(label);
         step.setName("SEQ STEP "+juce::String(static_cast<int>(i+1)));
-        step.setSliderStyle(juce::Slider::LinearVertical);
+        step.setSliderStyle(juce::Slider::LinearBarVertical);
         step.setColour(juce::Slider::backgroundColourId,juce::Colours::transparentBlack);
         step.setColour(juce::Slider::trackColourId,juce::Colours::transparentBlack);
         step.setColour(juce::Slider::thumbColourId,juce::Colours::transparentBlack);
@@ -330,9 +321,6 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         gate.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
         gate.setPopupDisplayEnabled(true,true,&sequenceContent_,700);
         gate.setScrollWheelEnabled(false);
-        gate.setColour(juce::Slider::backgroundColourId,Palette::borderSoft().withAlpha(.24f));
-        gate.setColour(juce::Slider::trackColourId,Palette::accent().withAlpha(.82f));
-        gate.setColour(juce::Slider::thumbColourId,Palette::accent());
         gate.setTooltip("Step probability");
         auto& ratchet=sequenceRatchet_[i];
         sequenceContent_.addAndMakeVisible(ratchet);
@@ -341,8 +329,8 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
         ratchet.setTooltip("Ratchet pulses inside this step");
     }
     addAndMakeVisible(sequenceHumanize_);addAndMakeVisible(sequenceHumanizeLabel_);
-    sequenceHumanize_.setSliderStyle(juce::Slider::LinearHorizontal);sequenceHumanize_.setColour(juce::Slider::backgroundColourId,Palette::borderSoft().withAlpha(.24f));sequenceHumanize_.setColour(juce::Slider::trackColourId,Palette::accent().withAlpha(.82f));sequenceHumanize_.setColour(juce::Slider::thumbColourId,Palette::accent());sequenceHumanize_.setRange(0.0,0.35,0.005);sequenceHumanize_.setValue(0.0,juce::dontSendNotification);sequenceHumanize_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);sequenceHumanize_.setPopupDisplayEnabled(true,true,this,700);
-    sequenceHumanizeLabel_.setText("HUMAN",juce::dontSendNotification);sequenceHumanizeLabel_.setFont(juce::FontOptions(8.0f));sequenceHumanizeLabel_.setColour(juce::Label::textColourId,Palette::accent().withAlpha(.82f));
+    sequenceHumanize_.setSliderStyle(juce::Slider::LinearHorizontal);sequenceHumanize_.setRange(0.0,0.35,0.005);sequenceHumanize_.setValue(0.0,juce::dontSendNotification);sequenceHumanize_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);sequenceHumanize_.setPopupDisplayEnabled(true,true,this,700);
+    sequenceHumanizeLabel_.setText("HUMAN",juce::dontSendNotification);sequenceHumanizeLabel_.setFont(juce::FontOptions(8.0f));sequenceHumanizeLabel_.setColour(juce::Label::textColourId,Palette::muted());
     for(auto* b:{&sequenceRandomize_,&sequenceInvert_,&sequenceClear_,&sequenceAllOn_,&sequenceAlternate_})
         addAndMakeVisible(*b);
     sequenceRandomize_.setTooltip("Generate a new bipolar modulation pattern");
@@ -1520,41 +1508,37 @@ void ModulationPanel::resized() {
             placeRandom(randomHold_,randomHoldLabel_,false);
             placeRandom(randomDelay_,randomDelayLabel_,true);
         } else if(selected_==11) {
-            body.removeFromTop(28);
-            auto header=body.removeFromTop(34).reduced(8,2);
+            auto header=body.removeFromTop(42).reduced(6,3);
             auto capCell=[&](juce::Label& cap,juce::Component& control,int width) {
                 auto cell=header.removeFromLeft(juce::jmin(width,header.getWidth()));
                 cap.setBounds(cell.removeFromTop(12));
                 control.setBounds(cell.reduced(0,1));
                 if(header.getWidth()>0) header.removeFromLeft(8);
             };
-            capCell(sequenceStepsCaption_,sequenceStepCount_,68);
-            capCell(sequenceDirectionCaption_,sequenceDirection_,106);
-            capCell(sequenceLoopCaption_,sequenceLoopMode_,82);
-            if(header.getWidth()>0) header.removeFromLeft(6);
-            sequenceSync_.setBounds(header.removeFromLeft(58).reduced(1,8));
+            capCell(sequenceStepsCaption_,sequenceStepCount_,72);
+            capCell(sequenceDirectionCaption_,sequenceDirection_,112);
+            capCell(sequenceLoopCaption_,sequenceLoopMode_,88);
+            sequenceSync_.setBounds(header.removeFromLeft(64).reduced(1,7));
 
-            auto rateCell=controls.removeFromLeft(96);
-            rateLabel_.setBounds(rateCell.removeFromBottom(15));rate_.setBounds(rateCell.reduced(2,0));
-            controls.removeFromLeft(10);
-            auto humanCell=controls.removeFromLeft(72);
-            sequenceHumanizeLabel_.setBounds(humanCell.removeFromBottom(15));
-            sequenceHumanize_.setBounds(humanCell.reduced(3,15));
-            controls.removeFromLeft(12);
-            sequenceRandomize_.setBounds(controls.removeFromLeft(82).reduced(1,13));
-            controls.removeFromLeft(5);
-            sequenceInvert_.setBounds(controls.removeFromLeft(60).reduced(1,13));
+            auto rateCell=controls.removeFromLeft(102);
+            rateLabel_.setBounds(rateCell.removeFromBottom(17));rate_.setBounds(rateCell);
+            controls.removeFromLeft(8);
+            auto humanCell=controls.removeFromLeft(84);sequenceHumanizeLabel_.setBounds(humanCell.removeFromBottom(14));sequenceHumanize_.setBounds(humanCell);
+            controls.removeFromLeft(8);
+            sequenceRandomize_.setBounds(controls.removeFromLeft(86).reduced(1,11));
+            controls.removeFromLeft(4);
+            sequenceInvert_.setBounds(controls.removeFromLeft(64).reduced(1,11));
             controls.removeFromLeft(4);
             sequenceClear_.setBounds(controls.removeFromLeft(54).reduced(1,11));
             controls.removeFromLeft(4);
-            sequenceAllOn_.setBounds(controls.removeFromLeft(56).reduced(1,13));
-            controls.removeFromLeft(5);
-            sequenceAlternate_.setBounds(controls.removeFromLeft(44).reduced(1,13));
+            sequenceAllOn_.setBounds(controls.removeFromLeft(60).reduced(1,11));
+            controls.removeFromLeft(4);
+            sequenceAlternate_.setBounds(controls.removeFromLeft(46).reduced(1,11));
 
             auto viewportBounds=body.reduced(8,4);
             sequenceViewport_.setBounds(viewportBounds);
-            constexpr int laneGap=5;
-            constexpr int laneWidth=84;
+            constexpr int laneGap=7;
+            constexpr int laneWidth=78;
             constexpr int minVisibleWidth=8*laneWidth+7*laneGap;
             const int sequenceContentWidth=juce::jmax(minVisibleWidth,viewportBounds.getWidth());
             const int contentHeight=juce::jmax(1,viewportBounds.getHeight()-6);
