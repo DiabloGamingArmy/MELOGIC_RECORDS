@@ -103,7 +103,8 @@ import {
 } from './data/musicService'
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 
-const app = document.querySelector('#app')\nbindExpandableMusicPlayer()
+const app = document.querySelector('#app')
+bindExpandableMusicPlayer()
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
 let musicLiveControlsCleanup = null
