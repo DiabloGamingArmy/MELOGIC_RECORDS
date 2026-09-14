@@ -1,0 +1,95 @@
+/* SOURA REGION EDITOR CORRECTIVE — v15 */
+
+/* 1. Restore waveform in Pitch mode */
+.studio-editor-page .studio-pitch-trace-waveform {
+  display: block !important;
+  visibility: visible !important;
+  opacity: .28 !important;
+  filter: saturate(.9) !important;
+  pointer-events: none !important;
+}
+.studio-editor-page .studio-pitch-trace-waveform :is(svg,canvas,path,polyline,polygon) {
+  visibility: visible !important;
+  opacity: 1;
+}
+
+/* 2. White Region Editor timeline/header divider */
+.studio-editor-page .studio-region-editor-header-container {
+  border-bottom: 1px solid rgba(255,255,255,.82) !important;
+}
+.studio-editor-page .studio-region-editor-timeline {
+  border-bottom-color: rgba(255,255,255,.82) !important;
+}
+.studio-editor-page .studio-audio-waveform-toolbar {
+  border-bottom: 1px solid #2A2A31 !important;
+}
+
+/* 3. Toolbar order; runtime also reorders DOM */
+.studio-editor-page .studio-audio-waveform-toolbar { order: -2; }
+.studio-editor-page .studio-region-editor-header-container { order: -1; }
+
+/* 4. Remove large pitch status row */
+.studio-editor-page .studio-pitch-trace-status {
+  display: none !important;
+}
+.studio-editor-page .studio-pitch-trace-status-inline {
+  display: block;
+  margin: 3px 0 8px;
+  color: #8E8E99;
+  font-size: 10px;
+  line-height: 1.25;
+  letter-spacing: .015em;
+  white-space: normal;
+}
+
+/* 5. Pitch notes use track/region color */
+.studio-editor-page .studio-pitch-trace-note {
+  --_note-color: var(--pitch-note-color, var(--soura-editor-note-color, #60A5FA));
+  background: color-mix(in srgb, var(--_note-color) 42%, #09090B) !important;
+  border-color: color-mix(in srgb, var(--_note-color) 72%, white 8%) !important;
+  color: white !important;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--_note-color) 12%, transparent) !important;
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease,
+    box-shadow 100ms ease,
+    filter 100ms ease !important;
+}
+.studio-editor-page .studio-pitch-trace-note:hover,
+.studio-editor-page .studio-pitch-trace-note.is-selected,
+.studio-editor-page .studio-pitch-trace-note:focus-visible {
+  background: color-mix(in srgb, var(--_note-color) 76%, white 12%) !important;
+  border-color: color-mix(in srgb, var(--_note-color) 68%, white 32%) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--_note-color) 54%, white 24%),
+    0 0 12px color-mix(in srgb, var(--_note-color) 40%, transparent) !important;
+  filter: brightness(1.16) saturate(1.08) !important;
+}
+
+/* MIDI Region Editor notes use active track/region color */
+.studio-editor-page .studio-midi-roll-note {
+  --_note-color: var(--soura-editor-note-color, var(--pitch-note-color, #60A5FA));
+  background: color-mix(in srgb, var(--_note-color) 62%, #0A0A0A) !important;
+  border-color: color-mix(in srgb, var(--_note-color) 78%, white 8%) !important;
+  color: white !important;
+  transition:
+    background-color 100ms ease,
+    border-color 100ms ease,
+    filter 100ms ease,
+    box-shadow 100ms ease !important;
+}
+.studio-editor-page .studio-midi-roll-note:hover,
+.studio-editor-page .studio-midi-roll-note.is-selected,
+.studio-editor-page .studio-midi-roll-note:focus-visible {
+  background: color-mix(in srgb, var(--_note-color) 82%, white 14%) !important;
+  border-color: color-mix(in srgb, var(--_note-color) 62%, white 38%) !important;
+  filter: brightness(1.2) saturate(1.1) !important;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--_note-color) 42%, transparent) !important;
+}
+.studio-editor-page .studio-pitch-trace-note.is-low-confidence {
+  opacity: .52;
+}
+.studio-editor-page .studio-pitch-trace-note.is-low-confidence:hover,
+.studio-editor-page .studio-pitch-trace-note.is-low-confidence.is-selected {
+  opacity: .82;
+}

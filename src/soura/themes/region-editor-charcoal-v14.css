@@ -70,8 +70,7 @@
  * remains visible above the charcoal surface.
  */
 .studio-editor-page .studio-audio-waveform-viewport .studio-audio-waveform,
-.studio-editor-page .studio-audio-waveform-viewport .studio-audio-waveform-bars,
-.studio-editor-page .studio-pitch-trace-waveform {
+.studio-editor-page .studio-audio-waveform-viewport .studio-audio-waveform-bars {
   background-color: transparent !important;
   background-image: none;
 }

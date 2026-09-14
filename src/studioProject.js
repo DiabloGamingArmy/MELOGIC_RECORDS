@@ -94,6 +94,7 @@ import './soura/themes/recovery-timeline-cycle-volume-v8.css'
 import './soura/themes/library-cycle-guides-v9.css'
 import './soura/themes/library-black-force-v10.css'
 import './soura/themes/region-editor-charcoal-v14.css'
+import './soura/themes/region-editor-corrective-v15.css'
 import './studio/audio/PitchTraceViewport.js'
 import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
 import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisService.js'
@@ -141,6 +142,160 @@ import {
 import { getRegionTimelineRange, getTimelineRegionGeometry, getTimelineRegionLaneGeometry } from './studio/timeline/regionGeometry.js'
 
 const app = document.querySelector('#app')
+
+// SOURA REGION EDITOR CORRECTIVE v15
+function getSouraRegionEditorColorV15(editorRoot) {
+  const candidates = [
+    document.querySelector('.studio-track-card.is-selected'),
+    document.querySelector('.studio-track-card[aria-selected="true"]'),
+    document.querySelector('.studio-midi-region.is-selected'),
+    document.querySelector('.studio-audio-region.is-selected'),
+    document.querySelector('.studio-region.is-selected')
+  ].filter(Boolean)
+
+  const variableNames = [
+    '--track-color',
+    '--region-color',
+    '--pitch-note-color',
+    '--studio-track-color'
+  ]
+
+  for (const node of candidates) {
+    const inline = node.style
+    const computed = getComputedStyle(node)
+
+    for (const variableName of variableNames) {
+      const value =
+        inline?.getPropertyValue(variableName)?.trim() ||
+        computed.getPropertyValue(variableName)?.trim()
+
+      if (value && value !== 'transparent') return value
+    }
+
+    const bg = computed.backgroundColor
+    if (
+      bg &&
+      bg !== 'transparent' &&
+      bg !== 'rgba(0, 0, 0, 0)' &&
+      !/^rgb\(0,\s*0,\s*0\)$/.test(bg)
+    ) {
+      return bg
+    }
+
+    const border = computed.borderLeftColor
+    if (
+      border &&
+      border !== 'transparent' &&
+      border !== 'rgba(0, 0, 0, 0)'
+    ) {
+      return border
+    }
+  }
+
+  const pitchNote = editorRoot?.querySelector?.('.studio-pitch-trace-note')
+  if (pitchNote) {
+    const noteColor =
+      pitchNote.style.getPropertyValue('--pitch-note-color')?.trim() ||
+      getComputedStyle(pitchNote).getPropertyValue('--pitch-note-color')?.trim()
+    if (noteColor) return noteColor
+  }
+
+  return '#60A5FA'
+}
+
+function normalizeSouraRegionEditorV15(root = document) {
+  const editors = new Set()
+
+  root.querySelectorAll?.(
+    '[data-audio-region-editor], .studio-region-editor-audio, .studio-midi-roll-editor'
+  ).forEach((node) => editors.add(node))
+
+  if (root.matches?.(
+    '[data-audio-region-editor], .studio-region-editor-audio, .studio-midi-roll-editor'
+  )) {
+    editors.add(root)
+  }
+
+  editors.forEach((editor) => {
+    const toolbar = editor.querySelector('.studio-audio-waveform-toolbar')
+    const header = editor.querySelector('.studio-region-editor-header-container')
+
+    if (toolbar && header && toolbar !== header.previousElementSibling) {
+      const parent =
+        toolbar.parentElement === header.parentElement
+          ? header.parentElement
+          : editor
+
+      try { parent.insertBefore(toolbar, header) } catch {}
+    }
+
+    editor.querySelectorAll('.studio-pitch-trace-status').forEach((status) => {
+      const text = String(status.textContent || '').trim()
+
+      if (text) {
+        const tools =
+          editor.querySelector('.studio-pitch-trace-tools-pane') ||
+          editor.querySelector('.studio-pitch-trace-controls') ||
+          editor.querySelector('.studio-pitch-trace-toolbar-copy')
+
+        if (tools) {
+          let compact = tools.querySelector('.studio-pitch-trace-status-inline')
+
+          if (!compact) {
+            compact = document.createElement('span')
+            compact.className = 'studio-pitch-trace-status-inline'
+
+            const heading = tools.querySelector('h1,h2,h3,h4,strong')
+            if (heading) heading.after(compact)
+            else tools.prepend(compact)
+          }
+
+          compact.textContent = text
+          compact.title = text
+        }
+      }
+
+      status.remove()
+    })
+
+    editor.style.setProperty(
+      '--soura-editor-note-color',
+      getSouraRegionEditorColorV15(editor)
+    )
+  })
+}
+
+let souraRegionEditorNormalizeRafV15 = 0
+function scheduleSouraRegionEditorNormalizeV15(root = document) {
+  if (souraRegionEditorNormalizeRafV15) return
+
+  souraRegionEditorNormalizeRafV15 = requestAnimationFrame(() => {
+    souraRegionEditorNormalizeRafV15 = 0
+    normalizeSouraRegionEditorV15(root)
+  })
+}
+
+if (!globalThis.__souraRegionEditorCorrectiveV15Installed) {
+  globalThis.__souraRegionEditorCorrectiveV15Installed = true
+
+  new MutationObserver((mutations) => {
+    if (mutations.some((m) => m.type === 'childList' || m.type === 'attributes')) {
+      scheduleSouraRegionEditorNormalizeV15(document)
+    }
+  }).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'style', 'aria-selected', 'data-selected']
+  })
+
+  document.addEventListener('click', () => {
+    scheduleSouraRegionEditorNormalizeV15(document)
+  }, true)
+
+  queueMicrotask(() => scheduleSouraRegionEditorNormalizeV15(document))
+}
+
 
 // SOURA LIBRARY RUNTIME BLACK v11
 function applySouraLibraryRuntimeBlackV11() {

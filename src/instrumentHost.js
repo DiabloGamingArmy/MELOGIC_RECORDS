@@ -11,6 +11,7 @@ import './soura/themes/recovery-timeline-cycle-volume-v8.css'
 import './soura/themes/library-cycle-guides-v9.css'
 import './soura/themes/library-black-force-v10.css'
 import './soura/themes/region-editor-charcoal-v14.css'
+import './soura/themes/region-editor-corrective-v15.css'
 import { createDawPluginInstance, getDawPluginDefinition } from './studio/plugins/pluginCatalog.js'
 import { drawWavetableVisualizers, renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 
