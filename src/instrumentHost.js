@@ -6,6 +6,7 @@ import './soura/themes/deep-black-final.css'
 import './soura/themes/missed-surfaces-v2.css'
 import './soura/themes/missed-surfaces-v3.css'
 import './soura/themes/track-selection-controls-v4.css'
+import './soura/themes/transport-timeline-interaction-v5.css'
 import { createDawPluginInstance, getDawPluginDefinition } from './studio/plugins/pluginCatalog.js'
 import { drawWavetableVisualizers, renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 

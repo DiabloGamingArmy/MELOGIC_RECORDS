@@ -1,0 +1,153 @@
+/*
+ * SOURA TRANSPORT + TIMELINE INTERACTION REPAIR — v5
+ * ==================================================
+ *
+ * Visual rule:
+ *   The individual transport buttons define the control boundary.
+ *   The parent transport group must not add a second enclosing border.
+ *
+ * Interaction rule:
+ *   Timeline/ruler/regions are interactive.
+ *   Playhead, marquee, range and purely visual overlays are passive.
+ */
+
+/* ============================================================
+   TRANSPORT GROUP — REMOVE PARENT CONTAINER BORDER
+   ============================================================ */
+
+.studio-editor-page
+.studio-editor-transport
+.studio-tool-group.studio-tool-group--transport,
+.studio-editor-page
+.studio-editor-transport
+.studio-tool-group--transport {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/*
+ * Keep the buttons themselves unchanged.
+ * We intentionally do not modify their borders/radii here.
+ */
+
+
+/* ============================================================
+   TIMELINE / ARRANGEMENT — RESTORE POINTER INTERACTION
+   ============================================================ */
+
+/* Core arrangement surfaces must accept pointer input. */
+.studio-editor-page .studio-arrangement,
+.studio-editor-page .studio-arrangement-grid,
+.studio-editor-page .studio-arrangement-grid-inner,
+.studio-editor-page .studio-timeline-ruler,
+.studio-editor-page .studio-timeline-ruler-inner,
+.studio-editor-page [data-timeline-ruler],
+.studio-editor-page [data-arrangement-grid],
+.studio-editor-page [data-arrangement-grid-inner] {
+  pointer-events: auto !important;
+}
+
+/* Ruler specifically needs clicking/dragging for playhead placement/scrub. */
+.studio-editor-page .studio-timeline-ruler,
+.studio-editor-page .studio-timeline-ruler-inner,
+.studio-editor-page [data-timeline-ruler] {
+  cursor: pointer !important;
+  user-select: none !important;
+}
+
+/* Regions must receive selection/drag/resize interactions. */
+.studio-editor-page .studio-audio-region,
+.studio-editor-page .studio-midi-region,
+.studio-editor-page .studio-region,
+.studio-editor-page [data-region-id],
+.studio-editor-page [data-region] {
+  pointer-events: auto !important;
+}
+
+/* Region handles/edges remain interactive. */
+.studio-editor-page :is(
+  [data-region-handle],
+  [data-region-resize],
+  [data-region-trim],
+  [class*="region-handle"],
+  [class*="region-resize"],
+  [class*="region-trim"]
+) {
+  pointer-events: auto !important;
+}
+
+
+/* ============================================================
+   VISUAL OVERLAYS — NEVER SWALLOW TIMELINE INPUT
+   ============================================================ */
+
+/*
+ * These are presentation layers, not hit targets.
+ * They must not sit above the arrangement and intercept the mouse.
+ */
+.studio-editor-page :is(
+  .studio-playhead,
+  .studio-timeline-playhead,
+  .studio-arrangement-playhead,
+  .studio-selection-marquee,
+  .studio-marquee,
+  .studio-arrangement-marquee,
+  .studio-arrangement-selection,
+  .studio-loop-range,
+  .studio-cycle-range,
+  .studio-time-selection,
+  [data-playhead],
+  [data-selection-marquee],
+  [data-marquee],
+  [data-loop-range],
+  [data-cycle-range],
+  [data-time-selection]
+) {
+  pointer-events: none !important;
+}
+
+/*
+ * Common pseudo-overlay containers should not intercept clicks.
+ * Their CHILDREN are unaffected unless separately matched above/below.
+ */
+.studio-editor-page .studio-arrangement-grid::before,
+.studio-editor-page .studio-arrangement-grid::after,
+.studio-editor-page .studio-arrangement-grid-inner::before,
+.studio-editor-page .studio-arrangement-grid-inner::after,
+.studio-editor-page .studio-timeline-ruler::before,
+.studio-editor-page .studio-timeline-ruler::after,
+.studio-editor-page .studio-timeline-ruler-inner::before,
+.studio-editor-page .studio-timeline-ruler-inner::after {
+  pointer-events: none !important;
+}
+
+
+/* ============================================================
+   AUTOMATION / EDITABLE HIT TARGETS — KEEP INTERACTIVE
+   ============================================================ */
+
+.studio-editor-page :is(
+  .studio-track-automation-default-line-hit,
+  [data-automation-point],
+  [data-automation-line],
+  [data-automation-handle]
+) {
+  pointer-events: auto !important;
+}
+
+
+/* ============================================================
+   SAFETY
+   ============================================================ */
+
+/*
+ * This patch intentionally does NOT alter:
+ * - Score Editor
+ * - region colors/waveforms
+ * - selected track styling
+ * - transport button styling
+ * - audio engine behavior
+ */
