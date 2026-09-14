@@ -37,6 +37,7 @@ impl Default for Histogram {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DiagnosticsSnapshot {
+    pub device_state: super::device_lifecycle::DeviceState,
     pub callbacks: u64,
     pub last_duration_ns: u64,
     pub last_deadline_ns: u64,
@@ -91,6 +92,7 @@ impl RealtimeDiagnostics {
             u64::MAX
         };
         DiagnosticsSnapshot {
+            device_state: super::device_lifecycle::DeviceState::Uninitialized,
             callbacks: self.callbacks.load(Ordering::Relaxed),
             last_duration_ns: self.last_duration_ns.load(Ordering::Relaxed),
             last_deadline_ns: self.last_deadline_ns.load(Ordering::Relaxed),

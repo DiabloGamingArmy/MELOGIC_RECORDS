@@ -49,7 +49,12 @@ class SouraWasmInstrumentProcessor extends AudioWorkletProcessor {
     }
     const leftPtr = Number(exp.soura_get_output_left_ptr())
     const rightPtr = Number(exp.soura_get_output_right_ptr())
-    this.memoryBuffer = exp.memory.buffer
+    this.memoryBuffer = exp.memory?.buffer
+    if (typeof this.memoryBuffer?.byteLength !== 'number'
+      || !Number.isSafeInteger(leftPtr) || !Number.isSafeInteger(rightPtr)
+      || leftPtr < 0 || rightPtr < 0 || leftPtr % 4 || rightPtr % 4) {
+      throw new Error('Soura WASM ABI returned invalid output memory or pointers.')
+    }
     // Invalid/uninitialized pointers fail during setup, before audio processing.
     this.left = new Float32Array(this.memoryBuffer, leftPtr, MAX_BLOCK_FRAMES)
     this.right = new Float32Array(this.memoryBuffer, rightPtr, MAX_BLOCK_FRAMES)

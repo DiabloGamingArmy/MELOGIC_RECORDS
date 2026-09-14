@@ -66,10 +66,10 @@ test('seeking inside a fade preserves its original project position and progress
 })
 
 test('seek during fade-in retains authored length instead of shrinking to remaining source', () => {
-  const { events } = schedule({ rate: 2, elapsed: 1.5, fadeIn: 3, fadeOut: 0 })
+  const { events } = schedule({ rate: .5, elapsed: 5, fadeIn: 6, fadeOut: 0 })
   const fade = events.find((event) => event.type === 'curve')
-  assert.equal(fade.curve.fromProgress, .5)
-  assert.equal(fade.duration, 1.5)
+  assert.equal(fade.curve.fromProgress, 5 / 6)
+  assert.ok(Math.abs(fade.duration - 1) < 1e-9)
 })
 
 test('rendered media keeps unit playback rate and the same envelope semantics', () => {

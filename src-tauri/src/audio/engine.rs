@@ -25,6 +25,7 @@ use cpal::{
 };
 
 use serde::Serialize;
+use super::device_lifecycle::{DeviceLifecycle, DeviceState, NativeDeviceCapabilities};
 use super::rt_diagnostics::{CallbackMeter, DiagnosticsSnapshot, RealtimeDiagnostics};
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,12 +38,25 @@ pub struct NativeAudioDeviceInfo {
   pub min_sample_rate: u32,
   pub max_sample_rate: u32,
   pub buffer_size: String,
+  pub configurations: Vec<NativeOutputConfiguration>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeOutputConfiguration {
+  pub channels: u16,
+  pub sample_format: String,
+  pub min_sample_rate: u32,
+  pub max_sample_rate: u32,
+  pub buffer_size: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeAudioStatus {
   pub diagnostics: DiagnosticsSnapshot,
+  pub device_state: DeviceState,
+  pub capabilities: NativeDeviceCapabilities,
   pub backend: String,
   pub ready: bool,
   pub stream_active: bool,
@@ -55,6 +69,7 @@ pub struct NativeAudioStatus {
 
 #[derive(Default)]
 struct RealtimeControl {
+  lifecycle: DeviceLifecycle,
   diagnostics: Arc<RealtimeDiagnostics>,
   tone_active: AtomicBool,
   tone_frequency_bits: AtomicU32,
@@ -178,6 +193,7 @@ impl NativeAudioEngine {
             |_| "Unknown Audio Device".to_string()
           );
 
+      let mut configurations = Vec::new();
       let mut max_channels = 0u16;
       let mut min_sample_rate = u32::MAX;
       let mut max_sample_rate = 0u32;
@@ -188,6 +204,11 @@ impl NativeAudioEngine {
         device.supported_output_configs()
       {
         for config in configs {
+          configurations.push(NativeOutputConfiguration {
+            channels: config.channels(), sample_format: format!("{:?}", config.sample_format()),
+            min_sample_rate: config.min_sample_rate(), max_sample_rate: config.max_sample_rate(),
+            buffer_size: supported_buffer_size_label(config.buffer_size()),
+          });
           max_channels =
             max_channels.max(
               config.channels()
@@ -225,6 +246,7 @@ impl NativeAudioEngine {
           min_sample_rate,
           max_sample_rate,
           buffer_size,
+          configurations,
         }
       );
     }
@@ -275,19 +297,23 @@ impl NativeAudioEngine {
   pub fn status(
     &self,
   ) -> NativeAudioStatus {
+    let mut diagnostics = self.control.diagnostics.snapshot();
+    diagnostics.device_state = self.control.lifecycle.state();
     NativeAudioStatus {
-      diagnostics: self.control.diagnostics.snapshot(),
+      diagnostics,
+      device_state: self.control.lifecycle.state(),
+      capabilities: NativeDeviceCapabilities::default(),
       backend:
         "native-cpal".to_string(),
 
       ready:
-        self.stream.is_some(),
+        self.stream.is_some() && self.control.lifecycle.running(),
 
       stream_active:
-        self.stream.is_some(),
+        self.stream.is_some() && self.control.lifecycle.running(),
 
       test_tone_active:
-        self.control.tone_active(),
+        self.control.tone_active() && self.control.lifecycle.running(),
 
       device_name:
         self.device_name.clone(),
@@ -310,9 +336,19 @@ impl NativeAudioEngine {
     &mut self,
   ) -> Result<(), String> {
     if self.stream.is_some() {
-      return Ok(());
+      return if self.control.lifecycle.running() { Ok(()) } else {
+        Err(format!("Native diagnostic output is {:?}. Check/reconnect the output device and restart Nexus. Project playback data was not changed.", self.control.lifecycle.state()))
+      };
     }
+    self.control.lifecycle.begin();
+    let result = self.start_default_output_stream();
+    if result.is_err() && self.control.lifecycle.state() != DeviceState::DeviceLost {
+      self.control.lifecycle.fail();
+    }
+    result
+  }
 
+  fn start_default_output_stream(&mut self) -> Result<(), String> {
     let host =
       cpal::default_host();
 
@@ -380,9 +416,11 @@ impl NativeAudioEngine {
     self.sample_format =
       Some(sample_format);
 
-    self.stream =
-      Some(stream);
-
+    self.stream = Some(stream);
+    if !self.control.lifecycle.started() {
+      drop(self.stream.take());
+      return Err("Native diagnostic output failed during startup. Check the output device and try again.".into());
+    }
     Ok(())
   }
 }
@@ -459,9 +497,10 @@ fn build_f32_stream(
   let mut phase =
     0.0f32;
 
-  let errors = Arc::clone(&control.diagnostics);
+  let errors = Arc::clone(&control);
   let error_callback = move |error| {
-    errors.record_stream_error(&error);
+    errors.lifecycle.stream_error(&error);
+    errors.diagnostics.record_stream_error(&error);
   };
   let mut meter = CallbackMeter::new(Arc::clone(&control.diagnostics), config.sample_rate);
 
@@ -503,9 +542,10 @@ fn build_i16_stream(
   let mut phase =
     0.0f32;
 
-  let errors = Arc::clone(&control.diagnostics);
+  let errors = Arc::clone(&control);
   let error_callback = move |error| {
-    errors.record_stream_error(&error);
+    errors.lifecycle.stream_error(&error);
+    errors.diagnostics.record_stream_error(&error);
   };
   let mut meter = CallbackMeter::new(Arc::clone(&control.diagnostics), config.sample_rate);
 
@@ -514,7 +554,7 @@ fn build_i16_stream(
     move |output: &mut [i16], _| {
       let started = Instant::now();
       let active =
-        control.tone_active();
+        control.tone_active() && control.lifecycle.running();
 
       let frequency =
         control.frequency_hz();
@@ -573,9 +613,10 @@ fn build_u16_stream(
   let mut phase =
     0.0f32;
 
-  let errors = Arc::clone(&control.diagnostics);
+  let errors = Arc::clone(&control);
   let error_callback = move |error| {
-    errors.record_stream_error(&error);
+    errors.lifecycle.stream_error(&error);
+    errors.diagnostics.record_stream_error(&error);
   };
   let mut meter = CallbackMeter::new(Arc::clone(&control.diagnostics), config.sample_rate);
 
@@ -584,7 +625,7 @@ fn build_u16_stream(
     move |output: &mut [u16], _| {
       let started = Instant::now();
       let active =
-        control.tone_active();
+        control.tone_active() && control.lifecycle.running();
 
       let frequency =
         control.frequency_hz();
@@ -638,7 +679,7 @@ fn write_test_tone_f32(
   phase: &mut f32,
 ) {
   let active =
-    control.tone_active();
+    control.tone_active() && control.lifecycle.running();
 
   let frequency =
     control.frequency_hz();

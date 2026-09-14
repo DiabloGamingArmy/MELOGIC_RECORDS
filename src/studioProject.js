@@ -9059,51 +9059,55 @@ function scheduleProjectAudioSource({ ctx, region, runtime, edit, stretch, playb
       }
       const gainNode = ctx.createGain()
       const baseGain = dbToGain(edit.gainDb)
-      gainNode.gain.setValueAtTime(baseGain, scheduleTime)
+      const startTime = scheduleTime + Math.max(0, edit.delayMs / 1000)
+      gainNode.gain.setValueAtTime(baseGain, startTime)
       const offsetSeconds = Math.min(runtime.audioBuffer.duration - 0.01, sourceOffsetSeconds)
       const remainingBufferSeconds = Math.max(0.01, trimEndSeconds - offsetSeconds)
-      const playDuration = Math.max(0.01, Math.min(remainingBufferSeconds, remainingVisibleSeconds * playbackRate))
-      let fadeIn = Math.min(Math.max(0, edit.fadeInSeconds), playDuration)
-      let fadeOut = Math.min(Math.max(0, edit.fadeOutSeconds), playDuration)
-      if (fadeIn + fadeOut > playDuration) {
-        const scale = playDuration / Math.max(0.01, fadeIn + fadeOut)
+      // AudioBufferSource.start duration counts source-buffer seconds. Gain
+      // automation counts context/project seconds, independent of source rate.
+      const sourceDurationSeconds = Math.max(0.01, Math.min(remainingBufferSeconds, remainingVisibleSeconds * playbackRate))
+      const playbackDurationSeconds = sourceDurationSeconds / playbackRate
+      // Preserve authored fade lengths when resuming partway through a clip.
+      let fadeIn = Math.min(Math.max(0, edit.fadeInSeconds), visibleDurationSeconds)
+      let fadeOut = Math.min(Math.max(0, edit.fadeOutSeconds), visibleDurationSeconds)
+      if (fadeIn + fadeOut > visibleDurationSeconds) {
+        const scale = visibleDurationSeconds / (fadeIn + fadeOut)
         fadeIn *= scale
         fadeOut *= scale
       }
       if (fadeIn > 0 && elapsedVisibleSeconds < fadeIn) {
         const fadeProgress = clamp(elapsedVisibleSeconds / fadeIn, 0, 1)
-        gainNode.gain.setValueAtTime(Math.max(0.0001, baseGain * fadeGainValue(fadeProgress, edit.fadeInCurve, 'in')), scheduleTime)
+        gainNode.gain.setValueAtTime(Math.max(0.0001, baseGain * fadeGainValue(fadeProgress, edit.fadeInCurve, 'in')), startTime)
         gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
           baseGain,
           fromProgress: fadeProgress,
           toProgress: 1,
           curve: edit.fadeInCurve,
           direction: 'in'
-        }), scheduleTime, Math.max(0.01, fadeIn * (1 - fadeProgress)))
+        }), startTime, Math.min(playbackDurationSeconds, fadeIn * (1 - fadeProgress)))
       }
-      if (fadeOut > 0 && remainingVisibleSeconds <= fadeOut) {
-        const fadeProgress = clamp((fadeOut - remainingVisibleSeconds) / fadeOut, 0, 1)
+      if (fadeOut > 0 && playbackDurationSeconds <= fadeOut) {
+        const fadeProgress = clamp((fadeOut - playbackDurationSeconds) / fadeOut, 0, 1)
         gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
           baseGain,
           fromProgress: fadeProgress,
           toProgress: 1,
           curve: edit.fadeOutCurve,
           direction: 'out'
-        }), scheduleTime, Math.max(0.01, remainingVisibleSeconds))
-      } else if (fadeOut > 0 && playDuration > fadeOut) {
-        gainNode.gain.setValueAtTime(baseGain, scheduleTime + Math.max(0.01, playDuration - fadeOut))
+        }), startTime, playbackDurationSeconds)
+      } else if (fadeOut > 0 && playbackDurationSeconds > fadeOut) {
+        gainNode.gain.setValueAtTime(baseGain, startTime + (playbackDurationSeconds - fadeOut))
         gainNode.gain.setValueCurveAtTime(makeFadeGainCurve({
           baseGain,
           fromProgress: 0,
           toProgress: 1,
           curve: edit.fadeOutCurve,
           direction: 'out'
-        }), scheduleTime + Math.max(0.01, playDuration - fadeOut), Math.max(0.01, fadeOut))
+        }), startTime + (playbackDurationSeconds - fadeOut), fadeOut)
       }
       source.connect(gainNode)
       gainNode.connect(channel.input)
-      const startTime = scheduleTime + Math.max(0, edit.delayMs / 1000)
-      source.start(startTime, Math.max(0, offsetSeconds), playDuration)
+      source.start(startTime, Math.max(0, offsetSeconds), sourceDurationSeconds)
       return { source, gainNode, startTime, offsetSeconds }
 }
 function updateAudioClipPlayback(currentBeat = getTransportClockProjectBeat(), schedulingContext = null) {

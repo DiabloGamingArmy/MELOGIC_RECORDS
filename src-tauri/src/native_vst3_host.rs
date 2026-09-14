@@ -12,7 +12,7 @@ use std::{
 };
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, SampleFormat, Stream, StreamConfig};
-use crate::audio::{reclamation::{Reclaimer, Retired}, rt_queue, rt_diagnostics::{CallbackMeter, DiagnosticsSnapshot, RealtimeDiagnostics}};
+use crate::audio::{device_lifecycle::{DeviceLifecycle, DeviceState, NativeDeviceCapabilities}, reclamation::{Reclaimer, Retired}, rt_queue, rt_diagnostics::{CallbackMeter, DiagnosticsSnapshot, RealtimeDiagnostics}};
 use serde::Serialize;
 
 #[repr(C)]
@@ -35,6 +35,7 @@ struct MidiEvent { kind: MidiEventKind, note: i32, velocity: f32, channel: i32 }
 
 struct HostShared {
   handle: usize,
+  lifecycle: DeviceLifecycle,
   diagnostics: Arc<RealtimeDiagnostics>,
   midi_budget: usize,
   gain_bits: AtomicU32,
@@ -71,6 +72,7 @@ struct HostedInstance {
 }
 impl Drop for HostedInstance {
   fn drop(&mut self) {
+    if let Some(owner) = self.owner.as_ref() { owner.shared.lifecycle.stop(); }
     drop(self.stream.take());
     if let Some(owner) = self.owner.take() {
       if let Err(mut owner) = self.reclaimer.retire(owner) {
@@ -107,6 +109,8 @@ impl Default for NativeVst3HostState {
 pub struct NativeVst3HostStatus {
   instance_id: String,
   ready: bool,
+  device_state: DeviceState,
+  capabilities: NativeDeviceCapabilities,
   sample_rate: u32,
   channels: u16,
   max_block_size: i32,
@@ -147,6 +151,7 @@ const MIDI_EVENTS_PER_CALLBACK: usize = 1024;
 const MIDI_QUEUE_CAPACITY: usize = 4096;
 
 fn render_block(shared: &HostShared, midi: &mut rt_queue::Receiver<MidiEvent>, output: &mut [f32], channels: usize, max_block_size: usize) {
+  if !shared.lifecycle.running() { output.fill(0.0); return; }
   let frames = output.len() / channels;
   if frames == 0 || frames > max_block_size {
     shared.diagnostics.oversized_buffers.fetch_add(1, Ordering::Relaxed);
@@ -171,8 +176,11 @@ fn render_block(shared: &HostShared, midi: &mut rt_queue::Receiver<MidiEvent>, o
 fn build_stream(shared: Arc<HostShared>, midi: rt_queue::Receiver<MidiEvent>, config: &StreamConfig, sample_format: SampleFormat, device: &cpal::Device, max_block_size: i32) -> Result<Stream, String> {
   let channels = usize::from(config.channels);
   if channels == 0 || config.sample_rate == 0 { return Err("Invalid native VST3 stream configuration.".into()); }
-  let errors = Arc::clone(&shared.diagnostics);
-  let err = move |error| { errors.record_stream_error(&error); };
+  let errors = Arc::clone(&shared);
+  let err = move |error| {
+    errors.lifecycle.stream_error(&error);
+    errors.diagnostics.record_stream_error(&error);
+  };
   let meter = CallbackMeter::new(Arc::clone(&shared.diagnostics), config.sample_rate);
   let mut callback = VstCallback { midi, meter, shared };
   match sample_format {
@@ -198,7 +206,11 @@ pub fn native_vst3_host_create(
 ) -> Result<NativeVst3HostStatus, String> {
   let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   if let Some(existing) = instances.get(&instance_id) {
-    return Ok(NativeVst3HostStatus { instance_id, ready: true, sample_rate: existing.sample_rate, channels: existing.channels, max_block_size: existing.max_block_size, audio_route: "soura-native-vst3-direct".into() });
+    let lifecycle = &existing.owner.as_ref().unwrap().shared.lifecycle;
+    if !lifecycle.running() {
+      return Err(format!("Native VST3 output is {:?}. Reconnect/check the output device and reload the instrument; its project data was retained.", lifecycle.state()));
+    }
+    return Ok(NativeVst3HostStatus { instance_id, ready: true, device_state: lifecycle.state(), capabilities: NativeDeviceCapabilities::default(), sample_rate: existing.sample_rate, channels: existing.channels, max_block_size: existing.max_block_size, audio_route: "soura-native-vst3-direct".into() });
   }
 
   let reclaimer = PLUGIN_RECLAIMER.get_or_init(Reclaimer::new).as_ref().map_err(Clone::clone)?.clone();
@@ -220,12 +232,14 @@ pub fn native_vst3_host_create(
   let (midi_tx, midi_rx) = rt_queue::channel(MIDI_QUEUE_CAPACITY);
   let shared = Arc::new(HostShared {
     handle: handle as usize,
+    lifecycle: DeviceLifecycle::default(),
     diagnostics: Arc::new(RealtimeDiagnostics::default()),
     midi_budget: (unsafe { soura_vst3_event_capacity() } as usize).min(MIDI_EVENTS_PER_CALLBACK),
     gain_bits: AtomicU32::new(1.0f32.to_bits()),
     pan_bits: AtomicU32::new(0.0f32.to_bits()),
     muted: AtomicBool::new(false),
   });
+  shared.lifecycle.begin();
   let mut instance = HostedInstance {
     stream: None, owner: Some(PluginOwner { shared, midi: midi_tx }), reclaimer,
     sample_rate: config.sample_rate, channels: config.channels, max_block_size: actual_max_block,
@@ -234,8 +248,11 @@ pub fn native_vst3_host_create(
   instance.stream = Some(build_stream(shared, midi_rx, &config, supported.sample_format(), &device, actual_max_block)?);
   instance.stream.as_ref().unwrap().play().map_err(|e| format!("Could not start VST3 output stream: {e}"))?;
 
+  if !instance.owner.as_ref().unwrap().shared.lifecycle.started() {
+    return Err("Native VST3 output failed during startup. Check the device and reload the instrument.".into());
+  }
   let status = NativeVst3HostStatus {
-    instance_id: instance_id.clone(), ready: true, sample_rate: config.sample_rate,
+    instance_id: instance_id.clone(), ready: true, device_state: DeviceState::Running, capabilities: NativeDeviceCapabilities::default(), sample_rate: config.sample_rate,
     channels: config.channels, max_block_size: actual_max_block,
     audio_route: "soura-native-vst3-direct".into(),
   };
@@ -248,6 +265,7 @@ pub fn native_vst3_host_note_on(state: tauri::State<'_, NativeVst3HostState>, in
   let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   let instance = instances.get_mut(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
   let owner = instance.owner.as_mut().unwrap();
+  if !owner.shared.lifecycle.running() { return Err("Native VST3 output is unavailable. Check the device and reload the instrument.".into()); }
   owner.midi.push(MidiEvent { kind: MidiEventKind::NoteOn, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { owner.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
 }
 
@@ -256,6 +274,7 @@ pub fn native_vst3_host_note_off(state: tauri::State<'_, NativeVst3HostState>, i
   let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   let instance = instances.get_mut(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
   let owner = instance.owner.as_mut().unwrap();
+  if !owner.shared.lifecycle.running() { return Err("Native VST3 output is unavailable. Check the device and reload the instrument.".into()); }
   owner.midi.push(MidiEvent { kind: MidiEventKind::NoteOff, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { owner.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
 }
 
@@ -294,7 +313,9 @@ pub fn native_vst3_host_dispose(state: tauri::State<'_, NativeVst3HostState>, in
 pub fn native_vst3_host_get_diagnostics(state: tauri::State<'_, NativeVst3HostState>, instance_id: String) -> Result<DiagnosticsSnapshot, String> {
   let instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   let instance = instances.get(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
-  Ok(instance.owner.as_ref().unwrap().shared.diagnostics.snapshot())
+  let mut snapshot = instance.owner.as_ref().unwrap().shared.diagnostics.snapshot();
+  snapshot.device_state = instance.owner.as_ref().unwrap().shared.lifecycle.state();
+  Ok(snapshot)
 }
 
 #[cfg(test)]
@@ -305,9 +326,11 @@ mod tests {
     let (mut tx, mut rx) = rt_queue::channel(2);
     tx.push(MidiEvent { kind: MidiEventKind::NoteOff, note: 60, velocity: 0.0, channel: 0 }).ok().unwrap();
     let shared = HostShared {
-      handle: 0, diagnostics: Arc::new(RealtimeDiagnostics::default()), midi_budget: MIDI_EVENTS_PER_CALLBACK,
+      handle: 0, lifecycle: DeviceLifecycle::default(), diagnostics: Arc::new(RealtimeDiagnostics::default()), midi_budget: MIDI_EVENTS_PER_CALLBACK,
       gain_bits: AtomicU32::new(1.0f32.to_bits()), pan_bits: AtomicU32::new(0.0f32.to_bits()), muted: AtomicBool::new(false),
     };
+    shared.lifecycle.begin();
+    assert!(shared.lifecycle.started());
     let mut output = [1.0; 130];
     let counts = crate::audio::rt_test_alloc::measure(|| render_block(&shared, &mut rx, &mut output, 2, 64));
     assert_eq!(counts, (0, 0));
@@ -319,7 +342,7 @@ mod tests {
   fn complete_callback_drop_keeps_backing_storage_off_audio_thread() {
     let (tx, rx) = rt_queue::channel(MIDI_QUEUE_CAPACITY);
     let shared = Arc::new(HostShared {
-      handle: 0, diagnostics: Arc::new(RealtimeDiagnostics::default()), midi_budget: MIDI_EVENTS_PER_CALLBACK,
+      handle: 0, lifecycle: DeviceLifecycle::default(), diagnostics: Arc::new(RealtimeDiagnostics::default()), midi_budget: MIDI_EVENTS_PER_CALLBACK,
       gain_bits: AtomicU32::new(1.0f32.to_bits()), pan_bits: AtomicU32::new(0.0f32.to_bits()), muted: AtomicBool::new(false),
     });
     let callback = VstCallback {
@@ -334,6 +357,25 @@ mod tests {
     assert!(owner.ready());
     // Null test handle: teardown of backing allocations occurs here, off RT.
     drop(owner);
+  }
+
+  #[test]
+  fn device_loss_silences_output_without_calling_plugin_or_consuming_midi() {
+    let (mut tx, mut rx) = rt_queue::channel(2);
+    tx.push(MidiEvent { kind: MidiEventKind::NoteOn, note: 60, velocity: 0.5, channel: 0 }).ok().unwrap();
+    let shared = HostShared {
+      handle: 0, lifecycle: DeviceLifecycle::default(), diagnostics: Arc::new(RealtimeDiagnostics::default()), midi_budget: MIDI_EVENTS_PER_CALLBACK,
+      gain_bits: AtomicU32::new(1.0f32.to_bits()), pan_bits: AtomicU32::new(0.0f32.to_bits()), muted: AtomicBool::new(false),
+    };
+    shared.lifecycle.begin();
+    shared.lifecycle.started();
+    shared.lifecycle.stream_error(&cpal::StreamError::DeviceNotAvailable);
+    let mut output = [1.0; 128];
+    let counts = crate::audio::rt_test_alloc::measure(|| render_block(&shared, &mut rx, &mut output, 2, 128));
+    assert_eq!(counts, (0, 0));
+    assert!(output.iter().all(|value| *value == 0.0));
+    assert_eq!(rx.pop().unwrap().note, 60);
+    assert_eq!(shared.diagnostics.snapshot().process_failures, 0);
   }
 
   #[test]

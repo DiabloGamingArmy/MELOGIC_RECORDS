@@ -119,3 +119,15 @@ test('WASM growth, oversized blocks and processing traps fail silent with diagno
     assert.equal(p.instance.processFailures, 1)
   }
 })
+
+test('invalid output pointer fails during initialization instead of emitting NaN audio', async () => {
+  const p = await processor({ delayed: true })
+  p.exports.soura_get_output_left_ptr = () => NaN
+  p.finishInstantiation()
+  await p.instance.ready
+  assert.equal(p.messages.at(-1).type, 'error')
+  assert.match(p.messages.at(-1).message, /invalid output memory or pointers/)
+  assert.ok(render(p).output[0].every((value) => value === 0))
+  p.instance.handleMessage({ type: 'dispose' })
+  assert.equal(p.stats().destroyed, 1)
+})
