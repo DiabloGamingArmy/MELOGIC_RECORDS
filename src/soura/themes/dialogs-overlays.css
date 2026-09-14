@@ -1,0 +1,223 @@
+/*
+ * SOURA THEME CONVERSION — PATCH 6/8
+ * Dialogs, Overlays, Popovers, Menus, Toasts & Transient UI
+ *
+ * Design rule:
+ * - transient chrome is neutral black/charcoal
+ * - blue -> purple is reserved for interaction and priority progress/status
+ * - warnings/errors/record states keep semantic color
+ * - no layout or behavior changes
+ */
+
+/* Modal backdrops */
+.studio-editor-page [class*="modal-backdrop"],
+.studio-editor-page [class*="dialog-backdrop"],
+.studio-editor-page [class*="overlay-backdrop"],
+.studio-modal {
+  background: var(--soura-overlay) !important;
+  backdrop-filter: blur(10px);
+}
+
+/* Dialog / modal panels */
+.studio-editor-page [role="dialog"],
+.studio-editor-page [aria-modal="true"],
+.studio-editor-page [class*="modal-panel"],
+.studio-editor-page [class*="dialog-panel"],
+.studio-modal-panel {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-strong) !important;
+  box-shadow: var(--soura-shadow-float) !important;
+}
+
+/* Popovers and menus */
+.studio-inspector-menu,
+.studio-global-popover,
+.studio-track-popover,
+.studio-track-menu,
+.studio-editor-page [role="menu"],
+.studio-editor-page [class*="popover"],
+.studio-editor-page [class*="dropdown-menu"],
+.studio-editor-page [class*="context-menu"],
+.studio-editor-page [class*="menu-panel"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow: var(--soura-shadow-menu) !important;
+}
+
+/* Menu rows */
+.studio-editor-page [role="menuitem"],
+.studio-editor-page [class*="menu-item"],
+.studio-editor-page [class*="dropdown-item"],
+.studio-editor-page [class*="context-item"] {
+  background: transparent !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: transparent !important;
+}
+
+.studio-editor-page [role="menuitem"]:hover,
+.studio-editor-page [class*="menu-item"]:hover,
+.studio-editor-page [class*="dropdown-item"]:hover,
+.studio-editor-page [class*="context-item"]:hover {
+  background: var(--soura-interaction-hover-bg) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.studio-editor-page [role="menuitem"][aria-checked="true"],
+.studio-editor-page [role="menuitemradio"][aria-checked="true"],
+.studio-editor-page [role="menuitemcheckbox"][aria-checked="true"],
+.studio-editor-page [class*="menu-item"].is-active,
+.studio-editor-page [class*="dropdown-item"].is-active {
+  background: var(--soura-accent-active-soft) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-accent-border) !important;
+}
+
+/* Tooltips */
+.studio-editor-page [role="tooltip"],
+.studio-editor-page [class*="tooltip"] {
+  background: var(--soura-surface-3) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow: var(--soura-shadow-menu) !important;
+}
+
+/* Toasts / notifications */
+.studio-editor-page [class*="toast"],
+.studio-editor-page [class*="notification"],
+.studio-editor-page [class*="snackbar"] {
+  background: var(--soura-surface-2) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow: var(--soura-shadow-float) !important;
+}
+
+/* Priority / progress notifications may use accent sparingly */
+.studio-editor-page [class*="toast"][data-status="progress"],
+.studio-editor-page [class*="notification"][data-status="progress"],
+.studio-editor-page [class*="snackbar"][data-status="progress"],
+.studio-editor-page [class*="progress-dialog"] {
+  background:
+    linear-gradient(var(--soura-surface-2), var(--soura-surface-2)) padding-box,
+    var(--soura-accent-gradient) border-box !important;
+  border: 1px solid transparent !important;
+}
+
+/* Generic progress bars */
+.studio-editor-page progress,
+.studio-editor-page [role="progressbar"],
+.studio-editor-page [class*="progress-track"] {
+  background: var(--soura-progress-track) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page progress::-webkit-progress-bar {
+  background: var(--soura-progress-track) !important;
+}
+
+.studio-editor-page progress::-webkit-progress-value {
+  background: var(--soura-accent-gradient) !important;
+}
+
+.studio-editor-page [class*="progress-fill"],
+.studio-editor-page [class*="progress-bar-fill"] {
+  background: var(--soura-accent-gradient) !important;
+}
+
+/* Loading states */
+.studio-editor-page [class*="loading-overlay"],
+.studio-editor-page [class*="loading-screen"] {
+  background: var(--soura-overlay-strong) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.studio-editor-page [class*="spinner"],
+.studio-editor-page [class*="loading-indicator"] {
+  color: var(--soura-accent-blue) !important;
+  border-color: rgba(255,255,255,.16) !important;
+  border-top-color: var(--soura-accent-purple) !important;
+}
+
+/* Dialog internal sections */
+.studio-editor-page [role="dialog"] [class*="header"],
+.studio-editor-page [class*="modal-panel"] [class*="header"],
+.studio-editor-page [class*="dialog-panel"] [class*="header"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [role="dialog"] [class*="footer"],
+.studio-editor-page [class*="modal-panel"] [class*="footer"],
+.studio-editor-page [class*="dialog-panel"] [class*="footer"] {
+  background: var(--soura-surface-0) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+/* Inputs inside transient UI */
+.studio-editor-page [role="dialog"] input:not([type="range"]):not([type="color"]),
+.studio-editor-page [role="dialog"] select,
+.studio-editor-page [role="dialog"] textarea,
+.studio-modal-panel input,
+.studio-modal-panel select,
+.studio-modal-panel textarea {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+}
+
+.studio-editor-page [role="dialog"] input:focus,
+.studio-editor-page [role="dialog"] select:focus,
+.studio-editor-page [role="dialog"] textarea:focus,
+.studio-modal-panel input:focus,
+.studio-modal-panel select:focus,
+.studio-modal-panel textarea:focus {
+  border-color: var(--soura-accent-border) !important;
+  box-shadow: var(--soura-interaction-focus-ring) !important;
+  outline: none !important;
+}
+
+/* Semantic transient states */
+.studio-editor-page [class*="toast"].is-error,
+.studio-editor-page [class*="notification"].is-error,
+.studio-editor-page [role="alert"].is-error {
+  border-color: rgba(255,95,112,.48) !important;
+  color: #ffd5da !important;
+}
+
+.studio-editor-page [class*="toast"].is-warning,
+.studio-editor-page [class*="notification"].is-warning {
+  border-color: rgba(240,184,74,.46) !important;
+  color: #f3d69d !important;
+}
+
+.studio-editor-page [class*="toast"].is-success,
+.studio-editor-page [class*="notification"].is-success {
+  border-color: rgba(88,201,138,.44) !important;
+  color: #bce7cf !important;
+}
+
+/* Empty / info transient states remain neutral */
+.studio-editor-page [class*="empty-state"],
+.studio-editor-page [class*="message-box"],
+.studio-editor-page [class*="info-box"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* Native browser popover-esque elements */
+.studio-editor-page details,
+.studio-editor-page summary {
+  border-color: var(--soura-border-subtle);
+}
+
+.studio-editor-page details[open] {
+  background: var(--soura-surface-1);
+}
+
+/*
+ * Patch 6 intentionally does not target detached/native windows.
+ * Those remain Patch 5 territory.
+ */
