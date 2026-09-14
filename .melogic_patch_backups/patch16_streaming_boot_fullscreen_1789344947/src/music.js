@@ -103,7 +103,7 @@ import {
 } from './data/musicService'
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 
-const app = document.querySelector('#app')\nbindExpandableMusicPlayer()
+const app = document.querySelector('#app')
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
 let musicLiveControlsCleanup = null
@@ -1160,14 +1160,9 @@ function renderAppShell(content) {
     const sidebar = existingPage.querySelector('[data-music-sidebar]')
     if (sidebar) sidebar.outerHTML = renderSidebar()
     const player = existingPage.querySelector('[data-music-player]')
-    const playerWasExpanded = player?.matches('[data-expandable-player].is-fullscreen') === true
     const playerMarkup = renderPlayer()
     if (player) player.outerHTML = playerMarkup
     else if (playerMarkup) existingPage.insertAdjacentHTML('beforeend', playerMarkup)
-    if (playerWasExpanded) {
-      existingPage.querySelector('[data-expandable-player]')?.classList.add('is-fullscreen')
-      document.documentElement.classList.add('music-player-fullscreen-open')
-    }
     existingPage.querySelectorAll('[data-stable-image][data-image-key]').forEach((container) => {
       const image = preservedImages.get(container.dataset.imageKey || '')
       if (!image || image.getAttribute('src') !== container.dataset.src) return
@@ -4619,38 +4614,6 @@ function renderLiveGuestSetupModal(stream = {}, invite = {}) {
   `
 }
 
-function closeExpandedMusicPlayer() {
-  const player = app.querySelector('[data-expandable-player].is-fullscreen')
-  if (!player) return false
-  player.classList.remove('is-fullscreen')
-  document.documentElement.classList.remove('music-player-fullscreen-open')
-  return true
-}
-
-function bindExpandableMusicPlayer() {
-  if (app.dataset.expandableMusicPlayerBound === 'true') return
-  app.dataset.expandableMusicPlayerBound = 'true'
-  app.addEventListener('click', (event) => {
-    const close = event.target.closest('[data-close-fullscreen-player]')
-    if (close) {
-      event.preventDefault()
-      event.stopPropagation()
-      closeExpandedMusicPlayer()
-      return
-    }
-    const player = event.target.closest('[data-expandable-player]')
-    if (!player || player.classList.contains('is-fullscreen')) return
-    if (event.target.closest('button, a, input, select, textarea, label, [role="button"], [contenteditable="true"]')) return
-    if (!state.player.track) return
-    player.classList.add('is-fullscreen')
-    document.documentElement.classList.add('music-player-fullscreen-open')
-    player.querySelector('[data-close-fullscreen-player]')?.focus({ preventScroll: true })
-  })
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeExpandedMusicPlayer()
-  })
-}
-
 function renderPlayer() {
   if (!shouldShowGlobalMusicPlayer()) return ''
   if (state.listenerRoom && state.liveStream?.id) {
@@ -4676,7 +4639,7 @@ function renderPlayer() {
   }
   const track = state.player.track
   return `
-    <aside class="music-player" data-music-player data-expandable-player aria-label="Melogic Streaming player">
+    <aside class="music-player" data-music-player aria-label="Melogic Streaming player">
       <div class="music-player-art">
         ${track?.coverArtURL ? `<img src="${escapeHtml(track.coverArtURL)}" alt="" />` : '<span aria-hidden="true">MR</span>'}
       </div>
@@ -6849,10 +6812,8 @@ function renderStreamingStartupShell() {
 
 
 function mountStreamingInitialPreloader() {
-  if (!document.querySelector('#page-preloader')) {
-    app.insertAdjacentHTML('afterbegin', renderPagePreloaderMarkup())
-  }
-  document.querySelector('#streaming-first-paint')?.remove()
+  if (document.querySelector('#page-preloader')) return
+  app.insertAdjacentHTML('afterbegin', renderPagePreloaderMarkup())
 }
 
 function settleStreamingInitialPreloader() {

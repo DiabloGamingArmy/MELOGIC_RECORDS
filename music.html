@@ -11,6 +11,16 @@
     <title>Melogic Streaming | Music and Live Streams</title>
   </head>
   <body>
+    <div id="streaming-first-paint" class="streaming-first-paint" role="status" aria-label="Loading Melogic Streaming">
+      <img src="/src/assets/brand/melogic-logo-mark-white-transparent.png" alt="" />
+    </div>
+    <style>
+      html,body{background:#000}
+      .streaming-first-paint{position:fixed;inset:0;z-index:2147483000;display:grid;place-items:center;background:#000}
+      .streaming-first-paint img{width:78px;height:auto;display:block;animation:streamingFirstPaintPulse 1.35s ease-in-out infinite}
+      @keyframes streamingFirstPaintPulse{0%,100%{opacity:.58;transform:scale(.94)}50%{opacity:1;transform:scale(1)}}
+      @media (prefers-reduced-motion:reduce){.streaming-first-paint img{animation:none}}
+    </style>
     <div id="app"></div>
     <script type="module" src="/src/music.js"></script>
   </body>
