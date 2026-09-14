@@ -1,5 +1,7 @@
 import './styles/base.css'
 import './styles/studio.css'
+import './soura/themes/foundation.css'
+import './soura/themes/shell.css'
 import { AudioPresets, Track, createLocalAudioTrack, createLocalScreenTracks, createLocalVideoTrack } from 'livekit-client'
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'

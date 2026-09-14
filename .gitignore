@@ -59,3 +59,4 @@ skills-lock.json
 ams_community.zip
 *.zip
 .melogic_patch_backups/
+.soura_patch_backups/

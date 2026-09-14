@@ -1,0 +1,116 @@
+/*
+ * SOURA THEME — REPO COMPLETENESS
+ * Floating / Detached Windows
+ */
+
+.daw-plugin-window {
+  border-color: var(--soura-border-strong) !important;
+  background: var(--soura-surface-1) !important;
+  box-shadow: var(--soura-shadow-float) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.daw-plugin-window-header,
+.daw-plugin-host-header {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+}
+
+.daw-plugin-window-header span,
+.daw-plugin-host-header span,
+.daw-plugin-host-footer,
+.daw-plugin-detached-note {
+  color: var(--soura-text-muted) !important;
+}
+
+.daw-plugin-window-header button,
+.daw-plugin-host-footer button,
+.daw-plugin-save-placeholder,
+.daw-plugin-add-mod {
+  background: var(--soura-surface-2) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border) !important;
+}
+
+.daw-plugin-window-header button:hover:not(:disabled),
+.daw-plugin-host-footer button:hover:not(:disabled),
+.daw-plugin-add-mod:hover:not(:disabled) {
+  background:
+    linear-gradient(var(--soura-surface-2), var(--soura-surface-2)) padding-box,
+    var(--soura-accent-gradient-hover) border-box !important;
+  border-color: transparent !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.daw-plugin-window-header button:active:not(:disabled),
+.daw-plugin-host-footer button:active:not(:disabled),
+.daw-plugin-add-mod:active:not(:disabled) {
+  background: var(--soura-accent-gradient-active) !important;
+  border-color: var(--soura-accent-border-strong) !important;
+  color: #fff !important;
+}
+
+.daw-plugin-window-body,
+.daw-plugin-host-main,
+.daw-plugin-shell,
+.soura-fx-shell {
+  background: var(--soura-canvas) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.soura-fx-header {
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.soura-fx-header span,
+.soura-fx-header strong {
+  color: var(--soura-text-muted) !important;
+}
+
+.soura-fx-header h2 {
+  color: var(--soura-text-primary) !important;
+}
+
+.soura-fx-band,
+.soura-fx-control,
+.soura-fx-toggle,
+.soura-fx-number,
+.soura-fx-select,
+.soura-fx-readonly {
+  background: var(--soura-surface-1) !important;
+  border-color: var(--soura-border-subtle) !important;
+  color: var(--soura-text-secondary) !important;
+}
+
+.daw-plugin-window-resize {
+  background: linear-gradient(135deg, transparent 0 45%, rgba(255,255,255,.26) 45% 54%, transparent 54% 64%, rgba(255,255,255,.26) 64% 72%, transparent 72%) !important;
+}
+
+.daw-plugin-window-resize:hover {
+  background: linear-gradient(135deg, transparent 0 45%, var(--soura-accent-blue) 45% 54%, transparent 54% 64%, var(--soura-accent-purple) 64% 72%, transparent 72%) !important;
+}
+
+html.is-soura-detached-region-editor-v7,
+html.is-soura-detached-region-editor-v7 body,
+body.is-soura-detached-region-root-v7,
+#soura-detached-region-portal,
+.studio-detached-region-root-panel-v7,
+.studio-detached-controller-panel-v8 {
+  background: var(--soura-canvas) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+#soura-detached-region-portal .studio-bottom-panel,
+.studio-detached-region-root-panel-v7 .studio-bottom-panel,
+.studio-detached-controller-panel-v8 {
+  background: var(--soura-surface-0) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+#soura-detached-region-portal [class*="header"],
+.studio-detached-region-root-panel-v7 [class*="header"] {
+  background: var(--soura-surface-1) !important;
+  border-color: var(--soura-divider) !important;
+  color: var(--soura-text-secondary) !important;
+}

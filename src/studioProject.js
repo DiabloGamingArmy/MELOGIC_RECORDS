@@ -17,6 +17,7 @@ import './soura/themes/editors-panels.css'
 import './soura/themes/dialogs-overlays.css'
 import './soura/themes/deep-surfaces.css'
 import './soura/themes/global-qa.css'
+import './soura/themes/shell.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { auth, waitForInitialAuthState } from './firebase/auth'
@@ -82,6 +83,7 @@ import {
   sampleStrategyDefinition
 } from './data/studioLibraryService.js'
 import './styles/dawPluginWindow.css'
+import './soura/themes/floating-windows.css'
 import './studio/audio/PitchTraceViewport.js'
 import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
 import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisService.js'
@@ -245,8 +247,8 @@ function openDetachedRegionEditorV7() {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Region Editor | Melogic DAW</title>
   <style data-soura-portal-style>
-    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#090f1a}
-    #soura-detached-region-portal{position:fixed;inset:0;overflow:hidden;background:#090f1a}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#080808}
+    #soura-detached-region-portal{position:fixed;inset:0;overflow:hidden;background:#080808}
   </style>
 </head>
 <body>

@@ -1,0 +1,98 @@
+/*
+ * SOURA THEME — REPO COMPLETENESS
+ * Non-project Soura surfaces.
+ */
+
+.studio-shell,
+.studio-main,
+.studio-home,
+.studio-home-main,
+.studio-live-main,
+.studio-demos-main,
+.studio-tutorials-main {
+  background: var(--soura-canvas) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.studio-live-header,
+.studio-live-footer,
+.studio-home-reference-hero,
+.studio-home-reference-panel,
+.studio-demo-tile,
+.studio-tutorial-card,
+.studio-action-card,
+.studio-shell [class*="panel"],
+.studio-shell [class*="card"] {
+  background: var(--soura-surface-1) !important;
+  border-color: var(--soura-border-subtle) !important;
+  color: var(--soura-text-secondary) !important;
+}
+
+.studio-shell [class*="header"],
+.studio-shell [class*="toolbar"],
+.studio-shell [class*="footer"] {
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-shell button,
+.studio-live-main button,
+.studio-demos-main button,
+.studio-tutorials-main button {
+  background: var(--soura-surface-2);
+  color: var(--soura-text-secondary);
+  border-color: var(--soura-border);
+}
+
+.studio-shell button:hover:not(:disabled),
+.studio-live-main button:hover:not(:disabled),
+.studio-demos-main button:hover:not(:disabled),
+.studio-tutorials-main button:hover:not(:disabled) {
+  background:
+    linear-gradient(var(--soura-surface-2), var(--soura-surface-2)) padding-box,
+    var(--soura-accent-gradient-hover) border-box;
+  border-color: transparent;
+  color: var(--soura-text-primary);
+}
+
+.studio-shell button:active:not(:disabled),
+.studio-live-main button:active:not(:disabled),
+.studio-demos-main button:active:not(:disabled),
+.studio-tutorials-main button:active:not(:disabled),
+.studio-shell button.is-active,
+.studio-live-main button.is-active {
+  background: var(--soura-accent-gradient-active);
+  border-color: var(--soura-accent-border-strong);
+  color: #fff;
+}
+
+.studio-live-transport-play.is-active {
+  background: var(--soura-accent-gradient-active) !important;
+}
+
+.studio-live-transport-stop.is-active,
+.studio-live-main [data-status="error"] {
+  border-color: rgba(255,95,112,.52) !important;
+}
+
+.studio-live-context-menu,
+.studio-shell [class*="context-menu"],
+.studio-shell [class*="popover"],
+.studio-shell [class*="dropdown-menu"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow: var(--soura-shadow-menu) !important;
+}
+
+.studio-live-context-menu button:hover,
+.studio-shell [class*="context-menu"] button:hover,
+.studio-shell [class*="popover"] button:hover {
+  background: var(--soura-interaction-hover-bg) !important;
+}
+
+.studio-shell,
+.studio-live-main,
+.studio-demos-main,
+.studio-tutorials-main {
+  scrollbar-color: rgba(255,255,255,.18) rgba(255,255,255,.025);
+}

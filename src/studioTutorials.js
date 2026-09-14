@@ -1,5 +1,7 @@
 import './styles/base.css'
 import './styles/studio.css'
+import './soura/themes/foundation.css'
+import './soura/themes/shell.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { studioSidebar } from './components/studioShell'

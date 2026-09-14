@@ -12,9 +12,9 @@
   min-width: 420px;
   min-height: 320px;
   overflow: hidden;
-  border: 1px solid rgba(126, 147, 191, 0.38);
+  border: 1px solid var(--soura-border-strong, rgba(255,255,255,.19));
   border-radius: 8px;
-  background: #101521;
+  background: var(--soura-surface-1, #101012);
   box-shadow: 0 26px 80px rgba(0, 0, 0, 0.48);
   pointer-events: auto;
 }
@@ -30,9 +30,9 @@
   justify-content: space-between;
   gap: 12px;
   padding: 0 8px 0 12px;
-  border-bottom: 1px solid rgba(126, 147, 191, 0.24);
-  background: linear-gradient(180deg, #20283a, #151b29);
-  color: #edf3ff;
+  border-bottom: 1px solid var(--soura-border, rgba(255,255,255,.115));
+  background: var(--soura-surface-1, #101012);
+  color: var(--soura-text-primary, #f5f5f7);
   cursor: grab;
   user-select: none;
 }
@@ -59,7 +59,7 @@
 }
 
 .daw-plugin-window-header span {
-  color: #91a2c4;
+  color: var(--soura-text-muted, #8b8b94);
   font-size: 11px;
 }
 
@@ -74,10 +74,10 @@
 .daw-plugin-save-placeholder,
 .daw-plugin-add-mod {
   min-height: 28px;
-  border: 1px solid rgba(126, 147, 191, 0.32);
+  border: 1px solid var(--soura-border, rgba(255,255,255,.115));
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.06);
-  color: #edf3ff;
+  background: var(--soura-surface-2, #151517);
+  color: var(--soura-text-primary, #f5f5f7);
   font-size: 12px;
   font-weight: 800;
   cursor: pointer;
@@ -96,7 +96,7 @@
 .daw-plugin-window-body {
   min-height: 0;
   overflow: hidden;
-  background: radial-gradient(circle at top left, rgba(63, 91, 150, 0.18), transparent 36%), #0c111b;
+  background: var(--soura-canvas, #080808);
 }
 
 .daw-plugin-window.is-minimized .daw-plugin-window-body,
@@ -111,7 +111,7 @@
   width: 20px;
   height: 20px;
   border: 0;
-  background: linear-gradient(135deg, transparent 0 45%, rgba(126, 211, 255, 0.65) 45% 54%, transparent 54% 64%, rgba(126, 211, 255, 0.65) 64% 72%, transparent 72%);
+  background: linear-gradient(135deg, transparent 0 45%, rgba(255,255,255,.26) 45% 54%, transparent 54% 64%, rgba(255,255,255,.26) 64% 72%, transparent 72%);
   cursor: nwse-resize;
 }
 
@@ -122,11 +122,11 @@
   min-height: 100%;
   padding: 24px;
   text-align: center;
-  color: #b9c5dc;
+  color: var(--soura-text-secondary, #c0c0c6);
 }
 
 .daw-plugin-detached-note strong {
-  color: #f4f7ff;
+  color: var(--soura-text-primary, #f5f5f7);
 }
 
 .daw-plugin-shell {
@@ -134,15 +134,15 @@
   gap: 14px;
   min-height: 100%;
   padding: 14px;
-  color: #e9efff;
+  color: var(--soura-text-primary, #f5f5f7);
 }
 
 .soura-fx-shell {
   grid-template-rows: auto minmax(0, 1fr);
   overflow: auto;
   background:
-    radial-gradient(circle at 16% 0%, rgba(100, 218, 255, 0.12), transparent 32%),
-    linear-gradient(180deg, rgba(18, 26, 41, 0.98), rgba(8, 12, 20, 0.98));
+    linear-gradient(var(--soura-canvas, #080808), var(--soura-canvas, #080808)),
+    var(--soura-canvas, #080808);
 }
 
 .soura-fx-header {
@@ -151,12 +151,12 @@
   justify-content: space-between;
   gap: 16px;
   padding-bottom: 12px;
-  border-bottom: 1px solid rgba(126, 147, 191, 0.22);
+  border-bottom: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
 }
 
 .soura-fx-header span,
 .soura-fx-header strong {
-  color: #8fa1c6;
+  color: var(--soura-text-muted, #8b8b94);
   font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.12em;
@@ -165,7 +165,7 @@
 
 .soura-fx-header h2 {
   margin: 2px 0 0;
-  color: #f3f8ff;
+  color: var(--soura-text-primary, #f5f5f7);
   font-size: 24px;
   letter-spacing: -0.03em;
 }
@@ -187,9 +187,9 @@
 .soura-fx-number,
 .soura-fx-select,
 .soura-fx-readonly {
-  border: 1px solid rgba(126, 147, 191, 0.18);
+  border: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--soura-surface-1, #101012);
 }
 
 .soura-fx-band {
@@ -425,7 +425,7 @@
   min-width: 0;
   border: 1px solid rgba(126, 147, 191, 0.2);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--soura-surface-1, #101012);
   color: #dce9ff;
   padding: 9px 7px;
   text-align: left;
@@ -449,7 +449,7 @@
 }
 
 .soura-fx-band-rack span {
-  color: #8fa1c6;
+  color: var(--soura-text-muted, #8b8b94);
   font-size: 10px;
 }
 
@@ -644,7 +644,7 @@
 
 .soura-generic-module strong {
   display: block;
-  color: #f3f8ff;
+  color: var(--soura-text-primary, #f5f5f7);
   font-size: 24px;
   letter-spacing: -0.03em;
 }
@@ -705,7 +705,7 @@
   gap: 8px;
   padding: 6px 8px;
   box-sizing: border-box;
-  border-bottom: 1px solid rgba(126, 147, 191, 0.24);
+  border-bottom: 1px solid var(--soura-border, rgba(255,255,255,.115));
   background: linear-gradient(180deg, #151d2c, #0f1521);
 }
 
@@ -965,7 +965,7 @@
 
 .mwt-mini-scope {
   height: 42px;
-  border: 1px solid rgba(126, 147, 191, 0.18);
+  border: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
   border-radius: 3px;
   background:
     linear-gradient(90deg, transparent 0 14px, rgba(125, 227, 255, 0.16) 15px, transparent 16px),
@@ -1195,7 +1195,7 @@
   gap: 14px;
   align-items: end;
   padding: 14px;
-  border: 1px solid rgba(126, 147, 191, 0.18);
+  border: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
   border-radius: 8px;
   background: linear-gradient(135deg, rgba(40, 52, 82, 0.84), rgba(18, 24, 38, 0.92));
 }
@@ -1377,10 +1377,10 @@
   display: grid;
   gap: 3px;
   width: 100%;
-  border: 1px solid rgba(126, 147, 191, 0.18);
+  border: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.045);
-  color: #e9efff;
+  background: var(--soura-surface-1, #101012);
+  color: var(--soura-text-primary, #f5f5f7);
   padding: 9px;
   text-align: left;
   cursor: pointer;
@@ -1414,7 +1414,7 @@
   gap: 7px;
   min-width: 0;
   padding: 10px;
-  border: 1px solid rgba(126, 147, 191, 0.18);
+  border: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
   border-radius: 8px;
   background: rgba(4, 8, 16, 0.26);
 }
@@ -1481,7 +1481,7 @@
   display: grid;
   place-items: end center;
   min-height: 72px;
-  border: 1px solid rgba(126, 147, 191, 0.18);
+  border: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
   border-radius: 0 0 7px 7px;
   background: linear-gradient(180deg, #f5f7fb, #b6c1d5);
   color: #172033;
@@ -1519,7 +1519,7 @@
   justify-content: space-between;
   gap: 16px;
   align-items: center;
-  border: 1px solid rgba(126, 147, 191, 0.18);
+  border: 1px solid var(--soura-border-subtle, rgba(255,255,255,.075));
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
   padding: 12px 14px;
