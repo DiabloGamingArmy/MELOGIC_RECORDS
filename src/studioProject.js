@@ -95,6 +95,7 @@ import './soura/themes/library-cycle-guides-v9.css'
 import './soura/themes/library-black-force-v10.css'
 import './soura/themes/region-editor-charcoal-v14.css'
 import './soura/themes/region-editor-corrective-v15.css'
+import './soura/themes/region-editor-structure-v16.css'
 import './studio/audio/PitchTraceViewport.js'
 import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
 import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisService.js'
@@ -142,6 +143,84 @@ import {
 import { getRegionTimelineRange, getTimelineRegionGeometry, getTimelineRegionLaneGeometry } from './studio/timeline/regionGeometry.js'
 
 const app = document.querySelector('#app')
+
+// SOURA REGION EDITOR STRUCTURE FIX v16
+function normalizeSouraRegionEditorStructureV16(root = document) {
+  const headers = Array.from(
+    root.querySelectorAll?.('.studio-region-editor-header-container') || []
+  )
+
+  headers.forEach((header) => {
+    const host =
+      header.closest('[data-audio-region-editor]') ||
+      header.closest('.studio-region-editor-audio') ||
+      header.closest('.studio-bottom-panel') ||
+      header.parentElement
+
+    if (!host) return
+
+    const toolbar =
+      host.querySelector('.studio-audio-waveform-toolbar') ||
+      document.querySelector('.studio-audio-waveform-toolbar')
+
+    if (!toolbar) return
+
+    if (header.previousElementSibling !== toolbar) {
+      try {
+        header.before(toolbar)
+      } catch (error) {
+        console.warn('[Soura v16] Could not reorder Region Editor toolbar', error)
+      }
+    }
+  })
+}
+
+let souraRegionEditorStructureRafV16 = 0
+
+function scheduleSouraRegionEditorStructureV16() {
+  if (souraRegionEditorStructureRafV16) return
+
+  souraRegionEditorStructureRafV16 = requestAnimationFrame(() => {
+    souraRegionEditorStructureRafV16 = 0
+    normalizeSouraRegionEditorStructureV16(document)
+  })
+}
+
+if (!globalThis.__souraRegionEditorStructureV16Installed) {
+  globalThis.__souraRegionEditorStructureV16Installed = true
+
+  const observer = new MutationObserver((mutations) => {
+    if (
+      mutations.some((mutation) =>
+        mutation.type === 'childList' ||
+        mutation.type === 'attributes'
+      )
+    ) {
+      scheduleSouraRegionEditorStructureV16()
+    }
+  })
+
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'hidden', 'style']
+  })
+
+  document.addEventListener(
+    'click',
+    () => scheduleSouraRegionEditorStructureV16(),
+    true
+  )
+
+  queueMicrotask(scheduleSouraRegionEditorStructureV16)
+  window.addEventListener(
+    'load',
+    scheduleSouraRegionEditorStructureV16,
+    { once: true }
+  )
+}
+
 
 // SOURA REGION EDITOR CORRECTIVE v15
 function getSouraRegionEditorColorV15(editorRoot) {
