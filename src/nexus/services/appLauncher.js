@@ -293,8 +293,25 @@ async function attachReturnToNexusLifecycle(
   appWindow,
   geometryPersistence = null,
 ) {
+  let forceCloseInProgress = false;
+
   try {
-    await appWindow.onCloseRequested(async () => {
+    await appWindow.onCloseRequested(async (event) => {
+      /*
+        Nexus owns this child-window lifecycle.
+
+        Prevent Tauri's default close path, finish the geometry save, then
+        force-destroy the child window. destroy() bypasses closeRequested,
+        so this cannot recurse.
+      */
+      event.preventDefault();
+
+      if (forceCloseInProgress) {
+        return;
+      }
+
+      forceCloseInProgress = true;
+
       try {
         await geometryPersistence?.flush?.();
       } catch (error) {
@@ -304,19 +321,42 @@ async function attachReturnToNexusLifecycle(
         );
       }
 
+      try {
+        await appWindow.destroy();
+      } catch (error) {
+        forceCloseInProgress = false;
+
+        console.error(
+          "[Nexus Launcher] Could not destroy application window:",
+          error,
+        );
+
+        await restoreNexus();
+        return;
+      }
+
       await restoreNexus();
     });
   } catch (error) {
-    console.warn("[Nexus Launcher] Could not attach close lifecycle:", error);
+    console.warn(
+      "[Nexus Launcher] Could not attach close lifecycle:",
+      error,
+    );
   }
 
   try {
     await appWindow.once("tauri://destroyed", async () => {
       geometryPersistence?.dispose?.();
-      await restoreNexus();
+
+      if (!forceCloseInProgress) {
+        await restoreNexus();
+      }
     });
   } catch (error) {
-    console.warn("[Nexus Launcher] Could not attach destroyed lifecycle:", error);
+    console.warn(
+      "[Nexus Launcher] Could not attach destroyed lifecycle:",
+      error,
+    );
   }
 }
 
