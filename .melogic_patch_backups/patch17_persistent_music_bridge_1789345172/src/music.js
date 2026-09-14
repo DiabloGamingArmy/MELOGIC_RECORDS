@@ -6,13 +6,6 @@ import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'fi
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { initPagePreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
-import {
-  adoptPersistentMusicState,
-  claimPersistentMusicAudio,
-  clearPersistentMusicPlayback,
-  readPersistentMusicPlayback,
-  snapshotPersistentMusicPlayback
-} from './services/persistentMusicPlayback'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getSiteAssetURL } from './firebase/siteAssets'
 import { storage } from './firebase/storage'
@@ -408,15 +401,6 @@ const state = {
     duration: 0,
     volume: 0.85
   }
-}
-const persistentPlayback = readPersistentMusicPlayback()
-if (persistentPlayback?.track?.streamAudioURL) {
-  state.player.track = persistentPlayback.track
-  state.player.currentTime = Number(persistentPlayback.currentTime || 0)
-  state.player.duration = Number(persistentPlayback.duration || persistentPlayback.track.duration || 0)
-  state.player.volume = Number.isFinite(Number(persistentPlayback.volume)) ? Number(persistentPlayback.volume) : 0.85
-  state.player.audio = claimPersistentMusicAudio(persistentPlayback.track, { volume: state.player.volume })
-  state.player.playing = persistentPlayback.playing === true && state.player.audio?.paused === false
 }
 
 function escapeHtml(value) {
@@ -4809,14 +4793,12 @@ function ensureAudio(track) {
     state.player.audio.pause()
     state.player.audio.removeAttribute('src')
   }
-  const audio = claimPersistentMusicAudio(track, { volume: state.player.volume })
-  if (!audio) return null
-  audio.preload = 'auto'
+  const audio = new Audio(track.streamAudioURL)
+  audio.preload = 'metadata'
   audio.volume = state.player.volume
   audio.addEventListener('timeupdate', () => {
     state.player.currentTime = audio.currentTime || 0
     state.player.duration = audio.duration || track.duration || 0
-    snapshotPersistentMusicPlayback({ track: state.player.track || track, audio, playing: !audio.paused, volume: state.player.volume, currentTime: state.player.currentTime, duration: state.player.duration })
     updatePlayerControls()
   })
   audio.addEventListener('loadedmetadata', () => {
@@ -4903,12 +4885,10 @@ async function toggleTrack(track) {
   if (!audio) return
   await audio.play()
   state.player.playing = true
-  adoptPersistentMusicState({ track: state.player.track, audio, playing: true, volume: state.player.volume, currentTime: state.player.currentTime, duration: state.player.duration })
   rerender()
 }
 
 function clearPlayer() {
-  clearPersistentMusicPlayback()
   if (state.player.audio) {
     state.player.audio.pause()
     state.player.audio.removeAttribute('src')

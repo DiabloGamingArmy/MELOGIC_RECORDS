@@ -9,7 +9,6 @@ import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.pn
 import { initChatDock } from './chatDock'
 import { initSiteGuidance } from './siteGuidance'
 import { ensureSiteFooter } from './siteFooter'
-import { installPersistentMusicNavigationBridge } from '../services/persistentMusicPlayback'
 import '../styles/chatDock.css'
 
 const ACCESS_GATE_STORAGE_KEY = 'melogic_access_gate'
@@ -85,8 +84,6 @@ function recordShellError(scope, error) {
 function clearShellError(scope) {
   shellState.errors = shellState.errors.filter((item) => item.scope !== scope)
 }
-
-installPersistentMusicNavigationBridge()
 
 export function getCurrentShellState() {
   return {
