@@ -4220,3 +4220,68 @@ body #soura-detached-region-portal > .studio-detached-controller-panel-v8 .studi
   border-color:transparent !important;color:#fff !important
 }
 @media(max-width:680px){.studio-notes-page-manager{grid-template-columns:1fr}.studio-notes-page-actions{justify-content:flex-start}}
+
+/* SOURA REGION EDITOR RESET v18
+ * Minimal owner-surface styling only.
+ */
+
+.studio-editor-page .studio-region-editor-audio .studio-pitch-trace-scroll,
+.studio-editor-page .studio-pitch-trace-scroll {
+  background-color: #111114 !important;
+  background-image: none !important;
+}
+
+.studio-editor-page .studio-pitch-trace-scroll .studio-pitch-trace-view,
+.studio-editor-page .studio-pitch-trace-scroll .studio-pitch-trace-canvas {
+  background-color: transparent !important;
+}
+
+.studio-editor-page .studio-audio-editor-waveform {
+  background-color: #111114 !important;
+  background-image: none !important;
+}
+
+.studio-editor-page .studio-audio-editor-waveform .studio-audio-waveform,
+.studio-editor-page .studio-audio-editor-waveform .studio-audio-waveform-bars {
+  visibility: visible !important;
+}
+
+.studio-editor-page .studio-region-editor-header-container {
+  background-color: #050505 !important;
+  background-image: none !important;
+  border-bottom: 1px solid #FFFFFF !important;
+}
+
+.studio-editor-page .studio-region-editor-timeline,
+.studio-editor-page .studio-region-editor-timeline-viewport {
+  border-bottom-color: #FFFFFF !important;
+}
+
+.studio-editor-page .soura-waveform-toolbar-mirror-v18 {
+  background: #050505 !important;
+  background-image: none !important;
+  border-top: 0 !important;
+  border-bottom: 1px solid #2A2A31 !important;
+  width: 100% !important;
+  flex: 0 0 auto !important;
+}
+
+.studio-editor-page
+.studio-audio-waveform-toolbar[data-soura-toolbar-source-v18="true"] {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+.studio-editor-page .studio-pitch-trace-status {
+  display: none !important;
+}
+
+.studio-editor-page .studio-pitch-trace-note:hover,
+.studio-editor-page .studio-pitch-trace-note.is-selected {
+  filter: brightness(1.16) saturate(1.08) !important;
+}
+
+.studio-editor-page .studio-midi-roll-note:hover,
+.studio-editor-page .studio-midi-roll-note.is-selected {
+  filter: brightness(1.18) saturate(1.08) !important;
+}

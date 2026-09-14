@@ -93,9 +93,6 @@ import './soura/themes/transport-timeline-interaction-v5.css'
 import './soura/themes/recovery-timeline-cycle-volume-v8.css'
 import './soura/themes/library-cycle-guides-v9.css'
 import './soura/themes/library-black-force-v10.css'
-import './soura/themes/region-editor-charcoal-v14.css'
-import './soura/themes/region-editor-corrective-v15.css'
-import './soura/themes/region-editor-structure-v16.css'
 import './studio/audio/PitchTraceViewport.js'
 import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
 import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisService.js'
@@ -144,59 +141,125 @@ import { getRegionTimelineRange, getTimelineRegionGeometry, getTimelineRegionLan
 
 const app = document.querySelector('#app')
 
-// SOURA REGION EDITOR STRUCTURE FIX v16
-function normalizeSouraRegionEditorStructureV16(root = document) {
-  const headers = Array.from(
-    root.querySelectorAll?.('.studio-region-editor-header-container') || []
+// SOURA REGION EDITOR RESET v18
+globalThis.__souraRegionEditorCorrectiveV15Installed = true
+globalThis.__souraRegionEditorStructureV16Installed = true
+globalThis.__souraRegionEditorV17Installed = true
+
+function stripDuplicateIdsV18(root) {
+  root.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'))
+  if (root.id) root.removeAttribute('id')
+}
+
+function syncToolbarMirrorV18(source, mirror) {
+  if (!source || !mirror) return
+
+  const sourceControls = Array.from(
+    source.querySelectorAll('button,input,select,textarea,[role="button"]')
+  )
+  const mirrorControls = Array.from(
+    mirror.querySelectorAll('button,input,select,textarea,[role="button"]')
   )
 
-  headers.forEach((header) => {
-    const host =
-      header.closest('[data-audio-region-editor]') ||
-      header.closest('.studio-region-editor-audio') ||
-      header.closest('.studio-bottom-panel') ||
-      header.parentElement
+  mirrorControls.forEach((control, index) => {
+    const original = sourceControls[index]
+    if (!original) return
 
-    if (!host) return
+    if ('disabled' in control) control.disabled = Boolean(original.disabled)
 
-    const toolbar =
-      host.querySelector('.studio-audio-waveform-toolbar') ||
-      document.querySelector('.studio-audio-waveform-toolbar')
+    if (
+      control instanceof HTMLInputElement &&
+      original instanceof HTMLInputElement
+    ) {
+      control.value = original.value
+      control.checked = original.checked
+    }
 
-    if (!toolbar) return
+    const pressed = original.getAttribute('aria-pressed')
+    if (pressed !== null) control.setAttribute('aria-pressed', pressed)
 
-    if (header.previousElementSibling !== toolbar) {
-      try {
-        header.before(toolbar)
-      } catch (error) {
-        console.warn('[Soura v16] Could not reorder Region Editor toolbar', error)
-      }
+    const selected = original.getAttribute('aria-selected')
+    if (selected !== null) control.setAttribute('aria-selected', selected)
+  })
+}
+
+function wireToolbarMirrorV18(source, mirror) {
+  if (mirror.dataset.souraToolbarMirrorWiredV18 === 'true') return
+  mirror.dataset.souraToolbarMirrorWiredV18 = 'true'
+
+  mirror.addEventListener('click', (event) => {
+    const mirrorControls = Array.from(
+      mirror.querySelectorAll('button,input,select,textarea,[role="button"]')
+    )
+    const sourceControls = Array.from(
+      source.querySelectorAll('button,input,select,textarea,[role="button"]')
+    )
+
+    const target = event.target.closest(
+      'button,input,select,textarea,[role="button"]'
+    )
+
+    if (!target) return
+
+    const index = mirrorControls.indexOf(target)
+    const original = sourceControls[index]
+
+    if (original && typeof original.click === 'function') {
+      original.click()
+      queueMicrotask(() => syncToolbarMirrorV18(source, mirror))
     }
   })
 }
 
-let souraRegionEditorStructureRafV16 = 0
+function normalizeRegionEditorV18(root = document) {
+  const editors = Array.from(
+    root.querySelectorAll?.(
+      '[data-audio-region-editor], .studio-region-editor-audio'
+    ) || []
+  )
 
-function scheduleSouraRegionEditorStructureV16() {
-  if (souraRegionEditorStructureRafV16) return
+  editors.forEach((editor) => {
+    const source = editor.querySelector(
+      '.studio-audio-waveform-toolbar:not(.soura-waveform-toolbar-mirror-v18)'
+    )
+    const header = editor.querySelector('.studio-region-editor-header-container')
 
-  souraRegionEditorStructureRafV16 = requestAnimationFrame(() => {
-    souraRegionEditorStructureRafV16 = 0
-    normalizeSouraRegionEditorStructureV16(document)
+    if (!source || !header) return
+
+    source.dataset.souraToolbarSourceV18 = 'true'
+
+    let mirror = editor.querySelector('.soura-waveform-toolbar-mirror-v18')
+
+    if (!mirror) {
+      mirror = source.cloneNode(true)
+      stripDuplicateIdsV18(mirror)
+      mirror.classList.add('soura-waveform-toolbar-mirror-v18')
+      mirror.removeAttribute('data-soura-toolbar-source-v18')
+      header.before(mirror)
+      wireToolbarMirrorV18(source, mirror)
+    }
+
+    syncToolbarMirrorV18(source, mirror)
   })
 }
 
-if (!globalThis.__souraRegionEditorStructureV16Installed) {
-  globalThis.__souraRegionEditorStructureV16Installed = true
+let regionEditorRafV18 = 0
+
+function scheduleRegionEditorV18() {
+  if (regionEditorRafV18) return
+
+  regionEditorRafV18 = requestAnimationFrame(() => {
+    regionEditorRafV18 = 0
+    normalizeRegionEditorV18(document)
+  })
+}
+
+if (!globalThis.__souraRegionEditorResetV18Installed) {
+  globalThis.__souraRegionEditorResetV18Installed = true
 
   const observer = new MutationObserver((mutations) => {
-    if (
-      mutations.some((mutation) =>
-        mutation.type === 'childList' ||
-        mutation.type === 'attributes'
-      )
-    ) {
-      scheduleSouraRegionEditorStructureV16()
+    if (mutations.some((m) => m.type === 'childList' || m.type === 'attributes')) {
+      scheduleRegionEditorV18()
     }
   })
 
@@ -204,118 +267,128 @@ if (!globalThis.__souraRegionEditorStructureV16Installed) {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ['class', 'hidden', 'style']
+    attributeFilter: ['class', 'hidden', 'aria-pressed', 'aria-selected', 'disabled']
   })
 
-  document.addEventListener(
-    'click',
-    () => scheduleSouraRegionEditorStructureV16(),
-    true
-  )
-
-  queueMicrotask(scheduleSouraRegionEditorStructureV16)
-  window.addEventListener(
-    'load',
-    scheduleSouraRegionEditorStructureV16,
-    { once: true }
-  )
+  document.addEventListener('click', scheduleRegionEditorV18, true)
+  queueMicrotask(scheduleRegionEditorV18)
+  window.addEventListener('load', scheduleRegionEditorV18, { once: true })
 }
 
 
-// SOURA REGION EDITOR CORRECTIVE v15
-function getSouraRegionEditorColorV15(editorRoot) {
-  const candidates = [
-    document.querySelector('.studio-track-card.is-selected'),
-    document.querySelector('.studio-track-card[aria-selected="true"]'),
-    document.querySelector('.studio-midi-region.is-selected'),
-    document.querySelector('.studio-audio-region.is-selected'),
-    document.querySelector('.studio-region.is-selected')
-  ].filter(Boolean)
+// SOURA REGION EDITOR AUTHORITATIVE REPAIR v17
+function getSouraRegionEditorColorV17(editorRoot) {
+  const selectedTrack =
+    document.querySelector('.studio-track-card.is-selected') ||
+    document.querySelector('.studio-track-card[aria-selected="true"]')
 
-  const variableNames = [
-    '--track-color',
+  const selectedRegion =
+    document.querySelector('.studio-audio-region.is-selected') ||
+    document.querySelector('.studio-midi-region.is-selected') ||
+    document.querySelector('.studio-region.is-selected')
+
+  const candidates = [selectedRegion, selectedTrack].filter(Boolean)
+  const variables = [
     '--region-color',
+    '--track-color',
     '--pitch-note-color',
     '--studio-track-color'
   ]
 
   for (const node of candidates) {
-    const inline = node.style
     const computed = getComputedStyle(node)
 
-    for (const variableName of variableNames) {
+    for (const variable of variables) {
       const value =
-        inline?.getPropertyValue(variableName)?.trim() ||
-        computed.getPropertyValue(variableName)?.trim()
+        node.style.getPropertyValue(variable)?.trim() ||
+        computed.getPropertyValue(variable)?.trim()
 
-      if (value && value !== 'transparent') return value
+      if (value) return value
     }
 
-    const bg = computed.backgroundColor
-    if (
-      bg &&
-      bg !== 'transparent' &&
-      bg !== 'rgba(0, 0, 0, 0)' &&
-      !/^rgb\(0,\s*0,\s*0\)$/.test(bg)
-    ) {
-      return bg
-    }
-
-    const border = computed.borderLeftColor
-    if (
-      border &&
-      border !== 'transparent' &&
-      border !== 'rgba(0, 0, 0, 0)'
-    ) {
-      return border
+    const edge = computed.borderLeftColor
+    if (edge && edge !== 'transparent' && edge !== 'rgba(0, 0, 0, 0)') {
+      return edge
     }
   }
 
   const pitchNote = editorRoot?.querySelector?.('.studio-pitch-trace-note')
-  if (pitchNote) {
-    const noteColor =
-      pitchNote.style.getPropertyValue('--pitch-note-color')?.trim() ||
-      getComputedStyle(pitchNote).getPropertyValue('--pitch-note-color')?.trim()
-    if (noteColor) return noteColor
-  }
+  const pitchColor = pitchNote
+    ? (
+        pitchNote.style.getPropertyValue('--pitch-note-color')?.trim() ||
+        getComputedStyle(pitchNote).getPropertyValue('--pitch-note-color')?.trim()
+      )
+    : ''
 
-  return '#60A5FA'
+  return pitchColor || '#60A5FA'
 }
 
-function normalizeSouraRegionEditorV15(root = document) {
-  const editors = new Set()
+function ensureWaveformToolbarSlotV17(toolbar) {
+  if (!toolbar?.parentElement) return null
 
-  root.querySelectorAll?.(
-    '[data-audio-region-editor], .studio-region-editor-audio, .studio-midi-roll-editor'
-  ).forEach((node) => editors.add(node))
-
-  if (root.matches?.(
-    '[data-audio-region-editor], .studio-region-editor-audio, .studio-midi-roll-editor'
-  )) {
-    editors.add(root)
+  if (!toolbar.dataset.souraToolbarUidV17) {
+    toolbar.dataset.souraToolbarUidV17 =
+      `toolbar-${Math.random().toString(36).slice(2)}`
   }
+
+  const selector =
+    `.soura-waveform-toolbar-placeholder-v17[data-toolbar-placeholder-for="${toolbar.dataset.souraToolbarUidV17}"]`
+
+  const existing = document.querySelector(selector)
+  if (existing) return existing
+
+  const placeholder = document.createElement('div')
+  placeholder.className = 'soura-waveform-toolbar-placeholder-v17'
+  placeholder.dataset.toolbarPlaceholderFor = toolbar.dataset.souraToolbarUidV17
+
+  const height = Math.max(
+    28,
+    Math.round(toolbar.getBoundingClientRect().height || 38)
+  )
+
+  placeholder.style.setProperty(
+    '--soura-waveform-toolbar-height-v17',
+    `${height}px`
+  )
+
+  toolbar.parentElement.insertBefore(placeholder, toolbar)
+
+  return placeholder
+}
+
+function normalizeSouraRegionEditorV17(root = document) {
+  const editors = Array.from(
+    root.querySelectorAll?.(
+      '[data-audio-region-editor], .studio-region-editor-audio, .studio-bottom-panel.studio-midi-roll-editor'
+    ) || []
+  )
 
   editors.forEach((editor) => {
     const toolbar = editor.querySelector('.studio-audio-waveform-toolbar')
     const header = editor.querySelector('.studio-region-editor-header-container')
 
-    if (toolbar && header && toolbar !== header.previousElementSibling) {
-      const parent =
-        toolbar.parentElement === header.parentElement
-          ? header.parentElement
-          : editor
+    /*
+     * Move toolbar above timeline header WITHOUT collapsing its original
+     * waveform-editor row. The placeholder preserves the original slot.
+     */
+    if (toolbar && header && header.previousElementSibling !== toolbar) {
+      ensureWaveformToolbarSlotV17(toolbar)
 
-      try { parent.insertBefore(toolbar, header) } catch {}
+      try {
+        header.before(toolbar)
+      } catch (error) {
+        console.warn('[Soura v17] Region toolbar reorder failed', error)
+      }
     }
 
+    /*
+     * Keep status information compact instead of consuming a footer row.
+     */
     editor.querySelectorAll('.studio-pitch-trace-status').forEach((status) => {
       const text = String(status.textContent || '').trim()
 
       if (text) {
-        const tools =
-          editor.querySelector('.studio-pitch-trace-tools-pane') ||
-          editor.querySelector('.studio-pitch-trace-controls') ||
-          editor.querySelector('.studio-pitch-trace-toolbar-copy')
+        const tools = editor.querySelector('.studio-pitch-trace-tools-pane')
 
         if (tools) {
           let compact = tools.querySelector('.studio-pitch-trace-status-inline')
@@ -323,10 +396,7 @@ function normalizeSouraRegionEditorV15(root = document) {
           if (!compact) {
             compact = document.createElement('span')
             compact.className = 'studio-pitch-trace-status-inline'
-
-            const heading = tools.querySelector('h1,h2,h3,h4,strong')
-            if (heading) heading.after(compact)
-            else tools.prepend(compact)
+            tools.prepend(compact)
           }
 
           compact.textContent = text
@@ -339,41 +409,51 @@ function normalizeSouraRegionEditorV15(root = document) {
 
     editor.style.setProperty(
       '--soura-editor-note-color',
-      getSouraRegionEditorColorV15(editor)
+      getSouraRegionEditorColorV17(editor)
     )
   })
 }
 
-let souraRegionEditorNormalizeRafV15 = 0
-function scheduleSouraRegionEditorNormalizeV15(root = document) {
-  if (souraRegionEditorNormalizeRafV15) return
+let souraRegionEditorRafV17 = 0
 
-  souraRegionEditorNormalizeRafV15 = requestAnimationFrame(() => {
-    souraRegionEditorNormalizeRafV15 = 0
-    normalizeSouraRegionEditorV15(root)
+function scheduleSouraRegionEditorV17() {
+  if (souraRegionEditorRafV17) return
+
+  souraRegionEditorRafV17 = requestAnimationFrame(() => {
+    souraRegionEditorRafV17 = 0
+    normalizeSouraRegionEditorV17(document)
   })
 }
 
-if (!globalThis.__souraRegionEditorCorrectiveV15Installed) {
-  globalThis.__souraRegionEditorCorrectiveV15Installed = true
+if (!globalThis.__souraRegionEditorV17Installed) {
+  globalThis.__souraRegionEditorV17Installed = true
 
-  new MutationObserver((mutations) => {
-    if (mutations.some((m) => m.type === 'childList' || m.type === 'attributes')) {
-      scheduleSouraRegionEditorNormalizeV15(document)
+  const observer = new MutationObserver((mutations) => {
+    if (
+      mutations.some((mutation) =>
+        mutation.type === 'childList' ||
+        mutation.type === 'attributes'
+      )
+    ) {
+      scheduleSouraRegionEditorV17()
     }
-  }).observe(document.documentElement, {
+  })
+
+  observer.observe(document.documentElement, {
     childList: true,
     subtree: true,
     attributes: true,
     attributeFilter: ['class', 'style', 'aria-selected', 'data-selected']
   })
 
-  document.addEventListener('click', () => {
-    scheduleSouraRegionEditorNormalizeV15(document)
-  }, true)
-
-  queueMicrotask(() => scheduleSouraRegionEditorNormalizeV15(document))
+  document.addEventListener('click', scheduleSouraRegionEditorV17, true)
+  queueMicrotask(scheduleSouraRegionEditorV17)
+  window.addEventListener('load', scheduleSouraRegionEditorV17, { once: true })
 }
+
+
+
+
 
 
 // SOURA LIBRARY RUNTIME BLACK v11
