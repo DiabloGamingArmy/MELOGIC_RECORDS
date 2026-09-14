@@ -26,11 +26,6 @@ const URL_RULES = {
 }
 const UPC_PATTERN = /^(?:\d{8}|\d{12,14})$/
 const ISRC_PATTERN = /^[A-Z]{2}[A-Z0-9]{3}\d{7}$/
-const STREAM_AUDIO_MAX_BYTES = 512 * 1024 * 1024
-const STREAM_AUDIO_CONTENT_TYPES = new Set([
-  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav',
-  'audio/flac', 'audio/x-flac', 'audio/mp4', 'audio/aac', 'audio/ogg'
-])
 
 function db() {
   return admin.firestore()
@@ -128,46 +123,6 @@ function normalizeArtworkPath(value = '', uid = '', releaseId = '') {
   return path
 }
 
-function normalizeStreamAudioPath(value = '', uid = '', releaseId = '', trackId = '') {
-  const path = cleanString(value, 800).replace(/^\/+/, '')
-  if (!path) return ''
-  const prefix = `users/${uid}/distribution/${releaseId}/audio/${trackId}/`
-  if (!trackId || !path.startsWith(prefix) || path.includes('..')) {
-    throw new HttpsError('invalid-argument', 'Streaming audio path is outside this track.')
-  }
-  return path
-}
-
-function validateStreamAudioMetadata(metadata = {}, { uid = '', releaseId = '', trackId = '' } = {}) {
-  const problems = []
-  const customMetadata = metadata.metadata || {}
-  const size = Number(metadata.size || 0)
-  if (!STREAM_AUDIO_CONTENT_TYPES.has(metadata.contentType || '')) problems.push('Streaming audio uses an unsupported audio format.')
-  if (!Number.isFinite(size) || size <= 0 || size > STREAM_AUDIO_MAX_BYTES) problems.push('Streaming audio must be between 1 byte and 512 MB.')
-  if (customMetadata.ownerUid !== uid || customMetadata.releaseId !== releaseId || customMetadata.trackId !== trackId || customMetadata.assetRole !== 'stream_audio') {
-    problems.push('Streaming audio ownership metadata does not match this track.')
-  }
-  return problems
-}
-
-async function loadTrustedStreamAudio(track = {}) {
-  if (!track.streamAudioPath) return null
-  const uid = cleanId(track.artistUid || '', 'Artist ID')
-  const releaseId = cleanId(track.releaseId || '', 'Release ID')
-  const trackId = cleanId(track.trackId || track.id || '', 'Track ID')
-  const path = normalizeStreamAudioPath(track.streamAudioPath, uid, releaseId, trackId)
-  const file = admin.storage().bucket().file(path)
-  let metadata
-  try { metadata = (await file.getMetadata())[0] }
-  catch (error) {
-    if (Number(error?.code) === 404) throw new HttpsError('failed-precondition', `Streaming audio for ${track.title || 'this track'} no longer exists.`)
-    throw new HttpsError('unavailable', 'Streaming audio could not be verified.')
-  }
-  const problems = validateStreamAudioMetadata(metadata, { uid, releaseId, trackId })
-  if (problems.length) throw new HttpsError('failed-precondition', problems.join(' '), { problems })
-  return { path, url: await getDownloadURL(file) }
-}
-
 function validateArtworkMetadata(metadata = {}, { uid = '', releaseId = '' } = {}) {
   const problems = []
   const customMetadata = metadata.metadata || {}
@@ -247,9 +202,7 @@ function normalizeTrack(raw = {}, index = 0, { releaseId = '', uid = '', artistN
     explicit: raw.explicit === true,
     status,
     visibility: 'private',
-    streamAudioPath: raw.trackId ? normalizeStreamAudioPath(raw.streamAudioPath || '', uid, releaseId, cleanId(raw.trackId, 'Track ID')) : '',
-    streamAudioURL: raw.trackId && raw.streamAudioPath ? cleanString(raw.streamAudioURL || '', 2000) : '',
-    playbackType: raw.trackId && raw.streamAudioPath ? 'internal_audio' : (spotify ? 'spotify_embed' : 'external_link'),
+    playbackType: spotify ? 'spotify_embed' : 'external_link',
     externalPlaybackURL: spotify,
     externalLinks: {
       spotify
@@ -392,9 +345,9 @@ function validateForSubmission(release = {}, tracks = []) {
   const hasOfficialPlayback = Boolean(
     release.externalLinks?.spotify
       || release.externalLinks?.appleMusic
-      || tracks.some((track) => track.externalLinks?.spotify || track.streamAudioPath)
+      || tracks.some((track) => track.externalLinks?.spotify)
   )
-  if (!hasOfficialPlayback) problems.push('Add Melogic-hosted audio, Spotify, or Apple Music playback.')
+  if (!hasOfficialPlayback) problems.push('Add a Spotify or Apple Music link for official playback.')
   return problems
 }
 
@@ -604,11 +557,6 @@ const submitMusicRelease = onCall(CALLABLE_OPTIONS, async (request) => {
   }
   await assertUniqueIdentifiers({ releaseId, upc: initialRelease.upc, tracks: initialTracks })
   const trustedArtwork = await loadTrustedArtwork(initialRelease)
-  const trustedAudioByTrackId = new Map()
-  for (const track of initialTracks) {
-    if (!track.streamAudioPath) continue
-    trustedAudioByTrackId.set(track.id || track.trackId, await loadTrustedStreamAudio(track))
-  }
 
   const initialUpdatedAt = initialRelease.updatedAt || null
   const candidateTrackRefs = initialTrackDocs.map((trackSnap) => trackSnap.ref)
@@ -701,15 +649,11 @@ const submitMusicRelease = onCall(CALLABLE_OPTIONS, async (request) => {
       },
       updatedAt: now
     }, { merge: true })
-    trackSnapshots.forEach((trackSnap) => {
-      const trustedAudio = trustedAudioByTrackId.get(trackSnap.id)
-      transaction.set(trackSnap.ref, {
-        status: 'submitted',
-        visibility: 'private',
-        ...(trustedAudio ? { streamAudioPath: trustedAudio.path, streamAudioURL: trustedAudio.url, playbackType: 'internal_audio' } : {}),
-        updatedAt: now
-      }, { merge: true })
-    })
+    trackSnapshots.forEach((trackSnap) => transaction.set(trackSnap.ref, {
+      status: 'submitted',
+      visibility: 'private',
+      updatedAt: now
+    }, { merge: true }))
     submittedRelease = release
   })
   await writeAccountEventSafely(requester.uid, {
@@ -756,14 +700,6 @@ const reviewMusicRelease = onCall(CALLABLE_OPTIONS, async (request) => {
   if (initialRelease.status !== 'submitted') throw new HttpsError('failed-precondition', 'Only submitted releases can be reviewed.')
   const initialTrackDocs = await releaseTracks(releaseId)
   const trustedArtwork = decision === 'approve' ? await loadTrustedArtwork(initialRelease) : null
-  const trustedApprovalAudioByTrackId = new Map()
-  if (decision === 'approve') {
-    for (const trackSnap of initialTrackDocs) {
-      const track = { id: trackSnap.id, ...(trackSnap.data() || {}) }
-      if (!track.streamAudioPath) continue
-      trustedApprovalAudioByTrackId.set(trackSnap.id, await loadTrustedStreamAudio(track))
-    }
-  }
   const candidateTrackRefs = initialTrackDocs.map((trackSnap) => trackSnap.ref)
   const nextStatus = decision === 'approve' ? 'published' : 'rejected'
   const nextVisibility = decision === 'approve' ? 'public' : 'private'
@@ -809,24 +745,13 @@ const reviewMusicRelease = onCall(CALLABLE_OPTIONS, async (request) => {
       ...(trustedArtwork ? { coverArtURL: trustedArtwork.url } : {}),
       updatedAt: now
     }, { merge: true })
-    trackSnapshots.forEach((trackSnap) => {
-      const trustedAudio = decision === 'approve' ? trustedApprovalAudioByTrackId.get(trackSnap.id) : null
-      const track = trackSnap.data() || {}
-      transaction.set(trackSnap.ref, {
-        status: nextStatus,
-        visibility: nextVisibility,
-        reviewedAt: now,
-        reviewedBy: reviewer.uid,
-        ...(decision === 'approve' && trustedAudio ? {
-          streamAudioPath: trustedAudio.path,
-          streamAudioURL: trustedAudio.url,
-          playbackType: 'internal_audio'
-        } : decision === 'approve' ? {
-          playbackType: track.externalLinks?.spotify ? 'spotify_embed' : 'external_link'
-        } : {}),
-        updatedAt: now
-      }, { merge: true })
-    })
+    trackSnapshots.forEach((trackSnap) => transaction.set(trackSnap.ref, {
+      status: nextStatus,
+      visibility: nextVisibility,
+      reviewedAt: now,
+      reviewedBy: reviewer.uid,
+      updatedAt: now
+    }, { merge: true }))
     reviewedRelease = release
     reviewedTrackCount = trackSnapshots.length
   })

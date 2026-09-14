@@ -369,27 +369,6 @@ service firebase.storage {
       allow delete: if isEditableDistributionRelease(uid, releaseId);
     }
 
-    match /users/{uid}/distribution/{releaseId}/audio/{trackId}/{fileName} {
-      allow read: if isDistributionReleaseOwner(uid, releaseId) || isPublicDistributionRelease(releaseId);
-      allow create, update: if isEditableDistributionRelease(uid, releaseId)
-        && request.resource != null
-        && request.resource.size > 0
-        && request.resource.size <= 512 * 1024 * 1024
-        && request.resource.contentType in ['audio/mpeg','audio/mp3','audio/wav','audio/x-wav','audio/flac','audio/x-flac','audio/mp4','audio/aac','audio/ogg']
-        && request.resource.metadata != null
-        && request.resource.metadata.keys().hasAll(['ownerUid', 'releaseId', 'trackId', 'assetRole'])
-        && request.resource.metadata.ownerUid == uid
-        && request.resource.metadata.releaseId == releaseId
-        && request.resource.metadata.trackId == trackId
-        && request.resource.metadata.assetRole == 'stream_audio'
-        && firestore.exists(/databases/(default)/documents/musicTracks/$(trackId))
-        && firestore.get(/databases/(default)/documents/musicTracks/$(trackId)).data.releaseId == releaseId
-        && firestore.get(/databases/(default)/documents/musicTracks/$(trackId)).data.artistUid == uid;
-      allow delete: if isEditableDistributionRelease(uid, releaseId)
-        && firestore.get(/databases/(default)/documents/musicTracks/$(trackId)).data.releaseId == releaseId
-        && firestore.get(/databases/(default)/documents/musicTracks/$(trackId)).data.artistUid == uid;
-    }
-
     match /users/{uid}/musicLiveUploads/{allPaths=**} {
       allow read: if true;
       allow write: if signedIn() && request.auth.uid == uid;

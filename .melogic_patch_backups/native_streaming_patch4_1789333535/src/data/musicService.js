@@ -107,21 +107,6 @@ function cleanMusicReleaseId(value = '') {
   return compoundId.replace(/^\/+|\/+$/g, '')
 }
 
-export function isNativeMusicTrackPlayable(track = {}) {
-  return track.playbackType === 'internal_audio'
-    && Boolean(String(track.streamAudioPath || '').trim())
-    && Boolean(String(track.streamAudioURL || '').trim())
-}
-
-export function preferredMusicPlayback(track = {}) {
-  if (isNativeMusicTrackPlayable(track)) {
-    return { type: 'internal_audio', url: String(track.streamAudioURL || '').trim() }
-  }
-  const spotify = String(track.externalLinks?.spotify || track.externalPlaybackURL || '').trim()
-  if (spotify) return { type: 'spotify_embed', url: spotify }
-  return { type: 'external_link', url: '' }
-}
-
 function isPublicPublished(item = {}) {
   return item.status === 'published' && item.visibility === 'public'
 }
@@ -238,28 +223,24 @@ function sortReleasesClientSide(releases = [], sort = 'newest') {
 
 export async function listPublishedMusicReleases({ limitCount = 24, genre = '', sort = 'newest' } = {}) {
   if (!db) return []
-  const cappedLimit = Math.max(1, Math.min(50, Number(limitCount) || 24))
-  const baseConstraints = [where('status', '==', 'published'), where('visibility', '==', 'public')]
-  if (genre) baseConstraints.push(where('genre', '==', genre))
+  const constraints = [
+    where('status', '==', 'published'),
+    where('visibility', '==', 'public')
+  ]
+  if (genre) constraints.push(where('genre', '==', genre))
+  if (sort === 'popular') {
+    constraints.push(orderBy('playCount', 'desc'))
+  } else {
+    constraints.push(orderBy('releaseDate', sort === 'oldest' ? 'asc' : 'desc'))
+  }
+  constraints.push(limit(Math.max(1, Math.min(50, Number(limitCount) || 24))))
+
   try {
-    const orderedConstraints = [...baseConstraints]
-    if (sort === 'popular') orderedConstraints.push(orderBy('playCount', 'desc'))
-    else orderedConstraints.push(orderBy('releaseDate', sort === 'oldest' ? 'asc' : 'desc'))
-    orderedConstraints.push(limit(cappedLimit))
-    const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.musicReleases), ...orderedConstraints))
-    const ordered = sortReleasesClientSide(snapshot.docs.map((docSnap) => normalizeMusicRelease(docSnap)), sort)
-    if (ordered.length >= cappedLimit) return ordered.slice(0, cappedLimit)
-    const compatibility = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.musicReleases), ...baseConstraints, limit(50)))
-    return sortReleasesClientSide(compatibility.docs.map((docSnap) => normalizeMusicRelease(docSnap)), sort).slice(0, cappedLimit)
+    const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.musicReleases), ...constraints))
+    return sortReleasesClientSide(snapshot.docs.map((docSnap) => normalizeMusicRelease(docSnap)), sort)
   } catch (error) {
-    console.warn('[musicService] Ordered public catalog query failed; using compatibility query.', error?.message || error)
-    try {
-      const snapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.musicReleases), ...baseConstraints, limit(50)))
-      return sortReleasesClientSide(snapshot.docs.map((docSnap) => normalizeMusicRelease(docSnap)), sort).slice(0, cappedLimit)
-    } catch (fallbackError) {
-      console.warn('[musicService] Public music catalog could not be loaded.', fallbackError?.message || fallbackError)
-      throw fallbackError
-    }
+    console.warn('[musicService] Published music releases could not be loaded.', error?.message || error)
+    return []
   }
 }
 

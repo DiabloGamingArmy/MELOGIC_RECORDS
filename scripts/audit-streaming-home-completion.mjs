@@ -1,0 +1,4 @@
+import fs from 'node:fs'
+const js=fs.readFileSync('src/music.js','utf8'),css=fs.readFileSync('src/styles/music.css','utf8')
+const checks=[['Patch 8 remains',css.includes('MELOGIC PATCH 8 - DISCOVERY FOUNDATION')],['home hero',js.includes('function renderStreamingHomeHero()')],['new releases',js.includes("id:'new-releases-home'")],['recent history state',js.includes('state.rows.recentlyPlayed || []')],['live state',js.includes('state.rows.liveStreams || []')],['no fake live cards',js.includes('No broadcasts are live right now')],['artist state',js.includes('state.rows.artists || []')],['genre search',js.includes('data-search-genre=')],['Distribution destination',js.includes('ROUTES.distribution')],['home CSS',css.includes('MELOGIC PATCH 10 - STREAMING HOME COMPLETION')]]
+let failed=0;for(const[n,ok]of checks){console.log(`${ok?'PASS':'FAIL'}  ${n}`);if(!ok)failed++}if(failed)process.exit(1);console.log('\nPatch 10 Streaming home completion audit passed.')

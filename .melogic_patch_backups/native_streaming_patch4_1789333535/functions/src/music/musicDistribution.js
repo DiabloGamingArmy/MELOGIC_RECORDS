@@ -756,14 +756,6 @@ const reviewMusicRelease = onCall(CALLABLE_OPTIONS, async (request) => {
   if (initialRelease.status !== 'submitted') throw new HttpsError('failed-precondition', 'Only submitted releases can be reviewed.')
   const initialTrackDocs = await releaseTracks(releaseId)
   const trustedArtwork = decision === 'approve' ? await loadTrustedArtwork(initialRelease) : null
-  const trustedApprovalAudioByTrackId = new Map()
-  if (decision === 'approve') {
-    for (const trackSnap of initialTrackDocs) {
-      const track = { id: trackSnap.id, ...(trackSnap.data() || {}) }
-      if (!track.streamAudioPath) continue
-      trustedApprovalAudioByTrackId.set(trackSnap.id, await loadTrustedStreamAudio(track))
-    }
-  }
   const candidateTrackRefs = initialTrackDocs.map((trackSnap) => trackSnap.ref)
   const nextStatus = decision === 'approve' ? 'published' : 'rejected'
   const nextVisibility = decision === 'approve' ? 'public' : 'private'
@@ -809,24 +801,13 @@ const reviewMusicRelease = onCall(CALLABLE_OPTIONS, async (request) => {
       ...(trustedArtwork ? { coverArtURL: trustedArtwork.url } : {}),
       updatedAt: now
     }, { merge: true })
-    trackSnapshots.forEach((trackSnap) => {
-      const trustedAudio = decision === 'approve' ? trustedApprovalAudioByTrackId.get(trackSnap.id) : null
-      const track = trackSnap.data() || {}
-      transaction.set(trackSnap.ref, {
-        status: nextStatus,
-        visibility: nextVisibility,
-        reviewedAt: now,
-        reviewedBy: reviewer.uid,
-        ...(decision === 'approve' && trustedAudio ? {
-          streamAudioPath: trustedAudio.path,
-          streamAudioURL: trustedAudio.url,
-          playbackType: 'internal_audio'
-        } : decision === 'approve' ? {
-          playbackType: track.externalLinks?.spotify ? 'spotify_embed' : 'external_link'
-        } : {}),
-        updatedAt: now
-      }, { merge: true })
-    })
+    trackSnapshots.forEach((trackSnap) => transaction.set(trackSnap.ref, {
+      status: nextStatus,
+      visibility: nextVisibility,
+      reviewedAt: now,
+      reviewedBy: reviewer.uid,
+      updatedAt: now
+    }, { merge: true }))
     reviewedRelease = release
     reviewedTrackCount = trackSnapshots.length
   })

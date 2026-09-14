@@ -7,9 +7,7 @@ import {
   listMyMusicReleases,
   saveMusicReleaseDraft,
   submitMusicRelease,
-  uploadDistributionArtwork,
-  uploadDistributionTrackAudio,
-  removeDistributionTrackAudio
+  uploadDistributionArtwork
 } from './data/distributionService'
 import { ROUTES, authRoute, musicReleaseRoute } from './utils/routes'
 
@@ -64,12 +62,7 @@ function emptyTrack(index = 0) {
     discNumber: 1,
     isrc: '',
     explicit: false,
-    spotifyUrl: '',
-    streamAudioPath: '',
-    streamAudioURL: '',
-    audioFileName: '',
-    audioUploadProgress: 0,
-    audioUploading: false
+    spotifyUrl: ''
   }
 }
 
@@ -173,8 +166,6 @@ function trackPayloads() {
     discNumber: track.discNumber || 1,
     isrc: track.isrc,
     explicit: track.explicit,
-    streamAudioPath: track.streamAudioPath || '',
-    streamAudioURL: track.streamAudioURL || '',
     externalLinks: { spotify: track.spotifyUrl }
   }))
 }
@@ -341,18 +332,6 @@ function tracksStep() {
           ${field('Track title', `<input data-track-field="title" value="${escapeHtml(track.title)}" maxlength="180" />`)}
           ${field('ISRC', `<input data-track-field="isrc" value="${escapeHtml(track.isrc)}" maxlength="15" placeholder="USABC2612345" />`, '12 characters; spaces and hyphens are accepted')}
           ${field('Spotify track link', `<input data-track-field="spotifyUrl" type="url" value="${escapeHtml(track.spotifyUrl)}" placeholder="https://open.spotify.com/track/…" />`)}
-          <div class="distribution-audio-upload">
-            <span>Melogic audio</span>
-            ${track.streamAudioPath
-              ? `<strong>${escapeHtml(track.audioFileName || 'Audio uploaded')}</strong><small>Ready for native Melogic playback.</small>
-                 <div class="distribution-audio-actions">
-                   <label class="distribution-secondary distribution-audio-picker">Replace<input data-track-audio="${index}" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/flac,audio/x-flac,audio/mp4,audio/aac,audio/ogg" hidden /></label>
-                   <button type="button" class="distribution-text-button" data-remove-track-audio="${index}">Remove audio</button>
-                 </div>`
-              : `<label class="distribution-secondary distribution-audio-picker">${track.audioUploading ? 'Uploading…' : 'Upload audio'}<input data-track-audio="${index}" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/flac,audio/x-flac,audio/mp4,audio/aac,audio/ogg" hidden /></label>
-                 <small>${track.trackId ? 'MP3, WAV, FLAC, M4A/AAC or OGG · 512 MB max' : 'Save this draft once to enable audio upload.'}</small>`}
-            ${track.audioUploading ? `<progress max="100" value="${track.audioUploadProgress || 0}"></progress><small>${track.audioUploadProgress || 0}%</small>` : ''}
-          </div>
           <label class="distribution-check"><input data-track-field="explicit" type="checkbox" ${track.explicit ? 'checked' : ''} /><span>Explicit</span></label>
           <button type="button" class="distribution-remove-track" data-remove-track="${index}" ${state.form.tracks.length === 1 ? 'disabled' : ''}>Remove</button>
         </article>
@@ -574,17 +553,6 @@ function syncVisibleInputs() {
   })
 }
 
-function preserveDistributionEditorState() {
-  // The DOM is authoritative for fields the user is actively editing.
-  // Commit every visible release + track field before an audio operation
-  // saves or re-renders the wizard.
-  syncVisibleInputs()
-
-  // Return the same object intentionally: callers operate on the preserved
-  // state rather than reconstructing the form from a server response.
-  return state.form
-}
-
 function validateStep(step = state.step) {
   syncVisibleInputs()
   if (step === 0) {
@@ -719,91 +687,7 @@ async function loadReleases({ preserveMessage = false } = {}) {
   }
 }
 
-async function ensureStableTrackIds() {
-  preserveDistributionEditorState()
-  if (state.form.releaseId && state.form.tracks.every((track) => track.trackId)) return
-  const result = await saveMusicReleaseDraft({ releaseId: state.form.releaseId, release: releasePayload(), tracks: trackPayloads() })
-  state.form.releaseId = result.releaseId
-  const returned = Array.isArray(result.tracks) ? result.tracks : []
-  state.form.tracks = state.form.tracks.map((track, index) => ({
-    ...track,
-    trackId: returned[index]?.trackId || returned[index]?.id || track.trackId || ''
-  }))
-}
-
-async function handleTrackAudioUpload(index, file) {
-  preserveDistributionEditorState()
-  const track = state.form.tracks[index]
-  if (!track || !(file instanceof File) || !state.user?.uid) return
-  state.error = ''
-  try {
-    await ensureStableTrackIds()
-    const stableTrack = state.form.tracks[index]
-    stableTrack.audioUploading = true
-    stableTrack.audioUploadProgress = 0
-    render()
-    const previousPath = stableTrack.streamAudioPath || ''
-    const uploaded = await uploadDistributionTrackAudio({
-      uid: state.user.uid,
-      releaseId: state.form.releaseId,
-      trackId: stableTrack.trackId,
-      file,
-      onProgress: (progress) => {
-        stableTrack.audioUploadProgress = progress
-        const progressNode = document.querySelector(`input[data-track-audio="${index}"]`)?.closest('.distribution-audio-upload')?.querySelector('progress')
-        if (progressNode) progressNode.value = progress
-      }
-    })
-    stableTrack.streamAudioPath = uploaded.path
-    stableTrack.streamAudioURL = uploaded.url
-    stableTrack.audioFileName = uploaded.name
-    stableTrack.audioUploading = false
-
-    // Uploads can take long enough for the user to continue editing.
-    // Capture those edits immediately before the completion save.
-    preserveDistributionEditorState()
-    await saveMusicReleaseDraft({ releaseId: state.form.releaseId, release: releasePayload(), tracks: trackPayloads() })
-    if (previousPath && previousPath !== uploaded.path) {
-      try { await removeDistributionTrackAudio({ path: previousPath }) } catch {}
-    }
-    state.message = `${stableTrack.title || `Track ${index + 1}`} audio uploaded.`
-  } catch (error) {
-    if (state.form.tracks[index]) state.form.tracks[index].audioUploading = false
-    state.error = error?.message || 'Audio upload failed.'
-  }
-  render()
-}
-
-async function handleTrackAudioRemove(index) {
-  preserveDistributionEditorState()
-  const track = state.form.tracks[index]
-  if (!track?.streamAudioPath) return
-  state.error = ''
-  try {
-    const path = track.streamAudioPath
-    track.streamAudioPath = ''
-    track.streamAudioURL = ''
-    track.audioFileName = ''
-    await saveMusicReleaseDraft({ releaseId: state.form.releaseId, release: releasePayload(), tracks: trackPayloads() })
-    await removeDistributionTrackAudio({ path })
-    state.message = `${track.title || `Track ${index + 1}`} audio removed.`
-  } catch (error) {
-    state.error = error?.message || 'Could not remove audio.'
-  }
-  render()
-}
-
 function bindEvents() {
-  document.querySelectorAll('[data-track-audio]').forEach((input) => input.addEventListener('change', () => {
-    preserveDistributionEditorState()
-    const file = input.files?.[0]
-    if (file) handleTrackAudioUpload(Number(input.dataset.trackAudio), file)
-  }))
-  document.querySelectorAll('[data-remove-track-audio]').forEach((button) => button.addEventListener('click', () => {
-    preserveDistributionEditorState()
-    handleTrackAudioRemove(Number(button.dataset.removeTrackAudio))
-  }))
-
   app.querySelectorAll('[data-new-release]').forEach((button) => {
     button.addEventListener('click', () => {
       state.form = emptyForm()

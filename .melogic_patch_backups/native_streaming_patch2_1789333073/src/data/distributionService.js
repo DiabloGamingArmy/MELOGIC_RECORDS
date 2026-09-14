@@ -1,5 +1,5 @@
 import { httpsCallable } from 'firebase/functions'
-import { deleteObject, getDownloadURL, ref, uploadBytes, uploadBytesResumable } from 'firebase/storage'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
 
@@ -65,38 +65,3 @@ export async function uploadDistributionArtwork({ uid = '', releaseId = '', file
   }
 }
 
-
-const DISTRIBUTION_AUDIO_TYPES = new Set([
-  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav',
-  'audio/flac', 'audio/x-flac', 'audio/mp4', 'audio/aac', 'audio/ogg'
-])
-
-export function uploadDistributionTrackAudio({ uid = '', releaseId = '', trackId = '', file, onProgress } = {}) {
-  if (!storage) return Promise.reject(new Error('Streaming audio storage is unavailable.'))
-  if (!uid || !releaseId || !trackId || !(file instanceof File)) return Promise.reject(new Error('Save the release draft before uploading track audio.'))
-  if (!DISTRIBUTION_AUDIO_TYPES.has(file.type)) return Promise.reject(new Error('Use MP3, WAV, FLAC, M4A/AAC, or OGG audio.'))
-  if (file.size <= 0 || file.size > 512 * 1024 * 1024) return Promise.reject(new Error('Audio must be between 1 byte and 512 MB.'))
-  const base = safeFileName(file.name.replace(/\.[^.]+$/, '')) || 'stream-audio'
-  const ext = (file.name.split('.').pop() || 'audio').replace(/[^a-z0-9]/gi, '').toLowerCase()
-  const path = `users/${uid}/distribution/${releaseId}/audio/${trackId}/${Date.now()}-${base}.${ext}`
-  const audioRef = ref(storage, path)
-  const task = uploadBytesResumable(audioRef, file, {
-    contentType: file.type,
-    customMetadata: { ownerUid: uid, releaseId, trackId, assetRole: 'stream_audio' }
-  })
-  return new Promise((resolve, reject) => {
-    task.on('state_changed',
-      snap => {
-        const pct = snap.totalBytes ? Math.round((snap.bytesTransferred / snap.totalBytes) * 100) : 0
-        if (typeof onProgress === 'function') onProgress(pct)
-      },
-      reject,
-      async () => resolve({ path, url: await getDownloadURL(task.snapshot.ref), name: file.name, size: file.size, contentType: file.type })
-    )
-  })
-}
-
-export async function removeDistributionTrackAudio({ path = '' } = {}) {
-  if (!storage || !path) return
-  await deleteObject(ref(storage, path))
-}

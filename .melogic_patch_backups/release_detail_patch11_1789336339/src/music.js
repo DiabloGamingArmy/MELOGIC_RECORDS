@@ -6804,32 +6804,28 @@ async function attachMusicHeroVideo() {
   }
 }
 
-function renderStreamingStartupShell() {
-  if (!app || app.childElementCount) return
-  app.innerHTML = `<div class="music-startup-shell" role="status" aria-live="polite"><div class="music-startup-top"><strong>MELOGIC</strong><span>Streaming</span></div><div class="music-startup-body"><aside><b>Melogic Streaming</b><i></i><i></i><i></i><i></i></aside><main><small>MELOGIC STREAMING</small><h1>Your music.<br><em>Your discovery.</em></h1><p>Loading your Streaming experience…</p><div class="music-startup-cards"><i></i><i></i><i></i><i></i></div></main></div></div>`
-}
-
 async function loadMusicPage() {
-  renderStreamingStartupShell()
   stopLiveStreamSubscription()
   stopLiveChatSubscription()
   stopLiveSequenceSubscription()
   stopLiveListRefresh()
   initShellChrome()
-  state.route = currentRouteMode()
-  state.activeView = getInitialView()
-  state.loading = true
-  rerender()
-
   state.currentUser = await waitForInitialAuthState().catch(() => null)
   state.accountPermissions = null
   if (state.currentUser) {
     state.accountPermissionsLoading = true
-    getMyAccountPermissions()
-      .then((permissions) => { state.accountPermissions = permissions })
-      .catch(() => { state.accountPermissions = { permissions: { musicLive: false }, restrictions: {}, source: 'fallback' } })
-      .finally(() => { state.accountPermissionsLoading = false; rerender() })
+    try {
+      state.accountPermissions = await getMyAccountPermissions()
+    } catch (error) {
+      state.accountPermissions = { permissions: { musicLive: false }, restrictions: {}, source: 'fallback' }
+    } finally {
+      state.accountPermissionsLoading = false
+    }
   }
+  state.route = currentRouteMode()
+  state.activeView = getInitialView()
+  state.loading = true
+  rerender()
 
   if (state.route.mode === 'release') {
     state.release = await getMusicRelease(state.route.id)
@@ -6886,7 +6882,7 @@ async function loadMusicPage() {
 
   if (state.route.mode === 'liveList') state.activeView = 'live'
 
-  const startupResults = await Promise.allSettled([
+  const [featured, newest, artists, recent, popular, liveStreams] = await Promise.all([
     listFeaturedMusicReleases(16),
     listNewMusicReleases(18),
     listFeaturedArtists(14),
@@ -6894,10 +6890,6 @@ async function loadMusicPage() {
     listPublishedMusicReleases({ limitCount: 16, sort: 'popular' }),
     listPublicLiveStreams({ limitCount: 20 })
   ])
-  const valueOrEmpty = (index) => startupResults[index]?.status === 'fulfilled' ? startupResults[index].value : []
-  const [featured, newest, artists, recent, popular, liveStreams] = [0,1,2,3,4,5].map(valueOrEmpty)
-  const startupFailures = startupResults.filter((result) => result.status === 'rejected')
-  if (startupFailures.length) console.warn(`[music] ${startupFailures.length} Streaming startup request(s) failed; rendering available data.`)
 
   state.rows.featured = featured
   state.rows.newest = newest

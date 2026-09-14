@@ -1,0 +1,4 @@
+import fs from 'node:fs'
+const f=fs.readFileSync('src/components/siteFooter.js','utf8'),m=fs.readFileSync('src/music.js','utf8'),c=fs.readFileSync('src/styles/music.css','utf8')
+const x=[['footer',f.includes('<strong>Melogic Creative Technologies</strong>')],['startup shell',m.includes('function renderStreamingStartupShell()')],['shell before auth',m.indexOf('renderStreamingStartupShell()')<m.indexOf('state.currentUser = await waitForInitialAuthState()')],['route before auth',m.indexOf('state.route = currentRouteMode()')<m.indexOf('state.currentUser = await waitForInitialAuthState()')],['permissions nonblocking',m.includes('getMyAccountPermissions()\n      .then(')],['catalog allSettled',m.includes('Promise.allSettled([')],['startup CSS',c.includes('MELOGIC PATCH 12 - STREAMING STARTUP')]]
+let n=0;for(const[k,v]of x){console.log(`${v?'PASS':'FAIL'}  ${k}`);if(!v)n++}if(n)process.exit(1);console.log('\nPatch 12 audit passed.')

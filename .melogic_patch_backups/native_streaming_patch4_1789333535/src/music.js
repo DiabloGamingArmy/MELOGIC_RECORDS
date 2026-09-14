@@ -96,9 +96,7 @@ import {
   listRecentlyPlayed,
   listTracksForRelease,
   listUserLibraryMusic,
-  searchMusic,
-  isNativeMusicTrackPlayable,
-  preferredMusicPlayback
+  searchMusic
 } from './data/musicService'
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 
@@ -200,8 +198,6 @@ const state = {
   searchQuery: '',
   searchResults: [],
   searchLoading: false,
-  catalogLoading: false,
-  catalogError: '',
   rows: {
     featured: [],
     newest: [],
@@ -553,23 +549,6 @@ function renderArtistArtwork(artist) {
   return `<div class="music-artist-art music-artist-art-fallback" aria-hidden="true">${escapeHtml(String(artist.artistName || 'A').slice(0, 1).toUpperCase())}</div>`
 }
 
-function renderDiscoveryReleaseRail(releases = [], options = {}) {
-  const items = Array.isArray(releases) ? releases.filter(Boolean) : []
-  const eyebrow = String(options.eyebrow || '')
-  const title = String(options.title || '')
-  const emptyTitle = String(options.emptyTitle || 'Nothing here yet')
-  const emptyBody = String(options.emptyBody || '')
-  return `
-    <section class="music-discovery-section">
-      <div class="music-discovery-heading"><div>${eyebrow ? `<p class="music-eyebrow">${escapeHtml(eyebrow)}</p>` : ''}<h2>${escapeHtml(title)}</h2></div></div>
-      ${state.catalogLoading
-        ? '<div class="music-discovery-skeletons" aria-label="Loading releases"><i></i><i></i><i></i><i></i></div>'
-        : items.length
-          ? `<div class="music-discovery-rail">${items.map((release) => releaseCard(release)).join('')}</div>`
-          : `<div class="music-empty-state"><strong>${escapeHtml(emptyTitle)}</strong><span>${escapeHtml(state.catalogError || emptyBody)}</span></div>`}
-    </section>`
-}
-
 function releaseCard(release, options = {}) {
   const tags = [release.genre, ...(release.moods || []), ...(release.tags || [])].filter(Boolean).slice(0, 2)
   const playable = Boolean(release.streamAudioURL)
@@ -679,12 +658,6 @@ function renderSidebar() {
 function renderHero() {
   const uploadHref = state.currentUser ? ROUTES.distribution : authRoute({ redirect: ROUTES.distribution })
   return `
-    ${renderDiscoveryReleaseRail(state.rows.newest, {
-      eyebrow: 'Latest on Melogic',
-      title: 'New releases',
-      emptyTitle: 'No public releases yet',
-      emptyBody: 'Approved public releases will appear here automatically.'
-    })}
     <section class="music-app-hero" data-music-hero>
       <video class="music-hero-video" data-music-hero-video muted loop playsinline autoplay preload="metadata" aria-hidden="true"></video>
       <div class="music-hero-overlay" aria-hidden="true"></div>
@@ -723,46 +696,54 @@ function rankedFeaturedLiveStreams(streams = state.rows.liveStreams) {
     .sort((left, right) => right.__featuredLiveScore - left.__featuredLiveScore)
 }
 
-function streamingHomeGreeting() {
-  const hour = new Date().getHours()
-  const period = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'
-  const name = String(state.currentUser?.displayName || '').trim().split(/\s+/)[0]
-  return name ? `Good ${period}, ${name}` : 'Listen on Melogic'
-}
-function uniqueStreamingReleases(items = [], limitCount = 12) {
-  const seen = new Set()
-  return (Array.isArray(items) ? items : []).filter((release) => {
-    const key = String(release?.id || release?.releaseId || '')
-    if (!key || seen.has(key)) return false
-    seen.add(key); return true
-  }).slice(0, limitCount)
-}
-function streamingHomeTopPicks() {
-  const featured = state.rows.featured?.length ? state.rows.featured : state.rows.staffPicks
-  return uniqueStreamingReleases([...(featured || []), ...(state.rows.newest || []), ...(state.rows.staffPicks || []), ...(state.rows.rising || [])], 12)
-}
-function renderStreamingHomeHero() {
-  const uploadHref = state.currentUser ? ROUTES.distribution : authRoute({ redirect: ROUTES.distribution })
-  const newest = uniqueStreamingReleases(state.rows.newest || [], 1)[0]
-  const heroArt = newest?.coverArtURL || newest?.artworkURL || newest?.imageURL || ''
-  return `<section class="music-home-hero"><div class="music-home-hero-copy"><p class="music-eyebrow">${escapeHtml(streamingHomeGreeting())}</p><h1>Your music.<br><span>Your discovery.</span></h1><p>Stream releases published through Melogic, discover creators, and pick up where you left off.</p><div class="music-home-hero-actions"><a class="button button-accent" href="#new-releases-home">Browse new releases</a><a class="button button-muted" href="${uploadHref}">Publish through Distribution</a></div></div><div class="music-home-hero-visual" aria-hidden="true">${heroArt ? `<img src="${escapeHtml(heroArt)}" alt="" loading="eager" />` : '<span class="music-home-orbit"><i></i><i></i><i></i></span>'}</div></section>`
-}
-function renderStreamingReleaseShelf({ id, eyebrow, title, items = [], emptyTitle, emptyBody } = {}) {
-  const releases = uniqueStreamingReleases(items, 16)
-  return `<section class="music-home-shelf" id="${escapeHtml(id || '')}"><div class="music-home-shelf-heading"><div><p class="music-eyebrow">${escapeHtml(eyebrow || '')}</p><h2>${escapeHtml(title || '')}</h2></div></div>${state.catalogLoading ? '<div class="music-home-skeleton-grid"><i></i><i></i><i></i><i></i><i></i></div>' : releases.length ? `<div class="music-home-release-rail" data-carousel="${escapeHtml(id || '')}">${releases.map((release) => releaseCard(release, { openLabel: 'View' })).join('')}</div>` : emptyState(emptyTitle || 'Nothing here yet', state.catalogError || emptyBody || '')}</section>`
-}
-function renderStreamingLiveShelf() {
-  const live = (state.rows.liveStreams || []).filter((stream) => stream?.isLive === true || stream?.status === 'live')
-  return `<section class="music-home-shelf" id="on-air-home"><div class="music-home-shelf-heading"><div><p class="music-eyebrow">Live Streams</p><h2>On air now</h2></div><a class="music-home-see-all" href="${ROUTES.musicLive}">View live streams</a></div>${live.length ? `<div class="music-home-live-rail">${live.slice(0,8).map(liveStreamCard).join('')}</div>` : '<div class="music-home-live-empty"><span class="music-live-pulse"></span><div><strong>No broadcasts are live right now</strong><p>When a creator goes live through Melogic, the broadcast will appear here automatically.</p></div></div>'}</section>`
-}
-
 function renderHomeView() {
-  const topPicks = streamingHomeTopPicks()
-  const newest = uniqueStreamingReleases(state.rows.newest || [], 16)
-  const recent = uniqueStreamingReleases(state.rows.recentlyPlayed || [], 12)
-  const artists = (state.rows.artists || []).slice(0, 10)
+  const featured = state.rows.featured.length ? state.rows.featured : state.rows.staffPicks
+  const featuredLive = rankedFeaturedLiveStreams().slice(0, 1)
+  const topPicks = [...featuredLive, ...featured].slice(0, 12)
   const genres = genreList()
-  return `${renderStreamingHomeHero()}<div class="music-home-content">${renderStreamingReleaseShelf({ id:'top-picks-home', eyebrow:state.currentUser ? 'For You' : 'Melogic Picks', title:state.currentUser ? 'Top picks for you' : 'Start listening', items:topPicks, emptyTitle:'Discovery is warming up', emptyBody:'Approved public releases will appear here as the catalog grows.' })}${renderStreamingReleaseShelf({ id:'new-releases-home', eyebrow:'Latest on Melogic', title:'New releases', items:newest, emptyTitle:'No new public releases yet', emptyBody:'Approved releases will appear here automatically.' })}${renderStreamingReleaseShelf({ id:'recently-played-home', eyebrow:'Your Listening', title:'Recently played', items:recent, emptyTitle:state.currentUser ? 'Nothing played yet' : 'Sign in to keep your listening history', emptyBody:state.currentUser ? 'Play a Melogic-hosted release and it will appear here.' : 'Your recent Melogic plays can follow you when you are signed in.' })}${renderStreamingLiveShelf()}${artists.length ? `<section class="music-home-shelf"><div class="music-home-shelf-heading"><div><p class="music-eyebrow">Artists</p><h2>Creators to watch</h2></div></div><div class="music-home-artist-rail">${artists.map(artistCard).join('')}</div></section>` : ''}<section class="music-home-shelf"><div class="music-home-shelf-heading"><div><p class="music-eyebrow">Browse</p><h2>Genres & moods</h2></div></div><div class="music-genre-cloud">${(genres.length ? genres : ['Electronic','Hip-Hop','Pop','Rock','Cinematic','Ambient','Bass','Indie']).slice(0,16).map((genre) => `<button type="button" data-search-genre="${escapeHtml(genre)}">${escapeHtml(genre)}</button>`).join('')}</div></section></div>`
+  return `
+    ${renderHero()}
+    ${carouselRow({
+      id: 'top-picks',
+      eyebrow: state.currentUser ? 'Top Picks for You' : 'Staff Picks',
+      title: featuredLive.length ? 'Featured now' : state.currentUser ? 'Start with these releases' : 'Featured music to start with',
+      items: topPicks,
+      type: 'mixed',
+      emptyTitle: 'Discovery is warming up.',
+      emptyBody: 'Featured live streams and approved public releases will appear here.'
+    })}
+    ${carouselRow({
+      id: 'recently-played',
+      eyebrow: 'Recently Played',
+      title: 'Pick up where you left off',
+      items: state.rows.recentlyPlayed,
+      emptyTitle: 'No recent plays yet',
+      emptyBody: 'Play music on Melogic and your recent tracks will appear here.'
+    })}
+    ${carouselRow({ id: 'live-now', eyebrow: 'Live Streams', title: 'On air now', items: state.rows.liveStreams, type: 'live', emptyTitle: 'No live streams right now', emptyBody: 'Live streams started from Studio Live will appear here.' })}
+    ${carouselRow({ id: 'featured-music', eyebrow: 'Featured Music', title: 'Featured releases', items: state.rows.featured })}
+    ${carouselRow({ id: 'featured-artists', eyebrow: 'Featured Artists', title: 'Creators to watch', items: state.rows.artists, type: 'artist', emptyTitle: 'Featured artists are coming soon', emptyBody: 'Artist rows will appear as public profiles are featured in Melogic Streaming.' })}
+    ${carouselRow({ id: 'new-releases', eyebrow: 'New on Melogic', title: 'Fresh public releases', items: state.rows.newest, emptyTitle: 'No new releases yet', emptyBody: 'New public releases will appear here after approval.' })}
+    ${carouselRow({ id: 'staff-picks', eyebrow: 'Staff Picks', title: 'Selected for discovery', items: state.rows.staffPicks })}
+    ${carouselRow({ id: 'rising-creators', eyebrow: 'Rising Creators', title: 'Momentum builders', items: state.rows.rising })}
+    <section class="music-row-section">
+      <div class="music-row-heading">
+        <div>
+          <p class="music-eyebrow">Genres / Moods</p>
+          <h2>Find a lane</h2>
+        </div>
+      </div>
+      <div class="music-genre-cloud">${(genres.length ? genres : ['Electronic', 'Hip-Hop', 'Pop', 'Rock', 'Cinematic', 'Ambient', 'Bass', 'Indie']).map((genre) => `<button type="button" data-search-genre="${escapeHtml(genre)}">${escapeHtml(genre)}</button>`).join('')}</div>
+    </section>
+    <section class="music-how-compact">
+      <p class="music-eyebrow">How Melogic Streaming works</p>
+      <div class="music-how-grid">
+        <article><strong>Approved public releases</strong><span>Creators publish music after review.</span></article>
+        <article><strong>Prepared stream files</strong><span>Playback uses stream audio, not private masters.</span></article>
+        <article><strong>Creator infrastructure</strong><span>Discovery connects profiles, releases, and future music tools.</span></article>
+      </div>
+    </section>
+  `
 }
 
 function renderNewView() {
@@ -1233,53 +1214,25 @@ function renderCredits(credits) {
   return `<ul>${Object.entries(credits).map(([key, value]) => `<li><strong>${escapeHtml(key)}:</strong> ${escapeHtml(Array.isArray(value) ? value.join(', ') : value)}</li>`).join('')}</ul>`
 }
 
-function nativeReleaseTracks() {
-  return state.tracks.filter((track) => isNativeMusicTrackPlayable(track))
-}
-function adjacentNativeReleaseTrack(direction = 1) {
-  const playable = nativeReleaseTracks()
-  if (!playable.length) return null
-  const currentId = state.player.track?.id || ''
-  const index = playable.findIndex((track) => track.id === currentId)
-  if (index < 0) return direction < 0 ? playable[playable.length - 1] : playable[0]
-  const nextIndex = index + direction
-  return playable[nextIndex] || null
-}
-
-async function playAdjacentNativeReleaseTrack(direction = 1) {
-  const next = adjacentNativeReleaseTrack(direction)
-  if (!next) return false
-  await toggleTrack(next)
-  return true
-}
-
-function releaseDurationSeconds() {
-  return state.tracks.reduce((total, track) => total + Math.max(0, Number(track.duration || 0)), 0)
-}
-function releasePrimaryPlayLabel() {
-  const playable = nativeReleaseTracks()
-  if (!playable.length) return 'Unavailable'
-  const current = state.player.track && playable.some((track) => track.id === state.player.track.id)
-  if (current && state.player.playing) return 'Pause'
-  return current ? 'Resume' : 'Play'
-}
-
 function renderTrackRow(track) {
-  const playable = isNativeMusicTrackPlayable(track)
+  const playable = Boolean(track.streamAudioURL)
   const isCurrent = state.player.track?.id === track.id
   const spotifyUrl = track.externalLinks?.spotify || track.externalPlaybackURL || ''
-  const duration = Number(track.duration || 0)
   return `
-    <li class="music-track-row ${isCurrent ? 'is-current' : ''} ${playable ? 'is-playable' : ''}">
-      <button type="button" class="music-track-play" data-play-track="${escapeHtml(track.id)}" ${playable ? '' : 'disabled'} aria-label="${escapeHtml(`${isCurrent && state.player.playing ? 'Pause' : 'Play'} ${track.title}`)}">
-        <span class="music-track-index">${escapeHtml(String(track.trackNumber || ''))}</span>
-        <span class="music-track-play-icon" aria-hidden="true">${isCurrent && state.player.playing ? 'II' : '>'}</span>
-      </button>
-      <div class="music-track-main"><strong>${escapeHtml(track.title)}</strong><small>${escapeHtml(track.artistName)}${track.explicit ? '<span class="music-track-explicit">E</span>' : ''}</small></div>
-      <div class="music-track-technical">${track.isrc ? `<span>${escapeHtml(track.isrc)}</span>` : ''}</div>
-      <span class="music-track-duration">${duration > 0 ? escapeHtml(formatDuration(duration)) : '--:--'}</span>
-      <div class="music-track-actions">${!playable && spotifyUrl ? `<a href="${escapeHtml(spotifyUrl)}" target="_blank" rel="noreferrer">Spotify +</a>` : ''}</div>
-    </li>`
+    <li class="music-track-row ${isCurrent ? 'is-current' : ''}">
+      <span class="music-track-number">${track.trackNumber}</span>
+      <div>
+        <strong>${escapeHtml(track.title)}</strong>
+        <small>${escapeHtml(track.artistName)}${track.isrc ? ` · ${escapeHtml(track.isrc)}` : ''}${track.explicit ? ' · Explicit' : ''}</small>
+      </div>
+      <span>${escapeHtml(formatDuration(track.duration))}</span>
+      ${playable
+        ? `<button type="button" class="button button-muted" data-play-track="${escapeHtml(track.id)}">${isCurrent && state.player.playing ? 'Pause' : 'Play'}</button>`
+        : spotifyUrl
+          ? `<a class="button button-muted" href="${escapeHtml(spotifyUrl)}" target="_blank" rel="noreferrer">Spotify</a>`
+          : '<span class="music-muted">Official link unavailable</span>'}
+    </li>
+  `
 }
 
 function spotifyEmbedURL(value = '') {
@@ -1294,31 +1247,84 @@ function spotifyEmbedURL(value = '') {
 }
 
 function renderOfficialPlayback(release = {}) {
-  const spotify = release.externalLinks?.spotify || release.externalPlaybackURL || state.tracks.find((track) => track.externalLinks?.spotify)?.externalLinks?.spotify || ''
-  const links = [spotify ? ['Spotify', spotify] : null, release.externalLinks?.appleMusic ? ['Apple Music', release.externalLinks.appleMusic] : null, release.externalLinks?.hyperFollow ? ['All stores', release.externalLinks.hyperFollow] : null, release.externalLinks?.distributor ? ['Distributor', release.externalLinks.distributor] : null].filter(Boolean)
-  if (!links.length) return ''
-  return `<section class="music-platform-row" aria-label="Listen on other platforms"><span>Also available on</span><div>${links.map(([label,url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)} <span aria-hidden="true">+</span></a>`).join('')}</div></section>`
+  const spotify = release.externalLinks?.spotify
+    || release.externalPlaybackURL
+    || state.tracks.find((track) => track.externalLinks?.spotify)?.externalLinks?.spotify
+    || ''
+  const embed = spotifyEmbedURL(spotify)
+  const links = [
+    release.externalLinks?.spotify ? ['Spotify', release.externalLinks.spotify] : null,
+    release.externalLinks?.appleMusic ? ['Apple Music', release.externalLinks.appleMusic] : null,
+    release.externalLinks?.hyperFollow ? ['All stores', release.externalLinks.hyperFollow] : null,
+    release.externalLinks?.distributor ? ['Distributor page', release.externalLinks.distributor] : null
+  ].filter(Boolean)
+  if (!embed && !links.length) return ''
+  return `
+    <section class="music-official-playback">
+      <div>
+        <p class="music-eyebrow">Official playback</p>
+        <h2>Listen through the artist’s distributor links</h2>
+        <p>Playback is provided by the linked music service. Melogic is not hosting this distributor-controlled audio.</p>
+      </div>
+      ${embed ? `<iframe src="${escapeHtml(embed)}" title="${escapeHtml(release.title)} on Spotify" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>` : ''}
+      ${links.length ? `<div class="music-official-links">${links.map(([label, url]) => `<a class="button button-muted" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${escapeHtml(label)}</a>`).join('')}</div>` : ''}
+    </section>
+  `
 }
 
 function renderReleaseDetailContent() {
-  if (state.loading) return '<section class="music-detail-state"><h1>Loading release...</h1></section>'
-  if (!state.release) return `<section class="music-detail-state"><p class="music-eyebrow">Release unavailable</p><h1>This Melogic Streaming release is not available.</h1><p>It may still be in review, private, unlisted, or no longer published.</p><a class="button button-accent" href="${ROUTES.music}">Back to Streaming</a></section>`
-  const release=state.release
-  const tags=[release.genre,release.subgenre,...(release.moods||[]),...(release.tags||[])].filter(Boolean)
-  const playableTracks=nativeReleaseTracks(), duration=releaseDurationSeconds()
-  const currentReleaseTrack=state.player.track&&playableTracks.some((track)=>track.id===state.player.track.id)
-  const metaBits=[formatDate(release.releaseDate||release.createdAt),`${state.tracks.length||0} ${state.tracks.length===1?'song':'songs'}`,duration>0?formatDuration(duration):''].filter(Boolean)
+  if (state.loading) {
+    return '<section class="music-detail-state"><h1>Loading release...</h1></section>'
+  }
+
+  if (!state.release) {
+    return `
+      <section class="music-detail-state">
+        <p class="music-eyebrow">Release unavailable</p>
+        <h1>This Melogic Streaming release is not available.</h1>
+        <p>It may still be in review, private, unlisted, or no longer published.</p>
+        <a class="button button-accent" href="${ROUTES.music}">Back to Streaming</a>
+      </section>
+    `
+  }
+
+  const release = state.release
+  const tags = [release.genre, release.subgenre, ...(release.moods || []), ...(release.tags || [])].filter(Boolean)
   return `
-    <section class="music-detail-hero music-release-hero">
-      <div class="music-release-art-shell">${renderReleaseArtwork(release,'music-detail-art')}</div>
-      <div class="music-detail-copy"><p class="music-eyebrow">${escapeHtml(titleCase(release.releaseType))}</p><h1>${escapeHtml(release.title)}</h1><p class="music-detail-artist">${escapeHtml(release.artistName)}</p><p class="music-release-meta">${metaBits.map(escapeHtml).join('<span>•</span>')}</p>
-        <div class="music-tag-row">${tags.length?tags.slice(0,6).map((tag)=>`<span>${escapeHtml(tag)}</span>`).join(''):'<span>Melogic Streaming</span>'}${release.explicit?'<span class="music-explicit-badge">Explicit</span>':''}</div>
-        <div class="music-release-actions"><button type="button" class="music-release-primary-play" data-release-native-play ${playableTracks.length?'':'disabled'}><span aria-hidden="true">${currentReleaseTrack&&state.player.playing?'II':'>'}</span>${escapeHtml(releasePrimaryPlayLabel())}</button>${playableTracks.length?'<span class="music-native-badge"><i></i> Streams on Melogic</span>':'<span class="music-native-badge is-unavailable">External playback only</span>'}</div>
+    <section class="music-detail-hero">
+      ${renderReleaseArtwork(release, 'music-detail-art')}
+      <div class="music-detail-copy">
+        <p class="music-eyebrow">${escapeHtml(titleCase(release.releaseType))}</p>
+        <h1>${escapeHtml(release.title)}</h1>
+        <p class="music-detail-artist">${escapeHtml(release.artistName)}</p>
+        <p>${escapeHtml(formatDate(release.releaseDate || release.createdAt))}</p>
+        <div class="music-tag-row">
+          ${tags.length ? tags.slice(0, 8).map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Melogic Streaming</span>'}
+          ${release.explicit ? '<span class="music-explicit-badge">Explicit</span>' : ''}
+        </div>
       </div>
     </section>
-    <section class="music-release-body"><main class="music-release-main"><div class="music-release-section-heading"><div><p class="music-eyebrow">Track list</p><h2>${state.tracks.length?`${state.tracks.length} ${state.tracks.length===1?'track':'tracks'}`:'Tracks'}</h2></div>${playableTracks.length?`<span>${playableTracks.length===state.tracks.length?'Full release available':`${playableTracks.length} playable on Melogic`}</span>`:''}</div>${state.tracks.length?`<ol class="music-track-list">${state.tracks.map(renderTrackRow).join('')}</ol>`:'<p class="music-muted">The track list is being prepared.</p>'}${renderOfficialPlayback(release)}</main>
-      <aside class="music-release-info"><section><p class="music-eyebrow">Release details</p><dl class="music-release-facts">${release.releaseType?`<div><dt>Type</dt><dd>${escapeHtml(titleCase(release.releaseType))}</dd></div>`:''}${release.releaseDate||release.createdAt?`<div><dt>Released</dt><dd>${escapeHtml(formatDate(release.releaseDate||release.createdAt))}</dd></div>`:''}${release.upc?`<div><dt>UPC</dt><dd>${escapeHtml(release.upc)}</dd></div>`:''}${release.sourceDistributor?`<div><dt>Distributor</dt><dd>${escapeHtml(titleCase(release.sourceDistributorLabel||release.sourceDistributor.replace(/_/g,' ')))}</dd></div>`:''}</dl></section><section><p class="music-eyebrow">Credits</p><div class="music-release-credits">${renderCredits(release.credits)}</div></section>${(release.copyrightLine||release.publisherLine)?`<section class="music-release-legal">${release.copyrightLine?`<p>${escapeHtml(release.copyrightLine)}</p>`:''}${release.publisherLine?`<p>${escapeHtml(release.publisherLine)}</p>`:''}</section>`:''}</aside>
-    </section>`
+    ${renderOfficialPlayback(release)}
+    <section class="music-detail-grid">
+      <div class="music-panel">
+        <div class="music-row-heading">
+          <div>
+            <p class="music-eyebrow">Track List</p>
+            <h2>${state.tracks.length || 'No'} tracks</h2>
+          </div>
+        </div>
+        ${state.tracks.length ? `<ol class="music-track-list">${state.tracks.map(renderTrackRow).join('')}</ol>` : '<p class="music-muted">The track list is being prepared.</p>'}
+      </div>
+      <aside class="music-panel">
+        <p class="music-eyebrow">Credits</p>
+        ${renderCredits(release.credits)}
+        ${release.upc ? `<p class="music-legal-line"><strong>UPC:</strong> ${escapeHtml(release.upc)}</p>` : ''}
+        ${release.sourceDistributor ? `<p class="music-legal-line"><strong>Distributed through:</strong> ${escapeHtml(titleCase(release.sourceDistributorLabel || release.sourceDistributor.replace(/_/g, ' ')))}</p>` : ''}
+        ${release.copyrightLine ? `<p class="music-legal-line">${escapeHtml(release.copyrightLine)}</p>` : ''}
+        ${release.publisherLine ? `<p class="music-legal-line">${escapeHtml(release.publisherLine)}</p>` : ''}
+      </aside>
+    </section>
+  `
 }
 
 function renderReleaseDetailPage() {
@@ -4703,53 +4709,8 @@ function rerender() {
   attachMusicHeroVideo()
 }
 
-function syncNativeMediaSession(track = state.player.track) {
-  if (!('mediaSession' in navigator)) return
-  if (!track || !isNativeMusicTrackPlayable(track)) {
-    navigator.mediaSession.metadata = null
-    navigator.mediaSession.playbackState = 'none'
-    return
-  }
-  try {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: track.title || 'Melogic Streaming',
-      artist: track.artistName || '',
-      album: state.release?.title || '',
-      artwork: track.coverArtURL ? [{ src: track.coverArtURL }] : []
-    })
-    navigator.mediaSession.playbackState = state.player.playing ? 'playing' : 'paused'
-  } catch {}
-}
-
-function installNativeMediaSessionHandlers() {
-  if (!('mediaSession' in navigator)) return
-  const set = (action, handler) => {
-    try { navigator.mediaSession.setActionHandler(action, handler) } catch {}
-  }
-  set('play', async () => {
-    const track = state.player.track
-    if (!track || !isNativeMusicTrackPlayable(track)) return
-    const audio = state.player.audio || ensureAudio(track)
-    if (!audio) return
-    try { await audio.play(); state.player.playing = true } catch { state.player.playing = false }
-    updatePlayerControls()
-  })
-  set('pause', () => {
-    state.player.audio?.pause()
-    state.player.playing = false
-    updatePlayerControls()
-  })
-  set('nexttrack', () => { playAdjacentNativeReleaseTrack(1).catch(() => {}) })
-  set('previoustrack', () => { playAdjacentNativeReleaseTrack(-1).catch(() => {}) })
-  set('seekto', (details) => {
-    const audio = state.player.audio
-    if (!audio || !Number.isFinite(details?.seekTime)) return
-    audio.currentTime = Math.max(0, Math.min(details.seekTime, Number(audio.duration || details.seekTime)))
-  })
-}
-
 function ensureAudio(track) {
-  if (!isNativeMusicTrackPlayable(track)) return null
+  if (!track?.streamAudioURL) return null
   if (state.player.audio) {
     state.player.audio.pause()
     state.player.audio.removeAttribute('src')
@@ -4768,29 +4729,6 @@ function ensureAudio(track) {
   })
   audio.addEventListener('ended', () => {
     state.player.playing = false
-    state.player.currentTime = 0
-    updatePlayerControls()
-    playAdjacentNativeReleaseTrack(1).catch((error) => {
-      console.warn('[music] Could not advance to the next native release track.', error)
-    })
-  })
-  audio.addEventListener('error', () => {
-    state.player.playing = false
-    state.player.currentTime = 0
-    console.warn('[music] Native audio failed to load.', {
-      trackId: track.id || '',
-      releaseId: track.releaseId || '',
-      mediaErrorCode: audio.error?.code || null
-    })
-    updatePlayerControls()
-  })
-  audio.addEventListener('error', () => {
-    state.player.playing = false
-    state.player.currentTime = 0
-    console.warn('[music] Native track audio failed to load.', {
-      trackId: track.id || '',
-      releaseId: track.releaseId || ''
-    })
     updatePlayerControls()
   })
   state.player.audio = audio
@@ -4798,7 +4736,6 @@ function ensureAudio(track) {
 }
 
 function updatePlayerControls() {
-  syncNativeMediaSession(state.player.track)
   const player = app.querySelector('[data-music-player]')
   if (!player) return
   const title = player.querySelector('.music-player-meta strong')
@@ -4827,7 +4764,7 @@ function updatePlayerControls() {
 }
 
 async function toggleTrack(track) {
-  if (!isNativeMusicTrackPlayable(track)) return
+  if (!track?.streamAudioURL) return
   if (state.player.track?.id === track.id && state.player.audio) {
     if (state.player.playing) {
       state.player.audio.pause()
@@ -6131,7 +6068,6 @@ function setActiveView(view) {
 }
 
 function bindMusicEvents() {
-  installNativeMediaSessionHandlers()
   app.querySelector('[data-toggle-music-sidebar]')?.addEventListener('click', () => {
     state.sidebarOpen = !state.sidebarOpen
     rerender()
@@ -6732,29 +6668,16 @@ function bindMusicEvents() {
   app.querySelectorAll('[data-play-release]').forEach((button) => {
     button.addEventListener('click', () => {
       const release = allPublicReleases().find((item) => item.id === button.dataset.playRelease)
-      if (!release) return
-      if (release.playbackType !== 'internal_audio' || !release.streamAudioPath || !release.streamAudioURL) {
-        window.location.href = musicReleaseRoute(release)
-        return
-      }
+      if (!release?.streamAudioURL) return
       toggleTrack({
         id: `release-${release.id}`,
         title: release.title,
         artistName: release.artistName,
-        streamAudioPath: release.streamAudioPath,
         streamAudioURL: release.streamAudioURL,
-        playbackType: 'internal_audio',
         coverArtURL: release.coverArtURL
       }).catch(() => {})
     })
   })
-  app.querySelector('[data-release-native-play]')?.addEventListener('click', () => {
-    const playable=nativeReleaseTracks()
-    if (!playable.length) return
-    const current=state.player.track&&playable.find((track)=>track.id===state.player.track.id)
-    toggleTrack(current||playable[0]).catch(()=>{})
-  })
-
   app.querySelectorAll('[data-play-track]').forEach((button) => {
     button.addEventListener('click', () => {
       const track = state.tracks.find((item) => item.id === button.dataset.playTrack)
@@ -6804,32 +6727,28 @@ async function attachMusicHeroVideo() {
   }
 }
 
-function renderStreamingStartupShell() {
-  if (!app || app.childElementCount) return
-  app.innerHTML = `<div class="music-startup-shell" role="status" aria-live="polite"><div class="music-startup-top"><strong>MELOGIC</strong><span>Streaming</span></div><div class="music-startup-body"><aside><b>Melogic Streaming</b><i></i><i></i><i></i><i></i></aside><main><small>MELOGIC STREAMING</small><h1>Your music.<br><em>Your discovery.</em></h1><p>Loading your Streaming experience…</p><div class="music-startup-cards"><i></i><i></i><i></i><i></i></div></main></div></div>`
-}
-
 async function loadMusicPage() {
-  renderStreamingStartupShell()
   stopLiveStreamSubscription()
   stopLiveChatSubscription()
   stopLiveSequenceSubscription()
   stopLiveListRefresh()
   initShellChrome()
-  state.route = currentRouteMode()
-  state.activeView = getInitialView()
-  state.loading = true
-  rerender()
-
   state.currentUser = await waitForInitialAuthState().catch(() => null)
   state.accountPermissions = null
   if (state.currentUser) {
     state.accountPermissionsLoading = true
-    getMyAccountPermissions()
-      .then((permissions) => { state.accountPermissions = permissions })
-      .catch(() => { state.accountPermissions = { permissions: { musicLive: false }, restrictions: {}, source: 'fallback' } })
-      .finally(() => { state.accountPermissionsLoading = false; rerender() })
+    try {
+      state.accountPermissions = await getMyAccountPermissions()
+    } catch (error) {
+      state.accountPermissions = { permissions: { musicLive: false }, restrictions: {}, source: 'fallback' }
+    } finally {
+      state.accountPermissionsLoading = false
+    }
   }
+  state.route = currentRouteMode()
+  state.activeView = getInitialView()
+  state.loading = true
+  rerender()
 
   if (state.route.mode === 'release') {
     state.release = await getMusicRelease(state.route.id)
@@ -6886,7 +6805,7 @@ async function loadMusicPage() {
 
   if (state.route.mode === 'liveList') state.activeView = 'live'
 
-  const startupResults = await Promise.allSettled([
+  const [featured, newest, artists, recent, popular, liveStreams] = await Promise.all([
     listFeaturedMusicReleases(16),
     listNewMusicReleases(18),
     listFeaturedArtists(14),
@@ -6894,15 +6813,9 @@ async function loadMusicPage() {
     listPublishedMusicReleases({ limitCount: 16, sort: 'popular' }),
     listPublicLiveStreams({ limitCount: 20 })
   ])
-  const valueOrEmpty = (index) => startupResults[index]?.status === 'fulfilled' ? startupResults[index].value : []
-  const [featured, newest, artists, recent, popular, liveStreams] = [0,1,2,3,4,5].map(valueOrEmpty)
-  const startupFailures = startupResults.filter((result) => result.status === 'rejected')
-  if (startupFailures.length) console.warn(`[music] ${startupFailures.length} Streaming startup request(s) failed; rendering available data.`)
 
   state.rows.featured = featured
   state.rows.newest = newest
-    if (!state.rows.featured?.length && state.rows.newest?.length) state.rows.featured = state.rows.newest.slice(0, 12)
-    if (!state.rows.newest?.length && state.rows.featured?.length) state.rows.newest = state.rows.featured.slice(0, 12)
   state.rows.staffPicks = featured.length ? featured : popular
   state.rows.rising = popular.length ? popular : newest
   state.rows.artists = artists

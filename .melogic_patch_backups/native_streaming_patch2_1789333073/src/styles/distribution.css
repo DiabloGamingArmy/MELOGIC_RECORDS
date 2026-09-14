@@ -736,11 +736,3 @@
     grid-column: 2;
   }
 }
-
-.distribution-audio-upload{display:flex;flex-direction:column;gap:.45rem;min-width:210px;padding:.8rem;border:1px solid rgba(255,255,255,.1);border-radius:12px;background:rgba(255,255,255,.025)}
-.distribution-audio-upload>span{font-size:.76rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.72}
-.distribution-audio-upload strong{font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.distribution-audio-upload small{opacity:.66;line-height:1.35}
-.distribution-audio-upload progress{width:100%;height:7px}
-.distribution-audio-actions{display:flex;gap:.55rem;align-items:center;flex-wrap:wrap}
-.distribution-audio-picker{cursor:pointer;text-align:center}

@@ -35,19 +35,6 @@ export function renderPagePreloaderMarkup() {
   `
 }
 
-export function showNavigationPreloader() {
-  let preloader = document.querySelector('#page-preloader')
-  if (!preloader) {
-    document.body.insertAdjacentHTML('beforeend', renderPagePreloaderMarkup())
-    preloader = document.querySelector('#page-preloader')
-  }
-  if (!preloader) return null
-  preloader.classList.remove('is-hidden')
-  preloader.dataset.navigationTransition = 'true'
-  loadBrandLoaderLogo(preloader).catch(() => {})
-  return preloader
-}
-
 export async function loadBrandLoaderLogo(preloader = document.querySelector('#page-preloader')) {
   if (!preloader) return fallbackBrandLogoUrl
   const logo = preloader.querySelector('.brand-loader-logo')

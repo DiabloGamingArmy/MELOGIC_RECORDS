@@ -574,17 +574,6 @@ function syncVisibleInputs() {
   })
 }
 
-function preserveDistributionEditorState() {
-  // The DOM is authoritative for fields the user is actively editing.
-  // Commit every visible release + track field before an audio operation
-  // saves or re-renders the wizard.
-  syncVisibleInputs()
-
-  // Return the same object intentionally: callers operate on the preserved
-  // state rather than reconstructing the form from a server response.
-  return state.form
-}
-
 function validateStep(step = state.step) {
   syncVisibleInputs()
   if (step === 0) {
@@ -720,7 +709,6 @@ async function loadReleases({ preserveMessage = false } = {}) {
 }
 
 async function ensureStableTrackIds() {
-  preserveDistributionEditorState()
   if (state.form.releaseId && state.form.tracks.every((track) => track.trackId)) return
   const result = await saveMusicReleaseDraft({ releaseId: state.form.releaseId, release: releasePayload(), tracks: trackPayloads() })
   state.form.releaseId = result.releaseId
@@ -732,7 +720,6 @@ async function ensureStableTrackIds() {
 }
 
 async function handleTrackAudioUpload(index, file) {
-  preserveDistributionEditorState()
   const track = state.form.tracks[index]
   if (!track || !(file instanceof File) || !state.user?.uid) return
   state.error = ''
@@ -758,10 +745,6 @@ async function handleTrackAudioUpload(index, file) {
     stableTrack.streamAudioURL = uploaded.url
     stableTrack.audioFileName = uploaded.name
     stableTrack.audioUploading = false
-
-    // Uploads can take long enough for the user to continue editing.
-    // Capture those edits immediately before the completion save.
-    preserveDistributionEditorState()
     await saveMusicReleaseDraft({ releaseId: state.form.releaseId, release: releasePayload(), tracks: trackPayloads() })
     if (previousPath && previousPath !== uploaded.path) {
       try { await removeDistributionTrackAudio({ path: previousPath }) } catch {}
@@ -775,7 +758,6 @@ async function handleTrackAudioUpload(index, file) {
 }
 
 async function handleTrackAudioRemove(index) {
-  preserveDistributionEditorState()
   const track = state.form.tracks[index]
   if (!track?.streamAudioPath) return
   state.error = ''
@@ -795,12 +777,10 @@ async function handleTrackAudioRemove(index) {
 
 function bindEvents() {
   document.querySelectorAll('[data-track-audio]').forEach((input) => input.addEventListener('change', () => {
-    preserveDistributionEditorState()
     const file = input.files?.[0]
     if (file) handleTrackAudioUpload(Number(input.dataset.trackAudio), file)
   }))
   document.querySelectorAll('[data-remove-track-audio]').forEach((button) => button.addEventListener('click', () => {
-    preserveDistributionEditorState()
     handleTrackAudioRemove(Number(button.dataset.removeTrackAudio))
   }))
 

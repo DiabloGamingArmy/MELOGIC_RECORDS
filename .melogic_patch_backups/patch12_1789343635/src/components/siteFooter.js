@@ -43,7 +43,7 @@ export function renderSiteFooter() {
     <footer class="site-footer" data-site-footer>
       <div class="site-footer-inner">
         <div class="site-footer-brand">
-          <strong>Melogic Creative Technologies</strong>
+          <strong>Melogic Records</strong>
           <p>Digital audio marketplace, creator tools, and support for producers building original music products.</p>
         </div>
         <nav class="site-footer-links" aria-label="Site information">
