@@ -19,45 +19,48 @@
 :root {
   color-scheme: dark;
 
-  --soura-black: #050505;
-  --soura-canvas: #080808;
-  --soura-surface-0: #0b0b0c;
-  --soura-surface-1: #101012;
-  --soura-surface-2: #151517;
-  --soura-surface-3: #1b1b1e;
-  --soura-surface-4: #232327;
+  --soura-black: #000000;
+  --soura-canvas: #000000;
+  --soura-surface-0: #050505;
+  --soura-surface-1: #0A0A0A;
+  --soura-surface-2: #111114;
+  --soura-surface-3: #17171C;
+  --soura-surface-4: #1E1E26;
 
-  --soura-surface-hover-neutral: #1e1e22;
-  --soura-surface-pressed-neutral: #29292e;
+  --soura-surface-hover-neutral: #17171C;
+  --soura-surface-pressed-neutral: #1E1E26;
 
-  --soura-border-subtle: rgba(255, 255, 255, 0.075);
-  --soura-border: rgba(255, 255, 255, 0.115);
-  --soura-border-strong: rgba(255, 255, 255, 0.19);
-  --soura-divider: rgba(255, 255, 255, 0.08);
+  --soura-border-subtle: #2A2A31;
+  --soura-border: #3A3A43;
+  --soura-border-strong: #62626D;
+  --soura-divider: #2A2A31;
 
-  --soura-text-primary: #f5f5f7;
-  --soura-text-secondary: #c0c0c6;
-  --soura-text-muted: #8b8b94;
-  --soura-text-dim: #66666f;
+  --soura-text-primary: #FFFFFF;
+  --soura-text-secondary: #B7B7C2;
+  --soura-text-muted: #8E8E99;
+  --soura-text-dim: #70707A;
   --soura-text-disabled: #505058;
 
-  --soura-accent-blue: #4f86ff;
-  --soura-accent-blue-strong: #3976ff;
-  --soura-accent-purple: #985cff;
-  --soura-accent-purple-strong: #8750f5;
+  --soura-accent-blue: #2563EB;
+  --soura-accent-blue-strong: #1D4ED8;
+  --soura-accent-purple: #9333EA;
+  --soura-accent-purple-strong: #7E22CE;
 
   --soura-accent-gradient:
-    linear-gradient(135deg, #4f86ff 0%, #6f6cff 48%, #985cff 100%);
+    
+    linear-gradient(135deg, #2563EB 0%, #5C4BEA 50%, #9333EA 100%);
   --soura-accent-gradient-hover:
-    linear-gradient(135deg, #5a8eff 0%, #796fff 48%, #a467ff 100%);
+    
+    linear-gradient(135deg, #1D4ED8 0%, #4F46E5 50%, #7E22CE 100%);
   --soura-accent-gradient-active:
-    linear-gradient(135deg, #3976ff 0%, #6557f2 50%, #8750f5 100%);
+    
+    linear-gradient(135deg, #1E40AF 0%, #4338CA 50%, #6B21A8 100%);
 
-  --soura-accent-soft: rgba(104, 102, 255, 0.10);
-  --soura-accent-hover-soft: rgba(104, 102, 255, 0.14);
-  --soura-accent-active-soft: rgba(104, 102, 255, 0.20);
-  --soura-accent-border: rgba(111, 108, 255, 0.52);
-  --soura-accent-border-strong: rgba(135, 101, 255, 0.78);
+  --soura-accent-soft: rgba(37, 99, 235, 0.10);
+  --soura-accent-hover-soft: rgba(92, 75, 234, 0.14);
+  --soura-accent-active-soft: rgba(92, 75, 234, 0.20);
+  --soura-accent-border: rgba(92, 75, 234, 0.52);
+  --soura-accent-border-strong: rgba(147, 51, 234, 0.78);
 
   --soura-interaction-hover-bg: var(--soura-accent-hover-soft);
   --soura-interaction-hover-border: var(--soura-accent-border);
@@ -66,6 +69,16 @@
   --soura-interaction-focus-ring:
     0 0 0 2px rgba(79, 134, 255, 0.32),
     0 0 0 4px rgba(152, 92, 255, 0.12);
+
+  --soura-focus: #60A5FA;
+  --soura-selection: rgba(37, 99, 235, 0.35);
+  --soura-selected-surface: rgba(37, 99, 235, 0.22);
+  --soura-shadow-accent:
+    0 0 18px rgba(124, 58, 237, 0.40),
+    0 0 0 1px rgba(96, 165, 250, 0.25);
+  --soura-shadow-accent-hover:
+    0 0 24px rgba(124, 58, 237, 0.52),
+    0 0 0 1px rgba(96, 165, 250, 0.34);
 
   --soura-progress-track: rgba(255, 255, 255, 0.09);
   --soura-progress-fill: var(--soura-accent-gradient);
@@ -125,7 +138,8 @@
 html,
 body,
 #app {
-  background-color: var(--soura-canvas);
+  background-color: #000000;
+  color: var(--soura-text-primary);
 }
 
 .soura-theme-accent-interactive {

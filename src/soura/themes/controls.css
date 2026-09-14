@@ -305,3 +305,36 @@
  * Regions/clips remain excluded above because project-content color is owned
  * by the musical object, not the application theme.
  */
+
+/* SOURA DEEP BLACK PERSISTENT CONTROL CONTRACT — v1
+ * Cascade guard after earlier control rules.
+ * Persistent state comes from aria-pressed/is-active/data-active.
+ */
+
+.studio-editor-page button.is-active:not([data-transport-record]),
+.studio-editor-page button[aria-pressed="true"]:not([data-transport-record]),
+.studio-editor-page [role="button"].is-active,
+.studio-editor-page [role="button"][aria-pressed="true"],
+.studio-editor-page [data-active="true"]:is(button, [role="button"]) {
+  background-color: transparent;
+  background-image: var(--soura-accent-gradient);
+  color: #FFFFFF;
+  border-color: transparent;
+  opacity: 1;
+}
+
+.studio-editor-page button.is-active:hover:not([data-transport-record]),
+.studio-editor-page button[aria-pressed="true"]:hover:not([data-transport-record]),
+.studio-editor-page [role="button"].is-active:hover,
+.studio-editor-page [role="button"][aria-pressed="true"]:hover {
+  background-color: transparent;
+  background-image: var(--soura-accent-gradient-hover);
+  color: #FFFFFF;
+  border-color: transparent;
+}
+
+.studio-editor-page button[aria-pressed="true"]:active:not([data-transport-record]),
+.studio-editor-page [role="button"][aria-pressed="true"]:active,
+.studio-editor-page button.is-active:active:not([data-transport-record]) {
+  background-image: var(--soura-accent-gradient-active);
+}

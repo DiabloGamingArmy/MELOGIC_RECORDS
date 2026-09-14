@@ -2,6 +2,8 @@ import './styles/base.css'
 import './soura/themes/foundation.css'
 import './styles/dawPluginWindow.css'
 import './soura/themes/floating-windows.css'
+import './soura/themes/deep-black-final.css'
+import './soura/themes/missed-surfaces-v2.css'
 import { createDawPluginInstance, getDawPluginDefinition } from './studio/plugins/pluginCatalog.js'
 import { drawWavetableVisualizers, renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 

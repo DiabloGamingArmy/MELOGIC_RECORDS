@@ -1,0 +1,534 @@
+/*
+ * SOURA MISSED SURFACES — v2
+ * ============================================================
+ * Corrective visual pass after the deep-black foundation.
+ *
+ * This file intentionally targets REAL legacy surfaces that remain blue/navy
+ * because src/styles/studio.css contains more specific historical rules.
+ *
+ * Contract:
+ * - primary chrome: #000 / #050505 / #0A0A0A / #111114
+ * - color only for active interaction, progress/status, musical/data content
+ * - do not neutralize track/region/waveform/MIDI/automation identity color
+ */
+
+/* ============================================================
+   1. GENERIC LEFT PANEL
+   Repo legacy: .studio-left-panel background:#151923
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel,
+.studio-editor-page .studio-left-panel--inspector,
+.studio-editor-page .studio-left-panel--smart-controls {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #FFFFFF !important;
+}
+
+.studio-editor-page .studio-left-panel > header,
+.studio-editor-page .studio-left-panel--inspector > header,
+.studio-editor-page .studio-left-panel--smart-controls > header {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #FFFFFF !important;
+}
+
+/* Left-panel nested structural cards */
+.studio-editor-page .studio-left-panel :is(
+  section,
+  fieldset,
+  [class*="section"],
+  [class*="group"],
+  [class*="card"],
+  [class*="panel"]
+):not(.studio-audio-region):not(.studio-midi-region) {
+  border-color: #2A2A31;
+}
+
+/* ============================================================
+   2. LIBRARY
+   Screenshot miss: large navy Library background and folder pane.
+   ============================================================ */
+
+.studio-editor-page :is(
+  .studio-asset-library,
+  .studio-asset-library-body,
+  [class*="asset-library"],
+  [class*="asset-browser"],
+  [class*="library-browser"]
+) {
+  background-color: #050505 !important;
+  background-image: none !important;
+  color: #B7B7C2 !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page :is(
+  [class*="asset-library-sidebar"],
+  [class*="asset-browser-sidebar"],
+  [class*="library-sidebar"],
+  [class*="folder-tree"]
+) {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page :is(
+  [class*="asset-row"],
+  [class*="library-row"],
+  [class*="folder-row"],
+  [class*="file-row"]
+) {
+  background: transparent !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page :is(
+  [class*="asset-row"],
+  [class*="library-row"],
+  [class*="folder-row"],
+  [class*="file-row"]
+):hover {
+  background: #111114 !important;
+}
+
+.studio-editor-page :is(
+  [class*="asset-row"],
+  [class*="library-row"],
+  [class*="folder-row"],
+  [class*="file-row"]
+).is-selected {
+  background: rgba(92,75,234,.20) !important;
+  border-color: rgba(147,51,234,.66) !important;
+}
+
+/* ============================================================
+   3. TRACK INSPECTOR / CHANNEL STRIP
+   ============================================================ */
+
+.studio-editor-page :is(
+  .studio-left-panel--inspector,
+  .studio-inspector,
+  .studio-inspector-panel,
+  [class*="inspector-body"],
+  [class*="inspector-content"]
+) {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page :is(
+  [class*="inspector-group"],
+  [class*="inspector-card"],
+  [class*="channel-strip-settings"],
+  [class*="channel-settings"],
+  [class*="midi-effects"],
+  [class*="audio-fx"]
+) {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  box-shadow: none !important;
+}
+
+.studio-editor-page :is(
+  [class*="instrument-slot"],
+  [class*="instrument-card"],
+  [class*="plugin-slot"],
+  [class*="insert-slot"],
+  [class*="send-slot"]
+) {
+  background: #111114 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   4. SMART CONTROLS
+   Repo legacy explicitly uses #0c1018 and blue-gray descendants.
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--smart-controls,
+.studio-editor-page .studio-smart-controls {
+  background: #050505 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+}
+
+.studio-editor-page .studio-smart-controls > header {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page .studio-smart-controls :is(
+  section,
+  fieldset,
+  [class*="section"],
+  [class*="group"],
+  [class*="card"],
+  [class*="result"],
+  [class*="analysis"]
+) {
+  background-color: #050505;
+  border-color: #2A2A31;
+}
+
+.studio-editor-page .studio-smart-controls :is(
+  select,
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  textarea
+) {
+  background: #0A0A0A !important;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+.studio-editor-page .studio-smart-controls button:not(.is-active):not([aria-pressed="true"]) {
+  background-color: #111114;
+}
+
+/* Keep Analyze / true active interaction colored, not structural chrome. */
+.studio-editor-page .studio-smart-controls :is(
+  button.is-active,
+  button[aria-pressed="true"],
+  button[data-active="true"]
+) {
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+}
+
+/* ============================================================
+   5. PROJECT NOTES / GENERIC MODALS
+   Screenshot miss: modal card is still blue-gray.
+   ============================================================ */
+
+.studio-modal-panel,
+.studio-editor-page [role="dialog"],
+.studio-editor-page [aria-modal="true"],
+.studio-editor-page [class*="modal-panel"],
+.studio-editor-page [class*="dialog-panel"] {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-color: #3A3A43 !important;
+  box-shadow: 0 24px 72px rgba(0,0,0,.72) !important;
+}
+
+.studio-modal-panel :is(
+  header,
+  [class*="header"],
+  [class*="toolbar"]
+),
+.studio-editor-page [role="dialog"] :is(
+  header,
+  [class*="header"],
+  [class*="toolbar"]
+) {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-modal-panel :is(textarea,input,select),
+.studio-editor-page [role="dialog"] :is(textarea,input,select) {
+  background: #050505 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+.studio-modal-panel :is(footer,[class*="footer"]),
+.studio-editor-page [role="dialog"] :is(footer,[class*="footer"]) {
+  background: #050505 !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   6. SCORE EDITOR
+   Repo legacy:
+     .soura-score-root background:#101824
+     score controls background:#1b2738
+   ============================================================ */
+
+.studio-bottom-panel.studio-score-editor,
+.soura-score-root,
+.soura-score-toolbar,
+.soura-score-inspector {
+  background: #050505 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-color: #2A2A31 !important;
+}
+
+.soura-score-toolbar,
+.soura-score-inspector > header,
+.soura-score-inspector [class*="header"] {
+  background: #0A0A0A !important;
+  background-image: none !important;
+}
+
+.soura-score-root :is(button,select,input) {
+  background: #0A0A0A !important;
+  background-image: none;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+/*
+ * Notation view:
+ * Convert the "paper" from warm white to deep neutral while keeping notation
+ * legible. VexFlow commonly emits SVG path/text linework in black.
+ */
+.soura-score-root svg {
+  background: #050505 !important;
+  color: #E8E8EE !important;
+}
+
+.soura-score-root svg :is(path,text,tspan) {
+  fill: #E8E8EE;
+}
+
+.soura-score-root svg :is(line,polyline) {
+  stroke: #8E8E99;
+}
+
+.soura-score-root svg [fill="#000"],
+.soura-score-root svg [fill="#000000"],
+.soura-score-root svg [fill="black"] {
+  fill: #E8E8EE !important;
+}
+
+.soura-score-root svg [stroke="#000"],
+.soura-score-root svg [stroke="#000000"],
+.soura-score-root svg [stroke="black"] {
+  stroke: #8E8E99 !important;
+}
+
+/* Do not recolor explicitly semantic/selected elements carrying their own class. */
+.soura-score-root :is(
+  .is-selected,
+  [aria-selected="true"],
+  [data-selected="true"]
+) {
+  border-color: rgba(147,51,234,.72);
+}
+
+/* ============================================================
+   7. REGION EDITOR / PITCH TRACE
+   Screenshot miss: structural analysis plane is still navy-blue.
+   Preserve the actual waveform / pitch data coloration.
+   ============================================================ */
+
+.studio-bottom-panel :is(
+  .studio-midi-roll-editor,
+  [class*="region-editor"],
+  [class*="pitch-editor"],
+  [class*="pitch-panel"],
+  [class*="pitch-tools"],
+  [class*="audio-editor"]
+) {
+  background-color: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #FFFFFF !important;
+}
+
+.studio-editor-page :is(
+  [class*="region-editor-header"],
+  [class*="pitch-toolbar"],
+  [class*="audio-editor-header"],
+  [class*="editor-toolbar"]
+) {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Grid/surface chrome only; avoid waveform/trace elements themselves. */
+.studio-editor-page :is(
+  [class*="pitch-grid"],
+  [class*="pitch-canvas"],
+  [class*="region-editor-grid"],
+  [class*="audio-editor-grid"],
+  [class*="editor-canvas"]
+):not(canvas) {
+  background-color: #000000 !important;
+  background-image: none !important;
+}
+
+/* Sidebar / Pitch Tools panels */
+.studio-editor-page :is(
+  [class*="pitch-tools"],
+  [class*="region-inspector"],
+  [class*="region-properties"],
+  [class*="pitch-controls"]
+) {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   8. INSTRUMENT KEYBOARD
+   Neutralize chrome; retain piano white/black tonal distinction.
+   ============================================================ */
+
+.studio-bottom-panel :is(
+  [class*="instrument-keyboard"],
+  [class*="keyboard-panel"],
+  [class*="piano-keyboard"]
+) {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-bottom-panel :is(
+  [class*="instrument-keyboard"],
+  [class*="keyboard-panel"]
+) :is(
+  header,
+  [class*="header"],
+  [class*="toolbar"],
+  [class*="controls"]
+) {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/*
+ * Piano keys remain recognizably tonal for usability, but legacy blue tints
+ * are removed. Pressed state may use the approved interaction accent.
+ */
+.studio-piano-key--white {
+  background: #D6D6DA !important;
+  background-image: none !important;
+  color: #202024 !important;
+  border-color: #777780 !important;
+}
+
+.studio-piano-key--black {
+  background: #050505 !important;
+  background-image: none !important;
+  color: #D8D8DE !important;
+  border-color: #000000 !important;
+}
+
+.studio-piano-key--white.is-pressed,
+.studio-piano-key--black.is-pressed {
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+  box-shadow: inset 0 0 0 2px rgba(255,255,255,.14) !important;
+}
+
+/* ============================================================
+   9. LEGACY BLUE-GRAY FIELD / CARD CLEANUP
+   Scoped to the editor, excluding musical objects.
+   ============================================================ */
+
+.studio-editor-page :is(
+  [class*="settings-card"],
+  [class*="settings-section"],
+  [class*="properties-card"],
+  [class*="details-card"],
+  [class*="utility-card"],
+  [class*="analysis-card"]
+):not(.studio-audio-region):not(.studio-midi-region) {
+  background-color: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Text fields/selects across missed panels */
+.studio-editor-page :is(
+  .studio-left-panel,
+  .studio-bottom-panel,
+  .studio-modal-panel
+) :is(
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+  select,
+  textarea
+) {
+  background-color: #050505 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+/* ============================================================
+   10. SCROLL / DIVIDER / RESIZER CLEANUP
+   ============================================================ */
+
+.studio-editor-page :is(
+  .studio-left-panel,
+  .studio-bottom-panel,
+  [class*="inspector"],
+  [class*="library"],
+  [class*="region-editor"],
+  [class*="score"]
+) {
+  scrollbar-color: #52525B #050505;
+}
+
+.studio-editor-page :is(
+  [class*="resizer"],
+  [class*="splitter"],
+  [class*="divider"]
+) {
+  background-color: #2A2A31 !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   11. ACTIVE/PERSISTENT STATE PROTECTION
+   Keep this last so neutral cleanup cannot erase ON states.
+   ============================================================ */
+
+.studio-editor-page :is(
+  button.is-active,
+  button[aria-pressed="true"],
+  [role="button"].is-active,
+  [role="button"][aria-pressed="true"],
+  [data-active="true"]:is(button,[role="button"])
+):not([data-transport-record]) {
+  background-color: transparent !important;
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+  box-shadow: var(--soura-shadow-accent, 0 0 18px rgba(124,58,237,.40)) !important;
+}
+
+.studio-editor-page :is(
+  button.is-active,
+  button[aria-pressed="true"],
+  [role="button"].is-active,
+  [role="button"][aria-pressed="true"]
+):not([data-transport-record]):hover {
+  background-image: var(--soura-accent-gradient-hover) !important;
+}
+
+/* Semantic record state stays red. */
+.studio-editor-page :is(
+  [data-transport-record].is-active,
+  [data-transport-record][aria-pressed="true"],
+  [data-record-arm].is-active,
+  [data-record-arm][aria-pressed="true"]
+) {
+  background-image: linear-gradient(180deg,#ff5b6d,#d9384e) !important;
+  border-color: rgba(255,105,124,.78) !important;
+}
+
+/* Musical/data color protection is intentional:
+ * - .studio-audio-region / .studio-midi-region
+ * - waveform pixels / pitch trace
+ * - track identity color strips
+ * - MIDI note data
+ * - automation curves
+ * - meter fills / clipping colors
+ */

@@ -1,0 +1,312 @@
+/*
+ * SOURA DEEP BLACK FINAL — v1
+ * ------------------------------------------------------------
+ * Final Soura-only visual normalization layer.
+ *
+ * Application chrome is neutral true-black / near-black.
+ * Musical/data color is preserved.
+ * Accent color is interaction/status language, not background decoration.
+ * Persistent toggle state is semantic/stable; :active is transient only.
+ */
+
+/* ROOT + PRIMARY CANVAS */
+html,
+body,
+#app,
+.studio-editor-page,
+.studio-editor-workspace,
+.studio-editor-page main,
+.studio-arrangement,
+.studio-arrangement-grid,
+.studio-arrangement-grid-inner {
+  background-color: #000000 !important;
+  color: var(--soura-text-primary) !important;
+}
+
+/* STRUCTURAL CHROME */
+.studio-track-sidebar,
+.studio-track-sidebar-header,
+.studio-track-sidebar-scroll,
+.studio-track-automation-sidebar,
+.studio-right-rail,
+.studio-bottom-panel,
+.studio-inspector,
+.studio-inspector-panel,
+.studio-asset-library,
+.studio-asset-library-body,
+.studio-mixer,
+.studio-mixer-body,
+.studio-editor-page [class*="topbar"],
+.studio-editor-page [class*="menu-bar"],
+.studio-editor-page [class*="menubar"],
+.studio-editor-page [class*="toolbar"],
+.studio-editor-page [class*="transport"],
+.studio-editor-page [class*="track-list"],
+.studio-editor-page [class*="track-sidebar"],
+.studio-editor-page [class*="track-column"],
+.studio-editor-page [class*="track-controls"],
+.studio-editor-page [class*="right-rail"],
+.studio-editor-page [class*="right-toolbar"],
+.studio-editor-page [class*="side-toolbar"],
+.studio-editor-page [class*="tool-rail"],
+.studio-editor-page [class*="status-bar"],
+.studio-editor-page [class*="statusbar"] {
+  background-color: var(--soura-surface-0) !important;
+  background-image: none !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+  box-shadow: none !important;
+}
+
+/* PANEL HEADERS / READOUTS */
+.studio-editor-page [class*="panel-header"],
+.studio-editor-page [class*="panel-toolbar"],
+.studio-editor-page [class*="asset-toolbar"],
+.studio-editor-page [class*="mixer-toolbar"],
+.studio-editor-page [class*="editor-toolbar"],
+.studio-editor-page [class*="inspector-header"],
+.studio-editor-page [class*="transport-display"],
+.studio-editor-page [class*="transport-info"],
+.studio-editor-page [class*="lcd"],
+.studio-editor-page [class*="ruler"],
+.studio-editor-page [class*="timeline-header"],
+.studio-timeline-ruler,
+.studio-timeline-ruler-inner {
+  background-color: var(--soura-surface-1) !important;
+  background-image: none !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* NORMAL PANEL BODIES */
+.studio-editor-page [class*="inspector"],
+.studio-editor-page [class*="asset-library"],
+.studio-editor-page [class*="asset-browser"],
+.studio-editor-page [class*="mixer"],
+.studio-editor-page [class*="region-editor"],
+.studio-editor-page [class*="bottom-panel"],
+.studio-editor-page [class*="instrument-panel"],
+.studio-editor-page [class*="resonance"],
+.studio-editor-page [class*="plugin-panel"],
+.studio-bottom-panel,
+.studio-midi-roll-editor {
+  background-color: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* ELEVATED TRANSIENT UI */
+.studio-editor-page [role="dialog"],
+.studio-editor-page [aria-modal="true"],
+.studio-editor-page [role="menu"],
+.studio-inspector-menu,
+.studio-global-popover,
+.studio-track-popover,
+.studio-track-menu,
+.studio-editor-page [class*="popover"],
+.studio-editor-page [class*="dropdown-menu"],
+.studio-editor-page [class*="context-menu"],
+.studio-editor-page [class*="menu-panel"],
+.studio-editor-page [role="tooltip"],
+.studio-editor-page [class*="tooltip"] {
+  background-color: var(--soura-surface-2) !important;
+  background-image: none !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* TRACK STRUCTURE — not regions or identity colors */
+.studio-editor-page [class*="track-row"],
+.studio-editor-page [class*="track-header"],
+.studio-editor-page [class*="track-card"] {
+  background-color: var(--soura-surface-1) !important;
+  background-image: none !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [class*="track-row"]:hover,
+.studio-editor-page [class*="track-header"]:hover,
+.studio-editor-page [class*="track-card"]:hover {
+  background-color: var(--soura-surface-2) !important;
+}
+
+/* CONTROLS AT REST */
+.studio-editor-page button,
+.studio-editor-page [role="button"] {
+  background-color: var(--soura-surface-1);
+  background-image: none;
+  color: var(--soura-text-secondary);
+  border-color: var(--soura-border-strong);
+}
+
+/* HOVER — approved interaction color */
+.studio-editor-page button:hover:not(:disabled):not([aria-disabled="true"]),
+.studio-editor-page [role="button"]:hover:not([aria-disabled="true"]) {
+  background-color: transparent;
+  background-image: var(--soura-accent-gradient-hover);
+  color: #FFFFFF;
+  border-color: transparent;
+}
+
+/* PERSISTENT ON STATE — deliberately after generic hover */
+.studio-editor-page button.is-active:not([data-transport-record]),
+.studio-editor-page button[class~="active"]:not([data-transport-record]),
+.studio-editor-page button[aria-pressed="true"]:not([data-transport-record]),
+.studio-editor-page [role="button"].is-active,
+.studio-editor-page [role="button"][aria-pressed="true"],
+.studio-editor-page [data-active="true"]:is(button, [role="button"]) {
+  background-color: transparent !important;
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+  box-shadow: var(--soura-shadow-accent, 0 0 18px rgba(124,58,237,.40)) !important;
+  opacity: 1 !important;
+}
+
+/* Hovering an ON toggle must not extinguish ON state */
+.studio-editor-page button.is-active:hover:not([data-transport-record]),
+.studio-editor-page button[aria-pressed="true"]:hover:not([data-transport-record]),
+.studio-editor-page [role="button"].is-active:hover,
+.studio-editor-page [role="button"][aria-pressed="true"]:hover,
+.studio-editor-page [data-active="true"]:is(button, [role="button"]):hover {
+  background-color: transparent !important;
+  background-image: var(--soura-accent-gradient-hover) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+}
+
+/* :active = transient tactile feedback only */
+.studio-editor-page button:active:not(:disabled),
+.studio-editor-page [role="button"]:active:not([aria-disabled="true"]) {
+  transform: translateY(1px);
+}
+
+/* Pressing an already-ON control remains colored */
+.studio-editor-page button[aria-pressed="true"]:active:not([data-transport-record]),
+.studio-editor-page [role="button"][aria-pressed="true"]:active,
+.studio-editor-page button.is-active:active:not([data-transport-record]) {
+  background-image: var(--soura-accent-gradient-active) !important;
+}
+
+/* Record remains semantic red */
+.studio-editor-page [data-transport-record].is-active,
+.studio-editor-page [data-transport-record][aria-pressed="true"],
+.studio-editor-page .studio-record-arm.is-active,
+.studio-editor-page [data-record-arm].is-active,
+.studio-editor-page [data-record-arm][aria-pressed="true"] {
+  background-image: linear-gradient(180deg, #ff5b6d, #d9384e) !important;
+  border-color: rgba(255,105,124,.78) !important;
+}
+
+/* INPUTS */
+.studio-editor-page input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+.studio-editor-page select,
+.studio-editor-page textarea {
+  background-color: var(--soura-surface-1) !important;
+  background-image: none !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-strong) !important;
+}
+
+/* FOCUS */
+.studio-editor-page :where(
+  button,
+  [role="button"],
+  input,
+  textarea,
+  select,
+  [role="combobox"],
+  [role="option"],
+  [role="tab"],
+  [role="treeitem"],
+  [role="menuitem"],
+  [role="slider"],
+  [role="separator"],
+  a[href]
+):focus-visible {
+  outline: 2px solid var(--soura-focus, #60A5FA) !important;
+  outline-offset: 2px !important;
+}
+
+/* PROGRESS / STATUS — intentional blue→purple color */
+.studio-editor-page progress::-webkit-progress-value,
+.studio-editor-page [role="progressbar"] [class*="fill"],
+.studio-editor-page [class*="progress-fill"],
+.studio-editor-page [class*="progress-bar-fill"],
+.studio-editor-page [class*="status-progress"],
+.studio-editor-page [class*="render-progress"] [class*="fill"],
+.studio-editor-page [class*="export-progress"] [class*="fill"],
+.studio-editor-page [class*="bounce-progress"] [class*="fill"],
+.studio-editor-page [class*="processing-progress"] [class*="fill"] {
+  background: var(--soura-accent-gradient) !important;
+}
+
+/* SCROLLBARS */
+.studio-editor-page *,
+.studio-editor-workspace * {
+  scrollbar-color: #52525B #000000;
+}
+
+.studio-editor-page *::-webkit-scrollbar-track,
+.studio-editor-workspace *::-webkit-scrollbar-track {
+  background: #000000;
+}
+
+.studio-editor-page *::-webkit-scrollbar-thumb,
+.studio-editor-workspace *::-webkit-scrollbar-thumb {
+  background: #52525B;
+  border: 2px solid #000000;
+}
+
+.studio-editor-page *::-webkit-scrollbar-thumb:hover,
+.studio-editor-workspace *::-webkit-scrollbar-thumb:hover {
+  background: #71717A;
+}
+
+/* DETACHED / PLUGIN-ADJACENT VERIFIED ROOT */
+.soura-fx-shell {
+  background-color: #000000 !important;
+  color: var(--soura-text-primary) !important;
+}
+
+/* ACCESSIBILITY FALLBACKS */
+@media (forced-colors: active) {
+  .studio-editor-page button[aria-pressed="true"],
+  .studio-editor-page [role="button"][aria-pressed="true"],
+  .studio-editor-page button.is-active {
+    background-image: none !important;
+    border: 2px solid Highlight !important;
+    color: ButtonText !important;
+    box-shadow: none !important;
+  }
+
+  .studio-editor-page :focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .studio-editor-page *,
+  .studio-editor-page *::before,
+  .studio-editor-page *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Intentionally not neutralized:
+ *   .studio-audio-region
+ *   .studio-midi-region
+ *   track identity strips / color chips
+ *   waveform pixels
+ *   MIDI notes
+ *   pitch traces
+ *   automation curves/nodes
+ *   spectrum/spectrogram data
+ *   meter fills / clipping indicators
+ */

@@ -1,0 +1,246 @@
+/*
+ * SOURA VISUAL COMPLETION
+ * Concrete selector pass based on the live editor screenshots.
+ *
+ * Goal:
+ * - true black / charcoal application chrome
+ * - project content keeps color
+ * - blue -> purple only for hover/active/pressed and meaningful progress/status
+ * - remove residual navy/slate surfaces from the legacy studio.css system
+ */
+
+/* ---------- APP ROOT / TOP CHROME ---------- */
+.studio-editor-page,
+.studio-editor-workspace {
+  background: var(--soura-canvas) !important;
+}
+
+.studio-editor-appbar {
+  background: #09090a !important;
+  border-color: var(--soura-border-subtle) !important;
+  box-shadow: none !important;
+}
+
+.studio-editor-appbar button,
+.studio-editor-appbar .studio-tool-button {
+  background: #111113 !important;
+  border-color: rgba(255,255,255,.10) !important;
+  color: var(--soura-text-secondary) !important;
+}
+
+.studio-editor-appbar button:hover,
+.studio-editor-appbar .studio-tool-button:hover {
+  background:
+    linear-gradient(#151517,#151517) padding-box,
+    var(--soura-accent-gradient-hover) border-box !important;
+  border-color: transparent !important;
+  color: #fff !important;
+}
+
+/* ---------- TRANSPORT BAND ---------- */
+.studio-editor-transport {
+  background: #0b0b0c !important;
+  border-top-color: rgba(255,255,255,.075) !important;
+  border-bottom-color: rgba(255,255,255,.075) !important;
+  box-shadow: none !important;
+}
+
+.studio-transport-center {
+  background: transparent !important;
+}
+
+/* concrete transport buttons: neutral at rest */
+.studio-editor-transport .studio-tool-button,
+.studio-editor-transport button {
+  background: #111113 !important;
+  border-color: rgba(255,255,255,.11) !important;
+  color: #c4c4ca !important;
+  box-shadow: none !important;
+}
+
+.studio-editor-transport .studio-tool-button:hover,
+.studio-editor-transport button:hover {
+  background:
+    linear-gradient(#171719,#171719) padding-box,
+    var(--soura-accent-gradient-hover) border-box !important;
+  border-color: transparent !important;
+  color: #fff !important;
+}
+
+/* keep accent only when a control is actually active */
+.studio-editor-transport .studio-tool-button.is-active,
+.studio-editor-transport button.is-active,
+.studio-editor-transport button[aria-pressed="true"] {
+  background: var(--soura-accent-gradient-active) !important;
+  border-color: var(--soura-accent-border-strong) !important;
+  color: #fff !important;
+}
+
+/* record remains semantic */
+.studio-editor-transport [data-transport-record].is-active,
+.studio-editor-transport .studio-record-arm.is-active {
+  background: linear-gradient(180deg,#ff5b6d,#d9384e) !important;
+  border-color: rgba(255,105,124,.72) !important;
+}
+
+/* ---------- LCD / LOGIC DISPLAY ---------- */
+.studio-logic-display {
+  background: #0d0d0f !important;
+  border-color: rgba(255,255,255,.11) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.025),
+    inset 0 -1px 0 rgba(0,0,0,.42) !important;
+}
+
+.studio-logic-display > *,
+.studio-logic-cell,
+.studio-logic-segment,
+.studio-logic-field {
+  background-color: transparent !important;
+  border-color: rgba(255,255,255,.075) !important;
+}
+
+.studio-logic-primary {
+  color: #f4f4f6 !important;
+}
+
+.studio-logic-secondary,
+.studio-logic-label {
+  color: #84848d !important;
+}
+
+/* ---------- MENU BAR / POPUPS ---------- */
+.studio-controls-menu,
+.studio-daw-menu {
+  background: #111113 !important;
+  border-color: rgba(255,255,255,.13) !important;
+  box-shadow: 0 16px 44px rgba(0,0,0,.62) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.studio-daw-menu-separator {
+  background: rgba(255,255,255,.08) !important;
+}
+
+/* ---------- TRACK SIDEBAR ---------- */
+.studio-track-sidebar,
+.studio-track-sidebar-header,
+.studio-track-sidebar-scroll {
+  background: #0b0b0c !important;
+  border-color: rgba(255,255,255,.075) !important;
+}
+
+.studio-track-row,
+.studio-track-header {
+  background: #101011 !important;
+  border-color: rgba(255,255,255,.065) !important;
+}
+
+.studio-track-row:hover,
+.studio-track-header:hover {
+  background: #141416 !important;
+}
+
+/* neutralize little structural controls, but preserve explicit track colors */
+.studio-track-row button:not(.is-active),
+.studio-track-header button:not(.is-active) {
+  background-color: #161618 !important;
+  border-color: rgba(255,255,255,.09) !important;
+  color: #b9b9c0 !important;
+}
+
+/* ---------- ARRANGEMENT / RULER / OVERVIEW ---------- */
+.studio-arrangement,
+.studio-arrangement-grid,
+.studio-arrangement-grid-inner {
+  background-color: #080808 !important;
+}
+
+.studio-timeline-ruler,
+.studio-timeline-ruler-inner,
+.studio-timeline-extension-lane,
+.studio-timeline-extension-lane-inner {
+  background: #101011 !important;
+  border-color: rgba(255,255,255,.075) !important;
+  box-shadow: none !important;
+}
+
+/* common overview/scroll strip selectors */
+.studio-editor-page [class*="overview"],
+.studio-editor-page [class*="minimap"],
+.studio-editor-page [class*="timeline-scroll"],
+.studio-editor-page [class*="timeline-overview"] {
+  background-color: #101011 !important;
+  border-color: rgba(255,255,255,.075) !important;
+}
+
+/* selected viewport can use a very faint interaction tint, not blue fill */
+.studio-editor-page [class*="overview"] [class*="viewport"],
+.studio-editor-page [class*="minimap"] [class*="viewport"] {
+  background: rgba(111,108,255,.08) !important;
+  border-color: rgba(129,101,255,.32) !important;
+}
+
+/* ---------- RIGHT TOOL RAIL ---------- */
+.studio-right-rail {
+  background: #0b0b0c !important;
+  border-left-color: rgba(255,255,255,.075) !important;
+}
+
+.studio-right-rail button {
+  background: #111113 !important;
+  border-color: rgba(255,255,255,.09) !important;
+  color: #b8b8bf !important;
+  box-shadow: none !important;
+}
+
+.studio-right-rail button:hover:not(:disabled) {
+  background:
+    linear-gradient(#171719,#171719) padding-box,
+    var(--soura-accent-gradient-hover) border-box !important;
+  border-color: transparent !important;
+  color: #fff !important;
+}
+
+.studio-right-rail button.is-active,
+.studio-right-rail button[aria-pressed="true"] {
+  background: var(--soura-accent-gradient-active) !important;
+  border-color: var(--soura-accent-border-strong) !important;
+  color: #fff !important;
+}
+
+/* ---------- BOTTOM STATUS BAR ---------- */
+.studio-editor-page [class*="status-bar"],
+.studio-editor-page [class*="statusbar"],
+.studio-editor-page [class*="footer-bar"],
+.studio-editor-page > footer {
+  background: #0b0b0c !important;
+  border-color: rgba(255,255,255,.075) !important;
+  color: #aaaab2 !important;
+}
+
+/* ---------- DOCKED PANELS ---------- */
+.studio-bottom-panel,
+.studio-inspector,
+.studio-inspector-panel,
+.studio-asset-library,
+.studio-mixer {
+  background: #0b0b0c !important;
+  border-color: rgba(255,255,255,.075) !important;
+}
+
+/* ---------- SCROLLBARS ---------- */
+.studio-editor-page *::-webkit-scrollbar-track {
+  background: #09090a !important;
+}
+.studio-editor-page *::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.17) !important;
+  border-color: #09090a !important;
+}
+
+/*
+ * DO NOT neutralize:
+ * audio/MIDI regions, waveforms, MIDI notes, track identity strips,
+ * automation curves, pitch traces, spectrum data, meter fills,
+ * warning/error/record/clipping semantics.
+ */
