@@ -6863,25 +6863,35 @@ async function attachMusicHeroVideo() {
   }
 }
 
-function renderStreamingStartupShell() {
-  if (!app || app.childElementCount) return
-  app.innerHTML = `<div class="music-startup-shell" role="status" aria-live="polite"><div class="music-startup-top"><strong>MELOGIC</strong><span>Streaming</span></div><div class="music-startup-body"><aside><b>Melogic Streaming</b><i></i><i></i><i></i><i></i></aside><main><small>MELOGIC STREAMING</small><h1>Your music.<br><em>Your discovery.</em></h1><p>Loading your Streaming experience…</p><div class="music-startup-cards"><i></i><i></i><i></i><i></i></div></main></div></div>`
-}
 
 
 function mountStreamingInitialPreloader() {
+  document.documentElement.classList.add('streaming-is-booting')
   if (!document.querySelector('#page-preloader')) {
-    app.insertAdjacentHTML('afterbegin', renderPagePreloaderMarkup())
+    document.body.insertAdjacentHTML('beforeend', renderPagePreloaderMarkup())
   }
-  document.querySelector('#streaming-first-paint')?.remove()
+  // Only remove the static first-paint guard after the canonical loader exists.
+  if (document.querySelector('#page-preloader')) {
+    document.querySelector('#streaming-first-paint')?.remove()
+  }
 }
 
 function settleStreamingInitialPreloader() {
-  initPagePreloader([], { fallbackMs: 3800, fadeDurationMs: 200 })
+  const preloader = document.querySelector('#page-preloader')
+  const reveal = () => {
+    document.documentElement.classList.remove('streaming-is-booting')
+  }
+  if (!preloader) {
+    reveal()
+    return
+  }
+  // Startup has already completed when this function is called. Fade the loader now,
+  // then reveal the actual Streaming UI. No intermediate catalog/skeleton frame is exposed.
+  initPagePreloader([], { fallbackMs: 1200, fadeDurationMs: 180 })
+  window.setTimeout(reveal, 220)
 }
 
 async function loadMusicPage() {
-  renderStreamingStartupShell()
   stopLiveStreamSubscription()
   stopLiveChatSubscription()
   stopLiveSequenceSubscription()

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html class="streaming-is-booting" lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -9,7 +9,16 @@
     />
     <link rel="canonical" href="https://melogicrecords.com/streaming" />
     <title>Melogic Streaming | Music and Live Streams</title>
-  </head>
+  <style id="streaming-critical-boot-style">
+  html.streaming-is-booting #app { visibility: hidden !important; }
+  #streaming-first-paint {
+    position: fixed; inset: 0; z-index: 2147483000; display: grid; place-items: center;
+    background: #000;
+  }
+  #streaming-first-paint img { width: 72px; height: 72px; object-fit: contain; }
+  html.streaming-is-booting #page-preloader { z-index: 2147483640 !important; }
+</style>
+</head>
   <body>
     <div id="streaming-first-paint" class="streaming-first-paint" role="status" aria-label="Loading Melogic Streaming">
       <img src="/src/assets/brand/melogic-logo-mark-white-transparent.png" alt="" />

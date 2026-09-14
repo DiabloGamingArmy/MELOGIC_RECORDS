@@ -32,7 +32,7 @@ export async function resumePersistentMusicPlayback(){
 export function installPersistentMusicNavigationBridge(){
  if(listenersBound)return;listenersBound=true
  window.addEventListener('pagehide',()=>{if(!globalAudio||!globalState?.track)return;snapshotPersistentMusicPlayback({track:globalState.track,audio:globalAudio,playing:!globalAudio.paused,volume:globalAudio.volume,duration:globalAudio.duration})})
- resumePersistentMusicPlayback().catch(()=>{})
+
 }
 export function adoptPersistentMusicState({track,audio,playing,volume,currentTime,duration}={}){
  if(!track?.streamAudioURL)return;globalAudio=audio||globalAudio;globalState={track,playing:playing===true,volume,currentTime,duration,savedAt:Date.now()};snapshotPersistentMusicPlayback({track,audio:globalAudio,playing,volume,currentTime,duration})

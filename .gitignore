@@ -58,3 +58,4 @@ skills-lock.json
 # Large local/server archives
 ams_community.zip
 *.zip
+.melogic_patch_backups/
