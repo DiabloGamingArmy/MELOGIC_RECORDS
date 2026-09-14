@@ -1,0 +1,202 @@
+/*
+ * SOURA THEME CONVERSION — PATCH 8/8
+ * Global Theme QA + Legacy Color Cleanup
+ *
+ * This is the final visual normalization pass.
+ *
+ * Goals:
+ * - eliminate remaining blue/cyan application-chrome leakage
+ * - force structural surfaces into the neutral black/charcoal hierarchy
+ * - keep blue->purple restricted to interaction and priority progress/status
+ * - preserve musical/data color and semantic warning/record/error color
+ * - avoid geometry/behavior changes
+ */
+
+/* ============================================================
+   GLOBAL EDITOR ROOT / LEGACY CHROME NORMALIZATION
+   ============================================================ */
+
+.studio-editor-page,
+.studio-editor-workspace,
+.studio-editor-page main {
+  background-color: var(--soura-canvas) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+/* Known legacy structural shells */
+.studio-track-sidebar,
+.studio-track-sidebar-header,
+.studio-track-sidebar-scroll,
+.studio-track-automation-sidebar,
+.studio-right-rail,
+.studio-bottom-panel,
+.studio-inspector,
+.studio-inspector-panel,
+.studio-asset-library,
+.studio-asset-library-body,
+.studio-mixer,
+.studio-mixer-body {
+  background-color: var(--soura-surface-0) !important;
+  border-color: var(--soura-border-subtle) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+/* Header bands / structural bars */
+.studio-editor-page [class*="header-bar"],
+.studio-editor-page [class*="control-bar"],
+.studio-editor-page [class*="utility-bar"],
+.studio-editor-page [class*="sub-toolbar"],
+.studio-editor-page [class*="dock-header"] {
+  background: var(--soura-surface-1) !important;
+  border-color: var(--soura-divider) !important;
+  color: var(--soura-text-secondary) !important;
+  box-shadow: none !important;
+}
+
+/* ============================================================
+   LEGACY CYAN / BLUE-TINTED READOUTS
+   ============================================================ */
+
+.studio-global-tempo-node span,
+.studio-track-automation-point span,
+.studio-editor-page [class*="value-readout"],
+.studio-editor-page [class*="parameter-readout"],
+.studio-editor-page [class*="numeric-readout"],
+.studio-editor-page [class*="timecode-readout"],
+.studio-editor-page [class*="tooltip-readout"] {
+  background: var(--soura-surface-3) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  text-shadow: none !important;
+}
+
+/* ============================================================
+   LEGACY PANELS / CARDS THAT MAY STILL CARRY BLUE FALLBACKS
+   ============================================================ */
+
+.studio-editor-page [class*="utility-panel"],
+.studio-editor-page [class*="settings-panel"],
+.studio-editor-page [class*="options-panel"],
+.studio-editor-page [class*="properties-panel"],
+.studio-editor-page [class*="details-panel"],
+.studio-editor-page [class*="browser-panel"],
+.studio-editor-page [class*="source-panel"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="utility-card"],
+.studio-editor-page [class*="settings-card"],
+.studio-editor-page [class*="options-card"],
+.studio-editor-page [class*="properties-card"],
+.studio-editor-page [class*="details-card"] {
+  background: var(--soura-surface-2) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+/* ============================================================
+   POPOVER / MENU FALLBACKS
+   ============================================================ */
+
+.studio-inspector-menu,
+.studio-global-popover,
+.studio-track-popover,
+.studio-track-menu,
+.studio-editor-page [class*="menu"],
+.studio-editor-page [class*="popover"] {
+  --ml-bg-panel: var(--soura-surface-1);
+  --ml-bg-panel-strong: var(--soura-surface-2);
+  --ml-border: var(--soura-border);
+  --ml-border-strong: var(--soura-border-strong);
+}
+
+/* ============================================================
+   LEGACY FOCUS / HOVER FALLBACK NORMALIZATION
+   ============================================================ */
+
+.studio-editor-page :focus-visible {
+  outline-color: var(--soura-accent-blue);
+}
+
+.studio-editor-page button:not(:disabled):hover,
+.studio-editor-page [role="button"]:not([aria-disabled="true"]):hover {
+  border-color: var(--soura-accent-border);
+}
+
+/* Active generic controls keep the approved sparse accent */
+.studio-editor-page button.is-active:not([data-transport-record]),
+.studio-editor-page [role="button"].is-active,
+.studio-editor-page [aria-pressed="true"]:not([data-transport-record]) {
+  border-color: var(--soura-accent-border-strong);
+}
+
+/* ============================================================
+   PROGRESS / STATUS — APPROVED ACCENT USE
+   ============================================================ */
+
+.studio-editor-page [role="progressbar"] [class*="fill"],
+.studio-editor-page [class*="progress-fill"],
+.studio-editor-page [class*="progress-bar-fill"],
+.studio-editor-page [class*="status-progress"] {
+  background: var(--soura-accent-gradient) !important;
+}
+
+/* ============================================================
+   EMPTY / PLACEHOLDER / HELP STATES
+   ============================================================ */
+
+.studio-editor-page [class*="placeholder"],
+.studio-editor-page [class*="empty-state"],
+.studio-editor-page [class*="help-panel"],
+.studio-editor-page [class*="hint-panel"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-muted) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* ============================================================
+   SCROLLBAR FINAL NORMALIZATION
+   ============================================================ */
+
+.studio-editor-page *,
+.studio-editor-workspace * {
+  scrollbar-color: rgba(255,255,255,.18) rgba(255,255,255,.025);
+}
+
+.studio-editor-page *::-webkit-scrollbar-track,
+.studio-editor-workspace *::-webkit-scrollbar-track {
+  background: rgba(255,255,255,.025);
+}
+
+.studio-editor-page *::-webkit-scrollbar-thumb,
+.studio-editor-workspace *::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.18);
+  border-color: var(--soura-surface-0);
+}
+
+.studio-editor-page *::-webkit-scrollbar-thumb:hover,
+.studio-editor-workspace *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,.28);
+}
+
+/* ============================================================
+   CONTENT COLOR PROTECTION
+   These are intentionally excluded from theme normalization.
+   ============================================================ */
+
+/*
+ * PRESERVE:
+ * - .studio-audio-region / .studio-midi-region
+ * - track identity strips / color chips
+ * - MIDI note colors
+ * - waveform pixels
+ * - pitch traces
+ * - automation curves
+ * - spectrum/spectrogram heatmaps
+ * - meter fills
+ * - clipping / record / warning / error semantics
+ *
+ * The application is neutral. The music/data owns color.
+ */

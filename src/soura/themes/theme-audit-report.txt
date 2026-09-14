@@ -1,0 +1,20 @@
+SOURA THEME AUDIT — PATCH 8/8
+========================================================================
+
+Purpose: identify remaining legacy blue/cyan hard-coded color signatures.
+Matches are candidates for manual review, not automatic failures, because
+some colors may legitimately belong to musical/data visualization.
+
+src/styles/studio.css
+  - legacy cyan 127,216,255: 10
+  - legacy cyan 110,231,255: 15
+  - legacy blue border 130,190,255: 3
+  - hex cyan #6ee7ff: 8
+  - hex light-cyan #d9f7ff: 2
+
+Total legacy-signature candidates: 38
+
+Interpretation:
+- Patch 8 neutralizes known structural/chrome surfaces through scoped overrides.
+- Remaining signatures inside musical/data layers should be preserved if meaningful.
+- Any visible blue/cyan chrome after this patch should be treated as a QA defect.
