@@ -35,7 +35,224 @@ const APP_WINDOWS = {
   },
 };
 
+const WINDOW_GEOMETRY_STORAGE_PREFIX =
+  "melogic.nexus.window.";
+
+const WINDOW_GEOMETRY_SAVE_DELAY_MS = 250;
+
 const nexusWindow = getCurrentWindow();
+
+function windowGeometryStorageKey(appId) {
+  return `${WINDOW_GEOMETRY_STORAGE_PREFIX}${appId}`;
+}
+
+function clampDimension(value, minimum, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(minimum, Math.round(number));
+}
+
+function loadWindowGeometry(appId, config) {
+  const fallback = {
+    width: config.width,
+    height: config.height,
+    maximized: false,
+  };
+
+  try {
+    const raw = localStorage.getItem(
+      windowGeometryStorageKey(appId),
+    );
+
+    if (!raw) return fallback;
+
+    const saved = JSON.parse(raw);
+
+    return {
+      width: clampDimension(
+        saved?.width,
+        config.minWidth,
+        config.width,
+      ),
+      height: clampDimension(
+        saved?.height,
+        config.minHeight,
+        config.height,
+      ),
+      maximized: saved?.maximized === true,
+    };
+  } catch (error) {
+    console.warn(
+      `[Nexus Launcher] Could not read saved window geometry for ${appId}:`,
+      error,
+    );
+    return fallback;
+  }
+}
+
+function saveWindowGeometry(appId, geometry) {
+  try {
+    localStorage.setItem(
+      windowGeometryStorageKey(appId),
+      JSON.stringify({
+        width: Math.round(geometry.width),
+        height: Math.round(geometry.height),
+        maximized: geometry.maximized === true,
+        savedAt: new Date().toISOString(),
+      }),
+    );
+  } catch (error) {
+    console.warn(
+      `[Nexus Launcher] Could not save window geometry for ${appId}:`,
+      error,
+    );
+  }
+}
+
+async function readLogicalWindowSize(appWindow) {
+  const [physicalSize, scaleFactor] = await Promise.all([
+    appWindow.outerSize(),
+    appWindow.scaleFactor(),
+  ]);
+
+  const scale = Number(scaleFactor) > 0 ? Number(scaleFactor) : 1;
+
+  return {
+    width: physicalSize.width / scale,
+    height: physicalSize.height / scale,
+  };
+}
+
+async function captureWindowGeometry(
+  appId,
+  config,
+  appWindow,
+  previousGeometry,
+) {
+  let maximized = false;
+
+  try {
+    maximized = await appWindow.isMaximized();
+  } catch (error) {
+    console.warn(
+      `[Nexus Launcher] Could not read maximized state for ${config.title}:`,
+      error,
+    );
+  }
+
+  if (maximized) {
+    const geometry = {
+      ...previousGeometry,
+      maximized: true,
+    };
+
+    saveWindowGeometry(appId, geometry);
+    return geometry;
+  }
+
+  try {
+    const size = await readLogicalWindowSize(appWindow);
+
+    const geometry = {
+      width: clampDimension(
+        size.width,
+        config.minWidth,
+        config.width,
+      ),
+      height: clampDimension(
+        size.height,
+        config.minHeight,
+        config.height,
+      ),
+      maximized: false,
+    };
+
+    saveWindowGeometry(appId, geometry);
+    return geometry;
+  } catch (error) {
+    console.warn(
+      `[Nexus Launcher] Could not capture window size for ${config.title}:`,
+      error,
+    );
+    return previousGeometry;
+  }
+}
+
+async function attachWindowGeometryPersistence(
+  appId,
+  config,
+  appWindow,
+  initialGeometry,
+) {
+  let lastGeometry = { ...initialGeometry };
+  let saveTimer = null;
+  let destroyed = false;
+
+  const flush = async () => {
+    if (destroyed) return;
+
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+
+    lastGeometry = await captureWindowGeometry(
+      appId,
+      config,
+      appWindow,
+      lastGeometry,
+    );
+  };
+
+  const scheduleSave = () => {
+    if (destroyed) return;
+
+    if (saveTimer) {
+      clearTimeout(saveTimer);
+    }
+
+    saveTimer = setTimeout(() => {
+      flush().catch((error) => {
+        console.warn(
+          `[Nexus Launcher] Deferred window geometry save failed for ${config.title}:`,
+          error,
+        );
+      });
+    }, WINDOW_GEOMETRY_SAVE_DELAY_MS);
+  };
+
+  const unlisten = [];
+
+  try {
+    unlisten.push(
+      await appWindow.onResized(scheduleSave),
+    );
+  } catch (error) {
+    console.warn(
+      `[Nexus Launcher] Could not observe resize events for ${config.title}:`,
+      error,
+    );
+  }
+
+  return {
+    flush,
+
+    dispose() {
+      destroyed = true;
+
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+
+      for (const stop of unlisten) {
+        try {
+          stop?.();
+        } catch {}
+      }
+    },
+  };
+}
 
 async function hideNexus() {
   try {
@@ -72,9 +289,21 @@ async function focusExistingWindow(window) {
   await hideNexus();
 }
 
-async function attachReturnToNexusLifecycle(appWindow) {
+async function attachReturnToNexusLifecycle(
+  appWindow,
+  geometryPersistence = null,
+) {
   try {
     await appWindow.onCloseRequested(async () => {
+      try {
+        await geometryPersistence?.flush?.();
+      } catch (error) {
+        console.warn(
+          "[Nexus Launcher] Could not flush window geometry before close:",
+          error,
+        );
+      }
+
       await restoreNexus();
     });
   } catch (error) {
@@ -83,6 +312,7 @@ async function attachReturnToNexusLifecycle(appWindow) {
 
   try {
     await appWindow.once("tauri://destroyed", async () => {
+      geometryPersistence?.dispose?.();
       await restoreNexus();
     });
   } catch (error) {
@@ -108,12 +338,18 @@ export async function launchMelogicApp(appId) {
     };
   }
 
+  const savedGeometry =
+    loadWindowGeometry(
+      appId,
+      config,
+    );
+
   const appWindow = new WebviewWindow(config.label, {
     url: config.projectBrowserUrl,
     title: config.title,
 
-    width: config.width,
-    height: config.height,
+    width: savedGeometry.width,
+    height: savedGeometry.height,
 
     minWidth: config.minWidth,
     minHeight: config.minHeight,
@@ -132,7 +368,30 @@ export async function launchMelogicApp(appId) {
   return await new Promise((resolve, reject) => {
     appWindow.once("tauri://created", async () => {
       try {
-        await attachReturnToNexusLifecycle(appWindow);
+        const geometryPersistence =
+          await attachWindowGeometryPersistence(
+            appId,
+            config,
+            appWindow,
+            savedGeometry,
+          );
+
+        await attachReturnToNexusLifecycle(
+          appWindow,
+          geometryPersistence,
+        );
+
+        if (savedGeometry.maximized) {
+          try {
+            await appWindow.maximize();
+          } catch (error) {
+            console.warn(
+              `[Nexus Launcher] Could not restore maximized state for ${config.title}:`,
+              error,
+            );
+          }
+        }
+
         await appWindow.setFocus();
         await hideNexus();
       } catch (error) {
