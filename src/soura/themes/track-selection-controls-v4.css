@@ -1,0 +1,205 @@
+/*
+ * SOURA TRACK SELECTION + CONTROL SURFACE REPAIR — v4
+ * ===================================================
+ *
+ * Hierarchy:
+ *   track card = surface
+ *   controls   = glyphs/actions living ON the surface
+ *
+ * Inactive controls MUST NOT paint independent filled blocks.
+ * Selection belongs to the card, not each child.
+ */
+
+/* ------------------------------------------------------------
+   TRACK CARD SURFACES
+   ------------------------------------------------------------ */
+
+.studio-editor-page .studio-track-card {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease !important;
+}
+
+/* Hover: small lift only. */
+.studio-editor-page .studio-track-card:hover {
+  background: #111114 !important;
+  background-image: none !important;
+  border-color: #3A3A43 !important;
+}
+
+/*
+ * Existing application state.
+ * This is the important restoration: later broad theme selectors had
+ * overwritten the original .studio-track-card.is-selected background.
+ */
+.studio-editor-page .studio-track-card.is-selected,
+.studio-editor-page .studio-track-card[aria-selected="true"],
+.studio-editor-page .studio-track-card[data-selected="true"] {
+  background: #17171C !important;
+  background-image: none !important;
+  border-color: #4A4A56 !important;
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,.025),
+    0 0 0 1px rgba(96,165,250,.08) !important;
+}
+
+/* Selected + hover remains selected, only slightly lifted. */
+.studio-editor-page .studio-track-card.is-selected:hover,
+.studio-editor-page .studio-track-card[aria-selected="true"]:hover,
+.studio-editor-page .studio-track-card[data-selected="true"]:hover {
+  background: #1E1E24 !important;
+  border-color: #62626D !important;
+}
+
+/* Preserve the existing identity/color strip pseudo elements. */
+.studio-editor-page .studio-track-card::before,
+.studio-editor-page .studio-track-card::after {
+  pointer-events: none;
+}
+
+/* Make the whole card read as clickable/selectable. */
+.studio-editor-page .studio-track-card {
+  cursor: default;
+}
+
+/* ------------------------------------------------------------
+   INACTIVE TRACK CONTROLS
+   Exact verified component classes from studio.css.
+   ------------------------------------------------------------ */
+
+.studio-editor-page .studio-track-card .studio-track-control,
+.studio-editor-page .studio-track-card .studio-record-arm,
+.studio-editor-page .studio-track-card .studio-track-more,
+.studio-editor-page .studio-track-card button:not(.is-active):not([aria-pressed="true"]) {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/*
+ * Keep shape/hit-targets, but no filled tiles.
+ * A tiny border is avoided intentionally so the controls visually belong
+ * to the parent track surface.
+ */
+.studio-editor-page .studio-track-card .studio-track-control,
+.studio-editor-page .studio-track-card .studio-record-arm,
+.studio-editor-page .studio-track-card .studio-track-more {
+  border-color: transparent !important;
+  color: #B7B7C2 !important;
+}
+
+/* Hover = local affordance, not persistent block. */
+.studio-editor-page .studio-track-card .studio-track-control:hover:not(.is-active),
+.studio-editor-page .studio-track-card .studio-record-arm:hover:not(.is-active),
+.studio-editor-page .studio-track-card .studio-track-more:hover,
+.studio-editor-page .studio-track-card button:hover:not(.is-active):not([aria-pressed="true"]) {
+  background: rgba(255,255,255,.065) !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  box-shadow: none !important;
+}
+
+/* Press = momentary tactile feedback only. */
+.studio-editor-page .studio-track-card .studio-track-control:active:not(.is-active),
+.studio-editor-page .studio-track-card .studio-record-arm:active:not(.is-active),
+.studio-editor-page .studio-track-card button:active:not(.is-active):not([aria-pressed="true"]) {
+  background: rgba(255,255,255,.10) !important;
+  background-image: none !important;
+  transform: translateY(1px);
+}
+
+/* ------------------------------------------------------------
+   ACTIVE TRACK CONTROLS
+   Persistent state only.
+   ------------------------------------------------------------ */
+
+.studio-editor-page .studio-track-card .studio-track-control.is-active,
+.studio-editor-page .studio-track-card .studio-track-control[aria-pressed="true"],
+.studio-editor-page .studio-track-card button[aria-pressed="true"]:not(.studio-record-arm),
+.studio-editor-page .studio-track-card button[data-active="true"]:not(.studio-record-arm) {
+  background-color: transparent !important;
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+  box-shadow: 0 0 12px rgba(92,75,234,.26) !important;
+}
+
+/* Mute/Solo are active controls too, but still state-driven only. */
+.studio-editor-page .studio-track-card [data-track-mute].is-active,
+.studio-editor-page .studio-track-card [data-track-solo].is-active {
+  background-color: transparent !important;
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+}
+
+/* Record-arm retains semantic red when actually armed. */
+.studio-editor-page .studio-track-card .studio-record-arm.is-active,
+.studio-editor-page .studio-track-card .studio-record-arm[aria-pressed="true"],
+.studio-editor-page .studio-track-card [data-track-record].is-active,
+.studio-editor-page .studio-track-card [data-track-record][aria-pressed="true"] {
+  background-color: transparent !important;
+  background-image: linear-gradient(180deg,#ff5b6d,#d9384e) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+  box-shadow: 0 0 12px rgba(217,56,78,.28) !important;
+}
+
+/* Active + hover must remain visibly active. */
+.studio-editor-page .studio-track-card .studio-track-control.is-active:hover,
+.studio-editor-page .studio-track-card .studio-track-control[aria-pressed="true"]:hover,
+.studio-editor-page .studio-track-card [data-track-mute].is-active:hover,
+.studio-editor-page .studio-track-card [data-track-solo].is-active:hover {
+  background-image: var(--soura-accent-gradient-hover) !important;
+}
+
+/* ------------------------------------------------------------
+   NON-BUTTON TRACK ELEMENTS
+   Don't let nested wrappers look like separate cards.
+   ------------------------------------------------------------ */
+
+.studio-editor-page .studio-track-card .studio-track-header-row,
+.studio-editor-page .studio-track-card .studio-track-control-row,
+.studio-editor-page .studio-track-card .studio-track-volume,
+.studio-editor-page .studio-track-card .studio-track-name {
+  background: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+}
+
+/* Sliders keep their own track/thumb mechanics; wrapper stays transparent. */
+.studio-editor-page .studio-track-card input[type="range"] {
+  background-color: transparent !important;
+}
+
+/* ------------------------------------------------------------
+   FOCUS
+   ------------------------------------------------------------ */
+
+.studio-editor-page .studio-track-card :is(
+  button,
+  input,
+  [role="button"],
+  [role="slider"]
+):focus-visible {
+  outline: 2px solid #60A5FA !important;
+  outline-offset: 2px !important;
+}
+
+/* ------------------------------------------------------------
+   SAFETY / SCOPE
+   ------------------------------------------------------------ */
+
+/*
+ * Intentionally untouched:
+ * - track identity strip/color
+ * - region colors
+ * - waveform colors
+ * - meters
+ * - Score Editor
+ * - Region Editor data rendering
+ */
