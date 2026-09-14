@@ -8,6 +8,8 @@ import './soura/themes/missed-surfaces-v3.css'
 import './soura/themes/track-selection-controls-v4.css'
 import './soura/themes/transport-timeline-interaction-v5.css'
 import './soura/themes/recovery-timeline-cycle-volume-v8.css'
+import './soura/themes/library-cycle-guides-v9.css'
+import './soura/themes/library-black-force-v10.css'
 import { createDawPluginInstance, getDawPluginDefinition } from './studio/plugins/pluginCatalog.js'
 import { drawWavetableVisualizers, renderPluginShell } from './studio/plugins/MelogicWavetableShell.js'
 

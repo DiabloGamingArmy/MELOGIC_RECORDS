@@ -1,0 +1,144 @@
+/*
+ * SOURA LIBRARY + CYCLE GUIDE PATCH — v9
+ * =======================================
+ */
+
+/* ============================================================
+   1. LIBRARY — TRUE BLACK / NEAR-BLACK SURFACES
+   Current app root: .studio-left-panel--library
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--library {
+  background: #000000 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Header / title area */
+.studio-editor-page .studio-left-panel--library > header,
+.studio-editor-page .studio-left-panel--library [class*="library-header"],
+.studio-editor-page .studio-left-panel--library .studio-library-panel > header {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Main library body / empty-state area */
+.studio-editor-page .studio-left-panel--library .studio-library-panel,
+.studio-editor-page .studio-left-panel--library [class*="library-body"],
+.studio-editor-page .studio-left-panel--library [class*="library-content"],
+.studio-editor-page .studio-left-panel--library [class*="library-browser"],
+.studio-editor-page .studio-left-panel--library [class*="asset-browser"] {
+  background: #000000 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Folder/root column */
+.studio-editor-page .studio-left-panel--library [class*="library-sidebar"],
+.studio-editor-page .studio-left-panel--library [class*="folder-tree"],
+.studio-editor-page .studio-left-panel--library [class*="library-folders"],
+.studio-editor-page .studio-left-panel--library [class*="folder-list"] {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Folder / library rows */
+.studio-editor-page .studio-left-panel--library :is(
+  [class*="folder-row"],
+  [class*="library-row"],
+  [class*="asset-row"],
+  [class*="source-row"]
+) {
+  background-color: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page .studio-left-panel--library :is(
+  [class*="folder-row"],
+  [class*="library-row"],
+  [class*="asset-row"],
+  [class*="source-row"]
+):hover {
+  background-color: #111114 !important;
+}
+
+/* Empty-state text should float on black, never on navy. */
+.studio-editor-page .studio-left-panel--library :is(
+  [class*="empty"],
+  [class*="placeholder"],
+  [class*="library-message"]
+) {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+
+/* ============================================================
+   2. CYCLE BOUNDARY GUIDES
+   Current repo:
+     .studio-cycle-guide
+     .studio-cycle-guide.is-enabled
+   ============================================================ */
+
+/*
+ * OFF = fully hidden.
+ * Keep the DOM element present so existing positioning code still works.
+ */
+.studio-editor-page .studio-cycle-guide:not(.is-enabled) {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/*
+ * ON = visible and uses the approved Soura blue -> purple language.
+ * Vertical line, so gradient runs top-to-bottom.
+ */
+.studio-editor-page .studio-cycle-guide.is-enabled {
+  opacity: 1 !important;
+  visibility: visible !important;
+
+  background:
+    linear-gradient(
+      180deg,
+      #2563EB 0%,
+      #5C4BEA 50%,
+      #9333EA 100%
+    ) !important;
+
+  box-shadow:
+    0 0 8px rgba(92,75,234,.34),
+    0 0 14px rgba(147,51,234,.18) !important;
+
+  pointer-events: none !important;
+}
+
+/*
+ * If the app ever toggles visibility by removing the enabled class,
+ * this rule guarantees the guide cannot remain cyan from legacy studio.css.
+ */
+.studio-editor-page .studio-cycle-guide {
+  transition:
+    opacity 100ms ease,
+    visibility 100ms linear !important;
+}
+
+
+/* ============================================================
+   SAFETY
+   ============================================================ */
+
+/*
+ * Intentionally untouched:
+ * - cycle range/body/handles
+ * - timeline pointer logic
+ * - Score Editor
+ * - track selection
+ * - region/waveform colors
+ * - audio engine
+ */

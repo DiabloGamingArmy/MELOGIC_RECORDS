@@ -1,0 +1,154 @@
+/*
+ * SOURA LIBRARY BLACK FORCE — v10
+ * ================================
+ * Strictly scoped to the Library panel.
+ */
+
+/* ============================================================
+   ROOT / FULL PANEL
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--library {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-color: #2A2A31 !important;
+}
+
+/*
+ * Structural descendants must not repaint the pane blue/charcoal.
+ * Let the true-black parent show through.
+ */
+.studio-editor-page .studio-left-panel--library > *,
+.studio-editor-page .studio-left-panel--library .studio-library-panel,
+.studio-editor-page .studio-left-panel--library .studio-library-panel > *,
+.studio-editor-page .studio-left-panel--library [class*="library-body"],
+.studio-editor-page .studio-left-panel--library [class*="library-content"],
+.studio-editor-page .studio-left-panel--library [class*="library-browser"],
+.studio-editor-page .studio-left-panel--library [class*="asset-browser"],
+.studio-editor-page .studio-left-panel--library [class*="library-main"],
+.studio-editor-page .studio-left-panel--library [class*="library-empty"],
+.studio-editor-page .studio-left-panel--library [class*="empty-state"] {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* Header gets just enough elevation to separate it. */
+.studio-editor-page .studio-left-panel--library > header,
+.studio-editor-page .studio-left-panel--library .studio-library-panel > header,
+.studio-editor-page .studio-left-panel--library [class*="library-header"] {
+  background: #050505 !important;
+  background-color: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   LEFT SOURCE/FOLDER COLUMN
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--library :is(
+  [class*="library-sidebar"],
+  [class*="library-folders"],
+  [class*="folder-tree"],
+  [class*="folder-list"],
+  [class*="source-list"],
+  [class*="library-roots"]
+) {
+  background: #050505 !important;
+  background-color: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Rows stay near-black, not blue-gray. */
+.studio-editor-page .studio-left-panel--library :is(
+  [class*="folder-row"],
+  [class*="library-row"],
+  [class*="asset-row"],
+  [class*="source-row"],
+  [class*="root-row"],
+  button
+):not(.is-active):not([aria-selected="true"]):not([aria-pressed="true"]) {
+  background-color: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Hover is a modest neutral lift. */
+.studio-editor-page .studio-left-panel--library :is(
+  [class*="folder-row"],
+  [class*="library-row"],
+  [class*="asset-row"],
+  [class*="source-row"],
+  [class*="root-row"],
+  button
+):not(.is-active):not([aria-selected="true"]):not([aria-pressed="true"]):hover {
+  background-color: #111114 !important;
+  background-image: none !important;
+}
+
+/* Selected/active keeps the approved accent language. */
+.studio-editor-page .studio-left-panel--library :is(
+  .is-active,
+  [aria-selected="true"],
+  [aria-pressed="true"],
+  [data-selected="true"]
+) {
+  background-color: transparent !important;
+  background-image: var(
+    --soura-accent-gradient,
+    linear-gradient(135deg,#2563EB 0%,#5C4BEA 50%,#9333EA 100%)
+  ) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+}
+
+/* ============================================================
+   CONTENT / EMPTY STATE
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--library :is(
+  [class*="empty"],
+  [class*="placeholder"],
+  [class*="message"],
+  [class*="content"]
+) {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* Text hierarchy */
+.studio-editor-page .studio-left-panel--library {
+  --library-v10-primary: #FFFFFF;
+  --library-v10-secondary: #B7B7C2;
+  --library-v10-muted: #8E8E99;
+}
+
+.studio-editor-page .studio-left-panel--library :is(h1,h2,h3,strong) {
+  color: var(--library-v10-primary) !important;
+}
+
+.studio-editor-page .studio-left-panel--library :is(p,small,label) {
+  color: var(--library-v10-secondary);
+}
+
+/* Fields remain intentional near-black controls. */
+.studio-editor-page .studio-left-panel--library :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea
+) {
+  background: #050505 !important;
+  background-image: none !important;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+/*
+ * Safety:
+ * - No Score Editor selectors
+ * - No timeline/cycle selectors
+ * - No track selectors
+ */
