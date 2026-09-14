@@ -31,6 +31,7 @@ pub fn run() {
       vst3::native_vst3_scan,
       vst3::native_vst3_is_available,
       native_vst3_host::native_vst3_host_create,
+      native_vst3_host::native_vst3_host_get_diagnostics,
       native_vst3_host::native_vst3_host_note_on,
       native_vst3_host::native_vst3_host_note_off,
       native_vst3_host::native_vst3_host_set_mix,

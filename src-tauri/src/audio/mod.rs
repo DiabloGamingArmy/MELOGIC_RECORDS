@@ -2,6 +2,8 @@ pub mod commands;
 mod analysis;
 mod dsp;
 mod engine;
+pub(crate) mod rt_queue;
+pub(crate) mod rt_diagnostics;
 
 use std::sync::Mutex;
 
@@ -20,3 +22,6 @@ impl Default for NativeAudioState {
     }
   }
 }
+
+#[cfg(test)]
+pub(crate) mod rt_test_alloc;

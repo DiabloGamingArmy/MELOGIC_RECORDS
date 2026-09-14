@@ -1,5 +1,6 @@
 use std::{
   f32::consts::TAU,
+  time::Instant,
   sync::{
     atomic::{
       AtomicBool,
@@ -24,6 +25,7 @@ use cpal::{
 };
 
 use serde::Serialize;
+use super::rt_diagnostics::{CallbackMeter, DiagnosticsSnapshot, RealtimeDiagnostics};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,6 +42,7 @@ pub struct NativeAudioDeviceInfo {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeAudioStatus {
+  pub diagnostics: DiagnosticsSnapshot,
   pub backend: String,
   pub ready: bool,
   pub stream_active: bool,
@@ -52,6 +55,7 @@ pub struct NativeAudioStatus {
 
 #[derive(Default)]
 struct RealtimeControl {
+  diagnostics: Arc<RealtimeDiagnostics>,
   tone_active: AtomicBool,
   tone_frequency_bits: AtomicU32,
   tone_gain_bits: AtomicU32,
@@ -272,6 +276,7 @@ impl NativeAudioEngine {
     &self,
   ) -> NativeAudioStatus {
     NativeAudioStatus {
+      diagnostics: self.control.diagnostics.snapshot(),
       backend:
         "native-cpal".to_string(),
 
@@ -454,16 +459,16 @@ fn build_f32_stream(
   let mut phase =
     0.0f32;
 
-  let error_callback =
-    |error| {
-      log::error!(
-        "[soura-native-audio] stream error: {error}"
-      );
-    };
+  let errors = Arc::clone(&control.diagnostics);
+  let error_callback = move |error| {
+    errors.record_stream_error(&error);
+  };
+  let mut meter = CallbackMeter::new(Arc::clone(&control.diagnostics), config.sample_rate);
 
   device.build_output_stream(
     config,
     move |output: &mut [f32], _| {
+      let started = Instant::now();
       write_test_tone_f32(
         output,
         channels,
@@ -471,6 +476,7 @@ fn build_f32_stream(
         &control,
         &mut phase,
       );
+      meter.finish(started, output.len() / channels);
     },
     error_callback,
     None,
@@ -497,16 +503,16 @@ fn build_i16_stream(
   let mut phase =
     0.0f32;
 
-  let error_callback =
-    |error| {
-      log::error!(
-        "[soura-native-audio] stream error: {error}"
-      );
-    };
+  let errors = Arc::clone(&control.diagnostics);
+  let error_callback = move |error| {
+    errors.record_stream_error(&error);
+  };
+  let mut meter = CallbackMeter::new(Arc::clone(&control.diagnostics), config.sample_rate);
 
   device.build_output_stream(
     config,
     move |output: &mut [i16], _| {
+      let started = Instant::now();
       let active =
         control.tone_active();
 
@@ -540,6 +546,7 @@ fn build_i16_stream(
           *channel = converted;
         }
       }
+      meter.finish(started, output.len() / channels);
     },
     error_callback,
     None,
@@ -566,16 +573,16 @@ fn build_u16_stream(
   let mut phase =
     0.0f32;
 
-  let error_callback =
-    |error| {
-      log::error!(
-        "[soura-native-audio] stream error: {error}"
-      );
-    };
+  let errors = Arc::clone(&control.diagnostics);
+  let error_callback = move |error| {
+    errors.record_stream_error(&error);
+  };
+  let mut meter = CallbackMeter::new(Arc::clone(&control.diagnostics), config.sample_rate);
 
   device.build_output_stream(
     config,
     move |output: &mut [u16], _| {
+      let started = Instant::now();
       let active =
         control.tone_active();
 
@@ -610,6 +617,7 @@ fn build_u16_stream(
           *channel = converted;
         }
       }
+      meter.finish(started, output.len() / channels);
     },
     error_callback,
     None,

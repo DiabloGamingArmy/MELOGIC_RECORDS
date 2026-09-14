@@ -41,3 +41,18 @@ target_link_libraries(soura_native_vst3_host PRIVATE
 
 set_target_properties(soura_native_vst3_host PROPERTIES POSITION_INDEPENDENT_CODE ON)
 install(TARGETS soura_native_vst3_host ARCHIVE DESTINATION lib)
+
+option(SOURA_BUILD_RT_TESTS "Build device-independent realtime bridge regression tests" OFF)
+if(SOURA_BUILD_RT_TESTS)
+  enable_testing()
+  add_executable(soura_realtime_bridge_test
+    tests/realtime_bridge_test.mm
+    "${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/module_mac.mm"
+    "${VST3_SDK_ROOT}/public.sdk/source/vst/hosting/plugprovider.cpp"
+  )
+  target_compile_features(soura_realtime_bridge_test PRIVATE cxx_std_17)
+  target_compile_options(soura_realtime_bridge_test PRIVATE "$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
+  target_include_directories(soura_realtime_bridge_test PRIVATE "${VST3_SDK_ROOT}")
+  target_link_libraries(soura_realtime_bridge_test PRIVATE sdk_hosting sdk "-framework Cocoa" "-framework Foundation")
+  add_test(NAME soura_realtime_bridge COMMAND soura_realtime_bridge_test)
+endif()

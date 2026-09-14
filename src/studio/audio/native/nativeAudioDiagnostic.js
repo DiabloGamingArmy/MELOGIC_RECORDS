@@ -46,6 +46,7 @@ export async function runNativeAudioDiagnostic() {
   await wait(700)
 
   await backend.stopTestTone()
+  const measuredStatus = await backend.getStatus()
 
   const dsp =
     await backend.runDspSelfTest({
@@ -53,7 +54,8 @@ export async function runNativeAudioDiagnostic() {
     })
 
   const result = {
-    status,
+    status: measuredStatus,
+    initialStatus: status,
     devices,
     dsp,
   }

@@ -21,6 +21,17 @@ using namespace Steinberg::Vst;
 
 namespace {
 
+constexpr int kMidiEventCapacity = 1024;
+
+// Plugins must not synchronously dispatch UI work from their process call.
+// Reject a misbehaving resize callback before touching any Cocoa objects.
+thread_local bool inRealtimeProcess = false;
+struct RealtimeProcessScope {
+  bool previous {inRealtimeProcess};
+  RealtimeProcessScope() { inRealtimeProcess = true; }
+  ~RealtimeProcessScope() { inRealtimeProcess = previous; }
+};
+
 struct SouraVst3EditorInfo { int width; int height; int resizable; };
 
 static void writeError(char* buffer, int capacity, const std::string& message) {
@@ -36,6 +47,7 @@ public:
   void setWindow(NSWindow* window, IPlugView* view) { window_ = window; view_ = view; }
 
   tresult PLUGIN_API resizeView(IPlugView* view, ViewRect* newSize) override {
+    if (inRealtimeProcess) return kResultFalse;
     if (!view || !newSize || view != view_ || !window_) return kInvalidArgument;
 
     __block tresult result = kResultTrue;
@@ -174,7 +186,7 @@ static HostInstance* createInstance(const char* path, double sampleRate, int max
   for (int32 i = 0; i < audioOutputs; ++i) host->component->activateBus(kAudio, kOutput, i, true);
   if (audioOutputs <= 0) { error = "VST3 exposes no audio output bus."; return nullptr; }
 
-  host->inputEvents.setMaxSize(1024);
+  host->inputEvents.setMaxSize(kMidiEventCapacity);
   host->processData.inputEvents = &host->inputEvents;
   host->processData.processContext = &host->processContext;
   host->processContext.sampleRate = sampleRate;
@@ -226,6 +238,8 @@ void* soura_vst3_create(const char* path, double sampleRate, int maxBlockSize, c
   return instance;
 }
 
+int soura_vst3_event_capacity() { return kMidiEventCapacity; }
+
 void soura_vst3_destroy(void* handle) { delete static_cast<HostInstance*>(handle); }
 void soura_vst3_note_on(void* handle, int note, float velocity, int channel) { enqueueNote(static_cast<HostInstance*>(handle), true, note, velocity, channel); }
 void soura_vst3_note_off(void* handle, int note, float velocity, int channel) { enqueueNote(static_cast<HostInstance*>(handle), false, note, velocity, channel); }
@@ -234,10 +248,12 @@ int soura_vst3_process(void* handle, float* output, int frames, int channels) {
   auto* host = static_cast<HostInstance*>(handle);
   if (!host || !output || frames <= 0 || frames > host->maxBlockSize || channels <= 0) return 0;
   host->processData.numSamples = frames;
-  {
-      if (host->processor->process(host->processData) != kResultOk) return 0;
-    host->inputEvents.clear();
-  }
+  // Events belong to one block, including failed blocks. Never replay stale
+  // note-ons or retain occupancy after a plugin returns an error.
+  RealtimeProcessScope realtimeScope;
+  const auto result = host->processor->process(host->processData);
+  host->inputEvents.clear();
+  if (result != kResultOk) return 0;
   if (host->processData.numOutputs <= 0 || !host->processData.outputs) return 0;
   const auto& bus = host->processData.outputs[0];
   if (bus.numChannels <= 0 || !bus.channelBuffers32) return 0;

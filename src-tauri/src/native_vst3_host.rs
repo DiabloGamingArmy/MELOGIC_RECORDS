@@ -1,5 +1,6 @@
 use std::{
   collections::HashMap,
+  time::Instant,
   ffi::{CStr, CString},
   os::raw::{c_char, c_float, c_int, c_void},
   sync::{
@@ -10,7 +11,7 @@ use std::{
 };
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, SampleFormat, Stream, StreamConfig};
-use crossbeam_queue::ArrayQueue;
+use crate::audio::{rt_queue, rt_diagnostics::{CallbackMeter, DiagnosticsSnapshot, RealtimeDiagnostics}};
 use serde::Serialize;
 
 #[repr(C)]
@@ -18,6 +19,7 @@ struct SouraVst3EditorInfo { width: c_int, height: c_int, resizable: c_int }
 
 extern "C" {
   fn soura_vst3_create(path: *const c_char, sample_rate: f64, max_block_size: c_int, error: *mut c_char, error_capacity: c_int) -> *mut c_void;
+  fn soura_vst3_event_capacity() -> c_int;
   fn soura_vst3_destroy(handle: *mut c_void);
   fn soura_vst3_note_on(handle: *mut c_void, note: c_int, velocity: c_float, channel: c_int);
   fn soura_vst3_note_off(handle: *mut c_void, note: c_int, velocity: c_float, channel: c_int);
@@ -32,7 +34,8 @@ struct MidiEvent { kind: MidiEventKind, note: i32, velocity: f32, channel: i32 }
 
 struct HostShared {
   handle: usize,
-  midi: Arc<ArrayQueue<MidiEvent>>,
+  diagnostics: Arc<RealtimeDiagnostics>,
+  midi_budget: usize,
   gain_bits: AtomicU32,
   pan_bits: AtomicU32,
   muted: AtomicBool,
@@ -41,8 +44,10 @@ unsafe impl Send for HostShared {}
 unsafe impl Sync for HostShared {}
 
 struct HostedInstance {
-  shared: Arc<HostShared>,
+  // Drop the stream before releasing callback backing storage.
   stream: Stream,
+  shared: Arc<HostShared>,
+  midi: rt_queue::Sender<MidiEvent>,
   sample_rate: u32,
   channels: u16,
   max_block_size: i32,
@@ -93,29 +98,45 @@ fn apply_mix(output: &mut [f32], channels: usize, shared: &HostShared) {
   }
 }
 
-fn build_stream(shared: Arc<HostShared>, config: &StreamConfig, sample_format: SampleFormat, device: &cpal::Device, max_block_size: i32) -> Result<Stream, String> {
+// Hard work ceiling; also limited to the capacity reported by the C++ bridge.
+const MIDI_EVENTS_PER_CALLBACK: usize = 1024;
+const MIDI_QUEUE_CAPACITY: usize = 4096;
+
+fn render_block(shared: &HostShared, midi: &mut rt_queue::Receiver<MidiEvent>, output: &mut [f32], channels: usize, max_block_size: usize) {
+  let frames = output.len() / channels;
+  if frames == 0 || frames > max_block_size {
+    shared.diagnostics.oversized_buffers.fetch_add(1, Ordering::Relaxed);
+    output.fill(0.0);
+    return;
+  }
+  midi.drain_bounded(shared.midi_budget, |event| unsafe {
+    match event.kind {
+      MidiEventKind::NoteOn => soura_vst3_note_on(shared.handle as *mut c_void, event.note, event.velocity, event.channel),
+      MidiEventKind::NoteOff => soura_vst3_note_off(shared.handle as *mut c_void, event.note, event.velocity, event.channel),
+    }
+  });
+  let ok = unsafe { soura_vst3_process(shared.handle as *mut c_void, output.as_mut_ptr(), frames as c_int, channels as c_int) };
+  if ok == 0 {
+    shared.diagnostics.process_failures.fetch_add(1, Ordering::Relaxed);
+    output.fill(0.0);
+    return;
+  }
+  apply_mix(output, channels, shared);
+}
+
+fn build_stream(shared: Arc<HostShared>, mut midi: rt_queue::Receiver<MidiEvent>, config: &StreamConfig, sample_format: SampleFormat, device: &cpal::Device, max_block_size: i32) -> Result<Stream, String> {
   let channels = usize::from(config.channels);
-  let err = |error| log::error!("[soura-vst3-host] CPAL stream error: {error}");
+  if channels == 0 || config.sample_rate == 0 { return Err("Invalid native VST3 stream configuration.".into()); }
+  let errors = Arc::clone(&shared.diagnostics);
+  let err = move |error| { errors.record_stream_error(&error); };
+  let mut meter = CallbackMeter::new(Arc::clone(&shared.diagnostics), config.sample_rate);
   match sample_format {
     SampleFormat::F32 => device.build_output_stream(
       config,
       move |output: &mut [f32], _| {
-        let frames = output.len() / channels;
-        if frames == 0 || frames > max_block_size as usize {
-          output.fill(0.0);
-          return;
-        }
-        while let Some(event) = shared.midi.pop() {
-          unsafe {
-            match event.kind {
-              MidiEventKind::NoteOn => soura_vst3_note_on(shared.handle as *mut c_void, event.note, event.velocity, event.channel),
-              MidiEventKind::NoteOff => soura_vst3_note_off(shared.handle as *mut c_void, event.note, event.velocity, event.channel),
-            }
-          }
-        }
-        let ok = unsafe { soura_vst3_process(shared.handle as *mut c_void, output.as_mut_ptr(), frames as c_int, channels as c_int) };
-        if ok == 0 { output.fill(0.0); return; }
-        apply_mix(output, channels, &shared);
+        let start = Instant::now();
+        render_block(&shared, &mut midi, output, channels, max_block_size as usize);
+        meter.finish(start, output.len() / channels);
       },
       err,
       None,
@@ -152,14 +173,16 @@ pub fn native_vst3_host_create(
   let handle = unsafe { soura_vst3_create(cpath.as_ptr(), actual_sample_rate, actual_max_block, error.as_mut_ptr(), error.len() as c_int) };
   if handle.is_null() { return Err(format!("Could not instantiate VST3 '{}': {}", path, ffi_error(&error))); }
 
+  let (midi_tx, midi_rx) = rt_queue::channel(MIDI_QUEUE_CAPACITY);
   let shared = Arc::new(HostShared {
     handle: handle as usize,
-    midi: Arc::new(ArrayQueue::new(4096)),
+    diagnostics: Arc::new(RealtimeDiagnostics::default()),
+    midi_budget: (unsafe { soura_vst3_event_capacity() } as usize).min(MIDI_EVENTS_PER_CALLBACK),
     gain_bits: AtomicU32::new(1.0f32.to_bits()),
     pan_bits: AtomicU32::new(0.0f32.to_bits()),
     muted: AtomicBool::new(false),
   });
-  let stream = match build_stream(Arc::clone(&shared), &config, supported.sample_format(), &device, actual_max_block) {
+  let stream = match build_stream(Arc::clone(&shared), midi_rx, &config, supported.sample_format(), &device, actual_max_block) {
     Ok(stream) => stream,
     Err(error) => { unsafe { soura_vst3_destroy(handle) }; return Err(error); }
   };
@@ -170,22 +193,22 @@ pub fn native_vst3_host_create(
     channels: config.channels, max_block_size: actual_max_block,
     audio_route: "soura-native-vst3-direct".into(),
   };
-  instances.insert(instance_id, HostedInstance { shared, stream, sample_rate: config.sample_rate, channels: config.channels, max_block_size: actual_max_block });
+  instances.insert(instance_id, HostedInstance { shared, stream, midi: midi_tx, sample_rate: config.sample_rate, channels: config.channels, max_block_size: actual_max_block });
   Ok(status)
 }
 
 #[tauri::command]
 pub fn native_vst3_host_note_on(state: tauri::State<'_, NativeVst3HostState>, instance_id: String, note: i32, velocity: f32, channel: i32) -> Result<(), String> {
-  let instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
-  let instance = instances.get(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
-  instance.shared.midi.push(MidiEvent { kind: MidiEventKind::NoteOn, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| "Native VST3 MIDI queue is full.".to_string())
+  let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
+  let instance = instances.get_mut(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
+  instance.midi.push(MidiEvent { kind: MidiEventKind::NoteOn, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { instance.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
 }
 
 #[tauri::command]
 pub fn native_vst3_host_note_off(state: tauri::State<'_, NativeVst3HostState>, instance_id: String, note: i32, velocity: f32, channel: i32) -> Result<(), String> {
-  let instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
-  let instance = instances.get(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
-  instance.shared.midi.push(MidiEvent { kind: MidiEventKind::NoteOff, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| "Native VST3 MIDI queue is full.".to_string())
+  let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
+  let instance = instances.get_mut(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
+  instance.midi.push(MidiEvent { kind: MidiEventKind::NoteOff, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { instance.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
 }
 
 #[tauri::command]
@@ -217,4 +240,36 @@ pub fn native_vst3_host_dispose(state: tauri::State<'_, NativeVst3HostState>, in
     unsafe { soura_vst3_destroy(instance.shared.handle as *mut c_void) };
   }
   Ok(())
+}
+
+/// Read counters on the control plane; this command never enters the callback.
+#[tauri::command]
+pub fn native_vst3_host_get_diagnostics(state: tauri::State<'_, NativeVst3HostState>, instance_id: String) -> Result<DiagnosticsSnapshot, String> {
+  let instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
+  let instance = instances.get(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
+  Ok(instance.shared.diagnostics.snapshot())
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  #[test]
+  fn rejected_buffer_is_silent_counted_and_keeps_pending_midi() {
+    let (mut tx, mut rx) = rt_queue::channel(2);
+    tx.push(MidiEvent { kind: MidiEventKind::NoteOff, note: 60, velocity: 0.0, channel: 0 }).ok().unwrap();
+    let shared = HostShared {
+      handle: 0, diagnostics: Arc::new(RealtimeDiagnostics::default()), midi_budget: MIDI_EVENTS_PER_CALLBACK,
+      gain_bits: AtomicU32::new(1.0f32.to_bits()), pan_bits: AtomicU32::new(0.0f32.to_bits()), muted: AtomicBool::new(false),
+    };
+    let mut output = [1.0; 130];
+    let counts = crate::audio::rt_test_alloc::measure(|| render_block(&shared, &mut rx, &mut output, 2, 64));
+    assert_eq!(counts, (0, 0));
+    assert!(output.iter().all(|sample| *sample == 0.0));
+    assert_eq!(shared.diagnostics.snapshot().oversized_buffers, 1);
+    assert_eq!(rx.pop().unwrap().note, 60);
+  }
+  #[test]
+  fn native_event_capacity_covers_callback_budget() {
+    assert!(unsafe { soura_vst3_event_capacity() } >= MIDI_EVENTS_PER_CALLBACK as i32);
+  }
 }

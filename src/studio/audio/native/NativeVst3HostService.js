@@ -32,3 +32,7 @@ export async function disposeNativeVst3Host(instanceId) {
   if (!instanceId || !isNativeVst3HostRuntime()) return
   return (await getInvoke())('native_vst3_host_dispose', { instanceId })
 }
+
+export async function getNativeVst3Diagnostics(instanceId) {
+  return (await getInvoke())('native_vst3_host_get_diagnostics', { instanceId })
+}
