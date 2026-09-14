@@ -21,6 +21,7 @@ import { vertixAssetRegistry, vertixPackInstallationRegistry } from './vertix/as
 import { createProjectAssetResolver, resolveProjectAssets, summarizeProjectAssetDependencies } from './vertix/projects/assetResolver'
 import { mountResonaChatSurface } from './components/resonaChatSurface.js'
 import { hydrateVertixAccountAssetProvider } from './data/vertixAssetLibraryService.js'
+import { syncVertixProjectsToNexus } from './nexus/services/projectIntegration.js'
 import { mountVertixAssetPreviews } from './vertix/assets/assetPreviewRenderer.js'
 
 const app = document.querySelector('#app')
@@ -913,6 +914,16 @@ async function loadDashboardProjects() {
   renderApp()
   try {
     const projects = await listAccessibleStageProjects(state.user.uid)
+
+    try {
+      syncVertixProjectsToNexus(projects)
+    } catch (error) {
+      console.warn(
+        '[Vertix] Nexus project indexing failed:',
+        error,
+      )
+    }
+
     const sorted = [...projects].sort(sortStageProjectsByActivity)
     state.projects = sorted
     state.recentProjects = sorted.slice(0, 6)

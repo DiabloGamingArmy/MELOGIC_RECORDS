@@ -14,6 +14,10 @@ import {
   ROUTES,
   studioProjectRoute
 } from '../utils/routes'
+import {
+  indexSingleSouraProject,
+  syncSouraProjectsToNexus
+} from '../nexus/services/projectIntegration'
 
 const app = document.querySelector('#app')
 const SOURA_ICON = '/assets/app-icons/soura.png'
@@ -575,6 +579,15 @@ async function handleCreateProject(event) {
       }
     )
 
+    try {
+      indexSingleSouraProject(project)
+    } catch (error) {
+      console.warn(
+        '[Soura Browser] Could not index new project in Nexus:',
+        error,
+      )
+    }
+
     window.location.href = studioProjectRoute(project.id)
   } catch (error) {
     console.error('[Soura Browser] Project creation failed:', error)
@@ -622,6 +635,17 @@ async function loadProjects() {
   try {
     state.projects =
       await listAccessibleStudioProjects(state.user.uid)
+
+    try {
+      syncSouraProjectsToNexus(
+        state.projects,
+      )
+    } catch (error) {
+      console.warn(
+        '[Soura Browser] Nexus project indexing failed:',
+        error,
+      )
+    }
 
     state.loading = false
   } catch (error) {
