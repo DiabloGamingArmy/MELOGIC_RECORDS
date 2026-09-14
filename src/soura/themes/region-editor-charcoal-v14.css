@@ -1,0 +1,112 @@
+/*
+ * SOURA REGION EDITOR CHARCOAL — v14
+ * ==================================
+ *
+ * Surface contract:
+ *   main editor workplane: #111114
+ *   deeper inset chrome:   #0D0D10
+ *   dividers:              #2A2A31
+ *
+ * Musical/data colors remain untouched.
+ */
+
+/* ============================================================
+   REGION EDITOR SHELL
+   ============================================================ */
+
+.studio-editor-page .studio-bottom-panel[data-audio-region-editor],
+.studio-editor-page .studio-bottom-panel.studio-midi-roll-editor,
+.studio-editor-page .studio-region-editor-audio {
+  background: #111114 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   PITCH TRACE EDITOR — IMAGE 1
+   ============================================================ */
+
+.studio-editor-page .studio-pitch-trace-view,
+.studio-editor-page .studio-pitch-trace-view [data-pitch-trace-scroll],
+.studio-editor-page .studio-pitch-trace-scroll,
+.studio-editor-page .studio-pitch-trace-canvas,
+.studio-editor-page .studio-pitch-trace-grid {
+  background-color: #111114 !important;
+  background-image: none !important;
+}
+
+/*
+ * The pitch-trace base/help card had a cyan/blue tint in studio.css.
+ * Neutralize it to the same charcoal system.
+ */
+.studio-editor-page .studio-pitch-trace-base {
+  background: #0D0D10 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #B7B7C2 !important;
+}
+
+/* Piano-key / left-axis area remains functionally distinct. */
+.studio-editor-page .studio-pitch-trace-keyboard {
+  background: #0D0D10 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   WAVEFORM EDITOR — IMAGE 2
+   ============================================================ */
+
+.studio-editor-page .studio-audio-waveform-viewport,
+.studio-editor-page .studio-audio-waveform-editor,
+.studio-editor-page .studio-audio-waveform-stage {
+  background-color: #111114 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/*
+ * Keep actual waveform/bar graphics transparent so their region/track color
+ * remains visible above the charcoal surface.
+ */
+.studio-editor-page .studio-audio-waveform-viewport .studio-audio-waveform,
+.studio-editor-page .studio-audio-waveform-viewport .studio-audio-waveform-bars,
+.studio-editor-page .studio-pitch-trace-waveform {
+  background-color: transparent !important;
+  background-image: none;
+}
+
+/* ============================================================
+   REGION EDITOR TOOL / INSPECTOR SEPARATION
+   ============================================================ */
+
+.studio-editor-page .studio-audio-region-tools,
+.studio-editor-page .studio-pitch-trace-tools-pane,
+.studio-editor-page .studio-pitch-trace-controls,
+.studio-editor-page .studio-pitch-trace-note-tools {
+  background: #0D0D10 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* Header stays nearly black so the charcoal canvas reads separately. */
+.studio-editor-page .studio-region-editor-header-container,
+.studio-editor-page .studio-audio-waveform-toolbar {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   SAFETY — DATA LAYERS
+   ============================================================ */
+
+/*
+ * Do NOT recolor:
+ * - .studio-pitch-trace-note
+ * - .studio-pitch-trace-waveform
+ * - waveform SVG/canvas data
+ * - regions
+ * - pitch curves
+ * - playheads
+ */
