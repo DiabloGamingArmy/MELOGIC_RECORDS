@@ -5,7 +5,6 @@ import { AudioPresets, Room, RoomEvent, Track, createLocalAudioTrack } from 'liv
 import { deleteObject, getDownloadURL, ref as storageRef, uploadBytes } from 'firebase/storage'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
-import { initPagePreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getSiteAssetURL } from './firebase/siteAssets'
 import { storage } from './firebase/storage'
@@ -6810,16 +6809,6 @@ function renderStreamingStartupShell() {
   app.innerHTML = `<div class="music-startup-shell" role="status" aria-live="polite"><div class="music-startup-top"><strong>MELOGIC</strong><span>Streaming</span></div><div class="music-startup-body"><aside><b>Melogic Streaming</b><i></i><i></i><i></i><i></i></aside><main><small>MELOGIC STREAMING</small><h1>Your music.<br><em>Your discovery.</em></h1><p>Loading your Streaming experience…</p><div class="music-startup-cards"><i></i><i></i><i></i><i></i></div></main></div></div>`
 }
 
-
-function mountStreamingInitialPreloader() {
-  if (document.querySelector('#page-preloader')) return
-  app.insertAdjacentHTML('afterbegin', renderPagePreloaderMarkup())
-}
-
-function settleStreamingInitialPreloader() {
-  initPagePreloader([], { fallbackMs: 3800, fadeDurationMs: 200 })
-}
-
 async function loadMusicPage() {
   renderStreamingStartupShell()
   stopLiveStreamSubscription()
@@ -6954,14 +6943,9 @@ window.addEventListener('pagehide', () => {
   cleanupHlsPlayback()
 })
 
-mountStreamingInitialPreloader()
-loadMusicPage()
-  .catch((error) => {
-    state.loading = false
-    state.error = error?.message || 'Melogic Streaming could not be loaded.'
-    console.warn('[music] Page load failed.', error)
-    rerender()
-  })
-  .finally(() => {
-    settleStreamingInitialPreloader()
-  })
+loadMusicPage().catch((error) => {
+  state.loading = false
+  state.error = error?.message || 'Melogic Streaming could not be loaded.'
+  console.warn('[music] Page load failed.', error)
+  rerender()
+})
