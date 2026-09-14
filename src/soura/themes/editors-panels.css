@@ -1,0 +1,327 @@
+/*
+ * SOURA THEME CONVERSION — PATCH 4/8
+ * Editors & Side Panels
+ *
+ * Scope:
+ * - Mixer / channel strips
+ * - Region editor / piano-roll/editor chrome
+ * - Asset Library / browser surfaces
+ * - Inspector surfaces
+ * - Bottom panels
+ * - Instrument / Resonance / plugin-adjacent embedded panels
+ * - Panel headers / panel toolbars / internal rows
+ *
+ * Rules:
+ * - Neutral black/charcoal chrome at rest.
+ * - Musical/editor data may retain color where it conveys content.
+ * - Blue->purple remains interaction/status-only and is inherited from Patch 3.
+ * - Detached/floating native windows are Patch 5.
+ * - Dialogs/popovers/toasts are Patch 6.
+ *
+ * Visual-only patch. No layout, geometry, sizing, positioning, scroll math,
+ * audio behavior, event handling, or editor logic changes.
+ */
+
+/* ============================================================
+   GENERIC DOCKED PANEL SHELLS
+   ============================================================ */
+
+.studio-editor-page [class*="inspector"],
+.studio-editor-page [class*="asset-library"],
+.studio-editor-page [class*="asset-browser"],
+.studio-editor-page [class*="mixer"],
+.studio-editor-page [class*="region-editor"],
+.studio-editor-page [class*="bottom-panel"],
+.studio-editor-page [class*="instrument-panel"],
+.studio-editor-page [class*="resonance"],
+.studio-editor-page [class*="plugin-panel"] {
+  background-color: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* Panel headers/toolbars become flatter, darker, and quieter. */
+.studio-editor-page [class*="panel-header"],
+.studio-editor-page [class*="panel-toolbar"],
+.studio-editor-page [class*="asset-toolbar"],
+.studio-editor-page [class*="mixer-toolbar"],
+.studio-editor-page [class*="editor-toolbar"],
+.studio-editor-page [class*="inspector-header"] {
+  background-color: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+  box-shadow: none !important;
+}
+
+/* Inner cards/sections stay neutral and separated by depth, not blue tint. */
+.studio-editor-page [class*="panel-section"],
+.studio-editor-page [class*="inspector-section"],
+.studio-editor-page [class*="editor-section"],
+.studio-editor-page [class*="library-section"],
+.studio-editor-page [class*="mixer-section"] {
+  background-color: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+/* ============================================================
+   ASSET LIBRARY / BROWSER
+   ============================================================ */
+
+.studio-asset-library-body,
+.studio-editor-page [class*="asset-library-body"],
+.studio-editor-page [class*="asset-browser-body"] {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-secondary) !important;
+}
+
+.studio-editor-page [class*="asset-library-sidebar"],
+.studio-editor-page [class*="asset-browser-sidebar"],
+.studio-editor-page [class*="library-sidebar"],
+.studio-editor-page [class*="folder-tree"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="asset-row"],
+.studio-editor-page [class*="file-row"],
+.studio-editor-page [class*="library-row"],
+.studio-editor-page [class*="folder-row"] {
+  background: transparent !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [class*="asset-row"]:hover,
+.studio-editor-page [class*="file-row"]:hover,
+.studio-editor-page [class*="library-row"]:hover,
+.studio-editor-page [class*="folder-row"]:hover {
+  background: var(--soura-surface-2) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+.studio-editor-page [class*="asset-row"].is-selected,
+.studio-editor-page [class*="file-row"].is-selected,
+.studio-editor-page [class*="library-row"].is-selected,
+.studio-editor-page [class*="folder-row"].is-selected {
+  background: var(--soura-accent-active-soft) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-accent-border) !important;
+}
+
+.studio-asset-library-empty,
+.studio-editor-page [class*="asset-empty"],
+.studio-editor-page [class*="library-empty"] {
+  background: transparent !important;
+  color: var(--soura-text-muted) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* ============================================================
+   MIXER
+   ============================================================ */
+
+.studio-editor-page .studio-mixer-strip,
+.studio-editor-page [class*="mixer-channel"],
+.studio-editor-page [class*="channel-strip"],
+.studio-editor-page [class*="master-strip"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.02),
+    0 8px 20px rgba(0,0,0,.16) !important;
+}
+
+.studio-editor-page .studio-mixer-strip:hover,
+.studio-editor-page [class*="mixer-channel"]:hover,
+.studio-editor-page [class*="channel-strip"]:hover {
+  background: var(--soura-surface-2) !important;
+}
+
+.studio-editor-page .studio-mixer-strip.is-selected,
+.studio-editor-page [class*="mixer-channel"].is-selected,
+.studio-editor-page [class*="channel-strip"].is-selected {
+  border-color: var(--soura-accent-border) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.03),
+    0 0 0 1px rgba(111,108,255,.10) !important;
+}
+
+/* Insert/send/plugin slots: dark neutral, not colored cards. */
+.studio-editor-page [class*="insert-slot"],
+.studio-editor-page [class*="send-slot"],
+.studio-editor-page [class*="fx-slot"],
+.studio-editor-page [class*="plugin-slot"] {
+  background: var(--soura-surface-2) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="insert-slot"]:hover,
+.studio-editor-page [class*="send-slot"]:hover,
+.studio-editor-page [class*="fx-slot"]:hover,
+.studio-editor-page [class*="plugin-slot"]:hover {
+  background: var(--soura-surface-3) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-accent-border) !important;
+}
+
+/*
+ * Do not target meter-fill, meter-bar, track-color, channel-color, etc.
+ * Meter and track identity data remain color-bearing musical/status content.
+ */
+
+/* ============================================================
+   REGION EDITOR / PIANO ROLL / AUDIO EDITOR CHROME
+   ============================================================ */
+
+.studio-bottom-panel,
+.studio-midi-roll-editor,
+.studio-editor-page [class*="region-editor-shell"],
+.studio-editor-page [class*="piano-roll"],
+.studio-editor-page [class*="audio-editor"] {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="region-editor-header"],
+.studio-editor-page [class*="piano-roll-header"],
+.studio-editor-page [class*="audio-editor-header"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+/*
+ * Editor grid backgrounds become neutral. MIDI notes, regions, waveforms,
+ * pitch traces, automation curves and other data overlays are not recolored.
+ */
+.studio-editor-page [class*="piano-roll-grid"],
+.studio-editor-page [class*="region-editor-grid"],
+.studio-editor-page [class*="audio-editor-grid"],
+.studio-editor-page [class*="editor-canvas"] {
+  background-color: var(--soura-canvas) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [class*="piano-roll-grid"] [class*="grid-line"],
+.studio-editor-page [class*="region-editor-grid"] [class*="grid-line"] {
+  border-color: rgba(255,255,255,.055) !important;
+}
+
+.studio-editor-page [class*="piano-keyboard"],
+.studio-editor-page [class*="note-keyboard"] {
+  background: var(--soura-surface-1) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* Piano keys keep tonal white/black distinction, but lose blue tint. */
+.studio-editor-page [class*="piano-key"].is-white,
+.studio-editor-page [class*="piano-key"][data-key-type="white"] {
+  background: #d9d9dc !important;
+  color: #151517 !important;
+  border-color: #8a8a90 !important;
+}
+
+.studio-editor-page [class*="piano-key"].is-black,
+.studio-editor-page [class*="piano-key"][data-key-type="black"] {
+  background: #151517 !important;
+  color: #f3f3f5 !important;
+  border-color: #050505 !important;
+}
+
+/* ============================================================
+   INSPECTOR
+   ============================================================ */
+
+.studio-editor-page [class*="inspector-body"],
+.studio-editor-page [class*="inspector-content"] {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-secondary) !important;
+}
+
+.studio-editor-page [class*="inspector-group"],
+.studio-editor-page [class*="inspector-card"] {
+  background: var(--soura-surface-1) !important;
+  border-color: var(--soura-border-subtle) !important;
+  color: var(--soura-text-secondary) !important;
+}
+
+.studio-editor-page [class*="inspector-label"],
+.studio-editor-page [class*="field-label"] {
+  color: var(--soura-text-muted) !important;
+}
+
+/* ============================================================
+   INSTRUMENT / RESONANCE / EMBEDDED PLUGIN-ADJACENT SURFACES
+   ============================================================ */
+
+.studio-editor-page [class*="instrument-browser"],
+.studio-editor-page [class*="instrument-panel"],
+.studio-editor-page [class*="instrument-shell"],
+.studio-editor-page [class*="resonance-panel"],
+.studio-editor-page [class*="resonance-shell"],
+.studio-editor-page [class*="plugin-browser"] {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="instrument-card"],
+.studio-editor-page [class*="instrument-row"],
+.studio-editor-page [class*="plugin-row"],
+.studio-editor-page [class*="preset-row"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [class*="instrument-card"]:hover,
+.studio-editor-page [class*="instrument-row"]:hover,
+.studio-editor-page [class*="plugin-row"]:hover,
+.studio-editor-page [class*="preset-row"]:hover {
+  background: var(--soura-surface-2) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+/* ============================================================
+   PANEL RESIZERS / DIVIDERS
+   ============================================================ */
+
+.studio-editor-page [class*="panel-resizer"],
+.studio-editor-page [class*="splitter"],
+.studio-editor-page [class*="divider"] {
+  background-color: var(--soura-divider) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* ============================================================
+   PANEL SCROLLBARS
+   ============================================================ */
+
+.studio-editor-page [class*="asset-library"],
+.studio-editor-page [class*="asset-browser"],
+.studio-editor-page [class*="mixer"],
+.studio-editor-page [class*="region-editor"],
+.studio-editor-page [class*="inspector"],
+.studio-editor-page [class*="bottom-panel"] {
+  scrollbar-color: rgba(255,255,255,.18) rgba(255,255,255,.025);
+}
+
+/* ============================================================
+   CONTENT-COLOR PROTECTION NOTES
+   ============================================================ */
+
+/*
+ * Intentionally NOT targeted:
+ *   .studio-audio-region
+ *   .studio-midi-region
+ *   waveform / MIDI-note / automation / pitch-trace color layers
+ *   meter fills
+ *   track-color chips / identity strips
+ *
+ * These continue to own their project/data color.
+ */
