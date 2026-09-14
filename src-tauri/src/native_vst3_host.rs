@@ -7,11 +7,12 @@ use std::{
     atomic::{AtomicBool, AtomicU32, Ordering},
     Arc,
     Mutex,
+    OnceLock,
   },
 };
 
 use cpal::{traits::{DeviceTrait, HostTrait, StreamTrait}, SampleFormat, Stream, StreamConfig};
-use crate::audio::{rt_queue, rt_diagnostics::{CallbackMeter, DiagnosticsSnapshot, RealtimeDiagnostics}};
+use crate::audio::{reclamation::{Reclaimer, Retired}, rt_queue, rt_diagnostics::{CallbackMeter, DiagnosticsSnapshot, RealtimeDiagnostics}};
 use serde::Serialize;
 
 #[repr(C)]
@@ -43,14 +44,57 @@ struct HostShared {
 unsafe impl Send for HostShared {}
 unsafe impl Sync for HostShared {}
 
-struct HostedInstance {
-  // Drop the stream before releasing callback backing storage.
-  stream: Stream,
+// The retirement owner pins all callback backing allocations until the entire
+// callback object has been released, even when CPAL's backend retains the stream.
+struct PluginOwner {
   shared: Arc<HostShared>,
   midi: rt_queue::Sender<MidiEvent>,
+}
+impl Retired for PluginOwner {
+  fn ready(&mut self) -> bool { Arc::get_mut(&mut self.shared).is_some() }
+}
+impl Drop for PluginOwner {
+  fn drop(&mut self) {
+    debug_assert_eq!(Arc::strong_count(&self.shared), 1);
+    unsafe { soura_vst3_destroy(self.shared.handle as *mut c_void) };
+  }
+}
+static PLUGIN_RECLAIMER: OnceLock<Result<Reclaimer<PluginOwner>, String>> = OnceLock::new();
+
+struct HostedInstance {
+  stream: Option<Stream>,
+  owner: Option<PluginOwner>,
+  reclaimer: Reclaimer<PluginOwner>,
   sample_rate: u32,
   channels: u16,
   max_block_size: i32,
+}
+impl Drop for HostedInstance {
+  fn drop(&mut self) {
+    drop(self.stream.take());
+    if let Some(owner) = self.owner.take() {
+      if let Err(mut owner) = self.reclaimer.retire(owner) {
+        // A failed worker must never turn into destruction of a live plugin.
+        log::error!("[soura-vst3-host] reclamation worker failed; restart Soura to release remaining native resources");
+        if owner.ready() { drop(owner); } else { std::mem::forget(owner); }
+      }
+    }
+  }
+}
+
+// Rust drops fields in declaration order. Release MIDI and diagnostics before
+// the shared lease, so readiness also proves their callback references are gone.
+struct VstCallback {
+  midi: rt_queue::Receiver<MidiEvent>,
+  meter: CallbackMeter,
+  shared: Arc<HostShared>,
+}
+impl VstCallback {
+  fn render(&mut self, output: &mut [f32], channels: usize, max_block: usize) {
+    let started = Instant::now();
+    render_block(&self.shared, &mut self.midi, output, channels, max_block);
+    self.meter.finish(started, output.len() / channels);
+  }
 }
 
 pub struct NativeVst3HostState { instances: Mutex<HashMap<String, HostedInstance>> }
@@ -124,19 +168,18 @@ fn render_block(shared: &HostShared, midi: &mut rt_queue::Receiver<MidiEvent>, o
   apply_mix(output, channels, shared);
 }
 
-fn build_stream(shared: Arc<HostShared>, mut midi: rt_queue::Receiver<MidiEvent>, config: &StreamConfig, sample_format: SampleFormat, device: &cpal::Device, max_block_size: i32) -> Result<Stream, String> {
+fn build_stream(shared: Arc<HostShared>, midi: rt_queue::Receiver<MidiEvent>, config: &StreamConfig, sample_format: SampleFormat, device: &cpal::Device, max_block_size: i32) -> Result<Stream, String> {
   let channels = usize::from(config.channels);
   if channels == 0 || config.sample_rate == 0 { return Err("Invalid native VST3 stream configuration.".into()); }
   let errors = Arc::clone(&shared.diagnostics);
   let err = move |error| { errors.record_stream_error(&error); };
-  let mut meter = CallbackMeter::new(Arc::clone(&shared.diagnostics), config.sample_rate);
+  let meter = CallbackMeter::new(Arc::clone(&shared.diagnostics), config.sample_rate);
+  let mut callback = VstCallback { midi, meter, shared };
   match sample_format {
     SampleFormat::F32 => device.build_output_stream(
       config,
       move |output: &mut [f32], _| {
-        let start = Instant::now();
-        render_block(&shared, &mut midi, output, channels, max_block_size as usize);
-        meter.finish(start, output.len() / channels);
+        callback.render(output, channels, max_block_size as usize);
       },
       err,
       None,
@@ -158,6 +201,7 @@ pub fn native_vst3_host_create(
     return Ok(NativeVst3HostStatus { instance_id, ready: true, sample_rate: existing.sample_rate, channels: existing.channels, max_block_size: existing.max_block_size, audio_route: "soura-native-vst3-direct".into() });
   }
 
+  let reclaimer = PLUGIN_RECLAIMER.get_or_init(Reclaimer::new).as_ref().map_err(Clone::clone)?.clone();
   let host = cpal::default_host();
   let device = host.default_output_device().ok_or_else(|| "No native output device is available for VST3 hosting.".to_string())?;
   let supported = device.default_output_config().map_err(|e| format!("Could not read native output configuration: {e}"))?;
@@ -182,18 +226,20 @@ pub fn native_vst3_host_create(
     pan_bits: AtomicU32::new(0.0f32.to_bits()),
     muted: AtomicBool::new(false),
   });
-  let stream = match build_stream(Arc::clone(&shared), midi_rx, &config, supported.sample_format(), &device, actual_max_block) {
-    Ok(stream) => stream,
-    Err(error) => { unsafe { soura_vst3_destroy(handle) }; return Err(error); }
+  let mut instance = HostedInstance {
+    stream: None, owner: Some(PluginOwner { shared, midi: midi_tx }), reclaimer,
+    sample_rate: config.sample_rate, channels: config.channels, max_block_size: actual_max_block,
   };
-  stream.play().map_err(|e| format!("Could not start VST3 output stream: {e}"))?;
+  let shared = Arc::clone(&instance.owner.as_ref().unwrap().shared);
+  instance.stream = Some(build_stream(shared, midi_rx, &config, supported.sample_format(), &device, actual_max_block)?);
+  instance.stream.as_ref().unwrap().play().map_err(|e| format!("Could not start VST3 output stream: {e}"))?;
 
   let status = NativeVst3HostStatus {
     instance_id: instance_id.clone(), ready: true, sample_rate: config.sample_rate,
     channels: config.channels, max_block_size: actual_max_block,
     audio_route: "soura-native-vst3-direct".into(),
   };
-  instances.insert(instance_id, HostedInstance { shared, stream, midi: midi_tx, sample_rate: config.sample_rate, channels: config.channels, max_block_size: actual_max_block });
+  instances.insert(instance_id, instance);
   Ok(status)
 }
 
@@ -201,23 +247,25 @@ pub fn native_vst3_host_create(
 pub fn native_vst3_host_note_on(state: tauri::State<'_, NativeVst3HostState>, instance_id: String, note: i32, velocity: f32, channel: i32) -> Result<(), String> {
   let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   let instance = instances.get_mut(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
-  instance.midi.push(MidiEvent { kind: MidiEventKind::NoteOn, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { instance.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
+  let owner = instance.owner.as_mut().unwrap();
+  owner.midi.push(MidiEvent { kind: MidiEventKind::NoteOn, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { owner.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
 }
 
 #[tauri::command]
 pub fn native_vst3_host_note_off(state: tauri::State<'_, NativeVst3HostState>, instance_id: String, note: i32, velocity: f32, channel: i32) -> Result<(), String> {
   let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   let instance = instances.get_mut(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
-  instance.midi.push(MidiEvent { kind: MidiEventKind::NoteOff, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { instance.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
+  let owner = instance.owner.as_mut().unwrap();
+  owner.midi.push(MidiEvent { kind: MidiEventKind::NoteOff, note: note.clamp(0, 127), velocity: velocity.clamp(0.0, 1.0), channel: channel.clamp(0, 15) }).map_err(|_| { owner.shared.diagnostics.midi_overruns.fetch_add(1, Ordering::Relaxed); "Native VST3 MIDI queue is full; event was not accepted.".to_string() })
 }
 
 #[tauri::command]
 pub fn native_vst3_host_set_mix(state: tauri::State<'_, NativeVst3HostState>, instance_id: String, gain: f32, pan: f32, muted: bool) -> Result<(), String> {
   let instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   let instance = instances.get(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
-  instance.shared.gain_bits.store(gain.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
-  instance.shared.pan_bits.store(pan.clamp(-1.0, 1.0).to_bits(), Ordering::Relaxed);
-  instance.shared.muted.store(muted, Ordering::Release);
+  instance.owner.as_ref().unwrap().shared.gain_bits.store(gain.clamp(0.0, 2.0).to_bits(), Ordering::Relaxed);
+  instance.owner.as_ref().unwrap().shared.pan_bits.store(pan.clamp(-1.0, 1.0).to_bits(), Ordering::Relaxed);
+  instance.owner.as_ref().unwrap().shared.muted.store(muted, Ordering::Release);
   Ok(())
 }
 
@@ -227,7 +275,7 @@ pub fn native_vst3_host_open_editor(state: tauri::State<'_, NativeVst3HostState>
   let instance = instances.get(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
   let mut info = SouraVst3EditorInfo { width: 0, height: 0, resizable: 0 };
   let mut error = vec![0 as c_char; 2048];
-  let result = unsafe { soura_vst3_open_editor(instance.shared.handle as *mut c_void, &mut info, error.as_mut_ptr(), error.len() as c_int) };
+  let result = unsafe { soura_vst3_open_editor(instance.owner.as_ref().unwrap().shared.handle as *mut c_void, &mut info, error.as_mut_ptr(), error.len() as c_int) };
   if result == 0 { return Err(format!("Could not open VST3 editor: {}", ffi_error(&error))); }
   Ok(NativeVst3EditorStatus { width: info.width, height: info.height, resizable: info.resizable != 0 })
 }
@@ -235,10 +283,9 @@ pub fn native_vst3_host_open_editor(state: tauri::State<'_, NativeVst3HostState>
 #[tauri::command]
 pub fn native_vst3_host_dispose(state: tauri::State<'_, NativeVst3HostState>, instance_id: String) -> Result<(), String> {
   let mut instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
-  if let Some(instance) = instances.remove(&instance_id) {
-    drop(instance.stream);
-    unsafe { soura_vst3_destroy(instance.shared.handle as *mut c_void) };
-  }
+  // HostedInstance retires the plugin after stopping output. Reclamation waits
+  // for backend-held callback references without waiting on the audio thread.
+  drop(instances.remove(&instance_id));
   Ok(())
 }
 
@@ -247,7 +294,7 @@ pub fn native_vst3_host_dispose(state: tauri::State<'_, NativeVst3HostState>, in
 pub fn native_vst3_host_get_diagnostics(state: tauri::State<'_, NativeVst3HostState>, instance_id: String) -> Result<DiagnosticsSnapshot, String> {
   let instances = state.instances.lock().map_err(|_| "VST3 host state lock failed".to_string())?;
   let instance = instances.get(&instance_id).ok_or_else(|| "Native VST3 instance is not running.".to_string())?;
-  Ok(instance.shared.diagnostics.snapshot())
+  Ok(instance.owner.as_ref().unwrap().shared.diagnostics.snapshot())
 }
 
 #[cfg(test)]

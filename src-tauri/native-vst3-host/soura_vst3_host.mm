@@ -135,7 +135,9 @@ struct HostInstance {
       plugView = nullptr;
     }
     if (editorWindow) {
-      dispatch_async(dispatch_get_main_queue(), ^{ [editorWindow close]; });
+      // Destruction is dispatched to the main thread by soura_vst3_destroy.
+      // Never capture this HostInstance in a block that outlives its destructor.
+      [editorWindow close];
       editorWindow = nil;
     }
     provider = nullptr;
@@ -240,7 +242,13 @@ void* soura_vst3_create(const char* path, double sampleRate, int maxBlockSize, c
 
 int soura_vst3_event_capacity() { return kMidiEventCapacity; }
 
-void soura_vst3_destroy(void* handle) { delete static_cast<HostInstance*>(handle); }
+void soura_vst3_destroy(void* handle) {
+  if (!handle) return;
+  // The reclamation worker has already proven all audio callbacks released their
+  // leases. Plugin/controller and Cocoa teardown belongs to the main thread.
+  if ([NSThread isMainThread]) delete static_cast<HostInstance*>(handle);
+  else dispatch_sync(dispatch_get_main_queue(), ^{ delete static_cast<HostInstance*>(handle); });
+}
 void soura_vst3_note_on(void* handle, int note, float velocity, int channel) { enqueueNote(static_cast<HostInstance*>(handle), true, note, velocity, channel); }
 void soura_vst3_note_off(void* handle, int note, float velocity, int channel) { enqueueNote(static_cast<HostInstance*>(handle), false, note, velocity, channel); }
 

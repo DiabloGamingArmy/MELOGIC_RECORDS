@@ -18,6 +18,9 @@ if (typeof exports === 'object' && typeof module === 'object')
   module.exports = SignalsmithStretch;
 else if (typeof define === 'function' && define['amd'])
   define([], () => SignalsmithStretch);
+// Soura host patch: prepared channel views and indexed automation consumption.
+// Embedded Signalsmith WASM is unchanged; do not regenerate this JS wrapper
+// without preserving the realtime regression tests.
 function registerWorkletProcessor(Module, audioNodeKey) {
 	class WasmProcessor extends AudioWorkletProcessor {
 		constructor(options) {
@@ -27,6 +30,7 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 			this.channels = 0;
 			this.buffersIn = [];
 			this.buffersOut = [];
+			this.timeMapIndex = 0;
 			
 			this.audioBuffers = []; // list of (multi-channel) audio buffers
 			this.audioBuffersStart = 0; // time-stamp for the first audio buffer
@@ -85,6 +89,11 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 					return result;
 				},
 				schedule: (objIn, adjustPrevious) => {
+					// Compact on the message path, never shift the array in process().
+					if (this.timeMapIndex) {
+						this.timeMap.splice(0, this.timeMapIndex);
+						this.timeMapIndex = 0;
+					}
 					let outputTime = ('outputTime' in objIn) ? objIn.outputTime : currentTime;
 
 					let latestSegment = this.timeMap[this.timeMap.length - 1];
@@ -230,6 +239,9 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 				this.buffersIn.push(bufferPointer + lengthBytes*c);
 				this.buffersOut.push(bufferPointer + lengthBytes*(c + this.channels));
 			}
+			this.preparedMemory = wasmModule.exports ? wasmModule.exports.memory.buffer : wasmModule.HEAP8.buffer;
+			this.inputViews = this.buffersIn.map(pointer => new Float32Array(this.preparedMemory, pointer, this.bufferLength));
+			this.outputViews = this.buffersOut.map(pointer => new Float32Array(this.preparedMemory, pointer, this.bufferLength));
 		}
 
 		process(inputList, outputList, parameters) {
@@ -244,10 +256,16 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 			if (!outputList[0]?.length) return false;
 
 			let outputTime = currentTime + this.outputLatencySeconds;
-			while (this.timeMap.length > 1 && this.timeMap[1].output <= outputTime) {
-				this.timeMap.shift();
+			// Find the active segment in logarithmic bounded work; retain old
+			// segments until a control message can compact them.
+			let low = this.timeMapIndex + 1, high = this.timeMap.length;
+			while (low < high) {
+				let middle = Math.floor((low + high)/2);
+				if (this.timeMap[middle].output <= outputTime) low = middle + 1;
+				else high = middle;
 			}
-			let currentMapSegment = this.timeMap[0];
+			this.timeMapIndex = Math.max(this.timeMapIndex, low - 1);
+			let currentMapSegment = this.timeMap[this.timeMapIndex];
 
 			let wasmModule = this.wasmModule;
 			wasmModule._setTransposeSemitones(currentMapSegment.semitones, currentMapSegment.tonalityHz/sampleRate);
@@ -256,33 +274,27 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 
 			// Check the input/output channel counts
 			if (outputList[0].length != this.channels) {
-				this.channels = outputList[0]?.length || 0;
-				configure();
+				throw new Error('Soura Signalsmith output channels changed after preparation. Recreate the processor.');
 			}
 			let outputBlockSize = outputList[0][0].length;
 
 			let memory = wasmModule.exports ? wasmModule.exports.memory.buffer : wasmModule.HEAP8.buffer;
+			if (memory !== this.preparedMemory || outputBlockSize > this.bufferLength) {
+				throw new Error('Soura Signalsmith buffer configuration changed during rendering. Recreate the processor.');
+			}
 			// Buffer list (one per channel)
 			let inputs = inputList[0];
 			if (!currentMapSegment.active) {
-				outputList[0].forEach((_, c) => {
-					let channelBuffer = inputs[c%inputs.length];
-					let buffer = new Float32Array(memory, this.buffersIn[c], outputBlockSize);
-					buffer.fill(0);
-				});
-				// Should detect silent input and skip processing
+				for (let c = 0; c < this.channels; ++c) this.inputViews[c].fill(0, 0, outputBlockSize);
 				wasmModule._process(outputBlockSize, outputBlockSize);
 			} else if (inputs?.length) {
-				// Live input
-				outputList[0].forEach((_, c) => {
+				// Live input: reuse the views prepared before processing starts.
+				for (let c = 0; c < this.channels; ++c) {
 					let channelBuffer = inputs[c%inputs.length];
-					let buffer = new Float32Array(memory, this.buffersIn[c], outputBlockSize);
-					if (channelBuffer) {
-						buffer.set(channelBuffer);
-					} else {
-						buffer.fill(0);
-					}
-				})
+					let buffer = this.inputViews[c];
+					if (channelBuffer) buffer.set(channelBuffer);
+					else buffer.fill(0, 0, outputBlockSize);
+				}
 				wasmModule._process(outputBlockSize, outputBlockSize);
 			} else {
 				let inputTime = currentMapSegment.input + (outputTime - currentMapSegment.output)*currentMapSegment.rate;
@@ -296,7 +308,7 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 				let inputSamplesEnd = Math.round(inputTime*sampleRate);
 
 				// Fill the buffer with previous input
-				let buffers = outputList[0].map((_, c) => new Float32Array(memory, this.buffersIn[c], this.bufferLength));
+				let buffers = this.inputViews;
 
 				let blockSamples = 0; // current write position in the temporary input buffer
 				let audioBufferIndex = 0;
@@ -305,7 +317,7 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 				let inputSamples = inputSamplesEnd - this.bufferLength;
 				if (inputSamples < audioSamples) {
 					blockSamples = audioSamples - inputSamples;
-					buffers.forEach(b => b.fill(0, 0, blockSamples));
+					for (let c = 0; c < this.channels; ++c) buffers[c].fill(0, 0, blockSamples);
 					inputSamples = audioSamples;
 				}
 				while (audioBufferIndex < this.audioBuffers.length && audioSamples < inputSamplesEnd) {
@@ -315,10 +327,10 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 					// how many samples to copy: min(how many left in the buffer, how many more we need)
 					let count = Math.min(audioBuffer[0].length - startIndex, inputSamplesEnd - inputSamples);
 					if (count > 0) {
-						buffers.forEach((buffer, c) => {
-							let channelBuffer = audioBuffer[c%audioBuffer.length];
-							buffer.subarray(blockSamples).set(channelBuffer.subarray(startIndex, startIndex + count));
-						});
+						for (let c = 0; c < this.channels; ++c) {
+							let buffer = buffers[c], channelBuffer = audioBuffer[c%audioBuffer.length];
+							for (let i = 0; i < count; ++i) buffer[blockSamples + i] = channelBuffer[startIndex + i];
+						}
 						audioSamples += count;
 						blockSamples += count;
 					} else { // we're already past this buffer - skip it
@@ -327,7 +339,7 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 					++audioBufferIndex;
 				}
 				if (blockSamples < this.bufferLength) {
-					buffers.forEach(buffer => buffer.subarray(blockSamples).fill(0));
+					for (let c = 0; c < this.channels; ++c) buffers[c].fill(0, blockSamples);
 				}
 
 				// constantly seeking, so we don't have to worry about the input buffers needing to be a rate-dependent size
@@ -343,10 +355,11 @@ function registerWorkletProcessor(Module, audioNodeKey) {
 			
 			// Re-fetch in case the memory changed (even though there *shouldn't* be any allocations)
 			memory = wasmModule.exports ? wasmModule.exports.memory.buffer : wasmModule.HEAP8.buffer;
-			outputList[0].forEach((channelBuffer, c) => {
-				let buffer = new Float32Array(memory, this.buffersOut[c], outputBlockSize);
-				channelBuffer.set(buffer);
-			});
+			if (memory !== this.preparedMemory) throw new Error('Soura Signalsmith grew memory during rendering. Recreate the processor.');
+			for (let c = 0; c < this.channels; ++c) {
+				let channelBuffer = outputList[0][c], buffer = this.outputViews[c];
+				for (let i = 0; i < outputBlockSize; ++i) channelBuffer[i] = buffer[i];
+			}
 			
 			return true;
 		}

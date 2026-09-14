@@ -3,6 +3,7 @@ mod analysis;
 mod dsp;
 mod engine;
 pub(crate) mod rt_queue;
+pub(crate) mod reclamation;
 pub(crate) mod rt_diagnostics;
 
 use std::sync::Mutex;
