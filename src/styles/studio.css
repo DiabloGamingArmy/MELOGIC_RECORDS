@@ -4158,3 +4158,65 @@ body #soura-detached-region-portal > .studio-detached-controller-panel-v8 .studi
 .soura-score-sidebar:focus-visible,.soura-score-sidebar summary:focus-visible{outline:2px solid #a58aef;outline-offset:-2px}
 @container (max-width:650px){.soura-score-sidebar{font-size:10px}.soura-score-sidebar-heading{padding:8px}.soura-score-section-body{padding:7px;gap:6px}}
 @media(max-width:700px){.soura-score-root:has(>.soura-score-sidebar){grid-template-columns:minmax(0,1fr) min(230px,46%)}.soura-score-sidebar label{flex-wrap:wrap}.soura-score-sidebar select,.soura-score-sidebar input:not([type=checkbox]){max-width:100%}.soura-score-section>summary{padding:8px}}
+
+/* SOURA PROJECT NOTES WORKSPACE v13 */
+.studio-notes-panel{
+  width:min(900px,calc(100vw - 28px)) !important;
+  max-height:min(90vh,820px) !important;
+  background:#050505 !important;
+  background-image:none !important;
+  border:1px solid #34343c !important;
+  border-radius:14px !important;
+  padding:16px !important;
+  grid-template-rows:auto auto minmax(0,1fr) auto !important;
+  gap:10px !important;
+  box-shadow:0 28px 90px rgba(0,0,0,.72) !important;
+}
+.studio-notes-header{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.studio-notes-header h3{color:#fff !important}
+.studio-notes-header-meta{color:#8e8e99;font-size:11px;white-space:nowrap}
+.studio-notes-pages{display:flex !important;flex-wrap:wrap;gap:7px !important;padding-bottom:2px}
+.studio-notes-page-button{
+  height:32px !important;border-radius:7px !important;border:1px solid #34343c !important;
+  background:#0a0a0a !important;color:#c9c9d2 !important;box-shadow:none !important
+}
+.studio-notes-page-button:hover{background:#111114 !important;color:#fff !important}
+.studio-notes-page-button.is-active,.studio-notes-page-button[aria-pressed="true"]{
+  background-image:var(--soura-accent-gradient,linear-gradient(135deg,#2563eb,#5c4bea 50%,#9333ea)) !important;
+  border-color:transparent !important;color:#fff !important;box-shadow:0 0 14px rgba(92,75,234,.24) !important
+}
+.studio-notes-page-button--add{border-style:dashed !important}
+.studio-notes-page-manager{display:grid;grid-template-columns:minmax(140px,1fr) auto;gap:8px;align-items:center}
+.studio-notes-title-input{
+  min-width:0;height:36px;border:1px solid #3a3a43;border-radius:8px;background:#09090b;
+  color:#fff;padding:0 10px;font:600 13px/1 inherit;outline:none
+}
+.studio-notes-title-input:focus{border-color:#5c4bea;box-shadow:0 0 0 2px rgba(92,75,234,.20)}
+.studio-notes-page-actions,.studio-notes-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.studio-notes-tool{
+  min-height:32px;border:1px solid #34343c;border-radius:7px;background:#0a0a0a;color:#c9c9d2;
+  padding:0 10px;font:600 11px/1 inherit;cursor:pointer
+}
+.studio-notes-tool:hover:not(:disabled){background:#151519;color:#fff;border-color:#50505b}
+.studio-notes-tool:disabled{opacity:.35;cursor:not-allowed}
+.studio-notes-tool--danger:hover:not(:disabled){background:rgba(217,56,78,.16);border-color:rgba(255,91,109,.48);color:#ff98a6}
+.studio-notes-toolbar{padding:8px;background:#000;border:1px solid #26262d;border-radius:9px}
+.studio-notes-toolbar-spacer{flex:1 1 auto}
+.studio-notes-stats{color:#8e8e99;font-size:10px;white-space:nowrap;padding:0 4px}
+.studio-notes-body{min-height:0 !important;display:grid !important;grid-template-rows:auto auto minmax(0,1fr) !important;gap:8px !important}
+.studio-notes-textarea{
+  min-height:300px !important;max-height:min(58vh,560px) !important;resize:vertical !important;
+  background:#000 !important;background-image:none !important;color:#f1f1f4 !important;
+  border:1px solid #34343c !important;border-radius:9px !important;padding:14px !important;
+  line-height:1.55 !important;font-size:13px !important;outline:none !important
+}
+.studio-notes-textarea:focus{border-color:#4a4a56 !important;box-shadow:0 0 0 2px rgba(92,75,234,.12) !important}
+.studio-notes-actions{border-top:1px solid #202026;padding-top:10px}
+.studio-notes-button{border-radius:7px !important}
+.studio-notes-button--secondary{background:#0a0a0a !important;border-color:#34343c !important;color:#c9c9d2 !important}
+.studio-notes-button--primary{
+  background-color:transparent !important;
+  background-image:var(--soura-accent-gradient,linear-gradient(135deg,#2563eb,#5c4bea 50%,#9333ea)) !important;
+  border-color:transparent !important;color:#fff !important
+}
+@media(max-width:680px){.studio-notes-page-manager{grid-template-columns:1fr}.studio-notes-page-actions{justify-content:flex-start}}

@@ -5104,7 +5104,117 @@ function bindSmartControlsEvents() {
 function renderLeftPanel() { if (!activeLeftPanel) return ''; const views={"library":renderStudioLibraryPanel(),"inspector":renderTrackInspector(),"smart-controls":renderSmartControlsPanel()}; return `<aside class="studio-left-panel ${activeLeftPanel==='inspector'?'studio-left-panel--inspector':''} ${activeLeftPanel==='library'?'studio-left-panel--library':''} ${activeLeftPanel==='smart-controls'?'studio-left-panel--smart-controls':''}">${views[activeLeftPanel] || ''}</aside>` }
 function getActiveNotePage(){ return notePages.find((page)=>page.id===activeNotePageId) || notePages[0] }
 function stashActiveNoteInput(){ const input = app.querySelector('[data-notes-input]'); const active = getActiveNotePage(); if (!input || !active) return; active.body = input.value }
-function renderNotesModal(){ if(!isNotesOpen) return ''; const activePage = getActiveNotePage(); return `<div class="studio-notes-modal"><div class="studio-notes-panel"><header class="studio-notes-header"><h3>Project Notes</h3></header><div class="studio-notes-body"><div class="studio-notes-pages">${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${page.id}" aria-pressed="${String(page.id===activeNotePageId)}">${page.title}</button>`).join('')}<button class="studio-notes-page-button" data-add-notes-page>Add Page</button></div><textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${activePage?.body || ''}</textarea></div><div class="studio-notes-actions"><button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button><button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button></div></div></div>` }
+// SOURA PROJECT NOTES WORKSPACE v13
+function createNotePageIdV13(){
+  const base = `page-${Date.now().toString(36)}`
+  let id = base
+  let suffix = 1
+  while(notePages.some((page)=>page.id===id)) id = `${base}-${suffix++}`
+  return id
+}
+function getNotePlayheadStampV13(){
+  const beatsPerBar = Math.max(1, Number(timelineState.beatsPerBar) || 4)
+  const pixelsPerBar = Math.max(1, Number(timelineState.pixelsPerBar) || 1)
+  const pixelsPerBeat = pixelsPerBar / beatsPerBar
+  const absoluteBeat = Math.max(0, (Number(timelineState.playheadX) || 0) / pixelsPerBeat)
+  const bar = Math.floor(absoluteBeat / beatsPerBar) + 1
+  const beat = Math.floor(absoluteBeat % beatsPerBar) + 1
+  return `Bar ${bar}, Beat ${beat}`
+}
+function getNoteStatsV13(body=''){
+  const text = String(body || '')
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0
+  return { words, characters:text.length }
+}
+function updateNotesStatsV13(){
+  const textarea = app.querySelector('[data-notes-input]')
+  const output = app.querySelector('[data-notes-stats]')
+  if(!textarea || !output) return
+  const stats = getNoteStatsV13(textarea.value)
+  output.textContent = `${stats.words} word${stats.words===1?'':'s'} · ${stats.characters} char${stats.characters===1?'':'s'}`
+}
+function insertIntoNoteV13(text){
+  const textarea = app.querySelector('[data-notes-input]')
+  if(!textarea) return
+  const start = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : textarea.value.length
+  const end = Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : start
+  textarea.value = `${textarea.value.slice(0,start)}${text}${textarea.value.slice(end)}`
+  const caret = start + text.length
+  textarea.setSelectionRange(caret,caret)
+  textarea.focus()
+  stashActiveNoteInput()
+  updateNotesStatsV13()
+  scheduleEditorSave()
+}
+function deleteActiveNotePageV13(){
+  if(notePages.length<=1) return
+  stashActiveNoteInput()
+  const index = Math.max(0,notePages.findIndex((page)=>page.id===activeNotePageId))
+  notePages = notePages.filter((page)=>page.id!==activeNotePageId)
+  activeNotePageId = (notePages[Math.min(index,notePages.length-1)] || notePages[0]).id
+  scheduleEditorSave()
+  renderEditor()
+}
+function duplicateActiveNotePageV13(){
+  stashActiveNoteInput()
+  const active = getActiveNotePage()
+  if(!active) return
+  const index = Math.max(0,notePages.findIndex((page)=>page.id===active.id))
+  const copy = {id:createNotePageIdV13(),title:`${active.title || 'Page'} Copy`,body:String(active.body || '')}
+  notePages = [...notePages.slice(0,index+1),copy,...notePages.slice(index+1)]
+  activeNotePageId = copy.id
+  scheduleEditorSave()
+  renderEditor()
+}
+function moveActiveNotePageV13(direction){
+  stashActiveNoteInput()
+  const index = notePages.findIndex((page)=>page.id===activeNotePageId)
+  const target = index + direction
+  if(index<0 || target<0 || target>=notePages.length) return
+  const next = [...notePages]
+  const [page] = next.splice(index,1)
+  next.splice(target,0,page)
+  notePages = next
+  scheduleEditorSave()
+  renderEditor()
+}
+function renderNotesModal(){
+  if(!isNotesOpen) return ''
+  const activePage = getActiveNotePage()
+  const activeIndex = Math.max(0,notePages.findIndex((page)=>page.id===activeNotePageId))
+  const stats = getNoteStatsV13(activePage?.body || '')
+  const canDelete = notePages.length > 1
+  return `<div class="studio-notes-modal"><div class="studio-notes-panel" role="dialog" aria-modal="true" aria-label="Project Notes">
+    <header class="studio-notes-header"><h3>Project Notes</h3><span class="studio-notes-header-meta">${notePages.length} page${notePages.length===1?'':'s'}</span></header>
+    <div class="studio-notes-pages">
+      ${notePages.map((page)=>`<button class="studio-notes-page-button ${page.id===activeNotePageId?'is-active':''}" data-notes-page="${esc(page.id)}" aria-pressed="${String(page.id===activeNotePageId)}">${esc(page.title)}</button>`).join('')}
+      <button class="studio-notes-page-button studio-notes-page-button--add" data-add-notes-page>+ Add Page</button>
+    </div>
+    <div class="studio-notes-body">
+      <div class="studio-notes-page-manager">
+        <input class="studio-notes-title-input" data-notes-title value="${esc(activePage?.title || 'Page')}" aria-label="Page name" maxlength="80">
+        <div class="studio-notes-page-actions">
+          <button class="studio-notes-tool" data-notes-move-left ${activeIndex<=0?'disabled':''}>← Move</button>
+          <button class="studio-notes-tool" data-notes-move-right ${activeIndex>=notePages.length-1?'disabled':''}>Move →</button>
+          <button class="studio-notes-tool" data-notes-duplicate>Duplicate</button>
+          <button class="studio-notes-tool studio-notes-tool--danger" data-notes-delete ${canDelete?'':'disabled'}>Delete</button>
+        </div>
+      </div>
+      <div class="studio-notes-toolbar">
+        <button class="studio-notes-tool" data-notes-insert="todo">+ TODO</button>
+        <button class="studio-notes-tool" data-notes-insert="playhead">Playhead Position</button>
+        <button class="studio-notes-tool" data-notes-insert="divider">Divider</button>
+        <span class="studio-notes-toolbar-spacer"></span>
+        <span class="studio-notes-stats" data-notes-stats>${stats.words} word${stats.words===1?'':'s'} · ${stats.characters} char${stats.characters===1?'':'s'}</span>
+      </div>
+      <textarea class="studio-notes-textarea" data-notes-input placeholder="Write notes for this project...">${esc(activePage?.body || '')}</textarea>
+    </div>
+    <div class="studio-notes-actions">
+      <button class="studio-notes-button studio-notes-button--secondary" data-close-notes>Close</button>
+      <button class="studio-notes-button studio-notes-button--primary" data-save-notes>Save</button>
+    </div>
+  </div></div>`
+}
 function renderAudioStretchRenderModal() {
   if (!audioStretchRenderState.active) return ''
   const progress = Number.isFinite(Number(audioStretchRenderState.progress)) ? clamp(Number(audioStretchRenderState.progress), 0, 1) : null
@@ -13584,7 +13694,34 @@ function bindEditorEvents() {
     if (activeRecording || isCountInRunning) stopRecordingAndKeep()
     else startRecordFlow()
   }, { capture: true })
-  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor(); if(activeLeftPanel==='library') loadStudioLibrary() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; updateUtilityToggleButton('[data-toggle-snap]', isSnapEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; updateUtilityToggleButton('[data-toggle-count-in]', isCountInEnabled); scheduleEditorSave() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } startRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = `page-${pageNumber}`; notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; updateUtilityToggleButton('[data-toggle-follow-playhead]', followPlayhead); scheduleEditorSave() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); updateUtilityToggleButton('[data-toggle-metronome]', isMetronomeEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; activeInstrumentSubpage=next; renderEditor() }) })
+  app.querySelector('.studio-notes-panel')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelector('[data-notes-input]')?.addEventListener('pointerdown',(e)=>e.stopPropagation()); app.querySelectorAll('[data-notes-page],[data-add-notes-page],[data-save-notes],[data-close-notes],[data-notes-delete],[data-notes-duplicate],[data-notes-move-left],[data-notes-move-right],[data-notes-insert],[data-notes-title]').forEach((el)=>el.addEventListener('pointerdown',(e)=>e.stopPropagation())); // SOURA PROJECT NOTES WORKSPACE v13 — interactions
+app.querySelector('[data-notes-title]')?.addEventListener('input',(event)=>{
+  const active = getActiveNotePage()
+  if(!active) return
+  active.title = String(event.currentTarget.value || '').slice(0,80) || 'Untitled Page'
+  scheduleEditorSave()
+})
+app.querySelector('[data-notes-input]')?.addEventListener('input',()=>{
+  stashActiveNoteInput()
+  updateNotesStatsV13()
+  scheduleEditorSave()
+})
+app.querySelector('[data-notes-delete]')?.addEventListener('click',()=>{
+  if(notePages.length<=1) return
+  const active = getActiveNotePage()
+  if(window.confirm(`Delete "${active?.title || 'this page'}"?`)) deleteActiveNotePageV13()
+})
+app.querySelector('[data-notes-duplicate]')?.addEventListener('click',duplicateActiveNotePageV13)
+app.querySelector('[data-notes-move-left]')?.addEventListener('click',()=>moveActiveNotePageV13(-1))
+app.querySelector('[data-notes-move-right]')?.addEventListener('click',()=>moveActiveNotePageV13(1))
+app.querySelectorAll('[data-notes-insert]').forEach((button)=>button.addEventListener('click',()=>{
+  const kind = button.dataset.notesInsert
+  if(kind==='todo') insertIntoNoteV13(`\n☐ TODO — `)
+  if(kind==='divider') insertIntoNoteV13(`\n────────────────────────\n`)
+  if(kind==='playhead') insertIntoNoteV13(`\n[${getNotePlayheadStampV13()}] `)
+}))
+updateNotesStatsV13()
+app.querySelectorAll('[data-left-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.leftPanel; activeLeftPanel = activeLeftPanel===id ? '' : id; renderEditor(); if(activeLeftPanel==='library') loadStudioLibrary() })); app.querySelector('[data-toggle-snap]')?.addEventListener('click',()=>{ isSnapEnabled=!isSnapEnabled; updateUtilityToggleButton('[data-toggle-snap]', isSnapEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-count-in]')?.addEventListener('click',()=>{ isCountInEnabled=!isCountInEnabled; updateUtilityToggleButton('[data-toggle-count-in]', isCountInEnabled); scheduleEditorSave() }); app.querySelector('[data-transport-record]')?.addEventListener('click',()=>{ if (activeRecording || isCountInRunning) { stopRecordingAndKeep(); return } startRecordFlow() }); app.querySelector('[data-open-notes]')?.addEventListener('click',()=>{ isNotesOpen=true; renderEditor() }); app.querySelector('[data-close-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelector('[data-save-notes]')?.addEventListener('click',()=>{ stashActiveNoteInput(); scheduleEditorSave(); isNotesOpen=false; renderEditor() }); app.querySelectorAll('[data-notes-page]').forEach((el)=>el.addEventListener('click',()=>{ stashActiveNoteInput(); activeNotePageId = el.dataset.notesPage; scheduleEditorSave(); renderEditor() })); app.querySelector('[data-add-notes-page]')?.addEventListener('click',()=>{ stashActiveNoteInput(); const pageNumber = notePages.length + 1; const id = createNotePageIdV13(); notePages = [...notePages, { id, title: `Page ${pageNumber}`, body: '' }]; activeNotePageId = id; scheduleEditorSave(); renderEditor() }); app.querySelector('[data-toggle-follow-playhead]')?.addEventListener('click',()=>{ followPlayhead=!followPlayhead; updateUtilityToggleButton('[data-toggle-follow-playhead]', followPlayhead); scheduleEditorSave() }); app.querySelector('[data-toggle-metronome]')?.addEventListener('click',()=>{ isMetronomeEnabled=!isMetronomeEnabled; if(isMetronomeEnabled) getAudioContext(); updateUtilityToggleButton('[data-toggle-metronome]', isMetronomeEnabled); scheduleEditorSave() }); app.querySelector('[data-toggle-cycle]')?.addEventListener('click',()=>{ setCycleEnabled(!isCycleEnabled); scheduleEditorSave() }); app.querySelectorAll('[data-bottom-panel]').forEach((el)=>el.addEventListener('click',()=>{ const id=el.dataset.bottomPanel; if(!id) return; openBottomPanel(id) })); app.querySelectorAll('[data-instrument-subpage]').forEach((el)=>{ el.addEventListener('click',(event)=>{ event.stopPropagation(); const next=el.dataset.instrumentSubpage; if(!next||activeInstrumentSubpage===next) return; activeInstrumentSubpage=next; renderEditor() }) })
   app.querySelectorAll('[data-library-folder]').forEach((button)=>button.addEventListener('click',(event)=>{
     const toggle = event.target.closest('[data-library-folder-toggle]')
     if (toggle) {
