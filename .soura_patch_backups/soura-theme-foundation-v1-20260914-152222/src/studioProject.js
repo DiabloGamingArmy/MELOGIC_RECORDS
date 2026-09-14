@@ -10,7 +10,6 @@ import { installSouraThemeConsole } from "./soura/themes/themeManager.js";
 // Experimental Soura theme console (session-only)
 installSouraThemeConsole();
 import './styles/studio.css'
-import './soura/themes/foundation.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { auth, waitForInitialAuthState } from './firebase/auth'

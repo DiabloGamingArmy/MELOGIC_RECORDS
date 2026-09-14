@@ -1,0 +1,139 @@
+/*
+ * SOURA THEME FOUNDATION — PATCH 1/8
+ * ----------------------------------
+ * Visual contract:
+ *   1. Application chrome is neutral black / charcoal / gray.
+ *   2. Project content owns musical color (track colors, regions, waveforms,
+ *      MIDI notes, and editor data where color carries information).
+ *   3. The blue -> purple accent is intentionally scarce. It is reserved for:
+ *        a) interaction: hover / pressed / active / keyboard focus
+ *        b) progress / status surfaces that need additional visual priority
+ *   4. Semantic colors (record, warning, danger, success, clipping) remain
+ *      semantically independent from the brand accent.
+ *
+ * This file is imported only by the Soura project entry point. Do not move
+ * these values into base.css: that would unintentionally re-theme the rest of
+ * the Melogic platform.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --soura-black: #050505;
+  --soura-canvas: #080808;
+  --soura-surface-0: #0b0b0c;
+  --soura-surface-1: #101012;
+  --soura-surface-2: #151517;
+  --soura-surface-3: #1b1b1e;
+  --soura-surface-4: #232327;
+
+  --soura-surface-hover-neutral: #1e1e22;
+  --soura-surface-pressed-neutral: #29292e;
+
+  --soura-border-subtle: rgba(255, 255, 255, 0.075);
+  --soura-border: rgba(255, 255, 255, 0.115);
+  --soura-border-strong: rgba(255, 255, 255, 0.19);
+  --soura-divider: rgba(255, 255, 255, 0.08);
+
+  --soura-text-primary: #f5f5f7;
+  --soura-text-secondary: #c0c0c6;
+  --soura-text-muted: #8b8b94;
+  --soura-text-dim: #66666f;
+  --soura-text-disabled: #505058;
+
+  --soura-accent-blue: #4f86ff;
+  --soura-accent-blue-strong: #3976ff;
+  --soura-accent-purple: #985cff;
+  --soura-accent-purple-strong: #8750f5;
+
+  --soura-accent-gradient:
+    linear-gradient(135deg, #4f86ff 0%, #6f6cff 48%, #985cff 100%);
+  --soura-accent-gradient-hover:
+    linear-gradient(135deg, #5a8eff 0%, #796fff 48%, #a467ff 100%);
+  --soura-accent-gradient-active:
+    linear-gradient(135deg, #3976ff 0%, #6557f2 50%, #8750f5 100%);
+
+  --soura-accent-soft: rgba(104, 102, 255, 0.10);
+  --soura-accent-hover-soft: rgba(104, 102, 255, 0.14);
+  --soura-accent-active-soft: rgba(104, 102, 255, 0.20);
+  --soura-accent-border: rgba(111, 108, 255, 0.52);
+  --soura-accent-border-strong: rgba(135, 101, 255, 0.78);
+
+  --soura-interaction-hover-bg: var(--soura-accent-hover-soft);
+  --soura-interaction-hover-border: var(--soura-accent-border);
+  --soura-interaction-active-bg: var(--soura-accent-active-soft);
+  --soura-interaction-active-border: var(--soura-accent-border-strong);
+  --soura-interaction-focus-ring:
+    0 0 0 2px rgba(79, 134, 255, 0.32),
+    0 0 0 4px rgba(152, 92, 255, 0.12);
+
+  --soura-progress-track: rgba(255, 255, 255, 0.09);
+  --soura-progress-fill: var(--soura-accent-gradient);
+  --soura-status-priority-bg: rgba(104, 102, 255, 0.13);
+  --soura-status-priority-border: rgba(111, 108, 255, 0.42);
+
+  --soura-record: #ff4d63;
+  --soura-danger: #ff5f70;
+  --soura-warning: #f0b84a;
+  --soura-success: #58c98a;
+  --soura-clipping: #ff4d4d;
+
+  --soura-overlay: rgba(0, 0, 0, 0.72);
+  --soura-overlay-strong: rgba(0, 0, 0, 0.84);
+  --soura-shadow-panel: 0 16px 42px rgba(0, 0, 0, 0.44);
+  --soura-shadow-float: 0 24px 72px rgba(0, 0, 0, 0.64);
+  --soura-shadow-menu: 0 14px 38px rgba(0, 0, 0, 0.58);
+
+  --ml-bg: var(--soura-canvas);
+  --ml-bg-elevated: var(--soura-surface-0);
+  --ml-bg-panel: rgba(16, 16, 18, 0.94);
+  --ml-bg-panel-strong: rgba(21, 21, 23, 0.98);
+  --ml-bg-interactive: rgba(27, 27, 30, 0.96);
+
+  --ml-border: var(--soura-border);
+  --ml-border-strong: var(--soura-border-strong);
+
+  --ml-text: var(--soura-text-primary);
+  --ml-text-muted: var(--soura-text-secondary);
+  --ml-text-dim: var(--soura-text-muted);
+
+  --ml-accent: var(--soura-accent-blue);
+  --ml-accent-2: var(--soura-accent-purple);
+  --ml-accent-gradient: var(--soura-accent-gradient);
+  --ml-accent-soft: var(--soura-accent-soft);
+
+  --ml-success: var(--soura-success);
+  --ml-danger: var(--soura-danger);
+  --ml-warning: var(--soura-warning);
+
+  --ml-shadow-panel: var(--soura-shadow-panel);
+  --ml-shadow-float: var(--soura-shadow-float);
+  --ml-focus-ring: var(--soura-interaction-focus-ring);
+
+  --bg: var(--soura-canvas);
+  --bg-soft: var(--soura-surface-0);
+  --surface: var(--soura-surface-1);
+  --text: var(--soura-text-primary);
+  --muted: var(--soura-text-secondary);
+  --border: var(--soura-border);
+  --purple: var(--soura-accent-purple);
+  --blue: var(--soura-accent-blue);
+  --cyan: var(--soura-accent-blue);
+  --accent: var(--soura-accent-gradient);
+}
+
+html,
+body,
+#app {
+  background-color: var(--soura-canvas);
+}
+
+.soura-theme-accent-interactive {
+  --soura-local-accent-bg: var(--soura-accent-gradient);
+  --soura-local-accent-border: var(--soura-accent-border);
+}
+
+.soura-theme-progress {
+  --soura-local-progress-track: var(--soura-progress-track);
+  --soura-local-progress-fill: var(--soura-progress-fill);
+}
