@@ -1,0 +1,229 @@
+/*
+ * SOURA MISSED SURFACES — v3
+ * Exact-selector corrective pass.
+ *
+ * IMPORTANT:
+ * - SCORE EDITOR IS INTENTIONALLY EXCLUDED.
+ * - Musical/data color remains intact.
+ * - This file exists to beat specific legacy studio.css rules that still
+ *   paint structural chrome navy / blue-gray.
+ */
+
+/* ============================================================
+   LIBRARY
+   Verified app selector: .studio-left-panel--library
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--library {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #FFFFFF !important;
+}
+
+.studio-editor-page .studio-left-panel--library .studio-library-panel,
+.studio-editor-page .studio-left-panel--library > header,
+.studio-editor-page .studio-left-panel--library [class*="library-header"] {
+  background: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #FFFFFF !important;
+}
+
+.studio-editor-page .studio-left-panel--library [class*="folder"],
+.studio-editor-page .studio-left-panel--library [class*="library-row"] {
+  background-color: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page .studio-left-panel--library [class*="folder"]:hover,
+.studio-editor-page .studio-left-panel--library [class*="library-row"]:hover {
+  background-color: #111114 !important;
+}
+
+/* ============================================================
+   TRACK INSPECTOR
+   Verified selector: .studio-left-panel--inspector
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--inspector {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #FFFFFF !important;
+}
+
+.studio-editor-page .studio-left-panel--inspector > section,
+.studio-editor-page .studio-left-panel--inspector fieldset,
+.studio-editor-page .studio-left-panel--inspector [class*="settings"],
+.studio-editor-page .studio-left-panel--inspector [class*="section"] {
+  background-color: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   SMART CONTROLS
+   Keep the successful v2 treatment but explicitly lock it in.
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel--smart-controls,
+.studio-editor-page .studio-smart-controls {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page .studio-smart-controls > header {
+  background: #0A0A0A !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page .studio-smart-controls select,
+.studio-editor-page .studio-smart-controls input:not([type="range"]),
+.studio-editor-page .studio-smart-controls textarea {
+  background: #050505 !important;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+/* ============================================================
+   REGION EDITOR
+   Verified exact selectors from studio.css:
+   .studio-region-editor-header-container
+   .studio-region-editor-timeline
+   ============================================================ */
+
+.studio-editor-page .studio-region-editor-header-container {
+  background: #050505 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page .studio-region-editor-timeline {
+  background: #000000 !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+}
+
+.studio-editor-page .studio-region-editor-tick {
+  border-color: #2A2A31 !important;
+}
+
+/* ============================================================
+   PITCH TRACE / REGION TOOLS
+   Verified exact selectors from studio.css:
+   .studio-pitch-trace-tools-pane
+   .studio-audio-region-tools
+   .studio-pitch-trace-controls
+   .studio-pitch-trace-note-tools
+   .studio-pitch-trace-base
+   ============================================================ */
+
+.studio-editor-page .studio-pitch-trace-tools-pane,
+.studio-editor-page .studio-audio-region-tools,
+.studio-editor-page .studio-pitch-trace-controls,
+.studio-editor-page .studio-pitch-trace-note-tools,
+.studio-editor-page .studio-pitch-trace-base {
+  background-color: #0A0A0A !important;
+  background-image: none !important;
+  border-color: #2A2A31 !important;
+  color: #FFFFFF !important;
+}
+
+.studio-editor-page .studio-pitch-trace-tools-pane select,
+.studio-editor-page .studio-pitch-trace-tools-pane input:not([type="range"]),
+.studio-editor-page .studio-pitch-trace-note-tools select,
+.studio-editor-page .studio-pitch-trace-note-tools input:not([type="range"]),
+.studio-editor-page .studio-audio-region-tools select,
+.studio-editor-page .studio-audio-region-tools input:not([type="range"]) {
+  background: #050505 !important;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+/*
+ * Do NOT recolor:
+ * .studio-pitch-trace-note
+ * .studio-pitch-trace-waveform
+ * .studio-pitch-trace-view canvas
+ * Those are data/analysis graphics.
+ */
+
+/* ============================================================
+   INSTRUMENT KEYBOARD CHROME
+   Verified exact piano key selectors from studio.css.
+   Keep white/black tonal identity; remove legacy blue cast.
+   ============================================================ */
+
+.studio-editor-page .studio-piano-key--white {
+  background: #D7D7DB !important;
+  background-image: none !important;
+  color: #222228 !important;
+  border-color: #7A7A84 !important;
+}
+
+.studio-editor-page .studio-piano-key--black {
+  background: #050505 !important;
+  background-image: none !important;
+  color: #D8D8DE !important;
+  border-color: #000000 !important;
+}
+
+.studio-editor-page .studio-piano-key--white small,
+.studio-editor-page .studio-piano-key--black small {
+  background: transparent !important;
+  color: inherit !important;
+}
+
+.studio-editor-page .studio-piano-key--white.is-pressed,
+.studio-editor-page .studio-piano-key--black.is-pressed {
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+}
+
+/* ============================================================
+   GENERIC LEFT-SIDE TEXT/FORM CLEANUP
+   Exact container scope only. Score Editor is not inside these.
+   ============================================================ */
+
+.studio-editor-page .studio-left-panel :is(
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+  select,
+  textarea
+) {
+  background: #050505 !important;
+  color: #FFFFFF !important;
+  border-color: #62626D !important;
+}
+
+/* ============================================================
+   ACTIVE STATE PROTECTION
+   ============================================================ */
+
+.studio-editor-page :is(
+  button.is-active,
+  button[aria-pressed="true"],
+  [role="button"].is-active,
+  [role="button"][aria-pressed="true"]
+):not([data-transport-record]) {
+  background-color: transparent !important;
+  background-image: var(--soura-accent-gradient) !important;
+  color: #FFFFFF !important;
+  border-color: transparent !important;
+}
+
+.studio-editor-page :is(
+  button.is-active,
+  button[aria-pressed="true"],
+  [role="button"].is-active,
+  [role="button"][aria-pressed="true"]
+):not([data-transport-record]):hover {
+  background-image: var(--soura-accent-gradient-hover) !important;
+}
+
+/* SCORE EDITOR PROTECTION:
+ * There are intentionally no .soura-score-* or .studio-score-editor
+ * selectors anywhere in this file.
+ */

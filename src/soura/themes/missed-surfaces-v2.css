@@ -250,73 +250,8 @@
 
 /* ============================================================
    6. SCORE EDITOR
-   Repo legacy:
-     .soura-score-root background:#101824
-     score controls background:#1b2738
+   RESTORED/PROTECTED BY V3 — no v2 theme overrides here.
    ============================================================ */
-
-.studio-bottom-panel.studio-score-editor,
-.soura-score-root,
-.soura-score-toolbar,
-.soura-score-inspector {
-  background: #050505 !important;
-  background-image: none !important;
-  color: #FFFFFF !important;
-  border-color: #2A2A31 !important;
-}
-
-.soura-score-toolbar,
-.soura-score-inspector > header,
-.soura-score-inspector [class*="header"] {
-  background: #0A0A0A !important;
-  background-image: none !important;
-}
-
-.soura-score-root :is(button,select,input) {
-  background: #0A0A0A !important;
-  background-image: none;
-  color: #FFFFFF !important;
-  border-color: #62626D !important;
-}
-
-/*
- * Notation view:
- * Convert the "paper" from warm white to deep neutral while keeping notation
- * legible. VexFlow commonly emits SVG path/text linework in black.
- */
-.soura-score-root svg {
-  background: #050505 !important;
-  color: #E8E8EE !important;
-}
-
-.soura-score-root svg :is(path,text,tspan) {
-  fill: #E8E8EE;
-}
-
-.soura-score-root svg :is(line,polyline) {
-  stroke: #8E8E99;
-}
-
-.soura-score-root svg [fill="#000"],
-.soura-score-root svg [fill="#000000"],
-.soura-score-root svg [fill="black"] {
-  fill: #E8E8EE !important;
-}
-
-.soura-score-root svg [stroke="#000"],
-.soura-score-root svg [stroke="#000000"],
-.soura-score-root svg [stroke="black"] {
-  stroke: #8E8E99 !important;
-}
-
-/* Do not recolor explicitly semantic/selected elements carrying their own class. */
-.soura-score-root :is(
-  .is-selected,
-  [aria-selected="true"],
-  [data-selected="true"]
-) {
-  border-color: rgba(147,51,234,.72);
-}
 
 /* ============================================================
    7. REGION EDITOR / PITCH TRACE
@@ -448,7 +383,7 @@
 /* Text fields/selects across missed panels */
 .studio-editor-page :is(
   .studio-left-panel,
-  .studio-bottom-panel,
+  .studio-bottom-panel:not(.studio-score-editor),
   .studio-modal-panel
 ) :is(
   input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]),
@@ -467,11 +402,10 @@
 
 .studio-editor-page :is(
   .studio-left-panel,
-  .studio-bottom-panel,
-  [class*="inspector"],
+  .studio-bottom-panel:not(.studio-score-editor),
+  [class*="inspector"]:not(.soura-score-inspector),
   [class*="library"],
-  [class*="region-editor"],
-  [class*="score"]
+  [class*="region-editor"]
 ) {
   scrollbar-color: #52525B #050505;
 }
