@@ -2,16 +2,18 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import vm from 'node:vm'
+import { createNativeInstanceCommandQueue } from '../src/studio/audio/native/nativeInstanceCommands.js'
 let source = await fs.readFile(new URL('../src/studio/instruments/NativeVst3Instrument.js', import.meta.url), 'utf8')
 source = source.replace(/import\s+[\s\S]*?from\s+['"][^'"]+['"]\s*/g, '').replace('export class NativeVst3Instrument', 'globalThis.Instrument = class NativeVst3Instrument')
 function deferred() { let resolve; const promise = new Promise((r) => { resolve = r }); return { promise, resolve } }
 const tick = () => new Promise(setImmediate)
 function setup({ path, creation } = {}) {
   const calls = []
+  const enqueue = createNativeInstanceCommandQueue()
   const context = vm.createContext({
     resolveNativeVst3RuntimePath: () => path || Promise.resolve('/fixture.vst3'),
-    ensureNativeVst3Host: () => { calls.push('create'); return creation || Promise.resolve({ ready: true }) },
-    disposeNativeVst3Host: async () => { calls.push('dispose') },
+    ensureNativeVst3Host: () => enqueue('fixture', () => { calls.push('create'); return creation || Promise.resolve({ ready: true }) }),
+    disposeNativeVst3Host: () => enqueue('fixture', async () => { calls.push('dispose') }),
     nativeVst3NoteOn: async () => { calls.push('on') },
     nativeVst3NoteOff: async () => { calls.push('off') },
     console
@@ -52,4 +54,26 @@ test('note-off waits for creation and is suppressed after disposal', async () =>
   creation.resolve({ ready: true })
   await Promise.all([ready, off, disposed])
   assert.deepEqual(calls, ['create', 'dispose'])
+})
+
+test('a replacement with the same ID waits for teardown even when creation is pending', async () => {
+  const enqueue = createNativeInstanceCommandQueue()
+  const creation = deferred()
+  const calls = []
+  const first = enqueue('same-id', async () => { calls.push('old-create'); await creation.promise })
+  const disposal = enqueue('same-id', async () => { calls.push('old-dispose') })
+  const replacement = enqueue('same-id', async () => { calls.push('new-create') })
+  const unrelated = enqueue('other-id', async () => { calls.push('other-create') })
+  await unrelated
+  assert.deepEqual(calls, ['old-create', 'other-create'])
+  creation.resolve()
+  await Promise.all([first, disposal, replacement])
+  assert.deepEqual(calls, ['old-create', 'other-create', 'old-dispose', 'new-create'])
+})
+test('failed creation does not block queued cleanup or lose its original error', async () => {
+  const enqueue = createNativeInstanceCommandQueue()
+  const first = enqueue('fixture', () => { throw new Error('create failed') })
+  const cleanup = enqueue('fixture', () => 'disposed')
+  await assert.rejects(first, /create failed/)
+  assert.equal(await cleanup, 'disposed')
 })

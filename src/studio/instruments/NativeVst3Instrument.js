@@ -67,12 +67,18 @@ export class NativeVst3Instrument {
     if (this.disposePromise) return this.disposePromise
     this.disposed = true
     const pendingCreation = this.readyPromise
+    // Register teardown before awaiting creation, so the service queues any
+    // replacement with the same instance ID after this teardown.
+    const cleanup = disposeNativeVst3Host(this.id).catch((error) => {
+      this.disposeError = error
+      console.warn('[NativeVst3Instrument] disposal failed', error)
+    })
     this.disposePromise = (async () => {
       // Serialize teardown after an in-flight native create. A late create must
       // not leave a plugin/stream running after its track has been removed.
       try { await pendingCreation } catch { /* creation failure still needs cleanup */ }
       try {
-        await disposeNativeVst3Host(this.id)
+        await cleanup
       } catch (error) {
         console.warn('[NativeVst3Instrument] disposal failed', error)
       }

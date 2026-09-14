@@ -1,4 +1,7 @@
+import { createNativeInstanceCommandQueue } from './nativeInstanceCommands.js'
 import { isSouraDesktopRuntime } from '../../runtime/SouraRuntimeCapabilities.js'
+
+const enqueueInstanceCommand = createNativeInstanceCommandQueue()
 
 let invokeFn = null
 async function getInvoke() {
@@ -13,7 +16,7 @@ export function isNativeVst3HostRuntime() {
 export async function ensureNativeVst3Host({ instanceId, path, sampleRate = 48000, maxBlockSize = 512 } = {}) {
   if (!isNativeVst3HostRuntime()) throw new Error('Native VST3 hosting is available only in Soura Desktop.')
   if (!instanceId || !path) throw new Error('VST3 instanceId and path are required.')
-  return (await getInvoke())('native_vst3_host_create', { instanceId, path, sampleRate, maxBlockSize })
+  return enqueueInstanceCommand(instanceId, async () => (await getInvoke())('native_vst3_host_create', { instanceId, path, sampleRate, maxBlockSize }))
 }
 export async function nativeVst3NoteOn(instanceId, note, velocity = 0.85, channel = 0) {
   return (await getInvoke())('native_vst3_host_note_on', { instanceId, note: Number(note), velocity: Number(velocity), channel: Number(channel) })
@@ -30,7 +33,7 @@ export async function nativeVst3SetMix(instanceId, { gain = 1, pan = 0, muted = 
 }
 export async function disposeNativeVst3Host(instanceId) {
   if (!instanceId || !isNativeVst3HostRuntime()) return
-  return (await getInvoke())('native_vst3_host_dispose', { instanceId })
+  return enqueueInstanceCommand(instanceId, async () => (await getInvoke())('native_vst3_host_dispose', { instanceId }))
 }
 
 export async function getNativeVst3Diagnostics(instanceId) {

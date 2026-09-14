@@ -316,6 +316,27 @@ mod tests {
     assert_eq!(rx.pop().unwrap().note, 60);
   }
   #[test]
+  fn complete_callback_drop_keeps_backing_storage_off_audio_thread() {
+    let (tx, rx) = rt_queue::channel(MIDI_QUEUE_CAPACITY);
+    let shared = Arc::new(HostShared {
+      handle: 0, diagnostics: Arc::new(RealtimeDiagnostics::default()), midi_budget: MIDI_EVENTS_PER_CALLBACK,
+      gain_bits: AtomicU32::new(1.0f32.to_bits()), pan_bits: AtomicU32::new(0.0f32.to_bits()), muted: AtomicBool::new(false),
+    });
+    let callback = VstCallback {
+      midi: rx, meter: CallbackMeter::new(Arc::clone(&shared.diagnostics), 48000), shared: Arc::clone(&shared),
+    };
+    let mut owner = PluginOwner { shared, midi: tx };
+    assert!(!owner.ready());
+    std::thread::spawn(move || {
+      let counts = crate::audio::rt_test_alloc::measure(|| drop(callback));
+      assert_eq!(counts, (0, 0));
+    }).join().unwrap();
+    assert!(owner.ready());
+    // Null test handle: teardown of backing allocations occurs here, off RT.
+    drop(owner);
+  }
+
+  #[test]
   fn native_event_capacity_covers_callback_budget() {
     assert!(unsafe { soura_vst3_event_capacity() } >= MIDI_EVENTS_PER_CALLBACK as i32);
   }

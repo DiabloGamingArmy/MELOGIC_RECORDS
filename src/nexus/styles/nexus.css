@@ -1528,3 +1528,522 @@ button:focus-visible {
   font-size: 11px;
   line-height: 1.5;
 }
+
+/* === NEXUS HOME REDESIGN — 2026-09-14 === */
+/*
+  Neutral Nexus chrome. Product logos remain the source of color.
+  The hero is edge-to-edge and fades directly into the application catalog.
+*/
+
+:root {
+  --nexus-bg: #050506;
+  --nexus-panel: #0a0a0c;
+  --nexus-panel-soft: #0d0d10;
+  --nexus-border: rgba(255, 255, 255, 0.075);
+  --nexus-border-strong: rgba(255, 255, 255, 0.14);
+  --nexus-text: #f5f5f7;
+  --nexus-text-muted: rgba(245, 245, 247, 0.60);
+  --nexus-text-faint: rgba(245, 245, 247, 0.34);
+}
+
+body {
+  background: var(--nexus-bg);
+}
+
+.nexus-app {
+  grid-template-columns: 220px minmax(0, 1fr);
+  background: var(--nexus-bg);
+}
+
+.nexus-sidebar {
+  position: relative;
+  z-index: 20;
+  padding: 28px 16px 20px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.018), transparent 28%),
+    #070708;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.nexus-brand-mark {
+  border-color: rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,0.08), rgba(255,255,255,0.015)),
+    #0a0a0c;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.08),
+    0 8px 24px rgba(0,0,0,0.26);
+}
+
+.nexus-nav-item {
+  border-radius: 8px;
+}
+
+.nexus-nav-item:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.nexus-nav-item-active {
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.11);
+  border-left: 3px solid rgba(255, 255, 255, 0.9);
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.085), rgba(255,255,255,0.035));
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.035),
+    0 8px 24px rgba(0,0,0,0.14);
+}
+
+.nexus-nav-item-active::before {
+  display: none;
+}
+
+.nexus-main {
+  position: relative;
+  min-width: 0;
+  padding: 0;
+  background: #050506;
+  overflow-x: hidden;
+  overflow-y: auto;
+  isolation: isolate;
+}
+
+.nexus-topbar {
+  position: absolute;
+  z-index: 12;
+  top: 0;
+  left: 0;
+  right: 0;
+
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+
+  min-height: 124px;
+  margin: 0;
+  padding: 34px 44px 24px;
+
+  border: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(5, 5, 6, 0.96) 0%,
+      rgba(5, 5, 6, 0.78) 46%,
+      rgba(5, 5, 6, 0.24) 78%,
+      transparent 100%
+    );
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.nexus-topbar-greeting {
+  min-width: 260px;
+}
+
+.nexus-topbar .nexus-overline {
+  margin: 0 0 8px;
+  color: rgba(255,255,255,0.40);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.19em;
+  text-transform: uppercase;
+}
+
+.nexus-topbar h1 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(25px, 2.1vw, 34px);
+  font-weight: 650;
+  line-height: 1.08;
+  letter-spacing: -0.035em;
+}
+
+.nexus-topbar-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  min-width: 0;
+}
+
+.nexus-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+
+  width: clamp(250px, 28vw, 430px);
+  height: 40px;
+  padding: 0 13px;
+
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 999px;
+  background: rgba(10,10,12,0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.035),
+    0 10px 36px rgba(0,0,0,0.18);
+
+  backdrop-filter: blur(14px) saturate(110%);
+  -webkit-backdrop-filter: blur(14px) saturate(110%);
+}
+
+.nexus-search:focus-within {
+  border-color: rgba(255,255,255,0.22);
+  background: rgba(14,14,16,0.86);
+}
+
+.nexus-search-icon {
+  flex: 0 0 auto;
+  color: rgba(255,255,255,0.55);
+  font-size: 18px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.nexus-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+}
+
+.nexus-search input::placeholder {
+  color: rgba(255,255,255,0.38);
+}
+
+.nexus-search input::-webkit-search-cancel-button {
+  opacity: 0.6;
+}
+
+.nexus-account-area {
+  gap: 10px;
+}
+
+.nexus-system-status {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 999px;
+  background: rgba(8,8,10,0.56);
+  color: rgba(255,255,255,0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.nexus-account-button {
+  background: rgba(8,8,10,0.60);
+  border-color: rgba(255,255,255,0.10);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.24);
+}
+
+.nexus-hero {
+  position: relative;
+  z-index: 1;
+
+  display: flex;
+  align-items: center;
+
+  width: 100%;
+  min-height: 510px;
+  margin: 0;
+  padding: 154px 48px 118px;
+
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+
+  background-color: #050506;
+  background-image:
+    linear-gradient(
+      90deg,
+      rgba(5,5,6,0.98) 0%,
+      rgba(5,5,6,0.83) 22%,
+      rgba(5,5,6,0.34) 49%,
+      rgba(5,5,6,0.08) 72%
+    ),
+    url("/assets/nexus/nexus-home-hero.webp");
+  background-size: cover;
+  background-position: center 47%;
+  background-repeat: no-repeat;
+
+  box-shadow: none;
+}
+
+.nexus-hero::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(5,5,6,0.15) 0%,
+      transparent 35%,
+      rgba(5,5,6,0.10) 56%,
+      rgba(5,5,6,0.68) 82%,
+      #050506 100%
+    );
+}
+
+.nexus-hero::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 145px;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      180deg,
+      transparent 0%,
+      rgba(5,5,6,0.72) 56%,
+      #050506 100%
+    );
+}
+
+.nexus-hero-content {
+  position: relative;
+  z-index: 2;
+  width: min(650px, 62%);
+  padding: 0;
+}
+
+.nexus-hero .nexus-section-label {
+  margin-bottom: 14px;
+  color: rgba(255,255,255,0.46);
+}
+
+.nexus-hero h2 {
+  max-width: 720px;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(42px, 4.2vw, 68px);
+  font-weight: 620;
+  line-height: 0.98;
+  letter-spacing: -0.052em;
+  text-wrap: balance;
+  text-shadow: 0 2px 30px rgba(0,0,0,0.42);
+}
+
+.nexus-hero-description {
+  max-width: 460px;
+  margin: 22px 0 0;
+  color: rgba(255,255,255,0.64);
+  font-size: 14px;
+  line-height: 1.55;
+  text-shadow: 0 1px 16px rgba(0,0,0,0.5);
+}
+
+.nexus-hero-art,
+.nexus-energy-orbit,
+.nexus-energy-core {
+  display: none !important;
+}
+
+.nexus-applications-section {
+  position: relative;
+  z-index: 4;
+  margin-top: -92px;
+  padding: 0 44px 34px;
+}
+
+.nexus-applications-section::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 24px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(180deg, transparent 0%, #050506 120px);
+  pointer-events: none;
+}
+
+.nexus-section-heading {
+  margin-bottom: 16px;
+}
+
+.nexus-applications-section .nexus-section-heading {
+  align-items: end;
+  min-height: 62px;
+}
+
+.nexus-applications-section .nexus-section-label {
+  color: rgba(255,255,255,0.36);
+}
+
+.nexus-section-heading h3 {
+  color: #fff;
+  letter-spacing: -0.025em;
+}
+
+.nexus-text-button {
+  color: rgba(255,255,255,0.50);
+}
+
+.nexus-text-button:hover {
+  color: #fff;
+}
+
+.nexus-app-card {
+  border-color: rgba(255,255,255,0.075);
+  border-radius: 13px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.024), rgba(255,255,255,0.010)),
+    rgba(9,9,11,0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.018),
+    0 12px 32px rgba(0,0,0,0.10);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.nexus-app-card:not(.nexus-app-card-disabled):hover {
+  border-color: rgba(255,255,255,0.15);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.042), rgba(255,255,255,0.015)),
+    rgba(10,10,12,0.93);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.035),
+    0 18px 42px rgba(0,0,0,0.18);
+}
+
+.nexus-app-card button {
+  border-color: rgba(255,255,255,0.11);
+  background: rgba(255,255,255,0.045);
+  color: rgba(255,255,255,0.88);
+}
+
+.nexus-app-card button:not(:disabled):hover {
+  border-color: rgba(255,255,255,0.21);
+  background: rgba(255,255,255,0.085);
+  color: #fff;
+}
+
+.nexus-app-status {
+  color: rgba(255,255,255,0.34);
+}
+
+.nexus-app-card-disabled {
+  opacity: 0.47;
+  filter: saturate(0.72);
+}
+
+.nexus-search-empty {
+  margin-top: 14px;
+  padding: 18px 20px;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.018);
+  color: rgba(255,255,255,0.48);
+  font-size: 13px;
+  text-align: center;
+}
+
+.nexus-workspace-section {
+  position: relative;
+  z-index: 3;
+  margin: 0;
+  padding: 14px 44px 54px;
+  background: #050506;
+}
+
+.nexus-recent-list {
+  border-color: rgba(255,255,255,0.075);
+  background: rgba(255,255,255,0.012);
+}
+
+.nexus-recent-row:hover {
+  background: rgba(255,255,255,0.035);
+}
+
+.nexus-runtime-status {
+  border-top-color: rgba(255,255,255,0.07);
+}
+
+.nexus-account-menu {
+  border-color: rgba(255,255,255,0.11);
+  background: rgba(12,12,14,0.96);
+  box-shadow: 0 24px 70px rgba(0,0,0,0.44);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+@media (max-width: 1180px) {
+  .nexus-app {
+    grid-template-columns: 205px minmax(0, 1fr);
+  }
+
+  .nexus-topbar {
+    padding-left: 34px;
+    padding-right: 34px;
+  }
+
+  .nexus-system-status {
+    display: none;
+  }
+
+  .nexus-hero {
+    min-height: 480px;
+    padding-left: 38px;
+    padding-right: 38px;
+    background-position: 57% 47%;
+  }
+
+  .nexus-applications-section,
+  .nexus-workspace-section {
+    padding-left: 34px;
+    padding-right: 34px;
+  }
+}
+
+@media (max-width: 940px) {
+  .nexus-app {
+    grid-template-columns: 184px minmax(0, 1fr);
+  }
+
+  .nexus-topbar {
+    gap: 18px;
+    padding: 30px 26px 20px;
+  }
+
+  .nexus-topbar .nexus-overline {
+    display: none;
+  }
+
+  .nexus-topbar h1 {
+    font-size: 25px;
+  }
+
+  .nexus-search {
+    width: min(34vw, 320px);
+  }
+
+  .nexus-hero {
+    min-height: 455px;
+    padding: 142px 30px 112px;
+    background-position: 62% 48%;
+  }
+
+  .nexus-hero-content {
+    width: 68%;
+  }
+
+  .nexus-hero h2 {
+    font-size: clamp(38px, 5vw, 54px);
+  }
+
+  .nexus-applications-section,
+  .nexus-workspace-section {
+    padding-left: 26px;
+    padding-right: 26px;
+  }
+}
+

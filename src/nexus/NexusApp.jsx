@@ -5,6 +5,7 @@ import AccountAvatar from "./components/AccountAvatar";
 import NexusLoadingScreen from "./components/NexusLoadingScreen";
 import LoginPage from "./pages/LoginPage";
 import { launchMelogicApp } from "./services/appLauncher";
+import { getRecentProjects } from "./services/projectRegistry";
 import "./styles/nexusAppCatalog.css";
 import { getTimeGreeting } from "./utils/greeting";
 
@@ -81,21 +82,6 @@ const apps = [
   },
 ];
 
-const recentProjects = [
-  {
-    name: "Vertix Beta Project",
-    appId: "vertix",
-    app: "Vertix",
-    modified: "Recently",
-  },
-  {
-    name: "Untitled Audio Project",
-    appId: "soura",
-    app: "Soura",
-    modified: "Recently",
-  },
-];
-
 function AppIcon({
   app,
   className = "",
@@ -141,6 +127,9 @@ export default function NexusApp() {
   const [accountMenuOpen, setAccountMenuOpen] =
     useState(false);
 
+  const [appSearch, setAppSearch] =
+    useState("");
+
   const [launchingApp, setLaunchingApp] =
     useState(null);
 
@@ -167,6 +156,25 @@ export default function NexusApp() {
     account.firstName || "Creator";
 
   const greeting = getTimeGreeting();
+
+  const recentProjects = getRecentProjects({ limit: 8 });
+
+  const normalizedAppSearch =
+    appSearch.trim().toLowerCase();
+
+  const filteredApps = normalizedAppSearch
+    ? apps.filter((app) =>
+        [
+          app.name,
+          app.category,
+          app.status,
+          app.version,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedAppSearch),
+      )
+    : apps;
 
   const handleLogout = async () => {
     setAccountMenuOpen(false);
@@ -308,7 +316,7 @@ export default function NexusApp() {
 
       <main className="nexus-main">
         <header className="nexus-topbar">
-          <div>
+          <div className="nexus-topbar-greeting">
             <p className="nexus-overline">
               Melogic Studio
             </p>
@@ -318,69 +326,90 @@ export default function NexusApp() {
             </h1>
           </div>
 
-          <div className="nexus-account-area">
-            <div className="nexus-system-status">
+          <div className="nexus-topbar-actions">
+            <label className="nexus-search">
               <span
-                className="nexus-status-light"
+                className="nexus-search-icon"
                 aria-hidden="true"
-              />
-              Nexus Ready
-            </div>
-
-            <div className="nexus-account-menu-container">
-              <button
-                className="nexus-account-button"
-                type="button"
-                aria-label="Open account menu"
-                aria-expanded={accountMenuOpen}
-                onClick={() =>
-                  setAccountMenuOpen((open) => !open)
-                }
               >
-                <AccountAvatar account={account} />
-              </button>
+                ⌕
+              </span>
 
-              {accountMenuOpen ? (
-                <div className="nexus-account-menu">
-                  <div className="nexus-account-menu-profile">
-                    <AccountAvatar
-                      account={account}
-                      size="large"
-                    />
+              <input
+                type="search"
+                value={appSearch}
+                onChange={(event) =>
+                  setAppSearch(event.target.value)
+                }
+                placeholder="Search apps, projects, or resources…"
+                aria-label="Search Nexus applications"
+              />
+            </label>
 
-                    <div>
-                      <strong>
-                        {account.displayName ||
-                          firstName}
-                      </strong>
+            <div className="nexus-account-area">
+              <div className="nexus-system-status">
+                <span
+                  className="nexus-status-light"
+                  aria-hidden="true"
+                />
+                Nexus Ready
+              </div>
 
-                      <span>
-                        {account.email}
-                      </span>
+              <div className="nexus-account-menu-container">
+                <button
+                  className="nexus-account-button"
+                  type="button"
+                  aria-label="Open account menu"
+                  aria-expanded={accountMenuOpen}
+                  onClick={() =>
+                    setAccountMenuOpen((open) => !open)
+                  }
+                >
+                  <AccountAvatar account={account} />
+                </button>
+
+                {accountMenuOpen ? (
+                  <div className="nexus-account-menu">
+                    <div className="nexus-account-menu-profile">
+                      <AccountAvatar
+                        account={account}
+                        size="large"
+                      />
+
+                      <div>
+                        <strong>
+                          {account.displayName ||
+                            firstName}
+                        </strong>
+
+                        <span>
+                          {account.email}
+                        </span>
+                      </div>
                     </div>
+
+                    <div className="nexus-account-menu-divider" />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAccountMenuOpen(false);
+                        setActiveNav("Settings");
+                      }}
+                    >
+                      Account settings
+                    </button>
+
+                    <button
+                      className="nexus-account-menu-signout"
+                      type="button"
+                      onClick={handleLogout}
+                    >
+                      Sign out
+                    </button>
                   </div>
-
-                  <div className="nexus-account-menu-divider" />
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAccountMenuOpen(false);
-                      setActiveNav("Settings");
-                    }}
-                  >
-                    Account settings
-                  </button>
-
-                  <button
-                    className="nexus-account-menu-signout"
-                    type="button"
-                    onClick={handleLogout}
-                  >
-                    Sign out
-                  </button>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </div>
         </header>
@@ -388,38 +417,23 @@ export default function NexusApp() {
         <section className="nexus-hero">
           <div className="nexus-hero-content">
             <p className="nexus-section-label">
-              Your Creative Suite
+              The Creative Suite
             </p>
 
             <h2>
-              Everything Melogic.
+              Everything you need
               <br />
-              One desktop.
+              to make what’s next.
             </h2>
 
             <p className="nexus-hero-description">
-              Launch your Melogic Studio tools,
-              manage local projects, and access
-              desktop-only capabilities through
-              Nexus.
+              Powerful tools. A unified workflow.
+              Built for creators.
             </p>
-          </div>
-
-          <div
-            className="nexus-hero-art"
-            aria-hidden="true"
-          >
-            <div className="nexus-energy-orbit nexus-energy-orbit-one" />
-            <div className="nexus-energy-orbit nexus-energy-orbit-two" />
-            <div className="nexus-energy-orbit nexus-energy-orbit-three" />
-
-            <div className="nexus-energy-core">
-              <span>M</span>
-            </div>
           </div>
         </section>
 
-        <section className="nexus-section">
+        <section className="nexus-section nexus-applications-section">
           <div className="nexus-section-heading">
             <div>
               <p className="nexus-section-label">
@@ -447,7 +461,7 @@ export default function NexusApp() {
           ) : null}
 
           <div className="nexus-app-grid">
-            {apps.map((app) => {
+            {filteredApps.map((app) => {
               const unavailable =
                 app.action === "Unavailable";
 
@@ -506,6 +520,12 @@ export default function NexusApp() {
               );
             })}
           </div>
+
+          {filteredApps.length === 0 ? (
+            <div className="nexus-search-empty">
+              No Melogic applications match “{appSearch}”.
+            </div>
+          ) : null}
         </section>
 
         <section className="nexus-section nexus-workspace-section">
@@ -531,7 +551,7 @@ export default function NexusApp() {
                 <button
                   className="nexus-recent-row"
                   type="button"
-                  key={`${project.app}-${project.name}`}
+                  key={project.id}
                 >
                   <AppIcon
                     app={app}
@@ -544,7 +564,7 @@ export default function NexusApp() {
                     </span>
 
                     <span className="nexus-recent-meta">
-                      {project.app} · {project.modified}
+                      {project.applicationName} · {project.modifiedLabel}
                     </span>
                   </div>
 
