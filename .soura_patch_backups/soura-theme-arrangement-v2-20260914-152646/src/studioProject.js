@@ -11,7 +11,6 @@ import { installSouraThemeConsole } from "./soura/themes/themeManager.js";
 installSouraThemeConsole();
 import './styles/studio.css'
 import './soura/themes/foundation.css'
-import './soura/themes/arrangement.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { auth, waitForInitialAuthState } from './firebase/auth'

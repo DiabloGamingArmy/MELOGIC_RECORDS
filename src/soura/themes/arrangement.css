@@ -1,0 +1,229 @@
+/*
+ * SOURA THEME CONVERSION — PATCH 2/8
+ * Main Arrangement + Transport
+ *
+ * Scope:
+ * - primary editor workspace
+ * - top/menu/transport chrome
+ * - transport/LCD readouts
+ * - track control column + track rows
+ * - arrangement canvas/grid/ruler
+ * - timeline extension/cycle lane
+ * - right-side primary tool rail
+ * - bottom status chrome
+ *
+ * Explicitly preserved:
+ * - track identity colors
+ * - audio/MIDI region colors
+ * - waveforms and MIDI note colors
+ * - record/warning/error semantic colors
+ *
+ * No layout, sizing, positioning, timeline math, transforms, or behavior.
+ */
+
+.studio-editor-page,
+.studio-editor-workspace {
+  background: var(--soura-canvas) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+/* ============================================================
+   TOP / MENU / TRANSPORT CHROME
+   ============================================================ */
+
+.studio-editor-page [class*="topbar"],
+.studio-editor-page [class*="menu-bar"],
+.studio-editor-page [class*="menubar"],
+.studio-editor-page [class*="toolbar"],
+.studio-editor-page [class*="transport"] {
+  background-color: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+  box-shadow: none !important;
+}
+
+/*
+ * Transport readouts should feel like embedded black glass, not blue-tinted
+ * cards. Accent is reserved for active/progress states handled later.
+ */
+.studio-editor-page [class*="transport-display"],
+.studio-editor-page [class*="transport-info"],
+.studio-editor-page [class*="lcd"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.48) !important;
+}
+
+.studio-editor-page [class*="transport-display"] small,
+.studio-editor-page [class*="transport-info"] small,
+.studio-editor-page [class*="lcd"] small,
+.studio-editor-page [class*="transport-display"] [class*="label"],
+.studio-editor-page [class*="transport-info"] [class*="label"],
+.studio-editor-page [class*="lcd"] [class*="label"] {
+  color: var(--soura-text-muted) !important;
+}
+
+/* ============================================================
+   TRACK CONTROL COLUMN
+   ============================================================ */
+
+.studio-editor-page [class*="track-list"],
+.studio-editor-page [class*="track-sidebar"],
+.studio-editor-page [class*="track-column"],
+.studio-editor-page [class*="track-controls"] {
+  background-color: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="track-row"],
+.studio-editor-page [class*="track-header"],
+.studio-editor-page [class*="track-card"] {
+  background-color: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+/*
+ * Track hover remains neutral in Patch 2.
+ * Patch 3 owns the blue->purple interaction language for buttons/controls.
+ */
+.studio-editor-page [class*="track-row"]:hover,
+.studio-editor-page [class*="track-header"]:hover,
+.studio-editor-page [class*="track-card"]:hover {
+  background-color: var(--soura-surface-2) !important;
+}
+
+.studio-editor-page [class*="new-track"],
+.studio-editor-page [class*="drop"][class*="track"] {
+  background-color: var(--soura-surface-0) !important;
+  color: var(--soura-text-muted) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/*
+ * Do NOT neutralize track identity strips, color swatches, meters or regions.
+ * These selectors only target structural track-row surfaces.
+ */
+
+/* ============================================================
+   ARRANGEMENT / TIMELINE CANVAS
+   ============================================================ */
+
+.studio-arrangement {
+  background-color: var(--soura-black) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-arrangement-grid,
+.studio-arrangement-grid-inner {
+  background-color: var(--soura-canvas) !important;
+  color: var(--soura-text-primary) !important;
+}
+
+/* Fine subdivisions stay intentionally quiet. */
+.studio-arrangement-grid [class*="grid-line"],
+.studio-arrangement-grid [class*="tick-line"],
+.studio-arrangement-grid [class*="beat-line"] {
+  border-color: rgba(255, 255, 255, 0.055) !important;
+}
+
+/* Bars/measures remain readable without turning the grid blue. */
+.studio-arrangement-grid [class*="measure-line"],
+.studio-arrangement-grid [class*="bar-line"] {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.studio-editor-page [class*="ruler"],
+.studio-editor-page [class*="timeline-header"] {
+  background-color: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/*
+ * Existing dark-theme timeline lane had blue-tinted gradients/borders.
+ * Convert only its chrome; the loop/cycle selection itself is not recolored.
+ */
+.studio-timeline-extension-lane,
+.studio-timeline-extension-lane-inner {
+  background: var(--soura-surface-0) !important;
+  border-color: var(--soura-border-subtle) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.025),
+    0 -8px 18px rgba(0, 0, 0, 0.24) !important;
+}
+
+.studio-timeline-ruler,
+.studio-timeline-ruler-inner {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* ============================================================
+   RIGHT-SIDE PRIMARY TOOL RAIL
+   ============================================================ */
+
+.studio-editor-page [class*="right-rail"],
+.studio-editor-page [class*="right-toolbar"],
+.studio-editor-page [class*="side-toolbar"],
+.studio-editor-page [class*="tool-rail"] {
+  background-color: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/*
+ * Button surfaces remain neutral here. Patch 3 will own hover/pressed/active
+ * gradients and focus treatment across the full control vocabulary.
+ */
+.studio-editor-page [class*="right-rail"] button,
+.studio-editor-page [class*="right-toolbar"] button,
+.studio-editor-page [class*="side-toolbar"] button,
+.studio-editor-page [class*="tool-rail"] button {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border) !important;
+}
+
+/* ============================================================
+   STATUS / LOWER CHROME
+   ============================================================ */
+
+.studio-editor-page [class*="status-bar"],
+.studio-editor-page [class*="statusbar"] {
+  background-color: var(--soura-surface-0) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* Scrollbar chrome inside the editor should also be neutral. */
+.studio-editor-page,
+.studio-editor-workspace,
+.studio-arrangement,
+.studio-arrangement-grid {
+  scrollbar-color:
+    rgba(255, 255, 255, 0.20)
+    rgba(255, 255, 255, 0.035);
+}
+
+.studio-editor-page ::-webkit-scrollbar-track,
+.studio-editor-workspace ::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.studio-editor-page ::-webkit-scrollbar-thumb,
+.studio-editor-workspace ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border: 2px solid var(--soura-surface-0);
+}
+
+.studio-editor-page ::-webkit-scrollbar-thumb:hover,
+.studio-editor-workspace ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
