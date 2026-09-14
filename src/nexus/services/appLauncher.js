@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getNexusLaunchConfig } from "./appManifest";
 
 /*
   NEXUS APPLICATION LIFECYCLE
@@ -12,28 +13,6 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
   Global product rule:
     Nexus -> App Project Browser -> Project Editor
 */
-
-const APP_WINDOWS = {
-  vertix: {
-    label: "vertix",
-    title: "Vertix",
-    projectBrowserUrl: "/stage.html",
-    width: 1440,
-    height: 900,
-    minWidth: 1050,
-    minHeight: 700,
-  },
-
-  soura: {
-    label: "soura",
-    title: "Soura",
-    projectBrowserUrl: "/soura.html",
-    width: 1440,
-    height: 900,
-    minWidth: 1050,
-    minHeight: 700,
-  },
-};
 
 const WINDOW_GEOMETRY_STORAGE_PREFIX =
   "melogic.nexus.window.";
@@ -361,10 +340,13 @@ async function attachReturnToNexusLifecycle(
 }
 
 export async function launchMelogicApp(appId) {
-  const config = APP_WINDOWS[appId];
+  const config =
+    getNexusLaunchConfig(appId);
 
   if (!config) {
-    throw new Error(`Nexus does not have a project browser registered for ${appId}.`);
+    throw new Error(
+      `Nexus does not have an available project browser registered for ${appId}.`,
+    );
   }
 
   const existing = await WebviewWindow.getByLabel(config.label);

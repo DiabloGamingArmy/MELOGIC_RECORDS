@@ -6,11 +6,10 @@ import NexusLoadingScreen from "./components/NexusLoadingScreen";
 import LoginPage from "./pages/LoginPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import { launchMelogicApp } from "./services/appLauncher";
+import { getNexusAppCatalog } from "./services/appManifest";
 import { getRecentProjects } from "./services/projectRegistry";
 import "./styles/nexusAppCatalog.css";
 import { getTimeGreeting } from "./utils/greeting";
-
-const APP_ICON_ROOT = "/assets/app-icons";
 
 const navigationItems = [
   "Home",
@@ -20,69 +19,7 @@ const navigationItems = [
   "Downloads",
 ];
 
-const apps = [
-  {
-    id: "vertix",
-    name: "Vertix",
-    category: "3D & Animation",
-    status: "Beta",
-    version: "v0.0",
-    action: "Open",
-    accent: "V",
-    icon: `${APP_ICON_ROOT}/vertix.png`,
-  },
-  {
-    id: "soura",
-    name: "Soura",
-    category: "Audio Production",
-    status: "Available",
-    version: "Web",
-    action: "Open",
-    accent: "S",
-    icon: `${APP_ICON_ROOT}/soura.png`,
-  },
-  {
-    id: "cineara",
-    name: "Cineara",
-    category: "Video Editing",
-    status: "Coming Soon",
-    version: "—",
-    action: "Unavailable",
-    accent: "C",
-    icon: `${APP_ICON_ROOT}/cineara.png`,
-  },
-  {
-    id: "inkora",
-    name: "Inkora",
-    category: "Graphics & Artwork",
-    status: "Coming Soon",
-    version: "—",
-    action: "Unavailable",
-    accent: "I",
-    icon: `${APP_ICON_ROOT}/inkora.png`,
-  },
-  {
-    id: "lucentra",
-    name: "Lucentra",
-    category: "Live Performance",
-    status: "Coming Soon",
-    version: "—",
-    action: "Unavailable",
-    accent: "L",
-    icon: `${APP_ICON_ROOT}/lucentra.png`,
-  },
-  {
-    id: "rundown-pilot",
-    name: "Rundown Pilot",
-    category: "Show Control",
-    status: "Coming Soon",
-    version: "—",
-    action: "Unavailable",
-    accent: "R",
-    icon: `${APP_ICON_ROOT}/rundown-pilot.png`,
-  },
-];
-
+const apps = getNexusAppCatalog();
 function AppIcon({
   app,
   className = "",
