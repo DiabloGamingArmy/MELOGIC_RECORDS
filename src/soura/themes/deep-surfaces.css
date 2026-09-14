@@ -1,0 +1,269 @@
+/*
+ * SOURA THEME CONVERSION — PATCH 7/8
+ * Deep / Exceptional Surfaces
+ *
+ * Scope:
+ * - automation lanes and global tempo lane chrome
+ * - pitch / spectral / analysis panels
+ * - render/export/status panels
+ * - meter housings (NOT meter fill colors)
+ * - waveform/editor utility chrome
+ * - diagnostic/status cards
+ * - odd legacy blue-tinted utility surfaces missed by broad panel passes
+ *
+ * Rules:
+ * - neutralize chrome only
+ * - preserve musical/data color
+ * - preserve semantic record/warning/error/clipping color
+ * - blue->purple only for interaction and priority status/progress
+ * - no layout/geometry/behavior changes
+ */
+
+/* ============================================================
+   AUTOMATION LANES
+   ============================================================ */
+
+.studio-track-automation-sidebar,
+.studio-editor-page [class*="automation-sidebar"],
+.studio-editor-page [class*="automation-header"],
+.studio-editor-page [class*="automation-lane"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="automation-toolbar"],
+.studio-editor-page [class*="automation-controls"] {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [class*="automation-label"],
+.studio-track-automation-sidebar label {
+  color: var(--soura-text-muted) !important;
+}
+
+/*
+ * Automation curve/node colors are data visualization and are intentionally
+ * not globally neutralized. Only tooltips/readout chrome is converted.
+ */
+.studio-track-automation-point span,
+.studio-editor-page [class*="automation-point"] span,
+.studio-editor-page [class*="automation-tooltip"],
+.studio-editor-page [class*="automation-readout"] {
+  background: var(--soura-surface-3) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow: var(--soura-shadow-menu) !important;
+}
+
+/* ============================================================
+   GLOBAL TEMPO / TIMELINE UTILITY LANES
+   ============================================================ */
+
+.studio-editor-page [class*="global-tempo"],
+.studio-editor-page [class*="tempo-lane"],
+.studio-editor-page [class*="tempo-header"] {
+  background-color: var(--soura-surface-1) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-global-tempo-node span,
+.studio-editor-page [class*="tempo-node"] span,
+.studio-editor-page [class*="tempo-readout"] {
+  background: var(--soura-surface-3) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+}
+
+/* ============================================================
+   PITCH / ANALYSIS / SPECTRAL CHROME
+   Preserve plotted lines, traces, heatmaps, bands, and waveform content.
+   ============================================================ */
+
+.studio-editor-page [class*="pitch-panel"],
+.studio-editor-page [class*="pitch-editor"],
+.studio-editor-page [class*="pitch-analysis"],
+.studio-editor-page [class*="analysis-panel"],
+.studio-editor-page [class*="analysis-surface"],
+.studio-editor-page [class*="spectral-panel"],
+.studio-editor-page [class*="spectrum-panel"] {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="pitch-toolbar"],
+.studio-editor-page [class*="analysis-toolbar"],
+.studio-editor-page [class*="spectral-toolbar"],
+.studio-editor-page [class*="spectrum-toolbar"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [class*="analysis-card"],
+.studio-editor-page [class*="analysis-row"],
+.studio-editor-page [class*="recommendation-card"],
+.studio-editor-page [class*="diagnostic-card"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="analysis-card"]:hover,
+.studio-editor-page [class*="recommendation-card"]:hover,
+.studio-editor-page [class*="diagnostic-card"]:hover {
+  background: var(--soura-surface-2) !important;
+  border-color: var(--soura-border) !important;
+}
+
+/* ============================================================
+   METER HOUSINGS
+   Meter fills are intentionally excluded.
+   ============================================================ */
+
+.studio-editor-page [class*="meter-shell"],
+.studio-editor-page [class*="meter-housing"],
+.studio-editor-page [class*="meter-track"],
+.studio-editor-page [class*="level-meter"] {
+  background-color: var(--soura-black) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="meter-label"],
+.studio-editor-page [class*="meter-scale"],
+.studio-editor-page [class*="meter-value"] {
+  color: var(--soura-text-muted) !important;
+}
+
+/*
+ * Do NOT target:
+ * [class*="meter-fill"], [class*="meter-bar"], peak/clipping indicators.
+ * Those colors carry signal/status meaning.
+ */
+
+/* ============================================================
+   RENDER / EXPORT / BOUNCE / PROCESSING STATUS
+   ============================================================ */
+
+.studio-editor-page [class*="export-panel"],
+.studio-editor-page [class*="render-panel"],
+.studio-editor-page [class*="bounce-panel"],
+.studio-editor-page [class*="processing-panel"],
+.studio-editor-page [class*="render-status"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border) !important;
+  box-shadow: var(--soura-shadow-panel) !important;
+}
+
+.studio-editor-page [class*="export-summary"],
+.studio-editor-page [class*="render-summary"],
+.studio-editor-page [class*="bounce-summary"],
+.studio-editor-page [class*="processing-summary"] {
+  background: var(--soura-surface-0) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+/* Priority processing/progress may use accent by design. */
+.studio-editor-page [class*="render-progress"] [class*="fill"],
+.studio-editor-page [class*="export-progress"] [class*="fill"],
+.studio-editor-page [class*="bounce-progress"] [class*="fill"],
+.studio-editor-page [class*="processing-progress"] [class*="fill"] {
+  background: var(--soura-accent-gradient) !important;
+}
+
+/* ============================================================
+   UTILITY / DIAGNOSTIC STATUS SURFACES
+   ============================================================ */
+
+.studio-editor-page [class*="diagnostic-panel"],
+.studio-editor-page [class*="performance-panel"],
+.studio-editor-page [class*="engine-status"],
+.studio-editor-page [class*="runtime-status"],
+.studio-editor-page [class*="plugin-status"],
+.studio-editor-page [class*="dsp-status"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+.studio-editor-page [class*="diagnostic-row"],
+.studio-editor-page [class*="performance-row"],
+.studio-editor-page [class*="status-row"] {
+  border-color: var(--soura-divider) !important;
+}
+
+/* High-priority healthy/working state: restrained accent, not full saturation. */
+.studio-editor-page [class*="engine-status"].is-active,
+.studio-editor-page [class*="runtime-status"].is-active,
+.studio-editor-page [class*="plugin-status"].is-active,
+.studio-editor-page [class*="dsp-status"].is-active {
+  background: var(--soura-status-priority-bg) !important;
+  border-color: var(--soura-status-priority-border) !important;
+}
+
+/* ============================================================
+   WAVEFORM / EDITOR UTILITY CHROME
+   Preserve the waveform itself.
+   ============================================================ */
+
+.studio-editor-page [class*="waveform-toolbar"],
+.studio-editor-page [class*="waveform-header"],
+.studio-editor-page [class*="waveform-controls"] {
+  background: var(--soura-surface-1) !important;
+  color: var(--soura-text-secondary) !important;
+  border-color: var(--soura-divider) !important;
+}
+
+.studio-editor-page [class*="waveform-readout"],
+.studio-editor-page [class*="sample-readout"],
+.studio-editor-page [class*="time-readout"] {
+  background: var(--soura-surface-2) !important;
+  color: var(--soura-text-primary) !important;
+  border-color: var(--soura-border-subtle) !important;
+}
+
+/* ============================================================
+   LEGACY BLUE-TINT CLEANUP FOR KNOWN UTILITY TEXT CHROME
+   ============================================================ */
+
+.studio-global-tempo-node span,
+.studio-track-automation-point span {
+  text-shadow: none !important;
+}
+
+/* ============================================================
+   SEMANTIC PROTECTION
+   ============================================================ */
+
+.studio-editor-page [class*="clipping"],
+.studio-editor-page [class*="clip-indicator"].is-clipping,
+.studio-editor-page [class*="peak-indicator"].is-clipping {
+  color: var(--soura-clipping) !important;
+}
+
+.studio-editor-page [class*="error"].is-active,
+.studio-editor-page [data-status="error"] {
+  border-color: rgba(255,95,112,.52) !important;
+}
+
+.studio-editor-page [class*="warning"].is-active,
+.studio-editor-page [data-status="warning"] {
+  border-color: rgba(240,184,74,.50) !important;
+}
+
+/*
+ * Intentionally excluded from theme neutralization:
+ * - audio/MIDI regions
+ * - track identity colors
+ * - waveform pixels
+ * - MIDI notes
+ * - pitch traces
+ * - automation curves
+ * - spectrum/spectrogram data
+ * - meter fills and clipping indicators
+ */
