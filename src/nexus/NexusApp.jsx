@@ -4,6 +4,7 @@ import { useNexusAuth } from "./auth/NexusAuthProvider";
 import AccountAvatar from "./components/AccountAvatar";
 import NexusLoadingScreen from "./components/NexusLoadingScreen";
 import LoginPage from "./pages/LoginPage";
+import ProjectsPage from "./pages/ProjectsPage";
 import { launchMelogicApp } from "./services/appLauncher";
 import { getRecentProjects } from "./services/projectRegistry";
 import "./styles/nexusAppCatalog.css";
@@ -414,6 +415,13 @@ export default function NexusApp() {
           </div>
         </header>
 
+        {activeNav === "Projects" ? (
+          <ProjectsPage
+            apps={apps}
+            onOpenApplication={handleLaunchApp}
+          />
+        ) : (
+          <>
         <section className="nexus-hero">
           <div className="nexus-hero-content">
             <p className="nexus-section-label">
@@ -446,6 +454,9 @@ export default function NexusApp() {
             <button
               className="nexus-text-button"
               type="button"
+              onClick={() =>
+                setActiveNav("Projects")
+              }
             >
               View all
             </button>
@@ -544,7 +555,7 @@ export default function NexusApp() {
               const app =
                 apps.find(
                   (candidate) =>
-                    candidate.id === project.appId,
+                    candidate.id === project.applicationId,
                 ) || apps[0];
 
               return (
@@ -579,6 +590,8 @@ export default function NexusApp() {
             })}
           </div>
         </section>
+          </>
+        )}
       </main>
     </div>
   );
