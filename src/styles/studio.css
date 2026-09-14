@@ -590,15 +590,15 @@ body.is-audio-region-stretching .studio-audio-region{cursor:ew-resize}
 .studio-smart-comparison>div{display:flex;justify-content:space-between;gap:10px;color:#a7b3c9;font-size:8px}
 .studio-smart-comparison>div strong{color:#e4ebf8;font-size:8px}
 .studio-smart-comparison p{margin:0!important;color:#8e9bb4!important;font-size:8px;line-height:1.4}
-.studio-daw-library{height:100%;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;color:#eaf0ff}
-.studio-daw-library>header{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid rgba(135,155,205,.22);background:#171c27}
+.studio-daw-library{height:100%;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr) auto;color:#eaf0ff;background:#000000}
+.studio-daw-library>header{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #2A2A31;background:#050505}
 .studio-daw-library>header h3,.studio-daw-library>header p{margin:0}
 .studio-daw-library>header h3{font-size:16px}
 .studio-daw-library>header p{margin-top:3px;color:#8f9bb7;font-size:11px}
-.studio-daw-library>header>span{min-width:28px;height:24px;display:grid;place-items:center;border-radius:5px;background:#252c3d;color:#a9dcff;font-size:11px;font-weight:900}
-.studio-daw-library-browser{min-height:0;display:grid;grid-template-columns:170px minmax(0,1fr)}
-.studio-daw-library-browser>nav{min-height:0;overflow:auto;padding:8px;border-right:1px solid rgba(135,155,205,.18);background:#121720}
-.studio-daw-library-results{min-height:0;overflow:auto;padding:10px;background:#0d1119}
+.studio-daw-library>header>span{min-width:28px;height:24px;display:grid;place-items:center;border-radius:5px;background:#111114;color:#B7B7C2;font-size:11px;font-weight:900}
+.studio-daw-library-browser{min-height:0;display:grid;grid-template-columns:170px minmax(0,1fr);background:#000000}
+.studio-daw-library-browser>nav{min-height:0;overflow:auto;padding:8px;border-right:1px solid #2A2A31;background:#050505}
+.studio-daw-library-results{min-height:0;overflow:auto;padding:10px;background:#000000}
 .studio-daw-library-folder{display:grid;gap:2px}
 .studio-daw-library-folder-button,.studio-daw-library-instrument{width:100%;border:0;color:#dce6fa;font:inherit;text-align:left;cursor:pointer}
 .studio-daw-library-folder-button{min-height:31px;display:grid;grid-template-columns:16px minmax(0,1fr) auto;align-items:center;gap:4px;border-radius:5px;background:transparent;padding:4px 6px 4px calc(6px + (var(--library-depth,0) * 12px))}

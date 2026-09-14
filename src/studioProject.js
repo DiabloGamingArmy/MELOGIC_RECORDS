@@ -140,6 +140,122 @@ import {
 import { getRegionTimelineRange, getTimelineRegionGeometry, getTimelineRegionLaneGeometry } from './studio/timeline/regionGeometry.js'
 
 const app = document.querySelector('#app')
+
+// SOURA LIBRARY RUNTIME BLACK v11
+function applySouraLibraryRuntimeBlackV11() {
+  const roots = document.querySelectorAll('.studio-left-panel--library')
+
+  roots.forEach((root) => {
+    root.style.setProperty('background', '#000000', 'important')
+    root.style.setProperty('background-color', '#000000', 'important')
+    root.style.setProperty('background-image', 'none', 'important')
+    root.style.setProperty('border-color', '#2A2A31', 'important')
+
+    const transparentStructuralSelectors = [
+      '.studio-library-panel',
+      '.studio-library-panel > *',
+      '[class*="library-body"]',
+      '[class*="library-content"]',
+      '[class*="library-browser"]',
+      '[class*="library-main"]',
+      '[class*="asset-browser"]',
+      '[class*="empty-state"]',
+      '[class*="library-empty"]',
+      '[class*="library-message"]',
+      '[class*="placeholder"]'
+    ]
+
+    root.querySelectorAll(transparentStructuralSelectors.join(',')).forEach((node) => {
+      node.style.setProperty('background-color', 'transparent', 'important')
+      node.style.setProperty('background-image', 'none', 'important')
+    })
+
+    const headerSelectors = [
+      ':scope > header',
+      '.studio-library-panel > header',
+      '[class*="library-header"]'
+    ]
+
+    headerSelectors.forEach((selector) => {
+      try {
+        root.querySelectorAll(selector).forEach((node) => {
+          node.style.setProperty('background', '#050505', 'important')
+          node.style.setProperty('background-color', '#050505', 'important')
+          node.style.setProperty('background-image', 'none', 'important')
+          node.style.setProperty('border-color', '#2A2A31', 'important')
+        })
+      } catch {}
+    })
+
+    const sidebarSelectors = [
+      '[class*="library-sidebar"]',
+      '[class*="library-folders"]',
+      '[class*="folder-tree"]',
+      '[class*="folder-list"]',
+      '[class*="source-list"]',
+      '[class*="library-roots"]'
+    ]
+
+    root.querySelectorAll(sidebarSelectors.join(',')).forEach((node) => {
+      node.style.setProperty('background', '#050505', 'important')
+      node.style.setProperty('background-color', '#050505', 'important')
+      node.style.setProperty('background-image', 'none', 'important')
+      node.style.setProperty('border-color', '#2A2A31', 'important')
+    })
+
+    const rowSelectors = [
+      '[class*="folder-row"]',
+      '[class*="library-row"]',
+      '[class*="asset-row"]',
+      '[class*="source-row"]',
+      '[class*="root-row"]'
+    ]
+
+    root.querySelectorAll(rowSelectors.join(',')).forEach((node) => {
+      const selected =
+        node.classList.contains('is-active') ||
+        node.getAttribute('aria-selected') === 'true' ||
+        node.getAttribute('aria-pressed') === 'true' ||
+        node.getAttribute('data-selected') === 'true'
+
+      if (!selected) {
+        node.style.setProperty('background-color', '#0A0A0A', 'important')
+        node.style.setProperty('background-image', 'none', 'important')
+        node.style.setProperty('border-color', '#2A2A31', 'important')
+      }
+    })
+  })
+}
+
+let souraLibraryRuntimeBlackRafV11 = 0
+function scheduleSouraLibraryRuntimeBlackV11() {
+  if (souraLibraryRuntimeBlackRafV11) return
+  souraLibraryRuntimeBlackRafV11 = requestAnimationFrame(() => {
+    souraLibraryRuntimeBlackRafV11 = 0
+    applySouraLibraryRuntimeBlackV11()
+  })
+}
+
+const souraLibraryRuntimeBlackObserverV11 = new MutationObserver((mutations) => {
+  if (mutations.some((mutation) =>
+    mutation.type === 'childList' || mutation.type === 'attributes'
+  )) {
+    scheduleSouraLibraryRuntimeBlackV11()
+  }
+})
+
+if (document.documentElement) {
+  souraLibraryRuntimeBlackObserverV11.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['class', 'aria-selected', 'aria-pressed', 'data-selected']
+  })
+}
+
+queueMicrotask(scheduleSouraLibraryRuntimeBlackV11)
+window.addEventListener('load', scheduleSouraLibraryRuntimeBlackV11, { once: true })
+
 // soura-detached-region-editor-capture-override-v7
 const souraDetachedRegionRequest = (() => {
   const params = new URLSearchParams(window.location.search)
