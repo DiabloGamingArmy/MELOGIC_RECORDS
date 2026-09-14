@@ -1,0 +1,327 @@
+/*
+ * SOURA RECOVERY — TIMELINE / CYCLE / VOLUME v8
+ * ==============================================
+ */
+
+/* ============================================================
+   1. TRANSPORT PARENT GROUP — NO SECONDARY OUTLINE
+   ============================================================ */
+
+.studio-editor-page
+.studio-editor-transport
+.studio-tool-group.studio-tool-group--transport,
+.studio-editor-page
+.studio-editor-transport
+.studio-tool-group--transport {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  background-image: none !important;
+}
+
+
+/* ============================================================
+   2. TRACK VOLUME — TROUGH ALWAYS VISIBLE
+   Actual repo component is .studio-track-volume.
+   ============================================================ */
+
+.studio-editor-page .studio-track-card .studio-track-volume {
+  background: transparent !important;
+  appearance: none !important;
+  -webkit-appearance: none !important;
+}
+
+/* WebKit/Safari/Chromium trough */
+.studio-editor-page
+.studio-track-card
+.studio-track-volume::-webkit-slider-runnable-track {
+  height: 6px !important;
+  border-radius: 999px !important;
+  background: #2A2A31 !important;
+  border: 1px solid #3A3A43 !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.55) !important;
+}
+
+/* Firefox trough */
+.studio-editor-page
+.studio-track-card
+.studio-track-volume::-moz-range-track {
+  height: 6px !important;
+  border-radius: 999px !important;
+  background: #2A2A31 !important;
+  border: 1px solid #3A3A43 !important;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.55) !important;
+}
+
+/*
+ * Selected tracks use a lighter card background, so explicitly deepen the
+ * trough there. This fixes the "floating circle" look.
+ */
+.studio-editor-page
+.studio-track-card.is-selected
+.studio-track-volume::-webkit-slider-runnable-track,
+.studio-editor-page
+.studio-track-card[aria-selected="true"]
+.studio-track-volume::-webkit-slider-runnable-track,
+.studio-editor-page
+.studio-track-card[data-selected="true"]
+.studio-track-volume::-webkit-slider-runnable-track {
+  background: #202026 !important;
+  border-color: #34343C !important;
+}
+
+.studio-editor-page
+.studio-track-card.is-selected
+.studio-track-volume::-moz-range-track,
+.studio-editor-page
+.studio-track-card[aria-selected="true"]
+.studio-track-volume::-moz-range-track,
+.studio-editor-page
+.studio-track-card[data-selected="true"]
+.studio-track-volume::-moz-range-track {
+  background: #202026 !important;
+  border-color: #34343C !important;
+}
+
+/* Hover: modest lift only */
+.studio-editor-page
+.studio-track-card
+.studio-track-volume:hover::-webkit-slider-runnable-track {
+  background: #32323A !important;
+}
+
+.studio-editor-page
+.studio-track-card
+.studio-track-volume:hover::-moz-range-track {
+  background: #32323A !important;
+}
+
+
+/* ============================================================
+   3. EMPTY TRACK COLUMN / TRACK LIST SURFACE
+   Current repo architecture uses track panel/list, not track-sidebar.
+   ============================================================ */
+
+.studio-editor-page .studio-track-panel,
+.studio-editor-page .studio-track-list,
+.studio-editor-page .studio-track-list-inner {
+  background-color: #070708 !important;
+  background-image: none !important;
+}
+
+.studio-editor-page .studio-track-list-inner {
+  min-height: 100% !important;
+}
+
+/* Track cards remain visually elevated from the empty column */
+.studio-editor-page .studio-track-card {
+  position: relative;
+  z-index: 1;
+}
+
+
+/* ============================================================
+   4. TIMELINE / RULER POINTER OWNERSHIP
+   ============================================================ */
+
+.studio-editor-page .studio-timeline-ruler {
+  pointer-events: auto !important;
+  user-select: none !important;
+}
+
+.studio-editor-page .studio-arrangement,
+.studio-editor-page .studio-arrangement-grid {
+  pointer-events: auto !important;
+}
+
+/*
+ * Decorative inner layers should not compete with the real interaction
+ * owner, except explicit cycle controls below.
+ */
+.studio-editor-page .studio-timeline-ruler-inner,
+.studio-editor-page .studio-arrangement-grid-inner {
+  pointer-events: none !important;
+}
+
+/* Regions and region edit targets stay interactive. */
+.studio-editor-page .studio-audio-region,
+.studio-editor-page .studio-midi-region,
+.studio-editor-page .studio-region,
+.studio-editor-page [data-region-id],
+.studio-editor-page [data-region],
+.studio-editor-page [data-region-handle],
+.studio-editor-page [data-region-resize],
+.studio-editor-page [data-region-trim] {
+  pointer-events: auto !important;
+}
+
+
+/* ============================================================
+   5. CYCLE LANE — INTERACTION + VISUALS
+   Existing JS already renders:
+     .studio-cycle-strip
+     .studio-cycle-range
+     .studio-cycle-range-body
+     .studio-cycle-range-handle
+   ============================================================ */
+
+.studio-editor-page .studio-cycle-strip {
+  pointer-events: auto !important;
+  cursor: crosshair !important;
+
+  background-color: #070708 !important;
+  background-image:
+    repeating-linear-gradient(
+      135deg,
+      rgba(255,255,255,.020) 0px,
+      rgba(255,255,255,.020) 8px,
+      rgba(255,255,255,0) 8px,
+      rgba(255,255,255,0) 18px
+    ),
+    linear-gradient(
+      180deg,
+      #0A0A0C 0%,
+      #060607 100%
+    ) !important;
+
+  border-top: 1px solid #151519 !important;
+  border-bottom: 1px solid #24242A !important;
+}
+
+.studio-editor-page .studio-timeline-ruler-inner .studio-cycle-strip,
+.studio-editor-page .studio-cycle-range,
+.studio-editor-page .studio-cycle-range-body,
+.studio-editor-page .studio-cycle-range-handle {
+  pointer-events: auto !important;
+}
+
+.studio-editor-page .studio-cycle-range {
+  z-index: 10 !important;
+  opacity: .78 !important;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(37,99,235,.24) 0%,
+      rgba(92,75,234,.27) 50%,
+      rgba(147,51,234,.24) 100%
+    ) !important;
+  border-color: rgba(92,75,234,.62) !important;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.025) !important;
+}
+
+.studio-editor-page .studio-cycle-range.is-enabled {
+  opacity: 1 !important;
+  border-color: rgba(147,51,234,.78) !important;
+}
+
+.studio-editor-page .studio-cycle-range-body {
+  cursor: grab !important;
+  position: relative;
+  z-index: 11 !important;
+}
+
+body.is-studio-dragging
+.studio-editor-page
+.studio-cycle-range-body {
+  cursor: grabbing !important;
+}
+
+.studio-editor-page .studio-cycle-range-handle {
+  width: 10px !important;
+  min-width: 10px !important;
+  cursor: ew-resize !important;
+  position: relative;
+  z-index: 12 !important;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255,255,255,.12),
+      rgba(255,255,255,.035)
+    ) !important;
+}
+
+.studio-editor-page
+.studio-cycle-range
+.studio-cycle-range-handle:first-child {
+  border-right: 1px solid rgba(255,255,255,.16) !important;
+}
+
+.studio-editor-page
+.studio-cycle-range
+.studio-cycle-range-handle:last-child {
+  border-left: 1px solid rgba(255,255,255,.16) !important;
+}
+
+
+/* ============================================================
+   6. PLAYHEAD GHOST-SMUDGE FIX
+   Current studio.css uses a moving triangle pseudo-element with
+   filter: drop-shadow(...), which is prone to Safari compositor residue.
+   ============================================================ */
+
+.studio-editor-page .studio-ruler-playhead,
+.studio-editor-page .studio-grid-playhead {
+  pointer-events: none !important;
+  filter: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  transition: none !important;
+  will-change: left;
+}
+
+.studio-editor-page .studio-ruler-playhead::before {
+  pointer-events: none !important;
+  filter: none !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+  transition: none !important;
+  transform: translate3d(-50%, 0, 0) !important;
+  backface-visibility: hidden !important;
+  -webkit-backface-visibility: hidden !important;
+  mix-blend-mode: normal !important;
+}
+
+/* Visual overlays must never steal mouse input. */
+.studio-editor-page :is(
+  .studio-playhead,
+  .studio-timeline-playhead,
+  .studio-arrangement-playhead,
+  .studio-selection-marquee,
+  .studio-marquee,
+  .studio-arrangement-marquee,
+  .studio-arrangement-selection,
+  .studio-loop-range,
+  .studio-cycle-range + .studio-cycle-guide,
+  .studio-cycle-guide,
+  .studio-time-selection,
+  [data-playhead],
+  [data-selection-marquee],
+  [data-marquee],
+  [data-time-selection]
+) {
+  pointer-events: none !important;
+}
+
+/* But cycle interaction elements explicitly opt back in. */
+.studio-editor-page :is(
+  .studio-cycle-strip,
+  .studio-cycle-range,
+  .studio-cycle-range-body,
+  .studio-cycle-range-handle
+) {
+  pointer-events: auto !important;
+}
+
+
+/* ============================================================
+   7. SAFETY
+   ============================================================ */
+
+/*
+ * Intentionally untouched:
+ * - Score Editor
+ * - audio engine
+ * - region/waveform/MIDI colors
+ * - track identity strips
+ */
