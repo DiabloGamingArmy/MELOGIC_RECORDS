@@ -254,15 +254,6 @@ async function requireAdminActionSecurity(request = {}, permissionOrPermissions 
       actionRequired: 'enable_2fa'
     })
   }
-  const authTime = Number(getAuthFromRequest(request)?.token?.auth_time || 0)
-  const nowSeconds = Math.floor(Date.now() / 1000)
-  if (!authTime || nowSeconds - authTime > 60) {
-    throw new HttpsError('permission-denied', 'Re-authenticate with 2FA to perform this admin action.', {
-      code: 'admin-step-up-required',
-      actionRequired: 'reauthenticate',
-      maxAgeSeconds: 60
-    })
-  }
   return claims
 }
 
