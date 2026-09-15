@@ -67,3 +67,6 @@ ams_community.zip
 *.recovery-v1.3-*.bak
 *.email-notifications-v1-*.bak
 *.web-push-p1-*.bak
+.melogic-vapid-private-key.txt
+*.web-push-p2-*.bak
+*.web-push-p2.1-*.bak
