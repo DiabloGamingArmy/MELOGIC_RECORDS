@@ -136,7 +136,7 @@ const TEMPLATE_SUBJECTS = {
   security_2fa_disabled: 'Two-factor authentication was disabled'
 }
 
-function renderPremiumEmailHtml({ eyebrow = 'Account notice', title = '', body = '', ctaLabel = '', ctaUrl = '', actionFallbackUrl = '', footer = '', tone = 'default' } = {}) {
+function renderPremiumEmailHtml({ eyebrow = 'Account notice', title = '', body = '', ctaLabel = '', ctaUrl = '', footer = '', tone = 'default' } = {}) {
   const isAlert = tone === 'alert'
   const accent = isAlert ? '#f2aa70' : '#9688ff'
   const accentSoft = isAlert ? '#211918' : '#171527'
@@ -145,9 +145,6 @@ function renderPremiumEmailHtml({ eyebrow = 'Account notice', title = '', body =
   const brandGradient = 'linear-gradient(135deg,#477dff 0%,#765dff 52%,#a65cff 100%)'
   const button = ctaUrl
     ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:28px 0 6px"><tr><td align="center" bgcolor="${brandFallback}" style="border-radius:8px;background-color:${brandFallback};background-image:${brandGradient}"><a href="${htmlEscape(ctaUrl)}" style="display:inline-block;padding:14px 22px;border:1px solid #8271ff;border-radius:8px;color:#ffffff;text-decoration:none;font-family:Arial,Helvetica,sans-serif;font-weight:800;font-size:14px;letter-spacing:.01em">${htmlEscape(ctaLabel || 'Open Melogic Records')}</a></td></tr></table>`
-    : ''
-  const actionFallback = actionFallbackUrl
-    ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:18px 0 0"><tr><td style="padding:14px 16px;border:1px solid #292b33;border-radius:8px;background:#0a0b0f;color:#aeb1bc;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:19px"><strong style="display:block;margin:0 0 7px;color:#d6d8df;font-size:12px">Button not working? Go to this link:</strong><a href="${htmlEscape(actionFallbackUrl)}" style="display:block;padding-left:12px;color:#a79cff;text-decoration:underline;overflow-wrap:anywhere;word-break:break-word">${htmlEscape(actionFallbackUrl)}</a></td></tr></table>`
     : ''
   return `<!doctype html>
 <html lang="en"><body style="margin:0;padding:0;background:#050507;color:#f2f3f7;font-family:Arial,Helvetica,sans-serif">
@@ -167,7 +164,6 @@ function renderPremiumEmailHtml({ eyebrow = 'Account notice', title = '', body =
               <h1 style="margin:0 0 16px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:28px;line-height:34px;font-weight:800;letter-spacing:-.02em">${htmlEscape(title)}</h1>
               <div style="color:#d6d8df;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:24px">${body}</div>
               ${button}
-              ${actionFallback}
               ${footer ? `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:22px 0 0"><tr><td bgcolor="${accentSoft}" style="padding:13px 14px;border:1px solid ${border};border-radius:8px;background:${accentSoft};color:#c9cbd3;font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:20px">${htmlEscape(footer)}</td></tr></table>` : ''}
               <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin:28px 0 0"><tr><td style="height:1px;background:#2a2c34;font-size:1px;line-height:1px">&nbsp;</td></tr></table>
               <p style="margin:20px 0 0;color:#aeb1bc;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:19px">If you did not request or recognize this activity, you can ignore this email or contact support.</p>
@@ -214,7 +210,6 @@ function renderEmailTemplate(templateName = '', data = {}) {
       body: `<p>Confirm this email address to finish securing your Melogic Records account.</p>`,
       ctaLabel: 'Confirm Email',
       ctaUrl: actionLink,
-      actionFallbackUrl: actionLink,
       footer: 'This helps protect your profile, marketplace activity, and account recovery.'
     })
     return { subject: TEMPLATE_SUBJECTS.email_verification, html, text: `Confirm your Melogic Records email.${fallbackLink}\n\nSupport: ${SUPPORT_EMAIL}` }
