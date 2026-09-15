@@ -1,0 +1,107 @@
+/*
+ * SOURA V53 - Pitch reference waveform structural visibility repair
+ *
+ * V50 created an opaque shell around the fixed keyboard + scrolling pitch canvas.
+ * The real reference waveform owner is .studio-pitch-trace-waveform-viewport.
+ * V52 only styled the inner .studio-pitch-trace-waveform, so the owner could still
+ * be physically painted underneath the opaque V50 shell.
+ */
+
+.studio-editor-page .studio-pitch-trace-view {
+  position: relative !important;
+  isolation: isolate !important;
+  background: #111114 !important;
+}
+
+/* V50 owns structure only; it must not cover the reference waveform. */
+.studio-editor-page
+.studio-pitch-trace-view > .studio-pitch-trace-viewport-shell-v50 {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  z-index: 2 !important;
+}
+
+/* This is the actual reference-waveform viewport used by Pitch mode. */
+.studio-editor-page .studio-pitch-trace-waveform-viewport {
+  display: block !important;
+  visibility: visible !important;
+  position: absolute !important;
+  left: var(--region-editor-keyboard-width, 74px) !important;
+  right: 0 !important;
+  top: 50% !important;
+  bottom: auto !important;
+  height: 180px !important;
+  min-height: 180px !important;
+  transform: translateY(-50%) !important;
+  overflow: hidden !important;
+  opacity: 1 !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Fixed-height reference waveform; X follows the pitch scroller. */
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform {
+  display: block !important;
+  visibility: visible !important;
+  position: absolute !important;
+  top: 0 !important;
+  bottom: auto !important;
+  left: var(--pt-waveform-offset, 0px) !important;
+  right: auto !important;
+  height: 180px !important;
+  min-height: 180px !important;
+  width: var(--pitch-trace-canvas-width, 100%) !important;
+  min-width: var(--pitch-trace-canvas-width, 100%) !important;
+  transform: none !important;
+  opacity: .30 !important;
+  filter: brightness(1.22) saturate(.92) !important;
+  pointer-events: none !important;
+  z-index: 1 !important;
+  background: transparent !important;
+}
+
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform > *,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform .studio-audio-waveform,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform .studio-audio-waveform-bars,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform svg,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform canvas {
+  display: block !important;
+  visibility: visible !important;
+  width: 100% !important;
+  height: 180px !important;
+  min-height: 180px !important;
+  opacity: 1 !important;
+  background: transparent !important;
+}
+
+/* Editing layers must reveal the waveform below them. */
+.studio-editor-page .studio-pitch-trace-scroll--canvas-only-v50,
+.studio-editor-page .studio-pitch-trace-canvas,
+.studio-editor-page .studio-pitch-trace-grid,
+.studio-editor-page .studio-pitch-trace-octave-lines,
+.studio-editor-page .studio-pitch-trace-notes,
+.studio-editor-page [data-pitch-trace-grid] {
+  background-color: transparent !important;
+}
+
+.studio-editor-page .studio-pitch-trace-grid,
+.studio-editor-page .studio-pitch-trace-octave-lines {
+  z-index: 3 !important;
+}
+.studio-editor-page .studio-pitch-trace-notes,
+.studio-editor-page [data-pitch-trace-grid] {
+  z-index: 4 !important;
+}
+.studio-editor-page .studio-pitch-trace-keyboard--fixed-x-v50 {
+  z-index: 30 !important;
+  background: #0d0d10 !important;
+}
