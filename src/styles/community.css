@@ -5261,3 +5261,25 @@ body.community-chrome-hidden .community-feed-header,body.community-chrome-hidden
 }
 @media(max-width:390px){.community-comments{padding-inline:14px!important}.community-post-detail-card{padding-inline:14px!important}.community-comment-form-actions>span{font-size:11px!important}}
 @media(max-width:760px) and (display-mode:standalone){.community-detail-topbar{padding-top:calc(max(env(safe-area-inset-top,0px),20px) + 16px)!important}}
+
+/* melogic-community-mobile-sticky-topbar-v3 */
+@media(max-width:760px){
+  .community-feed-header,.community-scroll-chrome{
+    position:sticky!important;top:0!important;inset-block-start:0!important;
+    width:100%!important;z-index:90!important;transform:none!important;
+    background:#07090d!important;isolation:isolate!important;
+  }
+  .community-master-tabs,.community-filter-shell,.community-filter-strip{
+    position:relative!important;top:auto!important;inset-block-start:auto!important;z-index:auto!important;
+  }
+  body.community-chrome-hidden .community-feed-header,
+  body.community-chrome-hidden .community-scroll-chrome{transform:none!important}
+}
+@media(max-width:760px) and (display-mode:standalone){
+  .community-feed-header,.community-scroll-chrome{
+    top:max(env(safe-area-inset-top,0px),20px)!important;
+  }
+}
+@media(max-width:760px) and (display-mode:standalone) and (orientation:landscape) and (max-height:500px){
+  .community-feed-header,.community-scroll-chrome{top:env(safe-area-inset-top,0px)!important}
+}
