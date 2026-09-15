@@ -381,6 +381,38 @@ function isCommunityNavigationTarget(target = '') {
   }
 }
 
+/* melogic-community-mobile-interactions-patch3 */
+function setupMobileCommunityShellActions() {
+  if (document.documentElement.dataset.mobileCommunityActionsReady === 'true') return
+  document.documentElement.dataset.mobileCommunityActionsReady = 'true'
+  document.addEventListener('click', (event) => {
+    const target = event.target instanceof Element ? event.target : null
+    const searchButton = target?.closest('[data-mobile-community-search]')
+    if (searchButton) {
+      event.preventDefault()
+      const input = document.querySelector('[data-community-search], .community-search-input, input[type="search"]')
+      if (input instanceof HTMLElement) {
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        window.setTimeout(() => input.focus({ preventScroll: true }), 180)
+      }
+      return
+    }
+    const createButton = target?.closest('[data-mobile-community-create]')
+    if (createButton) {
+      event.preventDefault()
+      const existing = document.querySelector('[data-community-create-post], [data-open-community-composer], .community-create-post-button')
+      if (existing instanceof HTMLElement && existing !== createButton) existing.click()
+      else {
+        state.composer.open = true
+        state.composer.error = ''
+        render()
+      }
+    }
+  })
+}
+
+setupMobileCommunityShellActions()
+
 function setupCommunityPendingLeaveWarning() {
   if (communityBeforeUnloadReady) return
   communityBeforeUnloadReady = true
