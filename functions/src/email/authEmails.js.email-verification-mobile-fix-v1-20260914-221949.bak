@@ -89,39 +89,19 @@ function actionCodeSettings(path = '/auth') {
   const cleanPath = String(path || '/auth').startsWith('/') ? path : `/${path}`
   return {
     url: `${AUTH_ACTION_BASE_URL}${cleanPath}`,
-    // Melogic owns a browser-based action handler at /auth/action. Asking
-    // Firebase to handle the code "in app" turns the generated link into a
-    // mobile/deep-link flow, which is not what this web handler consumes.
-    handleCodeInApp: false
+    handleCodeInApp: true
   }
 }
 
 function customAuthActionLink(firebaseLink = '', fallbackMode = '') {
-  let parsed = new URL(firebaseLink)
-
-  // Firebase can wrap an action URL for app/deep-link delivery. Normalize any
-  // wrapper before extracting the one-time action code so the email always
-  // points at Melogic's HTTPS browser handler.
-  for (let depth = 0; depth < 3; depth += 1) {
-    const nested = parsed.searchParams.get('link') || parsed.searchParams.get('deep_link_id')
-    if (!nested) break
-    try {
-      parsed = new URL(nested)
-    } catch {
-      break
-    }
-  }
-
+  const parsed = new URL(firebaseLink)
   const output = new URL('/auth/action', AUTH_ACTION_BASE_URL)
   const mode = parsed.searchParams.get('mode') || fallbackMode
   const oobCode = parsed.searchParams.get('oobCode') || ''
-  const apiKey = parsed.searchParams.get('apiKey') || ''
   const continueUrl = parsed.searchParams.get('continueUrl') || `${AUTH_ACTION_BASE_URL}/account/security`
   const lang = parsed.searchParams.get('lang') || ''
-
   if (mode) output.searchParams.set('mode', mode)
   if (oobCode) output.searchParams.set('oobCode', oobCode)
-  if (apiKey) output.searchParams.set('apiKey', apiKey)
   if (continueUrl) output.searchParams.set('continueUrl', continueUrl)
   if (lang) output.searchParams.set('lang', lang)
   return output.toString()
