@@ -648,3 +648,7 @@ select:focus {
 .account-id-value {
   color: var(--ml-text-muted);
 }
+
+.push-device-card{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px;margin:0 0 18px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.025)}
+.push-device-copy{display:grid;gap:5px}.push-device-card span,.push-device-card small{color:var(--text-muted,#9ca3af)}.push-device-actions{display:flex;gap:8px;flex-wrap:wrap}
+@media(max-width:700px){.push-device-card{align-items:stretch;flex-direction:column}.push-device-actions .button{flex:1}}
