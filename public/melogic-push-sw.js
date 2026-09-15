@@ -82,9 +82,21 @@ const SHELL_CACHE_PREFIX = 'melogic-shell-'
 const SHELL_CACHE = `${SHELL_CACHE_PREFIX}__MELOGIC_PWA_BUILD__`
 const SHELL_FILES = ['/offline.html', '/manifest.webmanifest', '/branding/icons/pwa-192.png', '/branding/icons/pwa-512.png', '/branding/icons/pwa-maskable-512.png', '/branding/icons/apple-touch-icon.png']
 
+/* melogic-pwa-forced-release-v2 */
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_FILES)))
+  event.waitUntil((async () => {
+    await caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_FILES))
+    // This worker file is build-versioned. If it changed, promote it immediately
+    // rather than leaving an installed PWA pinned to the previous worker.
+    await self.skipWaiting()
+  })())
 })
+self.addEventListener('message', event => {
+  if (event.data?.type === 'MELOGIC_SKIP_WAITING') {
+    event.waitUntil(self.skipWaiting())
+  }
+})
+
 /* melogic-pwa-auto-update-worker-v1 */
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {

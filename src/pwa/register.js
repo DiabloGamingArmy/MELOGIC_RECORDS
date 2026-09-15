@@ -75,6 +75,17 @@ if (!desktop) {
       reloadForBuild(String(event.data.build || 'unknown'))
     })
 
+    /* melogic-pwa-controller-refresh-v2 */
+    let controllerRefreshArmed = Boolean(navigator.serviceWorker.controller)
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // First control after a brand-new install is not necessarily an update.
+      if (!controllerRefreshArmed) {
+        controllerRefreshArmed = true
+        return
+      }
+      reloadForBuild(registration?.active?.scriptURL || 'controller-change')
+    })
+
     const checkForUpdate = async () => {
       if (!registration || !navigator.onLine || updateCheck) return updateCheck
       updateCheck = registration.update()
@@ -89,6 +100,7 @@ if (!desktop) {
           scope: '/',
           updateViaCache: 'none'
         })
+        if (registration.waiting) registration.waiting.postMessage({ type: 'MELOGIC_SKIP_WAITING' })
         await checkForUpdate()
       } catch (error) {
         console.warn('[Melogic offline] Registration failed; online browsing remains available.', error)
