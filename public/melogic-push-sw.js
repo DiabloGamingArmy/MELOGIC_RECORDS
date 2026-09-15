@@ -7,12 +7,15 @@ self.addEventListener('push', (event) => {
   }
 
   const title = String(payload.title || 'Melogic')
+  const icon = new URL(payload.icon || '/icons/pwa-192.png', self.location.origin).href
+  const badge = new URL(payload.badge || '/icons/favicon-48.png', self.location.origin).href
   const options = {
     body: String(payload.body || 'You have a new Melogic notification.'),
-    icon: payload.icon || '/branding/icons/pwa-192.png',
-    badge: payload.badge || '/branding/icons/favicon-48.png',
+    icon,
+    badge,
     tag: payload.tag || undefined,
     renotify: Boolean(payload.renotify),
+    silent: payload.silent === true,
     data: {
       url: payload.url || '/',
       ...(payload.data && typeof payload.data === 'object' ? payload.data : {})

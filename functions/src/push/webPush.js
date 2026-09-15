@@ -43,8 +43,9 @@ async function sendPushToUser(uid,payload={}) {
     body:clean(payload.body,500)||'You have a new Melogic notification.',
     url:clean(payload.url,1500)||'/',
     tag:clean(payload.tag,180)||undefined,
-    icon:'/branding/icons/pwa-192.png',
-    badge:'/branding/icons/favicon-48.png',
+    icon:'/icons/pwa-192.png',
+    badge:'/icons/favicon-48.png',
+    silent:false,
     data: payload.data && typeof payload.data==='object' ? payload.data : {}
   })
 

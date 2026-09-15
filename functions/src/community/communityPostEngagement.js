@@ -28,6 +28,24 @@ async function assertPublicPost(tx, postRef) {
   return post
 }
 
+function pushActorLabel(author = {}) {
+  const displayName = cleanString(author?.authorDisplayName || '', 100)
+  const username = cleanString(author?.authorUsername || '', 80).replace(/^@+/, '')
+  if (displayName && username && displayName.toLowerCase() !== username.toLowerCase()) {
+    return `${displayName} (@${username})`
+  }
+  if (displayName) return displayName
+  if (username) return `@${username}`
+  return 'Someone'
+}
+
+function pushPostPreview(post = {}) {
+  const raw = cleanString(post?.body || post?.title || '', 320)
+  if (!raw) return ''
+  const compact = raw.replace(/\s+/g, ' ').trim()
+  return compact.length > 150 ? `${compact.slice(0, 147).trimEnd()}…` : compact
+}
+
 function nextCount(current = 0, delta = 0) {
   return Math.max(0, Math.round(Number(current || 0)) + delta)
 }
@@ -148,11 +166,17 @@ async function togglePostReaction(request, reaction = 'like') {
       __push: liked && !likeSnap.exists && post.authorUid && post.authorUid !== uid ? {
         uid: post.authorUid,
         payload: {
-          title: 'New like on your post',
-          body: `${author?.authorDisplayName || 'Someone'} liked your community post.`,
+          title: `${pushActorLabel(author)} liked your post`,
+          body: pushPostPreview(post) || 'Open Melogic to view your post.',
           url: `/community/post/${postRef.id}`,
           tag: `community-post-like-${postRef.id}-${uid}`,
-          data: { type: 'community_post_like', postId: postRef.id, actorUid: uid }
+          data: {
+            type: 'community_post_like',
+            postId: postRef.id,
+            actorUid: uid,
+            actorDisplayName: cleanString(author?.authorDisplayName || '', 100),
+            actorUsername: cleanString(author?.authorUsername || '', 80)
+          }
         }
       } : null
     }
