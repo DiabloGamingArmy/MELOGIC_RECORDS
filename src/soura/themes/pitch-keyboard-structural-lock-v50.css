@@ -1,0 +1,49 @@
+/*
+ * SOURA Pitch Keyboard Structural Lock V50
+ * Fixed keyboard column + independently scrolling musical canvas.
+ */
+.studio-pitch-trace-view > .studio-pitch-trace-viewport-shell-v50 {
+  display: grid !important;
+  grid-template-columns: max-content minmax(0, 1fr) !important;
+  grid-template-rows: minmax(0, 1fr) !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  position: relative !important;
+  background: #111114 !important;
+}
+
+.studio-pitch-trace-keyboard--fixed-x-v50 {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  position: relative !important;
+  left: auto !important;
+  right: auto !important;
+  flex: none !important;
+  transform: none !important;
+  translate: none !important;
+  inset-inline-start: auto !important;
+  overflow: visible !important;
+  background: #0d0d10 !important;
+  z-index: 30 !important;
+  will-change: margin-top !important;
+}
+
+.studio-pitch-trace-scroll--canvas-only-v50 {
+  grid-column: 2 !important;
+  grid-row: 1 !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+.studio-pitch-trace-scroll--canvas-only-v50 > .studio-pitch-trace-canvas {
+  position: relative !important;
+  min-width: var(--pitch-trace-canvas-width, 100%) !important;
+}
