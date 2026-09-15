@@ -232,6 +232,5 @@ const revokeRecoveryCodes = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
 module.exports = {
   forcePasswordReset,
   revokeRecoveryCodes,
-  setTemporaryPassword,
-  unverifyUserEmail
+  setTemporaryPassword
 }

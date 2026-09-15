@@ -8734,9 +8734,6 @@ function bindEvents() {
   app.querySelectorAll('[data-admin-temp-password]').forEach((button) => {
     button.addEventListener('click', () => submitTemporaryPassword(button.getAttribute('data-admin-temp-password') || ''))
   })
-  app.querySelectorAll('[data-admin-unverify-email]').forEach((button) => {
-    button.addEventListener('click', () => submitUnverifyEmail(button.getAttribute('data-admin-unverify-email') || ''))
-  })
   app.querySelectorAll('[data-admin-revoke-recovery]').forEach((button) => {
     button.addEventListener('click', () => submitRevokeRecoveryCodes(button.getAttribute('data-admin-revoke-recovery') || ''))
   })

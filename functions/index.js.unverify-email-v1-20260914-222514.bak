@@ -284,7 +284,6 @@ exports.sendAdminSystemMessage = sendAdminSystemMessage
 exports.forcePasswordReset = forcePasswordReset
 exports.revokeRecoveryCodes = revokeRecoveryCodes
 exports.setTemporaryPassword = setTemporaryPassword
-exports.unverifyUserEmail = unverifyUserEmail
 exports.requestPasswordResetEmail = requestPasswordResetEmail
 exports.requestEmailVerification = requestEmailVerification
 exports.sendAdminEmail = sendAdminEmail

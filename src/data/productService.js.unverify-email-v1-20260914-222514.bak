@@ -2081,13 +2081,6 @@ export async function setTemporaryPassword({ uid = '', password = '', confirmati
   return result?.data || { ok: false }
 }
 
-export async function unverifyUserEmail({ uid = '', confirmation = '' } = {}) {
-  if (!functions) throw new Error('Functions are not configured.')
-  const callable = httpsCallable(functions, 'unverifyUserEmail')
-  const result = await callable({ uid, confirmation })
-  return result?.data || { ok: false }
-}
-
 export async function revokeRecoveryCodes({ uid = '', confirmation = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
   const callable = httpsCallable(functions, 'revokeRecoveryCodes')
