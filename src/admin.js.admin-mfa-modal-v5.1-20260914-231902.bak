@@ -187,7 +187,7 @@ function ensureAdminStepUpDialog() {
   dialog.dataset.adminStepupDialog=''
   dialog.className='admin-stepup-dialog'
   dialog.innerHTML=`
-    <form method="dialog" class="admin-stepup-card" data-admin-stepup-form autocomplete="on" novalidate>
+    <form method="dialog" class="admin-stepup-card" data-admin-stepup-form autocomplete="on">
       <div class="admin-stepup-eyebrow">Melogic Administration</div>
       <h2>Confirm Admin Action</h2>
       <p class="admin-stepup-copy" data-admin-stepup-copy></p>
@@ -239,26 +239,9 @@ function requestAdminCredential({label,email,stage='password'}) {
   const code=dialog.querySelector('[data-admin-stepup-code]'), copy=dialog.querySelector('[data-admin-stepup-copy]')
   const errorNode=dialog.querySelector('[data-admin-stepup-error]'), submit=dialog.querySelector('[data-admin-stepup-submit]')
   const cancel=dialog.querySelector('[data-admin-stepup-cancel]')
-  const passwordActive=stage==='password'
-  username.value=email||''
-  passwordStage.hidden=!passwordActive
-  totpStage.hidden=passwordActive
-
-  // Only the active authentication stage may participate in native form
-  // validation. This prevents Safari/Chromium from blocking the TOTP submit
-  // because the hidden password field is still marked required.
-  username.disabled=!passwordActive
-  password.disabled=!passwordActive
-  password.required=passwordActive
-  code.disabled=passwordActive
-  code.required=!passwordActive
-
-  copy.textContent=passwordActive?`${label} requires fresh authentication.`:`Enter your 6-digit authenticator code to approve ${label}.`
-  errorNode.hidden=true
-  errorNode.textContent=''
-  submit.textContent=passwordActive?'Continue':'Verify'
-  password.value=''
-  code.value=''
+  username.value=email||''; passwordStage.hidden=stage!=='password'; totpStage.hidden=stage!=='totp'
+  copy.textContent=stage==='password'?`${label} requires fresh authentication.`:`Enter your 6-digit authenticator code to approve ${label}.`
+  errorNode.hidden=true; errorNode.textContent=''; submit.textContent=stage==='password'?'Continue':'Verify'; password.value=''; code.value=''
   return new Promise((resolve)=>{
     let settled=false
     const finish=(value)=>{if(settled)return;settled=true;form.removeEventListener('submit',onSubmit);cancel.removeEventListener('click',onCancel);dialog.removeEventListener('cancel',onDialogCancel);if(dialog.open)dialog.close();resolve(value)}
