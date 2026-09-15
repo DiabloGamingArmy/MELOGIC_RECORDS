@@ -1915,7 +1915,7 @@ function renderPitchTraceView(region, track) {
   const empty=trace.status==='analyzing'?'<p class="studio-pitch-trace-empty">Deep pitch analysis is running…</p>':trace.status==='failed'?`<p class="studio-pitch-trace-empty">${esc(trace.error||'Pitch analysis failed.')}</p>`:'<p class="studio-pitch-trace-empty">Analyze Audio to map detected pitch onto MIDI rows.</p>'
   const emptyOverlay=(trace.notes||[]).length?'':empty
 
-  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1600})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks}</div></div></div>${emptyOverlay}</div>`
+  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:getRegionEditorAdaptivePeakBudgetV21(region,'pitch')})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks}</div></div></div>${emptyOverlay}</div>`
 }
 function getPitchTraceEditedNoteCount(trace = {}) {
   return (trace.notes || []).filter((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.editedFineTuneCents) || 0) > 0.001 || Math.abs(Number(note.gainDb) || 0) > 0.001).length
@@ -3852,13 +3852,44 @@ function renderAudioWaveform(region, options = {}) {
   const bars = safeChunks.length > (options.editor ? 420 : 220) ? '' : safeChunks.map((chunk)=>`<span style="left:${(chunk.x / viewDuration * 100).toFixed(3)}%;width:${Math.max(1, chunk.width / viewDuration * 100).toFixed(3)}%;top:${(50 - chunk.max * 42).toFixed(2)}%;height:${Math.max(1, (chunk.max - chunk.min) * 42).toFixed(2)}%"></span>`).join('')
   return `<svg class="studio-audio-waveform" viewBox="0 0 ${Math.max(0.001, viewDuration)} 100" preserveAspectRatio="none" aria-hidden="true"><polygon points="${upper} ${lower}"></polygon><polyline points="${upper}"></polyline><polyline points="${lower.split(' ').reverse().join(' ')}"></polyline></svg><div class="studio-audio-waveform-bars" aria-hidden="true">${bars}</div>`
 }
+// SOURA REGION EDITOR ADAPTIVE DETAIL ZOOM v21
+function getRegionEditorEffectiveZoomV21(region) {
+  const viewport = normalizeAudioWaveformViewport(region)
+  const fullDuration = Math.max(
+    0.000001,
+    Number(viewport?.fullDuration) ||
+    Number(getAudioRegionVisibleDurationSeconds(region)) ||
+    0.000001
+  )
+  const visibleDuration = Math.max(
+    0.000001,
+    Number(viewport?.endSeconds) - Number(viewport?.startSeconds)
+  )
+  return Math.max(1, fullDuration / visibleDuration)
+}
+
+function getRegionEditorAdaptivePeakBudgetV21(region, mode = 'waveform') {
+  const zoom = getRegionEditorEffectiveZoomV21(region)
+  const base = mode === 'pitch' ? 2400 : 3200
+  const budget = Math.ceil(base * zoom)
+
+  // Rendering-safety ceiling only. Zoom itself remains unbounded.
+  return Math.max(base, Math.min(262144, budget))
+}
+
+function getRegionEditorZoomFactorV21(direction) {
+  if (direction === 'in') return 1.35
+  if (direction === 'out') return 1 / 1.35
+  return 1
+}
+
 function normalizeAudioWaveformViewport(region) {
   const fullDuration = Math.max(minAudioRegionSeconds, getAudioRegionVisibleDurationSeconds(region))
   if (audioWaveformViewport.regionId !== region.id) {
     audioWaveformViewport = { regionId: region.id, startSeconds: 0, endSeconds: fullDuration, zoom: 1 }
     return { ...audioWaveformViewport, fullDuration }
   }
-  const zoom = clamp(Number(audioWaveformViewport.zoom) || 1, 1, 128)
+  const zoom = Math.max(1, Number(audioWaveformViewport.zoom) || 1)
   const length = clamp(Number(audioWaveformViewport.endSeconds - audioWaveformViewport.startSeconds) || (fullDuration / zoom), Math.min(0.02, fullDuration), fullDuration)
   const start = clamp(Number(audioWaveformViewport.startSeconds) || 0, 0, Math.max(0, fullDuration - length))
   audioWaveformViewport = { regionId: region.id, startSeconds: start, endSeconds: start + length, zoom: fullDuration / Math.max(0.001, length) }
@@ -3905,7 +3936,7 @@ function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = fa
   const zoom = Math.max(1, viewport.zoom)
   return `<div class="studio-audio-editor-waveform has-waveform-viewport" data-audio-waveform-shell="${esc(region.id)}" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">
     <div class="studio-audio-waveform-viewport" data-audio-waveform-viewport data-waveform-start="${start}" data-waveform-end="${end}" data-waveform-duration="${viewport.fullDuration}" tabindex="0">
-      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: 24000 })}
+      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: getRegionEditorAdaptivePeakBudgetV21(region,'waveform') })}
       ${viewportPlayhead}
     </div>
   </div>`
