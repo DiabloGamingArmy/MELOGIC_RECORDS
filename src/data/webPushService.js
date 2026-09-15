@@ -33,7 +33,12 @@ export async function ensureMelogicPushServiceWorker() {
 }
 
 export async function getCurrentWebPushSubscription() {
-  const registration = await ensureMelogicPushServiceWorker()
+  if (!('serviceWorker' in navigator)) return null
+
+  // State reads must be side-effect free. The diagnostic proved the active
+  // root-scoped registration is authoritative, so read navigator.serviceWorker.ready
+  // instead of re-registering the worker every time the UI asks for state.
+  const registration = await navigator.serviceWorker.ready
   return registration.pushManager.getSubscription()
 }
 

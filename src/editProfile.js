@@ -18,158 +18,6 @@ import {
 } from './data/webPushService';
 
 
-// MELOGIC_PUSH_DIAGNOSTIC_V1
-// Temporary instrumentation only. Does not subscribe, unsubscribe, write Firestore,
-// change permissions, alter VAPID keys, or modify service-worker registrations.
-const MELOGIC_PUSH_DIAG = {
-  seq: 0,
-  endpointFingerprint(endpoint = '') {
-    if (!endpoint) return null
-    let hash = 2166136261
-    for (let i = 0; i < endpoint.length; i += 1) {
-      hash ^= endpoint.charCodeAt(i)
-      hash = Math.imul(hash, 16777619)
-    }
-    return `ep-${(hash >>> 0).toString(16).padStart(8, '0')}`
-  },
-  bufferFingerprint(buffer) {
-    if (!buffer) return null
-    const bytes = new Uint8Array(buffer)
-    let hash = 2166136261
-    for (const byte of bytes) {
-      hash ^= byte
-      hash = Math.imul(hash, 16777619)
-    }
-    return `key-${(hash >>> 0).toString(16).padStart(8, '0')}-${bytes.length}`
-  },
-  workerInfo(worker) {
-    return worker ? {
-      scriptURL: worker.scriptURL || null,
-      state: worker.state || null
-    } : null
-  },
-  async registrationInfo(registration) {
-    let subscription = null
-    let permissionState = null
-    let subscriptionError = null
-    try {
-      subscription = await registration.pushManager?.getSubscription?.()
-    } catch (error) {
-      subscriptionError = { name: error?.name, message: error?.message }
-    }
-    try {
-      permissionState = await registration.pushManager?.permissionState?.({
-        userVisibleOnly: true,
-        applicationServerKey: subscription?.options?.applicationServerKey || undefined
-      })
-    } catch (_) {}
-    return {
-      scope: registration.scope,
-      updateViaCache: registration.updateViaCache,
-      installing: this.workerInfo(registration.installing),
-      waiting: this.workerInfo(registration.waiting),
-      active: this.workerInfo(registration.active),
-      pushManagerPermissionState: permissionState,
-      subscriptionError,
-      subscription: subscription ? {
-        exists: true,
-        endpointFingerprint: this.endpointFingerprint(subscription.endpoint),
-        expirationTime: subscription.expirationTime ?? null,
-        userVisibleOnly: subscription.options?.userVisibleOnly ?? null,
-        applicationServerKeyFingerprint: this.bufferFingerprint(subscription.options?.applicationServerKey)
-      } : { exists: false }
-    }
-  },
-  async snapshot(label) {
-    const id = ++this.seq
-    const output = {
-      marker: 'MELOGIC_PUSH_DIAGNOSTIC_V1',
-      snapshot: id,
-      label,
-      timestamp: new Date().toISOString(),
-      page: {
-        href: location.href,
-        origin: location.origin,
-        protocol: location.protocol,
-        visibilityState: document.visibilityState,
-        standaloneMedia: window.matchMedia?.('(display-mode: standalone)')?.matches ?? null,
-        navigatorStandalone: navigator.standalone ?? null
-      },
-      browser: {
-        userAgent: navigator.userAgent,
-        platform: navigator.platform,
-        online: navigator.onLine,
-        notificationPermission: typeof Notification !== 'undefined' ? Notification.permission : 'unavailable',
-        serviceWorkerSupported: 'serviceWorker' in navigator,
-        pushManagerSupported: 'PushManager' in window,
-        supportedContentEncodings: typeof PushManager !== 'undefined' ? PushManager.supportedContentEncodings : null
-      },
-      controller: navigator.serviceWorker ? this.workerInfo(navigator.serviceWorker.controller) : null,
-      registrations: [],
-      readyRegistration: null,
-      errors: []
-    }
-
-    if ('serviceWorker' in navigator) {
-      try {
-        const registrations = await navigator.serviceWorker.getRegistrations()
-        output.registrations = await Promise.all(registrations.map((reg) => this.registrationInfo(reg)))
-      } catch (error) {
-        output.errors.push({ stage: 'getRegistrations', name: error?.name, message: error?.message })
-      }
-
-      try {
-        const ready = await Promise.race([
-          navigator.serviceWorker.ready,
-          new Promise((_, reject) => setTimeout(() => reject(new Error('serviceWorker.ready timeout after 5000ms')), 5000))
-        ])
-        output.readyRegistration = await this.registrationInfo(ready)
-      } catch (error) {
-        output.errors.push({ stage: 'serviceWorker.ready', name: error?.name, message: error?.message })
-      }
-    }
-
-    console.groupCollapsed(`[MELOGIC PUSH DIAG #${id}] ${label}`)
-    console.log(output)
-    console.log('[MELOGIC PUSH DIAG JSON]', JSON.stringify(output, null, 2))
-    console.groupEnd()
-    window.__MELOGIC_PUSH_LAST_DIAGNOSTIC__ = output
-    return output
-  }
-}
-
-window.melogicPushDiagnostic = (label = 'manual') => MELOGIC_PUSH_DIAG.snapshot(label)
-
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    MELOGIC_PUSH_DIAG.snapshot('EVENT controllerchange')
-  })
-}
-
-window.addEventListener('pageshow', (event) => {
-  MELOGIC_PUSH_DIAG.snapshot(`EVENT pageshow persisted=${Boolean(event.persisted)}`)
-})
-
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    MELOGIC_PUSH_DIAG.snapshot('EVENT visibility visible')
-  }
-})
-
-setTimeout(() => MELOGIC_PUSH_DIAG.snapshot('AUTO 1s after module load'), 1000)
-setTimeout(() => MELOGIC_PUSH_DIAG.snapshot('AUTO 5s after module load'), 5000)
-
-document.addEventListener('click', (event) => {
-  const enable = event.target.closest?.('[data-enable-web-push]')
-  const disable = event.target.closest?.('[data-disable-web-push]')
-  if (!enable && !disable) return
-  const action = enable ? 'ENABLE' : 'DISABLE'
-  MELOGIC_PUSH_DIAG.snapshot(`BEFORE ${action} click`)
-  setTimeout(() => MELOGIC_PUSH_DIAG.snapshot(`AFTER ${action} +250ms`), 250)
-  setTimeout(() => MELOGIC_PUSH_DIAG.snapshot(`AFTER ${action} +1500ms`), 1500)
-  setTimeout(() => MELOGIC_PUSH_DIAG.snapshot(`AFTER ${action} +5000ms`), 5000)
-}, true)
-
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
   { key: 'featured-items', label: 'Featured Items' },
@@ -247,6 +95,18 @@ function renderWebPushSubscriptionState(subscription) {
   if (disable) disable.disabled = !active
 }
 
+async function hydrateWebPushSubscriptionState() {
+  try {
+    const subscription = await getCurrentWebPushSubscription()
+    renderWebPushSubscriptionState(subscription)
+    return subscription
+  } catch (error) {
+    console.warn('[web-push] subscription status failed', error)
+    renderWebPushSubscriptionState(null)
+    return null
+  }
+}
+
 async function handleWebPushEnrollmentClick(event) {
   const enable=event.target.closest?.('[data-enable-web-push]')
   const disable=event.target.closest?.('[data-disable-web-push]')
@@ -255,9 +115,8 @@ async function handleWebPushEnrollmentClick(event) {
   if(enable){
     enable.disabled=true; enable.textContent='Enabling...'
     try{
-      await enableWebPushForUser(pageState?.user?.uid)
-      renderWebPushSubscriptionState(await getCurrentWebPushSubscription())
-      enable.textContent='Enabled'
+      const result = await enableWebPushForUser(pageState?.user?.uid)
+      renderWebPushSubscriptionState(result.subscription)
     }catch(error){
       console.warn('[web-push] enable failed',error)
       document.querySelectorAll('[data-push-device-status]').forEach(el=>el.textContent=error?.message||'Could not enable push notifications.')
@@ -275,13 +134,11 @@ async function handleWebPushEnrollmentClick(event) {
     document.querySelectorAll('[data-enable-web-push]').forEach(el=>{el.disabled=false;el.textContent='Enable on This Device'})
   }catch(error){
     console.warn('[web-push] disable failed',error)
-  }finally{disable.disabled=false}
+    await hydrateWebPushSubscriptionState()
+  }
 }
 document.addEventListener('click',handleWebPushEnrollmentClick)
 
-getCurrentWebPushSubscription()
-  .then((subscription) => renderWebPushSubscriptionState(subscription))
-  .catch((error) => console.warn('[web-push] subscription status failed', error))
 
 
 // Install the push-capable service worker without prompting for notification
@@ -330,6 +187,13 @@ function renderSignedOutState() {
       <a class="button button-accent" href="${ROUTES.auth}">Go to Sign In / Sign Up</a>
     </article>
   `
+
+
+  // The browser PushSubscription is the source of truth. This must run only
+  // after the Notifications controls have been rendered into the DOM.
+  queueMicrotask(() => {
+    hydrateWebPushSubscriptionState()
+  })
 }
 
 function setGlobalEditStatus(message = '', state = 'info') {
