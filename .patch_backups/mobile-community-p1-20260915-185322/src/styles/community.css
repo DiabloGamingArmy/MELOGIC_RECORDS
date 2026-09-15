@@ -4761,18 +4761,3 @@ body:has(.community-page) #app {
   }
 
 }
-
-
-/* melogic-community-mobile-shell-patch1 */
-@media(max-width:760px){
-  .community-page{--community-sticky-top:0px;--community-sticky-top-hidden:0px;min-height:100dvh;background:#07090d;padding-bottom:10px}
-  .community-left-nav,.community-right-rail{display:none!important}
-  .community-layout,.community-layout.is-home,.community-layout.is-detail{display:block;width:100%;max-width:none;margin:0;padding-left:0;padding-right:0}
-  .community-main,.community-detail-main{width:100%;min-width:0;max-width:none;margin:0}
-  .community-scroll-chrome{top:0;background:rgba(7,9,13,.97);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
-  body.community-chrome-hidden .community-scroll-chrome{transform:none}
-  .community-shell-divider,.community-stories-row{width:100%}
-  .community-topic-bar{padding-left:12px;padding-right:12px}
-  .community-stories-row{padding-left:16px;padding-right:16px}
-  .community-detail-topbar{width:100%;padding:14px 16px 8px}
-}

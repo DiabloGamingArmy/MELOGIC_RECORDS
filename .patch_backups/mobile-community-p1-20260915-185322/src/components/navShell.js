@@ -14,24 +14,6 @@ export function navShell(options = {}) {
   const isAdmin = currentPage === 'admin'
 
   return `
-    <div class="mobile-app-shell">
-      <header class="mobile-app-header">
-        <h1 class="mobile-app-title">${isCommunity ? 'Community' : isMusic ? 'Streaming' : isProducts ? 'Products' : isInbox ? 'Inbox' : isProfile ? 'Profile' : 'Melogic'}</h1>
-        <div class="mobile-app-actions">
-          ${isCommunity ? `
-          <a class="mobile-icon-button" href="${ROUTES.community}?search=1" aria-label="Search Community">⌕</a>
-          <a class="mobile-icon-button" href="${ROUTES.inboxContent}" aria-label="Notifications">♢</a>
-          <a class="mobile-icon-button mobile-create-button" href="${ROUTES.communityCreate}" aria-label="Create post">＋</a>` : ''}
-        </div>
-      </header>
-      <nav class="mobile-bottom-nav" aria-label="Mobile primary navigation">
-        <a href="${ROUTES.community}" ${isCommunity ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">⌂</span><span>Community</span></a>
-        <a href="${ROUTES.music}" ${isMusic ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">▶</span><span>Streaming</span></a>
-        <a href="${ROUTES.products}" ${isProducts ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">◇</span><span>Products</span></a>
-        <a href="${ROUTES.inbox}" ${isInbox ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">✉</span><span>Inbox</span></a>
-        <a href="${ROUTES.profile}" ${isProfile ? 'aria-current="page"' : ''}><span class="mobile-profile-nav-avatar" data-profile-avatar aria-hidden="true">○</span><span>Profile</span></a>
-      </nav>
-    </div>
     <header class="nav-shell">
       <div class="nav-inner">
         <a class="brand" href="${ROUTES.home}" aria-label="Melogic Records home" data-guide-id="global-nav-brand" data-guide-label="Melogic Records home" data-guide-role="global-nav-link">

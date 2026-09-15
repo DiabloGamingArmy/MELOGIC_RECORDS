@@ -3044,25 +3044,3 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
   border-color: rgba(117, 105, 255, 0.48);
   background: rgba(102, 91, 255, 0.09);
 }
-
-
-/* melogic-mobile-shell-v1 */
-.mobile-app-shell{display:none}
-@media(max-width:760px){
-  :root{--mobile-nav-h:72px;--mobile-bg:#07090d;--mobile-line:rgba(160,178,210,.14);--mobile-muted:#929db1}
-  body{padding-bottom:calc(var(--mobile-nav-h) + env(safe-area-inset-bottom,0px))}
-  .nav-shell{display:none!important}
-  .mobile-app-shell{display:contents}
-  .mobile-app-header{position:relative;z-index:45;display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:66px;padding:max(14px,env(safe-area-inset-top,0px)) 18px 10px;background:var(--mobile-bg);color:#f6f8fc}
-  .mobile-app-title{margin:0;font-size:2rem;font-weight:760;line-height:1;letter-spacing:-.035em}
-  .mobile-app-actions{display:flex;align-items:center;gap:7px}
-  .mobile-icon-button{display:grid;place-items:center;width:40px;height:40px;padding:0;border:1px solid rgba(160,178,210,.22);border-radius:50%;color:#d8e1f0;background:transparent;text-decoration:none;font-size:25px;line-height:1;-webkit-tap-highlight-color:transparent}
-  .mobile-icon-button:active{background:rgba(255,255,255,.07);transform:scale(.96)}
-  .mobile-bottom-nav{position:fixed;z-index:100;right:0;bottom:0;left:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));min-height:calc(var(--mobile-nav-h) + env(safe-area-inset-bottom,0px));padding:8px 5px max(7px,env(safe-area-inset-bottom,0px));border-top:1px solid var(--mobile-line);background:rgba(7,9,13,.94);backdrop-filter:blur(22px) saturate(145%);-webkit-backdrop-filter:blur(22px) saturate(145%)}
-  .mobile-bottom-nav>a{position:relative;display:flex;min-width:0;min-height:54px;flex-direction:column;align-items:center;justify-content:center;gap:5px;border-radius:12px;color:var(--mobile-muted);font-size:10.5px;font-weight:560;line-height:1;text-decoration:none;-webkit-tap-highlight-color:transparent}
-  .mobile-bottom-nav>a[aria-current="page"]{color:#fff}
-  .mobile-bottom-nav>a[aria-current="page"]::before{content:"";position:absolute;top:-8px;width:30px;height:2px;border-radius:999px;background:linear-gradient(90deg,#6fd6ff,#936dff);box-shadow:0 0 12px rgba(125,111,255,.42)}
-  .mobile-nav-glyph{display:grid;place-items:center;width:25px;height:25px;font-size:22px;font-family:system-ui,sans-serif}
-  .mobile-profile-nav-avatar{display:grid;place-items:center;width:25px;height:25px;overflow:hidden;border-radius:50%;font-size:23px}
-  .mobile-profile-nav-avatar img{width:100%;height:100%;object-fit:cover}
-}
