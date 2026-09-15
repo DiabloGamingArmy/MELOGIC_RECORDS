@@ -14,29 +14,16 @@ function syncWaveformX(view, scrollLeft = getScroll(view)?.scrollLeft || 0) {
   view.style.setProperty('--pt-waveform-offset', `${-Math.max(0, scrollLeft)}px`)
 }
 
-// soura-pitch-keyboard-lock-x-v49
-// The pitch canvas owns scrolling. The piano keyboard is a fixed X-axis ruler:
-// horizontal scrolling must NEVER move it. It only mirrors vertical pitch scrolling.
-function syncPitchKeyboardViewport(
-  view,
-  scrollLeft = getScroll(view)?.scrollLeft || 0,
-  scrollTop = getScroll(view)?.scrollTop || 0
-) {
+// soura-region-editor-keyboard-native-scroll-v3
+// Safari/WebKit-safe keyboard synchronization: keep keyboard painting in native layout.
+// The pitch canvas remains the scroll owner; the keyboard mirrors only scrollTop.
+function syncPitchKeyboardY(view, scrollTop = getScroll(view)?.scrollTop || 0) {
   const keyboard = view?.querySelector?.('.studio-pitch-trace-keyboard')
   if (!keyboard) return
-
-  const x = Math.max(0, Number(scrollLeft) || 0)
   const y = Math.max(0, Number(scrollTop) || 0)
-
   keyboard.style.setProperty('--pt-keyboard-scroll-top', `${y}px`)
-  keyboard.style.setProperty('--pt-keyboard-scroll-left', `${x}px`)
-
-  // Counteract the scroll container's horizontal movement explicitly.
-  // translate3d is used instead of margin-left so the keyboard does not alter
-  // the pitch canvas' scrollWidth or musical geometry.
   keyboard.style.marginTop = `${-y}px`
-  keyboard.style.transform = `translate3d(${x}px, 0, 0)`
-  keyboard.style.zIndex = '30'
+  keyboard.style.transform = 'none'
 }
 
 function applyVerticalState(view, preserve = false, anchorY = 0.5) {
@@ -54,7 +41,7 @@ function applyVerticalState(view, preserve = false, anchorY = 0.5) {
       ? Math.max(0, (scrollRatio * Math.max(1, scroll.scrollHeight)) - (scroll.clientHeight * anchorY))
       : state.scrollTop
     syncWaveformX(view, scroll.scrollLeft)
-    syncPitchKeyboardViewport(view, scroll.scrollLeft, scroll.scrollTop)
+    syncPitchKeyboardY(view, scroll.scrollTop)
   })
 }
 
@@ -82,7 +69,6 @@ function hydrate() {
   document.querySelectorAll('.studio-pitch-trace-view').forEach((view) => {
     if (view.dataset.ptReady === '1') return
     view.dataset.ptReady = '1'
-    view.dataset.pitchKeyboardLockX = 'v49'
     applyVerticalState(view)
   })
 }
@@ -122,7 +108,7 @@ document.addEventListener('scroll', (event) => {
   state.scrollLeft = scroll.scrollLeft
   state.scrollTop = scroll.scrollTop
   syncWaveformX(view, scroll.scrollLeft)
-  syncPitchKeyboardViewport(view, scroll.scrollLeft, scroll.scrollTop)
+  syncPitchKeyboardY(view, scroll.scrollTop)
   view.dispatchEvent(new CustomEvent('soura:pitch-trace-horizontal-scroll', {
     bubbles: true,
     detail: { scrollLeft: scroll.scrollLeft }
