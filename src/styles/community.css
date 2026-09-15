@@ -5283,3 +5283,68 @@ body.community-chrome-hidden .community-feed-header,body.community-chrome-hidden
 @media(max-width:760px) and (display-mode:standalone) and (orientation:landscape) and (max-height:500px){
   .community-feed-header,.community-scroll-chrome{top:env(safe-area-inset-top,0px)!important}
 }
+
+/* melogic-community-pwa-safearea-sticky-v1 */
+/*
+  iOS installed-PWA correction:
+  - Community owns one sticky top offset.
+  - Do not stack the app-header/safe-area offset on the iOS safe area.
+  - Paint the exposed status/Dynamic-Island area solid black.
+  - Mobile browser behavior is intentionally untouched.
+*/
+@media (max-width:760px) and (display-mode:standalone) {
+  :root {
+    --community-pwa-physical-safe-top: env(safe-area-inset-top, 0px);
+  }
+
+  html,
+  body,
+  #app,
+  .mobile-app-shell,
+  .community-page {
+    background: #000 !important;
+  }
+
+  .community-feed-header {
+    position: sticky !important;
+    top: 0 !important;
+    inset-block-start: 0 !important;
+    z-index: 60 !important;
+    margin-top: 0 !important;
+    transform: none !important;
+    background: #07090d !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .community-feed-header::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    height: max(var(--community-pwa-physical-safe-top), 1px);
+    background: #000;
+    pointer-events: none;
+  }
+
+  body.community-chrome-hidden .community-feed-header {
+    transform: none !important;
+  }
+
+  .community-master-tabs,
+  .community-filter-shell,
+  .community-filter-strip {
+    position: relative !important;
+    top: auto !important;
+    inset-block-start: auto !important;
+  }
+}
+
+@media (max-width:760px) and (display-mode:standalone)
+       and (orientation:landscape) and (max-height:500px) {
+  .community-feed-header {
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+  }
+}
