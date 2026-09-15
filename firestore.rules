@@ -1038,11 +1038,11 @@ service cloud.firestore {
           ])
           && request.resource.data.endpoint is string
           && request.resource.data.endpoint.size() > 0
-          && request.resource.data.keys is map
-          && request.resource.data.keys.p256dh is string
-          && request.resource.data.keys.p256dh.size() > 0
-          && request.resource.data.keys.auth is string
-          && request.resource.data.keys.auth.size() > 0
+          && request.resource.data['keys'] is map
+          && request.resource.data['keys'].p256dh is string
+          && request.resource.data['keys'].p256dh.size() > 0
+          && request.resource.data['keys'].auth is string
+          && request.resource.data['keys'].auth.size() > 0
           && request.resource.data.enabled == true;
 
         allow update: if isOwner(uid)
@@ -1058,11 +1058,11 @@ service cloud.firestore {
           ])
           && request.resource.data.endpoint is string
           && request.resource.data.endpoint.size() > 0
-          && request.resource.data.keys is map
-          && request.resource.data.keys.p256dh is string
-          && request.resource.data.keys.p256dh.size() > 0
-          && request.resource.data.keys.auth is string
-          && request.resource.data.keys.auth.size() > 0;
+          && request.resource.data['keys'] is map
+          && request.resource.data['keys'].p256dh is string
+          && request.resource.data['keys'].p256dh.size() > 0
+          && request.resource.data['keys'].auth is string
+          && request.resource.data['keys'].auth.size() > 0;
 
         allow delete: if isOwner(uid);
       }
