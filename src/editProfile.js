@@ -97,6 +97,8 @@ async function handleWebPushEnrollmentClick(event) {
   disable.disabled=true
   try{
     await disableWebPushForUser(pageState?.user?.uid)
+    const remainingSubscription=await getCurrentWebPushSubscription()
+    if(remainingSubscription) throw new Error('Push subscription is still active on this device.')
     document.querySelectorAll('[data-push-device-status]').forEach(el=>el.textContent='This device is not subscribed')
     document.querySelectorAll('[data-enable-web-push]').forEach(el=>{el.disabled=false;el.textContent='Enable on This Device'})
   }catch(error){
@@ -106,10 +108,16 @@ async function handleWebPushEnrollmentClick(event) {
 document.addEventListener('click',handleWebPushEnrollmentClick)
 
 getCurrentWebPushSubscription().then(subscription=>{
-  if(!subscription)return
-  document.querySelectorAll('[data-push-device-status]').forEach(el=>el.textContent='Permission: Allowed · This device is subscribed')
-  document.querySelectorAll('[data-enable-web-push]').forEach(el=>el.textContent='Enabled')
-}).catch(()=>{})
+  const status=document.querySelector('[data-push-device-status]')
+  const button=document.querySelector('[data-enable-web-push]')
+  if(subscription){
+    if(status) status.textContent='Permission: Allowed · This device is subscribed'
+    if(button){button.textContent='Enabled';button.disabled=true}
+  }else{
+    if(status) status.textContent=Notification.permission==='denied'?'Permission: Blocked':'This device is not subscribed'
+    if(button){button.textContent='Enable on This Device';button.disabled=false}
+  }
+}).catch(error=>console.warn('[web-push] subscription status failed',error))
 
 
 // Install the push-capable service worker without prompting for notification

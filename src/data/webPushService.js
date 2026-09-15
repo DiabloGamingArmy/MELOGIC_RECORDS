@@ -82,10 +82,18 @@ export async function disableWebPushForUser(uid) {
   if (!uid) throw new Error('Sign in before changing push notifications.')
   const registration = await ensureMelogicPushServiceWorker()
   const subscription = await registration.pushManager.getSubscription()
-  if (!subscription) return { disabled: true }
+  if (!subscription) return { disabled: true, subscription: null }
 
   const id = (await sha256Hex(subscription.endpoint)).slice(0, 40)
-  await subscription.unsubscribe()
+  const unsubscribed = await subscription.unsubscribe()
+
+  // Do not lie to the UI or delete the server record if the browser did not
+  // actually revoke the subscription.
+  const remaining = await registration.pushManager.getSubscription()
+  if (!unsubscribed || remaining) {
+    throw new Error('This browser did not revoke the push subscription. Please try again.')
+  }
+
   await deleteDoc(doc(db, 'users', uid, 'pushSubscriptions', id))
-  return { disabled: true }
+  return { disabled: true, subscription: null }
 }
