@@ -5348,3 +5348,31 @@ body.community-chrome-hidden .community-feed-header,body.community-chrome-hidden
     padding-right: env(safe-area-inset-right, 0px);
   }
 }
+
+/* melogic-community-directional-header-v1
+   Feed chrome hides with downward travel and eases back on upward travel.
+   Safe-area paint remains black in standalone PWA. */
+@media(max-width:760px){
+  .community-feed-header{
+    --community-header-hide-y: calc(-100% - 2px);
+    transition:transform 260ms cubic-bezier(.22,.61,.36,1)!important;
+    will-change:transform;
+  }
+  body.community-chrome-hidden .community-feed-header{
+    transform:translate3d(0,var(--community-header-hide-y),0)!important;
+    pointer-events:none;
+  }
+  body:not(.community-chrome-hidden) .community-feed-header{
+    transform:translate3d(0,0,0)!important;
+    pointer-events:auto;
+  }
+}
+@media(max-width:760px) and (display-mode:standalone){
+  body.community-chrome-hidden .community-feed-header::before,
+  body:not(.community-chrome-hidden) .community-feed-header::before{
+    background:#000!important;
+  }
+}
+@media(max-width:760px) and (prefers-reduced-motion:reduce){
+  .community-feed-header{transition:none!important}
+}

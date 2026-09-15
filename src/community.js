@@ -5429,6 +5429,7 @@ function setCommunityChromeHidden(hidden = false) {
   document.body.classList.toggle('community-chrome-hidden', Boolean(hidden))
 }
 
+/* melogic-community-directional-scroll-v1 */
 function handleCommunityChromeScroll() {
   communityScrollRaf = 0
   if (state.view.type !== 'feed' || communityModalIsOpen() || activeElementIsCommunityInput()) {
@@ -5438,6 +5439,18 @@ function handleCommunityChromeScroll() {
   }
   const currentY = Math.max(0, window.scrollY || 0)
   const delta = currentY - lastCommunityScrollY
+
+  if (window.matchMedia('(max-width: 760px)').matches) {
+    const nearTop = currentY <= 18
+    const meaningfulDown = delta >= 4
+    const meaningfulUp = delta <= -3
+
+    if (nearTop || meaningfulUp) setCommunityChromeHidden(false)
+    else if (meaningfulDown && currentY > 72) setCommunityChromeHidden(true)
+
+    lastCommunityScrollY = currentY
+    return
+  }
   if (currentY < 24) setCommunityChromeHidden(false)
   else if (delta > 12) setCommunityChromeHidden(true)
   else if (delta < -8) setCommunityChromeHidden(false)
