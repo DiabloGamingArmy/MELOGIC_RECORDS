@@ -6,7 +6,7 @@
   "version": "signalsmith-stretch-1.3.2",
   "wasm": "/wasm/soura-dsp/soura_signalsmith.wasm",
   "vendorModule": "src/studio/audio/dsp/wasm/vendor/SignalsmithStretch.mjs",
-  "generatedAt": "2026-09-15T03:48:18.139Z",
+  "generatedAt": "2026-09-15T03:54:18.251Z",
   "source": {
     "package": "signalsmith-stretch",
     "version": "1.3.2",

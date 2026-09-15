@@ -36,26 +36,9 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
     moderationNotices: true,
     announcements: true
   },
-  email: {
-    likes: false,
-    comments: false,
-    replies: false,
-    mentions: false,
-    follows: false,
-    directMessages: true,
-    groupMessages: true,
-    marketplaceActivity: true,
-    creatorActivity: true
-  },
-  admin: {
-    auditActivity: true,
-    marketplaceSubmissions: true,
-    streamingSubmissions: true,
-    supportRequests: true
-  },
   delivery: {
     inApp: true,
-    email: true,
+    email: false,
     push: false,
     marketing: false
   }
