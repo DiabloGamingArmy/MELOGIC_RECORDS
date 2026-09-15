@@ -1,3 +1,10 @@
+const {
+  emailOnInboxMessageCreated,
+  emailOnProductSubmitted,
+  emailOnMusicReleaseSubmitted,
+  emailOnSupportFormCreated,
+  emailOnAdminAuditCreated
+} = require('./src/email/notificationEmails')
 const admin = require('firebase-admin')
 
 if (!admin.apps.length) {
@@ -352,3 +359,10 @@ exports.setSiteGuidanceSessionStatus = setSiteGuidanceSessionStatus
 exports.createGuidanceTestOverlay = createGuidanceTestOverlay
 exports.resolveSupportFormRequest = resolveSupportFormRequest
 exports.handleSupportAgentPresence = handleSupportAgentPresence
+
+// Melogic email notification triggers
+exports.emailOnInboxMessageCreated = emailOnInboxMessageCreated
+exports.emailOnProductSubmitted = emailOnProductSubmitted
+exports.emailOnMusicReleaseSubmitted = emailOnMusicReleaseSubmitted
+exports.emailOnSupportFormCreated = emailOnSupportFormCreated
+exports.emailOnAdminAuditCreated = emailOnAdminAuditCreated

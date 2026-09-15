@@ -60,3 +60,9 @@ ams_community.zip
 *.zip
 .melogic_patch_backups/
 .soura_patch_backups/
+
+# Local patch backups
+*.bak
+*.bak.*
+*.recovery-v1.3-*.bak
+*.email-notifications-v1-*.bak

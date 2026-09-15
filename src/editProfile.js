@@ -261,6 +261,12 @@ function getMergedState(user, profileResult) {
   }
 }
 
+function canSeeAdminNotificationSettings(state = pageState) {
+  const roles=[state?.userData?.role,state?.roleLabel,state?.userData?.accountRole,state?.userData?.adminRole]
+    .map(v=>String(v||'').trim().toLowerCase())
+  return roles.some(role=>['admin','administrator','founder','owner','staff','superadmin','super_admin'].includes(role))
+}
+
 function notificationToggleMarkup(group, key, label, preferences, { detail = '', disabled = false } = {}) {
   return `
     <label class="toggle-row ${disabled ? 'is-coming-soon' : ''}">
@@ -898,7 +904,36 @@ function renderSettingsPage() {
                 ${notificationToggleMarkup('inbox', 'incomingCalls', 'Incoming call alerts', notificationPreferences)}
               </div>
             </section>
-            <section class="notification-settings-group">
+                        <section class="settings-block" data-notification-email-settings>
+              <div class="settings-block-heading"><div>
+                <p class="eyebrow">Emails</p><h3>Phone & Email Alerts</h3>
+                <p>Choose which Melogic activity should be forwarded to your account email.</p>
+              </div></div>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('email','likes','Likes on your posts',notificationPreferences)}
+                ${notificationToggleMarkup('email','comments','Comments on your posts',notificationPreferences)}
+                ${notificationToggleMarkup('email','replies','Replies to your comments',notificationPreferences)}
+                ${notificationToggleMarkup('email','mentions','Mentions',notificationPreferences)}
+                ${notificationToggleMarkup('email','follows','New followers',notificationPreferences)}
+                ${notificationToggleMarkup('email','directMessages','Direct / inbox messages',notificationPreferences)}
+                ${notificationToggleMarkup('email','groupMessages','Group messages',notificationPreferences)}
+                ${notificationToggleMarkup('email','marketplaceActivity','Marketplace activity',notificationPreferences)}
+                ${notificationToggleMarkup('email','creatorActivity','Creator / release activity',notificationPreferences)}
+              </div>
+            </section>
+            ${canSeeAdminNotificationSettings()?`<section class="settings-block" data-notification-admin-settings>
+              <div class="settings-block-heading"><div>
+                <p class="eyebrow">Admin</p><h3>Administrative Email Alerts</h3>
+                <p>Operational alerts are only available to accounts with administrative access.</p>
+              </div></div>
+              <div class="toggle-list">
+                ${notificationToggleMarkup('admin','auditActivity','Admin audit activity',notificationPreferences)}
+                ${notificationToggleMarkup('admin','marketplaceSubmissions','New marketplace product submissions',notificationPreferences)}
+                ${notificationToggleMarkup('admin','streamingSubmissions','New streaming / distribution submissions',notificationPreferences)}
+                ${notificationToggleMarkup('admin','supportRequests','New support / Resona requests',notificationPreferences)}
+              </div>
+            </section>`:''}
+<section class="notification-settings-group">
               <h3>System / Security</h3>
               <div class="toggle-list">
                 ${notificationToggleMarkup('system', 'securityAlerts', 'Login and security alerts', notificationPreferences)}
@@ -911,7 +946,7 @@ function renderSettingsPage() {
               <h3>Delivery Preferences</h3>
               <div class="toggle-list">
                 ${notificationToggleMarkup('delivery', 'inApp', 'In-app notifications', notificationPreferences)}
-                ${notificationToggleMarkup('delivery', 'email', 'Email notifications', notificationPreferences, { detail: 'Coming soon', disabled: true })}
+                ${notificationToggleMarkup('delivery', 'email', 'Email notifications', notificationPreferences, { detail: 'Master email delivery switch' })}
                 ${notificationToggleMarkup('delivery', 'push', 'Push notifications', notificationPreferences, { detail: 'Coming soon', disabled: true })}
                 ${notificationToggleMarkup('delivery', 'marketing', 'Marketing emails', notificationPreferences)}
               </div>
