@@ -4,6 +4,7 @@ import {
   onIdTokenChanged,
   setPersistence,
   browserLocalPersistence,
+  indexedDBLocalPersistence,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -20,7 +21,10 @@ export const auth = getAuth(app)
 let hasWarnedPersistence = false
 let initialAuthStatePromise = null
 
-export const authPersistenceReady = setPersistence(auth, browserLocalPersistence).catch((error) => {
+/* melogic-auth-persistence-v2 */
+export const authPersistenceReady = setPersistence(auth, indexedDBLocalPersistence)
+  .catch(() => setPersistence(auth, browserLocalPersistence))
+  .catch((error) => {
   if (!hasWarnedPersistence) {
     hasWarnedPersistence = true
     console.warn('[firebase/auth] Failed to enable local persistence.', error?.code || error?.message || error)
