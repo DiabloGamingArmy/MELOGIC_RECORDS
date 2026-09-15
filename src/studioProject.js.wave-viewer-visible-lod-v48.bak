@@ -903,7 +903,7 @@ function secondsToBeats(seconds = 0, tempoMap = null) {
 const waveformWindowSeconds = 0.1
 // Keep the waveform density tied to the horizontal space it occupies, rather
 // than thinning a long clip merely because it has more total samples.
-const WAVEFORM_PEAKS_PER_PIXEL = 1
+const WAVEFORM_PEAKS_PER_PIXEL = 4
 const WAVEFORM_MIN_RENDERED_PEAKS = 96
 const WAVEFORM_MAX_RENDERED_PEAKS = 262144
 const WAVEFORM_PERSISTED_MAX_PEAKS = 131072
@@ -1915,7 +1915,7 @@ function renderPitchTraceView(region, track) {
   const empty=trace.status==='analyzing'?'<p class="studio-pitch-trace-empty">Deep pitch analysis is running…</p>':trace.status==='failed'?`<p class="studio-pitch-trace-empty">${esc(trace.error||'Pitch analysis failed.')}</p>`:'<p class="studio-pitch-trace-empty">Analyze Audio to map detected pitch onto MIDI rows.</p>'
   const emptyOverlay=(trace.notes||[]).length?'':empty
 
-  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:1100})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks}</div></div></div>${emptyOverlay}</div>`
+  return `<div class="studio-pitch-trace-view" data-pitch-trace-view data-region-editor-grid-width="${width}" data-pitch-trace-region-id="${esc(region.id)}" data-pitch-min="${minNote}" data-pitch-max="${maxNote}" data-pitch-duration="${visibleDuration}" style="--pitch-row-count:${rowCount};--pitch-trace-canvas-width:${width}px"><div class="studio-pitch-trace-waveform-viewport" aria-hidden="true"><div class="studio-pitch-trace-waveform">${renderAudioWaveform(region,{editor:true,maxPeaks:getRegionEditorAdaptivePeakBudgetV21(region,'pitch')})}</div></div><div class="studio-pitch-trace-scroll" data-pitch-trace-scroll><div class="studio-midi-roll-keys studio-pitch-trace-keyboard">${keyboard}</div><div class="studio-pitch-trace-canvas"><div class="studio-pitch-trace-octave-lines">${octaveLines}</div><div class="studio-pitch-trace-grid">${lines.join('')}</div><div class="studio-pitch-trace-notes" data-pitch-trace-grid>${blocks}</div></div></div>${emptyOverlay}</div>`
 }
 function getPitchTraceEditedNoteCount(trace = {}) {
   return (trace.notes || []).filter((note)=>note.muted === true || note.editedMidiNote !== note.originalMidiNote || Math.abs(Number(note.editedFineTuneCents) || 0) > 0.001 || Math.abs(Number(note.gainDb) || 0) > 0.001).length
@@ -3784,21 +3784,8 @@ function renderAudioWaveform(region, options = {}) {
   const stretchRatio = hasRenderedWaveform ? 1 : getAudioStretchRatio(region)
   const fullViewDuration = Math.max(minAudioRegionSeconds, hasRenderedWaveform ? visibleDuration : stretch.enabled ? visibleDuration : sourceDuration)
   const hasWindow = Number.isFinite(Number(options.viewStartSeconds)) || Number.isFinite(Number(options.viewEndSeconds))
-  const sourceSampleRate = Math.max(
-    8000,
-    Number(region?.audioBuffer?.sampleRate) ||
-    Number(region?.sampleRate) ||
-    Number(region?.audio?.sampleRate) ||
-    48000
-  )
-  // One source sample is the minimum legal Wave Viewer window.
-  const minWaveViewSeconds = 1 / sourceSampleRate
-  const viewStart = hasWindow
-    ? clamp(Number(options.viewStartSeconds) || 0, 0, Math.max(0, fullViewDuration - minWaveViewSeconds))
-    : 0
-  const viewEnd = hasWindow
-    ? clamp(Number(options.viewEndSeconds) || fullViewDuration, viewStart + minWaveViewSeconds, fullViewDuration)
-    : fullViewDuration
+  const viewStart = hasWindow ? clamp(Number(options.viewStartSeconds) || 0, 0, Math.max(0, fullViewDuration - 0.01)) : 0
+  const viewEnd = hasWindow ? clamp(Number(options.viewEndSeconds) || fullViewDuration, viewStart + 0.01, fullViewDuration) : fullViewDuration
 
   // Arrangement waveforms are rendered only for the currently visible timeline
   // slice plus a generous buffer. The SVG keeps the full region coordinate
@@ -3881,26 +3868,6 @@ function getRegionEditorEffectiveZoomV21(region) {
   return Math.max(1, fullDuration / visibleDuration)
 }
 
-// SOURA WAVE VIEWER VISIBLE LOD v48
-function getAudioWaveViewerVisiblePeakBudgetV48() {
-  const viewport =
-    document.querySelector('[data-audio-waveform-viewport]') ||
-    document.querySelector('.studio-audio-waveform-viewport')
-
-  const cssWidth = Math.max(
-    1,
-    Math.ceil(
-      Number(viewport?.getBoundingClientRect?.().width) ||
-      Number(viewport?.clientWidth) ||
-      Math.min(Number(window?.innerWidth) || 1600, 4096)
-    )
-  )
-
-  // O(screen width), not O(file duration).
-  const dpr = Math.max(1, Math.min(2, Number(window?.devicePixelRatio) || 1))
-  return Math.max(256, Math.ceil(cssWidth * dpr))
-}
-
 function getRegionEditorAdaptivePeakBudgetV21(region, mode = 'waveform') {
   const zoom = getRegionEditorEffectiveZoomV21(region)
   const base = mode === 'pitch' ? 2400 : 3200
@@ -3969,7 +3936,7 @@ function renderAudioRegionEditorWaveform(region, track, { pitchTraceEnabled = fa
   const zoom = Math.max(1, viewport.zoom)
   return `<div class="studio-audio-editor-waveform has-waveform-viewport" data-audio-waveform-shell="${esc(region.id)}" style="--region-color:${esc(color)};--waveform-color:${esc(waveformColor)}">
     <div class="studio-audio-waveform-viewport" data-audio-waveform-viewport data-waveform-start="${start}" data-waveform-end="${end}" data-waveform-duration="${viewport.fullDuration}" tabindex="0">
-      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: getAudioWaveViewerVisiblePeakBudgetV48() })}
+      ${renderAudioWaveform(region, { viewStartSeconds: start, viewEndSeconds: end, editor: true, maxPeaks: getRegionEditorAdaptivePeakBudgetV21(region,'waveform') })}
       ${viewportPlayhead}
     </div>
   </div>`
