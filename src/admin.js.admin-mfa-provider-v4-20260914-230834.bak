@@ -2,12 +2,10 @@ import './styles/base.css'
 import './styles/admin.css'
 import {
   EmailAuthProvider,
-  GoogleAuthProvider,
   TotpMultiFactorGenerator,
   getMultiFactorResolver,
   multiFactor,
-  reauthenticateWithCredential,
-  reauthenticateWithPopup
+  reauthenticateWithCredential
 } from 'firebase/auth'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
@@ -187,27 +185,16 @@ async function performAdminStepUp(label='Admin action') {
     const user=auth.currentUser || await waitForInitialAuthState()
     if (!user) throw new Error('You must be signed in.')
     if (!adminHasTotp(user)) { renderAdminMfaWall(); throw new Error('Authenticator-app 2FA is required.') }
-    if (!user.email) throw new Error('This admin account does not have an email address.')
+    if (!user.email) throw new Error('This admin account does not have a password email.')
 
-    const providerIds=new Set((user.providerData||[]).map((provider)=>provider?.providerId).filter(Boolean))
+    const password=window.prompt(`Confirm Admin Action\n\n${label}\n\nEnter your Melogic account password:`)
+    if (!password) return false
+
     let resolver
     try {
-      if (providerIds.has('password')) {
-        const password=window.prompt(`Confirm Admin Action\n\n${label}\n\nEnter your Melogic account password:`)
-        if (!password) return false
-        await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email,password))
-      } else if (providerIds.has('google.com')) {
-        const provider=new GoogleAuthProvider()
-        provider.setCustomParameters({ login_hint:user.email, prompt:'select_account' })
-        await reauthenticateWithPopup(user,provider)
-      } else {
-        throw new Error(`This admin account uses an unsupported sign-in provider (${Array.from(providerIds).join(', ')||'unknown'}).`)
-      }
+      await reauthenticateWithCredential(user,EmailAuthProvider.credential(user.email,password))
       throw new Error('Firebase did not require the enrolled second factor.')
     } catch(error) {
-      if (error?.code === 'auth/invalid-credential' && providerIds.has('password')) {
-        throw new Error('Firebase rejected the account password before the 2FA step. Enter your Melogic login password, not the 6-digit authenticator code.')
-      }
       if (error?.code !== 'auth/multi-factor-auth-required') throw error
       resolver=getMultiFactorResolver(auth,error)
     }

@@ -30,37 +30,6 @@ let hasWarnedProductFetch = false
 let hasWarnedProductMedia = false
 const isDevelopmentRuntime = import.meta.env.DEV
 
-const ADMIN_STEP_UP_CALLABLES = new Set([
-  'grantAdminProducts','repairAdminCheckoutOrder','reviewProductDecision','addAdminUserNote',
-  'forcePasswordReset','revokeRecoveryCodes','setAdminUserRole','sendAdminAuthEmail',
-  'sendAdminEmail','sendAdminSystemMessage','setTemporaryPassword','unverifyUserEmail',
-  'setUserSuspension','updateAdminAccountPermissions','updateReportDecision','updateAdminSettings',
-  'uploadSellerAgreementMarkdown','adminHideProduct','adminUnhideProduct','adminRemoveProduct'
-])
-
-async function requireAdminStepUp(name) {
-  const guard=window.__melogicAdminRequireStepUp
-  if (typeof guard !== 'function') {
-    const error=new Error('Admin 2FA security controller is unavailable. Refresh the Admin Panel.')
-    error.code='admin/step-up-controller-unavailable'
-    throw error
-  }
-  const ok=await guard(name)
-  if (!ok) {
-    const error=new Error('Admin action cancelled before 2FA verification.')
-    error.code='admin/step-up-cancelled'
-    throw error
-  }
-}
-
-function adminProtectedCallable(name) {
-  const callable=httpsCallable(functions,name)
-  return async (payload) => {
-    await requireAdminStepUp(name)
-    return callable(payload)
-  }
-}
-
 function warnOnce(type, ...details) {
   if (type === 'fetch') {
     if (hasWarnedProductFetch) return
@@ -1873,7 +1842,7 @@ export async function listMarketplaceReviewQueue({ limitCount = 60 } = {}) {
 
 export async function reviewProductDecision({ productId = '', decision = '', reason = '', notes = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('reviewProductDecision')
+  const callable = httpsCallable(functions, 'reviewProductDecision')
   const result = await callable({ productId, decision, reason, notes })
   return result?.data || { ok: false }
 }
@@ -1899,7 +1868,7 @@ export function adminRemoveProduct({ productId = '', reason = '', confirmation =
 
 export async function setAdminUserRole({ uid = '', role = '', active = true, reason = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('setAdminUserRole')
+  const callable = httpsCallable(functions, 'setAdminUserRole')
   const result = await callable({ uid, role, active, reason })
   return result?.data || { ok: false }
 }
@@ -1934,7 +1903,7 @@ export async function getAdminAccountPermissions({ uid = '' } = {}) {
 
 export async function updateAdminAccountPermissions(payload = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('updateAdminAccountPermissions')
+  const callable = httpsCallable(functions, 'updateAdminAccountPermissions')
   const result = await callable(payload)
   return result?.data || { ok: false, explicit: {}, effective: {} }
 }
@@ -1948,7 +1917,7 @@ export async function searchAdminGrantProducts({ uid = '', search = '' } = {}) {
 
 export async function grantAdminProducts({ uid = '', productIds = [] } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('grantAdminProducts')
+  const callable = httpsCallable(functions, 'grantAdminProducts')
   const result = await callable({ uid, productIds })
   return result?.data || {
     ok: false,
@@ -1960,14 +1929,14 @@ export async function grantAdminProducts({ uid = '', productIds = [] } = {}) {
 
 export async function addAdminUserNote({ uid = '', note = '', severity = 'info', category = 'account' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('addAdminUserNote')
+  const callable = httpsCallable(functions, 'addAdminUserNote')
   const result = await callable({ uid, note, severity, category })
   return result?.data || { ok: false }
 }
 
 export async function setUserSuspension({ uid = '', suspended = true, reason = '', duration = 'indefinite', note = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('setUserSuspension')
+  const callable = httpsCallable(functions, 'setUserSuspension')
   const result = await callable({ uid, suspended, reason, duration, note })
   return result?.data || { ok: false }
 }
@@ -1988,7 +1957,7 @@ export async function getAdminReport({ reportId = '' } = {}) {
 
 export async function updateReportDecision({ reportId = '', action = '', reason = '', notes = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('updateReportDecision')
+  const callable = httpsCallable(functions, 'updateReportDecision')
   const result = await callable({ reportId, action, reason, notes })
   return result?.data || { ok: false }
 }
@@ -2009,7 +1978,7 @@ export async function getAdminOrder({ orderId = '' } = {}) {
 
 export async function repairAdminCheckoutOrder({ orderId = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('repairAdminCheckoutOrder')
+  const callable = httpsCallable(functions, 'repairAdminCheckoutOrder')
   const result = await callable({ orderId })
   return result?.data || { ok: false }
 }
@@ -2058,7 +2027,7 @@ export async function getResonaAiStats() {
 
 export async function updateAdminSettings({ section = '', values = {}, reason = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('updateAdminSettings')
+  const callable = httpsCallable(functions, 'updateAdminSettings')
   const result = await callable({ section, values, reason })
   return result?.data || { ok: false, settings: {} }
 }
@@ -2079,49 +2048,49 @@ export async function listAdminEmailLogs({ mode = 'sent', limitCount = 10, curso
 
 export async function sendAdminEmail({ to = '', subject = '', body = '', category = 'support', templateType = 'support', ctaLabel = '', ctaUrl = '', relatedUid = '', relatedProductId = '', relatedOrderId = '', relatedReportId = '', cc = '', replyTo = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('sendAdminEmail')
+  const callable = httpsCallable(functions, 'sendAdminEmail')
   const result = await callable({ to, subject, body, category, templateType, ctaLabel, ctaUrl, relatedUid, relatedProductId, relatedOrderId, relatedReportId, cc, replyTo })
   return result?.data || { ok: false }
 }
 
 export async function sendAdminAuthEmail({ uid = '', type = '', to = '', subject = '', body = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('sendAdminAuthEmail')
+  const callable = httpsCallable(functions, 'sendAdminAuthEmail')
   const result = await callable({ uid, type, to, subject, body })
   return result?.data || { ok: false }
 }
 
 export async function sendAdminSystemMessage({ recipientUid = '', category = 'support', priority = 'normal', subject = '', body = '', actionLabel = '', actionUrl = '', internalNote = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('sendAdminSystemMessage')
+  const callable = httpsCallable(functions, 'sendAdminSystemMessage')
   const result = await callable({ recipientUid, category, priority, subject, body, actionLabel, actionUrl, internalNote })
   return result?.data || { ok: false }
 }
 
 export async function forcePasswordReset({ uid = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('forcePasswordReset')
+  const callable = httpsCallable(functions, 'forcePasswordReset')
   const result = await callable({ uid })
   return result?.data || { ok: false }
 }
 
 export async function setTemporaryPassword({ uid = '', password = '', confirmation = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('setTemporaryPassword')
+  const callable = httpsCallable(functions, 'setTemporaryPassword')
   const result = await callable({ uid, password, confirmation })
   return result?.data || { ok: false }
 }
 
 export async function unverifyUserEmail({ uid = '', confirmation = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('unverifyUserEmail')
+  const callable = httpsCallable(functions, 'unverifyUserEmail')
   const result = await callable({ uid, confirmation })
   return result?.data || { ok: false }
 }
 
 export async function revokeRecoveryCodes({ uid = '', confirmation = '' } = {}) {
   if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('revokeRecoveryCodes')
+  const callable = httpsCallable(functions, 'revokeRecoveryCodes')
   const result = await callable({ uid, confirmation })
   return result?.data || { ok: false }
 }
