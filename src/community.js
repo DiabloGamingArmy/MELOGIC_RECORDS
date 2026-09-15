@@ -381,8 +381,26 @@ function isCommunityNavigationTarget(target = '') {
   }
 }
 
+/* melogic-community-mobile-surface-js-patch4 */
+function setupMobileCommunitySurfaceBehavior() {
+  if (document.documentElement.dataset.mobileCommunitySurfaceReady === 'true') return
+  document.documentElement.dataset.mobileCommunitySurfaceReady = 'true'
+  const isMobile = () => window.matchMedia('(max-width: 760px)').matches
+  document.addEventListener('focusin', (event) => {
+    if (!isMobile()) return
+    const field = event.target instanceof Element ? event.target.closest('.community-comment-composer textarea, .community-reply-composer textarea, .community-detail-composer textarea') : null
+    if (field instanceof HTMLElement) window.setTimeout(() => field.scrollIntoView({ block:'nearest', behavior:'smooth' }), 120)
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !isMobile()) return
+    const close = document.querySelector('.community-share-modal [data-close], .community-report-modal [data-close], .community-options-modal [data-close], .community-modal [data-close], .community-dialog [data-close]')
+    if (close instanceof HTMLElement) close.click()
+  })
+}
+
 /* melogic-community-mobile-interactions-patch3 */
-function setupMobileCommunityShellActions() {
+function setupMobileCommunityShellActions()
+setupMobileCommunitySurfaceBehavior() {
   if (document.documentElement.dataset.mobileCommunityActionsReady === 'true') return
   document.documentElement.dataset.mobileCommunityActionsReady = 'true'
   document.addEventListener('click', (event) => {

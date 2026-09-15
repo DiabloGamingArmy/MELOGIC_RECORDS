@@ -5162,3 +5162,33 @@ body:has(.community-page) #app {
 @media (max-width:390px) {
   .community-composer-modal,.community-composer-dialog,.community-modal,.community-dialog {border-radius:18px 18px 0 0!important}
 }
+/* melogic-community-mobile-surfaces-patch4 */
+@media(max-width:760px){
+ .community-detail-main,.community-post-detail,.community-thread-detail{width:100%!important;max-width:none!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;background:#07090d!important;box-shadow:none!important}
+ .community-detail-topbar{position:sticky;z-index:35;top:0;display:flex;align-items:center;min-height:52px;padding:8px 12px!important;border-bottom:1px solid rgba(174,188,211,.12)!important;background:rgba(7,9,13,.94)!important;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+ .community-detail-topbar button,.community-detail-topbar a{min-width:40px;min-height:40px;border-radius:999px!important;touch-action:manipulation}
+ .community-comments,.community-comment-list,.community-replies,.community-reply-list{width:100%;margin:0!important;padding:0!important}
+ .community-comment,.community-comment-card,.community-reply,.community-reply-card{margin:0!important;padding:14px 16px!important;border:0!important;border-bottom:1px solid rgba(174,188,211,.10)!important;border-radius:0!important;background:#07090d!important;box-shadow:none!important}
+ .community-comment-avatar,.community-reply-avatar{width:36px!important;height:36px!important;flex:0 0 36px!important;border-radius:50%!important}
+ .community-comment p,.community-reply p,.community-comment-body,.community-reply-body{font-size:14px!important;line-height:1.45!important;color:#dde3ec!important}
+ .community-comment-meta,.community-reply-meta{color:#8995a8!important;font-size:11px!important}
+ .community-comment-actions,.community-reply-actions{display:flex!important;align-items:center;gap:2px!important;flex-wrap:nowrap!important;overflow-x:auto;scrollbar-width:none;margin-top:5px!important}
+ .community-comment-actions::-webkit-scrollbar,.community-reply-actions::-webkit-scrollbar{display:none}
+ .community-comment-actions button,.community-reply-actions button{flex:0 0 auto;min-width:38px!important;min-height:38px!important;padding:6px 8px!important;border:0!important;border-radius:999px!important;background:transparent!important;color:#9da9ba!important}
+ .community-comment-composer,.community-reply-composer,.community-detail-composer{position:sticky;z-index:32;bottom:calc(var(--mobile-nav-h,72px) + env(safe-area-inset-bottom,0px));display:flex!important;align-items:flex-end;gap:8px!important;width:100%;margin:0!important;padding:9px 12px!important;border:0!important;border-top:1px solid rgba(174,188,211,.12)!important;border-radius:0!important;background:rgba(7,9,13,.96)!important;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:none!important}
+ .community-comment-composer textarea,.community-comment-composer input,.community-reply-composer textarea,.community-reply-composer input,.community-detail-composer textarea,.community-detail-composer input{flex:1 1 auto;min-width:0;min-height:42px;max-height:128px;padding:10px 13px!important;border:1px solid rgba(174,188,211,.15)!important;border-radius:18px!important;background:#11151d!important;color:#f3f5f9!important;font-size:16px!important;box-shadow:none!important}
+ .community-comment-composer button,.community-reply-composer button,.community-detail-composer button{flex:0 0 auto;min-width:42px!important;min-height:42px!important;border-radius:999px!important;touch-action:manipulation}
+ .community-share-modal,.community-share-dialog,.community-report-modal,.community-report-dialog,.community-options-modal,.community-options-dialog{position:fixed!important;z-index:160!important;right:0!important;bottom:0!important;left:0!important;width:100%!important;max-width:none!important;max-height:78dvh!important;margin:0!important;overflow:auto!important;padding:8px 16px calc(16px + env(safe-area-inset-bottom,0px))!important;border:1px solid rgba(174,188,211,.13)!important;border-bottom:0!important;border-radius:22px 22px 0 0!important;background:#0b0f15!important;box-shadow:0 -20px 60px rgba(0,0,0,.48)!important}
+ .community-share-modal::before,.community-share-dialog::before,.community-report-modal::before,.community-report-dialog::before,.community-options-modal::before,.community-options-dialog::before{content:"";display:block;width:38px;height:4px;margin:0 auto 12px;border-radius:999px;background:rgba(192,202,219,.28)}
+ .community-share-modal button,.community-share-dialog button,.community-report-modal button,.community-report-dialog button,.community-options-modal button,.community-options-dialog button{min-height:46px!important;border-radius:12px!important;touch-action:manipulation}
+ .community-popover,.community-dropdown,.community-context-menu{max-width:calc(100vw - 24px)!important;max-height:65dvh!important;overflow:auto!important;border-color:rgba(174,188,211,.14)!important;border-radius:14px!important;background:#11151d!important}
+ .community-popover button,.community-dropdown button,.community-context-menu button{min-height:44px!important}
+ .community-replies,.community-reply-list{margin-left:38px!important;width:calc(100% - 38px)!important;border-left:1px solid rgba(174,188,211,.11)}
+ .community-replies .community-reply,.community-reply-list .community-reply{padding-left:12px!important}
+ .community-page button:focus-visible,.community-page a:focus-visible,.community-page input:focus-visible,.community-page textarea:focus-visible,.community-page select:focus-visible{outline:2px solid rgba(111,214,255,.82)!important;outline-offset:2px}
+ .community-comment,.community-reply,[data-comment-id]{scroll-margin-top:62px;scroll-margin-bottom:calc(var(--mobile-nav-h,72px) + 76px)}
+}
+@media(max-width:390px){
+ .community-comment,.community-comment-card,.community-reply,.community-reply-card{padding-left:14px!important;padding-right:14px!important}
+ .community-replies,.community-reply-list{margin-left:30px!important;width:calc(100% - 30px)!important}
+}
