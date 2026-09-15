@@ -1,6 +1,18 @@
 /* Melogic Web Push service worker.
    Push/notification only: intentionally does not intercept fetch requests. */
 self.addEventListener('push', (event) => {
+  // Declarative Web Push with mutable:false is already a complete user-visible
+  // notification. Modern WebKit owns its presentation; creating another
+  // showNotification() here can replace/duplicate the declarative content.
+  if (event.notification) {
+    console.log('[MELOGIC PUSH TRACE 4.3] declarative notification accepted by browser', {
+      title: event.notification.title,
+      body: event.notification.body,
+      navigate: event.notification.navigate || null
+    })
+    return
+  }
+
   let payload = {}
   try { payload = event.data ? event.data.json() : {} } catch {
     payload = { body: event.data ? event.data.text() : '' }
@@ -29,6 +41,12 @@ self.addEventListener('push', (event) => {
     }
   }
 
+  console.log('[MELOGIC PUSH TRACE 4.3] legacy service-worker render', {
+    title,
+    body: options.body,
+    url: options.data?.url || null,
+    traceId: options.data?.__melogicPushTraceId || null
+  })
   event.waitUntil(self.registration.showNotification(title, options))
 })
 

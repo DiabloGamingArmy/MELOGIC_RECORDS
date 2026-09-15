@@ -11,6 +11,17 @@ function clean(value='', max=500) {
   return String(value ?? '').trim().slice(0,max)
 }
 
+function endpointFingerprint(endpoint='') {
+  const value=clean(endpoint,5000)
+  if(!value) return 'missing'
+  let hash=2166136261
+  for(let i=0;i<value.length;i++){
+    hash^=value.charCodeAt(i)
+    hash=Math.imul(hash,16777619)
+  }
+  return `ep-${(hash>>>0).toString(16).padStart(8,'0')}`
+}
+
 function normalizeSubscription(data={}) {
   const endpoint=clean(data.endpoint,5000)
   const p256dh=clean(data.keys?.p256dh,2000)
@@ -44,6 +55,7 @@ async function sendPushToUser(uid,payload={}) {
   const navigate=/^https:\/\//i.test(rawUrl) ? rawUrl : `https://melogicrecords.studio${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`
   const tag=clean(payload.tag,180)||undefined
   const data=payload.data && typeof payload.data==='object' ? payload.data : {}
+  const traceId=`push-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`
 
   // Declarative Web Push (RFC 8030 marker) is the authoritative user-visible
   // notification on modern WebKit. The legacy fields are duplicated at the
@@ -55,6 +67,7 @@ async function sendPushToUser(uid,payload={}) {
       body,
       navigate,
       silent:false,
+      mutable:false,
       ...(tag ? { tag } : {})
     },
     title,
@@ -64,20 +77,48 @@ async function sendPushToUser(uid,payload={}) {
     icon:'/icons/pwa-192.png',
     badge:'/icons/favicon-48.png',
     silent:false,
-    data
+    data:{...data,__melogicPushTraceId:traceId}
+  })
+
+  console.log('[MELOGIC PUSH TRACE 4.3] prepared',{
+    traceId,
+    uid,
+    title,
+    body,
+    navigate,
+    tag,
+    subscriptionCount:snap.size
   })
 
   let sent=0,failed=0,removed=0
   await Promise.all(snap.docs.map(async d=>{
     const subscription=normalizeSubscription(d.data())
     if(!subscription){ failed++; return }
+    const fingerprint=endpointFingerprint(subscription.endpoint)
+    let endpointHost='unknown'
+    try{ endpointHost=new URL(subscription.endpoint).hostname }catch{}
+    console.log('[MELOGIC PUSH TRACE 4.3] sending',{
+      traceId,uid,subscriptionId:d.id,fingerprint,endpointHost,title,body,navigate,
+      contentType:'application/notification+json'
+    })
     try{
-      await webpush.sendNotification(subscription,message,{TTL:300,urgency:'normal'})
+      const response=await webpush.sendNotification(subscription,message,{
+        TTL:300,
+        urgency:'normal',
+        // REQUIRED for Declarative Web Push disposition in WebKit.
+        // Without this MIME type, WebKit treats the encrypted JSON as legacy
+        // Web Push and the installed app can fall back to "Melogic / Notification".
+        headers:{'Content-Type':'application/notification+json'}
+      })
       sent++
+      console.log('[MELOGIC PUSH TRACE 4.3] accepted',{
+        traceId,uid,subscriptionId:d.id,fingerprint,endpointHost,
+        statusCode:Number(response?.statusCode||0)
+      })
     }catch(error){
       failed++
       const status=Number(error?.statusCode||0)
-      console.warn('[web-push] delivery failed',{uid,subscriptionId:d.id,status,message:error?.message})
+      console.warn('[MELOGIC PUSH TRACE 4.3] failed',{traceId,uid,subscriptionId:d.id,fingerprint,endpointHost,status,message:error?.message})
       if(status===404 || status===410){
         try{ await d.ref.delete(); removed++ }catch(cleanupError){
           console.warn('[web-push] stale subscription cleanup failed',{uid,subscriptionId:d.id,message:cleanupError?.message})
