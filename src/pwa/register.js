@@ -45,8 +45,61 @@ if (!desktop) {
   observer.observe(document.documentElement, { childList: true, subtree: true })
   refreshInstallControls()
   if (import.meta.env.PROD && window.isSecureContext && 'serviceWorker' in navigator) {
-    const register = () => navigator.serviceWorker.register('/melogic-push-sw.js', { scope: '/', updateViaCache: 'none' })
-      .catch(error => console.warn('[Melogic offline] Registration failed; online browsing remains available.', error))
+    /* melogic-pwa-auto-update-v1
+       Check the worker on every app launch/resume. A newly installed worker
+       claims clients and sends MELOGIC_PWA_UPDATED. Reload at most once per
+       build, and never while the document has unsaved/editing guards. */
+    let registration = null
+    let updateCheck = null
+
+    const pageLooksUnsafeToReload = () =>
+      document.documentElement.dataset.preventPwaReload === 'true' ||
+      document.body?.dataset.preventPwaReload === 'true' ||
+      Boolean(document.querySelector(
+        '[data-unsaved-changes="true"], [data-recording="true"], [data-exporting="true"], [data-uploading="true"]'
+      ))
+
+    const reloadForBuild = build => {
+      const key = `melogic-pwa-reloaded:${build || 'unknown'}`
+      if (sessionStorage.getItem(key) === '1') return
+      if (pageLooksUnsafeToReload()) {
+        console.info('[Melogic PWA] Update ready; reload deferred because active work is in progress.')
+        return
+      }
+      sessionStorage.setItem(key, '1')
+      window.location.reload()
+    }
+
+    navigator.serviceWorker.addEventListener('message', event => {
+      if (event.data?.type !== 'MELOGIC_PWA_UPDATED') return
+      reloadForBuild(String(event.data.build || 'unknown'))
+    })
+
+    const checkForUpdate = async () => {
+      if (!registration || !navigator.onLine || updateCheck) return updateCheck
+      updateCheck = registration.update()
+        .catch(error => console.warn('[Melogic PWA] Update check failed; current app remains usable.', error))
+        .finally(() => { updateCheck = null })
+      return updateCheck
+    }
+
+    const register = async () => {
+      try {
+        registration = await navigator.serviceWorker.register('/melogic-push-sw.js', {
+          scope: '/',
+          updateViaCache: 'none'
+        })
+        await checkForUpdate()
+      } catch (error) {
+        console.warn('[Melogic offline] Registration failed; online browsing remains available.', error)
+      }
+    }
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') void checkForUpdate()
+    })
+    window.addEventListener('online', () => void checkForUpdate())
+
     if (document.readyState === 'complete') void register()
     else window.addEventListener('load', register, { once: true })
   }

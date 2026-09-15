@@ -85,10 +85,17 @@ const SHELL_FILES = ['/offline.html', '/manifest.webmanifest', '/branding/icons/
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(SHELL_CACHE).then(cache => cache.addAll(SHELL_FILES)))
 })
+/* melogic-pwa-auto-update-worker-v1 */
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys()
     await Promise.all(keys.filter(key => key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE).map(key => caches.delete(key)))
+    await clients.claim()
+    const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true })
+    await Promise.all(windows.map(client => client.postMessage({
+      type: 'MELOGIC_PWA_UPDATED',
+      build: SHELL_CACHE.slice(SHELL_CACHE_PREFIX.length)
+    })))
   })())
 })
 self.addEventListener('fetch', event => {
