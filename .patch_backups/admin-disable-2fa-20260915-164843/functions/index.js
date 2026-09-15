@@ -95,7 +95,7 @@ const { updateAdminSettings } = require('./src/admin/updateAdminSettings')
 const { addAdminUserNote } = require('./src/admin/addAdminUserNote')
 const { setUserSuspension } = require('./src/admin/setUserSuspension')
 const { sendAdminSystemMessage } = require('./src/admin/sendAdminSystemMessage')
-const { disableUserMfa, forcePasswordReset, revokeRecoveryCodes, setTemporaryPassword, unverifyUserEmail } = require('./src/admin/adminUserSecurityTools')
+const { forcePasswordReset, revokeRecoveryCodes, setTemporaryPassword, unverifyUserEmail } = require('./src/admin/adminUserSecurityTools')
 const { requestEmailVerification, requestPasswordResetEmail } = require('./src/email/authEmails')
 const { getEmailAdminStatus, listAdminEmailLogs, sendAdminAuthEmail, sendAdminEmail } = require('./src/email/adminEmail')
 const {
@@ -290,7 +290,6 @@ exports.updateAdminSettings = updateAdminSettings
 exports.addAdminUserNote = addAdminUserNote
 exports.setUserSuspension = setUserSuspension
 exports.sendAdminSystemMessage = sendAdminSystemMessage
-exports.disableUserMfa = disableUserMfa
 exports.forcePasswordReset = forcePasswordReset
 exports.revokeRecoveryCodes = revokeRecoveryCodes
 exports.setTemporaryPassword = setTemporaryPassword

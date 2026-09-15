@@ -187,80 +187,6 @@ const unverifyUserEmail = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async
   return { ok: true, emailVerified: false }
 })
 
-const disableUserMfa = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  const actor = await requireAdminActionSecurity(request, 'roleManage')
-  await assertOwnerOnly(actor)
-  const uid = safeUid(request.data?.uid || '')
-  if (uid === actor.uid) {
-    throw new HttpsError('failed-precondition', 'You cannot disable 2FA on your own admin account from the Admin Panel.')
-  }
-
-  const user = await admin.auth().getUser(uid)
-  const enrolledFactors = Array.isArray(user.multiFactor?.enrolledFactors)
-    ? user.multiFactor.enrolledFactors
-    : []
-
-  if (!enrolledFactors.length) {
-    return { ok: true, disabled: false, alreadyDisabled: true, removedFactorCount: 0 }
-  }
-
-  // Firebase Auth is authoritative for MFA enrollment. Clearing enrolledFactors
-  // removes TOTP/other enrolled second factors without needing the lost device.
-  await admin.auth().updateUser(uid, {
-    multiFactor: { enrolledFactors: [] }
-  })
-
-  // Recovery codes belong to the previous MFA enrollment and must not survive
-  // an administrative recovery action.
-  await admin.firestore().collection('users').doc(uid).collection('security').doc('recoveryCodes').set({
-    enabled: false,
-    remaining: 0,
-    codeHashes: [],
-    revokedAt: admin.firestore.FieldValue.serverTimestamp(),
-    revokedBy: actor.uid,
-    revokeReason: 'admin_mfa_disabled',
-    updatedAt: admin.firestore.FieldValue.serverTimestamp()
-  }, { merge: true })
-
-  // Force existing sessions/tokens to refresh against the changed security state.
-  await admin.auth().revokeRefreshTokens(uid)
-
-  await writeAdminAuditLog({
-    actorUid: actor.uid,
-    actorEmail: actor.email,
-    actorRole: actor.adminRole,
-    action: 'admin_mfa_disabled',
-    targetType: 'user',
-    targetId: uid,
-    targetPath: `users/${uid}`,
-    reason: '2FA disabled for account recovery',
-    metadata: {
-      removedFactorCount: enrolledFactors.length,
-      recoveryCodesRevoked: true,
-      refreshTokensRevoked: true
-    }
-  })
-
-  await writeAccountEvent(admin.firestore(), uid, {
-    type: 'mfa_disabled_by_admin',
-    severity: 'critical',
-    title: 'Two-factor authentication disabled',
-    message: 'Melogic Records Support disabled two-factor authentication on your account as part of an account recovery action. Re-enable 2FA from Security after signing in.',
-    actorUid: actor.uid,
-    actorType: 'admin',
-    source: 'admin-security-tools',
-    path: '/account/security',
-    metadata: { removedFactorCount: enrolledFactors.length }
-  }).catch(() => {})
-
-  return {
-    ok: true,
-    disabled: true,
-    alreadyDisabled: false,
-    removedFactorCount: enrolledFactors.length
-  }
-})
-
 const revokeRecoveryCodes = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const actor = await requireAdminActionSecurity(request, 'roleManage')
   await assertOwnerOnly(actor)
@@ -297,7 +223,6 @@ const revokeRecoveryCodes = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
 })
 
 module.exports = {
-  disableUserMfa,
   forcePasswordReset,
   revokeRecoveryCodes,
   setTemporaryPassword,

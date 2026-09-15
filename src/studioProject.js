@@ -13306,10 +13306,44 @@ function bindEditorEvents() {
     bindMidiRegionEvents()
   }
 
+  // The renderedTimelineBeatRange cache is an optimization, not rendering authority.
+  // During native horizontal scrolling it can become stale relative to the actual
+  // mounted ruler/grid DOM. When that happens the viewport may move beyond the last
+  // mounted grid division while the cached range still says the viewport is covered.
+  // Zoom appears to "fix" the problem because zoom always rebuilds the musical grid.
+  //
+  // Use the mounted arrangement divisions as a second, DOM-authoritative guard so
+  // scrolling can never expose an unrendered section of the timeline.
+  const mountedTimelineGridNeedsRefresh = (visibleRange = getTimelineRenderBeatRange({ bufferViewports: 0 })) => {
+    const gridInner = app.querySelector('[data-arrangement-grid-inner]')
+    if (!gridInner) return true
+
+    const divisions = gridInner.querySelectorAll('[data-grid-division][data-musical-beat]')
+    if (!divisions.length) return true
+
+    let mountedStart = Infinity
+    let mountedEnd = -Infinity
+
+    divisions.forEach((division) => {
+      const beat = Number(division.dataset.musicalBeat)
+      if (!Number.isFinite(beat)) return
+      mountedStart = Math.min(mountedStart, beat)
+      mountedEnd = Math.max(mountedEnd, beat)
+    })
+
+    if (!Number.isFinite(mountedStart) || !Number.isFinite(mountedEnd)) return true
+
+    const epsilon = 1e-6
+    return Number(visibleRange.startBeat) < mountedStart - epsilon
+      || Number(visibleRange.endBeat) > mountedEnd + epsilon
+  }
+
   let timelineViewportRefreshRaf = 0
   const scheduleTimelineViewportRefresh = ({ force = false } = {}) => {
     const visibleRange = getTimelineRenderBeatRange({ bufferViewports: 0 })
-    if (!force && !timelineViewportNeedsRefresh(renderedTimelineBeatRange, visibleRange)) return
+    const cachedRangeNeedsRefresh = timelineViewportNeedsRefresh(renderedTimelineBeatRange, visibleRange)
+    const mountedGridNeedsRefresh = mountedTimelineGridNeedsRefresh(visibleRange)
+    if (!force && !cachedRangeNeedsRefresh && !mountedGridNeedsRefresh) return
     if (timelineViewportRefreshRaf) return
     timelineViewportRefreshRaf = requestAnimationFrame(() => {
       timelineViewportRefreshRaf = 0
@@ -13548,7 +13582,16 @@ function bindEditorEvents() {
     syncTrackVerticalScroll(grid)
     // A matching zoom scroll acknowledges the revision already painted above.
     // Every other scroll remains a normal native-scroll viewport update.
-    if (scrollPolicy.shouldRefreshViewport) scheduleTimelineViewportRefresh()
+    //
+    // IMPORTANT: also consult the mounted grid itself. This closes a failure mode
+    // where the cached rendered beat range can drift from the divisions currently
+    // mounted in the DOM, exposing a blank timeline until a zoom rebuild occurs.
+    if (scrollPolicy.shouldRefreshViewport) {
+      const visibleRange = getTimelineRenderBeatRange({ bufferViewports: 0 })
+      scheduleTimelineViewportRefresh({
+        force: mountedTimelineGridNeedsRefresh(visibleRange)
+      })
+    }
     if (scrollPolicy.shouldRefreshWaveforms) scheduleVisibleAudioWaveformRefresh()
   }, { passive:true })
   trackList?.addEventListener('wheel', (event) => { if (!grid) return; event.preventDefault(); markTimelineUserInteraction(); grid.scrollTop = clamp(grid.scrollTop + normalizedWheelPixels(event, 'y'), 0, Math.max(0, grid.scrollHeight - grid.clientHeight)) }, { passive:false })

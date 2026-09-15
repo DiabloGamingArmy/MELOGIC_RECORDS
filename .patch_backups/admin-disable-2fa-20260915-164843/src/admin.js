@@ -34,7 +34,6 @@ import {
   reviewProductDecision,
   searchAdminGrantProducts,
   addAdminUserNote,
-  disableUserMfa,
   forcePasswordReset,
   revokeRecoveryCodes,
   setAdminUserRole,

@@ -32,7 +32,7 @@ const isDevelopmentRuntime = import.meta.env.DEV
 
 const ADMIN_STEP_UP_CALLABLES = new Set([
   'grantAdminProducts','repairAdminCheckoutOrder','reviewProductDecision','addAdminUserNote',
-  'disableUserMfa','forcePasswordReset','revokeRecoveryCodes','setAdminUserRole','sendAdminAuthEmail',
+  'forcePasswordReset','revokeRecoveryCodes','setAdminUserRole','sendAdminAuthEmail',
   'sendAdminEmail','sendAdminSystemMessage','setTemporaryPassword','unverifyUserEmail',
   'setUserSuspension','updateAdminAccountPermissions','updateReportDecision','updateAdminSettings',
   'uploadSellerAgreementMarkdown','adminHideProduct','adminUnhideProduct','adminRemoveProduct'
@@ -2095,13 +2095,6 @@ export async function sendAdminSystemMessage({ recipientUid = '', category = 'su
   if (!functions) throw new Error('Functions are not configured.')
   const callable = adminProtectedCallable('sendAdminSystemMessage')
   const result = await callable({ recipientUid, category, priority, subject, body, actionLabel, actionUrl, internalNote })
-  return result?.data || { ok: false }
-}
-
-export async function disableUserMfa(uid = '') {
-  if (!functions) throw new Error('Functions are not configured.')
-  const callable = adminProtectedCallable('disableUserMfa')
-  const result = await callable({ uid })
   return result?.data || { ok: false }
 }
 
