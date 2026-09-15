@@ -1,4 +1,4 @@
-import { doc, serverTimestamp, setDoc, deleteDoc } from 'firebase/firestore'
+import { doc, serverTimestamp, setDoc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 
 const SW_URL = '/melogic-push-sw.js'
@@ -60,7 +60,13 @@ export async function enableWebPushForUser(uid) {
 
   const json = subscription.toJSON()
   const id = (await sha256Hex(subscription.endpoint)).slice(0, 40)
-  await setDoc(doc(db, 'users', uid, 'pushSubscriptions', id), {
+  const subscriptionRef = doc(db, 'users', uid, 'pushSubscriptions', id)
+
+  // A browser may reuse the same push endpoint after unsubscribe/re-subscribe.
+  // Because the document ID is derived from that endpoint, this can be an
+  // UPDATE rather than a CREATE. Keep createdAt immutable on re-enrollment so
+  // Firestore's update allowlist is satisfied.
+  const subscriptionData = {
     endpoint: json.endpoint,
     expirationTime: json.expirationTime || null,
     keys: {
@@ -71,9 +77,18 @@ export async function enableWebPushForUser(uid) {
     userAgent: navigator.userAgent || '',
     standalone: capability.standalone,
     enabled: true,
-    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
-  }, { merge: true })
+  }
+
+  const existing = await getDoc(subscriptionRef)
+  if (existing.exists()) {
+    await updateDoc(subscriptionRef, subscriptionData)
+  } else {
+    await setDoc(subscriptionRef, {
+      ...subscriptionData,
+      createdAt: serverTimestamp()
+    })
+  }
 
   return { subscription, id }
 }
