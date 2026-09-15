@@ -903,10 +903,10 @@ function secondsToBeats(seconds = 0, tempoMap = null) {
 const waveformWindowSeconds = 0.1
 // Keep the waveform density tied to the horizontal space it occupies, rather
 // than thinning a long clip merely because it has more total samples.
-const WAVEFORM_PEAKS_PER_PIXEL = 4
+const WAVEFORM_PEAKS_PER_PIXEL = 2.75
 const WAVEFORM_MIN_RENDERED_PEAKS = 96
-const WAVEFORM_MAX_RENDERED_PEAKS = 262144
-const WAVEFORM_PERSISTED_MAX_PEAKS = 131072
+const WAVEFORM_MAX_RENDERED_PEAKS = 32768
+const WAVEFORM_PERSISTED_MAX_PEAKS = 16384
 const MAX_TIMELINE_POSITIVE_BEATS = 16384
 const minAudioRegionSeconds = 0.05
 const AUDIO_QUANTIZE_OPTIONS = ['off', '1/4', '1/8', '1/16', '1/32']
@@ -7459,21 +7459,17 @@ if (!globalThis.__souraPitchTraceCanonicalZoomV45) {
         midiRollBeatWidth = Math.round(
           clamp(
             viewportWidth / regionLength,
-            1,
-            1000000
+            12,
+            720
           )
         )
       } else {
         midiRollBeatWidth = Math.round(
           clamp(
             midiRollBeatWidth
-            * (
-                direction === 'in'
-                  ? (midiRollBeatWidth >= 4096 ? 1.08 : midiRollBeatWidth >= 1024 ? 1.12 : 1.18)
-                  : 1 / (midiRollBeatWidth >= 4096 ? 1.08 : midiRollBeatWidth >= 1024 ? 1.12 : 1.18)
-              ),
-            1,
-            1000000
+            * (direction === 'in' ? 1.18 : 1 / 1.18),
+            12,
+            720
           )
         )
       }
