@@ -399,8 +399,7 @@ function setupMobileCommunitySurfaceBehavior() {
 }
 
 /* melogic-community-mobile-interactions-patch3 */
-function setupMobileCommunityShellActions()
-setupMobileCommunitySurfaceBehavior() {
+function setupMobileCommunityShellActions() {
   if (document.documentElement.dataset.mobileCommunityActionsReady === 'true') return
   document.documentElement.dataset.mobileCommunityActionsReady = 'true'
   document.addEventListener('click', (event) => {
@@ -430,6 +429,7 @@ setupMobileCommunitySurfaceBehavior() {
 }
 
 setupMobileCommunityShellActions()
+setupMobileCommunitySurfaceBehavior()
 
 function setupCommunityPendingLeaveWarning() {
   if (communityBeforeUnloadReady) return
