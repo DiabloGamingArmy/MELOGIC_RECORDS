@@ -5376,3 +5376,25 @@ body.community-chrome-hidden .community-feed-header,body.community-chrome-hidden
 @media(max-width:760px) and (prefers-reduced-motion:reduce){
   .community-feed-header{transition:none!important}
 }
+
+/* melogic-community-mobile-detail-polish-v1 */
+@media(max-width:760px){
+.community-detail-topbar{width:100%!important;min-height:54px!important;padding:8px 16px!important;margin:0!important;display:grid!important;grid-template-columns:auto minmax(0,1fr)!important;align-items:center!important;gap:12px!important;border-bottom:1px solid rgba(255,255,255,.10)!important;background:#07090d!important}
+.community-detail-topbar .button{grid-column:1!important;grid-row:1!important;min-height:38px!important;padding:0 14px!important;border-radius:999px!important;align-self:center!important}
+.community-detail-topbar>div{grid-column:2!important;grid-row:1!important;min-width:0!important;display:flex!important;flex-direction:row-reverse!important;align-items:center!important;justify-content:flex-start!important;gap:10px!important;overflow:hidden!important}
+.community-detail-topbar .eyebrow{margin:0!important;flex:0 0 auto!important;font-size:11px!important;line-height:1!important;letter-spacing:.14em!important}
+.community-detail-topbar h1{margin:0!important;min-width:0!important;font-size:15px!important;line-height:1.2!important;font-weight:750!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.community-post-detail-card,.community-post-detail-card .community-comments,.community-post-detail-card .community-comment-composer,.community-post-detail-card .community-detail-composer,.community-comments,.community-comment-composer,.community-detail-composer{background:#07090d!important;background-image:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important;filter:none!important}
+.community-post-detail-card .community-comments,.community-comments{border-radius:0!important}
+.community-comment-composer,.community-detail-composer{position:relative!important;isolation:isolate!important;overflow:visible!important}
+.community-comment-composer::before,.community-comment-composer::after,.community-detail-composer::before,.community-detail-composer::after{content:none!important;display:none!important;background:none!important;filter:none!important}
+.community-comment-composer textarea,.community-detail-composer textarea{background:#080b10!important;background-image:none!important;-webkit-backdrop-filter:none!important;backdrop-filter:none!important;box-shadow:none!important}
+}
+@media(max-width:760px) and (display-mode:standalone){
+.community-feed-header::before{transition:transform 260ms cubic-bezier(.22,.61,.36,1),opacity 180ms ease!important;will-change:transform,opacity}
+body.community-chrome-hidden .community-feed-header::before{transform:translate3d(0,100%,0)!important;opacity:0!important}
+body:not(.community-chrome-hidden) .community-feed-header::before{transform:translate3d(0,0,0)!important;opacity:1!important}
+.mobile-bottom-nav,.mobile-app-bottom-nav,.community-mobile-bottom-nav,nav[data-mobile-bottom-nav]{padding-bottom:max(2px,calc(env(safe-area-inset-bottom,0px) - 8px))!important;transform:translate3d(0,6px,0)!important}
+.community-detail-topbar{padding-top:max(8px,env(safe-area-inset-top,0px))!important}
+}
+@media(max-width:760px) and (prefers-reduced-motion:reduce){.community-feed-header::before{transition:none!important}}
