@@ -9,6 +9,7 @@ import { db, getEffectiveProfile, savePrivateProfilePreferences, saveProfileChan
 import { storage } from './firebase/storage'
 import { ROUTES } from './utils/routes'
 import { normalizeNotificationPreferences } from './data/notificationPreferences'
+import { ensureMelogicPushServiceWorker, getWebPushCapability } from './data/webPushService'
 
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
@@ -67,6 +68,15 @@ app.innerHTML = `
 `
 
 initShellChrome()
+
+// Install the push-capable service worker without prompting for notification
+// permission. Permission/subscription is intentionally reserved for a direct
+// user gesture in the next Web Push patch.
+if (getWebPushCapability().supported) {
+  ensureMelogicPushServiceWorker().catch((error) => {
+    console.warn('[web-push] service worker registration failed', error)
+  })
+}
 
 const editRoot = document.querySelector('[data-edit-root]')
 let hasWarnedEditProfile = false
