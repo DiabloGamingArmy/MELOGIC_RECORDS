@@ -1,3 +1,4 @@
+import { validateEditorState } from '../studio/model/editorStateValidation.js'
 import { addDoc, collection, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore'
 import { db } from '../firebase/firestore'
 
@@ -63,7 +64,7 @@ export function sanitizeForFirestore(value, { inArray = false } = {}) {
   return output
 }
 
-export function normalizeStudioProject(projectId, raw = {}) { return { id: String(projectId || '').trim(), title: sanitizeTitle(raw.title), ownerId: String(raw.ownerId || '').trim(), collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds.filter(Boolean) : [], bpm: clampBpm(raw.bpm), key: sanitizeKey(raw.key), timeSignature: String(raw.timeSignature || '4/4').trim().slice(0, 20) || '4/4', type: sanitizeType(raw.type), visibility: 'private', createdAt: raw.createdAt || null, updatedAt: raw.updatedAt || null, lastOpenedAt: raw.lastOpenedAt || null, version: 1, tracks: Array.isArray(raw.tracks) ? raw.tracks : [], timeline: raw.timeline && typeof raw.timeline === 'object' ? raw.timeline : { bars: 32, snap: 'bar' }, mixer: raw.mixer && typeof raw.mixer === 'object' ? raw.mixer : { masterVolume: 0 }, collaboration: raw.collaboration && typeof raw.collaboration === 'object' ? raw.collaboration : { activeUsers: [] }, settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : {}, editorState: raw.editorState && typeof raw.editorState === 'object' ? raw.editorState : null } }
+export function normalizeStudioProject(projectId, raw = {}) { return { id: String(projectId || '').trim(), title: sanitizeTitle(raw.title), ownerId: String(raw.ownerId || '').trim(), collaboratorIds: Array.isArray(raw.collaboratorIds) ? raw.collaboratorIds.filter(Boolean) : [], bpm: clampBpm(raw.bpm), key: sanitizeKey(raw.key), timeSignature: String(raw.timeSignature || '4/4').trim().slice(0, 20) || '4/4', type: sanitizeType(raw.type), visibility: 'private', createdAt: raw.createdAt || null, updatedAt: raw.updatedAt || null, lastOpenedAt: raw.lastOpenedAt || null, version: 1, tracks: Array.isArray(raw.tracks) ? raw.tracks : [], timeline: raw.timeline && typeof raw.timeline === 'object' ? raw.timeline : { bars: 32, snap: 'bar' }, mixer: raw.mixer && typeof raw.mixer === 'object' ? raw.mixer : { masterVolume: 0 }, collaboration: raw.collaboration && typeof raw.collaboration === 'object' ? raw.collaboration : { activeUsers: [] }, settings: raw.settings && typeof raw.settings === 'object' ? raw.settings : {}, editorState: raw.editorState ?? null } }
 
 export async function listMyStudioProjects(uid) {
   const id = String(uid || '').trim(); if (!id) { console.warn('[studioProjectService] owned query skipped, missing uid'); return [] }
@@ -137,7 +138,8 @@ function compactStudioEditorStateForFirestore(editorState) {
 
 export async function saveStudioProjectEditorState(projectId, editorState) {
   const id = String(projectId || '').trim()
-  if (!id || !editorState || typeof editorState !== 'object') return
+  if (!id) throw new Error('A project ID is required to save.')
+  validateEditorState(editorState)
   const undefinedPaths = findUndefinedPaths(editorState, 'editorState')
   if (undefinedPaths.length && isDev()) console.warn('[studioProject] Firestore payload had undefined fields', undefinedPaths)
   const safeEditorState = compactStudioEditorStateForFirestore(editorState)

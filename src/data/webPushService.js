@@ -29,7 +29,7 @@ export function getWebPushCapability() {
 
 export async function ensureMelogicPushServiceWorker() {
   if (!('serviceWorker' in navigator)) throw new Error('Service workers are not supported on this device.')
-  return navigator.serviceWorker.register(SW_URL, { scope: '/' })
+  return navigator.serviceWorker.register(SW_URL, { scope: '/', updateViaCache: 'none' })
 }
 
 export async function getCurrentWebPushSubscription() {

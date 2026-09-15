@@ -1,5 +1,5 @@
 {
-  "name": "Melogic",
+  "name": "Melogic Records",
   "short_name": "Melogic",
   "description": "Melogic Records creative platform.",
   "start_url": "/",
@@ -25,6 +25,17 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "id": "/",
+  "shortcuts": [
+    {
+      "name": "My Library",
+      "url": "/library"
+    },
+    {
+      "name": "Studio",
+      "url": "/studio"
     }
   ]
 }

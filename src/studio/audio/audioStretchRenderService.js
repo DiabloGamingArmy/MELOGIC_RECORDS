@@ -70,11 +70,15 @@ export function audioBufferToWavBlob(audioBuffer, { bitDepth = 16 } = {}) {
   const bytesPerSample = wavBitDepth / 8
   const blockAlign = channels * bytesPerSample
   const dataSize = samples * blockAlign
-  const buffer = new ArrayBuffer(44 + dataSize)
+  const padding = dataSize % 2
+  if (!Number.isSafeInteger(dataSize) || dataSize + 44 + padding > 0xffffffff) {
+    throw new Error('Rendered audio exceeds the WAV 4 GB limit. Use a shorter region.')
+  }
+  const buffer = new ArrayBuffer(44 + dataSize + padding)
   const view = new DataView(buffer)
 
   writeAscii(view, 0, 'RIFF')
-  view.setUint32(4, 36 + dataSize, true)
+  view.setUint32(4, buffer.byteLength - 8, true)
   writeAscii(view, 8, 'WAVE')
   writeAscii(view, 12, 'fmt ')
   view.setUint32(16, 16, true)

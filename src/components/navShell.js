@@ -67,6 +67,7 @@ export function navShell(options = {}) {
               <a href="${ROUTES.orders}" data-nav-menu-orders role="menuitem">Orders</a>
               <a href="${ROUTES.billingPayouts}" data-nav-menu-payouts role="menuitem">Billing &amp; Payouts</a>
               <a href="${ROUTES.accountSecurity}" data-nav-menu-security role="menuitem">Security</a>
+              <button type="button" data-install-melogic role="menuitem" hidden>Install Melogic</button>
               <button type="button" data-nav-menu-signout role="menuitem">Log Out</button>
               <a href="${ROUTES.auth}" data-nav-menu-auth role="menuitem">Sign In / Sign Up</a>
             </div>

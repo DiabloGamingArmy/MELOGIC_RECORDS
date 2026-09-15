@@ -1,0 +1,22 @@
+/* Keep native browser navigation and pinch zoom available. */
+.melogic-install-dialog {
+  max-width: min(28rem, calc(100vw - 2rem));
+  padding: 1.5rem;
+  border: 1px solid #484848;
+  border-radius: 1rem;
+  background: #151515;
+  color: #f5f5f5;
+  line-height: 1.6;
+}
+.melogic-install-dialog::backdrop { background: rgb(0 0 0 / 65%); }
+.melogic-install-dialog button { min-height: 48px; padding: .5rem 1.25rem; }
+[data-install-melogic] { min-height: 48px; touch-action: manipulation; }
+[data-install-melogic][hidden] { display: none !important; }
+.melogic-install-dialog :focus-visible, [data-install-melogic]:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+@media (display-mode: standalone) {
+  .nav-shell { padding-top: env(safe-area-inset-top, 0px); }
+  .nav-inner { padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); }
+}

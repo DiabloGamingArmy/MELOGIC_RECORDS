@@ -1,3 +1,5 @@
+import { validateEditorState } from './studio/model/editorStateValidation.js'
+import { createEditorSaveQueue } from './studio/model/editorSaveQueue.js'
 import { openExportDialog } from './studio/export/ExportDialog.js'
 import { createMasterMixBus, createTrackMixChannel, connectTrackMixEffects } from './studio/audio/projectMixGraph.js'
 import { createScoreHost } from './studio/score/scoreHost.js'
@@ -763,7 +765,15 @@ const activeRecordingNotes = new Map()
 let cycleRange = null
 let cycleDrag = null
 let spacePlaybackStartX = null
-let saveTimer = 0
+const editorSaveQueue = createEditorSaveQueue({
+  capture: () => ({ id: projectState.id, state: buildEditorStateForSave() }),
+  write: ({ id, state }) => saveStudioProjectEditorState(id, state),
+  onStatus: (status, error) => {
+    saveStatus = status
+    if (error) console.error('[studioProject] save editorState failed', error)
+    updateEditorSaveStatus()
+  }
+})
 let isEditorLoaded = false
 let saveStatus = 'Saved'
 let bottomPanelMotion = ''
@@ -1415,7 +1425,8 @@ async function uploadSouraAudioBlob(blob, { clipId, suffix = '', onProgress = nu
   return path
 }
 function audioImportCacheKey(file = {}) {
-  return `${file.name || 'audio'}:${file.size || 0}:${file.lastModified || 0}:${file.type || ''}`
+  // File metadata is not a content identity: distinct files may share all of it.
+  return file
 }
 async function decodeAudioFileForImport(file) {
   if (!isSupportedAudioFile(file)) throw new Error('Unsupported audio file.')
@@ -1446,6 +1457,9 @@ async function decodeAudioFileForImport(file) {
     return metadata
   })().catch((error) => {
     audioImportPreviewCache.delete(key)
+    if (error?.name === 'EncodingError' || error?.name === 'NotSupportedError') {
+      throw new Error(`Could not decode ${file.name || 'this audio file'}. This browser may not support its codec, or the file may be damaged. Try a PCM WAV copy.`)
+    }
     throw error
   })
   audioImportPreviewCache.set(key, { promise })
@@ -1516,7 +1530,7 @@ function getAudioTrimStartSeconds(region = {}) {
 }
 function getAudioTrimEndSeconds(region = {}) {
   const fileDuration = getAudioFileDurationSeconds(region)
-  const raw = Number.isFinite(Number(region.trimEndSeconds)) ? Number(region.trimEndSeconds) : fileDuration
+  const raw = (region.trimEndSeconds != null && Number.isFinite(Number(region.trimEndSeconds))) ? Number(region.trimEndSeconds) : fileDuration
   return clamp(raw, getAudioTrimStartSeconds(region) + minAudioRegionSeconds, fileDuration)
 }
 function getAudioSourceDurationSeconds(region = {}) {
@@ -5940,7 +5954,7 @@ function runDawTopMenuAction(action = '') {
   const track = getSelectedTrack()
   const currentBeat = clampBeat(xToBeat(timelineState.playheadX))
   if (action === 'export-project') { renderEditor(); openProjectExport(); return }
-  if (action === 'save-project') { scheduleEditorSave(); renderEditor(); return }
+  if (action === 'save-project') { scheduleEditorSave(); void editorSaveQueue.flush().catch(() => {}); renderEditor(); return }
   if (action === 'import-audio') { openAudioImportPicker(); return }
   if (action === 'undo') { undoDawEdit(); return }
   if (action === 'redo') { redoDawEdit(); return }
@@ -6022,7 +6036,7 @@ function cloneRegionForState(region = {}, { persist = false } = {}) {
     syncAudioRegionTimeline(copy)
     const fileDurationSeconds = getAudioFileDurationSeconds(copy)
     const trimStartSeconds = getAudioTrimStartSeconds(copy)
-    const trimEndSeconds = Number.isFinite(Number(copy.trimEndSeconds)) ? getAudioTrimEndSeconds(copy) : null
+    const trimEndSeconds = (copy.trimEndSeconds != null && Number.isFinite(Number(copy.trimEndSeconds))) ? getAudioTrimEndSeconds(copy) : null
     const visibleDurationSeconds = getAudioRegionVisibleDurationSeconds(copy)
     copy.clipId = copy.clipId || copy.id
     copy.timelineStartBeats = Number(copy.timelineStartBeats ?? copy.startBeat) || 0
@@ -6092,7 +6106,7 @@ function normalizeLoadedRegion(region = {}) {
   const type = region.type === 'audio' ? 'audio' : 'midi'
   const rawFileDuration = Math.max(minAudioRegionSeconds, Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || minAudioRegionSeconds)
   const rawTrimStart = clamp(Number(region.trimStartSeconds) || 0, 0, Math.max(0, rawFileDuration - minAudioRegionSeconds))
-  const rawTrimEnd = Number.isFinite(Number(region.trimEndSeconds)) ? clamp(Number(region.trimEndSeconds), rawTrimStart + minAudioRegionSeconds, rawFileDuration) : rawFileDuration
+  const rawTrimEnd = (region.trimEndSeconds != null && Number.isFinite(Number(region.trimEndSeconds))) ? clamp(Number(region.trimEndSeconds), rawTrimStart + minAudioRegionSeconds, rawFileDuration) : rawFileDuration
   const rawSourceDuration = Math.max(minAudioRegionSeconds, rawTrimEnd - rawTrimStart)
   const rawVisibleDuration = getRawAudioRegionVisibleDurationSeconds(region) || rawSourceDuration
   const loadedStretch = normalizeAudioStretch(region.stretch, {
@@ -6121,7 +6135,7 @@ function normalizeLoadedRegion(region = {}) {
     type,
     notes: type === 'midi' && Array.isArray(region.notes) ? region.notes.map((note)=>({ ...note })) : [],
     trimStartSeconds: Number(region.trimStartSeconds) || 0,
-    trimEndSeconds: Number.isFinite(Number(region.trimEndSeconds)) ? Number(region.trimEndSeconds) : null,
+    trimEndSeconds: (region.trimEndSeconds != null && Number.isFinite(Number(region.trimEndSeconds))) ? Number(region.trimEndSeconds) : null,
     visibleDurationSeconds: Number(region.visibleDurationSeconds) || Number(region.durationSeconds) || null,
     fileDurationSeconds: Number(region.fileDurationSeconds || region.audioClip?.fileDurationSeconds || region.durationSeconds) || null,
     playbackRate: Number(region.playbackRate) || 1,
@@ -6230,7 +6244,7 @@ function buildEditorStateForSave(){
   }
 }
 function applyLoadedEditorState(editorState) {
-  if (!editorState || typeof editorState !== 'object') return
+  validateEditorState(editorState, SOURA_EDITOR_FORMAT_VERSION)
   scoreDocument = normalizeScoreDocument(editorState.scoreDocument)
   const tl = editorState.timeline || {}
   if (Number.isFinite(tl.bars)) timelineState.bars = Math.max(2, Number(tl.bars))
@@ -6287,6 +6301,10 @@ function applyLoadedEditorState(editorState) {
   isMetronomeEnabled = metronomeSettings.enabled
 
   if (Array.isArray(editorState.tracks)) {
+    const savedIds = new Set(editorState.tracks.filter(Boolean).map(track => track.id))
+    for (let index = tracks.length - 1; index >= 0; index--) {
+      if (!savedIds.has(tracks[index].id)) tracks.splice(index, 1)
+    }
     editorState.tracks.forEach((saved) => {
       if (!saved?.id) return
       const savedType = normalizeTrackType(saved.type)
@@ -6342,7 +6360,11 @@ function applyLoadedEditorState(editorState) {
   timelineState.playheadX = Number.isFinite(Number(tl.playheadX)) ? Number(tl.playheadX) : timelineState.playheadX
 }
 function updateEditorSaveStatus(){ app.querySelector('[data-save-status]')?.replaceChildren(document.createTextNode(saveStatus)) }
-function scheduleEditorSave(){ playbackContentRevision += 1; if(!isEditorLoaded||!projectState?.id) return; saveStatus='Saving…'; updateEditorSaveStatus(); if(saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(async()=>{ try{ await saveStudioProjectEditorState(projectState.id, buildEditorStateForSave()); saveStatus='Saved' }catch(err){ console.error('[studioProject] save editorState failed',err); saveStatus='Save failed' } updateEditorSaveStatus() },800) }
+function scheduleEditorSave() {
+  playbackContentRevision += 1
+  if (!isEditorLoaded || !projectState?.id) return
+  editorSaveQueue.schedule()
+}
 
 async function hydrateRenderedAudioRegionRuntime(region) {
   if (!region?.id || region.type !== 'audio') return false
@@ -7116,7 +7138,7 @@ function updateTimelineEdgeAutoScroll(event) {
   if (!timelineEdgeScrollRaf) timelineEdgeScrollRaf = requestAnimationFrame(tickTimelineEdgeAutoScroll)
 }
 
-function renderState(message, buttonHref = ROUTES.studio) { app.innerHTML = `<main class="studio-editor-page studio-editor-state"><div><h1>${message}</h1><a class="button" href="${buttonHref}">Back to Studio</a></div></main>` }
+function renderState(message, buttonHref = ROUTES.studio) { app.innerHTML = `<main class="studio-editor-page studio-editor-state"><div><h1>${esc(message)}</h1><a class="button" href="${buttonHref}">Back to Studio</a></div></main>` }
 
 function setEditorMenuOpen(open) {
   isEditorMenuOpen = open
@@ -10029,7 +10051,7 @@ async function createAudioRegionFromFile({
     return region
   } catch (error) {
     console.warn('[studioProject] audio import failed', { name: error?.name, message: error?.message })
-    recordingStatus = error?.message === 'Unsupported audio file.' ? 'Unsupported audio file.' : 'Could not decode this audio file.'
+    recordingStatus = error?.message || 'Audio import failed. Try a PCM WAV copy or a smaller file.'
     renderEditor()
     return null
   }
@@ -14255,7 +14277,7 @@ function cleanupDawSessionResources() {
   meterRaf = 0
   timelineEdgeScrollRaf = 0
   audioImportPreviewRaf = 0
-  if (saveTimer) window.clearTimeout(saveTimer)
+  void editorSaveQueue.flush().catch(() => {})
   if (countInTimer) window.clearInterval(countInTimer)
   if (timelineExtensionRepeatTimer) window.clearInterval(timelineExtensionRepeatTimer)
   try { pitchTraceAnalysis.worker?.terminate?.() } catch {}
@@ -14291,10 +14313,14 @@ function cleanupDawSessionResources() {
 }
 if(!window.__melogicDawInstrumentCleanupBound){
   window.__melogicDawInstrumentCleanupBound=true
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') void editorSaveQueue.flush().catch(() => {})
+  })
   window.addEventListener('beforeunload',(event)=>{
-    if(activeRecording){
+    if(activeRecording || editorSaveQueue.pending()){
+      void editorSaveQueue.flush().catch(() => {})
       event.preventDefault()
-      event.returnValue='Recording is in progress. Are you sure you want to leave?'
+      event.returnValue='Recording or unsaved changes are still pending.'
     }
   })
   window.addEventListener('pagehide', cleanupDawSessionResources, { once:true })
@@ -14472,7 +14498,7 @@ async function init() {
     projectState =
       project
 
-    if (projectState.editorState) {
+    if (projectState.editorState != null) {
       applyLoadedEditorState(
         projectState.editorState
       )
@@ -14618,7 +14644,7 @@ async function init() {
     )
 
     renderState(
-      'Soura could not load this project.'
+      error?.message || 'Soura could not load this project.'
     )
   }
 }

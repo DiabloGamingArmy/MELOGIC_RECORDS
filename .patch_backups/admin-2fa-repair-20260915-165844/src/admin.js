@@ -3045,7 +3045,6 @@ function renderAccountActionMenu({ uid, user, publicProfile, isSelf, canNote, ca
         <button type="button" class="${itemClass}" data-admin-force-reset="${escapeHtml(uid)}" ${can('userModerate') && user?.email ? '' : 'disabled'}>Force Reset</button>
         <button type="button" class="${itemClass}" data-admin-temp-password="${escapeHtml(uid)}" ${can('roleManage') ? '' : 'disabled'}>Set Temporary Password</button>
         <button type="button" class="${itemClass} is-danger" data-admin-revoke-recovery="${escapeHtml(uid)}" ${can('roleManage') && user?.recoveryCodesGenerated ? '' : 'disabled'}>Revoke Codes</button>
-        <button type=\"button\" class=\"${itemClass} is-danger\" data-admin-disable-mfa=\"${escapeHtml(uid)}\" ${can('roleManage') && !isSelf && !actioning ? '' : 'disabled'}>Disable / Remove 2FA</button>
         <button type="button" class="${itemClass}" data-admin-auth-email="email_verification" data-admin-auth-email-uid="${escapeHtml(uid)}" ${can('emailSend') && user?.email && !user?.emailVerified ? '' : 'disabled'}>Send Verification</button>
         <button type="button" class="${itemClass} is-danger" data-admin-unverify-email="${escapeHtml(uid)}" ${can('roleManage') && user?.email && user?.emailVerified && !isSelf ? '' : 'disabled'}>Unverify Email</button>
         <button type="button" class="${itemClass}" data-admin-security-notice-user="${escapeHtml(uid)}" ${can('emailSend') ? '' : 'disabled'}>Security Notice</button>
@@ -7420,28 +7419,6 @@ async function submitTemporaryPassword(uid = '') {
   }
 }
 
-async function submitDisableUserMfa(uid = '') {
-  if (!uid) return
-  const selected = state.adminData?.users?.profile || {}
-  const label = selected.displayName || selected.username || selected.email || uid
-  if (!window.confirm(`Disable / remove two-factor authentication for ${label}?\n\nUse this only after verifying the account owner has lost their authenticator device and recovery codes. This removes enrolled MFA factors, revokes recovery codes, and revokes existing refresh tokens.`)) return
-  state.adminData.users.actioning = 'disable-mfa'
-  state.error = ''
-  state.message = ''
-  render()
-  try {
-    const result = await disableUserMfa(uid)
-    state.message = result?.alreadyDisabled ? 'This account does not currently have an enrolled second factor.' : `2FA removed successfully. ${Number(result?.removedFactorCount || 0)} factor(s) removed.`
-    await loadAdminSectionData('users', { silent: true })
-  } catch (error) {
-    console.warn('[admin] disable/remove 2FA failed', { code: error?.code, message: error?.message, details: error?.details })
-    state.error = error?.message || 'Could not disable two-factor authentication.'
-  } finally {
-    state.adminData.users.actioning = ''
-    render()
-  }
-}
-
 async function submitUnverifyEmail(uid = '') {
   if (!uid) return
   state.adminData.users.actioning = 'unverify-email'
@@ -8939,9 +8916,6 @@ function bindEvents() {
   })
   app.querySelectorAll('[data-admin-revoke-recovery]').forEach((button) => {
     button.addEventListener('click', () => submitRevokeRecoveryCodes(button.getAttribute('data-admin-revoke-recovery') || ''))
-  })
-  app.querySelectorAll('[data-admin-disable-mfa]').forEach((button) => {
-    button.addEventListener('click', () => submitDisableUserMfa(button.getAttribute('data-admin-disable-mfa') || ''))
   })
   app.querySelectorAll('[data-admin-security-notice-user]').forEach((button) => {
     button.addEventListener('click', () => openAdminSecurityNotice(button.getAttribute('data-admin-security-notice-user') || ''))

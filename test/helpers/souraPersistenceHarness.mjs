@@ -1,3 +1,4 @@
+import { validateEditorState } from '../../src/studio/model/editorStateValidation.js'
 import fs from 'node:fs'
 import vm from 'node:vm'
 import * as portable from '../../src/studio/portability/portableTrackRender.js'
@@ -8,7 +9,7 @@ export function section(start, end) { return source.slice(source.indexOf(start),
 export function persistenceHarness(extra = {}) {
   const copy = value => value === undefined ? undefined : JSON.parse(JSON.stringify(value))
   const context = vm.createContext({
-    ...portable, normalizeScoreDocument, normalizeNoteNotation, normalizeRegionScore,
+    ...portable, validateEditorState, normalizeScoreDocument, normalizeNoteNotation, normalizeRegionScore,
     scoreDocument: normalizeScoreDocument(),
     timelineState: { bars: 32, beatsPerBar: 4, positiveBeats: 128, pixelsPerBar: 120, preStartPixels: 120, playheadX: 120, trackHeight: 80 },
     globalTracks: { tempoEvents: [{ beat: 0, bpm: 123.456 }], timeSignatureEvents: [{ beat: 0, numerator: 7, denominator: 8 }], keySignatureEvents: [{ beat: 0, root: 'D', scale: 'minor' }] },

@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { melogicPwaPlugin } from './scripts/pwaPlugin.mjs'
 
 const firebaseConfig = JSON.parse(readFileSync(resolve(__dirname, 'firebase.json'), 'utf-8'))
 
@@ -59,7 +60,7 @@ function htmlRouteFallbackPlugin() {
 }
 
 export default defineConfig({
-  plugins: [htmlRouteFallbackPlugin()],
+  plugins: [htmlRouteFallbackPlugin(), melogicPwaPlugin()],
   build: {
     rollupOptions: {
       input: {

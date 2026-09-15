@@ -31,3 +31,12 @@ test('save, close runtime, reopen, save preserves authored project state', () =>
   reopened.applyLoadedEditorState(JSON.parse(JSON.stringify(first)))
   assert.deepEqual(JSON.parse(JSON.stringify(reopened.buildEditorStateForSave())), first)
 })
+
+test('malformed data is rejected before any live state changes', () => {
+  for (const malformed of [[], { version: 999 }, { tracks: [null] }, { tracks: [{ id: 'x' }, { id: 'x' }] }, { tracks: [], regions: [{ id: 'r', trackId: 'missing' }] }, { regions: [{ id: 'r', trackId: 't', notes: [null] }] }, { globalTracks: { tempoEvents: 'bad' } }]) {
+    const app = persistenceHarness()
+    assert.throws(() => app.applyLoadedEditorState(malformed), /Project data is invalid/)
+    assert.equal(app.tracks[0].id, 'demo-track')
+    assert.equal(app.timelineState.bars, 32)
+  }
+})

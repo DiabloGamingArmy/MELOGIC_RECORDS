@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#050505">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/branding/icons/apple-touch-icon.png">
+  <title>Offline · Melogic</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; min-height: 100dvh; display: grid; place-items: center; background: #050505; color: #f5f5f5; font: 1rem/1.6 system-ui, sans-serif; padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left)); }
+    main { max-width: 30rem; }
+    img { width: 64px; height: 64px; border-radius: 14px; }
+    h1 { font-size: clamp(2rem, 7vw, 3rem); line-height: 1.15; letter-spacing: -.04em; }
+    p { color: #c8c8c8; }
+    a, button { display: inline-flex; align-items: center; min-height: 48px; padding: .6rem 1rem; border: 1px solid #626262; border-radius: .6rem; color: inherit; background: #1d1d1d; font: inherit; text-decoration: none; cursor: pointer; touch-action: manipulation; }
+    a:focus-visible, button:focus-visible { outline: 2px solid white; outline-offset: 4px; }
+    nav { display: flex; gap: .75rem; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <main>
+    <img src="/branding/icons/pwa-192.png" alt="Melogic">
+    <h1>Let’s reconnect.</h1>
+    <p>Melogic couldn’t reach the network. Check your connection, then try this page again.</p>
+    <p>Projects, uploads, your library, and account changes require a connection. Keep any open editor with unsaved work open until it confirms your work is saved.</p>
+    <nav aria-label="Connection options"><button onclick="location.reload()">Try again</button><a href="/home">Melogic home</a></nav>
+  </main>
+</body>
+</html>
