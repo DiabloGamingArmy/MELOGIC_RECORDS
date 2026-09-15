@@ -5,6 +5,7 @@ const {
   emailOnSupportFormCreated,
   emailOnAdminAuditCreated
 } = require('./src/email/notificationEmails')
+const { sendWebPushTest } = require('./src/push/webPush')
 const admin = require('firebase-admin')
 
 if (!admin.apps.length) {
@@ -183,6 +184,7 @@ const {
 const { resolveSupportFormRequest } = require('./src/support/supportForms')
 const { handleSupportAgentPresence } = require('./src/support/supportAgentPresence')
 
+exports.sendWebPushTest = sendWebPushTest
 exports.createOrGetDm = createOrGetDm
 exports.createGroupThread = createGroupThread
 exports.sendInboxMessage = sendInboxMessage

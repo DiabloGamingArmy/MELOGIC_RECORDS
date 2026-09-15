@@ -4,6 +4,7 @@ const { cleanString } = require('../admin/adminAuth')
 const { writeAccountEventToBatch } = require('../account/accountEvents')
 const { loadAuthorSnapshot } = require('./communityCommentShared')
 const { canonicalCounter, desiredToggleState, reactionTransition } = require('./communityEngagementState')
+const { sendPushToUser } = require('../push/webPush')
 
 function requireAuth(request) {
   const uid = cleanString(request.auth?.uid || '', 180)
@@ -143,12 +144,39 @@ async function togglePostReaction(request, reaction = 'like') {
       likesCount: likeCount,
       dislikesCount: dislikeCount,
       likeCount,
-      dislikeCount
+      dislikeCount,
+      __push: liked && !likeSnap.exists && post.authorUid && post.authorUid !== uid ? {
+        uid: post.authorUid,
+        payload: {
+          title: 'New like on your post',
+          body: `${author?.authorDisplayName || 'Someone'} liked your community post.`,
+          url: `/community/post/${postRef.id}`,
+          tag: `community-post-like-${postRef.id}-${uid}`,
+          data: { type: 'community_post_like', postId: postRef.id, actorUid: uid }
+        }
+      } : null
     }
   })
 }
 
-const toggleCommunityPostLike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => togglePostReaction(request, 'like'))
+const toggleCommunityPostLike = onCall(
+  { timeoutSeconds: 60, memory: '256MiB', secrets: [require('../push/webPush').WEB_PUSH_VAPID_PRIVATE_KEY] },
+  async (request) => {
+    const result = await togglePostReaction(request, 'like')
+    const dispatch = result.__push
+    delete result.__push
+    if (dispatch) {
+      try {
+        const delivery = await sendPushToUser(dispatch.uid, dispatch.payload)
+        console.log('[web-push] community like delivery', { recipientUid: dispatch.uid, ...delivery })
+      } catch (error) {
+        // A push outage must never make the already-committed Like action fail.
+        console.error('[web-push] community like delivery error', { recipientUid: dispatch.uid, message: error?.message })
+      }
+    }
+    return result
+  }
+)
 const toggleCommunityPostDislike = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => togglePostReaction(request, 'dislike'))
 const toggleCommunityPostSave = onCall({ timeoutSeconds: 60, memory: '256MiB' }, (request) => togglePostState(request, 'save'))
 

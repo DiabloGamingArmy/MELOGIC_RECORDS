@@ -37,3 +37,14 @@ self.addEventListener('notificationclick', (event) => {
     return clients.openWindow ? clients.openWindow(target) : undefined
   })())
 })
+
+
+// Log subscription invalidation for future diagnostics. Re-subscription requires
+// the application server key and authenticated persistence, so the foreground
+// app performs enrollment rather than silently creating an untracked endpoint.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  console.warn('[melogic-push-sw] pushsubscriptionchange', {
+    hadOldSubscription: Boolean(event.oldSubscription),
+    hasNewSubscription: Boolean(event.newSubscription)
+  })
+})
