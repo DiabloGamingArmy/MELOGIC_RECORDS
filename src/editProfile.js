@@ -75,6 +75,25 @@ app.innerHTML = `
 
 initShellChrome()
 
+function renderWebPushSubscriptionState(subscription) {
+  const capability = getWebPushCapability()
+  const status = document.querySelector('[data-push-device-status]')
+  const enable = document.querySelector('[data-enable-web-push]')
+  const disable = document.querySelector('[data-disable-web-push]')
+  const active = Boolean(subscription)
+
+  if (status) {
+    if (!capability.supported) status.textContent = 'Push notifications: Unsupported'
+    else if (capability.permission === 'denied') status.textContent = 'Push notifications: Blocked'
+    else status.textContent = active ? 'Push notifications: Enabled' : 'Push notifications: Disabled'
+  }
+  if (enable) {
+    enable.textContent = active ? 'Enabled' : 'Enable on This Device'
+    enable.disabled = active || !capability.supported || !capability.vapidConfigured || capability.permission === 'denied'
+  }
+  if (disable) disable.disabled = !active
+}
+
 async function handleWebPushEnrollmentClick(event) {
   const enable=event.target.closest?.('[data-enable-web-push]')
   const disable=event.target.closest?.('[data-disable-web-push]')
@@ -84,7 +103,7 @@ async function handleWebPushEnrollmentClick(event) {
     enable.disabled=true; enable.textContent='Enabling...'
     try{
       await enableWebPushForUser(pageState?.user?.uid)
-      document.querySelectorAll('[data-push-device-status]').forEach(el=>el.textContent='Permission: Allowed · This device is subscribed')
+      renderWebPushSubscriptionState(await getCurrentWebPushSubscription())
       enable.textContent='Enabled'
     }catch(error){
       console.warn('[web-push] enable failed',error)
@@ -99,7 +118,7 @@ async function handleWebPushEnrollmentClick(event) {
     await disableWebPushForUser(pageState?.user?.uid)
     const remainingSubscription=await getCurrentWebPushSubscription()
     if(remainingSubscription) throw new Error('Push subscription is still active on this device.')
-    document.querySelectorAll('[data-push-device-status]').forEach(el=>el.textContent='This device is not subscribed')
+    renderWebPushSubscriptionState(null)
     document.querySelectorAll('[data-enable-web-push]').forEach(el=>{el.disabled=false;el.textContent='Enable on This Device'})
   }catch(error){
     console.warn('[web-push] disable failed',error)
@@ -107,17 +126,9 @@ async function handleWebPushEnrollmentClick(event) {
 }
 document.addEventListener('click',handleWebPushEnrollmentClick)
 
-getCurrentWebPushSubscription().then(subscription=>{
-  const status=document.querySelector('[data-push-device-status]')
-  const button=document.querySelector('[data-enable-web-push]')
-  if(subscription){
-    if(status) status.textContent='Permission: Allowed · This device is subscribed'
-    if(button){button.textContent='Enabled';button.disabled=true}
-  }else{
-    if(status) status.textContent=Notification.permission==='denied'?'Permission: Blocked':'This device is not subscribed'
-    if(button){button.textContent='Enable on This Device';button.disabled=false}
-  }
-}).catch(error=>console.warn('[web-push] subscription status failed',error))
+getCurrentWebPushSubscription()
+  .then((subscription) => renderWebPushSubscriptionState(subscription))
+  .catch((error) => console.warn('[web-push] subscription status failed', error))
 
 
 // Install the push-capable service worker without prompting for notification
@@ -329,16 +340,36 @@ function canSeeAdminNotificationSettings(state = pageState) {
 }
 
 function pushNotificationDeviceMarkup() {
-  const c=getWebPushCapability()
-  const label=c.permission==='granted'?'Allowed':c.permission==='denied'?'Blocked':'Not enabled'
-  let note='Enable this browser or installed Melogic app to receive push notifications.'
-  if(!c.supported) note='Web Push is unavailable in this browser or security context.'
-  else if(/iPhone|iPad|iPod/i.test(navigator.userAgent)&&!c.standalone) note='On iPhone/iPad, add Melogic to your Home Screen, open the installed app, then enable push here.'
-  else if(!c.vapidConfigured) note='Melogic Web Push configuration is not available in this build.'
-  return `<div class="push-device-card" data-push-device-card>
-    <div class="push-device-copy"><strong>Push Notifications</strong><span>${note}</span><small data-push-device-status>Permission: ${label}</small></div>
-    <div class="push-device-actions"><button type="button" class="button button-accent" data-enable-web-push ${!c.supported||!c.vapidConfigured?'disabled':''}>Enable on This Device</button><button type="button" class="button button-muted" data-disable-web-push ${!c.supported?'disabled':''}>Disable</button></div>
-  </div>`
+  const capability = getWebPushCapability()
+  let note = 'Enable this device to receive Melogic push notifications.'
+  let status = 'Push notifications: Disabled'
+
+  if (!capability.supported) {
+    note = 'Web Push is unavailable in this browser or security context.'
+    status = 'Push notifications: Unsupported'
+  } else if (/iPhone|iPad|iPod/i.test(navigator.userAgent) && !capability.standalone) {
+    note = 'On iPhone/iPad, add Melogic to your Home Screen, open the installed app, then enable push here.'
+  } else if (!capability.vapidConfigured) {
+    note = 'Melogic Web Push configuration is unavailable in this build.'
+    status = 'Push notifications: Configuration error'
+  } else if (capability.permission === 'denied') {
+    note = 'Notification permission is blocked in this browser.'
+    status = 'Push notifications: Blocked'
+  }
+
+  return `
+    <div class="push-device-card" data-push-device-card>
+      <div class="push-device-copy">
+        <strong>Push Notifications</strong>
+        <span>${note}</span>
+        <small data-push-device-status>${status}</small>
+      </div>
+      <div class="push-device-actions">
+        <button type="button" class="button button-accent" data-enable-web-push ${!capability.supported || !capability.vapidConfigured || capability.permission === 'denied' ? 'disabled' : ''}>Enable on This Device</button>
+        <button type="button" class="button button-muted" data-disable-web-push disabled>Disable</button>
+      </div>
+    </div>
+  `
 }
 
 function notificationToggleMarkup(group, key, label, preferences, { detail = '', disabled = false } = {}) {
