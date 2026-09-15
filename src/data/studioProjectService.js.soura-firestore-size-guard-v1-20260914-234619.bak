@@ -98,56 +98,12 @@ export async function createStudioProject(user, input = {}) {
 }
 export async function touchStudioProject(projectId) { const id = String(projectId || '').trim(); if (!id) return; await updateDoc(doc(db, 'studioProjects', id), { updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() }) }
 
-const FIRESTORE_PROJECT_SOFT_LIMIT_BYTES = 900 * 1024
-const utf8Size = (value) => {
-  try { return new TextEncoder().encode(JSON.stringify(value)).byteLength } catch { return Number.POSITIVE_INFINITY }
-}
-
-function compactStudioEditorStateForFirestore(editorState) {
-  const safe = sanitizeForFirestore(editorState)
-  if (!safe || typeof safe !== 'object') return safe
-
-  // Never persist binary/runtime payloads or transient URLs into Firestore.
-  // Audio itself is already uploaded to Firebase Storage; Firestore stores only
-  // the durable storagePath plus compact editing metadata.
-  const visit = (value, key = '') => {
-    if (Array.isArray(value)) return value.map((item) => visit(item, key))
-    if (!value || typeof value !== 'object') {
-      if (typeof value === 'string' && (
-        value.startsWith('blob:') ||
-        value.startsWith('data:audio/') ||
-        value.startsWith('data:application/octet-stream')
-      )) return null
-      return value
-    }
-    const out={}
-    for (const [childKey,childValue] of Object.entries(value)) {
-      const lower=childKey.toLowerCase()
-      if (['blob','file','audiobuffer','arraybuffer','rawaudio','audiodata','filedata','binarydata'].includes(lower)) continue
-      if ((lower==='peaks' || lower==='waveform') && Array.isArray(childValue)) {
-        out[childKey]=childValue.slice(0,1200).map((item)=>visit(item,childKey))
-        continue
-      }
-      out[childKey]=visit(childValue,childKey)
-    }
-    return out
-  }
-  return visit(safe)
-}
-
 export async function saveStudioProjectEditorState(projectId, editorState) {
   const id = String(projectId || '').trim()
   if (!id || !editorState || typeof editorState !== 'object') return
   const undefinedPaths = findUndefinedPaths(editorState, 'editorState')
   if (undefinedPaths.length && isDev()) console.warn('[studioProject] Firestore payload had undefined fields', undefinedPaths)
-  const safeEditorState = compactStudioEditorStateForFirestore(editorState)
-  const payloadBytes = utf8Size(safeEditorState)
-  if (payloadBytes > FIRESTORE_PROJECT_SOFT_LIMIT_BYTES) {
-    console.warn('[studioProject] editorState remains unusually large after compaction', {
-      bytes: payloadBytes,
-      softLimitBytes: FIRESTORE_PROJECT_SOFT_LIMIT_BYTES
-    })
-  }
+  const safeEditorState = sanitizeForFirestore(editorState)
   const metadata = editorState.projectMetadata && typeof editorState.projectMetadata === 'object' ? editorState.projectMetadata : null
   const payload = { editorState: safeEditorState, updatedAt: serverTimestamp(), lastOpenedAt: serverTimestamp() }
   if (metadata?.title) payload.title = sanitizeTitle(metadata.title)

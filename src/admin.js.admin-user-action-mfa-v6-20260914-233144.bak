@@ -7379,7 +7379,7 @@ function adminActionBlockedMessage(error) {
 }
 
 async function submitForcePasswordReset(uid = '') {
-  if (!uid) return
+  if (!uid || !window.confirm('Force this user to reset their password?')) return
   state.adminData.users.actioning = 'force-reset'
   state.error = ''
   state.message = ''
@@ -7399,13 +7399,15 @@ async function submitForcePasswordReset(uid = '') {
 
 async function submitTemporaryPassword(uid = '') {
   if (!uid) return
+  const confirmation = window.prompt('Type SET TEMPORARY PASSWORD to continue.')
+  if (confirmation !== 'SET TEMPORARY PASSWORD') return
   const password = window.prompt('Optional: enter a temporary password, or leave blank to generate one.') || ''
   state.adminData.users.actioning = 'temp-password'
   state.error = ''
   state.message = ''
   render()
   try {
-    const result = await setTemporaryPassword({ uid, password })
+    const result = await setTemporaryPassword({ uid, password, confirmation })
     state.message = 'Temporary password set. The user must reset it after sign-in.'
     if (result.temporaryPassword) window.alert(`Temporary password shown once:\n\n${result.temporaryPassword}`)
     await loadAdminSectionData('users', { silent: true })
@@ -7420,12 +7422,14 @@ async function submitTemporaryPassword(uid = '') {
 
 async function submitUnverifyEmail(uid = '') {
   if (!uid) return
+  const confirmation = window.prompt('Type UNVERIFY EMAIL to mark this account email as unverified.')
+  if (confirmation !== 'UNVERIFY EMAIL') return
   state.adminData.users.actioning = 'unverify-email'
   state.error = ''
   state.message = ''
   render()
   try {
-    const result = await unverifyUserEmail({ uid })
+    const result = await unverifyUserEmail({ uid, confirmation })
     state.message = result?.alreadyUnverified
       ? 'This email was already unverified.'
       : 'Email verification removed. The user must verify the email again.'
@@ -7441,12 +7445,14 @@ async function submitUnverifyEmail(uid = '') {
 
 async function submitRevokeRecoveryCodes(uid = '') {
   if (!uid) return
+  const confirmation = window.prompt('Type REVOKE CODES to invalidate all recovery codes.')
+  if (confirmation !== 'REVOKE CODES') return
   state.adminData.users.actioning = 'revoke-codes'
   state.error = ''
   state.message = ''
   render()
   try {
-    await revokeRecoveryCodes({ uid })
+    await revokeRecoveryCodes({ uid, confirmation })
     state.message = 'Recovery codes revoked.'
     await loadAdminSectionData('users', { silent: true })
   } catch (error) {

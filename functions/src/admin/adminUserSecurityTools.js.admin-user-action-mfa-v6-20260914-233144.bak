@@ -115,6 +115,8 @@ const setTemporaryPassword = onCall({ timeoutSeconds: 60, memory: '256MiB', secr
   await assertOwnerOnly(actor)
   const uid = safeUid(request.data?.uid || '')
   if (uid === actor.uid) throw new HttpsError('failed-precondition', 'You cannot set your own temporary password.')
+  const confirmation = cleanString(request.data?.confirmation || '', 80)
+  if (confirmation !== 'SET TEMPORARY PASSWORD') throw new HttpsError('failed-precondition', 'Confirmation phrase is required.')
   const password = cleanString(request.data?.password || '', 120) || randomTemporaryPassword()
   if (password.length < 12) throw new HttpsError('invalid-argument', 'Temporary password must be at least 12 characters.')
   await admin.auth().updateUser(uid, { password })
@@ -155,6 +157,9 @@ const unverifyUserEmail = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async
   await assertOwnerOnly(actor)
   const uid = safeUid(request.data?.uid || '')
   if (uid === actor.uid) throw new HttpsError('failed-precondition', 'You cannot unverify your own admin email.')
+  const confirmation = cleanString(request.data?.confirmation || '', 80)
+  if (confirmation !== 'UNVERIFY EMAIL') throw new HttpsError('failed-precondition', 'Confirmation phrase is required.')
+
   const user = await admin.auth().getUser(uid)
   if (!user.email) throw new HttpsError('failed-precondition', 'This account does not have an email address.')
   if (!user.emailVerified) return { ok: true, emailVerified: false, alreadyUnverified: true }
@@ -191,6 +196,8 @@ const revokeRecoveryCodes = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   const actor = await requireAdminActionSecurity(request, 'roleManage')
   await assertOwnerOnly(actor)
   const uid = safeUid(request.data?.uid || '')
+  const confirmation = cleanString(request.data?.confirmation || '', 80)
+  if (confirmation !== 'REVOKE CODES') throw new HttpsError('failed-precondition', 'Confirmation phrase is required.')
   await admin.firestore().collection('users').doc(uid).collection('security').doc('recoveryCodes').set({
     enabled: false,
     remaining: 0,
