@@ -24,12 +24,13 @@ export function navShell(options = {}) {
           <a class="mobile-icon-button mobile-create-button" href="${ROUTES.communityCreate}" aria-label="Create post">＋</a>` : ''}
         </div>
       </header>
+      <!-- melogic-mobile-nav-svg-v1 -->
       <nav class="mobile-bottom-nav" aria-label="Mobile primary navigation">
-        <a href="${ROUTES.community}" ${isCommunity ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">⌂</span><span>Community</span></a>
-        <a href="${ROUTES.music}" ${isMusic ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">▶</span><span>Streaming</span></a>
-        <a href="${ROUTES.products}" ${isProducts ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">◇</span><span>Products</span></a>
-        <a href="${ROUTES.inbox}" ${isInbox ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph">✉</span><span>Inbox</span></a>
-        <a href="${ROUTES.profile}" ${isProfile ? 'aria-current="page"' : ''}><span class="mobile-profile-nav-avatar" data-profile-avatar aria-hidden="true">○</span><span>Profile</span></a>
+        <a href="${ROUTES.community}" ${isCommunity ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span><span>Community</span></a>
+        <a href="${ROUTES.music}" ${isMusic ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.2v13.6L19 12 8 5.2Z"/></svg></span><span>Streaming</span></a>
+        <a href="${ROUTES.products}" ${isProducts ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5.2 8.2 12 4l6.8 4.2v8.1L12 20l-6.8-3.7V8.2Z"/><path d="M5.6 8.4 12 12l6.4-3.6M12 12v7.5"/></svg></span><span>Products</span></a>
+        <a href="${ROUTES.inbox}" ${isInbox ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6.2h16v11.6H4V6.2Z"/><path d="m4.6 7 7.4 5.2L19.4 7"/></svg></span><span>Inbox</span></a>
+        <a href="${ROUTES.profile}" ${isProfile ? 'aria-current="page"' : ''}><span class="mobile-profile-nav-avatar" data-profile-avatar aria-hidden="true"></span><span>Profile</span></a>
       </nav>
     </div>
     <header class="nav-shell">
