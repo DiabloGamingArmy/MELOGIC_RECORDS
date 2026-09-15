@@ -235,19 +235,13 @@ function studioHomeHeroDownloadURL() {
 
 function hydrateStudioHomeHero(root = app) {
   const hero = root?.querySelector?.('.studio-home-reference-hero')
-  if (hero) {
-    applyPersistentStudioHeroURL(hero, 'studio-home', '--studio-home-hero-image')
-    const persistedImage = hero.style.getPropertyValue('--studio-home-hero-image').trim()
-    if (persistedImage) hero.style.setProperty('background-image', persistedImage, 'important')
-  }
+  if (hero) applyPersistentStudioHeroURL(hero, 'studio-home', '--studio-home-hero-image')
   if (!hero || hero.dataset.firebaseHeroReady === 'true' || hero.dataset.firebaseHeroLoading === 'true') return
   hero.dataset.firebaseHeroLoading = 'true'
   studioHomeHeroDownloadURL().then((url) => {
     if (!hero.isConnected) return
     rememberPersistentStudioHeroURL('studio-home', url)
-    const heroImage = `url("${String(url).replaceAll('"', '%22')}")`
-    hero.style.setProperty('--studio-home-hero-image', heroImage)
-    hero.style.setProperty('background-image', heroImage, 'important')
+    hero.style.setProperty('--studio-home-hero-image', `url("${String(url).replaceAll('"', '%22')}")`)
     hero.dataset.firebaseHeroReady = 'true'
     hero.removeAttribute('data-firebase-hero-loading')
   }).catch(() => {

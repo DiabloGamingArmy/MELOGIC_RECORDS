@@ -4251,15 +4251,3 @@ body #soura-detached-region-portal > .studio-detached-controller-panel-v8 .studi
   display:none !important;
 }
 
-
-
-/* studio-home-banner-restore-v1
-   Keep Studio Home's Firebase banner independent from editor theme
-   background shorthands. Black remains only as the loading fallback. */
-.studio-home-reference-hero{
-  background-color:#050505;
-  background-image:var(--studio-home-hero-image,none) !important;
-  background-position:center center !important;
-  background-size:cover !important;
-  background-repeat:no-repeat !important;
-}
