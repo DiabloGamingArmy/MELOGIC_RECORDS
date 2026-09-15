@@ -5192,3 +5192,30 @@ body:has(.community-page) #app {
  .community-comment,.community-comment-card,.community-reply,.community-reply-card{padding-left:14px!important;padding-right:14px!important}
  .community-replies,.community-reply-list{margin-left:30px!important;width:calc(100% - 30px)!important}
 }
+
+/* melogic-community-mobile-final-patch5 */
+@media(max-width:760px){
+ .community-page{width:100%;max-width:100vw;overflow-x:clip;padding-left:max(0px,env(safe-area-inset-left,0px));padding-right:max(0px,env(safe-area-inset-right,0px))}
+ .community-page *{min-width:0}
+ .community-page img,.community-page video,.community-page canvas,.community-page svg{max-width:100%}
+ .community-topic-scroll,.community-stories-row{overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+ .community-topic-scroll::-webkit-scrollbar,.community-stories-row::-webkit-scrollbar{display:none}
+ .community-post-card,.community-comment,.community-reply{overflow-wrap:anywhere;word-break:normal}
+ .community-post-card pre,.community-comment pre,.community-reply pre{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .community-post-card table{display:block;max-width:100%;overflow-x:auto}
+ .community-post-card a,.community-comment a,.community-reply a{overflow-wrap:anywhere}
+ .community-post-card button,.community-comment button,.community-reply button{-webkit-tap-highlight-color:transparent}
+ .community-story-item,.community-topic-pill{user-select:none;-webkit-user-select:none}
+ .community-story-item:active,.community-topic-pill:active{transform:scale(.97)}
+ .community-post-card:last-child{border-bottom-color:transparent!important}
+ .community-feed-error,.community-empty,.community-feed-empty{min-height:160px}
+ .community-composer-overlay,.community-modal-overlay,.community-dialog-backdrop{padding-left:env(safe-area-inset-left,0px)!important;padding-right:env(safe-area-inset-right,0px)!important}
+ .community-composer-modal,.community-composer-dialog,.community-modal,.community-dialog,.community-share-modal,.community-share-dialog,.community-report-modal,.community-report-dialog,.community-options-modal,.community-options-dialog{overscroll-behavior:contain}
+}
+@supports(height:100dvh){@media(max-width:760px){.community-page{min-height:100dvh}.community-composer-modal,.community-composer-dialog,.community-modal,.community-dialog{max-height:88dvh!important}}}
+@media(max-width:760px) and (orientation:landscape) and (max-height:500px){
+ .community-stories-row{padding-top:5px;padding-bottom:8px}.community-story-ring{width:48px;height:48px}.community-story-item{flex-basis:56px;max-width:56px}
+ .community-post-card{padding-top:13px!important;padding-bottom:11px!important}.community-composer-modal,.community-composer-dialog,.community-modal,.community-dialog{max-height:94dvh!important}
+ .community-comment-composer,.community-reply-composer,.community-detail-composer{bottom:calc(var(--mobile-nav-h,58px) + env(safe-area-inset-bottom,0px))}
+}
+@media(prefers-reduced-motion:reduce){.community-page *,.mobile-app-shell *{scroll-behavior:auto!important;transition-duration:.01ms!important;animation-duration:.01ms!important;animation-iteration-count:1!important}}
