@@ -38,15 +38,33 @@ async function sendPushToUser(uid,payload={}) {
   const snap=await col.get()
   if(snap.empty) return {ok:true,sent:0,failed:0,removed:0,reason:'no-subscriptions'}
 
+  const title=clean(payload.title,160)||'Melogic'
+  const body=clean(payload.body,500)||'You have a new Melogic notification.'
+  const rawUrl=clean(payload.url,1500)||'/'
+  const navigate=/^https:\/\//i.test(rawUrl) ? rawUrl : `https://melogicrecords.studio${rawUrl.startsWith('/') ? rawUrl : `/${rawUrl}`}`
+  const tag=clean(payload.tag,180)||undefined
+  const data=payload.data && typeof payload.data==='object' ? payload.data : {}
+
+  // Declarative Web Push (RFC 8030 marker) is the authoritative user-visible
+  // notification on modern WebKit. The legacy fields are duplicated at the
+  // top level so the existing service worker remains backward compatible.
   const message=JSON.stringify({
-    title:clean(payload.title,160)||'Melogic',
-    body:clean(payload.body,500)||'You have a new Melogic notification.',
-    url:clean(payload.url,1500)||'/',
-    tag:clean(payload.tag,180)||undefined,
+    web_push:8030,
+    notification:{
+      title,
+      body,
+      navigate,
+      silent:false,
+      ...(tag ? { tag } : {})
+    },
+    title,
+    body,
+    url:rawUrl,
+    tag,
     icon:'/icons/pwa-192.png',
     badge:'/icons/favicon-48.png',
     silent:false,
-    data: payload.data && typeof payload.data==='object' ? payload.data : {}
+    data
   })
 
   let sent=0,failed=0,removed=0

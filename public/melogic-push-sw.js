@@ -6,18 +6,25 @@ self.addEventListener('push', (event) => {
     payload = { body: event.data ? event.data.text() : '' }
   }
 
-  const title = String(payload.title || 'Melogic')
+  // Modern WebKit may parse Declarative Web Push before this handler runs.
+  // For engines using the imperative service-worker path, unwrap the same
+  // standardized notification so both paths render identical content.
+  const declarative = payload?.web_push === 8030 && payload?.notification && typeof payload.notification === 'object'
+    ? payload.notification
+    : null
+  const title = String(declarative?.title || payload.title || 'Melogic')
   const icon = new URL(payload.icon || '/icons/pwa-192.png', self.location.origin).href
   const badge = new URL(payload.badge || '/icons/favicon-48.png', self.location.origin).href
+  const navigate = declarative?.navigate || payload.url || '/'
   const options = {
-    body: String(payload.body || 'You have a new Melogic notification.'),
+    body: String(declarative?.body || payload.body || 'You have a new Melogic notification.'),
     icon,
     badge,
-    tag: payload.tag || undefined,
+    tag: declarative?.tag || payload.tag || undefined,
     renotify: Boolean(payload.renotify),
-    silent: payload.silent === true,
+    silent: declarative?.silent === true || payload.silent === true,
     data: {
-      url: payload.url || '/',
+      url: navigate,
       ...(payload.data && typeof payload.data === 'object' ? payload.data : {})
     }
   }
