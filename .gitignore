@@ -70,3 +70,4 @@ ams_community.zip
 .melogic-vapid-private-key.txt
 *.web-push-p2-*.bak
 *.web-push-p2.1-*.bak
+*.p2.4-*.bak

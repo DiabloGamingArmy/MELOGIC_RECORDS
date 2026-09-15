@@ -15,7 +15,9 @@ import {
   ensureMelogicPushServiceWorker,
   getCurrentWebPushSubscription,
   getWebPushCapability
-} from './data/webPushService'const SETTINGS_SECTIONS = [
+} from './data/webPushService';
+
+const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },
   { key: 'featured-items', label: 'Featured Items' },
   { key: 'account', label: 'Account' },
