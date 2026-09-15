@@ -1018,6 +1018,55 @@ service cloud.firestore {
         && privatePersonNamesAreValid(request.resource.data);
       allow delete: if false;
 
+      // Web Push device subscriptions.
+      // A signed-in user may manage only subscription documents under their own UID.
+      // Server-side Firebase Admin SDK delivery bypasses these client security rules.
+      match /pushSubscriptions/{subscriptionId} {
+        allow read: if isOwner(uid);
+
+        allow create: if isOwner(uid)
+          && request.resource.data.keys().hasOnly([
+            'endpoint',
+            'expirationTime',
+            'keys',
+            'platform',
+            'userAgent',
+            'standalone',
+            'enabled',
+            'createdAt',
+            'updatedAt'
+          ])
+          && request.resource.data.endpoint is string
+          && request.resource.data.endpoint.size() > 0
+          && request.resource.data.keys is map
+          && request.resource.data.keys.p256dh is string
+          && request.resource.data.keys.p256dh.size() > 0
+          && request.resource.data.keys.auth is string
+          && request.resource.data.keys.auth.size() > 0
+          && request.resource.data.enabled == true;
+
+        allow update: if isOwner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'endpoint',
+            'expirationTime',
+            'keys',
+            'platform',
+            'userAgent',
+            'standalone',
+            'enabled',
+            'updatedAt'
+          ])
+          && request.resource.data.endpoint is string
+          && request.resource.data.endpoint.size() > 0
+          && request.resource.data.keys is map
+          && request.resource.data.keys.p256dh is string
+          && request.resource.data.keys.p256dh.size() > 0
+          && request.resource.data.keys.auth is string
+          && request.resource.data.keys.auth.size() > 0;
+
+        allow delete: if isOwner(uid);
+      }
+
       match /entitlements/{productId} {
         allow read: if isOwner(uid);
         allow create, update, delete: if false;
