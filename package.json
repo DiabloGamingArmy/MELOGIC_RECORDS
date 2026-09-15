@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "test:rules": "firebase emulators:exec --only firestore --project melogic-records \"node --test test/firestoreRules.test.mjs\"",
     "storage:cors:get": "gsutil cors get gs://melogic-records.firebasestorage.app",
-    "test:toolbox": "node --test test/toolboxRegistry.test.mjs"
+    "test:toolbox": "node --test test/toolboxRegistry.test.mjs",
+    "test:soura": "node --test test/souraMidiNoteDrag.test.mjs test/nativeVst3InstrumentLifecycle.test.mjs test/souraWasmInstrumentLifecycle.test.mjs test/souraWasmRealtime.test.mjs test/signalsmithRealtime.test.mjs test/studioAudioEngine.test.mjs test/souraWebAudioContext.test.mjs test/souraTransportInvariant.test.mjs test/souraRuntimeCapabilities.test.mjs test/souraPortability.test.mjs test/souraAudioSourceTiming.test.mjs test/projectExport.test.mjs test/regionEditorCoordinates.test.mjs test/regionGeometry.test.mjs"
   },
   "devDependencies": {
     "@emnapi/core": "^1.10.0",

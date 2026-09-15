@@ -28,15 +28,59 @@ Baseline: `f95f4cd0a24eb74257e13001bdb1a6ffefd619c5`, clean main matching freshl
 - Native callback data paths do not take the command mutex, launch subprocesses, perform filesystem/network I/O, or rebuild the graph. Arc references are captured at stream creation, not cloned/dropped each block.
 - Tauri invocation and media analysis/DSP self-tests are outside the callback. Browser recording does not write disk from a Rust callback.
 
-## Remaining (priority order)
+## Completed reliability work
 
-1. Finish P1/P1A/P1B: qualify third-party VST processing, editor/processor concurrency and CPAL shutdown quiescence/lifetime on device loss. Inspect active Signalsmith/WASM instrument callbacks and graph mutation before declaring whole-runtime RT invariants. Add real hardware timing/stress and allocation/deallocation evidence; host-only tests cannot certify plugins or drivers. Native creation play-error/shutdown cleanup also needs lifecycle review.
-2. P2/P2A/P2B: transport/rate/buffer matrix, native MIDI sample timestamps and clock integration, authoritative device recovery/configuration/capability reporting, project load during playback. Current native status is not a lifecycle state machine.
-3. P3: recording alignment, punch, bounded capture/storage failure/device-loss behavior.
-4. P4: unified latency accounting and compensation (native instruments currently bypass WebAudio mixing).
-5. P5/P5A: executable persistence determinism and schema migrations against actual serializers.
-6. P6: inventory actual media subprocess boundaries; the PDF's named FFmpeg classes are absent.
-7. P7/P7A: remaining web architecture and large-session timeline performance.
-8. P8: actual Firebase/API security; PDF's Next/auth-service paths absent.
-9. P9: automated fast/release gates.
-10. P10: dependencies/SBOM/installers/accessibility.
+- Native MIDI handoff uses a fixed SPSC queue with at most 1024 events consumed per callback, matching the preallocated C++ EventList. Accepted excess events stay queued; full-queue rejection is observable. Failed C++ processing clears old input events.
+- Native diagnostic tone and VST callbacks expose atomic duration/error counters and bounded duration histograms. Percentile snapshots are calculated on control threads. Stream errors no longer log synchronously from the callback. The C++ process guard rejects synchronous editor resizing during processing.
+- Plugin retirement waits for exclusive ownership after both audio/error callback references disappear. A control worker destroys retired owners; C++ teardown executes on the main thread. The collection interval does not establish safety: ownership does. If the reclamation worker fails, the fallback retains a still-live owner rather than freeing it unsafely.
+- Native instrument creation/disposal is serialized per instance ID. Disposal remains terminal during pending creation; late notes and creation completions cannot resurrect disposed instruments.
+- Custom WASM instruments use a preallocated MIDI heap, cached output views, bounded per-block consumption, validated ABI pointers, explicit initialization acknowledgment and terminal disposal. Overflow, traps, unexpected memory growth and oversized blocks fail silent with diagnostics. Control-side polling replaces per-block reporting.
+- The Signalsmith wrapper caches live audio views, avoids per-block view construction and consumes automation without repeated array shifting. Its embedded WASM is unchanged. Before/after PCM comparisons were byte-identical for 300 blocks across four sample rates and three pitch shifts.
+- Shared live/offline source scheduling now distinguishes source-buffer duration from audible output duration for fades. Seeking preserves fade progress, and delayed sources use the delayed envelope origin.
+- Native device lifecycle reports INITIALIZING/RUNNING/DEVICE_LOST/FAILED/STOPPED states. Early stream failure cannot be overwritten by successful-start reporting. Failed VST output silences processing and rejects new MIDI. Capability flags explicitly report unsupported native device/configuration controls. Device enumeration retains actual channel/format/rate/buffer tuples.
+
+## Executive Summary 2: ordered implementation
+
+All nine pages were read on 2026-09-14. This document now determines feature order. Its sample filenames, snippets, architecture diagram and competitor comparisons are guidance, not evidence of defects in this repository. Do not copy its proposed blanket floor-based snapping, change monitoring latency hints indiscriminately, or add a second desktop framework: those choices require actual product requirements and runtime evidence.
+
+### Critical: core editing, file I/O, stability
+
+1. **Started: region/MIDI editing.** Confirmed and fixed pointer movement/right resizing clamping notes to the old region end. Region end and duration now extend to the latest edited note, share the note gesture's single history transaction, and return to the original boundary when the pointer moves back. The left boundary and minimum note duration remain protected. Regression coverage includes multiple notes, four zoom levels, snapping on/off, history snapshots and click-without-drag. Remaining: actual browser gesture/undo/redo qualification, keyboard nudge parity, region splits, copy/paste and snapping review. Existing split operations already call `commitHistoryMutation`; missing split undo is not established. MIDI paste already extends the region. The existing nearest-grid snapping is not inherently wrong.
+2. **Next: file I/O and persistence.** Inventory actual decoder/export capabilities and limits; test supported formats, large-file rejection/streaming behavior, metadata preservation, corruption handling, and tempo/loop round trips. RF64 and DAWproject interoperability remain unimplemented/unqualified here. Do not claim arbitrary >4 GB browser decoding or unlimited track capacity.
+3. **Ongoing: stability and regression gates.** Earlier callback/lifetime/device work is listed above. `npm run test:soura` and `.github/workflows/soura-reliability.yml` now gate editor/audio/export regressions and the production web build. Existing tests and other CI workflows predate this change; the PDF's claim that none exist is false. Native hardware, actual third-party plugin load, device churn, recording, long-session memory, sanitizers and UI accessibility still need qualification. The new CI workflow has been validated locally through its test/build commands, not run on GitHub yet.
+
+### Important: after critical qualification
+
+4. Multi-track recording: actual capture/arming/monitoring limits, overdub alignment, punch and storage/device failure behavior.
+5. MIDI sequencing: keyboard/pointer parity, quantization, velocity and piano-roll usability, preserving existing features.
+6. Plugin support: qualify existing native VST3 and built-in/WASM instruments before extending formats; unify native audio routing and project clock/latency accounting.
+7. Collaboration/cloud sync: inspect existing Firebase/LiveKit permissions and persistence before adding sharing, conflict resolution or backup. No security/privacy compliance claim follows from this code review.
+
+### Advanced: after reliable core workflows
+
+8. AI mastering/chords/EQ assistance with explicit data handling and measurable output quality.
+9. Mobile/standalone expansion; existing desktop uses Tauri, not Electron.
+10. Advanced DSP/content, then a supported developer SDK/API.
+
+Professionalism and cleanliness apply throughout: use existing controls and history/persistence paths; keep changes focused; provide useful errors and progress; maintain keyboard labels, focus and contrast as touched workflows are qualified. Existing transport ARIA labels and menus are present, so accessibility work should target verified gaps. Do not add dead buttons, pretend capabilities, blanket consent dialogs or placeholder feature panels.
+
+## Validation on 2026-09-14
+
+- `npm run test:soura`: 61 tests passed, including six new MIDI gesture regressions. Tests execute production handlers in a VM with controlled DOM/audio dependencies; they are not end-to-end browser or screen-reader tests.
+- `npm run build`: passed. Existing Vite large-chunk warning remains.
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib --locked --offline`: 15 passed, including Rust allocator tripwires, callback ownership, queue stress and start/device-loss races.
+- `cargo build --manifest-path src-tauri/Cargo.toml --lib --locked --offline`: passed; three existing CPAL device-name deprecation warnings remain.
+- `ctest --test-dir /tmp/soura-rt-bridge-tests --output-on-failure`: 1/1 passed against the actual C++ bridge and fake processor.
+- `git diff --check`: passed.
+
+To recreate the native bridge test build on this workstation:
+
+```sh
+cmake -S src-tauri/native-vst3-host -B /tmp/soura-rt-bridge-tests -DVST3_SDK_ROOT=/Users/ginobarnes/Library/Caches/Melogic/vst3sdk -DSOURA_BUILD_RT_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build /tmp/soura-rt-bridge-tests --target soura_realtime_bridge_test -j4
+ctest --test-dir /tmp/soura-rt-bridge-tests --output-on-failure
+```
+
+## Material limitations
+
+This is staged implementation, not completion of the full feature roadmap or a production-readiness certification. Native device recovery/configuration remains partial: no automatic reconnection or reconfiguration is implemented, and default-device CPAL handling can suppress physical disconnect errors. Native instruments still bypass WebAudio master/effects and lack project sample timestamps. Third-party plugins, drivers and browser GC are outside the allocation tests' guarantees. WASM instrument blocks above the existing 128-frame ABI fail explicitly. Signalsmith message/offline paths still allocate and scan buffers. Full recording/latency compensation, schema migration, security review and real-device stress remain pending. No project format migration or deployment was performed.

@@ -1,0 +1,49 @@
+/*
+ * SOURA V54 — Pitch reference waveform full-height amplitude
+ *
+ * Pitch Trace keeps basic waveform resolution, but its reference waveform
+ * now uses the full vertical height of the pitch editor. Horizontal movement
+ * remains owned by --pt-waveform-offset / PitchTraceViewport.js.
+ */
+
+.studio-editor-page .studio-pitch-trace-waveform-viewport {
+  top: 0 !important;
+  bottom: 0 !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  transform: none !important;
+  overflow: hidden !important;
+}
+
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform {
+  top: 0 !important;
+  bottom: 0 !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  transform: none !important;
+}
+
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform > *,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform .studio-audio-waveform,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform .studio-audio-waveform-bars,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform svg,
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform canvas {
+  display: block !important;
+  visibility: visible !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  max-height: none !important;
+}
+
+/* SVG waveform geometry must be allowed to stretch vertically instead of
+   preserving the old ~180px visual amplitude. */
+.studio-editor-page .studio-pitch-trace-waveform-viewport
+.studio-pitch-trace-waveform svg {
+  width: 100% !important;
+}

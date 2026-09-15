@@ -97,7 +97,6 @@ import './soura/themes/pitch-keyboard-structural-lock-v50.css'
 import './soura/themes/region-editor-authoritative-v17.css'
 import './soura/themes/pitch-waveform-visible-v52.css'
 import './soura/themes/pitch-reference-waveform-v53.css'
-import './soura/themes/pitch-reference-waveform-v54.css'
 import './studio/audio/PitchTraceViewport.js'
 import { createSouraRealtimeRegionProcessor, destroySouraRealtimeRegionProcessor, isSouraRealtimeDesktopRuntime, shouldUseRealtimeRegionProcessing } from './studio/audio/SouraRealtimeDsp.js'
 import { AudioAnalysisService } from './studio/audio/analysis/AudioAnalysisService.js'
@@ -11233,7 +11232,6 @@ function beginMidiNoteDrag(event, regionId, noteIndex) {
   const selectedIndices = getSelectedMidiRollNoteIndices(region)
   midiNoteDrag = {
     regionId,
-    originalRegionEndBeat: Number(region.endBeat) || Number(region.startBeat) + 0.25,
     noteIndex,
     mode: handle,
     before: captureDawSnapshot(),
@@ -11271,6 +11269,7 @@ function applyMidiNoteDrag(event) {
   const deltaBeat = isSnapEnabled ? snapBeat(rawDeltaBeat, snap) : rawDeltaBeat
   const pitchDelta = -Math.round(dy / midiRollRowHeight)
   const regionStart = Number(region.startBeat) || 0
+  const regionEnd = Math.max(regionStart + 0.25, Number(region.endBeat) || regionStart + 0.25)
   const snapshots = midiNoteDrag.noteSnapshots?.length ? midiNoteDrag.noteSnapshots : [{ index: midiNoteDrag.noteIndex, startBeat: midiNoteDrag.startBeat, durationBeats: midiNoteDrag.durationBeats, note: midiNoteDrag.note, lastAuditionNote: midiNoteDrag.note }]
   const rows = midiRollPitchRows(region)
   const minPitch = rows[rows.length - 1]
@@ -11287,17 +11286,18 @@ function applyMidiNoteDrag(event) {
       selectedNote.durationBeats = Math.max(0.05, noteEnd - selectedNote.startBeat)
     })
   } else if (midiNoteDrag.mode === 'right') {
-    const clampedDelta = Math.max(deltaBeat, ...snapshots.map((snapshot) => 0.05 - snapshot.durationBeats))
+    const clampedDelta = Math.min(deltaBeat, ...snapshots.map((snapshot) => regionEnd - (snapshot.startBeat + snapshot.durationBeats)))
     snapshots.forEach((snapshot) => {
       const selectedNote = region.notes[snapshot.index]
       if (!selectedNote) return
       const rawEnd = snapshot.startBeat + snapshot.durationBeats + clampedDelta
       const nextEnd = isSnapEnabled ? snapBeatToRegionEditorGrid(rawEnd) : rawEnd
-      selectedNote.durationBeats = Math.max(0.05, Math.max(nextEnd, snapshot.startBeat + 0.05) - snapshot.startBeat)
+      selectedNote.durationBeats = Math.max(0.05, clamp(nextEnd, snapshot.startBeat + 0.05, regionEnd) - snapshot.startBeat)
     })
   } else {
     const minStartDelta = Math.max(...snapshots.map((snapshot) => regionStart - snapshot.startBeat))
-    const clampedBeatDelta = Math.max(deltaBeat, minStartDelta)
+    const maxStartDelta = Math.min(...snapshots.map((snapshot) => regionEnd - snapshot.durationBeats - snapshot.startBeat))
+    const clampedBeatDelta = clamp(deltaBeat, minStartDelta, maxStartDelta)
     const minPitchDelta = Math.max(...snapshots.map((snapshot) => minPitch - snapshot.note))
     const maxPitchDelta = Math.min(...snapshots.map((snapshot) => maxPitch - snapshot.note))
     const clampedPitchDelta = clamp(pitchDelta, minPitchDelta, maxPitchDelta)
@@ -11305,7 +11305,7 @@ function applyMidiNoteDrag(event) {
       const selectedNote = region.notes[snapshot.index]
       if (!selectedNote) return
       const rawStart = snapshot.startBeat + clampedBeatDelta
-      selectedNote.startBeat = Math.max(regionStart, isSnapEnabled ? snapBeatToRegionEditorGrid(rawStart) : rawStart)
+      selectedNote.startBeat = isSnapEnabled ? snapBeatToRegionEditorGrid(rawStart) : rawStart
       selectedNote.note = clamp(snapshot.note + clampedPitchDelta, minPitch, maxPitch)
       if (selectedNote.note !== snapshot.lastAuditionNote) {
         snapshot.lastAuditionNote = selectedNote.note
@@ -11313,15 +11313,6 @@ function applyMidiNoteDrag(event) {
       }
     })
   }
-  // Keep region growth and note edits in the same undo transaction. Recompute
-  // from the gesture's original boundary so dragging back does not leave a tail.
-  let endBeat = midiNoteDrag.originalRegionEndBeat
-  for (const snapshot of snapshots) {
-    const editedNote = region.notes[snapshot.index]
-    if (editedNote) endBeat = Math.max(endBeat, editedNote.startBeat + editedNote.durationBeats)
-  }
-  region.endBeat = endBeat
-  region.durationBeats = endBeat - regionStart
   refreshMidiRegionDom()
   updateMidiRollNoteDom(region, snapshots.map((snapshot)=>snapshot.index))
 }
