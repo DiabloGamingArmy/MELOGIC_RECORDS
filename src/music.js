@@ -109,6 +109,28 @@ import {
   preferredMusicPlayback
 } from './data/musicService'
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
+
+// melogic-streaming-spa-lifecycle-v6
+function initConsumerSpaLifecycle() {
+  if (!isMobileSpaRuntime()) return
+  const existing = history.state && typeof history.state === 'object' ? history.state : {}
+  history.replaceState({
+    ...existing,
+    melogicMobileSpa: true,
+    routeId: 'streaming',
+    pathname: location.pathname
+  }, '', location.href)
+  emitMobileSpaNavigation({ type: 'streaming-init', routeId: 'streaming' })
+
+  if (!navigator.connection?.saveData) {
+    queueMicrotask(() => {
+      void prewarmMobileSpaRoute(ROUTES.community)
+      void prewarmMobileSpaRoute(ROUTES.profile)
+    })
+  }
+}
+initConsumerSpaLifecycle()
 
 const app = document.querySelector('#app')
 bindExpandableMusicPlayer()

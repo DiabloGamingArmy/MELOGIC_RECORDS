@@ -14,19 +14,19 @@ const PREWARM_DELAY_MS = 900
 
 const ROUTE_DEFINITIONS = Object.freeze([
   { id: 'community', path: ROUTES.community, module: () => import('../community.js') },
-  { id: 'streaming', path: ROUTES.music, module: () => import('../music.js') },
   { id: 'camera', path: '/camera', module: () => import('../camera.js') },
   { id: 'inbox', path: ROUTES.inbox, prefix: '/inbox/', module: () => import('../inbox.js') },
   { id: 'profile-public', path: ROUTES.profilePublic, prefixes: ['/profiles/', '/u/'], module: () => import('../profilePublic.js') }, // melogic-mobile-spa-profile-v5
   { id: 'profile-edit', path: ROUTES.editProfile, module: () => import('../editProfile.js') },
   { id: 'profile', path: ROUTES.profile, module: () => import('../profile.js') },
-  { id: 'products', path: ROUTES.products, module: () => import('../products.js') },
+  { id: 'products', path: ROUTES.products, prefix: '/products/', module: () => import('../products.js') }, // melogic-mobile-spa-consumer-v6
   { id: 'cart', path: ROUTES.cart, module: () => import('../cart.js') },
+  { id: 'streaming', path: ROUTES.music, prefix: '/streaming/', module: () => import('../music.js') },
   { id: 'support', path: ROUTES.support, prefix: '/support/', module: () => import('../support.js') }
 ])
 
 const warmedRoutes = new Set()
-const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox', 'community', 'profile', 'profile-edit', 'profile-public']) // melogic-mobile-spa-inbox-intercept-v3 // melogic-mobile-spa-community-v4 // melogic-mobile-spa-profile-v5
+const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox', 'community', 'profile', 'profile-edit', 'profile-public', 'products', 'cart', 'streaming', 'support']) // melogic-mobile-spa-inbox-intercept-v3 // melogic-mobile-spa-community-v4 // melogic-mobile-spa-profile-v5 // melogic-mobile-spa-consumer-v6
 let initialized = false
 let prewarmTimer = 0
 

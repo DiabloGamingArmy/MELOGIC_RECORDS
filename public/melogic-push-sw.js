@@ -90,6 +90,8 @@ const SHELL_FILES = ['/offline.html', '/manifest.webmanifest', '/branding/icons/
 const MELOGIC_WARM_MOBILE_ROUTES = new Set([
   '/community',
   '/streaming',
+  '/streaming/live',
+  '/streaming/sequence',
   '/camera',
   '/inbox',
   '/inbox/messages',
@@ -100,7 +102,12 @@ const MELOGIC_WARM_MOBILE_ROUTES = new Set([
   '/profile/public',
   '/products',
   '/cart',
-  '/support'
+  '/support',
+  '/support/faq',
+  '/support/about',
+  '/support/contact',
+  '/support/privacy',
+  '/support/terms'
 ])
 
 /* melogic-pwa-forced-release-v2 */

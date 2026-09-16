@@ -7,6 +7,27 @@ import { clearCart, getCartItems, removeFromCart, subscribeToCart } from './data
 import { createCheckoutSession } from './data/checkoutService'
 import { claimFreeProduct } from './data/entitlementService'
 import { ROUTES, authRoute } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
+
+// melogic-cart-spa-lifecycle-v6
+function initConsumerSpaLifecycle() {
+  if (!isMobileSpaRuntime()) return
+  const existing = history.state && typeof history.state === 'object' ? history.state : {}
+  history.replaceState({
+    ...existing,
+    melogicMobileSpa: true,
+    routeId: 'cart',
+    pathname: location.pathname
+  }, '', location.href)
+  emitMobileSpaNavigation({ type: 'cart-init', routeId: 'cart' })
+
+  if (!navigator.connection?.saveData) {
+    queueMicrotask(() => {
+      void prewarmMobileSpaRoute(ROUTES.products)
+    })
+  }
+}
+initConsumerSpaLifecycle()
 
 const app = document.querySelector('#app')
 let activeUser = null

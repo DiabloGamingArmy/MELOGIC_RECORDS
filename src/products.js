@@ -13,6 +13,7 @@ import { getProductReactionSummary } from './data/productEngagementService'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { iconSvg } from './utils/icons'
 import { ROUTES, authRoute, productRoute, publicProfileRoute, usernameProfileRoute } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import {
   fulfillmentTypeLabel,
   hasDigitalFulfillment,
@@ -22,6 +23,27 @@ import {
   physicalAvailableQuantity,
   shippingModeLabel
 } from './utils/productFulfillment'
+
+// melogic-products-spa-lifecycle-v6
+function initConsumerSpaLifecycle() {
+  if (!isMobileSpaRuntime()) return
+  const existing = history.state && typeof history.state === 'object' ? history.state : {}
+  history.replaceState({
+    ...existing,
+    melogicMobileSpa: true,
+    routeId: 'products',
+    pathname: location.pathname
+  }, '', location.href)
+  emitMobileSpaNavigation({ type: 'products-init', routeId: 'products' })
+
+  if (!navigator.connection?.saveData) {
+    queueMicrotask(() => {
+      void prewarmMobileSpaRoute(ROUTES.cart)
+      void prewarmMobileSpaRoute(ROUTES.profile)
+    })
+  }
+}
+initConsumerSpaLifecycle()
 
 const PAGE_SIZE = 10
 const SEARCH_DEBOUNCE_MS = 250

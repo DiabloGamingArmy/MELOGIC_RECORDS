@@ -10,6 +10,28 @@ import { createOrGetResonaThread } from './data/inboxService'
 import { waitForInitialAuthState } from './firebase/auth'
 import { openChatDock } from './components/chatDock'
 import { ROUTES, authRoute } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
+
+// melogic-support-spa-lifecycle-v6
+function initConsumerSpaLifecycle() {
+  if (!isMobileSpaRuntime()) return
+  const existing = history.state && typeof history.state === 'object' ? history.state : {}
+  history.replaceState({
+    ...existing,
+    melogicMobileSpa: true,
+    routeId: 'support',
+    pathname: location.pathname
+  }, '', location.href)
+  emitMobileSpaNavigation({ type: 'support-init', routeId: 'support' })
+
+  if (!navigator.connection?.saveData) {
+    queueMicrotask(() => {
+      void prewarmMobileSpaRoute(ROUTES.inbox)
+      void prewarmMobileSpaRoute(ROUTES.profile)
+    })
+  }
+}
+initConsumerSpaLifecycle()
 
 function supportCard({ eyebrow, title, body, actions = [] }) {
   return `
