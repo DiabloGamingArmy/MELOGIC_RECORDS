@@ -3879,3 +3879,10 @@ body.site-guidance-active .inbox-site-guidance-trigger {
   /* No interaction/stacking overrides here. Hit testing proved the real nav
      and thread buttons are already the topmost pointer targets. */
 }
+
+/* Persistent Inbox section navigation uses native browser activation.
+   Keep these anchors out of custom gesture ownership on touch devices. */
+body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

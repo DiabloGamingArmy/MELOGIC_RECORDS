@@ -7874,9 +7874,9 @@ function installMobileInboxNavigationAndScrollArchitecture() {
   const mobileTabsMarkup = () => {
     const active = routeKind()
     return `<nav class="inbox-mobile-section-tabs" data-inbox-mobile-section-tabs aria-label="Inbox sections">
-      <a class="${active === 'messages' ? 'is-active' : ''}" href="/inbox/messages" ${active === 'messages' ? 'aria-current="page"' : ''}>Messages</a>
-      <a class="${active === 'calls' ? 'is-active' : ''}" href="/inbox/calls" ${active === 'calls' ? 'aria-current="page"' : ''}>Calls</a>
-      <a class="${active === 'activity' ? 'is-active' : ''}" href="/inbox/system" ${active === 'activity' ? 'aria-current="page"' : ''}>Activity</a>
+      <a class="${active === 'messages' ? 'is-active' : ''}" href="/inbox/messages" data-native-touch-navigation ${active === 'messages' ? 'aria-current="page"' : ''}>Messages</a>
+      <a class="${active === 'calls' ? 'is-active' : ''}" href="/inbox/calls" data-native-touch-navigation ${active === 'calls' ? 'aria-current="page"' : ''}>Calls</a>
+      <a class="${active === 'activity' ? 'is-active' : ''}" href="/inbox/system" data-native-touch-navigation ${active === 'activity' ? 'aria-current="page"' : ''}>Activity</a>
     </nav>`
   }
   const ensureTabs = () => {
@@ -7917,6 +7917,9 @@ function installMobileInboxNavigationAndScrollArchitecture() {
       const anchor = anchors[index]
       if (!anchor) return
       if (anchor.getAttribute('href') !== href) anchor.setAttribute('href', href)
+      if (!anchor.hasAttribute('data-native-touch-navigation')) {
+        anchor.setAttribute('data-native-touch-navigation', '')
+      }
       const isActive = active === key
       anchor.classList.toggle('is-active', isActive)
       if (isActive) anchor.setAttribute('aria-current', 'page')

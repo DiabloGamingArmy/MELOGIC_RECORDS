@@ -16,7 +16,14 @@ function isRealTouchMobile() {
 
 function closestInteractive(target) {
   const element = target instanceof Element ? target : target?.parentElement
-  return element?.closest(INTERACTIVE_SELECTOR) || null
+  const control = element?.closest(INTERACTIVE_SELECTOR) || null
+
+  // Persistent navigation anchors must use the browser's native activation
+  // path. Do not synthesize .click() for them on touchend; doing so creates
+  // a second activation pipeline on real iOS/WebKit devices.
+  if (control?.matches('[data-native-touch-navigation]')) return null
+
+  return control
 }
 
 function isUsable(control) {
