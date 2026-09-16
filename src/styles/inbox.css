@@ -3886,3 +3886,74 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
 }
+
+/* melogic-inbox-mobile-visual-structure-v6
+   Mobile list spacing + true full-screen conversation + strict scroll ownership. */
+@media (max-width:760px) {
+  html:has(body.is-inbox-page), body.is-inbox-page {
+    height:100%; max-height:100%; overflow:hidden !important; overscroll-behavior:none;
+  }
+  body.is-inbox-page #app {
+    height:100dvh; max-height:100dvh; min-height:0; overflow:hidden !important;
+  }
+
+  /* More breathing room between avatar and conversation copy. */
+  body.is-inbox-page .inbox-mobile-list-view .thread-meta {
+    padding-left:6px !important;
+  }
+
+  /* Open conversation owns the complete mobile app viewport. */
+  body.is-inbox-page.is-inbox-mobile-conversation-open .mobile-app-header,
+  body.is-inbox-page.is-inbox-mobile-conversation-open .mobile-bottom-nav,
+  body.is-inbox-page.is-inbox-mobile-conversation-open .inbox-mobile-section-tabs {
+    display:none !important;
+  }
+
+  body.is-inbox-page.is-inbox-mobile-conversation-open main {
+    height:var(--inbox-mobile-bottom-edge,100dvh) !important;
+    max-height:var(--inbox-mobile-bottom-edge,100dvh) !important;
+    min-height:0 !important; padding:0 !important; overflow:hidden !important;
+  }
+
+  body.is-inbox-page.is-inbox-mobile-conversation-open .inbox-main-shell,
+  body.is-inbox-page.is-inbox-mobile-conversation-open .inbox-app-shell,
+  body.is-inbox-page.is-inbox-mobile-conversation-open .inbox-layout,
+  body.is-inbox-page.is-inbox-mobile-conversation-open .inbox-mobile-conversation-view,
+  body.is-inbox-page.is-inbox-mobile-conversation-open .inbox-main-panel {
+    height:100% !important; max-height:100% !important; min-height:0 !important;
+    overflow:hidden !important;
+  }
+
+  body.is-inbox-page.is-inbox-mobile-conversation-open .inbox-mobile-conversation-view .inbox-main-panel {
+    display:grid !important; grid-template-rows:auto minmax(0,1fr) !important;
+  }
+  body.is-inbox-page.is-inbox-mobile-conversation-open .conversation-header {
+    flex:0 0 auto !important; overflow:hidden !important;
+  }
+  body.is-inbox-page.is-inbox-mobile-conversation-open .conversation-stack {
+    display:flex !important; flex-direction:column !important;
+    min-height:0 !important; height:100% !important; overflow:hidden !important;
+  }
+  body.is-inbox-page.is-inbox-mobile-conversation-open .message-list,
+  body.is-inbox-page.is-inbox-mobile-conversation-open [data-message-list] {
+    flex:1 1 auto !important; min-height:0 !important; height:auto !important;
+    overflow-x:hidden !important; overflow-y:auto !important;
+    overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; touch-action:pan-y;
+  }
+  body.is-inbox-page.is-inbox-mobile-conversation-open .message-composer {
+    flex:0 0 auto !important; overflow:visible !important;
+  }
+
+  /* List route stays fixed; only the conversation list scrolls. */
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) main,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-main-shell,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-app-shell,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-layout,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-thread-panel {
+    min-height:0 !important; overflow:hidden !important;
+  }
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-thread-list {
+    min-height:0 !important; overflow-x:hidden !important; overflow-y:auto !important;
+    overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; touch-action:pan-y;
+  }
+}

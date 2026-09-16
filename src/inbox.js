@@ -7949,9 +7949,18 @@ function installMobileInboxNavigationAndScrollArchitecture() {
       list.insertBefore(label, normal[0])
     }
   }
+  const syncMobileConversationChrome = () => {
+    if (!isMobile()) {
+      document.body.classList.remove('is-inbox-mobile-conversation-open')
+      return
+    }
+    const conversationOpen = Boolean(document.querySelector('.inbox-mobile-conversation-view'))
+    document.body.classList.toggle('is-inbox-mobile-conversation-open', conversationOpen)
+  }
   const updateViewportBoundary = () => {
     if (!isMobile()) return
-    const nav = document.querySelector('.mobile-bottom-nav')
+    const conversationOpen = document.body.classList.contains('is-inbox-mobile-conversation-open')
+    const nav = conversationOpen ? null : document.querySelector('.mobile-bottom-nav')
     const viewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight)
     let bottomEdge = viewportHeight
     if (nav) {
@@ -7978,6 +7987,7 @@ function installMobileInboxNavigationAndScrollArchitecture() {
     raf = requestAnimationFrame(() => {
       ensureTabs()
       ensureThreadSectionLabels()
+      syncMobileConversationChrome()
       updateViewportBoundary()
       hardenConversationScrollOwnership()
     })
