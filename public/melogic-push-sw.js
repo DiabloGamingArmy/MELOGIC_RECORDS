@@ -80,7 +80,27 @@ self.addEventListener('pushsubscriptionchange', (event) => {
 // New builds wait for existing clients to close: never reload an active editor.
 const SHELL_CACHE_PREFIX = 'melogic-shell-'
 const SHELL_CACHE = `${SHELL_CACHE_PREFIX}__MELOGIC_PWA_BUILD__`
+const ROUTE_CACHE_PREFIX = 'melogic-mobile-routes-'
+const ROUTE_CACHE = `${ROUTE_CACHE_PREFIX}__MELOGIC_PWA_BUILD__`
 const SHELL_FILES = ['/offline.html', '/manifest.webmanifest', '/branding/icons/pwa-192.png', '/branding/icons/pwa-512.png', '/branding/icons/pwa-maskable-512.png', '/branding/icons/apple-touch-icon.png']
+
+// Patch 1 foundation only: these are public HTML route documents. Their JS/CSS
+// remains fingerprinted and is cached by the existing static-asset policy.
+// Dynamic Firebase/user data is deliberately NOT stored in Cache Storage.
+const MELOGIC_WARM_MOBILE_ROUTES = new Set([
+  '/community',
+  '/streaming',
+  '/camera',
+  '/inbox',
+  '/inbox/messages',
+  '/inbox/calls',
+  '/inbox/content/all',
+  '/profile',
+  '/profile/edit',
+  '/products',
+  '/cart',
+  '/support'
+])
 
 /* melogic-pwa-forced-release-v2 */
 self.addEventListener('install', event => {
@@ -101,7 +121,10 @@ self.addEventListener('message', event => {
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
     const keys = await caches.keys()
-    await Promise.all(keys.filter(key => key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE).map(key => caches.delete(key)))
+    await Promise.all(keys.filter(key =>
+      (key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE) ||
+      (key.startsWith(ROUTE_CACHE_PREFIX) && key !== ROUTE_CACHE)
+    ).map(key => caches.delete(key)))
     await clients.claim()
     const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true })
     await Promise.all(windows.map(client => client.postMessage({
@@ -116,6 +139,25 @@ self.addEventListener('fetch', event => {
   // Never cache APIs, uploads, account data, media, Range responses or third parties.
   if (request.method !== 'GET' || url.origin !== self.location.origin || request.headers.has('Range') || request.headers.has('Authorization')) return
   if (request.mode === 'navigate') {
+    const routeKey = url.pathname.replace(/\/+$/, '') || '/'
+    if (MELOGIC_WARM_MOBILE_ROUTES.has(routeKey)) {
+      event.respondWith((async () => {
+        const cache = await caches.open(ROUTE_CACHE)
+        try {
+          const response = await fetch(request)
+          if (response.ok && response.type === 'basic' && !/no-store|private/i.test(response.headers.get('Cache-Control') || '')) {
+            try { await cache.put(routeKey, response.clone()) } catch {}
+          }
+          return response
+        } catch {
+          const cachedRoute = await cache.match(routeKey)
+          if (cachedRoute) return cachedRoute
+          const offline = await caches.open(SHELL_CACHE).then(shell => shell.match('/offline.html'))
+          return offline || new Response('Melogic is offline. Reconnect and try again.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+        }
+      })())
+      return
+    }
     event.respondWith(fetch(request).catch(async () => {
       const cached = await caches.open(SHELL_CACHE).then(cache => cache.match('/offline.html'))
       return cached || new Response('Melogic is offline. Reconnect and try again.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })

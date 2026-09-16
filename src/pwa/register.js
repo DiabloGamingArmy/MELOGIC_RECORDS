@@ -1,4 +1,8 @@
 import './pwa.css'
+import { initMobileSpaFoundation } from './mobileSpaRouter'
+
+// melogic-mobile-spa-foundation-v1
+initMobileSpaFoundation()
 
 const desktop = Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__ || /Tauri/i.test(navigator.userAgent))
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
