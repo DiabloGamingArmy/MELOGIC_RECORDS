@@ -1,97 +1,125 @@
-// Temporary on-device trace for native mobile tap activation. Remove after diagnosis.
+/*
+ * melogic-real-touch-activation-v1
+ * Real-touch compatibility for mobile WebKit-style missing activation.
+ */
 let installed = false
 
-export function installMobileInteractionDiagnostic() {
-  if (installed || !window.matchMedia('(max-width: 760px)').matches || !(window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0)) return
+const INTERACTIVE_SELECTOR =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[role="button"]:not([aria-disabled="true"])'
+
+function isRealTouchMobile() {
+  return window.matchMedia('(max-width: 760px)').matches
+    && (window.matchMedia('(pointer: coarse)').matches
+      || navigator.maxTouchPoints > 0
+      || 'ontouchstart' in window)
+}
+
+function closestInteractive(target) {
+  const element = target instanceof Element ? target : target?.parentElement
+  return element?.closest(INTERACTIVE_SELECTOR) || null
+}
+
+function isUsable(control) {
+  if (!control?.isConnected) return false
+  if (control.matches('[disabled],[aria-disabled="true"]')) return false
+  const style = getComputedStyle(control)
+  return style.display !== 'none'
+    && style.visibility !== 'hidden'
+    && style.pointerEvents !== 'none'
+}
+
+function installRealTouchActivationCompatibility() {
+  if (installed || !isRealTouchMobile()) return
   installed = true
 
-  const panel = document.createElement('pre')
-  panel.setAttribute('aria-hidden', 'true')
-  panel.style.cssText = 'position:fixed;top:calc(env(safe-area-inset-top, 0px) + 68px);left:5px;right:5px;z-index:2147483647;max-height:42vh;overflow:hidden;margin:0;padding:6px;border:1px solid #65d9ff;border-radius:6px;background:rgba(0,0,0,.9);color:#fff;font:10px/1.25 monospace;white-space:pre-wrap;overflow-wrap:anywhere;pointer-events:none'
-  document.body.append(panel)
+  let gesture = null
+  let syntheticControl = null
+  let syntheticAt = 0
 
-  const events = []
-  let originalTarget = null
-  let startAt = 0
-  let clickSeen = false
-  let missingClickTimer = 0
-  let clickStatus = 'waiting for tap'
-
-  const label = (node) => {
-    if (!(node instanceof Element)) return node?.nodeName || 'none'
-    return `${node.tagName.toLowerCase()}${node.id ? `#${node.id}` : ''}${Array.from(node.classList).slice(0, 2).map(name => `.${name}`).join('')}`
-  }
-  const paint = () => {
-    const latest = events[events.length - 1]
-    panel.textContent = [
-      `TAP TRACE  ${clickStatus}`,
-      ...events.slice(-6).map(item => `${item.type.padEnd(11)} ${item.time} ${item.defaultPrevented ? 'PREVENTED' : 'ok'} ${item.originalConnected ? 'connected' : 'REMOVED'}`),
-      `TARGET: ${latest?.target || '-'}`,
-      `CONTROL: ${latest?.control || '-'}`,
-      `TOP ELEMENT: ${latest?.top || '-'}`,
-      `DEFAULT PREVENTED: ${latest?.defaultPrevented ?? '-'}`,
-      `START TARGET CONNECTED: ${latest?.originalConnected ?? '-'}`,
-      `HREF: ${latest?.href || '-'}`,
-      `POINTER/XY: ${latest?.pointerType || '-'} / ${latest?.x ?? '-'},${latest?.y ?? '-'}`,
-      `LOCATION: ${latest?.location || location.href}`
-    ].join('\n')
-  }
-  paint()
-
-  const onEvent = (event) => {
-    const now = performance.now()
-    if ((event.type === 'pointerdown' || event.type === 'touchstart') && now - startAt > 100) {
-      originalTarget = event.target
-      startAt = now
-      clickSeen = false
-      clickStatus = 'tap in progress'
-      clearTimeout(missingClickTimer)
+  document.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1) {
+      gesture = null
+      return
     }
-    const target = event.target instanceof Element ? event.target : event.target?.parentElement
-    const control = target?.closest('a,button,input,select,textarea,[role="button"]')
-    const touch = event.changedTouches?.[0] || event.touches?.[0]
-    const x = touch?.clientX ?? event.clientX
-    const y = touch?.clientY ?? event.clientY
-    const top = Number.isFinite(x) && Number.isFinite(y) ? document.elementFromPoint(x, y) : null
-    const item = {
-      type: event.type,
-      time: new Date().toLocaleTimeString(),
-      target: label(target),
-      control: label(control),
-      top: label(top),
-      href: control?.closest('a[href]')?.href || '',
-      defaultPrevented: event.defaultPrevented,
-      pointerType: event.pointerType || (touch ? 'touch' : ''),
-      x: Number.isFinite(x) ? Math.round(x) : null,
-      y: Number.isFinite(y) ? Math.round(y) : null,
-      originalConnected: originalTarget?.isConnected ?? null,
-      location: location.href
-    }
-    events.push(item)
-    if (events.length > 20) events.shift()
-    if (event.type === 'click') {
-      clickSeen = true
-      clickStatus = 'CLICK received'
-      clearTimeout(missingClickTimer)
-      // Capture runs before other listeners. Read cancellation again after propagation.
-      setTimeout(() => {
-        item.defaultPrevented = event.defaultPrevented
-        clickStatus = event.defaultPrevented ? 'CLICK CANCELED after capture' : 'CLICK not canceled'
-        paint()
-      }, 0)
-    } else if (event.type === 'touchend' || event.type === 'pointerup') {
-      clearTimeout(missingClickTimer)
-      missingClickTimer = setTimeout(() => {
-        if (!clickSeen) {
-          clickStatus = `NO CLICK after touch; start connected: ${originalTarget?.isConnected ?? '-'}`
-          paint()
-        }
-      }, 900)
-    }
-    paint()
-  }
+    const touch = event.touches[0]
+    const control = closestInteractive(event.target)
+    gesture = control ? {
+      control,
+      x: touch.clientX,
+      y: touch.clientY,
+      startedAt: performance.now(),
+      moved: false
+    } : null
+  }, { capture: true, passive: true })
 
-  for (const type of ['touchstart', 'touchend', 'pointerdown', 'pointerup', 'click']) {
-    document.addEventListener(type, onEvent, { capture: true, passive: true })
-  }
+  document.addEventListener('touchmove', (event) => {
+    if (!gesture || event.touches.length !== 1) {
+      gesture = null
+      return
+    }
+    const touch = event.touches[0]
+    if (Math.hypot(touch.clientX - gesture.x, touch.clientY - gesture.y) > 12) {
+      gesture.moved = true
+    }
+  }, { capture: true, passive: true })
+
+  document.addEventListener('touchcancel', () => {
+    gesture = null
+  }, { capture: true, passive: true })
+
+  document.addEventListener('touchend', (event) => {
+    const current = gesture
+    gesture = null
+
+    if (!current || current.moved || event.changedTouches.length !== 1) return
+    if (performance.now() - current.startedAt > 900) return
+
+    const touch = event.changedTouches[0]
+    if (Math.hypot(touch.clientX - current.x, touch.clientY - current.y) > 12) return
+
+    const releaseControl = closestInteractive(
+      document.elementFromPoint(touch.clientX, touch.clientY)
+    )
+    if (releaseControl !== current.control && !current.control.contains(releaseControl)) return
+    if (!isUsable(current.control)) return
+
+    // Activate inside the trusted touchend task. Do not cancel the touch event.
+    syntheticControl = current.control
+    syntheticAt = performance.now()
+    current.control.click()
+  }, { capture: true, passive: true })
+
+  // If WebKit later emits its delayed native compatibility click, suppress only
+  // that duplicate. Synthetic .click() has isTrusted === false.
+  document.addEventListener('click', (event) => {
+    if (!event.isTrusted || !syntheticControl) return
+    const control = closestInteractive(event.target)
+    const elapsed = performance.now() - syntheticAt
+
+    if (elapsed <= 900 && control === syntheticControl) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      syntheticControl = null
+      syntheticAt = 0
+      return
+    }
+    if (elapsed > 900) {
+      syntheticControl = null
+      syntheticAt = 0
+    }
+  }, { capture: true })
+
+  window.addEventListener('pageshow', () => {
+    gesture = null
+    syntheticControl = null
+    syntheticAt = 0
+  })
 }
+
+// Preserve the existing assetChrome API.
+export function installMobileInteractionDiagnostic() {
+  installRealTouchActivationCompatibility()
+}
+
+// Install on import as well; installation is idempotent.
+installRealTouchActivationCompatibility()

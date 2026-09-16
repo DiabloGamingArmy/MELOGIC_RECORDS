@@ -2249,9 +2249,9 @@ function getMessagesSidebarMarkup() {
     .map((filter) => {
       const guideKey = String(filter.label || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
       return `
-        <a href="${filter.path}" class="inbox-filter ${appState.activeFilter === filter.label ? 'is-active' : ''}" data-inbox-filter="${filter.label}" data-inbox-path="${filter.path}" data-guide-id="inbox-sidebar-${escapeHtml(guideKey)}" data-guide-label="${escapeHtml(filter.label)}" data-guide-role="inbox-sidebar-link">
+        <button type="button" class="inbox-filter ${appState.activeFilter === filter.label ? 'is-active' : ''}" data-inbox-filter="${filter.label}" data-inbox-path="${filter.path}" data-guide-id="inbox-sidebar-${escapeHtml(guideKey)}" data-guide-label="${escapeHtml(filter.label)}" data-guide-role="inbox-sidebar-button">
           <span>${filter.label}</span>
-        </a>
+        </button>
       `
     })
     .join('')
@@ -6278,16 +6278,13 @@ function bindSharedEvents(scope = inboxRoot) {
       renderSignedInState()
     })
   })
-  scope.querySelectorAll('[data-inbox-filter]').forEach((control) => {
-    control.addEventListener('click', (event) => {
-      // Keep SPA navigation when click delivery works. The real href remains a
-      // native WebKit/iOS fallback when custom click activation is lost.
-      event.preventDefault()
-      const nextFilter = control.dataset.inboxFilter || 'Messages'
+  scope.querySelectorAll('[data-inbox-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextFilter = button.dataset.inboxFilter || 'Messages'
       if (nextFilter !== 'Messages' && activeTypingThreadId) {
         clearTypingForThread(activeTypingThreadId)
       }
-      navigateInbox(control.dataset.inboxPath || control.getAttribute('href') || ROUTES.inboxMessages)
+      navigateInbox(button.dataset.inboxPath || ROUTES.inboxMessages)
     })
   })
 

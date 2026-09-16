@@ -199,11 +199,34 @@ export async function listInboxThreads(uid) {
   return Promise.all(hydratedThreads.map((thread) => decorateThread(thread, uid)))
 }
 
+// melogic-inbox-fast-load-v1
+// Render the mirror snapshot immediately, then enrich it asynchronously.
+// The previous implementation blocked the ENTIRE inbox on source-thread
+// hydration + per-DM profile reads before invoking callback().
 export function subscribeToInboxThreads(uid, callback, onError) {
-  return subscribeToThreadsForUser(uid, async (threads) => {
-    const hydratedThreads = await Promise.all(threads.map((thread) => hydrateThreadFromSourceIfNeeded(thread)))
-    const decorated = await Promise.all(hydratedThreads.map((thread) => decorateThread(thread, uid)))
-    callback(decorated)
+  let generation = 0
+
+  return subscribeToThreadsForUser(uid, (threads) => {
+    const currentGeneration = ++generation
+
+    // Fast first paint: inbox mirrors already contain the data required to
+    // render the conversation list. Do not hold the UI hostage to secondary
+    // Firestore reads.
+    callback(threads)
+
+    // Progressive enrichment. Missing legacy mirror fields and profile details
+    // are filled after the list is already interactive.
+    Promise.all(threads.map(async (thread) => {
+      const hydrated = await hydrateThreadFromSourceIfNeeded(thread)
+      return decorateThread(hydrated, uid)
+    }))
+      .then((decorated) => {
+        if (currentGeneration !== generation) return
+        callback(decorated)
+      })
+      .catch((error) => {
+        console.warn('[inboxService] Background thread enrichment failed.', error)
+      })
   }, onError)
 }
 
