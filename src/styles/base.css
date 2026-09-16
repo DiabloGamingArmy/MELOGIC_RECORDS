@@ -3102,32 +3102,40 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
  .mobile-profile-nav-avatar.has-photo{background-size:cover!important;background-position:center!important}
 }
 
-/* melogic-mobile-camera-nav-global-v1 */
-@media (max-width:760px) {
+
+
+
+/* melogic-camera-nav-authoritative-v2
+   Camera is a normal primary-nav item. This belongs in base.css so every
+   mobile route renders identical geometry before page-specific CSS loads. */
+@media (max-width: 760px) {
   .mobile-bottom-nav .mobile-camera-nav {
     position: relative;
     overflow: visible;
   }
-  .mobile-bottom-nav .mobile-camera-nav .mobile-camera-glyph {
-    width: 46px;
-    height: 46px;
-    margin-top: -14px;
-    border-radius: 999px;
+
+  .mobile-bottom-nav .mobile-camera-nav .mobile-camera-glyph,
+  .mobile-bottom-nav .mobile-camera-nav[aria-current='page'] .mobile-camera-glyph {
     display: grid;
     place-items: center;
-    background: #f6f7fb;
-    color: #050609;
-    box-shadow: 0 7px 24px rgba(0,0,0,.42);
-    transition: transform 150ms ease, box-shadow 150ms ease;
+    width: 25px;
+    height: 25px;
+    margin: 0;
+    border-radius: 0;
+    background: transparent;
+    color: currentColor;
+    box-shadow: none;
+    transform: none;
   }
+
   .mobile-bottom-nav .mobile-camera-nav .mobile-camera-glyph svg {
+    display: block;
     width: 24px;
     height: 24px;
     fill: none;
     stroke: currentColor;
     stroke-width: 1.8;
-  }
-  .mobile-bottom-nav .mobile-camera-nav:active .mobile-camera-glyph {
-    transform: scale(.93);
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 }
