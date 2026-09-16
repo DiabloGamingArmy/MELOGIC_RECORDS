@@ -4754,3 +4754,34 @@ body:has(.community-page) #app {
   outline:2px solid var(--community-focus-ring);
   outline-offset:2px;
 }
+
+/* melogic-community-semantic-accent-v4 */
+.community-page{--community-accent-a:#4f7dff;--community-accent-b:#9a6cff;--community-accent-gradient:linear-gradient(135deg,var(--community-accent-a),var(--community-accent-b));--community-accent-gradient-horizontal:linear-gradient(90deg,var(--community-accent-a),var(--community-accent-b));--community-accent-soft:rgba(111,101,255,.14);--community-accent-soft-strong:rgba(111,101,255,.22);--community-accent-border:rgba(130,112,255,.56);--community-focus-ring:#8b83ff}
+.community-master-tabs>button{color:var(--community-text-secondary);background:transparent;border-color:transparent}
+.community-master-tabs>button:hover{color:var(--community-text);background:var(--community-surface-hover)}
+.community-master-tabs>button:is(.is-active,[aria-selected="true"],[aria-current="page"]){position:relative;color:var(--community-text);background:transparent;font-weight:800}
+.community-master-tabs>button:is(.is-active,[aria-selected="true"],[aria-current="page"])::after{content:"";position:absolute;left:18%;right:18%;bottom:0;height:2px;border-radius:999px;background:var(--community-accent-gradient-horizontal)}
+.community-topic-pill.is-active,.community-filter-chip:is(.is-active,[aria-pressed="true"],[aria-selected="true"]){color:#fff;border-color:transparent;background:linear-gradient(var(--community-surface-2),var(--community-surface-2)) padding-box,var(--community-accent-gradient) border-box;font-weight:800}
+.community-topic-pill.is-active:hover,.community-filter-chip:is(.is-active,[aria-pressed="true"],[aria-selected="true"]):hover{background:linear-gradient(var(--community-surface-3),var(--community-surface-3)) padding-box,var(--community-accent-gradient) border-box}
+.community-left-nav .is-active,.community-left-nav :is(a,button)[aria-current="page"]{color:#fff;background:var(--community-surface-hover);background-image:none;border-color:transparent;border-radius:0;box-shadow:inset 2px 0 0 var(--community-accent-b);font-weight:700}
+.community-page :is(.button.primary,.button.is-primary,.community-primary-action,.community-composer-submit,.community-comment-submit,.community-create-submit,.community-report-submit,.community-destination-confirm,.community-story-submit){color:#fff;border-color:transparent;background:var(--community-accent-gradient);background-image:var(--community-accent-gradient);box-shadow:none}
+.community-page :is(.button.primary,.button.is-primary,.community-primary-action,.community-composer-submit,.community-comment-submit,.community-create-submit,.community-report-submit,.community-destination-confirm,.community-story-submit):hover{filter:brightness(1.08);box-shadow:0 0 0 1px rgba(255,255,255,.08)}
+.community-page :is(.button.primary,.button.is-primary,.community-primary-action,.community-composer-submit,.community-comment-submit,.community-create-submit,.community-report-submit,.community-destination-confirm,.community-story-submit):active{filter:brightness(.96);transform:translateY(1px)}
+.community-page :is(.community-post-actions button,.community-comment-actions button,.community-tool-button,.community-composer-tool,.community-intent-option,.community-destination-option):is(.is-active,[aria-pressed="true"],[aria-selected="true"]){color:#b9b5ff;border-color:var(--community-accent-border);background:var(--community-accent-soft)}
+.community-page :is(.community-post-actions button,.community-comment-actions button,.community-tool-button,.community-composer-tool,.community-intent-option,.community-destination-option):is(.is-active,[aria-pressed="true"],[aria-selected="true"]):hover{color:#d5d2ff;background:var(--community-accent-soft-strong)}
+.community-page :is(.is-liked,[data-reaction="like"][aria-pressed="true"]){color:#ff6f91}
+.community-page :is(.is-reposted,[data-reaction="repost"][aria-pressed="true"]){color:#62d6a7}
+.community-page :where(a,button,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--community-focus-ring);outline-offset:2px}
+.community-page :where(input,textarea,select):focus-visible{border-color:var(--community-accent-border)}
+.community-page :is(progress,.community-progress,.community-upload-progress,.community-loading-progress,.community-status-progress){accent-color:var(--community-accent-a)}
+.community-page progress::-webkit-progress-value,.community-page .community-progress-fill,.community-page .community-upload-progress-fill,.community-page .community-loading-progress-fill,.community-page .community-status-progress-fill{background:var(--community-accent-gradient-horizontal)}
+.community-page progress::-moz-progress-bar{background:var(--community-accent-gradient-horizontal)}
+.community-story-empty-state button,.community-page .community-inline-prompt,.community-page .community-secondary-action{color:var(--community-text-secondary)}
+.community-story-empty-state button:hover,.community-page .community-inline-prompt:hover,.community-page .community-secondary-action:hover{color:var(--community-text)}
+.community-story-ring{background:var(--community-accent-gradient)}
+.community-story-item.is-viewed .community-story-ring,.community-story-item[aria-label*="viewed" i] .community-story-ring{background:var(--community-surface-pressed)}
+.community-badge,.community-status-chip{color:var(--community-text-secondary);border-color:var(--community-border);background:var(--community-surface-2)}
+.community-badge:is(.is-selected,.is-active),.community-status-chip:is(.is-selected,.is-active){color:#fff;border-color:var(--community-accent-border);background:var(--community-accent-soft)}
+.community-page :is(button,a,input,textarea,select)[disabled],.community-page :is(button,a)[aria-disabled="true"]{filter:none;box-shadow:none}
+.community-page :is(.community-topic-arrow,.community-post-options-button,.community-filter-arrow,.community-comment-tool-row button,.community-post-actions button):not(.is-active):not([aria-pressed="true"]){box-shadow:none;background-image:none}
+@media(prefers-contrast:more){.community-topic-pill.is-active,.community-filter-chip:is(.is-active,[aria-pressed="true"],[aria-selected="true"]),.community-page :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline-width:3px}}

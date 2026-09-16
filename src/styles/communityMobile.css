@@ -138,7 +138,7 @@
   .community-feed-controls form { width: 100%; }
   .community-attachment-toolbar { flex-wrap: wrap; }
   .community-composer-attachment { grid-template-columns: 42px minmax(0, 1fr) 32px; }
-  .community-page :is(button, a, textarea):focus-visible { outline: 2px solid #8fd8ff; outline-offset: 2px; }
+  .community-page :is(button, a, textarea):focus-visible { outline: 2px solid var(--community-focus-ring); outline-offset: 2px; }
   .community-page button { touch-action: manipulation; }
   @keyframes community-title-enter { from { opacity: .6; transform: translateX(-12px); } to { opacity: 1; transform: translateX(0); } }
   @keyframes community-back-enter { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
@@ -185,4 +185,11 @@
   .community-page :is(button,a,textarea,input,select):focus-visible{
     outline-color:var(--community-focus-ring);
   }
+}
+
+/* melogic-community-semantic-accent-mobile-v4 */
+@media(max-width:760px){
+.community-master-tabs>button:is(.is-active,[aria-selected="true"],[aria-current="page"])::after{left:24%;right:24%}
+.community-topic-pill.is-active{color:#fff;border:1px solid transparent;background:linear-gradient(var(--community-surface-2),var(--community-surface-2)) padding-box,var(--community-accent-gradient) border-box}
+.community-page :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--community-focus-ring);outline-offset:2px}
 }
