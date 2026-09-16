@@ -2930,7 +2930,13 @@ function renderDetail() {
     <div class="community-layout is-home is-post-detail">
       ${renderLeftNav()}
       <div class="community-main community-route-main">
-        <section class="community-detail-topbar">
+        <section class="community-post-mobile-routebar" aria-label="Post navigation">
+          <a class="community-post-mobile-back" href="${ROUTES.community}" data-community-back-to-feed aria-label="Back to Community">
+            ${iconSvg('arrowLeft')}
+          </a>
+          <a class="community-post-mobile-title" href="${ROUTES.community}" data-community-back-to-feed aria-label="Community">Community</a>
+        </section>
+        <section class="community-detail-topbar community-detail-topbar-desktop">
           <div class="community-detail-title-track" aria-label="Post title">
             <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
           </div>
