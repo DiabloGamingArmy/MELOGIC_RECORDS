@@ -69,15 +69,55 @@ function captureTransitionFrame() {
   transitionFrame.classList.add('is-visible')
   return true
 }
-function waitForVideoFrame() {
+function nextAnimationFrame() {
+  return new Promise(resolve => requestAnimationFrame(resolve))
+}
+function nextPresentedVideoFrame() {
   return new Promise(resolve => {
-    if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-      requestAnimationFrame(() => requestAnimationFrame(resolve))
-      return
+    if (typeof video.requestVideoFrameCallback === 'function') {
+      video.requestVideoFrameCallback(() => resolve())
+    } else {
+      requestAnimationFrame(() => resolve())
     }
-    const ready = () => requestAnimationFrame(() => requestAnimationFrame(resolve))
-    video.addEventListener('loadeddata', ready, { once: true })
   })
+}
+async function waitForVideoFrame() {
+  // iOS/WebKit can briefly composite the first camera frame at the media's
+  // intrinsic size before object-fit:cover is visually settled. Do not reveal
+  // the live <video> merely because loadeddata fired. Wait for non-zero
+  // intrinsic dimensions, a presented frame, the video resize event/geometry
+  // to settle, and then another presented frame.
+  if (!(video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0)) {
+    await new Promise(resolve => {
+      const ready = () => {
+        if (video.videoWidth > 0 && video.videoHeight > 0) resolve()
+        else video.addEventListener('resize', ready, { once: true })
+      }
+      video.addEventListener('loadeddata', ready, { once: true })
+      video.addEventListener('resize', ready, { once: true })
+    })
+  }
+
+  await nextPresentedVideoFrame()
+  await nextAnimationFrame()
+
+  let stableFrames = 0
+  let lastWidth = video.videoWidth
+  let lastHeight = video.videoHeight
+  while (stableFrames < 3) {
+    await nextPresentedVideoFrame()
+    if (video.videoWidth === lastWidth && video.videoHeight === lastHeight) {
+      stableFrames += 1
+    } else {
+      lastWidth = video.videoWidth
+      lastHeight = video.videoHeight
+      stableFrames = 0
+    }
+  }
+
+  // One final paint boundary keeps WebKit's media compositor transition hidden.
+  await nextAnimationFrame()
+  await nextAnimationFrame()
 }
 async function startCamera({ preserveFrame = false } = {}) {
   if (cameraStarting) return
