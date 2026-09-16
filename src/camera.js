@@ -210,18 +210,57 @@ function showCapturedMedia(blob, type) {
   recordedVideo.hidden = isPhoto
   recordedPhoto.hidden = !isPhoto
   if (isPhoto) {
-    recordedVideo.pause(); recordedVideo.removeAttribute('src'); recordedVideo.load()
+    recordedVideo.pause()
+    try { recordedVideo.srcObject = null } catch {}
+    recordedVideo.removeAttribute('src')
+    recordedVideo.load()
     recordedPhoto.src = previewUrl
   } else {
     recordedPhoto.removeAttribute('src')
+    recordedVideo.pause()
     recordedVideo.controls = false
     recordedVideo.loop = true
+    recordedVideo.autoplay = true
     recordedVideo.playsInline = true
-    recordedVideo.src = previewUrl
+    recordedVideo.preload = 'auto'
     recordedVideo.currentTime = 0
-    const playPreview = () => recordedVideo.play().catch(() => {})
+
+    // WebKit has historically had Blob-URL playback edge cases. Safari supports
+    // assigning a Blob directly to HTMLMediaElement.srcObject; use that path
+    // when available, then fall back to the normal object URL everywhere else.
+    let usingBlobSrcObject = false
+    try {
+      recordedVideo.srcObject = blob
+      usingBlobSrcObject = recordedVideo.srcObject === blob
+    } catch {
+      recordedVideo.srcObject = null
+    }
+    if (!usingBlobSrcObject) recordedVideo.src = previewUrl
+
+    const playPreview = async () => {
+      try {
+        recordedVideo.muted = false
+        await recordedVideo.play()
+      } catch (error) {
+        // iOS may reject audible programmatic playback after MediaRecorder's
+        // asynchronous stop event. Never leave the review as a black screen:
+        // retry muted while retaining audio in the actual recorded Blob.
+        console.warn('[camera] audible review autoplay blocked; retrying muted', error)
+        try {
+          recordedVideo.muted = true
+          await recordedVideo.play()
+        } catch (mutedError) {
+          console.error('[camera] recorded video preview failed', mutedError)
+          setStatus('Video was recorded, but this browser could not start the preview.')
+        }
+      }
+    }
+
     if (recordedVideo.readyState >= 2) playPreview()
-    else recordedVideo.addEventListener('loadeddata', playPreview, { once: true })
+    else {
+      recordedVideo.addEventListener('loadeddata', playPreview, { once: true })
+      recordedVideo.load?.()
+    }
   }
   playback.dataset.captureType = type
   playback._melogicCapture = blob
@@ -231,10 +270,14 @@ function showCapturedMedia(blob, type) {
 function beginRecording() {
   if (!stream || recorder?.state === 'recording' || !window.MediaRecorder) return false
   chunks = []
-  const mimeType = supportedMimeType()
-  try { recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined) }
+  // Let the browser choose its native recorder container/codec first.
+  // This is materially safer on WebKit/iOS than forcing a codec variant that
+  // isTypeSupported() may advertise but a particular Safari build may not
+  // subsequently preview correctly.
+  try { recorder = new MediaRecorder(stream) }
   catch {
-    try { recorder = new MediaRecorder(stream) }
+    const mimeType = supportedMimeType()
+    try { recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined) }
     catch (error) { console.error('[camera] MediaRecorder unavailable', error); setStatus('Video recording is not supported on this device.'); return false }
   }
   recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data) }
@@ -244,7 +287,9 @@ function beginRecording() {
     capture.classList.remove('is-recording'); pill.hidden = true; window.clearInterval(recordingTimer)
     setStatus('Recording stopped because the browser reported an error.')
   }
-  recorder.start(250)
+  // A single final dataavailable Blob is the simplest/most interoperable
+  // local-preview path. stop() flushes final media before firing `stop`.
+  recorder.start()
   recordingStartedAt = Date.now(); updateTimer(); recordingTimer = window.setInterval(updateTimer, 250)
   capture.classList.add('is-recording'); pill.hidden = false
   return true
@@ -271,11 +316,10 @@ capture.addEventListener('pointermove', event => {
   if (activeCapturePointer === null || event.pointerId !== activeCapturePointer || !didHold) return
   event.preventDefault()
   const deltaY = event.clientY - captureStartY
-  if (deltaY < 0) {
-    setZoomFromDrag(deltaY)
-    // Rebase continuously so zoom follows the finger smoothly rather than compounding total displacement.
-    captureStartY = event.clientY
-  }
+  // Treat the shutter gesture as a relative zoom control in BOTH directions:
+  // finger up -> zoom in, finger back down -> zoom out.
+  if (deltaY !== 0) setZoomFromDrag(deltaY)
+  captureStartY = event.clientY
 })
 function releaseCapture(event) {
   if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
