@@ -65,11 +65,27 @@ let zoomCapability = null
 let zoomValue = null
 let zoomApplyPending = false
 let pendingZoomValue = null
+let recordingStream = null
+let microphoneStream = null
+let recordingIntent = false
 
 function setStatus(message = '') { status.textContent = message; status.hidden = !message }
+function stopMicrophone() {
+  microphoneStream?.getTracks?.().forEach(track => track.stop())
+  microphoneStream = null
+  recordingStream = null
+}
 function stopTracks() {
-  stopCanvasRenderer(); stream?.getTracks?.().forEach(track => track.stop()); stream = null
+  stopCanvasRenderer()
+  stream?.getTracks?.().forEach(track => track.stop())
+  stream = null
+  try { video.srcObject = null } catch {}
   zoomCapability = null; zoomValue = null; pendingZoomValue = null; zoomApplyPending = false
+}
+function stopCaptureEngines() {
+  stopMicrophone()
+  stopTracks()
+  liveCanvas.classList.remove('is-ready')
 }
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)) }
 function configureZoomCapability() {
@@ -178,7 +194,9 @@ async function startCamera({ preserveFrame=false }={}) {
   if (!preserved) transitionFrame?.classList.add('is-black','is-visible')
   setStatus(''); stopCanvasRenderer(); stopTracks()
   try {
-    const nextStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode}},audio:true})
+    // Idle Camera mode owns VIDEO ONLY. Do not open the microphone until an
+    // actual video recording begins.
+    const nextStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode}},audio:false})
     stream=nextStream; video.srcObject=nextStream
     configureZoomCapability()
     await video.play(); await waitForFirstDrawableFrame()
@@ -203,6 +221,9 @@ function updateTimer() {
 }
 function showCapturedMedia(blob, type) {
   if (!blob) return
+  // Review mode owns neither capture engine. Release camera + microphone before
+  // exposing captured/imported media.
+  stopCaptureEngines()
   if (previewUrl) URL.revokeObjectURL(previewUrl)
   previewUrl = URL.createObjectURL(blob)
   const isPhoto = type === 'photo'
@@ -267,36 +288,86 @@ function showCapturedMedia(blob, type) {
   useButton.textContent = isPhoto ? 'Use photo' : 'Use video'
   playback.hidden = false
 }
-function beginRecording() {
+async function beginRecording() {
   if (!stream || recorder?.state === 'recording' || !window.MediaRecorder) return false
+  const videoTrack = stream.getVideoTracks?.()[0]
+  if (!videoTrack || videoTrack.readyState !== 'live') return false
+
+  recordingIntent = true
   chunks = []
-  // Let the browser choose its native recorder container/codec first.
-  // This is materially safer on WebKit/iOS than forcing a codec variant that
-  // isTypeSupported() may advertise but a particular Safari build may not
-  // subsequently preview correctly.
-  try { recorder = new MediaRecorder(stream) }
+
+  try {
+    // Acquire the microphone only at the transition into VIDEO RECORDING.
+    microphoneStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true })
+  } catch (error) {
+    recordingIntent = false
+    console.error('[camera] microphone unavailable', error)
+    setStatus(error?.name === 'NotAllowedError'
+      ? 'Microphone access is required to record video with audio.'
+      : 'Unable to start the microphone on this device.')
+    return false
+  }
+
+  // The user may have released while the permission/device request was pending.
+  if (!recordingIntent || activeCapturePointer === null) {
+    stopMicrophone()
+    return false
+  }
+
+  const audioTrack = microphoneStream.getAudioTracks?.()[0]
+  if (!audioTrack) {
+    recordingIntent = false
+    stopMicrophone()
+    setStatus('No microphone input is available.')
+    return false
+  }
+
+  // MediaRecorder gets a dedicated snapshot of the currently-live video+audio
+  // tracks. We never mutate its track set after recording starts.
+  recordingStream = new MediaStream([videoTrack, audioTrack])
+
+  try { recorder = new MediaRecorder(recordingStream) }
   catch {
     const mimeType = supportedMimeType()
-    try { recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined) }
-    catch (error) { console.error('[camera] MediaRecorder unavailable', error); setStatus('Video recording is not supported on this device.'); return false }
+    try { recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined) }
+    catch (error) {
+      recordingIntent = false
+      stopMicrophone()
+      console.error('[camera] MediaRecorder unavailable', error)
+      setStatus('Video recording is not supported on this device.')
+      return false
+    }
   }
+
   recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data) }
-  recorder.onstop = () => showCapturedMedia(new Blob(chunks, { type: recorder.mimeType || 'video/webm' }), 'video')
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' })
+    stopCaptureEngines()
+    showCapturedMedia(blob, 'video')
+  }
   recorder.onerror = event => {
+    recordingIntent = false
+    stopCaptureEngines()
     console.error('[camera] recording failed', event?.error || event)
     capture.classList.remove('is-recording'); pill.hidden = true; window.clearInterval(recordingTimer)
     setStatus('Recording stopped because the browser reported an error.')
   }
-  // A single final dataavailable Blob is the simplest/most interoperable
-  // local-preview path. stop() flushes final media before firing `stop`.
+
   recorder.start()
   recordingStartedAt = Date.now(); updateTimer(); recordingTimer = window.setInterval(updateTimer, 250)
   capture.classList.add('is-recording'); pill.hidden = false
   return true
 }
 function endRecording() {
-  if (recorder?.state !== 'recording') return
-  recorder.stop(); window.clearInterval(recordingTimer); capture.classList.remove('is-recording'); pill.hidden = true
+  recordingIntent = false
+  if (recorder?.state !== 'recording') {
+    stopMicrophone()
+    return
+  }
+  recorder.stop()
+  window.clearInterval(recordingTimer)
+  capture.classList.remove('is-recording')
+  pill.hidden = true
 }
 function takePhoto() {
   if (!liveCanvas?.width || !liveCanvas?.height) return
@@ -310,7 +381,12 @@ capture.addEventListener('pointerdown', event => {
   if (event.button != null && event.button !== 0) return
   event.preventDefault(); didHold = false; activeCapturePointer = event.pointerId; captureStartY = event.clientY
   capture.setPointerCapture?.(event.pointerId)
-  holdTimer = window.setTimeout(() => { didHold = beginRecording() }, HOLD_TO_RECORD_MS)
+  holdTimer = window.setTimeout(() => {
+    didHold = true
+    beginRecording().then(started => {
+      if (!started && activeCapturePointer !== null) didHold = false
+    })
+  }, HOLD_TO_RECORD_MS)
 })
 capture.addEventListener('pointermove', event => {
   if (activeCapturePointer === null || event.pointerId !== activeCapturePointer || !didHold) return
@@ -325,12 +401,14 @@ function releaseCapture(event) {
   if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
   event.preventDefault(); window.clearTimeout(holdTimer)
   if (didHold) endRecording(); else takePhoto()
+  recordingIntent = false
   activeCapturePointer = null
 }
 capture.addEventListener('pointerup', releaseCapture)
 capture.addEventListener('pointercancel', event => {
   if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
-  window.clearTimeout(holdTimer); if (didHold) endRecording()
+  window.clearTimeout(holdTimer); recordingIntent = false; if (didHold) endRecording()
+  else stopMicrophone()
   capture.classList.remove('is-recording'); activeCapturePointer = null; event.preventDefault()
 })
 app.querySelector('[data-camera-flip]').addEventListener('click', flipCamera)
@@ -362,10 +440,12 @@ app.querySelector('[data-camera-flash]').addEventListener('click', async event =
   if (!capabilities.torch) { setStatus('Flash is not available with this camera.'); window.setTimeout(() => setStatus(''), 1600); return }
   const next = event.currentTarget.dataset.on !== 'true'; await track.applyConstraints({advanced:[{torch:next}]}); event.currentTarget.dataset.on = String(next)
 })
-app.querySelector('[data-camera-retake]').addEventListener('click', () => {
+app.querySelector('[data-camera-retake]').addEventListener('click', async () => {
   playback.hidden = true; playback._melogicCapture = null
-  recordedVideo.pause(); recordedVideo.removeAttribute('src'); recordedVideo.load(); recordedVideo.hidden = true
+  recordedVideo.pause(); recordedVideo.removeAttribute('src'); try { recordedVideo.srcObject = null } catch {}; recordedVideo.load(); recordedVideo.hidden = true
   recordedPhoto.removeAttribute('src'); recordedPhoto.hidden = true
+  // Retake explicitly re-enters idle Camera mode: video engine only.
+  await startCamera()
 })
 app.querySelector('[data-camera-use]').addEventListener('click', () => {
   const blob = playback._melogicCapture
