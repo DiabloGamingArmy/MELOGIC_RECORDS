@@ -5563,3 +5563,29 @@ body:not(.community-chrome-hidden) .community-feed-header::before{transform:tran
     filter:none !important;
   }
 }
+
+/* melogic-community-pwa-header-lowering-v6
+   Final PWA geometry adjustment:
+   keep the safe-area gradient exactly where it is, but lower the actual
+   Community sticky controls so they begin beneath the Dynamic Island glass.
+   This deliberately does NOT enlarge the blur layer. */
+@media (max-width:760px) and (display-mode:standalone) {
+  :root {
+    --community-pwa-control-clearance: 12px;
+  }
+
+  .community-feed-header {
+    box-sizing:border-box !important;
+    padding-top:var(--community-pwa-control-clearance) !important;
+  }
+
+  /* Preserve the directional hide distance after adding clearance, so the
+     complete header still exits the viewport instead of leaving a strip. */
+  body.community-chrome-hidden .community-feed-header {
+    transform:translate3d(
+      0,
+      calc(-100% - var(--community-pwa-control-clearance)),
+      0
+    ) !important;
+  }
+}
