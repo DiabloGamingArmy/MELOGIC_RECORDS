@@ -1,5 +1,7 @@
 import './styles/base.css'
 import './styles/community.css'
+import './styles/communityMobile.css'
+import { communityScrollViewport, setCommunityScroll, syncCommunityMobileHeader } from './community/viewport.js'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -60,6 +62,7 @@ import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
+document.body.classList.add('is-community-page')
 if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
 const COMMUNITY_PAGE_SIZE = 4
 const COMMUNITY_FOLLOWING_CACHE_SIZE = 24
@@ -311,10 +314,6 @@ const state = {
 }
 
 let feedPaginationObserver = null
-let communityScrollChromeReady = false
-let communityScrollRaf = 0
-let lastCommunityScrollY = window.scrollY || 0
-document.documentElement.dataset.communityChromeState = 'shown'
 let communityKeyboardReady = false
 let communityOutsideClickReady = false
 let communityBeforeUnloadReady = false
@@ -2134,7 +2133,6 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
           <span class="sr-only">${isReply ? 'Reply' : 'Comment'}</span>
           <textarea name="body" maxlength="2000" rows="${isReply ? '2' : '3'}" placeholder="${isReply ? 'Write a reply...' : 'Start the conversation...'}">${escapeHtml(body)}</textarea>
         </label>
-        <button type="submit" class="button button-accent" ${isSubmitting ? 'disabled' : ''}>${isSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post'}</button>
       </div>
       ${renderCommentAttachmentDrafts(parentCommentId)}
       ${localError ? `<p class="community-error">${escapeHtml(localError)}</p>` : ''}
@@ -2151,6 +2149,7 @@ function renderCommentComposer({ parentCommentId = '' } = {}) {
       <div class="community-comment-form-actions is-quiet">
         <span>${Math.max(0, 2000 - body.length)} characters left</span>
         ${isReply ? `<button type="button" class="button button-muted" data-cancel-reply-composer="${escapeHtml(parentCommentId)}">Cancel</button>` : ''}
+        <button type="submit" class="button button-accent" ${isSubmitting ? 'disabled' : ''}>${isSubmitting ? 'Posting...' : isReply ? 'Reply' : 'Post'}</button>
       </div>
     </form>
   `
@@ -2930,12 +2929,6 @@ function renderDetail() {
     <div class="community-layout is-home is-post-detail">
       ${renderLeftNav()}
       <div class="community-main community-route-main">
-        <section class="community-post-mobile-routebar" aria-label="Post navigation">
-          <a class="community-post-mobile-back" href="${ROUTES.community}" data-community-back-to-feed aria-label="Back to Community">
-            ${iconSvg('arrowLeft')}
-          </a>
-          <a class="community-post-mobile-title" href="${ROUTES.community}" data-community-back-to-feed aria-label="Community">Community</a>
-        </section>
         <section class="community-detail-topbar community-detail-topbar-desktop">
           <div class="community-detail-title-track" aria-label="Post title">
             <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
@@ -3114,9 +3107,9 @@ function updateFeedToolbarText() {
 function render() {
   if (!app) return
   document.body.classList.toggle('community-modal-open', communityModalIsOpen())
-  if (state.view.type !== 'feed' || communityModalIsOpen()) setCommunityChromeHidden(false)
   const communityRoot = renderCommunityShellOnce()
   if (!communityRoot) return
+  syncCommunityMobileHeader(Boolean(state.detailPostId), app)
   communityRoot.innerHTML = renderCommunityViewContent()
   bindEvents()
 }
@@ -3401,6 +3394,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
   const id = String(postId || '').trim()
   if (!id) return
   const previousPostId = state.detailPostId
+  if (previousPostId !== id) window.requestAnimationFrame(() => setCommunityScroll(0, app))
   state.detailPostId = id
   state.view = { type: 'feed' }
   state.error = ''
@@ -5431,63 +5425,6 @@ function activeElementIsCommunityInput() {
   return Boolean(active?.closest?.('.community-page input, .community-page textarea, .community-page select, .community-page [contenteditable="true"]'))
 }
 
-function setCommunityChromeHidden(hidden = false) {
-  const isHidden = Boolean(hidden)
-  document.body.classList.toggle('community-chrome-hidden', isHidden)
-  document.documentElement.dataset.communityChromeState = isHidden ? 'hidden' : 'shown'
-}
-
-/* melogic-community-directional-scroll-v1 */
-function handleCommunityChromeScroll() {
-  communityScrollRaf = 0
-  if (state.view.type !== 'feed' || communityModalIsOpen() || activeElementIsCommunityInput()) {
-    setCommunityChromeHidden(false)
-    lastCommunityScrollY = window.scrollY || 0
-    return
-  }
-  const currentY = Math.max(0, window.scrollY || 0)
-  const delta = currentY - lastCommunityScrollY
-
-  /* melogic-community-directional-scroll-quality-v2 */
-  if (window.matchMedia('(max-width: 760px)').matches) {
-    const nearTop = currentY <= 18
-    const hidden = document.body.classList.contains('community-chrome-hidden')
-    if (nearTop) {
-      setCommunityChromeHidden(false)
-      lastCommunityScrollY = currentY
-      return
-    }
-    if (hidden && currentY < lastCommunityScrollY - 1) {
-      setCommunityChromeHidden(false)
-      lastCommunityScrollY = currentY
-      return
-    }
-    if (!hidden && currentY > 72 && currentY > lastCommunityScrollY + 8) {
-      setCommunityChromeHidden(true)
-      lastCommunityScrollY = currentY
-      return
-    }
-    if (Math.abs(delta) >= 12) lastCommunityScrollY = currentY
-    return
-  }
-  if (currentY < 24) setCommunityChromeHidden(false)
-  else if (delta > 12) setCommunityChromeHidden(true)
-  else if (delta < -8) setCommunityChromeHidden(false)
-  if (Math.abs(delta) >= 4) lastCommunityScrollY = currentY
-}
-
-function scheduleCommunityChromeScroll() {
-  if (communityScrollRaf) return
-  communityScrollRaf = window.requestAnimationFrame(handleCommunityChromeScroll)
-}
-
-function setupCommunityScrollChrome() {
-  if (communityScrollChromeReady) return
-  communityScrollChromeReady = true
-  window.addEventListener('scroll', scheduleCommunityChromeScroll, { passive: true })
-  window.addEventListener('focusin', () => setCommunityChromeHidden(false), { passive: true })
-}
-
 function setupCommunityKeyboardShortcuts() {
   if (communityKeyboardReady) return
   communityKeyboardReady = true
@@ -5557,7 +5494,8 @@ function setupFeedPaginationObserver() {
   const sentinel = app?.querySelector('[data-community-feed-sentinel]')
   if (!sentinel || !state.feedHasMore || state.feedInitialLoading || state.feedLoadingMore) return
   if (!('IntersectionObserver' in window)) return
-  const scrollRoot = sentinel.closest('.community-main')
+  const viewport = communityScrollViewport(app)
+  const scrollRoot = viewport === document.scrollingElement || viewport === document.documentElement ? null : viewport
   feedPaginationObserver = new IntersectionObserver((entries) => {
     if (entries.some((entry) => entry.isIntersecting)) loadFeedPage({ reset: false, localOnly: true })
   }, {
@@ -5575,7 +5513,7 @@ function captureFeedNavigationSnapshot() {
   const root = app?.querySelector('[data-community-root]')
   const main = root?.querySelector('.community-main')
   if (!root || !main || state.detailPostId) return
-  const scrollTop = main.scrollTop
+  const scrollTop = communityScrollViewport(root).scrollTop
   if (root.contains(document.activeElement)) document.activeElement?.blur?.()
   const fragment = document.createDocumentFragment()
   while (root.firstChild) fragment.append(root.firstChild)
@@ -5626,18 +5564,9 @@ function restoreFeedNavigationSnapshot() {
   root.replaceChildren(snapshot.fragment)
   root.querySelectorAll('.community-image-viewer-backdrop').forEach((overlay) => overlay.remove())
   document.body.classList.remove('community-modal-open')
-  const main = root.querySelector('.community-main')
-  if (main) {
-    const restoreScroll = () => {
-      main.scrollTop = snapshot.scrollTop
-    }
-    restoreScroll()
-    window.requestAnimationFrame(() => {
-      restoreScroll()
-      window.requestAnimationFrame(restoreScroll)
-    })
-    window.setTimeout(restoreScroll, 80)
-  }
+  syncCommunityMobileHeader(false, app)
+  setCommunityScroll(snapshot.scrollTop, root)
+  window.requestAnimationFrame(() => setCommunityScroll(snapshot.scrollTop, root))
   updateTopicArrowState()
   updateCommunityRailFadeState()
   setupFeedPaginationObserver()
@@ -6313,10 +6242,12 @@ function bindCommunityComposerEvents(root = app) {
 
 function bindEvents() {
   setupCommunityPendingLeaveWarning()
-  app.querySelector('[data-community-back-to-feed]')?.addEventListener('click', (event) => {
-    if (!feedNavigationSnapshot) return
-    event.preventDefault()
-    window.history.back()
+  app.querySelectorAll('[data-community-back-to-feed]').forEach(link => {
+    link.onclick = event => {
+      if (!feedNavigationSnapshot) return
+      event.preventDefault()
+      window.history.back()
+    }
   })
   bindFeedRegionEvents(app)
   bindHistoryWidgetEvents(app)
@@ -6376,7 +6307,6 @@ function bindEvents() {
   setupCommunityRailResize()
   updateTopicArrowState()
   updateCommunityRailFadeState()
-  setupCommunityScrollChrome()
   setupCommunityKeyboardShortcuts()
   setupFeedPaginationObserver()
   app.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))

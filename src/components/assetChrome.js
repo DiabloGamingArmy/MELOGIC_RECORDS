@@ -210,7 +210,7 @@ function renderShellState() {
   updateCartBadges(shellState.cartCount)
   renderInboxBadges()
 
-  const profileAvatar = document.querySelector('[data-profile-avatar]')
+  const profileAvatars = document.querySelectorAll('[data-profile-avatar]')
   const profileTrigger = document.querySelector('[data-nav-profile-trigger]')
   const authEntryLink = document.querySelector('[data-nav-menu-auth]')
   const signOutButton = document.querySelector('[data-nav-menu-signout]')
@@ -222,7 +222,7 @@ function renderShellState() {
     document.querySelector('[data-nav-menu-security]')
   ].filter(Boolean)
   const adminLink = document.querySelector('[data-nav-menu-admin]')
-  if (!profileAvatar || !authEntryLink || !signOutButton) return
+  if (!profileAvatars.length || !authEntryLink || !signOutButton) return
 
   const signedIn = shellState.authReady && Boolean(shellState.user)
   authEntryLink.hidden = signedIn
@@ -231,7 +231,7 @@ function renderShellState() {
   signOutButton.textContent = 'Log Out'
   privateLinks.forEach((link) => { link.hidden = !signedIn })
   if (adminLink) adminLink.hidden = !signedIn || !shellState.isAdmin
-  renderProfileAvatar(profileAvatar, profileTrigger)
+  profileAvatars.forEach(avatar => renderProfileAvatar(avatar, avatar.closest('[data-nav-profile-trigger]') || null))
 }
 
 async function loadShellProfile(user, generation, retryAttempt = 0) {

@@ -2970,6 +2970,7 @@ html:not(.home-page-root) .distribution-field textarea {
 }
 
 /* Community and inbox collaboration surfaces */
+@media (min-width: 761px) {
 html:not(.home-page-root) .community-page {
   background:
     radial-gradient(circle at 12% 0, rgba(76, 97, 255, 0.1), transparent 28rem),
@@ -3003,6 +3004,8 @@ html:not(.home-page-root) .community-comment-options-menu,
 html:not(.home-page-root) .community-emoji-panel {
   border-color: var(--ml-border);
   background: #101219;
+}
+
 }
 
 html:not(.home-page-root) body.is-inbox-page * {

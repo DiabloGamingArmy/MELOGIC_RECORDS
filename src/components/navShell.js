@@ -1,3 +1,4 @@
+import { iconSvg } from '../utils/icons'
 import { ROUTES } from '../utils/routes'
 import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
 export function navShell(options = {}) {
@@ -15,7 +16,8 @@ export function navShell(options = {}) {
 
   return `
     <div class="mobile-app-shell">
-      <header class="mobile-app-header">
+      <header class="mobile-app-header" ${isCommunity ? 'data-community-mobile-header' : ''}>
+        ${isCommunity ? `<a class="community-mobile-back mobile-icon-button" href="${ROUTES.community}" data-community-back-to-feed aria-label="Back to Community" hidden>${iconSvg('arrowLeft')}</a>` : ''}
         <h1 class="mobile-app-title">${isCommunity ? 'Community' : isMusic ? 'Streaming' : isProducts ? 'Products' : isInbox ? 'Inbox' : isProfile ? 'Profile' : 'Melogic'}</h1>
         <div class="mobile-app-actions">
           ${isCommunity ? `
