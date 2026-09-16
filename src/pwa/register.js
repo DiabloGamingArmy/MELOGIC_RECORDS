@@ -1,6 +1,7 @@
 import './pwa.css'
 import { initMobileSpaFoundation } from './mobileSpaRouter'
 import { initPersistentMobileSpaShell } from './mobileSpaShell'
+import './mobileSpaDataCache' // melogic-mobile-spa-cache-v7b
 
 // melogic-mobile-spa-foundation-v1
 initMobileSpaFoundation()

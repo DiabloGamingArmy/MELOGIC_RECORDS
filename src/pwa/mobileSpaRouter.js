@@ -9,8 +9,9 @@ import { ROUTES } from '../utils/routes'
 
 const MOBILE_QUERY = '(max-width: 760px)'
 const SPA_EVENT = 'melogic:mobile-spa-navigation'
-const PREWARM_LIMIT = 3
-const PREWARM_DELAY_MS = 900
+const PREWARM_LIMIT = 4
+const PREWARM_DELAY_MS = 700
+const PREWARM_TIMEOUT_MS = 3500 // melogic-mobile-spa-cache-v7b
 
 const ROUTE_DEFINITIONS = Object.freeze([
   { id: 'community', path: ROUTES.community, module: () => import('../community.js') },
@@ -92,21 +93,29 @@ export async function prewarmMobileSpaRoute(path) {
   })
   if (!route || warmedRoutes.has(route.id)) return false
   warmedRoutes.add(route.id)
+
+  const controller = typeof AbortController === 'function' ? new AbortController() : null
+  const timeout = controller
+    ? window.setTimeout(() => controller.abort(), PREWARM_TIMEOUT_MS)
+    : 0
+
   try {
-    // Module prewarming downloads/parses the existing page implementation but
-    // does not mount another DOM tree. Existing entry modules may have side
-    // effects, so Patch 1 only prewarms route documents; module activation is
-    // reserved for lifecycle-aware migrations in later patches.
-    await fetch(route.path, {
+    // Warm only the public route document. Entry modules still have top-level
+    // side effects and are not dynamically executed by the prewarmer.
+    const response = await fetch(route.path, {
       method: 'GET',
       credentials: 'same-origin',
-      cache: 'force-cache',
-      headers: { 'X-Melogic-Prewarm': 'mobile-spa-v1' }
+      cache: 'default',
+      signal: controller?.signal,
+      headers: { 'X-Melogic-Prewarm': 'mobile-spa-v7b' }
     })
+    if (!response.ok) throw new Error(`route prewarm HTTP ${response.status}`)
     return true
   } catch {
     warmedRoutes.delete(route.id)
     return false
+  } finally {
+    if (timeout) window.clearTimeout(timeout)
   }
 }
 
@@ -117,7 +126,21 @@ function scheduleConservativePrewarm() {
   if (connection === 'slow-2g' || connection === '2g') return
 
   const current = resolveMobileSpaRoute()
-  const candidates = ROUTE_DEFINITIONS
+  const priorities = {
+    community: ['inbox', 'streaming', 'profile', 'products'],
+    inbox: ['community', 'profile', 'streaming', 'products'],
+    profile: ['community', 'inbox', 'profile-edit', 'products'],
+    'profile-edit': ['profile', 'profile-public', 'community', 'inbox'],
+    'profile-public': ['profile', 'community', 'products', 'inbox'],
+    products: ['cart', 'profile', 'community', 'streaming'],
+    cart: ['products', 'profile', 'community', 'inbox'],
+    streaming: ['community', 'profile', 'inbox', 'products'],
+    support: ['inbox', 'profile', 'community', 'products']
+  }
+  const orderedIds = priorities[current?.id] || ['community', 'inbox', 'streaming', 'profile']
+  const candidates = orderedIds
+    .map(id => ROUTE_DEFINITIONS.find(route => route.id === id))
+    .filter(Boolean)
     .filter(route => route.id !== current?.id)
     .slice(0, PREWARM_LIMIT)
 

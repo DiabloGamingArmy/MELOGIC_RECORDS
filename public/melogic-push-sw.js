@@ -128,6 +128,10 @@ self.addEventListener('message', event => {
 /* melogic-pwa-auto-update-worker-v1 */
 self.addEventListener('activate', event => {
   event.waitUntil((async () => {
+    // melogic-mobile-spa-cache-v7b
+    if (self.registration.navigationPreload) {
+      try { await self.registration.navigationPreload.enable() } catch {}
+    }
     const keys = await caches.keys()
     await Promise.all(keys.filter(key =>
       (key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE) ||
@@ -149,20 +153,36 @@ self.addEventListener('fetch', event => {
   if (request.mode === 'navigate') {
     const routeKey = url.pathname.replace(/\/+$/, '') || '/'
     if (MELOGIC_WARM_MOBILE_ROUTES.has(routeKey)) {
+      // melogic-mobile-spa-cache-v7b
+      // Cache-first-with-refresh for public route HTML only. Dynamic Firebase,
+      // user, checkout, upload and media state remain outside Cache Storage.
       event.respondWith((async () => {
         const cache = await caches.open(ROUTE_CACHE)
-        try {
-          const response = await fetch(request)
-          if (response.ok && response.type === 'basic' && !/no-store|private/i.test(response.headers.get('Cache-Control') || '')) {
-            try { await cache.put(routeKey, response.clone()) } catch {}
+        const cachedRoute = await cache.match(routeKey)
+
+        const refresh = (async () => {
+          try {
+            const preloaded = await event.preloadResponse
+            const response = preloaded || await fetch(request)
+            if (response?.ok && response.type === 'basic' && !/no-store|private/i.test(response.headers.get('Cache-Control') || '')) {
+              try { await cache.put(routeKey, response.clone()) } catch {}
+            }
+            return response || null
+          } catch {
+            return null
           }
-          return response
-        } catch {
-          const cachedRoute = await cache.match(routeKey)
-          if (cachedRoute) return cachedRoute
-          const offline = await caches.open(SHELL_CACHE).then(shell => shell.match('/offline.html'))
-          return offline || new Response('Melogic is offline. Reconnect and try again.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+        })()
+
+        if (cachedRoute) {
+          event.waitUntil(refresh.then(() => undefined))
+          return cachedRoute
         }
+
+        const network = await refresh
+        if (network) return network
+
+        const offline = await caches.open(SHELL_CACHE).then(shell => shell.match('/offline.html'))
+        return offline || new Response('Melogic is offline. Reconnect and try again.', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
       })())
       return
     }
