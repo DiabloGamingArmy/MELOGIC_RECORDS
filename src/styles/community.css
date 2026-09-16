@@ -5439,42 +5439,40 @@ body:not(.community-chrome-hidden) .community-feed-header::before{transform:tran
 .community-comments{padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))!important}
 }
 
-
-/* melogic-community-pwa-safearea-repeat-hide-fix-v1
-   Keep the installed-PWA Dynamic-Island/status safe-area visually coupled
-   to the Community directional header on EVERY hide/show cycle. */
+/* melogic-community-pwa-safearea-authority-v2
+   FINAL cascade authority for the standalone Community safe-area cap.
+   Hidden = no black paint, transparent blur.
+   Visible = opaque black.
+   This intentionally overrides all earlier historical ::before rules. */
 @media (max-width:760px) and (display-mode:standalone) {
-  .community-feed-header::before {
-    display: block !important;
-    visibility: visible !important;
-    transform: translate3d(0,0,0) !important;
-    transition:
-      background-color 180ms ease,
-      -webkit-backdrop-filter 180ms ease,
-      backdrop-filter 180ms ease,
-      opacity 180ms ease !important;
-    will-change: background-color, backdrop-filter, opacity !important;
+  body:has(.community-page) .community-feed-header::before {
+    content:"" !important;
+    display:block !important;
+    visibility:visible !important;
+    transform:none !important;
+    opacity:1 !important;
+    pointer-events:none !important;
+    transition:background-color 160ms ease,
+               -webkit-backdrop-filter 160ms ease,
+               backdrop-filter 160ms ease !important;
   }
 
-  body:not(.community-chrome-hidden) .community-feed-header::before {
-    background: #000 !important;
-    -webkit-backdrop-filter: none !important;
-    backdrop-filter: none !important;
-    opacity: 1 !important;
+  body:has(.community-page):not(.community-chrome-hidden) .community-feed-header::before {
+    background-color:#000 !important;
+    background-image:none !important;
+    -webkit-backdrop-filter:none !important;
+    backdrop-filter:none !important;
   }
 
-  body.community-chrome-hidden .community-feed-header::before {
-    background: rgba(7,9,13,.10) !important;
-    -webkit-backdrop-filter: blur(18px) saturate(115%) !important;
-    backdrop-filter: blur(18px) saturate(115%) !important;
-    opacity: 1 !important;
-  }
-}
-
-@media (max-width:760px) and (display-mode:standalone)
-       and (prefers-reduced-motion:reduce) {
-  .community-feed-header::before {
-    transition: none !important;
+  body:has(.community-page).community-chrome-hidden .community-feed-header::before {
+    /* Critical: alpha ZERO. The previous patch used rgba(...,.10), which
+       still paints the safe-area dark/black after the second hide. */
+    background-color:transparent !important;
+    background-image:none !important;
+    -webkit-backdrop-filter:blur(18px) saturate(115%) !important;
+    backdrop-filter:blur(18px) saturate(115%) !important;
   }
 }
-
+@media (max-width:760px) and (display-mode:standalone) and (prefers-reduced-motion:reduce) {
+  body:has(.community-page) .community-feed-header::before { transition:none !important; }
+}
