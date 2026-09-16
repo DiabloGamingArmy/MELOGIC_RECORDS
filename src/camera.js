@@ -67,13 +67,23 @@ let zoomApplyPending = false
 let pendingZoomValue = null
 let recordingStream = null
 let microphoneStream = null
+let recordingCanvasStream = null
+let permissionAudioTrack = null
 let recordingIntent = false
 
 function setStatus(message = '') { status.textContent = message; status.hidden = !message }
-function stopMicrophone() {
-  microphoneStream?.getTracks?.().forEach(track => track.stop())
+function stopMicrophone({ preservePermissionTrack = false } = {}) {
+  microphoneStream?.getTracks?.().forEach(track => {
+    if (!preservePermissionTrack || track !== permissionAudioTrack) track.stop()
+  })
   microphoneStream = null
+  recordingCanvasStream?.getTracks?.().forEach(track => track.stop())
+  recordingCanvasStream = null
   recordingStream = null
+  if (!preservePermissionTrack && permissionAudioTrack) {
+    try { permissionAudioTrack.stop() } catch {}
+    permissionAudioTrack = null
+  }
 }
 function stopTracks() {
   stopCanvasRenderer()
@@ -194,10 +204,21 @@ async function startCamera({ preserveFrame=false }={}) {
   if (!preserved) transitionFrame?.classList.add('is-black','is-visible')
   setStatus(''); stopCanvasRenderer(); stopTracks()
   try {
-    // Idle Camera mode owns VIDEO ONLY. Do not open the microphone until an
-    // actual video recording begins.
-    const nextStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode}},audio:false})
-    stream=nextStream; video.srcObject=nextStream
+    // Request BOTH permissions on camera entry. Keep the returned microphone
+    // track disabled while framing/photos so permission is established without
+    // feeding audio into any recorder.
+    const nextStream=await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:{ideal:facingMode}},
+      audio:true
+    })
+    const nextAudioTrack = nextStream.getAudioTracks?.()[0] || null
+    if (!nextAudioTrack) throw new Error('Camera opened without the required microphone track')
+    nextAudioTrack.enabled = false
+    permissionAudioTrack = nextAudioTrack
+    stream=nextStream
+    // Preview video receives video only; the disabled audio track is retained
+    // separately for later recording.
+    video.srcObject = new MediaStream(nextStream.getVideoTracks())
     configureZoomCapability()
     await video.play(); await waitForFirstDrawableFrame()
     startCanvasRenderer(); liveCanvas.classList.add('is-ready')
@@ -290,41 +311,58 @@ function showCapturedMedia(blob, type) {
 }
 async function beginRecording() {
   if (!stream || recorder?.state === 'recording' || !window.MediaRecorder) return false
-  const videoTrack = stream.getVideoTracks?.()[0]
-  if (!videoTrack || videoTrack.readyState !== 'live') return false
+  const sourceVideoTrack = stream.getVideoTracks?.()[0]
+  if (!sourceVideoTrack || sourceVideoTrack.readyState !== 'live') return false
 
   recordingIntent = true
   chunks = []
 
-  try {
-    // Acquire the microphone only at the transition into VIDEO RECORDING.
-    microphoneStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true })
-  } catch (error) {
-    recordingIntent = false
-    console.error('[camera] microphone unavailable', error)
-    setStatus(error?.name === 'NotAllowedError'
-      ? 'Microphone access is required to record video with audio.'
-      : 'Unable to start the microphone on this device.')
-    return false
+  // Camera initialization already requested microphone permission and retained
+  // its track. Activate that existing track only for actual video recording.
+  let audioTrack = permissionAudioTrack
+  if (!audioTrack || audioTrack.readyState !== 'live') {
+    // Defensive recovery if the OS/browser ended the permission track.
+    try {
+      microphoneStream = await navigator.mediaDevices.getUserMedia({ video:false, audio:true })
+      audioTrack = microphoneStream.getAudioTracks?.()[0] || null
+      permissionAudioTrack = audioTrack
+    } catch (error) {
+      recordingIntent = false
+      console.error('[camera] microphone unavailable', error)
+      setStatus('Unable to start the microphone on this device.')
+      return false
+    }
   }
 
-  // The user may have released while the permission/device request was pending.
   if (!recordingIntent || activeCapturePointer === null) {
-    stopMicrophone()
+    if (audioTrack) audioTrack.enabled = false
     return false
   }
-
-  const audioTrack = microphoneStream.getAudioTracks?.()[0]
   if (!audioTrack) {
     recordingIntent = false
-    stopMicrophone()
     setStatus('No microphone input is available.')
     return false
   }
+  audioTrack.enabled = true
 
-  // MediaRecorder gets a dedicated snapshot of the currently-live video+audio
-  // tracks. We never mutate its track set after recording starts.
-  recordingStream = new MediaStream([videoTrack, audioTrack])
+  let recorderVideoTrack = sourceVideoTrack
+
+  // The front preview is intentionally mirrored. For FRONT CAMERA recordings,
+  // record the already-mirrored live canvas so the encoded result matches what
+  // the user saw. Back camera stays on the native unmirrored hardware track.
+  if (facingMode === 'user' && typeof liveCanvas.captureStream === 'function') {
+    try {
+      const fps = sourceVideoTrack.getSettings?.().frameRate || 30
+      recordingCanvasStream = liveCanvas.captureStream(Math.min(60, Math.max(24, fps)))
+      const canvasTrack = recordingCanvasStream.getVideoTracks?.()[0]
+      if (canvasTrack) recorderVideoTrack = canvasTrack
+    } catch (error) {
+      console.warn('[camera] mirrored canvas recording unavailable; using camera track', error)
+      recordingCanvasStream = null
+    }
+  }
+
+  recordingStream = new MediaStream([recorderVideoTrack, audioTrack])
 
   try { recorder = new MediaRecorder(recordingStream) }
   catch {
@@ -332,7 +370,9 @@ async function beginRecording() {
     try { recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined) }
     catch (error) {
       recordingIntent = false
-      stopMicrophone()
+      audioTrack.enabled = false
+      recordingCanvasStream?.getTracks?.().forEach(track => track.stop())
+      recordingCanvasStream = null
       console.error('[camera] MediaRecorder unavailable', error)
       setStatus('Video recording is not supported on this device.')
       return false
@@ -342,11 +382,17 @@ async function beginRecording() {
   recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data) }
   recorder.onstop = () => {
     const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' })
+    if (permissionAudioTrack) permissionAudioTrack.enabled = false
+    recordingCanvasStream?.getTracks?.().forEach(track => track.stop())
+    recordingCanvasStream = null
     stopCaptureEngines()
     showCapturedMedia(blob, 'video')
   }
   recorder.onerror = event => {
     recordingIntent = false
+    if (permissionAudioTrack) permissionAudioTrack.enabled = false
+    recordingCanvasStream?.getTracks?.().forEach(track => track.stop())
+    recordingCanvasStream = null
     stopCaptureEngines()
     console.error('[camera] recording failed', event?.error || event)
     capture.classList.remove('is-recording'); pill.hidden = true; window.clearInterval(recordingTimer)
@@ -361,7 +407,7 @@ async function beginRecording() {
 function endRecording() {
   recordingIntent = false
   if (recorder?.state !== 'recording') {
-    stopMicrophone()
+    if (permissionAudioTrack) permissionAudioTrack.enabled = false
     return
   }
   recorder.stop()
@@ -408,7 +454,7 @@ capture.addEventListener('pointerup', releaseCapture)
 capture.addEventListener('pointercancel', event => {
   if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
   window.clearTimeout(holdTimer); recordingIntent = false; if (didHold) endRecording()
-  else stopMicrophone()
+  else if (permissionAudioTrack) permissionAudioTrack.enabled = false
   capture.classList.remove('is-recording'); activeCapturePointer = null; event.preventDefault()
 })
 app.querySelector('[data-camera-flip]').addEventListener('click', flipCamera)
