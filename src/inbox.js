@@ -7,6 +7,7 @@ import { initShellChrome } from './appBoot'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
 import { ROUTES, authRoute, communityPostRoute, inboxActiveCallRoute, productRoute, publicProfileRoute } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
@@ -689,11 +690,19 @@ function navigateInbox(path, { replace = false } = {}) {
   const nextUrl = inboxRouteWithCurrentSearch(path)
   const currentUrl = `${window.location.pathname}${window.location.search}`
   if (nextUrl !== currentUrl) {
-    window.history[replace ? 'replaceState' : 'pushState']({ inbox: true }, '', nextUrl)
+    const existingState = history.state && typeof history.state === 'object' ? history.state : {}
+    window.history[replace ? 'replaceState' : 'pushState']({
+      ...existingState,
+      inbox: true,
+      melogicMobileSpa: isMobileSpaRuntime(),
+      routeId: 'inbox',
+      pathname: path
+    }, '', nextUrl)
   }
   applyInboxRoute(parseInboxRoute(path))
   renderSignedInState()
   if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
+  if (isMobileSpaRuntime()) emitMobileSpaNavigation({ type: replace ? 'replace' : 'push', routeId: 'inbox' })
 }
 
 function normalizeInitialInboxRoute() {
@@ -8020,6 +8029,7 @@ window.addEventListener('popstate', (event) => {
     renderSignedInState()
     if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
   }
+  if (isMobileSpaRuntime()) emitMobileSpaNavigation({ type: 'popstate', routeId: 'inbox' })
 })
 
 // melogic-inbox-mobile-tabs-scroll-v5
@@ -8165,6 +8175,36 @@ function installMobileInboxNavigationAndScrollArchitecture() {
   reconcile()
 }
 installMobileInboxNavigationAndScrollArchitecture()
+
+// melogic-inbox-spa-lifecycle-v3
+function installInboxSpaLifecycle() {
+  if (!isMobileSpaRuntime() || window.__melogicInboxSpaLifecycleV3) return
+  window.__melogicInboxSpaLifecycleV3 = true
+
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0) return
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+
+    const anchor = event.target.closest?.('a[href]')
+    if (!(anchor instanceof HTMLAnchorElement)) return
+    if (anchor.target && anchor.target !== '_self') return
+    if (anchor.hasAttribute('download')) return
+
+    let url
+    try { url = new URL(anchor.href, location.href) } catch { return }
+    if (url.origin !== location.origin) return
+    if (!url.pathname.startsWith('/inbox')) return
+
+    // Keep hash-only semantics native. Everything else in the Inbox route
+    // family is rendered by the existing route-aware Inbox implementation.
+    if (url.pathname === location.pathname && url.search === location.search && url.hash) return
+
+    event.preventDefault()
+    navigateInbox(`${url.pathname}${url.search}`)
+  }, { capture: true })
+}
+
+installInboxSpaLifecycle()
 
 normalizeInitialInboxRoute()
 waitForInitialAuthState().then(async (user) => {

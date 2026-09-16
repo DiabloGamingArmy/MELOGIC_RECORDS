@@ -25,6 +25,7 @@ const ROUTE_DEFINITIONS = Object.freeze([
 ])
 
 const warmedRoutes = new Set()
+const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox']) // melogic-mobile-spa-inbox-intercept-v3
 let initialized = false
 let prewarmTimer = 0
 
@@ -56,6 +57,11 @@ export function canHandleMobileSpaUrl(value) {
   if (url.origin !== location.origin) return false
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
   return Boolean(resolveMobileSpaRoute(url.pathname))
+}
+
+export function isActivatedMobileSpaRoute(value = location.pathname) {
+  const route = resolveMobileSpaRoute(value)
+  return Boolean(route && ACTIVE_SPA_ROUTE_IDS.has(route.id))
 }
 
 export function emitMobileSpaNavigation(detail = {}) {
