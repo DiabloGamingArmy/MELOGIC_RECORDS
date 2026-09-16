@@ -3573,10 +3573,36 @@ function openThreadActionMenu(threadId, event) {
   if (!threadId) return
   clearFloatingOverlays()
   appState.reactionDetailModal = null
+  // melogic-mobile-thread-menu-touch-position-v1
+  // Native/synthetic mobile click events can expose clientX/clientY as 0/0.
+  // Prefer the actual touch point, then pointer coordinates, then the trigger's
+  // on-screen center so the menu can never fall back to the viewport origin.
+  const touchPoint = event.changedTouches?.[0] || event.touches?.[0] || null
+  const trigger = event.currentTarget instanceof Element
+    ? event.currentTarget
+    : event.target instanceof Element
+      ? event.target.closest('[data-thread-menu-id], [data-thread-action-trigger], [data-thread-menu-trigger], [data-thread-actions-trigger]')
+      : null
+  const triggerRect = trigger?.getBoundingClientRect?.()
+  const pointerX = Number(touchPoint?.clientX ?? event.clientX)
+  const pointerY = Number(touchPoint?.clientY ?? event.clientY)
+  const hasPointerPosition = Number.isFinite(pointerX) && Number.isFinite(pointerY)
+    && (pointerX !== 0 || pointerY !== 0)
+  const x = hasPointerPosition
+    ? pointerX
+    : triggerRect
+      ? triggerRect.left + (triggerRect.width / 2)
+      : window.innerWidth / 2
+  const y = hasPointerPosition
+    ? pointerY
+    : triggerRect
+      ? triggerRect.top + (triggerRect.height / 2)
+      : window.innerHeight / 2
+
   appState.threadActionMenu = {
     threadId,
-    x: event.clientX,
-    y: event.clientY
+    x,
+    y
   }
   appState.threadConfirmModal = null
   renderFloatingUi()
