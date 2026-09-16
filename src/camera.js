@@ -16,6 +16,7 @@ app.innerHTML = `
   ${navShell({ currentPage: 'camera' })}
   <main class="camera-screen" aria-label="Melogic camera">
     <video class="camera-preview is-mirrored" data-camera-preview autoplay muted playsinline></video>
+    <canvas class="camera-transition-frame" data-camera-transition-frame aria-hidden="true"></canvas>
     <div class="camera-shade"></div>
     <div class="camera-topbar">
       <a class="camera-tool" href="/community" aria-label="Close camera">×</a>
@@ -42,6 +43,9 @@ const pill = app.querySelector('[data-recording-pill]')
 const timerLabel = app.querySelector('[data-recording-time]')
 const playback = app.querySelector('[data-camera-playback]')
 const recordedVideo = app.querySelector('[data-camera-recorded]')
+const transitionFrame = app.querySelector('[data-camera-transition-frame]')
+let cameraStarting = false
+let lastPreviewTapAt = 0
 
 function setStatus(message = '') { status.textContent = message; status.hidden = !message }
 function stopTracks() { stream?.getTracks?.().forEach(track => track.stop()); stream = null }
@@ -49,18 +53,73 @@ function supportedMimeType() {
   const candidates = ['video/mp4;codecs=h264,aac','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']
   return candidates.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || ''
 }
-async function startCamera() {
+function captureTransitionFrame() {
+  if (!transitionFrame || !video.videoWidth || !video.videoHeight) return false
+  transitionFrame.width = video.videoWidth
+  transitionFrame.height = video.videoHeight
+  const ctx = transitionFrame.getContext('2d')
+  if (!ctx) return false
+  ctx.save()
+  if (facingMode === 'user') {
+    ctx.translate(transitionFrame.width, 0)
+    ctx.scale(-1, 1)
+  }
+  ctx.drawImage(video, 0, 0, transitionFrame.width, transitionFrame.height)
+  ctx.restore()
+  transitionFrame.classList.add('is-visible')
+  return true
+}
+function waitForVideoFrame() {
+  return new Promise(resolve => {
+    if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+      return
+    }
+    const ready = () => requestAnimationFrame(() => requestAnimationFrame(resolve))
+    video.addEventListener('loadeddata', ready, { once: true })
+  })
+}
+async function startCamera({ preserveFrame = false } = {}) {
+  if (cameraStarting) return
   if (!navigator.mediaDevices?.getUserMedia) { setStatus('Camera capture is not supported in this browser.'); return }
-  stopTracks(); setStatus('Starting camera…')
+  cameraStarting = true
+  const hasTransitionFrame = preserveFrame && captureTransitionFrame()
+  if (!hasTransitionFrame) {
+    transitionFrame?.classList.add('is-black')
+    transitionFrame?.classList.add('is-visible')
+  }
+  setStatus('')
+  stopTracks()
   try {
-    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode},width:{ideal:1920},height:{ideal:1080}},audio:true})
-    video.srcObject = stream
+    const nextStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode},width:{ideal:1920},height:{ideal:1080}},audio:true})
+    stream = nextStream
+    video.srcObject = nextStream
     video.classList.toggle('is-mirrored', facingMode === 'user')
     await video.play()
-    setStatus('')
+    await waitForVideoFrame()
+    video.classList.add('is-ready')
+    requestAnimationFrame(() => {
+      transitionFrame?.classList.remove('is-visible', 'is-black')
+    })
   } catch (error) {
     console.error('[camera] getUserMedia failed', error)
+    transitionFrame?.classList.remove('is-visible', 'is-black')
     setStatus(error?.name === 'NotAllowedError' ? 'Camera and microphone access are required. Enable them in your browser settings and reopen Camera.' : 'Unable to start the camera on this device.')
+  } finally {
+    cameraStarting = false
+  }
+}
+async function flipCamera() {
+  if (cameraStarting || recorder?.state === 'recording' || !playback.hidden) return
+  const previousFacingMode = facingMode
+  const preserved = captureTransitionFrame()
+  facingMode = facingMode === 'user' ? 'environment' : 'user'
+  video.classList.remove('is-ready')
+  try {
+    await startCamera({ preserveFrame: preserved })
+  } catch (error) {
+    facingMode = previousFacingMode
+    throw error
   }
 }
 function updateTimer() {
@@ -109,7 +168,18 @@ let didHold = false
 capture.addEventListener('pointerdown', event => { event.preventDefault(); didHold = false; holdTimer = window.setTimeout(() => { didHold = true; beginRecording() }, 240) })
 function releaseCapture(event) { event.preventDefault(); window.clearTimeout(holdTimer); if (didHold) endRecording(); else takePhoto() }
 capture.addEventListener('pointerup', releaseCapture); capture.addEventListener('pointercancel', event => { window.clearTimeout(holdTimer); if (didHold) endRecording(); event.preventDefault() })
-app.querySelector('[data-camera-flip]').addEventListener('click', async () => { facingMode = facingMode === 'user' ? 'environment' : 'user'; await startCamera() })
+app.querySelector('[data-camera-flip]').addEventListener('click', flipCamera)
+video.addEventListener('pointerup', event => {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  const now = performance.now()
+  if (now - lastPreviewTapAt <= 325) {
+    lastPreviewTapAt = 0
+    event.preventDefault()
+    flipCamera()
+    return
+  }
+  lastPreviewTapAt = now
+})
 app.querySelector('[data-camera-flash]').addEventListener('click', async event => {
   const track = stream?.getVideoTracks?.()[0]; const capabilities = track?.getCapabilities?.() || {}
   if (!capabilities.torch) { setStatus('Flash is not available with this camera.'); window.setTimeout(() => setStatus(''), 1600); return }
