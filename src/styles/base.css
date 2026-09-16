@@ -3101,3 +3101,33 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
  .mobile-profile-nav-avatar{display:block!important;width:27px!important;height:27px!important;flex:0 0 27px!important;border-radius:50%!important;overflow:hidden!important;background-size:cover!important;background-position:center!important;background-repeat:no-repeat!important;box-shadow:inset 0 0 0 1px rgba(215,223,239,.22);font-size:0!important;line-height:0!important}
  .mobile-profile-nav-avatar.has-photo{background-size:cover!important;background-position:center!important}
 }
+
+/* melogic-mobile-camera-nav-global-v1 */
+@media (max-width:760px) {
+  .mobile-bottom-nav .mobile-camera-nav {
+    position: relative;
+    overflow: visible;
+  }
+  .mobile-bottom-nav .mobile-camera-nav .mobile-camera-glyph {
+    width: 46px;
+    height: 46px;
+    margin-top: -14px;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    background: #f6f7fb;
+    color: #050609;
+    box-shadow: 0 7px 24px rgba(0,0,0,.42);
+    transition: transform 150ms ease, box-shadow 150ms ease;
+  }
+  .mobile-bottom-nav .mobile-camera-nav .mobile-camera-glyph svg {
+    width: 24px;
+    height: 24px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+  }
+  .mobile-bottom-nav .mobile-camera-nav:active .mobile-camera-glyph {
+    transform: scale(.93);
+  }
+}
