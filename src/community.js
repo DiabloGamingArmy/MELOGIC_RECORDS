@@ -5439,15 +5439,26 @@ function handleCommunityChromeScroll() {
   const currentY = Math.max(0, window.scrollY || 0)
   const delta = currentY - lastCommunityScrollY
 
+  /* melogic-community-directional-scroll-quality-v2 */
   if (window.matchMedia('(max-width: 760px)').matches) {
     const nearTop = currentY <= 18
-    const meaningfulDown = delta >= 4
-    const meaningfulUp = delta <= -3
-
-    if (nearTop || meaningfulUp) setCommunityChromeHidden(false)
-    else if (meaningfulDown && currentY > 72) setCommunityChromeHidden(true)
-
-    lastCommunityScrollY = currentY
+    const hidden = document.body.classList.contains('community-chrome-hidden')
+    if (nearTop) {
+      setCommunityChromeHidden(false)
+      lastCommunityScrollY = currentY
+      return
+    }
+    if (hidden && currentY < lastCommunityScrollY - 1) {
+      setCommunityChromeHidden(false)
+      lastCommunityScrollY = currentY
+      return
+    }
+    if (!hidden && currentY > 72 && currentY > lastCommunityScrollY + 8) {
+      setCommunityChromeHidden(true)
+      lastCommunityScrollY = currentY
+      return
+    }
+    if (Math.abs(delta) >= 12) lastCommunityScrollY = currentY
     return
   }
   if (currentY < 24) setCommunityChromeHidden(false)
