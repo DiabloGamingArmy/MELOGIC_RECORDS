@@ -314,6 +314,7 @@ let feedPaginationObserver = null
 let communityScrollChromeReady = false
 let communityScrollRaf = 0
 let lastCommunityScrollY = window.scrollY || 0
+document.documentElement.dataset.communityChromeState = 'shown'
 let communityKeyboardReady = false
 let communityOutsideClickReady = false
 let communityBeforeUnloadReady = false
@@ -5425,7 +5426,9 @@ function activeElementIsCommunityInput() {
 }
 
 function setCommunityChromeHidden(hidden = false) {
-  document.body.classList.toggle('community-chrome-hidden', Boolean(hidden))
+  const isHidden = Boolean(hidden)
+  document.body.classList.toggle('community-chrome-hidden', isHidden)
+  document.documentElement.dataset.communityChromeState = isHidden ? 'hidden' : 'shown'
 }
 
 /* melogic-community-directional-scroll-v1 */

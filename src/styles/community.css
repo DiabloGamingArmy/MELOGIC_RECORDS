@@ -5439,40 +5439,72 @@ body:not(.community-chrome-hidden) .community-feed-header::before{transform:tran
 .community-comments{padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))!important}
 }
 
-/* melogic-community-pwa-safearea-authority-v2
-   FINAL cascade authority for the standalone Community safe-area cap.
-   Hidden = no black paint, transparent blur.
-   Visible = opaque black.
-   This intentionally overrides all earlier historical ::before rules. */
-@media (max-width:760px) and (display-mode:standalone) {
-  body:has(.community-page) .community-feed-header::before {
-    content:"" !important;
-    display:block !important;
-    visibility:visible !important;
-    transform:none !important;
-    opacity:1 !important;
-    pointer-events:none !important;
-    transition:background-color 160ms ease,
-               -webkit-backdrop-filter 160ms ease,
-               backdrop-filter 160ms ease !important;
+/* melogic-community-safearea-root-authority-v3
+   SOURCE OF TRUTH FOR MOBILE COMMUNITY TOP SAFE AREA.
+
+   The safe-area visual is detached from .community-feed-header.
+   Header transforms no longer own the Dynamic-Island/notch paint.
+
+   shown  -> opaque black
+   hidden -> transparent frosted blur
+
+   Applies to mobile Safari and installed PWA. */
+@media (max-width:760px) {
+  :root {
+    --community-safe-cap-height: env(safe-area-inset-top, 0px);
   }
 
-  body:has(.community-page):not(.community-chrome-hidden) .community-feed-header::before {
-    background-color:#000 !important;
-    background-image:none !important;
-    -webkit-backdrop-filter:none !important;
-    backdrop-filter:none !important;
+  .community-feed-header::before {
+    content: none !important;
+    display: none !important;
   }
 
-  body:has(.community-page).community-chrome-hidden .community-feed-header::before {
-    /* Critical: alpha ZERO. The previous patch used rgba(...,.10), which
-       still paints the safe-area dark/black after the second hide. */
-    background-color:transparent !important;
-    background-image:none !important;
-    -webkit-backdrop-filter:blur(18px) saturate(115%) !important;
-    backdrop-filter:blur(18px) saturate(115%) !important;
+  body::before {
+    content: "";
+    position: fixed;
+    z-index: 2147483000;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--community-safe-cap-height);
+    pointer-events: none;
+    display: block;
+    transform: translateZ(0);
+    -webkit-transform: translateZ(0);
+    will-change: background-color, backdrop-filter;
+    transition:
+      background-color 170ms ease,
+      -webkit-backdrop-filter 170ms ease,
+      backdrop-filter 170ms ease;
+  }
+
+  html:not([data-community-chrome-state]),
+  html[data-community-chrome-state="shown"] {
+    --community-safe-cap-bg: #000;
+    --community-safe-cap-blur: none;
+  }
+
+  html[data-community-chrome-state="hidden"] {
+    --community-safe-cap-bg: rgba(0,0,0,0.04);
+    --community-safe-cap-blur: blur(18px) saturate(118%);
+  }
+
+  body::before {
+    background-color: var(--community-safe-cap-bg) !important;
+    background-image: none !important;
+    -webkit-backdrop-filter: var(--community-safe-cap-blur) !important;
+    backdrop-filter: var(--community-safe-cap-blur) !important;
   }
 }
-@media (max-width:760px) and (display-mode:standalone) and (prefers-reduced-motion:reduce) {
-  body:has(.community-page) .community-feed-header::before { transition:none !important; }
+
+@media (max-width:760px) and (display-mode:standalone) {
+  body::before {
+    height: env(safe-area-inset-top, 0px) !important;
+  }
+}
+
+@media (max-width:760px) and (prefers-reduced-motion:reduce) {
+  body::before {
+    transition: none !important;
+  }
 }
