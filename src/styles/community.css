@@ -5438,3 +5438,43 @@ body:not(.community-chrome-hidden) .community-feed-header::before{transform:tran
 .community-comment-character-count,.community-comment-composer-count,.community-detail-composer-count{position:static!important;flex:1 1 100%!important;width:100%!important;margin:2px 0 0!important;padding:0!important;text-align:center!important;transform:none!important}
 .community-comments{padding-bottom:calc(28px + env(safe-area-inset-bottom,0px))!important}
 }
+
+
+/* melogic-community-pwa-safearea-repeat-hide-fix-v1
+   Keep the installed-PWA Dynamic-Island/status safe-area visually coupled
+   to the Community directional header on EVERY hide/show cycle. */
+@media (max-width:760px) and (display-mode:standalone) {
+  .community-feed-header::before {
+    display: block !important;
+    visibility: visible !important;
+    transform: translate3d(0,0,0) !important;
+    transition:
+      background-color 180ms ease,
+      -webkit-backdrop-filter 180ms ease,
+      backdrop-filter 180ms ease,
+      opacity 180ms ease !important;
+    will-change: background-color, backdrop-filter, opacity !important;
+  }
+
+  body:not(.community-chrome-hidden) .community-feed-header::before {
+    background: #000 !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    opacity: 1 !important;
+  }
+
+  body.community-chrome-hidden .community-feed-header::before {
+    background: rgba(7,9,13,.10) !important;
+    -webkit-backdrop-filter: blur(18px) saturate(115%) !important;
+    backdrop-filter: blur(18px) saturate(115%) !important;
+    opacity: 1 !important;
+  }
+}
+
+@media (max-width:760px) and (display-mode:standalone)
+       and (prefers-reduced-motion:reduce) {
+  .community-feed-header::before {
+    transition: none !important;
+  }
+}
+
