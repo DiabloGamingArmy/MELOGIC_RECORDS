@@ -25,7 +25,7 @@ const ROUTE_DEFINITIONS = Object.freeze([
 ])
 
 const warmedRoutes = new Set()
-const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox']) // melogic-mobile-spa-inbox-intercept-v3
+const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox', 'community']) // melogic-mobile-spa-inbox-intercept-v3 // melogic-mobile-spa-community-v4
 let initialized = false
 let prewarmTimer = 0
 

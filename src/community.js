@@ -58,6 +58,7 @@ import {
 } from './data/communityService'
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
@@ -433,6 +434,55 @@ function setupMobileCommunityShellActions() {
 
 setupMobileCommunityShellActions()
 setupMobileCommunitySurfaceBehavior()
+
+// melogic-community-spa-lifecycle-v4
+function installCommunitySpaLifecycle() {
+  if (!isMobileSpaRuntime() || window.__melogicCommunitySpaLifecycleV4) return
+  window.__melogicCommunitySpaLifecycleV4 = true
+
+  document.addEventListener('click', (event) => {
+    if (event.defaultPrevented || event.button !== 0) return
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+
+    const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null
+    if (!(anchor instanceof HTMLAnchorElement)) return
+    if (anchor.target && anchor.target !== '_self') return
+    if (anchor.hasAttribute('download')) return
+
+    let url
+    try { url = new URL(anchor.href, location.href) } catch { return }
+    if (url.origin !== location.origin) return
+    if (!(url.pathname === ROUTES.community || url.pathname.startsWith(`${ROUTES.community}/`))) return
+    if (url.pathname === location.pathname && url.search === location.search && url.hash) return
+    if (!confirmCommunityNavigation(url.href)) return
+
+    const postMatch = url.pathname.match(/^\/community\/post\/([^/]+)\/?$/)
+    if (postMatch) {
+      let postId = ''
+      try { postId = decodeURIComponent(postMatch[1] || '') } catch {}
+      if (!postId) return
+      event.preventDefault()
+      openPostDetail(postId, url.hash || '')
+      return
+    }
+
+    // Community feed/community-slug/query routes already have a substantial
+    // state machine. Let the existing popstate route-restoration path own them:
+    // push the URL, then dispatch popstate exactly once.
+    event.preventDefault()
+    const existingState = history.state && typeof history.state === 'object' ? history.state : {}
+    history.pushState({
+      ...existingState,
+      melogicMobileSpa: true,
+      routeId: 'community',
+      pathname: url.pathname
+    }, '', `${url.pathname}${url.search}${url.hash}`)
+    window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
+    emitMobileSpaNavigation({ type: 'push', routeId: 'community' })
+  }, { capture: true })
+}
+
+installCommunitySpaLifecycle()
 
 function setupCommunityPendingLeaveWarning() {
   if (communityBeforeUnloadReady) return
@@ -3465,7 +3515,14 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
     state.focusedCommentId = ''
     state.focusedReplyId = ''
     state.focusedCommentScrolled = false
-    window.history.pushState({}, '', communityPostRoute(id))
+    const existingHistoryState = history.state && typeof history.state === 'object' ? history.state : {}
+    window.history.pushState({
+      ...existingHistoryState,
+      melogicMobileSpa: isMobileSpaRuntime(),
+      routeId: 'community',
+      pathname: communityPostRoute(id)
+    }, '', communityPostRoute(id))
+    if (isMobileSpaRuntime()) emitMobileSpaNavigation({ type: 'push', routeId: 'community' })
   }
 
   const cachedPost = seedPost || state.posts.find((post) => post.postId === id) || null
