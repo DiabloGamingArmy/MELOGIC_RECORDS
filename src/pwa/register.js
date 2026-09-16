@@ -2,12 +2,16 @@ import './pwa.css'
 import { initMobileSpaFoundation } from './mobileSpaRouter'
 import { initPersistentMobileSpaShell } from './mobileSpaShell'
 import './mobileSpaDataCache' // melogic-mobile-spa-cache-v7b
+import { initMobileSpaLifecycleAudit } from './mobileSpaLifecycleAudit'
 
 // melogic-mobile-spa-foundation-v1
 initMobileSpaFoundation()
 
 // melogic-mobile-spa-shell-v2
 initPersistentMobileSpaShell()
+
+// melogic-mobile-spa-final-v8
+initMobileSpaLifecycleAudit()
 
 const desktop = Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__ || /Tauri/i.test(navigator.userAgent))
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true
@@ -62,6 +66,7 @@ if (!desktop) {
     let retryTimer = null
     const BUILD_URL = '/melogic-build.json'
     const CHECK_INTERVAL_MS = 60000
+    const RELEASE_FETCH_TIMEOUT_MS = 8000 // melogic-mobile-spa-final-v8
 
     const unsafeToReload = () =>
       document.documentElement.dataset.preventPwaReload === 'true' ||
@@ -87,9 +92,19 @@ if (!desktop) {
     const fetchServerBuild = async () => {
       if (!navigator.onLine || buildCheck) return buildCheck
       buildCheck = (async () => {
-        const response = await fetch(`${BUILD_URL}?t=${Date.now()}`, {
-          cache: 'no-store', credentials: 'same-origin', headers: { 'Cache-Control': 'no-cache' }
-        })
+        const controller = typeof AbortController === 'function' ? new AbortController() : null
+        const timeout = controller ? setTimeout(() => controller.abort(), RELEASE_FETCH_TIMEOUT_MS) : 0
+        let response
+        try {
+          response = await fetch(`${BUILD_URL}?t=${Date.now()}`, {
+            cache: 'no-store',
+            credentials: 'same-origin',
+            signal: controller?.signal,
+            headers: { 'Cache-Control': 'no-cache' }
+          })
+        } finally {
+          if (timeout) clearTimeout(timeout)
+        }
         if (!response.ok) throw new Error(`build manifest HTTP ${response.status}`)
         const build = String((await response.json())?.build || '').trim()
         if (!build) throw new Error('build manifest missing build')
@@ -138,7 +153,16 @@ if (!desktop) {
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void checkForUpdate() })
     window.addEventListener('pageshow', () => void checkForUpdate())
     window.addEventListener('online', () => void checkForUpdate())
-    setInterval(() => { if (document.visibilityState === 'visible') void fetchServerBuild() }, CHECK_INTERVAL_MS)
+    const releaseInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') void fetchServerBuild()
+    }, CHECK_INTERVAL_MS)
+    window.addEventListener('pagehide', event => {
+      if (!event.persisted) {
+        clearInterval(releaseInterval)
+        if (retryTimer) clearTimeout(retryTimer)
+        observer.disconnect()
+      }
+    })
     if (document.readyState === 'complete') void register()
     else window.addEventListener('load', register, { once: true })
   }}

@@ -86,7 +86,10 @@ export function initPagePreloader(promises = [], options = {}) {
   const fallbackMs = Number(options.fallbackMs || 3800)
   const fadeDurationMs = Number(options.fadeDurationMs || 200)
   const waitFor = Array.isArray(promises) ? promises.filter(Boolean) : []
-  waitFor.push(loadBrandLoaderLogo(preloader))
+  // melogic-mobile-spa-final-v8
+  // Brand art is progressive enhancement. A slow Storage lookup must never
+  // keep an otherwise-ready mobile route behind the blocking page preloader.
+  void loadBrandLoaderLogo(preloader).catch(() => {})
   let hidden = false
 
   const hidePreloader = () => {

@@ -30,6 +30,8 @@ const warmedRoutes = new Set()
 const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox', 'community', 'profile', 'profile-edit', 'profile-public', 'products', 'cart', 'streaming', 'support']) // melogic-mobile-spa-inbox-intercept-v3 // melogic-mobile-spa-community-v4 // melogic-mobile-spa-profile-v5 // melogic-mobile-spa-consumer-v6
 let initialized = false
 let prewarmTimer = 0
+let prewarmIdleHandle = 0
+let prewarmRunToken = 0 // melogic-mobile-spa-final-v8
 
 function normalizedPath(value = location.pathname) {
   const path = String(value || '/').replace(/\/+$/, '')
@@ -144,17 +146,26 @@ function scheduleConservativePrewarm() {
     .filter(route => route.id !== current?.id)
     .slice(0, PREWARM_LIMIT)
 
+  const token = ++prewarmRunToken
   const run = async () => {
     for (const route of candidates) {
-      if (document.visibilityState !== 'visible') break
+      if (token !== prewarmRunToken || document.visibilityState !== 'visible') break
       await prewarmMobileSpaRoute(route.path)
     }
   }
 
+  if (prewarmTimer) window.clearTimeout(prewarmTimer)
+  if (prewarmIdleHandle && 'cancelIdleCallback' in window) cancelIdleCallback(prewarmIdleHandle)
   if ('requestIdleCallback' in window) {
-    requestIdleCallback(() => void run(), { timeout: 2500 })
+    prewarmIdleHandle = requestIdleCallback(() => {
+      prewarmIdleHandle = 0
+      void run()
+    }, { timeout: 2500 })
   } else {
-    prewarmTimer = window.setTimeout(() => void run(), PREWARM_DELAY_MS)
+    prewarmTimer = window.setTimeout(() => {
+      prewarmTimer = 0
+      void run()
+    }, PREWARM_DELAY_MS)
   }
 }
 
@@ -177,9 +188,22 @@ export function initMobileSpaFoundation() {
   // Patch 1 observes traversal only. It does not prevent default navigation.
   window.addEventListener('popstate', () => emitMobileSpaNavigation({ type: 'popstate' }))
   window.addEventListener('online', scheduleConservativePrewarm)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      prewarmRunToken += 1
+      if (prewarmTimer) window.clearTimeout(prewarmTimer)
+      prewarmTimer = 0
+      if (prewarmIdleHandle && 'cancelIdleCallback' in window) cancelIdleCallback(prewarmIdleHandle)
+      prewarmIdleHandle = 0
+    } else {
+      scheduleConservativePrewarm()
+    }
+  })
   window.addEventListener('pagehide', () => {
+    prewarmRunToken += 1
     if (prewarmTimer) window.clearTimeout(prewarmTimer)
-  }, { once: true })
+    if (prewarmIdleHandle && 'cancelIdleCallback' in window) cancelIdleCallback(prewarmIdleHandle)
+  })
 
   scheduleConservativePrewarm()
   emitMobileSpaNavigation({ type: 'init' })
