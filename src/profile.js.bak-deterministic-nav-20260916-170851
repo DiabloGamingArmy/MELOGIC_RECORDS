@@ -567,7 +567,7 @@ async function loadAndRenderProfile(user) {
 }
 
 // melogic-mobile-unified-runtime-v3
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
+if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('profile', {
     async mount() { return { fragment: null } },
     async activate({ instance }) {

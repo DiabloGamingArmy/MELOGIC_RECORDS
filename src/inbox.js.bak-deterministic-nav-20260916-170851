@@ -8208,7 +8208,7 @@ function installInboxSpaLifecycle() {
 installInboxSpaLifecycle()
 
 // melogic-mobile-unified-runtime-v2
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
+if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('inbox', {
     async mount() { return { fragment: null } },
     async activate({ instance }) {

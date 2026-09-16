@@ -6663,7 +6663,7 @@ function bindEvents() {
 }
 
 // melogic-mobile-unified-runtime-v2
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
+if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('community', {
     async mount() { render(); return { fragment: null } },
     async activate({ instance }) {

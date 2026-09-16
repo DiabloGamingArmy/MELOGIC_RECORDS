@@ -121,7 +121,7 @@ function stopCaptureEngines() {
   liveCanvas.classList.remove('is-ready')
 }
 // melogic-mobile-unified-runtime-v3
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
+if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('camera', {
     async mount() { return { fragment: null, resumeCamera: true } },
     async activate({ instance }) {
