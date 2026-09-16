@@ -232,3 +232,20 @@ body.is-community-page,body.is-community-page #app,.community-page,.is-community
   }
   .community-image-viewer-stage img[data-community-image-zoom-target].is-zoomed {transition:none}
 }
+
+/* melogic-community-filter-feed-fix-v1 */
+@media (max-width:760px), (hover:none), (pointer:coarse) {
+.community-page .community-filter-strip .community-topic-pill:not(.is-active),
+.community-page .community-filter-strip .community-topic-pill:not(.is-active):hover,
+.community-page .community-filter-strip .community-topic-pill:not(.is-active):active,
+.community-page .community-filter-strip .community-topic-pill:not(.is-active):focus{
+color:var(--community-text-secondary)!important;border-color:var(--community-border-subtle)!important;background:transparent!important;background-color:transparent!important;background-image:none!important;box-shadow:none!important;filter:none!important}
+.community-page .community-filter-strip .community-topic-pill.is-active,
+.community-page .community-filter-strip .community-topic-pill[aria-pressed="true"],
+.community-page .community-filter-strip .community-topic-pill.is-active:hover,
+.community-page .community-filter-strip .community-topic-pill[aria-pressed="true"]:hover,
+.community-page .community-filter-strip .community-topic-pill.is-active:active,
+.community-page .community-filter-strip .community-topic-pill[aria-pressed="true"]:active{
+color:#fff!important;border:1px solid transparent!important;background:linear-gradient(var(--community-surface-2),var(--community-surface-2)) padding-box,var(--community-accent-gradient) border-box!important;box-shadow:none!important;filter:none!important}
+.community-page .community-filter-strip .community-topic-pill{-webkit-tap-highlight-color:transparent}
+}

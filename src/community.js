@@ -2869,10 +2869,9 @@ function bindTopicRailEvents(root = app) {
       communityId: button.getAttribute('data-topic-community-id') || ''
     }))
   })
+  syncCommunityFilterControls(root)
   root?.querySelector('[data-clear-community-filters]')?.addEventListener('click', () => {
-    if (!state.selectedCommunityFilters.length) return
-    state.selectedCommunityFilters = []
-    loadFeedPage({ reset: true, localOnly: true })
+    void applyCommunityFilterSelection([])
   })
   root?.querySelectorAll('[data-topic-scroll]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -5420,28 +5419,35 @@ function selectTopicTab(tab = 'for-you') {
   loadCommunity()
 }
 
-function selectTopicCommunity({ communityId = '' } = {}) {
-  const cleanId = String(communityId || '').trim()
-  if (!cleanId || state.view.type !== 'feed') return
-  const selected = new Set(state.selectedCommunityFilters)
-  if (selected.has(cleanId)) selected.delete(cleanId)
-  else if (selected.size < 10) selected.add(cleanId)
-  else {
-    showCommunityToast('Choose up to 10 community filters at a time.')
-    return
-  }
-  state.activeCommunityId = ''
-  state.activeCommunitySlug = ''
-  state.selectedCommunityFilters = [...selected]
-  app?.querySelectorAll('[data-topic-community-id]').forEach((button) => {
-    const active = selected.has(button.getAttribute('data-topic-community-id') || '')
-    button.classList.toggle('is-active', active)
-    button.setAttribute('aria-pressed', active ? 'true' : 'false')
+/* melogic-community-filter-feed-fix-v1 */
+async function applyCommunityFilterSelection(nextFilters = []) {
+  const normalized=[...new Set((Array.isArray(nextFilters)?nextFilters:[]).map(value=>String(value||'').trim()).filter(Boolean))]
+  const changed=JSON.stringify(normalized)!==JSON.stringify(state.selectedCommunityFilters)
+  if(!changed){syncCommunityFilterControls();return}
+  state.selectedCommunityFilters=normalized
+  state.feedCursor=null;state.feedHasMore=true;state.feedError='';state.feedStillLoading=false
+  state.activeFeedQueryKey=''
+  state.followingFeedCache={key:'',posts:[]}
+  syncCommunityFilterControls()
+  await loadFeed({reset:true})
+}
+function syncCommunityFilterControls(root=app){
+  if(!root)return
+  root.querySelectorAll('[data-topic-community-id]').forEach(button=>{
+    const id=String(button.getAttribute('data-topic-community-id')||'').trim()
+    const active=state.selectedCommunityFilters.includes(id)
+    button.classList.toggle('is-active',active)
+    button.setAttribute('aria-pressed',String(active))
   })
-  const allButton = app?.querySelector('[data-clear-community-filters]')
-  allButton?.classList.toggle('is-active', selected.size === 0)
-  allButton?.setAttribute('aria-pressed', selected.size === 0 ? 'true' : 'false')
-  loadFeedPage({ reset: true, localOnly: true })
+  const all=root.querySelector('[data-clear-community-filters]')
+  if(all){const active=state.selectedCommunityFilters.length===0;all.classList.toggle('is-active',active);all.setAttribute('aria-pressed',String(active))}
+}
+function selectTopicCommunity({ communityId = '' } = {}) {
+  const cleanId=String(communityId||'').trim()
+  if(!cleanId)return
+  const selected=new Set(state.selectedCommunityFilters)
+  if(selected.has(cleanId))selected.delete(cleanId);else selected.add(cleanId)
+  void applyCommunityFilterSelection([...selected])
 }
 
 function updateTopicArrowState() {
