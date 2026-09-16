@@ -7,29 +7,6 @@ import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 import { ROUTES } from './utils/routes'
 import { installLiveKitDebugTest } from './livekit/livekitDebugTest'
-import { waitForInitialAuthState } from './firebase/auth'
-
-// melogic-mobile-root-auth-landing-v1
-// The bare root is a mobile entry gateway. Wait for Firebase persistence to
-// resolve before choosing the destination so returning users are not flashed
-// through /auth merely because Auth is still hydrating.
-const isMobileRootLanding = () => {
-  const path = location.pathname.replace(/\/+$/, '') || '/'
-  const mobileViewport = window.matchMedia('(max-width: 900px)').matches
-  const touchMobile = navigator.maxTouchPoints > 0
-  return path === '/' && mobileViewport && touchMobile
-}
-
-if (isMobileRootLanding()) {
-  document.documentElement.dataset.melogicMobileRootLanding = 'resolving'
-  void waitForInitialAuthState().then(user => {
-    const destination = user ? '/community' : '/auth'
-    if (location.pathname === '/') location.replace(destination)
-  }).catch(error => {
-    console.warn('[mobile-root] Auth resolution failed; routing to sign in.', error)
-    if (location.pathname === '/') location.replace('/auth')
-  })
-}
 
 const app = document.querySelector('#app')
 const HOME_SCROLL_BANNER_VIDEO_PATH = 'assets/site/home/backgrounds/scroll-banner.mp4'
