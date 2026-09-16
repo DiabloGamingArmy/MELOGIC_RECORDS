@@ -30,8 +30,9 @@ app.innerHTML = `
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 20 18.5H4A1.5 1.5 0 0 1 2.5 17V7A1.5 1.5 0 0 1 4 5.5Z"/><circle cx="8" cy="10" r="1.6"/><path d="m4.5 16 4.2-4.1 3.1 3 2.2-2.2 5.5 5.3"/></svg>
       </button>
       <input class="camera-library-input" data-camera-library-input type="file" accept="image/*,video/*" aria-hidden="true" tabindex="-1">
-      <button class="camera-capture" type="button" data-camera-capture aria-label="Tap for photo, hold for video"></button>
+      <button class="camera-capture" type="button" data-camera-capture aria-label="Tap for photo, hold for video"><span class="camera-stop-square" aria-hidden="true"></span></button>
       <button class="camera-tool camera-flip" type="button" data-camera-flip aria-label="Flip camera">↻</button>
+      <div class="camera-record-lock" data-camera-record-lock aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5.5" y="10" width="13" height="10" rx="2.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/></svg></div>
     </div>
     <div class="camera-status" data-camera-status>Starting camera…</div>
     <div class="camera-playback" data-camera-playback hidden>
@@ -56,6 +57,7 @@ const useButton = app.querySelector('[data-camera-use]')
 const transitionFrame = app.querySelector('[data-camera-transition-frame]')
 const liveCanvas = app.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
+const recordLock = app.querySelector('[data-camera-record-lock]')
 let renderGeneration = 0
 let renderRaf = 0
 let cameraStarting = false
@@ -70,6 +72,9 @@ let microphoneStream = null
 let recordingCanvasStream = null
 let permissionAudioTrack = null
 let recordingIntent = false
+let lockedRecording = false
+let lockHot = false
+let recordingCameraSwitching = false
 
 function setStatus(message = '') { status.textContent = message; status.hidden = !message }
 function stopMicrophone({ preservePermissionTrack = false } = {}) {
@@ -229,8 +234,36 @@ async function startCamera({ preserveFrame=false }={}) {
     setStatus(error?.name==='NotAllowedError' ? 'Camera and microphone access are required. Enable them in your browser settings and reopen Camera.' : 'Unable to start the camera on this device.')
   } finally { cameraStarting=false }
 }
+async function flipCameraWhileRecording() {
+  if (recordingCameraSwitching || recorder?.state !== 'recording' || !playback.hidden) return
+  recordingCameraSwitching = true
+  const nextFacing = facingMode === 'user' ? 'environment' : 'user'
+  const oldVideoTrack = stream?.getVideoTracks?.()[0]
+  stopCanvasRenderer()
+  try {
+    oldVideoTrack?.stop()
+    const nextVideoStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:nextFacing}},audio:false})
+    const nextVideoTrack = nextVideoStream.getVideoTracks?.()[0]
+    if (!nextVideoTrack) throw new Error('No video track returned while switching camera')
+    const retainedAudio = permissionAudioTrack && permissionAudioTrack.readyState === 'live' ? [permissionAudioTrack] : []
+    stream = new MediaStream([nextVideoTrack, ...retainedAudio])
+    video.srcObject = new MediaStream([nextVideoTrack])
+    facingMode = nextFacing
+    configureZoomCapability()
+    await video.play()
+    await waitForFirstDrawableFrame()
+    startCanvasRenderer()
+    liveCanvas.classList.add('is-ready')
+  } catch (error) {
+    console.error('[camera] in-recording camera switch failed', error)
+    if (oldVideoTrack?.readyState === 'live') startCanvasRenderer()
+    setStatus('Unable to switch cameras while recording.')
+    window.setTimeout(() => setStatus(''), 1600)
+  } finally { recordingCameraSwitching = false }
+}
 async function flipCamera() {
-  if (cameraStarting || recorder?.state==='recording' || !playback.hidden) return
+  if (cameraStarting || !playback.hidden) return
+  if (recorder?.state === 'recording') { await flipCameraWhileRecording(); return }
   const preserved=captureTransitionFrame()
   facingMode=facingMode==='user'?'environment':'user'
   liveCanvas.classList.remove('is-ready')
@@ -345,23 +378,24 @@ async function beginRecording() {
   }
   audioTrack.enabled = true
 
-  let recorderVideoTrack = sourceVideoTrack
-
-  // The front preview is intentionally mirrored. For FRONT CAMERA recordings,
-  // record the already-mirrored live canvas so the encoded result matches what
-  // the user saw. Back camera stays on the native unmirrored hardware track.
-  if (facingMode === 'user' && typeof liveCanvas.captureStream === 'function') {
-    try {
-      const fps = sourceVideoTrack.getSettings?.().frameRate || 30
-      recordingCanvasStream = liveCanvas.captureStream(Math.min(60, Math.max(24, fps)))
-      const canvasTrack = recordingCanvasStream.getVideoTracks?.()[0]
-      if (canvasTrack) recorderVideoTrack = canvasTrack
-    } catch (error) {
-      console.warn('[camera] mirrored canvas recording unavailable; using camera track', error)
-      recordingCanvasStream = null
-    }
+  // Keep MediaRecorder's track set stable for the entire take. Hardware camera
+  // flips only change the source rendered into this canvas track.
+  if (typeof liveCanvas.captureStream !== 'function') {
+    recordingIntent=false; audioTrack.enabled=false
+    setStatus('Live camera switching while recording is not supported on this browser.')
+    return false
   }
-
+  let recorderVideoTrack=null
+  try {
+    const fps=sourceVideoTrack.getSettings?.().frameRate || 30
+    recordingCanvasStream=liveCanvas.captureStream(Math.min(60,Math.max(24,fps)))
+    recorderVideoTrack=recordingCanvasStream.getVideoTracks?.()[0] || null
+  } catch(error) { console.error('[camera] canvas recording stream unavailable',error) }
+  if (!recorderVideoTrack) {
+    recordingIntent=false; audioTrack.enabled=false
+    setStatus('Unable to initialize the video recording surface.')
+    return false
+  }
   recordingStream = new MediaStream([recorderVideoTrack, audioTrack])
 
   try { recorder = new MediaRecorder(recordingStream) }
@@ -401,7 +435,8 @@ async function beginRecording() {
 
   recorder.start()
   recordingStartedAt = Date.now(); updateTimer(); recordingTimer = window.setInterval(updateTimer, 250)
-  capture.classList.add('is-recording'); pill.hidden = false
+  lockedRecording=false; lockHot=false
+  capture.classList.add('is-recording','is-following'); recordLock.classList.add('is-visible'); pill.hidden=false
   return true
 }
 function endRecording() {
@@ -412,8 +447,11 @@ function endRecording() {
   }
   recorder.stop()
   window.clearInterval(recordingTimer)
-  capture.classList.remove('is-recording')
-  pill.hidden = true
+  lockedRecording=false; lockHot=false
+  capture.classList.remove('is-recording','is-following','is-locked','is-lock-hot')
+  capture.style.removeProperty('--capture-x'); capture.style.removeProperty('--capture-y')
+  recordLock.classList.remove('is-visible','is-hot')
+  pill.hidden=true
 }
 function takePhoto() {
   if (!liveCanvas?.width || !liveCanvas?.height) return
@@ -425,6 +463,7 @@ let didHold = false
 let activeCapturePointer = null
 capture.addEventListener('pointerdown', event => {
   if (event.button != null && event.button !== 0) return
+  if (lockedRecording && recorder?.state === 'recording') { event.preventDefault(); endRecording(); return }
   event.preventDefault(); didHold = false; activeCapturePointer = event.pointerId; captureStartY = event.clientY
   capture.setPointerCapture?.(event.pointerId)
   holdTimer = window.setTimeout(() => {
@@ -437,18 +476,28 @@ capture.addEventListener('pointerdown', event => {
 capture.addEventListener('pointermove', event => {
   if (activeCapturePointer === null || event.pointerId !== activeCapturePointer || !didHold) return
   event.preventDefault()
-  const deltaY = event.clientY - captureStartY
-  // Treat the shutter gesture as a relative zoom control in BOTH directions:
-  // finger up -> zoom in, finger back down -> zoom out.
-  if (deltaY !== 0) setZoomFromDrag(deltaY)
-  captureStartY = event.clientY
+  const r=recordLock.getBoundingClientRect(), lx=r.left+r.width/2, ly=r.top+r.height/2
+  const radius=Math.max(44,Math.max(r.width,r.height)*.78)
+  lockHot=Math.hypot(event.clientX-lx,event.clientY-ly)<=radius
+  const x=lockHot?lx:event.clientX, y=lockHot?ly:event.clientY
+  capture.style.setProperty('--capture-x',`${x}px`); capture.style.setProperty('--capture-y',`${y}px`)
+  capture.classList.toggle('is-lock-hot',lockHot); recordLock.classList.toggle('is-hot',lockHot)
+  const deltaY=event.clientY-captureStartY
+  if (!lockHot && deltaY!==0) setZoomFromDrag(deltaY)
+  captureStartY=event.clientY
 })
 function releaseCapture(event) {
   if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
   event.preventDefault(); window.clearTimeout(holdTimer)
-  if (didHold) endRecording(); else takePhoto()
-  recordingIntent = false
-  activeCapturePointer = null
+  if (didHold && recorder?.state==='recording' && lockHot) {
+    lockedRecording=true; lockHot=false
+    capture.classList.remove('is-following','is-lock-hot'); capture.classList.add('is-locked')
+    capture.style.removeProperty('--capture-x'); capture.style.removeProperty('--capture-y')
+    recordLock.classList.remove('is-visible','is-hot')
+  } else if (didHold) endRecording()
+  else takePhoto()
+  recordingIntent=lockedRecording
+  activeCapturePointer=null
 }
 capture.addEventListener('pointerup', releaseCapture)
 capture.addEventListener('pointercancel', event => {
@@ -482,9 +531,33 @@ liveCanvas.addEventListener('pointerup', event => {
   lastPreviewTapAt = now
 })
 app.querySelector('[data-camera-flash]').addEventListener('click', async event => {
-  const track = stream?.getVideoTracks?.()[0]; const capabilities = track?.getCapabilities?.() || {}
-  if (!capabilities.torch) { setStatus('Flash is not available with this camera.'); window.setTimeout(() => setStatus(''), 1600); return }
-  const next = event.currentTarget.dataset.on !== 'true'; await track.applyConstraints({advanced:[{torch:next}]}); event.currentTarget.dataset.on = String(next)
+  const button = event.currentTarget
+  const track = stream?.getVideoTracks?.()[0]
+  const capabilities = track?.getCapabilities?.() || {}
+  if (!track || !capabilities.torch) {
+    setStatus('Flash is not available with this camera.')
+    window.setTimeout(() => setStatus(''), 1600)
+    return
+  }
+  const settings = track.getSettings?.() || {}
+  const currentlyOn = typeof settings.torch === 'boolean' ? settings.torch : button.dataset.on === 'true'
+  const next = !currentlyOn
+  try {
+    if (next) {
+      await track.applyConstraints({ advanced: [{ torch: true }] })
+    } else {
+      await track.applyConstraints({ advanced: [{ torch: false }] })
+      if (track.getSettings?.().torch === true) await track.applyConstraints()
+    }
+    const actual = track.getSettings?.().torch
+    const isOn = typeof actual === 'boolean' ? actual : next
+    button.dataset.on = String(isOn)
+    button.setAttribute('aria-pressed', String(isOn))
+  } catch (error) {
+    console.warn('[camera] torch toggle failed', error)
+    setStatus('Unable to change flash on this camera.')
+    window.setTimeout(() => setStatus(''), 1600)
+  }
 })
 app.querySelector('[data-camera-retake]').addEventListener('click', async () => {
   playback.hidden = true; playback._melogicCapture = null

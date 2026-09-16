@@ -22,3 +22,10 @@ html:has(body.melogic-camera-page),body.melogic-camera-page{margin:0;width:100%;
   object-position:center;
   background:#000;
 }
+
+/* melogic-record-lock-and-live-flip-v1 */
+.camera-record-lock{position:fixed;z-index:6;right:max(22px,env(safe-area-inset-right,0px));bottom:150px;width:54px;height:54px;border-radius:50%;display:grid;place-items:center;color:#fff;background:rgba(8,9,13,.54);border:1px solid rgba(255,255,255,.24);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);opacity:0;transform:scale(.82);pointer-events:none;transition:opacity 140ms ease,transform 140ms ease,box-shadow 140ms ease}
+.camera-record-lock svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.camera-record-lock.is-visible{opacity:1;transform:scale(1)}.camera-record-lock.is-hot{transform:scale(1.24);box-shadow:0 0 20px rgba(84,200,255,.52),0 0 38px rgba(168,87,255,.36);border-color:rgba(255,255,255,.7)}
+.camera-capture.is-following{position:fixed;z-index:8;left:var(--capture-x,50%);top:var(--capture-y,auto);bottom:auto;margin:0;transform:translate(-50%,-50%) scale(.9);transition:background 180ms ease,border-color 180ms ease,box-shadow 180ms ease}.camera-capture.is-following.is-lock-hot{transform:translate(-50%,-50%) scale(1.06)}
+.camera-stop-square{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:5px;transform:translate(-50%,-50%);background:#fff;opacity:0;transition:width 150ms ease,height 150ms ease,opacity 150ms ease;pointer-events:none}.camera-capture.is-locked .camera-stop-square{width:24px;height:24px;opacity:1}
+.camera-capture.is-locked{transform:scale(.9);border-color:transparent;background:rgba(255,255,255,.14);box-shadow:0 0 18px rgba(84,200,255,.55),0 0 34px rgba(168,87,255,.42)}.camera-capture.is-locked::before{inset:-14px;opacity:1;animation:camera-record-ring 2.4s linear infinite}
