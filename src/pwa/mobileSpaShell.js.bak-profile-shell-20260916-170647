@@ -114,18 +114,13 @@ function harvestShell(candidate) {
       persistentShell.dataset.melogicPersistentMobileShell = 'true'
       host.replaceChildren(persistentShell)
     } else {
-      // melogic-profile-community-shell-ownership-v1
-      // Each full document load owns its own page shell. The old implementation
-      // preserved the first shell forever, so a Community shell could survive a
-      // subsequent Profile document and visually cover/lock the Profile page.
-      // Replace the persistent shell with the newly rendered page shell instead.
-      const previousShell = persistentShell
-      persistentShell = candidate
-      persistentShell.dataset.melogicPersistentMobileShell = 'true'
-      host.replaceChildren(persistentShell)
-      if (previousShell && previousShell !== persistentShell && previousShell.isConnected) {
-        previousShell.remove()
-      }
+      const sourceHeader = candidate.querySelector(HEADER_SELECTOR)
+      const targetHeader = persistentShell.querySelector(HEADER_SELECTOR)
+      copyHeaderPresentation(sourceHeader, targetHeader)
+
+      // Keep the original bottom-nav DOM node alive so touch state, avatar
+      // rendering, unread badges, and future SPA listeners are not reset.
+      candidate.remove()
     }
     syncBottomNavigation()
     syncGenericHeaderTitle()
