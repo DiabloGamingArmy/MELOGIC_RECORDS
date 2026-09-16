@@ -3957,3 +3957,149 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; touch-action:pan-y;
   }
 }
+
+
+/* === MELOGIC MOBILE COMPOSER V1 === */
+@media (max-width: 760px) {
+  html,
+  body.is-inbox-page {
+    touch-action: pan-y;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    column-gap: 0.45rem;
+    row-gap: 0.42rem;
+    padding: 0.52rem 0.72rem max(0.58rem, env(safe-area-inset-bottom));
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: #000;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer > textarea {
+    grid-column: 1;
+    grid-row: 1;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    max-height: 7.75rem;
+    height: 44px;
+    resize: none;
+    overflow-y: hidden;
+    box-sizing: border-box;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 22px;
+    background: #1c1c1e;
+    color: #f5f5f7;
+    padding: 10px 15px;
+    font-size: 16px;
+    line-height: 22px;
+    outline: none;
+    box-shadow: none;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer > textarea::placeholder {
+    color: rgba(235, 235, 245, 0.48);
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer > textarea:focus {
+    border-color: rgba(255, 255, 255, 0.20);
+    outline: none;
+    box-shadow: none;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer-footer {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    display: block;
+    min-width: 44px;
+    margin: 0;
+    padding: 0;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer-footer > span:empty {
+    display: none;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.38rem;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions .button {
+    margin: 0;
+    min-width: 44px;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 0;
+    line-height: 1;
+    transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions [data-action="attach-file"] {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: #1c1c1e;
+    color: #fff;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions [data-action="attach-file"]::before {
+    content: "+";
+    font-size: 27px;
+    font-weight: 300;
+    line-height: 1;
+    transform: translateY(-1px);
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions button[type="submit"] {
+    border: 0;
+    background: linear-gradient(135deg, #6d4aff, #7c2cff);
+    color: #fff;
+    box-shadow: 0 4px 16px rgba(105, 63, 255, 0.28);
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions button[type="submit"]::before {
+    content: "➤";
+    font-size: 19px;
+    line-height: 1;
+    transform: translate(-1px, 1px) rotate(-8deg);
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer:not(.has-sendable-content) .composer-actions button[type="submit"] {
+    display: none;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer.has-text .composer-actions [data-action="attach-file"] {
+    display: none;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer.has-sendable-content .composer-actions button[type="submit"] {
+    display: grid;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer.has-sendable-content .composer-actions button[type="submit"]:not(:disabled):active {
+    transform: scale(0.94);
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer .composer-error,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer .composer-note {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin: 0;
+    padding: 0 0.25rem;
+    font-size: 0.72rem;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-reply-preview,
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-attachment-preview-strip {
+    grid-column: 1 / -1;
+  }
+}

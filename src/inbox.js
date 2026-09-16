@@ -2920,7 +2920,7 @@ function getConversationBodyMarkup({
           const ext = escapeHtml((String(file.name || '').split('.').pop() || type).toUpperCase().slice(0, 6))
           return `<article class="composer-attachment-preview is-file" title="${title}"><div class="composer-file-icon">${ext}</div><small>${title}</small><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`
         }).join('')}</div>` : ''}
-        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="${historyClearing ? 'Deleting conversation history...' : isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="1" maxlength="1200" placeholder="${historyClearing ? 'Deleting conversation history...' : isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
         <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isComposerUnavailable ? 'disabled' : ''} />
         <div class="message-composer-footer">
           ${appState.errorMessage
@@ -6268,6 +6268,25 @@ function renderSignedOutState() {
   floatingRoot.innerHTML = ''
 }
 
+// melogic-inbox-instagram-composer-v1
+function syncMessageComposerPresentation(textarea) {
+  if (!(textarea instanceof HTMLTextAreaElement)) return
+  const form = textarea.closest('[data-message-form]')
+  if (!form) return
+
+  const hasText = textarea.value.trim().length > 0
+  const hasAttachments = Boolean(form.querySelector('.composer-attachment-preview'))
+  form.classList.toggle('has-text', hasText)
+  form.classList.toggle('has-sendable-content', hasText || hasAttachments)
+
+  textarea.style.height = 'auto'
+  const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 22
+  const maxHeight = Math.max(44, Math.round(lineHeight * 5 + 20))
+  const nextHeight = Math.min(textarea.scrollHeight, maxHeight)
+  textarea.style.height = `${Math.max(44, nextHeight)}px`
+  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
+}
+
 function bindSharedEvents(scope = inboxRoot) {
   scope.querySelectorAll('[data-mobile-inbox-back]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -6544,6 +6563,10 @@ function bindSharedEvents(scope = inboxRoot) {
   const thread = getSelectedThread()
 
   if (textarea && thread) {
+    syncMessageComposerPresentation(textarea)
+    textarea.addEventListener('input', () => {
+      syncMessageComposerPresentation(textarea)
+    })
     textarea.addEventListener('keydown', async (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
@@ -7804,6 +7827,28 @@ function handleGlobalKeydown(event) {
     closeCreateChatModal()
   }
 }
+
+// melogic-inbox-page-zoom-lock-v1
+function installInboxPageZoomLock() {
+  if (window.__melogicInboxPageZoomLockV1) return
+  window.__melogicInboxPageZoomLockV1 = true
+
+  const preventGestureZoom = (event) => {
+    event.preventDefault()
+  }
+  const preventMultiTouchZoom = (event) => {
+    if (event.touches?.length > 1) event.preventDefault()
+  }
+
+  // WebKit gesture events plus a multi-touch fallback. Single-finger
+  // touchmove remains native so Inbox scrolling is unaffected.
+  document.addEventListener('gesturestart', preventGestureZoom, { passive: false })
+  document.addEventListener('gesturechange', preventGestureZoom, { passive: false })
+  document.addEventListener('gestureend', preventGestureZoom, { passive: false })
+  document.addEventListener('touchmove', preventMultiTouchZoom, { passive: false })
+}
+
+installInboxPageZoomLock()
 
 document.addEventListener('keydown', handleGlobalKeydown)
 document.addEventListener('visibilitychange', () => {
