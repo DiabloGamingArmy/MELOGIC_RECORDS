@@ -8,6 +8,7 @@ import { ROUTES, authRoute } from '../utils/routes'
 import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
 import { initChatDock } from './chatDock'
 import { initSiteGuidance } from './siteGuidance'
+import { installMobileInteractionDiagnostic } from './mobileInteractionDiagnostic'
 import { ensureSiteFooter } from './siteFooter'
 import '../styles/chatDock.css'
 
@@ -468,6 +469,7 @@ async function initAccessGate() {
 }
 
 export async function initShellChrome() {
+  installMobileInteractionDiagnostic()
   initNavBrandLogo()
   syncNavOffset()
   ensureSiteFooter()
