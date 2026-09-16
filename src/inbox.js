@@ -404,11 +404,12 @@ let processedStartUid = ''
 let accountCallManager = null
 let accountCallTimeout = null
 let accountCallTimer = null
-const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1'
+const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1';
+
 // melogic-inbox-mobile-architecture-v1
 
 // melogic-inbox-category-anchor-touch-fix-v1
-(function installInboxCategoryAnchorTouchFix(){
+;(function installInboxCategoryAnchorTouchFix(){
   if(window.__melogicInboxCategoryAnchorTouchFixV1) return;
   const touchMobile=window.matchMedia('(max-width: 760px)').matches &&
     (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints>0 || 'ontouchstart' in window);
@@ -7879,25 +7880,48 @@ function installMobileInboxNavigationAndScrollArchitecture() {
     </nav>`
   }
   const ensureTabs = () => {
+    const existingTabs = document.querySelector('[data-inbox-mobile-section-tabs]')
     if (!isMobile()) {
-      document.querySelectorAll('[data-inbox-mobile-section-tabs]').forEach((node) => node.remove())
+      existingTabs?.remove()
       return
     }
-    const root = document.querySelector('.inbox-app-shell, .inbox-main-shell, .inbox-layout')
-    if (!root) return
-    let tabs = document.querySelector('[data-inbox-mobile-section-tabs]')
+
+    // data-inbox-root is a volatile render surface: renderSignedInState()
+    // replaces inboxRoot.innerHTML. Keep section navigation outside that root
+    // so a render cannot destroy a pressed anchor before pointerup/click.
+    const inboxRootNode = document.querySelector('[data-inbox-root]')
+    const persistentParent = inboxRootNode?.parentElement
+    if (!inboxRootNode || !persistentParent) return
+
+    let tabs = existingTabs
     if (!tabs) {
       const holder = document.createElement('div')
       holder.innerHTML = mobileTabsMarkup().trim()
       tabs = holder.firstElementChild
-      const layout = document.querySelector('.inbox-layout')
-      if (layout?.parentElement) layout.parentElement.insertBefore(tabs, layout)
-      else root.prepend(tabs)
-    } else {
-      const holder = document.createElement('div')
-      holder.innerHTML = mobileTabsMarkup().trim()
-      tabs.replaceWith(holder.firstElementChild)
     }
+
+    // Move the SAME nav node to the persistent shell if an older build mounted
+    // it inside data-inbox-root. Never clone or replace the live navigation.
+    if (tabs.parentElement !== persistentParent || tabs.nextElementSibling !== inboxRootNode) {
+      persistentParent.insertBefore(tabs, inboxRootNode)
+    }
+
+    const active = routeKind()
+    const tabState = [
+      { href: '/inbox/messages', key: 'messages' },
+      { href: '/inbox/calls', key: 'calls' },
+      { href: '/inbox/system', key: 'activity' }
+    ]
+    const anchors = [...tabs.querySelectorAll(':scope > a')]
+    tabState.forEach(({ href, key }, index) => {
+      const anchor = anchors[index]
+      if (!anchor) return
+      if (anchor.getAttribute('href') !== href) anchor.setAttribute('href', href)
+      const isActive = active === key
+      anchor.classList.toggle('is-active', isActive)
+      if (isActive) anchor.setAttribute('aria-current', 'page')
+      else anchor.removeAttribute('aria-current')
+    })
   }
   const ensureThreadSectionLabels = () => {
     if (!isMobile() || routeKind() !== 'messages') return
