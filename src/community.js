@@ -2930,8 +2930,7 @@ function renderDetail() {
       ${renderLeftNav()}
       <div class="community-main community-route-main">
         <section class="community-detail-topbar">
-          <div>
-            <p class="eyebrow">Community</p>
+          <div class="community-detail-title-track" aria-label="Post title">
             <h1>${post ? escapeHtml(post.title || 'Post') : 'Post'}</h1>
           </div>
           <a class="button button-muted" href="${ROUTES.community}" data-community-back-to-feed>${iconSvg('arrowLeft')} <span>Back</span></a>
@@ -6125,9 +6124,16 @@ function bindFeedRegionEvents(root = app) {
       openPostDetail(postId, '#comments')
     })
   })
+  /* melogic-community-image-detail-first-v1 */
   root.querySelectorAll('[data-open-community-image]').forEach((button) => {
     button.addEventListener('click', (event) => {
       stopCommunityActionEvent(event)
+      const postCard = button.closest('.community-post-card[data-post-id]')
+      const isPostDetail = Boolean(postCard?.classList.contains('is-detail') || state.view.type === 'post')
+      if (postCard && !isPostDetail) {
+        openPostDetail(postCard.getAttribute('data-post-id') || '')
+        return
+      }
       openCommunityImageViewer(
         button.getAttribute('data-open-community-image') || '',
         button.getAttribute('data-community-image-name') || ''
