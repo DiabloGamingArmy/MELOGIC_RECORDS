@@ -10,7 +10,7 @@
     --community-content-gutter: clamp(12px, 4vw, 20px);
     --community-avatar-size: 38px;
     --community-divider: rgb(174 188 211 / 14%);
-    --community-background: #07090d;
+    --community-background: #000000;
     height: auto;
     min-height: 100dvh;
     overflow: visible;
@@ -98,7 +98,7 @@
   .community-post-body { font-size: .94rem; line-height: 1.6; overflow-wrap: anywhere; }
   .community-post-options-button { width: 44px; height: 44px; border: 0; background: transparent; }
   .community-page .community-post-options-menu {
-    width: max-content; min-width: min(12rem, calc(100vw - 2 * var(--community-content-gutter))); max-width: calc(100vw - 2 * var(--community-content-gutter)); z-index: 40; background: #141820;
+    width: max-content; min-width: min(12rem, calc(100vw - 2 * var(--community-content-gutter))); max-width: calc(100vw - 2 * var(--community-content-gutter)); z-index: 40; background: #0d0d0f;
   }
   .community-post-options-menu button { min-height: 44px; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
   .community-post-file-attachment.is-image,
@@ -145,5 +145,44 @@
   @media (prefers-reduced-motion: reduce) {
     .is-community-page .mobile-app-title, .is-community-page .community-mobile-back { animation: none; }
     .is-community-page .mobile-app-actions { transition: none; }
+  }
+}
+
+
+/* melogic-community-black-detail-mobile-v3
+   Mobile authority corrections; color system remains identical to desktop. */
+@media(max-width:760px){
+  body.is-community-page,
+  .is-community-page .mobile-app-header,
+  .is-community-page .mobile-bottom-nav,
+  .community-page{
+    background-color:#000;
+  }
+  .community-page .community-post-options-menu,
+  .community-page .community-comment-options-menu{
+    color:var(--community-text);
+    border:1px solid var(--community-border);
+    background:#0d0d0f;
+    box-shadow:0 18px 48px rgba(0,0,0,.68);
+  }
+  .community-comments,
+  .community-comment-composer,
+  .community-comment-card{
+    background:transparent;
+  }
+  .community-comment-composer textarea{
+    color:var(--community-text);
+    background:var(--community-surface-2);
+    border-color:var(--community-border);
+  }
+  .community-modal-backdrop{background:rgba(0,0,0,.80)}
+  .community-composer-modal,.community-report-modal,.community-story-modal,
+  .community-story-viewer,.community-destination-modal,.community-share-modal,
+  .community-options-modal,.community-modal,.community-dialog{
+    background:#0d0d0f;
+    border-color:var(--community-border);
+  }
+  .community-page :is(button,a,textarea,input,select):focus-visible{
+    outline-color:var(--community-focus-ring);
   }
 }

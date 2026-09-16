@@ -4496,3 +4496,261 @@ body:has(.community-page) #app {
 @media(max-width:1200px){.community-main,.community-route-main,.community-feed{background-color:transparent}}
 @media(max-width:900px){.community-feed-header{background:rgba(0,0,0,.94)}.community-mobile-stories{border-color:var(--community-feed-border)}}
 @media(max-width:640px){.community-feed .community-post-card:not(.community-post-detail-card),.community-main .community-post-card:not(.community-post-detail-card){background-color:transparent}}
+
+
+/* melogic-community-black-detail-v3
+   GLOBAL detail/comments/menus/modals conversion.
+   Applies at every viewport; communityMobile.css gets only mobile-authority fixes. */
+
+/* Detail route and post viewer */
+.community-layout.is-detail,
+.community-layout.is-post-detail,
+.community-detail-main,
+.community-detail-topbar,
+.community-post-detail-card,
+.community-post-detail {
+  color:var(--community-text);
+}
+.community-detail-topbar{
+  border-color:var(--community-border-subtle);
+  background:transparent;
+}
+.community-post-detail-card,
+.community-layout.is-detail .community-post-card,
+.community-layout.is-post-detail .community-post-card{
+  border-color:var(--community-border-subtle);
+  background:#000;
+  background-image:none;
+  box-shadow:none;
+}
+.community-post-detail-card :is(h1,h2,h3,strong),
+.community-layout.is-detail .community-post-card :is(h1,h2,h3,strong){
+  color:var(--community-text);
+}
+.community-post-detail-card :is(small,em,.community-post-meta,.community-post-time,.community-post-context){
+  color:var(--community-text-muted);
+}
+
+/* Comments: one continuous neutral-black visual system */
+.community-comments,
+.community-comments-list,
+.community-comments-thread{
+  color:var(--community-text);
+  background:transparent;
+}
+.community-comments-heading{
+  border-color:var(--community-border-subtle);
+}
+.community-comments-heading h3{color:var(--community-text)}
+.community-comments-heading p,
+.community-comments-count{color:var(--community-text-muted)}
+.community-comments-empty{
+  color:var(--community-text-muted);
+  background:transparent;
+  border-color:var(--community-border-subtle);
+}
+.community-comment-card{
+  color:var(--community-text);
+  border-color:var(--community-border-subtle);
+  background:transparent;
+  background-image:none;
+  box-shadow:none;
+}
+.community-comment-card:hover{
+  border-color:var(--community-border);
+  background:var(--community-surface-1);
+}
+.community-comment-card :is(small,em,.community-comment-meta,.community-comment-time){
+  color:var(--community-text-muted);
+}
+.community-comment-body,.community-comment-card p{color:var(--community-text)}
+.community-comment-replies{
+  border-color:var(--community-border-subtle);
+}
+.community-comment-actions button:not(.is-active){
+  color:var(--community-text-secondary);
+  background:transparent;
+}
+.community-comment-actions button:not(.is-active):hover{
+  color:var(--community-text);
+  background:var(--community-surface-hover);
+}
+
+/* Comment composer must visually belong to the thread, not float as a blue panel. */
+.community-comment-composer{
+  color:var(--community-text);
+  border-color:var(--community-border-subtle);
+  background:#000;
+  background-image:none;
+  box-shadow:none;
+}
+.community-comment-composer textarea,
+.community-comment-composer input,
+.community-comment-composer select{
+  color:var(--community-text);
+  background:var(--community-surface-2);
+  border-color:var(--community-border);
+}
+.community-comment-composer :is(textarea,input,select)::placeholder{color:var(--community-text-muted)}
+.community-comment-composer :is(textarea,input,select):focus{
+  background:var(--community-surface-3);
+  border-color:var(--community-border-strong);
+}
+.community-comment-tool-row button,
+.community-comment-form-actions.is-quiet button{
+  color:var(--community-text-secondary);
+  border-color:transparent;
+  background:transparent;
+}
+.community-comment-tool-row button:hover,
+.community-comment-form-actions.is-quiet button:hover{
+  color:var(--community-text);
+  background:var(--community-surface-hover);
+}
+.community-comment-attachment-drafts,
+.community-comment-attachments,
+.community-comment-file,
+.community-comment-upload-state{
+  border-color:var(--community-border-subtle);
+  background:transparent;
+  color:var(--community-text-secondary);
+}
+
+/* Post/comment three-dot menus and other contextual menus */
+.community-post-options-menu,
+.community-comment-options-menu,
+.community-options-menu,
+.community-context-menu,
+.community-menu,
+.community-popover{
+  color:var(--community-text);
+  border:1px solid var(--community-border);
+  background:#0d0d0f;
+  background-image:none;
+  box-shadow:0 18px 48px rgba(0,0,0,.62);
+}
+.community-post-options-menu button,
+.community-comment-options-menu button,
+.community-options-menu button,
+.community-context-menu button,
+.community-menu button,
+.community-popover button{
+  color:var(--community-text-secondary);
+  background:transparent;
+  border-color:transparent;
+}
+.community-post-options-menu button:hover,
+.community-comment-options-menu button:hover,
+.community-options-menu button:hover,
+.community-context-menu button:hover,
+.community-menu button:hover,
+.community-popover button:hover{
+  color:var(--community-text);
+  background:var(--community-surface-hover);
+}
+.community-page :is(.community-post-options-menu,.community-comment-options-menu,.community-options-menu,.community-context-menu,.community-menu,.community-popover) .is-danger{
+  color:#ff7b91;
+}
+
+/* Modal environment */
+.community-modal-backdrop{
+  background:rgba(0,0,0,.78);
+  -webkit-backdrop-filter:blur(10px);
+  backdrop-filter:blur(10px);
+}
+.community-composer-modal,
+.community-report-modal,
+.community-story-modal,
+.community-story-viewer,
+.community-destination-modal,
+.community-share-modal,
+.community-options-modal,
+.community-modal,
+.community-dialog{
+  color:var(--community-text);
+  border-color:var(--community-border);
+  background:#0d0d0f;
+  background-image:none;
+  box-shadow:0 24px 80px rgba(0,0,0,.72);
+}
+:is(.community-composer-modal,.community-report-modal,.community-story-modal,.community-story-viewer,.community-destination-modal,.community-share-modal,.community-options-modal,.community-modal,.community-dialog) header,
+:is(.community-composer-modal,.community-report-modal,.community-story-modal,.community-story-viewer,.community-destination-modal,.community-share-modal,.community-options-modal,.community-modal,.community-dialog) footer{
+  border-color:var(--community-border-subtle);
+  background:transparent;
+}
+:is(.community-composer-modal,.community-report-modal,.community-story-modal,.community-story-viewer,.community-destination-modal,.community-share-modal,.community-options-modal,.community-modal,.community-dialog) :is(h1,h2,h3,strong){
+  color:var(--community-text);
+}
+:is(.community-composer-modal,.community-report-modal,.community-story-modal,.community-story-viewer,.community-destination-modal,.community-share-modal,.community-options-modal,.community-modal,.community-dialog) :is(p,small,label){
+  color:var(--community-text-secondary);
+}
+:is(.community-composer-modal,.community-report-modal,.community-story-modal,.community-destination-modal,.community-share-modal,.community-options-modal,.community-modal,.community-dialog) :is(input,textarea,select){
+  color:var(--community-text);
+  border-color:var(--community-border);
+  background:var(--community-surface-2);
+}
+:is(.community-composer-modal,.community-report-modal,.community-story-modal,.community-destination-modal,.community-share-modal,.community-options-modal,.community-modal,.community-dialog) :is(input,textarea,select):focus{
+  border-color:var(--community-border-strong);
+  background:var(--community-surface-3);
+}
+
+/* Modal choices / report reasons / destinations */
+.community-report-options label,
+.community-destination-option,
+.community-story-option,
+.community-intent-option,
+.community-options-modal button,
+.community-share-modal button{
+  color:var(--community-text-secondary);
+  border-color:var(--community-border-subtle);
+  background:var(--community-surface-1);
+}
+.community-report-options label:hover,
+.community-destination-option:hover,
+.community-story-option:hover,
+.community-intent-option:hover,
+.community-options-modal button:hover,
+.community-share-modal button:hover{
+  color:var(--community-text);
+  border-color:var(--community-border);
+  background:var(--community-surface-hover);
+}
+
+/* Attachment/file/media shells: media itself is untouched. */
+.community-post-file-attachment,
+.community-comment-file,
+.community-composer-attachment,
+.community-attachment-preview{
+  border-color:var(--community-border-subtle);
+  background:var(--community-surface-1);
+}
+.community-post-file-attachment:not(.is-image):not(.is-video),
+.community-comment-file{
+  color:var(--community-text-secondary);
+}
+
+/* Viewer chrome should be black, but never alter user media. */
+.community-image-viewer,
+.community-media-viewer,
+.community-story-viewer{
+  --community-viewer-chrome:#000;
+}
+.community-image-viewer,
+.community-media-viewer{
+  background:#000;
+}
+.community-image-viewer :is(button,.community-viewer-close,.community-viewer-action),
+.community-media-viewer :is(button,.community-viewer-close,.community-viewer-action){
+  color:#fff;
+  border-color:rgba(255,255,255,.14);
+  background:rgba(0,0,0,.56);
+}
+
+/* Focus remains visible on the newly-dark contextual surfaces. */
+.community-page :is(
+ .community-post-options-menu,.community-comment-options-menu,.community-options-menu,
+ .community-context-menu,.community-menu,.community-popover,.community-modal-backdrop
+) :is(button,a,input,textarea,select,[tabindex]):focus-visible{
+  outline:2px solid var(--community-focus-ring);
+  outline-offset:2px;
+}
