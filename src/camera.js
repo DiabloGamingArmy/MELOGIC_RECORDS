@@ -21,8 +21,9 @@ app.innerHTML = `
     <div class="camera-shade"></div>
     <div class="camera-topbar">
       <a class="camera-tool" href="/community" aria-label="Close camera">×</a>
-      <div class="camera-tools"><button class="camera-tool" type="button" data-camera-flash aria-label="Flash">⚡</button></div>
+      <div class="camera-tools"><div class="camera-flash-stack"><button class="camera-tool" type="button" data-camera-flash aria-label="Flash" aria-pressed="false">⚡</button><input class="camera-flash-strength" data-camera-flash-strength type="range" min="0" max="100" value="62" aria-label="Flash magnitude" hidden></div></div>
     </div>
+    <div class="camera-front-flash" data-camera-front-flash aria-hidden="true"></div>
     <div class="camera-recording-pill" data-recording-pill hidden>REC <span data-recording-time>0:00</span></div>
     <div class="camera-mode-strip" aria-label="Capture mode"><span>Story</span><span class="is-active">Camera</span><span>Post</span></div>
     <div class="camera-capture-row">
@@ -38,6 +39,9 @@ app.innerHTML = `
     <div class="camera-playback" data-camera-playback hidden>
       <img data-camera-photo alt="Captured photo preview" hidden>
       <video data-camera-recorded playsinline loop hidden></video>
+      <canvas class="camera-edit-canvas" data-camera-edit-canvas></canvas>
+      <div class="camera-edit-textbox" data-camera-edit-textbox hidden><input data-camera-edit-text-input maxlength="160" placeholder="Type something…"><button type="button" data-camera-edit-text-add>Add</button></div>
+      <div class="camera-edit-tools" data-camera-edit-tools><button type="button" data-camera-edit-tool="text">T</button><button type="button" data-camera-edit-tool="pen">✎</button><button type="button" data-camera-edit-tool="sticker">☺</button><button type="button" data-camera-edit-tool="crop">⌗</button><button type="button" data-camera-edit-tool="image">▧</button><button type="button" data-camera-edit-tool="undo">↶</button><input data-camera-edit-image-input type="file" accept="image/*" hidden></div>
       <div class="camera-review-actions"><button type="button" data-camera-retake>Retake</button><button class="camera-use" type="button" data-camera-use>Use media</button></div>
     </div>
   </main>`
@@ -58,6 +62,9 @@ const transitionFrame = app.querySelector('[data-camera-transition-frame]')
 const liveCanvas = app.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
 const recordLock = app.querySelector('[data-camera-record-lock]')
+const flashButton=app.querySelector('[data-camera-flash]'), flashStrength=app.querySelector('[data-camera-flash-strength]'), frontFlash=app.querySelector('[data-camera-front-flash]')
+const editCanvas=app.querySelector('[data-camera-edit-canvas]'), editCtx=editCanvas?.getContext('2d'), editTextbox=app.querySelector('[data-camera-edit-textbox]'), editTextInput=app.querySelector('[data-camera-edit-text-input]'), editImageInput=app.querySelector('[data-camera-edit-image-input]')
+let frontFlashOn=false, editMode='', editDrawing=false, editHistory=[]
 let renderGeneration = 0
 let renderRaf = 0
 let cameraStarting = false
@@ -201,6 +208,13 @@ function waitForFirstDrawableFrame() {
     check()
   })
 }
+function updateFrontFlash(){const s=Number(flashStrength?.value||0)/100;frontFlash?.style.setProperty('--front-flash-strength',s.toFixed(3));frontFlash?.classList.toggle('is-on',facingMode==='user'&&frontFlashOn);if(flashStrength)flashStrength.hidden=!(facingMode==='user'?frontFlashOn:flashButton?.dataset.on==='true')}
+function resetFlashUI(){frontFlashOn=false;frontFlash?.classList.remove('is-on');if(flashButton){flashButton.dataset.on='false';flashButton.setAttribute('aria-pressed','false')}if(flashStrength)flashStrength.hidden=true}
+function sizeEditCanvas(){if(!editCanvas)return;const r=playback.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(editCanvas.width!==w||editCanvas.height!==h){editCanvas.width=w;editCanvas.height=h}}
+function pushEditHistory(){if(!editCanvas)return;editHistory.push(editCanvas.toDataURL());if(editHistory.length>20)editHistory.shift()}
+function restoreEditSnapshot(url){if(!editCtx)return;editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);if(!url)return;const i=new Image();i.onload=()=>editCtx.drawImage(i,0,0,editCanvas.width,editCanvas.height);i.src=url}
+function resetEditor(){editMode='';editDrawing=false;editHistory=[];if(editTextbox)editTextbox.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
+function editorPoint(e){const r=editCanvas.getBoundingClientRect();return{x:(e.clientX-r.left)*editCanvas.width/r.width,y:(e.clientY-r.top)*editCanvas.height/r.height}}
 async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
   if (!navigator.mediaDevices?.getUserMedia) { setStatus('Camera capture is not supported in this browser.'); return }
@@ -225,6 +239,7 @@ async function startCamera({ preserveFrame=false }={}) {
     // separately for later recording.
     video.srcObject = new MediaStream(nextStream.getVideoTracks())
     configureZoomCapability()
+    resetFlashUI()
     await video.play(); await waitForFirstDrawableFrame()
     startCanvasRenderer(); liveCanvas.classList.add('is-ready')
     requestAnimationFrame(()=>transitionFrame?.classList.remove('is-visible','is-black'))
@@ -250,6 +265,7 @@ async function flipCameraWhileRecording() {
     video.srcObject = new MediaStream([nextVideoTrack])
     facingMode = nextFacing
     configureZoomCapability()
+    resetFlashUI()
     await video.play()
     await waitForFirstDrawableFrame()
     startCanvasRenderer()
@@ -339,6 +355,7 @@ function showCapturedMedia(blob, type) {
   }
   playback.dataset.captureType = type
   playback._melogicCapture = blob
+  requestAnimationFrame(()=>{sizeEditCanvas();resetEditor()})
   useButton.textContent = isPhoto ? 'Use photo' : 'Use video'
   playback.hidden = false
 }
@@ -530,35 +547,15 @@ liveCanvas.addEventListener('pointerup', event => {
   }
   lastPreviewTapAt = now
 })
-app.querySelector('[data-camera-flash]').addEventListener('click', async event => {
-  const button = event.currentTarget
-  const track = stream?.getVideoTracks?.()[0]
-  const capabilities = track?.getCapabilities?.() || {}
-  if (!track || !capabilities.torch) {
-    setStatus('Flash is not available with this camera.')
-    window.setTimeout(() => setStatus(''), 1600)
-    return
-  }
-  const settings = track.getSettings?.() || {}
-  const currentlyOn = typeof settings.torch === 'boolean' ? settings.torch : button.dataset.on === 'true'
-  const next = !currentlyOn
-  try {
-    if (next) {
-      await track.applyConstraints({ advanced: [{ torch: true }] })
-    } else {
-      await track.applyConstraints({ advanced: [{ torch: false }] })
-      if (track.getSettings?.().torch === true) await track.applyConstraints()
-    }
-    const actual = track.getSettings?.().torch
-    const isOn = typeof actual === 'boolean' ? actual : next
-    button.dataset.on = String(isOn)
-    button.setAttribute('aria-pressed', String(isOn))
-  } catch (error) {
-    console.warn('[camera] torch toggle failed', error)
-    setStatus('Unable to change flash on this camera.')
-    window.setTimeout(() => setStatus(''), 1600)
-  }
-})
+flashButton.addEventListener('click',async event=>{const button=event.currentTarget;if(facingMode==='user'){frontFlashOn=!frontFlashOn;button.dataset.on=String(frontFlashOn);button.setAttribute('aria-pressed',String(frontFlashOn));updateFrontFlash();return}const track=stream?.getVideoTracks?.()[0],caps=track?.getCapabilities?.()||{};if(!track||!caps.torch){setStatus('Flash is not available with this camera.');setTimeout(()=>setStatus(''),1600);return}const current=typeof track.getSettings?.().torch==='boolean'?track.getSettings().torch:button.dataset.on==='true',next=!current;try{await track.applyConstraints({advanced:[{torch:next}]});const actual=track.getSettings?.().torch,on=typeof actual==='boolean'?actual:next;button.dataset.on=String(on);button.setAttribute('aria-pressed',String(on));flashStrength.hidden=!on}catch(error){console.warn('[camera] torch toggle failed',error);setStatus('Unable to change flash on this camera.');setTimeout(()=>setStatus(''),1600)}})
+flashStrength.addEventListener('input',updateFrontFlash)
+
+app.querySelector('[data-camera-edit-tools]').addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){restoreEditSnapshot(editHistory.pop()||'');return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text')editTextInput.focus()})
+app.querySelector('[data-camera-edit-text-add]').addEventListener('click',()=>{const v=editTextInput.value.trim();if(!v)return;sizeEditCanvas();pushEditHistory();const f=Math.max(34,editCanvas.width*.055);editCtx.font=`700 ${f}px system-ui`;editCtx.textAlign='center';editCtx.textBaseline='middle';editCtx.lineWidth=Math.max(4,f*.12);editCtx.strokeStyle='rgba(0,0,0,.72)';editCtx.fillStyle='#fff';editCtx.strokeText(v,editCanvas.width/2,editCanvas.height/2);editCtx.fillText(v,editCanvas.width/2,editCanvas.height/2);editTextInput.value='';editTextbox.hidden=true;editMode=''})
+editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[0];if(!file)return;const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{sizeEditCanvas();pushEditHistory();const m=Math.min(editCanvas.width,editCanvas.height)*.34,s=Math.min(m/i.width,m/i.height,1),w=i.width*s,h=i.height*s;editCtx.drawImage(i,(editCanvas.width-w)/2,(editCanvas.height-h)/2,w,h);URL.revokeObjectURL(u)};i.src=u})
+editCanvas.addEventListener('pointerdown',e=>{if(editMode!=='pen')return;e.preventDefault();sizeEditCanvas();pushEditHistory();editDrawing=true;editCanvas.setPointerCapture?.(e.pointerId);const p=editorPoint(e);editCtx.beginPath();editCtx.moveTo(p.x,p.y)})
+editCanvas.addEventListener('pointermove',e=>{if(!editDrawing||editMode!=='pen')return;e.preventDefault();const p=editorPoint(e);editCtx.lineWidth=Math.max(5,editCanvas.width*.008);editCtx.lineCap='round';editCtx.strokeStyle='#fff';editCtx.lineTo(p.x,p.y);editCtx.stroke()})
+editCanvas.addEventListener('pointerup',()=>editDrawing=false);editCanvas.addEventListener('pointercancel',()=>editDrawing=false)
 app.querySelector('[data-camera-retake]').addEventListener('click', async () => {
   playback.hidden = true; playback._melogicCapture = null
   recordedVideo.pause(); recordedVideo.removeAttribute('src'); try { recordedVideo.srcObject = null } catch {}; recordedVideo.load(); recordedVideo.hidden = true
@@ -573,7 +570,7 @@ app.querySelector('[data-camera-use]').addEventListener('click', () => {
   setStatus('Captured. Post and Story publishing hooks are ready for the next camera patch.')
   playback.hidden = true
 })
-window.addEventListener('resize', sizeLiveCanvas, { passive: true })
+window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
 window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })
 window.addEventListener('pagehide', stopTracks)
 document.addEventListener('visibilitychange', () => { if (document.hidden) stopTracks(); else if (!playback.hidden) return; else startCamera() })
