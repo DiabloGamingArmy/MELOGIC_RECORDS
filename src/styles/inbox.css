@@ -4328,3 +4328,40 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     margin-bottom:var(--inbox-scroll-end-gap) !important;
   }
 }
+
+
+/* melogic-inbox-mobile-invisible-terminal-row-v1
+   Deliberate mobile/PWA scroll shim requested after the geometric boundary
+   repair: append one invisible, inert conversation-row-sized block to the
+   end of each Inbox tab's scroll content. It occupies layout space but cannot
+   be seen, tapped, focused, selected, or used as a control. */
+@media (max-width:760px) {
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-mobile-list-view .inbox-thread-list::after,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-layout-activity .activity-panel::after,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-layout-activity .account-calls-panel::after {
+    content:"";
+    display:block;
+    box-sizing:border-box;
+    width:100%;
+    height:76px;
+    min-height:76px;
+    flex:0 0 76px;
+    opacity:0;
+    visibility:hidden;
+    pointer-events:none;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+
+  /* Calls is also an activity-panel. Prevent the generic Activity pseudo-row
+     from stacking with the Calls-specific one and creating two fake rows. */
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-layout-activity .activity-panel.account-calls-panel::after {
+    height:76px;
+    min-height:76px;
+    flex-basis:76px;
+  }
+}
