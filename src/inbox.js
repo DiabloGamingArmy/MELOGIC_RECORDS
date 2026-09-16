@@ -6287,6 +6287,57 @@ function syncMessageComposerPresentation(textarea) {
   textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
 }
 
+// melogic-inbox-composer-focus-viewport-lock-v1
+let inboxComposerViewportLockCleanup = null
+
+function lockInboxComposerViewportToTop(textarea) {
+  inboxComposerViewportLockCleanup?.()
+  inboxComposerViewportLockCleanup = null
+
+  if (!isMobileInboxViewport() || !(textarea instanceof HTMLTextAreaElement)) return
+
+  let active = true
+  let correcting = false
+  const visualViewport = window.visualViewport
+
+  const forceTop = () => {
+    if (!active || document.activeElement !== textarea || correcting) return
+    if (window.scrollX === 0 && window.scrollY === 0) return
+    correcting = true
+    window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
+    requestAnimationFrame(() => { correcting = false })
+  }
+
+  const holdTop = () => {
+    forceTop()
+    requestAnimationFrame(forceTop)
+  }
+
+  // iOS can move the layout viewport more than once while the keyboard animates.
+  // Reassert top on the viewport signals that accompany that animation.
+  window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
+  requestAnimationFrame(holdTop)
+  setTimeout(holdTop, 50)
+  setTimeout(holdTop, 150)
+  setTimeout(holdTop, 300)
+
+  window.addEventListener('scroll', forceTop, { passive: true })
+  visualViewport?.addEventListener('resize', holdTop, { passive: true })
+  visualViewport?.addEventListener('scroll', holdTop, { passive: true })
+
+  inboxComposerViewportLockCleanup = () => {
+    active = false
+    window.removeEventListener('scroll', forceTop)
+    visualViewport?.removeEventListener('resize', holdTop)
+    visualViewport?.removeEventListener('scroll', holdTop)
+  }
+}
+
+function releaseInboxComposerViewportLock() {
+  inboxComposerViewportLockCleanup?.()
+  inboxComposerViewportLockCleanup = null
+}
+
 function bindSharedEvents(scope = inboxRoot) {
   scope.querySelectorAll('[data-mobile-inbox-back]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -6564,6 +6615,9 @@ function bindSharedEvents(scope = inboxRoot) {
 
   if (textarea && thread) {
     syncMessageComposerPresentation(textarea)
+    textarea.addEventListener('focus', () => {
+      lockInboxComposerViewportToTop(textarea)
+    })
     textarea.addEventListener('input', () => {
       syncMessageComposerPresentation(textarea)
     })
@@ -6587,6 +6641,7 @@ function bindSharedEvents(scope = inboxRoot) {
       renderSelectedConversation({ reason: 'state-update' })
     })
     textarea.addEventListener('blur', () => {
+      releaseInboxComposerViewportLock()
       clearTypingForThread(thread.id)
     })
   }
