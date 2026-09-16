@@ -4271,3 +4271,14 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     color:#d8d4ff !important;
   }
 }
+
+/* melogic-inbox-mobile-top-header-compact-v1
+   Reduce the shared mobile Inbox header's vertical footprint by 10px.
+   Changing the header box itself instead of translating only its title makes
+   every downstream Inbox surface move upward by the same amount. */
+@media (max-width:760px) {
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .mobile-app-header {
+    min-height:56px !important;
+    padding-top:max(4px, calc(env(safe-area-inset-top, 0px) - 10px)) !important;
+  }
+}
