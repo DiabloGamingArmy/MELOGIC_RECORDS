@@ -3146,3 +3146,23 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
 @media (hover: none) and (pointer: coarse) {
   input, textarea, select, button, a, [role="button"] { touch-action: manipulation; }
 }
+
+
+/* melogic-mobile-spa-persistent-shell-v2
+   Patch 2: the mobile header/bottom navigation now live outside the replaceable
+   page outlet. This is intentionally structural only; route interception and
+   page lifecycle migration happen in subsequent patches. */
+@media (max-width:760px) {
+  #melogic-mobile-spa-shell-host {
+    display:contents;
+  }
+
+  #melogic-mobile-spa-shell-host > .mobile-app-shell {
+    display:block;
+  }
+
+  [data-melogic-mobile-spa-outlet] {
+    min-width:0;
+    width:100%;
+  }
+}
