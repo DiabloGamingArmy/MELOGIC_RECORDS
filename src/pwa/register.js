@@ -3,6 +3,7 @@ import { initMobileSpaFoundation } from './mobileSpaRouter'
 import { initPersistentMobileSpaShell } from './mobileSpaShell'
 import './mobileSpaDataCache' // melogic-mobile-spa-cache-v7b
 import { initMobileSpaLifecycleAudit } from './mobileSpaLifecycleAudit'
+import { initMobileAppRuntime } from './mobileAppRuntime'
 
 // melogic-mobile-spa-foundation-v1
 initMobileSpaFoundation()
@@ -12,6 +13,9 @@ initPersistentMobileSpaShell()
 
 // melogic-mobile-spa-final-v8
 initMobileSpaLifecycleAudit()
+
+// melogic-mobile-unified-runtime-v1
+initMobileAppRuntime()
 
 const desktop = Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__ || /Tauri/i.test(navigator.userAgent))
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true

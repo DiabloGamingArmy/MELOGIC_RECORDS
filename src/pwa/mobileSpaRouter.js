@@ -208,3 +208,17 @@ export function initMobileSpaFoundation() {
   scheduleConservativePrewarm()
   emitMobileSpaNavigation({ type: 'init' })
 }
+
+// melogic-mobile-unified-runtime-v1
+export function getMobileSpaRouteDefinition(value = location.pathname) {
+  const path = normalizedPath(value)
+  return ROUTE_DEFINITIONS.find(route =>
+    path === route.path ||
+    (route.prefix && path.startsWith(route.prefix)) ||
+    (Array.isArray(route.prefixes) && route.prefixes.some(prefix => path.startsWith(prefix)))
+  ) || null
+}
+
+export function getMobileSpaRouteLoader(value = location.pathname) {
+  return getMobileSpaRouteDefinition(value)?.module || null
+}
