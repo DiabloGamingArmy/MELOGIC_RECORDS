@@ -4056,7 +4056,7 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     font-size: 27px;
     font-weight: 300;
     line-height: 1;
-    transform: translateY(1px);
+    transform: translateY(3px);
   }
 
   body.is-inbox-page .inbox-mobile-conversation-view .composer-actions button[type="submit"] {
@@ -4070,7 +4070,7 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     content: "➤";
     font-size: 19px;
     line-height: 1;
-    transform: translate(-1px, 3px) rotate(-8deg);
+    transform: translate(-1px, 5px) rotate(-8deg);
   }
 
   body.is-inbox-page .inbox-mobile-conversation-view .message-composer:not(.has-sendable-content) .composer-actions button[type="submit"] {

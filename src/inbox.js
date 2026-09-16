@@ -6333,6 +6333,20 @@ function lockInboxComposerViewportToTop(textarea) {
   }
 }
 
+// melogic-inbox-composer-edge-scroll-v1
+function scrollConversationToLatestMessageOnce() {
+  const scroller = getMessageScroller()
+  if (!(scroller instanceof HTMLElement)) return
+
+  // scrollHeight is the complete internal message-content height. This changes
+  // only the conversation history scroller; it does not move the page viewport.
+  scroller.scrollTo({
+    left: 0,
+    top: scroller.scrollHeight,
+    behavior: 'instant'
+  })
+}
+
 function releaseInboxComposerViewportLock() {
   inboxComposerViewportLockCleanup?.()
   inboxComposerViewportLockCleanup = null
@@ -6617,6 +6631,8 @@ function bindSharedEvents(scope = inboxRoot) {
     syncMessageComposerPresentation(textarea)
     textarea.addEventListener('focus', () => {
       lockInboxComposerViewportToTop(textarea)
+      // One focus-edge snap: reveal the latest message as composition begins.
+      requestAnimationFrame(scrollConversationToLatestMessageOnce)
     })
     textarea.addEventListener('input', () => {
       syncMessageComposerPresentation(textarea)
@@ -6642,6 +6658,9 @@ function bindSharedEvents(scope = inboxRoot) {
     })
     textarea.addEventListener('blur', () => {
       releaseInboxComposerViewportLock()
+      // One blur-edge snap: restore the conversation to the latest message
+      // when keyboard input is left. Do not continuously pin message history.
+      requestAnimationFrame(scrollConversationToLatestMessageOnce)
       clearTypingForThread(thread.id)
     })
   }
