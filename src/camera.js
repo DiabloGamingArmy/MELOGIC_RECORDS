@@ -26,13 +26,18 @@ app.innerHTML = `
     <div class="camera-recording-pill" data-recording-pill hidden>REC <span data-recording-time>0:00</span></div>
     <div class="camera-mode-strip" aria-label="Capture mode"><span>Story</span><span class="is-active">Camera</span><span>Post</span></div>
     <div class="camera-capture-row">
+      <button class="camera-tool camera-library" type="button" data-camera-library aria-label="Open photo library">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v10A1.5 1.5 0 0 1 20 18.5H4A1.5 1.5 0 0 1 2.5 17V7A1.5 1.5 0 0 1 4 5.5Z"/><circle cx="8" cy="10" r="1.6"/><path d="m4.5 16 4.2-4.1 3.1 3 2.2-2.2 5.5 5.3"/></svg>
+      </button>
+      <input class="camera-library-input" data-camera-library-input type="file" accept="image/*,video/*" aria-hidden="true" tabindex="-1">
       <button class="camera-capture" type="button" data-camera-capture aria-label="Tap for photo, hold for video"></button>
       <button class="camera-tool camera-flip" type="button" data-camera-flip aria-label="Flip camera">↻</button>
     </div>
     <div class="camera-status" data-camera-status>Starting camera…</div>
     <div class="camera-playback" data-camera-playback hidden>
-      <video data-camera-recorded playsinline controls></video>
-      <div class="camera-review-actions"><button type="button" data-camera-retake>Retake</button><button class="camera-use" type="button" data-camera-use>Use video</button></div>
+      <img data-camera-photo alt="Captured photo preview" hidden>
+      <video data-camera-recorded playsinline controls hidden></video>
+      <div class="camera-review-actions"><button type="button" data-camera-retake>Retake</button><button class="camera-use" type="button" data-camera-use>Use media</button></div>
     </div>
   </main>`
 
@@ -44,6 +49,10 @@ const pill = app.querySelector('[data-recording-pill]')
 const timerLabel = app.querySelector('[data-recording-time]')
 const playback = app.querySelector('[data-camera-playback]')
 const recordedVideo = app.querySelector('[data-camera-recorded]')
+const recordedPhoto = app.querySelector('[data-camera-photo]')
+const libraryButton = app.querySelector('[data-camera-library]')
+const libraryInput = app.querySelector('[data-camera-library-input]')
+const useButton = app.querySelector('[data-camera-use]')
 const transitionFrame = app.querySelector('[data-camera-transition-frame]')
 const liveCanvas = app.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
@@ -143,24 +152,46 @@ function updateTimer() {
   const seconds = Math.floor((Date.now() - recordingStartedAt) / 1000)
   timerLabel.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2,'0')}`
 }
+function showCapturedMedia(blob, type) {
+  if (!blob) return
+  if (previewUrl) URL.revokeObjectURL(previewUrl)
+  previewUrl = URL.createObjectURL(blob)
+  const isPhoto = type === 'photo'
+  recordedVideo.pause()
+  recordedVideo.hidden = isPhoto
+  recordedPhoto.hidden = !isPhoto
+  if (isPhoto) {
+    recordedVideo.removeAttribute('src'); recordedVideo.load()
+    recordedPhoto.src = previewUrl
+  } else {
+    recordedPhoto.removeAttribute('src')
+    recordedVideo.src = previewUrl
+  }
+  playback.dataset.captureType = type
+  playback._melogicCapture = blob
+  useButton.textContent = isPhoto ? 'Use photo' : 'Use video'
+  playback.hidden = false
+}
 function beginRecording() {
-  if (!stream || recorder?.state === 'recording' || !window.MediaRecorder) return
+  if (!stream || recorder?.state === 'recording' || !window.MediaRecorder) return false
   chunks = []
   const mimeType = supportedMimeType()
-  try { recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined) } catch { recorder = new MediaRecorder(stream) }
+  try { recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined) }
+  catch {
+    try { recorder = new MediaRecorder(stream) }
+    catch (error) { console.error('[camera] MediaRecorder unavailable', error); setStatus('Video recording is not supported on this device.'); return false }
+  }
   recorder.ondataavailable = event => { if (event.data?.size) chunks.push(event.data) }
-  recorder.onstop = () => {
-    const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' })
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-    previewUrl = URL.createObjectURL(blob)
-    recordedVideo.src = previewUrl
-    playback.hidden = false
-    playback.dataset.captureType = 'video'
-    playback._melogicCapture = blob
+  recorder.onstop = () => showCapturedMedia(new Blob(chunks, { type: recorder.mimeType || 'video/webm' }), 'video')
+  recorder.onerror = event => {
+    console.error('[camera] recording failed', event?.error || event)
+    capture.classList.remove('is-recording'); pill.hidden = true; window.clearInterval(recordingTimer)
+    setStatus('Recording stopped because the browser reported an error.')
   }
   recorder.start(250)
   recordingStartedAt = Date.now(); updateTimer(); recordingTimer = window.setInterval(updateTimer, 250)
   capture.classList.add('is-recording'); pill.hidden = false
+  return true
 }
 function endRecording() {
   if (recorder?.state !== 'recording') return
@@ -168,20 +199,43 @@ function endRecording() {
 }
 function takePhoto() {
   if (!liveCanvas?.width || !liveCanvas?.height) return
-  liveCanvas.toBlob(blob=>{
-    if (!blob) return
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
-    previewUrl=URL.createObjectURL(blob)
-    recordedVideo.poster=previewUrl; recordedVideo.removeAttribute('src'); recordedVideo.load()
-    playback.hidden=false; playback.dataset.captureType='photo'; playback._melogicCapture=blob
-  },'image/jpeg',.92)
+  liveCanvas.toBlob(blob => showCapturedMedia(blob, 'photo'), 'image/jpeg', .92)
 }
+const HOLD_TO_RECORD_MS = 450
 let holdTimer = 0
 let didHold = false
-capture.addEventListener('pointerdown', event => { event.preventDefault(); didHold = false; holdTimer = window.setTimeout(() => { didHold = true; beginRecording() }, 240) })
-function releaseCapture(event) { event.preventDefault(); window.clearTimeout(holdTimer); if (didHold) endRecording(); else takePhoto() }
-capture.addEventListener('pointerup', releaseCapture); capture.addEventListener('pointercancel', event => { window.clearTimeout(holdTimer); if (didHold) endRecording(); event.preventDefault() })
+let activeCapturePointer = null
+capture.addEventListener('pointerdown', event => {
+  if (event.button != null && event.button !== 0) return
+  event.preventDefault(); didHold = false; activeCapturePointer = event.pointerId
+  capture.setPointerCapture?.(event.pointerId)
+  holdTimer = window.setTimeout(() => { didHold = beginRecording() }, HOLD_TO_RECORD_MS)
+})
+function releaseCapture(event) {
+  if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
+  event.preventDefault(); window.clearTimeout(holdTimer)
+  if (didHold) endRecording(); else takePhoto()
+  activeCapturePointer = null
+}
+capture.addEventListener('pointerup', releaseCapture)
+capture.addEventListener('pointercancel', event => {
+  if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
+  window.clearTimeout(holdTimer); if (didHold) endRecording()
+  capture.classList.remove('is-recording'); activeCapturePointer = null; event.preventDefault()
+})
 app.querySelector('[data-camera-flip]').addEventListener('click', flipCamera)
+libraryButton.addEventListener('click', () => {
+  // No `capture` attribute: request existing photo/video media instead of forcing a new camera capture.
+  libraryInput.value = ''
+  libraryInput.click()
+})
+libraryInput.addEventListener('change', () => {
+  const file = libraryInput.files?.[0]
+  if (!file) return
+  const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'photo' : ''
+  if (!type) { setStatus('Choose a photo or video from your library.'); return }
+  showCapturedMedia(file, type)
+})
 liveCanvas.addEventListener('pointerup', event => {
   if (event.pointerType === 'mouse' && event.button !== 0) return
   const now = performance.now()
@@ -198,7 +252,11 @@ app.querySelector('[data-camera-flash]').addEventListener('click', async event =
   if (!capabilities.torch) { setStatus('Flash is not available with this camera.'); window.setTimeout(() => setStatus(''), 1600); return }
   const next = event.currentTarget.dataset.on !== 'true'; await track.applyConstraints({advanced:[{torch:next}]}); event.currentTarget.dataset.on = String(next)
 })
-app.querySelector('[data-camera-retake]').addEventListener('click', () => { playback.hidden = true; recordedVideo.pause(); recordedVideo.removeAttribute('src'); recordedVideo.removeAttribute('poster'); recordedVideo.load() })
+app.querySelector('[data-camera-retake]').addEventListener('click', () => {
+  playback.hidden = true; playback._melogicCapture = null
+  recordedVideo.pause(); recordedVideo.removeAttribute('src'); recordedVideo.load(); recordedVideo.hidden = true
+  recordedPhoto.removeAttribute('src'); recordedPhoto.hidden = true
+})
 app.querySelector('[data-camera-use]').addEventListener('click', () => {
   const blob = playback._melogicCapture
   if (!blob) return
