@@ -69,6 +69,14 @@ let renderGeneration = 0
 let renderRaf = 0
 let cameraStarting = false
 let lastPreviewTapAt = 0
+/* melogic-camera-double-tap-multitouch-guard-v1 */
+const cameraTapPointers = new Set()
+let cameraTapGestureHadMultipleTouches = false
+let cameraTapPointerMoved = false
+let cameraTapStartX = 0
+let cameraTapStartY = 0
+const CAMERA_DOUBLE_TAP_MS = 325
+const CAMERA_TAP_MOVE_TOLERANCE = 18
 let captureStartY = 0
 let zoomCapability = null
 let zoomValue = null
@@ -157,12 +165,26 @@ let cameraPinchStartZoom = null
 function cameraPinchDistance(){const p=[...cameraPinchPointers.values()];return p.length<2?0:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y)}
 function quantizeCameraZoom(value){if(!zoomCapability)return value;const stepped=Math.round(value/zoomCapability.step)*zoomCapability.step;return clamp(stepped,zoomCapability.min,zoomCapability.max)}
 function queueCameraZoom(value){if(!zoomCapability||!Number.isFinite(value))return;pendingZoomValue=quantizeCameraZoom(value);flushZoomConstraint()}
-function resetCameraPinchGesture(){cameraPinchPointers.clear();cameraPinchStartDistance=0;cameraPinchStartZoom=null}
+function resetCameraPinchGesture(){
+  cameraPinchPointers.clear();cameraPinchStartDistance=0;cameraPinchStartZoom=null
+  cameraTapPointers.clear();cameraTapGestureHadMultipleTouches=false;cameraTapPointerMoved=false;lastPreviewTapAt=0
+}
 function installCameraPinchZoom(){
   if(!liveCanvas)return
   liveCanvas.addEventListener('pointerdown',event=>{
     if(event.pointerType!=='touch')return
     cameraPinchPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+    cameraTapPointers.add(event.pointerId)
+    if(cameraTapPointers.size===1){
+      cameraTapPointerMoved=false
+      cameraTapStartX=event.clientX
+      cameraTapStartY=event.clientY
+    } else {
+      // Once a second finger participates, this entire contact sequence
+      // is a gesture, never a tap/double-tap candidate.
+      cameraTapGestureHadMultipleTouches=true
+      lastPreviewTapAt=0
+    }
     liveCanvas.setPointerCapture?.(event.pointerId)
     if(cameraPinchPointers.size===2){
       const distance=cameraPinchDistance()
@@ -173,6 +195,7 @@ function installCameraPinchZoom(){
   liveCanvas.addEventListener('pointermove',event=>{
     if(event.pointerType!=='touch'||!cameraPinchPointers.has(event.pointerId))return
     cameraPinchPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+    if(cameraTapPointers.size===1 && Math.hypot(event.clientX-cameraTapStartX,event.clientY-cameraTapStartY)>CAMERA_TAP_MOVE_TOLERANCE) cameraTapPointerMoved=true
     if(cameraPinchPointers.size!==2||!zoomCapability||!Number.isFinite(cameraPinchStartZoom)||cameraPinchStartDistance<=0)return
     event.preventDefault()
     const currentDistance=cameraPinchDistance()
@@ -182,7 +205,11 @@ function installCameraPinchZoom(){
   const release=event=>{
     if(event.pointerType!=='touch')return
     cameraPinchPointers.delete(event.pointerId)
+    cameraTapPointers.delete(event.pointerId)
     if(cameraPinchPointers.size<2){cameraPinchStartDistance=0;cameraPinchStartZoom=null}
+    if(cameraTapPointers.size===0){
+      queueMicrotask(()=>{cameraTapGestureHadMultipleTouches=false;cameraTapPointerMoved=false})
+    }
   }
   liveCanvas.addEventListener('pointerup',release,{passive:true})
   liveCanvas.addEventListener('pointercancel',release,{passive:true})
@@ -580,11 +607,20 @@ libraryInput.addEventListener('change', () => {
 })
 liveCanvas.addEventListener('pointerup', event => {
   if (event.pointerType === 'mouse' && event.button !== 0) return
+
+  // Camera flip is a DOUBLE TAP, not "two pointerups close together".
+  // Any multi-touch/pinch sequence is excluded, even if both fingers
+  // are stationary and released within the double-tap time window.
+  if (event.pointerType === 'touch' && (cameraTapGestureHadMultipleTouches || cameraTapPointerMoved || cameraTapPointers.size > 1)) {
+    lastPreviewTapAt = 0
+    return
+  }
+
   const now = performance.now()
-  if (now - lastPreviewTapAt <= 325) {
+  if (now - lastPreviewTapAt <= CAMERA_DOUBLE_TAP_MS) {
     lastPreviewTapAt = 0
     event.preventDefault()
-    flipCamera()
+    void flipCamera()
     return
   }
   lastPreviewTapAt = now
