@@ -36,7 +36,7 @@ app.innerHTML = `
     <div class="camera-status" data-camera-status>Starting camera…</div>
     <div class="camera-playback" data-camera-playback hidden>
       <img data-camera-photo alt="Captured photo preview" hidden>
-      <video data-camera-recorded playsinline controls hidden></video>
+      <video data-camera-recorded playsinline loop hidden></video>
       <div class="camera-review-actions"><button type="button" data-camera-retake>Retake</button><button class="camera-use" type="button" data-camera-use>Use media</button></div>
     </div>
   </main>`
@@ -60,9 +60,57 @@ let renderGeneration = 0
 let renderRaf = 0
 let cameraStarting = false
 let lastPreviewTapAt = 0
+let captureStartY = 0
+let zoomCapability = null
+let zoomValue = null
+let zoomApplyPending = false
+let pendingZoomValue = null
 
 function setStatus(message = '') { status.textContent = message; status.hidden = !message }
-function stopTracks() { stopCanvasRenderer(); stream?.getTracks?.().forEach(track => track.stop()); stream = null }
+function stopTracks() {
+  stopCanvasRenderer(); stream?.getTracks?.().forEach(track => track.stop()); stream = null
+  zoomCapability = null; zoomValue = null; pendingZoomValue = null; zoomApplyPending = false
+}
+function clamp(value, min, max) { return Math.min(max, Math.max(min, value)) }
+function configureZoomCapability() {
+  const track = stream?.getVideoTracks?.()[0]
+  const capabilities = track?.getCapabilities?.() || {}
+  const range = capabilities.zoom
+  if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max) || range.max <= range.min) {
+    zoomCapability = null; zoomValue = null; return
+  }
+  zoomCapability = { min: range.min, max: range.max, step: Number.isFinite(range.step) && range.step > 0 ? range.step : 0.01 }
+  const current = track.getSettings?.().zoom
+  zoomValue = Number.isFinite(current) ? clamp(current, range.min, range.max) : range.min
+}
+async function flushZoomConstraint() {
+  if (zoomApplyPending || pendingZoomValue == null) return
+  const track = stream?.getVideoTracks?.()[0]
+  if (!track || !zoomCapability) return
+  zoomApplyPending = true
+  const requested = pendingZoomValue
+  pendingZoomValue = null
+  try {
+    await track.applyConstraints({ advanced: [{ zoom: requested }] })
+    const actual = track.getSettings?.().zoom
+    zoomValue = Number.isFinite(actual) ? actual : requested
+  } catch (error) {
+    console.warn('[camera] zoom constraint rejected', error)
+  } finally {
+    zoomApplyPending = false
+    if (pendingZoomValue != null) flushZoomConstraint()
+  }
+}
+function setZoomFromDrag(deltaY) {
+  if (!zoomCapability || !Number.isFinite(zoomValue)) return
+  const range = zoomCapability.max - zoomCapability.min
+  // Roughly 55% of the visible camera height traverses the hardware zoom range.
+  const travel = Math.max(180, liveCanvas?.clientHeight * .55 || 320)
+  const raw = zoomValue + ((-deltaY / travel) * range)
+  const stepped = Math.round(raw / zoomCapability.step) * zoomCapability.step
+  pendingZoomValue = clamp(stepped, zoomCapability.min, zoomCapability.max)
+  flushZoomConstraint()
+}
 function supportedMimeType() {
   const candidates = ['video/mp4;codecs=h264,aac','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']
   return candidates.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || ''
@@ -132,6 +180,7 @@ async function startCamera({ preserveFrame=false }={}) {
   try {
     const nextStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode}},audio:true})
     stream=nextStream; video.srcObject=nextStream
+    configureZoomCapability()
     await video.play(); await waitForFirstDrawableFrame()
     startCanvasRenderer(); liveCanvas.classList.add('is-ready')
     requestAnimationFrame(()=>transitionFrame?.classList.remove('is-visible','is-black'))
@@ -161,11 +210,18 @@ function showCapturedMedia(blob, type) {
   recordedVideo.hidden = isPhoto
   recordedPhoto.hidden = !isPhoto
   if (isPhoto) {
-    recordedVideo.removeAttribute('src'); recordedVideo.load()
+    recordedVideo.pause(); recordedVideo.removeAttribute('src'); recordedVideo.load()
     recordedPhoto.src = previewUrl
   } else {
     recordedPhoto.removeAttribute('src')
+    recordedVideo.controls = false
+    recordedVideo.loop = true
+    recordedVideo.playsInline = true
     recordedVideo.src = previewUrl
+    recordedVideo.currentTime = 0
+    const playPreview = () => recordedVideo.play().catch(() => {})
+    if (recordedVideo.readyState >= 2) playPreview()
+    else recordedVideo.addEventListener('loadeddata', playPreview, { once: true })
   }
   playback.dataset.captureType = type
   playback._melogicCapture = blob
@@ -207,9 +263,19 @@ let didHold = false
 let activeCapturePointer = null
 capture.addEventListener('pointerdown', event => {
   if (event.button != null && event.button !== 0) return
-  event.preventDefault(); didHold = false; activeCapturePointer = event.pointerId
+  event.preventDefault(); didHold = false; activeCapturePointer = event.pointerId; captureStartY = event.clientY
   capture.setPointerCapture?.(event.pointerId)
   holdTimer = window.setTimeout(() => { didHold = beginRecording() }, HOLD_TO_RECORD_MS)
+})
+capture.addEventListener('pointermove', event => {
+  if (activeCapturePointer === null || event.pointerId !== activeCapturePointer || !didHold) return
+  event.preventDefault()
+  const deltaY = event.clientY - captureStartY
+  if (deltaY < 0) {
+    setZoomFromDrag(deltaY)
+    // Rebase continuously so zoom follows the finger smoothly rather than compounding total displacement.
+    captureStartY = event.clientY
+  }
 })
 function releaseCapture(event) {
   if (activeCapturePointer !== null && event.pointerId !== activeCapturePointer) return
