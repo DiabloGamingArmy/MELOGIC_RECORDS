@@ -11,7 +11,23 @@ import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath, productRoute, stageProjectRoute } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import { formatUsername } from './utils/format'
+
+// melogic-public-profile-spa-lifecycle-v5
+function initPublicProfileSpaLifecycle() {
+  if (!isMobileSpaRuntime()) return
+  const existing = history.state && typeof history.state === 'object' ? history.state : {}
+  history.replaceState({
+    ...existing,
+    melogicMobileSpa: true,
+    routeId: 'profile-public',
+    pathname: location.pathname
+  }, '', location.href)
+  emitMobileSpaNavigation({ type: 'profile-public-init', routeId: 'profile-public' })
+  if (!navigator.connection?.saveData) queueMicrotask(() => void prewarmMobileSpaRoute(ROUTES.profile))
+}
+initPublicProfileSpaLifecycle()
 
 const app = document.querySelector('#app')
 

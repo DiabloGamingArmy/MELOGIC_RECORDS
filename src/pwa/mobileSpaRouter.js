@@ -17,15 +17,16 @@ const ROUTE_DEFINITIONS = Object.freeze([
   { id: 'streaming', path: ROUTES.music, module: () => import('../music.js') },
   { id: 'camera', path: '/camera', module: () => import('../camera.js') },
   { id: 'inbox', path: ROUTES.inbox, prefix: '/inbox/', module: () => import('../inbox.js') },
-  { id: 'profile', path: ROUTES.profile, module: () => import('../profile.js') },
+  { id: 'profile-public', path: ROUTES.profilePublic, prefixes: ['/profiles/', '/u/'], module: () => import('../profilePublic.js') }, // melogic-mobile-spa-profile-v5
   { id: 'profile-edit', path: ROUTES.editProfile, module: () => import('../editProfile.js') },
+  { id: 'profile', path: ROUTES.profile, module: () => import('../profile.js') },
   { id: 'products', path: ROUTES.products, module: () => import('../products.js') },
   { id: 'cart', path: ROUTES.cart, module: () => import('../cart.js') },
   { id: 'support', path: ROUTES.support, prefix: '/support/', module: () => import('../support.js') }
 ])
 
 const warmedRoutes = new Set()
-const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox', 'community']) // melogic-mobile-spa-inbox-intercept-v3 // melogic-mobile-spa-community-v4
+const ACTIVE_SPA_ROUTE_IDS = new Set(['inbox', 'community', 'profile', 'profile-edit', 'profile-public']) // melogic-mobile-spa-inbox-intercept-v3 // melogic-mobile-spa-community-v4 // melogic-mobile-spa-profile-v5
 let initialized = false
 let prewarmTimer = 0
 
@@ -44,7 +45,9 @@ export function isMobileSpaRuntime() {
 export function resolveMobileSpaRoute(value = location.pathname) {
   const path = normalizedPath(value)
   return MOBILE_SPA_ROUTES.find(route =>
-    path === route.path || (route.prefix && path.startsWith(route.prefix))
+    path === route.path ||
+    (route.prefix && path.startsWith(route.prefix)) ||
+    (Array.isArray(route.prefixes) && route.prefixes.some(prefix => path.startsWith(prefix)))
   ) || null
 }
 
@@ -83,7 +86,9 @@ export function onMobileSpaNavigation(listener) {
 export async function prewarmMobileSpaRoute(path) {
   const route = ROUTE_DEFINITIONS.find(candidate => {
     const normalized = normalizedPath(path)
-    return normalized === candidate.path || (candidate.prefix && normalized.startsWith(candidate.prefix))
+    return normalized === candidate.path ||
+      (candidate.prefix && normalized.startsWith(candidate.prefix)) ||
+      (Array.isArray(candidate.prefixes) && candidate.prefixes.some(prefix => normalized.startsWith(prefix)))
   })
   if (!route || warmedRoutes.has(route.id)) return false
   warmedRoutes.add(route.id)

@@ -8,6 +8,7 @@ import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from '
 import { db, getEffectiveProfile, savePrivateProfilePreferences, saveProfileChanges } from './firebase/firestore'
 import { storage } from './firebase/storage'
 import { ROUTES } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import { normalizeNotificationPreferences } from './data/notificationPreferences'
 import {
   disableWebPushForUser,
@@ -17,6 +18,35 @@ import {
   getWebPushCapability
 } from './data/webPushService';
 
+
+// melogic-edit-profile-spa-lifecycle-v5
+function initEditProfileSpaLifecycle() {
+  if (!isMobileSpaRuntime()) return
+  const existing = history.state && typeof history.state === 'object' ? history.state : {}
+  history.replaceState({
+    ...existing,
+    melogicMobileSpa: true,
+    routeId: 'profile-edit',
+    pathname: location.pathname,
+    section: location.hash.replace(/^#/, '') || 'public-profile'
+  }, '', location.href)
+
+  window.addEventListener('hashchange', () => {
+    const current = history.state && typeof history.state === 'object' ? history.state : {}
+    history.replaceState({
+      ...current,
+      melogicMobileSpa: true,
+      routeId: 'profile-edit',
+      pathname: location.pathname,
+      section: location.hash.replace(/^#/, '') || 'public-profile'
+    }, '', location.href)
+    emitMobileSpaNavigation({ type: 'hash', routeId: 'profile-edit' })
+  })
+
+  emitMobileSpaNavigation({ type: 'profile-edit-init', routeId: 'profile-edit' })
+  if (!navigator.connection?.saveData) queueMicrotask(() => void prewarmMobileSpaRoute(ROUTES.profile))
+}
+initEditProfileSpaLifecycle()
 
 const SETTINGS_SECTIONS = [
   { key: 'public-profile', label: 'Public Profile' },

@@ -97,6 +97,7 @@ const MELOGIC_WARM_MOBILE_ROUTES = new Set([
   '/inbox/content/all',
   '/profile',
   '/profile/edit',
+  '/profile/public',
   '/products',
   '/cart',
   '/support'

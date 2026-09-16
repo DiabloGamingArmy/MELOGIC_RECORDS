@@ -13,6 +13,30 @@ import {
   productRoute,
   publicProfileRoute
 } from './utils/routes'
+import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
+
+// melogic-profile-spa-lifecycle-v5
+function initPrivateProfileSpaLifecycle() {
+  if (!isMobileSpaRuntime()) return
+  const existing = history.state && typeof history.state === 'object' ? history.state : {}
+  history.replaceState({
+    ...existing,
+    melogicMobileSpa: true,
+    routeId: 'profile',
+    pathname: location.pathname
+  }, '', location.href)
+  emitMobileSpaNavigation({ type: 'profile-init', routeId: 'profile' })
+
+  // Warm the two most common next profile surfaces without executing their
+  // entry modules. Existing page state/auth/data remains authoritative.
+  if (!navigator.connection?.saveData) {
+    queueMicrotask(() => {
+      void prewarmMobileSpaRoute(ROUTES.editProfile)
+      void prewarmMobileSpaRoute(ROUTES.profilePublic)
+    })
+  }
+}
+initPrivateProfileSpaLifecycle()
 
 const PRIVATE_PROFILE_DEBUG = false
 const app = document.querySelector('#app')
