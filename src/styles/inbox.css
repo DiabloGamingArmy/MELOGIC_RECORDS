@@ -4282,3 +4282,49 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     padding-top:max(4px, calc(env(safe-area-inset-top, 0px) - 10px)) !important;
   }
 }
+
+
+/* melogic-inbox-mobile-scroll-bottom-boundary-v1
+   Give every Inbox list scroller real terminal layout space above the
+   persistent bottom nav. Open conversations are excluded because they hide
+   the bottom nav and own the full viewport. */
+@media (max-width:760px) {
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) {
+    --inbox-scroll-end-gap: 12px;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-mobile-list-view .inbox-thread-list {
+    box-sizing:border-box !important;
+    padding-bottom:calc(var(--inbox-scroll-end-gap) + env(safe-area-inset-bottom, 0px)) !important;
+    scroll-padding-bottom:calc(var(--inbox-scroll-end-gap) + env(safe-area-inset-bottom, 0px)) !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-layout-activity .inbox-main-panel,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-layout-activity .inbox-main-panel-full {
+    box-sizing:border-box !important;
+    height:100% !important;
+    max-height:100% !important;
+    min-height:0 !important;
+    overflow-x:hidden !important;
+    overflow-y:auto !important;
+    padding-bottom:calc(var(--inbox-scroll-end-gap) + env(safe-area-inset-bottom, 0px)) !important;
+    scroll-padding-bottom:calc(var(--inbox-scroll-end-gap) + env(safe-area-inset-bottom, 0px)) !important;
+    overscroll-behavior-y:contain;
+    -webkit-overflow-scrolling:touch;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-mobile-list-view .inbox-thread-list > :last-child {
+    margin-bottom:var(--inbox-scroll-end-gap) !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-layout-activity .activity-panel > :last-child,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open)
+    .inbox-layout-activity .account-calls-panel > :last-child {
+    margin-bottom:var(--inbox-scroll-end-gap) !important;
+  }
+}
