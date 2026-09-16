@@ -6347,6 +6347,22 @@ function scrollConversationToLatestMessageOnce() {
   })
 }
 
+// melogic-inbox-composer-focus-scroll-window-v1
+function keepConversationAtLatestDuringKeyboardOpen(durationMs = 500) {
+  const startedAt = performance.now()
+  let frameId = 0
+
+  const tick = (now) => {
+    scrollConversationToLatestMessageOnce()
+    if (now - startedAt < durationMs) {
+      frameId = requestAnimationFrame(tick)
+    }
+  }
+
+  frameId = requestAnimationFrame(tick)
+  return () => cancelAnimationFrame(frameId)
+}
+
 function releaseInboxComposerViewportLock() {
   inboxComposerViewportLockCleanup?.()
   inboxComposerViewportLockCleanup = null
@@ -6631,8 +6647,9 @@ function bindSharedEvents(scope = inboxRoot) {
     syncMessageComposerPresentation(textarea)
     textarea.addEventListener('focus', () => {
       lockInboxComposerViewportToTop(textarea)
-      // One focus-edge snap: reveal the latest message as composition begins.
-      requestAnimationFrame(scrollConversationToLatestMessageOnce)
+      // The iOS keyboard changes the usable viewport asynchronously. Keep the
+      // internal history at its latest edge only during that short transition.
+      keepConversationAtLatestDuringKeyboardOpen(500)
     })
     textarea.addEventListener('input', () => {
       syncMessageComposerPresentation(textarea)

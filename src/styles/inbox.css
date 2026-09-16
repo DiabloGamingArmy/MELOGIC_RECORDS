@@ -4068,9 +4068,9 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
 
   body.is-inbox-page .inbox-mobile-conversation-view .composer-actions button[type="submit"]::before {
     content: "➤";
-    font-size: 19px;
+    font-size: 22px;
     line-height: 1;
-    transform: translate(-1px, 5px) rotate(-8deg);
+    transform: translate(1px, 8px) rotate(-8deg);
   }
 
   body.is-inbox-page .inbox-mobile-conversation-view .message-composer:not(.has-sendable-content) .composer-actions button[type="submit"] {
@@ -4101,5 +4101,173 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
   body.is-inbox-page .inbox-mobile-conversation-view .composer-reply-preview,
   body.is-inbox-page .inbox-mobile-conversation-view .composer-attachment-preview-strip {
     grid-column: 1 / -1;
+  }
+}
+
+
+/* melogic-inbox-mobile-calls-activity-black-v1
+   Extends the established mobile Messages color language to Calls + Activity. */
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-layout-activity,
+  body.is-inbox-page .inbox-layout-activity .inbox-main-panel,
+  body.is-inbox-page .inbox-layout-activity .inbox-main-panel-full,
+  body.is-inbox-page .inbox-layout-activity .activity-panel,
+  body.is-inbox-page .inbox-layout-activity .account-calls-panel {
+    background:#000 !important;
+    color:#f4f5f8 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity {
+    display:block !important;
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+    height:100% !important;
+    overflow:hidden !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .inbox-main-panel,
+  body.is-inbox-page .inbox-layout-activity .inbox-main-panel-full {
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+    height:100% !important;
+    min-height:0 !important;
+    border:0 !important;
+    box-shadow:none !important;
+    overflow-y:auto !important;
+    overscroll-behavior-y:contain;
+    -webkit-overflow-scrolling:touch;
+    padding:0 16px 24px !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .activity-panel {
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    box-shadow:none !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .activity-header {
+    position:sticky;
+    top:0;
+    z-index:3;
+    min-height:64px;
+    margin:0 -16px 10px !important;
+    padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px !important;
+    border:0 !important;
+    border-bottom:1px solid rgba(255,255,255,.08) !important;
+    background:#000 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .activity-header h3 {
+    margin:0 !important;
+    color:#fff !important;
+    font-size:1.28rem !important;
+    line-height:1.1 !important;
+    font-weight:750 !important;
+    letter-spacing:-.025em !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .activity-header p {
+    margin:.2rem 0 0 !important;
+    color:#8e8e93 !important;
+    font-size:.78rem !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity :is(.system-notification-card,.content-notification-card,.inbox-empty-panel,.activity-empty-panel,.inbox-empty-panel-inline) {
+    border:1px solid rgba(255,255,255,.10) !important;
+    background:#0b0b0d !important;
+    box-shadow:none !important;
+    color:#f4f5f8 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity :is(.system-notification-card,.content-notification-card) {
+    border-radius:10px !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity :is(.system-notification-title,.content-notification-body,.content-notification-body strong) {
+    color:#f4f5f8 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity :is(.content-notification-body span,.content-notification-body small,.system-notification-card p,.system-notification-card time) {
+    color:#8e8e93 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .content-notification-actor {
+    border-color:rgba(255,255,255,.12) !important;
+    background:#1c1c1e !important;
+    color:#f4f5f8 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .system-notification-card.is-unread {
+    border-color:rgba(112,92,255,.48) !important;
+    background:linear-gradient(135deg,rgba(74,112,255,.11),rgba(124,44,255,.10)) !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .content-notification-card.is-unread {
+    border-color:rgba(112,92,255,.42) !important;
+    background:linear-gradient(135deg,rgba(74,112,255,.09),rgba(124,44,255,.08)) !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .content-notification-body:hover strong,
+  body.is-inbox-page .inbox-layout-activity .content-notification-body:focus-visible strong {
+    color:#b9b0ff !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .system-filter-row .inbox-filter {
+    border:1px solid rgba(255,255,255,.12) !important;
+    background:#0b0b0d !important;
+    color:#a8a8ad !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .system-filter-row .inbox-filter:is(:hover,:focus-visible,.is-active) {
+    border-color:rgba(112,92,255,.55) !important;
+    background:linear-gradient(135deg,rgba(74,112,255,.16),rgba(124,44,255,.14)) !important;
+    color:#fff !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity :is(.account-call-active-card,.account-call-history-row) {
+    border:1px solid rgba(255,255,255,.10) !important;
+    background:#0b0b0d !important;
+    box-shadow:none !important;
+    color:#f4f5f8 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .account-call-active-card { border-radius:10px !important; }
+  body.is-inbox-page .inbox-layout-activity .account-call-history-row { border-radius:8px !important; }
+
+  body.is-inbox-page .inbox-layout-activity :is(.account-call-active-meta h3,.account-call-history-row strong) {
+    color:#f4f5f8 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity :is(.account-call-active-meta p,.account-call-active-meta small,.account-call-history-row p,.account-call-history-row time) {
+    color:#8e8e93 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity :is(.account-call-avatar,.account-call-history-avatar) {
+    background:#1c1c1e !important;
+    color:#f4f5f8 !important;
+  }
+
+  /* Semantic call states remain colored because they convey status/action. */
+  body.is-inbox-page .inbox-layout-activity .account-call-active-card.is-incoming {
+    border-color:rgba(105,224,178,.42) !important;
+  }
+  body.is-inbox-page .inbox-layout-activity .account-call-eyebrow { color:#7ee2ba !important; }
+
+  body.is-inbox-page .inbox-layout-activity .account-call-error {
+    border-color:rgba(255,110,120,.32) !important;
+    background:rgba(116,28,36,.24) !important;
+    color:#ffd6d9 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .notification-action-feedback {
+    border-left-color:#756cff !important;
+    background:rgba(117,108,255,.08) !important;
+    color:#d8d4ff !important;
   }
 }
