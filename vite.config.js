@@ -32,10 +32,7 @@ function htmlRouteFallbackPlugin() {
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const entry = findEntry(req.url)
-        if (!entry) {
-          next()
-          return
-        }
+        if (!entry) { next(); return }
         const html = readFileSync(resolve(__dirname, entry.html), 'utf-8')
         const transformed = await server.transformIndexHtml(req.url || '/', html)
         res.statusCode = 200
@@ -46,10 +43,7 @@ function htmlRouteFallbackPlugin() {
     configurePreviewServer(server) {
       server.middlewares.use((req, res, next) => {
         const entry = findEntry(req.url)
-        if (!entry) {
-          next()
-          return
-        }
+        if (!entry) { next(); return }
         const html = readFileSync(resolve(__dirname, 'dist', entry.html), 'utf-8')
         res.statusCode = 200
         res.setHeader('Content-Type', 'text/html')
@@ -68,6 +62,7 @@ export default defineConfig({
         music: resolve(__dirname, 'music.html'),
         products: resolve(__dirname, 'products.html'),
         community: resolve(__dirname, 'community.html'),
+        camera: resolve(__dirname, 'camera.html'),
         live: resolve(__dirname, 'live.html'),
         forms: resolve(__dirname, 'forms.html'),
         faq: resolve(__dirname, 'faq.html'),
