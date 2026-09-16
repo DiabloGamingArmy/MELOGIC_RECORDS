@@ -3,12 +3,35 @@
   --community-sticky-top-hidden: 62px;
   min-height: 100vh;
   overflow-x: clip;
-  background:
-    radial-gradient(circle at 12% 0%, rgba(67, 125, 255, .12), transparent 28rem),
-    radial-gradient(circle at 85% 8%, rgba(63, 219, 155, .08), transparent 24rem),
-    #080b10;
+  background:var(--community-bg);
   color: #f5f7fb;
 }
+/* melogic-community-black-foundation-v1 */
+.community-page {
+  --community-bg:#000000;
+  --community-surface-0:#000000;
+  --community-surface-1:#070707;
+  --community-surface-2:#0d0d0f;
+  --community-surface-3:#141416;
+  --community-surface-hover:#19191c;
+  --community-surface-pressed:#202024;
+  --community-border-subtle:rgba(255,255,255,.08);
+  --community-border:rgba(255,255,255,.12);
+  --community-border-strong:rgba(255,255,255,.20);
+  --community-text:#f5f5f7;
+  --community-text-secondary:#b2b2b8;
+  --community-text-muted:#818187;
+  --community-text-faint:#66666d;
+  --community-accent-a:#4f7dff;
+  --community-accent-b:#9a6cff;
+  --community-accent-gradient:linear-gradient(135deg,var(--community-accent-a),var(--community-accent-b));
+  --community-focus-ring:rgba(118,111,255,.72);
+  background:var(--community-bg);
+  color:var(--community-text);
+  color-scheme:dark;
+}
+body:has(.community-page){background:#000;}
+
 
 body:has(.community-page),
 body:has(.community-page) #app {
@@ -76,7 +99,7 @@ body:has(.community-page) #app {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(8, 11, 16, .92);
+  background: rgba(0,0,0,.92);
   backdrop-filter: blur(18px);
   transform: translateY(0);
   transition: transform .2s ease;
@@ -113,13 +136,13 @@ body.community-chrome-hidden .community-scroll-chrome {
 .community-topic-bar::before,
 .community-stories-row::before {
   left: 0;
-  background: linear-gradient(90deg, rgba(8, 11, 16, .96), rgba(8, 11, 16, 0));
+  background: linear-gradient(90deg, rgba(0,0,0,.96), rgba(0,0,0,0));
 }
 
 .community-topic-bar::after,
 .community-stories-row::after {
   right: 0;
-  background: linear-gradient(270deg, rgba(8, 11, 16, .96), rgba(8, 11, 16, 0));
+  background: linear-gradient(270deg, rgba(0,0,0,.96), rgba(0,0,0,0));
 }
 
 .community-topic-bar.can-scroll-left::before,
@@ -299,7 +322,7 @@ body.community-chrome-hidden .community-scroll-chrome {
   height: 100%;
   border-radius: 50%;
   overflow: hidden;
-  background: #172332;
+  background: #19191c;
   color: #ffffff;
   font-weight: 900;
 }
@@ -316,7 +339,7 @@ body.community-chrome-hidden .community-scroll-chrome {
 }
 
 .community-story-avatar.is-create {
-  background: #111923;
+  background: #141416;
 }
 
 .community-story-empty {
@@ -4401,3 +4424,24 @@ body:has(.community-page) #app {
   }
 }
 
+
+/* Community Patch 1 structural authority */
+.community-scroll-chrome,.community-mobile-header,.community-mobile-bottom-nav,
+.community-composer,.community-panel,.community-sidebar,.community-rail-card,
+.community-post,.community-post-card,.community-detail-card,.community-comments,
+.community-comment,.community-menu,.community-popover,.community-modal,.community-dialog{
+  border-color:var(--community-border-subtle);
+}
+.community-scroll-chrome{background:rgba(0,0,0,.92);}
+.community-topic-bar::before,.community-stories-row::before{background:linear-gradient(90deg,rgba(0,0,0,.97),rgba(0,0,0,0));}
+.community-topic-bar::after,.community-stories-row::after{background:linear-gradient(270deg,rgba(0,0,0,.97),rgba(0,0,0,0));}
+.community-page :where(input,textarea,select){color:var(--community-text);}
+.community-page :where(input,textarea,select)::placeholder{color:var(--community-text-muted);}
+.community-page :where(a,button,input,textarea,select,[tabindex]):focus-visible{
+  outline:2px solid var(--community-focus-ring);outline-offset:2px;
+}
+.community-topic-pill:not(.is-active):hover,.community-topic-arrow:hover,
+.community-left-nav a:hover,.community-left-nav button:hover{background-color:var(--community-surface-hover);}
+@media(max-width:900px){
+  .community-page,body:has(.community-page),body:has(.community-page) #app{background-color:#000;}
+}
