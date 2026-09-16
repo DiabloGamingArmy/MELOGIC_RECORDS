@@ -1861,7 +1861,7 @@ function renderUploadedPostAttachment(attachment = {}) {
     return `
       <button type="button" class="community-post-file-attachment is-image" data-open-community-image="${escapeHtml(url)}" data-community-image-name="${escapeHtml(name)}" data-stop-card-nav ${url ? '' : 'disabled'}>
         ${url
-          ? `<img src="${escapeHtml(url)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async"${dimensions} />`
+          ? `<img src="${escapeHtml(url)}" data-community-storage-path="${escapeHtml(path)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async"${dimensions} />`
           : `<span class="community-attachment-load-state">Image preview unavailable</span>`
         }
       </button>
@@ -1870,7 +1870,7 @@ function renderUploadedPostAttachment(attachment = {}) {
   if (attachment.type === 'video') {
     return `
       <article class="community-post-file-attachment is-video" data-stop-card-nav>
-        ${url ? `<video src="${escapeHtml(url)}" controls preload="metadata"${dimensions}></video>` : '<span class="community-attachment-load-state">Video unavailable</span>'}
+        ${url ? `<video src="${escapeHtml(url)}" data-community-storage-path="${escapeHtml(path)}" controls preload="metadata"${dimensions}></video>` : '<span class="community-attachment-load-state">Video unavailable</span>'}
         <small>${escapeHtml(name)}</small>
       </article>
     `
@@ -3114,6 +3114,35 @@ function render() {
   bindEvents()
 }
 
+/* melogic-community-touch-media-stability-v1 */
+function renderPostViewerStateOnly(){
+  state.posts.forEach((post)=>{
+    const viewer=state.viewerState[post.postId]||{}
+    const selector=`[data-post-id="${String(post.postId||'').replaceAll('"','\\\"')}"]`
+    const card=app?.querySelector(selector)
+    if(!card)return
+    card.querySelectorAll('[data-community-post-like]').forEach((el)=>{el.classList.toggle('is-active',Boolean(viewer.liked));el.setAttribute('aria-pressed',String(Boolean(viewer.liked)))})
+    card.querySelectorAll('[data-community-post-dislike]').forEach((el)=>{el.classList.toggle('is-active',Boolean(viewer.disliked));el.setAttribute('aria-pressed',String(Boolean(viewer.disliked)))})
+    card.querySelectorAll('[data-community-post-save]').forEach((el)=>{el.classList.toggle('is-active',Boolean(viewer.saved));el.setAttribute('aria-pressed',String(Boolean(viewer.saved)))})
+  })
+}
+function renderPostMediaOnly(){
+  app?.querySelectorAll('[data-community-storage-path]').forEach((node)=>{
+    const path=node.getAttribute('data-community-storage-path')||''
+    const url=state.attachmentMediaUrls[path]||''
+    if(url && !node.getAttribute('src')) node.setAttribute('src',url)
+  })
+}
+function communityImageViewerOpen(){return Boolean(state.imageViewer?.open)}
+function installCommunityMobileGestureGuards(){
+  const isTouch=()=>window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints>0
+  document.addEventListener('gesturestart',(event)=>{if(isTouch()&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
+  document.addEventListener('gesturechange',(event)=>{if(isTouch()&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
+  document.addEventListener('gestureend',(event)=>{if(isTouch()&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
+  document.addEventListener('touchmove',(event)=>{if(isTouch()&&event.touches?.length>1&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
+}
+installCommunityMobileGestureGuards()
+
 async function loadViewerState() {
   if (!state.currentUser?.uid || !state.posts.length) {
     state.viewerState = {}
@@ -3176,10 +3205,10 @@ async function loadCommentViewerState() {
 
 async function loadAttachmentMediaUrls() {
   try {
-    state.attachmentMediaUrls = await resolveCommunityAttachmentMediaUrls(state.posts)
+    const resolved = await resolveCommunityAttachmentMediaUrls(state.posts)
+    state.attachmentMediaUrls = { ...state.attachmentMediaUrls, ...resolved }
   } catch (error) {
     console.warn('[community] attachment media url load failed', { code: error?.code, message: error?.message })
-    state.attachmentMediaUrls = {}
   }
 }
 
@@ -3215,8 +3244,7 @@ async function loadFeedEnrichment(requestId = state.feedRequestId, { localOnly =
   ])
   if (requestId !== state.feedRequestId) return
   logCommunityPerf('feed enrichment complete', { durationMs: Math.round(performance.now() - startedAt), posts: state.posts.length })
-  if (localOnly) renderFeedRegionOnly({ reset })
-  else render()
+  renderFeedRegionOnly({ reset: false })
 }
 
 async function loadStories({ renderAfter = false } = {}) {
@@ -3415,7 +3443,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
     if (previousPostId !== id && !state.commentsByPostId[id]?.loaded) resetActivePostComments(id)
     syncActiveCommentState(id)
     render()
-    loadViewerState().then(render).catch(() => null)
+    loadViewerState().then(() => renderPostViewerStateOnly()).catch(() => null)
     loadFocusedComment({ renderAfter: true })
       .then(() => loadComments({ renderAfter: true }))
       .catch(() => loadComments({ renderAfter: true }))
@@ -3442,8 +3470,8 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
     if (post) {
       Promise.allSettled([
         loadFocusedComment({ renderAfter: true }).then(() => loadComments({ renderAfter: true })),
-        loadViewerState().then(render),
-        loadAttachmentMediaUrls().then(render),
+        loadViewerState().then(() => renderPostViewerStateOnly()),
+        loadAttachmentMediaUrls().then(() => renderPostMediaOnly()),
         !state.communities.length ? loadCommunities({ renderOnStart: false, renderAfter: true }) : Promise.resolve()
       ]).then(() => {
         logCommunityPerf('detail enrichment complete', { postId: id })

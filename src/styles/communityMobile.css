@@ -193,3 +193,23 @@
 .community-topic-pill.is-active{color:#fff;border:1px solid transparent;background:linear-gradient(var(--community-surface-2),var(--community-surface-2)) padding-box,var(--community-accent-gradient) border-box}
 .community-page :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--community-focus-ring);outline-offset:2px}
 }
+
+/* melogic-community-theme-audit-mobile-v5 */
+@media(max-width:760px){
+body.is-community-page,body.is-community-page #app,.community-page,.is-community-page .mobile-app-header,.is-community-page .mobile-bottom-nav{background-color:#000;background-image:none}
+.community-page .community-main,.community-page .community-feed,.community-page .community-post-card,.community-page .community-comments,.community-page .community-comment-card,.community-page .community-comment-composer{background-color:transparent;background-image:none}
+.community-page .community-author em,.community-page .community-comments-heading p{color:var(--community-text-muted)}
+.community-page .community-comment-composer textarea{color:var(--community-text);background:var(--community-surface-2);border-color:var(--community-border)}
+.community-page .community-post-options-menu,.community-page .community-comment-options-menu{color:var(--community-text);background:var(--community-surface-2);border-color:var(--community-border)}
+.community-page :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--community-focus-ring);outline-offset:2px}
+}
+
+/* melogic-community-mobile-touch-hardening-v1 */
+@media (pointer:coarse), (hover:none) {
+  .community-page,.community-page *:not(input):not(textarea):not([contenteditable="true"]){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .community-page input,.community-page textarea,.community-page [contenteditable="true"]{-webkit-user-select:text;user-select:text}
+  .community-page{touch-action:pan-x pan-y}
+  .community-page img,.community-page video,.community-page button,.community-page a{-webkit-tap-highlight-color:transparent}
+  .community-image-viewer,.community-image-viewer *{touch-action:auto}
+  .community-image-viewer img{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+}
