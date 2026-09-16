@@ -405,6 +405,23 @@ let accountCallManager = null
 let accountCallTimeout = null
 let accountCallTimer = null
 const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1'
+// melogic-inbox-mobile-architecture-v1
+const INBOX_MOBILE_BREAKPOINT_PX = 760
+let mobileInboxListScrollTop = 0
+function isMobileInboxViewport() {
+  return window.matchMedia(`(max-width: ${INBOX_MOBILE_BREAKPOINT_PX}px)`).matches
+}
+function captureMobileInboxListScroll() {
+  const list = inboxRoot?.querySelector('.inbox-thread-list')
+  if (isMobileInboxViewport() && list) mobileInboxListScrollTop = list.scrollTop
+}
+function restoreMobileInboxListScroll() {
+  if (!isMobileInboxViewport() || appState.selectedThreadId) return
+  requestAnimationFrame(() => {
+    const list = inboxRoot?.querySelector('.inbox-thread-list')
+    if (list) list.scrollTop = mobileInboxListScrollTop
+  })
+}
 
 function debugTyping(...args) {
   if (DEBUG_TYPING) console.info('[inbox typing]', ...args)
@@ -2885,6 +2902,8 @@ function openThreadInChatDock(threadId = '') {
 
 async function selectThread(threadId = '', { forceBottom = true } = {}) {
   if (!threadId) return
+  const mobileOpeningConversation = isMobileInboxViewport() && appState.activeFilter === 'Messages' && appState.selectedThreadId !== threadId
+  if (mobileOpeningConversation) captureMobileInboxListScroll()
   if (appState.activeFilter !== 'Messages') {
     applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
     window.history.pushState({ inbox: true }, '', inboxRouteWithCurrentSearch(ROUTES.inboxMessages))
@@ -2898,6 +2917,11 @@ async function selectThread(threadId = '', { forceBottom = true } = {}) {
   appState.threadConfirmModal = null
   appState.messageFind = { open: false, query: '', activeIndex: -1, matchCount: 0 }
   appState.selectedThreadId = threadId
+  if (mobileOpeningConversation) {
+    document.body.dataset.mobileInboxExplicitConversation = threadId
+    const state = history.state && typeof history.state === 'object' ? history.state : {}
+    history.pushState({ ...state, inbox: true, mobileInboxConversation: threadId }, '', window.location.href)
+  }
   saveLastSelectedThread(appState.user?.uid, threadId)
   appState.errorMessage = ''
   startMessageSubscription(threadId)
@@ -4327,6 +4351,7 @@ function getConversationHeaderMarkup(thread) {
 
   return `
     <header class="conversation-header" data-conversation-header-signature="${escapeHtml(headerSignature)}">
+      <button type="button" class="mobile-conversation-back" data-mobile-inbox-back aria-label="Back to inbox">${iconSvg('arrowLeft') || '←'}</button>
       ${renderThreadAvatar(avatarThread, { stableKey: `thread-header:${thread.id}` })}
       <div class="conversation-header-meta">
         <h3>${escapeHtml(headerMeta.displayName || thread.title)}</h3>
@@ -5331,24 +5356,39 @@ function getReactionDetailModalMarkup() {
 
 function renderMessagesLayout() {
   const selectedThread = getSelectedThread()
-
+  if (isMobileInboxViewport()) {
+    if (selectedThread) {
+      return `
+        <div class="inbox-layout inbox-layout-messages inbox-mobile-conversation-view" data-mobile-inbox-view="conversation">
+          <section class="inbox-main-panel">
+            ${getConversationHeaderMarkup(selectedThread)}
+            ${getConversationBodyMarkup()}
+          </section>
+        </div>
+      `
+    }
+    return `
+      <div class="inbox-layout inbox-layout-messages inbox-mobile-list-view" data-mobile-inbox-view="list">
+        <section class="inbox-thread-panel">
+          <header class="panel-header panel-header-row">
+            <div><h3>Messages</h3><p>Direct and group conversations</p></div>
+            <div class="panel-actions"><button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button></div>
+          </header>
+          ${getMessagesThreadListMarkup()}
+        </section>
+      </div>
+    `
+  }
   return `
     <div class="inbox-layout inbox-layout-messages">
       <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
-
       <section class="inbox-thread-panel">
         <header class="panel-header panel-header-row">
-          <div>
-            <h3>Messages</h3>
-            <p>Direct and group conversations</p>
-          </div>
-          <div class="panel-actions">
-            <button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button>
-          </div>
+          <div><h3>Messages</h3><p>Direct and group conversations</p></div>
+          <div class="panel-actions"><button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button></div>
         </header>
         ${getMessagesThreadListMarkup()}
       </section>
-
       <section class="inbox-main-panel">
         ${getConversationHeaderMarkup(selectedThread)}
         ${getConversationBodyMarkup()}
@@ -6002,6 +6042,16 @@ function renderSignedOutState() {
 }
 
 function bindSharedEvents(scope = inboxRoot) {
+  scope.querySelectorAll('[data-mobile-inbox-back]').forEach((button) => {
+    button.addEventListener('click', () => {
+      if (!isMobileInboxViewport()) return
+      if (history.state?.mobileInboxConversation) return history.back()
+      delete document.body.dataset.mobileInboxExplicitConversation
+      appState.selectedThreadId = ''
+      messageScrollController.detach()
+      renderSignedInState()
+    })
+  })
   scope.querySelectorAll('[data-inbox-filter]').forEach((button) => {
     button.addEventListener('click', () => {
       const nextFilter = button.dataset.inboxFilter || 'Messages'
@@ -6500,12 +6550,15 @@ function restoreMessageComposerFocus(snapshot) {
 }
 
 function renderSignedInState() {
+  if (isMobileInboxViewport() && appState.activeFilter === 'Messages' && !history.state?.mobileInboxConversation && !document.body.dataset.mobileInboxExplicitConversation && !getStartUidParam()) {
+    appState.selectedThreadId = ''
+  }
   const composerFocus = captureMessageComposerFocus()
   const scrollSnapshot = messageScrollController.snapshot()
   const previousThreadId = messageScrollController.threadId
   inboxRoot.innerHTML = appState.activeFilter === 'Messages' ? renderMessagesLayout() : renderActivityLayout(appState.activeFilter)
   bindSharedEvents()
-  if (appState.activeFilter === 'Messages') {
+  if (appState.activeFilter === 'Messages' && (!isMobileInboxViewport() || Boolean(appState.selectedThreadId))) {
     const scroller = getMessageScroller()
     messageScrollController.attach(scroller, {
       threadId: appState.selectedThreadId,
@@ -6520,6 +6573,7 @@ function renderSignedInState() {
     messageScrollController.detach()
   }
   restoreMessageComposerFocus(composerFocus)
+  restoreMobileInboxListScroll()
   renderCreateChatModal()
   renderChatSettingsModal()
   renderFloatingUi()
@@ -7556,13 +7610,133 @@ window.addEventListener('beforeunload', () => {
 window.addEventListener('pagehide', () => {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
 })
-window.addEventListener('popstate', () => {
+window.addEventListener('popstate', (event) => {
   applyInboxRoute(parseInboxRoute())
+  if (isMobileInboxViewport() && appState.activeFilter === 'Messages') {
+    const threadId = event.state?.mobileInboxConversation || ''
+    if (!threadId) {
+      delete document.body.dataset.mobileInboxExplicitConversation
+      appState.selectedThreadId = ''
+      messageScrollController.detach()
+    } else {
+      document.body.dataset.mobileInboxExplicitConversation = threadId
+      appState.selectedThreadId = threadId
+      if (!appState.messagesByThreadId[threadId]) startMessageSubscription(threadId)
+    }
+  }
   if (appState.user) {
     renderSignedInState()
     if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
   }
 })
+
+// melogic-inbox-mobile-tabs-scroll-v5
+function installMobileInboxNavigationAndScrollArchitecture() {
+  if (document.documentElement.dataset.inboxMobileTabsScrollV5 === '1') return
+  document.documentElement.dataset.inboxMobileTabsScrollV5 = '1'
+  const isMobile = () => window.matchMedia('(max-width: 760px)').matches
+  const routeKind = () => {
+    const path = window.location.pathname.replace(/\/+$/, '')
+    if (path.startsWith('/inbox/calls')) return 'calls'
+    if (path.startsWith('/inbox/system') || path.startsWith('/inbox/content')) return 'activity'
+    return 'messages'
+  }
+  const mobileTabsMarkup = () => {
+    const active = routeKind()
+    return `<nav class="inbox-mobile-section-tabs" data-inbox-mobile-section-tabs aria-label="Inbox sections">
+      <a class="${active === 'messages' ? 'is-active' : ''}" href="/inbox/messages" ${active === 'messages' ? 'aria-current="page"' : ''}>Messages</a>
+      <a class="${active === 'calls' ? 'is-active' : ''}" href="/inbox/calls" ${active === 'calls' ? 'aria-current="page"' : ''}>Calls</a>
+      <a class="${active === 'activity' ? 'is-active' : ''}" href="/inbox/system" ${active === 'activity' ? 'aria-current="page"' : ''}>Activity</a>
+    </nav>`
+  }
+  const ensureTabs = () => {
+    if (!isMobile()) {
+      document.querySelectorAll('[data-inbox-mobile-section-tabs]').forEach((node) => node.remove())
+      return
+    }
+    const root = document.querySelector('.inbox-app-shell, .inbox-main-shell, .inbox-layout')
+    if (!root) return
+    let tabs = document.querySelector('[data-inbox-mobile-section-tabs]')
+    if (!tabs) {
+      const holder = document.createElement('div')
+      holder.innerHTML = mobileTabsMarkup().trim()
+      tabs = holder.firstElementChild
+      const layout = document.querySelector('.inbox-layout')
+      if (layout?.parentElement) layout.parentElement.insertBefore(tabs, layout)
+      else root.prepend(tabs)
+    } else {
+      const holder = document.createElement('div')
+      holder.innerHTML = mobileTabsMarkup().trim()
+      tabs.replaceWith(holder.firstElementChild)
+    }
+  }
+  const ensureThreadSectionLabels = () => {
+    if (!isMobile() || routeKind() !== 'messages') return
+    const list = document.querySelector('.inbox-thread-list')
+    if (!list) return
+    list.querySelectorAll('[data-mobile-inbox-section-label]').forEach((node) => node.remove())
+    const rows = [...list.querySelectorAll(':scope > .thread-row:not(.is-skeleton)')]
+    const pinned = rows.filter((row) => row.querySelector('.thread-pin-indicator'))
+    const normal = rows.filter((row) => !row.classList.contains('thread-row-resona') && !row.querySelector('.thread-pin-indicator'))
+    if (pinned.length) {
+      const label = document.createElement('div')
+      label.className = 'inbox-mobile-thread-section-label'
+      label.dataset.mobileInboxSectionLabel = 'pinned'
+      label.textContent = 'Pinned'
+      list.insertBefore(label, pinned[0])
+    }
+    if (normal.length) {
+      const label = document.createElement('div')
+      label.className = 'inbox-mobile-thread-section-label'
+      label.dataset.mobileInboxSectionLabel = 'messages'
+      label.textContent = 'Messages'
+      list.insertBefore(label, normal[0])
+    }
+  }
+  const updateViewportBoundary = () => {
+    if (!isMobile()) return
+    const nav = document.querySelector('.mobile-bottom-nav')
+    const viewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight)
+    let bottomEdge = viewportHeight
+    if (nav) {
+      const rect = nav.getBoundingClientRect()
+      if (rect.top > 0 && rect.top < viewportHeight) bottomEdge = Math.round(rect.top)
+    }
+    const value = `${Math.max(320, bottomEdge)}px`
+    document.documentElement.style.setProperty('--inbox-mobile-bottom-edge', value)
+    document.body.style.setProperty('--inbox-mobile-bottom-edge', value)
+  }
+  const hardenConversationScrollOwnership = () => {
+    if (!isMobile()) return
+    const messages = document.querySelector('.message-list')
+    const conversation = document.querySelector('.conversation-stack')
+    if (messages) messages.scrollLeft = 0
+    if (conversation) conversation.scrollLeft = 0
+    for (const node of [document.querySelector('.conversation-header'), document.querySelector('.message-composer')]) {
+      if (node) node.scrollLeft = 0
+    }
+  }
+  let raf = 0
+  const reconcile = () => {
+    cancelAnimationFrame(raf)
+    raf = requestAnimationFrame(() => {
+      ensureTabs()
+      ensureThreadSectionLabels()
+      updateViewportBoundary()
+      hardenConversationScrollOwnership()
+    })
+  }
+  const observer = new MutationObserver(() => reconcile())
+  observer.observe(document.querySelector('#app') || document.body, { childList: true, subtree: true })
+  window.visualViewport?.addEventListener('resize', reconcile, { passive: true })
+  window.visualViewport?.addEventListener('scroll', updateViewportBoundary, { passive: true })
+  window.addEventListener('resize', reconcile, { passive: true })
+  window.addEventListener('orientationchange', () => setTimeout(reconcile, 80), { passive: true })
+  window.addEventListener('popstate', reconcile)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(reconcile, 50) })
+  reconcile()
+}
+installMobileInboxNavigationAndScrollArchitecture()
 
 normalizeInitialInboxRoute()
 waitForInitialAuthState().then(async (user) => {
@@ -7639,3 +7813,15 @@ subscribeToAuthState(async (user) => {
   startAccountCallSubscriptions()
   if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
 })
+
+
+// === MELOGIC inbox click-path guard v7 ===
+// Preserve native/global navigation. This only ensures rendered thread buttons
+// reach the existing Inbox selection path if a later bubbling handler cancels them.
+document.addEventListener('click', (event) => {
+  const button = event.target.closest?.('[data-select-thread-id]')
+  if (!button || !document.body.classList.contains('is-inbox-page')) return
+  // Do not synthesize or cancel the click; the existing delegated Inbox handler owns it.
+  button.dataset.inboxLastPointerActivation = String(Date.now())
+}, { capture: true })
+

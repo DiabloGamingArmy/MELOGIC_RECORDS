@@ -48,6 +48,7 @@ export const ROUTES = {
   adminSettings: '/admin/settings',
   adminMarketplaceReview: '/admin/reviews',
   community: '/community',
+  communitySearch: '/community/search',
   communityCommunities: '/community/communities',
   communityCreate: '/community/create',
   communitySlug: '/community/c',

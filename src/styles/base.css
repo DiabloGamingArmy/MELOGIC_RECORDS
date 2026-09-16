@@ -3055,7 +3055,8 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
   :root{--mobile-nav-h:72px;--mobile-bg:#07090d;--mobile-line:rgba(160,178,210,.14);--mobile-muted:#929db1}
   body{padding-bottom:calc(var(--mobile-nav-h) + env(safe-area-inset-bottom,0px))}
   .nav-shell{display:none!important}
-  .mobile-app-shell{display:contents}
+  /* Keep a real box for WebKit touch hit testing around the fixed nav. */
+  .mobile-app-shell{display:block}
   .mobile-app-header{position:relative;z-index:45;display:flex;align-items:center;justify-content:space-between;gap:1rem;min-height:66px;padding:max(14px,env(safe-area-inset-top,0px)) 18px 10px;background:var(--mobile-bg);color:#f6f8fc}
   .mobile-app-title{margin:0;font-size:2rem;font-weight:760;line-height:1;letter-spacing:-.035em}
   .mobile-app-actions{display:flex;align-items:center;gap:7px}
@@ -3138,4 +3139,10 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
     stroke-linecap: round;
     stroke-linejoin: round;
   }
+}
+
+
+/* Keep native page gestures; only controls opt into fast tap handling. */
+@media (hover: none) and (pointer: coarse) {
+  input, textarea, select, button, a, [role="button"] { touch-action: manipulation; }
 }

@@ -249,3 +249,117 @@ color:var(--community-text-secondary)!important;border-color:var(--community-bor
 color:#fff!important;border:1px solid transparent!important;background:linear-gradient(var(--community-surface-2),var(--community-surface-2)) padding-box,var(--community-accent-gradient) border-box!important;box-shadow:none!important;filter:none!important}
 .community-page .community-filter-strip .community-topic-pill{-webkit-tap-highlight-color:transparent}
 }
+
+/* melogic-community-mobile-emergency-recovery-v1 */
+@media (max-width: 760px) {
+  html { width:100%; max-width:100%; overflow-x:clip !important; overflow-y:auto !important; overscroll-behavior-x:none; }
+  body.is-community-page {
+    position:static !important; inset:auto !important; width:100% !important; max-width:100% !important;
+    height:auto !important; min-height:100dvh !important; overflow-x:clip !important; overflow-y:visible !important;
+    touch-action:pan-y !important; -webkit-overflow-scrolling:touch;
+    padding-bottom:calc(var(--mobile-nav-height,72px) + env(safe-area-inset-bottom,0px)) !important;
+  }
+  body.is-community-page #app,
+  body.is-community-page .community-page,
+  body.is-community-page .community-root,
+  body.is-community-page .community-layout,
+  body.is-community-page .community-layout.is-home,
+  body.is-community-page .community-main,
+  body.is-community-page .community-layout.is-home > .community-main,
+  body.is-community-page .community-feed {
+    position:static !important; inset:auto !important; width:100% !important; max-width:100% !important; min-width:0 !important;
+    height:auto !important; min-height:0 !important; max-height:none !important;
+    overflow-x:clip !important; overflow-y:visible !important; contain:none !important; touch-action:pan-y !important;
+  }
+  body.is-community-page .mobile-app-header {
+    position:-webkit-sticky !important; position:sticky !important; top:0 !important; inset-block-start:0 !important;
+    z-index:1000 !important; width:100% !important; max-width:100% !important; min-width:0 !important;
+    transform:none !important; translate:none !important; overflow:visible !important; background:#000 !important; isolation:isolate;
+  }
+  body.is-community-page .mobile-bottom-nav {
+    position:fixed !important; left:0 !important; right:0 !important; bottom:0 !important;
+    width:100% !important; max-width:100% !important; z-index:1000 !important; transform:none !important;
+  }
+  body.is-community-page :is(.community-page,.community-root,.community-layout,.community-main,.community-feed,
+    .community-post-card,.community-post-header,.community-author,.community-author > span,.community-post-body,
+    .community-post-badges,.community-comments,.community-comment-card,.community-inline-composer,
+    .community-inline-prompt,.community-master-tabs,.community-filter-shell,.community-mobile-stories) {
+    min-width:0 !important; max-width:100% !important; box-sizing:border-box !important;
+  }
+  body.is-community-page .community-post-card { width:100% !important; margin-inline:0 !important; overflow-x:clip !important; }
+  body.is-community-page .community-post-card > h2,
+  body.is-community-page .community-post-body,
+  body.is-community-page .community-author,
+  body.is-community-page .community-author strong,
+  body.is-community-page .community-author em,
+  body.is-community-page .community-comment-card,
+  body.is-community-page .community-comment-card * { overflow-wrap:anywhere !important; word-break:normal; }
+  body.is-community-page .community-post-header { grid-template-columns:minmax(0,1fr) 44px !important; }
+  body.is-community-page .community-author > span:last-child {
+    min-width:0 !important; max-width:100% !important; overflow:hidden !important;
+  }
+  body.is-community-page .community-post-file-attachment,
+  body.is-community-page .community-post-file-attachment.is-image,
+  body.is-community-page .community-post-file-attachment.is-video {
+    display:block; width:100% !important; max-width:100% !important; min-width:0 !important;
+    overflow:hidden !important; box-sizing:border-box !important;
+  }
+  body.is-community-page .community-post-file-attachment :is(img,video,canvas,picture),
+  body.is-community-page .community-post-file-attachment picture > img {
+    display:block !important; width:100% !important; max-width:100% !important; min-width:0 !important;
+    height:auto !important; object-fit:contain !important;
+  }
+  body.is-community-page :is(.community-filter-strip,.community-stories-row,.community-comment-tool-row) {
+    overflow-x:auto !important; overflow-y:hidden !important; max-width:100% !important;
+    -webkit-overflow-scrolling:touch; touch-action:pan-x !important;
+  }
+  body.is-community-page .community-topic-pill {
+    max-width:min(75vw,320px) !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important;
+  }
+  body.is-community-page .community-post-actions {
+    width:100% !important; max-width:100% !important; min-width:0 !important; display:flex !important;
+    flex-wrap:nowrap !important; justify-content:space-between !important; overflow:hidden !important;
+  }
+  body.is-community-page .community-post-actions > :is(button,a) {
+    flex:0 1 auto !important; min-width:44px !important; max-width:25% !important;
+  }
+}
+
+/* melogic-detach-feed-filters-from-sticky-header-v1
+   Mobile/PWA: only the app title/header remains sticky.
+   Feed tabs + topic filters participate in normal document flow. */
+@media (max-width: 760px) {
+  body.is-community-page .community-scroll-chrome {
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    z-index: auto !important;
+    transform: none !important;
+    translate: none !important;
+    transition: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    will-change: auto !important;
+  }
+  body.community-chrome-hidden.is-community-page .community-scroll-chrome {
+    transform: none !important;
+    translate: none !important;
+  }
+  body.is-community-page .community-feed-header,
+  body.is-community-page .community-master-tabs,
+  body.is-community-page .community-filter-shell,
+  body.is-community-page .community-topic-bar,
+  body.is-community-page .community-filter-strip {
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    transform: none !important;
+    translate: none !important;
+    will-change: auto !important;
+  }
+  body.is-community-page .mobile-app-header {
+    position: -webkit-sticky !important;
+    position: sticky !important;
+    top: 0 !important;
+  }
+}

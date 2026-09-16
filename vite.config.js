@@ -62,6 +62,7 @@ export default defineConfig({
         music: resolve(__dirname, 'music.html'),
         products: resolve(__dirname, 'products.html'),
         community: resolve(__dirname, 'community.html'),
+        communitySearch: resolve(__dirname, 'community-search.html'),
         camera: resolve(__dirname, 'camera.html'),
         live: resolve(__dirname, 'live.html'),
         forms: resolve(__dirname, 'forms.html'),

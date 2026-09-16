@@ -3296,3 +3296,586 @@ body.site-guidance-active .inbox-site-guidance-trigger {
     justify-content: flex-end;
   }
 }
+
+/* melogic-inbox-mobile-architecture-v1 */
+.mobile-conversation-back { display:none; }
+@media (max-width:760px) {
+  body.is-inbox-page main { height:100dvh; padding-top:0; padding-bottom:var(--mobile-nav-height,72px); overflow:hidden; }
+  body.is-inbox-page .inbox-main-shell, body.is-inbox-page .inbox-app-shell,
+  body.is-inbox-page .inbox-layout-messages { width:100%; max-width:100%; min-width:0; height:100%; overflow:hidden; }
+  body.is-inbox-page .inbox-layout-messages { display:block; }
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel,
+  body.is-inbox-page .inbox-mobile-conversation-view .inbox-main-panel {
+    width:100%; max-width:100%; height:100%; min-height:0; padding:0; border:0; overflow:hidden;
+  }
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel {
+    display:grid; grid-template-rows:auto minmax(0,1fr);
+  }
+  body.is-inbox-page .inbox-mobile-list-view .panel-header {
+    padding:calc(env(safe-area-inset-top,0px) + 1rem) 1rem .85rem;
+    background:#000; border-bottom:1px solid rgba(255,255,255,.08); z-index:2;
+  }
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list {
+    min-height:0; overflow-x:hidden; overflow-y:auto; overscroll-behavior-y:contain;
+    -webkit-overflow-scrolling:touch; padding:.75rem 1rem 1.25rem;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .inbox-main-panel {
+    display:grid; grid-template-rows:auto minmax(0,1fr); align-content:stretch;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header {
+    position:relative; top:auto; width:100%; min-width:0; margin:0;
+    padding:calc(env(safe-area-inset-top,0px) + .55rem) .75rem .55rem;
+    background:#000; border-bottom:1px solid rgba(255,255,255,.08); z-index:5;
+  }
+  body.is-inbox-page .mobile-conversation-back {
+    display:inline-grid; place-items:center; width:2.65rem; height:2.65rem; flex:0 0 2.65rem;
+    padding:0; border:0; border-radius:999px; background:transparent; color:inherit;
+  }
+  body.is-inbox-page .mobile-conversation-back svg { width:1.35rem; height:1.35rem; }
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-stack {
+    min-height:0; height:100%; overflow:hidden;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-stack > [data-message-list] {
+    min-height:0; overflow-y:auto; overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer { max-width:100%; }
+}
+
+/* melogic-inbox-mobile-list-redesign-v2
+   Patch 2: visual pass for the mobile/PWA conversation list only. */
+@media (max-width:760px) {
+  body.is-inbox-page,
+  body.is-inbox-page main,
+  body.is-inbox-page .inbox-main-shell,
+  body.is-inbox-page .inbox-app-shell,
+  body.is-inbox-page .inbox-mobile-list-view,
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel {
+    background:#000 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel {
+    grid-template-rows:auto minmax(0,1fr) !important;
+    gap:0 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .panel-header {
+    min-height:64px;
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    gap:12px !important;
+    padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px !important;
+    border:0 !important;
+    border-bottom:1px solid rgba(255,255,255,.08) !important;
+    background:#000 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .panel-header > div:first-child {
+    min-width:0;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .panel-header h3 {
+    margin:0 !important;
+    color:#fff !important;
+    font-size:1.28rem !important;
+    line-height:1.1 !important;
+    font-weight:750 !important;
+    letter-spacing:-.025em !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .panel-header p {
+    display:none !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .panel-actions {
+    display:flex !important;
+    align-items:center !important;
+    gap:6px !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .create-chat-plus {
+    width:42px !important;
+    height:42px !important;
+    min-width:42px !important;
+    display:grid !important;
+    place-items:center !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:999px !important;
+    background:transparent !important;
+    color:#f4f5f8 !important;
+    font-size:1.85rem !important;
+    line-height:1 !important;
+    font-weight:300 !important;
+    box-shadow:none !important;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list {
+    display:block !important;
+    width:100% !important;
+    padding:6px 0 24px !important;
+    background:#000 !important;
+    scrollbar-width:none;
+  }
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list::-webkit-scrollbar { display:none; }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-row,.inbox-thread-row,.thread-card,.inbox-thread-card,[data-thread-id]) {
+    width:100% !important;
+    max-width:100% !important;
+    min-width:0 !important;
+    margin:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    box-shadow:none !important;
+    background:#000 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-row,.inbox-thread-row,.thread-card,.inbox-thread-card,[data-thread-id]):hover {
+    background:#000 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .thread-select {
+    width:100% !important;
+    min-width:0 !important;
+    min-height:76px !important;
+    display:grid !important;
+    grid-template-columns:52px minmax(0,1fr) auto !important;
+    align-items:center !important;
+    gap:12px !important;
+    padding:10px 16px !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    color:#fff !important;
+    text-align:left !important;
+    box-shadow:none !important;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .thread-select:hover,
+  body.is-inbox-page .inbox-mobile-list-view .thread-select:active,
+  body.is-inbox-page .inbox-mobile-list-view .thread-select:focus {
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .thread-avatar,
+  body.is-inbox-page .inbox-mobile-list-view [data-inbox-avatar-root] {
+    width:52px !important;
+    height:52px !important;
+    min-width:52px !important;
+    border-radius:50% !important;
+    overflow:hidden !important;
+    border:0 !important;
+    background:#181818 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view [data-inbox-avatar-root] img,
+  body.is-inbox-page .inbox-mobile-list-view .thread-avatar img {
+    width:100% !important;
+    height:100% !important;
+    object-fit:cover !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-copy,.thread-main,.thread-details,.thread-meta) {
+    min-width:0 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-title,.thread-name,.thread-select strong) {
+    color:#f5f5f7 !important;
+    font-size:.98rem !important;
+    line-height:1.25 !important;
+    font-weight:650 !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-preview,.thread-subtitle,.thread-select small) {
+    color:#8e8e93 !important;
+    font-size:.86rem !important;
+    line-height:1.3 !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-time,.thread-timestamp,time) {
+    color:#707078 !important;
+    font-size:.73rem !important;
+    line-height:1.2 !important;
+    white-space:nowrap !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.unread-dot,.thread-unread-dot) {
+    width:8px !important;
+    height:8px !important;
+    min-width:8px !important;
+    border-radius:50% !important;
+    background:linear-gradient(135deg,#4da3ff,#8a63ff) !important;
+    box-shadow:none !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-row,.inbox-thread-row,.thread-card,.inbox-thread-card,[data-thread-id]) + :is(.thread-row,.inbox-thread-row,.thread-card,.inbox-thread-card,[data-thread-id]) {
+    border-top:1px solid rgba(255,255,255,.055) !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view :is(.thread-actions,.thread-pin-action,.thread-menu-button) {
+    color:#8e8e93 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .thread-skeleton,
+  body.is-inbox-page .inbox-mobile-list-view .inbox-empty-state {
+    border:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+}
+
+/* Coarse pointers should never receive desktop hover paint on the mobile list. */
+@media (max-width:760px) and (hover:none), (max-width:760px) and (pointer:coarse) {
+  body.is-inbox-page .inbox-mobile-list-view button:hover,
+  body.is-inbox-page .inbox-mobile-list-view [data-thread-id]:hover {
+    background-color:inherit !important;
+  }
+}
+
+/* melogic-inbox-mobile-conversation-redesign-v3
+   Patch 3: dedicated mobile/PWA conversation visual system. */
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-mobile-conversation-view,
+  body.is-inbox-page .inbox-mobile-conversation-view .inbox-main-panel,
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-stack,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-list {
+    background:#000 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header {
+    min-height:62px !important;
+    display:flex !important;
+    align-items:center !important;
+    gap:9px !important;
+    padding:calc(env(safe-area-inset-top,0px) + 8px) 10px 8px !important;
+    border:0 !important;
+    border-bottom:1px solid rgba(255,255,255,.08) !important;
+    background:rgba(0,0,0,.96) !important;
+    box-shadow:none !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .mobile-conversation-back {
+    width:40px !important;height:40px !important;min-width:40px !important;
+    border:0 !important;background:transparent !important;color:#f5f5f7 !important;
+    box-shadow:none !important;-webkit-tap-highlight-color:transparent;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .mobile-conversation-back svg {width:22px !important;height:22px !important;}
+
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header > .thread-avatar,
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header > [data-inbox-avatar-root] {
+    width:40px !important;height:40px !important;min-width:40px !important;border-radius:50% !important;
+    border:0 !important;box-shadow:none !important;overflow:hidden !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header-meta {
+    min-width:0 !important;flex:1 1 auto !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header-meta h3 {
+    margin:0 !important;color:#f7f7f8 !important;font-size:.98rem !important;line-height:1.18 !important;
+    font-weight:700 !important;white-space:nowrap !important;overflow:hidden !important;text-overflow:ellipsis !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header-meta p {
+    margin:2px 0 0 !important;color:#85858c !important;font-size:.72rem !important;line-height:1.15 !important;
+    white-space:nowrap !important;overflow:hidden !important;text-overflow:ellipsis !important;
+  }
+
+  /* Find belongs in details on mobile; keep the primary chat header quiet. */
+  body.is-inbox-page .inbox-mobile-conversation-view .message-find-trigger,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-find,
+  body.is-inbox-page .inbox-mobile-conversation-view .inbox-site-guidance-trigger {
+    display:none !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-call-trigger,
+  body.is-inbox-page .inbox-mobile-conversation-view .chat-settings-trigger {
+    width:40px !important;height:40px !important;min-width:40px !important;
+    display:grid !important;place-items:center !important;padding:0 !important;
+    border:0 !important;border-radius:50% !important;background:transparent !important;
+    color:#ececf0 !important;box-shadow:none !important;-webkit-tap-highlight-color:transparent;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-call-trigger svg {width:19px !important;height:19px !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .chat-settings-trigger {font-size:1.35rem !important;}
+
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-stack.is-resona-chat {
+    background-image:none !important;background:#000 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-list {
+    padding:14px 12px 10px !important;gap:3px !important;
+    scrollbar-width:none;overscroll-behavior-y:contain;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .message-list::-webkit-scrollbar {display:none;}
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster {
+    width:100% !important;max-width:100% !important;min-width:0 !important;
+    margin-block:1px !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster + .message-cluster {margin-top:2px !important;}
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble-stack {
+    max-width:82% !important;min-width:0 !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble {
+    max-width:100% !important;padding:8px 11px !important;border:0 !important;
+    border-radius:18px !important;background:#1c1c1e !important;color:#f2f2f3 !important;
+    box-shadow:none !important;font-size:.94rem !important;line-height:1.32 !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-self .message-bubble {
+    background:linear-gradient(135deg,#3378f6,#7657f6) !important;color:#fff !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-other .message-bubble.is-first {border-bottom-left-radius:6px !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-other .message-bubble.is-middle {border-top-left-radius:6px !important;border-bottom-left-radius:6px !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-other .message-bubble.is-last {border-top-left-radius:6px !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-self .message-bubble.is-first {border-bottom-right-radius:6px !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-self .message-bubble.is-middle {border-top-right-radius:6px !important;border-bottom-right-radius:6px !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-self .message-bubble.is-last {border-top-right-radius:6px !important;}
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble p {overflow-wrap:anywhere !important;word-break:normal !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-status-line,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-edited-marker {
+    color:#74747b !important;font-size:.63rem !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-sender-label,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster-author {
+    color:#929299 !important;font-size:.68rem !important;margin-bottom:3px !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-history-boundary,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-day-separator,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-gap-separator {
+    color:#66666d !important;font-size:.68rem !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-image-preview-button,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-attachment-list video {
+    width:min(72vw,360px) !important;max-width:100% !important;border-radius:16px !important;background:#111 !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .message-image-preview-button img {
+    width:100% !important;max-height:52dvh !important;border:0 !important;border-radius:16px !important;object-fit:contain !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-reply-preview {
+    border:0 !important;border-radius:11px !important;background:rgba(255,255,255,.10) !important;color:inherit !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .reaction-pill {
+    border:1px solid rgba(255,255,255,.12) !important;background:#18181a !important;color:#eee !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .typing-indicator {
+    padding:2px 14px 5px !important;color:#77777f !important;font-size:.72rem !important;
+  }
+
+  /* Composer remains in layout flow beneath the message scroller. This avoids
+     relying on position:fixed while iOS/PWA keyboards mutate the visual viewport. */
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer {
+    position:relative !important;inset:auto !important;flex:0 0 auto !important;
+    width:100% !important;max-width:100% !important;margin:0 !important;
+    padding:7px 10px calc(8px + env(safe-area-inset-bottom,0px)) !important;
+    border:0 !important;border-top:1px solid rgba(255,255,255,.08) !important;
+    background:#000 !important;box-shadow:none !important;gap:6px !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer textarea {
+    min-height:42px !important;max-height:124px !important;resize:none !important;
+    border:1px solid rgba(255,255,255,.14) !important;border-radius:21px !important;
+    background:#151517 !important;color:#f4f4f5 !important;
+    padding:10px 13px !important;font-size:16px !important;line-height:1.25 !important;
+    box-shadow:none !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer textarea::placeholder {color:#77777e !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer textarea:focus {
+    outline:none !important;border-color:rgba(255,255,255,.24) !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer-footer {
+    gap:7px !important;min-width:0 !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions {
+    gap:5px !important;align-items:center !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-actions button,
+  body.is-inbox-page .inbox-mobile-conversation-view .message-composer-footer > button {
+    min-width:38px !important;min-height:38px !important;border-radius:50% !important;
+  }
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-note {color:#66666d !important;font-size:.68rem !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-attachment-preview-strip {scrollbar-width:none;}
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-attachment-preview-strip::-webkit-scrollbar {display:none;}
+
+  body.is-inbox-page .inbox-mobile-conversation-view .blocked-chat-alert,
+  body.is-inbox-page .inbox-mobile-conversation-view .composer-reply-preview {
+    border-color:rgba(255,255,255,.1) !important;background:#151517 !important;color:#ddd !important;
+  }
+
+  /* No desktop hover coloration on touch chat UI. */
+  body.is-inbox-page .inbox-mobile-conversation-view :is(button,.message-bubble):hover {
+    box-shadow:none;
+  }
+}
+@media (max-width:760px) and (hover:none), (max-width:760px) and (pointer:coarse) {
+  body.is-inbox-page .inbox-mobile-conversation-view .conversation-header button:hover {background:transparent !important;}
+}
+
+/* melogic-inbox-mobile-tabs-scroll-v5 */
+@media (max-width: 760px) {
+  html, body.is-inbox-page { max-width:100%; overflow-x:clip!important; }
+  body.is-inbox-page { overscroll-behavior-x:none; }
+  body.is-inbox-page main {
+    box-sizing:border-box!important;
+    height:calc(var(--inbox-mobile-bottom-edge,100dvh) - var(--nav-offset,0px))!important;
+    max-height:calc(var(--inbox-mobile-bottom-edge,100dvh) - var(--nav-offset,0px))!important;
+    min-height:0!important; padding-bottom:0!important; overflow:hidden!important;
+  }
+  body.is-inbox-page .inbox-main-shell, body.is-inbox-page .inbox-app-shell {
+    width:100%!important; max-width:100%!important; height:100%!important; min-height:0!important; overflow:hidden!important;
+  }
+  body.is-inbox-page .inbox-mobile-section-tabs {
+    flex:0 0 auto; width:100%; min-width:0; display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr)); align-items:end;
+    border-bottom:1px solid rgba(255,255,255,.08); background:#000; overflow:hidden;
+  }
+  body.is-inbox-page .inbox-mobile-section-tabs a {
+    position:relative; min-width:0; padding:13px 8px 12px; color:#85858f;
+    text-decoration:none; text-align:center; font-size:.94rem; font-weight:650; line-height:1.2;
+    -webkit-tap-highlight-color:transparent;
+  }
+  body.is-inbox-page .inbox-mobile-section-tabs a.is-active { color:#f5f5f7; }
+  body.is-inbox-page .inbox-mobile-section-tabs a.is-active::after {
+    content:""; position:absolute; left:22%; right:22%; bottom:0; height:2px;
+    border-radius:999px; background:linear-gradient(90deg,#59c8ff,#8b5cff);
+  }
+  body.is-inbox-page .inbox-layout {
+    flex:1 1 auto; width:100%!important; max-width:100%!important;
+    height:auto!important; min-height:0!important; overflow:hidden!important;
+  }
+  body.is-inbox-page .inbox-layout-messages {
+    grid-template-columns:minmax(0,1fr)!important; grid-template-rows:minmax(0,1fr)!important;
+  }
+  body.is-inbox-page .inbox-thread-panel, body.is-inbox-page .inbox-main-panel,
+  body.is-inbox-page .conversation-stack, body.is-inbox-page .conversation-header,
+  body.is-inbox-page .message-composer {
+    width:100%!important; max-width:100%!important; min-width:0!important;
+    box-sizing:border-box!important; overflow-x:clip!important;
+  }
+  body.is-inbox-page .inbox-thread-panel { height:100%!important; min-height:0!important; overflow:hidden!important; }
+  body.is-inbox-page .inbox-thread-panel .inbox-thread-list {
+    min-height:0!important; overflow-x:clip!important; overflow-y:auto!important;
+    overscroll-behavior:contain; touch-action:pan-y; -webkit-overflow-scrolling:touch;
+  }
+  body.is-inbox-page .inbox-mobile-thread-section-label {
+    padding:14px 20px 7px; border:0; background:#000; color:#74747c;
+    font-size:.72rem; font-weight:750; letter-spacing:.075em; line-height:1; text-transform:uppercase;
+  }
+  body.is-inbox-page .inbox-main-panel { height:100%!important; min-height:0!important; overflow:hidden!important; }
+  body.is-inbox-page .conversation-header {
+    flex:0 0 auto!important; overflow-y:clip!important; touch-action:manipulation;
+  }
+  body.is-inbox-page .conversation-header > *, body.is-inbox-page .conversation-header-meta,
+  body.is-inbox-page .message-composer > * { min-width:0; max-width:100%; }
+  body.is-inbox-page .conversation-header-meta { overflow:hidden; }
+  body.is-inbox-page .conversation-header-meta h3, body.is-inbox-page .conversation-header-meta p {
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  body.is-inbox-page .conversation-stack {
+    flex:1 1 auto!important; height:auto!important; min-height:0!important;
+    overflow:hidden!important; overscroll-behavior:none; touch-action:none;
+  }
+  body.is-inbox-page .message-list {
+    flex:1 1 0!important; width:100%!important; height:0!important; min-height:0!important;
+    max-height:none!important; overflow-x:clip!important; overflow-y:auto!important;
+    overscroll-behavior-x:none; overscroll-behavior-y:contain;
+    touch-action:pan-y!important; -webkit-overflow-scrolling:touch;
+  }
+  body.is-inbox-page .message-composer {
+    flex:0 0 auto!important; overflow-y:clip!important; overscroll-behavior:none; touch-action:manipulation;
+  }
+  body.is-inbox-page .message-composer textarea, body.is-inbox-page .message-composer input {
+    max-width:100%!important; min-width:0!important; font-size:16px;
+  }
+  body.is-inbox-page .message-bubble, body.is-inbox-page .message-bubble p,
+  body.is-inbox-page .message-reply-preview, body.is-inbox-page .message-attachment-list {
+    max-width:100%!important; overflow-wrap:anywhere;
+  }
+  body.is-inbox-page .message-attachment-list img, body.is-inbox-page .message-attachment-list video,
+  body.is-inbox-page .message-image-preview-button { max-width:100%!important; }
+  body.is-inbox-page .conversation-header, body.is-inbox-page .conversation-stack,
+  body.is-inbox-page .message-composer, body.is-inbox-page .inbox-thread-panel { overscroll-behavior-x:none; }
+}
+
+/* === MELOGIC inbox authoritative geometry repair v7 === */
+@media (max-width:820px) {
+  body.is-inbox-page {
+    overflow:hidden!important;
+  }
+
+  /* Diagnostic proved main starts below global top chrome. 100vh + top padding
+     was making its rendered border box taller than the viewport. */
+  body.is-inbox-page main {
+    box-sizing:border-box!important;
+    height:100dvh!important;
+    min-height:0!important;
+    max-height:100dvh!important;
+    padding-top:var(--nav-offset)!important;
+    padding-bottom:calc(79px + env(safe-area-inset-bottom,0px))!important;
+    overflow:hidden!important;
+  }
+
+  body.is-inbox-page .inbox-main-shell {
+    box-sizing:border-box!important;
+    height:100%!important;
+    min-height:0!important;
+    max-height:100%!important;
+    overflow:hidden!important;
+  }
+
+  body.is-inbox-page .inbox-app-shell,
+  body.is-inbox-page .inbox-layout,
+  body.is-inbox-page .inbox-thread-panel,
+  body.is-inbox-page .inbox-main-panel {
+    min-height:0!important;
+    max-height:100%!important;
+    box-sizing:border-box!important;
+  }
+
+  body.is-inbox-page .inbox-thread-panel {
+    height:100%!important;
+    overflow:hidden!important;
+  }
+
+  body.is-inbox-page .inbox-thread-list {
+    min-height:0!important;
+    max-height:100%!important;
+    overflow-x:hidden!important;
+    overflow-y:auto!important;
+    padding-bottom:16px!important;
+    scroll-padding-bottom:16px!important;
+  }
+
+  body.is-inbox-page .conversation-stack {
+    height:100%!important;
+    min-height:0!important;
+    max-height:100%!important;
+    overflow:hidden!important;
+  }
+
+  body.is-inbox-page .message-list {
+    min-height:0!important;
+    overflow-x:hidden!important;
+    overflow-y:auto!important;
+    padding-bottom:16px!important;
+    scroll-padding-bottom:16px!important;
+  }
+
+  /* No interaction/stacking overrides here. Hit testing proved the real nav
+     and thread buttons are already the topmost pointer targets. */
+}

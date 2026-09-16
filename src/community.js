@@ -3160,15 +3160,20 @@ function renderPostMediaOnly(){
     if(url && !node.getAttribute('src')) node.setAttribute('src',url)
   })
 }
-function communityImageViewerOpen(){return Boolean(state.imageViewer?.open)}
-function installCommunityMobileGestureGuards(){
-  const isTouch=()=>window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints>0
-  document.addEventListener('gesturestart',(event)=>{if(isTouch()&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
-  document.addEventListener('gesturechange',(event)=>{if(isTouch()&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
-  document.addEventListener('gestureend',(event)=>{if(isTouch()&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
-  document.addEventListener('touchmove',(event)=>{if(isTouch()&&event.touches?.length>1&&!communityImageViewerOpen())event.preventDefault()},{passive:false})
-}
-installCommunityMobileGestureGuards()
+/*
+ * melogic-mobile-native-activation-v1
+ *
+ * Do not install document-level touch/gesture preventDefault handlers here.
+ * On touch browsers (especially iOS Safari / standalone WebKit), cancelling a
+ * touch sequence at document scope can suppress the compatibility click that
+ * activates native <a> and <button> controls. That makes the UI visibly react
+ * to a press while navigation/action never completes.
+ *
+ * Gesture cancellation belongs only on the custom surface that owns the
+ * gesture (for example the open image-viewer stage or camera canvas). The
+ * Community image viewer already owns its touchstart/touchmove handling on its
+ * stage, so normal page controls and the global mobile nav stay browser-native.
+ */
 
 async function loadViewerState() {
   if (!state.currentUser?.uid || !state.posts.length) {

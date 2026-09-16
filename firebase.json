@@ -506,6 +506,10 @@
         "destination": "/inbox.html"
       },
       {
+        "source": "/community/search",
+        "destination": "/community-search.html"
+      },
+      {
         "source": "/community",
         "destination": "/community.html"
       },

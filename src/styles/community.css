@@ -4785,3 +4785,32 @@ body:has(.community-page) #app {
 .community-page :is(button,a,input,textarea,select)[disabled],.community-page :is(button,a)[aria-disabled="true"]{filter:none;box-shadow:none}
 .community-page :is(.community-topic-arrow,.community-post-options-button,.community-filter-arrow,.community-comment-tool-row button,.community-post-actions button):not(.is-active):not([aria-pressed="true"]){box-shadow:none;background-image:none}
 @media(prefers-contrast:more){.community-topic-pill.is-active,.community-filter-chip:is(.is-active,[aria-pressed="true"],[aria-selected="true"]),.community-page :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline-width:3px}}
+
+/* melogic-community-theme-audit-v5 */
+.community-page :is(.community-hero p,.community-feed-toolbar p,.community-panel p,.community-sidebar p,.community-rail-card p,.community-left-nav-heading,.community-story-empty,.community-story-empty-state,.community-post-meta,.community-post-time,.community-post-context,.community-post-subtitle,.community-author em,.community-comments-heading p,.community-comments-count,.community-comment-meta,.community-comment-time,.community-picker-note){color:var(--community-text-muted)}
+.community-page :is(.community-topic-pill,.community-topic-arrow,.community-story-item,.community-left-nav a,.community-left-nav button,.community-left-topic-filter summary,.community-secondary-action):not(.is-active):not([aria-current="page"]):not([aria-selected="true"]):not([aria-pressed="true"]){color:var(--community-text-secondary)}
+.community-page :is(.community-panel,.community-sidebar,.community-rail-card,.community-community-card,.community-create-panel,.community-feed-controls form,.community-product-picker,.community-mention-picker,.community-emoji-panel,.community-picker-note,.community-composer-attachment,.community-post-file-attachment:not(.is-image):not(.is-video)){border-color:var(--community-border-subtle);background-color:var(--community-surface-1);background-image:none;box-shadow:none}
+.community-page :is(.community-topic-arrow,.community-filter-arrow,.community-post-options-button,.community-post-menu-button,.community-post-more,.community-comment-tool-row button,.community-inline-prompt,.community-secondary-action):not(.is-active):not([aria-pressed="true"]):not([aria-selected="true"]){background-color:transparent;background-image:none;box-shadow:none}
+.community-left-nav a:hover,.community-left-nav button:hover{background:var(--community-surface-hover);background-image:none}
+.community-scroll-chrome{background-color:rgba(0,0,0,.92);background-image:none}
+.community-feed-header{background-color:rgba(0,0,0,.92);background-image:none}
+.community-detail-topbar{background-color:transparent;background-image:none}
+.community-left-nav-group+.community-left-nav-group,.community-left-topic-filter,.community-stories-label,.community-comments-heading,.community-comment-replies{border-color:var(--community-border-subtle)}
+.community-page :is(input,textarea,select){color:var(--community-text);background-color:var(--community-surface-2);border-color:var(--community-border)}
+.community-page :is(input,textarea,select)::placeholder{color:var(--community-text-muted)}
+.community-page :is(input,textarea,select):hover{border-color:var(--community-border-strong)}
+.community-page :is(input,textarea,select):focus{color:var(--community-text);background-color:var(--community-surface-3);border-color:var(--community-accent-border)}
+.community-page :is(.community-post-options-menu,.community-comment-options-menu,.community-options-menu,.community-context-menu,.community-menu,.community-popover,.community-composer-modal,.community-report-modal,.community-story-modal,.community-story-viewer,.community-destination-modal,.community-share-modal,.community-options-modal,.community-modal,.community-dialog){color:var(--community-text);border-color:var(--community-border);background-color:var(--community-surface-2);background-image:none}
+.community-page :is(.community-image-viewer,.community-media-viewer){background:#000}
+.community-page :where(a,button,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--community-focus-ring);outline-offset:2px}
+@media(forced-colors:active){.community-page :where(a,button,input,textarea,select,[tabindex]):focus-visible{outline:2px solid Highlight}.community-topic-pill.is-active,.community-filter-chip:is(.is-active,[aria-pressed="true"],[aria-selected="true"]){border:2px solid Highlight}}
+@media(prefers-reduced-transparency:reduce){.community-scroll-chrome,.community-feed-header,.community-modal-backdrop{-webkit-backdrop-filter:none;backdrop-filter:none}.community-scroll-chrome,.community-feed-header{background:#000}}
+@media(max-width:1200px){.community-main,.community-route-main,.community-feed{background-color:transparent}}
+@media(max-width:900px){body:has(.community-page),body:has(.community-page) #app,.community-page{background-color:#000}.community-feed-header{background-color:rgba(0,0,0,.94)}}
+
+/* community-header-search-v2 */
+@media(max-width:760px){
+.is-community-page .community-title-lockup{display:inline-flex;align-items:center;gap:9px}.is-community-page .community-title-logo{width:31px;height:31px;object-fit:contain}.is-community-page .mobile-app-actions{gap:6px}
+.is-community-page .community-header-action{display:grid!important;place-items:center;width:44px!important;height:44px!important;padding:0!important;border:0!important;border-radius:50%!important;background:transparent!important;color:#eef2fa!important;-webkit-tap-highlight-color:transparent}.is-community-page .community-header-action svg{width:24px!important;height:24px!important;stroke-width:1.9}.is-community-page .community-header-action:hover{background:transparent!important}
+.is-community-page .community-modal-backdrop:has(.community-composer-modal){align-items:flex-end;padding:0}.is-community-page .community-composer-modal{width:100%;max-width:none;max-height:92dvh;margin:0;border-radius:24px 24px 0 0;background:#08090b}.is-community-page .community-composer-modal>header{position:sticky;top:0;z-index:5;padding:16px 18px;border-bottom:1px solid #1d1f24;background:#08090bf5}.is-community-page .community-composer-modal form{padding:14px 16px max(20px,env(safe-area-inset-bottom))}.is-community-page .community-composer-primary{border:1px solid #20232a;border-radius:18px;overflow:hidden;background:#0b0c0f}
+}
