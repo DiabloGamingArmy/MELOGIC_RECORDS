@@ -103,6 +103,7 @@ function stopTracks() {
   stream = null
   try { video.srcObject = null } catch {}
   zoomCapability = null; zoomValue = null; pendingZoomValue = null; zoomApplyPending = false
+  resetCameraPinchGesture()
 }
 function stopCaptureEngines() {
   stopMicrophone()
@@ -149,6 +150,47 @@ function setZoomFromDrag(deltaY) {
   pendingZoomValue = clamp(stepped, zoomCapability.min, zoomCapability.max)
   flushZoomConstraint()
 }
+/* melogic-camera-pinch-zoom-v1 */
+const cameraPinchPointers = new Map()
+let cameraPinchStartDistance = 0
+let cameraPinchStartZoom = null
+function cameraPinchDistance(){const p=[...cameraPinchPointers.values()];return p.length<2?0:Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y)}
+function quantizeCameraZoom(value){if(!zoomCapability)return value;const stepped=Math.round(value/zoomCapability.step)*zoomCapability.step;return clamp(stepped,zoomCapability.min,zoomCapability.max)}
+function queueCameraZoom(value){if(!zoomCapability||!Number.isFinite(value))return;pendingZoomValue=quantizeCameraZoom(value);flushZoomConstraint()}
+function resetCameraPinchGesture(){cameraPinchPointers.clear();cameraPinchStartDistance=0;cameraPinchStartZoom=null}
+function installCameraPinchZoom(){
+  if(!liveCanvas)return
+  liveCanvas.addEventListener('pointerdown',event=>{
+    if(event.pointerType!=='touch')return
+    cameraPinchPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+    liveCanvas.setPointerCapture?.(event.pointerId)
+    if(cameraPinchPointers.size===2){
+      const distance=cameraPinchDistance()
+      if(distance>0&&zoomCapability&&Number.isFinite(zoomValue)){cameraPinchStartDistance=distance;cameraPinchStartZoom=zoomValue}
+      event.preventDefault()
+    }
+  },{passive:false})
+  liveCanvas.addEventListener('pointermove',event=>{
+    if(event.pointerType!=='touch'||!cameraPinchPointers.has(event.pointerId))return
+    cameraPinchPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+    if(cameraPinchPointers.size!==2||!zoomCapability||!Number.isFinite(cameraPinchStartZoom)||cameraPinchStartDistance<=0)return
+    event.preventDefault()
+    const currentDistance=cameraPinchDistance()
+    if(currentDistance<=0)return
+    queueCameraZoom(cameraPinchStartZoom*(currentDistance/cameraPinchStartDistance))
+  },{passive:false})
+  const release=event=>{
+    if(event.pointerType!=='touch')return
+    cameraPinchPointers.delete(event.pointerId)
+    if(cameraPinchPointers.size<2){cameraPinchStartDistance=0;cameraPinchStartZoom=null}
+  }
+  liveCanvas.addEventListener('pointerup',release,{passive:true})
+  liveCanvas.addEventListener('pointercancel',release,{passive:true})
+  liveCanvas.addEventListener('lostpointercapture',release,{passive:true})
+  for(const type of ['gesturestart','gesturechange','gestureend'])liveCanvas.addEventListener(type,event=>event.preventDefault(),{passive:false})
+}
+installCameraPinchZoom()
+
 function supportedMimeType() {
   const candidates = ['video/mp4;codecs=h264,aac','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']
   return candidates.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || ''
