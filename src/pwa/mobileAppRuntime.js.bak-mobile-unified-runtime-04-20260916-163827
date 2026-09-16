@@ -11,7 +11,6 @@ import {
   resolveMobileSpaRoute
 } from './mobileSpaRouter'
 import { getMobileSpaOutlet } from './mobileSpaShell'
-import { readMobileRuntimeMetadata, writeMobileRuntimeMetadata } from './mobileSpaDataCache'
 
 const RUNTIME_EVENT = 'melogic:mobile-runtime-state'
 const VIEW_IDS = new Set(['community', 'inbox', 'profile', 'profile-edit', 'profile-public', 'camera', 'streaming'])
@@ -21,11 +20,6 @@ const instances = new Map()
 let initialized = false
 let activeViewId = null
 let transitionId = 0
-let warmupGeneration = 0
-const runtimeWarmViews = new Set()
-const RUNTIME_WARM_ORDER = ['community', 'inbox', 'profile', 'camera', 'streaming']
-let runtimeSuspended = false
-let lastCompletedUrl = location.href
 
 function normalizedPath(value = location.pathname) {
   const path = String(value || '/').replace(/\/+$/, '')
@@ -66,7 +60,6 @@ export function registerMobileRuntimeView(viewId, lifecycle) {
     throw new Error(`Mobile runtime view already registered: ${id}`)
   }
   registry.set(id, lifecycle)
-  runtimeWarmViews.add(id)
   const currentRoute = resolveMobileSpaRoute()
   if (!activeViewId && currentRoute?.id === id) {
     activeViewId = id
@@ -102,7 +95,7 @@ export function canActivateMobileRuntimeUrl(value) {
 }
 
 export async function activateMobileRuntimeUrl(value, { historyMode = 'push', source = 'runtime' } = {}) {
-  if (!isMobileSpaRuntime() || runtimeSuspended) return false
+  if (!isMobileSpaRuntime()) return false
   let url
   try { url = value instanceof URL ? value : new URL(String(value), location.href) } catch { return false }
   if (url.origin !== location.origin) return false
@@ -150,13 +143,6 @@ export async function activateMobileRuntimeUrl(value, { historyMode = 'push', so
   else if (historyMode === 'push' && url.href !== location.href) history.pushState(state, '', url.href)
 
   emitMobileSpaNavigation({ type: 'runtime', source, route, pathname: normalizedPath(url.pathname) })
-  lastCompletedUrl = url.href
-  runtimeWarmViews.add(route.id)
-  void writeMobileRuntimeMetadata({
-    lastRouteId: route.id,
-    lastPathname: normalizedPath(url.pathname),
-    warmRouteIds: [...runtimeWarmViews]
-  })
   publish('transition-complete', { from: previousId, to: route.id, source })
   return true
 }
@@ -173,115 +159,21 @@ export async function unmountMobileRuntimeView(viewId) {
   return true
 }
 
-// melogic-mobile-unified-runtime-v5
-function runtimeCanWarm() {
-  if (!isMobileSpaRuntime() || document.visibilityState !== 'visible') return false
-  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection
-  if (connection?.saveData) return false
-  const effectiveType = String(connection?.effectiveType || '')
-  if (/^(slow-)?2g$/i.test(effectiveType)) return false
-  return true
-}
-
-async function warmRuntimeViewModule(routeId, generation) {
-  if (!runtimeCanWarm() || generation !== warmupGeneration || registry.has(routeId)) return
-  const routePath = routeId === 'streaming' ? '/music' : `/${routeId}`
-  const route = resolveMobileSpaRoute(routePath)
-  if (!route) return
-  try {
-    const { getMobileSpaRouteLoader } = await import('./mobileSpaRouter')
-    const loader = getMobileSpaRouteLoader(routePath)
-    if (typeof loader !== 'function') return
-    await loader()
-    if (generation === warmupGeneration && registry.has(routeId)) runtimeWarmViews.add(routeId)
-  } catch (error) {
-    if (import.meta.env?.DEV) console.debug('[Melogic mobile runtime] warmup skipped', routeId, error)
-  }
-}
-
-async function warmRuntimeViews() {
-  if (!runtimeCanWarm()) return
-  const generation = ++warmupGeneration
-  const metadata = await readMobileRuntimeMetadata().catch(() => null)
-  const remembered = Array.isArray(metadata?.warmRouteIds) ? metadata.warmRouteIds : []
-  const order = [...new Set([...remembered, ...RUNTIME_WARM_ORDER])]
-  for (const routeId of order) {
-    if (generation !== warmupGeneration || !runtimeCanWarm()) return
-    await warmRuntimeViewModule(routeId, generation)
-    // Yield between heavy entry chunks so first paint/input stays responsive.
-    await new Promise(resolve => window.setTimeout(resolve, 80))
-  }
-  void writeMobileRuntimeMetadata({
-    lastRouteId: resolveMobileSpaRoute()?.id || '',
-    lastPathname: normalizedPath(),
-    warmRouteIds: [...runtimeWarmViews]
-  })
-  publish('warmup-complete', { warmRouteIds: [...runtimeWarmViews] })
-}
-
-function scheduleRuntimeWarmup() {
-  if (!runtimeCanWarm()) return
-  const run = () => void warmRuntimeViews()
-  if ('requestIdleCallback' in window) {
-    window.requestIdleCallback(run, { timeout: 1800 })
-  } else {
-    window.setTimeout(run, 900)
-  }
-}
-
 export function initMobileAppRuntime() {
   if (initialized) return
   initialized = true
   if (!isMobileSpaRuntime()) return
   document.documentElement.dataset.melogicMobileRuntime = 'foundation'
   publish('init')
-  window.setTimeout(scheduleRuntimeWarmup, 500)
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      warmupGeneration += 1
-      return
-    }
-    scheduleRuntimeWarmup()
-  })
   queueMicrotask(() => initCommunityInboxRuntimeBridge())
   window.addEventListener('pagehide', event => {
-    runtimeSuspended = true
-    warmupGeneration += 1
-    transitionId += 1
-    publish(event.persisted ? 'pagehide-persisted' : 'pagehide')
-  })
-
-  window.addEventListener('pageshow', event => {
-    runtimeSuspended = false
-    const route = resolveMobileSpaRoute()
-    const needsRepair = route && VIEW_IDS.has(route.id) && registry.has(route.id) && activeViewId !== route.id
-    if (needsRepair) {
-      void activateMobileRuntimeUrl(location.href, {
-        historyMode: 'replace',
-        source: event.persisted ? 'bfcache-restore' : 'pageshow-repair'
-      })
-    }
-    if (document.visibilityState === 'visible') scheduleRuntimeWarmup()
-    publish(event.persisted ? 'pageshow-persisted' : 'pageshow')
-  })
-
-  window.addEventListener('online', () => {
-    if (document.visibilityState === 'visible') scheduleRuntimeWarmup()
-    publish('online')
-  })
-  window.addEventListener('offline', () => publish('offline'))
-
-  window.addEventListener('error', event => {
-    const message = String(event?.message || '')
-    if (/dynamically imported module|importing a module script|module script/i.test(message)) {
-      publish('module-load-error', { message })
-    }
+    if (!event.persisted) publish('pagehide')
   })
 }
 
 
 // melogic-mobile-unified-runtime-v2
-const PHASE2_ROUTE_IDS = new Set(['community', 'inbox', 'profile', 'camera', 'streaming']) // melogic-mobile-unified-runtime-v4
+const PHASE2_ROUTE_IDS = new Set(['community', 'inbox', 'profile', 'camera']) // melogic-mobile-unified-runtime-v3
 let phase2NavigationPending = false
 
 async function prepareMobileRuntimeRoute(url) {

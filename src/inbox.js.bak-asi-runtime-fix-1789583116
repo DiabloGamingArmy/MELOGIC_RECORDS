@@ -7,8 +7,6 @@ import { initShellChrome } from './appBoot'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
 import { ROUTES, authRoute, communityPostRoute, inboxActiveCallRoute, productRoute, publicProfileRoute } from './utils/routes'
-import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
@@ -406,12 +404,11 @@ let processedStartUid = ''
 let accountCallManager = null
 let accountCallTimeout = null
 let accountCallTimer = null
-const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1';
-
+const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1'
 // melogic-inbox-mobile-architecture-v1
 
 // melogic-inbox-category-anchor-touch-fix-v1
-;(function installInboxCategoryAnchorTouchFix(){
+(function installInboxCategoryAnchorTouchFix(){
   if(window.__melogicInboxCategoryAnchorTouchFixV1) return;
   const touchMobile=window.matchMedia('(max-width: 760px)').matches &&
     (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints>0 || 'ontouchstart' in window);
@@ -691,19 +688,11 @@ function navigateInbox(path, { replace = false } = {}) {
   const nextUrl = inboxRouteWithCurrentSearch(path)
   const currentUrl = `${window.location.pathname}${window.location.search}`
   if (nextUrl !== currentUrl) {
-    const existingState = history.state && typeof history.state === 'object' ? history.state : {}
-    window.history[replace ? 'replaceState' : 'pushState']({
-      ...existingState,
-      inbox: true,
-      melogicMobileSpa: isMobileSpaRuntime(),
-      routeId: 'inbox',
-      pathname: path
-    }, '', nextUrl)
+    window.history[replace ? 'replaceState' : 'pushState']({ inbox: true }, '', nextUrl)
   }
   applyInboxRoute(parseInboxRoute(path))
   renderSignedInState()
   if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
-  if (isMobileSpaRuntime()) emitMobileSpaNavigation({ type: replace ? 'replace' : 'push', routeId: 'inbox' })
 }
 
 function normalizeInitialInboxRoute() {
@@ -2930,7 +2919,7 @@ function getConversationBodyMarkup({
           const ext = escapeHtml((String(file.name || '').split('.').pop() || type).toUpperCase().slice(0, 6))
           return `<article class="composer-attachment-preview is-file" title="${title}"><div class="composer-file-icon">${ext}</div><small>${title}</small><button type="button" data-remove-attachment="${index}" aria-label="Remove attachment">×</button></article>`
         }).join('')}</div>` : ''}
-        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="1" maxlength="1200" placeholder="${historyClearing ? 'Deleting conversation history...' : isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
+        <textarea id="message-input" name="message" data-message-composer-input="${thread.id}" rows="2" maxlength="1200" placeholder="${historyClearing ? 'Deleting conversation history...' : isPreparingThread ? 'Preparing conversation...' : 'Write a message...'}" ${isComposerUnavailable ? 'disabled' : ''}>${escapeHtml(draft)}</textarea>
         <input type="file" class="composer-attachment-input" data-attachment-input multiple accept="image/*,video/*,audio/*,.pdf,.zip,.doc,.docx,.txt" ${isComposerUnavailable ? 'disabled' : ''} />
         <div class="message-composer-footer">
           ${appState.errorMessage
@@ -3583,36 +3572,10 @@ function openThreadActionMenu(threadId, event) {
   if (!threadId) return
   clearFloatingOverlays()
   appState.reactionDetailModal = null
-  // melogic-mobile-thread-menu-touch-position-v1
-  // Native/synthetic mobile click events can expose clientX/clientY as 0/0.
-  // Prefer the actual touch point, then pointer coordinates, then the trigger's
-  // on-screen center so the menu can never fall back to the viewport origin.
-  const touchPoint = event.changedTouches?.[0] || event.touches?.[0] || null
-  const trigger = event.currentTarget instanceof Element
-    ? event.currentTarget
-    : event.target instanceof Element
-      ? event.target.closest('[data-thread-menu-id], [data-thread-action-trigger], [data-thread-menu-trigger], [data-thread-actions-trigger]')
-      : null
-  const triggerRect = trigger?.getBoundingClientRect?.()
-  const pointerX = Number(touchPoint?.clientX ?? event.clientX)
-  const pointerY = Number(touchPoint?.clientY ?? event.clientY)
-  const hasPointerPosition = Number.isFinite(pointerX) && Number.isFinite(pointerY)
-    && (pointerX !== 0 || pointerY !== 0)
-  const x = hasPointerPosition
-    ? pointerX
-    : triggerRect
-      ? triggerRect.left + (triggerRect.width / 2)
-      : window.innerWidth / 2
-  const y = hasPointerPosition
-    ? pointerY
-    : triggerRect
-      ? triggerRect.top + (triggerRect.height / 2)
-      : window.innerHeight / 2
-
   appState.threadActionMenu = {
     threadId,
-    x,
-    y
+    x: event.clientX,
+    y: event.clientY
   }
   appState.threadConfirmModal = null
   renderFloatingUi()
@@ -6304,106 +6267,6 @@ function renderSignedOutState() {
   floatingRoot.innerHTML = ''
 }
 
-// melogic-inbox-instagram-composer-v1
-function syncMessageComposerPresentation(textarea) {
-  if (!(textarea instanceof HTMLTextAreaElement)) return
-  const form = textarea.closest('[data-message-form]')
-  if (!form) return
-
-  const hasText = textarea.value.trim().length > 0
-  const hasAttachments = Boolean(form.querySelector('.composer-attachment-preview'))
-  form.classList.toggle('has-text', hasText)
-  form.classList.toggle('has-sendable-content', hasText || hasAttachments)
-
-  textarea.style.height = 'auto'
-  const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 22
-  const maxHeight = Math.max(44, Math.round(lineHeight * 5 + 20))
-  const nextHeight = Math.min(textarea.scrollHeight, maxHeight)
-  textarea.style.height = `${Math.max(44, nextHeight)}px`
-  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
-}
-
-// melogic-inbox-composer-focus-viewport-lock-v1
-let inboxComposerViewportLockCleanup = null
-
-function lockInboxComposerViewportToTop(textarea) {
-  inboxComposerViewportLockCleanup?.()
-  inboxComposerViewportLockCleanup = null
-
-  if (!isMobileInboxViewport() || !(textarea instanceof HTMLTextAreaElement)) return
-
-  let active = true
-  let correcting = false
-  const visualViewport = window.visualViewport
-
-  const forceTop = () => {
-    if (!active || document.activeElement !== textarea || correcting) return
-    if (window.scrollX === 0 && window.scrollY === 0) return
-    correcting = true
-    window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
-    requestAnimationFrame(() => { correcting = false })
-  }
-
-  const holdTop = () => {
-    forceTop()
-    requestAnimationFrame(forceTop)
-  }
-
-  // iOS can move the layout viewport more than once while the keyboard animates.
-  // Reassert top on the viewport signals that accompany that animation.
-  window.scrollTo({ left: 0, top: 0, behavior: 'instant' })
-  requestAnimationFrame(holdTop)
-  setTimeout(holdTop, 50)
-  setTimeout(holdTop, 150)
-  setTimeout(holdTop, 300)
-
-  window.addEventListener('scroll', forceTop, { passive: true })
-  visualViewport?.addEventListener('resize', holdTop, { passive: true })
-  visualViewport?.addEventListener('scroll', holdTop, { passive: true })
-
-  inboxComposerViewportLockCleanup = () => {
-    active = false
-    window.removeEventListener('scroll', forceTop)
-    visualViewport?.removeEventListener('resize', holdTop)
-    visualViewport?.removeEventListener('scroll', holdTop)
-  }
-}
-
-// melogic-inbox-composer-edge-scroll-v1
-function scrollConversationToLatestMessageOnce() {
-  const scroller = getMessageScroller()
-  if (!(scroller instanceof HTMLElement)) return
-
-  // scrollHeight is the complete internal message-content height. This changes
-  // only the conversation history scroller; it does not move the page viewport.
-  scroller.scrollTo({
-    left: 0,
-    top: scroller.scrollHeight,
-    behavior: 'instant'
-  })
-}
-
-// melogic-inbox-composer-focus-scroll-window-v1
-function keepConversationAtLatestDuringKeyboardOpen(durationMs = 500) {
-  const startedAt = performance.now()
-  let frameId = 0
-
-  const tick = (now) => {
-    scrollConversationToLatestMessageOnce()
-    if (now - startedAt < durationMs) {
-      frameId = requestAnimationFrame(tick)
-    }
-  }
-
-  frameId = requestAnimationFrame(tick)
-  return () => cancelAnimationFrame(frameId)
-}
-
-function releaseInboxComposerViewportLock() {
-  inboxComposerViewportLockCleanup?.()
-  inboxComposerViewportLockCleanup = null
-}
-
 function bindSharedEvents(scope = inboxRoot) {
   scope.querySelectorAll('[data-mobile-inbox-back]').forEach((button) => {
     button.addEventListener('click', () => {
@@ -6680,16 +6543,6 @@ function bindSharedEvents(scope = inboxRoot) {
   const thread = getSelectedThread()
 
   if (textarea && thread) {
-    syncMessageComposerPresentation(textarea)
-    textarea.addEventListener('focus', () => {
-      lockInboxComposerViewportToTop(textarea)
-      // The iOS keyboard changes the usable viewport asynchronously. Keep the
-      // internal history at its latest edge only during that short transition.
-      keepConversationAtLatestDuringKeyboardOpen(500)
-    })
-    textarea.addEventListener('input', () => {
-      syncMessageComposerPresentation(textarea)
-    })
     textarea.addEventListener('keydown', async (event) => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
@@ -6710,10 +6563,6 @@ function bindSharedEvents(scope = inboxRoot) {
       renderSelectedConversation({ reason: 'state-update' })
     })
     textarea.addEventListener('blur', () => {
-      releaseInboxComposerViewportLock()
-      // One blur-edge snap: restore the conversation to the latest message
-      // when keyboard input is left. Do not continuously pin message history.
-      requestAnimationFrame(scrollConversationToLatestMessageOnce)
       clearTypingForThread(thread.id)
     })
   }
@@ -7955,28 +7804,6 @@ function handleGlobalKeydown(event) {
   }
 }
 
-// melogic-inbox-page-zoom-lock-v1
-function installInboxPageZoomLock() {
-  if (window.__melogicInboxPageZoomLockV1) return
-  window.__melogicInboxPageZoomLockV1 = true
-
-  const preventGestureZoom = (event) => {
-    event.preventDefault()
-  }
-  const preventMultiTouchZoom = (event) => {
-    if (event.touches?.length > 1) event.preventDefault()
-  }
-
-  // WebKit gesture events plus a multi-touch fallback. Single-finger
-  // touchmove remains native so Inbox scrolling is unaffected.
-  document.addEventListener('gesturestart', preventGestureZoom, { passive: false })
-  document.addEventListener('gesturechange', preventGestureZoom, { passive: false })
-  document.addEventListener('gestureend', preventGestureZoom, { passive: false })
-  document.addEventListener('touchmove', preventMultiTouchZoom, { passive: false })
-}
-
-installInboxPageZoomLock()
-
 document.addEventListener('keydown', handleGlobalKeydown)
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') {
@@ -8030,7 +7857,6 @@ window.addEventListener('popstate', (event) => {
     renderSignedInState()
     if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
   }
-  if (isMobileSpaRuntime()) emitMobileSpaNavigation({ type: 'popstate', routeId: 'inbox' })
 })
 
 // melogic-inbox-mobile-tabs-scroll-v5
@@ -8047,57 +7873,31 @@ function installMobileInboxNavigationAndScrollArchitecture() {
   const mobileTabsMarkup = () => {
     const active = routeKind()
     return `<nav class="inbox-mobile-section-tabs" data-inbox-mobile-section-tabs aria-label="Inbox sections">
-      <a class="${active === 'messages' ? 'is-active' : ''}" href="/inbox/messages" data-native-touch-navigation ${active === 'messages' ? 'aria-current="page"' : ''}>Messages</a>
-      <a class="${active === 'calls' ? 'is-active' : ''}" href="/inbox/calls" data-native-touch-navigation ${active === 'calls' ? 'aria-current="page"' : ''}>Calls</a>
-      <a class="${active === 'activity' ? 'is-active' : ''}" href="/inbox/system" data-native-touch-navigation ${active === 'activity' ? 'aria-current="page"' : ''}>Activity</a>
+      <a class="${active === 'messages' ? 'is-active' : ''}" href="/inbox/messages" ${active === 'messages' ? 'aria-current="page"' : ''}>Messages</a>
+      <a class="${active === 'calls' ? 'is-active' : ''}" href="/inbox/calls" ${active === 'calls' ? 'aria-current="page"' : ''}>Calls</a>
+      <a class="${active === 'activity' ? 'is-active' : ''}" href="/inbox/system" ${active === 'activity' ? 'aria-current="page"' : ''}>Activity</a>
     </nav>`
   }
   const ensureTabs = () => {
-    const existingTabs = document.querySelector('[data-inbox-mobile-section-tabs]')
     if (!isMobile()) {
-      existingTabs?.remove()
+      document.querySelectorAll('[data-inbox-mobile-section-tabs]').forEach((node) => node.remove())
       return
     }
-
-    // data-inbox-root is a volatile render surface: renderSignedInState()
-    // replaces inboxRoot.innerHTML. Keep section navigation outside that root
-    // so a render cannot destroy a pressed anchor before pointerup/click.
-    const inboxRootNode = document.querySelector('[data-inbox-root]')
-    const persistentParent = inboxRootNode?.parentElement
-    if (!inboxRootNode || !persistentParent) return
-
-    let tabs = existingTabs
+    const root = document.querySelector('.inbox-app-shell, .inbox-main-shell, .inbox-layout')
+    if (!root) return
+    let tabs = document.querySelector('[data-inbox-mobile-section-tabs]')
     if (!tabs) {
       const holder = document.createElement('div')
       holder.innerHTML = mobileTabsMarkup().trim()
       tabs = holder.firstElementChild
+      const layout = document.querySelector('.inbox-layout')
+      if (layout?.parentElement) layout.parentElement.insertBefore(tabs, layout)
+      else root.prepend(tabs)
+    } else {
+      const holder = document.createElement('div')
+      holder.innerHTML = mobileTabsMarkup().trim()
+      tabs.replaceWith(holder.firstElementChild)
     }
-
-    // Move the SAME nav node to the persistent shell if an older build mounted
-    // it inside data-inbox-root. Never clone or replace the live navigation.
-    if (tabs.parentElement !== persistentParent || tabs.nextElementSibling !== inboxRootNode) {
-      persistentParent.insertBefore(tabs, inboxRootNode)
-    }
-
-    const active = routeKind()
-    const tabState = [
-      { href: '/inbox/messages', key: 'messages' },
-      { href: '/inbox/calls', key: 'calls' },
-      { href: '/inbox/system', key: 'activity' }
-    ]
-    const anchors = [...tabs.querySelectorAll(':scope > a')]
-    tabState.forEach(({ href, key }, index) => {
-      const anchor = anchors[index]
-      if (!anchor) return
-      if (anchor.getAttribute('href') !== href) anchor.setAttribute('href', href)
-      if (!anchor.hasAttribute('data-native-touch-navigation')) {
-        anchor.setAttribute('data-native-touch-navigation', '')
-      }
-      const isActive = active === key
-      anchor.classList.toggle('is-active', isActive)
-      if (isActive) anchor.setAttribute('aria-current', 'page')
-      else anchor.removeAttribute('aria-current')
-    })
   }
   const ensureThreadSectionLabels = () => {
     if (!isMobile() || routeKind() !== 'messages') return
@@ -8122,18 +7922,9 @@ function installMobileInboxNavigationAndScrollArchitecture() {
       list.insertBefore(label, normal[0])
     }
   }
-  const syncMobileConversationChrome = () => {
-    if (!isMobile()) {
-      document.body.classList.remove('is-inbox-mobile-conversation-open')
-      return
-    }
-    const conversationOpen = Boolean(document.querySelector('.inbox-mobile-conversation-view'))
-    document.body.classList.toggle('is-inbox-mobile-conversation-open', conversationOpen)
-  }
   const updateViewportBoundary = () => {
     if (!isMobile()) return
-    const conversationOpen = document.body.classList.contains('is-inbox-mobile-conversation-open')
-    const nav = conversationOpen ? null : document.querySelector('.mobile-bottom-nav')
+    const nav = document.querySelector('.mobile-bottom-nav')
     const viewportHeight = Math.round(window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight)
     let bottomEdge = viewportHeight
     if (nav) {
@@ -8160,7 +7951,6 @@ function installMobileInboxNavigationAndScrollArchitecture() {
     raf = requestAnimationFrame(() => {
       ensureTabs()
       ensureThreadSectionLabels()
-      syncMobileConversationChrome()
       updateViewportBoundary()
       hardenConversationScrollOwnership()
     })
@@ -8176,53 +7966,6 @@ function installMobileInboxNavigationAndScrollArchitecture() {
   reconcile()
 }
 installMobileInboxNavigationAndScrollArchitecture()
-
-// melogic-inbox-spa-lifecycle-v3
-function installInboxSpaLifecycle() {
-  if (!isMobileSpaRuntime() || window.__melogicInboxSpaLifecycleV3) return
-  window.__melogicInboxSpaLifecycleV3 = true
-
-  document.addEventListener('click', (event) => {
-    if (event.defaultPrevented || event.button !== 0) return
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-
-    const anchor = event.target.closest?.('a[href]')
-    if (!(anchor instanceof HTMLAnchorElement)) return
-    if (anchor.target && anchor.target !== '_self') return
-    if (anchor.hasAttribute('download')) return
-
-    let url
-    try { url = new URL(anchor.href, location.href) } catch { return }
-    if (url.origin !== location.origin) return
-    if (!url.pathname.startsWith('/inbox')) return
-
-    // Keep hash-only semantics native. Everything else in the Inbox route
-    // family is rendered by the existing route-aware Inbox implementation.
-    if (url.pathname === location.pathname && url.search === location.search && url.hash) return
-
-    event.preventDefault()
-    navigateInbox(`${url.pathname}${url.search}`)
-  }, { capture: true })
-}
-
-installInboxSpaLifecycle()
-
-// melogic-mobile-unified-runtime-v2
-if (isMobileSpaRuntime()) {
-  registerMobileRuntimeView('inbox', {
-    async mount() { return { fragment: null } },
-    async activate({ instance }) {
-      document.body.classList.add('is-inbox-page')
-      if (instance?.fragment?.childNodes?.length) { app.replaceChildren(instance.fragment); instance.fragment=null }
-      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
-    },
-    async deactivate({ instance }) {
-      const fragment=document.createDocumentFragment(); while(app.firstChild) fragment.append(app.firstChild); instance.fragment=fragment
-      clearFloatingOverlays()
-    },
-    async unmount({ instance }) { instance.fragment=null; clearRealtimeListeners() }
-  })
-}
 
 normalizeInitialInboxRoute()
 waitForInitialAuthState().then(async (user) => {

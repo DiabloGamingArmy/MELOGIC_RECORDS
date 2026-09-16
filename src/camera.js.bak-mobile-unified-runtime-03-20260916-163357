@@ -2,8 +2,6 @@ import './styles/base.css'
 import './styles/camera.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
-import { isMobileSpaRuntime } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 
 const app = document.querySelector('#app')
 let stream = null
@@ -120,42 +118,6 @@ function stopCaptureEngines() {
   stopTracks()
   liveCanvas.classList.remove('is-ready')
 }
-// melogic-mobile-unified-runtime-v3
-if (isMobileSpaRuntime()) {
-  registerMobileRuntimeView('camera', {
-    async mount() { return { fragment: null, resumeCamera: true } },
-    async activate({ instance }) {
-      document.body.classList.add('is-camera-page')
-      if (instance?.fragment?.childNodes?.length) {
-        app.replaceChildren(instance.fragment)
-        instance.fragment = null
-      }
-      if (instance?.resumeCamera && playback?.hidden && !stream && !cameraStarting) {
-        instance.resumeCamera = false
-        await startCamera()
-      }
-    },
-    async deactivate({ instance }) {
-      document.body.classList.remove('is-camera-page')
-      instance.resumeCamera = Boolean(playback?.hidden)
-      recordingIntent = false
-      if (recorder?.state === 'recording') {
-        try { recorder.stop() } catch {}
-      }
-      window.clearInterval(recordingTimer)
-      window.clearTimeout(holdTimer)
-      stopCaptureEngines()
-      const fragment = document.createDocumentFragment()
-      while (app.firstChild) fragment.append(app.firstChild)
-      instance.fragment = fragment
-    },
-    async unmount({ instance }) {
-      stopCaptureEngines()
-      instance.fragment = null
-    }
-  })
-}
-
 function clamp(value, min, max) { return Math.min(max, Math.max(min, value)) }
 function configureZoomCapability() {
   const track = stream?.getVideoTracks?.()[0]

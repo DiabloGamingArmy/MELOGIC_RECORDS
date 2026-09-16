@@ -110,7 +110,6 @@ import {
 } from './data/musicService'
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 
 // melogic-streaming-spa-lifecycle-v6
 function initConsumerSpaLifecycle() {
@@ -134,8 +133,6 @@ function initConsumerSpaLifecycle() {
 initConsumerSpaLifecycle()
 
 const app = document.querySelector('#app')
-let mobileStreamingRuntimeActive = true
-let mobileStreamingRuntimeDirty = false
 bindExpandableMusicPlayer()
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
@@ -434,54 +431,6 @@ const state = {
     volume: 0.85
   }
 }
-// melogic-mobile-unified-runtime-v4
-function registerStreamingMobileRuntime() {
-  if (!isMobileSpaRuntime()) return
-
-  registerMobileRuntimeView('streaming', {
-    async mount() {
-      return { fragment: null }
-    },
-    async activate({ instance }) {
-      mobileStreamingRuntimeActive = true
-      document.body.classList.add('is-streaming-page')
-      if (instance?.fragment?.childNodes?.length) {
-        app.replaceChildren(instance.fragment)
-        instance.fragment = null
-      }
-      if (mobileStreamingRuntimeDirty) {
-        mobileStreamingRuntimeDirty = false
-        renderLandingPage()
-        hydrateStableImages()
-      }
-      ensureLiveKitListenerAudioMounted()
-    },
-    async deactivate({ instance }) {
-      mobileStreamingRuntimeActive = false
-      document.body.classList.remove('is-streaming-page')
-      musicLiveControlsCleanup?.()
-      musicMonitorVisualizerCleanup?.()
-      if (musicMonitorControlsTimer) {
-        window.clearTimeout(musicMonitorControlsTimer)
-        musicMonitorControlsTimer = 0
-      }
-      const fragment = document.createDocumentFragment()
-      while (app.firstChild) fragment.append(app.firstChild)
-      instance.fragment = fragment
-    },
-    async unmount({ instance }) {
-      mobileStreamingRuntimeActive = false
-      instance.fragment = null
-      try { cleanupHlsPlayback() } catch {}
-      try { cleanupNativeMediaSourcePipeline() } catch {}
-      try { await releaseLiveListenerPresence() } catch {}
-      try { await state.listenerRoom?.disconnect?.() } catch {}
-      state.listenerRoom = null
-    }
-  })
-}
-registerStreamingMobileRuntime()
-
 const persistentPlayback = readPersistentMusicPlayback()
 if (persistentPlayback?.track?.streamAudioURL) {
   state.player.track = persistentPlayback.track
@@ -1230,11 +1179,6 @@ function renderActiveView() {
 }
 
 function renderAppShell(content) {
-  // melogic-mobile-unified-runtime-v4
-  if (isMobileSpaRuntime() && !mobileStreamingRuntimeActive) {
-    mobileStreamingRuntimeDirty = true
-    return
-  }
   const existingPage = app.querySelector(':scope > .music-page')
   const existingContent = existingPage?.querySelector('[data-music-content]')
   if (existingPage && existingContent) {

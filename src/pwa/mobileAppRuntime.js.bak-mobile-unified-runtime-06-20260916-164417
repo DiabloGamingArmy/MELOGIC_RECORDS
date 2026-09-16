@@ -24,8 +24,6 @@ let transitionId = 0
 let warmupGeneration = 0
 const runtimeWarmViews = new Set()
 const RUNTIME_WARM_ORDER = ['community', 'inbox', 'profile', 'camera', 'streaming']
-let runtimeSuspended = false
-let lastCompletedUrl = location.href
 
 function normalizedPath(value = location.pathname) {
   const path = String(value || '/').replace(/\/+$/, '')
@@ -102,7 +100,7 @@ export function canActivateMobileRuntimeUrl(value) {
 }
 
 export async function activateMobileRuntimeUrl(value, { historyMode = 'push', source = 'runtime' } = {}) {
-  if (!isMobileSpaRuntime() || runtimeSuspended) return false
+  if (!isMobileSpaRuntime()) return false
   let url
   try { url = value instanceof URL ? value : new URL(String(value), location.href) } catch { return false }
   if (url.origin !== location.origin) return false
@@ -150,7 +148,6 @@ export async function activateMobileRuntimeUrl(value, { historyMode = 'push', so
   else if (historyMode === 'push' && url.href !== location.href) history.pushState(state, '', url.href)
 
   emitMobileSpaNavigation({ type: 'runtime', source, route, pathname: normalizedPath(url.pathname) })
-  lastCompletedUrl = url.href
   runtimeWarmViews.add(route.id)
   void writeMobileRuntimeMetadata({
     lastRouteId: route.id,
@@ -245,37 +242,7 @@ export function initMobileAppRuntime() {
   })
   queueMicrotask(() => initCommunityInboxRuntimeBridge())
   window.addEventListener('pagehide', event => {
-    runtimeSuspended = true
-    warmupGeneration += 1
-    transitionId += 1
-    publish(event.persisted ? 'pagehide-persisted' : 'pagehide')
-  })
-
-  window.addEventListener('pageshow', event => {
-    runtimeSuspended = false
-    const route = resolveMobileSpaRoute()
-    const needsRepair = route && VIEW_IDS.has(route.id) && registry.has(route.id) && activeViewId !== route.id
-    if (needsRepair) {
-      void activateMobileRuntimeUrl(location.href, {
-        historyMode: 'replace',
-        source: event.persisted ? 'bfcache-restore' : 'pageshow-repair'
-      })
-    }
-    if (document.visibilityState === 'visible') scheduleRuntimeWarmup()
-    publish(event.persisted ? 'pageshow-persisted' : 'pageshow')
-  })
-
-  window.addEventListener('online', () => {
-    if (document.visibilityState === 'visible') scheduleRuntimeWarmup()
-    publish('online')
-  })
-  window.addEventListener('offline', () => publish('offline'))
-
-  window.addEventListener('error', event => {
-    const message = String(event?.message || '')
-    if (/dynamically imported module|importing a module script|module script/i.test(message)) {
-      publish('module-load-error', { message })
-    }
+    if (!event.persisted) publish('pagehide')
   })
 }
 

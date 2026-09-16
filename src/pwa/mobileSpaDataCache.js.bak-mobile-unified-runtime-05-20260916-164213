@@ -118,32 +118,3 @@ export async function clearMobileSpaViewCache({ scope } = {}) {
     db.close()
   }
 }
-
-// melogic-mobile-unified-runtime-v5
-const RUNTIME_META_ROUTE = '__runtime__'
-const RUNTIME_META_MAX_AGE_MS = 24 * 60 * 60 * 1000
-
-export function runtimeCacheScope() {
-  // Deliberately device/session scoped, not identity scoped. No private data is
-  // stored by Patch 5; this cache contains only route timing/readiness metadata.
-  return 'mobile-runtime-v5'
-}
-
-export async function readMobileRuntimeMetadata() {
-  return readMobileSpaViewCache(RUNTIME_META_ROUTE, {
-    scope: runtimeCacheScope(),
-    maxAgeMs: RUNTIME_META_MAX_AGE_MS
-  })
-}
-
-export async function writeMobileRuntimeMetadata(value = {}) {
-  const safe = {
-    lastRouteId: String(value.lastRouteId || ''),
-    lastPathname: String(value.lastPathname || ''),
-    warmRouteIds: Array.isArray(value.warmRouteIds)
-      ? value.warmRouteIds.map(String).filter(Boolean).slice(0, 8)
-      : [],
-    updatedAt: Date.now()
-  }
-  return writeMobileSpaViewCache(RUNTIME_META_ROUTE, safe, { scope: runtimeCacheScope() })
-}

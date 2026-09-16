@@ -13,31 +13,6 @@ import {
   productRoute,
   publicProfileRoute
 } from './utils/routes'
-import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
-
-// melogic-profile-spa-lifecycle-v5
-function initPrivateProfileSpaLifecycle() {
-  if (!isMobileSpaRuntime()) return
-  const existing = history.state && typeof history.state === 'object' ? history.state : {}
-  history.replaceState({
-    ...existing,
-    melogicMobileSpa: true,
-    routeId: 'profile',
-    pathname: location.pathname
-  }, '', location.href)
-  emitMobileSpaNavigation({ type: 'profile-init', routeId: 'profile' })
-
-  // Warm the two most common next profile surfaces without executing their
-  // entry modules. Existing page state/auth/data remains authoritative.
-  if (!navigator.connection?.saveData) {
-    queueMicrotask(() => {
-      void prewarmMobileSpaRoute(ROUTES.editProfile)
-      void prewarmMobileSpaRoute(ROUTES.profilePublic)
-    })
-  }
-}
-initPrivateProfileSpaLifecycle()
 
 const PRIVATE_PROFILE_DEBUG = false
 const app = document.querySelector('#app')
@@ -564,27 +539,6 @@ async function loadAndRenderProfile(user) {
 
   renderSignedInState(user, storedProfile, dashboard)
   return true
-}
-
-// melogic-mobile-unified-runtime-v3
-if (isMobileSpaRuntime()) {
-  registerMobileRuntimeView('profile', {
-    async mount() { return { fragment: null } },
-    async activate({ instance }) {
-      document.body.classList.add('is-profile-page')
-      if (instance?.fragment?.childNodes?.length) {
-        app.replaceChildren(instance.fragment)
-        instance.fragment = null
-      }
-    },
-    async deactivate({ instance }) {
-      document.body.classList.remove('is-profile-page')
-      const fragment = document.createDocumentFragment()
-      while (app.firstChild) fragment.append(app.firstChild)
-      instance.fragment = fragment
-    },
-    async unmount({ instance }) { instance.fragment = null }
-  })
 }
 
 waitForInitialAuthState().then((user) => {

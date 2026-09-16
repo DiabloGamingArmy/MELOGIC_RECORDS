@@ -59,7 +59,6 @@ import {
 import { searchProfilesByUsername } from './data/profileSearchService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
@@ -6660,24 +6659,6 @@ function bindEvents() {
     })
   })
   app.querySelector('[data-community-report-form]')?.addEventListener('submit', handleReportSubmit)
-}
-
-// melogic-mobile-unified-runtime-v2
-if (isMobileSpaRuntime()) {
-  registerMobileRuntimeView('community', {
-    async mount() { render(); return { fragment: null } },
-    async activate({ instance }) {
-      document.body.classList.add('is-community-page')
-      if (instance?.fragment?.childNodes?.length) { app.replaceChildren(instance.fragment); instance.fragment = null }
-      else if (!app.querySelector('[data-community-root]')) { communityShellMounted = false; render() }
-      syncCommunityMobileHeader(Boolean(state.detailPostId), app)
-    },
-    async deactivate({ instance }) {
-      document.body.classList.remove('community-modal-open')
-      const fragment=document.createDocumentFragment(); while(app.firstChild) fragment.append(app.firstChild); instance.fragment=fragment
-    },
-    async unmount({ instance }) { instance.fragment=null }
-  })
 }
 
 waitForInitialAuthState().then((user) => {

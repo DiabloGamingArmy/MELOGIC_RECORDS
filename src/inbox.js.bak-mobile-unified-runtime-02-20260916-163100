@@ -8,7 +8,6 @@ import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
 import { ROUTES, authRoute, communityPostRoute, inboxActiveCallRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
 import { STORAGE_PATHS } from './config/storagePaths'
@@ -8206,23 +8205,6 @@ function installInboxSpaLifecycle() {
 }
 
 installInboxSpaLifecycle()
-
-// melogic-mobile-unified-runtime-v2
-if (isMobileSpaRuntime()) {
-  registerMobileRuntimeView('inbox', {
-    async mount() { return { fragment: null } },
-    async activate({ instance }) {
-      document.body.classList.add('is-inbox-page')
-      if (instance?.fragment?.childNodes?.length) { app.replaceChildren(instance.fragment); instance.fragment=null }
-      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
-    },
-    async deactivate({ instance }) {
-      const fragment=document.createDocumentFragment(); while(app.firstChild) fragment.append(app.firstChild); instance.fragment=fragment
-      clearFloatingOverlays()
-    },
-    async unmount({ instance }) { instance.fragment=null; clearRealtimeListeners() }
-  })
-}
 
 normalizeInitialInboxRoute()
 waitForInitialAuthState().then(async (user) => {

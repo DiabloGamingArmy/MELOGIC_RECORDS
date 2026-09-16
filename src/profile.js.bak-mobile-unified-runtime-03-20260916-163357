@@ -14,7 +14,6 @@ import {
   publicProfileRoute
 } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 
 // melogic-profile-spa-lifecycle-v5
 function initPrivateProfileSpaLifecycle() {
@@ -564,27 +563,6 @@ async function loadAndRenderProfile(user) {
 
   renderSignedInState(user, storedProfile, dashboard)
   return true
-}
-
-// melogic-mobile-unified-runtime-v3
-if (isMobileSpaRuntime()) {
-  registerMobileRuntimeView('profile', {
-    async mount() { return { fragment: null } },
-    async activate({ instance }) {
-      document.body.classList.add('is-profile-page')
-      if (instance?.fragment?.childNodes?.length) {
-        app.replaceChildren(instance.fragment)
-        instance.fragment = null
-      }
-    },
-    async deactivate({ instance }) {
-      document.body.classList.remove('is-profile-page')
-      const fragment = document.createDocumentFragment()
-      while (app.firstChild) fragment.append(app.firstChild)
-      instance.fragment = fragment
-    },
-    async unmount({ instance }) { instance.fragment = null }
-  })
 }
 
 waitForInitialAuthState().then((user) => {
