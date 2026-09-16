@@ -296,20 +296,60 @@ async function prepareMobileRuntimeRoute(url) {
   catch (error) { console.error('[Melogic mobile runtime] Route preparation failed.', route.id, error); return false }
 }
 
-
-// melogic-urgent-stop-runtime-route-spam-v1b
-// Emergency stabilization: cross-page runtime navigation is intentionally
-// disabled. Browser document navigation owns cross-surface transitions.
-export async function navigateMobileRuntimeUrl() {
+export async function navigateMobileRuntimeUrl(value, { source = 'anchor' } = {}) {
+  // melogic-urgent-stop-runtime-route-spam-v1
+  // Cross-page runtime swapping is temporarily disabled to guarantee one route
+  // owns one document. Native/browser navigation will handle the destination.
   return false
+  /*
+  if (phase2NavigationPending || !isMobileSpaRuntime()) return false
+  let url
+  try { url = value instanceof URL ? value : new URL(String(value), location.href) } catch { return false }
+  if (url.origin !== location.origin) return false
+  const route = resolveMobileSpaRoute(url.pathname)
+  if (!route || !PHASE2_ROUTE_IDS.has(route.id)) return false
+  phase2NavigationPending = true
+  try {
+    if (!registry.has(route.id)) {
+      const prepared = await prepareMobileRuntimeRoute(url)
+      if (!prepared) { location.assign(url.href); return true }
+      return await activateMobileRuntimeUrl(url, { historyMode: 'none', source })
+    }
+    return await activateMobileRuntimeUrl(url, { historyMode: 'push', source })
+  } finally { phase2NavigationPending = false }
 }
 
-function phase2AnchorForEvent() {
-  return null
+  */
+
+function phase2AnchorForEvent(event) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  const anchor = (event.target instanceof Element ? event.target : null)?.closest('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement) || (anchor.target && anchor.target !== '_self') || anchor.hasAttribute('download')) return null
+  let url
+  try { url = new URL(anchor.href, location.href) } catch { return null }
+  if (url.origin !== location.origin) return null
+  const current = resolveMobileSpaRoute(); const next = resolveMobileSpaRoute(url.pathname)
+  if (!current || !next || !PHASE2_ROUTE_IDS.has(current.id) || !PHASE2_ROUTE_IDS.has(next.id) || current.id === next.id) return null
+  return { anchor, url }
 }
 
 export function initCommunityInboxRuntimeBridge() {
-  // Do not install a preventDefault/capture bridge while legacy entry modules
-  // still have top-level DOM/auth/navigation side effects.
+  // melogic-urgent-stop-runtime-route-spam-v1
+  // Do not preventDefault on cross-page anchors while legacy page entries have
+  // top-level side effects. Let each destination perform a clean document load.
   return
+  /*
+  if (!isMobileSpaRuntime() || window.__melogicCommunityInboxRuntimeV2) return
+  window.__melogicCommunityInboxRuntimeV2 = true
+  document.addEventListener('click', event => {
+    const match = phase2AnchorForEvent(event); if (!match) return
+    event.preventDefault(); void navigateMobileRuntimeUrl(match.url, { source: 'community-inbox-anchor' })
+  }, true)
+  window.addEventListener('popstate', () => {
+    const route = resolveMobileSpaRoute()
+    if (!route || !PHASE2_ROUTE_IDS.has(route.id) || route.id === activeViewId) return
+    if (!registry.has(route.id)) { location.assign(location.href); return }
+    void activateMobileRuntimeUrl(location.href, { historyMode: 'none', source: 'popstate' })
+  })
+  */
 }

@@ -184,11 +184,19 @@ function runtimeCanWarm() {
 }
 
 async function warmRuntimeViewModule(routeId, generation) {
-  // melogic-urgent-stop-runtime-route-spam-v1
-  // EMERGENCY STABILIZATION: never evaluate page entry modules speculatively.
-  // The legacy entries still own top-level DOM/auth/navigation side effects.
-  // Network/document prewarming remains handled by mobileSpaRouter.
-  return false
+  if (!runtimeCanWarm() || generation !== warmupGeneration || registry.has(routeId)) return
+  const routePath = routeId === 'streaming' ? '/music' : `/${routeId}`
+  const route = resolveMobileSpaRoute(routePath)
+  if (!route) return
+  try {
+    const { getMobileSpaRouteLoader } = await import('./mobileSpaRouter')
+    const loader = getMobileSpaRouteLoader(routePath)
+    if (typeof loader !== 'function') return
+    await loader()
+    if (generation === warmupGeneration && registry.has(routeId)) runtimeWarmViews.add(routeId)
+  } catch (error) {
+    if (import.meta.env?.DEV) console.debug('[Melogic mobile runtime] warmup skipped', routeId, error)
+  }
 }
 
 async function warmRuntimeViews() {
@@ -227,14 +235,13 @@ export function initMobileAppRuntime() {
   if (!isMobileSpaRuntime()) return
   document.documentElement.dataset.melogicMobileRuntime = 'foundation'
   publish('init')
-  // melogic-urgent-stop-runtime-route-spam-v1
-  // Runtime module warmup disabled; router document prewarm remains safe.
+  window.setTimeout(scheduleRuntimeWarmup, 500)
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       warmupGeneration += 1
       return
     }
-    // Runtime module warmup intentionally disabled.
+    scheduleRuntimeWarmup()
   })
   queueMicrotask(() => initCommunityInboxRuntimeBridge())
   window.addEventListener('pagehide', event => {
@@ -254,7 +261,7 @@ export function initMobileAppRuntime() {
         source: event.persisted ? 'bfcache-restore' : 'pageshow-repair'
       })
     }
-    // Runtime module warmup intentionally disabled.
+    if (document.visibilityState === 'visible') scheduleRuntimeWarmup()
     publish(event.persisted ? 'pageshow-persisted' : 'pageshow')
   })
 
@@ -296,20 +303,47 @@ async function prepareMobileRuntimeRoute(url) {
   catch (error) { console.error('[Melogic mobile runtime] Route preparation failed.', route.id, error); return false }
 }
 
-
-// melogic-urgent-stop-runtime-route-spam-v1b
-// Emergency stabilization: cross-page runtime navigation is intentionally
-// disabled. Browser document navigation owns cross-surface transitions.
-export async function navigateMobileRuntimeUrl() {
-  return false
+export async function navigateMobileRuntimeUrl(value, { source = 'anchor' } = {}) {
+  if (phase2NavigationPending || !isMobileSpaRuntime()) return false
+  let url
+  try { url = value instanceof URL ? value : new URL(String(value), location.href) } catch { return false }
+  if (url.origin !== location.origin) return false
+  const route = resolveMobileSpaRoute(url.pathname)
+  if (!route || !PHASE2_ROUTE_IDS.has(route.id)) return false
+  phase2NavigationPending = true
+  try {
+    if (!registry.has(route.id)) {
+      const prepared = await prepareMobileRuntimeRoute(url)
+      if (!prepared) { location.assign(url.href); return true }
+      return await activateMobileRuntimeUrl(url, { historyMode: 'none', source })
+    }
+    return await activateMobileRuntimeUrl(url, { historyMode: 'push', source })
+  } finally { phase2NavigationPending = false }
 }
 
-function phase2AnchorForEvent() {
-  return null
+function phase2AnchorForEvent(event) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  const anchor = (event.target instanceof Element ? event.target : null)?.closest('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement) || (anchor.target && anchor.target !== '_self') || anchor.hasAttribute('download')) return null
+  let url
+  try { url = new URL(anchor.href, location.href) } catch { return null }
+  if (url.origin !== location.origin) return null
+  const current = resolveMobileSpaRoute(); const next = resolveMobileSpaRoute(url.pathname)
+  if (!current || !next || !PHASE2_ROUTE_IDS.has(current.id) || !PHASE2_ROUTE_IDS.has(next.id) || current.id === next.id) return null
+  return { anchor, url }
 }
 
 export function initCommunityInboxRuntimeBridge() {
-  // Do not install a preventDefault/capture bridge while legacy entry modules
-  // still have top-level DOM/auth/navigation side effects.
-  return
+  if (!isMobileSpaRuntime() || window.__melogicCommunityInboxRuntimeV2) return
+  window.__melogicCommunityInboxRuntimeV2 = true
+  document.addEventListener('click', event => {
+    const match = phase2AnchorForEvent(event); if (!match) return
+    event.preventDefault(); void navigateMobileRuntimeUrl(match.url, { source: 'community-inbox-anchor' })
+  }, true)
+  window.addEventListener('popstate', () => {
+    const route = resolveMobileSpaRoute()
+    if (!route || !PHASE2_ROUTE_IDS.has(route.id) || route.id === activeViewId) return
+    if (!registry.has(route.id)) { location.assign(location.href); return }
+    void activateMobileRuntimeUrl(location.href, { historyMode: 'none', source: 'popstate' })
+  })
 }
