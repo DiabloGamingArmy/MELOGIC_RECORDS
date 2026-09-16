@@ -213,3 +213,22 @@ body.is-community-page,body.is-community-page #app,.community-page,.is-community
   .community-image-viewer,.community-image-viewer *{touch-action:auto}
   .community-image-viewer img{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 }
+
+/* melogic-community-image-zoom-mobile-hover-v2 */
+@media (max-width:760px), (pointer:coarse), (hover:none) {
+  .community-page .community-post-card:hover,
+  .community-page .community-post-card.is-pointer-hovered,
+  .community-page .community-feed .community-post-card:not(.community-post-detail-card):hover,
+  .community-page .community-feed .community-post-card:not(.community-post-detail-card).is-pointer-hovered,
+  .community-page .community-main .community-post-card:not(.community-post-detail-card):hover,
+  .community-page .community-main .community-post-card:not(.community-post-detail-card).is-pointer-hovered {
+    background:transparent !important;background-color:transparent !important;background-image:none !important;
+    border-color:var(--community-divider) !important;box-shadow:none !important;transform:none !important;
+  }
+  .community-image-viewer-stage {overflow:hidden;touch-action:none !important;overscroll-behavior:contain}
+  .community-image-viewer-stage img[data-community-image-zoom-target] {
+    transform-origin:center center;will-change:transform;transition:transform 160ms ease-out;
+    touch-action:none !important;-webkit-user-drag:none;user-select:none;
+  }
+  .community-image-viewer-stage img[data-community-image-zoom-target].is-zoomed {transition:none}
+}

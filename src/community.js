@@ -175,7 +175,10 @@ const state = {
   imageViewer: {
     open: false,
     url: '',
-    name: ''
+    name: '',
+    scale: 1,
+    translateX: 0,
+    translateY: 0
   },
   posts: [],
   attachmentMediaUrls: {},
@@ -2609,6 +2612,31 @@ function renderEditPostModal() {
   `
 }
 
+/* melogic-community-image-zoom-mobile-hover-v2 */
+function bindCommunityImageViewerZoom() {
+  const stage=app?.querySelector('[data-community-image-zoom-stage]')
+  const image=stage?.querySelector('[data-community-image-zoom-target]')
+  if(!stage||!image)return
+  let scale=1,x=0,y=0,startDistance=0,startScale=1,startMidpoint=null,panStart=null
+  const clamp=(v,min,max)=>Math.min(max,Math.max(min,v))
+  const midpoint=(a,b)=>({x:(a.clientX+b.clientX)/2,y:(a.clientY+b.clientY)/2})
+  const distance=(a,b)=>Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY)
+  const apply=()=>{if(scale<=1){scale=1;x=0;y=0} image.style.transform=`translate3d(${x}px,${y}px,0) scale(${scale})`;image.classList.toggle('is-zoomed',scale>1.01)}
+  const reset=()=>{scale=1;x=0;y=0;apply()}
+  stage.addEventListener('touchstart',(event)=>{
+    if(event.touches.length===2){event.preventDefault();startDistance=distance(event.touches[0],event.touches[1]);startScale=scale;startMidpoint=midpoint(event.touches[0],event.touches[1]);panStart=null}
+    else if(event.touches.length===1&&scale>1)panStart={clientX:event.touches[0].clientX,clientY:event.touches[0].clientY,x,y}
+  },{passive:false})
+  stage.addEventListener('touchmove',(event)=>{
+    if(event.touches.length===2&&startDistance>0){event.preventDefault();const nextMid=midpoint(event.touches[0],event.touches[1]);scale=clamp(startScale*(distance(event.touches[0],event.touches[1])/startDistance),1,5);if(startMidpoint){x+=nextMid.x-startMidpoint.x;y+=nextMid.y-startMidpoint.y;startMidpoint=nextMid}apply()}
+    else if(event.touches.length===1&&scale>1&&panStart){event.preventDefault();x=panStart.x+(event.touches[0].clientX-panStart.clientX);y=panStart.y+(event.touches[0].clientY-panStart.clientY);apply()}
+  },{passive:false})
+  stage.addEventListener('touchend',(event)=>{if(event.touches.length<2){startDistance=0;startMidpoint=null}if(event.touches.length===0)panStart=null;if(scale<1.02)reset()},{passive:false})
+  let lastTap=0
+  stage.addEventListener('touchend',(event)=>{if(event.changedTouches.length!==1)return;const now=Date.now();if(now-lastTap<280){event.preventDefault();scale=scale>1?1:2;x=0;y=0;apply();lastTap=0}else lastTap=now},{passive:false})
+  image.addEventListener('dblclick',(event)=>{event.preventDefault();scale=scale>1?1:2;x=0;y=0;apply()})
+}
+
 function renderCommunityImageViewer() {
   if (!state.imageViewer.open || !state.imageViewer.url) return ''
   return `
@@ -2618,8 +2646,8 @@ function renderCommunityImageViewer() {
           <span>${escapeHtml(state.imageViewer.name || 'Image attachment')}</span>
           <button type="button" data-close-community-image-viewer aria-label="Close image viewer">${iconSvg('x')}</button>
         </header>
-        <div class="community-image-viewer-stage">
-          <img src="${escapeHtml(state.imageViewer.url)}" alt="${escapeHtml(state.imageViewer.name || 'Community attachment')}" />
+        <div class="community-image-viewer-stage" data-community-image-zoom-stage>
+          <img src="${escapeHtml(state.imageViewer.url)}" alt="${escapeHtml(state.imageViewer.name || 'Community attachment')}" data-community-image-zoom-target draggable="false" />
         </div>
         <footer>
           <a class="button button-muted" href="${escapeHtml(state.imageViewer.url)}" target="_blank" rel="noopener noreferrer">Open original</a>
@@ -6502,6 +6530,7 @@ function bindEvents() {
   app.querySelector('[data-community-image-viewer-backdrop]')?.addEventListener('click', (event) => {
     if (event.target === event.currentTarget) closeCommunityImageViewer()
   })
+  bindCommunityImageViewerZoom()
   app.querySelector('[data-community-search]')?.addEventListener('input', (event) => {
     state.communityFilters.search = event.target.value
     window.clearTimeout(state.communitySearchTimer)
