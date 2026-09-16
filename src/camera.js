@@ -15,7 +15,8 @@ let previewUrl = ''
 app.innerHTML = `
   ${navShell({ currentPage: 'camera' })}
   <main class="camera-screen" aria-label="Melogic camera">
-    <video class="camera-preview is-mirrored" data-camera-preview autoplay muted playsinline></video>
+    <video class="camera-preview-source" data-camera-preview autoplay muted playsinline></video>
+    <canvas class="camera-live-canvas" data-camera-live-canvas aria-hidden="true"></canvas>
     <canvas class="camera-transition-frame" data-camera-transition-frame aria-hidden="true"></canvas>
     <div class="camera-shade"></div>
     <div class="camera-topbar">
@@ -44,123 +45,99 @@ const timerLabel = app.querySelector('[data-recording-time]')
 const playback = app.querySelector('[data-camera-playback]')
 const recordedVideo = app.querySelector('[data-camera-recorded]')
 const transitionFrame = app.querySelector('[data-camera-transition-frame]')
+const liveCanvas = app.querySelector('[data-camera-live-canvas]')
+const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
+let renderGeneration = 0
+let renderRaf = 0
 let cameraStarting = false
 let lastPreviewTapAt = 0
 
 function setStatus(message = '') { status.textContent = message; status.hidden = !message }
-function stopTracks() { stream?.getTracks?.().forEach(track => track.stop()); stream = null }
+function stopTracks() { stopCanvasRenderer(); stream?.getTracks?.().forEach(track => track.stop()); stream = null }
 function supportedMimeType() {
   const candidates = ['video/mp4;codecs=h264,aac','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm']
   return candidates.find(type => window.MediaRecorder?.isTypeSupported?.(type)) || ''
 }
+function sizeLiveCanvas() {
+  if (!liveCanvas) return
+  const rect = liveCanvas.getBoundingClientRect()
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const w = Math.max(1, Math.round(rect.width * dpr))
+  const h = Math.max(1, Math.round(rect.height * dpr))
+  if (liveCanvas.width !== w) liveCanvas.width = w
+  if (liveCanvas.height !== h) liveCanvas.height = h
+}
+function drawAspectFill(ctx, source, sw, sh, tw, th, mirror = false) {
+  if (!ctx || !sw || !sh || !tw || !th) return false
+  const sr=sw/sh, tr=tw/th
+  let sx=0, sy=0, cw=sw, ch=sh
+  if (sr>tr) { cw=sh*tr; sx=(sw-cw)/2 } else { ch=sw/tr; sy=(sh-ch)/2 }
+  ctx.save(); ctx.setTransform(1,0,0,1,0,0); ctx.fillStyle='#000'; ctx.fillRect(0,0,tw,th)
+  if (mirror) { ctx.translate(tw,0); ctx.scale(-1,1) }
+  ctx.drawImage(source,sx,sy,cw,ch,0,0,tw,th); ctx.restore(); return true
+}
+function drawLiveFrame() {
+  sizeLiveCanvas()
+  return drawAspectFill(liveCtx,video,video.videoWidth,video.videoHeight,liveCanvas.width,liveCanvas.height,facingMode==='user')
+}
 function captureTransitionFrame() {
-  if (!transitionFrame || !video.videoWidth || !video.videoHeight) return false
-  transitionFrame.width = video.videoWidth
-  transitionFrame.height = video.videoHeight
-  const ctx = transitionFrame.getContext('2d')
-  if (!ctx) return false
-  ctx.save()
-  if (facingMode === 'user') {
-    ctx.translate(transitionFrame.width, 0)
-    ctx.scale(-1, 1)
+  if (!transitionFrame || !liveCanvas?.width || !liveCanvas?.height) return false
+  transitionFrame.width=liveCanvas.width; transitionFrame.height=liveCanvas.height
+  const ctx=transitionFrame.getContext('2d',{alpha:false}); if (!ctx) return false
+  ctx.drawImage(liveCanvas,0,0,transitionFrame.width,transitionFrame.height)
+  transitionFrame.classList.add('is-visible'); return true
+}
+function stopCanvasRenderer() {
+  renderGeneration += 1
+  if (renderRaf) cancelAnimationFrame(renderRaf)
+  renderRaf=0
+}
+function startCanvasRenderer() {
+  stopCanvasRenderer()
+  const generation=renderGeneration
+  const paint=()=>{
+    if (generation!==renderGeneration || !stream) return
+    drawLiveFrame()
+    if (typeof video.requestVideoFrameCallback==='function') video.requestVideoFrameCallback(paint)
+    else renderRaf=requestAnimationFrame(paint)
   }
-  ctx.drawImage(video, 0, 0, transitionFrame.width, transitionFrame.height)
-  ctx.restore()
-  transitionFrame.classList.add('is-visible')
-  return true
+  paint()
 }
-function nextAnimationFrame() {
-  return new Promise(resolve => requestAnimationFrame(resolve))
-}
-function nextPresentedVideoFrame() {
-  return new Promise(resolve => {
-    if (typeof video.requestVideoFrameCallback === 'function') {
-      video.requestVideoFrameCallback(() => resolve())
-    } else {
-      requestAnimationFrame(() => resolve())
+function waitForFirstDrawableFrame() {
+  return new Promise(resolve=>{
+    const check=()=>{
+      if (video.readyState>=2 && video.videoWidth>0 && video.videoHeight>0 && drawLiveFrame()) return resolve()
+      if (typeof video.requestVideoFrameCallback==='function') video.requestVideoFrameCallback(check)
+      else requestAnimationFrame(check)
     }
+    check()
   })
 }
-async function waitForVideoFrame() {
-  // iOS/WebKit can briefly composite the first camera frame at the media's
-  // intrinsic size before object-fit:cover is visually settled. Do not reveal
-  // the live <video> merely because loadeddata fired. Wait for non-zero
-  // intrinsic dimensions, a presented frame, the video resize event/geometry
-  // to settle, and then another presented frame.
-  if (!(video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0)) {
-    await new Promise(resolve => {
-      const ready = () => {
-        if (video.videoWidth > 0 && video.videoHeight > 0) resolve()
-        else video.addEventListener('resize', ready, { once: true })
-      }
-      video.addEventListener('loadeddata', ready, { once: true })
-      video.addEventListener('resize', ready, { once: true })
-    })
-  }
-
-  await nextPresentedVideoFrame()
-  await nextAnimationFrame()
-
-  let stableFrames = 0
-  let lastWidth = video.videoWidth
-  let lastHeight = video.videoHeight
-  while (stableFrames < 3) {
-    await nextPresentedVideoFrame()
-    if (video.videoWidth === lastWidth && video.videoHeight === lastHeight) {
-      stableFrames += 1
-    } else {
-      lastWidth = video.videoWidth
-      lastHeight = video.videoHeight
-      stableFrames = 0
-    }
-  }
-
-  // One final paint boundary keeps WebKit's media compositor transition hidden.
-  await nextAnimationFrame()
-  await nextAnimationFrame()
-}
-async function startCamera({ preserveFrame = false } = {}) {
+async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
   if (!navigator.mediaDevices?.getUserMedia) { setStatus('Camera capture is not supported in this browser.'); return }
-  cameraStarting = true
-  const hasTransitionFrame = preserveFrame && captureTransitionFrame()
-  if (!hasTransitionFrame) {
-    transitionFrame?.classList.add('is-black')
-    transitionFrame?.classList.add('is-visible')
-  }
-  setStatus('')
-  stopTracks()
+  cameraStarting=true
+  const preserved=preserveFrame && captureTransitionFrame()
+  if (!preserved) transitionFrame?.classList.add('is-black','is-visible')
+  setStatus(''); stopCanvasRenderer(); stopTracks()
   try {
-    const nextStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode},width:{ideal:1920},height:{ideal:1080}},audio:true})
-    stream = nextStream
-    video.srcObject = nextStream
-    video.classList.toggle('is-mirrored', facingMode === 'user')
-    await video.play()
-    await waitForVideoFrame()
-    video.classList.add('is-ready')
-    requestAnimationFrame(() => {
-      transitionFrame?.classList.remove('is-visible', 'is-black')
-    })
-  } catch (error) {
-    console.error('[camera] getUserMedia failed', error)
-    transitionFrame?.classList.remove('is-visible', 'is-black')
-    setStatus(error?.name === 'NotAllowedError' ? 'Camera and microphone access are required. Enable them in your browser settings and reopen Camera.' : 'Unable to start the camera on this device.')
-  } finally {
-    cameraStarting = false
-  }
+    const nextStream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:facingMode}},audio:true})
+    stream=nextStream; video.srcObject=nextStream
+    await video.play(); await waitForFirstDrawableFrame()
+    startCanvasRenderer(); liveCanvas.classList.add('is-ready')
+    requestAnimationFrame(()=>transitionFrame?.classList.remove('is-visible','is-black'))
+  } catch(error) {
+    console.error('[camera] getUserMedia failed',error)
+    transitionFrame?.classList.remove('is-visible','is-black')
+    setStatus(error?.name==='NotAllowedError' ? 'Camera and microphone access are required. Enable them in your browser settings and reopen Camera.' : 'Unable to start the camera on this device.')
+  } finally { cameraStarting=false }
 }
 async function flipCamera() {
-  if (cameraStarting || recorder?.state === 'recording' || !playback.hidden) return
-  const previousFacingMode = facingMode
-  const preserved = captureTransitionFrame()
-  facingMode = facingMode === 'user' ? 'environment' : 'user'
-  video.classList.remove('is-ready')
-  try {
-    await startCamera({ preserveFrame: preserved })
-  } catch (error) {
-    facingMode = previousFacingMode
-    throw error
-  }
+  if (cameraStarting || recorder?.state==='recording' || !playback.hidden) return
+  const preserved=captureTransitionFrame()
+  facingMode=facingMode==='user'?'environment':'user'
+  liveCanvas.classList.remove('is-ready')
+  await startCamera({preserveFrame:preserved})
 }
 function updateTimer() {
   const seconds = Math.floor((Date.now() - recordingStartedAt) / 1000)
@@ -190,17 +167,13 @@ function endRecording() {
   recorder.stop(); window.clearInterval(recordingTimer); capture.classList.remove('is-recording'); pill.hidden = true
 }
 function takePhoto() {
-  if (!video.videoWidth) return
-  const canvas = document.createElement('canvas'); canvas.width = video.videoWidth; canvas.height = video.videoHeight
-  const ctx = canvas.getContext('2d')
-  if (facingMode === 'user') { ctx.translate(canvas.width,0); ctx.scale(-1,1) }
-  ctx.drawImage(video,0,0,canvas.width,canvas.height)
-  canvas.toBlob(blob => {
+  if (!liveCanvas?.width || !liveCanvas?.height) return
+  liveCanvas.toBlob(blob=>{
     if (!blob) return
     if (previewUrl) URL.revokeObjectURL(previewUrl)
-    previewUrl = URL.createObjectURL(blob)
-    recordedVideo.poster = previewUrl; recordedVideo.removeAttribute('src'); recordedVideo.load()
-    playback.hidden = false; playback.dataset.captureType = 'photo'; playback._melogicCapture = blob
+    previewUrl=URL.createObjectURL(blob)
+    recordedVideo.poster=previewUrl; recordedVideo.removeAttribute('src'); recordedVideo.load()
+    playback.hidden=false; playback.dataset.captureType='photo'; playback._melogicCapture=blob
   },'image/jpeg',.92)
 }
 let holdTimer = 0
@@ -209,7 +182,7 @@ capture.addEventListener('pointerdown', event => { event.preventDefault(); didHo
 function releaseCapture(event) { event.preventDefault(); window.clearTimeout(holdTimer); if (didHold) endRecording(); else takePhoto() }
 capture.addEventListener('pointerup', releaseCapture); capture.addEventListener('pointercancel', event => { window.clearTimeout(holdTimer); if (didHold) endRecording(); event.preventDefault() })
 app.querySelector('[data-camera-flip]').addEventListener('click', flipCamera)
-video.addEventListener('pointerup', event => {
+liveCanvas.addEventListener('pointerup', event => {
   if (event.pointerType === 'mouse' && event.button !== 0) return
   const now = performance.now()
   if (now - lastPreviewTapAt <= 325) {
@@ -233,6 +206,8 @@ app.querySelector('[data-camera-use]').addEventListener('click', () => {
   setStatus('Captured. Post and Story publishing hooks are ready for the next camera patch.')
   playback.hidden = true
 })
+window.addEventListener('resize', sizeLiveCanvas, { passive: true })
+window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })
 window.addEventListener('pagehide', stopTracks)
 document.addEventListener('visibilitychange', () => { if (document.hidden) stopTracks(); else if (!playback.hidden) return; else startCamera() })
 startCamera()
