@@ -131,14 +131,17 @@ function initConsumerSpaLifecycle() {
     })
   }
 }
-initConsumerSpaLifecycle()
 
 const app = document.querySelector('#app')
 // melogic-pwa-streaming-camera-canonical-v4-route
-document.body.classList.add('is-streaming-page')
-let mobileStreamingRuntimeActive = true
+// melogic-streaming-lifecycle-contract-v4c
+// Page ownership is established by bootstrap/activate, not module evaluation.
+let streamingBootstrapped = false
+let streamingPopstateBound = false
+let streamingUnloadLifecycleBound = false
+let streamingGlobalUiBound = false
+let mobileStreamingRuntimeActive = false
 let mobileStreamingRuntimeDirty = false
-bindExpandableMusicPlayer()
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
 let musicLiveControlsCleanup = null
@@ -442,11 +445,14 @@ function registerStreamingMobileRuntime() {
 
   registerMobileRuntimeView('streaming', {
     async mount() {
+      await bootstrapStreamingDocument()
       return { fragment: null }
     },
     async activate({ instance }) {
+      await bootstrapStreamingDocument()
       mobileStreamingRuntimeActive = true
       document.body.classList.add('is-streaming-page')
+      bindStreamingGlobalUiOnce()
       if (instance?.fragment?.childNodes?.length) {
         app.replaceChildren(instance.fragment)
         instance.fragment = null
@@ -483,6 +489,12 @@ function registerStreamingMobileRuntime() {
   })
 }
 registerStreamingMobileRuntime()
+
+function bindStreamingGlobalUiOnce() {
+  if (streamingGlobalUiBound) return
+  streamingGlobalUiBound = true
+  bindExpandableMusicPlayer()
+}
 
 const persistentPlayback = readPersistentMusicPlayback()
 if (persistentPlayback?.track?.streamAudioURL) {
@@ -7077,7 +7089,7 @@ async function loadMusicPage() {
   startLiveListRefresh()
 }
 
-window.addEventListener('popstate', () => {
+function handleStreamingPopstate() {
   disconnectLiveListener()
   stopLiveStreamSubscription()
   stopLiveChatSubscription()
@@ -7085,33 +7097,57 @@ window.addEventListener('popstate', () => {
   state.route = currentRouteMode()
   state.activeView = getInitialView()
   loadMusicPage().catch(() => rerender())
-})
+}
 
-window.addEventListener('beforeunload', (event) => {
-  if (!isHostBroadcastActive()) return
-  if (state.goLive.form.streamingMethod === 'obsRtmp' && state.goLive.form.streamingProtocol !== 'nativeStreaming') return
-  event.preventDefault()
-  event.returnValue = ''
-})
+function bindStreamingUnloadLifecycleOnce() {
+  if (streamingUnloadLifecycleBound) return
+  streamingUnloadLifecycleBound = true
+  window.addEventListener('beforeunload', (event) => {
+    if (!isHostBroadcastActive()) return
+    if (state.goLive.form.streamingMethod === 'obsRtmp' && state.goLive.form.streamingProtocol !== 'nativeStreaming') return
+    event.preventDefault()
+    event.returnValue = ''
+  })
 
-window.addEventListener('pagehide', () => {
-  if (isHostBroadcastActive()) sendHostUnloadSignal('host_pagehide')
-  if (state.liveStream?.id && state.nativeViewerSessionId) {
-    clearPlaybackDemand(state.liveStream.id, state.nativeViewerSessionId).catch(() => {})
+  window.addEventListener('pagehide', () => {
+    if (isHostBroadcastActive()) sendHostUnloadSignal('host_pagehide')
+    if (state.liveStream?.id && state.nativeViewerSessionId) {
+      clearPlaybackDemand(state.liveStream.id, state.nativeViewerSessionId).catch(() => {})
+    }
+    state.hlsPlaybackRequested = false
+    releaseLiveListenerPresence().catch(() => {})
+    cleanupHlsPlayback()
+  })
+}
+
+async function bootstrapStreamingDocument() {
+  if (streamingBootstrapped) return
+  streamingBootstrapped = true
+  mobileStreamingRuntimeActive = true
+  document.body.classList.add('is-streaming-page')
+  bindStreamingGlobalUiOnce()
+  bindStreamingUnloadLifecycleOnce()
+  initConsumerSpaLifecycle()
+
+  if (!streamingPopstateBound) {
+    streamingPopstateBound = true
+    window.addEventListener('popstate', handleStreamingPopstate)
   }
-  state.hlsPlaybackRequested = false
-  releaseLiveListenerPresence().catch(() => {})
-  cleanupHlsPlayback()
-})
 
-mountStreamingInitialPreloader()
-loadMusicPage()
-  .catch((error) => {
+  mountStreamingInitialPreloader()
+  try {
+    await loadMusicPage()
+  } catch (error) {
     state.loading = false
     state.error = error?.message || 'Melogic Streaming could not be loaded.'
     console.warn('[music] Page load failed.', error)
     rerender()
-  })
-  .finally(() => {
+  } finally {
     settleStreamingInitialPreloader()
-  })
+  }
+}
+
+// Direct Streaming documents retain their cold-start loader. Cross-page SPA
+// interception remains disabled until both lifecycle contracts are proven.
+void bootstrapStreamingDocument()
+
