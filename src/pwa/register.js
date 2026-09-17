@@ -6,36 +6,6 @@ import { initMobileSpaLifecycleAudit } from './mobileSpaLifecycleAudit'
 import { initMobileAppRuntime } from './mobileAppRuntime'
 
 
-// melogic-mobile-physical-screen-nav-v7
-const updateMelogicPhysicalScreenGeometry = () => {
-  if (!window.matchMedia('(max-width: 760px)').matches) return
-  const root = document.documentElement
-  const sw = Number(window.screen?.width || 0)
-  const sh = Number(window.screen?.height || 0)
-  if (!(sw > 0 && sh > 0)) return
-  const landscape = window.matchMedia('(orientation: landscape)').matches
-  const physicalWidth = landscape ? Math.max(sw, sh) : Math.min(sw, sh)
-  const physicalHeight = landscape ? Math.min(sw, sh) : Math.max(sw, sh)
-  root.style.setProperty('--melogic-physical-screen-w', `${physicalWidth}px`)
-  root.style.setProperty('--melogic-physical-screen-h', `${physicalHeight}px`)
-}
-let melogicPhysicalScreenRaf = 0
-const scheduleMelogicPhysicalScreenGeometry = () => {
-  cancelAnimationFrame(melogicPhysicalScreenRaf)
-  melogicPhysicalScreenRaf = requestAnimationFrame(updateMelogicPhysicalScreenGeometry)
-}
-window.addEventListener('resize', scheduleMelogicPhysicalScreenGeometry, { passive:true })
-window.addEventListener('orientationchange', () => {
-  scheduleMelogicPhysicalScreenGeometry()
-  setTimeout(scheduleMelogicPhysicalScreenGeometry, 250)
-  setTimeout(scheduleMelogicPhysicalScreenGeometry, 700)
-}, { passive:true })
-window.addEventListener('pageshow', scheduleMelogicPhysicalScreenGeometry, { passive:true })
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') scheduleMelogicPhysicalScreenGeometry()
-})
-scheduleMelogicPhysicalScreenGeometry()
-
 // melogic-pwa-viewport-final-hardening-v6
 const melogicMobileViewportRoutes = new Set(['/community','/inbox','/inbox/messages','/inbox/calls','/inbox/activity','/profile','/streaming','/camera'])
 const isMelogicMobileViewportRoute = () => {
