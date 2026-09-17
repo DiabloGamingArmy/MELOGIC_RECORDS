@@ -143,6 +143,9 @@ let streamingUnloadLifecycleBound = false
 let streamingGlobalUiBound = false
 let mobileStreamingRuntimeActive = false
 let mobileStreamingRuntimeDirty = false
+// melogic-streaming-background-boot-v5c2
+let streamingBackgroundBoot = false
+let streamingBackgroundReady = false
 let musicMonitorVisualizerCleanup = null
 let musicMonitorControlsTimer = 0
 let musicLiveControlsCleanup = null
@@ -451,18 +454,22 @@ function registerStreamingMobileRuntime() {
     },
     async activate({ instance }) {
       await bootstrapStreamingDocument()
+      streamingBackgroundBoot = false
       mobileStreamingRuntimeActive = true
       document.body.classList.add('is-streaming-page')
+      initShellChrome()
       bindStreamingGlobalUiOnce()
+      initConsumerSpaLifecycle()
       if (instance?.fragment?.childNodes?.length) {
         app.replaceChildren(instance.fragment)
         instance.fragment = null
       }
-      if (mobileStreamingRuntimeDirty) {
+      if (mobileStreamingRuntimeDirty || (streamingBackgroundReady && !app.childElementCount)) {
         mobileStreamingRuntimeDirty = false
         renderLandingPage()
         hydrateStableImages()
       }
+      startLiveListRefresh()
       ensureLiveKitListenerAudioMounted()
     },
     async deactivate({ instance }) {
@@ -6989,11 +6996,11 @@ async function loadMusicPage() {
   stopLiveChatSubscription()
   stopLiveSequenceSubscription()
   stopLiveListRefresh()
-  initShellChrome()
+  if (!streamingBackgroundBoot) initShellChrome()
   state.route = currentRouteMode()
   state.activeView = getInitialView()
   state.loading = true
-  rerender()
+  if (!streamingBackgroundBoot) rerender()
 
   state.currentUser = await waitForInitialAuthState().catch(() => null)
   state.accountPermissions = null
@@ -7086,8 +7093,13 @@ async function loadMusicPage() {
     state.rows.library = await listUserLibraryMusic(state.currentUser?.uid || '', state.activeView, 20)
   }
   state.loading = false
-  rerender()
-  startLiveListRefresh()
+  streamingBackgroundReady = true
+  if (!streamingBackgroundBoot) {
+    rerender()
+    startLiveListRefresh()
+  } else {
+    mobileStreamingRuntimeDirty = true
+  }
 }
 
 function handleStreamingPopstate() {
@@ -7121,32 +7133,35 @@ function bindStreamingUnloadLifecycleOnce() {
   })
 }
 
-async function bootstrapStreamingDocument() {
+async function bootstrapStreamingDocument({ background = false } = {}) {
   if (streamingBootstrapPromise) return streamingBootstrapPromise
+  streamingBackgroundBoot = background === true
   streamingBootstrapPromise = (async () => {
     if (streamingBootstrapped) return
     streamingBootstrapped = true
-    mobileStreamingRuntimeActive = true
-    document.body.classList.add('is-streaming-page')
-    bindStreamingGlobalUiOnce()
+    mobileStreamingRuntimeActive = !streamingBackgroundBoot
+    if (!streamingBackgroundBoot) document.body.classList.add('is-streaming-page')
     bindStreamingUnloadLifecycleOnce()
-    initConsumerSpaLifecycle()
+    if (!streamingBackgroundBoot) {
+      bindStreamingGlobalUiOnce()
+      initConsumerSpaLifecycle()
+    }
 
     if (!streamingPopstateBound) {
       streamingPopstateBound = true
       window.addEventListener('popstate', handleStreamingPopstate)
     }
 
-    mountStreamingInitialPreloader()
+    if (!streamingBackgroundBoot) mountStreamingInitialPreloader()
     try {
       await loadMusicPage()
     } catch (error) {
       state.loading = false
       state.error = error?.message || 'Melogic Streaming could not be loaded.'
       console.warn('[music] Page load failed.', error)
-      rerender()
+      if (!streamingBackgroundBoot) rerender()
     } finally {
-      settleStreamingInitialPreloader()
+      if (!streamingBackgroundBoot) settleStreamingInitialPreloader()
     }
   })()
   try {
@@ -7156,6 +7171,12 @@ async function bootstrapStreamingDocument() {
     streamingBootstrapped = false
     throw error
   }
+}
+
+export async function warmStreamingRuntimeView() {
+  if (!isMobileSpaRuntime() || streamingBootstrapped) return streamingBackgroundReady
+  await bootstrapStreamingDocument({ background: true })
+  return streamingBackgroundReady
 }
 
 // melogic-runtime-boot-ownership-v4d1

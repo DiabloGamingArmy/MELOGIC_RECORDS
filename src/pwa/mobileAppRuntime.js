@@ -259,9 +259,13 @@ async function warmRuntimeViewModule(routeId, generation) {
   if (typeof loader !== 'function') return false
 
   try {
-    await loader()
+    const module = await loader()
     if (generation !== warmupGeneration || !runtimeCanWarm()) return false
     if (!registry.has(routeId)) return false
+    if (routeId === 'streaming' && typeof module?.warmStreamingRuntimeView === 'function') {
+      await module.warmStreamingRuntimeView()
+      if (generation !== warmupGeneration || !runtimeCanWarm()) return false
+    }
     runtimeWarmViews.add(routeId)
     publish('view-warmed', { viewId: routeId })
     return true
