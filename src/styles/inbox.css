@@ -4577,3 +4577,44 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
 @media (max-width:760px) {
  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) > #app > main { bottom:var(--melogic-mobile-nav-h) !important; }
 }
+
+/* melogic-inbox-mobile-scroll-footer-fix-v12
+   Inbox owns a bounded app viewport. Keep document scrolling locked, but restore
+   vertical touch scrolling to the actual Inbox content surfaces. The global
+   site footer is not part of the Inbox application surface. */
+body.is-inbox-page > footer,
+body.is-inbox-page .site-footer {
+  display: none !important;
+}
+
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel,
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list,
+  body.is-inbox-page .inbox-layout-activity .inbox-main-panel,
+  body.is-inbox-page .inbox-layout-activity .activity-panel,
+  body.is-inbox-page .inbox-layout-activity .account-calls-panel {
+    min-height: 0 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list,
+  body.is-inbox-page .inbox-layout-activity .inbox-main-panel,
+  body.is-inbox-page .inbox-layout-activity .activity-panel,
+  body.is-inbox-page .inbox-layout-activity .account-calls-panel {
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel {
+    height: 100% !important;
+    max-height: 100% !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list {
+    height: auto !important;
+    max-height: 100% !important;
+  }
+}
