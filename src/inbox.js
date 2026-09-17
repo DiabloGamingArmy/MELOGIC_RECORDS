@@ -102,6 +102,13 @@ import { detectPlatformCapabilities } from './platform/platformCapabilities'
 import { acceptProductGift, denyProductGift, listIncomingProductGifts } from './data/productGiftService'
 
 const app = document.querySelector('#app')
+// melogic-inbox-lifecycle-contract-v6a
+const inboxSurface = document.createElement('div')
+inboxSurface.dataset.melogicInboxSurface = 'true'
+let inboxBootstrapped = false
+let inboxBootstrapPromise = null
+let inboxRuntimeActive = false
+let inboxAuthObserverBound = false
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 const RESONA_SUPPORT_AVATAR_PATH = 'assets/profilePictures/staff/supportAgentResona.png'
@@ -716,7 +723,7 @@ function normalizeInitialInboxRoute() {
   }
 }
 
-app.innerHTML = `
+inboxSurface.innerHTML = `
   ${navShell({ currentPage: 'inbox' })}
   <main>
     <section class="inbox-main-shell">
@@ -729,22 +736,16 @@ app.innerHTML = `
   </main>
 `
 
-initShellChrome()
-document.body.classList.add('is-inbox-page')
-
-const inboxRoot = document.querySelector('[data-inbox-root]')
+const inboxRoot = inboxSurface.querySelector('[data-inbox-root]')
 const modalRoot = document.createElement('div')
 modalRoot.className = 'create-chat-modal-root'
-document.body.append(modalRoot)
 const floatingRoot = document.createElement('div')
 floatingRoot.className = 'inbox-floating-root'
-document.body.append(floatingRoot)
 const remoteCallAudio = document.createElement('audio')
 remoteCallAudio.autoplay = true
 remoteCallAudio.playsInline = true
 remoteCallAudio.hidden = true
 remoteCallAudio.dataset.accountCallRemoteAudio = 'true'
-document.body.append(remoteCallAudio)
 setupFloatingEventDelegates()
 setupInboxDelegates()
 
@@ -8208,24 +8209,77 @@ function installInboxSpaLifecycle() {
 installInboxSpaLifecycle()
 
 // melogic-mobile-unified-runtime-v2
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
+function attachInboxSurface() {
+  if (!app) return false
+  if (inboxSurface.parentNode !== app) app.replaceChildren(inboxSurface)
+  for (const node of [modalRoot, floatingRoot, remoteCallAudio]) {
+    if (!node.isConnected) document.body.append(node)
+  }
+  return true
+}
+
+function detachInboxSurface() {
+  if (inboxSurface.parentNode === app) inboxSurface.remove()
+  for (const node of [modalRoot, floatingRoot, remoteCallAudio]) node.remove()
+  clearFloatingOverlays()
+}
+
+async function bootstrapInboxDocument() {
+  if (inboxBootstrapPromise) return inboxBootstrapPromise
+  inboxBootstrapPromise = (async () => {
+    if (inboxBootstrapped) return
+    inboxBootstrapped = true
+    inboxRuntimeActive = true
+    normalizeInitialInboxRoute()
+    initShellChrome()
+    document.body.classList.add('is-inbox-page')
+    await initializeInboxAuth()
+  })()
+  try {
+    await inboxBootstrapPromise
+  } catch (error) {
+    inboxBootstrapPromise = null
+    inboxBootstrapped = false
+    throw error
+  }
+}
+
+if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('inbox', {
-    async mount() { return { fragment: null } },
+    async mount() {
+      const instance = { detached: true }
+      attachInboxSurface()
+      await bootstrapInboxDocument()
+      return instance
+    },
     async activate({ instance }) {
+      inboxRuntimeActive = true
+      attachInboxSurface()
       document.body.classList.add('is-inbox-page')
-      if (instance?.fragment?.childNodes?.length) { app.replaceChildren(instance.fragment); instance.fragment=null }
-      window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
+      initShellChrome()
+      applyInboxRoute(parseInboxRoute())
+      if (appState.user) renderSignedInState()
+      instance.detached = false
     },
     async deactivate({ instance }) {
-      const fragment=document.createDocumentFragment(); while(app.firstChild) fragment.append(app.firstChild); instance.fragment=fragment
-      clearFloatingOverlays()
+      inboxRuntimeActive = false
+      document.body.classList.remove('is-inbox-page')
+      releaseInboxComposerViewportLock()
+      if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
+      detachInboxSurface()
+      instance.detached = true
     },
-    async unmount({ instance }) { instance.fragment=null; clearRealtimeListeners() }
+    async unmount({ instance }) {
+      inboxRuntimeActive = false
+      detachInboxSurface()
+      clearRealtimeListeners()
+      instance.detached = true
+    }
   })
 }
 
-normalizeInitialInboxRoute()
-waitForInitialAuthState().then(async (user) => {
+async function initializeInboxAuth() {
+  const user = await waitForInitialAuthState()
   if (!user) {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
@@ -8271,9 +8325,12 @@ waitForInitialAuthState().then(async (user) => {
       warnRealtimePermission(`start-dm-${startUid}`, error)
     }
   }
-})
+}
 
-subscribeToAuthState(async (user) => {
+function bindInboxAuthObserverOnce() {
+  if (inboxAuthObserverBound) return
+  inboxAuthObserverBound = true
+  subscribeToAuthState(async (user) => {
   if (!hasInitializedAuthObserver) return
   if (!user) {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
@@ -8298,7 +8355,16 @@ subscribeToAuthState(async (user) => {
   startBlockedUsersSubscription()
   startAccountCallSubscriptions()
   if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
-})
+  })
+}
+
+bindInboxAuthObserverOnce()
+
+const inboxColdPath = location.pathname.replace(/\/+$/, '') || '/'
+if (inboxColdPath === '/inbox' || inboxColdPath.startsWith('/inbox/')) {
+  attachInboxSurface()
+  void bootstrapInboxDocument()
+}
 
 
 // === MELOGIC inbox click-path guard v7 ===
