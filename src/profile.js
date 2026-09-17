@@ -19,6 +19,15 @@ import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 // melogic-profile-spa-lifecycle-v5
 function initPrivateProfileSpaLifecycle() {
   if (!isMobileSpaRuntime()) return
+
+  // melogic-profile-runtime-route-guard-v11b2
+  // Profile is now speculatively imported/warmed by the persistent mobile
+  // runtime. Importing it while another document/route owns the viewport must
+  // never rewrite history or emit a Profile navigation event.
+  const pathname = String(location.pathname || '').replace(/\/+$/, '') || '/'
+  const profilePath = String(ROUTES.profile || '/profile').replace(/\/+$/, '') || '/'
+  if (pathname !== profilePath) return
+
   const existing = history.state && typeof history.state === 'object' ? history.state : {}
   history.replaceState({
     ...existing,
@@ -42,7 +51,17 @@ initPrivateProfileSpaLifecycle()
 const PRIVATE_PROFILE_DEBUG = false
 const app = document.querySelector('#app')
 
-app.innerHTML = `
+// melogic-profile-lifecycle-contract-v7a
+const profileSurface = document.createElement('div')
+profileSurface.dataset.melogicProfileSurface = 'true'
+const profileSurfaceParking = document.createDocumentFragment()
+let profileRuntimeActive = false
+let profileBootstrapPromise = null
+let profileWarmPromise = null
+let profileAuthObserverBound = false
+let profileDataReady = false // melogic-profile-instant-spa-warm-v7b
+
+profileSurface.innerHTML = `
   ${navShell({ currentPage: 'profile' })}
   <main>
     <section class="standard-hero section" id="profile-top">
@@ -70,9 +89,7 @@ app.innerHTML = `
   </main>
 `
 
-initShellChrome()
-
-const profileRoot = document.querySelector('[data-profile-root]')
+const profileRoot = profileSurface.querySelector('[data-profile-root]')
 let hasWarnedProfileFallback = false
 let hasWarnedNoAuthUser = false
 let hasInitializedProfile = false
@@ -522,6 +539,7 @@ async function loadAndRenderProfile(user) {
       console.warn('[profile] No authenticated user; showing sign-in required state.')
     }
     renderSignedOutState()
+    profileDataReady = true
     return false
   }
 
@@ -563,37 +581,91 @@ async function loadAndRenderProfile(user) {
   }
 
   renderSignedInState(user, storedProfile, dashboard)
+  profileDataReady = true
   return true
 }
 
-// melogic-mobile-unified-runtime-v3
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
+function attachProfileSurface() {
+  if (!app) return false
+  if (profileSurface.parentNode === app && app.childNodes.length === 1) return true
+  app.replaceChildren(profileSurface)
+  return true
+}
+
+function detachProfileSurface() {
+  if (profileSurface.parentNode) profileSurfaceParking.append(profileSurface)
+}
+
+async function bootstrapProfileDocument() {
+  if (profileBootstrapPromise) return profileBootstrapPromise
+  profileBootstrapPromise = (async () => {
+    const user = await waitForInitialAuthState()
+    hasInitializedProfile = true
+    await loadAndRenderProfile(user)
+    return true
+  })()
+  try {
+    return await profileBootstrapPromise
+  } catch (error) {
+    profileBootstrapPromise = null
+    throw error
+  }
+}
+
+export async function warmProfileRuntimeView() {
+  if (!isMobileSpaRuntime()) return profileDataReady
+  if (profileDataReady) return true
+  if (profileWarmPromise) return profileWarmPromise
+  profileWarmPromise = bootstrapProfileDocument()
+    .then(() => profileDataReady)
+    .finally(() => { profileWarmPromise = null })
+  return profileWarmPromise
+}
+
+function bindProfileAuthObserverOnce() {
+  if (profileAuthObserverBound) return
+  profileAuthObserverBound = true
+  subscribeToAuthState((user) => {
+    if (!hasInitializedProfile) return
+    if (user?.uid === activeProfileUid) return
+    void loadAndRenderProfile(user)
+  })
+}
+bindProfileAuthObserverOnce()
+
+if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('profile', {
-    async mount() { return { fragment: null } },
-    async activate({ instance }) {
+    async mount() {
+      attachProfileSurface()
+      await bootstrapProfileDocument()
+      return { surface: profileSurface }
+    },
+    async activate() {
+      profileRuntimeActive = true
+      attachProfileSurface()
       document.body.classList.add('is-profile-page')
-      if (instance?.fragment?.childNodes?.length) {
-        app.replaceChildren(instance.fragment)
-        instance.fragment = null
-      }
+      initShellChrome()
+      await bootstrapProfileDocument()
     },
-    async deactivate({ instance }) {
+    async deactivate() {
+      profileRuntimeActive = false
       document.body.classList.remove('is-profile-page')
-      const fragment = document.createDocumentFragment()
-      while (app.firstChild) fragment.append(app.firstChild)
-      instance.fragment = fragment
+      detachProfileSurface()
     },
-    async unmount({ instance }) { instance.fragment = null }
+    async unmount() {
+      profileRuntimeActive = false
+      document.body.classList.remove('is-profile-page')
+      detachProfileSurface()
+    }
   })
 }
 
-waitForInitialAuthState().then((user) => {
-  hasInitializedProfile = true
-  loadAndRenderProfile(user)
-})
+const profileColdPath = location.pathname.replace(/\/+$/, '') || '/'
+if (profileColdPath === '/profile') {
+  profileRuntimeActive = true
+  attachProfileSurface()
+  document.body.classList.add('is-profile-page')
+  initShellChrome()
+  void bootstrapProfileDocument()
+}
 
-subscribeToAuthState((user) => {
-  if (!hasInitializedProfile) return
-  if (user?.uid === activeProfileUid) return
-  loadAndRenderProfile(user)
-})

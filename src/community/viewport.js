@@ -4,7 +4,24 @@ export function communityScrollViewport(root = document) {
   return document.scrollingElement || document.documentElement
 }
 export function setCommunityScroll(top, root = document) {
-  communityScrollViewport(root).scrollTop = Math.max(0, Number(top) || 0)
+  // melogic-community-instant-feed-restore-v9
+  // base.css intentionally enables smooth document scrolling for user-driven
+  // navigation. History/feed restoration is state restoration, not navigation:
+  // force this assignment to settle synchronously before the restored feed paints.
+  const viewport = communityScrollViewport(root)
+  const nextTop = Math.max(0, Number(top) || 0)
+  const previousInlineBehavior = viewport.style?.scrollBehavior || ''
+
+  if (viewport.style) viewport.style.scrollBehavior = 'auto'
+  viewport.scrollTop = nextTop
+
+  // Reading scrollTop flushes the scroll assignment while behavior is still auto.
+  // Preserve any route/component inline behavior immediately afterward.
+  void viewport.scrollTop
+  if (viewport.style) {
+    if (previousInlineBehavior) viewport.style.scrollBehavior = previousInlineBehavior
+    else viewport.style.removeProperty('scroll-behavior')
+  }
 }
 export function syncCommunityMobileHeader(detail, root = document) {
   const header = root.querySelector('[data-community-mobile-header]')

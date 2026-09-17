@@ -23,7 +23,7 @@ let activeViewId = null
 let transitionId = 0
 let warmupGeneration = 0
 const runtimeWarmViews = new Set()
-const RUNTIME_WARM_ORDER = ['community', 'streaming', 'camera', 'inbox'] // melogic-inbox-warm-pagination-v6c2 // melogic-primary-tab-warm-pool-v5c
+const RUNTIME_WARM_ORDER = ['community', 'streaming', 'camera', 'inbox', 'profile'] // melogic-inbox-warm-pagination-v6c2 // melogic-primary-tab-warm-pool-v5c
 let runtimeSuspended = false
 let lastCompletedUrl = location.href
 
@@ -255,7 +255,8 @@ async function warmRuntimeViewModule(routeId, generation) {
     routeId === 'community' ? '/community' :
     routeId === 'streaming' ? '/streaming' :
     routeId === 'camera' ? '/camera' :
-    routeId === 'inbox' ? '/inbox/messages' : '/'
+    routeId === 'inbox' ? '/inbox/messages' :
+    routeId === 'profile' ? '/profile' : '/'
   )
   if (typeof loader !== 'function') return false
 
@@ -269,6 +270,10 @@ async function warmRuntimeViewModule(routeId, generation) {
     }
     if (routeId === 'inbox' && typeof module?.warmInboxRuntimeView === 'function') {
       await module.warmInboxRuntimeView()
+      if (generation !== warmupGeneration || !runtimeCanWarm()) return false
+    }
+    if (routeId === 'profile' && typeof module?.warmProfileRuntimeView === 'function') {
+      await module.warmProfileRuntimeView()
       if (generation !== warmupGeneration || !runtimeCanWarm()) return false
     }
     runtimeWarmViews.add(routeId)
@@ -397,9 +402,9 @@ async function prepareMobileRuntimeRoute(url) {
 
 // melogic-mobile-primary-tab-runtime-v4d
 // melogic-camera-primary-tab-runtime-v5b
-// Lifecycle-proven primary tabs. Inbox lifecycle extraction is complete.
-// Profile remains browser-owned until its lifecycle extraction patch is completed.
-const PRIMARY_TAB_ROUTE_IDS = new Set(['community', 'streaming', 'camera', 'inbox']) // melogic-inbox-primary-tab-runtime-v6b2
+// Lifecycle-proven primary tabs. Community, Streaming, Camera, Inbox, and Profile
+// now share the persistent mobile runtime.
+const PRIMARY_TAB_ROUTE_IDS = new Set(['community', 'streaming', 'camera', 'inbox', 'profile']) // melogic-profile-instant-spa-warm-v7b // melogic-inbox-primary-tab-runtime-v6b2
 let primaryTabNavigationPending = false
 
 function isPrimaryTabRuntimeUrl(value) {
@@ -487,8 +492,8 @@ async function handleRuntimePopstate() {
 
 export function initCommunityInboxRuntimeBridge() {
   if (!isMobileSpaRuntime()) return
-  // Capture phase claims lifecycle-proven Community/Streaming/Camera/Inbox tab anchors.
-  // Search, post detail, profile, Products, etc. remain untouched.
+  // Capture phase claims lifecycle-proven Community/Streaming/Camera/Inbox/Profile tab anchors.
+  // Search, post detail, Products, etc. remain untouched.
   document.addEventListener('click', handlePrimaryTabClick, true)
   window.addEventListener('popstate', () => { void handleRuntimePopstate() })
   document.documentElement.dataset.melogicPrimaryTabRuntime = 'enabled'

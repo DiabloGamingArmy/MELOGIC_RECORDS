@@ -5,7 +5,7 @@
 // in later patches can replace the outlet without destroying/recreating the
 // header and bottom navigation.
 
-import { isMobileSpaRuntime, onMobileSpaNavigation, resolveMobileSpaRoute } from './mobileSpaRouter'
+import { getMobileSpaPageDepth, isMobileSpaRuntime, onMobileSpaNavigation, resolveMobileSpaRoute } from './mobileSpaRouter'
 
 const HOST_ID = 'melogic-mobile-spa-shell-host'
 const OUTLET_ATTR = 'data-melogic-mobile-spa-outlet'
@@ -18,6 +18,7 @@ let observer = null
 let persistentShell = null
 let outlet = null
 let harvesting = false
+const routeHeaderPresentations = new Map() // melogic-community-header-ownership-v8b
 
 function routeTitle(routeId) {
   switch (routeId) {
@@ -75,6 +76,41 @@ function copyHeaderPresentation(source, target) {
   target.innerHTML = source.innerHTML
 }
 
+// melogic-route-header-presentations-v8c
+// Every primary route gets its own presentation snapshot. Community remains
+// identifiable from its specialized header; generic headers are keyed by the
+// route that owned the shell when it was harvested.
+function presentationRouteId(header, routeId = null) {
+  if (!(header instanceof HTMLElement)) return null
+  if (header.matches('[data-community-mobile-header], .community-app-header')) return 'community'
+  return routeId || null
+}
+
+function rememberHeaderPresentation(header, routeId = null) {
+  const ownerId = presentationRouteId(header, routeId)
+  if (!ownerId) return false
+
+  // melogic-community-canonical-header-v8d
+  // Community has specialized controls. Once its real navShell header has been
+  // captured, a generic/stale persistent header must never overwrite it.
+  if (ownerId === 'community') {
+    const isCommunityHeader = header.matches('[data-community-mobile-header], .community-app-header')
+    const existing = routeHeaderPresentations.get('community')
+    if (!isCommunityHeader && existing instanceof HTMLElement) return false
+    if (!isCommunityHeader) return false
+  }
+
+  routeHeaderPresentations.set(ownerId, header.cloneNode(true))
+  return true
+}
+
+function restoreRememberedHeaderPresentation(routeId, target) {
+  const source = routeHeaderPresentations.get(routeId)
+  if (!(source instanceof HTMLElement) || !(target instanceof HTMLElement)) return false
+  copyHeaderPresentation(source, target)
+  return true
+}
+
 function syncBottomNavigation(nav = persistentShell?.querySelector(NAV_SELECTOR)) {
   if (!(nav instanceof HTMLElement)) return
   const path = currentPath()
@@ -92,6 +128,16 @@ function syncBottomNavigation(nav = persistentShell?.querySelector(NAV_SELECTOR)
   })
 }
 
+// melogic-mobile-subpage-contract-v11a
+function syncMobilePageDepth() {
+  const depth = getMobileSpaPageDepth()
+  document.documentElement.dataset.melogicMobilePageDepth = depth
+  if (persistentShell instanceof HTMLElement) persistentShell.dataset.melogicMobilePageDepth = depth
+  const currentOutlet = getMobileSpaOutlet()
+  if (currentOutlet instanceof HTMLElement) currentOutlet.dataset.melogicMobilePageDepth = depth
+  return depth
+}
+
 function syncGenericHeaderTitle() {
   const header = persistentShell?.querySelector(HEADER_SELECTOR)
   const title = header?.querySelector('.mobile-app-title')
@@ -103,9 +149,45 @@ function syncGenericHeaderTitle() {
   title.textContent = routeTitle(route?.id)
 }
 
+// melogic-restore-existing-community-chrome-v8
+// SPA transitions keep one persistent shell. When returning to Community, restore
+// the already-existing Community header presentation from Community's parked/live
+// page shell rather than synthesizing/re-coding its controls.
+function restoreRouteHeaderPresentation() {
+  const route = resolveMobileSpaRoute()
+  const target = persistentShell?.querySelector(HEADER_SELECTOR)
+  if (!(target instanceof HTMLElement) || !route?.id) return false
+
+  if (route.id === 'community') {
+    const source = document.querySelector(
+      '#app [data-community-mobile-header], #app .community-app-header'
+    )
+    if (source instanceof HTMLElement && source !== target) {
+      rememberHeaderPresentation(source, 'community')
+      copyHeaderPresentation(source, target)
+      return true
+    }
+  }
+
+  // Critical 8C correction: restore the DESTINATION route's own existing header
+  // on every activation, not just Community. This prevents Community chrome from
+  // remaining in the persistent shell on the second+ trip to Inbox/Streaming/etc.
+  if (restoreRememberedHeaderPresentation(route.id, target)) return true
+
+  // Cold/first activation can use the currently harvested header as source.
+  if (route.id === 'community' && target.matches('[data-community-mobile-header], .community-app-header')) {
+    rememberHeaderPresentation(target, 'community')
+    return true
+  }
+  return false
+}
+
 function harvestShell(candidate) {
   if (!(candidate instanceof HTMLElement) || candidate === persistentShell || harvesting) return
   const host = ensureHost()
+  const candidateHeader = candidate.querySelector(HEADER_SELECTOR)
+  const candidateRoute = resolveMobileSpaRoute()
+  rememberHeaderPresentation(candidateHeader, candidateRoute?.id || null)
 
   harvesting = true
   try {
@@ -129,6 +211,11 @@ function harvestShell(candidate) {
     }
     syncBottomNavigation()
     syncGenericHeaderTitle()
+    const activeRoute = resolveMobileSpaRoute()
+    const activeHeader = persistentShell?.querySelector(HEADER_SELECTOR)
+    if (activeRoute?.id === 'community' || !activeHeader?.classList.contains('community-app-header')) {
+      rememberHeaderPresentation(activeHeader, activeRoute?.id || null)
+    }
   } finally {
     harvesting = false
   }
@@ -170,12 +257,29 @@ function boot() {
   document.documentElement.dataset.melogicMobileSpaShell = 'ready'
   discoverShells(document)
   bindOutletObserver()
+  syncMobilePageDepth()
 
   // Keep persistent chrome accurate as Patch 1 history state changes. Future
   // patches will emit the same event after same-document view transitions.
   onMobileSpaNavigation(() => {
     syncBottomNavigation()
-    syncGenericHeaderTitle()
+    syncMobilePageDepth()
+    const activeRoute = resolveMobileSpaRoute()
+    const restored = restoreRouteHeaderPresentation()
+
+    // Community's existing navShell + syncCommunityMobileHeader own its header.
+    // Generic title sync must not run over that specialized presentation.
+    if (activeRoute?.id !== 'community' || !restored) syncGenericHeaderTitle()
+
+    requestAnimationFrame(() => {
+      const settledRoute = resolveMobileSpaRoute()
+      const activeHeader = persistentShell?.querySelector(HEADER_SELECTOR)
+      if (settledRoute?.id === 'community') {
+        rememberHeaderPresentation(activeHeader, 'community')
+      } else if (!activeHeader?.classList.contains('community-app-header')) {
+        rememberHeaderPresentation(activeHeader, settledRoute?.id || null)
+      }
+    })
   })
 }
 

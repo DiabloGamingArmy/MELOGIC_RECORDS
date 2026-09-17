@@ -57,6 +57,25 @@ export function resolveMobileSpaRoute(value = location.pathname) {
   return MOBILE_SPA_ROUTES.find(route => routeMatchesPath(route, value)) || null
 }
 
+// melogic-mobile-subpage-contract-v11a
+const MOBILE_MAIN_PATHS = new Set([
+  normalizedPath(ROUTES.community), '/streaming', normalizedPath(ROUTES.inbox),
+  normalizedPath(ROUTES.profile), '/camera', '/camera.html', normalizedPath(ROUTES.products)
+])
+export function getMobileSpaPageDepth(value = location.pathname) {
+  const path = normalizedPath(value)
+  const route = resolveMobileSpaRoute(path)
+  if (!route) return 'outside'
+
+  // melogic-mobile-subpage-correction-v11b1
+  if (route.id === 'inbox') return 'main'
+
+  return MOBILE_MAIN_PATHS.has(path) ? 'main' : 'subpage'
+}
+export function isMobileSpaSubpage(value = location.pathname) {
+  return getMobileSpaPageDepth(value) === 'subpage'
+}
+
 export const MOBILE_SPA_ROUTES = ROUTE_DEFINITIONS.map(({ module, ...route }) => Object.freeze(route))
 
 export function canHandleMobileSpaUrl(value) {

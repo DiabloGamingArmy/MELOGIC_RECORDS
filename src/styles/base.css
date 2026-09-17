@@ -3309,3 +3309,24 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
     pointer-events:auto !important;
   }
 }
+
+/* melogic-mobile-subpage-nav-visibility-v11b
+   Persistent nav remains mounted for instant return, but subpages remove it
+   from layout/paint and collapse the shared nav-height contract to zero. */
+@media (max-width: 760px), (display-mode: standalone) {
+  html[data-melogic-mobile-page-depth="subpage"] {
+    --mobile-nav-height: 0px;
+    --melogic-mobile-nav-height: 0px;
+  }
+  html[data-melogic-mobile-page-depth="subpage"] .mobile-bottom-nav {
+    display: none !important;
+  }
+  /* melogic-mobile-subpage-correction-v11b1 */
+  html[data-melogic-mobile-page-depth="subpage"] body,
+  html[data-melogic-mobile-page-depth="subpage"] #app,
+  html[data-melogic-mobile-page-depth="subpage"] [data-melogic-mobile-spa-outlet] {
+    padding-bottom: 0 !important;
+    margin-bottom: 0 !important;
+  }
+}
+

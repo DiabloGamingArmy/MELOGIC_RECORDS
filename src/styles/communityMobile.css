@@ -81,8 +81,71 @@
   .community-page .community-layout.is-home > .community-main {
     width: 100%; min-width: 0; height: auto; min-height: 0; padding: 0; overflow: visible; border: 0; background: transparent; scrollbar-gutter: auto;
   }
+
+  /* melogic-community-bounded-scroll-viewport-v10
+     Community owns one fixed viewport between persistent mobile chrome.
+     This applies to feed and Community subviews because the boundary is the
+     stable .community-main surface, not route-specific markup. */
+  body.is-community-page {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+  body.is-community-page #app {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .community-page {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .community-page .community-layout,
+  .community-page .community-layout.is-home {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .community-page .community-main,
+  .community-page .community-layout.is-home > .community-main {
+    /* melogic-community-scroll-inset-v10b
+       Patch 10 bounded the HEIGHT but left the viewport's origin at y=0.
+       Explicitly inset the stable Community scroller below the persistent
+       header. Its height still terminates above the persistent bottom nav. */
+    position: relative;
+    top: 0;
+    height: calc(
+      100dvh
+      - var(--community-header-height)
+      - var(--mobile-safe-top)
+      - var(--mobile-nav-height)
+      - var(--mobile-safe-bottom)
+    );
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: auto;
+  }
   .community-layout.is-post-detail .community-detail-topbar { display: none; }
   .community-feed-header { position: static; top: auto; box-shadow: none; background: transparent; backdrop-filter: none; }
+  /* melogic-community-header-spacer-v10c
+     Deliberate layout shim: reserve one feed-header-sized block before the real
+     For You / Following header. It is invisible but participates in layout,
+     pushing the real feed header below the persistent app header. Because this
+     is generated from the feed header itself, no route-change JS is required. */
+  .community-feed-header::before {
+    content: "";
+    display: block;
+    width: 100%;
+    height: calc(var(--community-header-height) + var(--mobile-safe-top));
+    flex: 0 0 calc(var(--community-header-height) + var(--mobile-safe-top));
+    visibility: hidden;
+    pointer-events: none;
+  }
   .community-master-tabs { min-height: 48px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
   .community-master-tabs > button { min-height: 48px; }
   .community-filter-shell { padding: 0; }
@@ -542,5 +605,15 @@ color:#fff!important;border:1px solid transparent!important;background:linear-gr
       --melogic-mobile-header-h,
       calc(var(--community-header-height) + var(--mobile-safe-top))
     );
+  }
+}
+
+/* melogic-mobile-subpage-correction-v11b1 */
+@media (max-width: 760px) {
+  html[data-melogic-mobile-page-depth="subpage"] body.is-community-page { padding-bottom: 0 !important; }
+  html[data-melogic-mobile-page-depth="subpage"] .community-page .community-main,
+  html[data-melogic-mobile-page-depth="subpage"] .community-page .community-layout.is-home > .community-main {
+    height: calc(100dvh - var(--community-header-height) - var(--mobile-safe-top) - var(--mobile-safe-bottom)) !important;
+    padding-bottom: var(--mobile-safe-bottom) !important;
   }
 }
