@@ -43,7 +43,20 @@ function captureRuntimeScroll(viewId = activeViewId, url = location.href) {
 function restoreRuntimeScroll(viewId, url = location.href) {
   const saved = runtimeScroll.get(runtimeScrollKey(viewId, url))
   if (!saved) return false
-  requestAnimationFrame(() => window.scrollTo(saved.x, saved.y))
+
+  // melogic-mobile-instant-scroll-restore-v4d2
+  // Runtime view restoration is state restoration, not user navigation.
+  // Force a single-frame jump even when global/root CSS enables smooth scroll.
+  try {
+    window.scrollTo({ left: saved.x, top: saved.y, behavior: 'instant' })
+  } catch {
+    // Older WebKit fallback: temporarily neutralize CSS smooth scrolling.
+    const root = document.documentElement
+    const previous = root.style.scrollBehavior
+    root.style.scrollBehavior = 'auto'
+    window.scrollTo(saved.x, saved.y)
+    root.style.scrollBehavior = previous
+  }
   return true
 }
 function beginRuntimeTransition() {
