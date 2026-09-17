@@ -5062,3 +5062,36 @@ body.is-inbox-page .site-footer {
     padding-top:0 !important;
   }
 }
+
+/* melogic-inbox-pinned-route-header-v24
+   Pin Calls banner/+ independently from its scrolling content, and close the
+   remaining 2px Activity seam. Messages is intentionally untouched. */
+@media (max-width:760px) {
+  body.is-inbox-page [data-inbox-shared-mobile-shell="calls"] .account-calls-panel {
+    display:flex !important;
+    flex-direction:column !important;
+    height:100% !important;
+    min-height:0 !important;
+    overflow-y:auto !important;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-y:contain !important;
+    touch-action:pan-y !important;
+  }
+
+  body.is-inbox-page [data-inbox-shared-mobile-shell="calls"] .account-calls-panel > .inbox-mobile-route-header {
+    position:sticky !important;
+    top:0 !important;
+    z-index:10 !important;
+    width:100% !important;
+    flex:0 0 64px !important;
+    background:var(--surface, #050505) !important;
+  }
+
+  body.is-inbox-page [data-inbox-shared-mobile-shell="content"] .inbox-mobile-route-header,
+  body.is-inbox-page [data-inbox-shared-mobile-shell="system"] .inbox-mobile-route-header,
+  body.is-inbox-page [data-inbox-shared-mobile-shell="activity"] .inbox-mobile-route-header {
+    transform:translateY(-2px) !important;
+    margin-bottom:-2px !important;
+  }
+}
+
