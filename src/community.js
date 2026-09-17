@@ -355,6 +355,33 @@ function logCommunityPerf(label, data = {}) {
   console.debug('[community:perf]', label, data)
 }
 
+function reconcileCommunityMobileRouteHeader() {
+  const sync = () => syncCommunityMobileHeader(Boolean(parseDetailPostId()), document)
+  sync()
+  window.requestAnimationFrame(() => {
+    sync()
+    window.requestAnimationFrame(sync)
+  })
+  window.setTimeout(sync, 0)
+  window.setTimeout(sync, 60)
+  window.setTimeout(sync, 180)
+}
+
+function observeCommunityMobileHeaderLifecycle() {
+  if (document.documentElement.dataset.communityHeaderLifecycleReady === 'true') return
+  document.documentElement.dataset.communityHeaderLifecycleReady = 'true'
+  const observer = new MutationObserver((mutations) => {
+    if (!mutations.some((mutation) => mutation.type === 'childList' && (mutation.addedNodes.length || mutation.removedNodes.length))) return
+    reconcileCommunityMobileRouteHeader()
+  })
+  observer.observe(document.body, { childList: true, subtree: true })
+}
+
+window.addEventListener('popstate', reconcileCommunityMobileRouteHeader)
+window.addEventListener('pageshow', reconcileCommunityMobileRouteHeader)
+document.addEventListener('melogic:mobile-spa-navigation', reconcileCommunityMobileRouteHeader)
+observeCommunityMobileHeaderLifecycle()
+
 function dispatchCommunityPendingActionsChanged() {
   window.dispatchEvent(new CustomEvent('community:pending-actions-changed', {
     detail: { pendingCount: communityPendingActions.size }
@@ -2106,6 +2133,7 @@ function postAttachmentRenderKey(post = {}) {
     return `${attachment.type || ''}:${path}:${attachment.url || attachment.audioURL || state.attachmentMediaUrls[path] || ''}`
   }).join('|')
 }
+
 
 function postCard(post, { detail = false } = {}) {
   const viewer = state.viewerState[post.postId] || {}

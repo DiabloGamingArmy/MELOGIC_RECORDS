@@ -9,9 +9,38 @@ export function setCommunityScroll(top, root = document) {
 export function syncCommunityMobileHeader(detail, root = document) {
   const header = root.querySelector('[data-community-mobile-header]')
   if (!header) return
-  header.classList.toggle('is-post-view', Boolean(detail))
+  const isPostView = Boolean(detail)
+  header.classList.toggle('is-post-view', isPostView)
+
   const back = header.querySelector('[data-community-back-to-feed]')
-  if (back) { back.hidden = !detail; back.tabIndex = detail ? 0 : -1 }
+  if (back) {
+    back.hidden = !isPostView
+    back.tabIndex = isPostView ? 0 : -1
+  }
+
+  const title = header.querySelector('.mobile-app-title')
+  if (title) {
+    const lockup = title.querySelector('.community-title-lockup')
+    if (lockup) {
+      lockup.hidden = isPostView
+      lockup.setAttribute('aria-hidden', String(isPostView))
+    }
+
+    let postTitle = title.querySelector('.community-post-header-title')
+    if (!postTitle) {
+      postTitle = document.createElement('span')
+      postTitle.className = 'community-post-header-title'
+      postTitle.textContent = 'POST'
+      postTitle.hidden = true
+      title.append(postTitle)
+    }
+    postTitle.hidden = !isPostView
+    postTitle.setAttribute('aria-hidden', String(!isPostView))
+  }
+
   const actions = header.querySelector('.mobile-app-actions')
-  if (actions) { actions.inert = Boolean(detail); actions.setAttribute('aria-hidden', String(Boolean(detail))) }
+  if (actions) {
+    actions.inert = isPostView
+    actions.setAttribute('aria-hidden', String(isPostView))
+  }
 }

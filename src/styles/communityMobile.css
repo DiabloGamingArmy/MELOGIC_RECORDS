@@ -37,6 +37,27 @@
   .is-community-page .community-mobile-back svg { width: 22px; height: 22px; }
   .is-community-page .mobile-app-header.is-post-view { grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .is-community-page .is-post-view .mobile-app-title { grid-column: 2; text-align: center; animation: community-title-enter 220ms ease-out; }
+  .is-community-page .is-post-view .mobile-app-title {
+    grid-row: 1;
+    align-self: center;
+    justify-self: center;
+    width: 100%;
+  }
+  .is-community-page .community-title-lockup[hidden],
+  .is-community-page .community-post-header-title[hidden] {
+    display: none !important;
+  }
+  .is-community-page .community-post-header-title {
+    display: block;
+    font: inherit;
+    line-height: inherit;
+    color: inherit;
+    text-align: center;
+  }
+  .is-community-page .is-post-view .mobile-app-actions {
+    visibility: hidden;
+    pointer-events: none;
+  }
   .is-community-page .is-post-view .community-mobile-back { display: grid; grid-column: 1; grid-row: 1; animation: community-back-enter 220ms ease-out; }
   .is-community-page .is-post-view .mobile-app-actions { position: absolute; visibility: hidden; opacity: 0; pointer-events: none; transform: translateX(8px); }
   .is-community-page .mobile-bottom-nav {
@@ -485,4 +506,41 @@ color:#fff!important;border:1px solid transparent!important;background:linear-gr
 /* melogic-mobile-nav-absolute-screen-geometry-v6-community-boundary */
 @media (max-width:760px) {
  body.is-community-page .community-page { bottom:var(--melogic-mobile-nav-h) !important; }
+
+  /* community-post-viewer-v4 */
+  body.is-community-page .community-post-detail-card > .community-post-header {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 44px !important;
+    align-items: center !important;
+    gap: 0 8px !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+  body.is-community-page .community-post-detail-card > .community-post-header .community-author {
+    display: flex !important;
+    min-width: 0 !important;
+    align-items: center !important;
+  }
+  body.is-community-page .community-post-detail-card > .community-post-header .community-avatar {
+    display: grid !important;
+    flex: 0 0 auto !important;
+  }
+  body.is-community-page .community-post-detail-card > .community-post-header .community-post-header-actions {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+/* melogic-post-detail-header-clearance-v7
+   Runtime proof: the detail author row occupied y=16..58 while hit-testing
+   its center returned the POST shell title. Clear the persistent header
+   using canonical mobile header geometry, never a device pixel constant. */
+@media (max-width: 760px) {
+  body.is-community-page .community-layout.is-post-detail > .community-main,
+  body.is-community-page .community-layout.is-post-detail > .community-route-main {
+    padding-top: var(
+      --melogic-mobile-header-h,
+      calc(var(--community-header-height) + var(--mobile-safe-top))
+    );
+  }
 }
