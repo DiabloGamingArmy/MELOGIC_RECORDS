@@ -133,9 +133,7 @@ function initConsumerSpaLifecycle() {
 }
 initConsumerSpaLifecycle()
 
-const app = document.querySelector('#app')
-// melogic-pwa-streaming-camera-canonical-v4-route
-document.body.classList.add('is-streaming-page')
+const app = document.querySelector('#app')\n// melogic-pwa-streaming-camera-canonical-v4-route\ndocument.body.classList.add('is-streaming-page')
 let mobileStreamingRuntimeActive = true
 let mobileStreamingRuntimeDirty = false
 bindExpandableMusicPlayer()
