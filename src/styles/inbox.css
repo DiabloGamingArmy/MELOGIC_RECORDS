@@ -4924,3 +4924,60 @@ body.is-inbox-page .site-footer {
     min-height: 0 !important;
   }
 }
+
+/* melogic-inbox-activity-stable-scroll-owner-v21
+   Calls/Activity were giving BOTH the route panel and the content panel vertical
+   scrolling. When async data replaced the empty state with populated rows, the
+   inner activity panel became the scroll owner and its scrollTop/layout state
+   moved the persistent section tabs/header upward. Messages does not have this
+   nested-scroll handoff.
+
+   Keep the persistent route frame fixed. Only the content panel below the
+   section tabs may scroll, and reset that panel to a deterministic top edge. */
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-layout-activity {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel,
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel-full {
+    display: grid !important;
+    grid-template-rows: minmax(0, 1fr) !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    overscroll-behavior: none !important;
+    touch-action: auto !important;
+  }
+
+  /* The activity/calls content is the sole vertical scroller. */
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel > .activity-panel,
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel-full > .activity-panel,
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel > .account-calls-panel,
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel-full > .account-calls-panel {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain !important;
+    touch-action: pan-y !important;
+    scroll-padding-top: 0 !important;
+  }
+
+  /* Tabs are persistent navigation, never part of a scrolling content surface. */
+  body.is-inbox-page [data-inbox-mobile-section-tabs] {
+    flex-shrink: 0 !important;
+    translate: none !important;
+  }
+}
