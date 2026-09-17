@@ -90,8 +90,9 @@ initMobileSpaLifecycleAudit()
 
 // melogic-mobile-unified-runtime-v1
 // melogic-deterministic-mobile-navigation-v1
-// Unified cross-document runtime disabled until entry modules are lifecycle-pure.
-// initMobileAppRuntime()
+// melogic-mobile-runtime-core-hardening-v4a
+// Foundation is initialized; interception remains disabled in mobileAppRuntime.
+initMobileAppRuntime()
 
 const desktop = Boolean(window.__TAURI_INTERNALS__ || window.__TAURI__ || /Tauri/i.test(navigator.userAgent))
 const standalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true

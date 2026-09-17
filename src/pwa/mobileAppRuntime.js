@@ -27,6 +27,46 @@ const RUNTIME_WARM_ORDER = ['community', 'inbox', 'profile', 'camera', 'streamin
 let runtimeSuspended = false
 let lastCompletedUrl = location.href
 
+// melogic-mobile-runtime-core-hardening-v4a
+// Foundation only; cross-document interception remains disabled.
+const runtimeScroll = new Map()
+let transitionController = null
+function runtimeScrollKey(viewId, url = location.href) {
+  let pathname = '/'
+  try { pathname = new URL(String(url), location.href).pathname.replace(/\/+$/, '') || '/' } catch {}
+  return `${String(viewId || '')}:${pathname}`
+}
+function captureRuntimeScroll(viewId = activeViewId, url = location.href) {
+  if (!viewId) return
+  runtimeScroll.set(runtimeScrollKey(viewId, url), { x: Math.max(0, Math.round(window.scrollX || 0)), y: Math.max(0, Math.round(window.scrollY || 0)) })
+}
+function restoreRuntimeScroll(viewId, url = location.href) {
+  const saved = runtimeScroll.get(runtimeScrollKey(viewId, url))
+  if (!saved) return false
+  requestAnimationFrame(() => window.scrollTo(saved.x, saved.y))
+  return true
+}
+function beginRuntimeTransition() {
+  transitionController?.abort()
+  transitionController = typeof AbortController === 'function' ? new AbortController() : null
+  return { id: ++transitionId, signal: transitionController?.signal || null }
+}
+function runtimeHistoryState(route, url = location.href) {
+  let pathname = normalizedPath()
+  try { pathname = normalizedPath(new URL(String(url), location.href).pathname) } catch {}
+  return { ...(history.state && typeof history.state === "object" ? history.state : {}), melogicMobileSpa: true, melogicMobileRuntime: true, routeId: route?.id || null, pathname }
+}
+function runtimeFallback(url, reason = 'runtime-fallback') {
+  let target
+  try { target = url instanceof URL ? url : new URL(String(url), location.href) } catch { return false }
+  publish(reason, { target: target.pathname })
+  location.assign(target.href)
+  return true
+}
+export function getMobileRuntimeDiagnostics() {
+  return Object.freeze({ ...snapshot(), mode: 'foundation-non-intercepting', suspended: runtimeSuspended, lastCompletedUrl, scrollKeys: [...runtimeScroll.keys()], historyState: history.state && typeof history.state === 'object' ? { ...history.state } : history.state })
+}
+
 function normalizedPath(value = location.pathname) {
   const path = String(value || '/').replace(/\/+$/, '')
   return path || '/'
@@ -114,11 +154,13 @@ export async function activateMobileRuntimeUrl(value, { historyMode = 'push', so
   const outlet = getMobileSpaOutlet()
   if (!(outlet instanceof HTMLElement)) return false
 
-  const currentTransition = ++transitionId
+  const transition = beginRuntimeTransition()
+  const currentTransition = transition.id
   const previousId = activeViewId
   const previous = previousId ? registry.get(previousId) : null
   const previousInstance = previousId ? instances.get(previousId) : null
   publish('transition-start', { from: previousId, to: route.id, source })
+  if (previousId) captureRuntimeScroll(previousId, lastCompletedUrl)
 
   if (previousId && previousId !== route.id && previous && previousInstance) {
     await previous.deactivate({ outlet, instance: previousInstance, from: previousId, to: route.id, transitionId: currentTransition })
@@ -138,14 +180,9 @@ export async function activateMobileRuntimeUrl(value, { historyMode = 'push', so
   await lifecycle.activate({ outlet, instance: instances.get(route.id), route, url, transitionId: currentTransition })
   if (currentTransition !== transitionId) return false
   activeViewId = route.id
+  restoreRuntimeScroll(route.id, url.href)
 
-  const state = {
-    ...(history.state && typeof history.state === 'object' ? history.state : {}),
-    melogicMobileSpa: true,
-    melogicMobileRuntime: true,
-    routeId: route.id,
-    pathname: normalizedPath(url.pathname)
-  }
+  const state = runtimeHistoryState(route, url.href)
   if (historyMode === 'replace') history.replaceState(state, '', url.href)
   else if (historyMode === 'push' && url.href !== location.href) history.pushState(state, '', url.href)
 
@@ -226,7 +263,12 @@ export function initMobileAppRuntime() {
   initialized = true
   if (!isMobileSpaRuntime()) return
   document.documentElement.dataset.melogicMobileRuntime = 'foundation'
-  publish('init')
+  document.documentElement.dataset.melogicMobileRuntimeMode = 'non-intercepting'
+  const initialRoute = resolveMobileSpaRoute()
+  if (initialRoute && VIEW_IDS.has(initialRoute.id)) {
+    try { history.replaceState(runtimeHistoryState(initialRoute, location.href), '', location.href) } catch {}
+  }
+  publish('init', { mode: 'non-intercepting' })
   // melogic-urgent-stop-runtime-route-spam-v1
   // Runtime module warmup disabled; router document prewarm remains safe.
   document.addEventListener('visibilitychange', () => {
@@ -240,6 +282,8 @@ export function initMobileAppRuntime() {
   window.addEventListener('pagehide', event => {
     runtimeSuspended = true
     warmupGeneration += 1
+    captureRuntimeScroll(activeViewId, location.href)
+    transitionController?.abort()
     transitionId += 1
     publish(event.persisted ? 'pagehide-persisted' : 'pagehide')
   })
@@ -300,7 +344,10 @@ async function prepareMobileRuntimeRoute(url) {
 // melogic-urgent-stop-runtime-route-spam-v1b
 // Emergency stabilization: cross-page runtime navigation is intentionally
 // disabled. Browser document navigation owns cross-surface transitions.
-export async function navigateMobileRuntimeUrl() {
+export async function navigateMobileRuntimeUrl(value, options = {}) {
+  // 4A: false preserves native navigation until views are lifecycle-owned.
+  void value
+  void options
   return false
 }
 
