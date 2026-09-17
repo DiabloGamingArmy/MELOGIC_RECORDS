@@ -525,14 +525,6 @@ function installCommunitySpaLifecycle() {
       return
     }
 
-    // melogic-community-search-document-boundary-v1
-    // /community/search is a separate Vite document (community-search.html),
-    // not a Community feed/community-slug/query state. It must be allowed to
-    // use the anchor's native document navigation. Intercepting it here with
-    // preventDefault() + pushState() changes only the URL and leaves the
-    // Community document mounted.
-    if (url.pathname === '/community/search') return
-
     // Community feed/community-slug/query routes already have a substantial
     // state machine. Let the existing popstate route-restoration path own them:
     // push the URL, then dispatch popstate exactly once.

@@ -436,6 +436,16 @@ function setupMobileCommunityShellActions() {
   document.documentElement.dataset.mobileCommunityActionsReady = 'true'
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null
+    const searchButton = target?.closest('[data-mobile-community-search]')
+    if (searchButton) {
+      event.preventDefault()
+      const input = document.querySelector('[data-community-search], .community-search-input, input[type="search"]')
+      if (input instanceof HTMLElement) {
+        input.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        window.setTimeout(() => input.focus({ preventScroll: true }), 180)
+      }
+      return
+    }
     const createButton = target?.closest('[data-mobile-community-create]')
     if (createButton) {
       event.preventDefault()
@@ -524,14 +534,6 @@ function installCommunitySpaLifecycle() {
       openPostDetail(postId, url.hash || '')
       return
     }
-
-    // melogic-community-search-document-boundary-v1
-    // /community/search is a separate Vite document (community-search.html),
-    // not a Community feed/community-slug/query state. It must be allowed to
-    // use the anchor's native document navigation. Intercepting it here with
-    // preventDefault() + pushState() changes only the URL and leaves the
-    // Community document mounted.
-    if (url.pathname === '/community/search') return
 
     // Community feed/community-slug/query routes already have a substantial
     // state machine. Let the existing popstate route-restoration path own them:
