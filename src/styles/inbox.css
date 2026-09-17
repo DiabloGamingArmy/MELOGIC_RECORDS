@@ -4825,3 +4825,37 @@ body.is-inbox-page .site-footer {
     touch-action: pan-y;
   }
 }
+
+/* melogic-inbox-section-header-parity-style-v19
+   Messages / Calls / Activity share one mobile section-header geometry. */
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-mobile-section-tabs {
+    transform: translateY(6px) !important;
+    margin-bottom: 6px !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-primary-content-header,
+  body.is-inbox-page .account-calls-panel > .panel-header.activity-header,
+  body.is-inbox-page .inbox-main-panel-full > .activity-panel > .panel-header.activity-header {
+    box-sizing: border-box !important;
+    min-height: 64px !important;
+    height: 64px !important;
+    margin: 0 !important;
+    padding: 0 28px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    border-bottom: 1px solid var(--border-subtle, rgba(255,255,255,.08)) !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-primary-content-header > h3,
+  body.is-inbox-page .account-calls-panel > .panel-header.activity-header > h3,
+  body.is-inbox-page .inbox-main-panel-full > .activity-panel > .panel-header.activity-header > h3 {
+    margin: 0 !important;
+  }
+
+  body.is-inbox-page .account-calls-panel > .panel-header.activity-header > p,
+  body.is-inbox-page .inbox-main-panel-full > .activity-panel > .panel-header.activity-header > p {
+    display: none !important;
+  }
+}

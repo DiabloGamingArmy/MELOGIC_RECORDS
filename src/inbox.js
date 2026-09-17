@@ -3854,9 +3854,9 @@ function getCallsContentMarkup() {
 
   return `
     <section class="activity-panel account-calls-panel">
-      <header class="panel-header activity-header">
+      <header class="panel-header activity-header inbox-mobile-primary-content-header">
+        <!-- melogic-inbox-section-header-parity-v19 -->
         <h3>Calls</h3>
-        <p>Account-to-account audio calling</p>
       </header>
       ${appState.callError ? `<div class="account-call-error" role="alert">${escapeHtml(appState.callError)}</div>` : ''}
       ${activeMarkup}
