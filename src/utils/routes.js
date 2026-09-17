@@ -122,6 +122,7 @@ const LEGACY_ROUTE_MAP = {
   '/orders': ROUTES.orders,
   '/inbox.html': ROUTES.inbox,
   '/community.html': ROUTES.community,
+  '/camera.html': '/camera', // melogic-camera-route-canonicalization-v5b1
   '/live.html': ROUTES.live,
   '/forms.html': ROUTES.forms,
   '/faq.html': ROUTES.faq,

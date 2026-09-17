@@ -15,7 +15,7 @@ const PREWARM_TIMEOUT_MS = 3500 // melogic-mobile-spa-cache-v7b
 
 const ROUTE_DEFINITIONS = Object.freeze([
   { id: 'community', path: ROUTES.community, module: () => import('../community.js') },
-  { id: 'camera', path: '/camera', module: () => import('../camera.js') },
+  { id: 'camera', path: '/camera', aliases: ['/camera.html'], module: () => import('../camera.js') }, // melogic-camera-route-canonicalization-v5b1
   { id: 'inbox', path: ROUTES.inbox, prefix: '/inbox/', module: () => import('../inbox.js') },
   { id: 'profile-public', path: ROUTES.profilePublic, prefixes: ['/profiles/', '/u/'], module: () => import('../profilePublic.js') }, // melogic-mobile-spa-profile-v5
   { id: 'profile-edit', path: ROUTES.editProfile, module: () => import('../editProfile.js') },
@@ -38,6 +38,14 @@ function normalizedPath(value = location.pathname) {
   return path || '/'
 }
 
+function routeMatchesPath(route, value) {
+  const path = normalizedPath(value)
+  return path === route.path ||
+    (Array.isArray(route.aliases) && route.aliases.includes(path)) ||
+    (route.prefix && path.startsWith(route.prefix)) ||
+    (Array.isArray(route.prefixes) && route.prefixes.some(prefix => path.startsWith(prefix)))
+}
+
 export function isMobileSpaRuntime() {
   if (window.__TAURI_INTERNALS__ || window.__TAURI__) return false
   return window.matchMedia(MOBILE_QUERY).matches ||
@@ -46,12 +54,7 @@ export function isMobileSpaRuntime() {
 }
 
 export function resolveMobileSpaRoute(value = location.pathname) {
-  const path = normalizedPath(value)
-  return MOBILE_SPA_ROUTES.find(route =>
-    path === route.path ||
-    (route.prefix && path.startsWith(route.prefix)) ||
-    (Array.isArray(route.prefixes) && route.prefixes.some(prefix => path.startsWith(prefix)))
-  ) || null
+  return MOBILE_SPA_ROUTES.find(route => routeMatchesPath(route, value)) || null
 }
 
 export const MOBILE_SPA_ROUTES = ROUTE_DEFINITIONS.map(({ module, ...route }) => Object.freeze(route))
@@ -87,12 +90,7 @@ export function onMobileSpaNavigation(listener) {
 }
 
 export async function prewarmMobileSpaRoute(path) {
-  const route = ROUTE_DEFINITIONS.find(candidate => {
-    const normalized = normalizedPath(path)
-    return normalized === candidate.path ||
-      (candidate.prefix && normalized.startsWith(candidate.prefix)) ||
-      (Array.isArray(candidate.prefixes) && candidate.prefixes.some(prefix => normalized.startsWith(prefix)))
-  })
+  const route = ROUTE_DEFINITIONS.find(candidate => routeMatchesPath(candidate, path))
   if (!route || warmedRoutes.has(route.id)) return false
   warmedRoutes.add(route.id)
 
@@ -211,12 +209,7 @@ export function initMobileSpaFoundation() {
 
 // melogic-mobile-unified-runtime-v1
 export function getMobileSpaRouteDefinition(value = location.pathname) {
-  const path = normalizedPath(value)
-  return ROUTE_DEFINITIONS.find(route =>
-    path === route.path ||
-    (route.prefix && path.startsWith(route.prefix)) ||
-    (Array.isArray(route.prefixes) && route.prefixes.some(prefix => path.startsWith(prefix)))
-  ) || null
+  return ROUTE_DEFINITIONS.find(route => routeMatchesPath(route, value)) || null
 }
 
 export function getMobileSpaRouteLoader(value = location.pathname) {
