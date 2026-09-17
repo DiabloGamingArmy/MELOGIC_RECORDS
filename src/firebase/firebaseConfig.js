@@ -1,7 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app'
 import { initAppCheck } from './appCheck.js'
 
-const PROJECT_ID = 'melogic-records'
+const PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'melogic-records'
 const APP_NAME = 'melogic-records-web'
 
 function apiKeyHint(value) {

@@ -1,5 +1,24 @@
 {
   "projects": {
-    "default": "melogic-records"
-  }
+    "default": "melogic-records",
+    "staging": "melogic-records-staging",
+    "production": "melogic-records"
+  },
+  "targets": {
+    "melogic-records": {
+      "hosting": {
+        "web": [
+          "melogic-records"
+        ]
+      }
+    },
+    "melogic-records-staging": {
+      "hosting": {
+        "web": [
+          "melogic-records-staging"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
