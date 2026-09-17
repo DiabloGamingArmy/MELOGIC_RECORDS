@@ -357,9 +357,10 @@ async function prepareMobileRuntimeRoute(url) {
 
 
 // melogic-mobile-primary-tab-runtime-v4d
-// Narrow activation only: Community <-> Streaming. Other mobile routes retain
-// browser-owned document navigation until they receive lifecycle contracts.
-const PRIMARY_TAB_ROUTE_IDS = new Set(['community', 'streaming'])
+// melogic-camera-primary-tab-runtime-v5b
+// Lifecycle-proven primary tabs. Inbox/Profile remain browser-owned until their
+// own lifecycle extraction patches are completed.
+const PRIMARY_TAB_ROUTE_IDS = new Set(['community', 'streaming', 'camera'])
 let primaryTabNavigationPending = false
 
 function isPrimaryTabRuntimeUrl(value) {
@@ -447,7 +448,7 @@ async function handleRuntimePopstate() {
 
 export function initCommunityInboxRuntimeBridge() {
   if (!isMobileSpaRuntime()) return
-  // Capture phase claims only exact Community/Streaming cross-tab anchors.
+  // Capture phase claims only lifecycle-proven Community/Streaming/Camera tab anchors.
   // Search, post detail, profile, Inbox, Products, etc. are untouched.
   document.addEventListener('click', handlePrimaryTabClick, true)
   window.addEventListener('popstate', () => { void handleRuntimePopstate() })
