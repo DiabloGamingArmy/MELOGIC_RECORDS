@@ -4756,3 +4756,36 @@ body.is-inbox-page .site-footer {
     overflow: hidden !important;
   }
 }
+
+/* melogic-inbox-surface-geometry-v16
+   The Inbox renderer lives inside [data-melogic-inbox-surface], which is the
+   intermediate #app child observed at runtime. Constrain that real persistent
+   surface, not a guessed #app > main relationship. */
+@media (max-width:760px) {
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > [data-melogic-inbox-surface] {
+    position: absolute !important;
+    inset: 0 0 var(--melogic-mobile-nav-h, var(--mobile-nav-height, 72px)) 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > [data-melogic-inbox-surface] > main {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > [data-melogic-inbox-surface] .inbox-main-shell,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > [data-melogic-inbox-surface] .inbox-app-shell,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > [data-melogic-inbox-surface] .inbox-mobile-list-view,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > [data-melogic-inbox-surface] .inbox-layout-messages,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > [data-melogic-inbox-surface] .inbox-thread-panel {
+    min-height: 0 !important;
+    max-height: 100% !important;
+  }
+}
