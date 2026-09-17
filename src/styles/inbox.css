@@ -4738,3 +4738,21 @@ body.is-inbox-page .site-footer {
     overflow-y: auto !important;
   }
 }
+
+/* melogic-inbox-actual-spa-selector-v15
+   Runtime proved Patch 14 loaded but did not match: #app is not a direct child
+   of body in the persistent mobile SPA shell. Target the actual #app > main
+   relationship while retaining the Inbox body-state guard. */
+@media (max-width:760px) {
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) #app > main {
+    position: absolute !important;
+    inset: 0 0 var(--melogic-mobile-nav-h, var(--mobile-nav-height, 72px)) 0 !important;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    overflow: hidden !important;
+  }
+}
