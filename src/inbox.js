@@ -115,6 +115,18 @@ let inboxVisibleThreadCount = INBOX_THREAD_PAGE_SIZE
 let inboxWarmPromise = null
 let inboxBackgroundWarm = false
 let inboxThreadScrollBound = false
+// melogic-inbox-once-only-route-render-v27
+let inboxRenderedRouteKey = ''
+function currentInboxRouteRenderKey() {
+  return [
+    appState.activeFilter || 'Messages',
+    appState.activeFilter === 'Content' ? (appState.contentView || 'all') : '',
+    appState.activeFilter === 'Calls' ? (appState.callView || 'overview') : ''
+  ].join(':')
+}
+function markInboxRouteRendered() {
+  inboxRenderedRouteKey = currentInboxRouteRenderKey()
+}
 const inboxSurfaceParking = document.createDocumentFragment() // melogic-inbox-persistent-surface-v6b1
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
@@ -8330,20 +8342,19 @@ if (isMobileSpaRuntime()) {
       }
       document.body.classList.add('is-inbox-page')
       initShellChrome()
-      const previousFilter = appState.activeFilter
-      const previousContentView = appState.contentView
-      const previousCallView = appState.callView
       applyInboxRoute(parseInboxRoute())
 
-      // melogic-inbox-fluid-persistent-runtime-v18
-      // Reattach the parked live Inbox DOM without rebuilding it.
-      const routeChanged = previousFilter !== appState.activeFilter
-        || previousContentView !== appState.contentView
-        || previousCallView !== appState.callView
+      // melogic-inbox-once-only-route-render-v27
+      // The parked Inbox DOM is the cache. Returning to the same route must not
+      // reconstruct it or expose a loading state again.
       const hasRenderedInbox = Boolean(
         inboxRoot.querySelector('.inbox-layout, .inbox-mobile-list-view, .inbox-auth-card')
       )
-      if (appState.user && (routeChanged || !hasRenderedInbox)) renderSignedInState()
+      const requestedRouteKey = currentInboxRouteRenderKey()
+      if (appState.user && (!hasRenderedInbox || inboxRenderedRouteKey !== requestedRouteKey)) {
+        renderSignedInState()
+        markInboxRouteRendered()
+      }
       instance.detached = false
     },
     async deactivate({ instance }) {
@@ -8381,7 +8392,10 @@ async function initializeInboxAuth({ background = false } = {}) {
   appState.user = user
   await loadInboxNotificationPreferences()
   await loadProductGifts()
-  if (!background) renderSignedInState()
+  if (!background) {
+    renderSignedInState()
+    markInboxRouteRendered()
+  }
   startThreadSubscription({ background })
   startSystemNotificationSubscription()
   startAccountEventsSubscription()
@@ -8440,11 +8454,19 @@ function bindInboxAuthObserverOnce() {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
   }
+  const previousUserUid = appState.user?.uid || ''
   appState.user = user
   await loadInboxNotificationPreferences()
   await loadProductGifts()
   applyInboxRoute(parseInboxRoute())
-  renderSignedInState()
+  const authRouteKey = currentInboxRouteRenderKey()
+  const authHasRenderedInbox = Boolean(
+    inboxRoot.querySelector('.inbox-layout, .inbox-mobile-list-view, .inbox-auth-card')
+  )
+  if (previousUserUid !== user.uid || !authHasRenderedInbox || inboxRenderedRouteKey !== authRouteKey) {
+    renderSignedInState()
+    markInboxRouteRendered()
+  }
   startThreadSubscription()
   startSystemNotificationSubscription()
   startAccountEventsSubscription()
@@ -8470,6 +8492,7 @@ export async function warmInboxRuntimeView() {
     // Pre-render the parked surface once while another primary tab owns screen.
     if (appState.user && !inboxRoot.querySelector('.inbox-layout, .inbox-mobile-list-view')) {
       renderSignedInState()
+      markInboxRouteRendered()
     }
     return appState.hasLoadedThreadsOnce
   })()
