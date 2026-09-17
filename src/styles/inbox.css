@@ -5212,3 +5212,24 @@ body.is-inbox-page .site-footer {
     display: block !important;
   }
 }
+
+
+/* melogic-inbox-cache-reattach-v31
+   Runtime measurement on 440x796 WebKit:
+   parent route area = 724px high (0..724)
+   inbox root begins at y=64 but v30 incorrectly remained 724px high (64..788).
+   The root therefore must consume the parent's REMAINING block size. */
+@media (max-width: 760px) {
+  body.is-inbox-page .inbox-main-shell
+    > [data-inbox-root].is-persistent-mobile-inbox-host {
+    height: calc(100% - 64px) !important;
+    max-height: calc(100% - 64px) !important;
+    min-height: 0 !important;
+  }
+
+  body.is-inbox-page [data-inbox-root].is-persistent-mobile-inbox-host
+    > .inbox-persistent-route-surface {
+    height: 100% !important;
+    max-height: 100% !important;
+  }
+}

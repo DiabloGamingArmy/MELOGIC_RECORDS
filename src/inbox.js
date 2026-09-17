@@ -7032,26 +7032,31 @@ function mobileInboxSurfaceMarkup() {
 }
 
 function ensureMobileInboxSurface(key) {
+  // melogic-inbox-cache-reattach-v31
+  // Runtime audit proved a route change can clear inboxRoot while the v29 Map
+  // still owns the original DOM nodes. A disconnected cached node is NOT stale:
+  // it is the persistent page we want to preserve. Reattach every cached route
+  // before resolving/creating the requested route.
+  inboxRoot.querySelectorAll(
+    '[data-inbox-cold-skeleton], .inbox-auth-card, .inbox-native-skeleton'
+  ).forEach((node) => node.remove())
+
+  Array.from(inboxRoot.children).forEach((node) => {
+    if (!(node instanceof HTMLElement)) return
+    if (node.matches('[data-inbox-persistent-route-surface]')) return
+    node.remove()
+  })
+  inboxRoot.classList.add('is-persistent-mobile-inbox-host')
+
+  mobileInboxSurfaceCache.forEach((cachedSurface) => {
+    if (!(cachedSurface instanceof HTMLElement)) return
+    if (cachedSurface.parentNode !== inboxRoot) inboxRoot.append(cachedSurface)
+  })
+
   let surface = mobileInboxSurfaceCache.get(key)
-  if (surface?.isConnected) return { surface, created: false }
-
-  // melogic-inbox-persistent-host-fix-v30
-  // The pre-auth/cold-start loader used to be removed implicitly by
-  // inboxRoot.innerHTML = ... . Persistent v29 surfaces append instead, so the
-  // loader must be explicitly retired before the first live surface mounts.
-  if (mobileInboxSurfaceCache.size === 0) {
-    inboxRoot.querySelectorAll(
-      '[data-inbox-cold-skeleton], .inbox-auth-card, .inbox-native-skeleton'
-    ).forEach((node) => node.remove())
-
-    // Nothing except persistent route surfaces may participate in the route
-    // host's layout after authenticated mobile Inbox takes ownership.
-    Array.from(inboxRoot.children).forEach((node) => {
-      if (!(node instanceof HTMLElement)) return
-      if (node.matches('[data-inbox-persistent-route-surface]')) return
-      node.remove()
-    })
-    inboxRoot.classList.add('is-persistent-mobile-inbox-host')
+  if (surface) {
+    if (surface.parentNode !== inboxRoot) inboxRoot.append(surface)
+    return { surface, created: false }
   }
 
   surface = document.createElement('div')
@@ -7121,7 +7126,9 @@ function renderSignedInState() {
   }
 
   // Desktop and non-primary Inbox routes retain the established renderer.
-  mobileInboxSurfaceCache.clear()
+  // melogic-inbox-cache-reattach-v31: keep cached mobile DOM references alive.
+  // If another renderer clears inboxRoot, the next mobile route reattaches them.
+  if (!isMobileInboxViewport()) mobileInboxSurfaceCache.clear()
   inboxRoot.classList.remove('is-persistent-mobile-inbox-host')
   const composerFocus = captureMessageComposerFocus()
   const scrollSnapshot = messageScrollController.snapshot()
