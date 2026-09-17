@@ -8323,7 +8323,13 @@ async function initializeInboxAuth({ background = false } = {}) {
   if (!user) {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
-    window.location.assign(authRoute({ redirect: `${window.location.pathname}${window.location.search}` }))
+    // melogic-inbox-auth-route-ownership-v11b3
+    // A prewarmed/persistent Inbox may initialize while another route owns the
+    // document. Only foreground Inbox initialization is allowed to redirect.
+    const ownsInboxRoute = /^\/inbox(?:\/|$)/.test(window.location.pathname)
+    if (!background && ownsInboxRoute) {
+      window.location.assign(authRoute({ redirect: `${window.location.pathname}${window.location.search}` }))
+    }
     return
   }
 
@@ -8375,7 +8381,13 @@ function bindInboxAuthObserverOnce() {
   if (!user) {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
     clearRealtimeListeners()
-    window.location.assign(authRoute({ redirect: `${window.location.pathname}${window.location.search}` }))
+    // melogic-inbox-auth-route-ownership-v11b3
+    // The persistent Inbox auth observer survives deactivation. Never redirect
+    // Auth/Home/etc. after sign-out; redirect only while Inbox owns the URL.
+    const ownsInboxRoute = /^\/inbox(?:\/|$)/.test(window.location.pathname)
+    if (ownsInboxRoute) {
+      window.location.assign(authRoute({ redirect: `${window.location.pathname}${window.location.search}` }))
+    }
     return
   }
 
