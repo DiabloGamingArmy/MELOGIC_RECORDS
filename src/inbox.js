@@ -109,6 +109,12 @@ let inboxBootstrapped = false
 let inboxBootstrapPromise = null
 let inboxRuntimeActive = false
 let inboxAuthObserverBound = false
+// melogic-inbox-warm-pagination-v6c
+const INBOX_THREAD_PAGE_SIZE = 8
+let inboxVisibleThreadCount = INBOX_THREAD_PAGE_SIZE
+let inboxWarmPromise = null
+let inboxBackgroundWarm = false
+let inboxThreadScrollBound = false
 const inboxSurfaceParking = document.createDocumentFragment() // melogic-inbox-persistent-surface-v6b1
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
@@ -2391,6 +2397,22 @@ function getRecentThreadsSidebarMarkup() {
   `
 }
 
+function bindInboxThreadProgressiveRevealOnce() {
+  if (inboxThreadScrollBound) return
+  inboxThreadScrollBound = true
+  document.addEventListener('scroll', (event) => {
+    if (!inboxRuntimeActive || appState.activeFilter !== 'Messages') return
+    const list = event.target instanceof Element ? event.target.closest?.('.inbox-thread-list') : null
+    if (!list) return
+    if (inboxVisibleThreadCount >= appState.threads.filter((thread) => !isResonaThread(thread)).length) return
+    const threshold = Math.max(48, list.clientHeight * 0.35)
+    if (list.scrollTop + list.clientHeight < list.scrollHeight - threshold) return
+    inboxVisibleThreadCount += INBOX_THREAD_PAGE_SIZE
+    renderThreadListOnly()
+  }, true)
+}
+bindInboxThreadProgressiveRevealOnce()
+
 function getConversationSubtitle(thread) {
   if (!thread) return 'No thread selected'
   const typingUsers = getTypingUsers(thread.id)
@@ -2976,7 +2998,8 @@ function getMessagesThreadListMarkup() {
   }
 
   const resonaThread = getResonaDisplayThread()
-  const normalThreads = appState.threads.filter((thread) => !isResonaThread(thread))
+  const allNormalThreads = appState.threads.filter((thread) => !isResonaThread(thread))
+  const normalThreads = allNormalThreads.slice(0, inboxVisibleThreadCount)
   const resonaCard = `
     <article class="thread-row thread-row-resona ${resonaThread.id && resonaThread.id === appState.selectedThreadId ? 'is-active' : ''}" data-thread-row-id="${escapeHtml(resonaThread.id || 'resona')}" data-guide-id="inbox-thread-resona" data-guide-label="Resona conversation" data-guide-role="conversation-card" data-thread-render-signature="${escapeHtml(hashRenderSignature({ thread: resonaThread, avatar: appState.resonaAvatarURL }))}">
       <button class="thread-row-main" type="button" data-open-resona-thread>
@@ -3070,7 +3093,9 @@ function getMessagesThreadListMarkup() {
     })
     .join('')
 
-  return `<div class="inbox-thread-list">${resonaCard}${rows}</div>`
+  return `<div class="inbox-thread-list">${resonaCard}${rows}${allNormalThreads.length > normalThreads.length
+    ? '<div class="inbox-thread-page-sentinel" data-inbox-thread-page-sentinel aria-hidden="true"></div>'
+    : ''}</div>`
 }
 
 function getThreadActionMenuMarkup() {
@@ -7575,7 +7600,7 @@ function startMessageSubscription(threadId) {
   })
 }
 
-function startThreadSubscription() {
+function startThreadSubscription({ background = false } = {}) {
   if (!appState.user?.uid) return
   if (activeThreadSubscriptionUid === appState.user.uid) return
 
@@ -7587,7 +7612,7 @@ function startThreadSubscription() {
   appState.threadsFallbackPending = false
   appState.inboxRepairAttempted = false
   appState.isRepairingInbox = false
-  renderSignedInState()
+  if (!background && !inboxBackgroundWarm) renderSignedInState()
   loadResonaAvatar()
   loadResonaSupportAvatar()
   loadResonaBackground()
@@ -7611,7 +7636,7 @@ function startThreadSubscription() {
       appState.inboxRepairAttempted = true
       appState.isRepairingInbox = true
       console.info('[inbox] repairMyInboxThreads started')
-      renderSignedInState()
+      if (!background && !inboxBackgroundWarm) renderSignedInState()
       repairMyInboxThreads()
         .then(async ({ repairedCount }) => {
           console.info('[inbox] repairMyInboxThreads completed', { repairedCount })
@@ -7628,12 +7653,12 @@ function startThreadSubscription() {
           if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
             startMessageSubscription(appState.selectedThreadId)
           }
-          renderSignedInState()
+          if (!background && !inboxBackgroundWarm) renderSignedInState()
         })
         .catch((repairError) => {
           appState.isRepairingInbox = false
           warnRealtimePermission(`threads-repair-${appState.user.uid}`, repairError)
-          renderSignedInState()
+          if (!background && !inboxBackgroundWarm) renderSignedInState()
         })
       return
     }
@@ -7643,7 +7668,7 @@ function startThreadSubscription() {
         appState.inboxRepairAttempted = true
         appState.isRepairingInbox = true
         console.info('[inbox] repairMyInboxThreads started')
-        renderSignedInState()
+        if (!background && !inboxBackgroundWarm) renderSignedInState()
         repairMyInboxThreads()
           .then(async ({ repairedCount }) => {
             console.info('[inbox] repairMyInboxThreads completed', { repairedCount })
@@ -7660,12 +7685,12 @@ function startThreadSubscription() {
             if (appState.selectedThreadId && !appState.messagesByThreadId[appState.selectedThreadId]) {
               startMessageSubscription(appState.selectedThreadId)
             }
-            renderSignedInState()
+            if (!background && !inboxBackgroundWarm) renderSignedInState()
           })
           .catch((repairError) => {
             appState.isRepairingInbox = false
             warnRealtimePermission(`threads-repair-${appState.user.uid}`, repairError)
-            renderSignedInState()
+            if (!background && !inboxBackgroundWarm) renderSignedInState()
           })
         return
       }
@@ -7675,7 +7700,7 @@ function startThreadSubscription() {
         appState.threadsFallbackTried = true
         appState.threadsFallbackPending = true
         appState.isLoadingThreads = true
-        renderSignedInState()
+        if (!background && !inboxBackgroundWarm) renderSignedInState()
         listInboxThreads(appState.user.uid)
           .then((fallbackThreads) => {
             appState.threadsFallbackPending = false
@@ -7691,19 +7716,19 @@ function startThreadSubscription() {
             if (!appState.messagesByThreadId[appState.selectedThreadId]) {
               startMessageSubscription(appState.selectedThreadId)
             }
-            renderSignedInState()
+            if (!background && !inboxBackgroundWarm) renderSignedInState()
           })
           .catch((fallbackError) => {
             appState.threadsFallbackPending = false
             appState.isLoadingThreads = false
             warnRealtimePermission(`threads-empty-fallback-${appState.user.uid}`, fallbackError)
-            renderSignedInState()
+            if (!background && !inboxBackgroundWarm) renderSignedInState()
           })
         return
       }
       appState.selectedThreadId = ''
       appState.messageUnsubscribe()
-      renderSignedInState()
+      if (!background && !inboxBackgroundWarm) renderSignedInState()
       return
     }
 
@@ -7723,10 +7748,10 @@ function startThreadSubscription() {
       && previousSelectedThreadId === appState.selectedThreadId
       && inboxRoot.querySelector('.inbox-layout-messages')
     ) {
-      renderThreadListOnly()
-      if (profilesChanged) renderSelectedConversation({ reason: 'profiles-loaded' })
+      if (!background && !inboxBackgroundWarm) renderThreadListOnly()
+      if (profilesChanged) if (!background && !inboxBackgroundWarm) renderSelectedConversation({ reason: 'profiles-loaded' })
     } else {
-      renderSignedInState()
+      if (!background && !inboxBackgroundWarm) renderSignedInState()
     }
   }, async (error) => {
     warnRealtimePermission(`threads-${appState.user.uid}`, error)
@@ -7755,7 +7780,7 @@ function startThreadSubscription() {
       warnRealtimePermission(`threads-fallback-${appState.user.uid}`, fallbackError)
       appState.errorMessage = 'Inbox could not be loaded. Please refresh.'
     }
-    renderSignedInState()
+    if (!background && !inboxBackgroundWarm) renderSignedInState()
   })
 }
 
@@ -8233,16 +8258,20 @@ function detachInboxSurface() {
   clearFloatingOverlays()
 }
 
-async function bootstrapInboxDocument() {
+async function bootstrapInboxDocument({ background = false } = {}) {
   if (inboxBootstrapPromise) return inboxBootstrapPromise
   inboxBootstrapPromise = (async () => {
     if (inboxBootstrapped) return
     inboxBootstrapped = true
-    inboxRuntimeActive = true
-    normalizeInitialInboxRoute()
-    initShellChrome()
-    document.body.classList.add('is-inbox-page')
-    await initializeInboxAuth()
+    inboxRuntimeActive = !background
+    inboxBackgroundWarm = background
+    if (!background) {
+      normalizeInitialInboxRoute()
+      initShellChrome()
+      document.body.classList.add('is-inbox-page')
+    }
+    await initializeInboxAuth({ background })
+    inboxBackgroundWarm = false
   })()
   try {
     await inboxBootstrapPromise
@@ -8289,7 +8318,7 @@ if (isMobileSpaRuntime()) {
   })
 }
 
-async function initializeInboxAuth() {
+async function initializeInboxAuth({ background = false } = {}) {
   const user = await waitForInitialAuthState()
   if (!user) {
     if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
@@ -8301,8 +8330,8 @@ async function initializeInboxAuth() {
   appState.user = user
   await loadInboxNotificationPreferences()
   await loadProductGifts()
-  renderSignedInState()
-  startThreadSubscription()
+  if (!background) renderSignedInState()
+  startThreadSubscription({ background })
   startSystemNotificationSubscription()
   startAccountEventsSubscription()
   startInboxPinsSubscription()
@@ -8370,6 +8399,24 @@ function bindInboxAuthObserverOnce() {
 }
 
 bindInboxAuthObserverOnce()
+
+export async function warmInboxRuntimeView() {
+  if (!isMobileSpaRuntime() || inboxBootstrapped) return appState.hasLoadedThreadsOnce
+  if (inboxWarmPromise) return inboxWarmPromise
+  inboxWarmPromise = (async () => {
+    await bootstrapInboxDocument({ background: true })
+    const started = performance.now()
+    while (!appState.hasLoadedThreadsOnce && performance.now() - started < 3500) {
+      await new Promise((resolve) => setTimeout(resolve, 40))
+    }
+    return appState.hasLoadedThreadsOnce
+  })()
+  try {
+    return await inboxWarmPromise
+  } finally {
+    inboxWarmPromise = null
+  }
+}
 
 const inboxColdPath = location.pathname.replace(/\/+$/, '') || '/'
 if (inboxColdPath === '/inbox' || inboxColdPath.startsWith('/inbox/')) {

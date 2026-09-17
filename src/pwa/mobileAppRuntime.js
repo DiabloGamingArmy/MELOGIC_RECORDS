@@ -23,7 +23,7 @@ let activeViewId = null
 let transitionId = 0
 let warmupGeneration = 0
 const runtimeWarmViews = new Set()
-const RUNTIME_WARM_ORDER = ['community', 'streaming', 'camera'] // melogic-primary-tab-warm-pool-v5c
+const RUNTIME_WARM_ORDER = ['community', 'streaming', 'camera', 'inbox'] // melogic-inbox-warm-pagination-v6c2 // melogic-primary-tab-warm-pool-v5c
 let runtimeSuspended = false
 let lastCompletedUrl = location.href
 
@@ -265,6 +265,10 @@ async function warmRuntimeViewModule(routeId, generation) {
     if (!registry.has(routeId)) return false
     if (routeId === 'streaming' && typeof module?.warmStreamingRuntimeView === 'function') {
       await module.warmStreamingRuntimeView()
+      if (generation !== warmupGeneration || !runtimeCanWarm()) return false
+    }
+    if (routeId === 'inbox' && typeof module?.warmInboxRuntimeView === 'function') {
+      await module.warmInboxRuntimeView()
       if (generation !== warmupGeneration || !runtimeCanWarm()) return false
     }
     runtimeWarmViews.add(routeId)
