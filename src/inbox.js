@@ -2263,6 +2263,27 @@ function accountEventMatchesSystemFilter(item = {}, filter = 'all') {
   return false
 }
 
+// melogic-inbox-mobile-visible-tabs-v13
+function getMobileInboxPrimaryTabsMarkup() {
+  const tabs = [
+    { label: 'Messages', path: ROUTES.inboxMessages, active: appState.activeFilter === 'Messages' },
+    { label: 'Calls', path: ROUTES.inboxCalls, active: appState.activeFilter === 'Calls' },
+    { label: 'Activity', path: ROUTES.inboxContentAll, active: appState.activeFilter === 'Content' }
+  ]
+  return `
+    <nav class="inbox-mobile-primary-tabs-copy" aria-label="Inbox sections">
+      ${tabs.map((tab) => `
+        <a href="${tab.path}"
+           class="inbox-mobile-primary-tab-copy ${tab.active ? 'is-active' : ''}"
+           data-inbox-filter="${tab.label === 'Activity' ? 'Content' : tab.label}"
+           data-inbox-path="${tab.path}">
+          ${tab.label}
+        </a>
+      `).join('')}
+    </nav>
+  `
+}
+
 function getMessagesSidebarMarkup() {
   const filterMarkup = inboxFilters
     .map((filter) => {
@@ -5673,6 +5694,7 @@ function renderMessagesLayout() {
     <div class="inbox-layout inbox-layout-messages">
       <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
       <section class="inbox-thread-panel">
+        ${getMobileInboxPrimaryTabsMarkup()}
         <header class="panel-header panel-header-row">
           <div><h3>Messages</h3><p>Direct and group conversations</p></div>
           <div class="panel-actions"><button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button></div>
@@ -5692,6 +5714,7 @@ function renderActivityLayout(filterName) {
     <div class="inbox-layout inbox-layout-activity">
       <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
       <section class="inbox-main-panel inbox-main-panel-full">
+        ${getMobileInboxPrimaryTabsMarkup()}
         ${appState.notificationActionMessage ? `<div class="notification-action-feedback" role="status">${escapeHtml(appState.notificationActionMessage)}</div>` : ''}
         ${getFilterContentMarkup(filterName)}
       </section>

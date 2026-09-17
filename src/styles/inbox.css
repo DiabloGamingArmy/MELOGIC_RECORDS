@@ -4618,3 +4618,76 @@ body.is-inbox-page .site-footer {
     max-height: 100% !important;
   }
 }
+
+/* melogic-inbox-mobile-visible-tabs-v13 */
+.inbox-mobile-primary-tabs-copy { display: none; }
+
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel {
+    display: grid !important;
+    grid-template-rows: auto auto minmax(0, 1fr) !important;
+    align-content: stretch !important;
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: 100% !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list {
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: none !important;
+    overflow-x: hidden !important;
+    overflow-y: scroll !important;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+  }
+
+  body.is-inbox-page .inbox-mobile-primary-tabs-copy {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    align-items: center;
+    gap: 0.35rem;
+    width: 100%;
+    padding: 0;
+    margin: 0 0 0.35rem;
+    border: 0;
+    background: transparent;
+  }
+
+  body.is-inbox-page .inbox-mobile-primary-tab-copy {
+    min-width: 0;
+    padding: 0.48rem 0.25rem;
+    border: 0;
+    border-radius: 0.65rem;
+    background: transparent;
+    color: rgba(235, 240, 250, 0.68);
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body.is-inbox-page .inbox-mobile-primary-tab-copy.is-active {
+    color: #fff;
+    background: rgba(255,255,255,0.08);
+  }
+
+  body.is-inbox-page .inbox-layout-activity .inbox-main-panel {
+    display: grid !important;
+    grid-template-rows: auto minmax(0, 1fr) !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .activity-panel,
+  body.is-inbox-page .inbox-layout-activity .account-calls-panel {
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+}
