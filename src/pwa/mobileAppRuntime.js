@@ -64,7 +64,7 @@ function runtimeFallback(url, reason = 'runtime-fallback') {
   return true
 }
 export function getMobileRuntimeDiagnostics() {
-  return Object.freeze({ ...snapshot(), mode: 'foundation-non-intercepting', suspended: runtimeSuspended, lastCompletedUrl, scrollKeys: [...runtimeScroll.keys()], historyState: history.state && typeof history.state === 'object' ? { ...history.state } : history.state })
+  return Object.freeze({ ...snapshot(), mode: document.documentElement.dataset.melogicMobileRuntimeMode || 'foundation-non-intercepting', suspended: runtimeSuspended, lastCompletedUrl, scrollKeys: [...runtimeScroll.keys()], historyState: history.state && typeof history.state === 'object' ? { ...history.state } : history.state })
 }
 
 function normalizedPath(value = location.pathname) {
@@ -323,40 +323,104 @@ let phase2NavigationPending = false
 
 async function prepareMobileRuntimeRoute(url) {
   const route = resolveMobileSpaRoute(url.pathname)
-  if (!route || !PHASE2_ROUTE_IDS.has(route.id)) return false
+  if (!route || !PRIMARY_TAB_ROUTE_IDS.has(route.id)) return false
   if (registry.has(route.id)) return true
   const { getMobileSpaRouteLoader } = await import('./mobileSpaRouter')
   const loader = getMobileSpaRouteLoader(url.pathname)
   if (typeof loader !== 'function') return false
-  const state = { ...(history.state && typeof history.state === 'object' ? history.state : {}), melogicMobileSpa: true, melogicMobileRuntime: true, routeId: route.id, pathname: normalizedPath(url.pathname) }
-  history.pushState(state, '', url.href)
-  const previousId = activeViewId
-  const previousLifecycle = previousId ? registry.get(previousId) : null
-  const previousInstance = previousId ? instances.get(previousId) : null
-  if (previousLifecycle && previousInstance) await previousLifecycle.deactivate({ outlet: getMobileSpaOutlet(), instance: previousInstance, from: previousId, to: route.id, transitionId: ++transitionId })
-  const outlet = getMobileSpaOutlet()
-  if (outlet) outlet.replaceChildren()
-  try { await loader(); return registry.has(route.id) }
-  catch (error) { console.error('[Melogic mobile runtime] Route preparation failed.', route.id, error); return false }
+  try {
+    await loader()
+    return registry.has(route.id)
+  } catch (error) {
+    console.error('[Melogic mobile runtime] Primary-tab module preparation failed.', route.id, error)
+    return false
+  }
 }
 
 
-// melogic-urgent-stop-runtime-route-spam-v1b
-// Emergency stabilization: cross-page runtime navigation is intentionally
-// disabled. Browser document navigation owns cross-surface transitions.
+// melogic-mobile-primary-tab-runtime-v4d
+// Narrow activation only: Community <-> Streaming. Other mobile routes retain
+// browser-owned document navigation until they receive lifecycle contracts.
+const PRIMARY_TAB_ROUTE_IDS = new Set(['community', 'streaming'])
+let primaryTabNavigationPending = false
+
+function isPrimaryTabRuntimeUrl(value) {
+  if (!isMobileSpaRuntime()) return false
+  let url
+  try { url = value instanceof URL ? value : new URL(String(value), location.href) } catch { return false }
+  if (url.origin !== location.origin) return false
+  const route = resolveMobileSpaRoute(url.pathname)
+  return Boolean(route && PRIMARY_TAB_ROUTE_IDS.has(route.id))
+}
+
 export async function navigateMobileRuntimeUrl(value, options = {}) {
-  // 4A: false preserves native navigation until views are lifecycle-owned.
-  void value
-  void options
-  return false
+  if (runtimeSuspended || primaryTabNavigationPending || !isPrimaryTabRuntimeUrl(value)) return false
+  let url
+  try { url = value instanceof URL ? value : new URL(String(value), location.href) } catch { return false }
+  const route = resolveMobileSpaRoute(url.pathname)
+  if (!route) return false
+
+  primaryTabNavigationPending = true
+  document.documentElement.dataset.melogicMobileRuntimeMode = 'primary-tabs'
+  try {
+    const prepared = await prepareMobileRuntimeRoute(url)
+    if (!prepared) return false
+    return await activateMobileRuntimeUrl(url, {
+      historyMode: options.historyMode || 'push',
+      source: options.source || 'primary-tab'
+    })
+  } catch (error) {
+    console.error('[Melogic mobile runtime] Primary-tab transition failed.', error)
+    return false
+  } finally {
+    primaryTabNavigationPending = false
+  }
 }
 
-function phase2AnchorForEvent() {
-  return null
+function primaryTabAnchorForEvent(event) {
+  if (event.defaultPrevented || event.button !== 0) return null
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return null
+  const anchor = event.target?.closest?.('a[href]')
+  if (!(anchor instanceof HTMLAnchorElement)) return null
+  if (anchor.target && anchor.target !== '_self') return null
+  if (anchor.hasAttribute('download')) return null
+  if (!isPrimaryTabRuntimeUrl(anchor.href)) return null
+  const current = resolveMobileSpaRoute()
+  const destination = resolveMobileSpaRoute(new URL(anchor.href).pathname)
+  if (!current || !PRIMARY_TAB_ROUTE_IDS.has(current.id) || !destination) return null
+  if (current.id === destination.id) return null
+  return anchor
+}
+
+async function handlePrimaryTabClick(event) {
+  const anchor = primaryTabAnchorForEvent(event)
+  if (!anchor) return
+
+  // Claim the primary-tab click synchronously so the browser cannot begin a
+  // document navigation while the destination module is being prepared.
+  event.preventDefault()
+  const target = new URL(anchor.href, location.href)
+  const handled = await navigateMobileRuntimeUrl(target, { source: 'primary-tab-click' })
+  if (!handled) runtimeFallback(target, 'primary-tab-hard-fallback')
+}
+
+async function handleRuntimePopstate() {
+  const route = resolveMobileSpaRoute()
+  if (!route || !PRIMARY_TAB_ROUTE_IDS.has(route.id)) return
+  const handled = await navigateMobileRuntimeUrl(location.href, {
+    historyMode: 'none',
+    source: 'primary-tab-popstate'
+  })
+  if (!handled && activeViewId !== route.id) runtimeFallback(location.href, 'primary-tab-popstate-fallback')
 }
 
 export function initCommunityInboxRuntimeBridge() {
-  // Do not install a preventDefault/capture bridge while legacy entry modules
-  // still have top-level DOM/auth/navigation side effects.
-  return
+  if (!isMobileSpaRuntime()) return
+  // Capture phase claims only exact Community/Streaming cross-tab anchors.
+  // Search, post detail, profile, Inbox, Products, etc. are untouched.
+  document.addEventListener('click', handlePrimaryTabClick, true)
+  window.addEventListener('popstate', () => { void handleRuntimePopstate() })
+  document.documentElement.dataset.melogicPrimaryTabRuntime = 'enabled'
+  publish('primary-tab-runtime-enabled', { routeIds: [...PRIMARY_TAB_ROUTE_IDS] })
 }
+
