@@ -74,3 +74,6 @@ ams_community.zip
 
 # Local patch safety backups
 .patch_backups/
+
+# Timestamped local patch backups
+*.bak-*
