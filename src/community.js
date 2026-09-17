@@ -64,8 +64,12 @@ import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 
 const app = document.querySelector('#app')
-document.body.classList.add('is-community-page')
-if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
+// melogic-community-lifecycle-contract-v4b
+// Page ownership is established by bootstrap/activate, not module evaluation.
+let communityBootstrapped = false
+let communityAuthUnsubscribe = null
+let communityPopstateBound = false
+let communityGlobalUiBound = false
 const COMMUNITY_PAGE_SIZE = 4
 const COMMUNITY_FOLLOWING_CACHE_SIZE = 24
 const COMPOSER_DRAFT_KEY = 'melogic-community-composer-draft-v2'
@@ -450,8 +454,12 @@ function setupMobileCommunityShellActions() {
   })
 }
 
-setupMobileCommunityShellActions()
-setupMobileCommunitySurfaceBehavior()
+function bindCommunityGlobalUiOnce() {
+  if (communityGlobalUiBound) return
+  communityGlobalUiBound = true
+  setupMobileCommunityShellActions()
+  setupMobileCommunitySurfaceBehavior()
+}
 
 // melogic-community-firestore-reliability-v1
 function setupCommunityFeedTabs() {
@@ -6689,35 +6697,8 @@ function bindEvents() {
 }
 
 // melogic-mobile-unified-runtime-v2
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
-  registerMobileRuntimeView('community', {
-    async mount() { render(); return { fragment: null } },
-    async activate({ instance }) {
-      document.body.classList.add('is-community-page')
-      if (instance?.fragment?.childNodes?.length) { app.replaceChildren(instance.fragment); instance.fragment = null }
-      else if (!app.querySelector('[data-community-root]')) { communityShellMounted = false; render() }
-      syncCommunityMobileHeader(Boolean(state.detailPostId), app)
-    },
-    async deactivate({ instance }) {
-      document.body.classList.remove('community-modal-open')
-      const fragment=document.createDocumentFragment(); while(app.firstChild) fragment.append(app.firstChild); instance.fragment=fragment
-    },
-    async unmount({ instance }) { instance.fragment=null }
-  })
-}
-
-waitForInitialAuthState().then((user) => {
-  state.currentUser = user
-  loadWikipediaHistory().catch(() => null)
-  render()
-  return loadCommunity()
-})
-subscribeToAuthState((user) => {
-  state.currentUser = user
-  Promise.all([loadViewerState(), loadCommentViewerState()]).then(render).catch(() => render())
-})
-
-window.addEventListener('popstate', () => {
+// melogic-community-lifecycle-contract-v4b
+function syncCommunityRouteStateFromLocation() {
   state.detailPostId = parseDetailPostId()
   state.focusedCommentId = parseFeedParam('comment')
   state.focusedReplyId = parseFeedParam('reply')
@@ -6727,6 +6708,84 @@ window.addEventListener('popstate', () => {
   state.feedSearch = parseFeedParam('search').trim()
   state.feedSearchInput = state.feedSearch
   state.feedSort = ['new', 'top-today', 'top-week', 'most-discussed'].includes(parseFeedParam('sort')) ? parseFeedParam('sort') : 'new'
+}
+
+function handleCommunityPopstate() {
+  syncCommunityRouteStateFromLocation()
   if (!state.detailPostId && restoreFeedNavigationSnapshot()) return
   loadCommunity()
-})
+}
+
+async function bootstrapCommunityDocument() {
+  if (communityBootstrapped) return
+  communityBootstrapped = true
+  document.body.classList.add('is-community-page')
+  if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
+  bindCommunityGlobalUiOnce()
+
+  const user = await waitForInitialAuthState()
+  state.currentUser = user
+  loadWikipediaHistory().catch(() => null)
+  render()
+  await loadCommunity()
+
+  if (!communityAuthUnsubscribe) {
+    communityAuthUnsubscribe = subscribeToAuthState((nextUser) => {
+      state.currentUser = nextUser
+      Promise.all([loadViewerState(), loadCommentViewerState()]).then(render).catch(() => render())
+    })
+  }
+
+  if (!communityPopstateBound) {
+    communityPopstateBound = true
+    window.addEventListener('popstate', handleCommunityPopstate)
+  }
+}
+
+function detachCommunitySurface(instance) {
+  if (!app || !instance) return
+  const fragment = document.createDocumentFragment()
+  while (app.firstChild) fragment.append(app.firstChild)
+  instance.fragment = fragment
+}
+
+function attachCommunitySurface(instance) {
+  if (!app || !instance?.fragment?.childNodes?.length) return false
+  app.replaceChildren(instance.fragment)
+  instance.fragment = null
+  return true
+}
+
+if (isMobileSpaRuntime()) {
+  registerMobileRuntimeView('community', {
+    async mount() {
+      await bootstrapCommunityDocument()
+      return { fragment: null }
+    },
+    async activate({ instance }) {
+      document.body.classList.add('is-community-page')
+      bindCommunityGlobalUiOnce()
+      syncCommunityRouteStateFromLocation()
+      const restored = attachCommunitySurface(instance)
+      if (!restored && !app?.querySelector('[data-community-root]')) {
+        communityShellMounted = false
+        render()
+      }
+      syncCommunityMobileHeader(Boolean(state.detailPostId), app)
+    },
+    async deactivate({ instance }) {
+      document.body.classList.remove('community-modal-open')
+      resetStoryRecording()
+      detachCommunitySurface(instance)
+    },
+    async unmount({ instance }) {
+      resetStoryRecording()
+      instance.fragment = null
+    }
+  })
+}
+
+// Direct Community documents retain cold-start behavior. Cross-page runtime
+// interception remains disabled until Streaming receives the same contract.
+void bootstrapCommunityDocument()
+
