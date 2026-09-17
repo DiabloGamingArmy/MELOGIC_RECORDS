@@ -6,6 +6,11 @@ import { isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 
 const app = document.querySelector('#app')
+// melogic-camera-safe-prewarm-v5c1
+// Camera owns a persistent live DOM surface independent of the shared SPA outlet.
+// Module evaluation may happen during idle warmup without touching the visible page.
+const cameraSurface = document.createElement('div')
+cameraSurface.dataset.melogicCameraSurface = 'true'
 let stream = null
 let recorder = null
 let chunks = []
@@ -14,7 +19,7 @@ let recordingStartedAt = 0
 let recordingTimer = 0
 let previewUrl = ''
 
-app.innerHTML = `
+cameraSurface.innerHTML = `
   ${navShell({ currentPage: 'camera' })}
   <main class="camera-screen" aria-label="Melogic camera">
     <video class="camera-preview-source" data-camera-preview autoplay muted playsinline></video>
@@ -48,23 +53,23 @@ app.innerHTML = `
     </div>
   </main>`
 
-const video = app.querySelector('[data-camera-preview]')
-const status = app.querySelector('[data-camera-status]')
-const capture = app.querySelector('[data-camera-capture]')
-const pill = app.querySelector('[data-recording-pill]')
-const timerLabel = app.querySelector('[data-recording-time]')
-const playback = app.querySelector('[data-camera-playback]')
-const recordedVideo = app.querySelector('[data-camera-recorded]')
-const recordedPhoto = app.querySelector('[data-camera-photo]')
-const libraryButton = app.querySelector('[data-camera-library]')
-const libraryInput = app.querySelector('[data-camera-library-input]')
-const useButton = app.querySelector('[data-camera-use]')
-const transitionFrame = app.querySelector('[data-camera-transition-frame]')
-const liveCanvas = app.querySelector('[data-camera-live-canvas]')
+const video = cameraSurface.querySelector('[data-camera-preview]')
+const status = cameraSurface.querySelector('[data-camera-status]')
+const capture = cameraSurface.querySelector('[data-camera-capture]')
+const pill = cameraSurface.querySelector('[data-recording-pill]')
+const timerLabel = cameraSurface.querySelector('[data-recording-time]')
+const playback = cameraSurface.querySelector('[data-camera-playback]')
+const recordedVideo = cameraSurface.querySelector('[data-camera-recorded]')
+const recordedPhoto = cameraSurface.querySelector('[data-camera-photo]')
+const libraryButton = cameraSurface.querySelector('[data-camera-library]')
+const libraryInput = cameraSurface.querySelector('[data-camera-library-input]')
+const useButton = cameraSurface.querySelector('[data-camera-use]')
+const transitionFrame = cameraSurface.querySelector('[data-camera-transition-frame]')
+const liveCanvas = cameraSurface.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
-const recordLock = app.querySelector('[data-camera-record-lock]')
-const flashButton=app.querySelector('[data-camera-flash]'), flashStrength=app.querySelector('[data-camera-flash-strength]'), frontFlash=app.querySelector('[data-camera-front-flash]')
-const editCanvas=app.querySelector('[data-camera-edit-canvas]'), editCtx=editCanvas?.getContext('2d'), editTextbox=app.querySelector('[data-camera-edit-textbox]'), editTextInput=app.querySelector('[data-camera-edit-text-input]'), editImageInput=app.querySelector('[data-camera-edit-image-input]')
+const recordLock = cameraSurface.querySelector('[data-camera-record-lock]')
+const flashButton=cameraSurface.querySelector('[data-camera-flash]'), flashStrength=cameraSurface.querySelector('[data-camera-flash-strength]'), frontFlash=cameraSurface.querySelector('[data-camera-front-flash]')
+const editCanvas=cameraSurface.querySelector('[data-camera-edit-canvas]'), editCtx=editCanvas?.getContext('2d'), editTextbox=cameraSurface.querySelector('[data-camera-edit-textbox]'), editTextInput=cameraSurface.querySelector('[data-camera-edit-text-input]'), editImageInput=cameraSurface.querySelector('[data-camera-edit-image-input]')
 let frontFlashOn=false, editMode='', editDrawing=false, editHistory=[]
 let renderGeneration = 0
 let renderRaf = 0
@@ -129,15 +134,18 @@ function stopCaptureEngines() {
 // melogic-camera-lifecycle-contract-v5a
 function detachCameraSurface(instance) {
   if (!app || !instance) return
-  const fragment = document.createDocumentFragment()
-  while (app.firstChild) fragment.append(app.firstChild)
-  instance.fragment = fragment
+  if (cameraSurface.parentNode === app) cameraSurface.remove()
+  instance.detached = true
 }
 
 function attachCameraSurface(instance) {
-  if (!app || !instance?.fragment?.childNodes?.length) return false
-  app.replaceChildren(instance.fragment)
-  instance.fragment = null
+  if (!app || !instance) return false
+  if (cameraSurface.parentNode === app) {
+    instance.detached = false
+    return true
+  }
+  app.replaceChildren(cameraSurface)
+  instance.detached = false
   return true
 }
 
@@ -175,8 +183,10 @@ async function bootstrapCameraDocument() {
 if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('camera', {
     async mount() {
+      const instance = { detached: true, resumeCamera: true }
+      attachCameraSurface(instance)
       await bootstrapCameraDocument()
-      return { fragment: null, resumeCamera: true }
+      return instance
     },
     async activate({ instance }) {
       cameraRuntimeActive = true
@@ -197,7 +207,7 @@ if (isMobileSpaRuntime()) {
     async unmount({ instance }) {
       cameraRuntimeActive = false
       stopCameraForInactiveView()
-      instance.fragment = null
+      detachCameraSurface(instance)
     }
   })
 }
@@ -751,6 +761,8 @@ function bindCameraDocumentLifecycleOnce() {
 
 // Direct /camera documents retain current cold-start behavior. Dynamic import
 // from another SPA view only registers Camera; runtime activation owns startup.
-if ((location.pathname.replace(/\/+$/, '') || '/') === '/camera') {
+if ((location.pathname.replace(/\/+$/, '') || '/') === '/camera' ||
+    (location.pathname.replace(/\/+$/, '') || '/') === '/camera.html') {
+  if (app) app.replaceChildren(cameraSurface)
   void bootstrapCameraDocument()
 }
