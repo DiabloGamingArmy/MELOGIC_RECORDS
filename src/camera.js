@@ -48,7 +48,6 @@ app.innerHTML = `
     </div>
   </main>`
 
-initShellChrome()
 const video = app.querySelector('[data-camera-preview]')
 const status = app.querySelector('[data-camera-status]')
 const capture = app.querySelector('[data-camera-capture]')
@@ -93,6 +92,12 @@ let lockedRecording = false
 let lockHot = false
 let recordingCameraSwitching = false
 
+// melogic-camera-lifecycle-contract-v5a
+let cameraBootstrapped = false
+let cameraBootstrapPromise = null
+let cameraDocumentLifecycleBound = false
+let cameraRuntimeActive = false
+
 function setStatus(message = '') { status.textContent = message; status.hidden = !message }
 function stopMicrophone({ preservePermissionTrack = false } = {}) {
   microphoneStream?.getTracks?.().forEach(track => {
@@ -121,36 +126,77 @@ function stopCaptureEngines() {
   liveCanvas.classList.remove('is-ready')
 }
 // melogic-mobile-unified-runtime-v3
-if (false && isMobileSpaRuntime()) { // melogic-deterministic-mobile-navigation-v1
+// melogic-camera-lifecycle-contract-v5a
+function detachCameraSurface(instance) {
+  if (!app || !instance) return
+  const fragment = document.createDocumentFragment()
+  while (app.firstChild) fragment.append(app.firstChild)
+  instance.fragment = fragment
+}
+
+function attachCameraSurface(instance) {
+  if (!app || !instance?.fragment?.childNodes?.length) return false
+  app.replaceChildren(instance.fragment)
+  instance.fragment = null
+  return true
+}
+
+function stopCameraForInactiveView() {
+  recordingIntent = false
+  activeCapturePointer = null
+  window.clearInterval(recordingTimer)
+  window.clearTimeout(holdTimer)
+  if (recorder?.state === 'recording') {
+    try { recorder.stop() } catch {}
+  }
+  stopCaptureEngines()
+}
+
+async function bootstrapCameraDocument() {
+  if (cameraBootstrapPromise) return cameraBootstrapPromise
+  cameraBootstrapPromise = (async () => {
+    if (cameraBootstrapped) return
+    cameraBootstrapped = true
+    cameraRuntimeActive = true
+    document.body.classList.add('is-camera-page')
+    initShellChrome()
+    bindCameraDocumentLifecycleOnce()
+    if (playback?.hidden && !stream && !cameraStarting) await startCamera()
+  })()
+  try {
+    await cameraBootstrapPromise
+  } catch (error) {
+    cameraBootstrapPromise = null
+    cameraBootstrapped = false
+    throw error
+  }
+}
+
+if (isMobileSpaRuntime()) {
   registerMobileRuntimeView('camera', {
-    async mount() { return { fragment: null, resumeCamera: true } },
+    async mount() {
+      await bootstrapCameraDocument()
+      return { fragment: null, resumeCamera: true }
+    },
     async activate({ instance }) {
+      cameraRuntimeActive = true
       document.body.classList.add('is-camera-page')
-      if (instance?.fragment?.childNodes?.length) {
-        app.replaceChildren(instance.fragment)
-        instance.fragment = null
-      }
+      attachCameraSurface(instance)
       if (instance?.resumeCamera && playback?.hidden && !stream && !cameraStarting) {
         instance.resumeCamera = false
         await startCamera()
       }
     },
     async deactivate({ instance }) {
+      cameraRuntimeActive = false
       document.body.classList.remove('is-camera-page')
       instance.resumeCamera = Boolean(playback?.hidden)
-      recordingIntent = false
-      if (recorder?.state === 'recording') {
-        try { recorder.stop() } catch {}
-      }
-      window.clearInterval(recordingTimer)
-      window.clearTimeout(holdTimer)
-      stopCaptureEngines()
-      const fragment = document.createDocumentFragment()
-      while (app.firstChild) fragment.append(app.firstChild)
-      instance.fragment = fragment
+      stopCameraForInactiveView()
+      detachCameraSurface(instance)
     },
     async unmount({ instance }) {
-      stopCaptureEngines()
+      cameraRuntimeActive = false
+      stopCameraForInactiveView()
       instance.fragment = null
     }
   })
@@ -688,6 +734,23 @@ app.querySelector('[data-camera-use]').addEventListener('click', () => {
 })
 window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
 window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })
-window.addEventListener('pagehide', stopTracks)
-document.addEventListener('visibilitychange', () => { if (document.hidden) stopTracks(); else if (!playback.hidden) return; else startCamera() })
-startCamera()
+
+function bindCameraDocumentLifecycleOnce() {
+  if (cameraDocumentLifecycleBound) return
+  cameraDocumentLifecycleBound = true
+  window.addEventListener('pagehide', stopCameraForInactiveView)
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopCameraForInactiveView()
+      return
+    }
+    if (!cameraRuntimeActive || !playback.hidden || stream || cameraStarting) return
+    void startCamera()
+  })
+}
+
+// Direct /camera documents retain current cold-start behavior. Dynamic import
+// from another SPA view only registers Camera; runtime activation owns startup.
+if ((location.pathname.replace(/\/+$/, '') || '/') === '/camera') {
+  void bootstrapCameraDocument()
+}
