@@ -254,7 +254,8 @@ async function warmRuntimeViewModule(routeId, generation) {
   const loader = getMobileSpaRouteLoader(
     routeId === 'community' ? '/community' :
     routeId === 'streaming' ? '/streaming' :
-    routeId === 'camera' ? '/camera' : '/'
+    routeId === 'camera' ? '/camera' :
+    routeId === 'inbox' ? '/inbox/messages' : '/'
   )
   if (typeof loader !== 'function') return false
 
@@ -392,9 +393,9 @@ async function prepareMobileRuntimeRoute(url) {
 
 // melogic-mobile-primary-tab-runtime-v4d
 // melogic-camera-primary-tab-runtime-v5b
-// Lifecycle-proven primary tabs. Inbox/Profile remain browser-owned until their
-// own lifecycle extraction patches are completed.
-const PRIMARY_TAB_ROUTE_IDS = new Set(['community', 'streaming', 'camera'])
+// Lifecycle-proven primary tabs. Inbox lifecycle extraction is complete.
+// Profile remains browser-owned until its lifecycle extraction patch is completed.
+const PRIMARY_TAB_ROUTE_IDS = new Set(['community', 'streaming', 'camera', 'inbox']) // melogic-inbox-primary-tab-runtime-v6b2
 let primaryTabNavigationPending = false
 
 function isPrimaryTabRuntimeUrl(value) {
@@ -482,8 +483,8 @@ async function handleRuntimePopstate() {
 
 export function initCommunityInboxRuntimeBridge() {
   if (!isMobileSpaRuntime()) return
-  // Capture phase claims only lifecycle-proven Community/Streaming/Camera tab anchors.
-  // Search, post detail, profile, Inbox, Products, etc. are untouched.
+  // Capture phase claims lifecycle-proven Community/Streaming/Camera/Inbox tab anchors.
+  // Search, post detail, profile, Products, etc. remain untouched.
   document.addEventListener('click', handlePrimaryTabClick, true)
   window.addEventListener('popstate', () => { void handleRuntimePopstate() })
   document.documentElement.dataset.melogicPrimaryTabRuntime = 'enabled'
