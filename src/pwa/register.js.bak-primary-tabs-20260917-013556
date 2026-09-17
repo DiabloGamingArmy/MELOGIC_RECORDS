@@ -4,7 +4,6 @@ import { initPersistentMobileSpaShell } from './mobileSpaShell'
 import './mobileSpaDataCache' // melogic-mobile-spa-cache-v7b
 import { initMobileSpaLifecycleAudit } from './mobileSpaLifecycleAudit'
 import { initMobileAppRuntime } from './mobileAppRuntime'
-import { initMobilePrimaryTabsFoundation } from './mobilePrimaryTabs'
 
 
 // melogic-pwa-viewport-final-hardening-v6
@@ -80,10 +79,6 @@ initMobileSpaFoundation()
 
 // melogic-mobile-spa-shell-v2
 initPersistentMobileSpaShell()
-
-// melogic-mobile-primary-tabs-foundation-v1
-// Narrow Community <-> Streaming contract. Patch 2 remains non-intercepting.
-initMobilePrimaryTabsFoundation()
 
 // melogic-mobile-spa-final-v8
 initMobileSpaLifecycleAudit()

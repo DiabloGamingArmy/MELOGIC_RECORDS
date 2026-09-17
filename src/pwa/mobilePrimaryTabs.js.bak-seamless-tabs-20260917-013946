@@ -1,0 +1,131 @@
+/*
+ * melogic-mobile-primary-tabs-foundation-v1
+ *
+ * Narrow foundation for the two high-frequency consumer tabs:
+ *   /community <-> /streaming
+ *
+ * IMPORTANT: this module does NOT intercept clicks or perform same-document
+ * transitions yet. Patch 3 can do that only after both surfaces satisfy this
+ * contract. Direct document navigation remains the fallback and source of truth.
+ */
+
+const MOBILE_QUERY = '(max-width: 760px)'
+const TAB_EVENT = 'melogic:mobile-primary-tab-state'
+const SCROLL_PREFIX = 'melogic:mobile-primary-tab-scroll:'
+
+export const MOBILE_PRIMARY_TABS = Object.freeze({
+  community: Object.freeze({ id: 'community', path: '/community' }),
+  streaming: Object.freeze({ id: 'streaming', path: '/streaming' })
+})
+
+let initialized = false
+
+function normalizedPath(value = location.pathname) {
+  const path = String(value || '/').replace(/\/+$/, '')
+  return path || '/'
+}
+
+export function isMobilePrimaryTabEnvironment() {
+  if (window.__TAURI_INTERNALS__ || window.__TAURI__) return false
+  return window.matchMedia(MOBILE_QUERY).matches ||
+    window.matchMedia('(display-mode: standalone)').matches ||
+    navigator.standalone === true
+}
+
+export function resolveMobilePrimaryTab(value = location.pathname) {
+  const path = normalizedPath(value)
+  if (path === MOBILE_PRIMARY_TABS.community.path) return MOBILE_PRIMARY_TABS.community
+  if (path === MOBILE_PRIMARY_TABS.streaming.path) return MOBILE_PRIMARY_TABS.streaming
+  return null
+}
+
+export function isMobilePrimaryTabUrl(value) {
+  let url
+  try { url = value instanceof URL ? value : new URL(String(value), location.href) } catch { return false }
+  return url.origin === location.origin && Boolean(resolveMobilePrimaryTab(url.pathname))
+}
+
+function scrollKey(tabId) {
+  return `${SCROLL_PREFIX}${tabId}`
+}
+
+export function saveMobilePrimaryTabScroll(tabId, value = window.scrollY) {
+  if (!MOBILE_PRIMARY_TABS[tabId]) return
+  try { sessionStorage.setItem(scrollKey(tabId), String(Math.max(0, Number(value) || 0))) } catch {}
+}
+
+export function readMobilePrimaryTabScroll(tabId) {
+  if (!MOBILE_PRIMARY_TABS[tabId]) return 0
+  try { return Math.max(0, Number(sessionStorage.getItem(scrollKey(tabId))) || 0) } catch { return 0 }
+}
+
+export function restoreMobilePrimaryTabScroll(tabId, { behavior = 'instant' } = {}) {
+  const top = readMobilePrimaryTabScroll(tabId)
+  requestAnimationFrame(() => window.scrollTo({ top, left: 0, behavior }))
+}
+
+function publish(type, extra = {}) {
+  const active = resolveMobilePrimaryTab()
+  const detail = Object.freeze({
+    type,
+    activeTabId: active?.id || null,
+    pathname: normalizedPath(),
+    ...extra
+  })
+  window.__melogicMobilePrimaryTabs = detail
+  window.dispatchEvent(new CustomEvent(TAB_EVENT, { detail }))
+  return detail
+}
+
+export function onMobilePrimaryTabState(listener) {
+  if (typeof listener !== 'function') return () => {}
+  window.addEventListener(TAB_EVENT, listener)
+  return () => window.removeEventListener(TAB_EVENT, listener)
+}
+
+function classifyPrimaryTabAnchors() {
+  document.querySelectorAll('a[href]').forEach(anchor => {
+    let url
+    try { url = new URL(anchor.href, location.href) } catch { return }
+    const tab = url.origin === location.origin ? resolveMobilePrimaryTab(url.pathname) : null
+    if (!tab) {
+      anchor.removeAttribute('data-melogic-primary-tab')
+      return
+    }
+    anchor.dataset.melogicPrimaryTab = tab.id
+    // Contract marker only. Native navigation remains untouched in Patch 2.
+    anchor.dataset.nativeTouchNavigation = 'true'
+  })
+}
+
+function snapshotCurrentScroll() {
+  const active = resolveMobilePrimaryTab()
+  if (active) saveMobilePrimaryTabScroll(active.id)
+}
+
+export function initMobilePrimaryTabsFoundation() {
+  if (initialized) return
+  initialized = true
+  if (!isMobilePrimaryTabEnvironment()) return
+
+  document.documentElement.dataset.melogicPrimaryTabs = 'foundation'
+  classifyPrimaryTabAnchors()
+
+  // navShell can be re-rendered after auth/account changes.
+  const observer = new MutationObserver(records => {
+    if (records.some(record => record.addedNodes.length)) classifyPrimaryTabAnchors()
+  })
+  observer.observe(document.documentElement, { childList: true, subtree: true })
+
+  // Save state for later same-document transitions without changing current
+  // browser navigation semantics.
+  window.addEventListener('pagehide', snapshotCurrentScroll)
+  window.addEventListener('beforeunload', snapshotCurrentScroll)
+  window.addEventListener('popstate', () => publish('popstate'))
+  window.addEventListener('pageshow', event => {
+    classifyPrimaryTabAnchors()
+    publish(event.persisted ? 'pageshow-persisted' : 'pageshow')
+  })
+
+  publish('init')
+}
