@@ -3053,36 +3053,6 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
 .mobile-app-shell{display:none}
 @media(max-width:760px){
   :root{--mobile-nav-h:72px;--mobile-bg:#07090d;--mobile-line:rgba(160,178,210,.14);--mobile-muted:#929db1}
-  /* melogic-pwa-canonical-viewport-v1
-     Canonical mobile geometry foundation; routes opt in during later patches. */
-  :root{
-    --melogic-mobile-viewport-h:100vh;
-    --melogic-mobile-safe-top:env(safe-area-inset-top,0px);
-    --melogic-mobile-safe-bottom:env(safe-area-inset-bottom,0px);
-    --melogic-mobile-header-content-h:52px;
-    --melogic-mobile-header-h:calc(var(--melogic-mobile-safe-top) + var(--melogic-mobile-header-content-h));
-    --melogic-mobile-nav-content-h:var(--mobile-nav-h);
-    --melogic-mobile-nav-h:calc(var(--melogic-mobile-nav-content-h) + var(--melogic-mobile-safe-bottom));
-    --melogic-mobile-bg:var(--mobile-bg);
-  }
-  @supports (height:100dvh){:root{--melogic-mobile-viewport-h:100dvh}}
-
-  [data-melogic-viewport-shell]{
-    position:fixed;inset:0;width:100%;height:var(--melogic-mobile-viewport-h);
-    min-height:0;display:flex;flex-direction:column;overflow:hidden;
-    overscroll-behavior:none;background:var(--melogic-mobile-bg);
-  }
-  [data-melogic-viewport-header]{flex:0 0 auto;min-height:var(--melogic-mobile-header-h)}
-  [data-melogic-viewport-content]{
-    flex:1 1 auto;min-width:0;min-height:0;overflow-x:hidden;overflow-y:auto;
-    -webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;
-  }
-  [data-melogic-viewport-content='fixed']{overflow:hidden}
-  [data-melogic-viewport-nav]{
-    flex:0 0 var(--melogic-mobile-nav-h);min-height:var(--melogic-mobile-nav-h);
-    padding-bottom:var(--melogic-mobile-safe-bottom);
-  }
-
   body{padding-bottom:calc(var(--mobile-nav-h) + env(safe-area-inset-bottom,0px))}
   .nav-shell{display:none!important}
   /* Keep a real box for WebKit touch hit testing around the fixed nav. */
