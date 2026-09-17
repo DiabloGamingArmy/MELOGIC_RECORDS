@@ -5177,3 +5177,38 @@ body.is-inbox-page .site-footer {
     display: block;
   }
 }
+
+
+/* melogic-inbox-persistent-host-fix-v30
+   The authenticated mobile Inbox root is a fixed route host, not a vertical
+   document-flow container. Exactly one persistent subpage occupies it. */
+@media (max-width: 760px) {
+  body.is-inbox-page [data-inbox-root].is-persistent-mobile-inbox-host {
+    position: relative !important;
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page [data-inbox-root].is-persistent-mobile-inbox-host
+    > .inbox-persistent-route-surface {
+    position: absolute !important;
+    inset: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page [data-inbox-root].is-persistent-mobile-inbox-host
+    > .inbox-persistent-route-surface[hidden] {
+    display: none !important;
+  }
+
+  body.is-inbox-page [data-inbox-root].is-persistent-mobile-inbox-host
+    > .inbox-persistent-route-surface.is-active:not([hidden]) {
+    display: block !important;
+  }
+}

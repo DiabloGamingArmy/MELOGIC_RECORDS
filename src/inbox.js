@@ -7035,6 +7035,25 @@ function ensureMobileInboxSurface(key) {
   let surface = mobileInboxSurfaceCache.get(key)
   if (surface?.isConnected) return { surface, created: false }
 
+  // melogic-inbox-persistent-host-fix-v30
+  // The pre-auth/cold-start loader used to be removed implicitly by
+  // inboxRoot.innerHTML = ... . Persistent v29 surfaces append instead, so the
+  // loader must be explicitly retired before the first live surface mounts.
+  if (mobileInboxSurfaceCache.size === 0) {
+    inboxRoot.querySelectorAll(
+      '[data-inbox-cold-skeleton], .inbox-auth-card, .inbox-native-skeleton'
+    ).forEach((node) => node.remove())
+
+    // Nothing except persistent route surfaces may participate in the route
+    // host's layout after authenticated mobile Inbox takes ownership.
+    Array.from(inboxRoot.children).forEach((node) => {
+      if (!(node instanceof HTMLElement)) return
+      if (node.matches('[data-inbox-persistent-route-surface]')) return
+      node.remove()
+    })
+    inboxRoot.classList.add('is-persistent-mobile-inbox-host')
+  }
+
   surface = document.createElement('div')
   surface.className = 'inbox-persistent-route-surface'
   surface.dataset.inboxPersistentRouteSurface = key
@@ -7103,6 +7122,7 @@ function renderSignedInState() {
 
   // Desktop and non-primary Inbox routes retain the established renderer.
   mobileInboxSurfaceCache.clear()
+  inboxRoot.classList.remove('is-persistent-mobile-inbox-host')
   const composerFocus = captureMessageComposerFocus()
   const scrollSnapshot = messageScrollController.snapshot()
   const previousThreadId = messageScrollController.threadId
