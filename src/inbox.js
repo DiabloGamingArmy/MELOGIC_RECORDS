@@ -5713,20 +5713,22 @@ function renderMessagesLayout() {
 }
 
 function renderActivityLayout(filterName) {
+  // melogic-inbox-shared-mobile-shell-v22
+  // Calls/Activity use the same proven mobile shell as Messages.
   return `
-    <div class="inbox-layout inbox-layout-activity">
-      <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
-      <section class="inbox-main-panel inbox-main-panel-full">
+    <div class="inbox-layout inbox-layout-activity inbox-layout-messages inbox-mobile-list-view" data-mobile-inbox-view="list" data-inbox-shared-mobile-shell="${escapeHtml(String(filterName || '').toLowerCase())}">
+      <section class="inbox-thread-panel inbox-shared-mobile-route-panel">
         <!-- melogic-inbox-mobile-header-spacer-v17 -->
         <div class="inbox-mobile-header-spacer" aria-hidden="true"></div>
         ${getMobileInboxPrimaryTabsMarkup()}
-        ${appState.notificationActionMessage ? `<div class="notification-action-feedback" role="status">${escapeHtml(appState.notificationActionMessage)}</div>` : ''}
-        ${getFilterContentMarkup(filterName)}
+        <div class="inbox-shared-mobile-route-content">
+          ${appState.notificationActionMessage ? `<div class="notification-action-feedback" role="status">${escapeHtml(appState.notificationActionMessage)}</div>` : ''}
+          ${getFilterContentMarkup(filterName)}
+        </div>
       </section>
     </div>
   `
 }
-
 function buildGroupTitle(selectedUsers = []) {
   const labels = selectedUsers.map((user) => user.displayName || user.username || 'User').filter(Boolean)
   if (labels.length <= 2) return labels.join(', ')

@@ -4981,3 +4981,55 @@ body.is-inbox-page .site-footer {
     translate: none !important;
   }
 }
+
+/* melogic-inbox-shared-mobile-shell-style-v22
+   Calls/Activity now use Messages' mobile geometry. Async content changes only
+   the final minmax(0,1fr) scroll row, never the selector. */
+@media (max-width:760px) {
+  body.is-inbox-page [data-inbox-shared-mobile-shell] {
+    width:100% !important; height:100% !important; max-height:100% !important;
+    min-height:0 !important; overflow:hidden !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] > .inbox-shared-mobile-route-panel {
+    display:grid !important;
+    grid-template-rows:0 auto minmax(0,1fr) !important;
+    align-content:stretch !important;
+    width:100% !important; height:100% !important; max-height:100% !important;
+    min-height:0 !important; overflow:hidden !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] > .inbox-shared-mobile-route-panel > .inbox-mobile-section-tabs {
+    grid-row:2 !important; align-self:stretch !important; flex:none !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-shared-mobile-route-content {
+    grid-row:3 !important; display:block !important;
+    width:100% !important; height:100% !important; max-height:100% !important;
+    min-height:0 !important; overflow-x:hidden !important; overflow-y:auto !important;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-y:contain !important; touch-action:pan-y !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-shared-mobile-route-content > .activity-panel,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-shared-mobile-route-content > .account-calls-panel {
+    display:block !important; box-sizing:border-box !important;
+    width:100% !important; height:auto !important; max-height:none !important;
+    min-height:0 !important; margin:0 !important; overflow:visible !important;
+    overscroll-behavior:auto !important; touch-action:auto !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-mobile-primary-content-header,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .account-calls-panel > .panel-header.activity-header,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .activity-panel > .panel-header.activity-header {
+    box-sizing:border-box !important; width:100% !important;
+    min-height:64px !important; height:64px !important; margin:0 !important;
+    padding:0 28px !important; display:flex !important; align-items:center !important;
+    justify-content:flex-start !important;
+    border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.08)) !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-mobile-primary-content-header > h3,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .account-calls-panel > .panel-header.activity-header > h3,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .activity-panel > .panel-header.activity-header > h3 {
+    margin:0 !important; padding:0 !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .account-calls-panel > .panel-header.activity-header > p,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .activity-panel > .panel-header.activity-header > p {
+    display:none !important;
+  }
+}
