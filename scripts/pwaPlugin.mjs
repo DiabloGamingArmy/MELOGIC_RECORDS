@@ -14,7 +14,7 @@ export function melogicPwaPlugin() {
         const updated = html.replace(/(<meta\s+name="viewport"\s+content=")([^"]*)("\s*\/?>)/i, (_, before, value, after) => `${before}${value.includes('viewport-fit') ? value : `${value}, viewport-fit=cover`}${after}`)
         const tags = [
           { tag: 'script', attrs: { type: 'module', src: '/src/pwa/register.js' }, injectTo: 'head' },
-          ...['apple-mobile-web-app-capable', 'apple-mobile-web-app-status-bar-style', 'mobile-web-app-capable'].filter(name => !html.includes(`name="${name}"`)).map(name => ({ tag: 'meta', attrs: { name, content: name.endsWith('status-bar-style') ? 'black-translucent' : 'yes' }, injectTo: 'head' }))
+          ...['apple-mobile-web-app-capable', 'apple-mobile-web-app-status-bar-style', 'mobile-web-app-capable'].filter(name => !html.includes(`name="${name}"`)).map(name => ({ tag: 'meta', attrs: { name, content: name.endsWith('status-bar-style') ? 'black' : 'yes' }, injectTo: 'head' }))
         ]
         return { html: updated, tags }
       }
