@@ -7013,10 +7013,10 @@ function restoreMessageComposerFocus(snapshot) {
 }
 
 // melogic-inbox-persistent-subpage-surfaces-v29
-// Mobile Messages / Calls / Activity are live sibling DOM surfaces. Once a route
-// has been constructed, changing Inbox tabs hides/shows the same node instead
-// of replacing inboxRoot.innerHTML and rebuilding the entire Inbox.
+// melogic-inbox-first-mount-persistence-v33
+// The final mobile Inbox topology exists before async auth/Firebase begins.
 const mobileInboxSurfaceCache = new Map()
+const MOBILE_INBOX_PRIMARY_KEYS = ['messages', 'calls', 'activity']
 
 function mobileInboxSurfaceKey() {
   if (appState.activeFilter === 'Messages') return 'messages'
@@ -7025,18 +7025,49 @@ function mobileInboxSurfaceKey() {
   return String(appState.activeFilter || 'other').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')
 }
 
-function mobileInboxSurfaceMarkup() {
-  return appState.activeFilter === 'Messages'
-    ? renderMessagesLayout()
-    : renderActivityLayout(appState.activeFilter)
+function mobileInboxSurfaceMarkupForKey(key) {
+  if (key === 'messages') return renderMessagesLayout()
+  if (key === 'calls') return renderActivityLayout('Calls')
+  if (key === 'activity') return renderActivityLayout('System')
+  return ''
 }
 
-function ensureMobileInboxSurface(key) {
-  // melogic-inbox-cache-reattach-v31
-  // Runtime audit proved a route change can clear inboxRoot while the v29 Map
-  // still owns the original DOM nodes. A disconnected cached node is NOT stale:
-  // it is the persistent page we want to preserve. Reattach every cached route
-  // before resolving/creating the requested route.
+function createMobileInboxFirstMountSkeleton(key) {
+  const label = key === 'messages' ? 'Messages' : key === 'calls' ? 'Calls' : 'Activity'
+  return `
+    <div class="inbox-native-skeleton" data-inbox-route-skeleton="${key}" aria-label="Loading ${label}">
+      ${Array.from({ length: 5 }).map(() => `
+        <div class="inbox-native-skeleton-row">
+          <span class="inbox-native-skeleton-avatar"></span>
+          <span class="inbox-native-skeleton-copy">
+            <span class="inbox-native-skeleton-line is-primary"></span>
+            <span class="inbox-native-skeleton-line is-secondary"></span>
+          </span>
+        </div>
+      `).join('')}
+    </div>
+  `
+}
+
+function activateMobileInboxSurface(key) {
+  mobileInboxSurfaceCache.forEach((surface, surfaceKey) => {
+    const active = surfaceKey === key
+    if (surface.hidden !== !active) surface.hidden = !active
+    if (surface.classList.contains('is-active') !== active) surface.classList.toggle('is-active', active)
+    const ariaValue = active ? 'false' : 'true'
+    if (surface.getAttribute('aria-hidden') !== ariaValue) surface.setAttribute('aria-hidden', ariaValue)
+    if (active) {
+      if (surface.hasAttribute('inert')) surface.removeAttribute('inert')
+    } else if (!surface.hasAttribute('inert')) {
+      surface.setAttribute('inert', '')
+    }
+  })
+}
+
+function primePersistentMobileInboxHost() {
+  if (!isMobileInboxViewport()) return false
+  inboxRoot.classList.add('is-persistent-mobile-inbox-host')
+
   inboxRoot.querySelectorAll(
     '[data-inbox-cold-skeleton], .inbox-auth-card, .inbox-native-skeleton'
   ).forEach((node) => node.remove())
@@ -7046,38 +7077,62 @@ function ensureMobileInboxSurface(key) {
     if (node.matches('[data-inbox-persistent-route-surface]')) return
     node.remove()
   })
-  inboxRoot.classList.add('is-persistent-mobile-inbox-host')
 
-  mobileInboxSurfaceCache.forEach((cachedSurface) => {
-    if (!(cachedSurface instanceof HTMLElement)) return
-    if (cachedSurface.parentNode !== inboxRoot) inboxRoot.append(cachedSurface)
-  })
-
-  let surface = mobileInboxSurfaceCache.get(key)
-  if (surface) {
+  for (const key of MOBILE_INBOX_PRIMARY_KEYS) {
+    let surface = mobileInboxSurfaceCache.get(key)
+    if (!(surface instanceof HTMLElement)) {
+      surface = document.createElement('div')
+      surface.className = 'inbox-persistent-route-surface'
+      surface.dataset.inboxPersistentRouteSurface = key
+      surface.dataset.inboxSurfaceInitialized = '0'
+      surface.innerHTML = createMobileInboxFirstMountSkeleton(key)
+      mobileInboxSurfaceCache.set(key, surface)
+    }
     if (surface.parentNode !== inboxRoot) inboxRoot.append(surface)
-    return { surface, created: false }
   }
 
-  surface = document.createElement('div')
-  surface.className = 'inbox-persistent-route-surface'
-  surface.dataset.inboxPersistentRouteSurface = key
-  surface.innerHTML = mobileInboxSurfaceMarkup()
-  inboxRoot.append(surface)
-  mobileInboxSurfaceCache.set(key, surface)
+  activateMobileInboxSurface(mobileInboxSurfaceKey())
+  return true
+}
+
+function initializeMobileInboxSurface(key) {
+  const surface = mobileInboxSurfaceCache.get(key)
+  if (!(surface instanceof HTMLElement)) return { surface: null, created: false }
+  if (surface.dataset.inboxSurfaceInitialized === '1') return { surface, created: false }
+
+  surface.innerHTML = mobileInboxSurfaceMarkupForKey(key)
+  surface.dataset.inboxSurfaceInitialized = '1'
   bindSharedEvents(surface)
   return { surface, created: true }
 }
 
-function activateMobileInboxSurface(key) {
-  mobileInboxSurfaceCache.forEach((surface, surfaceKey) => {
-    const active = surfaceKey === key
-    surface.hidden = !active
-    surface.classList.toggle('is-active', active)
-    surface.setAttribute('aria-hidden', active ? 'false' : 'true')
-    if (active) surface.removeAttribute('inert')
-    else surface.setAttribute('inert', '')
-  })
+function ensureMobileInboxSurface(key) {
+  primePersistentMobileInboxHost()
+  let surface = mobileInboxSurfaceCache.get(key)
+  if (!(surface instanceof HTMLElement)) {
+    surface = document.createElement('div')
+    surface.className = 'inbox-persistent-route-surface'
+    surface.dataset.inboxPersistentRouteSurface = key
+    surface.dataset.inboxSurfaceInitialized = '0'
+    inboxRoot.append(surface)
+    mobileInboxSurfaceCache.set(key, surface)
+  }
+  if (surface.parentNode !== inboxRoot) inboxRoot.append(surface)
+  return initializeMobileInboxSurface(key)
+}
+
+function hydratePersistentMessagesThreadList(surface) {
+  if (!(surface instanceof HTMLElement) || surface.dataset.inboxSurfaceInitialized !== '1') return false
+  const currentList = surface.querySelector('.inbox-thread-list')
+  if (!currentList) return false
+  const holder = document.createElement('div')
+  holder.innerHTML = getMessagesThreadListMarkup().trim()
+  const nextList = holder.querySelector('.inbox-thread-list')
+  if (!nextList) return false
+  preserveStableImages(currentList, nextList)
+  currentList.replaceWith(nextList)
+  bindSharedEvents(nextList)
+  return true
 }
 
 function renderSignedInState() {
@@ -7095,10 +7150,12 @@ function renderSignedInState() {
     const previousThreadId = messageScrollController.threadId
     const { surface, created } = ensureMobileInboxSurface(key)
 
-    // Messages is deliberately preserved byte-for-byte when returning to it.
-    // Calls/Activity may be refreshed by their own realtime/state update paths,
-    // but a route switch itself never destroys a previously mounted surface.
     activateMobileInboxSurface(key)
+
+    // Realtime/fallback thread data updates only the live Messages list.
+    if (key === 'messages' && !created && appState.hasLoadedThreadsOnce) {
+      hydratePersistentMessagesThreadList(surface)
+    }
 
     if (key === 'messages' && (!isMobileInboxViewport() || Boolean(appState.selectedThreadId))) {
       const scroller = surface.querySelector('[data-message-list]')
@@ -8245,9 +8302,9 @@ function installMobileInboxNavigationAndScrollArchitecture() {
   const mobileTabsMarkup = () => {
     const active = routeKind()
     return `<nav class="inbox-mobile-section-tabs" data-inbox-mobile-section-tabs aria-label="Inbox sections">
-      <a class="${active === 'messages' ? 'is-active' : ''}" href="/inbox/messages" data-native-touch-navigation ${active === 'messages' ? 'aria-current="page"' : ''}>Messages</a>
-      <a class="${active === 'calls' ? 'is-active' : ''}" href="/inbox/calls" data-native-touch-navigation ${active === 'calls' ? 'aria-current="page"' : ''}>Calls</a>
-      <a class="${active === 'activity' ? 'is-active' : ''}" href="/inbox/system" data-native-touch-navigation ${active === 'activity' ? 'aria-current="page"' : ''}>Activity</a>
+      <a class="${active === 'messages' ? 'is-active' : ''}" href="/inbox/messages" ${active === 'messages' ? 'aria-current="page"' : ''}>Messages</a>
+      <a class="${active === 'calls' ? 'is-active' : ''}" href="/inbox/calls" ${active === 'calls' ? 'aria-current="page"' : ''}>Calls</a>
+      <a class="${active === 'activity' ? 'is-active' : ''}" href="/inbox/system" ${active === 'activity' ? 'aria-current="page"' : ''}>Activity</a>
     </nav>`
   }
   const ensureTabs = () => {
@@ -8288,9 +8345,8 @@ function installMobileInboxNavigationAndScrollArchitecture() {
       const anchor = anchors[index]
       if (!anchor) return
       if (anchor.getAttribute('href') !== href) anchor.setAttribute('href', href)
-      if (!anchor.hasAttribute('data-native-touch-navigation')) {
-        anchor.setAttribute('data-native-touch-navigation', '')
-      }
+      // v33: Inbox-local route; never opt into the primary SPA router.
+      anchor.removeAttribute('data-native-touch-navigation')
       const isActive = active === key
       anchor.classList.toggle('is-active', isActive)
       if (isActive) anchor.setAttribute('aria-current', 'page')
@@ -8440,6 +8496,8 @@ async function bootstrapInboxDocument({ background = false } = {}) {
       normalizeInitialInboxRoute()
       initShellChrome()
       document.body.classList.add('is-inbox-page')
+      // v33: establish final DOM topology before any asynchronous data work.
+      primePersistentMobileInboxHost()
     }
     await initializeInboxAuth({ background })
     inboxBackgroundWarm = false
