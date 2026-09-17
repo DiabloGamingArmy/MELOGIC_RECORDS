@@ -5,51 +5,6 @@ import './mobileSpaDataCache' // melogic-mobile-spa-cache-v7b
 import { initMobileSpaLifecycleAudit } from './mobileSpaLifecycleAudit'
 import { initMobileAppRuntime } from './mobileAppRuntime'
 
-
-// melogic-pwa-viewport-final-hardening-v6
-const melogicMobileViewportRoutes = new Set(['/community','/inbox','/inbox/messages','/inbox/calls','/inbox/activity','/profile','/streaming','/camera'])
-const isMelogicMobileViewportRoute = () => {
-  const path = location.pathname.replace(/\/+$/, '') || '/'
-  return melogicMobileViewportRoutes.has(path)
-}
-const updateMelogicVisualViewportState = () => {
-  if (!isMelogicMobileViewportRoute() || !window.matchMedia('(max-width: 760px)').matches) {
-    document.documentElement.classList.remove('melogic-visual-viewport-shrunken')
-    return
-  }
-  const vv = window.visualViewport
-  if (!vv) return
-  const layoutHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0)
-  const keyboardLikeShrink = layoutHeight > 0 && vv.height < layoutHeight - 120
-  document.documentElement.classList.toggle('melogic-visual-viewport-shrunken', keyboardLikeShrink)
-}
-let melogicViewportRaf = 0
-const scheduleMelogicViewportUpdate = () => {
-  cancelAnimationFrame(melogicViewportRaf)
-  melogicViewportRaf = requestAnimationFrame(updateMelogicVisualViewportState)
-}
-window.visualViewport?.addEventListener('resize', scheduleMelogicViewportUpdate, { passive:true })
-window.visualViewport?.addEventListener('scroll', scheduleMelogicViewportUpdate, { passive:true })
-window.addEventListener('orientationchange', () => {
-  scheduleMelogicViewportUpdate()
-  setTimeout(scheduleMelogicViewportUpdate, 250)
-  setTimeout(scheduleMelogicViewportUpdate, 700)
-}, { passive:true })
-window.addEventListener('resize', scheduleMelogicViewportUpdate, { passive:true })
-document.addEventListener('focusin', scheduleMelogicViewportUpdate)
-document.addEventListener('focusout', () => setTimeout(scheduleMelogicViewportUpdate, 80))
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    scheduleMelogicViewportUpdate()
-    setTimeout(scheduleMelogicViewportUpdate, 250)
-  }
-})
-window.addEventListener('pageshow', () => {
-  scheduleMelogicViewportUpdate()
-  setTimeout(scheduleMelogicViewportUpdate, 250)
-})
-scheduleMelogicViewportUpdate()
-
 // melogic-mobile-unified-runtime-v6
 const MOBILE_CHUNK_RECOVERY_KEY = 'melogic:mobile-chunk-recovery'
 const mobileRuntimeUnsafeToReload = () =>
