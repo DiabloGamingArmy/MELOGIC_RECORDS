@@ -5033,3 +5033,32 @@ body.is-inbox-page .site-footer {
     display:none !important;
   }
 }
+
+/* melogic-inbox-exact-messages-header-v23
+   Calls/Activity use Messages' actual panel-header-row framework. */
+@media (max-width:760px) {
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-mobile-route-header {
+    box-sizing:border-box !important;
+    width:100% !important;
+    min-height:64px !important;
+    height:64px !important;
+    margin:0 !important;
+    padding:0 20px !important;
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    gap:12px !important;
+    border-bottom:1px solid var(--border-subtle,rgba(255,255,255,.08)) !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-mobile-route-header > div,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-mobile-route-header h3 {
+    margin:0 !important;
+    padding:0 !important;
+  }
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-shared-mobile-route-content,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-shared-mobile-route-content > .activity-panel,
+  body.is-inbox-page [data-inbox-shared-mobile-shell] .inbox-shared-mobile-route-content > .account-calls-panel {
+    margin-top:0 !important;
+    padding-top:0 !important;
+  }
+}

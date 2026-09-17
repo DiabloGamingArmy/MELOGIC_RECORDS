@@ -3854,9 +3854,10 @@ function getCallsContentMarkup() {
 
   return `
     <section class="activity-panel account-calls-panel">
-      <header class="panel-header activity-header inbox-mobile-primary-content-header">
-        <!-- melogic-inbox-section-header-parity-v19 -->
-        <h3>Calls</h3>
+      <header class="panel-header panel-header-row inbox-mobile-route-header">
+        <!-- melogic-inbox-exact-messages-header-v23 -->
+        <div><h3>Calls</h3></div>
+        <div class="panel-actions"><button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button></div>
       </header>
       ${appState.callError ? `<div class="account-call-error" role="alert">${escapeHtml(appState.callError)}</div>` : ''}
       ${activeMarkup}
@@ -4058,7 +4059,7 @@ function getContentActivityMarkup() {
   if (activeTab.key === 'collaborations') {
     return `
       <section class="activity-panel">
-        <header class="panel-header activity-header inbox-mobile-primary-content-header"><!-- melogic-inbox-header-unification-v20 --><h3>Activity</h3></header>
+        <header class="panel-header panel-header-row inbox-mobile-route-header"><!-- melogic-inbox-exact-messages-header-v23 --><div><h3>Activity</h3></div></header>
         <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
           ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
         </nav>
@@ -4069,7 +4070,7 @@ function getContentActivityMarkup() {
   if (activeTab.key === 'gifts') {
     return `
       <section class="activity-panel">
-        <header class="panel-header activity-header"><h3>Content</h3><p>Activity connected to your work and profile</p></header>
+        <header class="panel-header panel-header-row inbox-mobile-route-header"><!-- melogic-inbox-exact-messages-header-v23 --><div><h3>Activity</h3></div></header>
         <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
           ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
         </nav>
