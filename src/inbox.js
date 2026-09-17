@@ -5062,7 +5062,9 @@ async function handleNotificationMenuAction(button) {
 function refreshAccountCallUi({ refreshConversation = false } = {}) {
   renderFloatingUi()
   if (appState.activeFilter === 'Calls') {
-    renderSignedInState()
+    // v34: Calls owns a persistent DOM surface. Call state changes update the
+    // floating call UI without reconstructing or re-entering the page renderer.
+    return
   } else if (refreshConversation && appState.activeFilter === 'Messages' && appState.selectedThreadId) {
     renderSelectedConversation({ reason: 'account-call-update' })
   }
@@ -5086,7 +5088,7 @@ function startAccountCallTimer() {
     if (statusNode && appState.callUiState === 'active') {
       statusNode.textContent = `Connected · ${getCallDuration(appState.activeCall)}`
     }
-    if (appState.activeFilter === 'Calls') renderSignedInState()
+    // v34: duration/status lives in floating call UI; never rerender Calls page.
   }, 1000)
 }
 
@@ -7145,6 +7147,29 @@ function renderSignedInState() {
 
   if (persistentMobileRoutes) {
     const key = mobileInboxSurfaceKey()
+
+    // melogic-inbox-freeze-secondary-surfaces-v34
+    // Calls/Activity are native-style persistent pages. Once one has been
+    // initialized AND activated, asynchronous call/activity/auth callbacks are
+    // forbidden from running the page renderer again. Their existing DOM is
+    // the authoritative live surface until the user leaves this Inbox route.
+    //
+    // A route switch still falls through because the requested surface is not
+    // active yet. Messages is excluded because its thread list has a targeted
+    // realtime hydration path.
+    const existingSurface = mobileInboxSurfaceCache.get(key)
+    const secondarySurfaceAlreadyActive = (
+      (key === 'calls' || key === 'activity')
+      && existingSurface instanceof HTMLElement
+      && existingSurface.dataset.inboxSurfaceInitialized === '1'
+      && existingSurface.classList.contains('is-active')
+      && existingSurface.hidden === false
+    )
+    if (secondarySurfaceAlreadyActive) {
+      renderFloatingUi()
+      return
+    }
+
     const composerFocus = captureMessageComposerFocus()
     const scrollSnapshot = messageScrollController.snapshot()
     const previousThreadId = messageScrollController.threadId
