@@ -4691,3 +4691,50 @@ body.is-inbox-page .site-footer {
     touch-action: pan-y;
   }
 }
+
+/* melogic-inbox-runtime-viewport-geometry-v14
+   Runtime measurement: #app=796px but Inbox main=954.84px. The outer app is
+   overflow:hidden, so the extra height is clipped rather than scrollable. */
+@media (max-width:760px) {
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) > #app > main {
+    position: absolute !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: var(--melogic-mobile-nav-h, var(--mobile-nav-height, 72px)) !important;
+    left: 0 !important;
+    width: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-main-shell,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-app-shell,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-mobile-list-view,
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-layout-messages {
+    height: 100% !important;
+    max-height: 100% !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-mobile-list-view {
+    box-sizing: border-box !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-thread-panel {
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: 100% !important;
+  }
+
+  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) .inbox-thread-list {
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+  }
+}
