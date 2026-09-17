@@ -2,9 +2,9 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="Melogic social inbox for messages, calls, and community notifications." />
-    <title>Melogic | Inbox</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="description" content="Melogic profile and account overview." />
+    <title>Melogic | Profile</title>
       <!-- Melogic browser / installed-app identity -->
     <link rel="icon" href="/branding/icons/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/branding/icons/favicon-32.png" type="image/png" sizes="32x32" />
@@ -15,6 +15,6 @@
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/inbox.js"></script>
+    <script type="module" src="/src/profile.js"></script>
   </body>
 </html>

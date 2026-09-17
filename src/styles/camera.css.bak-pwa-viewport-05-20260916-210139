@@ -75,9 +75,3 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
     padding-top:calc(var(--melogic-mobile-safe-top) + 12px);
   }
 }
-
-/* melogic-pwa-global-geometry-cleanup-v5 */
-@media (max-width:760px) {
-  body.melogic-camera-page .camera-screen { min-height:0!important; max-height:none!important; margin:0!important; }
-  body.melogic-camera-page .camera-bottom-spacer, body.melogic-camera-page [data-camera-bottom-spacer] { display:none!important; }
-}

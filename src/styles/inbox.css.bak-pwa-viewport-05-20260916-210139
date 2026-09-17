@@ -4452,9 +4452,3 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     height:var(--melogic-mobile-viewport-h);
   }
 }
-
-/* melogic-pwa-global-geometry-cleanup-v5 */
-@media (max-width:760px) {
-  body.is-inbox-page main { height:auto!important; min-height:0!important; max-height:none!important; margin-bottom:0!important; padding-bottom:0!important; }
-  body.is-inbox-page:not(.is-inbox-mobile-conversation-open) > #app > main { top:var(--melogic-mobile-header-h); bottom:var(--melogic-mobile-nav-h); }
-}

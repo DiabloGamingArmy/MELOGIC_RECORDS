@@ -3205,9 +3205,3 @@ html.music-player-fullscreen-open,html.music-player-fullscreen-open body{overflo
     max-width:calc(100vw - 1rem);
   }
 }
-
-/* melogic-pwa-global-geometry-cleanup-v5 */
-@media (max-width:760px) {
-  body.is-streaming-page > #app > .music-page { min-height:0!important; max-height:none!important; margin-bottom:0!important; padding-bottom:0!important; }
-  body.is-streaming-page .music-app-shell { min-height:0!important; padding-bottom:0; }
-}

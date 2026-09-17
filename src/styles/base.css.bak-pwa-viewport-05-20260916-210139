@@ -3201,30 +3201,3 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
 /* melogic-pwa-community-reference-v2
    Community is migrated first. Other mobile routes intentionally retain their
    legacy geometry until their dedicated migration patches. */
-
-/* melogic-pwa-global-geometry-cleanup-v5 */
-@media (max-width:760px) {
-  body:is(.is-community-page,.is-inbox-page,.is-profile-page,.is-streaming-page,.melogic-camera-page) {
-    margin:0; width:100%; max-width:100%; height:var(--melogic-mobile-viewport-h);
-    min-height:0; padding-bottom:0!important; overflow:hidden; overscroll-behavior:none;
-  }
-  body:is(.is-community-page,.is-inbox-page,.is-profile-page,.is-streaming-page,.melogic-camera-page) > #app {
-    width:100%; height:var(--melogic-mobile-viewport-h); min-height:0; overflow:hidden;
-  }
-  body:is(.is-community-page,.is-inbox-page,.is-profile-page,.is-streaming-page,.melogic-camera-page) .mobile-app-shell {
-    height:var(--melogic-mobile-viewport-h); min-height:0; overflow:hidden;
-  }
-  body:is(.is-community-page,.is-inbox-page,.is-profile-page,.is-streaming-page,.melogic-camera-page) .mobile-bottom-nav {
-    box-sizing:border-box; min-height:var(--melogic-mobile-nav-h); margin-bottom:0!important;
-    padding-bottom:var(--melogic-mobile-safe-bottom); transform:none;
-  }
-  body:is(.is-community-page,.is-inbox-page,.is-profile-page,.is-streaming-page,.melogic-camera-page)
-  :is(.mobile-top-blur,.mobile-top-mask,.mobile-app-blur,.pwa-top-blur,.pwa-top-mask,[data-mobile-top-blur],[data-pwa-top-blur],[data-pwa-top-mask]) {
-    display:none!important; content:none!important; filter:none!important; backdrop-filter:none!important;
-    -webkit-backdrop-filter:none!important; mask:none!important; -webkit-mask:none!important; pointer-events:none!important;
-  }
-  body:is(.is-community-page,.is-inbox-page,.is-profile-page,.is-streaming-page) :is(.mobile-app-header,.mobile-bottom-nav),
-  body.melogic-camera-page .mobile-bottom-nav {
-    filter:none!important; backdrop-filter:none!important; -webkit-backdrop-filter:none!important;
-  }
-}
