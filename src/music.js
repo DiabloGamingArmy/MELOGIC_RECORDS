@@ -137,6 +137,7 @@ const app = document.querySelector('#app')
 // melogic-streaming-lifecycle-contract-v4c
 // Page ownership is established by bootstrap/activate, not module evaluation.
 let streamingBootstrapped = false
+let streamingBootstrapPromise = null // melogic-runtime-boot-ownership-v4d1
 let streamingPopstateBound = false
 let streamingUnloadLifecycleBound = false
 let streamingGlobalUiBound = false
@@ -7121,33 +7122,47 @@ function bindStreamingUnloadLifecycleOnce() {
 }
 
 async function bootstrapStreamingDocument() {
-  if (streamingBootstrapped) return
-  streamingBootstrapped = true
-  mobileStreamingRuntimeActive = true
-  document.body.classList.add('is-streaming-page')
-  bindStreamingGlobalUiOnce()
-  bindStreamingUnloadLifecycleOnce()
-  initConsumerSpaLifecycle()
+  if (streamingBootstrapPromise) return streamingBootstrapPromise
+  streamingBootstrapPromise = (async () => {
+    if (streamingBootstrapped) return
+    streamingBootstrapped = true
+    mobileStreamingRuntimeActive = true
+    document.body.classList.add('is-streaming-page')
+    bindStreamingGlobalUiOnce()
+    bindStreamingUnloadLifecycleOnce()
+    initConsumerSpaLifecycle()
 
-  if (!streamingPopstateBound) {
-    streamingPopstateBound = true
-    window.addEventListener('popstate', handleStreamingPopstate)
-  }
+    if (!streamingPopstateBound) {
+      streamingPopstateBound = true
+      window.addEventListener('popstate', handleStreamingPopstate)
+    }
 
-  mountStreamingInitialPreloader()
+    mountStreamingInitialPreloader()
+    try {
+      await loadMusicPage()
+    } catch (error) {
+      state.loading = false
+      state.error = error?.message || 'Melogic Streaming could not be loaded.'
+      console.warn('[music] Page load failed.', error)
+      rerender()
+    } finally {
+      settleStreamingInitialPreloader()
+    }
+  })()
   try {
-    await loadMusicPage()
+    await streamingBootstrapPromise
   } catch (error) {
-    state.loading = false
-    state.error = error?.message || 'Melogic Streaming could not be loaded.'
-    console.warn('[music] Page load failed.', error)
-    rerender()
-  } finally {
-    settleStreamingInitialPreloader()
+    streamingBootstrapPromise = null
+    streamingBootstrapped = false
+    throw error
   }
 }
 
-// Direct Streaming documents retain their cold-start loader. Cross-page SPA
-// interception remains disabled until both lifecycle contracts are proven.
-void bootstrapStreamingDocument()
+// melogic-runtime-boot-ownership-v4d1
+// Cold boot only when this document actually owns a Streaming URL. Dynamic
+// import from Community must register the lifecycle without rendering early.
+if ((location.pathname.replace(/\/+$/, '') || '/') === '/streaming' ||
+    location.pathname.startsWith('/streaming/')) {
+  void bootstrapStreamingDocument()
+}
 

@@ -67,6 +67,7 @@ const app = document.querySelector('#app')
 // melogic-community-lifecycle-contract-v4b
 // Page ownership is established by bootstrap/activate, not module evaluation.
 let communityBootstrapped = false
+let communityBootstrapPromise = null // melogic-runtime-boot-ownership-v4d1
 let communityAuthUnsubscribe = null
 let communityPopstateBound = false
 let communityGlobalUiBound = false
@@ -6717,28 +6718,38 @@ function handleCommunityPopstate() {
 }
 
 async function bootstrapCommunityDocument() {
-  if (communityBootstrapped) return
-  communityBootstrapped = true
-  document.body.classList.add('is-community-page')
-  if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
-  bindCommunityGlobalUiOnce()
+  if (communityBootstrapPromise) return communityBootstrapPromise
+  communityBootstrapPromise = (async () => {
+    if (communityBootstrapped) return
+    communityBootstrapped = true
+    document.body.classList.add('is-community-page')
+    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual'
+    bindCommunityGlobalUiOnce()
 
-  const user = await waitForInitialAuthState()
-  state.currentUser = user
-  loadWikipediaHistory().catch(() => null)
-  render()
-  await loadCommunity()
+    const user = await waitForInitialAuthState()
+    state.currentUser = user
+    loadWikipediaHistory().catch(() => null)
+    render()
+    await loadCommunity()
 
-  if (!communityAuthUnsubscribe) {
-    communityAuthUnsubscribe = subscribeToAuthState((nextUser) => {
-      state.currentUser = nextUser
-      Promise.all([loadViewerState(), loadCommentViewerState()]).then(render).catch(() => render())
-    })
-  }
+    if (!communityAuthUnsubscribe) {
+      communityAuthUnsubscribe = subscribeToAuthState((nextUser) => {
+        state.currentUser = nextUser
+        Promise.all([loadViewerState(), loadCommentViewerState()]).then(render).catch(() => render())
+      })
+    }
 
-  if (!communityPopstateBound) {
-    communityPopstateBound = true
-    window.addEventListener('popstate', handleCommunityPopstate)
+    if (!communityPopstateBound) {
+      communityPopstateBound = true
+      window.addEventListener('popstate', handleCommunityPopstate)
+    }
+  })()
+  try {
+    await communityBootstrapPromise
+  } catch (error) {
+    communityBootstrapPromise = null
+    communityBootstrapped = false
+    throw error
   }
 }
 
@@ -6785,7 +6796,10 @@ if (isMobileSpaRuntime()) {
   })
 }
 
-// Direct Community documents retain cold-start behavior. Cross-page runtime
-// interception remains disabled until Streaming receives the same contract.
-void bootstrapCommunityDocument()
+// melogic-runtime-boot-ownership-v4d1
+// Only a real Community document may cold-boot Community. A dynamic import
+// while another view owns the document must register the lifecycle and stop.
+if ((location.pathname.replace(/\/+$/, '') || '/') === '/community') {
+  void bootstrapCommunityDocument()
+}
 

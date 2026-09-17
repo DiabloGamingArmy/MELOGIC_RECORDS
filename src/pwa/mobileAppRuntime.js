@@ -179,6 +179,11 @@ export async function activateMobileRuntimeUrl(value, { historyMode = 'push', so
 
   await lifecycle.activate({ outlet, instance: instances.get(route.id), route, url, transitionId: currentTransition })
   if (currentTransition !== transitionId) return false
+  if (!outlet.isConnected) {
+    publish('transition-outlet-lost', { from: previousId, to: route.id, source })
+    return false
+  }
+  document.documentElement.dataset.melogicRuntimeRenderedView = route.id // melogic-runtime-boot-ownership-v4d1
   activeViewId = route.id
   restoreRuntimeScroll(route.id, url.href)
 
@@ -364,11 +369,24 @@ export async function navigateMobileRuntimeUrl(value, options = {}) {
   document.documentElement.dataset.melogicMobileRuntimeMode = 'primary-tabs'
   try {
     const prepared = await prepareMobileRuntimeRoute(url)
+    publish('primary-tab-prepared', { to: route.id, prepared, registeredViews: [...registry.keys()] })
     if (!prepared) return false
-    return await activateMobileRuntimeUrl(url, {
+    const activated = await activateMobileRuntimeUrl(url, {
       historyMode: options.historyMode || 'push',
       source: options.source || 'primary-tab'
     })
+    publish('primary-tab-activation-result', {
+      to: route.id,
+      activated,
+      activeViewId,
+      outletChildren: getMobileSpaOutlet()?.childElementCount ?? -1
+    })
+    return activated
+    /* v4d1 old call retained below only as patch context:
+    return await activateMobileRuntimeUrl(url, {
+      historyMode: options.historyMode || 'push',
+      source: options.source || 'primary-tab'
+    }) */
   } catch (error) {
     console.error('[Melogic mobile runtime] Primary-tab transition failed.', error)
     return false
