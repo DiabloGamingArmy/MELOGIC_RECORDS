@@ -481,3 +481,8 @@ color:#fff!important;border:1px solid transparent!important;background:linear-gr
   body.is-community-page .community-page { min-height:0!important; max-height:none; margin-bottom:0!important; }
   body.is-community-page .community-main { padding-bottom:0; }
 }
+
+/* melogic-mobile-nav-absolute-screen-geometry-v6-community-boundary */
+@media (max-width:760px) {
+ body.is-community-page .community-page { bottom:var(--melogic-mobile-nav-h) !important; }
+}

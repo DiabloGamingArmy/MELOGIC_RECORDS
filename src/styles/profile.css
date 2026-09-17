@@ -800,3 +800,8 @@
     bottom:var(--melogic-mobile-nav-h) !important;
   }
 }
+
+/* melogic-mobile-nav-absolute-screen-geometry-v6-profile-boundary */
+@media (max-width:760px) {
+ body.is-profile-page > #app > main { bottom:var(--melogic-mobile-nav-h) !important; }
+}

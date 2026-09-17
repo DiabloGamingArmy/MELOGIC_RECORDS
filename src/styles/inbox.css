@@ -4572,3 +4572,8 @@ body.is-inbox-page .inbox-mobile-section-tabs > a[data-native-touch-navigation] 
     bottom:var(--melogic-mobile-nav-h) !important;
   }
 }
+
+/* melogic-mobile-nav-absolute-screen-geometry-v6-inbox-boundary */
+@media (max-width:760px) {
+ body.is-inbox-page:not(.is-inbox-mobile-conversation-open) > #app > main { bottom:var(--melogic-mobile-nav-h) !important; }
+}

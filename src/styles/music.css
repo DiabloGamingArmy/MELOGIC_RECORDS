@@ -3337,3 +3337,8 @@ html.music-player-fullscreen-open,html.music-player-fullscreen-open body{overflo
     bottom:calc(var(--melogic-mobile-nav-h) + 8px) !important;
   }
 }
+
+/* melogic-mobile-nav-absolute-screen-geometry-v6-streaming-boundary */
+@media (max-width:760px) {
+ body.is-streaming-page .music-player { bottom:calc(var(--melogic-mobile-nav-h) + 8px) !important; }
+}

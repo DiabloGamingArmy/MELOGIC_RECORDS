@@ -203,3 +203,8 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
     bottom:var(--melogic-mobile-nav-h) !important;
   }
 }
+
+/* melogic-mobile-nav-absolute-screen-geometry-v6-camera-boundary */
+@media (max-width:760px) {
+ body.melogic-camera-page .camera-screen { bottom:var(--melogic-mobile-nav-h) !important; }
+}
