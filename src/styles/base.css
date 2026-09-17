@@ -3309,3 +3309,27 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
     pointer-events:auto !important;
   }
 }
+
+/* melogic-mobile-physical-screen-nav-v7
+   x=0; y=physical screen height-nav height; width=physical screen width. */
+@media (max-width:760px) {
+  body .mobile-app-shell .mobile-bottom-nav,
+  body .mobile-bottom-nav {
+    position:fixed !important;
+    inset:auto !important;
+    left:0 !important;
+    right:auto !important;
+    bottom:auto !important;
+    top:calc(var(--melogic-physical-screen-h) - var(--melogic-mobile-nav-h)) !important;
+    width:var(--melogic-physical-screen-w) !important;
+    min-width:var(--melogic-physical-screen-w) !important;
+    max-width:var(--melogic-physical-screen-w) !important;
+    height:var(--melogic-mobile-nav-h) !important;
+    min-height:var(--melogic-mobile-nav-h) !important;
+    max-height:var(--melogic-mobile-nav-h) !important;
+    box-sizing:border-box !important;
+    margin:0 !important;
+    transform:none !important;
+    translate:none !important;
+  }
+}
