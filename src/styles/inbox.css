@@ -5129,3 +5129,34 @@ body.is-inbox-page .site-footer {
   }
 }
 
+
+
+/* melogic-inbox-native-cold-skeleton-v28 */
+@media (max-width: 760px) {
+  body.is-inbox-page .inbox-native-skeleton { box-sizing:border-box;width:100%;height:100%;min-height:0;padding:10px 18px 24px;overflow:hidden;background:#050505; }
+  body.is-inbox-page .inbox-native-skeleton-header { height:52px;display:flex;align-items:center; }
+  body.is-inbox-page .inbox-native-skeleton-tabs { height:44px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px; }
+  body.is-inbox-page .inbox-native-skeleton-tabs>span,
+  body.is-inbox-page .inbox-native-skeleton-line,
+  body.is-inbox-page .inbox-native-skeleton-row i,
+  body.is-inbox-page .inbox-native-skeleton-row b>span { display:block;position:relative;overflow:hidden;background:#171717; }
+  body.is-inbox-page .inbox-native-skeleton-tabs>span { border-radius:12px; }
+  body.is-inbox-page .inbox-native-skeleton-line-short { width:38%;height:18px;border-radius:7px; }
+  body.is-inbox-page .inbox-native-skeleton-list { display:grid;gap:8px; }
+  body.is-inbox-page .inbox-native-skeleton-row { min-height:72px;display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;gap:13px;padding:7px 2px; }
+  body.is-inbox-page .inbox-native-skeleton-row i { width:48px;height:48px;border-radius:50%; }
+  body.is-inbox-page .inbox-native-skeleton-row b { display:grid;gap:9px;min-width:0; }
+  body.is-inbox-page .inbox-native-skeleton-row b>span { height:13px;border-radius:6px; }
+  body.is-inbox-page .inbox-native-skeleton-row b>span:first-child { width:48%; }
+  body.is-inbox-page .inbox-native-skeleton-row b>span:last-child { width:78%;background:#101010; }
+  body.is-inbox-page .inbox-native-skeleton-tabs>span::after,
+  body.is-inbox-page .inbox-native-skeleton-line::after,
+  body.is-inbox-page .inbox-native-skeleton-row i::after,
+  body.is-inbox-page .inbox-native-skeleton-row b>span::after {
+    content:"";position:absolute;inset:0;transform:translateX(-100%);
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.065),transparent);
+    animation:melogicInboxSkeletonShimmer 1.35s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { body.is-inbox-page .inbox-native-skeleton *::after { animation:none !important; } }
+}
+@keyframes melogicInboxSkeletonShimmer { 100% { transform:translateX(100%); } }

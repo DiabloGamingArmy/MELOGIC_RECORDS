@@ -7,7 +7,7 @@ import { initShellChrome } from './appBoot'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { getEffectiveProfile } from './firebase/firestore'
 import { ROUTES, authRoute, communityPostRoute, inboxActiveCallRoute, productRoute, publicProfileRoute } from './utils/routes'
-import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
+import { isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
@@ -726,10 +726,13 @@ function navigateInbox(path, { replace = false } = {}) {
       pathname: path
     }, '', nextUrl)
   }
+  // melogic-inbox-internal-navigation-v28
+  // Inbox subroutes are transitions inside the already-mounted Inbox runtime.
+  // Never emit a primary SPA navigation event after rendering an Inbox subroute.
   applyInboxRoute(parseInboxRoute(path))
   renderSignedInState()
+  markInboxRouteRendered()
   if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
-  if (isMobileSpaRuntime()) emitMobileSpaNavigation({ type: replace ? 'replace' : 'push', routeId: 'inbox' })
 }
 
 function normalizeInitialInboxRoute() {
@@ -747,9 +750,17 @@ inboxSurface.innerHTML = `
   <main>
     <section class="inbox-main-shell">
       <div class="inbox-app-shell" data-inbox-root>
-        <article class="inbox-auth-card">
-          <h2>Loading inbox…</h2>
-        </article>
+        <div class="inbox-native-skeleton" data-inbox-cold-skeleton aria-label="Loading inbox" aria-busy="true">
+          <div class="inbox-native-skeleton-header"><span class="inbox-native-skeleton-line inbox-native-skeleton-line-short"></span></div>
+          <div class="inbox-native-skeleton-tabs"><span></span><span></span><span></span></div>
+          <div class="inbox-native-skeleton-list">
+            <div class="inbox-native-skeleton-row"><i></i><b><span></span><span></span></b></div>
+            <div class="inbox-native-skeleton-row"><i></i><b><span></span><span></span></b></div>
+            <div class="inbox-native-skeleton-row"><i></i><b><span></span><span></span></b></div>
+            <div class="inbox-native-skeleton-row"><i></i><b><span></span><span></span></b></div>
+            <div class="inbox-native-skeleton-row"><i></i><b><span></span><span></span></b></div>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -8099,10 +8110,11 @@ window.addEventListener('popstate', (event) => {
     }
   }
   if (appState.user) {
+    // melogic-inbox-internal-popstate-v28
     renderSignedInState()
+    markInboxRouteRendered()
     if (appState.activeFilter === 'Mutual Users') initializeMutualUsers()
   }
-  if (isMobileSpaRuntime()) emitMobileSpaNavigation({ type: 'popstate', routeId: 'inbox' })
 })
 
 // melogic-inbox-mobile-tabs-scroll-v5
