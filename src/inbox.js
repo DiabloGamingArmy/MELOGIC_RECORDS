@@ -109,6 +109,7 @@ let inboxBootstrapped = false
 let inboxBootstrapPromise = null
 let inboxRuntimeActive = false
 let inboxAuthObserverBound = false
+const inboxSurfaceParking = document.createDocumentFragment() // melogic-inbox-persistent-surface-v6b1
 const RESONA_AGENT_ID = 'resona'
 const RESONA_AVATAR_PATH = 'assets/profilePictures/aiSupport/resona.png'
 const RESONA_SUPPORT_AVATAR_PATH = 'assets/profilePictures/staff/supportAgentResona.png'
@@ -8211,15 +8212,23 @@ installInboxSpaLifecycle()
 // melogic-mobile-unified-runtime-v2
 function attachInboxSurface() {
   if (!app) return false
-  if (inboxSurface.parentNode !== app) app.replaceChildren(inboxSurface)
+  if (inboxSurface.parentNode !== app) {
+    // Move the persistent live node back from its parking fragment. replaceChildren
+    // intentionally clears only the currently-active view from the shared outlet.
+    app.replaceChildren(inboxSurface)
+  }
   for (const node of [modalRoot, floatingRoot, remoteCallAudio]) {
     if (!node.isConnected) document.body.append(node)
   }
-  return true
+  return inboxSurface.parentNode === app
 }
 
 function detachInboxSurface() {
-  if (inboxSurface.parentNode === app) inboxSurface.remove()
+  if (inboxSurface.parentNode === app) {
+    // Keep a real parent while inactive. This makes Inbox restoration deterministic
+    // and preserves the exact DOM node, event listeners, inputs, and rendered messages.
+    inboxSurfaceParking.append(inboxSurface)
+  }
   for (const node of [modalRoot, floatingRoot, remoteCallAudio]) node.remove()
   clearFloatingOverlays()
 }
@@ -8254,7 +8263,9 @@ if (isMobileSpaRuntime()) {
     },
     async activate({ instance }) {
       inboxRuntimeActive = true
-      attachInboxSurface()
+      if (!attachInboxSurface()) {
+        throw new Error('Inbox runtime failed to restore its persistent surface')
+      }
       document.body.classList.add('is-inbox-page')
       initShellChrome()
       applyInboxRoute(parseInboxRoute())
