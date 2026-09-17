@@ -5681,6 +5681,9 @@ function renderMessagesLayout() {
     return `
       <div class="inbox-layout inbox-layout-messages inbox-mobile-list-view" data-mobile-inbox-view="list">
         <section class="inbox-thread-panel">
+          <!-- melogic-inbox-mobile-header-spacer-v17 -->
+          <div class="inbox-mobile-header-spacer" aria-hidden="true"></div>
+          ${getMobileInboxPrimaryTabsMarkup()}
           <header class="panel-header panel-header-row">
             <div><h3>Messages</h3><p>Direct and group conversations</p></div>
             <div class="panel-actions"><button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button></div>
@@ -5714,6 +5717,8 @@ function renderActivityLayout(filterName) {
     <div class="inbox-layout inbox-layout-activity">
       <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
       <section class="inbox-main-panel inbox-main-panel-full">
+        <!-- melogic-inbox-mobile-header-spacer-v17 -->
+        <div class="inbox-mobile-header-spacer" aria-hidden="true"></div>
         ${getMobileInboxPrimaryTabsMarkup()}
         ${appState.notificationActionMessage ? `<div class="notification-action-feedback" role="status">${escapeHtml(appState.notificationActionMessage)}</div>` : ''}
         ${getFilterContentMarkup(filterName)}
@@ -8320,8 +8325,20 @@ if (isMobileSpaRuntime()) {
       }
       document.body.classList.add('is-inbox-page')
       initShellChrome()
+      const previousFilter = appState.activeFilter
+      const previousContentView = appState.contentView
+      const previousCallView = appState.callView
       applyInboxRoute(parseInboxRoute())
-      if (appState.user) renderSignedInState()
+
+      // melogic-inbox-fluid-persistent-runtime-v18
+      // Reattach the parked live Inbox DOM without rebuilding it.
+      const routeChanged = previousFilter !== appState.activeFilter
+        || previousContentView !== appState.contentView
+        || previousCallView !== appState.callView
+      const hasRenderedInbox = Boolean(
+        inboxRoot.querySelector('.inbox-layout, .inbox-mobile-list-view, .inbox-auth-card')
+      )
+      if (appState.user && (routeChanged || !hasRenderedInbox)) renderSignedInState()
       instance.detached = false
     },
     async deactivate({ instance }) {
@@ -8443,6 +8460,11 @@ export async function warmInboxRuntimeView() {
     const started = performance.now()
     while (!appState.hasLoadedThreadsOnce && performance.now() - started < 3500) {
       await new Promise((resolve) => setTimeout(resolve, 40))
+    }
+
+    // Pre-render the parked surface once while another primary tab owns screen.
+    if (appState.user && !inboxRoot.querySelector('.inbox-layout, .inbox-mobile-list-view')) {
+      renderSignedInState()
     }
     return appState.hasLoadedThreadsOnce
   })()

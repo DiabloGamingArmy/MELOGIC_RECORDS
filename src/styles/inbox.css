@@ -4789,3 +4789,39 @@ body.is-inbox-page .site-footer {
     max-height: 100% !important;
   }
 }
+
+/* melogic-inbox-mobile-header-spacer-style-v17
+   Superseded geometrically by v18; node retained as a structural hook. */
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-mobile-header-spacer {
+    display: block !important;
+    width: 100% !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    pointer-events: none !important;
+    visibility: hidden !important;
+  }
+}
+
+/* melogic-inbox-fluid-layout-v18
+   Persistent shell header already owns the top chrome; avoid a second 44px gap. */
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-panel {
+    grid-template-rows: 0 auto auto minmax(0, 1fr) !important;
+  }
+  body.is-inbox-page .inbox-mobile-list-view .inbox-mobile-section-tabs {
+    display: grid !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: relative !important;
+    z-index: 2 !important;
+    min-height: 44px !important;
+    margin-top: 0 !important;
+  }
+  body.is-inbox-page .inbox-mobile-list-view .inbox-thread-list {
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+  }
+}
