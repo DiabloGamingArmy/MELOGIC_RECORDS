@@ -7012,10 +7012,97 @@ function restoreMessageComposerFocus(snapshot) {
   composer.scrollTop = snapshot.scrollTop
 }
 
+// melogic-inbox-persistent-subpage-surfaces-v29
+// Mobile Messages / Calls / Activity are live sibling DOM surfaces. Once a route
+// has been constructed, changing Inbox tabs hides/shows the same node instead
+// of replacing inboxRoot.innerHTML and rebuilding the entire Inbox.
+const mobileInboxSurfaceCache = new Map()
+
+function mobileInboxSurfaceKey() {
+  if (appState.activeFilter === 'Messages') return 'messages'
+  if (appState.activeFilter === 'Calls') return 'calls'
+  if (appState.activeFilter === 'Content' || appState.activeFilter === 'System') return 'activity'
+  return String(appState.activeFilter || 'other').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')
+}
+
+function mobileInboxSurfaceMarkup() {
+  return appState.activeFilter === 'Messages'
+    ? renderMessagesLayout()
+    : renderActivityLayout(appState.activeFilter)
+}
+
+function ensureMobileInboxSurface(key) {
+  let surface = mobileInboxSurfaceCache.get(key)
+  if (surface?.isConnected) return { surface, created: false }
+
+  surface = document.createElement('div')
+  surface.className = 'inbox-persistent-route-surface'
+  surface.dataset.inboxPersistentRouteSurface = key
+  surface.innerHTML = mobileInboxSurfaceMarkup()
+  inboxRoot.append(surface)
+  mobileInboxSurfaceCache.set(key, surface)
+  bindSharedEvents(surface)
+  return { surface, created: true }
+}
+
+function activateMobileInboxSurface(key) {
+  mobileInboxSurfaceCache.forEach((surface, surfaceKey) => {
+    const active = surfaceKey === key
+    surface.hidden = !active
+    surface.classList.toggle('is-active', active)
+    surface.setAttribute('aria-hidden', active ? 'false' : 'true')
+    if (active) surface.removeAttribute('inert')
+    else surface.setAttribute('inert', '')
+  })
+}
+
 function renderSignedInState() {
   if (isMobileInboxViewport() && appState.activeFilter === 'Messages' && !history.state?.mobileInboxConversation && !document.body.dataset.mobileInboxExplicitConversation && !getStartUidParam()) {
     appState.selectedThreadId = ''
   }
+
+  const persistentMobileRoutes = isMobileInboxViewport()
+    && ['Messages', 'Calls', 'Content', 'System'].includes(appState.activeFilter)
+
+  if (persistentMobileRoutes) {
+    const key = mobileInboxSurfaceKey()
+    const composerFocus = captureMessageComposerFocus()
+    const scrollSnapshot = messageScrollController.snapshot()
+    const previousThreadId = messageScrollController.threadId
+    const { surface, created } = ensureMobileInboxSurface(key)
+
+    // Messages is deliberately preserved byte-for-byte when returning to it.
+    // Calls/Activity may be refreshed by their own realtime/state update paths,
+    // but a route switch itself never destroys a previously mounted surface.
+    activateMobileInboxSurface(key)
+
+    if (key === 'messages' && (!isMobileInboxViewport() || Boolean(appState.selectedThreadId))) {
+      const scroller = surface.querySelector('[data-message-list]')
+      messageScrollController.attach(scroller, {
+        threadId: appState.selectedThreadId,
+        resetMode: created || !previousThreadId || previousThreadId !== appState.selectedThreadId
+      })
+      if (appState.messageFind.open && appState.messageFind.query) applyMessageFind()
+      if (created) {
+        messageScrollController.stabilizeAfterRender(scrollSnapshot, {
+          reason: 'inbox-persistent-surface-create',
+          forceBottom: !previousThreadId || previousThreadId !== appState.selectedThreadId
+        })
+      }
+    } else {
+      messageScrollController.detach()
+    }
+
+    restoreMessageComposerFocus(composerFocus)
+    restoreMobileInboxListScroll()
+    renderCreateChatModal()
+    renderChatSettingsModal()
+    renderFloatingUi()
+    return
+  }
+
+  // Desktop and non-primary Inbox routes retain the established renderer.
+  mobileInboxSurfaceCache.clear()
   const composerFocus = captureMessageComposerFocus()
   const scrollSnapshot = messageScrollController.snapshot()
   const previousThreadId = messageScrollController.threadId
