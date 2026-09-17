@@ -4058,7 +4058,7 @@ function getContentActivityMarkup() {
   if (activeTab.key === 'collaborations') {
     return `
       <section class="activity-panel">
-        <header class="panel-header activity-header"><h3>Content</h3><p>Activity connected to your work and profile</p></header>
+        <header class="panel-header activity-header inbox-mobile-primary-content-header"><!-- melogic-inbox-header-unification-v20 --><h3>Activity</h3></header>
         <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
           ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
         </nav>

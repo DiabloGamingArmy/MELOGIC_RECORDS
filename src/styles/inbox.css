@@ -4859,3 +4859,68 @@ body.is-inbox-page .site-footer {
     display: none !important;
   }
 }
+
+/* melogic-inbox-tabs-layout-v20
+   v19 used transform:translateY(), which moves paint only, not layout. On
+   Calls/Activity that painted the selector into a clipped overflow boundary.
+   v20 moves the selector in normal flow and gives every Inbox route identical
+   selector/header geometry. */
+@media (max-width:760px) {
+  body.is-inbox-page .inbox-mobile-section-tabs {
+    transform: none !important;
+    position: relative !important;
+    top: auto !important;
+    margin-top: 10px !important;
+    margin-bottom: 10px !important;
+    min-height: 44px !important;
+    height: 44px !important;
+    flex: 0 0 44px !important;
+    overflow: visible !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    z-index: 20 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-section-tabs > a {
+    min-height: 44px !important;
+    height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  /* All three primary route headers use the Messages header dimensions. */
+  body.is-inbox-page .inbox-mobile-primary-content-header,
+  body.is-inbox-page .account-calls-panel > .panel-header.activity-header,
+  body.is-inbox-page .inbox-main-panel-full > .activity-panel > .panel-header.activity-header {
+    box-sizing: border-box !important;
+    width: 100% !important;
+    min-height: 64px !important;
+    height: 64px !important;
+    margin: 0 !important;
+    padding: 0 28px !important;
+    display: flex !important;
+    flex: 0 0 64px !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    overflow: visible !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-primary-content-header > h3,
+  body.is-inbox-page .account-calls-panel > .panel-header.activity-header > h3,
+  body.is-inbox-page .inbox-main-panel-full > .activity-panel > .panel-header.activity-header > h3 {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body.is-inbox-page .account-calls-panel > .panel-header.activity-header > p,
+  body.is-inbox-page .inbox-main-panel-full > .activity-panel > .panel-header.activity-header > p {
+    display: none !important;
+  }
+
+  /* Do not allow route-specific scroll containers to crop the global selector. */
+  body.is-inbox-page .inbox-layout-activity,
+  body.is-inbox-page .inbox-main-panel-full {
+    min-height: 0 !important;
+  }
+}
