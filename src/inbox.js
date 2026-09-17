@@ -3854,11 +3854,6 @@ function getCallsContentMarkup() {
 
   return `
     <section class="activity-panel account-calls-panel">
-      <header class="panel-header panel-header-row inbox-mobile-route-header">
-        <!-- melogic-inbox-exact-messages-header-v23 -->
-        <div><h3>Calls</h3></div>
-        <div class="panel-actions"><button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button></div>
-      </header>
       ${appState.callError ? `<div class="account-call-error" role="alert">${escapeHtml(appState.callError)}</div>` : ''}
       ${activeMarkup}
       ${incomingMarkup}
@@ -4059,7 +4054,6 @@ function getContentActivityMarkup() {
   if (activeTab.key === 'collaborations') {
     return `
       <section class="activity-panel">
-        <header class="panel-header panel-header-row inbox-mobile-route-header"><!-- melogic-inbox-exact-messages-header-v23 --><div><h3>Activity</h3></div></header>
         <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
           ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
         </nav>
@@ -4070,7 +4064,6 @@ function getContentActivityMarkup() {
   if (activeTab.key === 'gifts') {
     return `
       <section class="activity-panel">
-        <header class="panel-header panel-header-row inbox-mobile-route-header"><!-- melogic-inbox-exact-messages-header-v23 --><div><h3>Activity</h3></div></header>
         <nav class="system-filter-row inbox-content-tabs" aria-label="Content activity">
           ${tabs.map((tab) => `<button type="button" class="inbox-filter ${tab.key === activeTab.key ? 'is-active' : ''}" data-inbox-path="${tab.path}">${tab.label}</button>`).join('')}
         </nav>
@@ -5713,6 +5706,18 @@ function renderMessagesLayout() {
   `
 }
 
+// melogic-inbox-native-route-header-render-v25
+function getInboxMobileRouteHeaderMarkup(filterName) {
+  const isCalls = filterName === 'Calls'
+  const title = isCalls ? 'Calls' : 'Activity'
+  return `
+    <header class="panel-header panel-header-row inbox-native-mobile-route-header" data-inbox-native-route-header>
+      <div><h3>${title}</h3></div>
+      ${isCalls ? `<div class="panel-actions"><button type="button" class="create-chat-plus" data-action="open-create-chat" aria-label="Create chat">+</button></div>` : ''}
+    </header>
+  `
+}
+
 function renderActivityLayout(filterName) {
   // melogic-inbox-shared-mobile-shell-v22
   // Calls/Activity use the same proven mobile shell as Messages.
@@ -5722,6 +5727,7 @@ function renderActivityLayout(filterName) {
         <!-- melogic-inbox-mobile-header-spacer-v17 -->
         <div class="inbox-mobile-header-spacer" aria-hidden="true"></div>
         ${getMobileInboxPrimaryTabsMarkup()}
+        ${getInboxMobileRouteHeaderMarkup(filterName)}
         <div class="inbox-shared-mobile-route-content">
           ${appState.notificationActionMessage ? `<div class="notification-action-feedback" role="status">${escapeHtml(appState.notificationActionMessage)}</div>` : ''}
           ${getFilterContentMarkup(filterName)}
