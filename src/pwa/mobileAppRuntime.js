@@ -23,7 +23,7 @@ let activeViewId = null
 let transitionId = 0
 let warmupGeneration = 0
 const runtimeWarmViews = new Set()
-const RUNTIME_WARM_ORDER = ['community', 'inbox', 'profile', 'camera', 'streaming']
+const RUNTIME_WARM_ORDER = ['community', 'streaming', 'camera'] // melogic-primary-tab-warm-pool-v5c
 let runtimeSuspended = false
 let lastCompletedUrl = location.href
 
@@ -239,19 +239,47 @@ function runtimeCanWarm() {
 }
 
 async function warmRuntimeViewModule(routeId, generation) {
-  // melogic-urgent-stop-runtime-route-spam-v1
-  // EMERGENCY STABILIZATION: never evaluate page entry modules speculatively.
-  // The legacy entries still own top-level DOM/auth/navigation side effects.
-  // Network/document prewarming remains handled by mobileSpaRouter.
-  return false
+  // melogic-primary-tab-warm-pool-v5c
+  // Only lifecycle-proven primary tabs are safe to evaluate speculatively.
+  // This warms the ESM graph + lifecycle registration without navigating,
+  // activating a view, mounting media hardware, or mutating history.
+  if (!PRIMARY_TAB_ROUTE_IDS.has(routeId)) return false
+  if (generation !== warmupGeneration || !runtimeCanWarm()) return false
+  if (registry.has(routeId)) {
+    runtimeWarmViews.add(routeId)
+    return true
+  }
+
+  const { getMobileSpaRouteLoader } = await import('./mobileSpaRouter')
+  const loader = getMobileSpaRouteLoader(
+    routeId === 'community' ? '/community' :
+    routeId === 'streaming' ? '/streaming' :
+    routeId === 'camera' ? '/camera' : '/'
+  )
+  if (typeof loader !== 'function') return false
+
+  try {
+    await loader()
+    if (generation !== warmupGeneration || !runtimeCanWarm()) return false
+    if (!registry.has(routeId)) return false
+    runtimeWarmViews.add(routeId)
+    publish('view-warmed', { viewId: routeId })
+    return true
+  } catch (error) {
+    console.warn('[Melogic mobile runtime] Primary-tab warmup failed.', routeId, error)
+    return false
+  }
 }
 
 async function warmRuntimeViews() {
   if (!runtimeCanWarm()) return
   const generation = ++warmupGeneration
   const metadata = await readMobileRuntimeMetadata().catch(() => null)
-  const remembered = Array.isArray(metadata?.warmRouteIds) ? metadata.warmRouteIds : []
+  const remembered = Array.isArray(metadata?.warmRouteIds)
+    ? metadata.warmRouteIds.filter(routeId => PRIMARY_TAB_ROUTE_IDS.has(routeId))
+    : []
   const order = [...new Set([...remembered, ...RUNTIME_WARM_ORDER])]
+    .filter(routeId => routeId !== activeViewId)
   for (const routeId of order) {
     if (generation !== warmupGeneration || !runtimeCanWarm()) return
     await warmRuntimeViewModule(routeId, generation)
@@ -287,14 +315,16 @@ export function initMobileAppRuntime() {
     try { history.replaceState(runtimeHistoryState(initialRoute, location.href), '', location.href) } catch {}
   }
   publish('init', { mode: 'non-intercepting' })
-  // melogic-urgent-stop-runtime-route-spam-v1
-  // Runtime module warmup disabled; router document prewarm remains safe.
+  // melogic-primary-tab-warm-pool-v5c
+  // Let the current surface paint/become interactive first, then warm only
+  // lifecycle-proven primary-tab modules in low-priority idle time.
+  scheduleRuntimeWarmup()
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       warmupGeneration += 1
       return
     }
-    // Runtime module warmup intentionally disabled.
+    scheduleRuntimeWarmup()
   })
   queueMicrotask(() => initCommunityInboxRuntimeBridge())
   window.addEventListener('pagehide', event => {
@@ -316,7 +346,7 @@ export function initMobileAppRuntime() {
         source: event.persisted ? 'bfcache-restore' : 'pageshow-repair'
       })
     }
-    // Runtime module warmup intentionally disabled.
+    scheduleRuntimeWarmup()
     publish(event.persisted ? 'pageshow-persisted' : 'pageshow')
   })
 
