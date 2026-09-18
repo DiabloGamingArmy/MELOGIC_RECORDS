@@ -1,3 +1,4 @@
+import { doc, getDoc } from 'firebase/firestore'
 import './styles/base.css'
 import './styles/music.css'
 import melogicLoaderMarkUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
@@ -113,6 +114,7 @@ import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } fr
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { getPublicProfileIdentityByArtistName, getPublicProfileIdentityByUid, getCachedPublicProfileIdentityByUid } from './data/profileSearchService'
 import { getStorageAssetUrl } from './firebase/storageAssets'
+import { db } from './firebase/firestore'
 
 // melogic-streaming-spa-lifecycle-v6
 function initConsumerSpaLifecycle() {
@@ -686,6 +688,24 @@ const streamingArtistIdentityCache = new Map()
 const streamingArtistIdentityRequests = new Map()
 let streamingVerifiedBadgeUrl = ''
 let streamingTransparentVerifiedBadgeUrl = ''
+// melogic-streaming-transparent-badge-registry-v2
+async function resolveStreamingTransparentVerifiedBadge() {
+  try {
+    const snap = await getDoc(doc(db, 'roleDefinitions', 'verified'))
+    const path = snap.exists() ? String(snap.data()?.transparentIconPath || '').trim() : ''
+    if (!path) return ''
+    streamingTransparentVerifiedBadgeUrl = String(await getStorageAssetUrl(path, {
+      warnOnFail: false, scopeKey: 'streaming-badges-transparent', type: 'badge'
+    }) || '')
+    if (streamingBootstrapped) commitStreamingIdentityUpdate()
+    return streamingTransparentVerifiedBadgeUrl
+  } catch (error) {
+    streamingRuntimeProbe('transparent-badge-url-error', { message: String(error?.message || error || '') })
+    return ''
+  }
+}
+void resolveStreamingTransparentVerifiedBadge()
+
 
 void getStorageAssetUrl('assets/badges/verifiedBadge.png', {
   warnOnFail: false,

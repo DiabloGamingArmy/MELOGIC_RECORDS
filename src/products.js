@@ -10,6 +10,10 @@ import { addToCart } from './data/cartService'
 import { claimFreeProduct } from './data/entitlementService'
 import { listPublicProductsPage } from './data/productService'
 import { getProductReactionSummary } from './data/productEngagementService'
+import { getPublicProfileIdentityByUid, getCachedPublicProfileIdentityByUid } from './data/profileSearchService'
+import { getStorageAssetUrl } from './firebase/storageAssets'
+import { db } from './firebase/firestore'
+import { doc, getDoc } from 'firebase/firestore'
 import { subscribeToAuthState, waitForInitialAuthState } from './firebase/auth'
 import { iconSvg } from './utils/icons'
 import { ROUTES, authRoute, productRoute, publicProfileRoute, usernameProfileRoute } from './utils/routes'
@@ -99,6 +103,60 @@ let searchDebounceTimer = null
 let observer = null
 const reactionCountCache = new Map()
 const reactionCountRequests = new Map()
+const productCreatorIdentityCache = new Map()
+const productCreatorIdentityRequests = new Map()
+let productsTransparentVerifiedBadgeUrl = ''
+let productsRegularVerifiedBadgeUrl = ''
+
+function productCreatorUid(product = {}) {
+  return String(product.artistId || product.artistUid || product.uid || '').trim()
+}
+function productIdentityIsVerified(identity = {}) {
+  return Array.isArray(identity?.badges) && identity.badges.some((badge) => String(badge || '').trim().toLowerCase() === 'verified')
+}
+function productGridVerifiedBadgeMarkup(product = {}) {
+  const uid = productCreatorUid(product)
+  const identity = uid ? (productCreatorIdentityCache.get(uid) || getCachedPublicProfileIdentityByUid(uid)) : null
+  if (!productIdentityIsVerified(identity)) return ''
+  const badgeUrl = productsTransparentVerifiedBadgeUrl || productsRegularVerifiedBadgeUrl
+  return badgeUrl ? `<img class="product-creator-verified-badge" src="${escapeHtml(badgeUrl)}" alt="Verified" title="Verified" loading="lazy" decoding="async" />` : ''
+}
+async function resolveProductsVerifiedBadgeAssets() {
+  try {
+    const snap = await getDoc(doc(db, 'roleDefinitions', 'verified'))
+    const def = snap.exists() ? (snap.data() || {}) : {}
+    const regularPath = String(def.iconPath || 'assets/badges/verifiedBadge.png').trim()
+    const transparentPath = String(def.transparentIconPath || '').trim()
+    const [regular, transparent] = await Promise.all([
+      getStorageAssetUrl(regularPath, { warnOnFail:false, scopeKey:'products-badge-regular', type:'badge' }).catch(() => ''),
+      transparentPath ? getStorageAssetUrl(transparentPath, { warnOnFail:false, scopeKey:'products-badge-transparent', type:'badge' }).catch(() => '') : ''
+    ])
+    productsRegularVerifiedBadgeUrl = String(regular || '')
+    productsTransparentVerifiedBadgeUrl = String(transparent || '')
+  } catch {
+    productsRegularVerifiedBadgeUrl = String(await getStorageAssetUrl('assets/badges/verifiedBadge.png', {
+      warnOnFail:false, scopeKey:'products-badge-fallback', type:'badge'
+    }).catch(() => '') || '')
+  }
+  renderProducts()
+}
+function hydrateProductCreatorIdentities(items = []) {
+  let syncHit = false
+  items.forEach((product) => {
+    const uid = productCreatorUid(product)
+    if (!uid || productCreatorIdentityCache.has(uid) || productCreatorIdentityRequests.has(uid)) return
+    const cached = getCachedPublicProfileIdentityByUid(uid)
+    if (cached) { productCreatorIdentityCache.set(uid, cached); syncHit = true; return }
+    const request = getPublicProfileIdentityByUid(uid)
+      .then((identity) => productCreatorIdentityCache.set(uid, identity || null))
+      .catch(() => productCreatorIdentityCache.set(uid, null))
+      .finally(() => { productCreatorIdentityRequests.delete(uid); renderProducts() })
+    productCreatorIdentityRequests.set(uid, request)
+  })
+  if (syncHit) queueMicrotask(() => renderProducts())
+}
+void resolveProductsVerifiedBadgeAssets()
+
 const previewController = {
   activeProductId: '',
   activeAudio: null,
@@ -166,7 +224,7 @@ function productCardMarkup(product) {
           <p class="product-price">${escapeHtml(product.priceLabel || (product.isFree ? 'Free' : '—'))}</p>
         </div>
         <h3>${escapeHtml(product.title)}</h3>
-        <p class="product-creator">by <a href="${artistHref}" data-artist-link>${escapeHtml(product.artistName)}</a></p>
+        <p class="product-creator">by <a href="${artistHref}" data-artist-link>${escapeHtml(product.artistName)}</a>${productGridVerifiedBadgeMarkup(product)}</p>
         <p class="product-description">${escapeHtml(product.shortDescription || 'No description available yet.')}</p>
         <p class="product-tags">${tags || '#new'}</p>
         <p class="product-fulfillment-note">${escapeHtml(physicalSummary)}</p>
@@ -359,6 +417,7 @@ function renderProducts() {
 
   bindProductActions(filtered)
   hydrateProductReactionCounts(filtered)
+  hydrateProductCreatorIdentities(filtered)
 }
 
 function mapFiltersForService() {

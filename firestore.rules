@@ -1454,7 +1454,8 @@ service cloud.firestore {
 
     // melogic-role-system-finalization-v6
     match /roleDefinitions/{roleKey} {
-      allow read: if hasRoleManageClaim();
+      // Public visual badge metadata; writes remain server/admin controlled.
+      allow read: if true;
       allow create, update, delete: if false;
     }
 
