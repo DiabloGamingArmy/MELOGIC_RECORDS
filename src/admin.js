@@ -2547,9 +2547,17 @@ function teamView() {
       </div>
       ${data.roleRegistryError ? `<p class="admin-error">${escapeHtml(data.roleRegistryError)}</p>` : ''}
       <div class="admin-role-definition-grid">
-        ${(data.roleDefinitions || []).map((role) => `
+        ${(data.roleDefinitions || []).map((role) => {
+          // melogic-admin-roles-page-badge-preview-v1
+          const badgeAsset = adminBadgeStoragePath(role)
+          const badgePreview = badgeAsset.url
+            ? `<img src="${escapeHtml(badgeAsset.url)}" alt="" />`
+            : badgeAsset.path
+              ? `<img data-admin-badge-storage-path="${escapeHtml(badgeAsset.path)}" alt="" hidden />`
+              : iconSvg('user')
+          return `
           <article class="admin-role-definition-card">
-            <div class="admin-role-definition-icon">${role.iconPath ? `<img src="/${escapeHtml(String(role.iconPath).replace(/^\/+/,''))}" alt="" onerror="this.style.display='none'" />` : iconSvg('user')}</div>
+            <div class="admin-role-definition-icon">${badgePreview}</div>
             <div>
               <strong>${escapeHtml(role.displayName || role.key)}</strong>
               <code>${escapeHtml(role.key)}</code>
@@ -2562,7 +2570,8 @@ function teamView() {
               </div>
             </div>
             <button type="button" class="admin-icon-button" data-role-definition-edit="${escapeHtml(role.key)}" title="Edit ${escapeHtml(role.displayName || role.key)}">${iconSvg('edit')}</button>
-          </article>`).join('') || '<p class="admin-muted">No role definitions loaded.</p>'}
+          </article>`
+        }).join('') || '<p class="admin-muted">No role definitions loaded.</p>'}
       </div>
       ${roleDefinitionEditor(data)}
     </section>
