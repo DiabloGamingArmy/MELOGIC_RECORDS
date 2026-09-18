@@ -1379,6 +1379,10 @@ function renderLayout(content) {
   `
   bindEvents()
   restoreSupportWorkspaceRenderState(supportWorkspaceSnapshot)
+  // melogic-admin-global-badge-hydration-v1
+  // Hydrate Storage-backed badge images after every Admin view has been mounted.
+  // This covers Roles registry cards as well as account-permission dialogs.
+  queueMicrotask(() => hydrateAdminBadgePreviews(app))
 }
 
 function dashboardView() {
@@ -3283,7 +3287,6 @@ function accountRoleBadgeAssignmentList(data = {}, disabled = false) {
 }
 
 function accountPermissionsDialog() {
-  queueMicrotask(() => hydrateAdminBadgePreviews())
   const dialog = state.accountPermissionsDialog || {}
   if (!dialog.open) return ''
   const data = dialog.data || {}
