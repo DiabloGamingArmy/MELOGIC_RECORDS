@@ -132,19 +132,21 @@
   }
   .community-layout.is-post-detail .community-detail-topbar { display: none; }
   .community-feed-header { position: static; top: auto; box-shadow: none; background: transparent; backdrop-filter: none; }
-  /* melogic-community-header-spacer-v10c
-     Deliberate layout shim: reserve one feed-header-sized block before the real
-     For You / Following header. It is invisible but participates in layout,
-     pushing the real feed header below the persistent app header. Because this
-     is generated from the feed header itself, no route-change JS is required. */
+  /* melogic-community-home-header-clearance-v11
+     Stories now lead the mobile Community home flow. The old v10c spacer lived
+     inside .community-feed-header, so after that reorder Stories rendered
+     underneath the persistent app header and the spacer appeared between
+     Stories and the feed tabs. Reserve the same chrome clearance on the first
+     mobile home element instead. Layout only; desktop/right-rail Stories and
+     Community data behavior are untouched. */
+  .community-layout.is-home:not(.is-post-detail):not(.is-community-detail):not(.is-directory)
+    > .community-main > .community-mobile-stories {
+    padding-top: calc(var(--community-header-height) + var(--mobile-safe-top));
+  }
+
   .community-feed-header::before {
-    content: "";
-    display: block;
-    width: 100%;
-    height: calc(var(--community-header-height) + var(--mobile-safe-top));
-    flex: 0 0 calc(var(--community-header-height) + var(--mobile-safe-top));
-    visibility: hidden;
-    pointer-events: none;
+    content: none;
+    display: none;
   }
   .community-master-tabs { min-height: 48px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
   .community-master-tabs > button { min-height: 48px; }
