@@ -533,13 +533,18 @@
 .dashboard-recommendations-fullwidth,.dashboard-reviews-fullwidth{background:transparent;border-color:transparent;box-shadow:none;border-radius:0;padding:.35rem 0 0}
 .dashboard-lower-section-header{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:.75rem}
 .dashboard-review-count-badge{font-size:.75rem;padding:.22rem .5rem;border-radius:999px;background:rgba(68,88,130,.35);border:1px solid rgba(133,155,218,.3);color:#d5e2fb;white-space:nowrap}
-.dashboard-contributor-list{display:grid;gap:.5rem}
-.dashboard-contributor-row-inner{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.5rem}
-.dashboard-contributor-avatar{width:36px;height:36px;border-radius:50%;object-fit:cover}
-.dashboard-contributor-meta{text-align:left;min-width:0}
-.dashboard-contributor-name{margin:0;font-size:.86rem}
-.dashboard-contributor-role{margin:0;font-size:.76rem;color:#afc3e8}
-.dashboard-contributor-action{justify-self:end}
+/* melogic-product-contributor-profile-unit-v1 */
+.dashboard-contributor-list{display:grid;gap:.7rem}
+.dashboard-contributor-row{width:100%}
+.dashboard-contributor-row-inner{display:grid;grid-template-columns:56px minmax(0,1fr) auto;align-items:center;gap:.85rem;min-height:68px}
+.dashboard-contributor-avatar,.dashboard-contributor-avatar-fallback{width:56px;height:56px;min-width:56px;border-radius:50%;object-fit:cover;border:1px solid rgba(118,139,191,.28);background:#090d18}
+.dashboard-contributor-avatar-fallback{display:grid;place-items:center;color:#fff;font-weight:700}
+.dashboard-contributor-meta{display:grid;gap:.12rem;text-align:left;min-width:0}
+.dashboard-contributor-name{margin:0;display:flex;align-items:center;gap:.38rem;min-width:0;color:#f7f8fc;font-size:1.12rem;line-height:1.15;font-weight:700}
+.dashboard-contributor-handle-role{margin:0;color:#aeb4c6;font-size:.94rem;line-height:1.2;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dashboard-contributor-role-dot{padding:0 .18em;color:#aeb4c6}
+.dashboard-contributor-action{justify-self:end;min-width:86px;min-height:46px;border:1px solid rgba(137,145,168,.32);background:#11141d;color:#f7f8fc;border-radius:12px;font-weight:700}
+@media (max-width:560px){.dashboard-contributor-row-inner{grid-template-columns:48px minmax(0,1fr) auto;gap:.65rem}.dashboard-contributor-avatar,.dashboard-contributor-avatar-fallback{width:48px;height:48px;min-width:48px}.dashboard-contributor-name{font-size:1rem}.dashboard-contributor-handle-role{font-size:.82rem}.dashboard-contributor-action{min-width:70px;min-height:42px;padding-inline:.7rem}}
 
 .draft-preview-banner { padding: .65rem .85rem; border: 1px solid rgba(111, 179, 244, .45); color: #b8e3ff; background: rgba(23, 45, 77, .5); margin-bottom: .8rem; }
 .preview-mode-disabled { opacity: .55; cursor: not-allowed; }
