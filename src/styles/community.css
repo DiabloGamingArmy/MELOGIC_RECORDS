@@ -4940,3 +4940,16 @@ html.community-mobile-overlay-open body.is-community-page,html.community-mobile-
 .community-mobile-destination-row>.community-destination-avatar{width:46px!important;height:46px!important;min-width:46px!important;min-height:46px!important;margin:0!important}
 .community-mobile-destination-state{display:grid!important;place-items:center!important;align-content:center!important;gap:8px!important;width:100%!important;min-height:120px!important;margin:0!important;padding:24px!important;color:#8b8e95!important;text-align:center!important}
 }
+
+/* melogic-mobile-community-compact-destination-list-v5d */
+@media(max-width:760px){
+.community-mobile-destination-scroll{display:block!important;padding-top:0!important}
+.community-mobile-destination-row{min-height:68px!important;max-height:76px!important;overflow:hidden!important}
+.community-mobile-destination-row>svg{width:20px!important;height:20px!important;min-width:20px!important;min-height:20px!important;max-width:20px!important;max-height:20px!important}
+.community-mobile-destination-trailing{display:grid!important;place-items:center!important;width:24px!important;height:24px!important;min-width:24px!important;min-height:24px!important;max-width:24px!important;max-height:24px!important;overflow:hidden!important;color:#8ddcff!important}
+.community-mobile-destination-trailing svg{display:block!important;width:20px!important;height:20px!important;min-width:20px!important;min-height:20px!important;max-width:20px!important;max-height:20px!important;margin:0!important;padding:0!important}
+.community-mobile-destination-row .community-destination-avatar,.community-mobile-destination-row .community-destination-avatar img{max-width:46px!important;max-height:46px!important}
+.community-mobile-destination-row .community-destination-avatar svg{width:21px!important;height:21px!important;min-width:21px!important;min-height:21px!important;max-width:21px!important;max-height:21px!important}
+.community-mobile-destination-loading{display:flex!important;align-items:center!important;justify-content:center!important;gap:10px!important;width:100%!important;height:58px!important;min-height:58px!important;max-height:58px!important;margin:0!important;padding:0 12px!important;border-bottom:1px solid #1d1f23!important;color:#8b8e95!important;font-size:14px!important;font-weight:700!important}
+.community-mobile-destination-loading .community-destination-loader{width:18px!important;height:18px!important;min-width:18px!important;min-height:18px!important;max-width:18px!important;max-height:18px!important}
+}
