@@ -1,7 +1,8 @@
 import { iconSvg } from '../utils/icons'
 import { ROUTES } from '../utils/routes'
 import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
-// melogic-community-canonical-plus-action-v2c\nexport function navShell(options = {}) {
+// melogic-community-canonical-plus-action-v2c
+export function navShell(options = {}) {
   const currentPage = options.currentPage || ''
   const isHome = currentPage === 'home'
   const isMusic = currentPage === 'music'
