@@ -9,6 +9,7 @@ const {
   loadAccountPermissionInputs,
   resolveAccountPermissions
 } = require('../account/accountPermissions')
+const { listRoleDefinitions, normalizeRoleArray } = require('../roles/roleRegistry')
 
 const RESTRICTION_KEYS = [
   'suspended',
@@ -42,6 +43,30 @@ function publicBadgeMirror(badges = {}) {
   }, {})
 }
 
+// melogic-account-role-badge-assignment-v3
+async function loadCanonicalRoleState(uid = '') {
+  const [userSnap, profileSnap, definitions] = await Promise.all([
+    db().collection('users').doc(uid).get(),
+    db().collection('profiles').doc(uid).get(),
+    listRoleDefinitions({ includeDisabled: true })
+  ])
+  return {
+    roles: normalizeRoleArray(userSnap.data()?.roles || []),
+    badges: normalizeRoleArray(profileSnap.data()?.badges || []),
+    roleDefinitions: definitions
+  }
+}
+
+function validateAssignments(values = [], definitions = [], capability = '') {
+  const normalized = normalizeRoleArray(values)
+  const allowed = new Set(definitions
+    .filter((item) => item.enabled !== false && item?.[capability] === true)
+    .map((item) => item.key))
+  const invalid = normalized.filter((key) => !allowed.has(key))
+  if (invalid.length) throw new HttpsError('invalid-argument', `Unknown or unavailable role definitions: ${invalid.join(', ')}`)
+  return normalized
+}
+
 // melogic-admin-account-permissions-read-v1
 // Reading the selected user's current permission state is not a mutation and
 // must not require the 60-second MFA step-up window. The Admin Users UI opens
@@ -51,13 +76,19 @@ const getAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256MiB'
   assertAnyPermission(request, ['userRead', 'userModerate', 'roleManage'])
   const uid = cleanString(request.data?.uid || '', 180)
   if (!uid || uid.includes('/')) throw new HttpsError('invalid-argument', 'A valid uid is required.')
-  const inputs = await loadAccountPermissionInputs(uid)
+  const [inputs, canonical] = await Promise.all([
+    loadAccountPermissionInputs(uid),
+    loadCanonicalRoleState(uid)
+  ])
   return {
     ok: true,
     uid,
     defaults: DEFAULT_PERMISSIONS,
     explicit: permissionDocSummary(inputs.explicit || {}),
     effective: resolveAccountPermissions(inputs),
+    accountRoles: canonical.roles,
+    profileBadges: canonical.badges,
+    roleDefinitions: canonical.roleDefinitions,
     path: inputs.path
   }
 })
@@ -73,12 +104,19 @@ const updateAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256M
   const expiresAt = expiresAtInput ? new Date(expiresAtInput) : null
   if (expiresAtInput && Number.isNaN(expiresAt.getTime())) throw new HttpsError('invalid-argument', 'Expiration must be a valid date.')
 
-  const beforeInputs = await loadAccountPermissionInputs(uid)
+  const [beforeInputs, beforeCanonical] = await Promise.all([
+    loadAccountPermissionInputs(uid),
+    loadCanonicalRoleState(uid)
+  ])
   const beforeExplicit = permissionDocSummary(beforeInputs.explicit || {})
   const permissions = cleanBoolMap(request.data?.permissions || {})
   const badges = cleanBoolMap(request.data?.badges || {}, PUBLIC_BADGE_KEYS)
   const restrictions = cleanBoolMap(request.data?.restrictions || {}, RESTRICTION_KEYS)
+  const accountRoles = validateAssignments(request.data?.accountRoles || [], beforeCanonical.roleDefinitions, 'backendAssignable')
+  const profileBadges = validateAssignments(request.data?.profileBadges || [], beforeCanonical.roleDefinitions, 'badgeAssignable')
   const ref = db().collection('users').doc(uid).collection('permissions').doc('current')
+  const userRef = db().collection('users').doc(uid)
+  const profileRef = db().collection('profiles').doc(uid)
   const now = admin.firestore.FieldValue.serverTimestamp()
   const payload = {
     permissions,
@@ -93,11 +131,12 @@ const updateAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256M
   if (expiresAt) payload.expiresAt = admin.firestore.Timestamp.fromDate(expiresAt)
   else payload.expiresAt = null
 
-  await ref.set(payload, { merge: true })
-  await db().collection('profiles').doc(uid).set({
-    publicBadges: publicBadgeMirror(badges),
-    updatedAt: now
-  }, { merge: true })
+  // One atomic commit: permissions + backend roles + visual badges cannot partially diverge.
+  const batch = db().batch()
+  batch.set(ref, payload, { merge: true })
+  batch.set(userRef, { roles: accountRoles, updatedAt: now }, { merge: true })
+  batch.set(profileRef, { badges: profileBadges, updatedAt: now }, { merge: true })
+  batch.commit && await batch.commit()
   await writeAdminAuditLog({
     actorUid: claims.uid,
     actorEmail: claims.email,
@@ -107,16 +146,22 @@ const updateAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256M
     targetId: uid,
     targetPath: `users/${uid}/permissions/current`,
     reason,
-    before: beforeExplicit,
-    after: permissionDocSummary(payload)
+    before: { ...beforeExplicit, accountRoles: beforeCanonical.roles, profileBadges: beforeCanonical.badges },
+    after: { ...permissionDocSummary(payload), accountRoles, profileBadges }
   })
 
-  const afterInputs = await loadAccountPermissionInputs(uid)
+  const [afterInputs, afterCanonical] = await Promise.all([
+    loadAccountPermissionInputs(uid),
+    loadCanonicalRoleState(uid)
+  ])
   return {
     ok: true,
     uid,
     explicit: permissionDocSummary(afterInputs.explicit || {}),
     effective: resolveAccountPermissions(afterInputs),
+    accountRoles: afterCanonical.roles,
+    profileBadges: afterCanonical.badges,
+    roleDefinitions: afterCanonical.roleDefinitions,
     path: afterInputs.path
   }
 })
