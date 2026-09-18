@@ -111,7 +111,7 @@ import {
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
-import { getPublicProfileIdentityByArtistName, getPublicProfileIdentityByUid } from './data/profileSearchService'
+import { getPublicProfileIdentityByArtistName, getPublicProfileIdentityByUid, getCachedPublicProfileIdentityByUid } from './data/profileSearchService'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 
 // melogic-streaming-spa-lifecycle-v6
@@ -682,6 +682,15 @@ void getStorageAssetUrl('assets/badges/verifiedBadge.png', {
   if (streamingBootstrapped) render()
 }).catch(() => {})
 
+// melogic-streaming-shared-identity-subscription-v2
+globalThis.addEventListener?.('melogic:public-profile-identity', (event) => {
+  const uid = String(event?.detail?.uid || '').trim()
+  const identity = event?.detail?.identity || null
+  if (!uid || !identity) return
+  streamingArtistIdentityCache.set(`uid:${uid}`, identity)
+  if (streamingBootstrapped) render()
+})
+
 function streamingIdentityIsVerified(identity = {}) {
   return Array.isArray(identity?.badges) && identity.badges.some((badge) => String(badge || '').toLowerCase().trim() === 'verified')
 }
@@ -710,9 +719,23 @@ function ensureStreamingArtistIdentity(release = {}) {
 }
 
 function streamingArtistIdentity(release = {}) {
+  const uid = String(release.artistUid || '').trim()
   const key = streamingArtistIdentityKey(release)
-  if (key) ensureStreamingArtistIdentity(release)
-  return key ? streamingArtistIdentityCache.get(key) : null
+  if (!key) return null
+
+  // melogic-streaming-shared-identity-consumer-v1
+  // UID-backed releases should synchronously consume any identity already
+  // resolved by Community/profile prewarm before starting another lookup.
+  if (uid) {
+    const sharedIdentity = getCachedPublicProfileIdentityByUid(uid)
+    if (sharedIdentity) {
+      streamingArtistIdentityCache.set(key, sharedIdentity)
+      return sharedIdentity
+    }
+  }
+
+  ensureStreamingArtistIdentity(release)
+  return streamingArtistIdentityCache.get(key) || null
 }
 
 function streamingVerifiedBadgeMarkup(identity = {}) {
