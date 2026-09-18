@@ -1,41 +1,14 @@
-import { doc, getDoc, getFirestore, initializeFirestore, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
+import { doc, getDoc, getFirestore, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
 import { app } from './firebaseConfig.js'
 import { normalizeNotificationPreferences } from '../data/notificationPreferences'
 
 let hasWarnedProfileRead = false
 
-// melogic-community-firestore-reliability-v1
-// Firestore WebChannel can be rejected/stalled by Apple/WebKit networking in
-// installed PWAs and Safari. Modern Firebase already auto-detects long polling,
-// so only force it for the WebKit/iOS runtime where the failure was observed.
-function shouldForceFirestoreLongPolling() {
-  if (typeof navigator === 'undefined') return false
-  const ua = String(navigator.userAgent || '')
-  const isiOS = /iPad|iPhone|iPod/.test(ua)
-    || (navigator.platform === 'MacIntel' && Number(navigator.maxTouchPoints || 0) > 1)
-  const isAppleWebKit = /AppleWebKit/i.test(ua)
-  const isDesktopChromium = /(Chrome|Chromium|Edg|OPR)\//i.test(ua)
-  return isiOS || (isAppleWebKit && !isDesktopChromium)
-}
-
-function createFirestore() {
-  if (!shouldForceFirestoreLongPolling()) return getFirestore(app)
-  try {
-    const instance = initializeFirestore(app, {
-      experimentalForceLongPolling: true,
-      experimentalLongPollingOptions: { timeoutSeconds: 25 }
-    })
-    console.info('[firebase/firestore] WebKit reliability transport enabled.')
-    return instance
-  } catch (error) {
-    // If another module initialized Firestore first, preserve the shared
-    // instance rather than crashing the entire application boot.
-    console.warn('[firebase/firestore] Long-poll initialization unavailable; using existing instance.', error)
-    return getFirestore(app)
-  }
-}
-
-export const db = createFirestore()
+// melogic-community-// melogic-firestore-auto-transport-v2
+// Do not force WebChannel long polling for Safari/WebKit. Firebase's current
+// Firestore SDK owns transport selection and can apply its normal compatibility
+// behavior without a site-wide Safari override.
+export const db = getFirestore(app)
 
 const ACCESS_GATE_FALLBACK_CONFIG = {
   isKeyRequired: false,

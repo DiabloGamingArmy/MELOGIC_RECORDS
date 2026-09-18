@@ -111,7 +111,7 @@ import {
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
-import { getPublicProfileIdentityByUid } from './data/profileSearchService'
+import { getPublicProfileIdentityByArtistName, getPublicProfileIdentityByUid } from './data/profileSearchService'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 
 // melogic-streaming-spa-lifecycle-v6
@@ -686,10 +686,22 @@ function streamingIdentityIsVerified(identity = {}) {
   return Array.isArray(identity?.badges) && identity.badges.some((badge) => String(badge || '').toLowerCase().trim() === 'verified')
 }
 
-function ensureStreamingArtistIdentity(uid = '') {
-  const key = String(uid || '').trim()
+function streamingArtistIdentityKey(release = {}) {
+  const uid = String(release.artistUid || '').trim()
+  if (uid) return `uid:${uid}`
+  const artistName = String(release.artistName || '').trim().toLowerCase()
+  return artistName ? `name:${artistName}` : ''
+}
+
+function ensureStreamingArtistIdentity(release = {}) {
+  const uid = String(release.artistUid || '').trim()
+  const artistName = String(release.artistName || '').trim()
+  const key = streamingArtistIdentityKey(release)
   if (!key || streamingArtistIdentityCache.has(key) || streamingArtistIdentityRequests.has(key)) return
-  const request = getPublicProfileIdentityByUid(key).then((identity) => {
+  const lookup = uid
+    ? getPublicProfileIdentityByUid(uid)
+    : getPublicProfileIdentityByArtistName(artistName)
+  const request = lookup.then((identity) => {
     streamingArtistIdentityCache.set(key, identity || null)
     if (streamingBootstrapped) render()
   }).catch(() => streamingArtistIdentityCache.set(key, null))
@@ -698,9 +710,9 @@ function ensureStreamingArtistIdentity(uid = '') {
 }
 
 function streamingArtistIdentity(release = {}) {
-  const uid = String(release.artistUid || '').trim()
-  if (uid) ensureStreamingArtistIdentity(uid)
-  return uid ? streamingArtistIdentityCache.get(uid) : null
+  const key = streamingArtistIdentityKey(release)
+  if (key) ensureStreamingArtistIdentity(release)
+  return key ? streamingArtistIdentityCache.get(key) : null
 }
 
 function streamingVerifiedBadgeMarkup(identity = {}) {
@@ -709,18 +721,58 @@ function streamingVerifiedBadgeMarkup(identity = {}) {
     : ''
 }
 
+
+function publishStreamingIdentityDebug(release = {}) {
+  const key = streamingArtistIdentityKey(release)
+  const identity = key ? streamingArtistIdentityCache.get(key) : null
+  const debug = {
+    generatedAt: new Date().toISOString(),
+    release: {
+      id: release.id || '',
+      title: release.title || '',
+      artistUid: release.artistUid || '',
+      artistName: release.artistName || '',
+      rawIdentityKey: key
+    },
+    lookup: {
+      cacheHasKey: Boolean(key && streamingArtistIdentityCache.has(key)),
+      requestPending: Boolean(key && streamingArtistIdentityRequests.has(key)),
+      cacheValue: identity ?? null
+    },
+    resolvedIdentity: identity ? {
+      uid: identity.uid || '',
+      displayName: identity.displayName || '',
+      username: identity.username || '',
+      avatarURL: identity.avatarURL || '',
+      photoURL: identity.photoURL || '',
+      badges: Array.isArray(identity.badges) ? [...identity.badges] : []
+    } : null,
+    verified: {
+      profileIsVerified: streamingIdentityIsVerified(identity || {}),
+      badgeAssetURL: streamingVerifiedBadgeUrl || '',
+      badgeAssetResolved: Boolean(streamingVerifiedBadgeUrl),
+      wouldRenderBadge: Boolean(streamingIdentityIsVerified(identity || {}) && streamingVerifiedBadgeUrl)
+    }
+  }
+  window.__MELOGIC_STREAMING_DEBUG__ = debug
+  return debug
+}
+
 function streamingReleaseArtistNameMarkup(release = {}) {
   const identity = streamingArtistIdentity(release)
+  publishStreamingIdentityDebug(release)
   const displayName = identity?.displayName || release.artistName || 'Melogic Creator'
   return `<span class="music-artist-display-name">${escapeHtml(displayName)}${streamingVerifiedBadgeMarkup(identity)}</span>`
 }
 
 function streamingReleaseArtistIdentityMarkup(release = {}) {
   const identity = streamingArtistIdentity(release)
+  publishStreamingIdentityDebug(release)
   const displayName = identity?.displayName || release.artistName || 'Melogic Creator'
   const username = String(identity?.username || '').trim()
   const avatar = identity?.avatarURL || identity?.photoURL || ''
-  const profileHref = release.artistUid ? publicProfileRoute({ uid: release.artistUid }) : '#'
+  const profileUid = String(identity?.uid || release.artistUid || '').trim()
+  const profileHref = profileUid ? publicProfileRoute({ uid: profileUid }) : '#'
   return `<a class="music-release-artist-identity" href="${escapeHtml(profileHref)}">
     ${renderAvatarImage({ src: avatar, name: displayName, className: 'music-release-artist-avatar' })}
     <span class="music-release-artist-text">
