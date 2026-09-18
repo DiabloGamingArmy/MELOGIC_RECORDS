@@ -280,6 +280,7 @@ function buildPublicProfile(uid, authUser, profileInput = {}) {
     location: profileInput.location || '',
     website: profileInput.website || '',
     roleLabel: profileInput.roleLabel || deriveRoleLabelFromValue(profileInput.role || profileInput.accountType),
+    badges: Array.isArray(profileInput.badges) ? [...new Set(profileInput.badges.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))] : [],
     featuredItems,
     socials: profileInput.socials || {},
     stats: profileInput.stats || {
@@ -297,6 +298,7 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
     uid,
     email: authUser?.email || profileInput.email || '',
     role: profileInput.role || 'user',
+    roles: Array.isArray(profileInput.roles) ? [...new Set(profileInput.roles.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))] : [],
     roleLabel: profileInput.roleLabel || deriveRoleLabelFromValue(profileInput.role || profileInput.accountType),
     accountType: profileInput.accountType || 'user',
     settings: profileInput.settings || {},
@@ -320,6 +322,7 @@ function buildProvisionedUserDoc(uid, authUser, profileInput = {}) {
     uid,
     email: authUser?.email || profileInput.email || '',
     role: 'user',
+    roles: [],
     accountType: 'user',
     roleLabel: 'User',
     stats: { products: 0, savedItems: 0, comments: 0, likes: 0, downloads: 0 },
@@ -353,6 +356,7 @@ function buildProvisionedProfileDoc(uid, authUser, profileInput = {}) {
     location: '',
     website: '',
     roleLabel: 'User',
+    badges: [],
     featuredItems: {
       enabled: false,
       productIds: []
@@ -375,6 +379,7 @@ function buildMinimalProvisionedUserDoc(uid, authUser, profileInput = {}) {
     displayName: String(profileInput.displayName || authUser?.displayName || '').trim(),
     photoURL: profileInput.photoURL || authUser?.photoURL || '',
     role: 'user',
+    roles: [],
     onboardingRequired: true
   }
 }
@@ -598,7 +603,9 @@ export async function getEffectiveProfile(uid, authUser = null) {
       username: profileData?.username || userData?.username || '',
       bio: profileData?.bio || userData?.bio || '',
       photoURL: profileData?.avatarURL || profileData?.photoURL || userData?.photoURL || authUser?.photoURL || '',
-      email: userData?.email || authUser?.email || ''
+      email: userData?.email || authUser?.email || '',
+      roles: Array.isArray(userData?.roles) ? userData.roles : [],
+      badges: Array.isArray(profileData?.badges) ? profileData.badges : []
     }
 
     return {
@@ -728,6 +735,8 @@ export async function saveProfileChanges(user, payload = {}) {
         lastName: lastNameValidation.value,
         username: nextUsernameLower,
         role: existingUser.role || 'user',
+        roles: Array.isArray(existingUser.roles) ? existingUser.roles : [],
+        badges: Array.isArray(existingProfile.badges) ? existingProfile.badges : [],
         roleLabel: existingProfile.roleLabel || deriveRoleLabelFromValue(existingUser.role || existingUser.accountType),
         accountType: existingUser.accountType || 'user',
         stats: existingProfile.stats || existingUser.stats || {

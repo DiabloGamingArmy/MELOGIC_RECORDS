@@ -189,14 +189,11 @@ function debugPublicProfile(phase, extra = {}) {
   })
 }
 
-function getProfileRoles(profile = {}) {
-  const values = [
-    ...(Array.isArray(profile.roles) ? profile.roles : []),
-    ...(Array.isArray(profile.publicRoles) ? profile.publicRoles : []),
-    ...(Array.isArray(profile.badges) ? profile.badges : []),
-    ...(Array.isArray(profile.publicBadges) ? profile.publicBadges : [])
-  ]
-
+// melogic-canonical-role-authority-v5
+// Public identity is intentionally sourced ONLY from profiles/{uid}.badges[].
+// Backend users/{uid}.roles[] must never leak into badge presentation.
+function getProfileBadges(profile = {}) {
+  const values = Array.isArray(profile.badges) ? profile.badges : []
   return Array.from(new Set(values.map((value) => String(value || '').toLowerCase().trim()).filter(Boolean)))
 }
 
@@ -975,9 +972,9 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
   const stats = getStats(profile)
   const isLongName = displayName.length > 16
   const featuredSection = renderFeaturedSection(profile, displayName)
-  const roles = getProfileRoles(profile)
-  const hasVerified = roles.includes('verified')
-  const profileBadgeKeys = ['founder', 'moderator', 'beta', 'pro'].filter((key) => roles.includes(key))
+  const badges = getProfileBadges(profile)
+  const hasVerified = badges.includes('verified')
+  const profileBadgeKeys = ['founder', 'moderator', 'beta', 'pro'].filter((key) => badges.includes(key))
   const headerStats = [
     ['followers', 'Followers', stats.followers],
     ['following', 'Following', stats.following],
