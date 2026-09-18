@@ -138,19 +138,6 @@ function syncMobilePageDepth() {
   return depth
 }
 
-// Camera is an immersive capture surface and intentionally owns the viewport
-// without the shared title banner. Keep this route-derived so cold loads and
-// same-document SPA transitions use the exact same chrome contract.
-function syncRouteHeaderVisibility() {
-  const header = persistentShell?.querySelector(HEADER_SELECTOR)
-  if (!(header instanceof HTMLElement)) return
-  const route = resolveMobileSpaRoute()
-  const hideHeader = route?.id === 'camera'
-  header.toggleAttribute('hidden', hideHeader)
-  if (hideHeader) header.style.setProperty('display', 'none', 'important')
-  else header.style.removeProperty('display')
-}
-
 function syncGenericHeaderTitle() {
   const header = persistentShell?.querySelector(HEADER_SELECTOR)
   const title = header?.querySelector('.mobile-app-title')
@@ -224,7 +211,6 @@ function harvestShell(candidate) {
     }
     syncBottomNavigation()
     syncGenericHeaderTitle()
-    syncRouteHeaderVisibility()
     const activeRoute = resolveMobileSpaRoute()
     const activeHeader = persistentShell?.querySelector(HEADER_SELECTOR)
     if (activeRoute?.id === 'community' || !activeHeader?.classList.contains('community-app-header')) {
@@ -284,7 +270,6 @@ function boot() {
     // Community's existing navShell + syncCommunityMobileHeader own its header.
     // Generic title sync must not run over that specialized presentation.
     if (activeRoute?.id !== 'community' || !restored) syncGenericHeaderTitle()
-    syncRouteHeaderVisibility()
 
     requestAnimationFrame(() => {
       const settledRoute = resolveMobileSpaRoute()
