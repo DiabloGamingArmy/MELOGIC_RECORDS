@@ -3412,9 +3412,13 @@ function renderCommunityHomeView() {
     <div class="community-layout is-home">
       ${renderLeftNav()}
       <div class="community-main">
+        <!-- melogic-mobile-stories-before-feed-controls-v1
+             Visual order only: on mobile/tablet this region is visible above
+             the two-way feed tabs. Desktop keeps using the right-rail Stories
+             instance because .community-mobile-stories remains hidden there. -->
+        <div class="community-mobile-stories">${renderStoriesRow()}</div>
         ${renderTopicBar()}
         ${renderInlineComposer()}
-        <div class="community-mobile-stories">${renderStoriesRow()}</div>
         ${renderActiveCommunityTabContent()}
       </div>
       ${renderSidebar()}
