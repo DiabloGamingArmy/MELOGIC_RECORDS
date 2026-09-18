@@ -5233,6 +5233,15 @@ function updateCommunityDestinationResultsDom() {
   if (footerCount) footerCount.textContent = `${composerDestinationCommunities().length} communities available`
 }
 
+// melogic-mobile-community-destination-loading-v5e
+function refreshComposerDestinationSurface() {
+  if (useNativeMobileCommunityComposer() && state.composer.destinationPickerOpen) {
+    updateCommunityComposerLayer()
+    return
+  }
+  updateCommunityDestinationResultsDom()
+}
+
 async function loadComposerDestinationCommunities({ force = false } = {}) {
   if (state.composer.destinationLoading && !force) return
   state.composer = {
@@ -5240,8 +5249,10 @@ async function loadComposerDestinationCommunities({ force = false } = {}) {
     destinationLoading: true,
     destinationError: ''
   }
-  updateCommunityDestinationResultsDom()
+  refreshComposerDestinationSurface()
   try {
+    // Preserve the original destination picker's proven data source.
+    // Only the presentation layer is different on mobile.
     const rows = await listSelectableCommunities({ limitCount: 80 })
     state.communities = mergeCommunities(state.communities, rows)
     state.composer = {
@@ -5258,7 +5269,7 @@ async function loadComposerDestinationCommunities({ force = false } = {}) {
       destinationError: error?.message || 'Try again in a moment.'
     }
   }
-  updateCommunityDestinationResultsDom()
+  refreshComposerDestinationSurface()
 }
 
 function openCommunityDestinationPicker() {
