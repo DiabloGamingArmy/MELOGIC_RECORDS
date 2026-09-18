@@ -3121,6 +3121,13 @@ function openThreadInChatDock(threadId = '') {
 async function selectThread(threadId = '', { forceBottom = true } = {}) {
   if (!threadId) return
   const mobileOpeningConversation = isMobileInboxViewport() && appState.activeFilter === 'Messages' && appState.selectedThreadId !== threadId
+  // melogic-inbox-mobile-conversation-presentation-v3
+  // Mobile list/conversation visibility is CSS-owned by this body class.
+  // Keep it synchronized with the explicit conversation state when a thread
+  // is opened; previously the state changed but the list presentation remained.
+  if (isMobileInboxViewport() && appState.activeFilter === 'Messages') {
+    document.body.classList.add('is-inbox-mobile-conversation-open')
+  }
   if (mobileOpeningConversation) captureMobileInboxListScroll()
   if (appState.activeFilter !== 'Messages') {
     applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
@@ -6424,7 +6431,11 @@ function bindSharedEvents(scope = inboxRoot) {
   // Mobile thread rows are replaced by persistent-surface renders. Use one
   // delegated click owner on inboxRoot so a row remains actionable even if its
   // per-render listener was lost/replaced. Desktop keeps the existing binding.
-  if (scope === inboxRoot && !inboxRoot.dataset.mobileThreadOpenDelegated) {
+  // melogic-inbox-mobile-thread-open-v2
+  // Persistent mobile route surfaces call bindSharedEvents(surface), not
+  // bindSharedEvents(inboxRoot). Install the delegated owner the first time
+  // ANY Inbox surface binds so mobile thread rows can always reach selectThread().
+  if (!inboxRoot.dataset.mobileThreadOpenDelegated) {
     inboxRoot.dataset.mobileThreadOpenDelegated = 'true'
     inboxRoot.addEventListener('click', (event) => {
       if (!isMobileInboxViewport() || appState.activeFilter !== 'Messages') return
@@ -7126,10 +7137,32 @@ function renderSignedInState() {
 
     activateMobileInboxSurface(key)
 
-    // Realtime/fallback thread data updates only the live Messages list.
-    if (key === 'messages' && !created && appState.hasLoadedThreadsOnce) {
-      hydratePersistentMessagesThreadList(surface)
+    // melogic-inbox-mobile-message-topology-v4
+    // The Messages route is persistent, but its internal topology is not:
+    // mobile list view and mobile conversation view are different DOM trees.
+    // Rebuild only this cached Messages surface when selectedThreadId changes
+    // which side of that boundary we need. Calls/Activity remain frozen.
+    if (key === 'messages' && !created) {
+      const wantsConversation = Boolean(appState.selectedThreadId)
+      const hasConversation = Boolean(surface.querySelector('[data-mobile-inbox-view="conversation"]'))
+      const hasList = Boolean(surface.querySelector('[data-mobile-inbox-view="list"]'))
+      const topologyMismatch = (wantsConversation && !hasConversation) || (!wantsConversation && !hasList)
+
+      if (topologyMismatch) {
+        messageScrollController.detach()
+        surface.innerHTML = renderMessagesLayout()
+        bindSharedEvents(surface)
+      } else if (!wantsConversation && appState.hasLoadedThreadsOnce) {
+        // Realtime/fallback updates can continue hydrating the already-live list
+        // without replacing the persistent Messages route surface.
+        hydratePersistentMessagesThreadList(surface)
+      }
     }
+
+    document.body.classList.toggle(
+      'is-inbox-mobile-conversation-open',
+      key === 'messages' && Boolean(appState.selectedThreadId)
+    )
 
     if (key === 'messages' && (!isMobileInboxViewport() || Boolean(appState.selectedThreadId))) {
       const scroller = surface.querySelector('[data-message-list]')

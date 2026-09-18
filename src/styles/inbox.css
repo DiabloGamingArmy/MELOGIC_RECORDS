@@ -5219,11 +5219,15 @@ body.is-inbox-page .site-footer {
    parent route area = 724px high (0..724)
    inbox root begins at y=64 but v30 incorrectly remained 724px high (64..788).
    The root therefore must consume the parent's REMAINING block size. */
+/* melogic-inbox-persistent-host-full-height-v32
+   The persistent Inbox root already occupies the available Inbox shell.
+   Do not subtract an additional 64px from its height; doing so leaves the
+   mobile conversation/composer surface short and creates a bottom gap. */
 @media (max-width: 760px) {
   body.is-inbox-page .inbox-main-shell
     > [data-inbox-root].is-persistent-mobile-inbox-host {
-    height: calc(100% - 64px) !important;
-    max-height: calc(100% - 64px) !important;
+    height: 100% !important;
+    max-height: 100% !important;
     min-height: 0 !important;
   }
 
@@ -5314,4 +5318,29 @@ body.is-inbox-page .site-footer {
   body.is-inbox-page .inbox-desktop-secondary-content .panel-header {
     position:relative !important; inset:auto !important; margin-top:0 !important;
   }
+}
+
+/* melogic-inbox-message-bubble-content-width-v34
+   Text bubbles hug intrinsic text width + existing horizontal padding.
+   The stack may grow only until the conversation-width cap, at which point
+   text wraps normally. Applies to mobile and desktop. Media keeps its own sizing. */
+.message-bubble-stack {
+  width: fit-content;
+  max-width: min(78%, 42rem);
+}
+
+.message-bubble:not(.has-media) {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.message-bubble:not(.has-media) > p {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.cluster-sender,
+.cluster-sender[data-inbox-identity-name] {
+  color: #fff !important;
 }
