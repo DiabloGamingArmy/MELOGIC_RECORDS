@@ -27,8 +27,8 @@ cameraSurface.innerHTML = `
     <canvas class="camera-transition-frame" data-camera-transition-frame aria-hidden="true"></canvas>
     <div class="camera-shade"></div>
     <div class="camera-topbar">
-      <a class="camera-tool" href="/community" aria-label="Close camera">×</a>
-      <div class="camera-tools"><div class="camera-flash-stack"><button class="camera-tool" type="button" data-camera-flash aria-label="Flash" aria-pressed="false">⚡</button><input class="camera-flash-strength" data-camera-flash-strength type="range" min="0" max="100" value="62" aria-label="Flash magnitude" hidden></div></div>
+      <a class="camera-tool camera-close" data-camera-close href="/community" aria-label="Close camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></a>
+      <div class="camera-tools"><div class="camera-flash-stack"><button class="camera-tool camera-flash" type="button" data-camera-flash aria-label="Flash" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2.5 6.8 13h5.1l-1.4 8.5L17.2 11h-5.1l1.4-8.5Z"/></svg></button><input class="camera-flash-strength" data-camera-flash-strength type="range" min="0" max="100" value="62" aria-label="Flash magnitude" hidden></div></div>
     </div>
     <div class="camera-front-flash" data-camera-front-flash aria-hidden="true"></div>
     <div class="camera-recording-pill" data-recording-pill hidden>REC <span data-recording-time>0:00</span></div>
@@ -39,7 +39,7 @@ cameraSurface.innerHTML = `
       </button>
       <input class="camera-library-input" data-camera-library-input type="file" accept="image/*,video/*" aria-hidden="true" tabindex="-1">
       <button class="camera-capture" type="button" data-camera-capture aria-label="Tap for photo, hold for video"><span class="camera-stop-square" aria-hidden="true"></span></button>
-      <button class="camera-tool camera-flip" type="button" data-camera-flip aria-label="Flip camera">↻</button>
+      <button class="camera-tool camera-flip" type="button" data-camera-flip aria-label="Flip camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5"/><path d="M18.5 15.5A7 7 0 1 1 19.7 9"/></svg></button>
       <div class="camera-record-lock" data-camera-record-lock aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5.5" y="10" width="13" height="10" rx="2.5"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10"/></svg></div>
     </div>
     <div class="camera-status" data-camera-status>Starting camera…</div>
@@ -68,7 +68,7 @@ const transitionFrame = cameraSurface.querySelector('[data-camera-transition-fra
 const liveCanvas = cameraSurface.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
 const recordLock = cameraSurface.querySelector('[data-camera-record-lock]')
-const flashButton=cameraSurface.querySelector('[data-camera-flash]'), flashStrength=cameraSurface.querySelector('[data-camera-flash-strength]'), frontFlash=cameraSurface.querySelector('[data-camera-front-flash]')
+const closeButton=cameraSurface.querySelector('[data-camera-close]'), flashButton=cameraSurface.querySelector('[data-camera-flash]'), flashStrength=cameraSurface.querySelector('[data-camera-flash-strength]'), frontFlash=cameraSurface.querySelector('[data-camera-front-flash]')
 const editCanvas=cameraSurface.querySelector('[data-camera-edit-canvas]'), editCtx=editCanvas?.getContext('2d'), editTextbox=cameraSurface.querySelector('[data-camera-edit-textbox]'), editTextInput=cameraSurface.querySelector('[data-camera-edit-text-input]'), editImageInput=cameraSurface.querySelector('[data-camera-edit-image-input]')
 let frontFlashOn=false, editMode='', editDrawing=false, editHistory=[]
 let renderGeneration = 0
@@ -399,7 +399,14 @@ async function startCamera({ preserveFrame=false }={}) {
     // feeding audio into any recorder.
     const nextStream=await navigator.mediaDevices.getUserMedia({
       video:{facingMode:{ideal:facingMode}},
-      audio:true
+      audio:{
+        channelCount:{ideal:2},
+        sampleRate:{ideal:48000},
+        sampleSize:{ideal:24},
+        echoCancellation:{ideal:false},
+        noiseSuppression:{ideal:false},
+        autoGainControl:{ideal:false}
+      }
     })
     const nextAudioTrack = nextStream.getAudioTracks?.()[0] || null
     if (!nextAudioTrack) throw new Error('Camera opened without the required microphone track')
@@ -544,7 +551,17 @@ async function beginRecording() {
   if (!audioTrack || audioTrack.readyState !== 'live') {
     // Defensive recovery if the OS/browser ended the permission track.
     try {
-      microphoneStream = await navigator.mediaDevices.getUserMedia({ video:false, audio:true })
+      microphoneStream = await navigator.mediaDevices.getUserMedia({
+        video:false,
+        audio:{
+          channelCount:{ideal:2},
+          sampleRate:{ideal:48000},
+          sampleSize:{ideal:24},
+          echoCancellation:{ideal:false},
+          noiseSuppression:{ideal:false},
+          autoGainControl:{ideal:false}
+        }
+      })
       audioTrack = microphoneStream.getAudioTracks?.()[0] || null
       permissionAudioTrack = audioTrack
     } catch (error) {
@@ -586,9 +603,14 @@ async function beginRecording() {
   }
   recordingStream = new MediaStream([recorderVideoTrack, audioTrack])
 
-  try { recorder = new MediaRecorder(recordingStream) }
+  const mimeType = supportedMimeType()
+  const recorderOptions = {
+    ...(mimeType ? { mimeType } : {}),
+    audioBitsPerSecond: 256000,
+    videoBitsPerSecond: 12000000
+  }
+  try { recorder = new MediaRecorder(recordingStream, recorderOptions) }
   catch {
-    const mimeType = supportedMimeType()
     try { recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined) }
     catch (error) {
       recordingIntent = false
@@ -617,7 +639,7 @@ async function beginRecording() {
     recordingCanvasStream = null
     stopCaptureEngines()
     console.error('[camera] recording failed', event?.error || event)
-    capture.classList.remove('is-recording'); pill.hidden = true; window.clearInterval(recordingTimer)
+    capture.classList.remove('is-recording'); pill.hidden = true; closeButton?.removeAttribute('hidden'); window.clearInterval(recordingTimer)
     setStatus('Recording stopped because the browser reported an error.')
   }
 
@@ -625,6 +647,7 @@ async function beginRecording() {
   recordingStartedAt = Date.now(); updateTimer(); recordingTimer = window.setInterval(updateTimer, 250)
   lockedRecording=false; lockHot=false
   capture.classList.add('is-recording','is-following'); recordLock.classList.add('is-visible'); pill.hidden=false
+  closeButton?.setAttribute('hidden','')
   return true
 }
 function endRecording() {
@@ -640,6 +663,7 @@ function endRecording() {
   capture.style.removeProperty('--capture-x'); capture.style.removeProperty('--capture-y')
   recordLock.classList.remove('is-visible','is-hot')
   pill.hidden=true
+  closeButton?.removeAttribute('hidden')
 }
 function takePhoto() {
   if (!liveCanvas?.width || !liveCanvas?.height) return

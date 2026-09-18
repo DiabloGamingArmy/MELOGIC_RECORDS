@@ -208,3 +208,8 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 @media (max-width:760px) {
  body.melogic-camera-page .camera-screen { bottom:var(--melogic-mobile-nav-h) !important; }
 }
+
+/* melogic-camera-capture-quality-ui-v1 */
+.camera-tool svg{width:22px;height:22px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.camera-flash svg{fill:currentColor;stroke:none}
+.camera-close[hidden]{display:none!important}
