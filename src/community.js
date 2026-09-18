@@ -225,6 +225,7 @@ const state = {
     communityId: '',
     destinationPickerOpen: false,
     destinationSearch: '',
+    destinationSearchDraft: '',
     destinationLoading: false,
     destinationError: '',
     destinationItems: [],
@@ -1792,7 +1793,7 @@ function renderCommunityDestinationPickerModal() {
             <h2>Community Search</h2>
             <button type="button" data-mobile-create-community aria-label="Create community">${iconSvg('plus')}</button>
           </header>
-          <label class="community-mobile-destination-search">${iconSvg('search')}<input type="search" value="${escapeHtml(state.composer.destinationSearch)}" placeholder="Search communities" data-community-destination-search autocomplete="off" /></label>
+          <label class="community-mobile-destination-search">${iconSvg('search')}<input type="search" value="${escapeHtml(state.composer.destinationSearchDraft ?? state.composer.destinationSearch)}" placeholder="Search communities" data-community-destination-search autocomplete="off" /></label>
           <div class="community-mobile-destination-scroll" data-community-destination-scroll>
             <button type="button" class="community-mobile-destination-row ${state.composer.communityId ? '' : 'is-selected'}" data-select-community-destination="">
               <span class="community-destination-avatar is-general">${iconSvg('home')}</span><span><strong>General</strong><small>Main Melogic Community feed</small></span><span class="community-mobile-destination-trailing">${state.composer.communityId ? iconSvg('chevronRight') : iconSvg('checkCircle')}</span>
@@ -5278,6 +5279,7 @@ function openCommunityDestinationPicker() {
     ...state.composer,
     destinationPickerOpen: true,
     destinationSearch: '',
+    destinationSearchDraft: '',
     destinationVisibleCount: 10,
     destinationLoading: true,
     destinationError: ''
@@ -5288,6 +5290,7 @@ function openCommunityDestinationPicker() {
 }
 
 function closeCommunityDestinationPicker() {
+  window.clearTimeout(communityDestinationSearchTimer)
   state.composer = {
     ...state.composer,
     destinationPickerOpen: false,
@@ -5300,6 +5303,7 @@ function closeCommunityDestinationPicker() {
 }
 
 function selectComposerCommunityDestination(communityId = '') {
+  window.clearTimeout(communityDestinationSearchTimer)
   const cleanId = String(communityId || '').trim()
   if (cleanId && !composerDestinationCommunities().some((community) => community.communityId === cleanId)) return
   state.composer = {
@@ -6515,6 +6519,35 @@ function bindFeedRegionEvents(root = app) {
   bindCommentEvents(root)
 }
 
+// melogic-mobile-community-destination-debounce-v5f
+let communityDestinationSearchTimer = 0
+
+function updateMobileCommunityDestinationListDom(root = app) {
+  const scroll = root?.querySelector('[data-community-destination-scroll]')
+  if (!scroll || state.composer.destinationLoading || state.composer.destinationError) return
+  const matches = composerDestinationMatches()
+  const visible = matches.slice(0, Math.max(10, Number(state.composer.destinationVisibleCount || 10)))
+  const generalMatches = !state.composer.destinationSearch
+    || 'general feed'.includes(String(state.composer.destinationSearch || '').trim().toLowerCase())
+  scroll.innerHTML = `
+    ${generalMatches ? `
+      <button type="button" class="community-mobile-destination-row ${state.composer.communityId ? '' : 'is-selected'}" data-select-community-destination="">
+        <span class="community-destination-avatar is-general">${iconSvg('home')}</span>
+        <span><strong>General</strong><small>Main Melogic Community feed</small></span>
+        <span class="community-mobile-destination-trailing">${state.composer.communityId ? iconSvg('chevronRight') : iconSvg('checkCircle')}</span>
+      </button>` : ''}
+    ${visible.map((community) => `
+      <button type="button" class="community-mobile-destination-row ${state.composer.communityId === community.communityId ? 'is-selected' : ''}" data-select-community-destination="${escapeHtml(community.communityId)}">
+        ${renderCommunityDestinationAvatar(community)}
+        <span><strong>${escapeHtml(community.name)}</strong><small>${escapeHtml([`c/${community.slug || ''}`, community.category || '', `${formatCount(community.focusCount || community.followerCount)} focused`].filter(Boolean).join(' · '))}</small></span>
+        <span class="community-mobile-destination-trailing">${state.composer.communityId === community.communityId ? iconSvg('checkCircle') : iconSvg('chevronRight')}</span>
+      </button>`).join('')}
+    ${!generalMatches && !visible.length ? `<div class="community-mobile-destination-state"><strong>No communities found</strong><small>Try another search.</small></div>` : ''}
+    ${visible.length < matches.length ? `<div class="community-mobile-destination-sentinel" aria-hidden="true"></div>` : ''}
+  `
+  bindCommunityDestinationResultEvents(scroll)
+}
+
 function bindCommunityComposerEvents(root = app) {
   root?.querySelectorAll('[data-close-community-composer]').forEach((button) => button.addEventListener('click', closeCommunityComposer))
   root?.querySelector('[data-open-community-destination]')?.addEventListener('click', openCommunityDestinationPicker)
@@ -6523,10 +6556,15 @@ function bindCommunityComposerEvents(root = app) {
     if (event.target === event.currentTarget) closeCommunityDestinationPicker()
   })
   root?.querySelector('[data-community-destination-search]')?.addEventListener('input', (event) => {
-    state.composer.destinationSearch = String(event.target.value || '').slice(0, 80)
-    state.composer.destinationVisibleCount = 10
-    if (useNativeMobileCommunityComposer()) updateCommunityComposerLayer()
-    else updateCommunityDestinationResultsDom()
+    const value = String(event.target.value || '').slice(0, 80)
+    state.composer.destinationSearchDraft = value
+    window.clearTimeout(communityDestinationSearchTimer)
+    communityDestinationSearchTimer = window.setTimeout(() => {
+      state.composer.destinationSearch = state.composer.destinationSearchDraft
+      state.composer.destinationVisibleCount = 10
+      if (useNativeMobileCommunityComposer()) updateMobileCommunityDestinationListDom(root)
+      else updateCommunityDestinationResultsDom()
+    }, 500)
   })
   bindCommunityDestinationResultEvents(root)
   const destinationScroll = root?.querySelector('[data-community-destination-scroll]')
