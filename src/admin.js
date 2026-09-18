@@ -3193,10 +3193,15 @@ function accountRoleBadgeAssignmentList(data = {}, disabled = false) {
         if (!key) return ''
         const badgeAllowed = definition.badgeAssignable === true
         const roleAllowed = definition.backendAssignable === true
+        // melogic-admin-role-badge-icon-parse-fix-v1
+        const iconPath = String(definition.iconPath || '').replace(/^\/+/, '')
+        const iconMarkup = iconPath
+          ? '<span class="admin-role-badge-icon"><img src="/' + escapeHtml(iconPath) + '" alt="" onerror="this.style.display=\'none\'" /></span>'
+          : ''
         return `
           <div class="admin-role-badge-row">
             <div class="admin-role-badge-identity">
-              ${definition.iconPath ? `<span class="admin-role-badge-icon"><img src="/${escapeHtml(String(definition.iconPath).replace(/^\\/+/, ''))}" alt="" onerror="this.style.display='none'" /></span>` : ''}
+              ${iconMarkup}
               <span>
                 <strong>${escapeHtml(definition.displayName || humanLabel(key))}</strong>
                 <small>${escapeHtml(key)}</small>
