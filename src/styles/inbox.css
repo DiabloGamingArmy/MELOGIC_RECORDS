@@ -3622,9 +3622,12 @@ body.site-guidance-active .inbox-site-guidance-trigger {
   body.is-inbox-page .inbox-mobile-conversation-view .message-cluster + .message-cluster {margin-top:2px !important;}
 
   body.is-inbox-page .inbox-mobile-conversation-view .message-bubble-stack {
-    max-width:82% !important;min-width:0 !important;
+    width:max-content !important;
+    max-width:min(82%, 620px) !important;
+    min-width:0 !important;
   }
   body.is-inbox-page .inbox-mobile-conversation-view .message-bubble {
+    width:max-content !important;
     max-width:100% !important;padding:8px 11px !important;border:0 !important;
     border-radius:18px !important;background:#1c1c1e !important;color:#f2f2f3 !important;
     box-shadow:none !important;font-size:.94rem !important;line-height:1.32 !important;
@@ -3640,7 +3643,12 @@ body.site-guidance-active .inbox-site-guidance-trigger {
   body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-self .message-bubble.is-middle {border-top-right-radius:6px !important;border-bottom-right-radius:6px !important;}
   body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-self .message-bubble.is-last {border-top-right-radius:6px !important;}
 
-  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble p {overflow-wrap:anywhere !important;word-break:normal !important;}
+  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble p {
+    width:max-content !important;
+    max-width:100% !important;
+    overflow-wrap:break-word !important;
+    word-break:normal !important;
+  }
   body.is-inbox-page .inbox-mobile-conversation-view .message-status-line,
   body.is-inbox-page .inbox-mobile-conversation-view .message-edited-marker {
     color:#74747b !important;font-size:.63rem !important;
@@ -5320,49 +5328,4 @@ body.is-inbox-page .site-footer {
   }
 }
 
-/* melogic-inbox-message-bubble-content-width-v34
-   Text bubbles hug intrinsic text width + existing horizontal padding.
-   The stack may grow only until the conversation-width cap, at which point
-   text wraps normally. Applies to mobile and desktop. Media keeps its own sizing. */
-.message-bubble-stack {
-  width: fit-content;
-  max-width: min(78%, 42rem);
-}
-
-.message-bubble:not(.has-media) {
-  display: block;
-  width: fit-content;
-  max-width: 100%;
-}
-
-.message-bubble:not(.has-media) > p {
-  width: fit-content;
-  max-width: 100%;
-}
-
-.cluster-sender,
-.cluster-sender[data-inbox-identity-name] {
-  color: #fff !important;
-}
-
-/* melogic-inbox-message-bubble-content-width-v34b */
-.message-bubble-stack {
-  width: fit-content !important;
-  max-width: min(78%, 42rem) !important;
-}
-.message-bubble:not(.has-media) {
-  display: block !important;
-  width: fit-content !important;
-  min-width: 0 !important;
-  max-width: 100% !important;
-}
-.message-bubble:not(.has-media) > p {
-  display: block !important;
-  width: fit-content !important;
-  min-width: 0 !important;
-  max-width: 100% !important;
-}
-.message-cluster.is-self .message-bubble-stack { align-items: flex-end !important; }
-.message-cluster.is-other .message-bubble-stack { align-items: flex-start !important; }
-.cluster-sender,
-.cluster-sender[data-inbox-identity-name] { color: #fff !important; }
+/* melogic-inbox-mobile-renderer-bubble-sizing-v36 */
