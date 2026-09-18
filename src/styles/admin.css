@@ -4743,3 +4743,14 @@
     grid-column: 2;
   }
 }
+
+/* melogic-admin-role-registry-crud-v2 */
+.admin-role-registry{display:grid;gap:18px}.admin-role-definition-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+.admin-role-definition-card{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:start;padding:14px;border:1px solid var(--admin-border,#2c313b);border-radius:12px;background:rgba(255,255,255,.018)}
+.admin-role-definition-card code{display:block;margin-top:3px;color:var(--admin-muted,#89909d);font-size:11px}.admin-role-definition-card p{margin:8px 0;color:var(--admin-muted,#89909d);font-size:12px;line-height:1.45}
+.admin-role-definition-icon{width:42px;height:42px;display:grid;place-items:center;border:1px solid var(--admin-border,#2c313b);border-radius:10px;overflow:hidden}.admin-role-definition-icon img{width:26px;height:26px;object-fit:contain}
+.admin-role-definition-flags{display:flex;gap:6px;flex-wrap:wrap}.admin-role-definition-flags span{padding:3px 7px;border:1px solid var(--admin-border,#2c313b);border-radius:999px;font-size:10px;color:var(--admin-muted,#89909d)}
+.admin-role-definition-editor{margin-top:4px;padding:18px;border:1px solid var(--admin-border,#2c313b);border-radius:12px}.admin-role-definition-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
+.admin-role-definition-fields label{display:grid;gap:6px}.admin-role-definition-fields label>span{font-size:12px;font-weight:700}.admin-role-definition-fields .is-wide{grid-column:1/-1}.admin-role-definition-fields input,.admin-role-definition-fields textarea{width:100%;box-sizing:border-box}.admin-role-definition-fields textarea{min-height:88px;resize:vertical}
+.admin-role-definition-fields small{color:var(--admin-muted,#89909d)}.admin-role-check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.admin-role-check input{width:auto!important}.admin-role-definition-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+@media(max-width:760px){.admin-role-definition-fields{grid-template-columns:1fr}.admin-role-definition-fields .is-wide{grid-column:auto}}

@@ -27,6 +27,7 @@ import {
   listAdminProducts,
   listAdminReports,
   listAdminTeam,
+  listAdminRoleDefinitions,
   listAdminUsers,
   getAdminAccountPermissions,
   listMarketplaceReviewQueue,
@@ -38,6 +39,8 @@ import {
   forcePasswordReset,
   revokeRecoveryCodes,
   setAdminUserRole,
+  upsertAdminRoleDefinition,
+  deleteAdminRoleDefinition,
   sendAdminAuthEmail,
   sendAdminEmail,
   sendAdminSystemMessage,
@@ -646,7 +649,7 @@ const state = {
       createMessage: ''
     },
     orders: { items: [], detail: null, logs: [], entitlements: [], libraryItems: [], mismatchWarnings: [], loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', cursor: '', hasMore: false, pageSize: 15, repairing: '' },
-    team: { items: [], profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
+    team: { items: [], roleDefinitions: [], roleRegistryLoading: false, roleRegistryError: '', roleEditorKey: '', profile: null, adminUser: null, recentProducts: [], loading: false, loaded: false, error: '' },
     logs: { items: [], detail: null, detailId: '', loading: false, loadingMore: false, loaded: false, error: '', filter: 'all', search: '', cursor: '', hasMore: false, pageSize: 15 }
   },
   accountActionsMenuUid: '',
@@ -2533,6 +2536,35 @@ function teamView() {
       </div>
       <button type="button" class="admin-icon-button" data-refresh-admin-section title="Refresh roles">${iconSvg('barChart')}</button>
     </header>
+    <section class="admin-section-slab admin-role-registry" data-role-registry>
+      <div class="admin-slab-heading">
+        <div>
+          <h2>Role & Badge Registry</h2>
+          <p class="admin-muted">Definitions control role names and badge presentation. Assignment to accounts is handled separately.</p>
+        </div>
+        <button type="button" class="admin-primary-button" data-role-definition-new>${iconSvg('folderPlus')}<span>New Definition</span></button>
+      </div>
+      ${data.roleRegistryError ? `<p class="admin-error">${escapeHtml(data.roleRegistryError)}</p>` : ''}
+      <div class="admin-role-definition-grid">
+        ${(data.roleDefinitions || []).map((role) => `
+          <article class="admin-role-definition-card">
+            <div class="admin-role-definition-icon">${role.iconPath ? `<img src="/${escapeHtml(String(role.iconPath).replace(/^\/+/,''))}" alt="" onerror="this.style.display='none'" />` : iconSvg('user')}</div>
+            <div>
+              <strong>${escapeHtml(role.displayName || role.key)}</strong>
+              <code>${escapeHtml(role.key)}</code>
+              <p>${escapeHtml(role.description || 'No description.')}</p>
+              <div class="admin-role-definition-flags">
+                ${role.backendAssignable ? '<span>Backend role</span>' : ''}
+                ${role.badgeAssignable ? '<span>Public badge</span>' : ''}
+                ${role.protected ? '<span>Protected</span>' : ''}
+                ${role.enabled === false ? '<span>Disabled</span>' : ''}
+              </div>
+            </div>
+            <button type="button" class="admin-icon-button" data-role-definition-edit="${escapeHtml(role.key)}" title="Edit ${escapeHtml(role.displayName || role.key)}">${iconSvg('edit')}</button>
+          </article>`).join('') || '<p class="admin-muted">No role definitions loaded.</p>'}
+      </div>
+      ${roleDefinitionEditor(data)}
+    </section>
     <section class="admin-section-slab admin-role-panel">
       <div>
         <h2>Add / Update Admin User</h2>
@@ -2564,6 +2596,72 @@ function teamView() {
       ${adminTeamTable(data.items)}
     </section>
   `
+}
+
+function roleDefinitionEditor(data = {}) {
+  const key = data.roleEditorKey || ''
+  if (!key) return ''
+  const creating = key === '__new__'
+  const role = creating ? {} : (data.roleDefinitions || []).find((item) => item.key === key) || {}
+  return `
+    <form class="admin-role-definition-editor" data-role-definition-form>
+      <div class="admin-slab-heading"><h3>${creating ? 'Create Role Definition' : `Edit ${escapeHtml(role.displayName || role.key || '')}`}</h3><button type="button" class="admin-icon-button" data-role-definition-close>${iconSvg('x')}</button></div>
+      <div class="admin-role-definition-fields">
+        <label><span>Role Name / Key</span><input name="key" value="${escapeHtml(role.key || '')}" maxlength="64" ${creating ? '' : 'readonly'} required /><small>Stable identifier stored in account arrays.</small></label>
+        <label><span>Display Name</span><input name="displayName" value="${escapeHtml(role.displayName || '')}" maxlength="120" required /></label>
+        <label class="is-wide"><span>Description</span><textarea name="description" maxlength="600">${escapeHtml(role.description || '')}</textarea></label>
+        <label><span>Badge Icon Key</span><input name="iconKey" value="${escapeHtml(role.iconKey || '')}" maxlength="120" /></label>
+        <label><span>Badge Icon Path</span><input name="iconPath" value="${escapeHtml(role.iconPath || '')}" maxlength="500" placeholder="assets/badges/example.svg" /></label>
+        <label><span>Sort Order</span><input name="sortOrder" type="number" value="${escapeHtml(role.sortOrder ?? 1000)}" /></label>
+        <label class="admin-role-check"><input name="backendAssignable" type="checkbox" ${role.backendAssignable !== false ? 'checked' : ''}/><span>Backend role assignable</span></label>
+        <label class="admin-role-check"><input name="badgeAssignable" type="checkbox" ${role.badgeAssignable !== false ? 'checked' : ''}/><span>Public badge assignable</span></label>
+        <label class="admin-role-check"><input name="enabled" type="checkbox" ${role.enabled !== false ? 'checked' : ''}/><span>Enabled</span></label>
+        <label class="is-wide"><span>Audit Reason</span><input name="reason" maxlength="1200" placeholder="Why is this definition changing?" /></label>
+      </div>
+      <div class="admin-role-definition-actions">
+        ${!creating && !role.protected ? `<button type="button" class="admin-secondary-button is-danger" data-role-definition-delete="${escapeHtml(role.key)}">Delete Definition</button>` : ''}
+        <button type="submit" class="admin-primary-button">Save Definition</button>
+      </div>
+    </form>`
+}
+
+async function submitRoleDefinitionForm(form) {
+  const fd = new FormData(form)
+  const definition = {
+    key: fd.get('key') || '',
+    displayName: fd.get('displayName') || '',
+    description: fd.get('description') || '',
+    iconKey: fd.get('iconKey') || '',
+    iconPath: fd.get('iconPath') || '',
+    sortOrder: Number(fd.get('sortOrder') || 1000),
+    backendAssignable: form.elements.backendAssignable?.checked === true,
+    badgeAssignable: form.elements.badgeAssignable?.checked === true,
+    enabled: form.elements.enabled?.checked === true
+  }
+  try {
+    await upsertAdminRoleDefinition({ definition, reason: fd.get('reason') || '' })
+    state.adminData.team.roleEditorKey = ''
+    state.message = `Role definition ${definition.key} saved.`
+    await loadAdminSectionData('team', { silent: true })
+  } catch (error) {
+    state.adminData.team.roleRegistryError = error?.message || 'Could not save role definition.'
+  }
+  render()
+}
+
+async function removeRoleDefinition(key = '') {
+  if (!key) return
+  const reason = window.prompt(`Reason for deleting role definition "${key}"?`) || ''
+  if (!reason) return
+  try {
+    await deleteAdminRoleDefinition({ key, reason })
+    state.adminData.team.roleEditorKey = ''
+    state.message = `Role definition ${key} deleted.`
+    await loadAdminSectionData('team', { silent: true })
+  } catch (error) {
+    state.adminData.team.roleRegistryError = error?.message || 'Could not delete role definition.'
+  }
+  render()
 }
 
 function adminRoleOptions() {
@@ -6289,8 +6387,13 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
     },
     team: async () => {
       const detailUid = adminTeamDetailUid()
-      const result = await listAdminTeam({ limitCount: 50 })
+      const [result, registryResult] = await Promise.all([
+        listAdminTeam({ limitCount: 50 }),
+        listAdminRoleDefinitions()
+      ])
       state.adminData.team.items = result.team || []
+      state.adminData.team.roleDefinitions = registryResult.roles || []
+      state.adminData.team.roleRegistryError = ''
       if (detailUid) {
         const profileResult = await getAdminUserProfile({ uid: detailUid })
         state.adminData.team.profile = profileResult.user || null
@@ -9490,6 +9593,25 @@ app.querySelectorAll('[data-admin-call-end]').forEach((button) => {
   app.querySelector('[data-admin-role-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     submitRoleForm(event.currentTarget)
+  })
+  app.querySelector('[data-role-definition-new]')?.addEventListener('click', () => {
+    state.adminData.team.roleEditorKey = '__new__'
+    render()
+  })
+  app.querySelectorAll('[data-role-definition-edit]').forEach((button) => button.addEventListener('click', () => {
+    state.adminData.team.roleEditorKey = button.getAttribute('data-role-definition-edit') || ''
+    render()
+  }))
+  app.querySelector('[data-role-definition-close]')?.addEventListener('click', () => {
+    state.adminData.team.roleEditorKey = ''
+    render()
+  })
+  app.querySelector('[data-role-definition-form]')?.addEventListener('submit', (event) => {
+    event.preventDefault()
+    submitRoleDefinitionForm(event.currentTarget)
+  })
+  app.querySelector('[data-role-definition-delete]')?.addEventListener('click', (event) => {
+    removeRoleDefinition(event.currentTarget.getAttribute('data-role-definition-delete') || '')
   })
   app.querySelector('[data-support-threads-refresh]')?.addEventListener('click', (event) => {
     event.preventDefault()

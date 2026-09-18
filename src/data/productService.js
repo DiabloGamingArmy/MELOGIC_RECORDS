@@ -34,7 +34,7 @@ const ADMIN_STEP_UP_CALLABLES = new Set([
   'grantAdminProducts','repairAdminCheckoutOrder','reviewProductDecision','addAdminUserNote',
   'disableUserMfa','forcePasswordReset','revokeRecoveryCodes','setAdminUserRole','sendAdminAuthEmail',
   'sendAdminEmail','sendAdminSystemMessage','setTemporaryPassword','unverifyUserEmail',
-  'setUserSuspension','updateAdminAccountPermissions','updateReportDecision','updateAdminSettings',
+  'setUserSuspension','updateAdminAccountPermissions','upsertAdminRoleDefinition','deleteAdminRoleDefinition','updateReportDecision','updateAdminSettings',
   'uploadSellerAgreementMarkdown','adminHideProduct','adminUnhideProduct','adminRemoveProduct'
 ])
 
@@ -2033,6 +2033,27 @@ export async function listAdminTeam({ limitCount = 50 } = {}) {
   const callable = httpsCallable(functions, 'listAdminTeam')
   const result = await callable({ limit: limitCount })
   return result?.data || { ok: false, team: [] }
+}
+
+export async function listAdminRoleDefinitions() {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = httpsCallable(functions, 'listAdminRoleDefinitions')
+  const result = await callable({})
+  return result?.data || { ok: false, roles: [] }
+}
+
+export async function upsertAdminRoleDefinition({ definition = {}, reason = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = adminProtectedCallable('upsertAdminRoleDefinition')
+  const result = await callable({ definition, reason })
+  return result?.data || { ok: false, role: null }
+}
+
+export async function deleteAdminRoleDefinition({ key = '', reason = '' } = {}) {
+  if (!functions) throw new Error('Functions are not configured.')
+  const callable = adminProtectedCallable('deleteAdminRoleDefinition')
+  const result = await callable({ key, reason })
+  return result?.data || { ok: false, deleted: false }
 }
 
 export async function listActiveStaffPresence({ limitCount = 30 } = {}) {
