@@ -464,6 +464,11 @@ function primaryTabAnchorForEvent(event) {
   const current = resolveMobileSpaRoute()
   const destination = resolveMobileSpaRoute(new URL(anchor.href).pathname)
   if (!current || !PRIMARY_TAB_ROUTE_IDS.has(current.id) || !destination) return null
+
+  // melogic-inbox-subroute-runtime-ownership-v1
+  // /inbox/messages, /inbox/calls and /inbox/* activity routes are internal
+  // states of ONE persistent Inbox runtime view. The Inbox-local router owns
+  // same-view navigation; the primary-tab runtime must not claim/reactivate it.
   if (current.id === destination.id) return null
   return anchor
 }
@@ -483,6 +488,16 @@ async function handlePrimaryTabClick(event) {
 async function handleRuntimePopstate() {
   const route = resolveMobileSpaRoute()
   if (!route || !PRIMARY_TAB_ROUTE_IDS.has(route.id)) return
+
+  // melogic-inbox-subroute-runtime-ownership-v1
+  // A popstate inside the already-active Inbox belongs to inbox.js. Calling
+  // navigateMobileRuntimeUrl() here would reactivate the same persistent view
+  // after Inbox has already rendered its requested subroute.
+  if (route.id === 'inbox' && activeViewId === 'inbox') {
+    publish('inbox-local-popstate-owned', { pathname: normalizedPath() })
+    return
+  }
+
   const handled = await navigateMobileRuntimeUrl(location.href, {
     historyMode: 'none',
     source: 'primary-tab-popstate'
