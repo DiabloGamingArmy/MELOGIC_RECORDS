@@ -4304,7 +4304,19 @@ async function handleComposerSubmit(event) {
 
   state.composer.submitting = true
   state.composer.uploadProgress = state.composer.fileAttachments.length ? 0 : 100
-  render()
+  // melogic-mobile-community-publish-transition-v6
+  // Preserve the mounted mobile composer while publishing so its entrance animation cannot replay.
+  if (useNativeMobileCommunityComposer()) {
+    const composerLayer = app?.querySelector('[data-community-composer-layer]')
+    const submitButton = composerLayer?.querySelector('.community-mobile-composer-post')
+    if (submitButton) {
+      submitButton.disabled = true
+      submitButton.textContent = 'POSTING...'
+    }
+    composerLayer?.querySelector('[data-community-composer-form]')?.setAttribute('aria-busy', 'true')
+  } else {
+    render()
+  }
   let uploadedAttachments = []
   let postCreated = false
   try {
