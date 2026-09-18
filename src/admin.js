@@ -2646,8 +2646,6 @@ function roleDefinitionEditor(data = {}) {
 }
 
 async function submitRoleDefinitionForm(form) {
-  const transparentIconPath = String(form.querySelector('[name="transparentIconPath"]')?.value || '').trim()
-
   const fd = new FormData(form)
   const definition = {
     key: fd.get('key') || '',
@@ -2655,7 +2653,7 @@ async function submitRoleDefinitionForm(form) {
     description: fd.get('description') || '',
     iconKey: fd.get('iconKey') || '',
     iconPath: fd.get('iconPath') || '',
-    transparentIconPath,
+    transparentIconPath: String(fd.get('transparentIconPath') || '').trim(),
 
     sortOrder: Number(fd.get('sortOrder') || 1000),
     backendAssignable: form.elements.backendAssignable?.checked === true,

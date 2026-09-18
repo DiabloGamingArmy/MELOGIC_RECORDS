@@ -15,6 +15,7 @@ const SYSTEM_ROLE_DEFINITIONS = Object.freeze([
   key, roleName:key, displayName, description, iconKey:key,
   // melogic-badge-storage-preview-fix-v1
   iconPath:`assets/badges/${key}Badge.png`,
+  transparentIconPath:'',
   backendAssignable:true, badgeAssignable:true, system:true, protected:true,
   enabled:true, sortOrder
 })))
