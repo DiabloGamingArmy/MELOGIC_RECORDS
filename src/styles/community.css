@@ -4965,3 +4965,12 @@ color:#e8fff5!important;box-shadow:0 12px 34px rgba(0,0,0,.48)!important;opacity
 pointer-events:none!important;font-size:14px!important;font-weight:700!important;line-height:1.25!important;text-align:center!important;
 }}
 
+
+/* melogic-mobile-community-keyboard-toolbar-v7 */
+@media(max-width:760px){
+.community-mobile-composer-screen{top:var(--community-visual-viewport-top,0px)!important;bottom:auto!important;height:var(--community-visual-viewport-height,100dvh)!important;max-height:var(--community-visual-viewport-height,100dvh)!important;overflow:hidden!important}
+.community-mobile-composer{height:100%!important;max-height:100%!important;min-height:0!important}
+.community-mobile-composer-form{height:100%!important;min-height:0!important;max-height:100%!important;overflow:hidden!important}
+.community-mobile-composer-content{min-height:0!important;overflow:auto!important;overscroll-behavior:contain!important}
+.community-mobile-composer-bottom{position:relative!important;z-index:20!important;flex:none!important;padding-bottom:7px!important;background:#000!important}
+}

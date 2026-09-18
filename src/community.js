@@ -2028,6 +2028,8 @@ function updateCommunityComposerLayer() {
   document.documentElement.classList.toggle('community-mobile-overlay-open', mobileOverlayOpen)
   layer.innerHTML = renderComposerModal()
   bindCommunityComposerEvents(layer)
+  ensureCommunityComposerVisualViewportTracking()
+  syncCommunityComposerToVisualViewport()
 }
 
 function linkedProductMarkup(post) {
@@ -6571,6 +6573,30 @@ function updateMobileCommunityDestinationListDom(root = app) {
     ${visible.length < matches.length ? `<div class="community-mobile-destination-sentinel" aria-hidden="true"></div>` : ''}
   `
   bindCommunityDestinationResultEvents(scroll)
+}
+
+// melogic-mobile-community-keyboard-toolbar-v7
+let communityComposerVisualViewportReady = false
+
+function syncCommunityComposerToVisualViewport() {
+  const screen = app?.querySelector('[data-community-mobile-composer-screen]')
+  if (!(screen instanceof HTMLElement)) return
+  const viewport = window.visualViewport
+  if (!viewport) {
+    screen.style.removeProperty('--community-visual-viewport-top')
+    screen.style.removeProperty('--community-visual-viewport-height')
+    return
+  }
+  screen.style.setProperty('--community-visual-viewport-top', `${Math.max(0, viewport.offsetTop)}px`)
+  screen.style.setProperty('--community-visual-viewport-height', `${Math.max(1, viewport.height)}px`)
+}
+
+function ensureCommunityComposerVisualViewportTracking() {
+  if (communityComposerVisualViewportReady || !window.visualViewport) return
+  communityComposerVisualViewportReady = true
+  const sync = () => window.requestAnimationFrame(syncCommunityComposerToVisualViewport)
+  window.visualViewport.addEventListener('resize', sync, { passive: true })
+  window.visualViewport.addEventListener('scroll', sync, { passive: true })
 }
 
 function bindCommunityComposerEvents(root = app) {
