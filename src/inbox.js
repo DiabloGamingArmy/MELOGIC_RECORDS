@@ -11,6 +11,7 @@ import { isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { iconSvg } from './utils/icons'
 import { storage } from './firebase/storage'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 import { STORAGE_PATHS } from './config/storagePaths'
 import {
   INITIAL_MESSAGE_LIMIT,
@@ -57,7 +58,7 @@ import {
   setResonaMessageFeedback,
   updateThreadDetails
 } from './data/inboxService'
-import { searchProfilesByUsername } from './data/profileSearchService'
+import { getPublicProfileIdentityByUid, searchProfilesByUsername } from './data/profileSearchService'
 import {
   hideAccountEvent,
   markAccountEventRead,
@@ -102,6 +103,88 @@ import { detectPlatformCapabilities } from './platform/platformCapabilities'
 import { acceptProductGift, denyProductGift, listIncomingProductGifts } from './data/productGiftService'
 
 const app = document.querySelector('#app')
+
+// melogic-inbox-verified-identity-foundation-v1
+// Canonical verification authority: profiles/{uid}.badges[] via profileSearchService.
+// Inbox intentionally renders first, then hydrates verified state asynchronously.
+const inboxVerifiedIdentityCache = new Map()
+const inboxVerifiedIdentityRequests = new Map()
+let inboxMainVerifiedBadgeUrl = ''
+let inboxMainVerifiedBadgeRequest = null
+
+function inboxIdentityIsVerified(identity = {}) {
+  return Array.isArray(identity?.badges)
+    && identity.badges.some((badge) => String(badge || '').trim().toLowerCase() === 'verified')
+}
+
+export async function resolveInboxMainVerifiedBadgeUrl() {
+  if (inboxMainVerifiedBadgeUrl) return inboxMainVerifiedBadgeUrl
+  if (inboxMainVerifiedBadgeRequest) return inboxMainVerifiedBadgeRequest
+  inboxMainVerifiedBadgeRequest = getStorageAssetUrl('assets/badges/verifiedBadge.png', {
+    scopeKey: 'inbox-verified-identity',
+    type: 'badge',
+    warnOnFail: false
+  }).then((url) => {
+    inboxMainVerifiedBadgeUrl = String(url || '')
+    return inboxMainVerifiedBadgeUrl
+  }).catch(() => '').finally(() => {
+    inboxMainVerifiedBadgeRequest = null
+  })
+  return inboxMainVerifiedBadgeRequest
+}
+
+export async function getInboxCanonicalIdentity(uid = '') {
+  const cleanUid = String(uid || '').trim()
+  if (!cleanUid) return null
+  if (inboxVerifiedIdentityCache.has(cleanUid)) return inboxVerifiedIdentityCache.get(cleanUid)
+  if (inboxVerifiedIdentityRequests.has(cleanUid)) return inboxVerifiedIdentityRequests.get(cleanUid)
+  const request = getPublicProfileIdentityByUid(cleanUid)
+    .then((identity) => {
+      const normalized = identity || { uid: cleanUid, badges: [] }
+      inboxVerifiedIdentityCache.set(cleanUid, normalized)
+      return normalized
+    })
+    .catch(() => {
+      const fallback = { uid: cleanUid, badges: [] }
+      inboxVerifiedIdentityCache.set(cleanUid, fallback)
+      return fallback
+    })
+    .finally(() => inboxVerifiedIdentityRequests.delete(cleanUid))
+  inboxVerifiedIdentityRequests.set(cleanUid, request)
+  return request
+}
+
+export function inboxVerifiedBadgeMarkup(identity = {}, options = {}) {
+  if (!inboxIdentityIsVerified(identity) || !inboxMainVerifiedBadgeUrl) return ''
+  const className = ['inbox-verified-badge', options.className || ''].filter(Boolean).join(' ')
+  return `<img class="${className}" src="${escapeHtml(inboxMainVerifiedBadgeUrl)}" alt="Verified" title="Verified" loading="eager" decoding="async" />`
+}
+
+export async function hydrateInboxVerifiedIdentity(uid = '', root = document) {
+  const cleanUid = String(uid || '').trim()
+  if (!cleanUid || !root?.querySelectorAll) return null
+  const [identity] = await Promise.all([
+    getInboxCanonicalIdentity(cleanUid),
+    resolveInboxMainVerifiedBadgeUrl()
+  ])
+  if (!identity || !inboxIdentityIsVerified(identity)) return identity
+  root.querySelectorAll(`[data-inbox-identity-uid="${CSS.escape(cleanUid)}"]`).forEach((node) => {
+    if (node.querySelector('.inbox-verified-badge')) return
+    const nameTarget = node.matches('[data-inbox-identity-name]')
+      ? node
+      : node.querySelector('[data-inbox-identity-name]')
+    if (!nameTarget) return
+    nameTarget.insertAdjacentHTML('beforeend', inboxVerifiedBadgeMarkup(identity))
+  })
+  return identity
+}
+
+export async function hydrateInboxVerifiedIdentities(uids = [], root = document) {
+  const unique = [...new Set((Array.isArray(uids) ? uids : [uids]).map((uid) => String(uid || '').trim()).filter(Boolean))]
+  await resolveInboxMainVerifiedBadgeUrl()
+  return Promise.all(unique.map((uid) => hydrateInboxVerifiedIdentity(uid, root)))
+}
+
 // melogic-inbox-lifecycle-contract-v6a
 const inboxSurface = document.createElement('div')
 inboxSurface.dataset.melogicInboxSurface = 'true'
