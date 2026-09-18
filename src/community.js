@@ -436,23 +436,25 @@ function setupMobileCommunitySurfaceBehavior() {
 }
 
 /* melogic-community-mobile-interactions-patch3 */
+/* melogic-mobile-community-plus-direct-composer-v2b */
 function setupMobileCommunityShellActions() {
   if (document.documentElement.dataset.mobileCommunityActionsReady === 'true') return
   document.documentElement.dataset.mobileCommunityActionsReady = 'true'
+
+  // The mobile + is an in-place composer action, never a navigation action.
+  // Capture phase prevents an underlying /community/create anchor/router handler
+  // from winning before the Community module can open its native composer.
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null
     const createButton = target?.closest('[data-mobile-community-create]')
-    if (createButton) {
-      event.preventDefault()
-      const existing = document.querySelector('[data-community-create-post], [data-open-community-composer], .community-create-post-button')
-      if (existing instanceof HTMLElement && existing !== createButton) existing.click()
-      else {
-        state.composer.open = true
-        state.composer.error = ''
-        render()
-      }
-    }
-  })
+    if (!createButton) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    event.stopImmediatePropagation()
+
+    openCommunityComposer()
+  }, true)
 }
 
 function bindCommunityGlobalUiOnce() {
