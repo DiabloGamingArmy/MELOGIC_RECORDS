@@ -3090,8 +3090,13 @@ function accountPermissionsDialog() {
           </div>
           <button type="button" class="admin-icon-button" data-close-account-permissions title="Close">${iconSvg('x')}</button>
         </header>
-        ${dialog.loading ? '<article class="admin-empty-state">Loading account permissions...</article>' : `
-          ${dialog.error ? `<p class="admin-error">${escapeHtml(dialog.error)}</p>` : ''}
+        ${dialog.loading ? '<article class="admin-empty-state">Loading account permissions...</article>' : dialog.error || !dialog.data ? `
+          <!-- melogic-admin-permission-dialog-truthful-state-v2 -->
+          <article class="admin-empty-state">
+            <p class="admin-error">${escapeHtml(dialog.error || 'Account permissions could not be loaded.')}</p>
+            <p class="admin-muted">No permission controls are shown because their current values are unknown. Viewing permissions does not require an admin step-up; re-authentication is only required when saving changes.</p>
+          </article>
+        ` : `
           <form data-account-permissions-form>
             <div class="admin-permissions-grid">
               ${ACCOUNT_PERMISSION_GROUPS.map((group) => `
@@ -3111,7 +3116,7 @@ function accountPermissionsDialog() {
             </div>
             <label><span>Reason / note</span><textarea name="changeReason" required maxlength="1200" placeholder="Required audit note.">${escapeHtml(explicit.changeReason || '')}</textarea></label>
             <label><span>Optional expiration</span><input name="expiresAt" type="datetime-local" value="${escapeHtml((explicit.expiresAt || '').slice(0, 16))}" ${dialog.saving ? 'disabled' : ''} /></label>
-            <p class="admin-muted">Effective source: ${escapeHtml(effective.source || 'defaults')}${effective.updatedAt ? ` · Updated ${escapeHtml(formatDate(effective.updatedAt))}` : ''}</p>
+            <p class="admin-muted">Showing current effective values. Source: ${escapeHtml(effective.source || 'defaults')}${explicit.exists ? ' · Stored overrides exist' : ' · No stored overrides; defaults/eligibility are shown'}${effective.updatedAt ? ` · Updated ${escapeHtml(formatDate(effective.updatedAt))}` : ''}</p>
             <div class="admin-modal-actions">
               <button type="button" class="admin-secondary-button" data-close-account-permissions ${dialog.saving ? 'disabled' : ''}>Cancel</button>
               <button type="submit" class="admin-primary-link" ${dialog.saving ? 'disabled' : ''}>${dialog.saving ? 'Saving...' : 'Save Permissions'}</button>
