@@ -377,6 +377,11 @@
         "type": 301
       },
       {
+        "source": "/camera.html",
+        "destination": "/camera",
+        "type": 301
+      },
+      {
         "source": "/music.html",
         "destination": "/streaming",
         "type": 301
@@ -640,6 +645,10 @@
       {
         "source": "/home",
         "destination": "/index.html"
+      },
+      {
+        "source": "/camera",
+        "destination": "/camera.html"
       },
       {
         "source": "/streaming",
