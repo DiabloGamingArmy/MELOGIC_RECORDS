@@ -617,3 +617,13 @@ color:#fff!important;border:1px solid transparent!important;background:linear-gr
     padding-bottom: var(--mobile-safe-bottom) !important;
   }
 }
+
+/* melogic-mobile-community-destination-hardening-v5c */
+@media(max-width:760px){
+html.community-mobile-overlay-open{width:100%!important;max-width:100%!important;height:100dvh!important;max-height:100dvh!important;overflow:hidden!important;overscroll-behavior:none!important;touch-action:none!important}
+html.community-mobile-overlay-open body.is-community-page{position:fixed!important;inset:0!important;width:100%!important;height:100dvh!important;min-height:100dvh!important;max-height:100dvh!important;overflow:hidden!important;overscroll-behavior:none!important}
+html.community-mobile-overlay-open body.is-community-page .community-page{overflow:hidden!important;overscroll-behavior:none!important}
+html.community-mobile-overlay-open .community-mobile-destination-screen{touch-action:none!important}
+html.community-mobile-overlay-open .community-mobile-destination-scroll{touch-action:pan-y!important}
+html.community-mobile-overlay-open .community-mobile-destination-search,html.community-mobile-overlay-open .community-mobile-destination-search input,html.community-mobile-overlay-open .community-mobile-destination-row,html.community-mobile-overlay-open .community-mobile-destination-header button{touch-action:manipulation!important}
+}

@@ -1990,6 +1990,20 @@ function renderComposerLayer() {
   return `<div data-community-composer-layer>${renderComposerModal()}</div>`
 }
 
+// melogic-mobile-community-destination-hardening-v5c
+let communityMobileOverlayTouchGuardReady = false
+function ensureCommunityMobileOverlayTouchGuard() {
+  if (communityMobileOverlayTouchGuardReady) return
+  communityMobileOverlayTouchGuardReady = true
+  document.addEventListener('touchmove', (event) => {
+    if (!document.documentElement.classList.contains('community-mobile-overlay-open')) return
+    const target = event.target instanceof Element ? event.target : null
+    if (target?.closest('[data-community-destination-scroll], .community-mobile-composer-content, textarea, input, [data-mobile-composer-more-sheet]')) return
+    event.preventDefault()
+  }, { passive: false, capture: true })
+}
+ensureCommunityMobileOverlayTouchGuard()
+
 function updateCommunityComposerLayer() {
   const layer = app?.querySelector('[data-community-composer-layer]')
   if (!layer) {
@@ -1998,7 +2012,9 @@ function updateCommunityComposerLayer() {
   }
   document.body.classList.toggle('community-modal-open', communityModalIsOpen())
   document.body.classList.toggle('community-mobile-composer-open', Boolean(state.composer.open && state.currentUser && useNativeMobileCommunityComposer()))
-  document.body.classList.toggle('community-mobile-overlay-open', Boolean(useNativeMobileCommunityComposer() && (state.composer.open || state.composer.destinationPickerOpen)))
+  const mobileOverlayOpen = Boolean(useNativeMobileCommunityComposer() && (state.composer.open || state.composer.destinationPickerOpen))
+  document.body.classList.toggle('community-mobile-overlay-open', mobileOverlayOpen)
+  document.documentElement.classList.toggle('community-mobile-overlay-open', mobileOverlayOpen)
   layer.innerHTML = renderComposerModal()
   bindCommunityComposerEvents(layer)
 }
@@ -5152,6 +5168,7 @@ function openCommunityComposer() {
 
 function closeCommunityComposer() {
   communityMobileComposerFocusToken += 1
+  document.documentElement.classList.remove('community-mobile-overlay-open')
   if (composerHasDraft()) {
     if (!window.confirm('Discard draft?')) return
     clearComposerFileAttachments()
