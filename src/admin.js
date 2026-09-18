@@ -2646,6 +2646,8 @@ function roleDefinitionEditor(data = {}) {
 }
 
 async function submitRoleDefinitionForm(form) {
+  const transparentIconPath = String(form.querySelector('[name="transparentIconPath"]')?.value || '').trim()
+
   const fd = new FormData(form)
   const definition = {
     key: fd.get('key') || '',
@@ -2653,13 +2655,16 @@ async function submitRoleDefinitionForm(form) {
     description: fd.get('description') || '',
     iconKey: fd.get('iconKey') || '',
     iconPath: fd.get('iconPath') || '',
-    transparentIconPath: String(formData.get('transparentIconPath') || '').trim(),
+    transparentIconPath,
+
     sortOrder: Number(fd.get('sortOrder') || 1000),
     backendAssignable: form.elements.backendAssignable?.checked === true,
     badgeAssignable: form.elements.badgeAssignable?.checked === true,
     enabled: form.elements.enabled?.checked === true
   }
   try {
+    const approved = await performAdminStepUp('Save role / badge definition')
+    if (!approved) return
     await upsertAdminRoleDefinition({ definition, reason: fd.get('reason') || '' })
     state.adminData.team.roleEditorKey = ''
     state.message = `Role definition ${definition.key} saved.`

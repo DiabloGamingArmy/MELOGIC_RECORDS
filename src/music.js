@@ -685,6 +685,7 @@ streamingRuntimeProbe('music-module-loaded', { serviceWorkerControlled: Boolean(
 const streamingArtistIdentityCache = new Map()
 const streamingArtistIdentityRequests = new Map()
 let streamingVerifiedBadgeUrl = ''
+let streamingTransparentVerifiedBadgeUrl = ''
 
 void getStorageAssetUrl('assets/badges/verifiedBadge.png', {
   warnOnFail: false,
@@ -783,10 +784,23 @@ function streamingArtistIdentity(release = {}) {
   return streamingArtistIdentityCache.get(key) || null
 }
 
-function streamingVerifiedBadgeMarkup(identity = {}) {
-  streamingRuntimeProbe('badge-markup-called', { identityPresent: Boolean(identity && Object.keys(identity).length), verified: streamingIdentityIsVerified(identity), badgeUrlResolved: Boolean(streamingVerifiedBadgeUrl), uid: identity?.uid || '' })
-  return streamingIdentityIsVerified(identity) && streamingVerifiedBadgeUrl
-    ? `<img class="music-verified-badge" src="${escapeHtml(streamingVerifiedBadgeUrl)}" alt="Verified" title="Verified" loading="eager" decoding="async" />`
+function streamingVerifiedBadgeMarkup(identity = {}, { preferTransparent = false } = {}) {
+  const verified = streamingIdentityIsVerified(identity)
+  const regularUrl = String(streamingVerifiedBadgeUrl || '')
+  const transparentUrl = String(streamingTransparentVerifiedBadgeUrl || '')
+  const badgeUrl = preferTransparent && transparentUrl ? transparentUrl : regularUrl
+
+  streamingRuntimeProbe('badge-markup-called', {
+    identityPresent: Boolean(identity && Object.keys(identity).length),
+    verified,
+    badgeUrlResolved: Boolean(badgeUrl),
+    transparentPreferred: preferTransparent,
+    transparentResolved: Boolean(transparentUrl),
+    uid: identity?.uid || ''
+  })
+
+  return verified && badgeUrl
+    ? `<img class="music-verified-badge" src="${escapeHtml(badgeUrl)}" alt="Verified" title="Verified" loading="eager" decoding="async" />`
     : ''
 }
 
@@ -831,7 +845,7 @@ function streamingReleaseArtistNameMarkup(release = {}) {
   const identity = streamingArtistIdentity(release)
   publishStreamingIdentityDebug(release)
   const displayName = identity?.displayName || release.artistName || 'Melogic Creator'
-  return `<span class="music-artist-display-name">${escapeHtml(displayName)}${streamingVerifiedBadgeMarkup(identity)}</span>`
+  return `<span class="music-artist-display-name">${escapeHtml(displayName)}${streamingVerifiedBadgeMarkup(identity, { preferTransparent: true })}</span>`
 }
 
 function streamingReleaseArtistIdentityMarkup(release = {}) {
@@ -2322,6 +2336,16 @@ function attachLiveKitAudioDiagnostics(audio) {
             state: 'listening',
             tabId: state.nativeViewerSessionId
           }).catch(() => {})
+
+// melogic-small-transparent-verified-badge-v1
+void getStorageAssetUrl('assets/badges/verifiedBadgeTransparent.png', {
+  warnOnFail: false,
+  scopeKey: 'streaming-badges-transparent',
+  type: 'badge'
+}).then((url) => {
+  streamingTransparentVerifiedBadgeUrl = String(url || '')
+  if (streamingBootstrapped) rerender()
+}).catch(() => {})
         }
         updateLiveMediaSession(state.liveStream)
         updateLiveListenerControls()
