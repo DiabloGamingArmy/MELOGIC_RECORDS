@@ -545,235 +545,23 @@ const LAST_THREAD_STORAGE_KEY = 'melogic_inbox_last_thread_v1';
 
 // melogic-inbox-mobile-architecture-v1
 
-// melogic-inbox-category-anchor-touch-fix-v1
-;(function installInboxCategoryAnchorTouchFix(){
-  if(window.__melogicInboxCategoryAnchorTouchFixV1) return;
-  const touchMobile=window.matchMedia('(max-width: 760px)').matches &&
-    (window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints>0 || 'ontouchstart' in window);
-  if(!touchMobile) return;
-  window.__melogicInboxCategoryAnchorTouchFixV1=true;
-
-  const selector='[data-inbox-filter]';
-  const getControl=(target)=>{
-    const el=target instanceof Element ? target : target?.parentElement;
-    return el?.closest(selector)||null;
-  };
-  let tap=null;
-
-  document.addEventListener('touchstart',(event)=>{
-    if(event.touches.length!==1){tap=null;return;}
-    const control=getControl(event.target);
-    if(!control){tap=null;return;}
-    const t=event.touches[0];
-    tap={control,x:t.clientX,y:t.clientY,at:performance.now(),moved:false};
-  },{capture:true,passive:true});
-
-  document.addEventListener('touchmove',(event)=>{
-    if(!tap || event.touches.length!==1) return;
-    const t=event.touches[0];
-    if(Math.hypot(t.clientX-tap.x,t.clientY-tap.y)>10) tap.moved=true;
-  },{capture:true,passive:true});
-
-  document.addEventListener('touchcancel',()=>{tap=null},{capture:true,passive:true});
-
-  document.addEventListener('touchend',(event)=>{
-    const current=tap; tap=null;
-    if(!current || current.moved || event.changedTouches.length!==1) return;
-    const elapsed=performance.now()-current.at;
-    if(elapsed>500) return; // preserve Safari long-press/context-menu behavior
-    const t=event.changedTouches[0];
-    if(Math.hypot(t.clientX-current.x,t.clientY-current.y)>10) return;
-    const control=getControl(document.elementFromPoint(t.clientX,t.clientY)) ||
-      (current.control.isConnected ? current.control : null);
-    if(!control) return;
-    const href=control.getAttribute('href') || control.dataset.inboxPath || '';
-    if(!href) return;
-    window.location.assign(new URL(href,window.location.href).href);
-  },{capture:true,passive:true});
-})();
-
+// melogic-inbox-mobile-viewport-emergency-repair-v1
 const INBOX_MOBILE_BREAKPOINT_PX = 760
 let mobileInboxListScrollTop = 0
 function isMobileInboxViewport() {
   return window.matchMedia(`(max-width: ${INBOX_MOBILE_BREAKPOINT_PX}px)`).matches
 }
 
-// melogic-inbox-top-tabs-touch-fix-v2
-function installInboxRealTouchControls() {
-  if (window.__melogicInboxTopTabsTouchFixV2) return
-  const realTouch = window.matchMedia('(max-width: 760px)').matches
-    && (window.matchMedia('(pointer: coarse)').matches
-      || navigator.maxTouchPoints > 0
-      || 'ontouchstart' in window)
-  if (!realTouch) return
-  window.__melogicInboxTopTabsTouchFixV2 = true
-
-  const selector = [
-    '[data-inbox-filter]',
-    '[data-select-thread-id]',
-    '[data-thread-action-trigger]',
-    '[data-thread-menu-trigger]',
-    '[data-thread-actions-trigger]'
-  ].join(',')
-
-  let tap = null
-  let syntheticTarget = null
-  let syntheticAt = 0
-
-  const controlFor = (target) => {
-    const element = target instanceof Element ? target : target?.parentElement
-    return element?.closest(selector) || null
-  }
-
-  document.addEventListener('touchstart', (event) => {
-    if (event.touches.length !== 1) { tap = null; return }
-    const control = controlFor(event.target)
-    if (!control) { tap = null; return }
-    const touch = event.touches[0]
-    tap = { control, x: touch.clientX, y: touch.clientY, at: performance.now(), moved: false }
-  }, { capture: true, passive: true })
-
-  document.addEventListener('touchmove', (event) => {
-    if (!tap || event.touches.length !== 1) return
-    const touch = event.touches[0]
-    if (Math.hypot(touch.clientX - tap.x, touch.clientY - tap.y) > 12) tap.moved = true
-  }, { capture: true, passive: true })
-
-  document.addEventListener('touchcancel', () => { tap = null }, { capture: true, passive: true })
-
-  document.addEventListener('touchend', (event) => {
-    const current = tap
-    tap = null
-    if (!current || current.moved || event.changedTouches.length !== 1) return
-    if (performance.now() - current.at > 900) return
-    const touch = event.changedTouches[0]
-    if (Math.hypot(touch.clientX - current.x, touch.clientY - current.y) > 12) return
-
-    // Re-resolve after realtime Inbox renders may have replaced the start node.
-    const releaseControl = controlFor(document.elementFromPoint(touch.clientX, touch.clientY))
-    const control = releaseControl || (current.control.isConnected ? current.control : null)
-    if (!control || control.disabled || control.getAttribute('aria-disabled') === 'true') return
-
-    syntheticTarget = control
-    syntheticAt = performance.now()
-
-    // Inbox top categories are re-rendered controls. On real touch, invoke
-    // the same route transition directly instead of relying on WebKit's
-    // compatibility click surviving the render lifecycle.
-    if (control.matches('[data-inbox-filter]')) {
-      const nextFilter = control.dataset.inboxFilter || 'Messages'
-      const nextPath = control.dataset.inboxPath || ROUTES.inboxMessages
-      if (nextFilter !== 'Messages' && activeTypingThreadId) {
-        clearTypingForThread(activeTypingThreadId)
-      }
-      navigateInbox(nextPath)
-      return
-    }
-
-    control.click()
-  }, { capture: true, passive: true })
-
-  document.addEventListener('click', (event) => {
-    if (!event.isTrusted || !syntheticTarget) return
-    const control = controlFor(event.target)
-    const elapsed = performance.now() - syntheticAt
-    if (elapsed <= 900 && control === syntheticTarget) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      syntheticTarget = null
-      syntheticAt = 0
-      return
-    }
-    if (elapsed > 900) {
-      syntheticTarget = null
-      syntheticAt = 0
-    }
-  }, { capture: true })
-}
-
-installInboxRealTouchControls()
-
-
-// melogic-inbox-real-touch-controls-v1
-function installInboxTopTabsRealTouchControls() {
-  if (window.__melogicInboxRealTouchControlsV1) return
-  const realTouch = window.matchMedia('(max-width: 760px)').matches
-    && (window.matchMedia('(pointer: coarse)').matches
-      || navigator.maxTouchPoints > 0
-      || 'ontouchstart' in window)
-  if (!realTouch) return
-  window.__melogicInboxRealTouchControlsV1 = true
-
-  const selector = [
-    '[data-inbox-filter]',
-    '[data-select-thread-id]',
-    '[data-thread-action-trigger]',
-    '[data-thread-menu-trigger]',
-    '[data-thread-actions-trigger]'
-  ].join(',')
-
-  let tap = null
-  let syntheticTarget = null
-  let syntheticAt = 0
-
-  const controlFor = (target) => {
-    const element = target instanceof Element ? target : target?.parentElement
-    return element?.closest(selector) || null
-  }
-
-  document.addEventListener('touchstart', (event) => {
-    if (event.touches.length !== 1) { tap = null; return }
-    const control = controlFor(event.target)
-    if (!control) { tap = null; return }
-    const touch = event.touches[0]
-    tap = { control, x: touch.clientX, y: touch.clientY, at: performance.now(), moved: false }
-  }, { capture: true, passive: true })
-
-  document.addEventListener('touchmove', (event) => {
-    if (!tap || event.touches.length !== 1) return
-    const touch = event.touches[0]
-    if (Math.hypot(touch.clientX - tap.x, touch.clientY - tap.y) > 12) tap.moved = true
-  }, { capture: true, passive: true })
-
-  document.addEventListener('touchcancel', () => { tap = null }, { capture: true, passive: true })
-
-  document.addEventListener('touchend', (event) => {
-    const current = tap
-    tap = null
-    if (!current || current.moved || event.changedTouches.length !== 1) return
-    if (performance.now() - current.at > 900) return
-    const touch = event.changedTouches[0]
-    if (Math.hypot(touch.clientX - current.x, touch.clientY - current.y) > 12) return
-
-    // Re-resolve after realtime Inbox renders may have replaced the start node.
-    const releaseControl = controlFor(document.elementFromPoint(touch.clientX, touch.clientY))
-    const control = releaseControl || (current.control.isConnected ? current.control : null)
-    if (!control || control.disabled || control.getAttribute('aria-disabled') === 'true') return
-
-    syntheticTarget = control
-    syntheticAt = performance.now()
-    control.click()
-  }, { capture: true, passive: true })
-
-  document.addEventListener('click', (event) => {
-    if (!event.isTrusted || !syntheticTarget) return
-    const control = controlFor(event.target)
-    const elapsed = performance.now() - syntheticAt
-    if (elapsed <= 900 && control === syntheticTarget) {
-      event.preventDefault()
-      event.stopImmediatePropagation()
-      syntheticTarget = null
-      syntheticAt = 0
-      return
-    }
-    if (elapsed > 900) {
-      syntheticTarget = null
-      syntheticAt = 0
-    }
-  }, { capture: true })
-}
-
-installInboxTopTabsRealTouchControls()
+// melogic-inbox-mobile-nav-single-owner-v2
+// Removed three overlapping legacy touch shims. They predated the persistent
+// Inbox SPA lifecycle and could make one physical tap execute two navigation
+// models. The category shim used location.assign(), causing a hard reload after
+// the correct local render.
+//
+// Mobile Inbox navigation now has one owner: normal click activation is
+// intercepted by installInboxSpaLifecycle() and routed through navigateInbox().
+// Non-Inbox controls, desktop behavior, data subscriptions and renderers remain
+// untouched.
 
 function captureMobileInboxListScroll() {
   const list = inboxRoot?.querySelector('.inbox-thread-list')
@@ -4671,10 +4459,7 @@ function getFilterContentMarkup(filterName) {
       .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
     return `
       <section class="activity-panel">
-        <header class="panel-header activity-header">
-          <h3>System</h3>
-          <p>Account and product notifications</p>
-        </header>
+        
         <div class="system-filter-row">
           ${filterOptions.map((option) => `<button type="button" class="inbox-filter ${appState.systemFilter === option.key ? 'is-active' : ''}" data-system-filter="${option.key}">${option.label}</button>`).join('')}
         </div>
@@ -6635,6 +6420,24 @@ function releaseInboxComposerViewportLock() {
 }
 
 function bindSharedEvents(scope = inboxRoot) {
+  // melogic-inbox-mobile-thread-open-v1
+  // Mobile thread rows are replaced by persistent-surface renders. Use one
+  // delegated click owner on inboxRoot so a row remains actionable even if its
+  // per-render listener was lost/replaced. Desktop keeps the existing binding.
+  if (scope === inboxRoot && !inboxRoot.dataset.mobileThreadOpenDelegated) {
+    inboxRoot.dataset.mobileThreadOpenDelegated = 'true'
+    inboxRoot.addEventListener('click', (event) => {
+      if (!isMobileInboxViewport() || appState.activeFilter !== 'Messages') return
+      const button = event.target.closest?.('[data-select-thread-id]')
+      if (!button || !inboxRoot.contains(button)) return
+      event.preventDefault()
+      event.stopPropagation()
+      const threadId = button.getAttribute('data-select-thread-id') || ''
+      if (!threadId) return
+      void selectThread(threadId)
+    })
+  }
+
   scope.querySelectorAll('[data-mobile-inbox-back]').forEach((button) => {
     button.addEventListener('click', () => {
       if (!isMobileInboxViewport()) return
@@ -6755,6 +6558,7 @@ function bindSharedEvents(scope = inboxRoot) {
   })
 
   scope.querySelectorAll('[data-select-thread-id]').forEach((button) => {
+    if (isMobileInboxViewport()) return
     button.addEventListener('click', async () => {
       const threadId = button.getAttribute('data-select-thread-id') || ''
       await selectThread(threadId)
