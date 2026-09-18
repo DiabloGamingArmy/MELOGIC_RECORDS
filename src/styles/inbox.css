@@ -5328,4 +5328,90 @@ body.is-inbox-page .site-footer {
   }
 }
 
-/* melogic-inbox-mobile-renderer-bubble-sizing-v36 */
+/* melogic-inbox-message-cluster-definite-width-v37 */
+/*
+   The cluster body is the definite-width containing block.
+   Only the actual text bubble shrink-wraps to content.
+   This removes the circular intrinsic sizing dependency.
+*/
+
+/* Desktop + shared conversation geometry. */
+body.is-inbox-page .message-cluster-body {
+  width: min(72%, 620px) !important;
+  max-width: min(72%, 620px) !important;
+  min-width: 0 !important;
+  flex: 0 0 auto !important;
+}
+
+body.is-inbox-page .message-bubble-stack {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+body.is-inbox-page .message-bubble:not(.has-media) {
+  width: max-content !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+body.is-inbox-page .message-bubble:not(.has-media) > p {
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  white-space: pre-wrap !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+}
+
+body.is-inbox-page .message-cluster.is-self .message-bubble:not(.has-media) {
+  align-self: flex-end !important;
+}
+
+body.is-inbox-page .message-cluster.is-other .message-bubble:not(.has-media) {
+  align-self: flex-start !important;
+}
+
+body.is-inbox-page .cluster-sender,
+body.is-inbox-page .cluster-sender[data-inbox-identity-name] {
+  color: #fff !important;
+}
+
+/* Mobile renderer: the invisible body gets a real available width. */
+@media (max-width: 760px) {
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster-body {
+    width: 82% !important;
+    max-width: 82% !important;
+    min-width: 0 !important;
+    flex: 0 0 auto !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble-stack {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble:not(.has-media) {
+    width: max-content !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-bubble:not(.has-media) > p {
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    white-space: pre-wrap !important;
+    word-break: normal !important;
+    overflow-wrap: break-word !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-self .message-bubble:not(.has-media) {
+    align-self: flex-end !important;
+  }
+
+  body.is-inbox-page .inbox-mobile-conversation-view .message-cluster.is-other .message-bubble:not(.has-media) {
+    align-self: flex-start !important;
+  }
+}
