@@ -668,6 +668,19 @@ function renderArtistArtwork(artist) {
   return `<div class="music-artist-art music-artist-art-fallback" aria-hidden="true">${escapeHtml(String(artist.artistName || 'A').slice(0, 1).toUpperCase())}</div>`
 }
 
+// melogic-streaming-runtime-truth-probe-v7
+const STREAMING_RUNTIME_PROBE_VERSION = 'v7-2026-09-18'
+function streamingRuntimeProbe(stage, detail = {}) {
+  try {
+    const trace = Array.isArray(globalThis.__MELOGIC_STREAMING_RUNTIME_TRACE__) ? globalThis.__MELOGIC_STREAMING_RUNTIME_TRACE__ : []
+    trace.push({ at: new Date().toISOString(), ms: Math.round(performance?.now?.() || 0), version: STREAMING_RUNTIME_PROBE_VERSION, href: location.href, origin: location.origin, stage, ...detail })
+    if (trace.length > 250) trace.splice(0, trace.length - 250)
+    globalThis.__MELOGIC_STREAMING_RUNTIME_TRACE__ = trace
+  } catch {}
+}
+globalThis.__MELOGIC_STREAMING_BUILD__ = STREAMING_RUNTIME_PROBE_VERSION
+streamingRuntimeProbe('music-module-loaded', { serviceWorkerControlled: Boolean(navigator.serviceWorker?.controller), serviceWorkerScript: navigator.serviceWorker?.controller?.scriptURL || '' })
+
 // melogic-streaming-verified-identity-v1
 const streamingArtistIdentityCache = new Map()
 const streamingArtistIdentityRequests = new Map()
@@ -677,18 +690,20 @@ void getStorageAssetUrl('assets/badges/verifiedBadge.png', {
   warnOnFail: false,
   scopeKey: 'streaming-badges',
   type: 'badge'
-}).then((url) => {
+ }).then((url) => {
   streamingVerifiedBadgeUrl = String(url || '')
+  streamingRuntimeProbe('badge-url-resolved', { resolved: Boolean(streamingVerifiedBadgeUrl), url: streamingVerifiedBadgeUrl })
   if (streamingBootstrapped) render()
-}).catch(() => {})
+}).catch((error) => streamingRuntimeProbe('badge-url-error', { message: String(error?.message || error || '') }))
 
 // melogic-streaming-shared-identity-subscription-v2
 globalThis.addEventListener?.('melogic:public-profile-identity', (event) => {
   const uid = String(event?.detail?.uid || '').trim()
   const identity = event?.detail?.identity || null
   if (!uid || !identity) return
+  streamingRuntimeProbe('shared-identity-event', { uid, displayName: identity?.displayName || '', username: identity?.username || '', badges: identity?.badges || [] })
   streamingArtistIdentityCache.set(`uid:${uid}`, identity)
-  if (streamingBootstrapped) render()
+  commitStreamingIdentityUpdate()
 })
 
 function streamingIdentityIsVerified(identity = {}) {
@@ -702,18 +717,45 @@ function streamingArtistIdentityKey(release = {}) {
   return artistName ? `name:${artistName}` : ''
 }
 
+// melogic-streaming-identity-commit-v8-1
+let streamingIdentityCommitQueued = false
+function commitStreamingIdentityUpdate() {
+  mobileStreamingRuntimeDirty = true
+  if (streamingIdentityCommitQueued) return
+  streamingIdentityCommitQueued = true
+  queueMicrotask(() => {
+    requestAnimationFrame(() => {
+      streamingIdentityCommitQueued = false
+      if (!streamingBootstrapped) return
+      if (streamingBackgroundBoot || !mobileStreamingRuntimeActive) {
+        mobileStreamingRuntimeDirty = true
+        return
+      }
+      rerender()
+    })
+  })
+}
+
 function ensureStreamingArtistIdentity(release = {}) {
   const uid = String(release.artistUid || '').trim()
   const artistName = String(release.artistName || '').trim()
   const key = streamingArtistIdentityKey(release)
-  if (!key || streamingArtistIdentityCache.has(key) || streamingArtistIdentityRequests.has(key)) return
+  if (!key || streamingArtistIdentityCache.has(key) || streamingArtistIdentityRequests.has(key)) {
+    streamingRuntimeProbe('identity-ensure-skipped', { key, uid, cacheHasKey: streamingArtistIdentityCache.has(key), requestPending: streamingArtistIdentityRequests.has(key) })
+    return
+  }
+  streamingRuntimeProbe('identity-lookup-start', { key, uid, artistName })
   const lookup = uid
     ? getPublicProfileIdentityByUid(uid)
     : getPublicProfileIdentityByArtistName(artistName)
   const request = lookup.then((identity) => {
+    streamingRuntimeProbe('identity-lookup-resolved', { key, uid, found: Boolean(identity), displayName: identity?.displayName || '', username: identity?.username || '', badges: identity?.badges || [] })
     streamingArtistIdentityCache.set(key, identity || null)
-    if (streamingBootstrapped) render()
-  }).catch(() => streamingArtistIdentityCache.set(key, null))
+    commitStreamingIdentityUpdate()
+  }).catch((error) => {
+    streamingRuntimeProbe('identity-lookup-error', { key, uid, message: String(error?.message || error || '') })
+    streamingArtistIdentityCache.set(key, null)
+  })
     .finally(() => streamingArtistIdentityRequests.delete(key))
   streamingArtistIdentityRequests.set(key, request)
 }
@@ -722,6 +764,7 @@ function streamingArtistIdentity(release = {}) {
   const uid = String(release.artistUid || '').trim()
   const key = streamingArtistIdentityKey(release)
   if (!key) return null
+  streamingRuntimeProbe('identity-consumer-called', { key, uid, title: release?.title || '', releaseId: release?.id || '' })
 
   // melogic-streaming-shared-identity-consumer-v1
   // UID-backed releases should synchronously consume any identity already
@@ -729,9 +772,11 @@ function streamingArtistIdentity(release = {}) {
   if (uid) {
     const sharedIdentity = getCachedPublicProfileIdentityByUid(uid)
     if (sharedIdentity) {
+      streamingRuntimeProbe('identity-shared-cache-hit', { key, uid, displayName: sharedIdentity?.displayName || '', username: sharedIdentity?.username || '', badges: sharedIdentity?.badges || [] })
       streamingArtistIdentityCache.set(key, sharedIdentity)
       return sharedIdentity
     }
+    streamingRuntimeProbe('identity-shared-cache-miss', { key, uid })
   }
 
   ensureStreamingArtistIdentity(release)
@@ -739,6 +784,7 @@ function streamingArtistIdentity(release = {}) {
 }
 
 function streamingVerifiedBadgeMarkup(identity = {}) {
+  streamingRuntimeProbe('badge-markup-called', { identityPresent: Boolean(identity && Object.keys(identity).length), verified: streamingIdentityIsVerified(identity), badgeUrlResolved: Boolean(streamingVerifiedBadgeUrl), uid: identity?.uid || '' })
   return streamingIdentityIsVerified(identity) && streamingVerifiedBadgeUrl
     ? `<img class="music-verified-badge" src="${escapeHtml(streamingVerifiedBadgeUrl)}" alt="Verified" title="Verified" loading="eager" decoding="async" />`
     : ''

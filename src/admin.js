@@ -2626,6 +2626,12 @@ function roleDefinitionEditor(data = {}) {
         <label class="is-wide"><span>Description</span><textarea name="description" maxlength="600">${escapeHtml(role.description || '')}</textarea></label>
         <label><span>Badge Icon Key</span><input name="iconKey" value="${escapeHtml(role.iconKey || '')}" maxlength="120" /></label>
         <label><span>Badge Icon Path</span><input name="iconPath" value="${escapeHtml(role.iconPath || '')}" maxlength="500" placeholder="assets/badges/example.svg" /></label>
+              <!-- melogic-transparent-badge-icon-path-v1 -->
+              <label class="is-wide">
+                <span>Transparent Badge Icon Path</span>
+                <input name="transparentIconPath" value="${escapeHtml(role.transparentIconPath || '')}" maxlength="500" placeholder="assets/badges/verifiedBadgeTransparent.png" />
+                <small>Optional. Mostly-white/transparent badge asset for extremely small UI placements. Leave blank to use the regular badge icon.</small>
+              </label>
         <label><span>Sort Order</span><input name="sortOrder" type="number" value="${escapeHtml(role.sortOrder ?? 1000)}" /></label>
         <label class="admin-role-check"><input name="backendAssignable" type="checkbox" ${role.backendAssignable !== false ? 'checked' : ''}/><span>Backend role assignable</span></label>
         <label class="admin-role-check"><input name="badgeAssignable" type="checkbox" ${role.badgeAssignable !== false ? 'checked' : ''}/><span>Public badge assignable</span></label>
@@ -2647,6 +2653,7 @@ async function submitRoleDefinitionForm(form) {
     description: fd.get('description') || '',
     iconKey: fd.get('iconKey') || '',
     iconPath: fd.get('iconPath') || '',
+    transparentIconPath: String(formData.get('transparentIconPath') || '').trim(),
     sortOrder: Number(fd.get('sortOrder') || 1000),
     backendAssignable: form.elements.backendAssignable?.checked === true,
     badgeAssignable: form.elements.badgeAssignable?.checked === true,

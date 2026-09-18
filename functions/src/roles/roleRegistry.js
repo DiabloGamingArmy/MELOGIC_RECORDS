@@ -34,6 +34,8 @@ function serializeRoleDefinition(key='',raw={}){
     description:String(raw.description||'').trim().slice(0,600),
     iconKey:String(raw.iconKey||cleanKey).trim().slice(0,120),
     iconPath:String(raw.iconPath||'').trim().slice(0,500),
+    // melogic-transparent-badge-icon-path-v1
+    transparentIconPath:String(raw.transparentIconPath||'').trim().slice(0,500),
     backendAssignable:raw.backendAssignable===true, badgeAssignable:raw.badgeAssignable===true,
     system:raw.system===true, protected:raw.protected===true, enabled:raw.enabled!==false,
     sortOrder:Number.isFinite(Number(raw.sortOrder))?Number(raw.sortOrder):1000
