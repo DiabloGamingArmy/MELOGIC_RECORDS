@@ -5862,8 +5862,20 @@ function getInboxMobileRouteHeaderMarkup(filterName) {
 }
 
 function renderActivityLayout(filterName) {
+  // melogic-inbox-desktop-secondary-structural-v3
+  if (!isMobileInboxViewport()) {
+    return `
+      <div class="inbox-layout inbox-layout-activity inbox-desktop-secondary-layout" data-inbox-desktop-secondary="${escapeHtml(String(filterName || '').toLowerCase())}">
+        <aside class="inbox-sidebar">${getMessagesSidebarMarkup()}</aside>
+        <section class="inbox-main-panel inbox-main-panel-full inbox-desktop-secondary-content">
+          ${appState.notificationActionMessage ? `<div class="notification-action-feedback" role="status">${escapeHtml(appState.notificationActionMessage)}</div>` : ''}
+          ${getFilterContentMarkup(filterName)}
+        </section>
+      </div>
+    `
+  }
+
   // melogic-inbox-shared-mobile-shell-v22
-  // Calls/Activity use the same proven mobile shell as Messages.
   return `
     <div class="inbox-layout inbox-layout-activity inbox-layout-messages inbox-mobile-list-view" data-mobile-inbox-view="list" data-inbox-shared-mobile-shell="${escapeHtml(String(filterName || '').toLowerCase())}">
       <section class="inbox-thread-panel inbox-shared-mobile-route-panel">
