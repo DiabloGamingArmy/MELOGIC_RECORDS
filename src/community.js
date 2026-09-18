@@ -1852,10 +1852,33 @@ function renderNativeMobileComposerShell() {
             </div>
           </div>
 
+          ${renderComposerAttachments()}
+          ${renderComposerProductPicker()}
+          ${renderComposerMusicPicker()}
+          ${renderComposerStagePicker()}
+          ${renderComposerStudioPicker()}
+          ${renderComposerIntentFields()}
           <div class="community-mobile-composer-bottom">
+            <div class="community-mobile-composer-tools" aria-label="Add to post">
+              <button type="button" data-open-post-attachment-picker aria-label="Add photo, video, or file" title="Photo, video, or file">${iconSvg('image')}</button>
+              <button type="button" data-open-post-attachment-picker aria-label="Add document" title="Document">${iconSvg('file')}</button>
+              <button type="button" data-open-music-picker aria-label="Add music" title="Music">${iconSvg('music')}</button>
+              <button type="button" data-toggle-emoji-panel aria-label="Add emoji" title="Emoji">${iconSvg('smile')}</button>
+              <button type="button" data-mobile-composer-more-actions aria-label="More post options" title="More options">&#8226;&#8226;&#8226;</button>
+            </div>
+            <input class="community-hidden-file-input" type="file" multiple hidden data-post-attachment-input accept="image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/webm,audio/mp4,audio/aac,audio/ogg,application/pdf,text/plain,application/zip,application/x-zip-compressed,application/json" />
+            ${renderEmojiPanel()}
+            <div class="community-mobile-composer-more-sheet" data-mobile-composer-more-sheet hidden>
+              <button type="button" data-open-product-picker>${iconSvg('package')}<span>Add product</span></button>
+              <button type="button" data-open-stage-picker>${iconSvg('cube')}<span>Add Stage Plan</span></button>
+              <button type="button" data-open-studio-picker>${iconSvg('music')}<span>Add Studio project</span></button>
+              <button type="button" data-set-composer-intent="feedback_request">${iconSvg('messageCircle')}<span>Request feedback</span></button>
+              <button type="button" data-set-composer-intent="collaboration_request">${iconSvg('user')}<span>Find collaborators</span></button>
+            </div>
             <span class="community-mobile-composer-count">${Math.max(0, 2000 - state.composer.body.length)}</span>
             ${state.composer.error ? `<p class="community-error">${escapeHtml(state.composer.error)}</p>` : ''}
           </div>
+          <!-- melogic-mobile-community-composer-attachments-v3 -->
         </form>
         ${renderCommunityDestinationPickerModal()}
       </section>
@@ -6457,9 +6480,14 @@ function bindCommunityComposerEvents(root = app) {
     updateComposerFromForm()
     openStudioPicker()
   })
-  root?.querySelector('[data-open-post-attachment-picker]')?.addEventListener('click', () => {
+  root?.querySelectorAll('[data-open-post-attachment-picker]').forEach((button) => button.addEventListener('click', () => {
     updateComposerFromForm()
     root.querySelector('[data-post-attachment-input]')?.click()
+  }))
+  root?.querySelector('[data-mobile-composer-more-actions]')?.addEventListener('click', () => {
+    updateComposerFromForm()
+    const sheet = root.querySelector('[data-mobile-composer-more-sheet]')
+    if (sheet) sheet.hidden = !sheet.hidden
   })
   root?.querySelector('[data-post-attachment-input]')?.addEventListener('change', async (event) => {
     await addComposerFiles(event.target.files)
