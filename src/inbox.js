@@ -6452,11 +6452,32 @@ function bindSharedEvents(scope = inboxRoot) {
   scope.querySelectorAll('[data-mobile-inbox-back]').forEach((button) => {
     button.addEventListener('click', () => {
       if (!isMobileInboxViewport()) return
-      if (history.state?.mobileInboxConversation) return history.back()
+
+      // melogic-inbox-conversation-exit-ownership-v1
+      // The conversation back button is an Inbox-local state transition, NOT
+      // browser history navigation. history.back() can cross the persistent
+      // primary-tab boundary (for example back into Community) while Inbox
+      // chrome/state remains active. Collapse the conversation in-place and
+      // replace only the current Inbox history entry.
       delete document.body.dataset.mobileInboxExplicitConversation
+      document.body.classList.remove('is-inbox-mobile-conversation-open')
       appState.selectedThreadId = ''
       messageScrollController.detach()
+
+      const state = history.state && typeof history.state === 'object'
+        ? { ...history.state }
+        : {}
+      delete state.mobileInboxConversation
+      state.inbox = true
+      state.melogicMobileSpa = true
+      state.routeId = 'inbox'
+      state.pathname = ROUTES.inboxMessages
+      history.replaceState(state, '', inboxRouteWithCurrentSearch(ROUTES.inboxMessages))
+
+      applyInboxRoute(parseInboxRoute(ROUTES.inboxMessages))
       renderSignedInState()
+      markInboxRouteRendered()
+      restoreMobileInboxListScroll()
     })
   })
   scope.querySelectorAll('[data-inbox-filter]').forEach((control) => {
@@ -8274,6 +8295,11 @@ window.addEventListener('pagehide', () => {
   if (activeTypingThreadId) clearTypingForThread(activeTypingThreadId)
 })
 window.addEventListener('popstate', (event) => {
+  // melogic-inbox-conversation-exit-ownership-v1
+  // This listener survives while the persistent Inbox surface is parked.
+  // Never let it process Community/Profile/Streaming/etc. history entries.
+  if (!/^\/inbox(?:\/|$)/.test(window.location.pathname)) return
+
   applyInboxRoute(parseInboxRoute())
   if (isMobileInboxViewport() && appState.activeFilter === 'Messages') {
     const threadId = event.state?.mobileInboxConversation || ''
