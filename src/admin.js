@@ -3169,6 +3169,58 @@ function permissionToggle({ name, label, values, defaultValues, prefix, disabled
   `
 }
 
+// melogic-admin-role-badge-list-v1
+function accountRoleBadgeAssignmentList(data = {}, disabled = false) {
+  const definitions = Array.isArray(data.roleDefinitions)
+    ? data.roleDefinitions.filter((item) => item && item.enabled !== false)
+    : []
+  const selectedRoles = new Set(Array.isArray(data.accountRoles) ? data.accountRoles : [])
+  const selectedBadges = new Set(Array.isArray(data.profileBadges) ? data.profileBadges : [])
+
+  if (!definitions.length) {
+    return '<p class="admin-muted">No enabled role definitions are available.</p>'
+  }
+
+  return `
+    <div class="admin-role-badge-list" role="group" aria-label="Role and badge assignments">
+      <div class="admin-role-badge-list-head" aria-hidden="true">
+        <span>Definition</span>
+        <span>Badge</span>
+        <span>Role / Permission</span>
+      </div>
+      ${definitions.map((definition) => {
+        const key = String(definition.key || definition.roleName || '').trim()
+        if (!key) return ''
+        const badgeAllowed = definition.badgeAssignable === true
+        const roleAllowed = definition.backendAssignable === true
+        return `
+          <div class="admin-role-badge-row">
+            <div class="admin-role-badge-identity">
+              ${definition.iconPath ? `<span class="admin-role-badge-icon"><img src="/${escapeHtml(String(definition.iconPath).replace(/^\\/+/, ''))}" alt="" onerror="this.style.display='none'" /></span>` : ''}
+              <span>
+                <strong>${escapeHtml(definition.displayName || humanLabel(key))}</strong>
+                <small>${escapeHtml(key)}</small>
+              </span>
+            </div>
+            <label class="admin-role-badge-choice ${badgeAllowed ? '' : 'is-unavailable'}" title="${badgeAllowed ? `Show ${definition.displayName || key} as a public badge` : 'This definition cannot be assigned as a public badge'}">
+              <input type="checkbox" name="profileBadges" value="${escapeHtml(key)}"
+                ${selectedBadges.has(key) ? 'checked' : ''}
+                ${disabled || !badgeAllowed ? 'disabled' : ''} />
+              <span>Badge</span>
+            </label>
+            <label class="admin-role-badge-choice ${roleAllowed ? '' : 'is-unavailable'}" title="${roleAllowed ? `Grant ${definition.displayName || key} as a backend role` : 'This definition cannot be granted as a backend role'}">
+              <input type="checkbox" name="accountRoles" value="${escapeHtml(key)}"
+                ${selectedRoles.has(key) ? 'checked' : ''}
+                ${disabled || !roleAllowed ? 'disabled' : ''} />
+              <span>Grant</span>
+            </label>
+          </div>
+        `
+      }).join('')}
+    </div>
+  `
+}
+
 function accountPermissionsDialog() {
   const dialog = state.accountPermissionsDialog || {}
   if (!dialog.open) return ''
@@ -3176,7 +3228,6 @@ function accountPermissionsDialog() {
   const explicit = data.explicit || {}
   const effective = data.effective || {}
   const permissions = explicit.exists ? (explicit.permissions || {}) : (effective.permissions || {})
-  const badges = explicit.exists ? (explicit.badges || {}) : (effective.badges || {})
   const restrictions = explicit.exists ? (explicit.restrictions || {}) : (effective.restrictions || {})
   return `
     <div class="admin-modal-backdrop" data-close-account-permissions role="presentation">
@@ -3203,9 +3254,10 @@ function accountPermissionsDialog() {
                   ${group.fields.map(([key, label]) => permissionToggle({ name: key, label, values: permissions, defaultValues: data.defaults || {}, prefix: 'permissions', disabled: dialog.saving })).join('')}
                 </fieldset>
               `).join('')}
-              <fieldset class="admin-permission-group">
-                <legend>Public Badges</legend>
-                ${ACCOUNT_BADGE_FIELDS.map(([key, label]) => permissionToggle({ name: key, label, values: badges, prefix: 'badges', disabled: dialog.saving })).join('')}
+              <fieldset class="admin-permission-group admin-role-badge-assignment-group">
+                <legend>Roles & Badges</legend>
+                <p class="admin-muted admin-role-badge-help">Each existing definition can independently grant backend authority and/or display a public badge.</p>
+                ${accountRoleBadgeAssignmentList(data, dialog.saving)}
               </fieldset>
               <fieldset class="admin-permission-group">
                 <legend>Restrictions</legend>
@@ -7880,12 +7932,16 @@ function closeAccountPermissionsDialog() {
 
 function collectAccountPermissionForm(form) {
   const result = { permissions: {}, badges: {}, restrictions: {} }
-  form.querySelectorAll('input[type="checkbox"][name^="permissions."], input[type="checkbox"][name^="badges."], input[type="checkbox"][name^="restrictions."]').forEach((input) => {
+  form.querySelectorAll('input[type="checkbox"][name^="permissions."], input[type="checkbox"][name^="restrictions."]').forEach((input) => {
     const [group, key] = String(input.name || '').split('.')
     if (result[group] && key) result[group][key] = input.checked === true
   })
+  const accountRoles = Array.from(form.querySelectorAll('input[type="checkbox"][name="accountRoles"]:checked')).map((input) => input.value)
+  const profileBadges = Array.from(form.querySelectorAll('input[type="checkbox"][name="profileBadges"]:checked')).map((input) => input.value)
   return {
     ...result,
+    accountRoles,
+    profileBadges,
     changeReason: String(form.elements.changeReason?.value || '').trim(),
     expiresAt: String(form.elements.expiresAt?.value || '').trim()
   }
@@ -7899,6 +7955,11 @@ async function submitAccountPermissions(form) {
     dialog.error = 'A reason is required for the audit log.'
     render()
     return
+  }
+  dialog.data = {
+    ...(dialog.data || {}),
+    accountRoles: [...payload.accountRoles],
+    profileBadges: [...payload.profileBadges]
   }
   dialog.saving = true
   dialog.error = ''

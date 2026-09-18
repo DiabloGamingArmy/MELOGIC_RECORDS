@@ -4754,3 +4754,28 @@
 .admin-role-definition-fields label{display:grid;gap:6px}.admin-role-definition-fields label>span{font-size:12px;font-weight:700}.admin-role-definition-fields .is-wide{grid-column:1/-1}.admin-role-definition-fields input,.admin-role-definition-fields textarea{width:100%;box-sizing:border-box}.admin-role-definition-fields textarea{min-height:88px;resize:vertical}
 .admin-role-definition-fields small{color:var(--admin-muted,#89909d)}.admin-role-check{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center}.admin-role-check input{width:auto!important}.admin-role-definition-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
 @media(max-width:760px){.admin-role-definition-fields{grid-template-columns:1fr}.admin-role-definition-fields .is-wide{grid-column:auto}}
+
+/* melogic-admin-role-badge-list-v1 */
+.admin-role-badge-assignment-group{grid-column:1/-1}
+.admin-role-badge-help{margin:0 0 12px}
+.admin-role-badge-list{display:grid;width:100%;overflow:hidden;border:1px solid var(--admin-border,#303641);border-radius:12px;background:rgba(255,255,255,.012)}
+.admin-role-badge-list-head,.admin-role-badge-row{display:grid;grid-template-columns:minmax(190px,1fr) 110px 150px;align-items:center}
+.admin-role-badge-list-head{min-height:34px;padding:0 14px;border-bottom:1px solid var(--admin-border,#303641);color:var(--admin-muted,#7f8793);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.admin-role-badge-list-head span:not(:first-child){text-align:center}
+.admin-role-badge-row{min-height:58px;padding:0 14px;border-bottom:1px solid rgba(255,255,255,.055)}
+.admin-role-badge-row:last-child{border-bottom:0}
+.admin-role-badge-identity{display:flex;align-items:center;gap:10px;min-width:0}
+.admin-role-badge-identity>span:last-child{display:grid;min-width:0}
+.admin-role-badge-identity strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.admin-role-badge-identity small{margin-top:2px;color:var(--admin-muted,#7f8793);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px}
+.admin-role-badge-icon{display:grid;place-items:center;width:30px;height:30px;flex:0 0 30px;border:1px solid var(--admin-border,#303641);border-radius:8px}
+.admin-role-badge-icon img{max-width:20px;max-height:20px;object-fit:contain}
+.admin-role-badge-choice{display:flex;align-items:center;justify-content:center;gap:7px;min-height:42px;cursor:pointer;font-size:12px;font-weight:700}
+.admin-role-badge-choice input{width:17px;height:17px;margin:0;accent-color:#e53b45}
+.admin-role-badge-choice.is-unavailable{opacity:.25;cursor:not-allowed}
+.admin-role-badge-choice input:disabled{cursor:not-allowed}
+@media(max-width:720px){
+ .admin-role-badge-list-head,.admin-role-badge-row{grid-template-columns:minmax(130px,1fr) 72px 96px}
+ .admin-role-badge-list-head,.admin-role-badge-row{padding-left:10px;padding-right:10px}
+ .admin-role-badge-choice span{display:none}
+}
