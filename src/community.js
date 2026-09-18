@@ -3551,8 +3551,34 @@ async function loadCommentViewerState() {
 
 async function loadAttachmentMediaUrls() {
   try {
-    const resolved = await resolveCommunityAttachmentMediaUrls(state.posts)
-    state.attachmentMediaUrls = { ...state.attachmentMediaUrls, ...resolved }
+    // melogic-community-pagination-media-stability-v1
+    // Pagination appends posts to a persistent feed. Existing attachment URLs
+    // are already live DOM state and must remain stable: resolving every path
+    // again can change the attachment render key and make updatePostCardDom()
+    // rebuild an existing attachment region, which reloads its img/video/audio.
+    //
+    // Resolve ONLY media paths that are not already cached for this Community
+    // session, then preserve every previously resolved URL verbatim.
+    const unresolvedPosts = state.posts.map((post) => ({
+      ...post,
+      attachments: (post.attachments || []).filter((attachment) => {
+        const path = attachment.path || attachment.storagePath || attachment.snapshot?.previewAudioPath || ''
+        if (!path) return false
+        if (attachment.url || attachment.audioURL) return false
+        return !state.attachmentMediaUrls[path]
+      })
+    })).filter((post) => post.attachments.length)
+
+    if (!unresolvedPosts.length) return
+
+    const resolved = await resolveCommunityAttachmentMediaUrls(unresolvedPosts)
+    const additions = Object.fromEntries(
+      Object.entries(resolved).filter(([path, url]) => path && url && !state.attachmentMediaUrls[path])
+    )
+
+    // Existing entries win deliberately. Once an image/video/audio element has
+    // a URL, infinite-scroll enrichment is not allowed to replace that URL.
+    state.attachmentMediaUrls = { ...additions, ...state.attachmentMediaUrls }
   } catch (error) {
     console.warn('[community] attachment media url load failed', { code: error?.code, message: error?.message })
   }
