@@ -436,6 +436,50 @@ export async function listSelectableCommunities({ search = '', limitCount = 80 }
     .slice(0, safeLimit)
 }
 
+// melogic-community-canonical-metadata-v1
+export async function getCommunityById(communityId = '') {
+  const id = String(communityId || '').trim()
+  if (!id || id.includes('/')) return null
+  const snap = await getDoc(doc(db, COMMUNITY_COLLECTION, id)).catch((error) => {
+    if (String(error?.code || '').includes('permission-denied')) return null
+    throw error
+  })
+  if (!snap?.exists?.()) return null
+  const community = normalizeCommunity(snap)
+  if (community.status !== 'active' || community.visibility !== 'public') return null
+  return community
+}
+
+export async function hydrateCommunityPostCommunities(posts = []) {
+  const rows = Array.isArray(posts) ? posts : []
+  const ids = [...new Set(rows.map((post) => String(post?.communityId || '').trim()).filter((id) => id && !id.includes('/')))]
+  if (!ids.length) return rows
+
+  const entries = await Promise.all(ids.map(async (id) => [id, await getCommunityById(id)]))
+  const byId = new Map(entries.filter(([, community]) => Boolean(community)))
+
+  return rows.map((post) => {
+    const community = byId.get(String(post?.communityId || '').trim())
+    if (!community) return post
+    return {
+      ...post,
+      // communityId is the relationship. Mutable identity always comes from
+      // communities/{communityId}, never the denormalized post snapshot.
+      communitySlug: community.slug || community.communityId,
+      communityName: community.name || community.title || community.slug || 'Community',
+      community: {
+        communityId: community.communityId,
+        slug: community.slug || community.communityId,
+        name: community.name || community.title || community.slug || 'Community',
+        title: community.title || community.name || community.slug || 'Community',
+        imageUrl: community.imageUrl || community.imageURL || community.iconURL || '',
+        imagePath: community.imagePath || '',
+        category: community.category || ''
+      }
+    }
+  })
+}
+
 export async function getCommunityBySlug(slug = '') {
   const clean = String(slug || '').trim()
   if (!clean) return null
@@ -545,9 +589,10 @@ function logFirestoreIndexUrl(error, scope = 'community query') {
   if (url) console.warn(`[communityService] ${scope} index URL`, url)
 }
 
-export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', communityIds = [], limitCount = 25, tag = '', search = '', sort = 'new', pageMode = false, cursor = null } = {}) {
+export async function listCommunityPosts({ tab = 'for-you', communityId = '', communitySlug = '', communityIds = [], limitCount = 25, tag = '', search = '', sort = 'new', pageMode = false, cursor = null } = {}) {
   const tagKey = normalizeTagKey(tag)
   const searchToken = normalizeFeedSearchToken(search)
+  const canonicalCommunityId = String(communityId || '').trim()
   const selectedCommunityIds = [...new Set((Array.isArray(communityIds) ? communityIds : [])
     .map((id) => String(id || '').trim())
     .filter((id) => id && !id.includes('/')))].slice(0, 10)
@@ -557,7 +602,7 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
     where('status', '==', 'published'),
     where('visibility', '==', 'public')
   ]
-  if (communitySlug) constraints.push(where('communitySlug', '==', communitySlug))
+  if (canonicalCommunityId) constraints.push(where('communityId', '==', canonicalCommunityId))
   else if (selectedCommunityIds.length) constraints.push(where('communityId', 'in', selectedCommunityIds))
   if (tab === 'official') constraints.push(where('official', '==', true))
   if (tagKey) constraints.push(where('tagKeys', 'array-contains', tagKey))
@@ -593,7 +638,7 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
       const rows = snapshot.docs
         .map((docSnap) => normalizeCommunityPost(docSnap))
         .filter((post) => (
-          (!communitySlug || post.communitySlug === communitySlug)
+          (!canonicalCommunityId || post.communityId === canonicalCommunityId)
           && (!selectedCommunityIds.length || selectedCommunityIds.includes(post.communityId))
           && (tab !== 'official' || post.official)
           && (!tagKey || (post.tagKeys || post.tags || []).includes(tagKey))
@@ -613,7 +658,7 @@ export async function listCommunityPosts({ tab = 'for-you', communitySlug = '', 
     fallbackConstraints,
     normalizeCommunityPost,
     (post) => (
-      (!communitySlug || post.communitySlug === communitySlug)
+      (!canonicalCommunityId || post.communityId === canonicalCommunityId)
       && (!selectedCommunityIds.length || selectedCommunityIds.includes(post.communityId))
       && (tab !== 'official' || post.official)
       && (!tagKey || (post.tagKeys || post.tags || []).includes(tagKey))
@@ -721,7 +766,8 @@ export async function getCommunityPost(postId = '') {
   if (!snap.exists()) return null
   const post = normalizeCommunityPost(snap)
   if (post.status !== 'published' || post.visibility !== 'public') return null
-  return post
+  const [hydratedPost] = await hydrateCommunityPostCommunities([post])
+  return hydratedPost || post
 }
 
 export async function getCommunityPostViewerState(postId = '', uid = '') {

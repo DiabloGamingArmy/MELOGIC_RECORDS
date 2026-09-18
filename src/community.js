@@ -20,6 +20,7 @@ import {
   getCommunityCommentViewerState,
   getCommunityBySlug,
   getCommunityPost,
+  hydrateCommunityPostCommunities,
   getCommunityPostViewerState,
   getCommunityTopComment,
   listCommunityCommentsPage,
@@ -743,6 +744,7 @@ function communityCssEscape(value = '') {
 function feedQueryOptions() {
   return {
     tab: state.activeTab,
+    communityId: state.view.type === 'community' && state.community ? state.community.communityId : '',
     communitySlug: state.view.type === 'community' && state.community ? state.community.slug : state.activeCommunitySlug,
     communityIds: state.view.type === 'feed' ? state.selectedCommunityFilters.slice(0, 10) : [],
     limitCount: COMMUNITY_PAGE_SIZE,
@@ -756,6 +758,7 @@ function feedQueryKey() {
   const options = feedQueryOptions()
   return JSON.stringify({
     view: state.view.type,
+    communityId: options.communityId,
     slug: options.communitySlug,
     mode: state.activeTab,
     communityIds: [...options.communityIds].sort(),
@@ -2381,6 +2384,8 @@ function postAttachmentRenderKey(post = {}) {
 
 function postCard(post, { detail = false } = {}) {
   const viewer = state.viewerState[post.postId] || {}
+  const liveCommunity = post.community && post.community.communityId === post.communityId ? post.community : null
+  const communitySlug = liveCommunity?.slug || post.communitySlug || ''
   const body = detail ? post.body : post.body.slice(0, 640)
   const authorHref = post.authorUid ? publicProfileRoute({ uid: post.authorUid }) : ROUTES.profilePublic
   const isOwn = state.currentUser?.uid && state.currentUser.uid === post.authorUid
@@ -2401,7 +2406,7 @@ function postCard(post, { detail = false } = {}) {
         <div class="community-post-header-actions">
           <div class="community-post-badges">
             ${pinned ? `<span class="community-badge is-pinned">${iconSvg('star')} Pinned</span>` : ''}
-            ${post.communitySlug ? `<a class="community-badge" href="${communityRoute(post.communitySlug)}">c/${escapeHtml(post.communitySlug)}</a>` : ''}
+            ${communitySlug ? `<a class="community-badge" href="${communityRoute(communitySlug)}">c/${escapeHtml(communitySlug)}</a>` : ''}
             ${post.official ? '<span class="community-badge">Official</span>' : ''}
             ${post.intent === 'feedback_request' ? '<span class="community-badge">Feedback Requested</span>' : ''}
             ${post.intent === 'collaboration_request' ? '<span class="community-badge">Looking for Collaborators</span>' : ''}
@@ -4184,6 +4189,8 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
       cursor = result.cursor || null
       hasMore = Boolean(result.hasMore)
     }
+    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
+    posts = await hydrateCommunityPostCommunities(posts)
     if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
     state.posts = reset ? sortPinnedPosts(posts) : sortPinnedPosts(mergeUniquePosts(state.posts, posts))
     state.feedCursor = cursor || state.feedCursor
