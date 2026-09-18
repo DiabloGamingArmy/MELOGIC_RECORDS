@@ -1848,7 +1848,7 @@ function renderNativeMobileComposerShell() {
             <div class="community-mobile-composer-author-avatar">${currentUserAvatar()}</div>
             <div class="community-mobile-composer-writing">
               <strong class="community-mobile-composer-username">${escapeHtml(userName)}</strong>
-              <textarea name="body" maxlength="2000" rows="8" placeholder="${escapeHtml(communityComposerPrompt)}" data-composer-body autofocus>${escapeHtml(state.composer.body)}</textarea>
+              <textarea name="body" maxlength="2000" rows="8" placeholder="${escapeHtml(communityComposerPrompt)}" data-composer-body>${escapeHtml(state.composer.body)}</textarea>
             </div>
           </div>
 
@@ -5093,6 +5093,28 @@ async function handleToggleFocus(communityId) {
     })
 }
 
+// melogic-mobile-community-composer-polish-v4
+let communityMobileComposerFocusToken = 0
+function focusMobileCommunityComposerAfterEntrance() {
+  if (!state.composer.open || !state.currentUser || !useNativeMobileCommunityComposer()) return
+  const token = ++communityMobileComposerFocusToken
+  const screen = app?.querySelector('[data-community-mobile-composer-screen]')
+  const textarea = screen?.querySelector('[data-composer-body]')
+  if (!(screen instanceof HTMLElement) || !(textarea instanceof HTMLTextAreaElement)) return
+  let completed = false
+  const focus = () => {
+    if (completed || token !== communityMobileComposerFocusToken || !state.composer.open) return
+    completed = true
+    textarea.focus({ preventScroll: true })
+    const end = textarea.value.length
+    try { textarea.setSelectionRange(end, end) } catch {}
+  }
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { requestAnimationFrame(focus); return }
+  screen.addEventListener('animationend', (event) => {
+    if (event.target === screen && event.animationName === 'communityMobileComposerEnter') focus()
+  }, { once: true })
+  window.setTimeout(focus, 420)
+}
 function openCommunityComposer() {
   const draft = restoreComposerDraft()
   state.composer = {
@@ -5113,9 +5135,11 @@ function openCommunityComposer() {
     error: ''
   }
   updateCommunityComposerLayer()
+  focusMobileCommunityComposerAfterEntrance()
 }
 
 function closeCommunityComposer() {
+  communityMobileComposerFocusToken += 1
   if (composerHasDraft()) {
     if (!window.confirm('Discard draft?')) return
     clearComposerFileAttachments()
@@ -6463,7 +6487,15 @@ function bindCommunityComposerEvents(root = app) {
   })
   bindCommunityDestinationResultEvents(root)
   root?.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
-  root?.querySelector('[data-community-composer-form]')?.addEventListener('input', updateComposerFromForm)
+  root?.querySelector('[data-community-composer-form]')?.addEventListener('input', (event) => {
+    updateComposerFromForm()
+    if (!useNativeMobileCommunityComposer()) return
+    const form = event.currentTarget
+    const post = form?.querySelector('.community-mobile-composer-post')
+    const count = form?.querySelector('.community-mobile-composer-count')
+    if (post instanceof HTMLButtonElement) post.disabled = !String(state.composer.body || '').trim() || state.composer.submitting
+    if (count instanceof HTMLElement) count.textContent = String(Math.max(0, 2000 - state.composer.body.length))
+  })
   root?.querySelector('[data-open-product-picker]')?.addEventListener('click', () => {
     updateComposerFromForm()
     openProductPicker()
@@ -6488,6 +6520,9 @@ function bindCommunityComposerEvents(root = app) {
     updateComposerFromForm()
     const sheet = root.querySelector('[data-mobile-composer-more-sheet]')
     if (sheet) sheet.hidden = !sheet.hidden
+  })
+  root?.querySelector('[data-mobile-composer-more-sheet]')?.addEventListener('click', (event) => {
+    if (event.target.closest('button')) event.currentTarget.hidden = true
   })
   root?.querySelector('[data-post-attachment-input]')?.addEventListener('change', async (event) => {
     await addComposerFiles(event.target.files)

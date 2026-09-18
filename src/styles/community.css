@@ -4884,3 +4884,21 @@ body.community-mobile-composer-open .mobile-bottom-nav{visibility:hidden!importa
 .community-mobile-composer .community-emoji-panel{position:absolute;left:12px;bottom:calc(64px + env(safe-area-inset-bottom));z-index:9}
 .community-mobile-composer .community-product-picker,.community-mobile-composer .community-intent-panel{position:absolute;left:12px;right:12px;bottom:calc(66px + env(safe-area-inset-bottom));z-index:10;max-height:55dvh;overflow:auto;border:1px solid #292c31;border-radius:16px;background:#111216;box-shadow:0 18px 50px rgba(0,0,0,.6)}
 }
+
+/* melogic-mobile-community-composer-polish-v4 */
+@media(max-width:760px){
+.community-mobile-composer-screen{overscroll-behavior:none}
+.community-mobile-composer{height:100dvh}
+.community-mobile-composer-form{height:100%;max-height:100dvh}
+.community-mobile-composer-content{overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+.community-page .community-mobile-composer-writing textarea{min-height:0}
+.community-mobile-composer-bottom{z-index:5}
+.community-mobile-composer-tools{min-width:0;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.community-mobile-composer-tools::-webkit-scrollbar{display:none}
+.community-mobile-composer-tools>button{flex:0 0 42px;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.community-mobile-composer-close,.community-mobile-composer-more,.community-mobile-composer-destination,.community-mobile-composer-post{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.community-mobile-composer-post:not(:disabled):active{transform:scale(.97)}
+.community-mobile-composer-writing textarea{caret-color:#fff}
+.community-mobile-composer-writing textarea:focus{outline:none!important}
+}
+@media(max-width:760px) and (prefers-reduced-motion:reduce){.community-mobile-composer-screen{animation:none!important}}
