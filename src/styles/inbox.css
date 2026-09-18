@@ -5344,3 +5344,25 @@ body.is-inbox-page .site-footer {
 .cluster-sender[data-inbox-identity-name] {
   color: #fff !important;
 }
+
+/* melogic-inbox-message-bubble-content-width-v34b */
+.message-bubble-stack {
+  width: fit-content !important;
+  max-width: min(78%, 42rem) !important;
+}
+.message-bubble:not(.has-media) {
+  display: block !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+.message-bubble:not(.has-media) > p {
+  display: block !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+.message-cluster.is-self .message-bubble-stack { align-items: flex-end !important; }
+.message-cluster.is-other .message-bubble-stack { align-items: flex-start !important; }
+.cluster-sender,
+.cluster-sender[data-inbox-identity-name] { color: #fff !important; }
