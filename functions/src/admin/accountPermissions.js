@@ -1,6 +1,6 @@
 const admin = require('firebase-admin')
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
-const { cleanString, requireAdminActionSecurity } = require('./adminAuth')
+const { assertAnyPermission, cleanString, requireAdminActionSecurity } = require('./adminAuth')
 const { writeAdminAuditLog } = require('./auditLog')
 const {
   DEFAULT_PERMISSIONS,
@@ -42,8 +42,13 @@ function publicBadgeMirror(badges = {}) {
   }, {})
 }
 
+// melogic-admin-account-permissions-read-v1
+// Reading the selected user's current permission state is not a mutation and
+// must not require the 60-second MFA step-up window. The Admin Users UI opens
+// this callable directly; requiring fresh step-up here caused the read to fail
+// and the dialog to fall back to unchecked controls.
 const getAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
-  await requireAdminActionSecurity(request, ['userRead', 'userModerate', 'roleManage'])
+  assertAnyPermission(request, ['userRead', 'userModerate', 'roleManage'])
   const uid = cleanString(request.data?.uid || '', 180)
   if (!uid || uid.includes('/')) throw new HttpsError('invalid-argument', 'A valid uid is required.')
   const inputs = await loadAccountPermissionInputs(uid)
