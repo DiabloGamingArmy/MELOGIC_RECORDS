@@ -3495,14 +3495,52 @@ function updateFeedToolbarText() {
     : 'Fresh creator updates from across Melogic.'
 }
 
+// melogic-community-desktop-scroll-stability-v2
+function captureCommunityDesktopScrollAnchor() {
+  if (window.matchMedia('(max-width: 760px)').matches) return null
+  const root = app?.querySelector('[data-community-root]')
+  const main = root?.querySelector('.community-main')
+  if (!main) return null
+
+  const ownsScroll = /auto|scroll/.test(window.getComputedStyle(main).overflowY)
+  return {
+    top: Number(ownsScroll ? main.scrollTop : window.scrollY) || 0,
+    ownsScroll,
+    pathname: window.location.pathname,
+    viewType: state.view?.type || '',
+    detailPostId: state.detailPostId || '',
+    activeTab: state.activeTab || ''
+  }
+}
+
+function restoreCommunityDesktopScrollAnchor(anchor) {
+  if (!anchor || window.matchMedia('(max-width: 760px)').matches) return
+  if (anchor.pathname !== window.location.pathname) return
+  if (anchor.viewType !== (state.view?.type || '')) return
+  if (anchor.detailPostId !== (state.detailPostId || '')) return
+  if (anchor.activeTab !== (state.activeTab || '')) return
+
+  const root = app?.querySelector('[data-community-root]')
+  const main = root?.querySelector('.community-main')
+  if (!main) return
+
+  if (anchor.ownsScroll && /auto|scroll/.test(window.getComputedStyle(main).overflowY)) {
+    main.scrollTop = anchor.top
+  } else {
+    window.scrollTo({ top: anchor.top, left: window.scrollX, behavior: 'auto' })
+  }
+}
+
 function render() {
   if (!app) return
+  const desktopScrollAnchor = captureCommunityDesktopScrollAnchor()
   document.body.classList.toggle('community-modal-open', communityModalIsOpen())
   const communityRoot = renderCommunityShellOnce()
   if (!communityRoot) return
   syncCommunityMobileHeader(Boolean(state.detailPostId), app)
   communityRoot.innerHTML = renderCommunityViewContent()
   bindEvents()
+  restoreCommunityDesktopScrollAnchor(desktopScrollAnchor)
 }
 
 /* melogic-community-touch-media-stability-v1 */
@@ -7141,7 +7179,17 @@ async function bootstrapCommunityDocument() {
     if (!communityAuthUnsubscribe) {
       communityAuthUnsubscribe = subscribeToAuthState((nextUser) => {
         state.currentUser = nextUser
-        Promise.all([loadViewerState(), loadCommentViewerState()]).then(render).catch(() => render())
+        // Auth/viewer enrichment is not a Community topology change. Never
+        // rebuild the desktop scroll owner merely to update reaction state.
+        Promise.all([loadViewerState(), loadCommentViewerState()])
+          .then(() => {
+            renderPostViewerStateOnly()
+            allLoadedComments().forEach((comment) => updateCommentActionDom(comment.commentId))
+          })
+          .catch(() => {
+            renderPostViewerStateOnly()
+            allLoadedComments().forEach((comment) => updateCommentActionDom(comment.commentId))
+          })
       })
     }
 
