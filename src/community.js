@@ -441,18 +441,15 @@ function setupMobileCommunityShellActions() {
   if (document.documentElement.dataset.mobileCommunityActionsReady === 'true') return
   document.documentElement.dataset.mobileCommunityActionsReady = 'true'
 
-  // The mobile + is an in-place composer action, never a navigation action.
-  // Capture phase prevents an underlying /community/create anchor/router handler
-  // from winning before the Community module can open its native composer.
+  // melogic-community-canonical-plus-bridge-v2c
+  // The canonical navShell header may be harvested/cloned by the warm SPA shell.
+  // This action marker survives cloning and remains an in-page action.
   document.addEventListener('click', (event) => {
     const target = event.target instanceof Element ? event.target : null
     const createButton = target?.closest('[data-mobile-community-create]')
     if (!createButton) return
-
     event.preventDefault()
     event.stopPropagation()
-    event.stopImmediatePropagation()
-
     openCommunityComposer()
   }, true)
 }

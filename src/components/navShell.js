@@ -1,7 +1,7 @@
 import { iconSvg } from '../utils/icons'
 import { ROUTES } from '../utils/routes'
 import brandLogoUrl from '../assets/brand/melogic-logo-mark-white-transparent.png'
-export function navShell(options = {}) {
+// melogic-community-canonical-plus-action-v2c\nexport function navShell(options = {}) {
   const currentPage = options.currentPage || ''
   const isHome = currentPage === 'home'
   const isMusic = currentPage === 'music'
@@ -23,7 +23,7 @@ export function navShell(options = {}) {
         ${isCommunity ? `<a class="community-mobile-back mobile-icon-button" href="${ROUTES.community}" data-community-back-to-feed aria-label="Back to Community" hidden>${iconSvg('arrowLeft')}</a>` : ''}
         ${isCommunitySearch ? `<a class="community-search-back mobile-icon-button" href="${ROUTES.community}" aria-label="Back to Community">${iconSvg('arrowLeft')}</a>` : ''}
         <h1 class="mobile-app-title">${isCommunity ? `<span class="community-title-lockup"><img class="community-title-logo" src="${brandLogoUrl}" alt="" aria-hidden="true"><span>Community</span></span>` : isCommunitySearch ? 'Search' : isMusic ? 'Streaming' : isProducts ? 'Products' : isInbox ? 'Inbox' : isProfile ? 'Profile' : isCamera ? 'Camera' : 'Melogic'}</h1>
-        <div class="mobile-app-actions">${isCommunity ? `<a class="mobile-icon-button community-header-action" href="${ROUTES.communitySearch}" data-mobile-community-search aria-label="Search Community">${iconSvg('search')}</a><a class="mobile-icon-button mobile-create-button community-header-action" href="${ROUTES.communityCreate}" aria-label="Create post">${iconSvg('plus')}</a>` : ''}</div>
+        <div class="mobile-app-actions">${isCommunity ? `<a class="mobile-icon-button community-header-action" href="${ROUTES.communitySearch}" data-mobile-community-search aria-label="Search Community">${iconSvg('search')}</a><button type="button" class="mobile-icon-button mobile-create-button community-header-action" data-mobile-community-create aria-label="Create post">${iconSvg('plus')}</button>` : ''}</div>
       </header>
       <nav class="mobile-bottom-nav" aria-label="Mobile primary navigation" style="grid-template-columns:repeat(5,minmax(0,1fr))">
         <a href="${ROUTES.community}" ${isCommunity ? 'aria-current="page"' : ''}><span class="mobile-nav-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span><span>Community</span></a>
