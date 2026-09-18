@@ -1814,29 +1814,57 @@ function useNativeMobileCommunityComposer() {
 }
 function renderNativeMobileComposerShell() {
   if (!state.composer.open || !state.currentUser) return ''
+  const community = currentComposerCommunity()
+  const canPost = Boolean(String(state.composer.body || '').trim()) && !state.composer.submitting
+  const userName = formatUsername(state.currentUser?.displayName || state.currentUser?.email || 'You')
   return `
     <div class="community-mobile-composer-screen" data-community-mobile-composer-screen>
       <section class="community-mobile-composer" role="dialog" aria-modal="true" aria-labelledby="community-mobile-composer-title">
-        <header class="community-mobile-composer-header">
-          <button type="button" class="community-mobile-composer-close" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
-          <h2 id="community-mobile-composer-title">New post</h2>
-          <button type="button" class="community-mobile-composer-more" aria-label="Post options">&#8226;&#8226;&#8226;</button>
-        </header>
         <form class="community-mobile-composer-form" data-community-composer-form>
-          ${renderComposerDestinationButton()}
-          <div class="community-mobile-composer-author">
-            <span class="community-mobile-composer-author-placeholder" aria-hidden="true"></span>
-            <strong>${escapeHtml(formatUsername(state.currentUser?.displayName || state.currentUser?.email || 'You'))}</strong>
+          <header class="community-mobile-composer-header">
+            <button type="button" class="community-mobile-composer-close" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
+            <h2 id="community-mobile-composer-title">New post</h2>
+            <button type="button" class="community-mobile-composer-more" aria-label="Post options">&#8226;&#8226;&#8226;</button>
+          </header>
+
+          <div class="community-mobile-composer-destination-row">
+            <button type="button" class="community-mobile-composer-destination" data-open-community-destination ${state.composer.submitting ? 'disabled' : ''}>
+              ${community
+                ? renderCommunityDestinationAvatar(community, { large: true })
+                : `<span class="community-destination-avatar is-large is-general">${iconSvg('home')}</span>`
+              }
+              <span>
+                <strong>${escapeHtml(community?.name || 'General')}</strong>
+                <small>${community ? `c/${escapeHtml(community.slug || '')}` : 'Community'}</small>
+              </span>
+              ${iconSvg('chevronDown')}
+            </button>
+            <input type="hidden" name="communityId" value="${escapeHtml(state.composer.communityId)}" />
+            <button type="submit" class="community-mobile-composer-post" ${canPost ? '' : 'disabled'}>
+              ${state.composer.submitting ? 'POSTING...' : 'POST'}
+            </button>
           </div>
-          <label class="community-mobile-composer-body">
-            <span class="sr-only">Post text</span>
-            <textarea name="body" maxlength="2000" rows="8" placeholder="${escapeHtml(communityComposerPrompt)}" data-composer-body>${escapeHtml(state.composer.body)}</textarea>
-          </label>
+
+          <div class="community-mobile-composer-content">
+            <div class="community-mobile-composer-author-avatar">${currentUserAvatar()}</div>
+            <div class="community-mobile-composer-writing">
+              <strong class="community-mobile-composer-username">${escapeHtml(userName)}</strong>
+              <textarea name="body" maxlength="2000" rows="8" placeholder="${escapeHtml(communityComposerPrompt)}" data-composer-body autofocus>${escapeHtml(state.composer.body)}</textarea>
+            </div>
+          </div>
+
+          <div class="community-mobile-composer-bottom">
+            <span class="community-mobile-composer-count">${Math.max(0, 2000 - state.composer.body.length)}</span>
+            ${state.composer.error ? `<p class="community-error">${escapeHtml(state.composer.error)}</p>` : ''}
+          </div>
         </form>
+        ${renderCommunityDestinationPickerModal()}
       </section>
     </div>
   `
 }
+// melogic-mobile-native-community-composer-v2
+
 function renderComposerModal() {
   if (!state.composer.open) return ''
   if (state.currentUser && useNativeMobileCommunityComposer()) return renderNativeMobileComposerShell()
