@@ -3342,3 +3342,13 @@ html.music-player-fullscreen-open,html.music-player-fullscreen-open body{overflo
 @media (max-width:760px) {
  body.is-streaming-page .music-player { bottom:calc(var(--melogic-mobile-nav-h) + 8px) !important; }
 }
+
+/* MELOGIC STREAMING VERIFIED IDENTITY V1 */
+.music-artist-display-name,.music-release-artist-text strong{display:inline-flex;align-items:center}
+.music-verified-badge{width:1.05em;height:1.05em;margin-left:6px;flex:0 0 auto;object-fit:contain}
+.music-release-artist-identity{display:inline-flex;align-items:center;gap:.72rem;width:fit-content;margin:.85rem 0 .35rem;color:inherit;text-decoration:none}
+.music-release-artist-avatar{width:3.15rem;height:3.15rem;flex:0 0 3.15rem;border:1px solid rgba(151,177,220,.22);border-radius:50%;overflow:hidden}
+.music-release-artist-text{display:grid;gap:.08rem;min-width:0}
+.music-release-artist-text strong{color:var(--ml-text);font-size:clamp(1.05rem,1.7vw,1.35rem);line-height:1.15}
+.music-release-artist-text>span{color:var(--ml-text-muted);font-size:.95rem;line-height:1.2}
+.music-release-artist-identity:hover .music-release-artist-text strong{text-decoration:underline;text-underline-offset:.16em}

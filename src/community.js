@@ -56,12 +56,13 @@ import {
   validateCommunityPostAttachment,
   validateCommunityStoryMedia
 } from './data/communityService'
-import { searchProfilesByUsername } from './data/profileSearchService'
+import { getPublicProfileIdentityByUid, searchProfilesByUsername } from './data/profileSearchService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 
 const app = document.querySelector('#app')
 // melogic-community-lifecycle-contract-v4b
@@ -341,6 +342,68 @@ const communityPostSaveVersions = new Map()
 const communityCommentReactionVersions = new Map()
 const communityFocusVersions = new Map()
 const communityPostHoverTimers = new WeakMap()
+
+// melogic-community-verified-badge-v1
+// Live profiles/{uid}.badges[] is authoritative; Community snapshots may be stale.
+const communityAuthorIdentityCache = new Map()
+const communityAuthorIdentityRequests = new Map()
+let communityIdentityRenderQueued = false
+
+function queueCommunityIdentityRender() {
+  if (communityIdentityRenderQueued) return
+  communityIdentityRenderQueued = true
+  window.requestAnimationFrame(() => {
+    communityIdentityRenderQueued = false
+    if (communityBootstrapped) render()
+  })
+}
+function ensureCommunityAuthorIdentity(uid = '') {
+  const cleanUid = String(uid || '').trim()
+  if (!cleanUid || communityAuthorIdentityCache.has(cleanUid)) return Promise.resolve(communityAuthorIdentityCache.get(cleanUid) || null)
+  if (communityAuthorIdentityRequests.has(cleanUid)) return communityAuthorIdentityRequests.get(cleanUid)
+  const request = getPublicProfileIdentityByUid(cleanUid).then((profile) => {
+    communityAuthorIdentityCache.set(cleanUid, profile || { uid: cleanUid, badges: [] })
+    communityAuthorIdentityRequests.delete(cleanUid)
+    queueCommunityIdentityRender()
+    return profile
+  }).catch(() => {
+    communityAuthorIdentityCache.set(cleanUid, { uid: cleanUid, badges: [] })
+    communityAuthorIdentityRequests.delete(cleanUid)
+    return null
+  })
+  communityAuthorIdentityRequests.set(cleanUid, request)
+  return request
+}
+function communityAuthorIsVerified(author = {}) {
+  const uid = String(author.authorUid || author.uid || '').trim()
+  if (uid) {
+    void ensureCommunityAuthorIdentity(uid)
+    const live = communityAuthorIdentityCache.get(uid)
+    if (live) return Array.isArray(live.badges) && live.badges.includes('verified')
+  }
+  const badges = Array.isArray(author.authorBadges) ? author.authorBadges : (Array.isArray(author.badges) ? author.badges : [])
+  return badges.map((v) => String(v || '').toLowerCase().trim()).includes('verified')
+}
+let communityVerifiedBadgeUrl = ''
+void getStorageAssetUrl('assets/badges/verifiedBadge.png', {
+  warnOnFail: false,
+  scopeKey: 'community-badges',
+  type: 'badge'
+}).then((url) => {
+  communityVerifiedBadgeUrl = String(url || '')
+  queueCommunityIdentityRender()
+}).catch(() => {})
+
+function communityVerifiedBadgeMarkup(author = {}) {
+  return communityAuthorIsVerified(author) && communityVerifiedBadgeUrl
+    ? `<img class="community-verified-badge" src="${escapeHtml(communityVerifiedBadgeUrl)}" alt="Verified" title="Verified" loading="eager" decoding="async" />`
+    : ''
+}
+function communityDisplayNameMarkup(author = {}, fallback = 'Melogic Creator', id = '') {
+  const displayName = String(author.authorDisplayName || author.displayName || fallback).trim() || fallback
+  const idAttr = id ? ` id="${escapeHtml(id)}"` : ''
+  return `<strong${idAttr} class="community-display-name">${escapeHtml(displayName)}${communityVerifiedBadgeMarkup(author)}</strong>`
+}
 let storyMediaRecorder = null
 let storyRecordingStream = null
 let storyRecordingChunks = []
@@ -1051,7 +1114,7 @@ function renderStoriesRow() {
       <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
         ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="lazy" />` : story.mediaType === 'video' ? iconSvg('play') : storyAvatar(story)}
       </span></span>
-      <strong>${escapeHtml(story.authorDisplayName || story.authorUsername || 'Creator')}</strong>
+      ${communityDisplayNameMarkup(story, story.authorDisplayName || story.authorUsername || 'Creator')}
     </button>
   `).join('')
 
@@ -1217,7 +1280,7 @@ function renderStoryViewerModal() {
           <a class="community-author" href="${profileHref}">
             <span class="community-avatar">${storyAvatar(story)}</span>
             <span>
-              <strong id="community-story-viewer-title">${escapeHtml(story.authorDisplayName || 'Melogic Creator')}</strong>
+              ${communityDisplayNameMarkup(story, 'Melogic Creator', 'community-story-viewer-title')}
               <em>${escapeHtml(formatUsername(story.authorUsername) || 'Creator')} · ${escapeHtml(storyExpiresLabel(story.expiresAt))}</em>
             </span>
           </a>
@@ -2242,7 +2305,7 @@ function renderTopCommentPreview(post = {}) {
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar community-top-comment-avatar">${postAvatar(comment)}</span>
           <span>
-            <strong>${escapeHtml(comment.authorDisplayName || 'Melogic Creator')}</strong>
+            ${communityDisplayNameMarkup(comment)}
             <em>${escapeHtml(formatUsername(comment.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(comment.createdAt))}</em>
           </span>
         </a>
@@ -2281,7 +2344,7 @@ function postCard(post, { detail = false } = {}) {
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar">${postAvatar(post)}</span>
           <span>
-            <strong>${escapeHtml(post.authorDisplayName || 'Melogic Creator')}</strong>
+            ${communityDisplayNameMarkup(post)}
             <em>${escapeHtml(formatUsername(post.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(post.createdAt))}${post.edited ? ' · edited' : ''}</em>
           </span>
         </a>
@@ -2523,7 +2586,7 @@ function commentCard(comment, replies = []) {
         <a class="community-author" href="${authorHref}">
           <span class="community-avatar">${postAvatar(comment)}</span>
           <span>
-            <strong>${escapeHtml(comment.authorDisplayName || 'Melogic Creator')}</strong>
+            ${communityDisplayNameMarkup(comment)}
             <em>${escapeHtml(formatUsername(comment.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(comment.createdAt))}</em>
           </span>
         </a>

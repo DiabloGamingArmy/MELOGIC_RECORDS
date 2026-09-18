@@ -11,7 +11,8 @@ function normalizeProfile(profileDoc) {
     avatarURL: String(raw.avatarURL || '').trim(),
     photoURL: String(raw.photoURL || '').trim(),
     roleLabel: String(raw.roleLabel || 'Melogic member').trim(),
-    location: String(raw.location || '').trim()
+    location: String(raw.location || '').trim(),
+    badges: Array.isArray(raw.badges) ? Array.from(new Set(raw.badges.map((value) => String(value || '').toLowerCase().trim()).filter(Boolean))) : []
   }
 }
 
@@ -52,5 +53,18 @@ export async function searchProfilesByUsername(input = '') {
       lookupError.code = 'profile-search/unavailable'
       throw lookupError
     }
+  }
+}
+
+// melogic-community-verified-badge-v1
+export async function getPublicProfileIdentityByUid(uid = '') {
+  const cleanUid = String(uid || '').trim()
+  if (!db || !cleanUid) return null
+  try {
+    const snap = await getDoc(doc(db, 'profiles', cleanUid))
+    return snap.exists() ? normalizeProfile(snap) : null
+  } catch (error) {
+    console.warn('[profileSearchService] Public identity lookup failed.', error?.code || error?.message || error)
+    return null
   }
 }

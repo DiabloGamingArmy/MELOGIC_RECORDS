@@ -111,6 +111,8 @@ import {
 import { ROUTES, authRoute, musicLiveStreamRoute, musicReleaseRoute, publicProfileRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
+import { getPublicProfileIdentityByUid } from './data/profileSearchService'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 
 // melogic-streaming-spa-lifecycle-v6
 function initConsumerSpaLifecycle() {
@@ -666,6 +668,68 @@ function renderArtistArtwork(artist) {
   return `<div class="music-artist-art music-artist-art-fallback" aria-hidden="true">${escapeHtml(String(artist.artistName || 'A').slice(0, 1).toUpperCase())}</div>`
 }
 
+// melogic-streaming-verified-identity-v1
+const streamingArtistIdentityCache = new Map()
+const streamingArtistIdentityRequests = new Map()
+let streamingVerifiedBadgeUrl = ''
+
+void getStorageAssetUrl('assets/badges/verifiedBadge.png', {
+  warnOnFail: false,
+  scopeKey: 'streaming-badges',
+  type: 'badge'
+}).then((url) => {
+  streamingVerifiedBadgeUrl = String(url || '')
+  if (streamingBootstrapped) render()
+}).catch(() => {})
+
+function streamingIdentityIsVerified(identity = {}) {
+  return Array.isArray(identity?.badges) && identity.badges.some((badge) => String(badge || '').toLowerCase().trim() === 'verified')
+}
+
+function ensureStreamingArtistIdentity(uid = '') {
+  const key = String(uid || '').trim()
+  if (!key || streamingArtistIdentityCache.has(key) || streamingArtistIdentityRequests.has(key)) return
+  const request = getPublicProfileIdentityByUid(key).then((identity) => {
+    streamingArtistIdentityCache.set(key, identity || null)
+    if (streamingBootstrapped) render()
+  }).catch(() => streamingArtistIdentityCache.set(key, null))
+    .finally(() => streamingArtistIdentityRequests.delete(key))
+  streamingArtistIdentityRequests.set(key, request)
+}
+
+function streamingArtistIdentity(release = {}) {
+  const uid = String(release.artistUid || '').trim()
+  if (uid) ensureStreamingArtistIdentity(uid)
+  return uid ? streamingArtistIdentityCache.get(uid) : null
+}
+
+function streamingVerifiedBadgeMarkup(identity = {}) {
+  return streamingIdentityIsVerified(identity) && streamingVerifiedBadgeUrl
+    ? `<img class="music-verified-badge" src="${escapeHtml(streamingVerifiedBadgeUrl)}" alt="Verified" title="Verified" loading="eager" decoding="async" />`
+    : ''
+}
+
+function streamingReleaseArtistNameMarkup(release = {}) {
+  const identity = streamingArtistIdentity(release)
+  const displayName = identity?.displayName || release.artistName || 'Melogic Creator'
+  return `<span class="music-artist-display-name">${escapeHtml(displayName)}${streamingVerifiedBadgeMarkup(identity)}</span>`
+}
+
+function streamingReleaseArtistIdentityMarkup(release = {}) {
+  const identity = streamingArtistIdentity(release)
+  const displayName = identity?.displayName || release.artistName || 'Melogic Creator'
+  const username = String(identity?.username || '').trim()
+  const avatar = identity?.avatarURL || identity?.photoURL || ''
+  const profileHref = release.artistUid ? publicProfileRoute({ uid: release.artistUid }) : '#'
+  return `<a class="music-release-artist-identity" href="${escapeHtml(profileHref)}">
+    ${renderAvatarImage({ src: avatar, name: displayName, className: 'music-release-artist-avatar' })}
+    <span class="music-release-artist-text">
+      <strong>${escapeHtml(displayName)}${streamingVerifiedBadgeMarkup(identity)}</strong>
+      ${username ? `<span>@${escapeHtml(username.replace(/^@/, ''))}</span>` : ''}
+    </span>
+  </a>`
+}
+
 function renderDiscoveryReleaseRail(releases = [], options = {}) {
   const items = Array.isArray(releases) ? releases.filter(Boolean) : []
   const eyebrow = String(options.eyebrow || '')
@@ -696,7 +760,7 @@ function releaseCard(release, options = {}) {
             ${release.explicit ? '<span class="music-explicit-badge">E</span>' : ''}
           </div>
           <h3>${escapeHtml(release.title)}</h3>
-          <p>by ${escapeHtml(release.artistName)}</p>
+          <p>by ${streamingReleaseArtistNameMarkup(release)}</p>
           <div class="music-tag-row">${tags.length ? tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join('') : '<span>Melogic Streaming</span>'}</div>
         </div>
       </a>
@@ -1434,7 +1498,7 @@ function renderReleaseDetailContent() {
   return `
     <section class="music-detail-hero music-release-hero">
       <div class="music-release-art-shell">${renderReleaseArtwork(release,'music-detail-art')}</div>
-      <div class="music-detail-copy"><p class="music-eyebrow">${escapeHtml(titleCase(release.releaseType))}</p><h1>${escapeHtml(release.title)}</h1><p class="music-detail-artist">${escapeHtml(release.artistName)}</p><p class="music-release-meta">${metaBits.map(escapeHtml).join('<span>•</span>')}</p>
+      <div class="music-detail-copy"><p class="music-eyebrow">${escapeHtml(titleCase(release.releaseType))}</p><h1>${escapeHtml(release.title)}</h1>${streamingReleaseArtistIdentityMarkup(release)}<p class="music-release-meta">${metaBits.map(escapeHtml).join('<span>•</span>')}</p>
         <div class="music-tag-row">${tags.length?tags.slice(0,6).map((tag)=>`<span>${escapeHtml(tag)}</span>`).join(''):'<span>Melogic Streaming</span>'}${release.explicit?'<span class="music-explicit-badge">Explicit</span>':''}</div>
         <div class="music-release-actions"><button type="button" class="music-release-primary-play" data-release-native-play ${playableTracks.length?'':'disabled'}><span aria-hidden="true">${currentReleaseTrack&&state.player.playing?'II':'>'}</span>${escapeHtml(releasePrimaryPlayLabel())}</button>${playableTracks.length?'<span class="music-native-badge"><i></i> Streams on Melogic</span>':'<span class="music-native-badge is-unavailable">External playback only</span>'}</div>
       </div>
