@@ -1,5 +1,4 @@
 import './styles/base.css'
-import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage'
 import './styles/admin.css'
 import {
   EmailAuthProvider,
@@ -71,6 +70,7 @@ import {
 } from './data/communityService'
 import { auth, waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
+// melogic-admin-badge-initialized-storage-fix-v2
 import { formatUsername } from './utils/format'
 import { formatActionLabel as sharedActionLabel } from './utils/displayFormat'
 import { isPaidMoneyOrder, orderAmountAvailable, orderLifecycleLabel } from './utils/commerce'
@@ -3194,7 +3194,14 @@ function hydrateAdminBadgePreviews(root = document) {
     try {
       let url = adminBadgePreviewCache.get(path)
       if (!url) {
-        url = await getDownloadURL(storageRef(getStorage(), path))
+        // Use Melogic's initialized Firebase app/storage pipeline. Calling getStorage()
+        // with no app here looks for a [DEFAULT] app that this application does not create.
+        url = await getStorageAssetUrl(path, {
+          scopeKey: 'admin-role-badge-previews',
+          type: 'badge',
+          warnOnFail: true
+        })
+        if (!url) throw new Error(`Badge asset unavailable: ${path}`)
         adminBadgePreviewCache.set(path, url)
       }
       if (img.isConnected) {
