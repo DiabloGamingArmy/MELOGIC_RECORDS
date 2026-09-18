@@ -5282,36 +5282,60 @@ body.is-inbox-page .site-footer {
 .chat-details-member-meta .inbox-verified-badge{--inbox-verified-badge-size:.9em}
 .chat-details-modal .chat-search-meta .inbox-verified-badge{--inbox-verified-badge-size:.88em}
 
-/* melogic-inbox-desktop-secondary-pages-restore-v1
-   Desktop only. Messages/Inbox and mobile/PWA are intentionally untouched. */
+/* melogic-inbox-desktop-secondary-pages-restore-v2
+   Desktop only. Restore the original left navigation column and give the
+   secondary content column explicit scroll ownership below the site header.
+   Messages and all <=760px mobile/PWA rules remain untouched. */
 @media (min-width:761px) {
   body.is-inbox-page .inbox-layout-activity {
-    grid-template-columns:minmax(0,1fr) !important;
+    grid-template-columns:minmax(220px,250px) minmax(0,1fr) !important;
     width:100% !important;
+    height:100% !important;
     min-width:0 !important;
+    min-height:0 !important;
+    overflow:hidden !important;
   }
 
   body.is-inbox-page .inbox-layout-activity > .inbox-sidebar {
-    display:none !important;
+    display:grid !important;
+    min-width:0 !important;
+    min-height:0 !important;
+    overflow-y:auto !important;
+    overflow-x:hidden !important;
   }
 
   body.is-inbox-page .inbox-layout-activity > .inbox-main-panel,
   body.is-inbox-page .inbox-layout-activity > .inbox-main-panel-full {
-    width:100% !important;
-    min-width:0 !important;
-    max-width:none !important;
-    padding:1rem !important;
-    overflow:auto !important;
     box-sizing:border-box !important;
+    width:100% !important;
+    height:100% !important;
+    min-width:0 !important;
+    min-height:0 !important;
+    max-width:none !important;
+    max-height:100% !important;
+    padding:1.35rem 1rem 2rem !important;
+    overflow-x:hidden !important;
+    overflow-y:auto !important;
+    overscroll-behavior:contain !important;
+    align-content:start !important;
   }
 
   body.is-inbox-page .inbox-layout-activity .activity-panel,
   body.is-inbox-page .inbox-layout-activity .account-calls-panel,
   body.is-inbox-page .inbox-layout-activity .mutual-users-panel {
+    box-sizing:border-box !important;
     width:100% !important;
     min-width:0 !important;
     max-width:none !important;
-    box-sizing:border-box !important;
-    align-self:start;
+    align-self:start !important;
+    overflow:visible !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .activity-header,
+  body.is-inbox-page .inbox-layout-activity .panel-header {
+    position:relative !important;
+    top:auto !important;
+    z-index:auto !important;
+    margin-top:0 !important;
   }
 }
