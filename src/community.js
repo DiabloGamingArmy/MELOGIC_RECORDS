@@ -228,6 +228,7 @@ const state = {
     destinationLoading: false,
     destinationError: '',
     destinationItems: [],
+    destinationVisibleCount: 10,
     tags: '',
     visibility: 'public',
     attachments: [],
@@ -1780,32 +1781,42 @@ function renderCommunityDestinationResults() {
 
 function renderCommunityDestinationPickerModal() {
   if (!state.composer.destinationPickerOpen) return ''
+  if (useNativeMobileCommunityComposer()) {
+    const matches = composerDestinationMatches()
+    const visible = matches.slice(0, Math.max(10, Number(state.composer.destinationVisibleCount || 10)))
+    return `
+      <div class="community-mobile-destination-screen" data-community-mobile-destination-screen>
+        <section class="community-mobile-destination" role="dialog" aria-modal="true">
+          <header class="community-mobile-destination-header">
+            <button type="button" data-close-community-destination aria-label="Back to post">${iconSvg('arrowLeft')}</button>
+            <h2>Community Search</h2>
+            <button type="button" data-mobile-create-community aria-label="Create community">${iconSvg('plus')}</button>
+          </header>
+          <label class="community-mobile-destination-search">${iconSvg('search')}<input type="search" value="${escapeHtml(state.composer.destinationSearch)}" placeholder="Search communities" data-community-destination-search autocomplete="off" /></label>
+          <div class="community-mobile-destination-scroll" data-community-destination-scroll>
+            <button type="button" class="community-mobile-destination-row ${state.composer.communityId ? '' : 'is-selected'}" data-select-community-destination="">
+              <span class="community-destination-avatar is-general">${iconSvg('home')}</span><span><strong>General</strong><small>Main Melogic Community feed</small></span>${state.composer.communityId ? iconSvg('chevronRight') : iconSvg('checkCircle')}
+            </button>
+            ${state.composer.destinationLoading ? `<div class="community-mobile-destination-state"><strong>Loading communities...</strong></div>` : state.composer.destinationError ? `<div class="community-mobile-destination-state"><strong>Could not load communities</strong><small>${escapeHtml(state.composer.destinationError)}</small></div>` : visible.map((community) => `
+              <button type="button" class="community-mobile-destination-row ${state.composer.communityId === community.communityId ? 'is-selected' : ''}" data-select-community-destination="${escapeHtml(community.communityId)}">
+                ${renderCommunityDestinationAvatar(community)}<span><strong>${escapeHtml(community.name)}</strong><small>${escapeHtml([`c/${community.slug || ''}`, community.category || '', `${formatCount(community.focusCount || community.followerCount)} focused`].filter(Boolean).join(' · '))}</small></span>${state.composer.communityId === community.communityId ? iconSvg('checkCircle') : iconSvg('chevronRight')}
+              </button>`).join('')}
+            ${!state.composer.destinationLoading && !state.composer.destinationError && !visible.length ? `<div class="community-mobile-destination-state"><strong>No communities found</strong><small>Try another search.</small></div>` : ''}
+            ${visible.length < matches.length ? `<div class="community-mobile-destination-sentinel" aria-hidden="true"></div>` : ''}
+          </div>
+        </section>
+      </div>`
+  }
   return `
     <div class="community-modal-backdrop community-destination-backdrop" data-community-destination-backdrop>
-      <section class="community-destination-modal" role="dialog" aria-modal="true" aria-labelledby="community-destination-title" data-community-destination-modal>
-        <header>
-          <div>
-            <p class="eyebrow">Post Destination</p>
-            <h2 id="community-destination-title">Choose a Community</h2>
-            <p>Search active public communities and choose where this post belongs.</p>
-          </div>
-          <button type="button" class="community-close-button" data-close-community-destination aria-label="Close community selection">${iconSvg('x')}</button>
-        </header>
-        <label class="community-destination-search">
-          ${iconSvg('search')}
-          <input type="search" value="${escapeHtml(state.composer.destinationSearch)}" placeholder="Search communities" data-community-destination-search autocomplete="off" />
-        </label>
-        <div data-community-destination-results>
-          ${renderCommunityDestinationResults()}
-        </div>
-        <footer>
-          <span>${composerDestinationCommunities().length} communities available</span>
-          <button type="button" class="button button-muted" data-close-community-destination>Cancel</button>
-        </footer>
+      <section class="community-destination-modal" role="dialog" aria-modal="true" data-community-destination-modal>
+        <header><div><p class="eyebrow">Post Destination</p><h2>Choose a Community</h2><p>Search active public communities and choose where this post belongs.</p></div><button type="button" class="community-close-button" data-close-community-destination>${iconSvg('x')}</button></header>
+        <label class="community-destination-search">${iconSvg('search')}<input type="search" value="${escapeHtml(state.composer.destinationSearch)}" placeholder="Search communities" data-community-destination-search /></label>
+        <div data-community-destination-results>${renderCommunityDestinationResults()}</div>
       </section>
-    </div>
-  `
+    </div>`
 }
+// melogic-mobile-community-destination-search-v5b
 
 // melogic-mobile-native-community-composer-v1b
 function useNativeMobileCommunityComposer() {
@@ -1987,6 +1998,7 @@ function updateCommunityComposerLayer() {
   }
   document.body.classList.toggle('community-modal-open', communityModalIsOpen())
   document.body.classList.toggle('community-mobile-composer-open', Boolean(state.composer.open && state.currentUser && useNativeMobileCommunityComposer()))
+  document.body.classList.toggle('community-mobile-overlay-open', Boolean(useNativeMobileCommunityComposer() && (state.composer.open || state.composer.destinationPickerOpen)))
   layer.innerHTML = renderComposerModal()
   bindCommunityComposerEvents(layer)
 }
@@ -5238,6 +5250,7 @@ function openCommunityDestinationPicker() {
     ...state.composer,
     destinationPickerOpen: true,
     destinationSearch: '',
+    destinationVisibleCount: 10,
     destinationLoading: true,
     destinationError: ''
   }
@@ -6483,9 +6496,20 @@ function bindCommunityComposerEvents(root = app) {
   })
   root?.querySelector('[data-community-destination-search]')?.addEventListener('input', (event) => {
     state.composer.destinationSearch = String(event.target.value || '').slice(0, 80)
-    updateCommunityDestinationResultsDom()
+    state.composer.destinationVisibleCount = 10
+    if (useNativeMobileCommunityComposer()) updateCommunityComposerLayer()
+    else updateCommunityDestinationResultsDom()
   })
   bindCommunityDestinationResultEvents(root)
+  const destinationScroll = root?.querySelector('[data-community-destination-scroll]')
+  destinationScroll?.addEventListener('scroll', () => {
+    if (destinationScroll.scrollTop + destinationScroll.clientHeight < destinationScroll.scrollHeight - 180) return
+    const total = composerDestinationMatches().length
+    const current = Math.max(10, Number(state.composer.destinationVisibleCount || 10))
+    if (current >= total) return
+    state.composer.destinationVisibleCount = Math.min(total, current + 10)
+    updateCommunityComposerLayer()
+  }, { passive: true })
   root?.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
   root?.querySelector('[data-community-composer-form]')?.addEventListener('input', (event) => {
     updateComposerFromForm()
