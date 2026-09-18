@@ -7786,6 +7786,9 @@ async function handleCommunityModerationAction(button) {
     render()
     return
   }
+  // melogic-admin-community-mfa-audit-v1
+  const approved = await performAdminStepUp(`Community: ${humanLabel(action)}`)
+  if (!approved) return
   state.adminData.community.actioning = action
   state.error = ''
   state.message = ''
@@ -7829,6 +7832,8 @@ async function submitAdminCommunityCreate(form) {
     render()
     return
   }
+  const approved = await performAdminStepUp('Create community')
+  if (!approved) return
   data.createSaving = true
   data.createError = ''
   data.createMessage = ''
@@ -7886,6 +7891,8 @@ async function submitAdminCommunityEdit(form) {
     render()
     return
   }
+  const approved = await performAdminStepUp('Save community changes')
+  if (!approved) return
   data.actioning = 'save-community'
   state.error = ''
   state.message = ''
