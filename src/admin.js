@@ -1,4 +1,5 @@
 import './styles/base.css'
+import { getDownloadURL, getStorage, ref as storageRef } from 'firebase/storage'
 import './styles/admin.css'
 import {
   EmailAuthProvider,
@@ -3170,6 +3171,43 @@ function permissionToggle({ name, label, values, defaultValues, prefix, disabled
 }
 
 // melogic-admin-role-badge-list-v1
+const adminBadgePreviewCache = new Map()
+
+function adminBadgeStoragePath(definition = {}) {
+  const key = String(definition.key || definition.roleName || '').trim()
+  const configured = String(definition.iconPath || '').trim()
+  if (/^https?:\/\//i.test(configured)) return { url: configured, path: '' }
+  // System badge files currently live in Firebase Storage at assets/badges/<key>Badge.png.
+  // Prefer that canonical path for system definitions; custom definitions may supply their own Storage path.
+  const path = definition.system === true && key
+    ? `assets/badges/${key}Badge.png`
+    : configured.replace(/^\/+/, '')
+  return { url: '', path }
+}
+
+function hydrateAdminBadgePreviews(root = document) {
+  root.querySelectorAll('[data-admin-badge-storage-path]').forEach(async (img) => {
+    if (img.dataset.badgePreviewHydrated === 'true') return
+    img.dataset.badgePreviewHydrated = 'true'
+    const path = String(img.dataset.adminBadgeStoragePath || '').trim()
+    if (!path) return
+    try {
+      let url = adminBadgePreviewCache.get(path)
+      if (!url) {
+        url = await getDownloadURL(storageRef(getStorage(), path))
+        adminBadgePreviewCache.set(path, url)
+      }
+      if (img.isConnected) {
+        img.src = url
+        img.hidden = false
+      }
+    } catch (error) {
+      console.warn('[admin] badge preview unavailable', { path, error })
+      if (img.isConnected) img.hidden = true
+    }
+  })
+}
+
 function accountRoleBadgeAssignmentList(data = {}, disabled = false) {
   const definitions = Array.isArray(data.roleDefinitions)
     ? data.roleDefinitions.filter((item) => item && item.enabled !== false)
@@ -3194,10 +3232,12 @@ function accountRoleBadgeAssignmentList(data = {}, disabled = false) {
         const badgeAllowed = definition.badgeAssignable === true
         const roleAllowed = definition.backendAssignable === true
         // melogic-admin-role-badge-icon-parse-fix-v1
-        const iconPath = String(definition.iconPath || '').replace(/^\/+/, '')
-        const iconMarkup = iconPath
-          ? '<span class="admin-role-badge-icon"><img src="/' + escapeHtml(iconPath) + '" alt="" onerror="this.style.display=\'none\'" /></span>'
-          : ''
+        const badgeAsset = adminBadgeStoragePath(definition)
+        const iconMarkup = badgeAsset.url
+          ? '<span class="admin-role-badge-icon"><img src="' + escapeHtml(badgeAsset.url) + '" alt="" /></span>'
+          : badgeAsset.path
+            ? '<span class="admin-role-badge-icon"><img data-admin-badge-storage-path="' + escapeHtml(badgeAsset.path) + '" alt="" hidden /></span>'
+            : ''
         return `
           <div class="admin-role-badge-row">
             <div class="admin-role-badge-identity">
@@ -3227,6 +3267,7 @@ function accountRoleBadgeAssignmentList(data = {}, disabled = false) {
 }
 
 function accountPermissionsDialog() {
+  queueMicrotask(() => hydrateAdminBadgePreviews())
   const dialog = state.accountPermissionsDialog || {}
   if (!dialog.open) return ''
   const data = dialog.data || {}

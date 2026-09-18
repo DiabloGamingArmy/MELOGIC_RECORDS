@@ -13,7 +13,8 @@ const SYSTEM_ROLE_DEFINITIONS = Object.freeze([
   ['beta','Beta','Melogic beta-program role and optional public beta identity.',500]
 ].map(([key,displayName,description,sortOrder]) => Object.freeze({
   key, roleName:key, displayName, description, iconKey:key,
-  iconPath:`assets/badges/${key}.svg`,
+  // melogic-badge-storage-preview-fix-v1
+  iconPath:`assets/badges/${key}Badge.png`,
   backendAssignable:true, badgeAssignable:true, system:true, protected:true,
   enabled:true, sortOrder
 })))
