@@ -166,7 +166,9 @@ async function bootstrapCameraDocument() {
     if (cameraBootstrapped) return
     cameraBootstrapped = true
     cameraRuntimeActive = true
-    document.body.classList.add('is-camera-page')
+    // Camera route chrome/geometry must follow runtime ownership, not the HTML
+    // document that happened to cold-boot the persistent SPA.
+    document.body.classList.add('is-camera-page', 'melogic-camera-page')
     initShellChrome()
     bindCameraDocumentLifecycleOnce()
     if (playback?.hidden && !stream && !cameraStarting) await startCamera()
@@ -190,7 +192,9 @@ if (isMobileSpaRuntime()) {
     },
     async activate({ instance }) {
       cameraRuntimeActive = true
-      document.body.classList.add('is-camera-page')
+      // A warm SPA transition into Camera never loads camera.html, so explicitly
+      // acquire Camera's route-scoped body contract here.
+      document.body.classList.add('is-camera-page', 'melogic-camera-page')
       attachCameraSurface(instance)
       if (instance?.resumeCamera && playback?.hidden && !stream && !cameraStarting) {
         instance.resumeCamera = false
@@ -199,13 +203,17 @@ if (isMobileSpaRuntime()) {
     },
     async deactivate({ instance }) {
       cameraRuntimeActive = false
-      document.body.classList.remove('is-camera-page')
+      // A cold Camera document keeps its <body> alive while the primary-tab SPA
+      // navigates elsewhere. Release BOTH Camera classes so Camera-only CSS
+      // cannot leak into Community/Streaming/Inbox/Profile.
+      document.body.classList.remove('is-camera-page', 'melogic-camera-page')
       instance.resumeCamera = Boolean(playback?.hidden)
       stopCameraForInactiveView()
       detachCameraSurface(instance)
     },
     async unmount({ instance }) {
       cameraRuntimeActive = false
+      document.body.classList.remove('is-camera-page', 'melogic-camera-page')
       stopCameraForInactiveView()
       detachCameraSurface(instance)
     }
