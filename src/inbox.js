@@ -185,6 +185,32 @@ export async function hydrateInboxVerifiedIdentities(uids = [], root = document)
   return Promise.all(unique.map((uid) => hydrateInboxVerifiedIdentity(uid, root)))
 }
 
+
+// melogic-inbox-verified-surface-integration-v2
+let inboxVerifiedSurfaceObserver = null
+let inboxVerifiedHydrationQueued = false
+
+function hydrateRenderedInboxVerifiedSurfaces(root = inboxRoot) {
+  if (!root?.querySelectorAll || inboxVerifiedHydrationQueued) return
+  inboxVerifiedHydrationQueued = true
+  queueMicrotask(() => {
+    inboxVerifiedHydrationQueued = false
+    const uids = [...new Set([...root.querySelectorAll('[data-inbox-identity-uid]')]
+      .map((node) => String(node.dataset.inboxIdentityUid || '').trim())
+      .filter((uid) => uid && uid !== RESONA_AGENT_ID && uid !== 'system'))]
+    if (uids.length) void hydrateInboxVerifiedIdentities(uids, root)
+  })
+}
+
+function ensureInboxVerifiedSurfaceObserver() {
+  if (inboxVerifiedSurfaceObserver || !inboxRoot) return
+  inboxVerifiedSurfaceObserver = new MutationObserver((mutations) => {
+    if (mutations.some((mutation) => mutation.addedNodes?.length)) hydrateRenderedInboxVerifiedSurfaces(inboxRoot)
+  })
+  inboxVerifiedSurfaceObserver.observe(inboxRoot, { childList: true, subtree: true })
+  hydrateRenderedInboxVerifiedSurfaces(inboxRoot)
+}
+
 // melogic-inbox-lifecycle-contract-v6a
 const inboxSurface = document.createElement('div')
 inboxSurface.dataset.melogicInboxSurface = 'true'
@@ -850,6 +876,7 @@ inboxSurface.innerHTML = `
 `
 
 const inboxRoot = inboxSurface.querySelector('[data-inbox-root]')
+ensureInboxVerifiedSurfaceObserver()
 const modalRoot = document.createElement('div')
 modalRoot.className = 'create-chat-modal-root'
 const floatingRoot = document.createElement('div')
@@ -2451,6 +2478,18 @@ function getPinnedInboxSidebarMarkup() {
   `
 }
 
+
+function getInboxVerifiedDmUid(thread = {}) {
+  if (!thread || thread.type !== 'dm' || isResonaThread(thread)) return ''
+  return String(thread.otherParticipantId || (thread.participantIds || []).find((uid) => uid && uid !== appState.user?.uid) || '').trim()
+}
+
+function inboxIdentityNameAttrs(uid = '') {
+  const cleanUid = String(uid || '').trim()
+  if (!cleanUid || cleanUid === RESONA_AGENT_ID || cleanUid === 'system') return ''
+  return ` data-inbox-identity-uid="${escapeHtml(cleanUid)}" data-inbox-identity-name`
+}
+
 function getRecentThreadsSidebarMarkup() {
   if (appState.activeFilter !== 'Messages') return ''
 
@@ -2509,7 +2548,7 @@ function getRecentThreadsSidebarMarkup() {
       const isActive = appState.selectedThreadId === thread.id
       return `
         <button type="button" class="sidebar-thread-pill ${isActive ? 'is-active' : ''}" data-select-thread-id="${escapeHtml(thread.id)}" data-guide-id="inbox-sidebar-thread-${escapeHtml(thread.id)}" data-guide-label="${escapeHtml(thread.title)}" data-guide-role="inbox-sidebar-thread">
-          <strong>${escapeHtml(thread.title)}</strong>
+          <strong${inboxIdentityNameAttrs(getInboxVerifiedDmUid(thread))}>${escapeHtml(thread.title)}</strong>
           ${thread.type === 'group' ? '<small>Group</small>' : '<small>Direct</small>'}
         </button>
       `
@@ -2973,7 +3012,7 @@ function getMessageGroupsMarkup(thread, {
         <div class="message-cluster ${isSelf ? 'is-self' : 'is-other'}" data-index="${index}">
           ${avatarMarkup}
           <div class="message-cluster-body">
-            ${!isSelf ? `<p class="cluster-sender">${escapeHtml(sender.displayName || sender.username || getInitials({ uid: sender.uid }))}</p>` : ''}
+            ${!isSelf ? `<p class="cluster-sender"${inboxIdentityNameAttrs(sender.uid)}>${escapeHtml(sender.displayName || sender.username || getInitials({ uid: sender.uid }))}</p>` : ''}
             <div class="message-bubble-stack">${bubbles}</div>
             ${statusLine}
           </div>
@@ -3198,7 +3237,7 @@ function getMessagesThreadListMarkup() {
             ${renderThreadAvatar(thread, { stableKey: `thread-list:${thread.id}` })}
             <div class="thread-meta">
               <div class="thread-title-row">
-                <strong>${escapeHtml(thread.title)}</strong>
+                <strong${inboxIdentityNameAttrs(getInboxVerifiedDmUid(thread))}>${escapeHtml(thread.title)}</strong>
                 <span>${escapeHtml(formatThreadTimestamp(thread.lastMessageAt || thread.updatedAt || thread.createdAt))}</span>
               </div>
               <div class="thread-preview-row">
@@ -4761,7 +4800,7 @@ function getConversationHeaderMarkup(thread) {
       <button type="button" class="mobile-conversation-back" data-mobile-inbox-back aria-label="Back to inbox">${iconSvg('arrowLeft') || '←'}</button>
       ${renderThreadAvatar(avatarThread, { stableKey: `thread-header:${thread.id}` })}
       <div class="conversation-header-meta">
-        <h3>${escapeHtml(headerMeta.displayName || thread.title)}</h3>
+        <h3${inboxIdentityNameAttrs(thread.type === 'dm' && !isResonaThread(thread) ? otherParticipant : '')}>${escapeHtml(headerMeta.displayName || thread.title)}</h3>
         <p>${escapeHtml(getConversationSubtitle(thread))}</p>
       </div>
       ${getSiteGuidanceHeaderMarkup(thread)}

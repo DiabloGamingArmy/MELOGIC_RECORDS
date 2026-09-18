@@ -5251,3 +5251,17 @@ body.is-inbox-page .site-footer {
   align-items:center;
   min-width:0;
 }
+
+/* melogic-inbox-verified-surface-integration-v2 */
+.inbox-thread-list [data-inbox-identity-name],
+.sidebar-thread-pill [data-inbox-identity-name],
+.conversation-header-meta [data-inbox-identity-name],
+.cluster-sender[data-inbox-identity-name] {
+  display:inline-flex;
+  align-items:center;
+  min-width:0;
+}
+.inbox-thread-list .inbox-verified-badge { --inbox-verified-badge-size:.9em; }
+.sidebar-thread-pill .inbox-verified-badge { --inbox-verified-badge-size:.88em; }
+.conversation-header-meta .inbox-verified-badge { --inbox-verified-badge-size:1em; }
+.cluster-sender .inbox-verified-badge { --inbox-verified-badge-size:.88em; }
