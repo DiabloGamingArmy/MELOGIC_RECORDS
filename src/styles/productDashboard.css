@@ -2189,3 +2189,13 @@
     align-content: start !important;
   }
 }
+
+/* melogic-product-contributor-profile-unit-v2 */
+.dashboard-contributor-profile-link{display:block;color:inherit;text-decoration:none;border-radius:12px;transition:background 120ms ease}
+.dashboard-contributor-profile-link:hover{background:rgba(255,255,255,.035)}
+.dashboard-contributor-profile-link:focus-visible{outline:2px solid rgba(255,255,255,.72);outline-offset:3px}
+.dashboard-contributor-profile-link .dashboard-contributor-row-inner{grid-template-columns:56px minmax(0,1fr)}
+.dashboard-contributor-name{color:#fff!important}
+.dashboard-contributor-handle-role{color:#aeb4c6}
+.dashboard-contributor-verified-badge{width:1.05em;height:1.05em;flex:0 0 auto;object-fit:contain;margin-left:.08rem}
+.dashboard-contributor-action{display:none!important}

@@ -6,11 +6,12 @@ import { addToCart } from './data/cartService'
 import { createReport, getProductShellById, installMarketplaceSouraPack, installMarketplaceVertixPack, listProductFiles, listRecommendedProducts, normalizeProduct, resolveProductMedia } from './data/productService'
 import { claimFreeProduct, createProductDownloadLink, createProductDownloadUrl, getProductAccessContext, userOwnsProduct } from './data/entitlementService'
 import { sendProductGift } from './data/productGiftService'
-import { searchProfilesByUsername } from './data/profileSearchService'
+import { getPublicProfileIdentityByUid, searchProfilesByUsername } from './data/profileSearchService'
 import { beginProductDownloads, productDownloadDialogMarkup } from './components/productDownloadDialog'
 import { getProductEngagementState, setProductEngagement } from './data/productEngagementService'
 import { createMarketplaceReviewReport, createProductReview, createProductReviewReply, deleteProductReview, deleteProductReviewReply, getReviewReactionStates, listProductReviewReplies, listProductReviews, setProductReviewReaction } from './data/productReviewService'
 import { waitForInitialAuthState } from './firebase/auth'
+import { getStorageAssetUrl } from './firebase/storageAssets'
 import { ROUTES, authRoute, productRoute, publicProfileRoute } from './utils/routes'
 import { formatUsername } from './utils/format'
 import {
@@ -73,6 +74,39 @@ const state = {
 }
 
 let giftSearchTimer = null
+
+const productContributorIdentityCache = new Map()
+let productContributorVerifiedBadgeUrl = ''
+
+async function hydrateProductContributorIdentities() {
+  const roots = [...app.querySelectorAll('[data-product-contributor-uid]')]
+  if (!roots.length) return
+  if (!productContributorVerifiedBadgeUrl) {
+    productContributorVerifiedBadgeUrl = await getStorageAssetUrl('assets/badges/verifiedBadge.png', { scopeKey: 'product-viewer-contributors', type: 'badge', warnOnFail: false }).catch(() => '')
+  }
+  await Promise.all(roots.map(async (root) => {
+    const uid = String(root.dataset.productContributorUid || '').trim()
+    if (!uid) return
+    let identity = productContributorIdentityCache.get(uid)
+    if (!identity) {
+      identity = await getPublicProfileIdentityByUid(uid).catch(() => null)
+      if (identity) productContributorIdentityCache.set(uid, identity)
+    }
+    if (!identity || !root.isConnected) return
+    const name = root.querySelector('[data-contributor-display-name]')
+    const secondary = root.querySelector('[data-contributor-secondary]')
+    const avatar = root.querySelector('[data-contributor-avatar]')
+    if (name && identity.displayName) name.firstChild.textContent = identity.displayName
+    const role = String(root.dataset.productContributorRole || '').trim()
+    if (secondary && identity.username) secondary.textContent = `${formatUsername(identity.username)}${role ? ` • ${role}` : ''}`
+    if (avatar && (identity.avatarURL || identity.photoURL)) avatar.src = identity.avatarURL || identity.photoURL
+    const verified = Array.isArray(identity.badges) && identity.badges.some((badge) => String(badge || '').trim().toLowerCase() === 'verified')
+    if (name && verified && productContributorVerifiedBadgeUrl && !name.querySelector('.dashboard-contributor-verified-badge')) {
+      name.insertAdjacentHTML('beforeend', `<img class="dashboard-contributor-verified-badge" src="${escapeHtml(productContributorVerifiedBadgeUrl)}" alt="Verified" title="Verified" />`)
+    }
+  }))
+}
+
 
 function productDownloadBytes(product = {}, productFiles = []) {
   const explicit = Number(product.assetSummary?.totalBytes || product.assetSummary?.downloadBytes || product.primaryDownloadBytes || 0)
@@ -502,6 +536,7 @@ function renderMainMedia() {
   })
 
 
+  void hydrateProductContributorIdentities()
   bindInteractiveRatingControl()
   app.querySelectorAll('[data-media-index]').forEach((button) => {
     const index = Number(button.getAttribute('data-media-index'))
@@ -1392,7 +1427,9 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
                   const name = row.displayName || 'Contributor'
                   const handle = formatUsername(row.username)
                   const route = row.profilePath || (row.uid ? publicProfileRoute({ uid: row.uid }) : '')
-                  return `<div class="dashboard-contributor-row"><div class="dashboard-contributor-row-inner">${row.avatarURL ? `<img class="dashboard-contributor-avatar" src="${escapeHtml(row.avatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback dashboard-contributor-avatar-fallback">${escapeHtml(creatorInitials(name))}</span>`}<div class="dashboard-contributor-meta"><p class="dashboard-contributor-name">${escapeHtml(name)}</p><p class="dashboard-contributor-handle-role">${handle ? escapeHtml(handle) : ''}${handle && row.role ? ' <span class="dashboard-contributor-role-dot" aria-hidden="true">•</span> ' : ''}${row.role ? escapeHtml(row.role) : ''}</p></div>${route ? `<a class="button button-muted dashboard-contributor-action" href="/${escapeHtml(String(route).replace(/^\/+/, ''))}">View</a>` : ''}</div></div>`
+                  return route
+                    ? `<a class="dashboard-contributor-row dashboard-contributor-profile-link" data-product-contributor-uid="${escapeHtml(row.uid || '')}" data-product-contributor-role="${escapeHtml(row.role || '')}" href="/${escapeHtml(String(route).replace(/^\/+/, ''))}" aria-label="Open ${escapeHtml(name)} profile"><div class="dashboard-contributor-row-inner">${row.avatarURL ? `<img data-contributor-avatar class="dashboard-contributor-avatar" src="${escapeHtml(row.avatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback dashboard-contributor-avatar-fallback">${escapeHtml(creatorInitials(name))}</span>`}<div class="dashboard-contributor-meta"><p data-contributor-display-name class="dashboard-contributor-name">${escapeHtml(name)}</p><p data-contributor-secondary class="dashboard-contributor-handle-role">${handle ? escapeHtml(handle) : ''}${handle && row.role ? ' • ' : ''}${escapeHtml(row.role || '')}</p></div></div></a>`
+                    : `<div class="dashboard-contributor-row" data-product-contributor-uid="${escapeHtml(row.uid || '')}" data-product-contributor-role="${escapeHtml(row.role || '')}"><div class="dashboard-contributor-row-inner">${row.avatarURL ? `<img data-contributor-avatar class="dashboard-contributor-avatar" src="${escapeHtml(row.avatarURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />` : `<span class="dashboard-creator-avatar-fallback dashboard-contributor-avatar-fallback">${escapeHtml(creatorInitials(name))}</span>`}<div class="dashboard-contributor-meta"><p data-contributor-display-name class="dashboard-contributor-name">${escapeHtml(name)}</p><p data-contributor-secondary class="dashboard-contributor-handle-role">${handle ? escapeHtml(handle) : ''}${handle && row.role ? ' • ' : ''}${escapeHtml(row.role || '')}</p></div></div></div>`
                 }).join('')}
               </div>
             </article>
