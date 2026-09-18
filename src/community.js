@@ -7127,9 +7127,19 @@ if (isMobileSpaRuntime()) {
 }
 
 // melogic-runtime-boot-ownership-v4d1
-// Only a real Community document may cold-boot Community. A dynamic import
-// while another view owns the document must register the lifecycle and stop.
-if ((location.pathname.replace(/\/+$/, '') || '/') === '/community') {
+// melogic-community-deep-route-cold-boot-v1
+// Firebase Hosting serves community.html for the entire Community route family.
+// Cold-boot every Community document/deep link, while speculative imports from
+// another primary surface still only register the lifecycle and do not boot.
+const communityColdBootPath = location.pathname.replace(/\/+$/, '') || '/'
+const isCommunityDocumentRoute =
+  communityColdBootPath === '/community' ||
+  communityColdBootPath === '/community/communities' ||
+  communityColdBootPath === '/community/create' ||
+  communityColdBootPath.startsWith('/community/c/') ||
+  communityColdBootPath.startsWith('/community/post/')
+
+if (isCommunityDocumentRoute) {
   void bootstrapCommunityDocument()
 }
 
