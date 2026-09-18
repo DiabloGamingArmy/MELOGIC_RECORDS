@@ -2005,6 +2005,16 @@ function ensureCommunityMobileOverlayTouchGuard() {
 }
 ensureCommunityMobileOverlayTouchGuard()
 
+// melogic-mobile-community-release-overlay-lock-v6b
+function releaseCommunityMobileOverlayLock() {
+  document.documentElement.classList.remove('community-mobile-overlay-open')
+  document.body.classList.remove('community-mobile-overlay-open')
+  document.body.classList.remove('community-mobile-composer-open')
+  // community-modal-open is derived from modal state; after successful publish
+  // the composer is already reset/closed, so release that lock too.
+  document.body.classList.remove('community-modal-open')
+}
+
 function updateCommunityComposerLayer() {
   const layer = app?.querySelector('[data-community-composer-layer]')
   if (!layer) {
@@ -4400,6 +4410,9 @@ async function handleComposerSubmit(event) {
     clearComposerFileAttachments()
     clearComposerDraft()
     state.composer = defaultComposerState({ communityId: state.view.type === 'community' ? state.community?.communityId || '' : '' })
+    // The success path closes the composer without updateCommunityComposerLayer().
+    // Explicitly release the mobile html/body scroll lock before rebuilding the feed.
+    releaseCommunityMobileOverlayLock()
     state.message = 'Post published.'
     render()
     window.setTimeout(() => {
@@ -5181,7 +5194,7 @@ function openCommunityComposer() {
 
 function closeCommunityComposer() {
   communityMobileComposerFocusToken += 1
-  document.documentElement.classList.remove('community-mobile-overlay-open')
+  releaseCommunityMobileOverlayLock()
   if (composerHasDraft()) {
     if (!window.confirm('Discard draft?')) return
     clearComposerFileAttachments()
