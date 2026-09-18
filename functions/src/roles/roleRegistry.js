@@ -59,4 +59,28 @@ async function seedSystemRoleDefinitions({actorUid='system'}={}){
   await batch.commit()
   return SYSTEM_ROLE_DEFINITIONS.map(x=>x.key)
 }
-module.exports={ROLE_REGISTRY_COLLECTION,SYSTEM_ROLE_DEFINITIONS,listRoleDefinitions,normalizeRoleArray,normalizeRoleKey,roleDefinitionRef,seedSystemRoleDefinitions,serializeRoleDefinition}
+
+function canonicalizeLegacyBadgeValues(profile = {}) {
+  const direct = normalizeRoleArray(profile.badges || [])
+  if (direct.length) return direct
+  const legacyArrays = [
+    ...(Array.isArray(profile.publicRoles) ? profile.publicRoles : []),
+    ...(Array.isArray(profile.publicBadges) ? profile.publicBadges : [])
+  ]
+  const legacyMap = profile.publicBadges && !Array.isArray(profile.publicBadges) && typeof profile.publicBadges === 'object'
+    ? Object.entries(profile.publicBadges).filter(([, enabled]) => enabled === true).map(([key]) => key.replace(/^badge_/, ''))
+    : []
+  return normalizeRoleArray([...legacyArrays, ...legacyMap])
+}
+
+function canonicalizeLegacyRoleValues(user = {}, profile = {}) {
+  // Migration may inspect legacy profile roles, but runtime authorization must not.
+  const direct = normalizeRoleArray(user.roles || [])
+  if (direct.length) return direct
+  return normalizeRoleArray([
+    ...(Array.isArray(user.publicRoles) ? user.publicRoles : []),
+    ...(Array.isArray(profile.roles) ? profile.roles : [])
+  ])
+}
+
+module.exports={ROLE_REGISTRY_COLLECTION,SYSTEM_ROLE_DEFINITIONS,canonicalizeLegacyBadgeValues,canonicalizeLegacyRoleValues,listRoleDefinitions,normalizeRoleArray,normalizeRoleKey,roleDefinitionRef,seedSystemRoleDefinitions,serializeRoleDefinition}

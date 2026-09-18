@@ -8,7 +8,10 @@ const {
   listRoleDefinitions,
   normalizeRoleKey,
   roleDefinitionRef,
-  serializeRoleDefinition
+  serializeRoleDefinition,
+  canonicalizeLegacyBadgeValues,
+  canonicalizeLegacyRoleValues,
+  normalizeRoleArray
 } = require('../roles/roleRegistry')
 
 // melogic-admin-role-registry-crud-v2
@@ -63,4 +66,52 @@ const deleteAdminRoleDefinition = onCall({timeoutSeconds:60,memory:'256MiB'}, as
   return {ok:true,key,deleted:true}
 })
 
-module.exports={listAdminRoleDefinitions,upsertAdminRoleDefinition,deleteAdminRoleDefinition}
+
+const migrateCanonicalRoleAssignments = onCall({timeoutSeconds:540,memory:'512MiB'}, async(request)=>{
+  const actor=await requireAdminActionSecurity(request,'roleManage')
+  const apply=request.data?.apply===true
+  const requestedLimit=Math.max(1,Math.min(500,Number(request.data?.limit)||250))
+  const definitions=await listRoleDefinitions({includeDisabled:true})
+  const known=new Set(definitions.map((item)=>item.key))
+  const usersSnap=await db().collection('users').limit(requestedLimit).get()
+  const report={scanned:0,changed:0,rolesMigrated:0,badgesMigrated:0,unknownKeys:[],apply}
+  const unknown=new Set()
+  const batch=apply ? db().batch() : null
+  for(const userDoc of usersSnap.docs){
+    report.scanned+=1
+    const uid=userDoc.id
+    const user=userDoc.data()||{}
+    const profileRef=db().collection('profiles').doc(uid)
+    const profileSnap=await profileRef.get()
+    const profile=profileSnap.exists ? profileSnap.data()||{} : {}
+    const currentRoles=normalizeRoleArray(user.roles||[])
+    const currentBadges=normalizeRoleArray(profile.badges||[])
+    const nextRoles=canonicalizeLegacyRoleValues(user,profile)
+    const nextBadges=canonicalizeLegacyBadgeValues(profile)
+    ;[...nextRoles,...nextBadges].filter((key)=>!known.has(key)).forEach((key)=>unknown.add(key))
+    const rolesChanged=JSON.stringify([...currentRoles].sort())!==JSON.stringify([...nextRoles].sort())
+    const badgesChanged=JSON.stringify([...currentBadges].sort())!==JSON.stringify([...nextBadges].sort())
+    if(!rolesChanged&&!badgesChanged) continue
+    report.changed+=1
+    if(rolesChanged) report.rolesMigrated+=1
+    if(badgesChanged) report.badgesMigrated+=1
+    if(apply){
+      const now=admin.firestore.FieldValue.serverTimestamp()
+      if(rolesChanged) batch.set(userDoc.ref,{roles:nextRoles,updatedAt:now},{merge:true})
+      if(badgesChanged) batch.set(profileRef,{badges:nextBadges,updatedAt:now},{merge:true})
+    }
+  }
+  report.unknownKeys=[...unknown].sort()
+  if(apply&&report.changed) await batch.commit()
+  await writeAdminAuditLog({
+    actorUid:actor.uid,actorEmail:actor.email,actorRole:actor.adminRole,
+    action:apply?'canonical_role_migration_applied':'canonical_role_migration_previewed',
+    targetType:'role_registry',targetId:'canonical-role-migration',
+    targetPath:ROLE_REGISTRY_COLLECTION,
+    reason:cleanString(request.data?.reason||`Canonical role/badge migration ${apply?'apply':'dry run'}.`,1200),
+    before:null,after:report
+  })
+  return {ok:true,report}
+})
+
+module.exports={listAdminRoleDefinitions,upsertAdminRoleDefinition,deleteAdminRoleDefinition,migrateCanonicalRoleAssignments}

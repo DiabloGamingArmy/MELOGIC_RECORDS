@@ -58,7 +58,8 @@ service cloud.firestore {
         'suspensionNote',
         'suspensionDuration',
         'suspensionUntil',
-        'unsuspensionReason'
+        'unsuspensionReason',
+        'roles'
       ];
     }
 
@@ -82,6 +83,7 @@ service cloud.firestore {
         'accountStatus',
         'suspended',
         'publicBadges',
+        'badges',
         'followerCount',
         'followersCount',
         'followingCount'
@@ -1448,6 +1450,12 @@ service cloud.firestore {
       match /hiddenThreadMessages/{threadId}/messages/{messageId} {
         allow read, create, update, delete: if isOwner(uid);
       }
+    }
+
+    // melogic-role-system-finalization-v6
+    match /roleDefinitions/{roleKey} {
+      allow read: if hasRoleManageClaim();
+      allow create, update, delete: if false;
     }
 
     match /profiles/{uid} {
