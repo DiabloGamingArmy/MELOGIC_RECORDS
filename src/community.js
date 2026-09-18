@@ -349,12 +349,58 @@ const communityAuthorIdentityCache = new Map()
 const communityAuthorIdentityRequests = new Map()
 let communityIdentityRenderQueued = false
 
+// melogic-community-identity-dom-hydration-v1
+// Identity lookups are asynchronous enrichment. They must never trigger the
+// page-level render(), because render() replaces communityRoot.innerHTML and
+// destroys every mounted feed image/video/audio element.
+function hydrateCommunityIdentityDom() {
+  if (!app) return
+
+  app.querySelectorAll('[data-community-author-uid]').forEach((node) => {
+    const uid = String(node.getAttribute('data-community-author-uid') || '').trim()
+    if (!uid) return
+    const identity = communityAuthorIdentityCache.get(uid)
+    if (!identity) return
+
+    const fallback = node.getAttribute('data-community-display-fallback') || 'Melogic Creator'
+    const displayName = String(identity.displayName || identity.authorDisplayName || fallback).trim() || fallback
+    const verified = Array.isArray(identity.badges) && identity.badges.includes('verified')
+
+    // Preserve the <strong> node itself. Only text/badge children change, so
+    // post cards and all media descendants elsewhere in the card stay mounted.
+    let textNode = [...node.childNodes].find((child) => child.nodeType === Node.TEXT_NODE)
+    if (!textNode) {
+      textNode = document.createTextNode('')
+      node.prepend(textNode)
+    }
+    textNode.nodeValue = displayName
+
+    const badge = node.querySelector(':scope > .community-verified-badge')
+    if (verified && communityVerifiedBadgeUrl) {
+      if (!badge) {
+        const img = document.createElement('img')
+        img.className = 'community-verified-badge'
+        img.src = communityVerifiedBadgeUrl
+        img.alt = 'Verified'
+        img.title = 'Verified'
+        img.loading = 'eager'
+        img.decoding = 'async'
+        node.append(img)
+      } else if (badge.getAttribute('src') !== communityVerifiedBadgeUrl) {
+        badge.setAttribute('src', communityVerifiedBadgeUrl)
+      }
+    } else {
+      badge?.remove()
+    }
+  })
+}
+
 function queueCommunityIdentityRender() {
   if (communityIdentityRenderQueued) return
   communityIdentityRenderQueued = true
   window.requestAnimationFrame(() => {
     communityIdentityRenderQueued = false
-    if (communityBootstrapped) render()
+    if (communityBootstrapped) hydrateCommunityIdentityDom()
   })
 }
 function ensureCommunityAuthorIdentity(uid = '') {
@@ -401,8 +447,12 @@ function communityVerifiedBadgeMarkup(author = {}) {
 }
 function communityDisplayNameMarkup(author = {}, fallback = 'Melogic Creator', id = '') {
   const displayName = String(author.authorDisplayName || author.displayName || fallback).trim() || fallback
+  const uid = String(author.authorUid || author.uid || '').trim()
   const idAttr = id ? ` id="${escapeHtml(id)}"` : ''
-  return `<strong${idAttr} class="community-display-name">${escapeHtml(displayName)}${communityVerifiedBadgeMarkup(author)}</strong>`
+  const identityAttrs = uid
+    ? ` data-community-author-uid="${escapeHtml(uid)}" data-community-display-fallback="${escapeHtml(displayName)}"`
+    : ''
+  return `<strong${idAttr} class="community-display-name"${identityAttrs}>${escapeHtml(displayName)}${communityVerifiedBadgeMarkup(author)}</strong>`
 }
 let storyMediaRecorder = null
 let storyRecordingStream = null
