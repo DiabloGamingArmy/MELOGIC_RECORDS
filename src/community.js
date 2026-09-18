@@ -1808,8 +1808,38 @@ function renderCommunityDestinationPickerModal() {
   `
 }
 
+// melogic-mobile-native-community-composer-v1b
+function useNativeMobileCommunityComposer() {
+  return window.matchMedia('(max-width: 760px)').matches
+}
+function renderNativeMobileComposerShell() {
+  if (!state.composer.open || !state.currentUser) return ''
+  return `
+    <div class="community-mobile-composer-screen" data-community-mobile-composer-screen>
+      <section class="community-mobile-composer" role="dialog" aria-modal="true" aria-labelledby="community-mobile-composer-title">
+        <header class="community-mobile-composer-header">
+          <button type="button" class="community-mobile-composer-close" data-close-community-composer aria-label="Close composer">${iconSvg('x')}</button>
+          <h2 id="community-mobile-composer-title">New post</h2>
+          <button type="button" class="community-mobile-composer-more" aria-label="Post options">&#8226;&#8226;&#8226;</button>
+        </header>
+        <form class="community-mobile-composer-form" data-community-composer-form>
+          ${renderComposerDestinationButton()}
+          <div class="community-mobile-composer-author">
+            <span class="community-mobile-composer-author-placeholder" aria-hidden="true"></span>
+            <strong>${escapeHtml(formatUsername(state.currentUser?.displayName || state.currentUser?.email || 'You'))}</strong>
+          </div>
+          <label class="community-mobile-composer-body">
+            <span class="sr-only">Post text</span>
+            <textarea name="body" maxlength="2000" rows="8" placeholder="${escapeHtml(communityComposerPrompt)}" data-composer-body>${escapeHtml(state.composer.body)}</textarea>
+          </label>
+        </form>
+      </section>
+    </div>
+  `
+}
 function renderComposerModal() {
   if (!state.composer.open) return ''
+  if (state.currentUser && useNativeMobileCommunityComposer()) return renderNativeMobileComposerShell()
   if (!state.currentUser) {
     return `
       <div class="community-modal-backdrop">
@@ -1906,6 +1936,7 @@ function updateCommunityComposerLayer() {
     return
   }
   document.body.classList.toggle('community-modal-open', communityModalIsOpen())
+  document.body.classList.toggle('community-mobile-composer-open', Boolean(state.composer.open && state.currentUser && useNativeMobileCommunityComposer()))
   layer.innerHTML = renderComposerModal()
   bindCommunityComposerEvents(layer)
 }
