@@ -4974,3 +4974,10 @@ pointer-events:none!important;font-size:14px!important;font-weight:700!important
 .community-mobile-composer-content{min-height:0!important;overflow:auto!important;overscroll-behavior:contain!important}
 .community-mobile-composer-bottom{position:relative!important;z-index:20!important;flex:none!important;padding-bottom:7px!important;background:#000!important}
 }
+
+/* melogic-mobile-community-keyboard-underlay-v7b */
+@media(max-width:760px){
+html.community-mobile-composer-visual-underlay,body.community-mobile-composer-visual-underlay{background:#000!important;background-color:#000!important}
+body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;z-index:2147481900;left:0;right:0;top:0;bottom:0;width:100%;height:100%;background:#000;pointer-events:none}
+.community-mobile-composer-screen{z-index:2147482000!important;background:#000!important}
+}

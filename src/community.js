@@ -2010,6 +2010,8 @@ function releaseCommunityMobileOverlayLock() {
   document.documentElement.classList.remove('community-mobile-overlay-open')
   document.body.classList.remove('community-mobile-overlay-open')
   document.body.classList.remove('community-mobile-composer-open')
+  document.documentElement.classList.remove('community-mobile-composer-visual-underlay')
+  document.body.classList.remove('community-mobile-composer-visual-underlay')
   // community-modal-open is derived from modal state; after successful publish
   // the composer is already reset/closed, so release that lock too.
   document.body.classList.remove('community-modal-open')
@@ -6589,6 +6591,9 @@ function syncCommunityComposerToVisualViewport() {
   }
   screen.style.setProperty('--community-visual-viewport-top', `${Math.max(0, viewport.offsetTop)}px`)
   screen.style.setProperty('--community-visual-viewport-height', `${Math.max(1, viewport.height)}px`)
+  // melogic-mobile-community-keyboard-underlay-v7b
+  document.documentElement.classList.add('community-mobile-composer-visual-underlay')
+  document.body.classList.add('community-mobile-composer-visual-underlay')
 }
 
 function ensureCommunityComposerVisualViewportTracking() {
