@@ -5265,3 +5265,19 @@ body.is-inbox-page .site-footer {
 .sidebar-thread-pill .inbox-verified-badge { --inbox-verified-badge-size:.88em; }
 .conversation-header-meta .inbox-verified-badge { --inbox-verified-badge-size:1em; }
 .cluster-sender .inbox-verified-badge { --inbox-verified-badge-size:.88em; }
+
+/* melogic-inbox-chat-details-verified-v1 */
+.chat-details-member-meta [data-inbox-identity-name],
+.chat-details-modal .chat-search-meta [data-inbox-identity-name]{display:inline-flex;align-items:center;min-width:0}
+.chat-details-member-meta .inbox-verified-badge{--inbox-verified-badge-size:.9em}
+.chat-details-modal .chat-search-meta .inbox-verified-badge{--inbox-verified-badge-size:.88em}
+
+/* melogic-inbox-chat-details-verified-v2 */
+.chat-details-member-meta [data-inbox-identity-name],
+.chat-details-modal .chat-search-meta [data-inbox-identity-name]{
+  display:inline-flex;
+  align-items:center;
+  min-width:0;
+}
+.chat-details-member-meta .inbox-verified-badge{--inbox-verified-badge-size:.9em}
+.chat-details-modal .chat-search-meta .inbox-verified-badge{--inbox-verified-badge-size:.88em}

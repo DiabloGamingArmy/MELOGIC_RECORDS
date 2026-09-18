@@ -6372,7 +6372,7 @@ function renderChatSettingsModal(options = {}) {
         ${member.avatarURL ? `<img decoding="async" src="${escapeHtml(member.avatarURL)}" alt="" />` : `<span>${escapeHtml(getInitials(member))}</span>`}
       </div>
       <div class="chat-details-member-meta">
-        <strong>${escapeHtml(member.displayName || 'Member')} ${member.uid === appState.user?.uid ? '<span>(You)</span>' : ''} ${member.uid === thread.createdBy ? '<span>(Owner)</span>' : ''}</strong>
+        <strong${inboxIdentityNameAttrs(member.uid)}>${escapeHtml(member.displayName || 'Member')}${member.uid === appState.user?.uid ? ' <span>(You)</span>' : ''}${member.uid === thread.createdBy ? ' <span>(Owner)</span>' : ''}</strong>
         <small>@${escapeHtml(member.username || 'member')}</small>
       </div>
       ${thread.type === 'group' && participants.length > 1 && (canEditGroup || member.uid === appState.user?.uid) ? `<button type="button" class="button button-muted chat-details-remove" data-remove-member="${member.uid}">${member.uid === appState.user?.uid ? 'Leave' : 'Remove'}</button>` : ''}
@@ -6390,7 +6390,7 @@ function renderChatSettingsModal(options = {}) {
               ${profile.avatarURL || profile.photoURL ? `<img decoding="async" src="${escapeHtml(profile.avatarURL || profile.photoURL)}" alt="" />` : `<span>${escapeHtml(getInitials(profile))}</span>`}
             </div>
             <div class="chat-search-meta">
-              <strong>${escapeHtml(profile.displayName || profile.username || 'User')}</strong>
+              <strong${inboxIdentityNameAttrs(profile.uid)}>${escapeHtml(profile.displayName || profile.username || 'User')}</strong>
               <small>@${escapeHtml(profile.username || 'unknown')}</small>
             </div>
           </button>
@@ -6453,6 +6453,17 @@ function renderChatSettingsModal(options = {}) {
       </section>
     </div>
   `
+
+  // melogic-inbox-chat-details-verified-v1
+  const chatDetailsIdentityUids = [...new Set([...modalRoot.querySelectorAll('[data-inbox-identity-uid]')].map((node) => String(node.dataset.inboxIdentityUid || '').trim()).filter(Boolean))]
+  if (chatDetailsIdentityUids.length) queueMicrotask(() => void hydrateInboxVerifiedIdentities(chatDetailsIdentityUids, modalRoot))
+
+  // melogic-inbox-chat-details-verified-v2
+  const chatDetailsVerifiedUids = [...new Set([...modalRoot.querySelectorAll('[data-inbox-identity-uid]')]
+    .map((node) => String(node.dataset.inboxIdentityUid || '').trim()).filter(Boolean))]
+  if (chatDetailsVerifiedUids.length) {
+    queueMicrotask(() => void hydrateInboxVerifiedIdentities(chatDetailsVerifiedUids, modalRoot))
+  }
 
   modalRoot.querySelector('[data-chat-details-close]')?.addEventListener('click', closeChatSettingsModal)
   modalRoot.querySelector('.chat-details-backdrop')?.addEventListener('click', (event) => {
