@@ -67,6 +67,34 @@ function validateAssignments(values = [], definitions = [], capability = '') {
   return normalized
 }
 
+// melogic-role-assignment-integrity-audit-v4
+function assignmentDiff(before = [], after = []) {
+  const beforeSet = new Set(normalizeRoleArray(before))
+  const afterSet = new Set(normalizeRoleArray(after))
+  return {
+    added: [...afterSet].filter((key) => !beforeSet.has(key)).sort(),
+    removed: [...beforeSet].filter((key) => !afterSet.has(key)).sort(),
+    unchanged: [...afterSet].filter((key) => beforeSet.has(key)).sort()
+  }
+}
+
+function sameRoleArray(left = [], right = []) {
+  const a = [...normalizeRoleArray(left)].sort()
+  const b = [...normalizeRoleArray(right)].sort()
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
+function assignmentAuditSummary(beforeRoles = [], afterRoles = [], beforeBadges = [], afterBadges = []) {
+  const roles = assignmentDiff(beforeRoles, afterRoles)
+  const badges = assignmentDiff(beforeBadges, afterBadges)
+  return {
+    roles,
+    badges,
+    rolesChanged: roles.added.length > 0 || roles.removed.length > 0,
+    badgesChanged: badges.added.length > 0 || badges.removed.length > 0
+  }
+}
+
 // melogic-admin-account-permissions-read-v1
 // Reading the selected user's current permission state is not a mutation and
 // must not require the 60-second MFA step-up window. The Admin Users UI opens
@@ -114,6 +142,7 @@ const updateAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256M
   const restrictions = cleanBoolMap(request.data?.restrictions || {}, RESTRICTION_KEYS)
   const accountRoles = validateAssignments(request.data?.accountRoles || [], beforeCanonical.roleDefinitions, 'backendAssignable')
   const profileBadges = validateAssignments(request.data?.profileBadges || [], beforeCanonical.roleDefinitions, 'badgeAssignable')
+  const assignmentChanges = assignmentAuditSummary(beforeCanonical.roles, accountRoles, beforeCanonical.badges, profileBadges)
   const ref = db().collection('users').doc(uid).collection('permissions').doc('current')
   const userRef = db().collection('users').doc(uid)
   const profileRef = db().collection('profiles').doc(uid)
@@ -136,7 +165,9 @@ const updateAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256M
   batch.set(ref, payload, { merge: true })
   batch.set(userRef, { roles: accountRoles, updatedAt: now }, { merge: true })
   batch.set(profileRef, { badges: profileBadges, updatedAt: now }, { merge: true })
-  batch.commit && await batch.commit()
+  await batch.commit()
+
+  // Keep the general permission audit for one complete account-change record.
   await writeAdminAuditLog({
     actorUid: claims.uid,
     actorEmail: claims.email,
@@ -147,13 +178,60 @@ const updateAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256M
     targetPath: `users/${uid}/permissions/current`,
     reason,
     before: { ...beforeExplicit, accountRoles: beforeCanonical.roles, profileBadges: beforeCanonical.badges },
-    after: { ...permissionDocSummary(payload), accountRoles, profileBadges }
+    after: {
+      ...permissionDocSummary(payload),
+      accountRoles,
+      profileBadges,
+      assignmentChanges
+    }
   })
+
+  // Dedicated assignment audit records make role/badge changes queryable without
+  // conflating backend authority with public identity.
+  if (assignmentChanges.rolesChanged) {
+    await writeAdminAuditLog({
+      actorUid: claims.uid,
+      actorEmail: claims.email,
+      actorRole: claims.adminRole,
+      action: 'account_roles_updated',
+      targetType: 'user',
+      targetId: uid,
+      targetPath: `users/${uid}`,
+      reason,
+      before: { roles: beforeCanonical.roles },
+      after: { roles: accountRoles, diff: assignmentChanges.roles }
+    })
+  }
+  if (assignmentChanges.badgesChanged) {
+    await writeAdminAuditLog({
+      actorUid: claims.uid,
+      actorEmail: claims.email,
+      actorRole: claims.adminRole,
+      action: 'profile_badges_updated',
+      targetType: 'profile',
+      targetId: uid,
+      targetPath: `profiles/${uid}`,
+      reason,
+      before: { badges: beforeCanonical.badges },
+      after: { badges: profileBadges, diff: assignmentChanges.badges }
+    })
+  }
 
   const [afterInputs, afterCanonical] = await Promise.all([
     loadAccountPermissionInputs(uid),
     loadCanonicalRoleState(uid)
   ])
+  if (!sameRoleArray(afterCanonical.roles, accountRoles) || !sameRoleArray(afterCanonical.badges, profileBadges)) {
+    console.error('[admin] canonical role/badge verification mismatch', {
+      uid,
+      expectedRoles: accountRoles,
+      actualRoles: afterCanonical.roles,
+      expectedBadges: profileBadges,
+      actualBadges: afterCanonical.badges
+    })
+    throw new HttpsError('internal', 'Role/badge data was written but post-save verification did not match. Refresh before making another change.')
+  }
+
   return {
     ok: true,
     uid,
@@ -162,6 +240,7 @@ const updateAdminAccountPermissions = onCall({ timeoutSeconds: 60, memory: '256M
     accountRoles: afterCanonical.roles,
     profileBadges: afterCanonical.badges,
     roleDefinitions: afterCanonical.roleDefinitions,
+    assignmentChanges,
     path: afterInputs.path
   }
 })
