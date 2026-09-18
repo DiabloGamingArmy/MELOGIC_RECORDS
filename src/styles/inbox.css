@@ -5281,3 +5281,37 @@ body.is-inbox-page .site-footer {
 }
 .chat-details-member-meta .inbox-verified-badge{--inbox-verified-badge-size:.9em}
 .chat-details-modal .chat-search-meta .inbox-verified-badge{--inbox-verified-badge-size:.88em}
+
+/* melogic-inbox-desktop-secondary-pages-restore-v1
+   Desktop only. Messages/Inbox and mobile/PWA are intentionally untouched. */
+@media (min-width:761px) {
+  body.is-inbox-page .inbox-layout-activity {
+    grid-template-columns:minmax(0,1fr) !important;
+    width:100% !important;
+    min-width:0 !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity > .inbox-sidebar {
+    display:none !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel,
+  body.is-inbox-page .inbox-layout-activity > .inbox-main-panel-full {
+    width:100% !important;
+    min-width:0 !important;
+    max-width:none !important;
+    padding:1rem !important;
+    overflow:auto !important;
+    box-sizing:border-box !important;
+  }
+
+  body.is-inbox-page .inbox-layout-activity .activity-panel,
+  body.is-inbox-page .inbox-layout-activity .account-calls-panel,
+  body.is-inbox-page .inbox-layout-activity .mutual-users-panel {
+    width:100% !important;
+    min-width:0 !important;
+    max-width:none !important;
+    box-sizing:border-box !important;
+    align-self:start;
+  }
+}
