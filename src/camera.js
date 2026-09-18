@@ -686,7 +686,11 @@ capture.addEventListener('pointercancel', event => {
   else if (permissionAudioTrack) permissionAudioTrack.enabled = false
   capture.classList.remove('is-recording'); activeCapturePointer = null; event.preventDefault()
 })
-app.querySelector('[data-camera-flip]').addEventListener('click', flipCamera)
+// Bind against Camera's persistent surface, not the shared #app outlet.
+// On a cold /camera load the module is evaluated before cameraSurface is mounted
+// into #app, so querying #app here returns null and aborts the entire module.
+const flipButton = cameraSurface.querySelector('[data-camera-flip]')
+if (flipButton) flipButton.addEventListener('click', flipCamera)
 libraryButton.addEventListener('click', () => {
   // No `capture` attribute: request existing photo/video media instead of forcing a new camera capture.
   libraryInput.value = ''
@@ -722,20 +726,20 @@ liveCanvas.addEventListener('pointerup', event => {
 flashButton.addEventListener('click',async event=>{const button=event.currentTarget;if(facingMode==='user'){frontFlashOn=!frontFlashOn;button.dataset.on=String(frontFlashOn);button.setAttribute('aria-pressed',String(frontFlashOn));updateFrontFlash();return}const track=stream?.getVideoTracks?.()[0],caps=track?.getCapabilities?.()||{};if(!track||!caps.torch){setStatus('Flash is not available with this camera.');setTimeout(()=>setStatus(''),1600);return}const current=typeof track.getSettings?.().torch==='boolean'?track.getSettings().torch:button.dataset.on==='true',next=!current;try{await track.applyConstraints({advanced:[{torch:next}]});const actual=track.getSettings?.().torch,on=typeof actual==='boolean'?actual:next;button.dataset.on=String(on);button.setAttribute('aria-pressed',String(on));flashStrength.hidden=!on}catch(error){console.warn('[camera] torch toggle failed',error);setStatus('Unable to change flash on this camera.');setTimeout(()=>setStatus(''),1600)}})
 flashStrength.addEventListener('input',updateFrontFlash)
 
-app.querySelector('[data-camera-edit-tools]').addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){restoreEditSnapshot(editHistory.pop()||'');return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text')editTextInput.focus()})
-app.querySelector('[data-camera-edit-text-add]').addEventListener('click',()=>{const v=editTextInput.value.trim();if(!v)return;sizeEditCanvas();pushEditHistory();const f=Math.max(34,editCanvas.width*.055);editCtx.font=`700 ${f}px system-ui`;editCtx.textAlign='center';editCtx.textBaseline='middle';editCtx.lineWidth=Math.max(4,f*.12);editCtx.strokeStyle='rgba(0,0,0,.72)';editCtx.fillStyle='#fff';editCtx.strokeText(v,editCanvas.width/2,editCanvas.height/2);editCtx.fillText(v,editCanvas.width/2,editCanvas.height/2);editTextInput.value='';editTextbox.hidden=true;editMode=''})
+cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){restoreEditSnapshot(editHistory.pop()||'');return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text')editTextInput.focus()})
+cameraSurface.querySelector('[data-camera-edit-text-add]')?.addEventListener('click',()=>{const v=editTextInput.value.trim();if(!v)return;sizeEditCanvas();pushEditHistory();const f=Math.max(34,editCanvas.width*.055);editCtx.font=`700 ${f}px system-ui`;editCtx.textAlign='center';editCtx.textBaseline='middle';editCtx.lineWidth=Math.max(4,f*.12);editCtx.strokeStyle='rgba(0,0,0,.72)';editCtx.fillStyle='#fff';editCtx.strokeText(v,editCanvas.width/2,editCanvas.height/2);editCtx.fillText(v,editCanvas.width/2,editCanvas.height/2);editTextInput.value='';editTextbox.hidden=true;editMode=''})
 editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[0];if(!file)return;const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{sizeEditCanvas();pushEditHistory();const m=Math.min(editCanvas.width,editCanvas.height)*.34,s=Math.min(m/i.width,m/i.height,1),w=i.width*s,h=i.height*s;editCtx.drawImage(i,(editCanvas.width-w)/2,(editCanvas.height-h)/2,w,h);URL.revokeObjectURL(u)};i.src=u})
 editCanvas.addEventListener('pointerdown',e=>{if(editMode!=='pen')return;e.preventDefault();sizeEditCanvas();pushEditHistory();editDrawing=true;editCanvas.setPointerCapture?.(e.pointerId);const p=editorPoint(e);editCtx.beginPath();editCtx.moveTo(p.x,p.y)})
 editCanvas.addEventListener('pointermove',e=>{if(!editDrawing||editMode!=='pen')return;e.preventDefault();const p=editorPoint(e);editCtx.lineWidth=Math.max(5,editCanvas.width*.008);editCtx.lineCap='round';editCtx.strokeStyle='#fff';editCtx.lineTo(p.x,p.y);editCtx.stroke()})
 editCanvas.addEventListener('pointerup',()=>editDrawing=false);editCanvas.addEventListener('pointercancel',()=>editDrawing=false)
-app.querySelector('[data-camera-retake]').addEventListener('click', async () => {
+cameraSurface.querySelector('[data-camera-retake]')?.addEventListener('click', async () => {
   playback.hidden = true; playback._melogicCapture = null
   recordedVideo.pause(); recordedVideo.removeAttribute('src'); try { recordedVideo.srcObject = null } catch {}; recordedVideo.load(); recordedVideo.hidden = true
   recordedPhoto.removeAttribute('src'); recordedPhoto.hidden = true
   // Retake explicitly re-enters idle Camera mode: video engine only.
   await startCamera()
 })
-app.querySelector('[data-camera-use]').addEventListener('click', () => {
+cameraSurface.querySelector('[data-camera-use]')?.addEventListener('click', () => {
   const blob = playback._melogicCapture
   if (!blob) return
   window.__melogicCameraCapture = { blob, type: playback.dataset.captureType || 'video', createdAt: Date.now() }
