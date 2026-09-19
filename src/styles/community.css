@@ -5854,10 +5854,6 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     background: var(--community-neutral-2);
   }
 
-  .community-verified-badge {
-    filter: grayscale(1) saturate(0) brightness(1.35);
-  }
-
   .community-badge.is-pinned,
   .community-framework-icon,
   .community-history-event strong,
@@ -6391,5 +6387,196 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
   .community-workspace-coming-soon {
     border-radius: 6px;
     background: #0d0d0f;
+  }
+}
+
+
+/* melogic-community-verified-badge-color-integrity-v1
+   Verified artwork is brand/identity media, never UI chrome. Preserve its native color globally. */
+.community-page .community-verified-badge {
+  filter: none !important;
+  -webkit-filter: none !important;
+  opacity: 1;
+}
+
+
+/* melogic-community-workspace-professional-v2
+   Stronger desktop differentiation after runtime review: visible hierarchy,
+   editorial spacing, floating utility surfaces, and a clearer inspector. */
+@media (min-width: 761px) {
+  .community-layout.is-community-detail {
+    grid-template-columns: 220px minmax(620px, 1fr) 320px;
+    width: min(1540px, calc(100% - 28px));
+  }
+
+  .community-workspace .community-main {
+    padding-right: 2.15rem;
+    padding-left: 2.15rem;
+  }
+
+  .community-workspace-header {
+    margin-right: -2.15rem;
+    margin-left: -2.15rem;
+    padding-right: 2.15rem;
+    padding-left: 2.15rem;
+  }
+
+  .community-workspace-identity {
+    grid-template-columns: 76px minmax(0,1fr) auto;
+    min-height: 158px;
+    padding: 1.7rem 0 1.25rem;
+  }
+
+  .community-workspace-avatar {
+    width: 76px;
+    height: 76px;
+    border-radius: 18px;
+  }
+
+  .community-workspace-title-row {
+    display: flex;
+    align-items: center;
+    gap: .65rem;
+  }
+
+  .community-workspace-copy .community-workspace-title-row h1 {
+    font-size: 1.72rem;
+    line-height: 1.08;
+  }
+
+  .community-workspace-type {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 0 .48rem;
+    border: 1px solid rgba(255,255,255,.1);
+    border-radius: 5px;
+    color: #96969e;
+    background: #0b0b0d;
+    font-size: .61rem;
+    font-weight: 650;
+  }
+
+  .community-workspace-statusline {
+    display: flex;
+    align-items: center;
+    gap: .48rem;
+    margin-top: .72rem;
+    color: #77777f;
+    font-size: .66rem;
+  }
+
+  .community-workspace-statusline strong {
+    color: #b9b9bf;
+    font-weight: 620;
+  }
+
+  .community-workspace-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #aaaab0;
+    box-shadow: 0 0 0 3px rgba(255,255,255,.055);
+  }
+
+  .community-workspace-meta {
+    margin-top: .38rem;
+  }
+
+  .community-workspace-actions {
+    align-self: start;
+    margin-top: .25rem;
+  }
+
+  .community-workspace-actions .button {
+    min-width: 82px;
+    min-height: 38px;
+  }
+
+  .community-workspace-tabs {
+    gap: 1.8rem;
+  }
+
+  .community-workspace-tabs button {
+    min-height: 48px;
+    font-size: .78rem;
+  }
+
+  .community-workspace .community-inline-composer {
+    margin: 1.15rem 0 .55rem;
+    padding: .68rem .72rem;
+    border-color: rgba(255,255,255,.075);
+    background: #08080a;
+  }
+
+  .community-workspace .community-inline-prompt {
+    text-align: left;
+  }
+
+  .community-workspace .community-post-card:not(.community-post-detail-card) {
+    padding: 1.6rem .8rem 1.4rem;
+  }
+
+  .community-workspace .community-post-card:not(.community-post-detail-card) .community-post-header,
+  .community-workspace .community-post-card:not(.community-post-detail-card) .community-post-body,
+  .community-workspace .community-post-card:not(.community-post-detail-card) .community-post-actions {
+    max-width: 760px;
+  }
+
+  .community-workspace .community-post-card:not(.community-post-detail-card) .community-post-body {
+    margin-top: .72rem;
+  }
+
+  .community-workspace .community-network-right-rail {
+    padding: 1.15rem 1.25rem 1.5rem;
+  }
+
+  .community-workspace .community-rail-search {
+    margin-bottom: .45rem;
+  }
+
+  .community-workspace .community-workspace-inspector {
+    padding-top: 1.2rem;
+  }
+
+  .community-workspace .community-workspace-inspector .community-network-rail-heading > strong {
+    margin-top: .08rem;
+    font-size: 1.08rem;
+    letter-spacing: -.015em;
+  }
+
+  .community-workspace-presence {
+    grid-template-columns: 10px minmax(0,1fr);
+    margin: 1rem 0 .65rem;
+    padding: .7rem 0;
+    border-top: 1px solid rgba(255,255,255,.055);
+    border-bottom: 1px solid rgba(255,255,255,.055);
+  }
+
+  .community-workspace .community-network-context-list {
+    border-top: 0;
+  }
+
+  .community-workspace .community-network-context-list > span {
+    min-height: 38px;
+  }
+
+  .community-workspace .community-network-next-card {
+    padding-top: 1.15rem;
+  }
+
+  .community-workspace .community-network-next-list button {
+    padding: .58rem .2rem;
+  }
+
+  .community-workspace .community-network-next-list button:hover {
+    padding-right: .45rem;
+    padding-left: .45rem;
+  }
+
+  /* Let the workspace breathe below sparse feeds rather than reading as a boxed panel. */
+  .community-workspace .community-feed-state {
+    border: 0;
+    background: transparent;
   }
 }
