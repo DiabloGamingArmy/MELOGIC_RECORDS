@@ -1125,36 +1125,48 @@ function visibleTopicCommunities() {
 }
 
 function renderTopicBar() {
-  const communities = visibleTopicCommunities()
-  const communityPills = communities.map((community) => `
-      <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.includes(community.communityId) ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(community.communityId)}" aria-pressed="${state.selectedCommunityFilters.includes(community.communityId) ? 'true' : 'false'}">
-        ${escapeHtml(community.name)}
+  // melogic-network-topics-p2
+  // The current backend still filters these values by communityId. On desktop
+  // they are now presented as Topics so the UI no longer teaches users that
+  // every subject/category is a community. A later schema patch can replace
+  // the compatibility IDs with canonical topic IDs without changing this UI.
+  const topics = visibleTopicCommunities()
+  const topicPills = topics.map((topic) => `
+      <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.includes(topic.communityId) ? 'is-active' : ''}" data-topic-community-id="${escapeHtml(topic.communityId)}" aria-pressed="${state.selectedCommunityFilters.includes(topic.communityId) ? 'true' : 'false'}">
+        ${escapeHtml(topic.name)}
       </button>
     `).join('')
 
   return `
-    <section class="community-feed-header" aria-label="Feed navigation and filters">
-      <div class="community-master-tabs" role="tablist" aria-label="Feed">
+    <section class="community-feed-header community-network-home-header" aria-label="Home feed navigation and topics">
+      <div class="community-network-home-title">
+        <span>Network</span>
+        <strong>Home</strong>
+      </div>
+      <div class="community-master-tabs" role="tablist" aria-label="Home feed">
         <button type="button" role="tab" aria-selected="${state.activeTab === 'for-you' ? 'true' : 'false'}" class="${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
         <button type="button" role="tab" aria-selected="${state.activeTab === 'following' ? 'true' : 'false'}" class="${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Following</button>
         <label class="community-sort-control" title="Sort feed">
           <span class="sr-only">Sort feed</span>
           ${iconSvg('barChart')}
           <select data-community-feed-sort aria-label="Sort feed">
-            <option value="new" ${state.feedSort === 'new' ? 'selected' : ''}>New</option>
+            <option value="new" ${state.feedSort === 'new' ? 'selected' : ''}>Latest</option>
             <option value="top-today" ${state.feedSort === 'top-today' ? 'selected' : ''}>Top Today</option>
             <option value="top-week" ${state.feedSort === 'top-week' ? 'selected' : ''}>Top Week</option>
             <option value="most-discussed" ${state.feedSort === 'most-discussed' ? 'selected' : ''}>Most Discussed</option>
           </select>
         </label>
       </div>
-      <div class="community-filter-shell">
-        <div class="community-filter-strip" data-community-topic-scroll aria-label="Filter by community">
-          <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.length ? '' : 'is-active'}" data-clear-community-filters aria-pressed="${state.selectedCommunityFilters.length ? 'false' : 'true'}">All</button>
-          ${communityPills}
+      <div class="community-topic-context">
+        <span class="community-topic-context-label">Topics</span>
+        <div class="community-filter-shell">
+          <div class="community-filter-strip" data-community-topic-scroll aria-label="Filter Home by topic">
+            <button type="button" class="community-topic-pill ${state.selectedCommunityFilters.length ? '' : 'is-active'}" data-clear-community-filters aria-pressed="${state.selectedCommunityFilters.length ? 'false' : 'true'}">All</button>
+            ${topicPills}
+          </div>
+          <button type="button" class="community-filter-arrow is-left" data-topic-scroll="-1" aria-label="Scroll topics left">${iconSvg('chevronRight')}</button>
+          <button type="button" class="community-filter-arrow is-right" data-topic-scroll="1" aria-label="Scroll topics right">${iconSvg('chevronRight')}</button>
         </div>
-        <button type="button" class="community-filter-arrow is-left" data-topic-scroll="-1" aria-label="Scroll communities left">${iconSvg('chevronRight')}</button>
-        <button type="button" class="community-filter-arrow is-right" data-topic-scroll="1" aria-label="Scroll communities right">${iconSvg('chevronRight')}</button>
       </div>
     </section>
   `
