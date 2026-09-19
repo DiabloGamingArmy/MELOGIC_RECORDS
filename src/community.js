@@ -3086,7 +3086,7 @@ function renderLeftNav() {
       <nav>
         <section class="community-network-nav-section" aria-label="Network">
           <a class="${state.view.type === 'feed' ? 'is-active' : ''}" href="${ROUTES.community}" aria-current="${state.view.type === 'feed' ? 'page' : 'false'}">
-            ${iconSvg('home')} <span>Home</span>
+            <span class="community-network-home-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span> <span>Home</span>
           </a>
           <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}" aria-current="${state.view.type === 'communities' ? 'page' : 'false'}">
             ${iconSvg('search')} <span>Discover</span>
