@@ -302,3 +302,38 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   visibility:visible!important;
   pointer-events:auto!important;
 }
+
+
+/* melogic-camera-review-replace-nav-v2
+   Review actions now live inside the real mobile-bottom-nav. Hide only the
+   normal nav links, never the nav container itself. This survives all shared
+   fixed-nav/PWA geometry rules and guarantees identical bottom positioning. */
+[data-melogic-camera-surface].is-reviewing .mobile-bottom-nav{
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  visibility:visible!important;
+  pointer-events:auto!important;
+  padding:0!important;
+}
+[data-melogic-camera-surface].is-reviewing .mobile-bottom-nav > a{
+  display:none!important;
+}
+[data-melogic-camera-surface] .mobile-bottom-nav > .camera-review-bottom-actions{
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  min-height:0!important;
+  box-sizing:border-box!important;
+  margin:0!important;
+  padding:10px max(14px,env(safe-area-inset-right,0px))
+    max(10px,env(safe-area-inset-bottom,0px))
+    max(14px,env(safe-area-inset-left,0px))!important;
+}
+[data-melogic-camera-surface].is-reviewing:not(.is-sharing) .mobile-bottom-nav > .camera-review-bottom-actions{
+  display:grid!important;
+}
+[data-melogic-camera-surface].is-sharing .mobile-bottom-nav{
+  visibility:hidden!important;
+  pointer-events:none!important;
+}

@@ -575,6 +575,7 @@ function updateTimer() {
   timerLabel.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2,'0')}`
 }
 // melogic-camera-review-bottom-actions-p1-v1
+// melogic-camera-review-replace-nav-v2
 function ensureCameraReviewBottomBar(){
   const nav=cameraSurface.querySelector('.mobile-bottom-nav')
   if(!nav)return null
@@ -583,23 +584,21 @@ function ensureCameraReviewBottomBar(){
     reviewBottomBar.className='camera-review-bottom-actions'
     reviewBottomBar.hidden=true
     reviewBottomBar.innerHTML='<button type="button" data-camera-review-cancel>Cancel</button><button type="button" class="is-primary" data-camera-review-share>Share</button>'
-    nav.insertAdjacentElement('afterend',reviewBottomBar)
+    // Put review controls INSIDE the actual shared nav shell. This removes the
+    // competing fixed-bottom element problem entirely.
+    nav.append(reviewBottomBar)
     reviewCancelButton=reviewBottomBar.querySelector('[data-camera-review-cancel]')
     reviewShareButton=reviewBottomBar.querySelector('[data-camera-review-share]')
   }
   return reviewBottomBar
 }
-// melogic-camera-review-bar-visibility-fix-v1
 function setCameraReviewBottomBar(active){
   const nav=cameraSurface.querySelector('.mobile-bottom-nav')
   const bar=ensureCameraReviewBottomBar()
-  // The shared nav has several route-scoped display:flex!important rules, so
-  // relying on the HTML hidden attribute is not authoritative in Camera.
-  // Review state is now the single CSS source of truth for both bars.
   cameraSurface.classList.toggle('is-reviewing',Boolean(active))
   if(nav){
-    nav.hidden=Boolean(active)
-    nav.setAttribute('aria-hidden',String(Boolean(active)))
+    nav.hidden=false
+    nav.setAttribute('aria-label',active?'Camera review actions':'Mobile primary navigation')
   }
   if(bar){
     bar.hidden=!active
