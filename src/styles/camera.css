@@ -256,3 +256,13 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-exposure-slider{width:132px;height:24px;transform:rotate(-90deg);accent-color:#fff;touch-action:none}
 .camera-exposure-slider:disabled{opacity:.35}
 .camera-screen:has(.camera-playback:not([hidden])) .camera-focus-indicator,.camera-screen:has(.camera-playback:not([hidden])) .camera-exposure-pill,.camera-screen.is-sharing .camera-focus-indicator,.camera-screen.is-sharing .camera-exposure-pill{display:none!important}
+
+
+/* melogic-camera-review-bottom-actions-p1-v1 */
+.camera-review-actions{display:none!important}
+.camera-review-bottom-actions{position:fixed;z-index:2100;left:0;right:0;bottom:0;height:var(--camera-nav-height,82px);box-sizing:border-box;padding:10px max(14px,env(safe-area-inset-right,0px)) max(10px,env(safe-area-inset-bottom,0px)) max(14px,env(safe-area-inset-left,0px));display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:center;background:#050609;border-top:1px solid rgba(255,255,255,.08)}
+.camera-review-bottom-actions[hidden]{display:none!important}
+.camera-review-bottom-actions button{min-width:0;height:50px;border:1px solid rgba(255,255,255,.14);border-radius:15px;background:#111216;color:#fff;font:700 15px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.camera-review-bottom-actions button:active{transform:scale(.985);background:#18191e}
+.camera-review-bottom-actions button.is-primary{background:#fff;color:#070708;border-color:#fff}
+[data-melogic-camera-surface].is-sharing .camera-review-bottom-actions{display:none!important}

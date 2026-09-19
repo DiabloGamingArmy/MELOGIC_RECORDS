@@ -63,7 +63,7 @@ cameraSurface.innerHTML = `
         <button type="button" data-camera-edit-tool="undo" aria-label="Undo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7-5 5 5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/></svg></button>
         <input data-camera-edit-image-input type="file" accept="image/*" hidden>
       </div>
-      <div class="camera-review-actions"><button type="button" data-camera-retake>Retake</button><button class="camera-use" type="button" data-camera-use>Share</button></div>
+      <!-- melogic-camera-review-bottom-actions-p1-v1: bottom bar owns review actions -->
     </div>
     <!-- melogic-camera-share-shell-p1-v1 -->
     <section class="camera-share-screen" data-camera-share-screen aria-label="Share media" hidden>
@@ -103,7 +103,10 @@ const recordedVideo = cameraSurface.querySelector('[data-camera-recorded]')
 const recordedPhoto = cameraSurface.querySelector('[data-camera-photo]')
 const libraryButton = cameraSurface.querySelector('[data-camera-library]')
 const libraryInput = cameraSurface.querySelector('[data-camera-library-input]')
-const useButton = cameraSurface.querySelector('[data-camera-use]')
+const useButton = null
+let reviewBottomBar = null
+let reviewCancelButton = null
+let reviewShareButton = null
 const shareScreen = cameraSurface.querySelector('[data-camera-share-screen]')
 const shareBackButton = cameraSurface.querySelector('[data-camera-share-back]')
 const shareEditButton = cameraSurface.querySelector('[data-camera-share-edit]')
@@ -568,6 +571,29 @@ function updateTimer() {
   const seconds = Math.floor((Date.now() - recordingStartedAt) / 1000)
   timerLabel.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2,'0')}`
 }
+// melogic-camera-review-bottom-actions-p1-v1
+function ensureCameraReviewBottomBar(){
+  const nav=cameraSurface.querySelector('.mobile-bottom-nav')
+  if(!nav)return null
+  if(!reviewBottomBar){
+    reviewBottomBar=document.createElement('div')
+    reviewBottomBar.className='camera-review-bottom-actions'
+    reviewBottomBar.hidden=true
+    reviewBottomBar.innerHTML='<button type="button" data-camera-review-cancel>Cancel</button><button type="button" class="is-primary" data-camera-review-share>Share</button>'
+    nav.insertAdjacentElement('afterend',reviewBottomBar)
+    reviewCancelButton=reviewBottomBar.querySelector('[data-camera-review-cancel]')
+    reviewShareButton=reviewBottomBar.querySelector('[data-camera-review-share]')
+  }
+  return reviewBottomBar
+}
+function setCameraReviewBottomBar(active){
+  const nav=cameraSurface.querySelector('.mobile-bottom-nav')
+  const bar=ensureCameraReviewBottomBar()
+  if(nav)nav.hidden=Boolean(active)
+  if(bar)bar.hidden=!active
+  cameraSurface.classList.toggle('is-reviewing',Boolean(active))
+}
+
 function showCapturedMedia(blob, type) {
   if (!blob) return
   // Review mode owns neither capture engine. Release camera + microphone before
@@ -637,6 +663,7 @@ function showCapturedMedia(blob, type) {
   requestAnimationFrame(()=>{sizeEditCanvas();resetEditor()})
   useButton.textContent = 'Share'
   playback.hidden = false
+  setCameraReviewBottomBar(true)
 }
 // melogic-camera-share-shell-p1-v1
 function syncSharePreview() {
@@ -654,6 +681,7 @@ function openShareScreen(){
 }
 function closeShareScreen(){
   shareVideo.pause();shareScreen.hidden=true;cameraSurface.classList.remove('is-sharing')
+  if(!playback.hidden)setCameraReviewBottomBar(true)
   if(!recordedVideo.hidden)recordedVideo.play().catch(()=>{})
 }
 
@@ -897,7 +925,7 @@ editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[
 editCanvas.addEventListener('pointerdown',e=>{if(editMode!=='pen')return;e.preventDefault();sizeEditCanvas();pushEditHistory();editDrawing=true;editCanvas.setPointerCapture?.(e.pointerId);const p=editorPoint(e);editCtx.beginPath();editCtx.moveTo(p.x,p.y)})
 editCanvas.addEventListener('pointermove',e=>{if(!editDrawing||editMode!=='pen')return;e.preventDefault();const p=editorPoint(e);editCtx.lineWidth=Math.max(5,editCanvas.width*.008);editCtx.lineCap='round';editCtx.strokeStyle='#fff';editCtx.lineTo(p.x,p.y);editCtx.stroke()})
 editCanvas.addEventListener('pointerup',()=>editDrawing=false);editCanvas.addEventListener('pointercancel',()=>editDrawing=false)
-cameraSurface.querySelector('[data-camera-retake]')?.addEventListener('click', async () => {
+async function cancelCameraReview() {
   closeShareScreen()
   playback.hidden = true; playback._melogicCapture = null
   delete window.__melogicCameraCapture
@@ -905,8 +933,11 @@ cameraSurface.querySelector('[data-camera-retake]')?.addEventListener('click', a
   recordedPhoto.removeAttribute('src'); recordedPhoto.hidden = true
   // Retake explicitly re-enters idle Camera mode: video engine only.
   await startCamera()
-})
-useButton?.addEventListener('click', openShareScreen)
+  setCameraReviewBottomBar(false)
+}
+ensureCameraReviewBottomBar()
+reviewCancelButton?.addEventListener('click',()=>void cancelCameraReview())
+reviewShareButton?.addEventListener('click', openShareScreen)
 shareBackButton?.addEventListener('click', closeShareScreen)
 shareEditButton?.addEventListener('click', closeShareScreen)
 // melogic-camera-share-message-p3-v1
