@@ -306,7 +306,12 @@ async function configureCameraImagingDefaults(){
 function showCameraFocusIndicator(x,y){const r=liveCanvas.getBoundingClientRect();focusIndicator.style.left=clamp(x-r.left,0,r.width)+'px';focusIndicator.style.top=clamp(y-r.top,0,r.height)+'px';focusIndicator.classList.remove('is-visible');void focusIndicator.offsetWidth;focusIndicator.classList.add('is-visible');exposurePill.hidden=false;clearTimeout(focusIndicatorTimer);focusIndicatorTimer=setTimeout(()=>focusIndicator.classList.remove('is-visible'),1800)}
 async function focusCameraAt(x,y){
  if(!stream||!playback.hidden)return;showCameraFocusIndicator(x,y);const t=stream.getVideoTracks?.()[0],caps=cameraImagingCapabilities();if(!t)return
- const r=liveCanvas.getBoundingClientRect();let px=clamp((x-r.left)/Math.max(1,r.width),0,1),py=clamp((y-r.top)/Math.max(1,r.height),0,1);if(facingMode==='user')px=1-px
+ const r=liveCanvas.getBoundingClientRect()
+ const nx=clamp((x-r.left)/Math.max(1,r.width),0,1),ny=clamp((y-r.top)/Math.max(1,r.height),0,1)
+ const sw=video.videoWidth||1,sh=video.videoHeight||1,tr=r.width/Math.max(1,r.height),sr=sw/sh
+ let sx=0,sy=0,cw=sw,ch=sh
+ if(sr>tr){cw=sh*tr;sx=(sw-cw)/2}else{ch=sw/tr;sy=(sh-ch)/2}
+ let px=(sx+nx*cw)/sw,py=(sy+ny*ch)/sh;if(facingMode==='user')px=1-px
  const advanced=[],supported=navigator.mediaDevices?.getSupportedConstraints?.()||{}
  if(supported.pointsOfInterest)advanced.push({pointsOfInterest:[{x:px,y:py}]})
  if(Array.isArray(caps.focusMode)){if(caps.focusMode.includes('single-shot'))advanced.push({focusMode:'single-shot'});else if(caps.focusMode.includes('continuous'))advanced.push({focusMode:'continuous'})}
@@ -483,7 +488,12 @@ async function startCamera({ preserveFrame=false }={}) {
     // track disabled while framing/photos so permission is established without
     // feeding audio into any recorder.
     const nextStream=await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:{ideal:facingMode}},
+      video:{
+        facingMode:{ideal:facingMode},
+        width:{ideal:3840},
+        height:{ideal:2160},
+        frameRate:{ideal:30}
+      },
       audio:{
         channelCount:{ideal:2},
         sampleRate:{ideal:48000},
@@ -505,6 +515,10 @@ async function startCamera({ preserveFrame=false }={}) {
     await configureCameraImagingDefaults()
     resetFlashUI()
     await video.play(); await waitForFirstDrawableFrame()
+    try {
+      const activeTrack=stream?.getVideoTracks?.()[0]
+      console.info('[camera] active imaging', {settings:activeTrack?.getSettings?.(),capabilities:activeTrack?.getCapabilities?.()})
+    } catch {}
     startCanvasRenderer(); liveCanvas.classList.add('is-ready')
     requestAnimationFrame(()=>transitionFrame?.classList.remove('is-visible','is-black'))
   } catch(error) {
@@ -521,7 +535,7 @@ async function flipCameraWhileRecording() {
   stopCanvasRenderer()
   try {
     oldVideoTrack?.stop()
-    const nextVideoStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:nextFacing}},audio:false})
+    const nextVideoStream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:nextFacing},width:{ideal:3840},height:{ideal:2160},frameRate:{ideal:30}},audio:false})
     const nextVideoTrack = nextVideoStream.getVideoTracks?.()[0]
     if (!nextVideoTrack) throw new Error('No video track returned while switching camera')
     const retainedAudio = permissionAudioTrack && permissionAudioTrack.readyState === 'live' ? [permissionAudioTrack] : []
@@ -771,9 +785,20 @@ function endRecording() {
   pill.hidden=true
   closeButton?.removeAttribute('hidden')
 }
+// melogic-camera-quality-focus-v2
 function takePhoto() {
-  if (!liveCanvas?.width || !liveCanvas?.height) return
-  liveCanvas.toBlob(blob => showCapturedMedia(blob, 'photo'), 'image/jpeg', .92)
+  const sw=video.videoWidth,sh=video.videoHeight
+  if(!sw||!sh)return
+  const rect=liveCanvas.getBoundingClientRect(),targetRatio=rect.width/Math.max(1,rect.height),sourceRatio=sw/sh
+  let sx=0,sy=0,cw=sw,ch=sh
+  if(sourceRatio>targetRatio){cw=sh*targetRatio;sx=(sw-cw)/2}else{ch=sw/targetRatio;sy=(sh-ch)/2}
+  const photoCanvas=document.createElement('canvas')
+  photoCanvas.width=Math.max(1,Math.round(cw));photoCanvas.height=Math.max(1,Math.round(ch))
+  const ctx=photoCanvas.getContext('2d',{alpha:false})
+  if(!ctx)return
+  if(facingMode==='user'){ctx.translate(photoCanvas.width,0);ctx.scale(-1,1)}
+  ctx.drawImage(video,sx,sy,cw,ch,0,0,photoCanvas.width,photoCanvas.height)
+  photoCanvas.toBlob(blob=>{if(blob)showCapturedMedia(blob,'photo')},'image/jpeg',.96)
 }
 const HOLD_TO_RECORD_MS = 450
 let holdTimer = 0
