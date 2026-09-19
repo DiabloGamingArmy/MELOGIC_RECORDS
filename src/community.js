@@ -3406,27 +3406,111 @@ function renderDetail() {
   `
 }
 
+function renderCommunityWorkspacePlaceholder({ title = '', description = '', icon = 'cube' } = {}) {
+  return `
+    <section class="community-workspace-placeholder">
+      <span class="community-workspace-placeholder-icon">${iconSvg(icon)}</span>
+      <div>
+        <strong>${escapeHtml(title)}</strong>
+        <p>${escapeHtml(description)}</p>
+      </div>
+      <span class="community-workspace-coming-soon">Foundation ready</span>
+    </section>
+  `
+}
+
+function renderCommunityWorkspaceContent() {
+  if (state.activeTab === 'community-projects') {
+    return renderCommunityWorkspacePlaceholder({
+      title: 'Projects',
+      description: 'Projects connected to this community will live here as the canonical project graph comes online.',
+      icon: 'cube'
+    })
+  }
+  if (state.activeTab === 'community-people') {
+    return renderCommunityWorkspacePlaceholder({
+      title: 'People',
+      description: 'Members, roles, verified affiliations, and collaborators will live here when membership lands.',
+      icon: 'user'
+    })
+  }
+  if (state.activeTab === 'community-opportunities') {
+    return renderCommunityWorkspacePlaceholder({
+      title: 'Opportunities',
+      description: 'Collaboration requests, open roles, calls for creators, and other actionable opportunities will collect here.',
+      icon: 'search'
+    })
+  }
+  if (state.activeTab === 'community-events') {
+    return renderCommunityWorkspacePlaceholder({
+      title: 'Events',
+      description: 'Community events, sessions, performances, deadlines, and live activity will collect here.',
+      icon: 'calendar'
+    })
+  }
+  return `
+    ${renderInlineComposer()}
+    <div data-community-feed-region>${renderFeed()}</div>
+  `
+}
+
 function renderCommunityDetail() {
   const community = state.community
   const focused = community ? Boolean(state.communityFocus[community.communityId]) : false
-  const focusDisabled = false
+  const workspaceTabs = [
+    ['community-feed', 'Feed'],
+    ['community-projects', 'Projects'],
+    ['community-people', 'People'],
+    ['community-opportunities', 'Opportunities'],
+    ['community-events', 'Events']
+  ]
+  const workspaceTab = workspaceTabs.some(([id]) => id === state.activeTab) ? state.activeTab : 'community-feed'
+
   return `
-    <div class="community-layout is-home is-community-detail">
+    <div class="community-layout is-home is-community-detail community-workspace">
       ${renderLeftNav()}
       <div class="community-main community-route-main">
-        <section class="community-hero compact community-community-hero">
-          <div>
-            <p class="eyebrow">Community</p>
-            <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
-            <p>${community ? escapeHtml(community.description) : 'Loading community...'}</p>
-            ${community ? `<div class="community-community-stats hero-stats"><span>c/${escapeHtml(community.slug)}</span><span>${formatCount(community.focusCount)} focused</span><span>${formatCount(community.postCount)} posts</span></div>` : ''}
+        <section class="community-workspace-header">
+          <div class="community-workspace-identity">
+            <span class="community-workspace-avatar" aria-hidden="true">
+              ${community?.iconURL
+                ? `<img src="${escapeHtml(community.iconURL)}" alt="" loading="lazy" />`
+                : escapeHtml((community?.name || 'M').slice(0, 1).toUpperCase())
+              }
+            </span>
+            <div class="community-workspace-copy">
+              <div class="community-workspace-kicker">
+                <span>Community</span>
+                ${community?.official ? '<span class="community-workspace-verified">Official</span>' : ''}
+              </div>
+              <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
+              <p>${community ? escapeHtml(community.description || 'A Melogic community.') : 'Loading community...'}</p>
+              ${community ? `<div class="community-workspace-meta">
+                <span>c/${escapeHtml(community.slug)}</span>
+                <span>${formatCount(community.focusCount)} focused</span>
+                <span>${formatCount(community.postCount)} posts</span>
+                ${community.category ? `<span>${escapeHtml(community.category)}</span>` : ''}
+              </div>` : ''}
+            </div>
+            <div class="community-workspace-actions">
+              <a class="button button-muted" href="${ROUTES.communityCommunities}">Discover</a>
+              ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" data-toggle-community-focus="${escapeHtml(community.communityId)}">${focused ? 'Focused' : 'Focus'}</button>` : ''}
+            </div>
           </div>
-          <div class="community-hero-actions">
-            <a class="button button-muted" href="${ROUTES.communityCommunities}">All Communities</a>
-            ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" ${focusDisabled ? 'disabled title="Focus is available once this community is active."' : `data-toggle-community-focus="${escapeHtml(community.communityId)}"`}>${focusDisabled ? 'Focus soon' : focused ? 'Focused' : 'Focus'}</button>` : ''}
-          </div>
+
+          <nav class="community-workspace-tabs" aria-label="${escapeHtml(community?.name || 'Community')} workspace">
+            ${workspaceTabs.map(([id, label]) => `<button type="button" class="${workspaceTab === id ? 'is-active' : ''}" data-community-workspace-tab="${id}" aria-current="${workspaceTab === id ? 'page' : 'false'}">${label}</button>`).join('')}
+          </nav>
         </section>
-        ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading community...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : community ? renderFeed() : '<section class="community-feed-state community-panel">This community is not available.</section>'}
+
+        ${state.communityFilters.loading
+          ? '<section class="community-feed-state community-panel">Loading community...</section>'
+          : state.communityFilters.error
+            ? `<section class="community-feed-state community-panel"><strong>Could not load community.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>`
+            : community
+              ? renderCommunityWorkspaceContent()
+              : '<section class="community-feed-state community-panel">This community is not available.</section>'
+        }
       </div>
       ${renderSidebar()}
     </div>
