@@ -1425,6 +1425,24 @@ export async function createCommunity(payload = {}) {
   return result?.data || { ok: false }
 }
 
+export async function getCommunityMembership(communityId = '') {
+  const callable = httpsCallable(functions, 'getCommunityMembership')
+  const result = await callable({ communityId })
+  return result?.data || { ok: false, membership: null }
+}
+
+export async function joinCommunity(communityId = '') {
+  const callable = httpsCallable(functions, 'joinCommunity')
+  const result = await callable({ communityId })
+  return result?.data || { ok: false }
+}
+
+export async function leaveCommunity(communityId = '') {
+  const callable = httpsCallable(functions, 'leaveCommunity')
+  const result = await callable({ communityId })
+  return result?.data || { ok: false }
+}
+
 export async function toggleCommunityFocus(communityId = '', focused = null) {
   const callable = httpsCallable(functions, 'toggleCommunityFocus')
   const payload = { communityId }
