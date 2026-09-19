@@ -629,3 +629,217 @@ html.community-mobile-overlay-open .community-mobile-destination-screen{touch-ac
 html.community-mobile-overlay-open .community-mobile-destination-scroll{touch-action:pan-y!important}
 html.community-mobile-overlay-open .community-mobile-destination-search,html.community-mobile-overlay-open .community-mobile-destination-search input,html.community-mobile-overlay-open .community-mobile-destination-row,html.community-mobile-overlay-open .community-mobile-destination-header button{touch-action:manipulation!important}
 }
+
+
+/* melogic-mobile-community-feed-cleanup-v1
+   Screenshot-driven mobile Home cleanup: one 16px gutter, compact stories,
+   compact feed navigation/topics, floating composer, flatter media and fewer dividers. */
+@media (max-width:760px) {
+  body.is-community-page {
+    --community-mobile-gutter:16px;
+    --community-mobile-divider:rgba(255,255,255,.075);
+  }
+
+  /* Remove desktop IA label from mobile. The Community header already provides context. */
+  body.is-community-page .community-network-home-title {
+    display:none !important;
+  }
+
+  /* Stories: useful when populated, intentionally compact when empty. */
+  body.is-community-page .community-mobile-stories {
+    border-bottom:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-mobile-stories .community-stories-row {
+    min-height:0 !important;
+    padding:10px var(--community-mobile-gutter) 8px !important;
+    gap:12px !important;
+    border:0 !important;
+  }
+  body.is-community-page .community-stories-label {
+    display:none !important;
+  }
+  body.is-community-page .community-story-item {
+    flex:0 0 58px !important;
+    width:58px !important;
+    gap:5px !important;
+  }
+  body.is-community-page .community-story-ring {
+    width:52px !important;
+    height:52px !important;
+  }
+  body.is-community-page .community-story-item strong {
+    max-width:58px !important;
+    font-size:.66rem !important;
+  }
+  body.is-community-page .community-story-empty-state {
+    min-width:0 !important;
+    min-height:52px !important;
+    padding:0 4px !important;
+    gap:3px !important;
+    align-content:center !important;
+    justify-items:start !important;
+    text-align:left !important;
+  }
+  body.is-community-page .community-story-empty-state > span {
+    color:#8c8c94 !important;
+    font-size:.68rem !important;
+    font-weight:600 !important;
+  }
+  body.is-community-page .community-story-empty-state button {
+    min-height:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    background:transparent !important;
+    color:#b9b9c0 !important;
+    font-size:.64rem !important;
+  }
+
+  /* Feed mode: compact two-way selector, no oversized band. */
+  body.is-community-page .community-network-home-header {
+    padding:0 !important;
+    border:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-master-tabs {
+    display:grid !important;
+    grid-template-columns:1fr 1fr auto !important;
+    align-items:center !important;
+    min-height:48px !important;
+    padding:0 var(--community-mobile-gutter) !important;
+    border-top:1px solid var(--community-mobile-divider) !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-master-tabs > button {
+    position:relative !important;
+    min-height:47px !important;
+    padding:0 8px !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    color:#777780 !important;
+    font-size:.78rem !important;
+    font-weight:650 !important;
+  }
+  body.is-community-page .community-master-tabs > button.is-active,
+  body.is-community-page .community-master-tabs > button[aria-selected="true"] {
+    color:#fff !important;
+  }
+  body.is-community-page .community-master-tabs > button.is-active::after,
+  body.is-community-page .community-master-tabs > button[aria-selected="true"]::after {
+    content:"" !important;
+    position:absolute !important;
+    right:24% !important;
+    bottom:-1px !important;
+    left:24% !important;
+    height:2px !important;
+    background:var(--community-accent-gradient,var(--ml-accent-gradient)) !important;
+  }
+  body.is-community-page .community-sort-control {
+    width:38px !important;
+    min-width:38px !important;
+    height:38px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:8px !important;
+    background:transparent !important;
+    color:#777780 !important;
+  }
+  body.is-community-page .community-sort-control select {
+    position:absolute !important;
+    inset:0 !important;
+    width:100% !important;
+    height:100% !important;
+    opacity:0 !important;
+  }
+
+  /* Topics are a small horizontal filter rail, not another page section. */
+  body.is-community-page .community-topic-context {
+    padding:8px 0 7px !important;
+    border:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-topic-context-label {
+    display:none !important;
+  }
+  body.is-community-page .community-filter-shell {
+    width:100% !important;
+  }
+  body.is-community-page .community-filter-strip {
+    gap:7px !important;
+    padding:0 var(--community-mobile-gutter) !important;
+    border:0 !important;
+    scrollbar-width:none !important;
+  }
+  body.is-community-page .community-filter-strip::-webkit-scrollbar {
+    display:none !important;
+  }
+  body.is-community-page .community-topic-pill {
+    min-height:32px !important;
+    height:32px !important;
+    padding:0 11px !important;
+    border-radius:7px !important;
+    font-size:.69rem !important;
+    font-weight:620 !important;
+  }
+
+  /* Composer reads as a control without becoming another card. */
+  body.is-community-page .community-inline-composer {
+    grid-template-columns:38px minmax(0,1fr) !important;
+    gap:9px !important;
+    margin:5px var(--community-mobile-gutter) 7px !important;
+    padding:7px 9px !important;
+    border:1px solid rgba(255,255,255,.075) !important;
+    border-radius:10px !important;
+    background:#09090b !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-inline-avatar {
+    width:38px !important;
+    height:38px !important;
+  }
+  body.is-community-page .community-inline-prompt {
+    min-height:38px !important;
+    padding:0 !important;
+    color:#96969e !important;
+    text-align:left !important;
+    font-size:.78rem !important;
+  }
+
+  /* Feed alignment uses the same 16px gutter everywhere. */
+  body.is-community-page .community-page .community-main .community-post-card {
+    padding:15px var(--community-mobile-gutter) 17px !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+  }
+  body.is-community-page .community-post-card:first-child {
+    border-top:0 !important;
+  }
+  body.is-community-page .community-post-file-attachment,
+  body.is-community-page .community-post-file-attachment.is-image,
+  body.is-community-page .community-post-file-attachment.is-video {
+    margin-top:11px !important;
+    border-radius:8px !important;
+  }
+  body.is-community-page .community-post-file-attachment :is(img,video,picture > img) {
+    border-radius:8px !important;
+  }
+
+  /* Avoid stacking decorative separators between every control region. */
+  body.is-community-page .community-filter-shell,
+  body.is-community-page .community-topic-context,
+  body.is-community-page .community-inline-composer {
+    border-top-color:transparent !important;
+    border-bottom-color:transparent !important;
+  }
+
+  /* Bottom-nav state should read as belonging to the item, not a stray line. */
+  body.is-community-page .mobile-bottom-nav > a[aria-current="page"]::before {
+    right:22% !important;
+    left:22% !important;
+    height:2px !important;
+    border-radius:0 0 2px 2px !important;
+    background:var(--ml-accent-gradient,linear-gradient(135deg,#477dff 0%,#765dff 52%,#a65cff 100%)) !important;
+  }
+}
