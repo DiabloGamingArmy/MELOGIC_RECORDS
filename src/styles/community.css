@@ -5643,3 +5643,28 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     display: none;
   }
 }
+
+
+/* melogic-network-integration-audit-p7 */
+@media (min-width: 761px) {
+  .community-membership-button {
+    min-width: 88px;
+  }
+
+  /* The discovery screenshots showed the create-community card stretching to
+     dominate the first viewport. Keep it useful without reading like a hero ad. */
+  .community-network-directory .community-community-grid {
+    align-items: start;
+  }
+
+  .community-network-directory .community-create-card,
+  .community-network-directory [data-create-community-card] {
+    min-height: 220px;
+    max-height: 320px;
+  }
+
+  /* Keep the directory summary and navigator secondary to discovery itself. */
+  .community-network-directory-summary {
+    opacity: .78;
+  }
+}
