@@ -3464,8 +3464,17 @@ function renderCommunityDetail() {
                 <span>Community</span>
                 ${community?.official ? '<span class="community-workspace-verified">Official</span>' : ''}
               </div>
-              <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
+              <div class="community-workspace-title-row">
+                <h1>${community ? escapeHtml(community.name) : 'Community'}</h1>
+                ${community ? `<span class="community-workspace-type">${escapeHtml(community.category || 'Community')}</span>` : ''}
+              </div>
               <p>${community ? escapeHtml(community.description || 'A Melogic community.') : 'Loading community...'}</p>
+              ${community ? `<div class="community-workspace-statusline">
+                <span class="community-workspace-status-dot" aria-hidden="true"></span>
+                <span>Workspace</span>
+                <strong>${formatCount(community.memberCount)} members</strong>
+                <span>${formatCount(community.postCount)} posts</span>
+              </div>` : ''}
               ${community ? `<div class="community-workspace-meta">
                 <span>c/${escapeHtml(community.slug)}</span>
                 <span>${formatCount(community.memberCount)} members</span>
