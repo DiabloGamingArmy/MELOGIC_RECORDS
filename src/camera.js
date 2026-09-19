@@ -684,7 +684,7 @@ function renderCameraShareSelections(){
     button.classList.toggle('is-selected',selected)
     button.setAttribute('aria-pressed',String(selected))
   }
-  if(shareCommitButton)shareCommitButton.disabled=cameraShareSelections.size===0
+  if(shareCommitButton)shareCommitButton.disabled=cameraShareSelections.size===0||cameraShareCommitting
 }
 function resetCameraShareSelections(){
   cameraShareSelections.clear()
@@ -991,17 +991,17 @@ messageSendbar?.addEventListener('click',event=>{const button=event.target.close
 // melogic-camera-share-export-p4-v1
 function cameraExportFile(){return cameraMessageCaptureFile()}
 function saveCameraMediaToDevice(){
- const file=cameraExportFile();if(!file){setStatus('The media is no longer available.');return}
+ const file=cameraExportFile();if(!file)return false
  let url=''
- try{url=URL.createObjectURL(file);const a=document.createElement('a');a.href=url;a.download=file.name||`melogic-media-${Date.now()}`;a.rel='noopener';a.style.display='none';document.body.append(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),30000);setStatus('Save requested.');window.setTimeout(()=>setStatus(''),1800)}
- catch(error){if(url)URL.revokeObjectURL(url);console.warn('[camera] save failed',error);setStatus('This browser could not save the media.')}
+ try{url=URL.createObjectURL(file);const a=document.createElement('a');a.href=url;a.download=file.name||`melogic-media-${Date.now()}`;a.rel='noopener';a.style.display='none';document.body.append(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),30000);return true}
+ catch(error){if(url)URL.revokeObjectURL(url);console.warn('[camera] save failed',error);return false}
 }
 async function shareCameraMediaToSystem(){
- const file=cameraExportFile();if(!file){setStatus('The media is no longer available.');return}
- if(typeof navigator.share!=='function'){setStatus('System sharing is not available in this browser.');return}
- if(typeof navigator.canShare==='function'&&!navigator.canShare({files:[file]})){setStatus('This device cannot share this media type directly.');return}
- try{await navigator.share({files:[file],title:'Melogic media'});setStatus('Shared.');window.setTimeout(()=>setStatus(''),1400)}
- catch(error){if(error?.name==='AbortError')return;console.warn('[camera] system share failed',error);setStatus('Could not open the device share options.')}
+ const file=cameraExportFile();if(!file)return false
+ if(typeof navigator.share!=='function')return false
+ if(typeof navigator.canShare==='function'&&!navigator.canShare({files:[file]}))return false
+ try{await navigator.share({files:[file],title:'Melogic media'});return true}
+ catch(error){if(error?.name!=='AbortError')console.warn('[camera] system share failed',error);return false}
 }
 
 // melogic-camera-share-publish-p2-v1
@@ -1028,12 +1028,25 @@ shareScreen?.addEventListener('click',event=>{
   event.preventDefault()
   toggleCameraShareDestination(d)
 })
-shareCommitButton?.addEventListener('click',()=>{
-  // Execution intentionally lands in Patch 4. P2 establishes selection semantics only.
-  if(!cameraShareSelections.size)return
-  setStatus(`${cameraShareSelections.size} share destination${cameraShareSelections.size===1?'':'s'} selected.`)
-  window.setTimeout(()=>setStatus(''),1400)
-})
+// melogic-camera-share-orchestration-p4-v1
+let cameraShareCommitting=false
+async function commitCameraShareSelections(){
+ if(cameraShareCommitting||!cameraShareSelections.size)return
+ const selected=new Set(cameraShareSelections)
+ if(selected.has('message')&&!cameraMessageSelectedThreadIds.size){messageState.hidden=false;messageState.textContent='Select at least one conversation before sharing.';messagePanel.hidden=false;messagePanel.scrollIntoView({behavior:'smooth',block:'nearest'});return}
+ cameraShareCommitting=true;shareCommitButton.disabled=true;shareCommitButton.textContent='Sharing…'
+ const failures=[]
+ try{
+  if(selected.has('device')&&!saveCameraMediaToDevice())failures.push('Save to Device')
+  if(selected.has('system')&&!(await shareCameraMediaToSystem()))failures.push('Share to Another App')
+  if(failures.length){setStatus(`Could not complete: ${failures.join(', ')}.`);return}
+  if(selected.has('feed')){handoffCameraMediaToCommunity('feed');return}
+  if(selected.has('story')){handoffCameraMediaToCommunity('story');return}
+  setStatus('Sharing complete.');window.setTimeout(()=>setStatus(''),1800)
+ }catch(error){console.warn('[camera] multi-destination share failed',error);setStatus(error?.message||'Could not complete sharing.')}
+ finally{cameraShareCommitting=false;if(cameraSurface.isConnected){shareCommitButton.textContent='Share';renderCameraShareSelections()}}
+}
+shareCommitButton?.addEventListener('click',()=>void commitCameraShareSelections())
 window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
 window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })
 
