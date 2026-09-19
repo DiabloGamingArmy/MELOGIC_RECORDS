@@ -246,3 +246,13 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 /* melogic-camera-share-export-p4-v1: original-quality device save + native Web Share */
 
 /* melogic-camera-share-final-p5-v1: final share lifecycle hardening */
+
+/* melogic-camera-focus-exposure-edf27c4-v1 */
+.camera-focus-indicator{position:absolute;z-index:34;width:76px;height:76px;transform:translate(-50%,-50%) scale(1.14);pointer-events:none;opacity:0;transition:opacity .14s ease,transform .22s cubic-bezier(.2,.8,.2,1)}
+.camera-focus-indicator.is-visible{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.camera-focus-indicator svg{display:block;width:100%;height:100%;overflow:visible;fill:none;stroke:#fff;stroke-width:6;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px rgba(0,0,0,.45))}
+.camera-exposure-pill{position:absolute;z-index:35;right:max(14px,env(safe-area-inset-right,0px));top:50%;transform:translateY(-50%);width:46px;height:184px;border:1px solid rgba(255,255,255,.16);border-radius:999px;background:rgba(10,10,12,.72);backdrop-filter:blur(18px) saturate(130%);-webkit-backdrop-filter:blur(18px) saturate(130%);box-shadow:0 8px 28px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;padding:10px 0;touch-action:none}
+.camera-exposure-pill[hidden]{display:none!important}
+.camera-exposure-slider{width:132px;height:24px;transform:rotate(-90deg);accent-color:#fff;touch-action:none}
+.camera-exposure-slider:disabled{opacity:.35}
+.camera-screen:has(.camera-playback:not([hidden])) .camera-focus-indicator,.camera-screen:has(.camera-playback:not([hidden])) .camera-exposure-pill,.camera-screen.is-sharing .camera-focus-indicator,.camera-screen.is-sharing .camera-exposure-pill{display:none!important}

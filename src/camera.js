@@ -29,6 +29,9 @@ cameraSurface.innerHTML = `
     <canvas class="camera-live-canvas" data-camera-live-canvas aria-hidden="true"></canvas>
     <canvas class="camera-transition-frame" data-camera-transition-frame aria-hidden="true"></canvas>
     <div class="camera-shade"></div>
+    <!-- melogic-camera-focus-exposure-edf27c4-v1 -->
+    <div class="camera-focus-indicator" data-camera-focus-indicator aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><path d="M31 8H23C14.7 8 8 14.7 8 23v8"/><path d="M69 8h8c8.3 0 15 6.7 15 15v8"/><path d="M8 69v8c0 8.3 6.7 15 15 15h8"/><path d="M92 69v8c0 8.3-6.7 15-15 15h-8"/></svg></div>
+    <div class="camera-exposure-pill" data-camera-exposure-pill hidden><input class="camera-exposure-slider" data-camera-exposure type="range" min="-1" max="1" step=".01" value="0" aria-label="Camera exposure"></div>
     <div class="camera-topbar">
       <a class="camera-tool camera-close" data-camera-close href="/community" aria-label="Close camera"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></a>
       <div class="camera-tools"><div class="camera-flash-stack"><button class="camera-tool camera-flash" type="button" data-camera-flash aria-label="Flash" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13.5 2.5 6.8 13h5.1l-1.4 8.5L17.2 11h-5.1l1.4-8.5Z"/></svg></button><input class="camera-flash-strength" data-camera-flash-strength type="range" min="0" max="100" value="62" aria-label="Flash magnitude" hidden></div></div>
@@ -118,6 +121,9 @@ const messageSend=cameraSurface.querySelector('[data-camera-message-send]')
 const transitionFrame = cameraSurface.querySelector('[data-camera-transition-frame]')
 const liveCanvas = cameraSurface.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
+const focusIndicator = cameraSurface.querySelector('[data-camera-focus-indicator]')
+const exposurePill = cameraSurface.querySelector('[data-camera-exposure-pill]')
+const exposureSlider = cameraSurface.querySelector('[data-camera-exposure]')
 const recordLock = cameraSurface.querySelector('[data-camera-record-lock]')
 const closeButton=cameraSurface.querySelector('[data-camera-close]'), flashButton=cameraSurface.querySelector('[data-camera-flash]'), flashStrength=cameraSurface.querySelector('[data-camera-flash-strength]'), frontFlash=cameraSurface.querySelector('[data-camera-front-flash]')
 const editCanvas=cameraSurface.querySelector('[data-camera-edit-canvas]'), editCtx=editCanvas?.getContext('2d'), editTextbox=cameraSurface.querySelector('[data-camera-edit-textbox]'), editTextInput=cameraSurface.querySelector('[data-camera-edit-text-input]'), editImageInput=cameraSurface.querySelector('[data-camera-edit-image-input]')
@@ -139,6 +145,9 @@ let zoomCapability = null
 let zoomValue = null
 let zoomApplyPending = false
 let pendingZoomValue = null
+let exposureCapability = null
+let exposureValue = 0
+let focusIndicatorTimer = 0
 let recordingStream = null
 let microphoneStream = null
 let recordingCanvasStream = null
@@ -174,6 +183,7 @@ function stopTracks() {
   stream = null
   try { video.srcObject = null } catch {}
   zoomCapability = null; zoomValue = null; pendingZoomValue = null; zoomApplyPending = false
+  exposureCapability = null; exposureValue = 0; clearTimeout(focusIndicatorTimer); focusIndicator?.classList.remove('is-visible'); if(exposurePill) exposurePill.hidden = true
   resetCameraPinchGesture()
 }
 function stopCaptureEngines() {
@@ -283,6 +293,30 @@ function configureZoomCapability() {
   const current = track.getSettings?.().zoom
   zoomValue = Number.isFinite(current) ? clamp(current, range.min, range.max) : range.min
 }
+// melogic-camera-focus-exposure-edf27c4-v1
+function cameraImagingCapabilities(){const t=stream?.getVideoTracks?.()[0];try{return t?.getCapabilities?.()||{}}catch{return{}}}
+async function configureCameraImagingDefaults(){
+ const t=stream?.getVideoTracks?.()[0];if(!t)return;const caps=cameraImagingCapabilities(),advanced=[]
+ if(Array.isArray(caps.focusMode)&&caps.focusMode.includes('continuous'))advanced.push({focusMode:'continuous'})
+ if(Array.isArray(caps.exposureMode)&&caps.exposureMode.includes('continuous'))advanced.push({exposureMode:'continuous'})
+ const r=caps.exposureCompensation
+ if(r&&Number.isFinite(r.min)&&Number.isFinite(r.max)&&r.max>r.min){exposureCapability={min:r.min,max:r.max,step:Number.isFinite(r.step)&&r.step>0?r.step:.01};const cur=t.getSettings?.().exposureCompensation;exposureValue=Number.isFinite(cur)?clamp(cur,r.min,r.max):clamp(0,r.min,r.max);exposureSlider.min=String(r.min);exposureSlider.max=String(r.max);exposureSlider.step=String(exposureCapability.step);exposureSlider.value=String(exposureValue);exposureSlider.disabled=false}else{exposureCapability=null;exposureSlider.disabled=true}
+ if(advanced.length)try{await t.applyConstraints({advanced})}catch(e){console.warn('[camera] autofocus defaults rejected',e)}
+}
+function showCameraFocusIndicator(x,y){const r=liveCanvas.getBoundingClientRect();focusIndicator.style.left=clamp(x-r.left,0,r.width)+'px';focusIndicator.style.top=clamp(y-r.top,0,r.height)+'px';focusIndicator.classList.remove('is-visible');void focusIndicator.offsetWidth;focusIndicator.classList.add('is-visible');exposurePill.hidden=false;clearTimeout(focusIndicatorTimer);focusIndicatorTimer=setTimeout(()=>focusIndicator.classList.remove('is-visible'),1800)}
+async function focusCameraAt(x,y){
+ if(!stream||!playback.hidden)return;showCameraFocusIndicator(x,y);const t=stream.getVideoTracks?.()[0],caps=cameraImagingCapabilities();if(!t)return
+ const r=liveCanvas.getBoundingClientRect();let px=clamp((x-r.left)/Math.max(1,r.width),0,1),py=clamp((y-r.top)/Math.max(1,r.height),0,1);if(facingMode==='user')px=1-px
+ const advanced=[],supported=navigator.mediaDevices?.getSupportedConstraints?.()||{}
+ if(supported.pointsOfInterest)advanced.push({pointsOfInterest:[{x:px,y:py}]})
+ if(Array.isArray(caps.focusMode)){if(caps.focusMode.includes('single-shot'))advanced.push({focusMode:'single-shot'});else if(caps.focusMode.includes('continuous'))advanced.push({focusMode:'continuous'})}
+ if(advanced.length)try{await t.applyConstraints({advanced})}catch(e){console.warn('[camera] tap focus rejected',e)}
+}
+async function setCameraExposure(raw){
+ if(!exposureCapability)return;const t=stream?.getVideoTracks?.()[0];if(!t)return;const s=exposureCapability.step,v=clamp(Math.round(Number(raw)/s)*s,exposureCapability.min,exposureCapability.max)
+ try{await t.applyConstraints({advanced:[{exposureCompensation:v}]});const actual=t.getSettings?.().exposureCompensation;exposureValue=Number.isFinite(actual)?actual:v;exposureSlider.value=String(exposureValue)}catch(e){console.warn('[camera] exposure compensation rejected',e)}
+}
+
 async function flushZoomConstraint() {
   if (zoomApplyPending || pendingZoomValue == null) return
   const track = stream?.getVideoTracks?.()[0]
@@ -468,6 +502,7 @@ async function startCamera({ preserveFrame=false }={}) {
     // separately for later recording.
     video.srcObject = new MediaStream(nextStream.getVideoTracks())
     configureZoomCapability()
+    await configureCameraImagingDefaults()
     resetFlashUI()
     await video.play(); await waitForFirstDrawableFrame()
     startCanvasRenderer(); liveCanvas.classList.add('is-ready')
@@ -494,6 +529,7 @@ async function flipCameraWhileRecording() {
     video.srcObject = new MediaStream([nextVideoTrack])
     facingMode = nextFacing
     configureZoomCapability()
+    await configureCameraImagingDefaults()
     resetFlashUI()
     await video.play()
     await waitForFirstDrawableFrame()
@@ -824,9 +860,11 @@ liveCanvas.addEventListener('pointerup', event => {
     return
   }
   lastPreviewTapAt = now
+  void focusCameraAt(event.clientX,event.clientY)
 })
 flashButton.addEventListener('click',async event=>{const button=event.currentTarget;if(facingMode==='user'){frontFlashOn=!frontFlashOn;button.dataset.on=String(frontFlashOn);button.setAttribute('aria-pressed',String(frontFlashOn));updateFrontFlash();return}const track=stream?.getVideoTracks?.()[0],caps=track?.getCapabilities?.()||{};if(!track||!caps.torch){setStatus('Flash is not available with this camera.');setTimeout(()=>setStatus(''),1600);return}const current=typeof track.getSettings?.().torch==='boolean'?track.getSettings().torch:button.dataset.on==='true',next=!current;try{await track.applyConstraints({advanced:[{torch:next}]});const actual=track.getSettings?.().torch,on=typeof actual==='boolean'?actual:next;button.dataset.on=String(on);button.setAttribute('aria-pressed',String(on));flashStrength.hidden=!on}catch(error){console.warn('[camera] torch toggle failed',error);setStatus('Unable to change flash on this camera.');setTimeout(()=>setStatus(''),1600)}})
 flashStrength.addEventListener('input',updateFrontFlash)
+exposureSlider?.addEventListener('input',event=>{ void setCameraExposure(event.currentTarget.value) })
 
 cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){restoreEditSnapshot(editHistory.pop()||'');return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text')editTextInput.focus()})
 cameraSurface.querySelector('[data-camera-edit-text-add]')?.addEventListener('click',()=>{const v=editTextInput.value.trim();if(!v)return;sizeEditCanvas();pushEditHistory();const f=Math.max(34,editCanvas.width*.055);editCtx.font=`700 ${f}px system-ui`;editCtx.textAlign='center';editCtx.textBaseline='middle';editCtx.lineWidth=Math.max(4,f*.12);editCtx.strokeStyle='rgba(0,0,0,.72)';editCtx.fillStyle='#fff';editCtx.strokeText(v,editCanvas.width/2,editCanvas.height/2);editCtx.fillText(v,editCanvas.width/2,editCanvas.height/2);editTextInput.value='';editTextbox.hidden=true;editMode=''})
