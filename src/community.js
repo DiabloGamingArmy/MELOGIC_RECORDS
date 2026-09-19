@@ -3131,6 +3131,12 @@ function trendingCommunities() {
     .slice(0, 6)
 }
 
+function suggestedCommunities() {
+  return displayedCommunities()
+    .filter((community) => !state.communityFocus[community.communityId])
+    .slice(0, 8)
+}
+
 function renderCommunityDiscoveryBody() {
   const isTrending = state.discoveryTab === 'trending'
   const communities = isTrending ? trendingCommunities().slice(0, 8) : suggestedCommunities()
