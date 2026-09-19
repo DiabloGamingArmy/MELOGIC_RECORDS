@@ -5478,3 +5478,168 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     font-size: .64rem;
   }
 }
+
+
+/* melogic-contextual-network-rail-p5 */
+@media (min-width: 761px) {
+  .community-network-right-rail {
+    background: #05070a;
+  }
+
+  .community-network-context-card,
+  .community-network-next-card {
+    display: grid;
+    gap: .8rem;
+    padding: 1rem .9rem;
+  }
+
+  .community-network-rail-heading {
+    display: grid;
+    gap: .12rem;
+  }
+
+  .community-network-rail-heading > span {
+    color: #68778c;
+    font-size: .62rem;
+    font-weight: 820;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+  }
+
+  .community-network-rail-heading > strong {
+    color: #f2f5fa;
+    font-size: .94rem;
+    line-height: 1.2;
+  }
+
+  .community-network-signal-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .45rem;
+  }
+
+  .community-network-signal-grid > div {
+    display: grid;
+    gap: .08rem;
+    padding: .65rem .7rem;
+    border: 1px solid rgba(255, 255, 255, .075);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .025);
+  }
+
+  .community-network-signal-grid strong {
+    color: #eaf0f8;
+    font-size: .92rem;
+  }
+
+  .community-network-signal-grid span,
+  .community-network-context-card > p {
+    color: #69788c;
+    font-size: .68rem;
+    line-height: 1.42;
+  }
+
+  .community-network-context-card > p {
+    margin: 0;
+  }
+
+  .community-network-context-card > a {
+    color: #9baabc;
+    font-size: .7rem;
+    font-weight: 720;
+    text-decoration: none;
+  }
+
+  .community-network-context-card > a:hover {
+    color: #eef4fb;
+  }
+
+  .community-network-context-list {
+    display: grid;
+    gap: .12rem;
+  }
+
+  .community-network-context-list > span {
+    display: flex;
+    justify-content: space-between;
+    gap: .75rem;
+    padding: .45rem 0;
+    border-bottom: 1px solid rgba(255, 255, 255, .055);
+    font-size: .68rem;
+  }
+
+  .community-network-context-list strong {
+    color: #78879a;
+    font-weight: 650;
+  }
+
+  .community-network-context-list em {
+    overflow: hidden;
+    color: #aeb9c8;
+    font-style: normal;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .community-network-next-list {
+    display: grid;
+    gap: .15rem;
+  }
+
+  .community-network-next-list > a,
+  .community-network-next-list > button {
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr);
+    align-items: center;
+    gap: .55rem;
+    width: 100%;
+    min-height: 46px;
+    padding: .45rem .5rem;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .community-network-next-list > a:hover,
+  .community-network-next-list > button:hover {
+    background: rgba(255, 255, 255, .045);
+  }
+
+  .community-network-next-list svg {
+    width: 17px;
+    height: 17px;
+    color: #738297;
+  }
+
+  .community-network-next-list > a > span,
+  .community-network-next-list > button > span {
+    display: grid;
+    gap: .06rem;
+    min-width: 0;
+  }
+
+  .community-network-next-list strong {
+    color: #dce4ee;
+    font-size: .74rem;
+  }
+
+  .community-network-next-list small {
+    overflow: hidden;
+    color: #637185;
+    font-size: .64rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Screenshot regression cleanup: Patch 3's count bubble was rendering as
+     an empty circle when there were zero saved/focused communities. */
+  .community-network-place-count:empty {
+    display: none;
+  }
+}
