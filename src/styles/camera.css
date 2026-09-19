@@ -266,3 +266,15 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-review-bottom-actions button:active{transform:scale(.985);background:#18191e}
 .camera-review-bottom-actions button.is-primary{background:#fff;color:#070708;border-color:#fff}
 [data-melogic-camera-surface].is-sharing .camera-review-bottom-actions{display:none!important}
+
+
+/* melogic-camera-share-multiselect-p2-v1 */
+.camera-share-header{grid-template-columns:44px minmax(0,1fr) auto}
+.camera-share-commit{min-width:62px;height:38px;padding:0 14px;border:0;border-radius:12px;background:#fff;color:#080809;font:750 14px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.camera-share-commit:disabled{opacity:.34}
+.camera-share-destination{grid-template-columns:46px minmax(0,1fr) 26px}
+.camera-share-destination.is-selected{background:rgba(255,255,255,.065)}
+.camera-share-destination.is-selected .camera-share-icon{background:#191a20;border-color:rgba(255,255,255,.16)}
+.camera-share-choice{width:22px;height:22px;border:1px solid #424249;border-radius:7px;display:grid;place-items:center;color:transparent;transition:background .12s ease,border-color .12s ease,color .12s ease}
+.camera-share-choice svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+.camera-share-destination.is-selected .camera-share-choice{background:#f4f4f5;border-color:#f4f4f5;color:#09090a}

@@ -69,14 +69,14 @@ cameraSurface.innerHTML = `
     <section class="camera-share-screen" data-camera-share-screen aria-label="Share media" hidden>
       <header class="camera-share-header">
         <button class="camera-share-back" type="button" data-camera-share-back aria-label="Back to editor"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg></button>
-        <div class="camera-share-heading"><h1>Share</h1><span>Choose where this goes</span></div><div></div>
+        <div class="camera-share-heading"><h1>Share</h1><span>Choose where this goes</span></div><button class="camera-share-commit" type="button" data-camera-share-commit disabled>Share</button>
       </header>
       <div class="camera-share-content">
         <div class="camera-share-preview"><img data-camera-share-photo alt="Photo ready to share" hidden><video data-camera-share-video playsinline muted loop hidden></video><div class="camera-share-preview-meta"><span data-camera-share-type>Media</span><button type="button" data-camera-share-edit>Edit</button></div></div>
         <section class="camera-share-section"><h2>Share on Melogic</h2><div class="camera-share-destinations">
-          <button class="camera-share-destination is-primary" type="button" data-share-destination="story"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg></span><span class="camera-share-copy"><strong>Post to Story</strong><small>Share with your followers for 24 hours</small></span><span class="camera-share-chevron">›</span></button>
-          <button class="camera-share-destination" type="button" data-share-destination="feed"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 12h8M8 15h5"/></svg></span><span class="camera-share-copy"><strong>Post to Feed</strong><small>Publish to the Community feed</small></span><span class="camera-share-chevron">›</span></button>
-          <button class="camera-share-destination" type="button" data-share-destination="message"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></svg></span><span class="camera-share-copy"><strong>Send in Message</strong><small>Share with a person or conversation</small></span><span class="camera-share-chevron">›</span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="story"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg></span><span class="camera-share-copy"><strong>Post to Story</strong><small>Share with your followers for 24 hours</small></span><span class="camera-share-choice" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg></span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="feed"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 12h8M8 15h5"/></svg></span><span class="camera-share-copy"><strong>Post to Feed</strong><small>Publish to the Community feed</small></span><span class="camera-share-choice" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg></span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="message"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></svg></span><span class="camera-share-copy"><strong>Send in Message</strong><small>Share with a person or conversation</small></span><span class="camera-share-choice" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg></span></button>
         </div></section>
         <!-- melogic-camera-share-message-p3-v1 -->
         <section class="camera-share-message-panel" data-camera-share-message-panel hidden>
@@ -86,8 +86,8 @@ cameraSurface.innerHTML = `
           <div class="camera-share-message-sendbar" data-camera-message-sendbar hidden><span data-camera-message-selection></span><button type="button" data-camera-message-send>Send</button></div>
         </section>
         <section class="camera-share-section"><h2>More</h2><div class="camera-share-destinations">
-          <button class="camera-share-destination" type="button" data-share-destination="device"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M5 19h14"/></svg></span><span class="camera-share-copy"><strong>Save to Device</strong><small>Keep the original media on this device</small></span><span class="camera-share-chevron">›</span></button>
-          <button class="camera-share-destination" type="button" data-share-destination="system"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"/></svg></span><span class="camera-share-copy"><strong>Share to Another App</strong><small>Use your device share options</small></span><span class="camera-share-chevron">›</span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="device"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M5 19h14"/></svg></span><span class="camera-share-copy"><strong>Save to Device</strong><small>Keep the original media on this device</small></span><span class="camera-share-choice" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg></span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="system"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"/></svg></span><span class="camera-share-copy"><strong>Share to Another App</strong><small>Use your device share options</small></span><span class="camera-share-choice" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg></span></button>
         </div></section>
       </div>
     </section>
@@ -113,6 +113,9 @@ const shareEditButton = cameraSurface.querySelector('[data-camera-share-edit]')
 const sharePhoto = cameraSurface.querySelector('[data-camera-share-photo]')
 const shareVideo = cameraSurface.querySelector('[data-camera-share-video]')
 const shareType = cameraSurface.querySelector('[data-camera-share-type]')
+const shareCommitButton = cameraSurface.querySelector('[data-camera-share-commit]')
+const shareDestinations = [...cameraSurface.querySelectorAll('[data-share-destination]')]
+const cameraShareSelections = new Set()
 const messagePanel=cameraSurface.querySelector('[data-camera-share-message-panel]')
 const messageClose=cameraSurface.querySelector('[data-camera-message-close]')
 const messageSearch=cameraSurface.querySelector('[data-camera-message-search]')
@@ -674,9 +677,35 @@ function syncSharePreview() {
   else{sharePhoto.removeAttribute('src');shareVideo.src=previewUrl;shareVideo.currentTime=0;shareVideo.play().catch(()=>{})}
   return true
 }
+// melogic-camera-share-multiselect-p2-v1
+function renderCameraShareSelections(){
+  for(const button of shareDestinations){
+    const selected=cameraShareSelections.has(button.dataset.shareDestination)
+    button.classList.toggle('is-selected',selected)
+    button.setAttribute('aria-pressed',String(selected))
+  }
+  if(shareCommitButton)shareCommitButton.disabled=cameraShareSelections.size===0
+}
+function resetCameraShareSelections(){
+  cameraShareSelections.clear()
+  renderCameraShareSelections()
+}
+function toggleCameraShareDestination(button){
+  const destination=button?.dataset?.shareDestination
+  if(!destination)return
+  if(cameraShareSelections.has(destination))cameraShareSelections.delete(destination)
+  else cameraShareSelections.add(destination)
+  renderCameraShareSelections()
+  // Messages selection itself is Patch 3; P2 only exposes/hides its existing picker.
+  if(destination==='message'){
+    if(cameraShareSelections.has('message'))void openCameraMessagePicker()
+    else closeCameraMessagePicker()
+  }
+}
 function openShareScreen(){
   const blob=playback._melogicCapture;if(!blob||!syncSharePreview())return
   window.__melogicCameraCapture={blob,type:playback.dataset.captureType||'video',createdAt:Date.now()}
+  resetCameraShareSelections()
   recordedVideo.pause();shareScreen.hidden=false;cameraSurface.classList.add('is-sharing')
 }
 function closeShareScreen(){
@@ -983,12 +1012,16 @@ function handoffCameraMediaToCommunity(destination) {
   setStatus('Open Camera from the mobile app to post this media to Community.')
 }
 shareScreen?.addEventListener('click',event=>{
-  const d=event.target.closest('[data-share-destination]');if(!d)return
-  const destination=d.dataset.shareDestination
-  if(destination==='story'||destination==='feed'){handoffCameraMediaToCommunity(destination);return}
-  if(destination==='message'){void openCameraMessagePicker();return}
-  if(destination==='device'){saveCameraMediaToDevice();return}
-  if(destination==='system'){void shareCameraMediaToSystem();return}
+  const d=event.target.closest('[data-share-destination]')
+  if(!d)return
+  event.preventDefault()
+  toggleCameraShareDestination(d)
+})
+shareCommitButton?.addEventListener('click',()=>{
+  // Execution intentionally lands in Patch 4. P2 establishes selection semantics only.
+  if(!cameraShareSelections.size)return
+  setStatus(`${cameraShareSelections.size} share destination${cameraShareSelections.size===1?'':'s'} selected.`)
+  window.setTimeout(()=>setStatus(''),1400)
 })
 window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
 window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })
@@ -1017,3 +1050,5 @@ if ((location.pathname.replace(/\/+$/, '') || '/') === '/camera' ||
   if (app) app.replaceChildren(cameraSurface)
   void bootstrapCameraDocument()
 }
+
+// melogic-camera-share-p2-repair-v1 — verified P2 after original script post-write reporting failure.
