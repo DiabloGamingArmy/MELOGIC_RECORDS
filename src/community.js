@@ -3263,21 +3263,92 @@ function renderCommunityDiscoveryBody() {
   `
 }
 
-function renderSidebar() {
+function renderNetworkActivityCard() {
+  const focusedCount = state.communities.filter((community) => community?.communityId && state.communityFocus[community.communityId]).length
+  const visiblePosts = state.posts.length
   return `
-    <aside class="community-right-rail community-sidebar">
+    <section class="community-rail-card community-network-context-card">
+      <div class="community-network-rail-heading">
+        <span>Network</span>
+        <strong>Relevant to You</strong>
+      </div>
+      <div class="community-network-signal-grid">
+        <div><strong>${formatCount(focusedCount)}</strong><span>Communities</span></div>
+        <div><strong>${formatCount(visiblePosts)}</strong><span>Feed items</span></div>
+      </div>
+      <p>As Melogic learns your projects, collaborators, skills, and communities, useful people and work will surface here.</p>
+      <a href="${ROUTES.communityCommunities}">Explore the network</a>
+    </section>
+  `
+}
+
+function renderCommunityContextRail() {
+  const community = state.community
+  if (!community) return renderNetworkActivityCard()
+  const focused = Boolean(state.communityFocus[community.communityId])
+  return `
+    <section class="community-rail-card community-network-context-card is-community">
+      <div class="community-network-rail-heading">
+        <span>Current Community</span>
+        <strong>${escapeHtml(community.name)}</strong>
+      </div>
+      <div class="community-network-signal-grid">
+        <div><strong>${formatCount(community.focusCount)}</strong><span>Focused</span></div>
+        <div><strong>${formatCount(community.postCount)}</strong><span>Posts</span></div>
+      </div>
+      <div class="community-network-context-list">
+        <span><strong>Your status</strong><em>${focused ? 'Focused' : 'Discovering'}</em></span>
+        <span><strong>Category</strong><em>${escapeHtml(community.category || 'Community')}</em></span>
+        <span><strong>Workspace</strong><em>Feed · Projects · People</em></span>
+      </div>
+      <a href="${ROUTES.communityCommunities}">Discover more communities</a>
+    </section>
+  `
+}
+
+function renderNetworkNextCard() {
+  const isCommunity = state.view.type === 'community' && state.community
+  return `
+    <section class="community-rail-card community-network-next-card">
+      <div class="community-network-rail-heading">
+        <span>Next</span>
+        <strong>${isCommunity ? 'Inside this community' : 'Across your network'}</strong>
+      </div>
+      <div class="community-network-next-list">
+        ${isCommunity ? `
+          <button type="button" data-community-workspace-tab="community-projects">${iconSvg('cube')}<span><strong>Projects</strong><small>Shared work connected here</small></span></button>
+          <button type="button" data-community-workspace-tab="community-people">${iconSvg('user')}<span><strong>People</strong><small>Members and collaborators</small></span></button>
+          <button type="button" data-community-workspace-tab="community-opportunities">${iconSvg('search')}<span><strong>Opportunities</strong><small>Open roles and requests</small></span></button>
+        ` : `
+          <a href="${ROUTES.communityCommunities}">${iconSvg('search')}<span><strong>Find communities</strong><small>Discover relevant groups</small></span></a>
+          <a href="${ROUTES.communityCreate}">${iconSvg('plus')}<span><strong>Create a community</strong><small>Build a place for your people</small></span></a>
+        `}
+      </div>
+    </section>
+  `
+}
+
+function renderSidebar() {
+  const inCommunity = state.view.type === 'community'
+  return `
+    <aside class="community-right-rail community-sidebar community-network-right-rail">
       <form class="community-rail-search" data-community-feed-search>
         ${iconSvg('search')}
-        <input type="search" name="communityFeedSearch" value="${escapeHtml(state.feedSearch)}" placeholder="Search posts, tags, creators" aria-label="Search posts, tags, creators" />
+        <input type="search" name="communityFeedSearch" value="${escapeHtml(state.feedSearch)}" placeholder="Search the network" aria-label="Search the network" />
         <button type="submit" aria-label="Search">Search</button>
       </form>
-      <div class="community-right-stories">
-        ${renderStoriesRow()}
-      </div>
-      <section class="community-rail-card community-discovery-card" data-community-discovery-widget>
-        ${renderCommunityDiscoveryBody()}
-      </section>
-      ${renderHistoryWidget()}
+      ${inCommunity ? renderCommunityContextRail() : `
+        <div class="community-right-stories">
+          ${renderStoriesRow()}
+        </div>
+        ${renderNetworkActivityCard()}
+      `}
+      ${renderNetworkNextCard()}
+      ${!inCommunity ? `
+        <section class="community-rail-card community-discovery-card" data-community-discovery-widget>
+          ${renderCommunityDiscoveryBody()}
+        </section>
+      ` : ''}
       ${renderCommunityRailFooter()}
     </aside>
   `
