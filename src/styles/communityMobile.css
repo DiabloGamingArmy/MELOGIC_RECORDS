@@ -843,3 +843,125 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     background:var(--ml-accent-gradient,linear-gradient(135deg,#477dff 0%,#765dff 52%,#a65cff 100%)) !important;
   }
 }
+
+
+/* melogic-mobile-community-feed-polish-v2
+   Runtime screenshot follow-up: align topic rail controls, remove visual strip
+   clutter, improve feed cadence and touch hierarchy. */
+@media (max-width:760px) {
+  /* Topic rail owns a single 36px control height. Arrows vertically match pills. */
+  body.is-community-page .community-topic-context {
+    padding:7px 0 8px !important;
+  }
+  body.is-community-page .community-filter-shell {
+    position:relative !important;
+    display:flex !important;
+    align-items:center !important;
+    min-height:36px !important;
+    padding:0 40px !important;
+  }
+  body.is-community-page .community-filter-strip {
+    min-height:36px !important;
+    padding:2px 0 !important;
+    align-items:center !important;
+  }
+  body.is-community-page .community-topic-pill {
+    flex:0 0 auto !important;
+    min-height:32px !important;
+    height:32px !important;
+  }
+  body.is-community-page .community-filter-arrow {
+    display:grid !important;
+    place-items:center !important;
+    position:absolute !important;
+    top:50% !important;
+    width:34px !important;
+    height:34px !important;
+    min-width:34px !important;
+    min-height:34px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:8px !important;
+    background:#000 !important;
+    color:#8e8e97 !important;
+    transform:translateY(-50%) !important;
+    z-index:3 !important;
+  }
+  body.is-community-page .community-filter-arrow.is-left {
+    left:3px !important;
+  }
+  body.is-community-page .community-filter-arrow.is-left svg {
+    transform:rotate(180deg) !important;
+  }
+  body.is-community-page .community-filter-arrow.is-right {
+    right:3px !important;
+  }
+  body.is-community-page .community-filter-arrow:disabled {
+    opacity:.22 !important;
+  }
+  body.is-community-page .community-filter-arrow:not(:disabled):active {
+    background:#101012 !important;
+    color:#fff !important;
+  }
+
+  /* With the redundant inline composer gone, give controls -> feed a deliberate pause. */
+  body.is-community-page .community-network-home-header {
+    margin-bottom:5px !important;
+  }
+  body.is-community-page .community-feed {
+    border-top:1px solid rgba(255,255,255,.065) !important;
+  }
+
+  /* More editorial post rhythm: identity is compact, content gets breathing room. */
+  body.is-community-page .community-page .community-main .community-post-card {
+    padding-top:17px !important;
+    padding-bottom:20px !important;
+  }
+  body.is-community-page .community-author {
+    gap:9px !important;
+  }
+  body.is-community-page .community-author strong {
+    letter-spacing:-.01em !important;
+  }
+  body.is-community-page .community-post-card > h2 {
+    margin-top:13px !important;
+    margin-bottom:6px !important;
+    font-size:1rem !important;
+    letter-spacing:-.018em !important;
+  }
+  body.is-community-page .community-post-body {
+    line-height:1.52 !important;
+  }
+  body.is-community-page .community-post-actions {
+    margin-top:12px !important;
+    padding-top:10px !important;
+    border-top:1px solid rgba(255,255,255,.055) !important;
+  }
+  body.is-community-page .community-post-actions > :is(button,a) {
+    min-height:38px !important;
+    border-radius:7px !important;
+    color:#8f8f98 !important;
+  }
+  body.is-community-page .community-post-actions > :is(button,a):active {
+    color:#fff !important;
+    background:rgba(255,255,255,.045) !important;
+  }
+
+  /* Keep media visually important without the oversized social-card radius. */
+  body.is-community-page .community-post-file-attachment,
+  body.is-community-page .community-post-file-attachment :is(img,video,picture > img) {
+    border-radius:6px !important;
+  }
+
+  /* Empty/end-of-feed messaging should not become another visual section. */
+  body.is-community-page .community-feed-state,
+  body.is-community-page .community-feed-end {
+    min-height:0 !important;
+    padding:14px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    background:transparent !important;
+    color:#66666e !important;
+    font-size:.68rem !important;
+  }
+}
