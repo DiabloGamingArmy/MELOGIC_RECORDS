@@ -20,7 +20,7 @@ let facingMode = 'user'
 let recordingStartedAt = 0
 let recordingTimer = 0
 let previewUrl = ''
-let cameraMessageThreads=[],cameraMessageSelectedThreadIds=new Set(),cameraMessageLoading=false,cameraMessageSending=false
+let cameraMessageThreads=[],cameraMessageSelectedThreadIds=new Set(),cameraMessageLoading=false,cameraMessageSending=false,cameraMessageDeliveryMode=''
 
 cameraSurface.innerHTML = `
   ${navShell({ currentPage: 'camera' })}
@@ -664,7 +664,6 @@ function showCapturedMedia(blob, type) {
   playback.dataset.captureType = type
   playback._melogicCapture = blob
   requestAnimationFrame(()=>{sizeEditCanvas();resetEditor()})
-  useButton.textContent = 'Share'
   playback.hidden = false
   setCameraReviewBottomBar(true)
 }
@@ -980,13 +979,13 @@ function renderCameraMessageThreads(){
  const selected=selectedCameraMessageThreads(),count=selected.length;messageSendbar.hidden=count===0;messageSelection.textContent=count===1?`Send to ${selected[0].title||'conversation'}`:`${count} conversations selected`;const actions=messageSendbar.querySelector('[data-camera-message-send-actions]');if(actions){actions.replaceChildren();const add=(label,mode)=>{const b=document.createElement('button');b.type='button';b.dataset.cameraMessageSend='';b.dataset.mode=mode;b.textContent=label;actions.append(b)};if(count===1)add('Send','single');else if(count>1){add('Send Separately','separate');add('Send as Group','group')}}
 }
 async function openCameraMessagePicker(){if(cameraMessageLoading||cameraMessageSending)return;messagePanel.hidden=false;messagePanel.scrollIntoView({behavior:'smooth',block:'nearest'});if(cameraMessageThreads.length){renderCameraMessageThreads();return}cameraMessageLoading=true;messageState.hidden=false;messageState.textContent='Loading conversations...';try{const user=auth.currentUser||await waitForInitialAuthState();if(!user)throw new Error('Sign in before sending a message.');cameraMessageThreads=await listInboxThreads(user.uid)}catch(error){console.warn('[camera] could not load Inbox conversations',error);messageState.textContent=error?.message||'Could not load conversations.'}finally{cameraMessageLoading=false;renderCameraMessageThreads()}}
-function closeCameraMessagePicker(){if(cameraMessageSending)return;messagePanel.hidden=true;cameraMessageSelectedThreadIds.clear();messageSearch.value='';renderCameraMessageThreads()}
+function closeCameraMessagePicker(){if(cameraMessageSending)return;messagePanel.hidden=true;cameraMessageSelectedThreadIds.clear();cameraMessageDeliveryMode='';messageSearch.value='';renderCameraMessageThreads()}
 function cameraMessageRecipientIds(thread,userId){const ids=new Set();if(thread?.otherParticipantId)ids.add(thread.otherParticipantId);for(const id of getThreadParticipantUids(thread||{}))if(id&&id!==userId)ids.add(id);return [...ids]}
-async function sendCameraMedia(mode='single'){const selected=selectedCameraMessageThreads();if(cameraMessageSending||!selected.length)return;const file=cameraMessageCaptureFile();if(!file){messageState.hidden=false;messageState.textContent='The captured media is no longer available.';return}try{const user=auth.currentUser||await waitForInitialAuthState();if(!user)throw new Error('Sign in before sending a message.');cameraMessageSending=true;messageSendbar.querySelectorAll('button').forEach(b=>b.disabled=true);if(mode==='group'&&selected.length>1){const participantIds=[...new Set(selected.flatMap(t=>cameraMessageRecipientIds(t,user.uid)))];if(!participantIds.length)throw new Error('No recipients were found for the selected conversations.');const group=await createGroupThread({creatorId:user.uid,participantIds,title:'Shared from Camera'}),threadId=group?.id||group?.threadId;if(!threadId)throw new Error('The group conversation could not be created.');await sendMessage(threadId,{senderId:user.uid,body:'',attachments:[file],clientMessageId:`camera-group-${Date.now()}`});setStatus('Sent to group.')}else{const targets=mode==='single'?[selected[0]]:selected;for(let i=0;i<targets.length;i++)await sendMessage(targets[i].id,{senderId:user.uid,body:'',attachments:[file],clientMessageId:`camera-${Date.now()}-${i}`});setStatus(targets.length===1?'Sent in message.':`Sent separately to ${targets.length} conversations.`)}window.setTimeout(()=>setStatus(''),1800)}catch(error){console.warn('[camera] message share failed',{code:error?.code,message:error?.message});messageState.hidden=false;messageState.textContent=error?.message||'Could not send this media.'}finally{cameraMessageSending=false;renderCameraMessageThreads()}}
+async function sendCameraMedia(mode='single'){const selected=selectedCameraMessageThreads();if(cameraMessageSending||!selected.length)return false;const file=cameraMessageCaptureFile();if(!file){messageState.hidden=false;messageState.textContent='The captured media is no longer available.';return false}try{const user=auth.currentUser||await waitForInitialAuthState();if(!user)throw new Error('Sign in before sending a message.');cameraMessageSending=true;messageSendbar.querySelectorAll('button').forEach(b=>b.disabled=true);if(mode==='group'&&selected.length>1){const participantIds=[...new Set(selected.flatMap(t=>cameraMessageRecipientIds(t,user.uid)))];if(!participantIds.length)throw new Error('No recipients were found for the selected conversations.');const group=await createGroupThread({creatorId:user.uid,participantIds,title:'Shared from Camera'}),threadId=group?.id||group?.threadId;if(!threadId)throw new Error('The group conversation could not be created.');await sendMessage(threadId,{senderId:user.uid,body:'',attachments:[file],clientMessageId:`camera-group-${Date.now()}`});setStatus('Sent to group.')}else{const targets=mode==='single'?[selected[0]]:selected;for(let i=0;i<targets.length;i++)await sendMessage(targets[i].id,{senderId:user.uid,body:'',attachments:[file],clientMessageId:`camera-${Date.now()}-${i}`});setStatus(targets.length===1?'Sent in message.':`Sent separately to ${targets.length} conversations.`)}window.setTimeout(()=>setStatus(''),1800);return true}catch(error){console.warn('[camera] message share failed',{code:error?.code,message:error?.message});messageState.hidden=false;messageState.textContent=error?.message||'Could not send this media.';return false}finally{cameraMessageSending=false;renderCameraMessageThreads()}}
 messageSearch?.addEventListener('input',renderCameraMessageThreads)
 messageClose?.addEventListener('click',closeCameraMessagePicker)
-messageList?.addEventListener('click',event=>{const row=event.target.closest('[data-camera-message-thread]');if(!row||cameraMessageSending)return;const id=row.dataset.cameraMessageThread||'';if(!id)return;if(cameraMessageSelectedThreadIds.has(id))cameraMessageSelectedThreadIds.delete(id);else cameraMessageSelectedThreadIds.add(id);renderCameraMessageThreads()})
-messageSendbar?.addEventListener('click',event=>{const button=event.target.closest('[data-camera-message-send]');if(button)void sendCameraMedia(button.dataset.mode||'single')})
+messageList?.addEventListener('click',event=>{const row=event.target.closest('[data-camera-message-thread]');if(!row||cameraMessageSending)return;const id=row.dataset.cameraMessageThread||'';if(!id)return;if(cameraMessageSelectedThreadIds.has(id))cameraMessageSelectedThreadIds.delete(id);else cameraMessageSelectedThreadIds.add(id);cameraMessageDeliveryMode='';renderCameraMessageThreads()})
+messageSendbar?.addEventListener('click',event=>{const button=event.target.closest('[data-camera-message-send]');if(!button||cameraMessageSending)return;cameraMessageDeliveryMode=button.dataset.mode||'single';messageSendbar.querySelectorAll('[data-camera-message-send]').forEach(b=>{const active=b.dataset.mode===cameraMessageDeliveryMode;b.classList.toggle('is-selected',active);b.setAttribute('aria-pressed',String(active))});setStatus(cameraMessageDeliveryMode==='group'?'Messages will send as one group.':cameraMessageDeliveryMode==='separate'?'Messages will send separately.':'Message recipient selected.');window.setTimeout(()=>setStatus(''),1200)})
 
 // melogic-camera-share-export-p4-v1
 function cameraExportFile(){return cameraMessageCaptureFile()}
@@ -1034,9 +1033,14 @@ async function commitCameraShareSelections(){
  if(cameraShareCommitting||!cameraShareSelections.size)return
  const selected=new Set(cameraShareSelections)
  if(selected.has('message')&&!cameraMessageSelectedThreadIds.size){messageState.hidden=false;messageState.textContent='Select at least one conversation before sharing.';messagePanel.hidden=false;messagePanel.scrollIntoView({behavior:'smooth',block:'nearest'});return}
+ if(selected.has('message')&&cameraMessageSelectedThreadIds.size>1&&!['separate','group'].includes(cameraMessageDeliveryMode)){messageState.hidden=false;messageState.textContent='Choose Send Separately or Send as Group.';messagePanel.scrollIntoView({behavior:'smooth',block:'nearest'});return}
  cameraShareCommitting=true;shareCommitButton.disabled=true;shareCommitButton.textContent='Sharing…'
  const failures=[]
  try{
+  if(selected.has('message')){
+   const mode=cameraMessageSelectedThreadIds.size===1?'single':cameraMessageDeliveryMode
+   if(!(await sendCameraMedia(mode)))failures.push('Messages')
+  }
   if(selected.has('device')&&!saveCameraMediaToDevice())failures.push('Save to Device')
   if(selected.has('system')&&!(await shareCameraMediaToSystem()))failures.push('Share to Another App')
   if(failures.length){setStatus(`Could not complete: ${failures.join(', ')}.`);return}
@@ -1076,3 +1080,5 @@ if ((location.pathname.replace(/\/+$/, '') || '/') === '/camera' ||
 }
 
 // melogic-camera-share-p2-repair-v1 — verified P2 after original script post-write reporting failure.
+
+// melogic-camera-share-final-cleanup-p5-v1
