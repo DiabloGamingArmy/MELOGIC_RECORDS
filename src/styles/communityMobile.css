@@ -965,3 +965,95 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     font-size:.68rem !important;
   }
 }
+
+
+/* melogic-mobile-topic-rail-restore-v3
+   Restore the topic rail's original edge-to-edge scrolling geometry while
+   retaining the corrected vertical alignment from v2. */
+@media (max-width:760px) {
+  body.is-community-page .community-filter-shell {
+    display:block !important;
+    min-height:36px !important;
+    padding:0 !important;
+    overflow:visible !important;
+  }
+
+  body.is-community-page .community-filter-strip {
+    width:100% !important;
+    min-height:36px !important;
+    padding:2px 10px !important;
+    gap:7px !important;
+    scroll-padding-left:10px !important;
+    scroll-padding-right:10px !important;
+    align-items:center !important;
+  }
+
+  /* Arrows float over the rail instead of consuming horizontal layout space. */
+  body.is-community-page .community-filter-arrow {
+    top:50% !important;
+    width:30px !important;
+    height:32px !important;
+    min-width:30px !important;
+    min-height:32px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    box-shadow:none !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+    transform:translateY(-50%) !important;
+  }
+
+  body.is-community-page .community-filter-arrow.is-left {
+    left:0 !important;
+  }
+
+  body.is-community-page .community-filter-arrow.is-right {
+    right:0 !important;
+  }
+
+  body.is-community-page .community-filter-arrow:not(:disabled):hover,
+  body.is-community-page .community-filter-arrow:not(:disabled):active,
+  body.is-community-page .community-filter-arrow:not(:disabled):focus-visible {
+    background:transparent !important;
+    box-shadow:none !important;
+  }
+
+  /* Only reveal the edge arrow when there is actually more content that way.
+     This keeps the first All pill naturally anchored ~10px from the left. */
+  body.is-community-page .community-filter-shell:not(.can-scroll-left) .community-filter-arrow.is-left,
+  body.is-community-page .community-filter-arrow.is-left:disabled {
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  body.is-community-page .community-filter-shell:not(.can-scroll-right) .community-filter-arrow.is-right,
+  body.is-community-page .community-filter-arrow.is-right:disabled {
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  /* A tiny edge fade communicates overflow without introducing another container. */
+  body.is-community-page .community-filter-shell.can-scroll-left::before,
+  body.is-community-page .community-filter-shell.can-scroll-right::after {
+    content:"" !important;
+    position:absolute !important;
+    top:0 !important;
+    bottom:0 !important;
+    width:28px !important;
+    z-index:2 !important;
+    pointer-events:none !important;
+  }
+
+  body.is-community-page .community-filter-shell.can-scroll-left::before {
+    left:0 !important;
+    background:linear-gradient(90deg,#000 20%,rgba(0,0,0,0)) !important;
+  }
+
+  body.is-community-page .community-filter-shell.can-scroll-right::after {
+    right:0 !important;
+    background:linear-gradient(270deg,#000 20%,rgba(0,0,0,0)) !important;
+  }
+}
