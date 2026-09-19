@@ -3071,6 +3071,52 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
   }
 }
 
+/* melogic-mobile-input-focus-zoom-p2-v1
+   Final cascade hardening. This rule intentionally lives immediately before
+   the mobile shell and uses :where() + !important so route/component CSS
+   loaded earlier cannot reintroduce sub-16px editable controls. */
+@media (max-width:760px){
+  :where(
+    input[type="text"],
+    input[type="search"],
+    input[type="email"],
+    input[type="password"],
+    input[type="tel"],
+    input[type="url"],
+    input[type="number"],
+    input[type="date"],
+    input[type="datetime-local"],
+    input[type="month"],
+    input[type="time"],
+    input[type="week"],
+    input:not([type]),
+    textarea,
+    select,
+    [contenteditable="true"]
+  ){
+    font-size:16px !important;
+    -webkit-text-size-adjust:100%;
+  }
+
+  /* Explicit final-pass surfaces: authentication/OTP, camera recipient search,
+     Inbox, Community, profile/account forms, commerce and support forms. */
+  :where(
+    .auth-page,
+    body.is-auth-page,
+    .camera-share-message-panel,
+    body.is-inbox-page,
+    .community-page,
+    .profile-page,
+    .edit-profile-page,
+    .products-page,
+    .cart-page,
+    .support-page,
+    .account-page
+  ) :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]),textarea,select,[contenteditable="true"]){
+    font-size:16px !important;
+  }
+}
+
 /* melogic-mobile-shell-v1 */
 .mobile-app-shell{display:none}
 @media(max-width:760px){
