@@ -3107,14 +3107,6 @@ function renderLeftNav() {
                 </div>`
             }
           </div>
-          <div class="community-network-community-actions">
-            <a class="community-network-secondary-link" href="${ROUTES.communityCommunities}">
-              ${iconSvg('search')} <span>Discover Communities</span>
-            </a>
-            <a class="community-network-secondary-link" href="${ROUTES.communityCreate}">
-              ${iconSvg('plus')} <span>Create Community</span>
-            </a>
-          </div>
         </section>
       </nav>
     </aside>
@@ -4380,7 +4372,12 @@ async function loadCommunity() {
 
   loadStories({ renderAfter: true }).catch(() => null)
 
-  if (!state.communities.length && state.view.type !== 'community') {
+  if (state.view.type === 'feed') {
+    // Home's left navigator depends on the same community + focus data as Discover.
+    // Await it before the first feed render so Home cannot paint a false
+    // "No communities yet" state while focus data is still loading.
+    await loadCommunities({ renderOnStart: false, renderAfter: false })
+  } else if (!state.communities.length && state.view.type !== 'community') {
     loadCommunities({ renderOnStart: false, renderAfter: false })
       .then(updateCommunityAncillaryDom)
       .catch(() => null)
