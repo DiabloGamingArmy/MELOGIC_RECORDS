@@ -5180,3 +5180,92 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     font-size: .74rem;
   }
 }
+
+
+/* melogic-community-navigator-p3 */
+@media (min-width: 761px) {
+  .community-network-section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .6rem;
+  }
+
+  .community-network-place-count {
+    display: grid;
+    place-items: center;
+    min-width: 20px;
+    min-height: 20px;
+    padding: 0 .35rem;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .04);
+    color: #8796aa;
+    font-size: .62rem;
+    letter-spacing: 0;
+  }
+
+  .community-network-place[aria-current="page"] {
+    border-color: rgba(123, 219, 255, .14);
+    background: rgba(71, 130, 183, .16);
+    color: #f5f8fc;
+  }
+
+  .community-network-place[aria-current="page"] .community-network-place-avatar {
+    border-color: rgba(123, 219, 255, .3);
+  }
+
+  .community-network-empty-state {
+    display: grid;
+    gap: .22rem;
+    margin: .08rem .65rem .65rem;
+    padding: .72rem .75rem;
+    border: 1px dashed rgba(255, 255, 255, .1);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, .025);
+  }
+
+  .community-network-empty-state strong {
+    color: #aeb9c8;
+    font-size: .76rem;
+  }
+
+  .community-network-empty-state span {
+    color: #65748a;
+    font-size: .68rem;
+    line-height: 1.4;
+  }
+
+  .community-network-community-actions {
+    display: grid;
+    gap: .12rem;
+    margin-top: .22rem;
+  }
+
+  .community-network-discover-hero {
+    align-items: end;
+  }
+
+  .community-network-directory-summary {
+    display: grid;
+    justify-items: end;
+    gap: .08rem;
+    min-width: 120px;
+  }
+
+  .community-network-directory-summary strong {
+    color: #f4f7fb;
+    font-size: 1.35rem;
+    line-height: 1;
+  }
+
+  .community-network-directory-summary span {
+    color: #738197;
+    font-size: .72rem;
+  }
+
+  .community-network-create-community {
+    align-self: end;
+    white-space: nowrap;
+  }
+}
