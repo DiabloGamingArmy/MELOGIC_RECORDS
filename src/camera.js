@@ -853,6 +853,22 @@ function closeCameraMessagePicker(){if(cameraMessageSending)return;messagePanel.
 async function sendCameraMediaToThread(){if(cameraMessageSending||!cameraMessageSelectedThreadId)return;const file=cameraMessageCaptureFile();if(!file){messageState.hidden=false;messageState.textContent='The captured media is no longer available.';return}try{const user=auth.currentUser||await waitForInitialAuthState();if(!user)throw new Error('Sign in before sending a message.');cameraMessageSending=true;messageSend.disabled=true;messageSend.textContent='Sending...';await sendMessage(cameraMessageSelectedThreadId,{senderId:user.uid,body:'',attachments:[file],clientMessageId:`camera-${Date.now()}`});messageSend.textContent='Sent';setStatus('Sent in message.');window.setTimeout(()=>window.location.assign('/inbox/messages'),500)}catch(error){console.warn('[camera] message share failed',{code:error?.code,message:error?.message});messageState.hidden=false;messageState.textContent=error?.message||'Could not send this media.';messageSend.textContent='Send'}finally{cameraMessageSending=false;messageSend.disabled=false}}
 messageSearch?.addEventListener('input',renderCameraMessageThreads);messageClose?.addEventListener('click',closeCameraMessagePicker);messageList?.addEventListener('click',event=>{const row=event.target.closest('[data-camera-message-thread]');if(!row||cameraMessageSending)return;cameraMessageSelectedThreadId=row.dataset.cameraMessageThread||'';renderCameraMessageThreads()});messageSend?.addEventListener('click',()=>void sendCameraMediaToThread())
 
+// melogic-camera-share-export-p4-v1
+function cameraExportFile(){return cameraMessageCaptureFile()}
+function saveCameraMediaToDevice(){
+ const file=cameraExportFile();if(!file){setStatus('The media is no longer available.');return}
+ let url=''
+ try{url=URL.createObjectURL(file);const a=document.createElement('a');a.href=url;a.download=file.name||`melogic-media-${Date.now()}`;a.rel='noopener';a.style.display='none';document.body.append(a);a.click();a.remove();window.setTimeout(()=>URL.revokeObjectURL(url),30000);setStatus('Save requested.');window.setTimeout(()=>setStatus(''),1800)}
+ catch(error){if(url)URL.revokeObjectURL(url);console.warn('[camera] save failed',error);setStatus('This browser could not save the media.')}
+}
+async function shareCameraMediaToSystem(){
+ const file=cameraExportFile();if(!file){setStatus('The media is no longer available.');return}
+ if(typeof navigator.share!=='function'){setStatus('System sharing is not available in this browser.');return}
+ if(typeof navigator.canShare==='function'&&!navigator.canShare({files:[file]})){setStatus('This device cannot share this media type directly.');return}
+ try{await navigator.share({files:[file],title:'Melogic media'});setStatus('Shared.');window.setTimeout(()=>setStatus(''),1400)}
+ catch(error){if(error?.name==='AbortError')return;console.warn('[camera] system share failed',error);setStatus('Could not open the device share options.')}
+}
+
 // melogic-camera-share-publish-p2-v1
 function handoffCameraMediaToCommunity(destination) {
   const blob=playback._melogicCapture
@@ -870,8 +886,8 @@ shareScreen?.addEventListener('click',event=>{
   const destination=d.dataset.shareDestination
   if(destination==='story'||destination==='feed'){handoffCameraMediaToCommunity(destination);return}
   if(destination==='message'){void openCameraMessagePicker();return}
-  const m={device:'Save to Device arrives in Patch 4.',system:'Device sharing arrives in Patch 4.'}
-  setStatus(m[destination]||'');window.setTimeout(()=>setStatus(''),1600)
+  if(destination==='device'){saveCameraMediaToDevice();return}
+  if(destination==='system'){void shareCameraMediaToSystem();return}
 })
 window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
 window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })
