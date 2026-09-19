@@ -3039,30 +3039,35 @@ function renderCommunityImageViewer() {
 }
 
 function renderLeftNav() {
-  // melogic-desktop-network-shell-p1
-  // Until canonical memberships land, focused communities are the safest
-  // existing proxy for the user's saved network places. Patch 6 will replace
-  // this adapter with real membership records without changing this shell.
+  // melogic-community-navigator-p3
+  // Focus is still the compatibility source until canonical membership lands,
+  // but the navigation now treats focused communities as persistent places
+  // rather than generic feed filters.
   const focusedCommunities = state.communities
     .filter((community) => community?.communityId && state.communityFocus[community.communityId])
     .slice(0, 7)
 
-  const communityLink = (community) => `
-    <a class="community-network-place ${state.activeCommunityId === community.communityId ? 'is-active' : ''}"
-      href="${communityRoute(community.slug)}"
-      data-network-community-id="${escapeHtml(community.communityId)}">
-      <span class="community-network-place-avatar" aria-hidden="true">
-        ${community.iconURL
-          ? `<img src="${escapeHtml(community.iconURL)}" alt="" loading="lazy" />`
-          : escapeHtml((community.name || 'M').slice(0, 1).toUpperCase())
-        }
-      </span>
-      <span class="community-network-place-copy">
-        <strong>${escapeHtml(community.name || 'Community')}</strong>
-        <small>Focused</small>
-      </span>
-    </a>
-  `
+  const communityLink = (community) => {
+    const isCurrent = state.view.type === 'community'
+      && (state.activeCommunityId === community.communityId || state.activeCommunitySlug === community.slug)
+    return `
+      <a class="community-network-place ${isCurrent ? 'is-active' : ''}"
+        href="${communityRoute(community.slug)}"
+        data-network-community-id="${escapeHtml(community.communityId)}"
+        aria-current="${isCurrent ? 'page' : 'false'}">
+        <span class="community-network-place-avatar" aria-hidden="true">
+          ${community.iconURL
+            ? `<img src="${escapeHtml(community.iconURL)}" alt="" loading="lazy" />`
+            : escapeHtml((community.name || 'M').slice(0, 1).toUpperCase())
+          }
+        </span>
+        <span class="community-network-place-copy">
+          <strong>${escapeHtml(community.name || 'Community')}</strong>
+          <small>${community.official ? 'Official community' : 'Community'}</small>
+        </span>
+      </a>
+    `
+  }
 
   return `
     <aside class="community-left-nav community-network-nav" aria-label="Melogic network navigation">
@@ -3070,28 +3075,36 @@ function renderLeftNav() {
 
       <nav>
         <section class="community-network-nav-section" aria-label="Network">
-          <a class="${state.view.type === 'feed' ? 'is-active' : ''}" href="${ROUTES.community}">
+          <a class="${state.view.type === 'feed' ? 'is-active' : ''}" href="${ROUTES.community}" aria-current="${state.view.type === 'feed' ? 'page' : 'false'}">
             ${iconSvg('home')} <span>Home</span>
           </a>
-          <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}">
+          <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}" aria-current="${state.view.type === 'communities' ? 'page' : 'false'}">
             ${iconSvg('search')} <span>Discover</span>
           </a>
         </section>
 
         <section class="community-network-nav-section community-network-places" aria-labelledby="community-network-places-heading">
-          <div class="community-network-section-heading" id="community-network-places-heading">Your Communities</div>
+          <div class="community-network-section-heading" id="community-network-places-heading">
+            <span>Your Communities</span>
+            <span class="community-network-place-count">${focusedCommunities.length || ''}</span>
+          </div>
           <div class="community-network-place-list">
             ${focusedCommunities.length
               ? focusedCommunities.map(communityLink).join('')
-              : `<p class="community-network-empty">Communities you focus will appear here.</p>`
+              : `<div class="community-network-empty-state">
+                  <strong>No communities yet</strong>
+                  <span>Focus a community to keep it here while membership is being built.</span>
+                </div>`
             }
           </div>
-          <a class="community-network-secondary-link" href="${ROUTES.communityCommunities}">
-            ${iconSvg('search')} <span>Discover Communities</span>
-          </a>
-          <a class="community-network-secondary-link" href="${ROUTES.communityCreate}">
-            ${iconSvg('plus')} <span>Create Community</span>
-          </a>
+          <div class="community-network-community-actions">
+            <a class="community-network-secondary-link" href="${ROUTES.communityCommunities}">
+              ${iconSvg('search')} <span>Discover Communities</span>
+            </a>
+            <a class="community-network-secondary-link" href="${ROUTES.communityCreate}">
+              ${iconSvg('plus')} <span>Create Community</span>
+            </a>
+          </div>
         </section>
       </nav>
     </aside>
