@@ -3532,6 +3532,10 @@ function renderCommunityWorkspaceContent() {
 function renderCommunityDetail() {
   const community = state.community
   const focused = community ? Boolean(state.communityFocus[community.communityId]) : false
+  const membershipState = community ? state.communityMembership[community.communityId] || {} : {}
+  const membership = membershipState.membership || null
+  const membershipStatus = membership?.status || ''
+  const membershipPolicy = membershipState.policy || community?.membershipPolicy || (community?.visibility === 'public' ? 'open' : 'approval')
   const workspaceTabs = [
     ['community-feed', 'Feed'],
     ['community-projects', 'Projects'],
@@ -3562,6 +3566,7 @@ function renderCommunityDetail() {
               <p>${community ? escapeHtml(community.description || 'A Melogic community.') : 'Loading community...'}</p>
               ${community ? `<div class="community-workspace-meta">
                 <span>c/${escapeHtml(community.slug)}</span>
+                <span>${formatCount(community.memberCount)} members</span>
                 <span>${formatCount(community.focusCount)} focused</span>
                 <span>${formatCount(community.postCount)} posts</span>
                 ${community.category ? `<span>${escapeHtml(community.category)}</span>` : ''}
@@ -3569,7 +3574,17 @@ function renderCommunityDetail() {
             </div>
             <div class="community-workspace-actions">
               <a class="button button-muted" href="${ROUTES.communityCommunities}">Discover</a>
-              ${community ? `<button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" data-toggle-community-focus="${escapeHtml(community.communityId)}">${focused ? 'Focused' : 'Focus'}</button>` : ''}
+              ${community ? `
+                <button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" data-toggle-community-focus="${escapeHtml(community.communityId)}">${focused ? 'Focused' : 'Focus'}</button>
+                ${membershipState.loading
+                  ? '<button type="button" class="button button-muted" disabled>Checking...</button>'
+                  : membershipStatus === 'member'
+                    ? `<button type="button" class="button button-muted community-membership-button" data-community-membership-action="leave" data-community-membership-id="${escapeHtml(community.communityId)}">Member</button>`
+                    : membershipStatus === 'pending'
+                      ? '<button type="button" class="button button-muted community-membership-button" disabled>Request pending</button>'
+                      : `<button type="button" class="button button-muted community-membership-button" data-community-membership-action="join" data-community-membership-id="${escapeHtml(community.communityId)}">${membershipPolicy === 'approval' ? 'Request to Join' : membershipPolicy === 'open' ? 'Join' : 'Verify to Join'}</button>`
+                }
+              ` : ''}
             </div>
           </div>
 
@@ -7192,6 +7207,14 @@ function bindCommunityComposerEvents(root = app) {
 
 function bindEvents() {
   setupCommunityPendingLeaveWarning()
+  app.querySelectorAll('[data-community-membership-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      handleCommunityMembership(
+        button.getAttribute('data-community-membership-id') || '',
+        button.getAttribute('data-community-membership-action') || 'join'
+      )
+    })
+  })
   app.querySelectorAll('[data-community-workspace-tab]').forEach((button) => {
     button.addEventListener('click', () => {
       const nextTab = button.getAttribute('data-community-workspace-tab') || 'community-feed'
