@@ -5114,3 +5114,69 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     color: #eef4fc;
   }
 }
+
+
+/* melogic-network-topics-p2 */
+@media (min-width: 761px) {
+  .community-network-home-header {
+    background: rgba(0, 0, 0, .94);
+  }
+
+  .community-network-home-title {
+    display: grid;
+    gap: .12rem;
+    padding: 1rem 1.15rem .72rem;
+    border-bottom: 1px solid rgba(145, 169, 211, .09);
+  }
+
+  .community-network-home-title > span {
+    color: #65748a;
+    font-size: .64rem;
+    font-weight: 800;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+
+  .community-network-home-title > strong {
+    color: #f5f7fb;
+    font-size: 1.08rem;
+    font-weight: 820;
+    letter-spacing: -.015em;
+  }
+
+  .community-network-home-header .community-master-tabs {
+    min-height: 50px;
+  }
+
+  .community-topic-context {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: .75rem;
+    min-width: 0;
+    padding: .56rem .72rem .64rem 1.05rem;
+    border-top: 1px solid rgba(145, 169, 211, .075);
+  }
+
+  .community-topic-context-label {
+    color: #76859a;
+    font-size: .66rem;
+    font-weight: 820;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+  }
+
+  .community-topic-context .community-filter-shell {
+    min-width: 0;
+  }
+
+  .community-topic-context .community-filter-strip {
+    padding-block: .08rem;
+  }
+
+  .community-topic-context .community-topic-pill {
+    min-height: 30px;
+    padding: .36rem .72rem;
+    font-size: .74rem;
+  }
+}
