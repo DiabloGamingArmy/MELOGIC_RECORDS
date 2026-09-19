@@ -5269,3 +5269,212 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     white-space: nowrap;
   }
 }
+
+
+/* melogic-community-workspace-p4 */
+@media (min-width: 761px) {
+  .community-workspace .community-main {
+    background: #05070b;
+  }
+
+  .community-workspace-header {
+    position: sticky;
+    top: 0;
+    z-index: 18;
+    border-bottom: 1px solid rgba(255, 255, 255, .08);
+    background: rgba(3, 5, 8, .97);
+    backdrop-filter: blur(16px);
+  }
+
+  .community-workspace-identity {
+    display: grid;
+    grid-template-columns: 58px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .9rem;
+    padding: 1.05rem 1.1rem .9rem;
+  }
+
+  .community-workspace-avatar {
+    display: grid;
+    place-items: center;
+    width: 58px;
+    height: 58px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 15px;
+    background: rgba(255, 255, 255, .06);
+    color: #edf3fb;
+    font-size: 1.12rem;
+    font-weight: 850;
+  }
+
+  .community-workspace-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .community-workspace-copy {
+    min-width: 0;
+  }
+
+  .community-workspace-kicker {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    margin-bottom: .2rem;
+    color: #718096;
+    font-size: .64rem;
+    font-weight: 820;
+    letter-spacing: .11em;
+    text-transform: uppercase;
+  }
+
+  .community-workspace-verified {
+    padding: .14rem .36rem;
+    border: 1px solid rgba(123, 219, 255, .2);
+    border-radius: 999px;
+    color: #91dfff;
+    font-size: .56rem;
+    letter-spacing: .08em;
+  }
+
+  .community-workspace-copy h1 {
+    margin: 0;
+    color: #f7f9fc;
+    font-size: 1.22rem;
+    line-height: 1.15;
+  }
+
+  .community-workspace-copy > p {
+    max-width: 680px;
+    margin: .28rem 0 0;
+    color: #8a97a9;
+    font-size: .78rem;
+    line-height: 1.4;
+  }
+
+  .community-workspace-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem .75rem;
+    margin-top: .48rem;
+    color: #647286;
+    font-size: .68rem;
+  }
+
+  .community-workspace-actions {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+  }
+
+  .community-workspace-tabs {
+    display: flex;
+    align-items: end;
+    gap: .2rem;
+    min-width: 0;
+    padding: 0 .8rem;
+    overflow-x: auto;
+  }
+
+  .community-workspace-tabs button {
+    position: relative;
+    min-height: 42px;
+    padding: .62rem .72rem .7rem;
+    border: 0;
+    background: transparent;
+    color: #77869a;
+    font: inherit;
+    font-size: .76rem;
+    font-weight: 720;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .community-workspace-tabs button:hover {
+    color: #dfe7f2;
+  }
+
+  .community-workspace-tabs button.is-active {
+    color: #f5f8fc;
+  }
+
+  .community-workspace-tabs button.is-active::after {
+    content: '';
+    position: absolute;
+    right: .65rem;
+    bottom: 0;
+    left: .65rem;
+    height: 2px;
+    border-radius: 999px;
+    background: #f5f8fc;
+  }
+
+  .community-workspace > .community-main > .community-inline-composer {
+    margin-top: 0;
+  }
+
+  .community-workspace-placeholder {
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .9rem;
+    margin: 1rem;
+    padding: 1rem;
+    border: 1px solid rgba(255, 255, 255, .085);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .025);
+  }
+
+  .community-workspace-placeholder-icon {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 11px;
+    background: rgba(255, 255, 255, .04);
+    color: #9ba9bb;
+  }
+
+  .community-workspace-placeholder-icon svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .community-workspace-placeholder strong {
+    color: #eaf0f8;
+    font-size: .88rem;
+  }
+
+  .community-workspace-placeholder p {
+    margin: .2rem 0 0;
+    color: #6f7d90;
+    font-size: .74rem;
+    line-height: 1.45;
+  }
+
+  .community-workspace-coming-soon {
+    padding: .28rem .5rem;
+    border: 1px solid rgba(255, 255, 255, .08);
+    border-radius: 999px;
+    color: #68768a;
+    font-size: .64rem;
+    white-space: nowrap;
+  }
+
+  /* Patch-4 screenshot regression cleanup: keep the empty navigator copy
+     visually secondary instead of competing with Home/feed content. */
+  .community-network-empty-state {
+    padding: .58rem .62rem;
+  }
+
+  .community-network-empty-state strong {
+    font-size: .72rem;
+  }
+
+  .community-network-empty-state span {
+    font-size: .64rem;
+  }
+}
