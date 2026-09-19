@@ -2887,18 +2887,23 @@ function renderCommunityCard(community) {
 
 function renderCommunitiesView() {
   const categories = directoryCategoryOptions()
+  const focusedCount = state.communities.filter((community) => community?.communityId && state.communityFocus[community.communityId]).length
   return `
-    <div class="community-layout is-home is-directory">
+    <div class="community-layout is-home is-directory community-network-directory">
       ${renderLeftNav()}
       <div class="community-main community-route-main">
-        <section class="community-hero compact">
+        <section class="community-hero compact community-network-discover-hero">
           <div>
-            <p class="eyebrow">Explore</p>
-            <h1>Communities</h1>
-            <p>Find official Melogic spaces created and moderated by the admin team.</p>
+            <p class="eyebrow">Network</p>
+            <h1>Discover Communities</h1>
+            <p>Find groups built around people, organizations, institutions, places, and shared creative work.</p>
+          </div>
+          <div class="community-network-directory-summary" aria-label="Community summary">
+            <strong>${formatCount(focusedCount)}</strong>
+            <span>in your navigator</span>
           </div>
         </section>
-        <section class="community-panel community-community-tools">
+        <section class="community-panel community-community-tools" aria-label="Discover community filters">
           <label>
             <span>Search</span>
             <input name="communitySearch" value="${escapeHtml(state.communityFilters.search)}" placeholder="Search communities" data-community-search />
@@ -2909,8 +2914,9 @@ function renderCommunitiesView() {
               ${categories.map((category) => `<option value="${escapeHtml(category)}" ${state.communityFilters.category === category ? 'selected' : ''}>${category === 'all' ? 'All categories' : escapeHtml(category)}</option>`).join('')}
             </select>
           </label>
+          <a class="button button-muted community-network-create-community" href="${ROUTES.communityCreate}">${iconSvg('plus')} <span>Create Community</span></a>
         </section>
-        ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : `<section class="community-community-grid">${directoryCommunities().map(renderCommunityCard).join('') || '<div class="community-feed-state community-panel"><strong>No communities are live yet.</strong><span>Admin-created communities will appear here once active and public.</span></div>'}</section>`}
+        ${state.communityFilters.loading ? '<section class="community-feed-state community-panel">Loading communities...</section>' : state.communityFilters.error ? `<section class="community-feed-state community-panel"><strong>Could not load communities.</strong><span>${escapeHtml(state.communityFilters.error)}</span></section>` : `<section class="community-community-grid">${directoryCommunities().map(renderCommunityCard).join('') || '<div class="community-feed-state community-panel"><strong>No communities are live yet.</strong><span>Communities will appear here once active and discoverable.</span></div>'}</section>`}
       </div>
       ${renderSidebar()}
     </div>
