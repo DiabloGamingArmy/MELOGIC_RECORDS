@@ -278,3 +278,8 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-share-choice{width:22px;height:22px;border:1px solid #424249;border-radius:7px;display:grid;place-items:center;color:transparent;transition:background .12s ease,border-color .12s ease,color .12s ease}
 .camera-share-choice svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
 .camera-share-destination.is-selected .camera-share-choice{background:#f4f4f5;border-color:#f4f4f5;color:#09090a}
+
+/* melogic-camera-messages-multiselect-p3-v1 */
+.camera-share-message-sendbar{align-items:flex-start}
+.camera-share-message-send-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.camera-share-message-send-actions button{min-height:38px;padding:0 12px;white-space:nowrap}
