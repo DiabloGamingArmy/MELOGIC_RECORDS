@@ -2599,8 +2599,25 @@ body.community-chrome-hidden .community-right-rail {
 }
 
 .community-community-tools {
-  grid-template-columns: minmax(0, 1fr) 220px;
+  grid-template-columns: minmax(0, 1fr) 220px auto;
+  align-items: end;
   margin-bottom: 1rem;
+}
+
+.community-community-tools > .community-network-create-community {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  justify-self: end;
+  gap: .4rem;
+  width: auto;
+  min-height: 42px;
+}
+
+.community-community-tools > .community-network-create-community svg {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
 }
 
 .community-community-grid {
