@@ -48,9 +48,36 @@ cameraSurface.innerHTML = `
       <video data-camera-recorded playsinline loop hidden></video>
       <canvas class="camera-edit-canvas" data-camera-edit-canvas></canvas>
       <div class="camera-edit-textbox" data-camera-edit-textbox hidden><input data-camera-edit-text-input maxlength="160" placeholder="Type something…"><button type="button" data-camera-edit-text-add>Add</button></div>
-      <div class="camera-edit-tools" data-camera-edit-tools><button type="button" data-camera-edit-tool="text">T</button><button type="button" data-camera-edit-tool="pen">✎</button><button type="button" data-camera-edit-tool="sticker">☺</button><button type="button" data-camera-edit-tool="crop">⌗</button><button type="button" data-camera-edit-tool="image">▧</button><button type="button" data-camera-edit-tool="undo">↶</button><input data-camera-edit-image-input type="file" accept="image/*" hidden></div>
-      <div class="camera-review-actions"><button type="button" data-camera-retake>Retake</button><button class="camera-use" type="button" data-camera-use>Use media</button></div>
+      <div class="camera-edit-tools" data-camera-edit-tools>
+        <button type="button" data-camera-edit-tool="text" aria-label="Add text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8.5 19h7"/></svg></button>
+        <button type="button" data-camera-edit-tool="pen" aria-label="Draw"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.8 6.4 2.8 2.8"/></svg></button>
+        <button type="button" data-camera-edit-tool="sticker" aria-label="Add sticker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9V8l-5-5h-4Z"/><path d="M16 3v5h5"/><path d="M8.5 12.5h.01M14.5 12.5h.01M8.8 16c1.8 1.5 4.6 1.5 6.4 0"/></svg></button>
+        <button type="button" data-camera-edit-tool="crop" aria-label="Crop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v14a2 2 0 0 0 2 2h12M3 7h14a2 2 0 0 1 2 2v12"/></svg></button>
+        <button type="button" data-camera-edit-tool="image" aria-label="Add image"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m5 17 4.5-4.5 3.2 3.2 2.3-2.3 4 3.6"/></svg></button>
+        <button type="button" data-camera-edit-tool="undo" aria-label="Undo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7-5 5 5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/></svg></button>
+        <input data-camera-edit-image-input type="file" accept="image/*" hidden>
+      </div>
+      <div class="camera-review-actions"><button type="button" data-camera-retake>Retake</button><button class="camera-use" type="button" data-camera-use>Share</button></div>
     </div>
+    <!-- melogic-camera-share-shell-p1-v1 -->
+    <section class="camera-share-screen" data-camera-share-screen aria-label="Share media" hidden>
+      <header class="camera-share-header">
+        <button class="camera-share-back" type="button" data-camera-share-back aria-label="Back to editor"><svg viewBox="0 0 24 24"><path d="M15 5 8 12l7 7"/></svg></button>
+        <div class="camera-share-heading"><h1>Share</h1><span>Choose where this goes</span></div><div></div>
+      </header>
+      <div class="camera-share-content">
+        <div class="camera-share-preview"><img data-camera-share-photo alt="Photo ready to share" hidden><video data-camera-share-video playsinline muted loop hidden></video><div class="camera-share-preview-meta"><span data-camera-share-type>Media</span><button type="button" data-camera-share-edit>Edit</button></div></div>
+        <section class="camera-share-section"><h2>Share on Melogic</h2><div class="camera-share-destinations">
+          <button class="camera-share-destination is-primary" type="button" data-share-destination="story"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg></span><span class="camera-share-copy"><strong>Post to Story</strong><small>Share with your followers for 24 hours</small></span><span class="camera-share-chevron">›</span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="feed"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 12h8M8 15h5"/></svg></span><span class="camera-share-copy"><strong>Post to Feed</strong><small>Publish to the Community feed</small></span><span class="camera-share-chevron">›</span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="message"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></svg></span><span class="camera-share-copy"><strong>Send in Message</strong><small>Share with a person or conversation</small></span><span class="camera-share-chevron">›</span></button>
+        </div></section>
+        <section class="camera-share-section"><h2>More</h2><div class="camera-share-destinations">
+          <button class="camera-share-destination" type="button" data-share-destination="device"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M5 19h14"/></svg></span><span class="camera-share-copy"><strong>Save to Device</strong><small>Keep the original media on this device</small></span><span class="camera-share-chevron">›</span></button>
+          <button class="camera-share-destination" type="button" data-share-destination="system"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"/></svg></span><span class="camera-share-copy"><strong>Share to Another App</strong><small>Use your device share options</small></span><span class="camera-share-chevron">›</span></button>
+        </div></section>
+      </div>
+    </section>
   </main>`
 
 const video = cameraSurface.querySelector('[data-camera-preview]')
@@ -64,6 +91,12 @@ const recordedPhoto = cameraSurface.querySelector('[data-camera-photo]')
 const libraryButton = cameraSurface.querySelector('[data-camera-library]')
 const libraryInput = cameraSurface.querySelector('[data-camera-library-input]')
 const useButton = cameraSurface.querySelector('[data-camera-use]')
+const shareScreen = cameraSurface.querySelector('[data-camera-share-screen]')
+const shareBackButton = cameraSurface.querySelector('[data-camera-share-back]')
+const shareEditButton = cameraSurface.querySelector('[data-camera-share-edit]')
+const sharePhoto = cameraSurface.querySelector('[data-camera-share-photo]')
+const shareVideo = cameraSurface.querySelector('[data-camera-share-video]')
+const shareType = cameraSurface.querySelector('[data-camera-share-type]')
 const transitionFrame = cameraSurface.querySelector('[data-camera-transition-frame]')
 const liveCanvas = cameraSurface.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
@@ -534,9 +567,28 @@ function showCapturedMedia(blob, type) {
   playback.dataset.captureType = type
   playback._melogicCapture = blob
   requestAnimationFrame(()=>{sizeEditCanvas();resetEditor()})
-  useButton.textContent = isPhoto ? 'Use photo' : 'Use video'
+  useButton.textContent = 'Share'
   playback.hidden = false
 }
+// melogic-camera-share-shell-p1-v1
+function syncSharePreview() {
+  const blob=playback._melogicCapture, type=playback.dataset.captureType||'video'
+  if(!blob||!previewUrl)return false
+  const photo=type==='photo'; shareType.textContent=photo?'Photo':'Video'; sharePhoto.hidden=!photo; shareVideo.hidden=photo
+  if(photo){shareVideo.pause();shareVideo.removeAttribute('src');shareVideo.load();sharePhoto.src=previewUrl}
+  else{sharePhoto.removeAttribute('src');shareVideo.src=previewUrl;shareVideo.currentTime=0;shareVideo.play().catch(()=>{})}
+  return true
+}
+function openShareScreen(){
+  const blob=playback._melogicCapture;if(!blob||!syncSharePreview())return
+  window.__melogicCameraCapture={blob,type:playback.dataset.captureType||'video',createdAt:Date.now()}
+  recordedVideo.pause();shareScreen.hidden=false;cameraSurface.classList.add('is-sharing')
+}
+function closeShareScreen(){
+  shareVideo.pause();shareScreen.hidden=true;cameraSurface.classList.remove('is-sharing')
+  if(!recordedVideo.hidden)recordedVideo.play().catch(()=>{})
+}
+
 async function beginRecording() {
   if (!stream || recorder?.state === 'recording' || !window.MediaRecorder) return false
   const sourceVideoTrack = stream.getVideoTracks?.()[0]
@@ -765,18 +817,20 @@ editCanvas.addEventListener('pointerdown',e=>{if(editMode!=='pen')return;e.preve
 editCanvas.addEventListener('pointermove',e=>{if(!editDrawing||editMode!=='pen')return;e.preventDefault();const p=editorPoint(e);editCtx.lineWidth=Math.max(5,editCanvas.width*.008);editCtx.lineCap='round';editCtx.strokeStyle='#fff';editCtx.lineTo(p.x,p.y);editCtx.stroke()})
 editCanvas.addEventListener('pointerup',()=>editDrawing=false);editCanvas.addEventListener('pointercancel',()=>editDrawing=false)
 cameraSurface.querySelector('[data-camera-retake]')?.addEventListener('click', async () => {
+  closeShareScreen()
   playback.hidden = true; playback._melogicCapture = null
   recordedVideo.pause(); recordedVideo.removeAttribute('src'); try { recordedVideo.srcObject = null } catch {}; recordedVideo.load(); recordedVideo.hidden = true
   recordedPhoto.removeAttribute('src'); recordedPhoto.hidden = true
   // Retake explicitly re-enters idle Camera mode: video engine only.
   await startCamera()
 })
-cameraSurface.querySelector('[data-camera-use]')?.addEventListener('click', () => {
-  const blob = playback._melogicCapture
-  if (!blob) return
-  window.__melogicCameraCapture = { blob, type: playback.dataset.captureType || 'video', createdAt: Date.now() }
-  setStatus('Captured. Post and Story publishing hooks are ready for the next camera patch.')
-  playback.hidden = true
+useButton?.addEventListener('click', openShareScreen)
+shareBackButton?.addEventListener('click', closeShareScreen)
+shareEditButton?.addEventListener('click', closeShareScreen)
+shareScreen?.addEventListener('click',event=>{
+  const d=event.target.closest('[data-share-destination]');if(!d)return
+  const m={story:'Story publishing arrives in Patch 2.',feed:'Feed publishing arrives in Patch 2.',message:'Message sharing arrives in Patch 3.',device:'Save to Device arrives in Patch 4.',system:'Device sharing arrives in Patch 4.'}
+  setStatus(m[d.dataset.shareDestination]||'');window.setTimeout(()=>setStatus(''),1600)
 })
 window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
 window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })

@@ -213,3 +213,26 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-tool svg{width:22px;height:22px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .camera-flash svg{fill:currentColor;stroke:none}
 .camera-close[hidden]{display:none!important}
+
+/* melogic-camera-editor-pill-v1 */
+.camera-edit-tools{position:absolute;z-index:9;right:max(12px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 72px);display:flex;flex-direction:column;gap:0;padding:7px 5px;border:1px solid rgba(255,255,255,.22);border-radius:999px;background:rgba(8,9,13,.58);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);box-shadow:0 10px 30px rgba(0,0,0,.2);overflow:hidden}
+.camera-edit-tools button{appearance:none;width:44px;height:44px;flex:0 0 44px;display:grid;place-items:center;border:0;border-radius:50%;background:transparent;color:#fff;padding:0;box-shadow:none;-webkit-backdrop-filter:none;backdrop-filter:none}
+.camera-edit-tools button + button{border-top:1px solid rgba(255,255,255,.08)}
+.camera-edit-tools button:active{background:rgba(255,255,255,.12)}
+.camera-edit-tools button.is-active{background:linear-gradient(135deg,#477dff,#9d5cff)}
+.camera-edit-tools svg{width:21px;height:21px;display:block;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+
+/* melogic-camera-share-shell-p1-v1 */
+.camera-share-screen{position:fixed;inset:0;z-index:2200;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden;color:#f7f7f8;background:#050506;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.camera-share-screen[hidden]{display:none!important}
+.camera-share-header{flex:0 0 auto;min-height:72px;padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 12px;display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;border-bottom:1px solid rgba(255,255,255,.075);background:rgba(5,5,6,.97)}
+.camera-share-back{width:42px;height:42px;border:0;border-radius:50%;display:grid;place-items:center;background:rgba(255,255,255,.075);color:#fff}.camera-share-back svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
+.camera-share-heading{text-align:center;line-height:1.1}.camera-share-heading h1{margin:0;font-size:20px;font-weight:780}.camera-share-heading span{display:block;margin-top:5px;color:#8e8e95;font-size:11px;font-weight:600}
+.camera-share-content{flex:1;min-height:0;overflow-y:auto;padding:18px 16px calc(28px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}
+.camera-share-preview{position:relative;width:min(100%,520px);aspect-ratio:16/9;margin:0 auto 24px;overflow:hidden;border-radius:18px;background:#101013;border:1px solid rgba(255,255,255,.1);box-shadow:0 16px 50px rgba(0,0,0,.38)}
+.camera-share-preview img,.camera-share-preview video{width:100%;height:100%;display:block;object-fit:cover;background:#000}.camera-share-preview-meta{position:absolute;left:0;right:0;bottom:0;padding:28px 12px 11px;display:flex;align-items:center;justify-content:space-between;background:linear-gradient(transparent,rgba(0,0,0,.82));pointer-events:none}.camera-share-preview-meta span{padding:6px 9px;border-radius:999px;background:rgba(0,0,0,.52);font-size:11px;font-weight:750}.camera-share-preview-meta button{pointer-events:auto;border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:7px 12px;background:rgba(0,0,0,.55);color:#fff;font-weight:700}
+.camera-share-section{width:min(100%,560px);margin:0 auto 22px}.camera-share-section h2{margin:0 2px 9px;color:#8d8d94;font-size:11px;font-weight:760;letter-spacing:.08em;text-transform:uppercase}.camera-share-destinations{overflow:hidden;border:1px solid rgba(255,255,255,.08);border-radius:18px;background:#0d0d10}
+.camera-share-destination{width:100%;min-height:72px;padding:12px 13px;border:0;border-bottom:1px solid rgba(255,255,255,.065);display:grid;grid-template-columns:46px minmax(0,1fr) 18px;gap:11px;align-items:center;text-align:left;background:transparent;color:#fff}.camera-share-destination:last-child{border-bottom:0}.camera-share-destination:active{background:rgba(255,255,255,.055)}
+.camera-share-icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:#17171c;border:1px solid rgba(255,255,255,.08)}.camera-share-destination.is-primary .camera-share-icon{background:linear-gradient(145deg,rgba(75,126,255,.28),rgba(158,84,255,.28));border-color:rgba(130,102,255,.32)}.camera-share-icon svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.camera-share-copy{min-width:0;display:flex;flex-direction:column;gap:4px}.camera-share-copy strong{font-size:14px;font-weight:760}.camera-share-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#888890;font-size:11px}.camera-share-chevron{color:#65656c;font-size:25px;font-weight:300}
+[data-melogic-camera-surface].is-sharing .mobile-bottom-nav{visibility:hidden!important;pointer-events:none!important}
