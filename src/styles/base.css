@@ -3049,6 +3049,28 @@ html:not(.home-page-root) .notification-item-menu-button[aria-expanded='true'] {
 }
 
 
+/* melogic-mobile-input-focus-zoom-p1-v1
+   iOS/WebKit focus-zoom prevention: editable mobile controls stay >=16px. */
+@media (max-width:760px){
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]),
+  textarea,
+  select,
+  [contenteditable="true"]{
+    font-size:16px !important;
+  }
+
+  .auth-page input,.auth-page textarea,.auth-page select,
+  body.is-auth-page input,body.is-auth-page textarea,body.is-auth-page select,
+  .camera-share-message-search input,
+  .message-find input,.message-composer textarea,.message-composer input,
+  .community-mention-control input,.community-rail-search input,
+  .community-mobile-destination-search input,
+  .community-mobile-composer-body textarea,.community-mobile-composer-writing textarea,
+  .ml-input,.ml-select,.ml-textarea,.access-gate-input{
+    font-size:16px !important;
+  }
+}
+
 /* melogic-mobile-shell-v1 */
 .mobile-app-shell{display:none}
 @media(max-width:760px){
