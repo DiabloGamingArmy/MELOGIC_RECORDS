@@ -575,29 +575,38 @@ function updateTimer() {
   timerLabel.textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2,'0')}`
 }
 // melogic-camera-review-bottom-actions-p1-v1
-// melogic-camera-review-replace-nav-v2
+// melogic-camera-persistent-shell-review-fix-v1
+function getCameraBottomNav(){
+  // mobileSpaShell harvests .mobile-app-shell OUT of cameraSurface and moves it
+  // into #melogic-mobile-spa-shell-host. After that, cameraSurface queries can
+  // never see the visible persistent nav.
+  return cameraSurface.querySelector('.mobile-bottom-nav')
+    || document.querySelector('#melogic-mobile-spa-shell-host .mobile-bottom-nav')
+    || document.querySelector('[data-melogic-persistent-mobile-shell] .mobile-bottom-nav')
+}
 function ensureCameraReviewBottomBar(){
-  const nav=cameraSurface.querySelector('.mobile-bottom-nav')
+  const nav=getCameraBottomNav()
   if(!nav)return null
-  if(!reviewBottomBar){
-    reviewBottomBar=document.createElement('div')
-    reviewBottomBar.className='camera-review-bottom-actions'
-    reviewBottomBar.hidden=true
-    reviewBottomBar.innerHTML='<button type="button" data-camera-review-cancel>Cancel</button><button type="button" class="is-primary" data-camera-review-share>Share</button>'
-    // Put review controls INSIDE the actual shared nav shell. This removes the
-    // competing fixed-bottom element problem entirely.
-    nav.append(reviewBottomBar)
-    reviewCancelButton=reviewBottomBar.querySelector('[data-camera-review-cancel]')
-    reviewShareButton=reviewBottomBar.querySelector('[data-camera-review-share]')
+  let bar=nav.querySelector('.camera-review-bottom-actions')
+  if(!bar){
+    bar=document.createElement('div')
+    bar.className='camera-review-bottom-actions'
+    bar.hidden=true
+    bar.innerHTML='<button type="button" data-camera-review-cancel>Cancel</button><button type="button" class="is-primary" data-camera-review-share>Share</button>'
+    nav.append(bar)
   }
-  return reviewBottomBar
+  reviewBottomBar=bar
+  reviewCancelButton=bar.querySelector('[data-camera-review-cancel]')
+  reviewShareButton=bar.querySelector('[data-camera-review-share]')
+  return bar
 }
 function setCameraReviewBottomBar(active){
-  const nav=cameraSurface.querySelector('.mobile-bottom-nav')
+  const nav=getCameraBottomNav()
   const bar=ensureCameraReviewBottomBar()
   cameraSurface.classList.toggle('is-reviewing',Boolean(active))
   if(nav){
     nav.hidden=false
+    nav.classList.toggle('is-camera-reviewing',Boolean(active))
     nav.setAttribute('aria-label',active?'Camera review actions':'Mobile primary navigation')
   }
   if(bar){
@@ -973,8 +982,12 @@ async function cancelCameraReview() {
   setCameraReviewBottomBar(false)
 }
 ensureCameraReviewBottomBar()
-reviewCancelButton?.addEventListener('click',()=>void cancelCameraReview())
-reviewShareButton?.addEventListener('click', openShareScreen)
+document.addEventListener('click',event=>{
+  const cancel=event.target.closest?.('[data-camera-review-cancel]')
+  const share=event.target.closest?.('[data-camera-review-share]')
+  if(cancel){event.preventDefault();void cancelCameraReview();return}
+  if(share){event.preventDefault();openShareScreen()}
+})
 shareBackButton?.addEventListener('click', closeShareScreen)
 shareEditButton?.addEventListener('click', closeShareScreen)
 // melogic-camera-share-message-p3-v1

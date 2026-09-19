@@ -337,3 +337,29 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   visibility:hidden!important;
   pointer-events:none!important;
 }
+
+
+/* melogic-camera-persistent-shell-review-fix-v1
+   The SPA harvests the visible nav into #melogic-mobile-spa-shell-host, so
+   review state must live on the persistent nav itself, not an #app descendant. */
+.mobile-bottom-nav.is-camera-reviewing{
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  visibility:visible!important;
+  pointer-events:auto!important;
+  padding:0!important;
+}
+.mobile-bottom-nav.is-camera-reviewing > a{
+  display:none!important;
+}
+.mobile-bottom-nav.is-camera-reviewing > .camera-review-bottom-actions{
+  display:grid!important;
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  box-sizing:border-box!important;
+  padding:10px max(14px,env(safe-area-inset-right,0px))
+    max(10px,env(safe-area-inset-bottom,0px))
+    max(14px,env(safe-area-inset-left,0px))!important;
+}
