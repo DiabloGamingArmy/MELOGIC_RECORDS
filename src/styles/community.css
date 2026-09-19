@@ -5984,3 +5984,412 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     background-image: var(--ml-accent-gradient, linear-gradient(135deg, #477dff 0%, #765dff 52%, #a65cff 100%));
   }
 }
+
+
+/* melogic-community-workspace-professional-v1
+   Desktop-only community workspace redesign.
+   One continuous canvas, floating controls, minimal containment, Soura accent
+   only for interaction/active state. Mobile remains untouched. */
+@media (min-width: 761px) {
+  .community-layout.is-community-detail {
+    grid-template-columns: minmax(190px, 230px) minmax(0, 900px) minmax(300px, 350px);
+    gap: 0;
+    width: min(1600px, calc(100% - 48px));
+    padding-top: 0;
+  }
+
+  .community-workspace .community-main {
+    min-height: calc(100vh - var(--community-sticky-top, 72px));
+    padding: 0 1.65rem 4rem;
+    border-right: 1px solid var(--community-neutral-line, rgba(255,255,255,.1));
+    border-left: 1px solid var(--community-neutral-line, rgba(255,255,255,.1));
+    background: #000;
+  }
+
+  /* Masthead: identity floats on the canvas rather than inside a card. */
+  .community-workspace-header {
+    position: sticky;
+    top: 0;
+    z-index: 18;
+    margin: 0 -1.65rem;
+    padding: 0 1.65rem;
+    border: 0;
+    border-bottom: 1px solid rgba(255,255,255,.085);
+    background: rgba(0,0,0,.94);
+    backdrop-filter: blur(18px);
+  }
+
+  .community-workspace-identity {
+    grid-template-columns: 64px minmax(0, 1fr) auto;
+    gap: 1rem;
+    min-height: 126px;
+    padding: 1.35rem 0 1rem;
+  }
+
+  .community-workspace-avatar {
+    width: 64px;
+    height: 64px;
+    border: 1px solid rgba(255,255,255,.16);
+    border-radius: 14px;
+    background: #0d0d0f;
+    box-shadow: 0 10px 32px rgba(0,0,0,.32);
+  }
+
+  .community-workspace-copy h1 {
+    margin: 0;
+    color: #f7f7f8;
+    font-size: 1.48rem;
+    font-weight: 760;
+    letter-spacing: -.025em;
+  }
+
+  .community-workspace-copy > p {
+    max-width: 620px;
+    margin: .32rem 0 0;
+    color: #a2a2aa;
+    font-size: .82rem;
+    line-height: 1.45;
+  }
+
+  .community-workspace-kicker {
+    margin-bottom: .25rem;
+    color: #77777f;
+    font-size: .61rem;
+    letter-spacing: .14em;
+  }
+
+  .community-workspace-verified {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    color: #aaaab2;
+    background: transparent;
+    font-size: .56rem;
+  }
+
+  .community-workspace-meta {
+    gap: 0;
+    margin-top: .55rem;
+    color: #74747c;
+    font-size: .68rem;
+  }
+
+  .community-workspace-meta span {
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .community-workspace-meta span + span::before {
+    content: "·";
+    margin: 0 .55rem;
+    color: #45454b;
+  }
+
+  .community-workspace-actions {
+    gap: .5rem;
+    align-self: center;
+  }
+
+  .community-workspace-actions .button {
+    min-height: 36px;
+    padding: .45rem .85rem;
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
+  /* Tabs are typography + state, not pills or a tab container. */
+  .community-workspace-tabs {
+    gap: 1.55rem;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+  }
+
+  .community-workspace-tabs button {
+    min-height: 45px;
+    padding: .72rem 0 .78rem;
+    color: #77777f;
+    font-size: .76rem;
+    font-weight: 690;
+  }
+
+  .community-workspace-tabs button:hover {
+    color: #d8d8dc;
+  }
+
+  .community-workspace-tabs button.is-active {
+    color: #fff;
+  }
+
+  .community-workspace-tabs button.is-active::after {
+    right: 0;
+    left: 0;
+    height: 2px;
+    border-radius: 0;
+    background: #477dff;
+    background-image: var(--ml-accent-gradient, linear-gradient(135deg,#477dff 0%,#765dff 52%,#a65cff 100%));
+  }
+
+  /* Composer becomes a slim floating command strip. */
+  .community-workspace .community-inline-composer {
+    grid-template-columns: 38px minmax(0,1fr) auto;
+    gap: .75rem;
+    margin: .85rem 0 .35rem;
+    padding: .55rem .65rem;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: #09090b;
+    transition: background-color .16s ease, border-color .16s ease, transform .16s ease;
+  }
+
+  .community-workspace .community-inline-composer:hover,
+  .community-workspace .community-inline-composer:focus-within {
+    border-color: rgba(255,255,255,.12);
+    background: #0e0e11;
+  }
+
+  .community-workspace .community-inline-avatar {
+    width: 38px;
+    height: 38px;
+    border-color: rgba(255,255,255,.1);
+    background: #151518;
+  }
+
+  .community-workspace .community-inline-prompt {
+    min-height: 38px;
+    color: #85858e;
+    font-size: .9rem;
+  }
+
+  .community-workspace .community-inline-post {
+    min-height: 34px;
+    padding: .42rem .9rem;
+    border-radius: 8px;
+    color: #fff;
+    background: #477dff;
+    background-image: var(--ml-accent-gradient, linear-gradient(135deg,#477dff 0%,#765dff 52%,#a65cff 100%));
+  }
+
+  /* Feed is a continuous activity stream. */
+  .community-workspace [data-community-feed-region] {
+    margin: 0;
+  }
+
+  .community-workspace .community-feed {
+    background: transparent;
+  }
+
+  .community-workspace .community-post-card:not(.community-post-detail-card) {
+    margin: 0;
+    padding: 1.35rem .75rem 1.25rem;
+    border: 0;
+    border-bottom: 1px solid rgba(255,255,255,.075);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .community-workspace .community-post-card:not(.community-post-detail-card):hover,
+  .community-workspace .community-post-card:not(.community-post-detail-card).is-pointer-hovered {
+    border-color: rgba(255,255,255,.11);
+    background: rgba(255,255,255,.022);
+    transform: none;
+  }
+
+  .community-workspace .community-post-card h2 {
+    margin-top: .82rem;
+    font-size: 1.04rem;
+    letter-spacing: -.012em;
+  }
+
+  .community-workspace .community-post-body {
+    color: #d1d1d5;
+    line-height: 1.58;
+  }
+
+  .community-workspace .community-post-actions {
+    margin-top: 1rem;
+    padding-top: .72rem;
+    border-top: 1px solid rgba(255,255,255,.06);
+  }
+
+  .community-workspace .community-post-actions button,
+  .community-workspace .community-post-actions a {
+    border-radius: 7px;
+  }
+
+  /* Left navigation: selected community is a location, not a rounded card. */
+  .community-workspace .community-network-place[aria-current="page"] {
+    position: relative;
+    border-color: transparent;
+    border-radius: 7px;
+    background: rgba(255,255,255,.045);
+    color: #fff;
+  }
+
+  .community-workspace .community-network-place[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    left: -1px;
+    width: 2px;
+    background: #477dff;
+    background-image: var(--ml-accent-gradient, linear-gradient(180deg,#477dff 0%,#765dff 52%,#a65cff 100%));
+  }
+
+  .community-workspace .community-network-place[aria-current="page"] .community-network-place-avatar {
+    border-color: rgba(255,255,255,.16);
+  }
+
+  /* Right rail becomes a quiet inspector, not stacked cards. */
+  .community-workspace .community-network-right-rail {
+    padding: 1rem 1.1rem 1.5rem;
+    background: #000;
+  }
+
+  .community-workspace .community-rail-search {
+    min-height: 40px;
+    border-radius: 8px;
+    border-color: rgba(255,255,255,.09);
+    background: #09090b;
+    box-shadow: none;
+  }
+
+  .community-workspace .community-rail-card {
+    margin: 0;
+    padding: 1rem 0;
+    border: 0;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .community-workspace .community-network-rail-heading {
+    gap: .15rem;
+  }
+
+  .community-workspace .community-network-rail-heading > span {
+    color: #686870;
+    font-size: .59rem;
+    letter-spacing: .13em;
+  }
+
+  .community-workspace .community-network-rail-heading > strong {
+    color: #f2f2f4;
+    font-size: .92rem;
+  }
+
+  .community-workspace .community-network-signal-grid {
+    display: none;
+  }
+
+  .community-workspace-presence {
+    display: grid;
+    grid-template-columns: 9px minmax(0,1fr);
+    column-gap: .5rem;
+    row-gap: .08rem;
+    align-items: center;
+    margin: .9rem 0 .55rem;
+    padding: .55rem 0;
+  }
+
+  .community-workspace-presence-dot {
+    grid-row: span 2;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 0 0 4px rgba(255,255,255,.06);
+  }
+
+  .community-workspace-presence strong {
+    color: #d9d9dd;
+    font-size: .74rem;
+  }
+
+  .community-workspace-presence small {
+    color: #707078;
+    font-size: .66rem;
+  }
+
+  .community-workspace .community-network-context-list {
+    border-top: 1px solid rgba(255,255,255,.06);
+  }
+
+  .community-workspace .community-network-context-list > span {
+    min-height: 34px;
+    padding: .48rem 0;
+    border-color: rgba(255,255,255,.055);
+  }
+
+  .community-workspace .community-network-context-list strong {
+    color: #85858d;
+    font-size: .69rem;
+    font-weight: 620;
+  }
+
+  .community-workspace .community-network-context-list em {
+    color: #c6c6cb;
+    font-size: .69rem;
+  }
+
+  .community-workspace .community-network-context-card > a {
+    display: inline-flex;
+    margin-top: .7rem;
+    color: #9b9ba3;
+    font-size: .69rem;
+    text-decoration: none;
+  }
+
+  .community-workspace .community-network-context-card > a:hover {
+    color: #fff;
+  }
+
+  .community-workspace .community-network-next-list {
+    margin-top: .55rem;
+  }
+
+  .community-workspace .community-network-next-list button,
+  .community-workspace .community-network-next-list a {
+    min-height: 48px;
+    padding: .48rem 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .community-workspace .community-network-next-list button:hover,
+  .community-workspace .community-network-next-list a:hover {
+    background: rgba(255,255,255,.035);
+  }
+
+  .community-workspace .community-network-next-list svg {
+    color: #888890;
+  }
+
+  .community-workspace .community-rail-footer {
+    padding: 1rem 0 0;
+  }
+
+  /* Future workspace tabs should inherit the same low-container visual system. */
+  .community-workspace-placeholder {
+    margin: 1.25rem 0;
+    padding: 1.1rem 0;
+    border: 0;
+    border-top: 1px solid rgba(255,255,255,.08);
+    border-bottom: 1px solid rgba(255,255,255,.08);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .community-workspace-placeholder-icon {
+    border-radius: 8px;
+  }
+
+  .community-workspace-coming-soon {
+    border-radius: 6px;
+    background: #0d0d0f;
+  }
+}
