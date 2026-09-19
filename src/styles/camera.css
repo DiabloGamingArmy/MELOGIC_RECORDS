@@ -236,3 +236,6 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-share-icon{width:44px;height:44px;border-radius:14px;display:grid;place-items:center;background:#17171c;border:1px solid rgba(255,255,255,.08)}.camera-share-destination.is-primary .camera-share-icon{background:linear-gradient(145deg,rgba(75,126,255,.28),rgba(158,84,255,.28));border-color:rgba(130,102,255,.32)}.camera-share-icon svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .camera-share-copy{min-width:0;display:flex;flex-direction:column;gap:4px}.camera-share-copy strong{font-size:14px;font-weight:760}.camera-share-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#888890;font-size:11px}.camera-share-chevron{color:#65656c;font-size:25px;font-weight:300}
 [data-melogic-camera-surface].is-sharing .mobile-bottom-nav{visibility:hidden!important;pointer-events:none!important}
+
+/* melogic-camera-share-publish-p2-v1
+   Story/Feed publishing intentionally reuses Community's established composer UI/pipeline. */

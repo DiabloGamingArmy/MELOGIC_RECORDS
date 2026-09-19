@@ -827,10 +827,24 @@ cameraSurface.querySelector('[data-camera-retake]')?.addEventListener('click', a
 useButton?.addEventListener('click', openShareScreen)
 shareBackButton?.addEventListener('click', closeShareScreen)
 shareEditButton?.addEventListener('click', closeShareScreen)
+// melogic-camera-share-publish-p2-v1
+function handoffCameraMediaToCommunity(destination) {
+  const blob=playback._melogicCapture
+  if(!blob)return
+  const type=playback.dataset.captureType||'video'
+  const mime=String(blob.type||'')||(type==='photo'?'image/jpeg':'video/webm')
+  const ext=mime.includes('png')?'png':mime.includes('webp')?'webp':mime.includes('jpeg')?'jpg':mime.includes('quicktime')?'mov':mime.includes('mp4')?'mp4':'webm'
+  const file=blob instanceof File?blob:new File([blob],`melogic-${type}-${Date.now()}.${ext}`,{type:mime,lastModified:Date.now()})
+  window.__melogicCommunityMediaHandoff={destination,file,type,createdAt:Date.now()}
+  sessionStorage.setItem('melogicCommunityMediaHandoffDestination',destination)
+  window.location.assign('/community')
+}
 shareScreen?.addEventListener('click',event=>{
   const d=event.target.closest('[data-share-destination]');if(!d)return
-  const m={story:'Story publishing arrives in Patch 2.',feed:'Feed publishing arrives in Patch 2.',message:'Message sharing arrives in Patch 3.',device:'Save to Device arrives in Patch 4.',system:'Device sharing arrives in Patch 4.'}
-  setStatus(m[d.dataset.shareDestination]||'');window.setTimeout(()=>setStatus(''),1600)
+  const destination=d.dataset.shareDestination
+  if(destination==='story'||destination==='feed'){handoffCameraMediaToCommunity(destination);return}
+  const m={message:'Message sharing arrives in Patch 3.',device:'Save to Device arrives in Patch 4.',system:'Device sharing arrives in Patch 4.'}
+  setStatus(m[destination]||'');window.setTimeout(()=>setStatus(''),1600)
 })
 window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
 window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiveCanvas), { passive: true })
