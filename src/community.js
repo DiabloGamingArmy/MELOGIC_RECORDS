@@ -7071,6 +7071,14 @@ function bindCommunityComposerEvents(root = app) {
 
 function bindEvents() {
   setupCommunityPendingLeaveWarning()
+  app.querySelectorAll('[data-community-workspace-tab]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const nextTab = button.getAttribute('data-community-workspace-tab') || 'community-feed'
+      if (!['community-feed', 'community-projects', 'community-people', 'community-opportunities', 'community-events'].includes(nextTab)) return
+      state.activeTab = nextTab
+      render()
+    })
+  })
   app.querySelectorAll('[data-community-back-to-feed]').forEach(link => {
     link.onclick = event => {
       if (!feedNavigationSnapshot) return
