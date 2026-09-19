@@ -3027,27 +3027,60 @@ function renderCommunityImageViewer() {
 }
 
 function renderLeftNav() {
-  const navItems = [
-    { label: 'Home', icon: 'home', href: ROUTES.community, active: state.view.type === 'feed' },
-    { label: 'Explore', icon: 'search', href: ROUTES.communityCommunities, active: state.view.type === 'communities' },
-    { label: 'Streaming', icon: 'play', href: ROUTES.music },
-    { label: 'Products', icon: 'package', href: ROUTES.products },
-    { label: 'Studio', icon: 'cube', href: ROUTES.studio },
-    { label: 'DAW Projects', icon: 'music', href: ROUTES.studioDaw },
-    { label: 'Stagemaker Projects', icon: 'cube', href: ROUTES.studioStagemaker },
-    { label: 'Distribution', icon: 'upload', href: ROUTES.distribution },
-    { label: 'Inbox', icon: 'mailSend', href: ROUTES.inbox },
-    { label: 'Profile', icon: 'user', href: state.currentUser ? ROUTES.profile : authRoute({ redirect: ROUTES.profile }) }
-  ]
-  const renderItem = (item) => `
-    <a class="${item.active ? 'is-active' : ''}" href="${item.href}">${iconSvg(item.icon)} <span>${escapeHtml(item.label)}</span></a>
+  // melogic-desktop-network-shell-p1
+  // Until canonical memberships land, focused communities are the safest
+  // existing proxy for the user's saved network places. Patch 6 will replace
+  // this adapter with real membership records without changing this shell.
+  const focusedCommunities = state.communities
+    .filter((community) => community?.communityId && state.communityFocus[community.communityId])
+    .slice(0, 7)
+
+  const communityLink = (community) => `
+    <a class="community-network-place ${state.activeCommunityId === community.communityId ? 'is-active' : ''}"
+      href="${communityRoute(community.slug)}"
+      data-network-community-id="${escapeHtml(community.communityId)}">
+      <span class="community-network-place-avatar" aria-hidden="true">
+        ${community.iconURL
+          ? `<img src="${escapeHtml(community.iconURL)}" alt="" loading="lazy" />`
+          : escapeHtml((community.name || 'M').slice(0, 1).toUpperCase())
+        }
+      </span>
+      <span class="community-network-place-copy">
+        <strong>${escapeHtml(community.name || 'Community')}</strong>
+        <small>Focused</small>
+      </span>
+    </a>
   `
+
   return `
-    <aside class="community-left-nav" aria-label="Community navigation">
-      <a class="community-side-brand" href="${ROUTES.community}" aria-label="Community home">COMMUNITY</a>
+    <aside class="community-left-nav community-network-nav" aria-label="Melogic network navigation">
+      <a class="community-side-brand" href="${ROUTES.community}" aria-label="Network home">NETWORK</a>
+
       <nav>
-        ${navItems.map(renderItem).join('')}
-        <button type="button" class="community-side-post-button" data-open-community-composer>${iconSvg('plus')} <span>Post</span></button>
+        <section class="community-network-nav-section" aria-label="Network">
+          <a class="${state.view.type === 'feed' ? 'is-active' : ''}" href="${ROUTES.community}">
+            ${iconSvg('home')} <span>Home</span>
+          </a>
+          <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}">
+            ${iconSvg('search')} <span>Discover</span>
+          </a>
+        </section>
+
+        <section class="community-network-nav-section community-network-places" aria-labelledby="community-network-places-heading">
+          <div class="community-network-section-heading" id="community-network-places-heading">Your Communities</div>
+          <div class="community-network-place-list">
+            ${focusedCommunities.length
+              ? focusedCommunities.map(communityLink).join('')
+              : `<p class="community-network-empty">Communities you focus will appear here.</p>`
+            }
+          </div>
+          <a class="community-network-secondary-link" href="${ROUTES.communityCommunities}">
+            ${iconSvg('search')} <span>Discover Communities</span>
+          </a>
+          <a class="community-network-secondary-link" href="${ROUTES.communityCreate}">
+            ${iconSvg('plus')} <span>Create Community</span>
+          </a>
+        </section>
       </nav>
     </aside>
   `
