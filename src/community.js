@@ -3180,20 +3180,32 @@ function renderCommunityContextRail() {
   const community = state.community
   if (!community) return renderNetworkActivityCard()
   const focused = Boolean(state.communityFocus[community.communityId])
+  const membershipState = state.communityMembership[community.communityId] || {}
+  const membershipStatus = membershipState.membership?.status || ''
+  const relationship = membershipStatus === 'member'
+    ? 'Member'
+    : membershipStatus === 'pending'
+      ? 'Join pending'
+      : focused
+        ? 'Focused'
+        : 'Discovering'
   return `
-    <section class="community-rail-card community-network-context-card is-community">
+    <section class="community-rail-card community-network-context-card is-community community-workspace-inspector">
       <div class="community-network-rail-heading">
         <span>Current Community</span>
         <strong>${escapeHtml(community.name)}</strong>
       </div>
-      <div class="community-network-signal-grid">
-        <div><strong>${formatCount(community.focusCount)}</strong><span>Focused</span></div>
-        <div><strong>${formatCount(community.postCount)}</strong><span>Posts</span></div>
+      <div class="community-workspace-presence">
+        <span class="community-workspace-presence-dot" aria-hidden="true"></span>
+        <strong>Community workspace</strong>
+        <small>Shared activity and collaboration</small>
       </div>
       <div class="community-network-context-list">
-        <span><strong>Your status</strong><em>${focused ? 'Focused' : 'Discovering'}</em></span>
+        <span><strong>Relationship</strong><em>${relationship}</em></span>
+        <span><strong>Members</strong><em>${formatCount(community.memberCount)}</em></span>
+        <span><strong>Focused</strong><em>${formatCount(community.focusCount)}</em></span>
+        <span><strong>Posts</strong><em>${formatCount(community.postCount)}</em></span>
         <span><strong>Category</strong><em>${escapeHtml(community.category || 'Community')}</em></span>
-        <span><strong>Workspace</strong><em>Feed · Projects · People</em></span>
       </div>
       <a href="${ROUTES.communityCommunities}">Discover more communities</a>
     </section>
@@ -3463,7 +3475,6 @@ function renderCommunityDetail() {
               </div>` : ''}
             </div>
             <div class="community-workspace-actions">
-              <a class="button button-muted" href="${ROUTES.communityCommunities}">Discover</a>
               ${community ? `
                 <button type="button" class="button ${focused ? 'button-muted' : 'button-accent'}" data-toggle-community-focus="${escapeHtml(community.communityId)}">${focused ? 'Focused' : 'Focus'}</button>
                 ${membershipState.loading
