@@ -6354,6 +6354,31 @@ function openStoryComposer() {
   render()
 }
 
+// melogic-camera-share-final-p5-v1
+let cameraCommunityHandoffConsumedAt=0
+async function consumeCameraCommunityMediaHandoff(){
+  const h=window.__melogicCommunityMediaHandoff
+  if(!h?.file||!['story','feed'].includes(h.destination)||h.createdAt===cameraCommunityHandoffConsumedAt)return false
+  if(Date.now()-Number(h.createdAt||0)>600000){delete window.__melogicCommunityMediaHandoff;sessionStorage.removeItem('melogicCommunityMediaHandoffDestination');return false}
+  if(!state.currentUser)return false
+  cameraCommunityHandoffConsumedAt=h.createdAt
+  try{
+    if(h.destination==='story'){
+      validateCommunityStoryMedia(h.file);resetStoryRecording();resetStoryPreviewURL()
+      state.storyComposer={...cleanStoryComposerState({open:true,mode:'upload',mediaType:h.type==='photo'?'image':'video',file:h.file,previewURL:URL.createObjectURL(h.file),lifetimeHours:24,visibility:'public',recordingSupported:typeof MediaRecorder!=='undefined'&&Boolean(navigator.mediaDevices?.getUserMedia)})}
+      render()
+    }else{
+      const {type}=validateCommunityPostAttachment(h.file);clearComposerFileAttachments()
+      const id=composerFileAttachmentId(),media=await readComposerMediaMetadata(h.file,type)
+      state.composer=defaultComposerState({open:true,communityId:state.view.type==='community'?state.community?.communityId||'':'',fileAttachments:[{id,file:h.file,type,previewURL:media.previewURL||'',metadata:media.metadata||{}}],destinationItems:state.communities,error:''})
+      updateCommunityComposerLayer();focusMobileCommunityComposerAfterEntrance()
+    }
+    delete window.__melogicCommunityMediaHandoff;sessionStorage.removeItem('melogicCommunityMediaHandoffDestination');return true
+  }catch(error){
+    console.warn('[community] camera media handoff failed',{code:error?.code,message:error?.message});state.message=error?.message||'Could not open the captured media.';delete window.__melogicCommunityMediaHandoff;sessionStorage.removeItem('melogicCommunityMediaHandoffDestination');render();return false
+  }
+}
+
 async function handleStorySubmit(event) {
   event.preventDefault()
   if (!state.currentUser) {
@@ -7186,6 +7211,7 @@ async function bootstrapCommunityDocument() {
     loadWikipediaHistory().catch(() => null)
     render()
     await loadCommunity()
+    await consumeCameraCommunityMediaHandoff()
 
     if (!communityAuthUnsubscribe) {
       communityAuthUnsubscribe = subscribeToAuthState((nextUser) => {
@@ -7248,6 +7274,7 @@ if (isMobileSpaRuntime()) {
         render()
       }
       syncCommunityMobileHeader(Boolean(state.detailPostId), app)
+      await consumeCameraCommunityMediaHandoff()
     },
     async deactivate({ instance }) {
       document.body.classList.remove('community-modal-open')

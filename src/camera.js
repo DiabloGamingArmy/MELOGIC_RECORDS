@@ -837,6 +837,7 @@ editCanvas.addEventListener('pointerup',()=>editDrawing=false);editCanvas.addEve
 cameraSurface.querySelector('[data-camera-retake]')?.addEventListener('click', async () => {
   closeShareScreen()
   playback.hidden = true; playback._melogicCapture = null
+  delete window.__melogicCameraCapture
   recordedVideo.pause(); recordedVideo.removeAttribute('src'); try { recordedVideo.srcObject = null } catch {}; recordedVideo.load(); recordedVideo.hidden = true
   recordedPhoto.removeAttribute('src'); recordedPhoto.hidden = true
   // Retake explicitly re-enters idle Camera mode: video engine only.
@@ -879,7 +880,13 @@ function handoffCameraMediaToCommunity(destination) {
   const file=blob instanceof File?blob:new File([blob],`melogic-${type}-${Date.now()}.${ext}`,{type:mime,lastModified:Date.now()})
   window.__melogicCommunityMediaHandoff={destination,file,type,createdAt:Date.now()}
   sessionStorage.setItem('melogicCommunityMediaHandoffDestination',destination)
-  window.location.assign('/community')
+  // melogic-camera-share-final-p5-v1
+  if(isMobileSpaRuntime()){
+    history.pushState({...(history.state||{}),melogicMobileSpa:true,routeId:'community',pathname:'/community'},'', '/community')
+    window.dispatchEvent(new CustomEvent('melogic:mobile-spa-navigation',{detail:{type:'camera-share',pathname:'/community'}}))
+    return
+  }
+  setStatus('Open Camera from the mobile app to post this media to Community.')
 }
 shareScreen?.addEventListener('click',event=>{
   const d=event.target.closest('[data-share-destination]');if(!d)return
@@ -895,7 +902,10 @@ window.addEventListener('orientationchange', () => requestAnimationFrame(sizeLiv
 function bindCameraDocumentLifecycleOnce() {
   if (cameraDocumentLifecycleBound) return
   cameraDocumentLifecycleBound = true
-  window.addEventListener('pagehide', stopCameraForInactiveView)
+  window.addEventListener('pagehide', () => {
+    stopCameraForInactiveView()
+    if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=''}
+  })
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       stopCameraForInactiveView()
