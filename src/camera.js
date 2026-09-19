@@ -589,12 +589,22 @@ function ensureCameraReviewBottomBar(){
   }
   return reviewBottomBar
 }
+// melogic-camera-review-bar-visibility-fix-v1
 function setCameraReviewBottomBar(active){
   const nav=cameraSurface.querySelector('.mobile-bottom-nav')
   const bar=ensureCameraReviewBottomBar()
-  if(nav)nav.hidden=Boolean(active)
-  if(bar)bar.hidden=!active
+  // The shared nav has several route-scoped display:flex!important rules, so
+  // relying on the HTML hidden attribute is not authoritative in Camera.
+  // Review state is now the single CSS source of truth for both bars.
   cameraSurface.classList.toggle('is-reviewing',Boolean(active))
+  if(nav){
+    nav.hidden=Boolean(active)
+    nav.setAttribute('aria-hidden',String(Boolean(active)))
+  }
+  if(bar){
+    bar.hidden=!active
+    bar.setAttribute('aria-hidden',String(!active))
+  }
 }
 
 function showCapturedMedia(blob, type) {

@@ -283,3 +283,22 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-share-message-sendbar{align-items:flex-start}
 .camera-share-message-send-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .camera-share-message-send-actions button{min-height:38px;padding:0 12px;white-space:nowrap}
+
+
+/* melogic-camera-review-bar-visibility-fix-v1
+   Camera has legacy/mobile route rules that force .mobile-bottom-nav to
+   display:flex!important. State-class selectors therefore override those
+   rules explicitly instead of depending on the hidden attribute alone. */
+[data-melogic-camera-surface].is-reviewing .mobile-bottom-nav{
+  display:none!important;
+  visibility:hidden!important;
+  pointer-events:none!important;
+}
+[data-melogic-camera-surface]:not(.is-reviewing) .camera-review-bottom-actions{
+  display:none!important;
+}
+[data-melogic-camera-surface].is-reviewing:not(.is-sharing) .camera-review-bottom-actions{
+  display:grid!important;
+  visibility:visible!important;
+  pointer-events:auto!important;
+}
