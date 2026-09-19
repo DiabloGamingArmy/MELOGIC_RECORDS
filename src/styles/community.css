@@ -5685,3 +5685,96 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     opacity: .78;
   }
 }
+
+
+/* melogic-desktop-network-mobile-language-v1
+   Desktop Network borrows the mobile Community visual language:
+   true black surfaces, cool slate borders/text, white active navigation,
+   and the cyan-to-violet accent reserved for state/selection. */
+@media (min-width: 761px) {
+  .community-page {
+    --community-desktop-mobile-bg: #000;
+    --community-desktop-mobile-panel: #07090d;
+    --community-desktop-mobile-panel-2: #0b0e14;
+    --community-desktop-mobile-line: rgba(174, 188, 211, .14);
+    --community-desktop-mobile-muted: #929db1;
+    --community-desktop-mobile-text: #f6f8fc;
+    --community-desktop-mobile-cyan: #6fd6ff;
+    --community-desktop-mobile-violet: #936dff;
+    background: var(--community-desktop-mobile-bg);
+    color: var(--community-desktop-mobile-text);
+  }
+
+  .community-left-nav,
+  .community-main,
+  .community-right-rail,
+  .community-network-nav,
+  .community-network-right-rail {
+    background: var(--community-desktop-mobile-bg);
+    border-color: var(--community-desktop-mobile-line);
+  }
+
+  .community-network-nav-section > a {
+    color: var(--community-desktop-mobile-muted);
+  }
+
+  .community-network-nav-section > a:hover {
+    background: rgba(255, 255, 255, .045);
+    color: var(--community-desktop-mobile-text);
+  }
+
+  .community-network-nav-section > a.is-active {
+    background: rgba(111, 214, 255, .075);
+    color: #fff;
+  }
+
+  .community-network-nav-section > a.is-active::before {
+    background: linear-gradient(180deg, var(--community-desktop-mobile-cyan), var(--community-desktop-mobile-violet));
+  }
+
+  .community-network-home-glyph {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    color: currentColor;
+  }
+
+  .community-network-home-glyph svg {
+    display: block;
+    width: 22px;
+    height: 22px;
+    overflow: visible;
+  }
+
+  .community-network-home-glyph path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .community-network-place,
+  .community-rail-card,
+  .community-network-context-card,
+  .community-network-next-card,
+  .community-inline-composer,
+  .community-post-card {
+    border-color: var(--community-desktop-mobile-line);
+  }
+
+  .community-network-place:hover,
+  .community-network-next-list a:hover {
+    background: rgba(255, 255, 255, .045);
+  }
+
+  .community-network-section-heading,
+  .community-network-place-copy small,
+  .community-network-context-list span,
+  .community-network-activity-copy,
+  .community-network-next-list small {
+    color: var(--community-desktop-mobile-muted);
+  }
+}
