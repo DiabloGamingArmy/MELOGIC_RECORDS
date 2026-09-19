@@ -5778,3 +5778,180 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     color: var(--community-desktop-mobile-muted);
   }
 }
+
+
+/* melogic-desktop-soura-color-discipline-v1
+   Desktop Community color contract:
+   - resting/static UI is achromatic; hierarchy comes from exposure only
+   - interaction, active state and motion may use Soura's canonical accent
+   - user-authored media and brand/community artwork are never desaturated
+   Canonical Soura accent: base.css --ml-accent-gradient. */
+@media (min-width: 761px) {
+  .community-page {
+    --community-soura-accent: var(--ml-accent-gradient, linear-gradient(135deg, #477dff 0%, #765dff 52%, #a65cff 100%));
+    --community-neutral-0: #000;
+    --community-neutral-1: #070707;
+    --community-neutral-2: #0d0d0f;
+    --community-neutral-3: #141416;
+    --community-neutral-4: #1b1b1f;
+    --community-neutral-line: rgba(255,255,255,.10);
+    --community-neutral-line-strong: rgba(255,255,255,.18);
+    --community-neutral-text: #f5f5f7;
+    --community-neutral-muted: #a2a2aa;
+    --community-neutral-faint: #707077;
+  }
+
+  /* Resting shell: zero chroma, exposure-only hierarchy. */
+  .community-network-nav,
+  .community-main,
+  .community-network-right-rail,
+  .community-right-rail,
+  .community-workspace,
+  .community-workspace-header,
+  .community-network-directory,
+  .community-network-discover-hero,
+  .community-main > .community-stories-row {
+    background: var(--community-neutral-0);
+    background-image: none;
+    border-color: var(--community-neutral-line);
+  }
+
+  .community-network-nav .community-side-brand,
+  .community-network-section-heading,
+  .community-network-place-copy small,
+  .community-network-empty,
+  .community-network-activity-copy,
+  .community-network-context-list span,
+  .community-network-next-list small,
+  .community-author em,
+  .community-post-actions,
+  .community-post-actions em,
+  .community-topic-pill:not(.is-active),
+  .community-filter-strip .community-topic-pill:not(.is-active),
+  .community-discovery-tabs button:not(.is-active),
+  .community-suggested-list em,
+  .community-trending-tags em {
+    color: var(--community-neutral-muted);
+  }
+
+  .community-network-place-avatar,
+  .community-community-icon,
+  .community-avatar,
+  .community-inline-avatar,
+  .community-framework-icon,
+  .community-suggested-list a > span {
+    background: var(--community-neutral-3);
+    background-image: none;
+    border-color: var(--community-neutral-line);
+    color: var(--community-neutral-text);
+  }
+
+  /* Artwork/photos stay intact. Only generated/static UI fallback surfaces go mono. */
+  .community-network-place-avatar:has(img),
+  .community-community-icon:has(img),
+  .community-avatar:has(img),
+  .community-inline-avatar:has(img) {
+    background: var(--community-neutral-2);
+  }
+
+  .community-verified-badge {
+    filter: grayscale(1) saturate(0) brightness(1.35);
+  }
+
+  .community-badge.is-pinned,
+  .community-framework-icon,
+  .community-history-event strong,
+  .community-history-state.is-error {
+    color: var(--community-neutral-muted);
+    background: rgba(255,255,255,.045);
+    border-color: var(--community-neutral-line);
+  }
+
+  .community-history-event,
+  .community-comment-replies {
+    border-color: var(--community-neutral-line);
+  }
+
+  .community-comment-replies .community-comment-card.is-reply::before {
+    background: var(--community-neutral-line);
+  }
+
+  /* Soura canonical accent: interactive/active/moving UI only. */
+  .community-topic-pill.is-active,
+  .community-filter-strip .community-topic-pill.is-active,
+  .community-inline-post,
+  .community-page .button-accent,
+  .community-page .button-primary {
+    background: #477dff;
+    background-image: var(--community-soura-accent);
+    border-color: transparent;
+    color: #fff;
+  }
+
+  .community-story-ring {
+    background: #477dff;
+    background-image: var(--community-soura-accent);
+  }
+
+  .community-network-nav-section > a.is-active {
+    background: rgba(255,255,255,.055);
+    color: #fff;
+  }
+
+  .community-network-nav-section > a.is-active::before {
+    background: #477dff;
+    background-image: var(--community-soura-accent);
+  }
+
+  .community-discovery-tabs button.is-active,
+  .community-post-actions button:hover,
+  .community-post-actions a:hover,
+  .community-comment-actions button:hover,
+  .community-post-actions .is-active,
+  .community-comment-actions .is-active,
+  .community-post-options-button:hover,
+  .community-post-options-button[aria-expanded="true"],
+  .community-network-place:hover,
+  .community-network-next-list a:hover {
+    color: #fff;
+    border-color: rgba(118,93,255,.38);
+    background: rgba(118,93,255,.12);
+  }
+
+  .community-suggested-list button,
+  .community-card-actions button,
+  .community-card-actions .button {
+    border-color: rgba(118,93,255,.38);
+    color: #f5f5f7;
+    background: rgba(118,93,255,.10);
+  }
+
+  .community-suggested-list button:hover,
+  .community-card-actions button:hover,
+  .community-card-actions .button:hover {
+    background: #477dff;
+    background-image: var(--community-soura-accent);
+    border-color: transparent;
+    color: #fff;
+  }
+
+  .community-discovery-heading a,
+  .community-story-empty-state button,
+  .community-filter-arrow:hover {
+    color: var(--community-neutral-text);
+  }
+
+  .community-discovery-heading a:hover,
+  .community-story-empty-state button:hover {
+    background-image: var(--community-soura-accent);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+
+  /* Animated loading state remains achromatic: movement itself is the signal. */
+  .community-skeleton-line {
+    background: linear-gradient(90deg, rgba(255,255,255,.05), rgba(255,255,255,.15), rgba(255,255,255,.05));
+    background-size: 220% 100%;
+  }
+}
