@@ -2241,6 +2241,22 @@ service cloud.firestore {
       }
     }
 
+    match /communities/{communityId}/members/{uid} {
+      allow read: if signedIn()
+        && (
+          request.auth.uid == uid
+          || hasUserModerateClaim()
+          || get(/databases/$(database)/documents/communities/$(communityId)).data.ownerUid == request.auth.uid
+          || (
+            get(/databases/$(database)/documents/communities/$(communityId)).data.moderatorIds is list
+            && request.auth.uid in get(/databases/$(database)/documents/communities/$(communityId)).data.moderatorIds
+          )
+        );
+      // Membership lifecycle is server-controlled so clients cannot self-assign
+      // roles, verification, or privileged membership state.
+      allow write: if false;
+    }
+
     match /communities/{communityId} {
       allow read: if (
           resource.data.status == 'active'
