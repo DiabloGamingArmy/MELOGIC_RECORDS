@@ -49,6 +49,7 @@ const { toggleCommunityPostLike, toggleCommunityPostDislike, toggleCommunityPost
 const { updateCommunityPost } = require('./src/community/updateCommunityPost')
 const { createCommunity } = require('./src/community/createCommunity')
 const { toggleCommunityFocus } = require('./src/community/toggleCommunityFocus')
+const { getCommunityMembership, joinCommunity, leaveCommunity } = require('./src/community/communityMembership')
 const { seedCommunities } = require('./src/community/seedCommunities')
 const { createCommunityComment } = require('./src/community/createCommunityComment')
 const { deleteCommunityComment } = require('./src/community/deleteCommunityComment')
@@ -232,6 +233,9 @@ exports.recordCommunityPostShare = recordCommunityPostShare
 exports.updateCommunityPost = updateCommunityPost
 exports.createCommunity = createCommunity
 exports.toggleCommunityFocus = toggleCommunityFocus
+exports.getCommunityMembership = getCommunityMembership
+exports.joinCommunity = joinCommunity
+exports.leaveCommunity = leaveCommunity
 exports.seedCommunities = seedCommunities
 exports.createCommunityComment = createCommunityComment
 exports.deleteCommunityComment = deleteCommunityComment
