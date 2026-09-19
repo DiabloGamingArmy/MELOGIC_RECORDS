@@ -19,6 +19,7 @@ import {
   getCommunityComment,
   getCommunityCommentViewerState,
   getCommunityBySlug,
+  getCommunityMembership,
   getCommunityPost,
   hydrateCommunityPostCommunities,
   getCommunityPostViewerState,
@@ -34,6 +35,8 @@ import {
   listShareableCommunityProducts,
   listShareableCommunityStagePlans,
   listShareableCommunityStudioProjects,
+  joinCommunity,
+  leaveCommunity,
   newCommunityStoryId,
   newCommunityCommentId,
   newCommunityPostId,
@@ -147,6 +150,7 @@ const state = {
   community: null,
   communities: [],
   communityFocus: {},
+  communityMembership: {},
   communityFilters: {
     search: '',
     category: 'all',
@@ -4498,6 +4502,7 @@ async function loadCommunity() {
       render()
       if (community) {
         loadCommunityFocusState().then(render).catch(() => null)
+        loadActiveCommunityMembership(community.communityId).then(render).catch(() => null)
         await loadFeedPage({ reset: true })
       }
     } catch (error) {
@@ -5511,6 +5516,51 @@ async function handleCommentDelete(commentId = '', postId = state.detailPostId) 
     state.commentActionError = 'Could not delete this comment.'
     renderCommentState()
   })
+}
+
+async function loadActiveCommunityMembership(communityId = '') {
+  const id = String(communityId || '').trim()
+  if (!id || !state.currentUser?.uid) return
+  try {
+    const result = await getCommunityMembership(id)
+    state.communityMembership[id] = {
+      loading: false,
+      policy: result?.policy || 'open',
+      membership: result?.membership || null,
+      error: ''
+    }
+  } catch (error) {
+    console.warn('[community] membership load failed', { code: error?.code, message: error?.message })
+    state.communityMembership[id] = { loading: false, policy: 'open', membership: null, error: error?.message || 'Membership unavailable.' }
+  }
+}
+
+async function handleCommunityMembership(communityId = '', action = 'join') {
+  const id = String(communityId || '').trim()
+  if (!id) return
+  if (!state.currentUser) {
+    if (!confirmCommunityNavigation()) return
+    window.location.assign(authRoute({ redirect: window.location.pathname }))
+    return
+  }
+  const actionId = `membership:${action}:${id}`
+  if (communityPendingActions.has(actionId)) return
+  const previous = state.communityMembership[id] || null
+  state.communityMembership[id] = { ...(previous || {}), loading: true, error: '' }
+  render()
+  try {
+    const result = await trackCommunityAction(actionId, action === 'leave' ? leaveCommunity(id) : joinCommunity(id))
+    await loadActiveCommunityMembership(id)
+    if (result?.status === 'pending') showCommunityToast('Membership request submitted.')
+    else if (action === 'leave') showCommunityToast('You left this community.')
+    else showCommunityToast('You joined this community.')
+    render()
+  } catch (error) {
+    console.warn('[community] membership action failed', { code: error?.code, message: error?.message })
+    state.communityMembership[id] = { ...(previous || {}), loading: false, error: error?.message || 'Membership could not be updated.' }
+    showCommunityToast(error?.message || 'Membership could not be updated.')
+    render()
+  }
 }
 
 async function handleToggleFocus(communityId) {
