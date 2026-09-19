@@ -63,7 +63,7 @@ import {
 import { getPublicProfileIdentityByUid, searchProfilesByUsername } from './data/profileSearchService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
+import { navigateMobileRuntimeUrl, registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 import { getStorageAssetUrl } from './firebase/storageAssets'
@@ -6536,11 +6536,27 @@ function stopStoryRecording() {
   render()
 }
 
-function openStoryComposer() {
+async function openStoryComposer() {
   if (!state.currentUser) {
     window.location.assign(authRoute({ redirect: window.location.pathname }))
     return
   }
+
+  // melogic-mobile-story-camera-spa-v1
+  // Mobile Stories are captured through the existing persistent Camera runtime.
+  // navigateMobileRuntimeUrl() prepares/activates Camera in-place, so this does
+  // not perform a document load or bypass the established SPA lifecycle.
+  if (isMobileSpaRuntime()) {
+    const opened = await navigateMobileRuntimeUrl('/camera', {
+      historyMode: 'push',
+      source: 'community-add-story'
+    })
+    if (opened) return
+    console.warn('[community] mobile Add Story could not activate Camera runtime')
+    showCommunityToast('Camera could not be opened. Try the Camera tab.')
+    return
+  }
+
   resetStoryRecording()
   resetStoryPreviewURL()
   state.storyComposer = {
