@@ -5955,3 +5955,32 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     background-size: 220% 100%;
   }
 }
+
+
+/* melogic-network-active-soura-gradient-v1
+   Override legacy cyan active-rail treatment with the exact Soura accent. */
+@media (min-width: 761px) {
+  .community-left-nav nav a.is-active,
+  .community-network-nav-section > a.is-active {
+    color: #fff;
+    background: rgba(255,255,255,.055);
+    box-shadow: none;
+  }
+
+  .community-left-nav nav a.is-active {
+    position: relative;
+  }
+
+  .community-left-nav nav a.is-active::before,
+  .community-network-nav-section > a.is-active::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 0 999px 999px 0;
+    background: #477dff;
+    background-image: var(--ml-accent-gradient, linear-gradient(135deg, #477dff 0%, #765dff 52%, #a65cff 100%));
+  }
+}
