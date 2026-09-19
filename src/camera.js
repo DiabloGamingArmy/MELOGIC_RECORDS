@@ -4,6 +4,8 @@ import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
+import { auth, waitForInitialAuthState } from './firebase/auth'
+import { listInboxThreads, sendMessage } from './data/inboxService'
 
 const app = document.querySelector('#app')
 // melogic-camera-safe-prewarm-v5c1
@@ -18,6 +20,7 @@ let facingMode = 'user'
 let recordingStartedAt = 0
 let recordingTimer = 0
 let previewUrl = ''
+let cameraMessageThreads=[],cameraMessageSelectedThreadId='',cameraMessageLoading=false,cameraMessageSending=false
 
 cameraSurface.innerHTML = `
   ${navShell({ currentPage: 'camera' })}
@@ -72,6 +75,13 @@ cameraSurface.innerHTML = `
           <button class="camera-share-destination" type="button" data-share-destination="feed"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M8 9h8M8 12h8M8 15h5"/></svg></span><span class="camera-share-copy"><strong>Post to Feed</strong><small>Publish to the Community feed</small></span><span class="camera-share-chevron">›</span></button>
           <button class="camera-share-destination" type="button" data-share-destination="message"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5z"/></svg></span><span class="camera-share-copy"><strong>Send in Message</strong><small>Share with a person or conversation</small></span><span class="camera-share-chevron">›</span></button>
         </div></section>
+        <!-- melogic-camera-share-message-p3-v1 -->
+        <section class="camera-share-message-panel" data-camera-share-message-panel hidden>
+          <div class="camera-share-message-head"><div><strong>Send in Message</strong><small>Recent conversations from Inbox</small></div><button type="button" data-camera-message-close aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+          <label class="camera-share-message-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg><input type="search" data-camera-message-search placeholder="Search conversations" autocomplete="off"></label>
+          <div class="camera-share-message-state" data-camera-message-state>Loading conversations...</div><div class="camera-share-message-list" data-camera-message-list></div>
+          <div class="camera-share-message-sendbar" data-camera-message-sendbar hidden><span data-camera-message-selection></span><button type="button" data-camera-message-send>Send</button></div>
+        </section>
         <section class="camera-share-section"><h2>More</h2><div class="camera-share-destinations">
           <button class="camera-share-destination" type="button" data-share-destination="device"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M5 19h14"/></svg></span><span class="camera-share-copy"><strong>Save to Device</strong><small>Keep the original media on this device</small></span><span class="camera-share-chevron">›</span></button>
           <button class="camera-share-destination" type="button" data-share-destination="system"><span class="camera-share-icon"><svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.5M8.2 13.2l7.6 4.5"/></svg></span><span class="camera-share-copy"><strong>Share to Another App</strong><small>Use your device share options</small></span><span class="camera-share-chevron">›</span></button>
@@ -97,6 +107,14 @@ const shareEditButton = cameraSurface.querySelector('[data-camera-share-edit]')
 const sharePhoto = cameraSurface.querySelector('[data-camera-share-photo]')
 const shareVideo = cameraSurface.querySelector('[data-camera-share-video]')
 const shareType = cameraSurface.querySelector('[data-camera-share-type]')
+const messagePanel=cameraSurface.querySelector('[data-camera-share-message-panel]')
+const messageClose=cameraSurface.querySelector('[data-camera-message-close]')
+const messageSearch=cameraSurface.querySelector('[data-camera-message-search]')
+const messageState=cameraSurface.querySelector('[data-camera-message-state]')
+const messageList=cameraSurface.querySelector('[data-camera-message-list]')
+const messageSendbar=cameraSurface.querySelector('[data-camera-message-sendbar]')
+const messageSelection=cameraSurface.querySelector('[data-camera-message-selection]')
+const messageSend=cameraSurface.querySelector('[data-camera-message-send]')
 const transitionFrame = cameraSurface.querySelector('[data-camera-transition-frame]')
 const liveCanvas = cameraSurface.querySelector('[data-camera-live-canvas]')
 const liveCtx = liveCanvas?.getContext('2d', { alpha: false })
@@ -827,6 +845,14 @@ cameraSurface.querySelector('[data-camera-retake]')?.addEventListener('click', a
 useButton?.addEventListener('click', openShareScreen)
 shareBackButton?.addEventListener('click', closeShareScreen)
 shareEditButton?.addEventListener('click', closeShareScreen)
+// melogic-camera-share-message-p3-v1
+function cameraMessageCaptureFile(){const blob=playback._melogicCapture;if(!blob)return null;const type=playback.dataset.captureType||'video';if(blob instanceof File)return blob;const mime=String(blob.type||'')||(type==='photo'?'image/jpeg':'video/webm');const ext=mime.includes('png')?'png':mime.includes('webp')?'webp':mime.includes('jpeg')?'jpg':mime.includes('quicktime')?'mov':mime.includes('mp4')?'mp4':'webm';return new File([blob],`melogic-${type}-${Date.now()}.${ext}`,{type:mime,lastModified:Date.now()})}
+function renderCameraMessageThreads(){const q=String(messageSearch.value||'').trim().toLowerCase();const rows=cameraMessageThreads.filter(t=>!t.isAgent&&(!q||`${t.title||''} ${t.subtitle||''}`.toLowerCase().includes(q)));messageState.hidden=rows.length>0;messageState.textContent=cameraMessageLoading?'Loading conversations...':(q?'No matching conversations.':'No message conversations yet.');messageList.replaceChildren(...rows.map(t=>{const row=document.createElement('button');row.type='button';row.className='camera-share-thread'+(t.id===cameraMessageSelectedThreadId?' is-selected':'');row.dataset.cameraMessageThread=t.id;const av=document.createElement('span');av.className='camera-share-thread-avatar';if(t.imageURL){const img=document.createElement('img');img.src=t.imageURL;img.alt='';av.append(img)}else av.textContent=(t.title||'?').trim().charAt(0).toUpperCase()||'?';const copy=document.createElement('span');copy.className='camera-share-thread-copy';const strong=document.createElement('strong');strong.textContent=t.title||'Conversation';const small=document.createElement('small');small.textContent=t.subtitle||'';copy.append(strong,small);const check=document.createElement('span');check.className='camera-share-thread-check';check.innerHTML='<svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg>';row.append(av,copy,check);return row}));const selected=cameraMessageThreads.find(t=>t.id===cameraMessageSelectedThreadId);messageSendbar.hidden=!selected;messageSelection.textContent=selected?`Send to ${selected.title||'conversation'}`:''}
+async function openCameraMessagePicker(){if(cameraMessageLoading||cameraMessageSending)return;messagePanel.hidden=false;messagePanel.scrollIntoView({behavior:'smooth',block:'nearest'});if(cameraMessageThreads.length){renderCameraMessageThreads();return}cameraMessageLoading=true;messageState.hidden=false;messageState.textContent='Loading conversations...';try{const user=auth.currentUser||await waitForInitialAuthState();if(!user)throw new Error('Sign in before sending a message.');cameraMessageThreads=await listInboxThreads(user.uid)}catch(error){console.warn('[camera] could not load Inbox conversations',error);messageState.textContent=error?.message||'Could not load conversations.'}finally{cameraMessageLoading=false;renderCameraMessageThreads()}}
+function closeCameraMessagePicker(){if(cameraMessageSending)return;messagePanel.hidden=true;cameraMessageSelectedThreadId='';messageSearch.value='';renderCameraMessageThreads()}
+async function sendCameraMediaToThread(){if(cameraMessageSending||!cameraMessageSelectedThreadId)return;const file=cameraMessageCaptureFile();if(!file){messageState.hidden=false;messageState.textContent='The captured media is no longer available.';return}try{const user=auth.currentUser||await waitForInitialAuthState();if(!user)throw new Error('Sign in before sending a message.');cameraMessageSending=true;messageSend.disabled=true;messageSend.textContent='Sending...';await sendMessage(cameraMessageSelectedThreadId,{senderId:user.uid,body:'',attachments:[file],clientMessageId:`camera-${Date.now()}`});messageSend.textContent='Sent';setStatus('Sent in message.');window.setTimeout(()=>window.location.assign('/inbox/messages'),500)}catch(error){console.warn('[camera] message share failed',{code:error?.code,message:error?.message});messageState.hidden=false;messageState.textContent=error?.message||'Could not send this media.';messageSend.textContent='Send'}finally{cameraMessageSending=false;messageSend.disabled=false}}
+messageSearch?.addEventListener('input',renderCameraMessageThreads);messageClose?.addEventListener('click',closeCameraMessagePicker);messageList?.addEventListener('click',event=>{const row=event.target.closest('[data-camera-message-thread]');if(!row||cameraMessageSending)return;cameraMessageSelectedThreadId=row.dataset.cameraMessageThread||'';renderCameraMessageThreads()});messageSend?.addEventListener('click',()=>void sendCameraMediaToThread())
+
 // melogic-camera-share-publish-p2-v1
 function handoffCameraMediaToCommunity(destination) {
   const blob=playback._melogicCapture
@@ -843,7 +869,8 @@ shareScreen?.addEventListener('click',event=>{
   const d=event.target.closest('[data-share-destination]');if(!d)return
   const destination=d.dataset.shareDestination
   if(destination==='story'||destination==='feed'){handoffCameraMediaToCommunity(destination);return}
-  const m={message:'Message sharing arrives in Patch 3.',device:'Save to Device arrives in Patch 4.',system:'Device sharing arrives in Patch 4.'}
+  if(destination==='message'){void openCameraMessagePicker();return}
+  const m={device:'Save to Device arrives in Patch 4.',system:'Device sharing arrives in Patch 4.'}
   setStatus(m[destination]||'');window.setTimeout(()=>setStatus(''),1600)
 })
 window.addEventListener('resize',()=>{sizeLiveCanvas();if(!playback.hidden)sizeEditCanvas()},{passive:true})
