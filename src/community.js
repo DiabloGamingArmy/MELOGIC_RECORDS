@@ -3566,7 +3566,6 @@ function renderCommunityHomeView() {
              instance because .community-mobile-stories remains hidden there. -->
         <div class="community-mobile-stories">${renderStoriesRow()}</div>
         ${renderTopicBar()}
-        ${renderInlineComposer()}
         ${renderActiveCommunityTabContent()}
       </div>
       ${renderSidebar()}
