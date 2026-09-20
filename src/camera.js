@@ -693,6 +693,13 @@ function renderCameraEditorLayers(){
     node.style.transform=`translate(-50%,-50%) rotate(${Number(layer.rotation)||0}deg) scale(${clampEditorValue(Number(layer.scale)||1,.15,8)})`
     if(layer.type==='text'){
       node.textContent=layer.text||'Text'
+      // Text owns its own intrinsic bounds. Do not force the generic layer box
+      // (which was producing the oversized selection rectangle).
+      node.style.width='max-content'
+      node.style.maxWidth='78%'
+      node.style.height='auto'
+      node.style.minWidth='0'
+      node.style.minHeight='0'
       const fontMap={system:'system-ui,-apple-system,sans-serif',serif:'Georgia,serif',mono:'ui-monospace,SFMono-Regular,monospace',rounded:'"Arial Rounded MT Bold",system-ui,sans-serif'}
       node.style.fontFamily=fontMap[layer.fontFamily]||fontMap.system
       node.style.fontSize=`${clampEditorValue(Number(layer.fontSize)||36,12,96)}px`
@@ -1523,7 +1530,7 @@ function commitCameraText(){
 cameraSurface.querySelector('[data-camera-edit-text-add]')?.addEventListener('click',commitCameraText)
 editTextInput?.addEventListener('input',()=>{
   let layer=selectedCameraTextLayer();const text=editTextInput.value
-  if(!layer&&text){layer=addCameraEditorLayer('text',{text,fontFamily:textRailFont?.value||textFont?.value||'system',fontSize:Number(textRailSize?.value||textSize?.value)||36,color:textRailColor?.value||textColor?.value||'#ffffff',borderColor:textRailBorderColor?.value||'#000000',borderWidth:1,opacity:(Number(textRailOpacity?.value)||100)/100,width:.72,height:.18,fontWeight:700,fontStyle:'normal',textDecoration:'none',textAlign:'center',background:false});editorState.__textDraftId=layer.id;syncTextRailControls(layer)}
+  if(!layer&&text){layer=addCameraEditorLayer('text',{text,x:.5,y:.5,fontFamily:textRailFont?.value||textFont?.value||'system',fontSize:Number(textRailSize?.value||textSize?.value)||36,color:textRailColor?.value||textColor?.value||'#ffffff',borderColor:textRailBorderColor?.value||'#000000',borderWidth:1,opacity:(Number(textRailOpacity?.value)||100)/100,width:.24,height:.08,fontWeight:700,fontStyle:'normal',textDecoration:'none',textAlign:'center',background:false});editorState.__textDraftId=layer.id;syncTextRailControls(layer)}
   else if(layer)updateCameraEditorLayer(layer.id,{text},{history:false})
   // The actual text layer is the only visible text while typing; textarea is caret/input only.
   if(layer){editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent'}
