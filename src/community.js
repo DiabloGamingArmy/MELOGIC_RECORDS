@@ -1299,7 +1299,7 @@ function renderStoriesRow() {
   const realStoryItems = storyGroups().slice(0, 12).map((group) => {
     const story = group.stories[0]
     return `
-      <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
+      <button type="button" class="community-story-item ${communityAuthorIsVerified(story) ? 'is-verified-story' : ''}" data-open-story="${escapeHtml(story.storyId)}">
         <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
           ${storyAvatar(story)}
         </span></span>

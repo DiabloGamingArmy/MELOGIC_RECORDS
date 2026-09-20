@@ -1837,16 +1837,6 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     max-width:48vw !important;
   }
 
-  .community-story-viewer-identity .community-display-name.is-verified {
-    max-width:32vw !important;
-    gap:0 !important;
-  }
-
-  .community-story-viewer-identity .community-display-name.is-verified .community-verified-badge {
-    margin-left:-5px !important;
-    transform:translateX(-2px) !important;
-  }
-
   .community-story-viewer-identity .community-verified-badge {
     display:inline-block !important;
     flex:0 0 13px !important;
@@ -2825,5 +2815,26 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     line-height:1.15;
     text-overflow:ellipsis;
     white-space:nowrap;
+  }
+}
+
+
+/* melogic-mobile-story-row-verified-spacing-v1
+   Applies ONLY to Story cards on the Community homepage, not the open viewer. */
+@media (max-width:760px) {
+  .community-stories-row .community-story-item.is-verified-story > .community-display-name {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    max-width:58px;
+    gap:0;
+  }
+
+  .community-stories-row .community-story-item.is-verified-story > .community-display-name .community-verified-badge {
+    flex:0 0 12px;
+    width:12px;
+    height:12px;
+    margin-left:-4px !important;
+    transform:translateX(-2px);
   }
 }
