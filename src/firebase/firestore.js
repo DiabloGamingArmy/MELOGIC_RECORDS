@@ -269,10 +269,6 @@ function buildPrivateProfile(uid, authUser, profileInput = {}) {
   return {
     uid,
     email: authUser?.email || profileInput.email || '',
-    role: profileInput.role || 'user',
-    roles: Array.isArray(profileInput.roles) ? [...new Set(profileInput.roles.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))] : [],
-    roleLabel: profileInput.roleLabel || deriveRoleLabelFromValue(profileInput.role || profileInput.accountType),
-    accountType: profileInput.accountType || 'user',
     settings: profileInput.settings || {},
     creatorSettings: profileInput.creatorSettings || {},
     // Backward-compat profile fields while migrating to profiles/{uid}
@@ -700,24 +696,16 @@ export async function saveProfileChanges(user, payload = {}) {
         throw error
       }
 
+      // Only user-editable profile data belongs in this client transaction.
+      // Authorization, role/badge state, counters, moderation state, and other
+      // server-owned metadata must never be echoed back by profile editing.
       const normalizedPayload = {
         ...payload,
         displayName: displayNameValidation.value,
         firstName: firstNameValidation.value,
         lastName: lastNameValidation.value,
         username: nextUsernameLower,
-        role: existingUser.role || 'user',
-        roles: Array.isArray(existingUser.roles) ? existingUser.roles : [],
         roleLabel: existingProfile.roleLabel || deriveRoleLabelFromValue(existingUser.role || existingUser.accountType),
-        accountType: existingUser.accountType || 'user',
-        stats: existingProfile.stats || existingUser.stats || {
-          products: 0,
-          savedItems: 0,
-          comments: 0,
-          likes: 0,
-          downloads: 0
-        },
-        counts: existingProfile.counts || existingUser.counts || {},
         featuredItems: {
           enabled: Boolean(payload.featuredItems?.enabled),
           productIds: Array.isArray(payload.featuredItems?.productIds)
@@ -728,6 +716,22 @@ export async function saveProfileChanges(user, payload = {}) {
 
       const publicPayload = sanitizeFirestorePayload(buildPublicProfile(uid, user, normalizedPayload))
       const privatePayload = sanitizeFirestorePayload(buildPrivateProfile(uid, user, normalizedPayload))
+
+      // Defense in depth: a profile edit must not be able to smuggle
+      // server-controlled authorization/moderation/counter fields through a
+      // broad payload, even if a future UI accidentally includes them.
+      const publicServerControlledFields = [
+        'accountStatus', 'suspended', 'publicBadges', 'badges',
+        'followerCount', 'followersCount', 'followingCount'
+      ]
+      const privateServerControlledFields = [
+        'accountStatus', 'suspended', 'suspendedAt', 'suspendedBy',
+        'unsuspendedAt', 'unsuspendedBy', 'suspensionReason', 'suspensionNote',
+        'suspensionDuration', 'suspensionUntil', 'unsuspensionReason', 'roles',
+        'role', 'accountType', 'stats', 'counts'
+      ]
+      publicServerControlledFields.forEach((field) => delete publicPayload[field])
+      privateServerControlledFields.forEach((field) => delete privatePayload[field])
       publicPayload.updatedAt = serverTimestamp()
       privatePayload.updatedAt = serverTimestamp()
 
