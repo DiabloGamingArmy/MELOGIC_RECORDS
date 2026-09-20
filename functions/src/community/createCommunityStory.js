@@ -34,6 +34,8 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
   const lifetimeHours = normalizeLifetimeHours(request.data?.lifetimeHours || 24)
   const linkedPostId = sanitizeLinkedId(request.data?.linkedPostId || '')
   const linkedProductId = sanitizeLinkedId(request.data?.linkedProductId || '')
+  const remixOfStoryId = sanitizeLinkedId(request.data?.remixOfStoryId || '')
+  const remixPermission = request.data?.remixPermission === true
   const layers = sanitizeStoryLayers(request.data?.layers || [])
 
   if (!STORY_MEDIA_TYPES.has(mediaType)) {
@@ -51,6 +53,19 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
 
   const existing = await storyRef.get()
   if (existing.exists) throw new HttpsError('failed-precondition', 'This story already exists.')
+
+  let remixSource = null
+  if (remixOfStoryId) {
+    const sourceSnap = await firestore.collection('communityStories').doc(remixOfStoryId).get()
+    if (!sourceSnap.exists) throw new HttpsError('not-found', 'The original Story is no longer available.')
+    remixSource = sourceSnap.data() || {}
+    if (remixSource.status !== 'active' || remixSource.visibility !== 'public') {
+      throw new HttpsError('failed-precondition', 'This Story cannot be remixed.')
+    }
+    if (remixSource.authorUid !== uid && remixSource.remixPermission !== true) {
+      throw new HttpsError('permission-denied', 'The creator has not enabled remixing for this Story.')
+    }
+  }
 
   const nowDate = new Date()
   const expiresDate = new Date(nowDate.getTime() + lifetimeHours * 60 * 60 * 1000)
@@ -72,6 +87,11 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
     background: mediaType === 'text' ? sanitizeBackground(request.data?.background || '') : '',
     linkedPostId,
     linkedProductId,
+    remixPermission,
+    remixOfStoryId,
+    remixSourceAuthorUid: remixSource?.authorUid || '',
+    remixSourceAuthorDisplayName: remixSource?.authorDisplayName || '',
+    remixSourceCreatedAt: remixSource?.createdAt || null,
     layers,
     layerSchemaVersion: 1,
     expiresAt: admin.firestore.Timestamp.fromDate(expiresDate),
