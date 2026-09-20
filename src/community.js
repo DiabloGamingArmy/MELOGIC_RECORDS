@@ -1066,6 +1066,32 @@ function storyById(storyId = '') {
   return state.stories.find((story) => story.storyId === storyId) || null
 }
 
+function storyProvenance(story = {}) {
+  const nativeLayer = (story.layers || []).find((layer) => layer.type === 'project' && layer.metadata?.source === 'melogic')
+  const kind = String(nativeLayer?.metadata?.melogicKind || '')
+  const nativeLabels = { soura: 'Made with Soura', vertix: 'Made with Vertix', preset: 'Melogic Preset', sample: 'Melogic Sample', stage: 'Melogic Stage Plan' }
+  const items = []
+  if (story.remixOfStoryId) {
+    items.push({
+      kind: 'remix',
+      label: `Remixed from ${story.remixSourceAuthorDisplayName || 'original creator'}`,
+      detail: story.remixSourceCreatedAt ? formatTime(story.remixSourceCreatedAt) : '',
+      targetId: story.remixOfStoryId
+    })
+  }
+  if (nativeLayer) {
+    items.push({
+      kind: kind || 'melogic',
+      label: nativeLabels[kind] || 'Made in Melogic',
+      detail: nativeLayer.content || '',
+      url: nativeLayer.targetURL || ''
+    })
+  }
+  if (story.linkedProductId) items.push({ kind: 'product', label: 'Linked Melogic product', url: productRoute({ productId: story.linkedProductId }) })
+  if (story.linkedPostId) items.push({ kind: 'post', label: 'Linked Community post', url: communityPostRoute({ postId: story.linkedPostId }) })
+  return items
+}
+
 // melogic-story-author-groups-v1
 // Stories are grouped by creator in the rail/viewer. Progress segments belong
 // only to the creator currently being viewed, never to the global story list.
@@ -1466,6 +1492,7 @@ function renderStoryViewerModal() {
   const index = currentStoryIndex()
   const isOwn = state.currentUser?.uid && state.currentUser.uid === story.authorUid
   const profileHref = story.authorUid ? publicProfileRoute({ uid: story.authorUid }) : ROUTES.profilePublic
+  const provenance = storyProvenance(story)
   return `
     <div class="community-modal-backdrop">
       <section class="community-story-viewer" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
@@ -1497,6 +1524,9 @@ function renderStoryViewerModal() {
           <button type="button" data-story-action="source">${iconSvg('link')}<span>Source</span></button>
           <button type="button" data-story-action="report">${iconSvg('alertCircle')}<span>Report</span></button>
         </div>
+        ${provenance.length ? `<div class="community-story-provenance" data-story-provenance>
+          ${provenance.map((item) => `<button type="button" data-story-provenance-kind="${escapeHtml(item.kind)}" data-story-provenance-url="${escapeHtml(item.url || '')}" data-story-provenance-id="${escapeHtml(item.targetId || '')}"><span>${iconSvg(item.kind === 'remix' ? 'refreshCw' : item.kind === 'product' ? 'shoppingBag' : 'link')}</span><span><strong>${escapeHtml(item.label)}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}</span></button>`).join('')}
+        </div>` : ''}
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
           ${story.mediaType === 'video' && story.mediaURL
             ? `<video src="${escapeHtml(story.mediaURL)}" autoplay muted playsinline preload="auto" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture></video>`
@@ -8119,10 +8149,12 @@ function bindEvents() {
       return
     }
     if (action === 'source') {
-      const sourceLayer = (story.layers || []).find((layer) => layer.targetURL)
-      const sourceURL = sourceLayer?.targetURL || communityPostRoute({ postId: story.linkedPostId || '' })
-      if (sourceURL && sourceURL !== '#') window.location.assign(sourceURL)
-      else showCommunityToast('This Story has no linked source.')
+      const panel = app.querySelector('[data-story-provenance]')
+      if (panel) {
+        panel.classList.toggle('is-open')
+        return
+      }
+      showCommunityToast('This Story has no linked source.')
       return
     }
     if (action === 'remix') {
@@ -8163,6 +8195,22 @@ function bindEvents() {
       window.localStorage.setItem(key, JSON.stringify(ids.slice(-250)))
       showCommunityToast(`Added to ${collectionName}.`)
     }
+  }))
+  app.querySelectorAll('[data-story-provenance-url], [data-story-provenance-id]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    const url = button.getAttribute('data-story-provenance-url') || ''
+    const sourceId = button.getAttribute('data-story-provenance-id') || ''
+    if (sourceId) {
+      const sourceStory = storyById(sourceId)
+      if (sourceStory) {
+        state.storyViewer = { open: true, storyId: sourceId, loading: false, error: '' }
+        render()
+        return
+      }
+      showCommunityToast('The original Story is no longer active.')
+      return
+    }
+    if (url && url !== '#') window.location.assign(url)
   }))
   app.querySelectorAll('[data-story-report]').forEach((button) => button.addEventListener('click', () => openStoryReport(button.getAttribute('data-story-report') || '')))
   app.querySelectorAll('[data-story-delete]').forEach((button) => button.addEventListener('click', () => handleStoryDelete(button.getAttribute('data-story-delete') || '')))
