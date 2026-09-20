@@ -920,3 +920,72 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
  right:max(70px,calc(env(safe-area-inset-right,0px) + 62px))!important;
  top:calc(env(safe-area-inset-top,0px) + 64px)!important;
 }
+
+
+/* camera-editor-cleanup-p2-modal-viewport
+   One geometry contract for iOS Safari/PWA sheets and keyboard-driven text. */
+.camera-surface{
+ --camera-editor-viewport-top:0px;
+ --camera-review-bar-clearance:calc(var(--camera-nav-height,82px) + env(safe-area-inset-bottom,0px));
+}
+.camera-sticker-picker,.camera-audio-controls{
+ position:fixed!important;
+ z-index:2200!important;
+ left:max(8px,env(safe-area-inset-left,0px))!important;
+ right:max(8px,env(safe-area-inset-right,0px))!important;
+ top:calc(var(--camera-editor-viewport-top,0px) + env(safe-area-inset-top,0px) + 48px)!important;
+ bottom:var(--camera-review-bar-clearance)!important;
+ width:auto!important;height:auto!important;max-height:none!important;
+ transform:translateY(var(--camera-sheet-drag,0px))!important;
+ border-radius:28px 28px 0 0!important;
+ overflow:hidden!important;
+}
+.camera-sticker-picker.is-dragging,.camera-audio-controls.is-dragging{transition:none!important}
+.camera-sticker-picker:not(.is-dragging),.camera-audio-controls:not(.is-dragging){transition:transform .2s ease!important}
+.camera-sticker-grid,.camera-music-results{min-height:0!important;flex:1 1 auto!important;overflow-y:auto!important;overscroll-behavior-y:contain!important}
+.camera-sticker-picker,.camera-audio-controls{display:flex!important;flex-direction:column!important}
+.camera-sticker-picker[hidden],.camera-audio-controls[hidden]{display:none!important}
+.camera-sticker-tabs{flex:0 0 auto;overflow-x:auto!important;overflow-y:hidden!important;scrollbar-width:none;white-space:nowrap}
+.camera-sticker-tabs::-webkit-scrollbar{display:none}
+.camera-sticker-search,.camera-music-search,.camera-sticker-head,.camera-audio-head,.camera-sheet-grabber{flex:0 0 auto}
+.camera-sheet-grabber{cursor:grab}.camera-sheet-grabber:active{cursor:grabbing}
+
+/* The review bar always wins the bottom layer; sheets never render beneath it. */
+.camera-review-bottom-actions{z-index:2300!important}
+.camera-surface.is-reviewing .camera-sticker-picker,
+.camera-surface.is-reviewing .camera-audio-controls{bottom:var(--camera-review-bar-clearance)!important}
+
+/* Text editing follows VisualViewport instead of the layout viewport when iOS keyboard opens. */
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox{
+ position:fixed!important;
+ top:var(--camera-editor-viewport-top,0px)!important;
+ bottom:auto!important;
+ height:var(--camera-editor-viewport-height,100dvh)!important;
+ max-height:var(--camera-editor-viewport-height,100dvh)!important;
+}
+.camera-surface.is-keyboard-open[data-camera-active-tool="text"] .camera-text-done{
+ top:calc(var(--camera-editor-viewport-top,0px) + env(safe-area-inset-top,0px) + 12px)!important;
+}
+.camera-surface.is-keyboard-open[data-camera-active-tool="text"] .camera-edit-tools{
+ top:calc(var(--camera-editor-viewport-top,0px) + env(safe-area-inset-top,0px) + 64px)!important;
+ max-height:calc(var(--camera-editor-viewport-height,100dvh) - env(safe-area-inset-top,0px) - 86px)!important;
+}
+
+/* Search keyboard: shrink content naturally; never force the old full-height rule. */
+.camera-surface.is-keyboard-open .camera-sticker-picker,
+.camera-surface.is-keyboard-open .camera-audio-controls{
+ top:calc(var(--camera-editor-viewport-top,0px) + 8px)!important;
+ bottom:8px!important;
+ max-height:calc(var(--camera-editor-viewport-height,100dvh) - 16px)!important;
+}
+.camera-surface.is-keyboard-open .camera-review-bottom-actions{visibility:hidden!important;pointer-events:none!important}
+
+/* Desktop retains a centered modal rather than inheriting mobile fixed-sheet geometry. */
+@media(min-width:761px){
+ .camera-sticker-picker,.camera-audio-controls{
+  left:50%!important;right:auto!important;top:80px!important;bottom:80px!important;
+  width:min(620px,calc(100% - 30px))!important;
+  transform:translate(-50%,var(--camera-sheet-drag,0px))!important;
+  border-radius:28px!important;
+ }
+}
