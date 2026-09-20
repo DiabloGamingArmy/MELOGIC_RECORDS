@@ -1400,26 +1400,35 @@ function renderStoryViewerModal() {
           }
           ${(story.mediaType === 'image' || story.mediaType === 'video') && (story.caption || story.text) ? `<p class="community-story-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
         </div>
-        <div class="community-story-discussion">
-          <div class="community-story-reactions" aria-label="Story reactions">
-            <button type="button" data-story-reaction="like:${escapeHtml(story.storyId)}">${iconSvg('thumbsUp')} <span>Like</span></button>
-            <button type="button" data-story-reaction="dislike:${escapeHtml(story.storyId)}">${iconSvg('thumbsDown')} <span>Dislike</span></button>
+        <div class="community-story-mobile-interactions">
+          <div class="community-story-reply-shell" aria-label="Story reply">
+            <input type="text" aria-label="Send message" placeholder="Send message…" maxlength="240" disabled />
           </div>
-          <form data-story-comment-form="${escapeHtml(story.storyId)}">
-            <label for="story-comment-${escapeHtml(story.storyId)}">Comment</label>
-            <div>
-              <input id="story-comment-${escapeHtml(story.storyId)}" name="storyComment" type="text" maxlength="240" placeholder="Story comments are coming soon." disabled />
-              <button type="submit" disabled aria-label="Send story comment">${iconSvg('send')}</button>
-            </div>
-          </form>
+          <button type="button" class="community-story-mobile-like" data-story-reaction="like:${escapeHtml(story.storyId)}" aria-label="Like story">${iconSvg('heart')}</button>
+          <button type="button" class="community-story-mobile-share" aria-label="Share story">${iconSvg('send')}</button>
         </div>
-        <footer class="community-story-viewer-actions">
-          <button type="button" data-story-prev ${state.stories.length <= 1 ? 'disabled' : ''}>${iconSvg('arrowLeft')} <span>Prev</span></button>
-          <span>${formatCount(index + 1)} / ${formatCount(state.stories.length)} · ${iconSvg('eye')} ${formatCount(story.viewCount)}</span>
-          <button type="button" data-story-next ${state.stories.length <= 1 ? 'disabled' : ''}><span>Next</span> ${iconSvg('chevronRight')}</button>
-          <button type="button" data-story-report="${escapeHtml(story.storyId)}">${iconSvg('alertCircle')} <span>Report</span></button>
-          ${isOwn ? `<button type="button" data-story-delete="${escapeHtml(story.storyId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
-        </footer>
+        <div class="community-story-desktop-controls">
+          <div class="community-story-discussion">
+            <div class="community-story-reactions" aria-label="Story reactions">
+              <button type="button" data-story-reaction="like:${escapeHtml(story.storyId)}">${iconSvg('thumbsUp')} <span>Like</span></button>
+              <button type="button" data-story-reaction="dislike:${escapeHtml(story.storyId)}">${iconSvg('thumbsDown')} <span>Dislike</span></button>
+            </div>
+            <form data-story-comment-form="${escapeHtml(story.storyId)}">
+              <label for="story-comment-${escapeHtml(story.storyId)}">Comment</label>
+              <div>
+                <input id="story-comment-${escapeHtml(story.storyId)}" name="storyComment" type="text" maxlength="240" placeholder="Story comments are coming soon." disabled />
+                <button type="submit" disabled aria-label="Send story comment">${iconSvg('send')}</button>
+              </div>
+            </form>
+          </div>
+          <footer class="community-story-viewer-actions">
+            <button type="button" data-story-prev ${state.stories.length <= 1 ? 'disabled' : ''}>${iconSvg('arrowLeft')} <span>Prev</span></button>
+            <span>${formatCount(index + 1)} / ${formatCount(state.stories.length)} · ${iconSvg('eye')} ${formatCount(story.viewCount)}</span>
+            <button type="button" data-story-next ${state.stories.length <= 1 ? 'disabled' : ''}><span>Next</span> ${iconSvg('chevronRight')}</button>
+            <button type="button" data-story-report="${escapeHtml(story.storyId)}">${iconSvg('alertCircle')} <span>Report</span></button>
+            ${isOwn ? `<button type="button" data-story-delete="${escapeHtml(story.storyId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
+          </footer>
+        </div>
         ${state.storyViewer.error ? `<p class="community-error">${escapeHtml(state.storyViewer.error)}</p>` : ''}
       </section>
     </div>
