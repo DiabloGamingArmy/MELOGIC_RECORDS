@@ -176,6 +176,7 @@ const state = {
     previewURL: '',
     lifetimeHours: 24,
     visibility: 'public',
+    storyType: 'moment',
     layers: [],
     selectedLayerId: '',
     remixOfStoryId: '',
@@ -1037,6 +1038,7 @@ function cleanStoryComposerState(overrides = {}) {
     previewURL: '',
     lifetimeHours: 24,
     visibility: 'public',
+    storyType: 'moment',
     layers: [],
     selectedLayerId: '',
     remixOfStoryId: '',
@@ -1338,6 +1340,12 @@ function renderStoryComposerModal() {
         ${state.storyComposer.message ? `<p class="community-success">${escapeHtml(state.storyComposer.message)}</p>` : `
           <form data-story-composer-form>
             ${state.storyComposer.remixOfStoryId ? `<div class="community-story-remix-banner"><span>REMIX</span><strong>From ${escapeHtml(state.storyComposer.remixSourceAuthorDisplayName || 'original creator')}</strong><small>Original attribution remains attached to your Story.</small></div>` : ''}
+            <div class="community-story-type-switch" role="group" aria-label="Story type">
+              ${[
+                ['moment','Moment'], ['sound','Sound'], ['thought','Thought'], ['drop','Drop'],
+                ['ask','Ask'], ['live','Live'], ['project','Project']
+              ].map(([value,label]) => `<button type="button" data-story-type="${value}" class="${state.storyComposer.storyType === value ? 'is-active' : ''}" aria-pressed="${state.storyComposer.storyType === value ? 'true' : 'false'}">${label}</button>`).join('')}
+            </div>
             <div class="community-story-mode-switch" role="group" aria-label="Story media source">
               <button type="button" data-story-mode="upload" class="${state.storyComposer.mode === 'upload' ? 'is-active' : ''}" aria-pressed="${state.storyComposer.mode === 'upload' ? 'true' : 'false'}" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('upload')} <span>Upload</span></button>
               <button type="button" data-story-mode="record" class="${isRecordMode ? 'is-active' : ''}" aria-pressed="${isRecordMode ? 'true' : 'false'}" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('play')} <span>Record</span></button>
@@ -1527,6 +1535,7 @@ function renderStoryViewerModal() {
         ${provenance.length ? `<div class="community-story-provenance" data-story-provenance>
           ${provenance.map((item) => `<button type="button" data-story-provenance-kind="${escapeHtml(item.kind)}" data-story-provenance-url="${escapeHtml(item.url || '')}" data-story-provenance-id="${escapeHtml(item.targetId || '')}"><span>${iconSvg(item.kind === 'remix' ? 'refreshCw' : item.kind === 'product' ? 'shoppingBag' : 'link')}</span><span><strong>${escapeHtml(item.label)}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}</span></button>`).join('')}
         </div>` : ''}
+        <div class="community-story-type-badge is-${escapeHtml(story.storyType || 'moment')}">${escapeHtml((story.storyType || 'moment').toUpperCase())}</div>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
           ${story.mediaType === 'video' && story.mediaURL
             ? `<video src="${escapeHtml(story.mediaURL)}" autoplay muted playsinline preload="auto" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture></video>`
@@ -6976,6 +6985,7 @@ async function handleStorySubmit(event) {
       lifetimeHours,
       visibility,
       background: state.storyComposer.background,
+      storyType: state.storyComposer.storyType || 'moment',
       layers: state.storyComposer.layers || [],
       remixOfStoryId: state.storyComposer.remixOfStoryId || '',
       remixPermission: state.storyComposer.remixPermission === true
@@ -7909,6 +7919,11 @@ function bindEvents() {
     const id = `layer-${Date.now().toString(36)}`
     layers.push({ id, type, x: .5, y: .58, width: .48, height: .1, rotation: 0, scale: 1, opacity: 1, zIndex: layers.length + 1, startMs: 0, endMs: 0, content, targetId: '', targetURL, metadata })
     state.storyComposer = { ...state.storyComposer, layers, selectedLayerId: id }
+    render()
+  }))
+  app.querySelectorAll('[data-story-type]').forEach((button) => button.addEventListener('click', () => {
+    updateStoryComposerFromForm()
+    state.storyComposer.storyType = button.getAttribute('data-story-type') || 'moment'
     render()
   }))
   app.querySelector('[data-story-remix-permission]')?.addEventListener('change', (event) => {
