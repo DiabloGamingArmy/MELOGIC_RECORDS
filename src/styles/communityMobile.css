@@ -1183,8 +1183,9 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
    create target read as the signed-in user's Story rather than a generic icon. */
 @media (max-width:760px) {
   body.is-community-page .community-mobile-stories .community-stories-row {
-    padding-left:8px !important;
-    scroll-padding-left:8px !important;
+    padding-left:0 !important;
+    scroll-padding-left:0 !important;
+    margin-left:-4px !important;
   }
 
   body.is-community-page .community-story-avatar.is-create {
