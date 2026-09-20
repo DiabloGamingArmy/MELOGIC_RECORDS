@@ -141,7 +141,10 @@ function sanitizeSafePageContext(raw = null) {
     dawContext: sanitizeContextValue(raw.dawContext),
     stageContext: sanitizeContextValue(raw.stageContext),
     productId: cleanString(raw.productId || '', 180),
-    productTitle: cleanString(raw.productTitle || '', 200)
+    productTitle: cleanString(raw.productTitle || '', 200),
+    storyAuthorUid: cleanString(raw.storyAuthorUid || '', 180),
+    storyMediaType: cleanString(raw.storyMediaType || '', 40),
+    storyMediaURL: cleanString(raw.storyMediaURL || '', 2000)
   }
 }
 
