@@ -253,7 +253,6 @@ function buildPublicProfile(uid, authUser, profileInput = {}) {
     location: profileInput.location || '',
     website: profileInput.website || '',
     roleLabel: profileInput.roleLabel || deriveRoleLabelFromValue(profileInput.role || profileInput.accountType),
-    badges: Array.isArray(profileInput.badges) ? [...new Set(profileInput.badges.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean))] : [],
     featuredItems,
     socials: profileInput.socials || {},
     stats: profileInput.stats || {
@@ -709,7 +708,6 @@ export async function saveProfileChanges(user, payload = {}) {
         username: nextUsernameLower,
         role: existingUser.role || 'user',
         roles: Array.isArray(existingUser.roles) ? existingUser.roles : [],
-        badges: Array.isArray(existingProfile.badges) ? existingProfile.badges : [],
         roleLabel: existingProfile.roleLabel || deriveRoleLabelFromValue(existingUser.role || existingUser.accountType),
         accountType: existingUser.accountType || 'user',
         stats: existingProfile.stats || existingUser.stats || {
