@@ -1104,3 +1104,18 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   -webkit-text-stroke:0 transparent;
   text-shadow:none;
 }
+
+
+/* camera-layer-touch-transform-p8 */
+.camera-editor-layer-stage{
+  touch-action:none!important;
+}
+.camera-editor-layer{
+  touch-action:none!important;
+}
+.camera-editor-layer.is-selected{
+  cursor:grab;
+}
+.camera-editor-layer.is-selected:active{
+  cursor:grabbing;
+}
