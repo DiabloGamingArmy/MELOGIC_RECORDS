@@ -2437,3 +2437,23 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-story-provenance small { font-size:.66rem; opacity:.58; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .community-story-provenance button:active { background:rgba(255,255,255,.08); }
 }
+
+
+/* melogic-story-types-push-16 */
+@media (max-width:760px) {
+  .community-story-type-switch { display:flex; gap:6px; overflow-x:auto; padding:1px 0 8px; scrollbar-width:none; }
+  .community-story-type-switch::-webkit-scrollbar { display:none; }
+  .community-story-type-switch button {
+    flex:0 0 auto; min-height:38px; padding:0 13px; border:1px solid rgba(255,255,255,.11);
+    border-radius:999px; background:transparent; color:rgba(255,255,255,.64); font:inherit; font-size:.75rem; font-weight:720;
+  }
+  .community-story-type-switch button.is-active { border-color:rgba(255,255,255,.38); background:rgba(255,255,255,.1); color:#fff; }
+  .community-story-type-badge {
+    position:absolute; z-index:12; top:calc(env(safe-area-inset-top,0px) + 65px); left:50%; transform:translateX(-50%);
+    padding:4px 8px; border:1px solid rgba(255,255,255,.15); border-radius:999px; background:rgba(5,6,8,.44);
+    color:rgba(255,255,255,.7); font-size:.56rem; font-weight:900; letter-spacing:.13em; pointer-events:none;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  }
+  .community-story-type-badge.is-moment { opacity:.62; }
+  .community-story-type-badge.is-live { border-color:rgba(255,255,255,.32); color:#fff; }
+}
