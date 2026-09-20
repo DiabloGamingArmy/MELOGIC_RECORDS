@@ -1211,7 +1211,7 @@ function renderStoriesRow() {
   const realStoryItems = state.stories.slice(0, 12).map((story) => `
     <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
       <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
-        ${story.mediaType === 'image' && story.mediaURL ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="lazy" />` : story.mediaType === 'video' ? iconSvg('play') : storyAvatar(story)}
+        ${storyAvatar(story)}
       </span></span>
       ${communityDisplayNameMarkup(story, story.authorDisplayName || story.authorUsername || 'Creator')}
     </button>
