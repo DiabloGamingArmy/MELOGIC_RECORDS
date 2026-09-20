@@ -562,3 +562,59 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   .camera-edit-tools>button{width:42px!important;height:42px!important}
   .camera-edit-tools.is-expanded{max-height:calc(100% - var(--melogic-mobile-safe-top,0px) - 104px)}
 }
+
+
+/* camera-editor-redesign-p2-draw-rail */
+/* Drawing uses the right rail for discrete brush controls and a secondary pill for continuous parameters. */
+.camera-draw-controls{
+  position:absolute;z-index:59;
+  right:max(8px,env(safe-area-inset-right,0px));
+  top:calc(env(safe-area-inset-top,0px) + 64px);
+  left:auto;bottom:auto;transform:none;
+  display:flex;align-items:flex-start;gap:8px;
+  max-width:none;padding:0;border:0;border-radius:0;background:transparent;
+  backdrop-filter:none;-webkit-backdrop-filter:none;
+  pointer-events:none;
+}
+.camera-draw-controls[hidden]{display:none!important}
+.camera-draw-brushes{
+  width:56px;box-sizing:border-box;padding:6px;
+  display:flex;flex-direction:column;gap:2px;
+  border:1px solid rgba(255,255,255,.16);border-radius:999px;
+  background:rgba(8,9,13,.78);box-shadow:0 14px 42px rgba(0,0,0,.3);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  pointer-events:auto;
+}
+.camera-draw-brushes button,.camera-draw-color-button{
+  width:42px;height:42px;flex:0 0 42px;box-sizing:border-box;
+  display:grid;place-items:center;padding:0;border:0;border-radius:50%;
+  background:transparent;color:#fff;touch-action:manipulation;
+}
+.camera-draw-brushes button.is-active{background:#fff;color:rgba(25,26,30,.68)}
+.camera-draw-brushes svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.camera-draw-color-button{position:relative;border:1px solid rgba(255,255,255,.12)}
+.camera-draw-color-button input{position:absolute;inset:0;width:100%!important;height:100%!important;opacity:0;padding:0;border:0;cursor:pointer}
+.camera-draw-color-button span{width:24px;height:24px;border:3px solid #fff;border-radius:50%;background:currentColor;box-shadow:0 0 0 1px rgba(0,0,0,.35);pointer-events:none}
+.camera-draw-color-button:has(input[value="#ffffff"]) span{background:#fff}
+.camera-draw-parameters{
+  display:flex;gap:7px;padding:11px 8px;
+  border:1px solid rgba(255,255,255,.16);border-radius:999px;
+  background:rgba(8,9,13,.78);box-shadow:0 14px 42px rgba(0,0,0,.26);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  pointer-events:auto;
+}
+.camera-draw-parameters label{height:154px;width:34px;display:flex;flex-direction:column;align-items:center;gap:7px;color:rgba(255,255,255,.68);font:650 8px/1 system-ui;text-transform:uppercase;letter-spacing:.05em}
+.camera-draw-parameters input[type="range"]{
+  width:132px!important;height:26px;margin:53px -49px 0;
+  transform:rotate(-90deg);transform-origin:center;
+  accent-color:#fff;touch-action:none;
+}
+.camera-edit-tools[data-active-tool="pen"]{opacity:0;pointer-events:none!important}
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-controls{animation:cameraDrawControlsIn .2s ease-out both}
+@keyframes cameraDrawControlsIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:translateX(0)}}
+@media(max-width:760px){
+  .camera-draw-controls{right:max(8px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px)}
+  .camera-draw-brushes{width:56px}
+  .camera-draw-parameters label{height:142px}
+  .camera-draw-parameters input[type="range"]{width:120px;margin:47px -43px 0}
+}
