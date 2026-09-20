@@ -54,7 +54,17 @@ cameraSurface.innerHTML = `
       <video data-camera-recorded playsinline loop hidden></video>
       <canvas class="camera-edit-canvas" data-camera-edit-canvas></canvas>
       <div class="camera-editor-layer-stage" data-camera-editor-layer-stage aria-label="Editing layers"></div>
-      <div class="camera-edit-textbox" data-camera-edit-textbox hidden><input data-camera-edit-text-input maxlength="160" placeholder="Type something…"><button type="button" data-camera-edit-text-add>Add</button></div>
+      <div class="camera-edit-textbox" data-camera-edit-textbox hidden>
+        <div class="camera-text-entry"><input data-camera-edit-text-input maxlength="160" placeholder="Type something…"><button type="button" data-camera-edit-text-add>Done</button></div>
+        <div class="camera-text-controls">
+          <select data-camera-text-font aria-label="Text font"><option value="system">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option><option value="rounded">Rounded</option></select>
+          <button type="button" data-camera-text-style="weight" aria-label="Bold text"><strong>B</strong></button>
+          <button type="button" data-camera-text-style="align" aria-label="Change alignment">≡</button>
+          <button type="button" data-camera-text-style="background" aria-label="Toggle text background">▣</button>
+          <input type="color" value="#ffffff" data-camera-text-color aria-label="Text color">
+          <input type="range" min="16" max="72" value="36" data-camera-text-size aria-label="Text size">
+        </div>
+      </div>
       <div class="camera-edit-tools" data-camera-edit-tools>
         <button type="button" data-camera-edit-tool="text" aria-label="Add text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8.5 19h7"/></svg></button>
         <button type="button" data-camera-edit-tool="pen" aria-label="Draw"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.8 6.4 2.8 2.8"/></svg></button>
@@ -547,7 +557,22 @@ function renderCameraEditorLayers(){
     node.style.opacity=String(clampEditorValue(layer.opacity,0,1))
     node.style.zIndex=String(20+(layer.zIndex||0))
     node.style.transform=`translate(-50%,-50%) rotate(${Number(layer.rotation)||0}deg) scale(${clampEditorValue(Number(layer.scale)||1,.15,8)})`
-    if(layer.type==='text')node.textContent=layer.text||'Text'
+    if(layer.type==='text'){
+      node.textContent=layer.text||'Text'
+      const fontMap={system:'system-ui,-apple-system,sans-serif',serif:'Georgia,serif',mono:'ui-monospace,SFMono-Regular,monospace',rounded:'"Arial Rounded MT Bold",system-ui,sans-serif'}
+      node.style.fontFamily=fontMap[layer.fontFamily]||fontMap.system
+      node.style.fontSize=`${clampEditorValue(Number(layer.fontSize)||36,12,96)}px`
+      node.style.fontWeight=layer.fontWeight||700
+      node.style.textAlign=layer.textAlign||'center'
+      node.style.color=layer.color||'#fff'
+      node.style.lineHeight='1.08'
+      node.style.whiteSpace='pre-wrap'
+      node.style.overflowWrap='anywhere'
+      node.style.padding=layer.background?'8px 12px':'4px'
+      node.style.borderRadius=layer.background?'10px':'0'
+      node.style.background=layer.background?'rgba(0,0,0,.58)':'transparent'
+      node.style.textShadow=layer.background?'none':'0 2px 8px rgba(0,0,0,.72)'
+    }
     else if(layer.type==='sticker')node.textContent=layer.value||'☺'
     else if(layer.type==='image'&&layer.previewURL){const img=document.createElement('img');img.src=layer.previewURL;img.alt='';node.append(img)}
     else node.textContent=layer.label||layer.type
@@ -1152,8 +1177,36 @@ cameraSurface.querySelector('[data-camera-editor-selection-actions]')?.addEventL
   else if(action==='forward')moveCameraEditorLayer(editorState.selectedLayerId,1)
   else if(action==='back')moveCameraEditorLayer(editorState.selectedLayerId,-1)
 })
-cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text')editTextInput.focus()})
-cameraSurface.querySelector('[data-camera-edit-text-add]')?.addEventListener('click',()=>{const v=editTextInput.value.trim();if(!v)return;sizeEditCanvas();pushEditHistory();const f=Math.max(34,editCanvas.width*.055);editCtx.font=`700 ${f}px system-ui`;editCtx.textAlign='center';editCtx.textBaseline='middle';editCtx.lineWidth=Math.max(4,f*.12);editCtx.strokeStyle='rgba(0,0,0,.72)';editCtx.fillStyle='#fff';editCtx.strokeText(v,editCanvas.width/2,editCanvas.height/2);editCtx.fillText(v,editCanvas.width/2,editCanvas.height/2);editTextInput.value='';editTextbox.hidden=true;editMode=''})
+cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}editTextInput.focus()}})
+const textFont=cameraSurface.querySelector('[data-camera-text-font]'),textColor=cameraSurface.querySelector('[data-camera-text-color]'),textSize=cameraSurface.querySelector('[data-camera-text-size]')
+function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
+function syncCameraTextControls(layer){
+  if(!layer)return
+  editTextInput.value=layer.text||''
+  if(textFont)textFont.value=layer.fontFamily||'system'
+  if(textColor)textColor.value=layer.color||'#ffffff'
+  if(textSize)textSize.value=String(layer.fontSize||36)
+}
+function commitCameraText(){
+  const value=editTextInput.value.trim();if(!value)return
+  let layer=selectedCameraTextLayer()
+  const props={text:value,fontFamily:textFont?.value||'system',fontSize:Number(textSize?.value)||36,color:textColor?.value||'#ffffff'}
+  if(layer)updateCameraEditorLayer(layer.id,props)
+  else layer=addCameraEditorLayer('text',{...props,width:.62,height:.14,fontWeight:700,textAlign:'center',background:false})
+  editTextbox.hidden=true;editMode='';renderCameraEditorLayers()
+}
+cameraSurface.querySelector('[data-camera-edit-text-add]')?.addEventListener('click',commitCameraText)
+editTextInput?.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();commitCameraText()}})
+textFont?.addEventListener('change',()=>{const layer=selectedCameraTextLayer();if(layer)updateCameraEditorLayer(layer.id,{fontFamily:textFont.value})})
+textColor?.addEventListener('input',()=>{const layer=selectedCameraTextLayer();if(layer)updateCameraEditorLayer(layer.id,{color:textColor.value})})
+textSize?.addEventListener('input',()=>{const layer=selectedCameraTextLayer();if(layer)updateCameraEditorLayer(layer.id,{fontSize:Number(textSize.value)||36})})
+cameraSurface.querySelectorAll('[data-camera-text-style]').forEach(button=>button.addEventListener('click',()=>{
+  const layer=selectedCameraTextLayer();if(!layer)return
+  const style=button.dataset.cameraTextStyle
+  if(style==='weight')updateCameraEditorLayer(layer.id,{fontWeight:Number(layer.fontWeight)===400?700:400})
+  if(style==='align'){const values=['left','center','right'],index=values.indexOf(layer.textAlign||'center');updateCameraEditorLayer(layer.id,{textAlign:values[(index+1)%values.length]})}
+  if(style==='background')updateCameraEditorLayer(layer.id,{background:!layer.background})
+}))
 editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[0];if(!file)return;const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{sizeEditCanvas();pushEditHistory();const m=Math.min(editCanvas.width,editCanvas.height)*.34,s=Math.min(m/i.width,m/i.height,1),w=i.width*s,h=i.height*s;editCtx.drawImage(i,(editCanvas.width-w)/2,(editCanvas.height-h)/2,w,h);URL.revokeObjectURL(u)};i.src=u})
 const editorLayerStage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
 editorLayerStage?.addEventListener('pointerdown',event=>{
@@ -1177,6 +1230,11 @@ function finishEditorPointer(event){
 editorLayerStage?.addEventListener('pointerup',finishEditorPointer)
 editorLayerStage?.addEventListener('pointercancel',finishEditorPointer)
 editorLayerStage?.addEventListener('click',event=>event.stopPropagation())
+editorLayerStage?.addEventListener('dblclick',event=>{
+  const target=event.target.closest?.('[data-camera-editor-layer]');if(!target)return
+  const layer=editorState.layers.find(item=>item.id===target.dataset.cameraEditorLayer);if(layer?.type!=='text')return
+  event.preventDefault();event.stopPropagation();selectCameraEditorLayer(layer.id);syncCameraTextControls(layer);editMode='text';editTextbox.hidden=false;editTextInput.focus();editTextInput.select()
+})
 
 editCanvas.addEventListener('pointerdown',e=>{if(editMode!=='pen')return;e.preventDefault();sizeEditCanvas();pushEditHistory();editDrawing=true;editCanvas.setPointerCapture?.(e.pointerId);const p=editorPoint(e);editCtx.beginPath();editCtx.moveTo(p.x,p.y)})
 editCanvas.addEventListener('pointermove',e=>{if(!editDrawing||editMode!=='pen')return;e.preventDefault();const p=editorPoint(e);editCtx.lineWidth=Math.max(5,editCanvas.width*.008);editCtx.lineCap='round';editCtx.strokeStyle='#fff';editCtx.lineTo(p.x,p.y);editCtx.stroke()})
