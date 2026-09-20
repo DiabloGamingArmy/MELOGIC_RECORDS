@@ -988,3 +988,26 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   transform:rotate(-90deg)!important;
   transform-origin:center!important;
 }
+
+
+/* camera-text-single-live-preview-p3
+   The rendered editor layer is the visual text. The textarea only owns keyboard input/caret.
+   During typing, pin that selected layer to the vertical center of the visible area above iOS keyboard. */
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox textarea{
+  color:transparent!important;
+  -webkit-text-fill-color:transparent!important;
+  text-shadow:none!important;
+  caret-color:#fff!important;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox textarea::placeholder{
+  color:rgba(255,255,255,.48)!important;
+  -webkit-text-fill-color:rgba(255,255,255,.48)!important;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-editor-layer-stage [data-camera-editor-layer].is-selected{
+  position:fixed!important;
+  left:50%!important;
+  top:calc(var(--camera-editor-viewport-height,100dvh) / 2)!important;
+  transform:translate(-50%,-50%)!important;
+  margin:0!important;
+  z-index:63!important;
+}
