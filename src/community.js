@@ -1446,7 +1446,16 @@ function renderStoryViewerModal() {
           <div class="community-story-reply-shell" aria-label="Story reply">
             <input type="text" aria-label="Send message" placeholder="Send message…" maxlength="240" readonly inputmode="none" />
           </div>
-          <button type="button" class="community-story-mobile-like" data-story-reaction="like:${escapeHtml(story.storyId)}" aria-label="Like story">${iconSvg('heart')}</button>
+          <div class="community-story-reaction-anchor">
+            <div class="community-story-reaction-orbit" data-story-reaction-orbit aria-hidden="true">
+              <button type="button" data-story-quick-reaction="fire" aria-label="React fire"><span>🔥</span></button>
+              <button type="button" data-story-quick-reaction="laugh" aria-label="React laugh"><span>😂</span></button>
+              <button type="button" data-story-quick-reaction="mindblown" aria-label="React mind blown"><span>🤯</span></button>
+              <button type="button" data-story-quick-reaction="clap" aria-label="React applause"><span>👏</span></button>
+              <button type="button" data-story-quick-reaction="dead" aria-label="React dead"><span>💀</span></button>
+            </div>
+            <button type="button" class="community-story-mobile-like" data-story-reaction="like:${escapeHtml(story.storyId)}" aria-label="Like story" aria-expanded="false">${iconSvg('heart')}</button>
+          </div>
           <button type="button" class="community-story-mobile-share" data-story-mobile-share="${escapeHtml(story.storyId)}" aria-label="Share story">${iconSvg('send')}</button>
         </div>
         <div class="community-story-desktop-controls">
@@ -7780,7 +7789,47 @@ function bindEvents() {
   app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
   app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
   bindStoryViewerPlayback()
-  app.querySelectorAll('[data-story-reaction]').forEach((button) => button.addEventListener('click', () => {
+  const storyLikeButton = app.querySelector('.community-story-mobile-like')
+  const storyReactionOrbit = app.querySelector('[data-story-reaction-orbit]')
+  let storyReactionHoldTimer = 0
+  let storyReactionHoldOpened = false
+  const closeStoryReactionOrbit = () => {
+    storyReactionOrbit?.classList.remove('is-open')
+    storyReactionOrbit?.setAttribute('aria-hidden', 'true')
+    storyLikeButton?.setAttribute('aria-expanded', 'false')
+  }
+  const openStoryReactionOrbit = () => {
+    storyReactionHoldOpened = true
+    storyReactionOrbit?.classList.add('is-open')
+    storyReactionOrbit?.setAttribute('aria-hidden', 'false')
+    storyLikeButton?.setAttribute('aria-expanded', 'true')
+    if (navigator.vibrate) navigator.vibrate(18)
+  }
+  storyLikeButton?.addEventListener('pointerdown', (event) => {
+    event.stopPropagation()
+    storyReactionHoldOpened = false
+    window.clearTimeout(storyReactionHoldTimer)
+    storyReactionHoldTimer = window.setTimeout(openStoryReactionOrbit, 360)
+  })
+  storyLikeButton?.addEventListener('pointerup', (event) => {
+    event.stopPropagation()
+    window.clearTimeout(storyReactionHoldTimer)
+    if (!storyReactionHoldOpened) {
+      storyLikeButton.classList.toggle('is-reacted')
+      showCommunityToast(storyLikeButton.classList.contains('is-reacted') ? 'Liked Story.' : 'Like removed.')
+    }
+  })
+  storyLikeButton?.addEventListener('pointercancel', () => window.clearTimeout(storyReactionHoldTimer))
+  storyLikeButton?.addEventListener('click', (event) => event.stopPropagation())
+  app.querySelectorAll('[data-story-quick-reaction]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const label = button.querySelector('span')?.textContent || 'Reaction'
+    storyLikeButton?.classList.add('is-reacted')
+    closeStoryReactionOrbit()
+    showCommunityToast(`${label} reaction selected.`)
+  }))
+  app.querySelectorAll('.community-story-desktop-controls [data-story-reaction]').forEach((button) => button.addEventListener('click', () => {
     showCommunityToast('Story reactions are coming soon.')
   }))
   app.querySelector('[data-story-mobile-share]')?.addEventListener('click', (event) => {
