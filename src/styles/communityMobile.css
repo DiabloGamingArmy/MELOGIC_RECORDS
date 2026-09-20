@@ -813,6 +813,28 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     height:2px !important;
     background:var(--community-accent-gradient,var(--ml-accent-gradient)) !important;
   }
+  /* Keep the feed sort control on the same row as the three-way selector. */
+  body.is-community-page .community-network-home-header {
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) 38px !important;
+    align-items:center !important;
+  }
+  body.is-community-page .community-network-home-header > .community-mobile-primary-tabs {
+    grid-column:1 !important;
+    grid-row:1 !important;
+    border-bottom:0 !important;
+  }
+  body.is-community-page .community-network-home-header > .community-sort-control {
+    grid-column:2 !important;
+    grid-row:1 !important;
+    justify-self:end !important;
+    align-self:center !important;
+  }
+  body.is-community-page .community-network-home-header > .community-topic-context {
+    grid-column:1 / -1 !important;
+    grid-row:2 !important;
+  }
+
   body.is-community-page .community-sort-control {
     width:38px !important;
     min-width:38px !important;
