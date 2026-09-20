@@ -626,6 +626,15 @@ function setupCommunityFeedTabs() {
     if (!['for-you', 'following'].includes(nextTab)) return
     event.preventDefault()
 
+    // Mobile surface routing owns BOTH state mutation and DOM caching.
+    // Do not change activeTab before it captures the currently mounted surface:
+    // doing so mislabels the outgoing DOM and rotates Discover/Following/For You.
+    if (isMobileSpaRuntime()) {
+      event.stopImmediatePropagation()
+      navigateMobileCommunitySurface(nextTab)
+      return
+    }
+
     // A tab can already be the remembered feed selection while Discover is
     // mounted. In that case it is still a navigation action: leave Discover.
     // Only short-circuit when that feed is already the visible surface.
@@ -633,11 +642,6 @@ function setupCommunityFeedTabs() {
 
     state.activeTab = nextTab
     state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
-
-    if (isMobileSpaRuntime()) {
-      navigateMobileCommunitySurface(nextTab)
-      return
-    }
 
     // Desktop left-rail feed controls are also visible while Discover is open.
     // Switching feed must therefore leave the Discover route/view, not merely
@@ -6879,8 +6883,8 @@ function restoreMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
   const cached = mobileCommunitySurfaceCache.get(key)
   const root = app?.querySelector('[data-community-root]')
   if (!cached?.fragment?.childNodes?.length || !root) return false
-  mobileCommunitySurfaceCache.delete(key)
-
+  // Keep the cache slot alive conceptually; the restored fragment is consumed
+  // by the DOM, and the surface is re-captured into the same slot on departure.
   // Stories/community topology are shared live state. Surface-specific feed
   // data comes from the snapshot, but shared state must never roll backward.
   const sharedState = {
@@ -6895,6 +6899,7 @@ function restoreMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
   Object.assign(state, cached.state, sharedState)
   root.replaceChildren(cached.fragment)
   mobileCommunitySurfaceKey = key
+  bindEvents()
   syncCommunityMobileHeader(false, app)
   setCommunityScroll(cached.scrollTop, root)
   window.requestAnimationFrame(() => setCommunityScroll(cached.scrollTop, root))
@@ -8452,11 +8457,13 @@ function bindEvents() {
   bindFeedRegionEvents(app)
   bindCommunityDiscoveryWidgetEvents(app)
   setupCommunityOutsideClick()
-  app.querySelectorAll('[data-community-tab]').forEach((button) => {
-    button.addEventListener('click', () => {
-      selectTopicTab(button.getAttribute('data-community-tab') || 'for-you')
+  if (!isMobileSpaRuntime()) {
+    app.querySelectorAll('[data-community-tab]').forEach((button) => {
+      button.addEventListener('click', () => {
+        selectTopicTab(button.getAttribute('data-community-tab') || 'for-you')
+      })
     })
-  })
+  }
   app.querySelector('[data-community-feed-search]')?.addEventListener('submit', handleFeedSearch)
   app.querySelector('[data-community-feed-sort]')?.addEventListener('change', (event) => {
     state.feedSort = ['new', 'top-today', 'top-week', 'most-discussed'].includes(event.target.value) ? event.target.value : 'new'
