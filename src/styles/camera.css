@@ -1011,3 +1011,33 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   margin:0!important;
   z-index:63!important;
 }
+
+
+/* camera-text-unified-edit-geometry-p4
+   One coordinate system: textarea/caret and rendered text share the same keyboard-safe center. */
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox textarea{
+  left:50%!important;
+  top:50%!important;
+  transform:translate(-50%,-50%)!important;
+  width:min(78%,560px)!important;
+  min-height:56px!important;
+  padding:8px 12px!important;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-editor-layer-stage [data-camera-editor-layer].is-selected{
+  position:absolute!important;
+  left:50%!important;
+  top:50%!important;
+  width:max-content!important;
+  max-width:78%!important;
+  height:auto!important;
+  min-width:0!important;
+  min-height:0!important;
+  transform:translate(-50%,-50%)!important;
+  margin:0!important;
+  z-index:63!important;
+  box-sizing:border-box!important;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-editor-layer-stage [data-camera-editor-layer].is-selected::before{
+  inset:-6px!important;
+  border-radius:8px!important;
+}
