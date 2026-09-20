@@ -1277,9 +1277,9 @@ function renderStoryComposerModal() {
                         <label class="community-story-dropzone ${state.storyComposer.submitting ? 'is-disabled' : ''}">
                           ${iconSvg('upload')}
                           <strong>Drop media here or choose a file</strong>
-                          <span>MP4, WebM, JPG, PNG, or WebP</span>
+                          <span>Images and videos · optimized automatically before upload</span>
                           <em>Stories can be up to 60 seconds.</em>
-                          <input name="storyMedia" type="file" accept="video/mp4,video/webm,image/jpeg,image/png,image/webp" data-story-file ${state.storyComposer.submitting ? 'disabled' : ''} />
+                          <input name="storyMedia" type="file" accept="image/*,video/*,.heic,.heif,.avif,.mov,.m4v,.avi,.mkv,.3gp,.3g2,.mpeg,.mpg,.ogv" data-story-file ${state.storyComposer.submitting ? 'disabled' : ''} />
                         </label>
                       `
                   }
@@ -1303,7 +1303,7 @@ function renderStoryComposerModal() {
                       <div><strong>${escapeHtml(state.storyComposer.file?.name || 'Story media')}</strong><small>${escapeHtml(storyFileLabel(state.storyComposer.file).split(' · ').slice(1).join(' · ') || (isVideo ? 'Video' : 'Image'))}</small></div>
                       <label class="button button-muted ${state.storyComposer.submitting ? 'is-disabled' : ''}">
                         Replace
-                        <input name="storyMedia" type="file" accept="video/mp4,video/webm,image/jpeg,image/png,image/webp" data-story-file ${state.storyComposer.submitting ? 'disabled' : ''} />
+                        <input name="storyMedia" type="file" accept="image/*,video/*,.heic,.heif,.avif,.mov,.m4v,.avi,.mkv,.3gp,.3g2,.mpeg,.mpg,.ogv" data-story-file ${state.storyComposer.submitting ? 'disabled' : ''} />
                       </label>
                       <button type="button" class="community-story-remove-file" data-remove-story-file aria-label="Remove selected story media" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('x')}</button>
                     </div>
