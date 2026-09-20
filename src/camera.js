@@ -780,6 +780,24 @@ function beginEditorDrag(pointer){
   editorGestureHistoryCommitted=false
   editorGesture={kind:'drag',layerId:layer.id,start:{x:pointer.x,y:pointer.y},layer:{x:layer.x,y:layer.y}}
 }
+function beginEditorTouchDrag(touch){
+  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!layer||!touch)return false
+  editorGestureHistoryCommitted=false
+  editorGesture={kind:'touch-drag',layerId:layer.id,start:{x:touch.clientX,y:touch.clientY},layer:{x:layer.x,y:layer.y}}
+  return true
+}
+function updateEditorTouchDrag(touch){
+  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!layer||editorGesture?.kind!=='touch-drag'||!touch)return
+  const stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]'),r=stage?.getBoundingClientRect()
+  if(!r?.width||!r?.height)return
+  if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
+  layer.x=clampEditorValue(editorGesture.layer.x+(touch.clientX-editorGesture.start.x)/r.width,.02,.98)
+  layer.y=clampEditorValue(editorGesture.layer.y+(touch.clientY-editorGesture.start.y)/r.height,.02,.98)
+  editorState.revision+=1
+  paintCameraEditorLayerTransform(layer)
+}
 function updateEditorDrag(pointer){
   const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
   if(!layer||editorGesture?.kind!=='drag'||!pointer)return
@@ -1707,10 +1725,29 @@ editorLayerStage?.addEventListener('keydown',event=>{
   if(!target)return
   if(event.key==='Escape'){event.preventDefault();commitCameraText()}
 })
+const CAMERA_GESTURE_DEBUG=true
+function traceCameraGesture(event,label=''){
+  if(!CAMERA_GESTURE_DEBUG)return
+  console.debug('[camera-gesture]',label||event.type,{
+    type:event.type,
+    pointerType:event.pointerType||'',
+    pointerId:event.pointerId??null,
+    touches:event.touches?.length??null,
+    scale:Number.isFinite(Number(event.scale))?Number(event.scale):null,
+    rotation:Number.isFinite(Number(event.rotation))?Number(event.rotation):null,
+    defaultPrevented:event.defaultPrevented,
+    gesture:editorGesture?.kind||'idle',
+    selectedLayerId:editorState.selectedLayerId||''
+  })
+}
+
 editorLayerStage?.addEventListener('pointerdown',event=>{
-  // Touch pinch/rotate is owned by TouchEvent/GestureEvent below. PointerEvent is
-  // retained only for direct one-pointer layer dragging (mouse/pen/touch).
-  if(editorGesture?.kind==='touch-transform'||editorGesture?.kind==='webkit-transform')return
+  traceCameraGesture(event)
+  // Touch is owned exclusively by Touch Events below. Never start a PointerEvent
+  // drag for a finger; mixing the two systems was causing the first contact to
+  // establish translation before the second contact could become a transform.
+  if(event.pointerType==='touch')return
+  if(editorGesture?.kind==='touch-drag'||editorGesture?.kind==='touch-transform')return
   const target=event.target.closest?.('[data-camera-editor-layer]')
   if(!target)return
   if(target.matches('[data-camera-live-text-editor="true"]')){event.stopPropagation();return}
@@ -1718,19 +1755,17 @@ editorLayerStage?.addEventListener('pointerdown',event=>{
   selectCameraEditorLayer(target.dataset.cameraEditorLayer||'')
   const pointer={x:event.clientX,y:event.clientY}
   editorPointers.clear();editorPointers.set(event.pointerId,pointer)
-  if(event.pointerType!=='touch')editorLayerStage.setPointerCapture?.(event.pointerId)
+  editorLayerStage.setPointerCapture?.(event.pointerId)
   beginEditorDrag(pointer)
 })
 editorLayerStage?.addEventListener('pointermove',event=>{
-  if(editorGesture?.kind!=='drag'||!editorPointers.has(event.pointerId))return
-  // Once iOS reports multiple touches, TouchEvent takes authority and pointer drag stops.
-  if(event.pointerType==='touch'&&editorPointers.size>1)return
-  event.preventDefault()
+  if(event.pointerType==='touch'||editorGesture?.kind!=='drag'||!editorPointers.has(event.pointerId))return
+  event.preventDefault();traceCameraGesture(event)
   const pointer={x:event.clientX,y:event.clientY}
   editorPointers.set(event.pointerId,pointer);updateEditorDrag(pointer)
 })
 function finishEditorPointer(event){
-  if(!editorPointers.has(event.pointerId))return
+  if(event.pointerType==='touch'||!editorPointers.has(event.pointerId))return
   editorPointers.delete(event.pointerId)
   if(editorGesture?.kind==='drag'){editorGesture=null;renderCameraEditorLayers()}
 }
@@ -1738,38 +1773,60 @@ editorLayerStage?.addEventListener('pointerup',finishEditorPointer)
 editorLayerStage?.addEventListener('pointercancel',finishEditorPointer)
 
 editorLayerStage?.addEventListener('touchstart',event=>{
-  if(event.touches.length<2||!editorState.selectedLayerId)return
+  traceCameraGesture(event)
+  if(!editorState.selectedLayerId)return
+  if(event.touches.length>=2){
+    event.preventDefault()
+    // A second finger atomically promotes touch-drag to transform. The transform
+    // snapshot freezes x/y and owns scale + rotation until the gesture ends.
+    beginEditorTouchTransform(event.touches)
+    return
+  }
+  if(event.touches.length!==1)return
+  const target=event.target.closest?.('[data-camera-editor-layer]')
+  if(!target||target.dataset.cameraEditorLayer!==editorState.selectedLayerId)return
+  if(target.matches('[data-camera-live-text-editor="true"]'))return
   event.preventDefault()
-  editorPointers.clear()
-  // On WebKit, gesturestart may follow this event and become authoritative.
-  beginEditorTouchTransform(event.touches)
+  beginEditorTouchDrag(event.touches[0])
 },{passive:false})
 editorLayerStage?.addEventListener('touchmove',event=>{
-  if(event.touches.length<2||editorGesture?.kind!=='touch-transform')return
-  event.preventDefault();updateEditorTouchTransform(event.touches)
+  traceCameraGesture(event)
+  if(event.touches.length>=2){
+    event.preventDefault()
+    if(editorGesture?.kind!=='touch-transform')beginEditorTouchTransform(event.touches)
+    updateEditorTouchTransform(event.touches)
+    return
+  }
+  if(event.touches.length===1&&editorGesture?.kind==='touch-drag'){
+    event.preventDefault();updateEditorTouchDrag(event.touches[0])
+  }
 },{passive:false})
 editorLayerStage?.addEventListener('touchend',event=>{
-  if(editorGesture?.kind!=='touch-transform')return
-  event.preventDefault()
-  if(event.touches.length<2)finishEditorTransform()
+  traceCameraGesture(event)
+  if(editorGesture?.kind==='touch-transform'){
+    event.preventDefault()
+    // Never downgrade a completed pinch/twist into a drag with the remaining finger.
+    if(event.touches.length<2)finishEditorTransform()
+    return
+  }
+  if(editorGesture?.kind==='touch-drag'&&event.touches.length===0){
+    event.preventDefault();finishEditorTransform()
+  }
 },{passive:false})
 editorLayerStage?.addEventListener('touchcancel',event=>{
-  if(editorGesture?.kind==='touch-transform')finishEditorTransform()
+  traceCameraGesture(event)
+  if(editorGesture?.kind==='touch-transform'||editorGesture?.kind==='touch-drag')finishEditorTransform()
 },{passive:false})
 
-// Safari/iOS exposes native scale + rotation. Prefer it when emitted.
-editorLayerStage?.addEventListener('gesturestart',event=>{
-  if(!editorState.selectedLayerId)return
-  event.preventDefault();beginEditorWebKitGesture(event)
-},{passive:false})
-editorLayerStage?.addEventListener('gesturechange',event=>{
-  if(editorGesture?.kind!=='webkit-transform')return
-  event.preventDefault();updateEditorWebKitGesture(event)
-},{passive:false})
-editorLayerStage?.addEventListener('gestureend',event=>{
-  if(editorGesture?.kind!=='webkit-transform')return
-  event.preventDefault();finishEditorTransform()
-},{passive:false})
+// Diagnostic only: do not mutate editor state from WebKit GestureEvents.
+// Logging these tells us whether a given iOS/PWA build emits them without
+// competing with the authoritative TouchEvent state machine.
+;['gesturestart','gesturechange','gestureend'].forEach(type=>{
+  editorLayerStage?.addEventListener(type,event=>{
+    traceCameraGesture(event)
+    if(editorState.selectedLayerId)event.preventDefault()
+  },{passive:false})
+})
 editorLayerStage?.addEventListener('click',event=>event.stopPropagation())
 editorLayerStage?.addEventListener('dblclick',event=>{
   const target=event.target.closest?.('[data-camera-editor-layer]');if(!target)return
