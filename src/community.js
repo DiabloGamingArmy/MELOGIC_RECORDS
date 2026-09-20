@@ -3864,12 +3864,31 @@ async function loadTopCommentPreviews() {
   }))
 }
 
+async function loadFeedCommunityMetadata(requestId = state.feedRequestId) {
+  const sourcePosts = state.posts.slice()
+  if (!sourcePosts.length) return
+  try {
+    const hydrated = await hydrateCommunityPostCommunities(sourcePosts)
+    if (requestId !== state.feedRequestId) return
+    const hydratedById = new Map(hydrated.map((post) => [post.postId, post]))
+    state.posts = state.posts.map((post) => hydratedById.get(post.postId) || post)
+  } catch (error) {
+    // Community metadata is non-critical enrichment. Keep the already-rendered
+    // denormalized post snapshot if canonical lookup is temporarily unavailable.
+    console.warn('[community] post community metadata enrichment failed', {
+      code: error?.code,
+      message: error?.message
+    })
+  }
+}
+
 async function loadFeedEnrichment(requestId = state.feedRequestId, { localOnly = false } = {}) {
   const startedAt = performance.now()
   await Promise.allSettled([
     loadViewerState(),
     loadAttachmentMediaUrls(),
-    loadTopCommentPreviews()
+    loadTopCommentPreviews(),
+    loadFeedCommunityMetadata(requestId)
   ])
   if (requestId !== state.feedRequestId) return
   logCommunityPerf('feed enrichment complete', { durationMs: Math.round(performance.now() - startedAt), posts: state.posts.length })
@@ -4354,8 +4373,12 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
       hasMore = Boolean(result.hasMore)
     }
     if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
-    posts = await hydrateCommunityPostCommunities(posts)
-    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
+
+    // melogic-community-progressive-community-metadata-v1
+    // Feed documents already carry denormalized communitySlug/communityName,
+    // which is sufficient for first paint. Do not block visible posts behind
+    // N additional communities/{id} reads. Canonical mutable community metadata
+    // is reconciled after paint as progressive enrichment.
     state.posts = reset ? sortPinnedPosts(posts) : sortPinnedPosts(mergeUniquePosts(state.posts, posts))
     state.feedCursor = cursor || state.feedCursor
     state.feedHasMore = hasMore
