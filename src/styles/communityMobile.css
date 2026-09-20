@@ -2347,7 +2347,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-story-object.is-poll > strong { display:block; padding:2px 3px 8px; white-space:normal; }
   .community-story-object.is-poll > div { display:grid; gap:5px; }
   .community-story-object.is-poll button {
-    width:100%; min-height:34px; border:1px solid rgba(255,255,255,.15); border-radius:10px;
+    width:100%; min-height:44px; border:1px solid rgba(255,255,255,.15); border-radius:10px;
     background:rgba(255,255,255,.07); color:#fff; padding:6px 9px; text-align:left; font:inherit;
   }
   .community-story-object.is-poll button.is-selected {
@@ -2486,4 +2486,13 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   }
   .community-story-context-drawer section button small { font-size:.58rem; text-transform:uppercase; letter-spacing:.08em; opacity:.46; }
   .community-story-context-drawer section button strong { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.78rem; }
+}
+
+
+/* melogic-story-final-audit-push-18 */
+@media (max-width:760px) {
+  .community-story-object { min-height:44px; }
+  .community-story-viewer-layers a[href="#"] { cursor:default; }
+  .community-story-context-drawer[aria-hidden="true"] { pointer-events:none; }
+  .community-story-context-drawer[aria-hidden="false"] { pointer-events:auto; }
 }
