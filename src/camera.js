@@ -62,6 +62,13 @@ cameraSurface.innerHTML = `
         <button type="button" data-camera-edit-tool="crop" aria-label="Crop"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v14a2 2 0 0 0 2 2h12M3 7h14a2 2 0 0 1 2 2v12"/></svg></button>
         <button type="button" data-camera-edit-tool="image" aria-label="Add image"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m5 17 4.5-4.5 3.2 3.2 2.3-2.3 4 3.6"/></svg></button>
         <button type="button" data-camera-edit-tool="undo" aria-label="Undo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 7-5 5 5 5"/><path d="M5 12h8a6 6 0 0 1 6 6"/></svg></button>
+        <button type="button" data-camera-edit-tool="redo" aria-label="Redo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 7 5 5-5 5"/><path d="M19 12h-8a6 6 0 0 0-6 6"/></svg></button>
+        <div class="camera-editor-selection-actions" data-camera-editor-selection-actions hidden>
+          <button type="button" data-camera-layer-action="back" aria-label="Move layer backward">↓</button>
+          <button type="button" data-camera-layer-action="forward" aria-label="Move layer forward">↑</button>
+          <button type="button" data-camera-layer-action="duplicate" aria-label="Duplicate layer">⧉</button>
+          <button type="button" data-camera-layer-action="delete" aria-label="Delete layer">×</button>
+        </div>
         <input data-camera-edit-image-input type="file" accept="image/*" hidden>
       </div>
       <!-- melogic-camera-review-bottom-actions-p1-v1: bottom bar owns review actions -->
@@ -138,6 +145,10 @@ let frontFlashOn=false, editMode='', editDrawing=false, editHistory=[]
 let editorState=createCameraEditorState()
 const editorPointers=new Map()
 let editorGesture=null
+let editorUndoStack=[]
+let editorRedoStack=[]
+let editorHistorySuspended=false
+const CAMERA_EDITOR_HISTORY_LIMIT=60
 let renderGeneration = 0
 let renderRaf = 0
 let cameraStarting = false
@@ -508,6 +519,7 @@ function syncCameraEditorMediaGeometry(){
   if(!isPhoto&&Number.isFinite(recordedVideo?.duration))editorState.media.durationMs=Math.max(0,Math.round(recordedVideo.duration*1000))
 }
 function addCameraEditorLayer(type,props={}){
+  pushCameraEditorHistory()
   const layer={
     id:cameraEditorId(type),type,
     x:.5,y:.5,width:.32,height:.12,rotation:0,scale:1,opacity:1,zIndex:editorState.layers.length,
@@ -518,8 +530,8 @@ function addCameraEditorLayer(type,props={}){
   return layer
 }
 function selectCameraEditorLayer(id=''){editorState.selectedLayerId=editorState.layers.some(layer=>layer.id===id)?id:'';renderCameraEditorLayers()}
-function updateCameraEditorLayer(id,patch={}){const layer=editorState.layers.find(item=>item.id===id);if(!layer)return null;Object.assign(layer,patch);editorState.revision+=1;renderCameraEditorLayers();return layer}
-function removeCameraEditorLayer(id){const index=editorState.layers.findIndex(layer=>layer.id===id);if(index<0)return false;editorState.layers.splice(index,1);editorState.layers.forEach((layer,zIndex)=>layer.zIndex=zIndex);if(editorState.selectedLayerId===id)editorState.selectedLayerId='';editorState.revision+=1;renderCameraEditorLayers();return true}
+function updateCameraEditorLayer(id,patch={}){const layer=editorState.layers.find(item=>item.id===id);if(!layer)return null;pushCameraEditorHistory();Object.assign(layer,patch);editorState.revision+=1;renderCameraEditorLayers();return layer}
+function removeCameraEditorLayer(id){const index=editorState.layers.findIndex(layer=>layer.id===id);if(index<0)return false;pushCameraEditorHistory();editorState.layers.splice(index,1);editorState.layers.forEach((layer,zIndex)=>layer.zIndex=zIndex);if(editorState.selectedLayerId===id)editorState.selectedLayerId='';editorState.revision+=1;renderCameraEditorLayers();return true}
 function clampEditorValue(value,min,max){return Math.min(max,Math.max(min,value))}
 function renderCameraEditorLayers(){
   const stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
@@ -542,6 +554,7 @@ function renderCameraEditorLayers(){
     return node
   })
   stage.replaceChildren(...nodes)
+  syncCameraEditorSelectionActions()
 }
 function editorStagePoint(event){
   const stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]'),r=stage?.getBoundingClientRect()
@@ -552,8 +565,8 @@ function beginEditorGesture(){
   const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
   if(!layer)return
   const points=[...editorPointers.values()]
-  if(points.length===1)editorGesture={kind:'drag',layerId:layer.id,start:{...points[0]},layer:{x:layer.x,y:layer.y}}
-  else if(points.length>=2){
+  if(points.length===1){pushCameraEditorHistory();editorGesture={kind:'drag',layerId:layer.id,start:{...points[0]},layer:{x:layer.x,y:layer.y}}}
+  else if(points.length>=2){pushCameraEditorHistory();
     const [a,b]=points,dx=b.x-a.x,dy=b.y-a.y
     editorGesture={kind:'transform',layerId:layer.id,distance:Math.hypot(dx,dy)||1,angle:Math.atan2(dy,dx)*180/Math.PI,scale:layer.scale||1,rotation:layer.rotation||0}
   }
@@ -576,14 +589,49 @@ function updateEditorGesture(){
   }
   editorState.revision+=1;renderCameraEditorLayers()
 }
+function cameraEditorStateForHistory(){const snapshot=cameraEditorSnapshot();snapshot.layers=snapshot.layers.map(layer=>{const copy={...layer};delete copy.previewURL;return copy});return snapshot}
+function syncCameraEditorSelectionActions(){
+  const actions=cameraSurface.querySelector('[data-camera-editor-selection-actions]')
+  if(actions)actions.hidden=!editorState.selectedLayerId
+  const undo=cameraSurface.querySelector('[data-camera-edit-tool="undo"]'),redo=cameraSurface.querySelector('[data-camera-edit-tool="redo"]')
+  if(undo)undo.disabled=!editorUndoStack.length
+  if(redo)redo.disabled=!editorRedoStack.length
+}
+function pushCameraEditorHistory(){
+  if(editorHistorySuspended)return
+  editorUndoStack.push(cameraEditorStateForHistory())
+  if(editorUndoStack.length>CAMERA_EDITOR_HISTORY_LIMIT)editorUndoStack.shift()
+  editorRedoStack=[]
+  syncCameraEditorSelectionActions()
+}
+function restoreCameraEditorState(snapshot){
+  if(!snapshot)return false
+  editorHistorySuspended=true
+  editorState=JSON.parse(JSON.stringify(snapshot))
+  editorHistorySuspended=false
+  renderCameraEditorLayers();syncCameraEditorSelectionActions();return true
+}
+function undoCameraEditor(){if(!editorUndoStack.length)return false;editorRedoStack.push(cameraEditorStateForHistory());return restoreCameraEditorState(editorUndoStack.pop())}
+function redoCameraEditor(){if(!editorRedoStack.length)return false;editorUndoStack.push(cameraEditorStateForHistory());return restoreCameraEditorState(editorRedoStack.pop())}
+function duplicateCameraEditorLayer(id=editorState.selectedLayerId){
+  const source=editorState.layers.find(layer=>layer.id===id);if(!source)return null
+  pushCameraEditorHistory()
+  const clone={...JSON.parse(JSON.stringify(source)),id:cameraEditorId(source.type),x:clampEditorValue(source.x+.04,.02,.98),y:clampEditorValue(source.y+.04,.02,.98),zIndex:editorState.layers.length}
+  editorState.layers.push(clone);editorState.selectedLayerId=clone.id;editorState.revision+=1;renderCameraEditorLayers();syncCameraEditorSelectionActions();return clone
+}
+function moveCameraEditorLayer(id,direction=1){
+  const index=editorState.layers.findIndex(layer=>layer.id===id);if(index<0)return false
+  const target=clampEditorValue(index+(direction>0?1:-1),0,editorState.layers.length-1);if(target===index)return false
+  pushCameraEditorHistory();const [layer]=editorState.layers.splice(index,1);editorState.layers.splice(target,0,layer);editorState.layers.forEach((item,zIndex)=>item.zIndex=zIndex);editorState.revision+=1;renderCameraEditorLayers();return true
+}
 function cameraEditorSnapshot(){return JSON.parse(JSON.stringify(editorState))}
 function exportCameraEditorState(){syncCameraEditorMediaGeometry();return cameraEditorSnapshot()}
-window.__melogicCameraEditor={getState:exportCameraEditorState,addLayer:addCameraEditorLayer,selectLayer:selectCameraEditorLayer,updateLayer:updateCameraEditorLayer,removeLayer:removeCameraEditorLayer}
+window.__melogicCameraEditor={getState:exportCameraEditorState,addLayer:addCameraEditorLayer,selectLayer:selectCameraEditorLayer,updateLayer:updateCameraEditorLayer,removeLayer:removeCameraEditorLayer,undo:undoCameraEditor,redo:redoCameraEditor,duplicateLayer:duplicateCameraEditorLayer,moveLayer:moveCameraEditorLayer}
 
 function sizeEditCanvas(){if(!editCanvas)return;const r=playback.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(editCanvas.width!==w||editCanvas.height!==h){editCanvas.width=w;editCanvas.height=h}}
 function pushEditHistory(){if(!editCanvas)return;editHistory.push(editCanvas.toDataURL());if(editHistory.length>20)editHistory.shift()}
 function restoreEditSnapshot(url){if(!editCtx)return;editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);if(!url)return;const i=new Image();i.onload=()=>editCtx.drawImage(i,0,0,editCanvas.width,editCanvas.height);i.src=url}
-function resetEditor(){editMode='';editDrawing=false;editHistory=[];resetCameraEditorState(playback?.dataset?.captureType||'');editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
+function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
 function editorPoint(e){const r=editCanvas.getBoundingClientRect();return{x:(e.clientX-r.left)*editCanvas.width/r.width,y:(e.clientY-r.top)*editCanvas.height/r.height}}
 async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
@@ -1096,7 +1144,15 @@ flashButton.addEventListener('click',async event=>{const button=event.currentTar
 flashStrength.addEventListener('input',updateFrontFlash)
 exposureSlider?.addEventListener('input',event=>{ void setCameraExposure(event.currentTarget.value) })
 
-cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){restoreEditSnapshot(editHistory.pop()||'');return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text')editTextInput.focus()})
+cameraSurface.querySelector('[data-camera-editor-selection-actions]')?.addEventListener('click',event=>{
+  const button=event.target.closest('[data-camera-layer-action]');if(!button||!editorState.selectedLayerId)return
+  event.preventDefault();event.stopPropagation();const action=button.dataset.cameraLayerAction
+  if(action==='delete')removeCameraEditorLayer(editorState.selectedLayerId)
+  else if(action==='duplicate')duplicateCameraEditorLayer()
+  else if(action==='forward')moveCameraEditorLayer(editorState.selectedLayerId,1)
+  else if(action==='back')moveCameraEditorLayer(editorState.selectedLayerId,-1)
+})
+cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text')editTextInput.focus()})
 cameraSurface.querySelector('[data-camera-edit-text-add]')?.addEventListener('click',()=>{const v=editTextInput.value.trim();if(!v)return;sizeEditCanvas();pushEditHistory();const f=Math.max(34,editCanvas.width*.055);editCtx.font=`700 ${f}px system-ui`;editCtx.textAlign='center';editCtx.textBaseline='middle';editCtx.lineWidth=Math.max(4,f*.12);editCtx.strokeStyle='rgba(0,0,0,.72)';editCtx.fillStyle='#fff';editCtx.strokeText(v,editCanvas.width/2,editCanvas.height/2);editCtx.fillText(v,editCanvas.width/2,editCanvas.height/2);editTextInput.value='';editTextbox.hidden=true;editMode=''})
 editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[0];if(!file)return;const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{sizeEditCanvas();pushEditHistory();const m=Math.min(editCanvas.width,editCanvas.height)*.34,s=Math.min(m/i.width,m/i.height,1),w=i.width*s,h=i.height*s;editCtx.drawImage(i,(editCanvas.width-w)/2,(editCanvas.height-h)/2,w,h);URL.revokeObjectURL(u)};i.src=u})
 const editorLayerStage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
