@@ -1254,3 +1254,95 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     stroke-width:2.1;
   }
 }
+
+
+/* melogic-mobile-story-viewer-fullscreen-p1 */
+/* Story Viewer is an immersive viewport mode, not a modal card.
+   Push 1 intentionally preserves the existing viewer controls/content hierarchy;
+   later pushes replace the HUD and interaction treatment. */
+@media (max-width:760px) {
+  body:has(.community-modal-backdrop .community-story-viewer) {
+    overflow:hidden !important;
+    overscroll-behavior:none;
+    background:#000 !important;
+  }
+
+  /* The Story owns the mobile viewport while open. */
+  body:has(.community-modal-backdrop .community-story-viewer) .mobile-bottom-nav,
+  body:has(.community-modal-backdrop .community-story-viewer) .community-mobile-header,
+  body:has(.community-modal-backdrop .community-story-viewer) .community-scroll-chrome {
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  .community-modal-backdrop:has(.community-story-viewer) {
+    position:fixed !important;
+    inset:0 !important;
+    z-index:10000 !important;
+    width:100vw !important;
+    height:100dvh !important;
+    min-height:100dvh !important;
+    margin:0 !important;
+    padding:0 !important;
+    overflow:hidden !important;
+    overscroll-behavior:none !important;
+    background:#000 !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer {
+    position:relative !important;
+    inset:auto !important;
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) !important;
+    grid-template-rows:auto minmax(0,1fr) auto auto !important;
+    grid-template-areas:
+      "header"
+      "media"
+      "discussion"
+      "actions" !important;
+    width:100vw !important;
+    max-width:none !important;
+    height:100dvh !important;
+    min-height:100dvh !important;
+    max-height:none !important;
+    margin:0 !important;
+    padding:
+      env(safe-area-inset-top,0px)
+      env(safe-area-inset-right,0px)
+      env(safe-area-inset-bottom,0px)
+      env(safe-area-inset-left,0px) !important;
+    border:0 !important;
+    border-radius:0 !important;
+    outline:0 !important;
+    overflow:hidden !important;
+    background:#000 !important;
+    box-shadow:none !important;
+    color-scheme:dark;
+  }
+
+  /* Strip the old card treatment from the primary Story canvas. */
+  .community-modal-backdrop > .community-story-viewer .community-story-surface {
+    min-width:0 !important;
+    min-height:0 !important;
+    margin:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+    overflow:hidden !important;
+  }
+
+  /* Keep legacy discussion/actions usable during the architecture migration,
+     but make them part of the full-screen viewer instead of an outer modal. */
+  .community-modal-backdrop > .community-story-viewer .community-story-discussion,
+  .community-modal-backdrop > .community-story-viewer .community-story-viewer-actions {
+    min-width:0 !important;
+    margin:0 !important;
+    border-left:0 !important;
+    border-right:0 !important;
+    border-radius:0 !important;
+    box-shadow:none !important;
+  }
+}
