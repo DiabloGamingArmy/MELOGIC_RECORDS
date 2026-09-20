@@ -2819,6 +2819,2871 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 }
 
 
+/* melogic-mobile-story-avatar-verified-v2
+   Community homepage only: badge straddles the bottom edge of the Story PFP.
+   A larger black copy of the exact verified asset sits behind the blue icon. */
+@media (max-width:760px) {
+  .community-stories-row .community-story-item.is-verified-story > .community-story-ring {
+    position:relative;
+    overflow:visible;
+  }
+
+  .community-stories-row .community-story-avatar-verified {
+    position:absolute;
+    z-index:5;
+    left:50%;
+    bottom:0;
+    width:16px;
+    height:16px;
+    transform:translate(-50%, 50%);
+    pointer-events:none;
+  }
+
+  .community-stories-row .community-story-avatar-verified-shadow,
+  .community-stories-row .community-story-avatar-verified-icon {
+    position:absolute;
+    left:50%;
+    top:50%;
+    display:block;
+    object-fit:contain;
+    transform:translate(-50%, -50%);
+  }
+
+  .community-stories-row .community-story-avatar-verified-shadow {
+    width:21px;
+    height:21px;
+    filter:brightness(0) saturate(100%);
+  }
+
+  .community-stories-row .community-story-avatar-verified-icon {
+    width:15px;
+    height:15px;
+  }
+
+  .community-stories-row .community-story-item.is-verified-story > .community-display-name .community-verified-badge {
+    display:none !important;
+  }
+}* Authoritative Community phone layout. Desktop columns stay in community.css.
+   The document scrolls; only the shared title bar is sticky. No scroll animation. */
+.community-mobile-back { display: none; }
+@media (max-width: 760px) {
+  body.is-community-page {
+    --mobile-safe-top: env(safe-area-inset-top, 0px);
+    --mobile-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --community-header-height: 60px;
+    --mobile-nav-height: 72px;
+    --community-content-gutter: clamp(12px, 4vw, 20px);
+    --community-avatar-size: 38px;
+    --community-divider: rgb(174 188 211 / 14%);
+    --community-background: #000000;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+    padding-bottom: calc(var(--mobile-nav-height) + var(--mobile-safe-bottom));
+    background: var(--community-background);
+  }
+  html:has(body.is-community-page) { overflow-x: clip; }
+  body.is-community-page #app { height: auto; min-height: 100dvh; overflow: visible; }
+  .is-community-page .mobile-app-header {
+    position: sticky;
+    top: 0;
+    z-index: 45;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    min-height: calc(var(--community-header-height) + var(--mobile-safe-top));
+    padding: calc(8px + var(--mobile-safe-top)) max(var(--community-content-gutter), env(safe-area-inset-right)) 8px max(var(--community-content-gutter), env(safe-area-inset-left));
+    background: var(--community-background);
+    border-bottom: 1px solid var(--community-divider);
+  }
+  .is-community-page .mobile-app-title { min-width: 0; font-size: clamp(1.35rem, 5vw, 1.65rem); line-height: 1.25; }
+  .is-community-page .mobile-app-actions { gap: 2px; transition: opacity 220ms ease, transform 220ms ease; }
+  .is-community-page .mobile-icon-button { width: 44px; height: 44px; border: 0; }
+  .is-community-page .community-mobile-back svg { width: 22px; height: 22px; }
+  .is-community-page .mobile-app-header.is-post-view { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+  .is-community-page .is-post-view .mobile-app-title { grid-column: 2; text-align: center; animation: community-title-enter 220ms ease-out; }
+  .is-community-page .is-post-view .mobile-app-title {
+    grid-row: 1;
+    align-self: center;
+    justify-self: center;
+    width: 100%;
+  }
+  .is-community-page .community-title-lockup[hidden],
+  .is-community-page .community-post-header-title[hidden] {
+    display: none !important;
+  }
+  .is-community-page .community-post-header-title {
+    display: block;
+    font: inherit;
+    line-height: inherit;
+    color: inherit;
+    text-align: center;
+  }
+  .is-community-page .is-post-view .mobile-app-actions {
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .is-community-page .is-post-view .community-mobile-back { display: grid; grid-column: 1; grid-row: 1; animation: community-back-enter 220ms ease-out; }
+  .is-community-page .is-post-view .mobile-app-actions { position: absolute; visibility: hidden; opacity: 0; pointer-events: none; transform: translateX(8px); }
+  .is-community-page .mobile-bottom-nav {
+    min-height: calc(var(--mobile-nav-height) + var(--mobile-safe-bottom));
+    padding: 8px max(5px, env(safe-area-inset-right)) calc(8px + var(--mobile-safe-bottom)) max(5px, env(safe-area-inset-left));
+    background: var(--community-background);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .is-community-page .mobile-profile-nav-avatar { background-size: cover; background-position: center; }
+  .is-community-page .mobile-profile-nav-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .community-page { height: auto; min-height: 0; padding: 0; overflow: visible; background: var(--community-background); }
+  .community-root { height: auto; min-height: 0; }
+  .community-page .community-layout,
+  .community-page .community-layout.is-home {
+    display: block; width: 100%; height: auto; min-height: 0; margin: 0; padding: 0; overflow: visible;
+  }
+  .community-layout.is-home > .community-left-nav,
+  .community-layout.is-home > .community-right-rail { display: none; }
+  .community-page .community-main,
+  .community-page .community-layout.is-home > .community-main {
+    width: 100%; min-width: 0; height: auto; min-height: 0; padding: 0; overflow: visible; border: 0; background: transparent; scrollbar-gutter: auto;
+  }
+
+  /* melogic-community-bounded-scroll-viewport-v10
+     Community owns one fixed viewport between persistent mobile chrome.
+     This applies to feed and Community subviews because the boundary is the
+     stable .community-main surface, not route-specific markup. */
+  body.is-community-page {
+    height: 100dvh;
+    min-height: 100dvh;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+  body.is-community-page #app {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .community-page {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .community-page .community-layout,
+  .community-page .community-layout.is-home {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .community-page .community-main,
+  .community-page .community-layout.is-home > .community-main {
+    /* melogic-community-scroll-inset-v10b
+       Patch 10 bounded the HEIGHT but left the viewport's origin at y=0.
+       Explicitly inset the stable Community scroller below the persistent
+       header. Its height still terminates above the persistent bottom nav. */
+    position: relative;
+    top: 0;
+    height: calc(
+      100dvh
+      - var(--community-header-height)
+      - var(--mobile-safe-top)
+      - var(--mobile-nav-height)
+      - var(--mobile-safe-bottom)
+    );
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-gutter: auto;
+  }
+  .community-layout.is-post-detail .community-detail-topbar { display: none; }
+  .community-feed-header { position: static; top: auto; box-shadow: none; background: transparent; backdrop-filter: none; }
+  /* melogic-community-home-header-clearance-v11
+     Stories now lead the mobile Community home flow. The old v10c spacer lived
+     inside .community-feed-header, so after that reorder Stories rendered
+     underneath the persistent app header and the spacer appeared between
+     Stories and the feed tabs. Reserve the same chrome clearance on the first
+     mobile home element instead. Layout only; desktop/right-rail Stories and
+     Community data behavior are untouched. */
+  .community-layout.is-home:not(.is-post-detail):not(.is-community-detail):not(.is-directory)
+    > .community-main > .community-mobile-stories {
+    padding-top: calc(var(--community-header-height) + var(--mobile-safe-top));
+  }
+
+  .community-feed-header::before {
+    content: none;
+    display: none;
+  }
+  .community-master-tabs { min-height: 48px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
+  .community-master-tabs > button { min-height: 48px; }
+  .community-filter-shell { padding: 0; }
+  .community-filter-strip { padding: 8px var(--community-content-gutter); gap: 8px; scrollbar-width: none; }
+  .community-filter-arrow { display: none; }
+  .community-topic-pill { min-height: 44px; padding: 0 12px; max-width: 75vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .community-inline-composer { grid-template-columns: var(--community-avatar-size) minmax(0, 1fr); padding: 12px var(--community-content-gutter); background: transparent; box-shadow: none; }
+  .community-inline-avatar { width: var(--community-avatar-size); height: var(--community-avatar-size); }
+  .community-inline-prompt { min-height: 44px; }
+  .community-inline-post { display: none; }
+  .community-mobile-stories .community-stories-row { width: 100%; min-height: 0; margin: 0; padding: 10px var(--community-content-gutter) 14px; gap: 14px; scrollbar-width: none; }
+  .community-stories-label { display: none; }
+  .community-story-item { flex: 0 0 64px; width: 64px; gap: 6px; }
+  .community-story-ring { width: 56px; height: 56px; padding: 2px; }
+  .community-story-item strong { display: block; max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; }
+  .community-story-empty-state { min-height: 0; padding: 8px; justify-content: center; }
+  .community-story-empty-state button { min-height: 44px; }
+  .community-page .community-feed { width: 100%; padding: 0; margin: 0; gap: 0; }
+  .community-page .community-main .community-post-card {
+    width: 100%; margin: 0; padding: 16px var(--community-content-gutter); border: 0; border-bottom: 1px solid var(--community-divider); border-radius: 0; box-shadow: none; background: transparent; transform: none; animation: none; overflow: visible;
+  }
+  .community-post-header { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 0 8px; }
+  .community-author { min-width: 0; gap: 10px; }
+  .community-author > span:last-child { min-width: 0; }
+  .community-author strong { font-size: .94rem; line-height: 1.4; }
+  .community-author em { font-size: .76rem; line-height: 1.45; color: #a0abbd; }
+  .community-avatar { width: var(--community-avatar-size); height: var(--community-avatar-size); flex-basis: var(--community-avatar-size); }
+  .community-post-header-actions { display: contents; }
+  .community-post-header-actions > .community-post-options { grid-column: 2; grid-row: 1; }
+  .community-post-badges { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; padding-left: calc(var(--community-avatar-size) + 10px); margin-top: 6px; min-width: 0; }
+  .community-post-badges:empty { display: none; }
+  .community-post-badges .community-badge { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .68rem; }
+  .community-post-card > h2 { margin: 12px 0 6px; font-size: 1.04rem; line-height: 1.4; overflow-wrap: anywhere; }
+  .community-post-body { font-size: .94rem; line-height: 1.6; overflow-wrap: anywhere; }
+  .community-post-options-button { width: 44px; height: 44px; border: 0; background: transparent; }
+  .community-page .community-post-options-menu {
+    width: max-content; min-width: min(12rem, calc(100vw - 2 * var(--community-content-gutter))); max-width: calc(100vw - 2 * var(--community-content-gutter)); z-index: 40; background: #0d0d0f;
+  }
+  .community-post-options-menu button { min-height: 44px; white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+  .community-post-file-attachment.is-image,
+  .community-post-file-attachment.is-video { width: 100%; border: 0; border-radius: 12px; }
+  .community-post-file-attachment.is-image img,
+  .community-post-file-attachment.is-video video { width: 100%; height: auto; max-height: none; object-fit: contain; }
+  .community-post-file-attachment.is-image img:not([width]),
+  .community-post-file-attachment.is-video video:not([width]) { aspect-ratio: 4 / 3; object-fit: contain; }
+  .community-post-actions { display: flex; justify-content: space-between; flex-wrap: nowrap; gap: 0; margin-top: 8px; padding: 0; overflow: visible; }
+  .community-post-actions > :is(button, a) { min-width: 44px; min-height: 44px; padding: 6px; gap: 4px; border: 0; background: transparent; }
+  .community-post-actions span { display: none; }
+  .community-post-actions svg { width: 19px; height: 19px; }
+  .community-post-actions em { font-size: .7rem; }
+  .community-comments { width: 100%; margin: 0; padding: 16px 0 0; scroll-margin-top: calc(var(--community-header-height) + var(--mobile-safe-top) + 12px); }
+  .community-comments-heading { display: block; margin-bottom: 12px; }
+  .community-comments-heading h3 { display: block; margin: 0; font-size: 1rem; }
+  .community-comments-heading p { display: block; margin: 4px 0 0; color: #a0abbd; }
+  .community-comment-composer { position: static; width: 100%; margin: 0; padding: 12px 0; border: 0; box-shadow: none; backdrop-filter: none; }
+  .community-comment-composer-row { grid-template-columns: var(--community-avatar-size) minmax(0, 1fr); gap: 10px; }
+  .community-comment-form-actions > button { min-height: 44px; margin-left: auto; }
+  .community-comment-composer textarea { width: 100%; min-height: 96px; padding: 10px; font-size: 16px; line-height: 1.45; border: 1px solid var(--community-divider); resize: vertical; }
+  .community-comment-tool-row { padding: 0; flex-wrap: nowrap; overflow-x: auto; gap: 4px; }
+  .community-comment-tool-row button { min-height: 44px; flex: 0 0 auto; }
+  .community-comment-form-actions.is-quiet { padding: 0; justify-content: space-between; gap: 8px; }
+  .community-comments-empty { margin: 14px 0; text-align: center; padding: 12px 0; }
+  .community-comment-card { min-width: 0; box-shadow: none; }
+  .community-comment-header .community-author { flex: 1; }
+  .community-comment-replies { margin-left: 12px; padding-left: 12px; }
+  .community-comment-attachment-drafts,
+  .community-comment-attachments { padding-left: 0; }
+  .community-comment-upload-state { margin-left: 0; }
+  .community-modal-backdrop { padding: max(12px, var(--mobile-safe-top)) max(8px, env(safe-area-inset-right)) max(12px, var(--mobile-safe-bottom)) max(8px, env(safe-area-inset-left)); }
+  .community-composer-modal, .community-report-modal, .community-story-modal, .community-story-viewer, .community-destination-modal { width: 100%; max-height: calc(100dvh - var(--mobile-safe-top) - var(--mobile-safe-bottom) - 24px); }
+  .community-community-grid, .community-framework-grid, .community-community-tools, .community-composer-meta-grid, .community-story-options-grid, .community-intent-grid { grid-template-columns: minmax(0, 1fr); }
+  .community-hero, .community-feed-toolbar, .community-detail-topbar { width: 100%; flex-direction: column; align-items: stretch; padding: 16px var(--community-content-gutter); }
+  .community-feed-controls { width: 100%; display: flex; flex-wrap: wrap; }
+  .community-feed-controls form { width: 100%; }
+  .community-attachment-toolbar { flex-wrap: wrap; }
+  .community-composer-attachment { grid-template-columns: 42px minmax(0, 1fr) 32px; }
+  .community-page :is(button, a, textarea):focus-visible { outline: 2px solid var(--community-focus-ring); outline-offset: 2px; }
+  .community-page button { touch-action: manipulation; }
+  @keyframes community-title-enter { from { opacity: .6; transform: translateX(-12px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes community-back-enter { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+  @media (prefers-reduced-motion: reduce) {
+    .is-community-page .mobile-app-title, .is-community-page .community-mobile-back { animation: none; }
+    .is-community-page .mobile-app-actions { transition: none; }
+  }
+}
+
+
+/* melogic-community-black-detail-mobile-v3
+   Mobile authority corrections; color system remains identical to desktop. */
+@media(max-width:760px){
+  body.is-community-page,
+  .is-community-page .mobile-app-header,
+  .is-community-page .mobile-bottom-nav,
+  .community-page{
+    background-color:#000;
+  }
+  .community-page .community-post-options-menu,
+  .community-page .community-comment-options-menu{
+    color:var(--community-text);
+    border:1px solid var(--community-border);
+    background:#0d0d0f;
+    box-shadow:0 18px 48px rgba(0,0,0,.68);
+  }
+  .community-comments,
+  .community-comment-composer,
+  .community-comment-card{
+    background:transparent;
+  }
+  .community-comment-composer textarea{
+    color:var(--community-text);
+    background:var(--community-surface-2);
+    border-color:var(--community-border);
+  }
+  .community-modal-backdrop{background:rgba(0,0,0,.80)}
+  .community-composer-modal,.community-report-modal,.community-story-modal,
+  .community-story-viewer,.community-destination-modal,.community-share-modal,
+  .community-options-modal,.community-modal,.community-dialog{
+    background:#0d0d0f;
+    border-color:var(--community-border);
+  }
+  .community-page :is(button,a,textarea,input,select):focus-visible{
+    outline-color:var(--community-focus-ring);
+  }
+}
+
+/* melogic-community-semantic-accent-mobile-v4 */
+@media(max-width:760px){
+.community-master-tabs>button:is(.is-active,[aria-selected="true"],[aria-current="page"])::after{left:24%;right:24%}
+.community-topic-pill.is-active{color:#fff;border:1px solid transparent;background:linear-gradient(var(--community-surface-2),var(--community-surface-2)) padding-box,var(--community-accent-gradient) border-box}
+.community-page :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--community-focus-ring);outline-offset:2px}
+}
+
+/* melogic-community-theme-audit-mobile-v5 */
+@media(max-width:760px){
+body.is-community-page,body.is-community-page #app,.community-page,.is-community-page .mobile-app-header,.is-community-page .mobile-bottom-nav{background-color:#000;background-image:none}
+.community-page .community-main,.community-page .community-feed,.community-page .community-post-card,.community-page .community-comments,.community-page .community-comment-card,.community-page .community-comment-composer{background-color:transparent;background-image:none}
+.community-page .community-author em,.community-page .community-comments-heading p{color:var(--community-text-muted)}
+.community-page .community-comment-composer textarea{color:var(--community-text);background:var(--community-surface-2);border-color:var(--community-border)}
+.community-page .community-post-options-menu,.community-page .community-comment-options-menu{color:var(--community-text);background:var(--community-surface-2);border-color:var(--community-border)}
+.community-page :is(button,a,input,textarea,select,[tabindex]):focus-visible{outline:2px solid var(--community-focus-ring);outline-offset:2px}
+}
+
+/* melogic-community-mobile-touch-hardening-v1 */
+@media (pointer:coarse), (hover:none) {
+  .community-page,.community-page *:not(input):not(textarea):not([contenteditable="true"]){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  .community-page input,.community-page textarea,.community-page [contenteditable="true"]{-webkit-user-select:text;user-select:text}
+  .community-page{touch-action:pan-x pan-y}
+  .community-page img,.community-page video,.community-page button,.community-page a{-webkit-tap-highlight-color:transparent}
+  .community-image-viewer,.community-image-viewer *{touch-action:auto}
+  .community-image-viewer img{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+}
+
+/* melogic-community-image-zoom-mobile-hover-v2 */
+@media (max-width:760px), (pointer:coarse), (hover:none) {
+  .community-page .community-post-card:hover,
+  .community-page .community-post-card.is-pointer-hovered,
+  .community-page .community-feed .community-post-card:not(.community-post-detail-card):hover,
+  .community-page .community-feed .community-post-card:not(.community-post-detail-card).is-pointer-hovered,
+  .community-page .community-main .community-post-card:not(.community-post-detail-card):hover,
+  .community-page .community-main .community-post-card:not(.community-post-detail-card).is-pointer-hovered {
+    background:transparent !important;background-color:transparent !important;background-image:none !important;
+    border-color:var(--community-divider) !important;box-shadow:none !important;transform:none !important;
+  }
+  .community-image-viewer-stage {overflow:hidden;touch-action:none !important;overscroll-behavior:contain}
+  .community-image-viewer-stage img[data-community-image-zoom-target] {
+    transform-origin:center center;will-change:transform;transition:transform 160ms ease-out;
+    touch-action:none !important;-webkit-user-drag:none;user-select:none;
+  }
+  .community-image-viewer-stage img[data-community-image-zoom-target].is-zoomed {transition:none}
+}
+
+/* melogic-community-filter-feed-fix-v1 */
+@media (max-width:760px), (hover:none), (pointer:coarse) {
+.community-page .community-filter-strip .community-topic-pill:not(.is-active),
+.community-page .community-filter-strip .community-topic-pill:not(.is-active):hover,
+.community-page .community-filter-strip .community-topic-pill:not(.is-active):active,
+.community-page .community-filter-strip .community-topic-pill:not(.is-active):focus{
+color:var(--community-text-secondary)!important;border-color:var(--community-border-subtle)!important;background:transparent!important;background-color:transparent!important;background-image:none!important;box-shadow:none!important;filter:none!important}
+.community-page .community-filter-strip .community-topic-pill.is-active,
+.community-page .community-filter-strip .community-topic-pill[aria-pressed="true"],
+.community-page .community-filter-strip .community-topic-pill.is-active:hover,
+.community-page .community-filter-strip .community-topic-pill[aria-pressed="true"]:hover,
+.community-page .community-filter-strip .community-topic-pill.is-active:active,
+.community-page .community-filter-strip .community-topic-pill[aria-pressed="true"]:active{
+color:#fff!important;border:1px solid transparent!important;background:linear-gradient(var(--community-surface-2),var(--community-surface-2)) padding-box,var(--community-accent-gradient) border-box!important;box-shadow:none!important;filter:none!important}
+.community-page .community-filter-strip .community-topic-pill{-webkit-tap-highlight-color:transparent}
+}
+
+/* melogic-community-mobile-emergency-recovery-v1 */
+@media (max-width: 760px) {
+  html { width:100%; max-width:100%; overflow-x:clip !important; overflow-y:auto !important; overscroll-behavior-x:none; }
+  body.is-community-page {
+    position:static !important; inset:auto !important; width:100% !important; max-width:100% !important;
+    height:auto !important; min-height:100dvh !important; overflow-x:clip !important; overflow-y:visible !important;
+    touch-action:pan-y !important; -webkit-overflow-scrolling:touch;
+    padding-bottom:calc(var(--mobile-nav-height,72px) + env(safe-area-inset-bottom,0px)) !important;
+  }
+  body.is-community-page #app,
+  body.is-community-page .community-page,
+  body.is-community-page .community-root,
+  body.is-community-page .community-layout,
+  body.is-community-page .community-layout.is-home,
+  body.is-community-page .community-main,
+  body.is-community-page .community-layout.is-home > .community-main,
+  body.is-community-page .community-feed {
+    position:static !important; inset:auto !important; width:100% !important; max-width:100% !important; min-width:0 !important;
+    height:auto !important; min-height:0 !important; max-height:none !important;
+    overflow-x:clip !important; overflow-y:visible !important; contain:none !important; touch-action:pan-y !important;
+  }
+  body.is-community-page .mobile-app-header {
+    position:-webkit-sticky !important; position:sticky !important; top:0 !important; inset-block-start:0 !important;
+    z-index:1000 !important; width:100% !important; max-width:100% !important; min-width:0 !important;
+    transform:none !important; translate:none !important; overflow:visible !important; background:#000 !important; isolation:isolate;
+  }
+  body.is-community-page .mobile-bottom-nav {
+    position:fixed !important; left:0 !important; right:0 !important; bottom:0 !important;
+    width:100% !important; max-width:100% !important; z-index:1000 !important; transform:none !important;
+  }
+  body.is-community-page :is(.community-page,.community-root,.community-layout,.community-main,.community-feed,
+    .community-post-card,.community-post-header,.community-author,.community-author > span,.community-post-body,
+    .community-post-badges,.community-comments,.community-comment-card,.community-inline-composer,
+    .community-inline-prompt,.community-master-tabs,.community-filter-shell,.community-mobile-stories) {
+    min-width:0 !important; max-width:100% !important; box-sizing:border-box !important;
+  }
+  body.is-community-page .community-post-card { width:100% !important; margin-inline:0 !important; overflow-x:clip !important; }
+  body.is-community-page .community-post-card > h2,
+  body.is-community-page .community-post-body,
+  body.is-community-page .community-author,
+  body.is-community-page .community-author strong,
+  body.is-community-page .community-author em,
+  body.is-community-page .community-comment-card,
+  body.is-community-page .community-comment-card * { overflow-wrap:anywhere !important; word-break:normal; }
+  body.is-community-page .community-post-header { grid-template-columns:minmax(0,1fr) 44px !important; }
+  body.is-community-page .community-author > span:last-child {
+    min-width:0 !important; max-width:100% !important; overflow:hidden !important;
+  }
+  body.is-community-page .community-post-file-attachment,
+  body.is-community-page .community-post-file-attachment.is-image,
+  body.is-community-page .community-post-file-attachment.is-video {
+    display:block; width:100% !important; max-width:100% !important; min-width:0 !important;
+    overflow:hidden !important; box-sizing:border-box !important;
+  }
+  body.is-community-page .community-post-file-attachment :is(img,video,canvas,picture),
+  body.is-community-page .community-post-file-attachment picture > img {
+    display:block !important; width:100% !important; max-width:100% !important; min-width:0 !important;
+    height:auto !important; object-fit:contain !important;
+  }
+  body.is-community-page :is(.community-filter-strip,.community-stories-row,.community-comment-tool-row) {
+    overflow-x:auto !important; overflow-y:hidden !important; max-width:100% !important;
+    -webkit-overflow-scrolling:touch; touch-action:pan-x !important;
+  }
+  body.is-community-page .community-topic-pill {
+    max-width:min(75vw,320px) !important; overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important;
+  }
+  body.is-community-page .community-post-actions {
+    width:100% !important; max-width:100% !important; min-width:0 !important; display:flex !important;
+    flex-wrap:nowrap !important; justify-content:space-between !important; overflow:hidden !important;
+  }
+  body.is-community-page .community-post-actions > :is(button,a) {
+    flex:0 1 auto !important; min-width:44px !important; max-width:25% !important;
+  }
+}
+
+/* melogic-detach-feed-filters-from-sticky-header-v1
+   Mobile/PWA: only the app title/header remains sticky.
+   Feed tabs + topic filters participate in normal document flow. */
+@media (max-width: 760px) {
+  body.is-community-page .community-scroll-chrome {
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    z-index: auto !important;
+    transform: none !important;
+    translate: none !important;
+    transition: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    will-change: auto !important;
+  }
+  body.community-chrome-hidden.is-community-page .community-scroll-chrome {
+    transform: none !important;
+    translate: none !important;
+  }
+  body.is-community-page .community-feed-header,
+  body.is-community-page .community-master-tabs,
+  body.is-community-page .community-filter-shell,
+  body.is-community-page .community-topic-bar,
+  body.is-community-page .community-filter-strip {
+    position: static !important;
+    inset: auto !important;
+    top: auto !important;
+    transform: none !important;
+    translate: none !important;
+    will-change: auto !important;
+  }
+  body.is-community-page .mobile-app-header {
+    position: -webkit-sticky !important;
+    position: sticky !important;
+    top: 0 !important;
+  }
+}
+
+
+/* melogic-pwa-community-reference-v2
+   Community reference implementation for canonical mobile/PWA geometry. */
+@media (max-width:760px) {
+  html:has(body.is-community-page),
+  body.is-community-page,
+  body.is-community-page #app {
+    width:100%;
+    height:var(--melogic-mobile-viewport-h);
+    min-height:0;
+    overflow:hidden;
+    overscroll-behavior:none;
+    background:var(--community-background,#000);
+  }
+  body.is-community-page { padding-bottom:0; }
+
+  body.is-community-page .mobile-app-shell {
+    position:fixed;
+    inset:0;
+    z-index:40;
+    width:100%;
+    height:var(--melogic-mobile-viewport-h);
+    min-height:0;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    pointer-events:none;
+    background:transparent;
+  }
+
+  body.is-community-page .mobile-app-header {
+    position:relative;
+    top:auto;
+    flex:0 0 auto;
+    min-height:var(--melogic-mobile-header-h);
+    padding:calc(8px + var(--melogic-mobile-safe-top))
+      max(var(--community-content-gutter),env(safe-area-inset-right,0px))
+      8px
+      max(var(--community-content-gutter),env(safe-area-inset-left,0px));
+    pointer-events:auto;
+    background:var(--community-background,#000);
+    backdrop-filter:none!important;
+    -webkit-backdrop-filter:none!important;
+    filter:none!important;
+    box-shadow:none;
+  }
+
+  body.is-community-page .mobile-bottom-nav {
+    position:relative;
+    inset:auto;
+    flex:0 0 var(--melogic-mobile-nav-h);
+    width:100%;
+    min-height:var(--melogic-mobile-nav-h);
+    margin-top:auto;
+    padding:8px max(5px,env(safe-area-inset-right,0px))
+      calc(8px + var(--melogic-mobile-safe-bottom))
+      max(5px,env(safe-area-inset-left,0px));
+    pointer-events:auto;
+    background:var(--community-background,#000);
+    backdrop-filter:none!important;
+    -webkit-backdrop-filter:none!important;
+    filter:none!important;
+    box-shadow:none;
+  }
+
+  body.is-community-page .community-page {
+    position:fixed;
+    top:var(--melogic-mobile-header-h);
+    right:0;
+    bottom:var(--melogic-mobile-nav-h);
+    left:0;
+    width:100%;
+    height:auto;
+    min-height:0;
+    padding:0;
+    overflow-x:hidden;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-y:contain;
+    background:var(--community-background,#000);
+  }
+
+  body.is-community-page .community-root,
+  body.is-community-page .community-layout,
+  body.is-community-page .community-main { min-height:0; }
+
+  body.is-community-page :is(
+    .mobile-top-blur,.mobile-top-mask,.mobile-app-blur,.pwa-top-blur,.pwa-top-mask,
+    [data-mobile-top-blur],[data-pwa-top-blur],[data-pwa-top-mask]
+  ) {
+    display:none!important;
+    content:none!important;
+    backdrop-filter:none!important;
+    -webkit-backdrop-filter:none!important;
+    filter:none!important;
+    mask:none!important;
+    -webkit-mask:none!important;
+    pointer-events:none!important;
+  }
+
+  body.is-community-page::before,
+  body.is-community-page::after,
+  body.is-community-page #app::before,
+  body.is-community-page #app::after {
+    backdrop-filter:none!important;
+    -webkit-backdrop-filter:none!important;
+    filter:none!important;
+    mask:none!important;
+    -webkit-mask:none!important;
+  }
+}
+
+/* melogic-pwa-global-geometry-cleanup-v5 */
+@media (max-width:760px) {
+  body.is-community-page .community-page { min-height:0!important; max-height:none; margin-bottom:0!important; }
+  body.is-community-page .community-main { padding-bottom:0; }
+}
+
+/* melogic-mobile-nav-absolute-screen-geometry-v6-community-boundary */
+@media (max-width:760px) {
+ body.is-community-page .community-page { bottom:var(--melogic-mobile-nav-h) !important; }
+
+  /* community-post-viewer-v4 */
+  body.is-community-page .community-post-detail-card > .community-post-header {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 44px !important;
+    align-items: center !important;
+    gap: 0 8px !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+  body.is-community-page .community-post-detail-card > .community-post-header .community-author {
+    display: flex !important;
+    min-width: 0 !important;
+    align-items: center !important;
+  }
+  body.is-community-page .community-post-detail-card > .community-post-header .community-avatar {
+    display: grid !important;
+    flex: 0 0 auto !important;
+  }
+  body.is-community-page .community-post-detail-card > .community-post-header .community-post-header-actions {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+
+/* melogic-post-detail-header-clearance-v7
+   Runtime proof: the detail author row occupied y=16..58 while hit-testing
+   its center returned the POST shell title. Clear the persistent header
+   using canonical mobile header geometry, never a device pixel constant. */
+@media (max-width: 760px) {
+  body.is-community-page .community-layout.is-post-detail > .community-main,
+  body.is-community-page .community-layout.is-post-detail > .community-route-main {
+    padding-top: var(
+      --melogic-mobile-header-h,
+      calc(var(--community-header-height) + var(--mobile-safe-top))
+    );
+  }
+}
+
+/* melogic-mobile-subpage-correction-v11b1 */
+@media (max-width: 760px) {
+  html[data-melogic-mobile-page-depth="subpage"] body.is-community-page { padding-bottom: 0 !important; }
+  html[data-melogic-mobile-page-depth="subpage"] .community-page .community-main,
+  html[data-melogic-mobile-page-depth="subpage"] .community-page .community-layout.is-home > .community-main {
+    height: calc(100dvh - var(--community-header-height) - var(--mobile-safe-top) - var(--mobile-safe-bottom)) !important;
+    padding-bottom: var(--mobile-safe-bottom) !important;
+  }
+}
+
+/* melogic-mobile-community-destination-hardening-v5c */
+@media(max-width:760px){
+html.community-mobile-overlay-open{width:100%!important;max-width:100%!important;height:100dvh!important;max-height:100dvh!important;overflow:hidden!important;overscroll-behavior:none!important;touch-action:none!important}
+html.community-mobile-overlay-open body.is-community-page{position:fixed!important;inset:0!important;width:100%!important;height:100dvh!important;min-height:100dvh!important;max-height:100dvh!important;overflow:hidden!important;overscroll-behavior:none!important}
+html.community-mobile-overlay-open body.is-community-page .community-page{overflow:hidden!important;overscroll-behavior:none!important}
+html.community-mobile-overlay-open .community-mobile-destination-screen{touch-action:none!important}
+html.community-mobile-overlay-open .community-mobile-destination-scroll{touch-action:pan-y!important}
+html.community-mobile-overlay-open .community-mobile-destination-search,html.community-mobile-overlay-open .community-mobile-destination-search input,html.community-mobile-overlay-open .community-mobile-destination-row,html.community-mobile-overlay-open .community-mobile-destination-header button{touch-action:manipulation!important}
+}
+
+
+/* melogic-mobile-community-feed-cleanup-v1
+   Screenshot-driven mobile Home cleanup: one 16px gutter, compact stories,
+   compact feed navigation/topics, floating composer, flatter media and fewer dividers. */
+@media (max-width:760px) {
+  body.is-community-page {
+    --community-mobile-gutter:16px;
+    --community-mobile-divider:rgba(255,255,255,.075);
+  }
+
+  /* Remove desktop IA label from mobile. The Community header already provides context. */
+  body.is-community-page .community-network-home-title {
+    display:none !important;
+  }
+
+  /* Stories: useful when populated, intentionally compact when empty. */
+  body.is-community-page .community-mobile-stories {
+    border-bottom:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-mobile-stories .community-stories-row {
+    min-height:0 !important;
+    padding:10px var(--community-mobile-gutter) 8px !important;
+    gap:12px !important;
+    border:0 !important;
+  }
+  body.is-community-page .community-stories-label {
+    display:none !important;
+  }
+  body.is-community-page .community-story-item {
+    flex:0 0 58px !important;
+    width:58px !important;
+    gap:5px !important;
+  }
+  body.is-community-page .community-story-ring {
+    width:52px !important;
+    height:52px !important;
+  }
+  body.is-community-page .community-story-item strong {
+    max-width:58px !important;
+    font-size:.66rem !important;
+  }
+  body.is-community-page .community-story-empty-state {
+    min-width:0 !important;
+    min-height:52px !important;
+    padding:0 4px !important;
+    gap:3px !important;
+    align-content:center !important;
+    justify-items:start !important;
+    text-align:left !important;
+  }
+  body.is-community-page .community-story-empty-state > span {
+    color:#8c8c94 !important;
+    font-size:.68rem !important;
+    font-weight:600 !important;
+  }
+  body.is-community-page .community-story-empty-state button {
+    min-height:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    background:transparent !important;
+    color:#b9b9c0 !important;
+    font-size:.64rem !important;
+  }
+
+  /* Feed mode: compact two-way selector, no oversized band. */
+  body.is-community-page .community-network-home-header {
+    padding:0 !important;
+    border:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-master-tabs {
+    display:grid !important;
+    grid-template-columns:1fr 1fr auto !important;
+    align-items:center !important;
+    min-height:48px !important;
+    padding:0 var(--community-mobile-gutter) !important;
+    border-top:1px solid var(--community-mobile-divider) !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-master-tabs > button {
+    position:relative !important;
+    min-height:47px !important;
+    padding:0 8px !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    color:#777780 !important;
+    font-size:.78rem !important;
+    font-weight:650 !important;
+  }
+  body.is-community-page .community-master-tabs > button.is-active,
+  body.is-community-page .community-master-tabs > button[aria-selected="true"] {
+    color:#fff !important;
+  }
+  body.is-community-page .community-master-tabs > button.is-active::after,
+  body.is-community-page .community-master-tabs > button[aria-selected="true"]::after {
+    content:"" !important;
+    position:absolute !important;
+    right:24% !important;
+    bottom:-1px !important;
+    left:24% !important;
+    height:2px !important;
+    background:var(--community-accent-gradient,var(--ml-accent-gradient)) !important;
+  }
+  body.is-community-page .community-sort-control {
+    width:38px !important;
+    min-width:38px !important;
+    height:38px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:8px !important;
+    background:transparent !important;
+    color:#777780 !important;
+  }
+  body.is-community-page .community-sort-control select {
+    position:absolute !important;
+    inset:0 !important;
+    width:100% !important;
+    height:100% !important;
+    opacity:0 !important;
+  }
+
+  /* Topics are a small horizontal filter rail, not another page section. */
+  body.is-community-page .community-topic-context {
+    padding:8px 0 7px !important;
+    border:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-topic-context-label {
+    display:none !important;
+  }
+  body.is-community-page .community-filter-shell {
+    width:100% !important;
+  }
+  body.is-community-page .community-filter-strip {
+    gap:7px !important;
+    padding:0 var(--community-mobile-gutter) !important;
+    border:0 !important;
+    scrollbar-width:none !important;
+  }
+  body.is-community-page .community-filter-strip::-webkit-scrollbar {
+    display:none !important;
+  }
+  body.is-community-page .community-topic-pill {
+    min-height:32px !important;
+    height:32px !important;
+    padding:0 11px !important;
+    border-radius:7px !important;
+    font-size:.69rem !important;
+    font-weight:620 !important;
+  }
+
+  /* Composer reads as a control without becoming another card. */
+  body.is-community-page .community-inline-composer {
+    grid-template-columns:38px minmax(0,1fr) !important;
+    gap:9px !important;
+    margin:5px var(--community-mobile-gutter) 7px !important;
+    padding:7px 9px !important;
+    border:1px solid rgba(255,255,255,.075) !important;
+    border-radius:10px !important;
+    background:#09090b !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-inline-avatar {
+    width:38px !important;
+    height:38px !important;
+  }
+  body.is-community-page .community-inline-prompt {
+    min-height:38px !important;
+    padding:0 !important;
+    color:#96969e !important;
+    text-align:left !important;
+    font-size:.78rem !important;
+  }
+
+  /* Feed alignment uses the same 16px gutter everywhere. */
+  body.is-community-page .community-page .community-main .community-post-card {
+    padding:15px var(--community-mobile-gutter) 17px !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+  }
+  body.is-community-page .community-post-card:first-child {
+    border-top:0 !important;
+  }
+  body.is-community-page .community-post-file-attachment,
+  body.is-community-page .community-post-file-attachment.is-image,
+  body.is-community-page .community-post-file-attachment.is-video {
+    margin-top:11px !important;
+    border-radius:8px !important;
+  }
+  body.is-community-page .community-post-file-attachment :is(img,video,picture > img) {
+    border-radius:8px !important;
+  }
+
+  /* Avoid stacking decorative separators between every control region. */
+  body.is-community-page .community-filter-shell,
+  body.is-community-page .community-topic-context,
+  body.is-community-page .community-inline-composer {
+    border-top-color:transparent !important;
+    border-bottom-color:transparent !important;
+  }
+
+  /* Bottom-nav state should read as belonging to the item, not a stray line. */
+  body.is-community-page .mobile-bottom-nav > a[aria-current="page"]::before {
+    right:22% !important;
+    left:22% !important;
+    height:2px !important;
+    border-radius:0 0 2px 2px !important;
+    background:var(--ml-accent-gradient,linear-gradient(135deg,#477dff 0%,#765dff 52%,#a65cff 100%)) !important;
+  }
+}
+
+
+/* melogic-mobile-community-feed-polish-v2
+   Runtime screenshot follow-up: align topic rail controls, remove visual strip
+   clutter, improve feed cadence and touch hierarchy. */
+@media (max-width:760px) {
+  /* Topic rail owns a single 36px control height. Arrows vertically match pills. */
+  body.is-community-page .community-topic-context {
+    padding:7px 0 8px !important;
+  }
+  body.is-community-page .community-filter-shell {
+    position:relative !important;
+    display:flex !important;
+    align-items:center !important;
+    min-height:36px !important;
+    padding:0 40px !important;
+  }
+  body.is-community-page .community-filter-strip {
+    min-height:36px !important;
+    padding:2px 0 !important;
+    align-items:center !important;
+  }
+  body.is-community-page .community-topic-pill {
+    flex:0 0 auto !important;
+    min-height:32px !important;
+    height:32px !important;
+  }
+  body.is-community-page .community-filter-arrow {
+    display:grid !important;
+    place-items:center !important;
+    position:absolute !important;
+    top:50% !important;
+    width:34px !important;
+    height:34px !important;
+    min-width:34px !important;
+    min-height:34px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:8px !important;
+    background:#000 !important;
+    color:#8e8e97 !important;
+    transform:translateY(-50%) !important;
+    z-index:3 !important;
+  }
+  body.is-community-page .community-filter-arrow.is-left {
+    left:3px !important;
+  }
+  body.is-community-page .community-filter-arrow.is-left svg {
+    transform:rotate(180deg) !important;
+  }
+  body.is-community-page .community-filter-arrow.is-right {
+    right:3px !important;
+  }
+  body.is-community-page .community-filter-arrow:disabled {
+    opacity:.22 !important;
+  }
+  body.is-community-page .community-filter-arrow:not(:disabled):active {
+    background:#101012 !important;
+    color:#fff !important;
+  }
+
+  /* With the redundant inline composer gone, give controls -> feed a deliberate pause. */
+  body.is-community-page .community-network-home-header {
+    margin-bottom:5px !important;
+  }
+  body.is-community-page .community-feed {
+    border-top:1px solid rgba(255,255,255,.065) !important;
+  }
+
+  /* More editorial post rhythm: identity is compact, content gets breathing room. */
+  body.is-community-page .community-page .community-main .community-post-card {
+    padding-top:17px !important;
+    padding-bottom:20px !important;
+  }
+  body.is-community-page .community-author {
+    gap:9px !important;
+  }
+  body.is-community-page .community-author strong {
+    letter-spacing:-.01em !important;
+  }
+  body.is-community-page .community-post-card > h2 {
+    margin-top:13px !important;
+    margin-bottom:6px !important;
+    font-size:1rem !important;
+    letter-spacing:-.018em !important;
+  }
+  body.is-community-page .community-post-body {
+    line-height:1.52 !important;
+  }
+  body.is-community-page .community-post-actions {
+    margin-top:12px !important;
+    padding-top:10px !important;
+    border-top:1px solid rgba(255,255,255,.055) !important;
+  }
+  body.is-community-page .community-post-actions > :is(button,a) {
+    min-height:38px !important;
+    border-radius:7px !important;
+    color:#8f8f98 !important;
+  }
+  body.is-community-page .community-post-actions > :is(button,a):active {
+    color:#fff !important;
+    background:rgba(255,255,255,.045) !important;
+  }
+
+  /* Keep media visually important without the oversized social-card radius. */
+  body.is-community-page .community-post-file-attachment,
+  body.is-community-page .community-post-file-attachment :is(img,video,picture > img) {
+    border-radius:6px !important;
+  }
+
+  /* Empty/end-of-feed messaging should not become another visual section. */
+  body.is-community-page .community-feed-state,
+  body.is-community-page .community-feed-end {
+    min-height:0 !important;
+    padding:14px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    background:transparent !important;
+    color:#66666e !important;
+    font-size:.68rem !important;
+  }
+}
+
+
+/* melogic-mobile-topic-rail-restore-v3
+   Restore the topic rail's original edge-to-edge scrolling geometry while
+   retaining the corrected vertical alignment from v2. */
+@media (max-width:760px) {
+  body.is-community-page .community-filter-shell {
+    display:block !important;
+    min-height:36px !important;
+    padding:0 !important;
+    overflow:visible !important;
+  }
+
+  body.is-community-page .community-filter-strip {
+    width:100% !important;
+    min-height:36px !important;
+    padding:2px 10px !important;
+    gap:7px !important;
+    scroll-padding-left:10px !important;
+    scroll-padding-right:10px !important;
+    align-items:center !important;
+  }
+
+  /* Arrows float over the rail instead of consuming horizontal layout space. */
+  body.is-community-page .community-filter-arrow {
+    top:50% !important;
+    width:30px !important;
+    height:32px !important;
+    min-width:30px !important;
+    min-height:32px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    box-shadow:none !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+    transform:translateY(-50%) !important;
+  }
+
+  body.is-community-page .community-filter-arrow.is-left {
+    left:0 !important;
+  }
+
+  body.is-community-page .community-filter-arrow.is-right {
+    right:0 !important;
+  }
+
+  body.is-community-page .community-filter-arrow:not(:disabled):hover,
+  body.is-community-page .community-filter-arrow:not(:disabled):active,
+  body.is-community-page .community-filter-arrow:not(:disabled):focus-visible {
+    background:transparent !important;
+    box-shadow:none !important;
+  }
+
+  /* Only reveal the edge arrow when there is actually more content that way.
+     This keeps the first All pill naturally anchored ~10px from the left. */
+  body.is-community-page .community-filter-shell:not(.can-scroll-left) .community-filter-arrow.is-left,
+  body.is-community-page .community-filter-arrow.is-left:disabled {
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  body.is-community-page .community-filter-shell:not(.can-scroll-right) .community-filter-arrow.is-right,
+  body.is-community-page .community-filter-arrow.is-right:disabled {
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  /* A tiny edge fade communicates overflow without introducing another container. */
+  body.is-community-page .community-filter-shell.can-scroll-left::before,
+  body.is-community-page .community-filter-shell.can-scroll-right::after {
+    content:"" !important;
+    position:absolute !important;
+    top:0 !important;
+    bottom:0 !important;
+    width:28px !important;
+    z-index:2 !important;
+    pointer-events:none !important;
+  }
+
+  body.is-community-page .community-filter-shell.can-scroll-left::before {
+    left:0 !important;
+    background:linear-gradient(90deg,#000 20%,rgba(0,0,0,0)) !important;
+  }
+
+  body.is-community-page .community-filter-shell.can-scroll-right::after {
+    right:0 !important;
+    background:linear-gradient(270deg,#000 20%,rgba(0,0,0,0)) !important;
+  }
+}
+
+
+/* melogic-mobile-story-optimistic-upload-v1 */
+@media (max-width:760px) {
+  body.is-community-page .community-story-item.is-pending-story {
+    opacity:1 !important;
+    cursor:default;
+  }
+  body.is-community-page .community-story-item.is-pending-story:disabled {
+    color:inherit !important;
+    -webkit-text-fill-color:inherit !important;
+  }
+  body.is-community-page .community-story-item.is-pending-story > strong {
+    max-width:72px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    color:#b9b9c2;
+    font-size:.68rem;
+  }
+  body.is-community-page .community-story-upload-ring {
+    position:relative;
+    isolation:isolate;
+    border:0 !important;
+    background:transparent !important;
+  }
+  body.is-community-page .community-story-upload-ring::before {
+    content:"";
+    position:absolute;
+    inset:-3px;
+    z-index:-1;
+    border-radius:50%;
+    background:var(--community-accent-gradient,var(--ml-accent-gradient));
+    animation:community-story-upload-spin 1.05s linear infinite,community-story-upload-pulse 1.5s ease-in-out infinite;
+  }
+  body.is-community-page .community-story-upload-ring::after {
+    content:"";
+    position:absolute;
+    inset:1px;
+    z-index:-1;
+    border-radius:50%;
+    background:#000;
+  }
+  body.is-community-page .community-story-item.is-pending-story .community-story-avatar {
+    position:relative;
+    z-index:1;
+    overflow:hidden;
+    background:#111;
+  }
+  body.is-community-page .community-story-item.is-pending-story .community-story-avatar img {
+    width:100%;
+    height:100%;
+    display:block;
+    object-fit:cover;
+  }
+  body.is-community-page .community-story-item.is-pending-story.is-failed .community-story-upload-ring::before {
+    animation:none;
+    background:#777;
+  }
+  body.is-community-page .community-story-item.is-pending-story.is-failed {
+    cursor:pointer;
+  }
+  @keyframes community-story-upload-spin {
+    to { transform:rotate(360deg); }
+  }
+  @keyframes community-story-upload-pulse {
+    0%,100% { opacity:.58; filter:brightness(.9); }
+    50% { opacity:1; filter:brightness(1.25); }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    body.is-community-page .community-story-upload-ring::before { animation:none; }
+  }
+}
+
+
+/* melogic-mobile-stories-scale-v2
+   Larger mobile Story targets while preserving the existing typography.
+   Story labels/subtext get the same wider display budget before ellipsis. */
+@media (max-width:760px) {
+  body.is-community-page .community-mobile-stories .community-stories-row {
+    padding-top:16px !important;
+    padding-bottom:14px !important;
+    gap:16px !important;
+  }
+
+  body.is-community-page .community-story-item {
+    flex:0 0 88px !important;
+    width:88px !important;
+    gap:8px !important;
+  }
+
+  body.is-community-page .community-story-ring {
+    width:78px !important;
+    height:78px !important;
+  }
+
+  body.is-community-page .community-story-item strong,
+  body.is-community-page .community-story-item > span:not(.community-story-ring) {
+    width:88px !important;
+    max-width:88px !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+
+  body.is-community-page .community-story-item strong {
+    font-size:.66rem !important;
+  }
+
+  body.is-community-page .community-story-item.is-pending-story > strong {
+    width:88px !important;
+    max-width:88px !important;
+    font-size:.68rem !important;
+  }
+
+  body.is-community-page .community-story-empty-state {
+    min-height:78px !important;
+  }
+}
+
+
+/* melogic-mobile-own-story-avatar-v1
+   Screenshot follow-up: align Stories closer to the screen edge and make the
+   create target read as the signed-in user's Story rather than a generic icon. */
+@media (max-width:760px) {
+  body.is-community-page .community-mobile-stories .community-stories-row {
+    padding-left:0 !important;
+    scroll-padding-left:0 !important;
+    margin-left:-4px !important;
+  }
+
+  body.is-community-page .community-story-avatar.is-create {
+    position:relative !important;
+    overflow:hidden !important;
+    padding:0 !important;
+    background:#111 !important;
+  }
+
+  body.is-community-page .community-own-story-avatar {
+    position:absolute;
+    inset:0;
+    display:grid;
+    place-items:center;
+    overflow:hidden;
+    border-radius:50%;
+    background:#15151a;
+  }
+
+  body.is-community-page .community-own-story-avatar > img {
+    position:absolute;
+    inset:-5%;
+    width:110% !important;
+    height:110% !important;
+    object-fit:cover;
+    filter:blur(2.2px) brightness(.55);
+    transform:scale(1.04);
+  }
+
+  body.is-community-page .community-own-story-fallback {
+    display:grid;
+    place-items:center;
+    width:100%;
+    height:100%;
+    color:#8d8d96;
+    font-size:1.15rem;
+    font-weight:700;
+    filter:blur(.45px);
+  }
+
+  body.is-community-page .community-own-story-dim {
+    position:absolute;
+    inset:0;
+    background:rgba(0,0,0,.26);
+    pointer-events:none;
+  }
+
+  body.is-community-page .community-own-story-plus {
+    position:relative;
+    z-index:2;
+    display:grid;
+    place-items:center;
+    width:30px;
+    height:30px;
+    border:1px solid rgba(255,255,255,.76);
+    border-radius:50%;
+    background:rgba(0,0,0,.46);
+    color:#fff;
+    backdrop-filter:blur(3px);
+    -webkit-backdrop-filter:blur(3px);
+  }
+
+  body.is-community-page .community-own-story-plus svg {
+    width:16px !important;
+    height:16px !important;
+    stroke-width:2.1;
+  }
+}
+
+
+/* melogic-mobile-story-viewer-fullscreen-p1 */
+/* Story Viewer is an immersive viewport mode, not a modal card.
+   Push 1 intentionally preserves the existing viewer controls/content hierarchy;
+   later pushes replace the HUD and interaction treatment. */
+@media (max-width:760px) {
+  body:has(.community-modal-backdrop .community-story-viewer) {
+    overflow:hidden !important;
+    overscroll-behavior:none;
+    background:#000 !important;
+  }
+
+  /* The Story owns the mobile viewport while open. */
+  body:has(.community-modal-backdrop .community-story-viewer) .mobile-bottom-nav,
+  body:has(.community-modal-backdrop .community-story-viewer) .community-mobile-header,
+  body:has(.community-modal-backdrop .community-story-viewer) .community-scroll-chrome {
+    visibility:hidden !important;
+    pointer-events:none !important;
+  }
+
+  .community-modal-backdrop:has(.community-story-viewer) {
+    position:fixed !important;
+    inset:0 !important;
+    z-index:10000 !important;
+    width:100vw !important;
+    height:100dvh !important;
+    min-height:100dvh !important;
+    margin:0 !important;
+    padding:0 !important;
+    overflow:hidden !important;
+    overscroll-behavior:none !important;
+    background:#000 !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer {
+    position:relative !important;
+    inset:auto !important;
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) !important;
+    grid-template-rows:auto minmax(0,1fr) auto auto !important;
+    grid-template-areas:
+      "header"
+      "media"
+      "discussion"
+      "actions" !important;
+    width:100vw !important;
+    max-width:none !important;
+    height:100dvh !important;
+    min-height:100dvh !important;
+    max-height:none !important;
+    margin:0 !important;
+    padding:
+      env(safe-area-inset-top,0px)
+      env(safe-area-inset-right,0px)
+      env(safe-area-inset-bottom,0px)
+      env(safe-area-inset-left,0px) !important;
+    border:0 !important;
+    border-radius:0 !important;
+    outline:0 !important;
+    overflow:hidden !important;
+    background:#000 !important;
+    box-shadow:none !important;
+    color-scheme:dark;
+  }
+
+  /* Strip the old card treatment from the primary Story canvas. */
+  .community-modal-backdrop > .community-story-viewer .community-story-surface {
+    min-width:0 !important;
+    min-height:0 !important;
+    margin:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+    overflow:hidden !important;
+  }
+
+  /* Keep legacy discussion/actions usable during the architecture migration,
+     but make them part of the full-screen viewer instead of an outer modal. */
+  .community-modal-backdrop > .community-story-viewer .community-story-discussion,
+  .community-modal-backdrop > .community-story-viewer .community-story-viewer-actions {
+    min-width:0 !important;
+    margin:0 !important;
+    border-left:0 !important;
+    border-right:0 !important;
+    border-radius:0 !important;
+    box-shadow:none !important;
+  }
+}
+
+
+/* melogic-mobile-story-viewer-hud-p2 */
+/* Instagram-derived visual grammar: edge-to-edge media, segmented progress,
+   compact creator identity, and a transparent top HUD over the Story. */
+@media (max-width:760px) {
+  .community-modal-backdrop > .community-story-viewer {
+    display:block !important;
+    position:relative !important;
+    padding:0 !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface {
+    position:absolute !important;
+    inset:0 !important;
+    display:grid !important;
+    width:100% !important;
+    height:100% !important;
+    min-height:0 !important;
+    padding:0 !important;
+    place-items:center !important;
+    z-index:0 !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > img,
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > video {
+    display:block !important;
+    width:100% !important;
+    height:100% !important;
+    max-width:none !important;
+    max-height:none !important;
+    border-radius:0 !important;
+    object-fit:contain !important;
+    background:#000 !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface > p:not(.community-story-caption) {
+    max-width:min(84vw,32rem) !important;
+    margin:0 !important;
+    padding:24px !important;
+    color:#fff !important;
+    text-shadow:0 2px 18px rgba(0,0,0,.48) !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-caption {
+    position:absolute !important;
+    right:18px !important;
+    bottom:max(112px,calc(env(safe-area-inset-bottom,0px) + 88px)) !important;
+    left:18px !important;
+    z-index:4 !important;
+    max-width:none !important;
+    margin:0 !important;
+    padding:0 !important;
+    color:#fff !important;
+    font-size:.92rem !important;
+    line-height:1.35 !important;
+    text-align:left !important;
+    text-shadow:0 1px 8px rgba(0,0,0,.9),0 2px 18px rgba(0,0,0,.55) !important;
+    pointer-events:none !important;
+  }
+
+  .community-story-viewer-hud {
+    position:absolute !important;
+    top:0 !important;
+    right:0 !important;
+    left:0 !important;
+    z-index:8 !important;
+    display:block !important;
+    margin:0 !important;
+    padding:
+      max(8px,env(safe-area-inset-top,0px))
+      max(12px,env(safe-area-inset-right,0px))
+      22px
+      max(12px,env(safe-area-inset-left,0px)) !important;
+    border:0 !important;
+    background:linear-gradient(180deg,rgba(0,0,0,.58) 0%,rgba(0,0,0,.24) 62%,rgba(0,0,0,0) 100%) !important;
+    pointer-events:none !important;
+  }
+
+  .community-story-progress-rail {
+    display:flex !important;
+    width:100% !important;
+    height:3px !important;
+    gap:3px !important;
+    margin:0 0 11px !important;
+    padding:0 !important;
+  }
+
+  .community-story-progress-rail > span {
+    position:relative !important;
+    flex:1 1 0 !important;
+    height:3px !important;
+    overflow:hidden !important;
+    border-radius:999px !important;
+    background:rgba(255,255,255,.34) !important;
+  }
+
+  .community-story-progress-rail > span > i {
+    display:block !important;
+    width:0 !important;
+    height:100% !important;
+    border-radius:inherit !important;
+    background:#fff !important;
+  }
+
+  .community-story-progress-rail > span.is-complete > i {
+    width:100% !important;
+  }
+
+  .community-story-progress-rail > span.is-active > i {
+    width:100% !important;
+    transform-origin:left center !important;
+    animation:community-story-progress-fill 5s linear both;
+  }
+
+  .community-story-viewer-hud-row {
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    gap:10px !important;
+    min-height:40px !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-viewer-hud .community-author {
+    display:flex !important;
+    flex:1 1 auto !important;
+    min-width:0 !important;
+    align-items:center !important;
+    gap:9px !important;
+    color:#fff !important;
+    text-decoration:none !important;
+  }
+
+  .community-story-viewer-hud .community-avatar {
+    flex:0 0 34px !important;
+    width:34px !important;
+    height:34px !important;
+    border:1px solid rgba(255,255,255,.82) !important;
+    border-radius:50% !important;
+    overflow:hidden !important;
+    background:#151515 !important;
+    box-shadow:0 1px 8px rgba(0,0,0,.35) !important;
+  }
+
+  .community-story-viewer-hud .community-avatar :is(img,picture) {
+    width:100% !important;
+    height:100% !important;
+    object-fit:cover !important;
+  }
+
+  .community-story-viewer-identity {
+    display:flex !important;
+    min-width:0 !important;
+    align-items:baseline !important;
+    gap:6px !important;
+    white-space:nowrap !important;
+    text-shadow:0 1px 6px rgba(0,0,0,.9) !important;
+  }
+
+  .community-story-viewer-identity strong {
+    overflow:hidden !important;
+    max-width:42vw !important;
+    color:#fff !important;
+    font-size:.82rem !important;
+    font-weight:700 !important;
+    text-overflow:ellipsis !important;
+  }
+
+  .community-story-viewer-identity em {
+    overflow:hidden !important;
+    max-width:38vw !important;
+    color:rgba(255,255,255,.74) !important;
+    font-size:.68rem !important;
+    font-style:normal !important;
+    font-weight:500 !important;
+    text-overflow:ellipsis !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close {
+    display:grid !important;
+    place-items:center !important;
+    flex:0 0 40px !important;
+    width:40px !important;
+    height:40px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:50% !important;
+    background:transparent !important;
+    color:#fff !important;
+    filter:drop-shadow(0 1px 4px rgba(0,0,0,.7)) !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close svg {
+    width:24px !important;
+    height:24px !important;
+    stroke-width:2 !important;
+  }
+
+  /* Existing lower controls stay functional but float above the media.
+     Their full redesign belongs to Push 3. */
+  .community-modal-backdrop > .community-story-viewer .community-story-discussion {
+    position:absolute !important;
+    right:12px !important;
+    bottom:max(62px,calc(env(safe-area-inset-bottom,0px) + 46px)) !important;
+    left:12px !important;
+    z-index:6 !important;
+    min-height:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    background:transparent !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-viewer-actions {
+    position:absolute !important;
+    right:12px !important;
+    bottom:max(8px,env(safe-area-inset-bottom,0px)) !important;
+    left:12px !important;
+    z-index:7 !important;
+    padding:0 !important;
+    background:transparent !important;
+  }
+
+  @keyframes community-story-progress-fill {
+    from { transform:scaleX(0); }
+    to { transform:scaleX(1); }
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-story-progress-rail > span.is-active > i {
+      animation:none !important;
+      transform:none !important;
+    }
+  }
+}
+
+
+/* melogic-mobile-story-viewer-interactions-p3 */
+/* Mobile Story viewer: replace legacy Like/Dislike/comment/footer chrome with
+   the sparse reply + heart + share interaction row used by immersive viewers. */
+.community-story-mobile-interactions {
+  display:none;
+}
+
+@media (max-width:760px) {
+  .community-modal-backdrop > .community-story-viewer .community-story-desktop-controls {
+    display:none !important;
+  }
+
+  .community-story-mobile-interactions {
+    position:absolute !important;
+    right:max(16px,env(safe-area-inset-right,0px)) !important;
+    bottom:max(12px,env(safe-area-inset-bottom,0px)) !important;
+    left:max(16px,env(safe-area-inset-left,0px)) !important;
+    z-index:10 !important;
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) 44px 44px !important;
+    align-items:center !important;
+    gap:10px !important;
+    min-height:48px !important;
+    padding:0 !important;
+    background:transparent !important;
+  }
+
+  .community-story-reply-shell {
+    display:flex !important;
+    align-items:center !important;
+    min-width:0 !important;
+    height:46px !important;
+    border:1px solid rgba(255,255,255,.72) !important;
+    border-radius:999px !important;
+    background:rgba(0,0,0,.10) !important;
+    box-shadow:0 1px 8px rgba(0,0,0,.18) !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+  }
+
+  .community-story-reply-shell input {
+    width:100% !important;
+    min-width:0 !important;
+    height:100% !important;
+    margin:0 !important;
+    padding:0 18px !important;
+    border:0 !important;
+    outline:0 !important;
+    background:transparent !important;
+    color:#fff !important;
+    font:inherit !important;
+    font-size:.9rem !important;
+    font-weight:500 !important;
+    opacity:1 !important;
+    -webkit-text-fill-color:#fff !important;
+  }
+
+  .community-story-reply-shell input::placeholder {
+    color:rgba(255,255,255,.92) !important;
+    opacity:1 !important;
+    -webkit-text-fill-color:rgba(255,255,255,.92) !important;
+  }
+
+  .community-story-mobile-interactions > button {
+    display:grid !important;
+    place-items:center !important;
+    width:44px !important;
+    height:44px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    color:#fff !important;
+    box-shadow:none !important;
+    filter:drop-shadow(0 1px 5px rgba(0,0,0,.7)) !important;
+    cursor:pointer !important;
+  }
+
+  .community-story-mobile-interactions > button svg {
+    width:27px !important;
+    height:27px !important;
+    stroke-width:1.8 !important;
+  }
+
+  .community-story-mobile-interactions > button:active {
+    transform:scale(.92) !important;
+  }
+
+  /* Keep authored captions clear of the persistent interaction row. */
+  .community-modal-backdrop > .community-story-viewer .community-story-caption {
+    bottom:max(82px,calc(env(safe-area-inset-bottom,0px) + 70px)) !important;
+  }
+
+  /* Navigation remains gesture/tap driven; old visible Prev/Next chrome is gone. */
+  .community-modal-backdrop > .community-story-viewer .community-story-discussion,
+  .community-modal-backdrop > .community-story-viewer .community-story-viewer-actions {
+    display:none !important;
+  }
+}
+
+
+/* melogic-mobile-story-viewer-behavior-p4 */
+@media (max-width:760px) {
+  .community-story-viewer .community-story-surface {
+    touch-action:none !important;
+    -webkit-user-select:none !important;
+    user-select:none !important;
+  }
+
+  .community-story-viewer.is-paused .community-story-progress-rail > span.is-active > i {
+    animation-play-state:paused !important;
+  }
+
+  .community-story-viewer .community-story-surface > img,
+  .community-story-viewer .community-story-surface > video {
+    -webkit-user-drag:none !important;
+    user-select:none !important;
+  }
+}
+
+
+/* melogic-mobile-story-viewer-polish-p5 */
+/* Final mobile/PWA Story pass: normalize viewport fallbacks, media crop,
+   safe areas, compact phones, landscape, and interaction hit targets. */
+@media (max-width:760px) {
+  .community-modal-backdrop:has(.community-story-viewer),
+  .community-modal-backdrop > .community-story-viewer {
+    height:100vh !important;
+    height:100svh !important;
+    height:100dvh !important;
+    min-height:100vh !important;
+    min-height:100svh !important;
+    min-height:100dvh !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > img,
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > video {
+    object-fit:cover !important;
+    object-position:center center !important;
+  }
+
+  .community-story-viewer-hud {
+    padding-top:max(10px,calc(env(safe-area-inset-top,0px) + 4px)) !important;
+  }
+
+  .community-story-progress-rail {
+    height:2px !important;
+    gap:3px !important;
+    margin-bottom:10px !important;
+  }
+
+  .community-story-progress-rail > span {
+    height:2px !important;
+  }
+
+  .community-story-viewer-hud .community-avatar {
+    flex-basis:32px !important;
+    width:32px !important;
+    height:32px !important;
+  }
+
+  .community-story-viewer-identity strong {
+    max-width:46vw !important;
+    font-size:.8rem !important;
+  }
+
+  .community-story-viewer-identity em {
+    max-width:30vw !important;
+    font-size:.66rem !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close,
+  .community-story-mobile-interactions > button {
+    min-width:44px !important;
+    min-height:44px !important;
+  }
+
+  .community-story-reply-shell {
+    height:44px !important;
+    border-color:rgba(255,255,255,.64) !important;
+    background:rgba(0,0,0,.16) !important;
+  }
+
+  .community-story-reply-shell input {
+    cursor:pointer !important;
+  }
+
+  .community-story-mobile-interactions {
+    bottom:max(10px,calc(env(safe-area-inset-bottom,0px) + 6px)) !important;
+  }
+
+  .community-story-viewer .community-error {
+    position:absolute !important;
+    right:16px !important;
+    bottom:max(78px,calc(env(safe-area-inset-bottom,0px) + 68px)) !important;
+    left:16px !important;
+    z-index:12 !important;
+    margin:0 !important;
+  }
+}
+
+@media (max-width:360px) {
+  .community-story-mobile-interactions {
+    right:max(10px,env(safe-area-inset-right,0px)) !important;
+    left:max(10px,env(safe-area-inset-left,0px)) !important;
+    grid-template-columns:minmax(0,1fr) 42px 42px !important;
+    gap:6px !important;
+  }
+
+  .community-story-viewer-identity em {
+    display:none !important;
+  }
+}
+
+@media (max-width:760px) and (orientation:landscape) {
+  .community-story-viewer-hud {
+    padding-top:max(6px,env(safe-area-inset-top,0px)) !important;
+  }
+
+  .community-story-viewer-hud-row {
+    min-height:34px !important;
+  }
+
+  .community-story-viewer-hud .community-avatar {
+    flex-basis:28px !important;
+    width:28px !important;
+    height:28px !important;
+  }
+
+  .community-story-mobile-interactions {
+    grid-template-columns:minmax(160px,360px) 44px 44px !important;
+    justify-content:end !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-caption {
+    right:max(18px,env(safe-area-inset-right,0px)) !important;
+    left:max(18px,env(safe-area-inset-left,0px)) !important;
+  }
+}
+
+
+/* melogic-mobile-story-viewer-screenshot-fixes */
+@media (max-width:760px) {
+  /* Keep the verified badge visible and proportioned inside the compact Story identity. */
+  .community-story-viewer-identity .community-display-name {
+    display:inline-flex !important;
+    align-items:center !important;
+    gap:4px !important;
+    overflow:visible !important;
+    max-width:48vw !important;
+  }
+
+  .community-story-viewer-identity .community-verified-badge {
+    display:inline-block !important;
+    flex:0 0 13px !important;
+    width:13px !important;
+    height:13px !important;
+    margin:0 !important;
+    object-fit:contain !important;
+    vertical-align:-2px !important;
+  }
+
+  /* Timestamp is deliberately separate from @username. It defaults to posted age;
+     tapping it toggles to remaining Story lifetime. */
+  .community-story-time-toggle {
+    position:relative !important;
+    top:-1px !important;
+    display:inline-flex !important;
+    align-items:center !important;
+    min-width:0 !important;
+    min-height:32px !important;
+    margin:0 0 0 -2px !important;
+    padding:0 8px 0 0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    box-shadow:none !important;
+    color:rgba(255,255,255,.74) !important;
+    font:inherit !important;
+    font-size:.68rem !important;
+    font-weight:500 !important;
+    line-height:1 !important;
+    white-space:nowrap !important;
+    cursor:pointer !important;
+  }
+
+  /* Make the right-side controls impossible to lose to generic button/icon rules. */
+  .community-story-mobile-interactions {
+    grid-template-columns:minmax(0,1fr) 46px 46px !important;
+    overflow:visible !important;
+  }
+
+  .community-story-mobile-interactions > .community-story-mobile-like,
+  .community-story-mobile-interactions > .community-story-mobile-share {
+    display:grid !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    place-items:center !important;
+    position:relative !important;
+    z-index:2 !important;
+    flex:none !important;
+    width:46px !important;
+    height:46px !important;
+    color:#fff !important;
+    background:transparent !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-mobile-interactions > .community-story-mobile-like svg,
+  .community-story-mobile-interactions > .community-story-mobile-share svg {
+    display:block !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    width:28px !important;
+    height:28px !important;
+    min-width:28px !important;
+    min-height:28px !important;
+    color:currentColor !important;
+    stroke:currentColor !important;
+    fill:none !important;
+  }
+
+  .community-story-reply-shell {
+    min-width:0 !important;
+  }
+}
+
+@media (max-width:360px) {
+  .community-story-viewer-identity .community-display-name {
+    max-width:44vw !important;
+  }
+
+  .community-story-time-toggle {
+    font-size:.64rem !important;
+  }
+}
+
+
+/* melogic-story-author-transition-v1 */
+@media (max-width:760px) {
+  .community-modal-backdrop > .community-story-viewer {
+    transform:translate3d(0,0,0);
+    opacity:1;
+    will-change:transform,opacity;
+  }
+
+  .community-modal-backdrop > .community-story-viewer.is-shifting-left {
+    animation:community-story-author-shift-left 220ms cubic-bezier(.4,0,.2,1) forwards !important;
+    pointer-events:none !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer.is-shifting-right {
+    animation:community-story-author-shift-right 220ms cubic-bezier(.4,0,.2,1) forwards !important;
+    pointer-events:none !important;
+  }
+
+  @keyframes community-story-author-shift-left {
+    from { transform:translate3d(0,0,0); opacity:1; }
+    to { transform:translate3d(-100%,0,0); opacity:.72; }
+  }
+
+  @keyframes community-story-author-shift-right {
+    from { transform:translate3d(0,0,0); opacity:1; }
+    to { transform:translate3d(100%,0,0); opacity:.72; }
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-modal-backdrop > .community-story-viewer.is-shifting-left,
+    .community-modal-backdrop > .community-story-viewer.is-shifting-right {
+      animation-duration:1ms !important;
+    }
+  }
+}
+
+
+/* melogic-stories-identity-push-01 */
+/* Melogic Story identity v1:
+   retain the learned full-screen Story grammar, but establish Melogic's own
+   optical rhythm, restrained glass controls, and creator-transition motion. */
+@media (max-width:760px) {
+  .community-story-viewer {
+    --melogic-story-hud-gutter:clamp(14px,3.8vw,20px);
+    --melogic-story-glass:rgba(8,10,14,.20);
+    --melogic-story-line:rgba(255,255,255,.72);
+    --melogic-story-muted:rgba(255,255,255,.76);
+  }
+
+  .community-story-viewer-hud {
+    padding-right:max(var(--melogic-story-hud-gutter),env(safe-area-inset-right,0px)) !important;
+    padding-left:max(var(--melogic-story-hud-gutter),env(safe-area-inset-left,0px)) !important;
+    background:linear-gradient(180deg,rgba(0,0,0,.54) 0%,rgba(0,0,0,.19) 58%,transparent 100%) !important;
+  }
+
+  .community-story-progress-rail {
+    gap:4px !important;
+  }
+
+  .community-story-progress-rail > span {
+    background:rgba(255,255,255,.28) !important;
+  }
+
+  .community-story-progress-rail > span > i {
+    background:linear-gradient(90deg,#fff 0%,rgba(255,255,255,.88) 100%) !important;
+    box-shadow:0 0 8px rgba(255,255,255,.10) !important;
+  }
+
+  .community-story-viewer-hud-row {
+    gap:8px !important;
+  }
+
+  .community-story-viewer-hud .community-author {
+    gap:10px !important;
+  }
+
+  .community-story-viewer-hud .community-avatar {
+    border-color:rgba(255,255,255,.70) !important;
+    box-shadow:0 2px 12px rgba(0,0,0,.34) !important;
+  }
+
+  .community-story-viewer-identity {
+    gap:5px !important;
+  }
+
+  .community-story-time-toggle {
+    color:var(--melogic-story-muted) !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close {
+    border:1px solid transparent !important;
+    transition:background-color 120ms ease,border-color 120ms ease,transform 120ms ease !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close:active {
+    transform:scale(.92) !important;
+    border-color:rgba(255,255,255,.16) !important;
+    background:rgba(255,255,255,.08) !important;
+  }
+
+  .community-story-reply-shell {
+    border-color:var(--melogic-story-line) !important;
+    background:var(--melogic-story-glass) !important;
+    box-shadow:0 4px 20px rgba(0,0,0,.12) !important;
+  }
+
+  .community-story-mobile-interactions > button {
+    transition:transform 120ms ease,opacity 120ms ease !important;
+  }
+
+  .community-story-mobile-interactions > button:active {
+    transform:scale(.88) !important;
+    opacity:.78 !important;
+  }
+
+  /* Creator changes are deliberately more dimensional than intra-creator
+     Story changes: the whole viewer leaves as one coherent Melogic surface. */
+  .community-modal-backdrop > .community-story-viewer.is-creator-transition.is-shifting-left {
+    animation:melogic-story-creator-left 260ms cubic-bezier(.32,.72,.24,1) forwards !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer.is-creator-transition.is-shifting-right {
+    animation:melogic-story-creator-right 260ms cubic-bezier(.32,.72,.24,1) forwards !important;
+  }
+
+  @keyframes melogic-story-creator-left {
+    0% { transform:translate3d(0,0,0) scale(1); opacity:1; filter:brightness(1); }
+    55% { opacity:.96; }
+    100% { transform:translate3d(-102%,0,0) scale(.985); opacity:.74; filter:brightness(.88); }
+  }
+
+  @keyframes melogic-story-creator-right {
+    0% { transform:translate3d(0,0,0) scale(1); opacity:1; filter:brightness(1); }
+    55% { opacity:.96; }
+    100% { transform:translate3d(102%,0,0) scale(.985); opacity:.74; filter:brightness(.88); }
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-modal-backdrop > .community-story-viewer.is-creator-transition.is-shifting-left,
+    .community-modal-backdrop > .community-story-viewer.is-creator-transition.is-shifting-right {
+      animation-duration:1ms !important;
+    }
+  }
+}
+
+
+/* melogic-story-more-control-fix */
+@media (max-width:760px) {
+  .community-story-viewer-hud-actions {
+    display:flex !important;
+    flex:0 0 auto !important;
+    align-items:center !important;
+    gap:2px !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-more,
+  .community-story-viewer-hud .community-story-viewer-close {
+    display:grid !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    place-items:center !important;
+    width:40px !important;
+    height:40px !important;
+    min-width:40px !important;
+    min-height:40px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:50% !important;
+    background:transparent !important;
+    color:#fff !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-more svg {
+    display:block !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    width:24px !important;
+    height:24px !important;
+    color:#fff !important;
+    fill:currentColor !important;
+    stroke:none !important;
+    filter:drop-shadow(0 1px 4px rgba(0,0,0,.7)) !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-more:active {
+    transform:scale(.92) !important;
+    background:rgba(255,255,255,.08) !important;
+  }
+}
+
+
+/* melogic-story-signal-foundation-push-02 */
+@media (max-width:760px) {
+  /* Story Signal is now driven by viewer/media state. CSS no longer owns time. */
+  .community-story-progress-rail > span.is-active > i {
+    width:100% !important;
+    transform:scaleX(var(--story-signal-progress,0));
+    transform-origin:left center !important;
+    animation:none !important;
+    transition:none !important;
+    will-change:transform;
+  }
+
+  .community-story-viewer.is-paused .community-story-progress-rail > span.is-active > i {
+    animation:none !important;
+  }
+}
+
+
+/* melogic-story-signal-waveform-push-03 */
+@media (max-width:760px) {
+  .community-story-progress-rail > span {
+    isolation:isolate !important;
+  }
+
+  .community-story-signal-bars {
+    display:none;
+  }
+
+  /* Video-bearing Stories get Melogic's compact Signal signature. The bars are
+     intentionally restrained: the viewer stays media-first, not DAW-like. */
+  .community-story-progress-rail > span.has-story-signal .community-story-signal-bars {
+    position:absolute !important;
+    inset:-3px 0 !important;
+    z-index:1 !important;
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    gap:1px !important;
+    overflow:hidden !important;
+    border-radius:inherit !important;
+    opacity:.46 !important;
+    pointer-events:none !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal .community-story-signal-bars > b {
+    flex:1 1 0 !important;
+    min-width:1px !important;
+    max-width:3px !important;
+    height:var(--signal-height,40%) !important;
+    min-height:1px !important;
+    border-radius:999px !important;
+    background:rgba(255,255,255,.74) !important;
+    transform-origin:center !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal > i {
+    z-index:2 !important;
+    opacity:.88 !important;
+    mix-blend-mode:screen !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal.is-active {
+    box-shadow:0 0 0 1px rgba(255,255,255,.025),0 0 10px rgba(255,255,255,.035) !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars {
+    opacity:.66 !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal.is-complete .community-story-signal-bars {
+    opacity:.30 !important;
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-story-progress-rail > span.has-story-signal .community-story-signal-bars {
+      transition:none !important;
+    }
+  }
+}
+
+
+/* melogic-story-reaction-orbit-push-04 */
+@media (max-width:760px) {
+  .community-story-mobile-interactions {
+    grid-template-columns:minmax(0,1fr) 46px 46px !important;
+  }
+
+  .community-story-reaction-anchor {
+    position:relative !important;
+    display:grid !important;
+    width:46px !important;
+    height:46px !important;
+    place-items:center !important;
+    overflow:visible !important;
+  }
+
+  .community-story-reaction-anchor > .community-story-mobile-like {
+    display:grid !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    place-items:center !important;
+    width:46px !important;
+    height:46px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    background:transparent !important;
+    color:#fff !important;
+    filter:drop-shadow(0 1px 5px rgba(0,0,0,.7)) !important;
+    touch-action:none !important;
+  }
+
+  .community-story-reaction-anchor > .community-story-mobile-like svg {
+    width:28px !important;
+    height:28px !important;
+    fill:transparent !important;
+    stroke:currentColor !important;
+    transition:transform 140ms ease,fill 140ms ease !important;
+  }
+
+  .community-story-reaction-anchor > .community-story-mobile-like.is-reacted svg {
+    fill:currentColor !important;
+    transform:scale(1.04) !important;
+  }
+
+  .community-story-reaction-orbit {
+    position:absolute !important;
+    right:-5px !important;
+    bottom:52px !important;
+    z-index:20 !important;
+    display:flex !important;
+    flex-direction:column-reverse !important;
+    align-items:center !important;
+    gap:5px !important;
+    padding:7px 5px !important;
+    border:1px solid rgba(255,255,255,.13) !important;
+    border-radius:999px !important;
+    background:rgba(8,10,14,.82) !important;
+    box-shadow:0 12px 34px rgba(0,0,0,.34) !important;
+    backdrop-filter:blur(16px) saturate(115%) !important;
+    -webkit-backdrop-filter:blur(16px) saturate(115%) !important;
+    opacity:0 !important;
+    transform:translateY(8px) scale(.86) !important;
+    transform-origin:bottom center !important;
+    pointer-events:none !important;
+    transition:opacity 140ms ease,transform 180ms cubic-bezier(.2,.8,.2,1) !important;
+  }
+
+  .community-story-reaction-orbit.is-open {
+    opacity:1 !important;
+    transform:translateY(0) scale(1) !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-reaction-orbit > button {
+    display:grid !important;
+    place-items:center !important;
+    width:38px !important;
+    height:38px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:50% !important;
+    background:transparent !important;
+    font-size:1.25rem !important;
+    line-height:1 !important;
+    transform:scale(.82) !important;
+    transition:transform 120ms ease,background-color 120ms ease !important;
+  }
+
+  .community-story-reaction-orbit.is-open > button {
+    transform:scale(1) !important;
+  }
+
+  .community-story-reaction-orbit > button:active {
+    transform:scale(.84) !important;
+    background:rgba(255,255,255,.10) !important;
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-story-reaction-orbit,
+    .community-story-reaction-orbit > button {
+      transition:none !important;
+    }
+  }
+}
+
+
+/* melogic-story-interactive-objects-push-08 */
+@media (max-width:760px) {
+  .community-story-viewer-layers { position:absolute; inset:0; z-index:4; pointer-events:none; }
+  .community-story-object {
+    position:absolute; left:calc(var(--layer-x,.5) * 100%); top:calc(var(--layer-y,.5) * 100%);
+    z-index:var(--layer-z,1); width:calc(var(--layer-w,.45) * 100%); min-height:38px;
+    transform:translate(-50%,-50%) scale(var(--layer-scale,1)) rotate(var(--layer-rotation,0deg));
+    display:flex; align-items:center; justify-content:center; gap:7px; padding:8px 12px;
+    border:1px solid rgba(255,255,255,.16); border-radius:999px; background:rgba(8,10,14,.66);
+    color:#fff; text-decoration:none; font-size:.84rem; line-height:1.1; text-align:center;
+    box-shadow:0 6px 22px rgba(0,0,0,.24); backdrop-filter:blur(12px) saturate(110%);
+    -webkit-backdrop-filter:blur(12px) saturate(110%); pointer-events:auto;
+  }
+  .community-story-object svg { width:15px; height:15px; flex:0 0 auto; }
+  .community-story-object strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .community-story-object.is-text { border:0; border-radius:8px; background:rgba(0,0,0,.28); }
+  .community-story-object:active { transform:translate(-50%,-50%) scale(calc(var(--layer-scale,1) * .96)) rotate(var(--layer-rotation,0deg)); }
+}
+
+
+/* melogic-story-rich-objects-push-09 */
+@media (max-width:760px) {
+  .community-story-object.is-audio,
+  .community-story-object.is-product,
+  .community-story-object.is-event {
+    justify-content:flex-start; text-align:left; border-radius:14px; min-height:48px;
+  }
+  .community-story-object.is-audio > span:last-child,
+  .community-story-object.is-product > span:last-child,
+  .community-story-object.is-event > span:last-child {
+    min-width:0; display:flex; flex-direction:column; gap:2px;
+  }
+  .community-story-object small {
+    display:block; font-size:.58rem; line-height:1; letter-spacing:.12em; opacity:.58; font-weight:800;
+  }
+  .community-story-object.is-poll {
+    width:min(calc(var(--layer-w,.7) * 100%),82%); border-radius:16px; padding:10px;
+    display:block; text-align:left;
+  }
+  .community-story-object.is-poll > strong { display:block; padding:2px 3px 8px; white-space:normal; }
+  .community-story-object.is-poll > div { display:grid; gap:5px; }
+  .community-story-object.is-poll button {
+    width:100%; min-height:44px; border:1px solid rgba(255,255,255,.15); border-radius:10px;
+    background:rgba(255,255,255,.07); color:#fff; padding:6px 9px; text-align:left; font:inherit;
+  }
+  .community-story-object.is-poll button.is-selected {
+    background:rgba(255,255,255,.19); border-color:rgba(255,255,255,.72);
+  }
+}
+
+
+/* melogic-story-native-objects-push-10 */
+@media (max-width:760px) {
+  .community-story-object.is-melogic-native {
+    justify-content:flex-start; text-align:left; min-height:54px; border-radius:14px;
+    border-color:rgba(255,255,255,.22); background:rgba(5,7,10,.78);
+    box-shadow:0 8px 26px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.055);
+  }
+  .community-story-object.is-melogic-native > span:nth-child(2) {
+    display:flex; flex:1 1 auto; min-width:0; flex-direction:column; gap:3px;
+  }
+  .community-story-native-glyph {
+    display:grid; place-items:center; width:29px; height:29px; flex:0 0 29px;
+    border:1px solid rgba(255,255,255,.16); border-radius:9px; background:rgba(255,255,255,.07);
+    font-size:1rem;
+  }
+  .community-story-object.is-melogic-native em {
+    flex:0 0 auto; font-size:.66rem; font-style:normal; font-weight:800; opacity:.68;
+  }
+  .community-story-object.is-melogic-native strong {
+    display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+}
+
+
+/* melogic-story-context-replies-push-11 */
+@media (max-width:760px) {
+  .community-story-reply-shell { display:flex; align-items:center; min-width:0; }
+  .community-story-reply-shell input {
+    flex:1 1 auto; min-width:0; height:44px; border:0; outline:0; background:transparent;
+    color:#fff; font:inherit; padding:0 4px 0 2px;
+  }
+  .community-story-reply-shell input::placeholder { color:rgba(255,255,255,.66); }
+  .community-story-reply-shell button {
+    display:grid; place-items:center; width:38px; height:38px; flex:0 0 38px; padding:0;
+    border:0; border-radius:50%; background:transparent; color:#fff; opacity:.84;
+  }
+  .community-story-reply-shell button svg { width:22px; height:22px; }
+  .community-story-reply-shell button:active { transform:scale(.92); }
+  .community-story-reply-shell button:disabled { opacity:.32; }
+}
+
+
+/* melogic-story-action-rail-push-12 */
+@media (max-width:760px) {
+  .community-story-action-rail[hidden] { display:none; }
+  .community-story-action-rail {
+    position:absolute; z-index:24; top:calc(env(safe-area-inset-top,0px) + 58px); right:12px;
+    width:176px; padding:6px; border:1px solid rgba(255,255,255,.13); border-radius:16px;
+    background:rgba(8,9,12,.86); box-shadow:0 14px 44px rgba(0,0,0,.42);
+    backdrop-filter:blur(20px) saturate(115%); -webkit-backdrop-filter:blur(20px) saturate(115%);
+  }
+  .community-story-action-rail button {
+    width:100%; min-height:44px; display:flex; align-items:center; gap:11px; padding:0 11px;
+    border:0; border-radius:11px; background:transparent; color:#fff; font:inherit; text-align:left;
+  }
+  .community-story-action-rail button svg { width:18px; height:18px; flex:0 0 auto; }
+  .community-story-action-rail button:active { background:rgba(255,255,255,.09); }
+  .community-story-action-rail button:last-child { color:rgba(255,255,255,.72); }
+}
+
+
+/* melogic-story-provenance-push-15 */
+@media (max-width:760px) {
+  .community-story-provenance {
+    position:absolute; z-index:23; left:12px; right:12px; bottom:calc(env(safe-area-inset-bottom,0px) + 76px);
+    display:none; padding:6px; border:1px solid rgba(255,255,255,.12); border-radius:15px;
+    background:rgba(7,8,11,.88); box-shadow:0 14px 42px rgba(0,0,0,.4);
+    backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+  }
+  .community-story-provenance.is-open { display:grid; gap:2px; }
+  .community-story-provenance button {
+    min-height:48px; display:flex; align-items:center; gap:10px; width:100%; padding:7px 10px;
+    border:0; border-radius:10px; background:transparent; color:#fff; text-align:left;
+  }
+  .community-story-provenance button > span:first-child { display:grid; place-items:center; width:25px; opacity:.72; }
+  .community-story-provenance button svg { width:18px; height:18px; }
+  .community-story-provenance button > span:last-child { display:flex; min-width:0; flex-direction:column; gap:2px; }
+  .community-story-provenance strong { font-size:.78rem; font-weight:760; }
+  .community-story-provenance small { font-size:.66rem; opacity:.58; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .community-story-provenance button:active { background:rgba(255,255,255,.08); }
+}
+
+
+/* melogic-story-types-push-16 */
+@media (max-width:760px) {
+  .community-story-type-switch { display:flex; gap:6px; overflow-x:auto; padding:1px 0 8px; scrollbar-width:none; }
+  .community-story-type-switch::-webkit-scrollbar { display:none; }
+  .community-story-type-switch button {
+    flex:0 0 auto; min-height:38px; padding:0 13px; border:1px solid rgba(255,255,255,.11);
+    border-radius:999px; background:transparent; color:rgba(255,255,255,.64); font:inherit; font-size:.75rem; font-weight:720;
+  }
+  .community-story-type-switch button.is-active { border-color:rgba(255,255,255,.38); background:rgba(255,255,255,.1); color:#fff; }
+  .community-story-type-badge {
+    position:absolute; z-index:12; top:calc(env(safe-area-inset-top,0px) + 65px); left:50%; transform:translateX(-50%);
+    padding:4px 8px; border:1px solid rgba(255,255,255,.15); border-radius:999px; background:rgba(5,6,8,.44);
+    color:rgba(255,255,255,.7); font-size:.56rem; font-weight:900; letter-spacing:.13em; pointer-events:none;
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  }
+  .community-story-type-badge.is-moment { opacity:.62; }
+  .community-story-type-badge.is-live { border-color:rgba(255,255,255,.32); color:#fff; }
+}
+
+
+/* melogic-story-context-drawer-push-17 */
+@media (max-width:760px) {
+  .community-story-context-drawer {
+    position:absolute; z-index:30; left:0; right:0; bottom:0; max-height:min(72vh,620px);
+    padding:14px 14px calc(env(safe-area-inset-bottom,0px) + 18px); overflow:auto;
+    border-radius:22px 22px 0 0; border-top:1px solid rgba(255,255,255,.13);
+    background:rgba(7,8,11,.94); color:#fff; box-shadow:0 -18px 55px rgba(0,0,0,.42);
+    backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
+    transform:translateY(104%); transition:transform 220ms ease;
+  }
+  .community-story-context-drawer.is-open { transform:translateY(0); }
+  .community-story-context-drawer > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  .community-story-context-drawer > header div { display:flex; flex-direction:column; gap:2px; }
+  .community-story-context-drawer > header small { font-size:.58rem; font-weight:900; letter-spacing:.14em; opacity:.5; }
+  .community-story-context-drawer > header strong { font-size:.94rem; }
+  .community-story-context-drawer > header button { width:44px; height:44px; border:0; border-radius:50%; background:rgba(255,255,255,.07); color:#fff; }
+  .community-story-context-summary { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .community-story-context-summary span { padding:5px 8px; border:1px solid rgba(255,255,255,.1); border-radius:999px; font-size:.62rem; opacity:.72; }
+  .community-story-context-caption { margin:0 0 14px; padding:10px 11px; border-radius:11px; background:rgba(255,255,255,.045); font-size:.78rem; line-height:1.4; }
+  .community-story-context-drawer section { display:grid; gap:5px; margin-top:14px; }
+  .community-story-context-drawer h3 { margin:0 0 3px; font-size:.66rem; letter-spacing:.08em; text-transform:uppercase; opacity:.5; }
+  .community-story-context-drawer section button {
+    display:flex; flex-direction:column; align-items:flex-start; justify-content:center; min-height:48px; width:100%;
+    padding:7px 10px; border:0; border-radius:10px; background:rgba(255,255,255,.035); color:#fff; text-align:left;
+  }
+  .community-story-context-drawer section button small { font-size:.58rem; text-transform:uppercase; letter-spacing:.08em; opacity:.46; }
+  .community-story-context-drawer section button strong { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.78rem; }
+}
+
+
+/* melogic-story-final-audit-push-18 */
+@media (max-width:760px) {
+  .community-story-object { min-height:44px; }
+  .community-story-viewer-layers a[href="#"] { cursor:default; }
+  .community-story-context-drawer[aria-hidden="true"] { pointer-events:none; }
+  .community-story-context-drawer[aria-hidden="false"] { pointer-events:auto; }
+}
+
+
+/* story-signal-interactive */
+@media (max-width:760px) {
+  .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars {
+    pointer-events:auto !important;
+    overflow:visible !important;
+    touch-action:manipulation;
+  }
+  .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars > b {
+    position:relative;
+    cursor:pointer;
+  }
+}
+
+
+/* melogic-community-mobile-discover-routing-p1
+   Patch 1: expose the existing Discover Communities route from the mobile
+   For You / Following selector without changing the desktop selector yet.
+   The anchor intentionally uses the canonical Community route so the existing
+   warm-SPA/popstate lifecycle remains the single navigation owner. */
+.community-mobile-discover-tab {
+  display: none;
+}
+@media (max-width: 760px) {
+  body.is-community-page .community-master-tabs {
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 38px !important;
+  }
+  body.is-community-page .community-master-tabs > .community-mobile-discover-tab {
+    position: relative !important;
+    display: grid !important;
+    place-items: center !important;
+    min-width: 0 !important;
+    min-height: 47px !important;
+    padding: 0 8px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #777780 !important;
+    font-size: .78rem !important;
+    font-weight: 650 !important;
+    line-height: 1 !important;
+    text-decoration: none !important;
+  }
+}
+
+
+/* melogic-community-mobile-discover-surface-p2
+   Patch 2: turn the existing canonical communities directory into a native
+   mobile Discover surface. Data loading, search/category controls, focus
+   mutations, links, and desktop geometry remain owned by their existing code. */
+@media (max-width:760px) {
+  body.is-community-page .community-network-directory {
+    display:block !important;
+    width:100% !important;
+    min-height:100% !important;
+    padding:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-network-directory > .community-left-nav,
+  body.is-community-page .community-network-directory > .community-right-rail {
+    display:none !important;
+  }
+  body.is-community-page .community-network-directory > .community-main {
+    width:100% !important;
+    max-width:none !important;
+    margin:0 !important;
+    padding:0 0 calc(var(--melogic-mobile-bottom-nav-h) + var(--melogic-mobile-safe-bottom) + 18px) !important;
+  }
+  body.is-community-page .community-network-discover-hero {
+    display:flex !important;
+    align-items:flex-end !important;
+    justify-content:space-between !important;
+    gap:16px !important;
+    margin:0 !important;
+    padding:18px var(--community-mobile-gutter) 14px !important;
+    border:0 !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-network-discover-hero .eyebrow,
+  body.is-community-page .community-network-discover-hero > div:first-child > p:last-child {
+    display:none !important;
+  }
+  body.is-community-page .community-network-discover-hero h1 {
+    margin:0 !important;
+    color:#fff !important;
+    font-size:1.18rem !important;
+    font-weight:720 !important;
+    line-height:1.15 !important;
+    letter-spacing:-.02em !important;
+  }
+  body.is-community-page .community-network-directory-summary {
+    display:flex !important;
+    align-items:baseline !important;
+    gap:5px !important;
+    padding:0 !important;
+    border:0 !important;
+    background:transparent !important;
+    color:#777780 !important;
+  }
+  body.is-community-page .community-network-directory-summary strong {
+    color:#d7d7dc !important;
+    font-size:.78rem !important;
+  }
+  body.is-community-page .community-network-directory-summary span {
+    font-size:.67rem !important;
+  }
+
+  body.is-community-page .community-community-tools {
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) auto !important;
+    gap:8px !important;
+    margin:0 !important;
+    padding:10px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-community-tools label {
+    min-width:0 !important;
+    margin:0 !important;
+  }
+  body.is-community-page .community-community-tools label > span {
+    display:none !important;
+  }
+  body.is-community-page .community-community-tools input,
+  body.is-community-page .community-community-tools select {
+    width:100% !important;
+    min-height:40px !important;
+    height:40px !important;
+    margin:0 !important;
+    padding:0 12px !important;
+    border:1px solid #242428 !important;
+    border-radius:10px !important;
+    background:#111114 !important;
+    color:#f4f4f5 !important;
+    font-size:.76rem !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-community-tools label:nth-of-type(2) {
+    grid-column:1 / 2 !important;
+  }
+  body.is-community-page .community-network-create-community {
+    grid-column:2 !important;
+    grid-row:1 / span 2 !important;
+    align-self:stretch !important;
+    display:grid !important;
+    place-items:center !important;
+    width:42px !important;
+    min-width:42px !important;
+    min-height:42px !important;
+    padding:0 !important;
+    border:1px solid #242428 !important;
+    border-radius:10px !important;
+    background:#111114 !important;
+    color:#fff !important;
+  }
+  body.is-community-page .community-network-create-community span {
+    display:none !important;
+  }
+  body.is-community-page .community-network-create-community svg {
+    width:18px !important;
+    height:18px !important;
+  }
+
+  body.is-community-page .community-community-grid {
+    display:grid !important;
+    grid-template-columns:1fr !important;
+    gap:0 !important;
+    width:100% !important;
+    margin:0 !important;
+    padding:0 !important;
+  }
+  body.is-community-page .community-community-card {
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) auto !important;
+    gap:8px 12px !important;
+    width:100% !important;
+    margin:0 !important;
+    padding:14px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-community-main {
+    display:grid !important;
+    grid-template-columns:46px minmax(0,1fr) !important;
+    align-items:center !important;
+    gap:10px !important;
+    min-width:0 !important;
+    color:#fff !important;
+    text-decoration:none !important;
+  }
+  body.is-community-page .community-community-icon {
+    width:46px !important;
+    height:46px !important;
+    border:1px solid #29292e !important;
+    border-radius:12px !important;
+    background:#151518 !important;
+    font-size:.95rem !important;
+    overflow:hidden !important;
+  }
+  body.is-community-page .community-community-icon img {
+    width:100% !important;
+    height:100% !important;
+    object-fit:cover !important;
+  }
+  body.is-community-page .community-community-main strong {
+    display:block !important;
+    overflow:hidden !important;
+    color:#f5f5f6 !important;
+    font-size:.84rem !important;
+    font-weight:690 !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+  body.is-community-page .community-community-main em {
+    display:block !important;
+    margin-top:3px !important;
+    overflow:hidden !important;
+    color:#777780 !important;
+    font-size:.66rem !important;
+    font-style:normal !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+  body.is-community-page .community-community-card > p {
+    grid-column:1 / -1 !important;
+    margin:0 !important;
+    color:#a1a1a8 !important;
+    font-size:.72rem !important;
+    line-height:1.4 !important;
+    display:-webkit-box !important;
+    -webkit-line-clamp:2 !important;
+    -webkit-box-orient:vertical !important;
+    overflow:hidden !important;
+  }
+  body.is-community-page .community-community-stats {
+    grid-column:1 !important;
+    display:flex !important;
+    align-items:center !important;
+    gap:10px !important;
+    min-width:0 !important;
+    color:#6f6f78 !important;
+    font-size:.62rem !important;
+    white-space:nowrap !important;
+  }
+  body.is-community-page .community-community-stats span:last-child {
+    display:none !important;
+  }
+  body.is-community-page .community-card-actions {
+    grid-column:2 !important;
+    grid-row:1 !important;
+    display:flex !important;
+    align-items:center !important;
+    gap:6px !important;
+    margin:0 !important;
+  }
+  body.is-community-page .community-card-actions .button {
+    min-height:34px !important;
+    height:34px !important;
+    padding:0 11px !important;
+    border-radius:9px !important;
+    font-size:.67rem !important;
+  }
+  body.is-community-page .community-card-actions a.button {
+    display:none !important;
+  }
+  body.is-community-page .community-network-directory .community-feed-state {
+    margin:0 !important;
+    padding:28px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    text-align:center !important;
+  }
+}
+
+
+/* melogic-mobile-composer-two-line-identity-v1 */
+@media (max-width:760px) {
+  .community-mobile-composer-identity {
+    display:flex;
+    min-width:0;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:1px;
+    margin:0 0 4px;
+  }
+
+  .community-mobile-composer-display-name {
+    display:block;
+    max-width:100%;
+    overflow:hidden;
+    color:#f4f6f8;
+    font-size:.92rem;
+    font-weight:700;
+    line-height:1.15;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+
+  .community-mobile-composer-username {
+    display:block;
+    max-width:100%;
+    overflow:hidden;
+    color:rgba(160,171,189,.72);
+    font-size:.68rem;
+    font-weight:500;
+    line-height:1.15;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+}
+
+
 /* melogic-mobile-story-row-verified-spacing-v1
    Applies ONLY to Story cards on the Community homepage, not the open viewer. */
 @media (max-width:760px) {

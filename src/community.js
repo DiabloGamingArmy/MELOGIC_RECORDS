@@ -1302,8 +1302,12 @@ function renderStoriesRow() {
       <button type="button" class="community-story-item ${communityAuthorIsVerified(story) ? 'is-verified-story' : ''}" data-open-story="${escapeHtml(story.storyId)}">
         <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
           ${storyAvatar(story)}
-        </span></span>
-        ${communityDisplayNameMarkup(story, story.authorDisplayName || story.authorUsername || 'Creator')}
+        </span>${communityAuthorIsVerified(story) && communityVerifiedBadgeUrl ? `
+          <span class="community-story-avatar-verified" aria-label="Verified" title="Verified">
+            <img class="community-story-avatar-verified-shadow" src="${escapeHtml(communityVerifiedBadgeUrl)}" alt="" aria-hidden="true" />
+            <img class="community-story-avatar-verified-icon" src="${escapeHtml(communityVerifiedBadgeUrl)}" alt="" aria-hidden="true" />
+          </span>` : ''}</span>
+        ${communityDisplayNameMarkup({ ...story, authorBadges: [] }, story.authorDisplayName || story.authorUsername || 'Creator')}
       </button>
     `
   }).join('')
