@@ -94,10 +94,19 @@ cameraSurface.innerHTML = `
         <input type="range" min="100" max="400" value="100" data-camera-crop-zoom aria-label="Crop zoom">
       </div>
       <div class="camera-draw-controls" data-camera-draw-controls hidden>
-        <select data-camera-draw-brush aria-label="Brush"><option value="pen">Pen</option><option value="marker">Marker</option><option value="highlighter">Highlighter</option><option value="neon">Neon</option><option value="eraser">Eraser</option></select>
-        <input type="color" value="#ffffff" data-camera-draw-color aria-label="Brush color">
-        <input type="range" min="2" max="32" value="8" data-camera-draw-size aria-label="Brush size">
-        <input type="range" min="10" max="100" value="100" data-camera-draw-opacity aria-label="Brush opacity">
+        <div class="camera-draw-brushes" role="group" aria-label="Brush type">
+          <button type="button" data-camera-draw-brush-option="pen" class="is-active" aria-label="Pen"><svg viewBox="0 0 24 24"><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/></svg></button>
+          <button type="button" data-camera-draw-brush-option="marker" aria-label="Marker"><svg viewBox="0 0 24 24"><path d="m5 17 9-9 3 3-9 9H5v-3Z"/><path d="m13 9 3 3"/></svg></button>
+          <button type="button" data-camera-draw-brush-option="highlighter" aria-label="Highlighter"><svg viewBox="0 0 24 24"><path d="m6 16 8-8 4 4-8 8H6v-4Z"/><path d="M4 21h12"/></svg></button>
+          <button type="button" data-camera-draw-brush-option="neon" aria-label="Neon"><svg viewBox="0 0 24 24"><path d="M12 3v3M5.6 5.6l2.1 2.1M3 12h3M18 12h3M16.3 7.7l2.1-2.1"/><path d="M9 18h6M10 21h4"/><path d="M8.5 14.5a5 5 0 1 1 7 0L14 16h-4l-1.5-1.5Z"/></svg></button>
+          <button type="button" data-camera-draw-brush-option="eraser" aria-label="Eraser"><svg viewBox="0 0 24 24"><path d="m7 17-3-3 9-9a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-8 8H7Z"/><path d="m12 18 5-5"/></svg></button>
+          <input type="hidden" value="pen" data-camera-draw-brush>
+          <label class="camera-draw-color-button" aria-label="Brush color"><input type="color" value="#ffffff" data-camera-draw-color><span></span></label>
+        </div>
+        <div class="camera-draw-parameters" data-camera-draw-parameters>
+          <label><span>Size</span><input type="range" min="2" max="32" value="8" data-camera-draw-size aria-label="Brush size"></label>
+          <label><span>Opacity</span><input type="range" min="10" max="100" value="100" data-camera-draw-opacity aria-label="Brush opacity"></label>
+        </div>
       </div>
       <div class="camera-sticker-picker" data-camera-sticker-picker hidden>
         <div class="camera-sticker-tabs"><button type="button" data-sticker-tab="emoji" class="is-active">Emoji</button><button type="button" data-sticker-tab="shape">Shapes</button><button type="button" data-sticker-tab="utility">Utility</button><button type="button" data-sticker-tab="melogic">Melogic</button></div>
@@ -1318,7 +1327,7 @@ const editToolRail=cameraSurface.querySelector('[data-camera-edit-tools]'),editT
 const CAMERA_TOOL_LABELS={text:'Text',pen:'Draw',sticker:'Stickers',crop:'Crop',video:'Video',adjust:'Adjust',music:'Music',image:'Image'}
 function setCameraToolRail(tool=''){
   if(!editToolRail)return
-  editToolRail.dataset.activeTool=tool;editToolRail.classList.toggle('is-expanded',!!tool)
+  editToolRail.dataset.activeTool=tool;editToolRail.classList.toggle('is-expanded',!!tool);cameraSurface.dataset.cameraActiveTool=tool
   editToolRail.querySelectorAll(':scope > [data-camera-edit-tool]').forEach(button=>{const active=button.dataset.cameraEditTool===tool;button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active))})
   if(editToolContext){editToolContext.textContent=tool?(CAMERA_TOOL_LABELS[tool]||tool):'';editToolContext.setAttribute('aria-hidden',String(!tool))}
 }
@@ -1514,6 +1523,11 @@ editorLayerStage?.addEventListener('dblclick',event=>{
 })
 
 const drawControls=cameraSurface.querySelector('[data-camera-draw-controls]'),drawBrush=cameraSurface.querySelector('[data-camera-draw-brush]'),drawColor=cameraSurface.querySelector('[data-camera-draw-color]'),drawSize=cameraSurface.querySelector('[data-camera-draw-size]'),drawOpacity=cameraSurface.querySelector('[data-camera-draw-opacity]')
+cameraSurface.querySelector('[data-camera-draw-controls]')?.addEventListener('click',event=>{
+  const button=event.target.closest('[data-camera-draw-brush-option]');if(!button)return
+  event.preventDefault();event.stopPropagation();drawBrush.value=button.dataset.cameraDrawBrushOption
+  cameraSurface.querySelectorAll('[data-camera-draw-brush-option]').forEach(item=>item.classList.toggle('is-active',item===button))
+})
 let activeDrawLayerId=''
 function normalizedDrawPoint(event){const r=editCanvas.getBoundingClientRect();return{x:clampEditorValue((event.clientX-r.left)/r.width,0,1),y:clampEditorValue((event.clientY-r.top)/r.height,0,1)}}
 editCanvas.addEventListener('pointerdown',e=>{
