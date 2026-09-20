@@ -1,4 +1,5 @@
 import './styles/base.css'
+import { listNewMusicReleases, searchMusic, listTracksForRelease, isNativeMusicTrackPlayable } from './data/musicService'
 import './styles/camera.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
@@ -81,14 +82,19 @@ cameraSurface.innerHTML = `
         <div class="camera-adjust-single"><span data-camera-adjust-current-label>Exposure</span><input type="range" min="-100" max="100" value="0" data-camera-adjust-current><output data-camera-adjust-current-value>0</output></div>
       </div>
       <div class="camera-audio-controls" data-camera-audio-controls hidden>
-        <div class="camera-audio-head"><strong>Music & Audio</strong><button type="button" data-camera-audio-close aria-label="Close audio controls">×</button></div>
-        <label>Original <input type="range" min="0" max="100" value="100" data-camera-original-volume></label>
-        <label class="camera-audio-mute"><input type="checkbox" data-camera-original-mute> Mute original audio</label>
-        <div class="camera-music-source"><input type="text" maxlength="100" placeholder="Track title" data-camera-music-title><input type="url" placeholder="Track URL" data-camera-music-url><button type="button" data-camera-music-attach>Attach</button></div>
-        <label>Music <input type="range" min="0" max="100" value="80" data-camera-music-volume></label>
-        <div class="camera-music-segment"><label>Start <input type="number" min="0" step="0.1" value="0" data-camera-music-start></label><label>End <input type="number" min="0.1" step="0.1" value="15" data-camera-music-end></label></div>
-        <div class="camera-music-fades"><label>Fade in <input type="number" min="0" max="5" step="0.1" value="0" data-camera-music-fade-in></label><label>Fade out <input type="number" min="0" max="5" step="0.1" value="0" data-camera-music-fade-out></label></div>
-        <button type="button" data-camera-music-remove hidden>Remove music</button>
+        <div class="camera-sheet-grabber" data-camera-audio-dismiss></div>
+        <div class="camera-audio-head"><strong>Add music</strong><button type="button" data-camera-audio-close aria-label="Close music">×</button></div>
+        <div class="camera-music-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg><input type="search" data-camera-music-search placeholder="Search Melogic music" autocomplete="off"><button type="button" data-camera-music-import aria-label="Import audio">+</button><input type="file" accept="audio/*" data-camera-music-file hidden></div>
+        <div class="camera-music-results" data-camera-music-results></div>
+        <div class="camera-music-empty" data-camera-music-empty hidden>No music found.</div>
+        <section class="camera-music-selected" data-camera-music-selected hidden>
+          <div><strong data-camera-music-selected-title></strong><small data-camera-music-selected-artist></small></div><button type="button" data-camera-music-remove>Remove</button>
+          <label>Music <input type="range" min="0" max="100" value="80" data-camera-music-volume></label>
+          <label class="camera-original-audio">Original <input type="range" min="0" max="100" value="100" data-camera-original-volume></label>
+          <label class="camera-audio-mute"><input type="checkbox" data-camera-original-mute> Mute original</label>
+          <div class="camera-music-segment"><label>Start <input type="number" min="0" step="0.1" value="0" data-camera-music-start></label><label>End <input type="number" min="0.1" step="0.1" value="15" data-camera-music-end></label></div>
+          <div class="camera-music-fades"><label>Fade in <input type="number" min="0" max="5" step="0.1" value="0" data-camera-music-fade-in></label><label>Fade out <input type="number" min="0" max="5" step="0.1" value="0" data-camera-music-fade-out></label></div>
+        </section>
       </div>
       <div class="camera-crop-controls" data-camera-crop-controls hidden>
         <div class="camera-crop-rail">
@@ -1381,24 +1387,39 @@ const adjustControls=cameraSurface.querySelector('[data-camera-adjust-controls]'
 renderCameraAdjustmentControls()
 cameraSurface.querySelector('[data-camera-adjust-close]')?.addEventListener('click',()=>{adjustControls.hidden=true;if(editToolRail?.dataset.activeTool==='adjust'){editMode='';setCameraToolRail('')}})
 
-const audioControls=cameraSurface.querySelector('[data-camera-audio-controls]'),originalVolume=cameraSurface.querySelector('[data-camera-original-volume]'),originalMute=cameraSurface.querySelector('[data-camera-original-mute]'),musicVolume=cameraSurface.querySelector('[data-camera-music-volume]'),musicTitle=cameraSurface.querySelector('[data-camera-music-title]'),musicURL=cameraSurface.querySelector('[data-camera-music-url]'),musicStart=cameraSurface.querySelector('[data-camera-music-start]'),musicEnd=cameraSurface.querySelector('[data-camera-music-end]'),musicFadeIn=cameraSurface.querySelector('[data-camera-music-fade-in]'),musicFadeOut=cameraSurface.querySelector('[data-camera-music-fade-out]'),musicRemove=cameraSurface.querySelector('[data-camera-music-remove]')
+const audioControls=cameraSurface.querySelector('[data-camera-audio-controls]'),originalVolume=cameraSurface.querySelector('[data-camera-original-volume]'),originalMute=cameraSurface.querySelector('[data-camera-original-mute]'),musicVolume=cameraSurface.querySelector('[data-camera-music-volume]'),musicStart=cameraSurface.querySelector('[data-camera-music-start]'),musicEnd=cameraSurface.querySelector('[data-camera-music-end]'),musicFadeIn=cameraSurface.querySelector('[data-camera-music-fade-in]'),musicFadeOut=cameraSurface.querySelector('[data-camera-music-fade-out]'),musicRemove=cameraSurface.querySelector('[data-camera-music-remove]')
 function applyCameraAudioPreview(){
   const audio=editorState.audio||{};recordedVideo.volume=clampEditorValue(Number(audio.originalVolume)??1,0,1);recordedVideo.muted=Boolean(audio.muted)
 }
 function syncCameraAudioControls(){
-  const audio=editorState.audio||{};if(originalVolume)originalVolume.value=String(Math.round((audio.originalVolume??1)*100));if(originalMute)originalMute.checked=!!audio.muted;if(musicVolume)musicVolume.value=String(Math.round((audio.musicVolume??.8)*100));if(musicStart)musicStart.value=String((audio.musicStartMs||0)/1000);if(musicEnd)musicEnd.value=String((audio.musicEndMs||15000)/1000);if(musicFadeIn)musicFadeIn.value=String((audio.fadeInMs||0)/1000);if(musicFadeOut)musicFadeOut.value=String((audio.fadeOutMs||0)/1000);if(musicTitle)musicTitle.value=audio.music?.title||'';if(musicURL)musicURL.value=audio.music?.url||'';if(musicRemove)musicRemove.hidden=!audio.music
+  const audio=editorState.audio||{};if(originalVolume)originalVolume.value=String(Math.round((audio.originalVolume??1)*100));if(originalMute)originalMute.checked=!!audio.muted;if(musicVolume)musicVolume.value=String(Math.round((audio.musicVolume??.8)*100));if(musicStart)musicStart.value=String((audio.musicStartMs||0)/1000);if(musicEnd)musicEnd.value=String((audio.musicEndMs||15000)/1000);if(musicFadeIn)musicFadeIn.value=String((audio.fadeInMs||0)/1000);if(musicFadeOut)musicFadeOut.value=String((audio.fadeOutMs||0)/1000);const selected=cameraSurface.querySelector('[data-camera-music-selected]'),title=cameraSurface.querySelector('[data-camera-music-selected-title]'),artist=cameraSurface.querySelector('[data-camera-music-selected-artist]');if(selected)selected.hidden=!audio.music;if(title)title.textContent=audio.music?.title||'';if(artist)artist.textContent=audio.music?.artistName||audio.music?.sourceLabel||''
 }
 function updateCameraAudio(patch){pushCameraEditorHistory();editorState.audio={...editorState.audio,...patch};editorState.revision+=1;applyCameraAudioPreview();syncCameraAudioControls()}
 originalVolume?.addEventListener('change',()=>updateCameraAudio({originalVolume:Number(originalVolume.value)/100}))
 originalMute?.addEventListener('change',()=>updateCameraAudio({muted:originalMute.checked}))
 musicVolume?.addEventListener('change',()=>updateCameraAudio({musicVolume:Number(musicVolume.value)/100}))
-cameraSurface.querySelector('[data-camera-music-attach]')?.addEventListener('click',()=>{const title=musicTitle.value.trim(),url=musicURL.value.trim();if(!title&&!url)return;updateCameraAudio({music:{id:cameraEditorId('music'),title:title||'Attached track',url}})})
+
 musicStart?.addEventListener('change',()=>updateCameraAudio({musicStartMs:Math.max(0,Math.round(Number(musicStart.value||0)*1000))}))
 musicEnd?.addEventListener('change',()=>updateCameraAudio({musicEndMs:Math.max(100,Math.round(Number(musicEnd.value||15)*1000))}))
 musicFadeIn?.addEventListener('change',()=>updateCameraAudio({fadeInMs:Math.max(0,Math.round(Number(musicFadeIn.value||0)*1000))}))
 musicFadeOut?.addEventListener('change',()=>updateCameraAudio({fadeOutMs:Math.max(0,Math.round(Number(musicFadeOut.value||0)*1000))}))
 musicRemove?.addEventListener('click',()=>updateCameraAudio({music:null}))
-cameraSurface.querySelector('[data-camera-audio-close]')?.addEventListener('click',()=>{audioControls.hidden=true;if(editToolRail?.dataset.activeTool==='music'){editMode='';setCameraToolRail('')}})
+let cameraMusicReleases=[],cameraMusicSearchTimer=0,cameraMusicObjectUrl=''
+function closeCameraMusicSheet(){audioControls.hidden=true;if(editToolRail?.dataset.activeTool==='music'){editMode='';setCameraToolRail('')}}
+function renderCameraMusicResults(releases=[]){
+ const host=cameraSurface.querySelector('[data-camera-music-results]'),empty=cameraSurface.querySelector('[data-camera-music-empty]');if(!host)return
+ host.replaceChildren(...releases.map(release=>{const button=document.createElement('button');button.type='button';button.className='camera-music-result';button.dataset.cameraMusicRelease=release.id;const art=document.createElement(release.coverArtURL?'img':'span');if(release.coverArtURL){art.src=release.coverArtURL;art.alt=''}else{art.className='camera-music-art-fallback';art.textContent='♪'}const copy=document.createElement('span');copy.innerHTML='<strong></strong><small></small>';copy.querySelector('strong').textContent=release.title;copy.querySelector('small').textContent=release.artistName;button.append(art,copy);return button}))
+ if(empty)empty.hidden=releases.length>0
+}
+async function loadCameraMusic(queryText=''){
+ try{cameraMusicReleases=queryText.trim()?await searchMusic(queryText,20):await listNewMusicReleases(20);renderCameraMusicResults(cameraMusicReleases)}catch(error){console.warn('[camera/music] catalog load failed',error);renderCameraMusicResults([])}
+}
+cameraSurface.querySelector('[data-camera-music-search]')?.addEventListener('input',event=>{clearTimeout(cameraMusicSearchTimer);cameraMusicSearchTimer=setTimeout(()=>void loadCameraMusic(event.target.value),220)})
+cameraSurface.querySelector('[data-camera-music-results]')?.addEventListener('click',async event=>{const button=event.target.closest('[data-camera-music-release]');if(!button)return;const release=cameraMusicReleases.find(item=>item.id===button.dataset.cameraMusicRelease);if(!release)return;const tracks=await listTracksForRelease(release.id),track=tracks.find(isNativeMusicTrackPlayable);if(!track)return;updateCameraAudio({music:{id:track.id,title:track.title,artistName:track.artistName||release.artistName,url:track.streamAudioURL,releaseId:release.id,source:'melogic-streaming'},musicStartMs:0,musicEndMs:Math.min(15000,Math.max(100,Math.round((track.duration||15)*1000)))})})
+cameraSurface.querySelector('[data-camera-music-import]')?.addEventListener('click',()=>cameraSurface.querySelector('[data-camera-music-file]')?.click())
+cameraSurface.querySelector('[data-camera-music-file]')?.addEventListener('change',event=>{const file=event.target.files?.[0];if(!file)return;if(cameraMusicObjectUrl)URL.revokeObjectURL(cameraMusicObjectUrl);cameraMusicObjectUrl=URL.createObjectURL(file);updateCameraAudio({music:{id:cameraEditorId('music'),title:file.name.replace(/\.[^.]+$/,''),artistName:'Imported audio',url:cameraMusicObjectUrl,source:'local-import'},musicStartMs:0,musicEndMs:15000});event.target.value=''})
+cameraSurface.querySelector('[data-camera-audio-dismiss]')?.addEventListener('click',closeCameraMusicSheet)
+cameraSurface.querySelector('[data-camera-audio-close]')?.addEventListener('click',closeCameraMusicSheet)
 
 const cropZoom=cameraSurface.querySelector('[data-camera-crop-zoom]')
 function cameraSourceAspect(){const w=editorState.media.sourceWidth||1,h=editorState.media.sourceHeight||1;return w/h}
