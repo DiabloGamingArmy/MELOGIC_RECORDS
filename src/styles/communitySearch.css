@@ -102,3 +102,25 @@
   }
 }
 
+
+/* melogic-mobile-search-empty-cleanup-v1
+   Mobile Explore/Search: remove the oversized decorative magnifier while
+   preserving the useful empty-state copy. Desktop remains unchanged. */
+@media (max-width:760px) {
+  .is-community-search-page .cs-empty > svg,
+  .is-community-search-page .melogic-search-empty > svg,
+  .is-community-search-page .melogic-empty-search-icon,
+  .is-community-search-page .community-search-empty-state > svg,
+  .is-community-search-page .search-empty-state > svg,
+  .is-community-search-page .empty-search-icon,
+  .is-community-search-page .search-empty-icon {
+    display:none !important;
+  }
+
+  .is-community-search-page .cs-empty,
+  .is-community-search-page .melogic-search-empty {
+    min-height:42vh;
+    gap:10px;
+    padding:42px 24px;
+  }
+}
