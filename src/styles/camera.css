@@ -433,3 +433,12 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-surface.is-media-transforming .camera-edit-canvas{pointer-events:none}
 .camera-surface.is-media-transforming .camera-playback{touch-action:none;overflow:hidden}
 .camera-edit-canvas.is-crop-mode{outline:1px dashed rgba(255,255,255,.72);outline-offset:-12px}
+
+
+/* camera-editor-audio-p8 */
+.camera-audio-controls{position:absolute;z-index:35;left:12px;right:62px;bottom:calc(80px + env(safe-area-inset-bottom,0px));max-height:min(58vh,470px);overflow:auto;padding:12px;border:1px solid rgba(255,255,255,.16);border-radius:20px;background:rgba(8,9,13,.92);color:#fff;backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+.camera-audio-controls[hidden]{display:none!important}.camera-audio-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}.camera-audio-head button{width:34px;height:34px;border:0;border-radius:50%;background:rgba(255,255,255,.08);color:#fff;font-size:23px}
+.camera-audio-controls>label{display:grid;grid-template-columns:70px 1fr;align-items:center;gap:8px;margin:8px 0;font-size:12px;color:#bbb}.camera-audio-controls input[type="range"]{width:100%;accent-color:#fff}
+.camera-audio-mute{display:flex!important;grid-template-columns:none!important}.camera-music-source{display:grid;grid-template-columns:1fr;gap:6px;margin:10px 0}.camera-music-source input{height:38px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.06);color:#fff;padding:0 10px}.camera-music-source button,.camera-audio-controls>[data-camera-music-remove]{height:38px;border:0;border-radius:10px;background:#fff;color:#090a0d;font-weight:700}
+.camera-music-segment,.camera-music-fades{display:grid;grid-template-columns:1fr 1fr;gap:7px}.camera-music-segment label,.camera-music-fades label{display:flex;flex-direction:column;gap:4px;color:#aaa;font-size:11px}.camera-music-segment input,.camera-music-fades input{height:36px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.06);color:#fff;padding:0 8px}
+.camera-audio-controls>[data-camera-music-remove]{width:100%;margin-top:9px;background:rgba(255,255,255,.08);color:#fff}
