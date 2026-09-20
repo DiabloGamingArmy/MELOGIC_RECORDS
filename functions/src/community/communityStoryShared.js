@@ -25,6 +25,49 @@ function sanitizeStoryText(value = '') {
   return cleanString(value, 500)
 }
 
+const STORY_LAYER_TYPES = new Set(['text', 'audio', 'link', 'person', 'product', 'project', 'poll', 'drawing'])
+const STORY_LAYER_MAX_COUNT = 40
+
+function clampStoryLayerNumber(value, fallback = 0, min = 0, max = 1) {
+  const number = Number(value)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
+}
+
+function sanitizeStoryLayers(value = []) {
+  if (!Array.isArray(value)) return []
+  return value.slice(0, STORY_LAYER_MAX_COUNT).map((raw, index) => {
+    const type = cleanString(raw?.type || '', 32).toLowerCase()
+    if (!STORY_LAYER_TYPES.has(type)) return null
+    const layer = {
+      id: cleanString(raw?.id || `layer-${index + 1}`, 80),
+      type,
+      x: clampStoryLayerNumber(raw?.x, .5),
+      y: clampStoryLayerNumber(raw?.y, .5),
+      width: clampStoryLayerNumber(raw?.width, .25, .02, 1),
+      height: clampStoryLayerNumber(raw?.height, .1, .02, 1),
+      rotation: clampStoryLayerNumber(raw?.rotation, 0, -180, 180),
+      scale: clampStoryLayerNumber(raw?.scale, 1, .1, 8),
+      opacity: clampStoryLayerNumber(raw?.opacity, 1),
+      zIndex: Math.max(0, Math.min(999, Math.round(Number(raw?.zIndex ?? index) || 0))),
+      startMs: Math.max(0, Math.round(Number(raw?.startMs || 0))),
+      endMs: Math.max(0, Math.round(Number(raw?.endMs || 0))),
+      content: cleanString(raw?.content || '', 1000),
+      targetId: sanitizeLinkedId(raw?.targetId || ''),
+      targetURL: cleanString(raw?.targetURL || '', 1200),
+      metadata: {}
+    }
+    const metadata = raw?.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata) ? raw.metadata : {}
+    for (const [key, item] of Object.entries(metadata).slice(0, 20)) {
+      const safeKey = cleanString(key, 64)
+      if (!safeKey) continue
+      if (typeof item === 'string') layer.metadata[safeKey] = cleanString(item, 500)
+      else if (typeof item === 'number' && Number.isFinite(item)) layer.metadata[safeKey] = item
+      else if (typeof item === 'boolean') layer.metadata[safeKey] = item
+    }
+    return layer
+  }).filter(Boolean)
+}
+
 function sanitizeBackground(value = '') {
   const clean = cleanString(value || 'aurora', 40)
   return STORY_BACKGROUND_VALUES.has(clean) ? clean : 'aurora'
@@ -92,7 +135,9 @@ function serializeStory(story = {}, id = '') {
     reportCount: Math.max(0, Number(story.reportCount || 0)),
     moderationStatus: story.moderationStatus || '',
     status: story.status || 'active',
-    visibility: story.visibility || 'public'
+    visibility: story.visibility || 'public',
+    layers: sanitizeStoryLayers(story.layers || []),
+    layerSchemaVersion: Math.max(1, Number(story.layerSchemaVersion || 1))
   }
 }
 
@@ -113,6 +158,8 @@ module.exports = {
   STORY_COLLECTION,
   STORY_MAX_LIFETIME_HOURS,
   STORY_MEDIA_TYPES,
+  STORY_LAYER_TYPES,
+  STORY_LAYER_MAX_COUNT,
   admin,
   cleanString,
   db,
@@ -122,6 +169,7 @@ module.exports = {
   requireAuth,
   sanitizeBackground,
   sanitizeLinkedId,
+  sanitizeStoryLayers,
   sanitizeStoryId,
   sanitizeStoryText,
   serializeStory,
