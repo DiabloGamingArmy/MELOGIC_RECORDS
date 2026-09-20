@@ -1132,43 +1132,47 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 }
 
 
-/* melogic-mobile-stories-scale-v1
-   Give the mobile Stories rail more visual weight without changing label type size.
-   Wider item/label bounds also delay the single-line ellipsis. */
+/* melogic-mobile-stories-scale-v2
+   Larger mobile Story targets while preserving the existing typography.
+   Story labels/subtext get the same wider display budget before ellipsis. */
 @media (max-width:760px) {
   body.is-community-page .community-mobile-stories .community-stories-row {
-    padding-top:14px !important;
-    padding-bottom:12px !important;
-    gap:14px !important;
+    padding-top:16px !important;
+    padding-bottom:14px !important;
+    gap:16px !important;
   }
 
   body.is-community-page .community-story-item {
-    flex:0 0 76px !important;
-    width:76px !important;
-    gap:7px !important;
+    flex:0 0 88px !important;
+    width:88px !important;
+    gap:8px !important;
   }
 
   body.is-community-page .community-story-ring {
-    width:66px !important;
-    height:66px !important;
+    width:78px !important;
+    height:78px !important;
   }
 
-  body.is-community-page .community-story-item strong {
-    width:76px !important;
-    max-width:76px !important;
-    font-size:.66rem !important;
+  body.is-community-page .community-story-item strong,
+  body.is-community-page .community-story-item > span:not(.community-story-ring) {
+    width:88px !important;
+    max-width:88px !important;
     overflow:hidden !important;
     text-overflow:ellipsis !important;
     white-space:nowrap !important;
   }
 
+  body.is-community-page .community-story-item strong {
+    font-size:.66rem !important;
+  }
+
   body.is-community-page .community-story-item.is-pending-story > strong {
-    width:76px !important;
-    max-width:76px !important;
+    width:88px !important;
+    max-width:88px !important;
     font-size:.68rem !important;
   }
 
   body.is-community-page .community-story-empty-state {
-    min-height:66px !important;
+    min-height:78px !important;
   }
 }
