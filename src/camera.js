@@ -134,6 +134,7 @@ const recordLock = cameraSurface.querySelector('[data-camera-record-lock]')
 const closeButton=cameraSurface.querySelector('[data-camera-close]'), flashButton=cameraSurface.querySelector('[data-camera-flash]'), flashStrength=cameraSurface.querySelector('[data-camera-flash-strength]'), frontFlash=cameraSurface.querySelector('[data-camera-front-flash]')
 const editCanvas=cameraSurface.querySelector('[data-camera-edit-canvas]'), editCtx=editCanvas?.getContext('2d'), editTextbox=cameraSurface.querySelector('[data-camera-edit-textbox]'), editTextInput=cameraSurface.querySelector('[data-camera-edit-text-input]'), editImageInput=cameraSurface.querySelector('[data-camera-edit-image-input]')
 let frontFlashOn=false, editMode='', editDrawing=false, editHistory=[]
+let editorState=createCameraEditorState()
 let renderGeneration = 0
 let renderRaf = 0
 let cameraStarting = false
@@ -477,10 +478,52 @@ function waitForFirstDrawableFrame() {
 }
 function updateFrontFlash(){const s=Number(flashStrength?.value||0)/100;frontFlash?.style.setProperty('--front-flash-strength',s.toFixed(3));frontFlash?.classList.toggle('is-on',facingMode==='user'&&frontFlashOn);if(flashStrength)flashStrength.hidden=!(facingMode==='user'?frontFlashOn:flashButton?.dataset.on==='true')}
 function resetFlashUI(){frontFlashOn=false;frontFlash?.classList.remove('is-on');if(flashButton){flashButton.dataset.on='false';flashButton.setAttribute('aria-pressed','false')}if(flashStrength)flashStrength.hidden=true}
+function createCameraEditorState(){
+  return {
+    schemaVersion:1,
+    media:{type:'',sourceWidth:0,sourceHeight:0,durationMs:0},
+    transform:{x:0,y:0,scale:1,rotation:0,flipX:false,flipY:false,crop:null},
+    layers:[],
+    selectedLayerId:'',
+    revision:0
+  }
+}
+function cameraEditorId(prefix='layer'){
+  try{return `${prefix}-${crypto.randomUUID()}`}catch{return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`}
+}
+function resetCameraEditorState(type=''){
+  editorState=createCameraEditorState()
+  editorState.media.type=type||playback?.dataset?.captureType||''
+  syncCameraEditorMediaGeometry()
+}
+function syncCameraEditorMediaGeometry(){
+  if(!editorState?.media)return
+  const isPhoto=(playback?.dataset?.captureType||editorState.media.type)==='photo'
+  const width=isPhoto?recordedPhoto?.naturalWidth:recordedVideo?.videoWidth
+  const height=isPhoto?recordedPhoto?.naturalHeight:recordedVideo?.videoHeight
+  if(width>0&&height>0){editorState.media.sourceWidth=width;editorState.media.sourceHeight=height}
+  if(!isPhoto&&Number.isFinite(recordedVideo?.duration))editorState.media.durationMs=Math.max(0,Math.round(recordedVideo.duration*1000))
+}
+function addCameraEditorLayer(type,props={}){
+  const layer={
+    id:cameraEditorId(type),type,
+    x:.5,y:.5,width:.32,height:.12,rotation:0,scale:1,opacity:1,zIndex:editorState.layers.length,
+    ...props
+  }
+  editorState.layers.push(layer);editorState.selectedLayerId=layer.id;editorState.revision+=1
+  return layer
+}
+function selectCameraEditorLayer(id=''){editorState.selectedLayerId=editorState.layers.some(layer=>layer.id===id)?id:''}
+function updateCameraEditorLayer(id,patch={}){const layer=editorState.layers.find(item=>item.id===id);if(!layer)return null;Object.assign(layer,patch);editorState.revision+=1;return layer}
+function removeCameraEditorLayer(id){const index=editorState.layers.findIndex(layer=>layer.id===id);if(index<0)return false;editorState.layers.splice(index,1);editorState.layers.forEach((layer,zIndex)=>layer.zIndex=zIndex);if(editorState.selectedLayerId===id)editorState.selectedLayerId='';editorState.revision+=1;return true}
+function cameraEditorSnapshot(){return JSON.parse(JSON.stringify(editorState))}
+function exportCameraEditorState(){syncCameraEditorMediaGeometry();return cameraEditorSnapshot()}
+window.__melogicCameraEditor={getState:exportCameraEditorState,addLayer:addCameraEditorLayer,selectLayer:selectCameraEditorLayer,updateLayer:updateCameraEditorLayer,removeLayer:removeCameraEditorLayer}
+
 function sizeEditCanvas(){if(!editCanvas)return;const r=playback.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(editCanvas.width!==w||editCanvas.height!==h){editCanvas.width=w;editCanvas.height=h}}
 function pushEditHistory(){if(!editCanvas)return;editHistory.push(editCanvas.toDataURL());if(editHistory.length>20)editHistory.shift()}
 function restoreEditSnapshot(url){if(!editCtx)return;editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);if(!url)return;const i=new Image();i.onload=()=>editCtx.drawImage(i,0,0,editCanvas.width,editCanvas.height);i.src=url}
-function resetEditor(){editMode='';editDrawing=false;editHistory=[];if(editTextbox)editTextbox.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
+function resetEditor(){editMode='';editDrawing=false;editHistory=[];resetCameraEditorState(playback?.dataset?.captureType||'');if(editTextbox)editTextbox.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
 function editorPoint(e){const r=editCanvas.getBoundingClientRect();return{x:(e.clientX-r.left)*editCanvas.width/r.width,y:(e.clientY-r.top)*editCanvas.height/r.height}}
 async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
@@ -632,6 +675,7 @@ function showCapturedMedia(blob, type) {
     recordedVideo.removeAttribute('src')
     recordedVideo.load()
     recordedPhoto.src = previewUrl
+    recordedPhoto.addEventListener('load',syncCameraEditorMediaGeometry,{once:true})
   } else {
     recordedPhoto.removeAttribute('src')
     recordedVideo.pause()
@@ -673,6 +717,7 @@ function showCapturedMedia(blob, type) {
       }
     }
 
+    recordedVideo.addEventListener('loadedmetadata',syncCameraEditorMediaGeometry,{once:true})
     if (recordedVideo.readyState >= 2) playPreview()
     else {
       recordedVideo.addEventListener('loadeddata', playPreview, { once: true })
