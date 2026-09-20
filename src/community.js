@@ -624,7 +624,10 @@ function setupCommunityFeedTabs() {
     if (!['for-you', 'following'].includes(nextTab)) return
     event.preventDefault()
 
-    if (state.activeTab === nextTab && !state.feedError) return
+    // A tab can already be the remembered feed selection while Discover is
+    // mounted. In that case it is still a navigation action: leave Discover.
+    // Only short-circuit when that feed is already the visible surface.
+    if (state.view.type === 'feed' && state.activeTab === nextTab && !state.feedError) return
 
     state.activeTab = nextTab
     state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
