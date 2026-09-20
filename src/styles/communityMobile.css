@@ -1582,3 +1582,105 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     }
   }
 }
+
+
+/* melogic-mobile-story-viewer-interactions-p3 */
+/* Mobile Story viewer: replace legacy Like/Dislike/comment/footer chrome with
+   the sparse reply + heart + share interaction row used by immersive viewers. */
+.community-story-mobile-interactions {
+  display:none;
+}
+
+@media (max-width:760px) {
+  .community-modal-backdrop > .community-story-viewer .community-story-desktop-controls {
+    display:none !important;
+  }
+
+  .community-story-mobile-interactions {
+    position:absolute !important;
+    right:max(16px,env(safe-area-inset-right,0px)) !important;
+    bottom:max(12px,env(safe-area-inset-bottom,0px)) !important;
+    left:max(16px,env(safe-area-inset-left,0px)) !important;
+    z-index:10 !important;
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) 44px 44px !important;
+    align-items:center !important;
+    gap:10px !important;
+    min-height:48px !important;
+    padding:0 !important;
+    background:transparent !important;
+  }
+
+  .community-story-reply-shell {
+    display:flex !important;
+    align-items:center !important;
+    min-width:0 !important;
+    height:46px !important;
+    border:1px solid rgba(255,255,255,.72) !important;
+    border-radius:999px !important;
+    background:rgba(0,0,0,.10) !important;
+    box-shadow:0 1px 8px rgba(0,0,0,.18) !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+  }
+
+  .community-story-reply-shell input {
+    width:100% !important;
+    min-width:0 !important;
+    height:100% !important;
+    margin:0 !important;
+    padding:0 18px !important;
+    border:0 !important;
+    outline:0 !important;
+    background:transparent !important;
+    color:#fff !important;
+    font:inherit !important;
+    font-size:.9rem !important;
+    font-weight:500 !important;
+    opacity:1 !important;
+    -webkit-text-fill-color:#fff !important;
+  }
+
+  .community-story-reply-shell input::placeholder {
+    color:rgba(255,255,255,.92) !important;
+    opacity:1 !important;
+    -webkit-text-fill-color:rgba(255,255,255,.92) !important;
+  }
+
+  .community-story-mobile-interactions > button {
+    display:grid !important;
+    place-items:center !important;
+    width:44px !important;
+    height:44px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    color:#fff !important;
+    box-shadow:none !important;
+    filter:drop-shadow(0 1px 5px rgba(0,0,0,.7)) !important;
+    cursor:pointer !important;
+  }
+
+  .community-story-mobile-interactions > button svg {
+    width:27px !important;
+    height:27px !important;
+    stroke-width:1.8 !important;
+  }
+
+  .community-story-mobile-interactions > button:active {
+    transform:scale(.92) !important;
+  }
+
+  /* Keep authored captions clear of the persistent interaction row. */
+  .community-modal-backdrop > .community-story-viewer .community-story-caption {
+    bottom:max(82px,calc(env(safe-area-inset-bottom,0px) + 70px)) !important;
+  }
+
+  /* Navigation remains gesture/tap driven; old visible Prev/Next chrome is gone. */
+  .community-modal-backdrop > .community-story-viewer .community-story-discussion,
+  .community-modal-backdrop > .community-story-viewer .community-story-viewer-actions {
+    display:none !important;
+  }
+}
