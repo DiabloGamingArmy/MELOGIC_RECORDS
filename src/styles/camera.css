@@ -483,3 +483,25 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   .camera-sticker-grid{grid-template-columns:repeat(6,minmax(38px,1fr))}
   .camera-adjust-controls,.camera-video-controls,.camera-audio-controls,.camera-crop-controls{left:max(8px,env(safe-area-inset-left,0px));right:58px}
 }
+
+
+/* camera-editor-split-rails-touch-fix */
+/* Primary creation tools live on the right; non-creative editor functions live on the left. */
+.camera-edit-tools,.camera-editor-functions{z-index:60;pointer-events:auto!important}
+.camera-edit-tools{max-height:calc(100% - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 150px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.camera-edit-tools::-webkit-scrollbar{display:none}
+.camera-editor-functions{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:calc(env(safe-area-inset-top,0px) + 72px);display:flex;flex-direction:column;gap:8px}
+.camera-editor-functions>button,.camera-editor-functions .camera-editor-selection-actions button{display:grid;place-items:center;width:44px;height:44px;padding:0;border:1px solid rgba(255,255,255,.22);border-radius:50%;background:rgba(8,9,13,.58);color:#fff;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);touch-action:manipulation;pointer-events:auto}
+.camera-editor-functions button:disabled{opacity:.32;pointer-events:none}.camera-editor-functions svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.camera-editor-functions .camera-editor-selection-actions{display:flex;flex-direction:column;gap:6px;padding-top:7px;border-top:1px solid rgba(255,255,255,.16)}
+.camera-editor-functions .camera-editor-selection-actions[hidden]{display:none!important}
+.camera-editor-functions .camera-editor-selection-actions button{width:40px!important;height:40px!important;font-size:initial!important}
+
+/* Tool surfaces may sit above the media, but must never cover the side rails. */
+.camera-edit-canvas.is-drawing-mode{z-index:12}
+.camera-edit-tools,.camera-editor-functions{isolation:isolate}
+@media (max-width:760px){
+  .camera-editor-functions{left:max(8px,env(safe-area-inset-left,0px));top:calc(env(safe-area-inset-top,0px) + 64px);gap:7px}
+  .camera-editor-functions>button{width:42px;height:42px}
+  .camera-edit-tools{max-height:calc(100% - var(--melogic-mobile-safe-top,0px) - 116px)}
+}
