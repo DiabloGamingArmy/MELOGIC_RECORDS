@@ -10,14 +10,23 @@ import { iconSvg } from './utils/icons'
 const app=document.querySelector('#app'); document.body.classList.add('is-community-search-page')
 const esc=(v='')=>String(v).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
 const state={q:'',busy:false,people:[],communities:[],posts:[],request:0}
-function render(){const h=app.querySelector('[data-results]');if(!h)return;if(!state.q){h.innerHTML=`<div class="cs-empty">${iconSvg('search')}<strong>Search Community</strong><span>Find creators, communities, and posts.</span></div>`;return}if(state.busy){h.innerHTML='<div class="cs-empty"><strong>Searching…</strong></div>';return}const people=state.people.map(x=>`<a class="cs-row" href="${publicProfileRoute({uid:x.uid,username:x.username})}"><strong>${esc(x.displayName||x.username||'Creator')}</strong><small>@${esc(x.username||'creator')}</small></a>`).join('');const communities=state.communities.map(x=>`<a class="cs-row" href="${communityRoute(x.slug)}"><strong>${esc(x.name||x.slug||'Community')}</strong><small>c/${esc(x.slug||'')}</small></a>`).join('');const posts=state.posts.map(x=>`<a class="cs-post" href="${communityPostRoute(x.postId)}"><small>@${esc(x.authorUsername||'creator')}</small>${x.title?`<strong>${esc(x.title)}</strong>`:''}<p>${esc(String(x.body||'').slice(0,220))}</p></a>`).join('');h.innerHTML=(people?`<section><h2>Creators</h2>${people}</section>`:'')+(communities?`<section><h2>Communities</h2>${communities}</section>`:'')+(posts?`<section><h2>Posts</h2>${posts}</section>`:'')||'<div class="cs-empty"><strong>No results</strong><span>Try another search.</span></div>'}
+function render(){
+  const h=app.querySelector('[data-results]'); if(!h)return;
+  if(!state.q){h.innerHTML=`<div class="cs-empty">${iconSvg('search')}<strong>Search Community</strong><span>Find creators, communities, and posts.</span></div>`;return}
+  if(state.busy){h.innerHTML='<div class="cs-empty"><strong>Searching…</strong></div>';return}
+  const people=state.people.map(x=>`<a class="cs-row" data-search-type="Accounts" data-result-id="${esc(x.uid)}" href="${publicProfileRoute({uid:x.uid,username:x.username})}"><strong>${esc(x.displayName||x.username||'Creator')}</strong><small>@${esc(x.username||'creator')}</small></a>`).join('');
+  const communities=state.communities.map(x=>`<a class="cs-row" data-search-type="Communities" data-result-id="${esc(x.id||x.slug)}" href="${communityRoute(x.slug)}"><strong>${esc(x.name||x.slug||'Community')}</strong><small>c/${esc(x.slug||'')}</small></a>`).join('');
+  const posts=state.posts.map(x=>`<a class="cs-post" data-search-type="Posts" data-result-id="${esc(x.postId)}" href="${communityPostRoute(x.postId)}"><small>@${esc(x.authorUsername||'creator')}</small>${x.title?`<strong>${esc(x.title)}</strong>`:''}<p>${esc(String(x.body||'').slice(0,220))}</p></a>`).join('');
+  h.innerHTML=(people?`<section data-result-section="Accounts"><h2>Creators</h2>${people}</section>`:'')+(communities?`<section data-result-section="Communities"><h2>Communities</h2>${communities}</section>`:'')+(posts?`<section data-result-section="Posts"><h2>Posts</h2>${posts}</section>`:'')||'<div class="cs-empty"><strong>No results</strong><span>Try another search.</span></div>';
+  requestAnimationFrame(melogicApplySearchFilter)
+}
 async function run(raw){const q=String(raw||'').trim(),request=++state.request;state.q=q;if(!q){state.busy=false;state.people=[];state.communities=[];state.posts=[];render();return}state.busy=true;render();const [people,communities,page]=await Promise.all([q.length>1?searchProfilesByUsername(q).catch(()=>[]):Promise.resolve([]),listCommunities({search:q,limitCount:8}).catch(()=>[]),listCommunityPosts({search:q,limitCount:12,pageMode:true}).catch(()=>({posts:[]}))]);if(request!==state.request)return;state.people=Array.isArray(people)?people:[];state.communities=Array.isArray(communities)?communities:(communities?.communities||[]);state.posts=Array.isArray(page)?page:(page?.posts||[]);state.busy=false;render()}
 app.innerHTML=`${navShell({currentPage:'communitySearch'})}<main class="cs-main"><div class="cs-shell"><header class="cs-desktop"><a href="${ROUTES.community}" aria-label="Back">${iconSvg('arrowLeft')}</a><h1>Search Community</h1></header><form class="cs-search" role="search" aria-label="Community"><span>${iconSvg('search')}</span><input type="search" placeholder="Search creators, communities, posts…" aria-label="Search Community" autocomplete="off" enterkeyhint="search" autofocus></form><div class="cs-results" data-results aria-live="polite"></div></div></main>`
 initShellChrome({currentPage:'communitySearch'});const input=app.querySelector('.cs-search input');let timer;input.addEventListener('input',()=>{clearTimeout(timer);timer=setTimeout(()=>run(input.value),180)});input.form.addEventListener('submit',e=>{e.preventDefault();clearTimeout(timer);run(input.value)});render()
 
 
 // MELOGIC_SEARCH_FILTER_PATCH_V2
-const MELOGIC_SEARCH_FILTERS = ['All','Posts','Accounts','Video','Audio','Live','Products'];
+const MELOGIC_SEARCH_FILTERS = ['All','Accounts','Communities','Posts','Video','Audio','Live','Products'];
 let melogicSearchFilter = 'All';
 
 function melogicSearchFilterPatch() {
@@ -69,6 +78,7 @@ function melogicSearchFilterPatch() {
 
 function melogicResultType(el){
   const h=`${el.dataset.searchType||''} ${el.dataset.resultType||''} ${el.dataset.contentType||''} ${el.className||''}`.toLowerCase();
+  if(/communit/.test(h))return'Communities';
   if(/account|creator|profile|user/.test(h))return'Accounts';
   if(/product|marketplace/.test(h))return'Products';
   if(/live/.test(h))return'Live';
@@ -84,10 +94,11 @@ function melogicEmpty(noResults){
 }
 function melogicApplySearchFilter(){
   const input=document.querySelector('#community-search-input,input[type="search"]'); if(!input)return;
-  const root=document.querySelector('.community-search-results,.search-results');
+  const root=document.querySelector('[data-results],.community-search-results,.search-results');
   const items=root?[...root.querySelectorAll('[data-search-type],[data-result-type],[data-content-type],[data-result-id],[data-post-id],article,.search-result,.community-search-result')]:[];
   let shown=0;
   items.forEach(el=>{const on=melogicSearchFilter==='All'||melogicResultType(el)===melogicSearchFilter;el.hidden=!on;if(on)shown++});
+  root?.querySelectorAll('[data-result-section]').forEach(section=>{const visible=[...section.querySelectorAll('[data-search-type]')].some(item=>!item.hidden);section.hidden=!visible});
   const old=document.querySelector('.melogic-search-empty');
   if(!input.value.trim() && !items.length) melogicEmpty(false);
   else if(input.value.trim() && items.length && !shown) melogicEmpty(true);
