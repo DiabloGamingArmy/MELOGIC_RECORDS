@@ -597,6 +597,12 @@ function setupMobileCommunityShellActions() {
 function bindCommunityGlobalUiOnce() {
   if (communityGlobalUiBound) return
   communityGlobalUiBound = true
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible' || isMobileSpaRuntime()) return
+    const key = desktopCommunitySurfaceKeyFor()
+    if (['for-you', 'following', 'discover'].includes(key)) refreshDesktopCommunitySharedContent(key)
+  })
   setupMobileCommunityShellActions()
   setupMobileCommunitySurfaceBehavior()
 }
@@ -6809,7 +6815,19 @@ function restoreDesktopCommunitySurface(key) {
   const root = app?.querySelector('[data-community-root]')
   if (!cached || !root || !cached.fragment?.childNodes?.length) return false
   desktopCommunitySurfaceCache.delete(key)
-  Object.assign(state, cached.state)
+
+  // Preserve authoritative cross-surface data while restoring only the
+  // expensive surface-local feed/directory state.
+  const sharedState = {
+    currentUser: state.currentUser,
+    communities: state.communities,
+    communityFocus: state.communityFocus,
+    communityMembership: state.communityMembership,
+    stories: state.stories,
+    storiesLoading: state.storiesLoading,
+    storiesError: state.storiesError
+  }
+  Object.assign(state, cached.state, sharedState)
   root.replaceChildren(cached.fragment)
   desktopCommunitySurfaceKey = key
   bindEvents()
@@ -6823,7 +6841,17 @@ function restoreDesktopCommunitySurface(key) {
   updateCommunityRailFadeState()
   setupFeedPaginationObserver()
   hydrateCommunityIdentityDom()
+  updateStoryRegionsOnly()
+  reconcileCommunitySharedRegions()
   return true
+}
+
+function refreshDesktopCommunitySharedContent(nextKey) {
+  if (isMobileSpaRuntime()) return
+  void Promise.allSettled([
+    loadStories({ renderAfter: true, hydrateIdentity: true }),
+    hydrateDesktopCommunitySharedState({ fullDirectory: nextKey === 'discover' })
+  ])
 }
 
 function navigateDesktopCommunitySurface(nextKey) {
@@ -6845,14 +6873,12 @@ function navigateDesktopCommunitySurface(nextKey) {
   }
 
   if (restoreDesktopCommunitySurface(nextKey)) {
-    void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
-    void hydrateDesktopCommunitySharedState({ fullDirectory: nextKey === 'discover' }).catch(() => null)
+    refreshDesktopCommunitySharedContent(nextKey)
     return true
   }
   desktopCommunitySurfaceKey = nextKey
   render()
-  void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
-  void hydrateDesktopCommunitySharedState({ fullDirectory: nextKey === 'discover' }).catch(() => null)
+  refreshDesktopCommunitySharedContent(nextKey)
   if (nextKey !== 'discover') {
     void loadFeedPage({ reset: true }).catch(() => null)
   }
@@ -8860,7 +8886,27 @@ function syncCommunityRouteStateFromLocation() {
 }
 
 function handleCommunityPopstate() {
+  const previousSurfaceKey = desktopCommunitySurfaceKey || desktopCommunitySurfaceKeyFor()
   syncCommunityRouteStateFromLocation()
+
+  if (!isMobileSpaRuntime() && !state.detailPostId) {
+    const nextSurfaceKey = desktopCommunitySurfaceKeyFor()
+    if (['for-you', 'following', 'discover'].includes(nextSurfaceKey)) {
+      if (previousSurfaceKey && previousSurfaceKey !== nextSurfaceKey) {
+        captureDesktopCommunitySurface(previousSurfaceKey)
+      }
+      if (restoreDesktopCommunitySurface(nextSurfaceKey)) {
+        refreshDesktopCommunitySharedContent(nextSurfaceKey)
+        return
+      }
+      desktopCommunitySurfaceKey = nextSurfaceKey
+      render()
+      refreshDesktopCommunitySharedContent(nextSurfaceKey)
+      if (nextSurfaceKey !== 'discover') void loadFeedPage({ reset: true }).catch(() => null)
+      return
+    }
+  }
+
   if (!state.detailPostId && restoreFeedNavigationSnapshot()) return
   loadCommunity()
 }
