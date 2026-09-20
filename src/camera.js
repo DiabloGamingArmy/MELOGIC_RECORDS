@@ -690,8 +690,27 @@ function syncSharePreview() {
   const blob=playback._melogicCapture, type=playback.dataset.captureType||'video'
   if(!blob||!previewUrl)return false
   const photo=type==='photo'; shareType.textContent=photo?'Photo':'Video'; sharePhoto.hidden=!photo; shareVideo.hidden=photo
-  if(photo){shareVideo.pause();shareVideo.removeAttribute('src');shareVideo.load();sharePhoto.src=previewUrl}
-  else{sharePhoto.removeAttribute('src');shareVideo.src=previewUrl;shareVideo.currentTime=0;shareVideo.play().catch(()=>{})}
+  if(photo){
+    shareVideo.pause();shareVideo.removeAttribute('src');shareVideo.removeAttribute('poster');shareVideo.load();sharePhoto.src=previewUrl
+  }else{
+    sharePhoto.removeAttribute('src')
+    shareVideo.loop=true;shareVideo.autoplay=true;shareVideo.muted=true;shareVideo.playsInline=true;shareVideo.preload='auto'
+    shareVideo.src=previewUrl
+    const paintFirstFrame=()=>{
+      try{
+        const canvas=document.createElement('canvas'),w=shareVideo.videoWidth,h=shareVideo.videoHeight
+        if(!w||!h)return
+        canvas.width=w;canvas.height=h
+        canvas.getContext('2d')?.drawImage(shareVideo,0,0,w,h)
+        shareVideo.poster=canvas.toDataURL('image/jpeg',.82)
+      }catch{}
+      shareVideo.currentTime=0
+      shareVideo.play().catch(()=>{})
+    }
+    if(shareVideo.readyState>=2)paintFirstFrame()
+    else shareVideo.addEventListener('loadeddata',paintFirstFrame,{once:true})
+    shareVideo.load()
+  }
   return true
 }
 // melogic-camera-share-multiselect-p2-v1
@@ -936,8 +955,15 @@ libraryButton.addEventListener('click', () => {
 libraryInput.addEventListener('change', () => {
   const file = libraryInput.files?.[0]
   if (!file) return
-  const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'photo' : ''
+  const name=String(file.name||'').toLowerCase()
+  const type = file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|avi|mkv|3gp|3g2|mpeg|mpg|ogv)$/i.test(name)
+    ? 'video'
+    : file.type.startsWith('image/') || /\.(heic|heif|avif|jpg|jpeg|jfif|png|webp|gif|bmp|tif|tiff)$/i.test(name)
+      ? 'photo'
+      : ''
   if (!type) { setStatus('Choose a photo or video from your library.'); return }
+  // The file input is intentionally single-select. Once iOS hands the chosen
+  // asset back to the page, enter the editor/review immediately.
   showCapturedMedia(file, type)
 })
 liveCanvas.addEventListener('pointerup', event => {
