@@ -6827,6 +6827,128 @@ async function handleStorySubmit(event) {
   }
 }
 
+// melogic-mobile-story-viewer-behavior-p4
+const STORY_IMAGE_DURATION_MS = 5000
+let storyViewerAdvanceTimer = 0
+let storyViewerHoldTimer = 0
+let storyViewerPointerDownAt = 0
+let storyViewerPointerStartX = 0
+let storyViewerPointerStartY = 0
+let storyViewerHeld = false
+
+function clearStoryViewerAdvanceTimer() {
+  if (storyViewerAdvanceTimer) window.clearTimeout(storyViewerAdvanceTimer)
+  storyViewerAdvanceTimer = 0
+}
+
+function storyViewerMedia() {
+  return app?.querySelector('.community-story-viewer .community-story-surface video') || null
+}
+
+function pauseStoryViewerPlayback() {
+  clearStoryViewerAdvanceTimer()
+  const video = storyViewerMedia()
+  if (video && !video.paused) video.pause()
+  app?.querySelector('.community-story-viewer')?.classList.add('is-paused')
+}
+
+function resumeStoryViewerPlayback() {
+  app?.querySelector('.community-story-viewer')?.classList.remove('is-paused')
+  const story = storyById(state.storyViewer.storyId)
+  if (!story) return
+  const video = storyViewerMedia()
+  if (story.mediaType === 'video' && video) {
+    video.play().catch(() => {})
+    return
+  }
+  scheduleStoryViewerAdvance(STORY_IMAGE_DURATION_MS)
+}
+
+function closeStoryViewer() {
+  clearStoryViewerAdvanceTimer()
+  if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
+  storyViewerHoldTimer = 0
+  state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
+  render()
+}
+
+function scheduleStoryViewerAdvance(delay = STORY_IMAGE_DURATION_MS) {
+  clearStoryViewerAdvanceTimer()
+  if (!state.storyViewer.open || state.stories.length <= 1) return
+  storyViewerAdvanceTimer = window.setTimeout(() => {
+    if (!state.storyViewer.open) return
+    advanceStory(1)
+  }, Math.max(250, Number(delay) || STORY_IMAGE_DURATION_MS))
+}
+
+function bindStoryViewerPlayback() {
+  clearStoryViewerAdvanceTimer()
+  const viewer = app?.querySelector('.community-story-viewer')
+  if (!viewer || !state.storyViewer.open) return
+  const story = storyById(state.storyViewer.storyId)
+  const video = storyViewerMedia()
+  if (story?.mediaType === 'video' && video) {
+    video.loop = false
+    video.muted = false
+    const play = () => video.play().catch(() => {
+      video.muted = true
+      video.play().catch(() => {})
+    })
+    if (video.readyState >= 2) play()
+    else video.addEventListener('canplay', play, { once: true })
+    video.addEventListener('ended', () => advanceStory(1), { once: true })
+  } else {
+    scheduleStoryViewerAdvance(STORY_IMAGE_DURATION_MS)
+  }
+
+  const surface = viewer.querySelector('.community-story-surface')
+  if (!surface) return
+  surface.addEventListener('pointerdown', (event) => {
+    if (event.button != null && event.button !== 0) return
+    storyViewerPointerDownAt = performance.now()
+    storyViewerPointerStartX = event.clientX
+    storyViewerPointerStartY = event.clientY
+    storyViewerHeld = false
+    if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
+    storyViewerHoldTimer = window.setTimeout(() => {
+      storyViewerHeld = true
+      pauseStoryViewerPlayback()
+    }, 220)
+  })
+  const finishPointer = (event) => {
+    if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
+    storyViewerHoldTimer = 0
+    const wasHeld = storyViewerHeld
+    if (wasHeld) {
+      storyViewerHeld = false
+      resumeStoryViewerPlayback()
+      return
+    }
+    const dx = event.clientX - storyViewerPointerStartX
+    const dy = event.clientY - storyViewerPointerStartY
+    if (Math.abs(dy) > 90 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+      closeStoryViewer()
+      return
+    }
+    if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      advanceStory(dx < 0 ? 1 : -1)
+      return
+    }
+    if (performance.now() - storyViewerPointerDownAt < 350) {
+      const rect = surface.getBoundingClientRect()
+      const localX = event.clientX - rect.left
+      advanceStory(localX < rect.width * .35 ? -1 : 1)
+    }
+  }
+  surface.addEventListener('pointerup', finishPointer)
+  surface.addEventListener('pointercancel', () => {
+    if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
+    storyViewerHoldTimer = 0
+    if (storyViewerHeld) resumeStoryViewerPlayback()
+    storyViewerHeld = false
+  })
+}
+
 function openStoryViewer(storyId = '') {
   const story = storyById(storyId)
   if (!story) return
@@ -6847,7 +6969,13 @@ function openStoryViewer(storyId = '') {
 
 function advanceStory(delta = 1) {
   if (!state.stories.length) return
-  const nextIndex = (currentStoryIndex() + delta + state.stories.length) % state.stories.length
+  clearStoryViewerAdvanceTimer()
+  const currentIndex = currentStoryIndex()
+  const nextIndex = currentIndex + delta
+  if (nextIndex < 0 || nextIndex >= state.stories.length) {
+    closeStoryViewer()
+    return
+  }
   openStoryViewer(state.stories[nextIndex].storyId)
 }
 
@@ -7474,12 +7602,10 @@ function bindEvents() {
   app.querySelectorAll('[data-close-story-composer]').forEach((button) => button.addEventListener('click', closeStoryComposer))
   bindStoryRecordingPreview()
   app.querySelectorAll('[data-open-story]').forEach((button) => button.addEventListener('click', () => openStoryViewer(button.getAttribute('data-open-story') || '')))
-  app.querySelector('[data-close-story-viewer]')?.addEventListener('click', () => {
-    state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
-    render()
-  })
+  app.querySelector('[data-close-story-viewer]')?.addEventListener('click', closeStoryViewer)
   app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
   app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
+  bindStoryViewerPlayback()
   app.querySelectorAll('[data-story-reaction]').forEach((button) => button.addEventListener('click', () => {
     showCommunityToast('Story reactions are coming soon.')
   }))
