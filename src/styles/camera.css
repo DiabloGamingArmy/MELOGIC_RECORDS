@@ -380,3 +380,17 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-editor-selection-actions[hidden]{display:none!important}
 .camera-editor-selection-actions button{width:40px!important;height:40px!important;font-size:17px!important;background:rgba(8,9,13,.68)!important}
 .camera-editor-selection-actions button[data-camera-layer-action="delete"]{font-size:25px!important}
+
+
+/* camera-editor-text-v2-p4 */
+.camera-edit-textbox{flex-direction:column;align-items:stretch;right:64px}
+.camera-text-entry{display:flex;gap:8px}
+.camera-text-entry input{flex:1;min-width:0}
+.camera-text-controls{display:flex;align-items:center;gap:6px;overflow-x:auto;padding:4px 0;scrollbar-width:none}
+.camera-text-controls::-webkit-scrollbar{display:none}
+.camera-text-controls select,.camera-text-controls button,.camera-text-controls input[type="color"]{flex:0 0 auto;height:38px;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(8,9,13,.7);color:#fff}
+.camera-text-controls select{padding:0 12px}
+.camera-text-controls button{min-width:38px;padding:0 10px}
+.camera-text-controls input[type="color"]{width:38px;padding:4px}
+.camera-text-controls input[type="range"]{flex:0 0 92px;accent-color:#fff}
+.camera-editor-layer[data-camera-editor-layer]{box-sizing:border-box}
