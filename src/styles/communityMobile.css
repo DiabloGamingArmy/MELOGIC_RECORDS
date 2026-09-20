@@ -1176,3 +1176,80 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     min-height:78px !important;
   }
 }
+
+
+/* melogic-mobile-own-story-avatar-v1
+   Screenshot follow-up: align Stories closer to the screen edge and make the
+   create target read as the signed-in user's Story rather than a generic icon. */
+@media (max-width:760px) {
+  body.is-community-page .community-mobile-stories .community-stories-row {
+    padding-left:8px !important;
+    scroll-padding-left:8px !important;
+  }
+
+  body.is-community-page .community-story-avatar.is-create {
+    position:relative !important;
+    overflow:hidden !important;
+    padding:0 !important;
+    background:#111 !important;
+  }
+
+  body.is-community-page .community-own-story-avatar {
+    position:absolute;
+    inset:0;
+    display:grid;
+    place-items:center;
+    overflow:hidden;
+    border-radius:50%;
+    background:#15151a;
+  }
+
+  body.is-community-page .community-own-story-avatar > img {
+    position:absolute;
+    inset:-5%;
+    width:110% !important;
+    height:110% !important;
+    object-fit:cover;
+    filter:blur(2.2px) brightness(.55);
+    transform:scale(1.04);
+  }
+
+  body.is-community-page .community-own-story-fallback {
+    display:grid;
+    place-items:center;
+    width:100%;
+    height:100%;
+    color:#8d8d96;
+    font-size:1.15rem;
+    font-weight:700;
+    filter:blur(.45px);
+  }
+
+  body.is-community-page .community-own-story-dim {
+    position:absolute;
+    inset:0;
+    background:rgba(0,0,0,.26);
+    pointer-events:none;
+  }
+
+  body.is-community-page .community-own-story-plus {
+    position:relative;
+    z-index:2;
+    display:grid;
+    place-items:center;
+    width:30px;
+    height:30px;
+    border:1px solid rgba(255,255,255,.76);
+    border-radius:50%;
+    background:rgba(0,0,0,.46);
+    color:#fff;
+    backdrop-filter:blur(3px);
+    -webkit-backdrop-filter:blur(3px);
+  }
+
+  body.is-community-page .community-own-story-plus svg {
+    width:16px !important;
+    height:16px !important;
+    stroke-width:2.1;
+  }
+}
