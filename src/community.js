@@ -4403,13 +4403,20 @@ async function loadCommunity() {
     return
   }
 
+  // melogic-community-parallel-cold-start-v1
+  // Stories, Home feed, and Community navigation data are independent reads.
+  // Start them together; ancillary navigation data must never sit in front of
+  // first-feed paint on the critical path.
   loadStories({ renderAfter: true }).catch(() => null)
 
+  let homeCommunitiesPromise = null
   if (state.view.type === 'feed') {
-    // Home's left navigator depends on the same community + focus data as Discover.
-    // Await it before the first feed render so Home cannot paint a false
-    // "No communities yet" state while focus data is still loading.
-    await loadCommunities({ renderOnStart: false, renderAfter: false })
+    homeCommunitiesPromise = loadCommunities({ renderOnStart: false, renderAfter: false })
+      .then(() => {
+        updateCommunityAncillaryDom()
+        return true
+      })
+      .catch(() => false)
   } else if (!state.communities.length && state.view.type !== 'community') {
     loadCommunities({ renderOnStart: false, renderAfter: false })
       .then(updateCommunityAncillaryDom)
@@ -4460,9 +4467,15 @@ async function loadCommunity() {
   state.loading = false
   await loadFeedPage({ reset: true })
   if (isInitialHomeHydration) {
+    // The branded loader is feed-scoped. Release it as soon as the first feed
+    // request settles; do not wait for communities/focus or Stories.
     state.initialHomeHydration = false
     render()
   }
+  // Keep the ancillary request alive for this boot cycle without serializing
+  // first-feed paint behind it. Its completion updates only the surrounding
+  // Community navigation/rail DOM.
+  if (homeCommunitiesPromise) void homeCommunitiesPromise
 }
 
 function updatePostCounts(postId, patch = {}) {
