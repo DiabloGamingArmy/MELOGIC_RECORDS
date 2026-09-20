@@ -1385,7 +1385,7 @@ function renderStoryViewerModal() {
               <span class="community-avatar">${storyAvatar(story)}</span>
               <span class="community-story-viewer-identity">
                 ${communityDisplayNameMarkup(story, 'Melogic Creator', 'community-story-viewer-title')}
-                <em>${escapeHtml(formatUsername(story.authorUsername) || 'Creator')} · ${escapeHtml(storyExpiresLabel(story.expiresAt))}</em>
+                <button type="button" class="community-story-time-toggle" data-story-time-toggle data-story-posted-label="${escapeHtml(formatTime(story.createdAt))}" data-story-left-label="${escapeHtml(storyExpiresLabel(story.expiresAt))}" aria-label="Show time remaining">${escapeHtml(formatTime(story.createdAt))}</button>
               </span>
             </a>
             <button type="button" class="community-story-viewer-close" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
@@ -7628,6 +7628,15 @@ function bindEvents() {
   bindStoryRecordingPreview()
   app.querySelectorAll('[data-open-story]').forEach((button) => button.addEventListener('click', () => openStoryViewer(button.getAttribute('data-open-story') || '')))
   app.querySelector('[data-close-story-viewer]')?.addEventListener('click', closeStoryViewer)
+  app.querySelector('[data-story-time-toggle]')?.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const button = event.currentTarget
+    const showingLeft = button.dataset.showingLeft === 'true'
+    button.dataset.showingLeft = showingLeft ? 'false' : 'true'
+    button.textContent = showingLeft ? button.dataset.storyPostedLabel : button.dataset.storyLeftLabel
+    button.setAttribute('aria-label', showingLeft ? 'Show time remaining' : 'Show when Story was posted')
+  })
   app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
   app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
   bindStoryViewerPlayback()
