@@ -1359,7 +1359,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* Story Viewer is an immersive viewport mode, not a modal card.
    Push 1 intentionally preserves the existing viewer controls/content hierarchy;
    later pushes replace the HUD and interaction treatment. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   body:has(.community-modal-backdrop .community-story-viewer) {
     overflow:hidden !important;
     overscroll-behavior:none;
@@ -1450,7 +1450,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* melogic-mobile-story-viewer-hud-p2 */
 /* Instagram-derived visual grammar: edge-to-edge media, segmented progress,
    compact creator identity, and a transparent top HUD over the Story. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop > .community-story-viewer {
     display:block !important;
     position:relative !important;
@@ -1690,7 +1690,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   display:none;
 }
 
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop > .community-story-viewer .community-story-desktop-controls {
     display:none !important;
   }
@@ -1786,7 +1786,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-mobile-story-viewer-behavior-p4 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer .community-story-surface {
     touch-action:none !important;
     -webkit-user-select:none !important;
@@ -1808,7 +1808,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* melogic-mobile-story-viewer-polish-p5 */
 /* Final mobile/PWA Story pass: normalize viewport fallbacks, media crop,
    safe areas, compact phones, landscape, and interaction hit targets. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop:has(.community-story-viewer),
   .community-modal-backdrop > .community-story-viewer {
     height:100vh !important;
@@ -1926,7 +1926,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-mobile-story-viewer-screenshot-fixes */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   /* Keep the verified badge visible and proportioned inside the compact Story identity. */
   .community-story-viewer-identity .community-display-name {
     display:inline-flex !important;
@@ -2023,7 +2023,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-author-transition-v1 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop > .community-story-viewer {
     transform:translate3d(0,0,0);
     opacity:1;
@@ -2063,7 +2063,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* Melogic Story identity v1:
    retain the learned full-screen Story grammar, but establish Melogic's own
    optical rhythm, restrained glass controls, and creator-transition motion. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer {
     --melogic-story-hud-gutter:clamp(14px,3.8vw,20px);
     --melogic-story-glass:rgba(8,10,14,.20);
@@ -2169,7 +2169,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-more-control-fix */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer-hud-actions {
     display:flex !important;
     flex:0 0 auto !important;
@@ -2217,7 +2217,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-signal-foundation-push-02 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   /* Story Signal is now driven by viewer/media state. CSS no longer owns time. */
   .community-story-progress-rail > span.is-active > i {
     width:100% !important;
@@ -2235,7 +2235,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-signal-waveform-push-03 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-progress-rail > span {
     isolation:isolate !important;
   }
@@ -2298,7 +2298,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-reaction-orbit-push-04 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-mobile-interactions {
     grid-template-columns:minmax(0,1fr) 46px 46px !important;
   }
@@ -2405,7 +2405,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-interactive-objects-push-08 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer-layers { position:absolute; inset:0; z-index:4; pointer-events:none; }
   .community-story-object {
     position:absolute; left:calc(var(--layer-x,.5) * 100%); top:calc(var(--layer-y,.5) * 100%);
@@ -2425,7 +2425,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-rich-objects-push-09 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-object.is-audio,
   .community-story-object.is-product,
   .community-story-object.is-event {
@@ -2456,7 +2456,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-native-objects-push-10 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-object.is-melogic-native {
     justify-content:flex-start; text-align:left; min-height:54px; border-radius:14px;
     border-color:rgba(255,255,255,.22); background:rgba(5,7,10,.78);
@@ -2480,7 +2480,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-context-replies-push-11 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-reply-shell { display:flex; align-items:center; min-width:0; }
   .community-story-reply-shell input {
     flex:1 1 auto; min-width:0; height:44px; border:0; outline:0; background:transparent;
@@ -2498,7 +2498,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-action-rail-push-12 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-action-rail[hidden] { display:none; }
   .community-story-action-rail {
     position:absolute; z-index:24; top:calc(env(safe-area-inset-top,0px) + 58px); right:12px;
@@ -2517,7 +2517,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-provenance-push-15 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-provenance {
     position:absolute; z-index:23; left:12px; right:12px; bottom:calc(env(safe-area-inset-bottom,0px) + 76px);
     display:none; padding:6px; border:1px solid rgba(255,255,255,.12); border-radius:15px;
@@ -2539,7 +2539,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-types-push-16 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-type-switch { display:flex; gap:6px; overflow-x:auto; padding:1px 0 8px; scrollbar-width:none; }
   .community-story-type-switch::-webkit-scrollbar { display:none; }
   .community-story-type-switch button {
@@ -2559,7 +2559,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-context-drawer-push-17 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-context-drawer {
     position:absolute; z-index:30; left:0; right:0; bottom:0; max-height:min(72vh,620px);
     padding:14px 14px calc(env(safe-area-inset-bottom,0px) + 18px); overflow:auto;
@@ -2589,7 +2589,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-final-audit-push-18 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-object { min-height:44px; }
   .community-story-viewer-layers a[href="#"] { cursor:default; }
   .community-story-context-drawer[aria-hidden="true"] { pointer-events:none; }
@@ -2598,7 +2598,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* story-signal-interactive */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars {
     pointer-events:auto !important;
     overflow:visible !important;
@@ -4226,7 +4226,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* Story Viewer is an immersive viewport mode, not a modal card.
    Push 1 intentionally preserves the existing viewer controls/content hierarchy;
    later pushes replace the HUD and interaction treatment. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   body:has(.community-modal-backdrop .community-story-viewer) {
     overflow:hidden !important;
     overscroll-behavior:none;
@@ -4317,7 +4317,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* melogic-mobile-story-viewer-hud-p2 */
 /* Instagram-derived visual grammar: edge-to-edge media, segmented progress,
    compact creator identity, and a transparent top HUD over the Story. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop > .community-story-viewer {
     display:block !important;
     position:relative !important;
@@ -4557,7 +4557,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   display:none;
 }
 
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop > .community-story-viewer .community-story-desktop-controls {
     display:none !important;
   }
@@ -4653,7 +4653,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-mobile-story-viewer-behavior-p4 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer .community-story-surface {
     touch-action:none !important;
     -webkit-user-select:none !important;
@@ -4675,7 +4675,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* melogic-mobile-story-viewer-polish-p5 */
 /* Final mobile/PWA Story pass: normalize viewport fallbacks, media crop,
    safe areas, compact phones, landscape, and interaction hit targets. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop:has(.community-story-viewer),
   .community-modal-backdrop > .community-story-viewer {
     height:100vh !important;
@@ -4793,7 +4793,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-mobile-story-viewer-screenshot-fixes */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   /* Keep the verified badge visible and proportioned inside the compact Story identity. */
   .community-story-viewer-identity .community-display-name {
     display:inline-flex !important;
@@ -4890,7 +4890,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-author-transition-v1 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-modal-backdrop > .community-story-viewer {
     transform:translate3d(0,0,0);
     opacity:1;
@@ -4930,7 +4930,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 /* Melogic Story identity v1:
    retain the learned full-screen Story grammar, but establish Melogic's own
    optical rhythm, restrained glass controls, and creator-transition motion. */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer {
     --melogic-story-hud-gutter:clamp(14px,3.8vw,20px);
     --melogic-story-glass:rgba(8,10,14,.20);
@@ -5036,7 +5036,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-more-control-fix */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer-hud-actions {
     display:flex !important;
     flex:0 0 auto !important;
@@ -5084,7 +5084,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-signal-foundation-push-02 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   /* Story Signal is now driven by viewer/media state. CSS no longer owns time. */
   .community-story-progress-rail > span.is-active > i {
     width:100% !important;
@@ -5102,7 +5102,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-signal-waveform-push-03 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-progress-rail > span {
     isolation:isolate !important;
   }
@@ -5165,7 +5165,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-reaction-orbit-push-04 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-mobile-interactions {
     grid-template-columns:minmax(0,1fr) 46px 46px !important;
   }
@@ -5272,7 +5272,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-interactive-objects-push-08 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-viewer-layers { position:absolute; inset:0; z-index:4; pointer-events:none; }
   .community-story-object {
     position:absolute; left:calc(var(--layer-x,.5) * 100%); top:calc(var(--layer-y,.5) * 100%);
@@ -5292,7 +5292,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-rich-objects-push-09 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-object.is-audio,
   .community-story-object.is-product,
   .community-story-object.is-event {
@@ -5323,7 +5323,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-native-objects-push-10 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-object.is-melogic-native {
     justify-content:flex-start; text-align:left; min-height:54px; border-radius:14px;
     border-color:rgba(255,255,255,.22); background:rgba(5,7,10,.78);
@@ -5347,7 +5347,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-context-replies-push-11 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-reply-shell { display:flex; align-items:center; min-width:0; }
   .community-story-reply-shell input {
     flex:1 1 auto; min-width:0; height:44px; border:0; outline:0; background:transparent;
@@ -5365,7 +5365,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-action-rail-push-12 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-action-rail[hidden] { display:none; }
   .community-story-action-rail {
     position:absolute; z-index:24; top:calc(env(safe-area-inset-top,0px) + 58px); right:12px;
@@ -5384,7 +5384,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-provenance-push-15 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-provenance {
     position:absolute; z-index:23; left:12px; right:12px; bottom:calc(env(safe-area-inset-bottom,0px) + 76px);
     display:none; padding:6px; border:1px solid rgba(255,255,255,.12); border-radius:15px;
@@ -5406,7 +5406,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-types-push-16 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-type-switch { display:flex; gap:6px; overflow-x:auto; padding:1px 0 8px; scrollbar-width:none; }
   .community-story-type-switch::-webkit-scrollbar { display:none; }
   .community-story-type-switch button {
@@ -5426,7 +5426,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-context-drawer-push-17 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-context-drawer {
     position:absolute; z-index:30; left:0; right:0; bottom:0; max-height:min(72vh,620px);
     padding:14px 14px calc(env(safe-area-inset-bottom,0px) + 18px); overflow:auto;
@@ -5456,7 +5456,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* melogic-story-final-audit-push-18 */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-object { min-height:44px; }
   .community-story-viewer-layers a[href="#"] { cursor:default; }
   .community-story-context-drawer[aria-hidden="true"] { pointer-events:none; }
@@ -5465,7 +5465,7 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 
 
 /* story-signal-interactive */
-@media (max-width:760px) {
+@media (max-width:760px), (min-width:761px) {
   .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars {
     pointer-events:auto !important;
     overflow:visible !important;
