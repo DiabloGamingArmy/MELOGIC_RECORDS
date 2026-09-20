@@ -13845,3 +13845,273 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
   font-weight: 700;
   cursor: pointer;
 }
+
+
+/* melogic-desktop-unified-composer-fab-v1 */
+@media (min-width: 761px) {
+  .community-desktop-compose-fab {
+    position: fixed;
+    left: max(24px, calc((100vw - min(100vw, 1600px)) / 2 + 24px));
+    bottom: 28px;
+    z-index: 88;
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    border: 1.5px solid rgba(255, 255, 255, .92);
+    border-radius: 14px;
+    background: #050505;
+    color: #fff;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, .38);
+    cursor: pointer;
+    transition: transform .22s cubic-bezier(.2,.8,.2,1), box-shadow .22s ease, border-color .22s ease;
+  }
+
+  .community-desktop-compose-fab svg {
+    width: 23px;
+    height: 23px;
+    transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  }
+
+  .community-desktop-compose-fab:hover,
+  .community-desktop-compose-fab:focus-visible {
+    border-color: transparent;
+    background: linear-gradient(135deg, #477DFF 0%, #765DFF 52%, #A65CFF 100%);
+    box-shadow: 0 16px 40px rgba(118, 93, 255, .3), 0 0 0 1px rgba(255,255,255,.1);
+    transform: translateY(-3px) scale(1.055);
+    outline: none;
+  }
+
+  .community-desktop-compose-fab:hover svg,
+  .community-desktop-compose-fab:focus-visible svg {
+    transform: rotate(90deg) scale(1.08);
+  }
+
+  /* Desktop shell for the same composer DOM/functionality used on mobile. */
+  .community-mobile-composer-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    display: grid;
+    place-items: center;
+    padding: 32px;
+    overflow: auto;
+    background: rgba(0, 0, 0, .72);
+    backdrop-filter: blur(14px);
+  }
+
+  .community-mobile-composer {
+    width: min(680px, calc(100vw - 64px));
+    max-height: min(820px, calc(100vh - 64px));
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .13);
+    border-radius: 18px;
+    background: #050505;
+    color: #f7f7f8;
+    box-shadow: 0 30px 90px rgba(0, 0, 0, .58);
+  }
+
+  .community-mobile-composer-form {
+    display: grid;
+    grid-template-rows: auto auto minmax(260px, 1fr) auto;
+    max-height: min(820px, calc(100vh - 64px));
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .community-mobile-composer-header {
+    display: grid;
+    grid-template-columns: 52px minmax(0,1fr) 52px;
+    align-items: center;
+    min-height: 58px;
+    padding: 0 8px;
+    border-bottom: 1px solid #25272b;
+    background: #000;
+  }
+
+  .community-mobile-composer-header h2 {
+    margin: 0;
+    color: #fff;
+    text-align: center;
+    font-size: 19px;
+    font-weight: 800;
+  }
+
+  .community-mobile-composer-close,
+  .community-mobile-composer-more {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+  }
+
+  .community-mobile-composer-destination-row {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 16px;
+    border-bottom: 1px solid #202226;
+    background: #000;
+  }
+
+  .community-mobile-composer-destination {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #fff;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .community-mobile-composer-destination > span:nth-child(2) {
+    display: grid;
+    min-width: 0;
+  }
+
+  .community-mobile-composer-destination strong {
+    overflow: hidden;
+    color: #fff;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .community-mobile-composer-destination small {
+    color: #777;
+  }
+
+  .community-mobile-composer-post {
+    min-width: 70px;
+    height: 34px;
+    padding: 0 15px;
+    border: 0;
+    border-radius: 8px;
+    background: #fff;
+    color: #000;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: .04em;
+    cursor: pointer;
+  }
+
+  .community-mobile-composer-post:disabled { opacity: .28; }
+
+  .community-mobile-composer-content {
+    display: grid;
+    grid-template-columns: 50px minmax(0,1fr);
+    gap: 12px;
+    min-height: 260px;
+    padding: 18px 18px 0;
+  }
+
+  .community-mobile-composer-author-avatar {
+    display: grid;
+    place-items: center;
+    width: 50px;
+    height: 50px;
+    overflow: hidden;
+    border-radius: 50%;
+    background: #17191d;
+  }
+
+  .community-mobile-composer-author-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .community-mobile-composer-writing {
+    display: grid;
+    grid-template-rows: auto minmax(0,1fr);
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .community-mobile-composer-identity {
+    display: grid;
+  }
+
+  .community-mobile-composer-identity small { color: #8a8d94; }
+
+  .community-mobile-composer-writing textarea {
+    width: 100%;
+    min-height: 250px;
+    margin-top: 10px;
+    padding: 0;
+    resize: vertical;
+    border: 0 !important;
+    outline: 0 !important;
+    background: transparent !important;
+    color: #fff;
+    font: inherit;
+    font-size: 18px;
+    line-height: 1.45;
+    box-shadow: none !important;
+  }
+
+  .community-mobile-composer-bottom {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px 14px;
+    border-top: 1px solid #202226;
+    background: #000;
+  }
+
+  .community-mobile-composer-tools {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-right: auto;
+  }
+
+  .community-mobile-composer-tools > button {
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    padding: 0;
+    border: 0;
+    border-radius: 9px;
+    background: transparent;
+    color: #d8dbe1;
+    cursor: pointer;
+  }
+
+  .community-mobile-composer-tools > button:hover {
+    background: rgba(255,255,255,.08);
+    color: #fff;
+  }
+
+  .community-mobile-composer-more-sheet {
+    position: absolute;
+    right: 16px;
+    bottom: 58px;
+    z-index: 3;
+    min-width: 220px;
+    padding: 6px;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: 12px;
+    background: #111216;
+    box-shadow: 0 18px 48px rgba(0,0,0,.5);
+  }
+
+  .community-mobile-composer-count {
+    color: #777;
+    font-size: 12px;
+  }
+}

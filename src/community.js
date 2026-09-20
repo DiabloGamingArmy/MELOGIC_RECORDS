@@ -2310,6 +2310,10 @@ function renderCommunityDestinationPickerModal() {
 function useNativeMobileCommunityComposer() {
   return window.matchMedia('(max-width: 760px)').matches
 }
+
+function useUnifiedCommunityComposer() {
+  return Boolean(state.currentUser)
+}
 function renderNativeMobileComposerShell() {
   if (!state.composer.open || !state.currentUser) return ''
   const community = currentComposerCommunity()
@@ -2400,7 +2404,7 @@ function renderNativeMobileComposerShell() {
 
 function renderComposerModal() {
   if (!state.composer.open) return ''
-  if (state.currentUser && useNativeMobileCommunityComposer()) return renderNativeMobileComposerShell()
+  if (useUnifiedCommunityComposer()) return renderNativeMobileComposerShell()
   if (!state.currentUser) {
     return `
       <div class="community-modal-backdrop">
@@ -4033,6 +4037,11 @@ function renderDetail() {
       </div>
       ${renderSidebar()}
     </div>
+    ${state.view.type === 'feed' && !state.detailPostId && ['for-you', 'following'].includes(state.activeTab) ? `
+      <button type="button" class="community-desktop-compose-fab" data-open-community-composer aria-label="Create post" title="Create post">
+        ${iconSvg('plus')}
+      </button>
+    ` : ''}
     ${renderStoryComposerModal()}
     ${renderStoryViewerModal()}
     ${renderEditPostModal()}
