@@ -6580,3 +6580,17 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     background: transparent;
   }
 }
+
+
+/* melogic-community-workspace-full-bleed-v3
+   Community workspaces use the same edge-to-edge desktop shell as Home.
+   The previous professional workspace pass reintroduced a centered max-width,
+   which exposed body gutters at wide viewport sizes. */
+@media (min-width: 761px) {
+  .community-layout.is-home.is-community-detail {
+    width: 100%;
+    max-width: none;
+    margin-right: 0;
+    margin-left: 0;
+  }
+}
