@@ -4037,11 +4037,6 @@ function renderDetail() {
       </div>
       ${renderSidebar()}
     </div>
-    ${state.view.type === 'feed' && !state.detailPostId && ['for-you', 'following'].includes(state.activeTab) ? `
-      <button type="button" class="community-desktop-compose-fab" data-open-community-composer aria-label="Create post" title="Create post">
-        ${iconSvg('plus')}
-      </button>
-    ` : ''}
     ${renderStoryComposerModal()}
     ${renderStoryViewerModal()}
     ${renderEditPostModal()}
@@ -4236,6 +4231,11 @@ function renderCommunityHomeView() {
       </div>
       ${renderSidebar()}
     </div>
+    ${state.view.type === 'feed' && !state.detailPostId && ['for-you', 'following'].includes(state.activeTab) ? `
+      <button type="button" class="community-desktop-compose-fab" data-open-community-composer aria-label="Create post" title="Create post">
+        ${iconSvg('plus')}
+      </button>
+    ` : ''}
     ${renderStoryComposerModal()}
     ${renderStoryViewerModal()}
     ${renderEditPostModal()}
