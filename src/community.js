@@ -1341,6 +1341,11 @@ function renderStoryComposerModal() {
                     <button type="button" data-story-add-object="product"><span>◇</span><span>Product</span></button>
                     <button type="button" data-story-add-object="event"><span>◫</span><span>Event</span></button>
                     <button type="button" data-story-add-object="poll"><span>▥</span><span>Poll</span></button>
+                    <button type="button" data-story-add-object="project" data-story-native-kind="soura"><span>◈</span><span>Soura</span></button>
+                    <button type="button" data-story-add-object="project" data-story-native-kind="vertix"><span>⬡</span><span>Vertix</span></button>
+                    <button type="button" data-story-add-object="project" data-story-native-kind="preset"><span>≋</span><span>Preset</span></button>
+                    <button type="button" data-story-add-object="project" data-story-native-kind="sample"><span>⌁</span><span>Sample</span></button>
+                    <button type="button" data-story-add-object="project" data-story-native-kind="stage"><span>▦</span><span>Stage Plan</span></button>
                     ${state.storyComposer.selectedLayerId ? `
                       <button type="button" data-story-layer-scale-down aria-label="Make layer smaller">−</button>
                       <button type="button" data-story-layer-scale-up aria-label="Make layer larger">+</button>
@@ -1485,6 +1490,12 @@ function renderStoryViewerModal() {
               if (layer.type === 'poll') {
                 const options = String(layer.metadata?.options || '').split('|').filter(Boolean)
                 return `<div class="community-story-object is-poll" style="${style}" data-story-poll><strong>${escapeHtml(layer.content || 'Poll')}</strong><div>${options.map((option, optionIndex) => `<button type="button" data-story-poll-option="${optionIndex}">${escapeHtml(option)}</button>`).join('')}</div></div>`
+              }
+              if (layer.type === 'project') {
+                const kind = String(layer.metadata?.melogicKind || 'project')
+                const labels = { soura: 'SOURA PROJECT', vertix: 'VERTIX SCENE', preset: 'PRESET', sample: 'SAMPLE', stage: 'STAGE PLAN', project: 'MELOGIC' }
+                const glyphs = { soura: '◈', vertix: '⬡', preset: '≋', sample: '⌁', stage: '▦', project: '◆' }
+                return `<a class="community-story-object is-melogic-native is-${escapeHtml(kind)}" style="${style}" href="${escapeHtml(layer.targetURL || '#')}"><span class="community-story-native-glyph">${glyphs[kind] || '◆'}</span><span><small>${labels[kind] || 'MELOGIC'}</small><strong>${escapeHtml(layer.content || 'Open in Melogic')}</strong></span><em>Open</em></a>`
               }
               if (layer.type === 'text') return `<span class="community-story-object is-text" style="${style}"><strong>${escapeHtml(layer.content || '')}</strong></span>`
               return ''
@@ -7805,12 +7816,20 @@ function bindEvents() {
       event: ['Event', 'Enter the event name:', 'Enter the event URL (optional):'],
       poll: ['Poll', 'Enter the poll question:', 'Enter choices separated by commas:']
     }
-    const config = prompts[type]
+    const nativeKind = button.getAttribute('data-story-native-kind') || ''
+    const nativeConfig = {
+      soura: ['Soura Project', 'Enter the Soura project name:', 'Enter the Soura project URL:'],
+      vertix: ['Vertix Scene', 'Enter the Vertix scene name:', 'Enter the Vertix project URL:'],
+      preset: ['Preset', 'Enter the preset name:', 'Enter its Melogic URL (optional):'],
+      sample: ['Sample', 'Enter the sample name:', 'Enter its Melogic URL (optional):'],
+      stage: ['Stage Plan', 'Enter the stage plan name:', 'Enter the Vertix/stage plan URL:']
+    }
+    const config = nativeKind ? nativeConfig[nativeKind] : prompts[type]
     if (!config) return
     const content = window.prompt(config[1], config[0])?.trim()
     if (!content) return
     let targetURL = window.prompt(config[2], '')?.trim() || ''
-    let metadata = {}
+    let metadata = nativeKind ? { melogicKind: nativeKind, source: 'melogic' } : {}
     if (type === 'poll') {
       const options = targetURL.split(',').map((item) => item.trim()).filter(Boolean).slice(0, 6)
       if (options.length < 2) {
