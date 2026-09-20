@@ -6926,13 +6926,40 @@ function bindStoryViewerPlayback() {
   if (story?.mediaType === 'video' && video) {
     video.loop = false
     video.muted = false
-    const play = () => video.play().catch(() => {
+    const activeProgress = viewer.querySelector('.community-story-progress-rail > span.is-active > i')
+    const syncVideoProgressDuration = () => {
+      const duration = Number(video.duration)
+      if (!activeProgress || !Number.isFinite(duration) || duration <= 0) return
+      activeProgress.style.animationDuration = `${duration}s`
+      // Restart from the beginning once real media metadata is known.
+      activeProgress.style.animationName = 'none'
+      void activeProgress.offsetWidth
+      activeProgress.style.animationName = 'community-story-progress-fill'
+      activeProgress.style.animationPlayState = video.paused ? 'paused' : 'running'
+    }
+    const play = () => video.play().then(() => {
+      if (activeProgress) activeProgress.style.animationPlayState = 'running'
+    }).catch(() => {
       video.muted = true
-      video.play().catch(() => {})
+      return video.play().then(() => {
+        if (activeProgress) activeProgress.style.animationPlayState = 'running'
+      }).catch(() => {})
+    })
+    if (video.readyState >= 1) syncVideoProgressDuration()
+    else video.addEventListener('loadedmetadata', syncVideoProgressDuration, { once: true })
+    video.addEventListener('durationchange', syncVideoProgressDuration)
+    video.addEventListener('play', () => {
+      if (activeProgress) activeProgress.style.animationPlayState = 'running'
+    })
+    video.addEventListener('pause', () => {
+      if (activeProgress) activeProgress.style.animationPlayState = 'paused'
     })
     if (video.readyState >= 2) play()
     else video.addEventListener('canplay', play, { once: true })
-    video.addEventListener('ended', () => advanceStory(1), { once: true })
+    video.addEventListener('ended', () => {
+      if (activeProgress) activeProgress.style.animationPlayState = 'paused'
+      advanceStory(1)
+    }, { once: true })
   } else {
     scheduleStoryViewerAdvance(STORY_IMAGE_DURATION_MS)
   }
