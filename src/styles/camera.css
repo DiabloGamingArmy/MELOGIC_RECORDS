@@ -1041,3 +1041,16 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   inset:-6px!important;
   border-radius:8px!important;
 }
+
+
+/* camera-text-caret-overlay-p5
+   JS measures the rendered text layer and places this input exactly over it. */
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox textarea{
+  transform:none!important;
+  min-height:0!important;
+  max-height:none!important;
+  box-sizing:border-box!important;
+  margin:0!important;
+  resize:none!important;
+  overflow:hidden!important;
+}
