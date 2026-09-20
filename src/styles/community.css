@@ -13796,3 +13796,52 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     display: none !important;
   }
 }
+
+
+/* melogic-community-image-reliability-v1 */
+.community-post-file-attachment.is-image[data-community-image-shell] {
+  position: relative;
+  overflow: hidden;
+}
+
+.community-post-file-attachment.is-image[data-community-image-shell] .community-attachment-load-state {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  padding: 1rem;
+  background: rgba(8, 9, 12, .82);
+  color: #9da6b5;
+  font-size: .78rem;
+  text-align: center;
+  z-index: 1;
+}
+
+.community-post-file-attachment.is-image[data-community-image-shell] img {
+  position: relative;
+  z-index: 2;
+}
+
+.community-post-file-attachment.is-image[data-community-image-shell].is-loading img,
+.community-post-file-attachment.is-image[data-community-image-shell].is-retrying img {
+  opacity: 0;
+}
+
+.community-post-file-attachment.is-image[data-community-image-shell].is-failed .community-attachment-load-state {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: .55rem;
+}
+
+.community-post-file-attachment.is-image[data-community-image-shell] [data-community-image-retry] {
+  border: 1px solid rgba(118, 93, 255, .55);
+  border-radius: 7px;
+  padding: .4rem .7rem;
+  background: rgba(118, 93, 255, .12);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}

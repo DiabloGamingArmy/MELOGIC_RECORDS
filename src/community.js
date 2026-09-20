@@ -208,6 +208,7 @@ const state = {
   },
   posts: [],
   attachmentMediaUrls: {},
+  attachmentMediaFailures: {},
   viewerState: {},
   loading: true,
   initialHomeHydration: true,
@@ -2601,6 +2602,89 @@ function renderStudioProjectAttachment(attachment = {}) {
   `
 }
 
+const COMMUNITY_IMAGE_RETRY_DELAYS = [900, 2200, 5000, 10000]
+const communityImageRetryTimers = new Map()
+
+function communityImageFailureState(path = '') {
+  return state.attachmentMediaFailures[path] || { attempts: 0, exhausted: false }
+}
+
+function clearCommunityImageRetry(path = '') {
+  const timer = communityImageRetryTimers.get(path)
+  if (timer) window.clearTimeout(timer)
+  communityImageRetryTimers.delete(path)
+}
+
+function markCommunityImageLoaded(image) {
+  const path = image?.getAttribute?.('data-community-storage-path') || ''
+  if (!path) return
+  clearCommunityImageRetry(path)
+  delete state.attachmentMediaFailures[path]
+  const shell = image.closest('[data-community-image-shell]')
+  shell?.classList.remove('is-loading', 'is-retrying', 'is-failed')
+  shell?.querySelector('[data-community-image-status]')?.remove()
+}
+
+function retryCommunityImageElement(image, { immediate = false } = {}) {
+  const path = image?.getAttribute?.('data-community-storage-path') || ''
+  const url = state.attachmentMediaUrls[path] || image?.getAttribute?.('src') || ''
+  if (!path || !url) return
+  const previous = communityImageFailureState(path)
+  const attempts = immediate ? 0 : Number(previous.attempts || 0)
+  if (!immediate && attempts >= COMMUNITY_IMAGE_RETRY_DELAYS.length) {
+    state.attachmentMediaFailures[path] = { attempts, exhausted: true }
+    const shell = image.closest('[data-community-image-shell]')
+    shell?.classList.remove('is-loading', 'is-retrying')
+    shell?.classList.add('is-failed')
+    const status = shell?.querySelector('[data-community-image-status]')
+    if (status) status.innerHTML = `<span>Image is taking longer than expected.</span><button type="button" data-community-image-retry="${escapeHtml(path)}">Retry image</button>`
+    bindCommunityImageReliability(shell)
+    return
+  }
+
+  clearCommunityImageRetry(path)
+  const nextAttempts = immediate ? 0 : attempts + 1
+  state.attachmentMediaFailures[path] = { attempts: nextAttempts, exhausted: false }
+  const shell = image.closest('[data-community-image-shell]')
+  shell?.classList.add('is-retrying')
+  shell?.classList.remove('is-failed')
+  const status = shell?.querySelector('[data-community-image-status]')
+  if (status) status.textContent = nextAttempts > 1 ? 'Still loading image…' : 'Loading image…'
+  const delay = immediate ? 0 : COMMUNITY_IMAGE_RETRY_DELAYS[Math.min(attempts, COMMUNITY_IMAGE_RETRY_DELAYS.length - 1)]
+  const timer = window.setTimeout(() => {
+    communityImageRetryTimers.delete(path)
+    // Reassigning a cache-busted Firebase download URL forces WebKit/browser
+    // transfer recovery without tearing down the post card or feed surface.
+    const separator = url.includes('?') ? '&' : '?'
+    image.src = `${url}${separator}melogic_media_retry=${Date.now()}`
+  }, delay)
+  communityImageRetryTimers.set(path, timer)
+}
+
+function bindCommunityImageReliability(root = app) {
+  if (!root) return
+  root.querySelectorAll('img[data-community-storage-path]').forEach((image) => {
+    if (image.dataset.mediaReliabilityBound === 'true') return
+    image.dataset.mediaReliabilityBound = 'true'
+    image.addEventListener('load', () => markCommunityImageLoaded(image))
+    image.addEventListener('error', () => retryCommunityImageElement(image))
+    if (image.complete && image.naturalWidth > 0) markCommunityImageLoaded(image)
+  })
+  root.querySelectorAll('[data-community-image-retry]').forEach((button) => {
+    if (button.dataset.mediaRetryBound === 'true') return
+    button.dataset.mediaRetryBound = 'true'
+    button.addEventListener('click', (event) => {
+      stopCommunityActionEvent(event)
+      const path = button.getAttribute('data-community-image-retry') || ''
+      const shell = button.closest('[data-community-image-shell]')
+      const image = shell?.querySelector('img[data-community-storage-path]')
+      if (!image || !path) return
+      state.attachmentMediaFailures[path] = { attempts: 0, exhausted: false }
+      retryCommunityImageElement(image, { immediate: true })
+    })
+  })
+}
+
 function renderUploadedPostAttachment(attachment = {}) {
   const path = attachment.path || attachment.storagePath || ''
   const url = attachment.url || state.attachmentMediaUrls[path] || ''
@@ -2610,10 +2694,10 @@ function renderUploadedPostAttachment(attachment = {}) {
     : ''
   if (attachment.type === 'image') {
     return `
-      <button type="button" class="community-post-file-attachment is-image" data-open-community-image="${escapeHtml(url)}" data-community-image-name="${escapeHtml(name)}" data-stop-card-nav ${url ? '' : 'disabled'}>
+      <button type="button" class="community-post-file-attachment is-image ${url ? 'is-loading' : 'is-resolving'}" data-community-image-shell data-open-community-image="${escapeHtml(url)}" data-community-image-name="${escapeHtml(name)}" data-stop-card-nav ${url ? '' : 'disabled'}>
         ${url
-          ? `<img src="${escapeHtml(url)}" data-community-storage-path="${escapeHtml(path)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async"${dimensions} />`
-          : `<span class="community-attachment-load-state">Image preview unavailable</span>`
+          ? `<img src="${escapeHtml(url)}" data-community-storage-path="${escapeHtml(path)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async"${dimensions} /><span class="community-attachment-load-state" data-community-image-status>Loading image…</span>`
+          : `<span class="community-attachment-load-state" data-community-image-status>Loading image…</span>`
         }
       </button>
     `
@@ -4302,6 +4386,7 @@ function renderPostMediaOnly(){
     const url=state.attachmentMediaUrls[path]||''
     if(url && !node.getAttribute('src')) node.setAttribute('src',url)
   })
+  bindCommunityImageReliability(app)
 }
 /*
  * melogic-mobile-native-activation-v1
@@ -8272,6 +8357,7 @@ function bindCommentEvents(root = app) {
 
 function bindFeedRegionEvents(root = app) {
   if (!root) return
+  bindCommunityImageReliability(root)
   root.querySelectorAll('.community-post-card:not(.is-detail) .community-post-actions a[href$="#comments"]').forEach((link) => {
     link.addEventListener('click', (event) => {
       event.preventDefault()

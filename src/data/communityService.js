@@ -193,6 +193,36 @@ function safeProductAudioPreviewPath(product = {}, requestedPath = '') {
 }
 
 const storageUrlCache = new Map()
+const storageUrlRequests = new Map()
+const COMMUNITY_STORAGE_RETRY_DELAYS = [0, 750, 2000, 5000, 10000]
+
+function waitForCommunityStorageRetry(delayMs = 0) {
+  if (!delayMs) return Promise.resolve()
+  return new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
+function isPermanentCommunityStorageError(error) {
+  const code = String(error?.code || '').toLowerCase()
+  return code.includes('object-not-found')
+    || code.includes('unauthorized')
+    || code.includes('unauthenticated')
+    || code.includes('invalid-url')
+    || code.includes('invalid-argument')
+}
+
+async function resolveStorageUrlWithRetry(path = '') {
+  let lastError = null
+  for (let attempt = 0; attempt < COMMUNITY_STORAGE_RETRY_DELAYS.length; attempt += 1) {
+    await waitForCommunityStorageRetry(COMMUNITY_STORAGE_RETRY_DELAYS[attempt])
+    try {
+      return await getDownloadURL(ref(storage, path))
+    } catch (error) {
+      lastError = error
+      if (isPermanentCommunityStorageError(error)) break
+    }
+  }
+  throw lastError || new Error('Storage URL could not be resolved.')
+}
 
 async function getFreshDocument(documentRef) {
   try {
@@ -207,10 +237,28 @@ async function getFreshDocument(documentRef) {
 async function safeStorageUrl(path = '') {
   const clean = String(path || '').trim()
   if (!clean || !storage) return ''
-  if (!storageUrlCache.has(clean)) {
-    storageUrlCache.set(clean, getDownloadURL(ref(storage, clean)).catch(() => ''))
-  }
-  return storageUrlCache.get(clean)
+  if (storageUrlCache.has(clean)) return storageUrlCache.get(clean)
+  if (storageUrlRequests.has(clean)) return storageUrlRequests.get(clean)
+
+  const request = resolveStorageUrlWithRetry(clean)
+    .then((url) => {
+      if (url) storageUrlCache.set(clean, url)
+      return url || ''
+    })
+    .catch((error) => {
+      // Never poison the session cache with a transient failure. A later
+      // Community enrichment pass or explicit media retry gets a fresh chance.
+      console.warn('[community] storage url resolution exhausted retries', {
+        path: clean,
+        code: error?.code,
+        message: error?.message
+      })
+      return ''
+    })
+    .finally(() => storageUrlRequests.delete(clean))
+
+  storageUrlRequests.set(clean, request)
+  return request
 }
 
 export function normalizeCommunityStagePlan(rawOrSnap = {}, explicitId = '') {
