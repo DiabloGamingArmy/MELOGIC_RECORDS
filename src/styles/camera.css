@@ -451,3 +451,13 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-adjust-sliders{display:grid;gap:8px}.camera-adjust-sliders label{display:grid;grid-template-columns:78px 1fr;align-items:center;gap:8px;font-size:11px;color:#bbb}.camera-adjust-sliders input{width:100%;accent-color:#fff}
 .camera-playback::after{content:"";position:absolute;z-index:6;inset:0;pointer-events:none;background:radial-gradient(circle at center,rgba(255,255,255,calc(var(--camera-fade,0)*.16)) 0 42%,rgba(0,0,0,calc(var(--camera-vignette,0)*.68)) 100%);opacity:1}
 .camera-playback::before{content:"";position:absolute;z-index:6;inset:0;pointer-events:none;opacity:calc(var(--camera-grain,0)*.22);background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E")}
+
+
+/* camera-editor-video-p10 */
+.camera-video-controls{position:absolute;z-index:36;left:12px;right:62px;bottom:calc(80px + env(safe-area-inset-bottom,0px));padding:12px;border:1px solid rgba(255,255,255,.16);border-radius:20px;background:rgba(8,9,13,.92);color:#fff;backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+.camera-video-controls[hidden]{display:none!important}.camera-video-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.camera-video-head button{width:34px;height:34px;border:0;border-radius:50%;background:rgba(255,255,255,.08);color:#fff;font-size:23px}
+.camera-video-track{position:relative;height:42px;border-radius:9px;background:rgba(255,255,255,.07);overflow:hidden}.camera-video-track::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(255,255,255,.08) 0 1px,transparent 1px 8%)}
+.camera-video-selection{position:absolute;top:0;bottom:0;border:2px solid #fff;border-radius:8px;background:rgba(255,255,255,.06)}
+.camera-video-times{display:flex;justify-content:space-between;margin:4px 1px 10px;font-size:10px;color:#999}
+.camera-video-controls>label{display:grid;grid-template-columns:68px 1fr;align-items:center;gap:8px;margin:8px 0;font-size:11px;color:#bbb}.camera-video-controls input[type="range"]{width:100%;accent-color:#fff}
+.camera-video-speeds{display:flex;gap:6px;margin-top:11px}.camera-video-speeds button,.camera-video-controls>[data-camera-video-reset]{height:38px;border:0;border-radius:999px;background:rgba(255,255,255,.08);color:#bbb}.camera-video-speeds button{flex:1}.camera-video-speeds button.is-active{background:#fff;color:#090a0d}.camera-video-controls>[data-camera-video-reset]{width:100%;margin-top:9px}
