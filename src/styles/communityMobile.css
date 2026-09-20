@@ -2541,3 +2541,242 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     text-decoration: none !important;
   }
 }
+
+
+/* melogic-community-mobile-discover-surface-p2
+   Patch 2: turn the existing canonical communities directory into a native
+   mobile Discover surface. Data loading, search/category controls, focus
+   mutations, links, and desktop geometry remain owned by their existing code. */
+@media (max-width:760px) {
+  body.is-community-page .community-network-directory {
+    display:block !important;
+    width:100% !important;
+    min-height:100% !important;
+    padding:0 !important;
+    background:#000 !important;
+  }
+  body.is-community-page .community-network-directory > .community-left-nav,
+  body.is-community-page .community-network-directory > .community-right-rail {
+    display:none !important;
+  }
+  body.is-community-page .community-network-directory > .community-main {
+    width:100% !important;
+    max-width:none !important;
+    margin:0 !important;
+    padding:0 0 calc(var(--melogic-mobile-bottom-nav-h) + var(--melogic-mobile-safe-bottom) + 18px) !important;
+  }
+  body.is-community-page .community-network-discover-hero {
+    display:flex !important;
+    align-items:flex-end !important;
+    justify-content:space-between !important;
+    gap:16px !important;
+    margin:0 !important;
+    padding:18px var(--community-mobile-gutter) 14px !important;
+    border:0 !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-network-discover-hero .eyebrow,
+  body.is-community-page .community-network-discover-hero > div:first-child > p:last-child {
+    display:none !important;
+  }
+  body.is-community-page .community-network-discover-hero h1 {
+    margin:0 !important;
+    color:#fff !important;
+    font-size:1.18rem !important;
+    font-weight:720 !important;
+    line-height:1.15 !important;
+    letter-spacing:-.02em !important;
+  }
+  body.is-community-page .community-network-directory-summary {
+    display:flex !important;
+    align-items:baseline !important;
+    gap:5px !important;
+    padding:0 !important;
+    border:0 !important;
+    background:transparent !important;
+    color:#777780 !important;
+  }
+  body.is-community-page .community-network-directory-summary strong {
+    color:#d7d7dc !important;
+    font-size:.78rem !important;
+  }
+  body.is-community-page .community-network-directory-summary span {
+    font-size:.67rem !important;
+  }
+
+  body.is-community-page .community-community-tools {
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) auto !important;
+    gap:8px !important;
+    margin:0 !important;
+    padding:10px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-community-tools label {
+    min-width:0 !important;
+    margin:0 !important;
+  }
+  body.is-community-page .community-community-tools label > span {
+    display:none !important;
+  }
+  body.is-community-page .community-community-tools input,
+  body.is-community-page .community-community-tools select {
+    width:100% !important;
+    min-height:40px !important;
+    height:40px !important;
+    margin:0 !important;
+    padding:0 12px !important;
+    border:1px solid #242428 !important;
+    border-radius:10px !important;
+    background:#111114 !important;
+    color:#f4f4f5 !important;
+    font-size:.76rem !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-community-tools label:nth-of-type(2) {
+    grid-column:1 / 2 !important;
+  }
+  body.is-community-page .community-network-create-community {
+    grid-column:2 !important;
+    grid-row:1 / span 2 !important;
+    align-self:stretch !important;
+    display:grid !important;
+    place-items:center !important;
+    width:42px !important;
+    min-width:42px !important;
+    min-height:42px !important;
+    padding:0 !important;
+    border:1px solid #242428 !important;
+    border-radius:10px !important;
+    background:#111114 !important;
+    color:#fff !important;
+  }
+  body.is-community-page .community-network-create-community span {
+    display:none !important;
+  }
+  body.is-community-page .community-network-create-community svg {
+    width:18px !important;
+    height:18px !important;
+  }
+
+  body.is-community-page .community-community-grid {
+    display:grid !important;
+    grid-template-columns:1fr !important;
+    gap:0 !important;
+    width:100% !important;
+    margin:0 !important;
+    padding:0 !important;
+  }
+  body.is-community-page .community-community-card {
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) auto !important;
+    gap:8px 12px !important;
+    width:100% !important;
+    margin:0 !important;
+    padding:14px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    border-bottom:1px solid var(--community-mobile-divider) !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    box-shadow:none !important;
+  }
+  body.is-community-page .community-community-main {
+    display:grid !important;
+    grid-template-columns:46px minmax(0,1fr) !important;
+    align-items:center !important;
+    gap:10px !important;
+    min-width:0 !important;
+    color:#fff !important;
+    text-decoration:none !important;
+  }
+  body.is-community-page .community-community-icon {
+    width:46px !important;
+    height:46px !important;
+    border:1px solid #29292e !important;
+    border-radius:12px !important;
+    background:#151518 !important;
+    font-size:.95rem !important;
+    overflow:hidden !important;
+  }
+  body.is-community-page .community-community-icon img {
+    width:100% !important;
+    height:100% !important;
+    object-fit:cover !important;
+  }
+  body.is-community-page .community-community-main strong {
+    display:block !important;
+    overflow:hidden !important;
+    color:#f5f5f6 !important;
+    font-size:.84rem !important;
+    font-weight:690 !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+  body.is-community-page .community-community-main em {
+    display:block !important;
+    margin-top:3px !important;
+    overflow:hidden !important;
+    color:#777780 !important;
+    font-size:.66rem !important;
+    font-style:normal !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+  body.is-community-page .community-community-card > p {
+    grid-column:1 / -1 !important;
+    margin:0 !important;
+    color:#a1a1a8 !important;
+    font-size:.72rem !important;
+    line-height:1.4 !important;
+    display:-webkit-box !important;
+    -webkit-line-clamp:2 !important;
+    -webkit-box-orient:vertical !important;
+    overflow:hidden !important;
+  }
+  body.is-community-page .community-community-stats {
+    grid-column:1 !important;
+    display:flex !important;
+    align-items:center !important;
+    gap:10px !important;
+    min-width:0 !important;
+    color:#6f6f78 !important;
+    font-size:.62rem !important;
+    white-space:nowrap !important;
+  }
+  body.is-community-page .community-community-stats span:last-child {
+    display:none !important;
+  }
+  body.is-community-page .community-card-actions {
+    grid-column:2 !important;
+    grid-row:1 !important;
+    display:flex !important;
+    align-items:center !important;
+    gap:6px !important;
+    margin:0 !important;
+  }
+  body.is-community-page .community-card-actions .button {
+    min-height:34px !important;
+    height:34px !important;
+    padding:0 11px !important;
+    border-radius:9px !important;
+    font-size:.67rem !important;
+  }
+  body.is-community-page .community-card-actions a.button {
+    display:none !important;
+  }
+  body.is-community-page .community-network-directory .community-feed-state {
+    margin:0 !important;
+    padding:28px var(--community-mobile-gutter) !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:#000 !important;
+    text-align:center !important;
+  }
+}
