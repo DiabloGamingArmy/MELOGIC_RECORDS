@@ -1620,8 +1620,8 @@ function renderStoryViewerModal() {
   const contextItems = (story.layers || []).filter((layer) => ['person','location','community','audio','product','event','poll','project'].includes(layer.type))
   const contextLabels = { person:'Person', location:'Location', community:'Community', audio:'Sound', product:'Product', event:'Event', poll:'Poll', project:'Project' }
   return `
-    <div class="community-modal-backdrop">
-      <section class="community-story-viewer${isMobileSpaRuntime() ? '' : ' community-story-viewer--mobile-on-desktop'}" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
+    <div class="community-modal-backdrop${isMobileSpaRuntime() || window.matchMedia?.('(max-width: 760px)').matches ? '' : ' community-story-mobile-desktop-host'}">
+      <section class="community-story-viewer" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
         <header class="community-story-viewer-hud">
           <div class="community-story-progress-rail" aria-label="Story ${formatCount(index + 1)} of ${formatCount(groupStories.length)}">
             ${groupStories.map((groupStory, storyIndex) => {
