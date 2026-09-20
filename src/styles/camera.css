@@ -1119,3 +1119,21 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-editor-layer.is-selected:active{
   cursor:grabbing;
 }
+
+
+/* camera-native-multitouch-p9
+   Manipulation mode must not trigger selection/callout; live text editing restores it. */
+.camera-editor-layer-stage{
+  touch-action:none!important;
+  user-select:none;
+  -webkit-user-select:none;
+  -webkit-touch-callout:none;
+}
+.camera-editor-layer-stage [data-camera-editor-layer]{
+  touch-action:none!important;
+}
+.camera-editor-layer[data-camera-live-text-editor="true"]{
+  user-select:text!important;
+  -webkit-user-select:text!important;
+  -webkit-touch-callout:default;
+}
