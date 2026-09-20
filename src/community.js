@@ -646,6 +646,47 @@ function setupCommunityFeedTabs() {
 
 setupCommunityFeedTabs()
 
+// Desktop Network rail routing. These are visually the exact same anchors as
+// Discover, but feed selection must explicitly transition out of Discover.
+if (!window.__melogicDesktopCommunityFeedRailV1) {
+  window.__melogicDesktopCommunityFeedRailV1 = true
+  document.addEventListener('click', (event) => {
+    if (isMobileSpaRuntime() || event.defaultPrevented || event.button !== 0) return
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+    const link = event.target instanceof Element
+      ? event.target.closest('a[data-community-desktop-feed-link]')
+      : null
+    if (!(link instanceof HTMLAnchorElement)) return
+    const nextTab = String(link.dataset.communityDesktopFeedLink || '').trim()
+    if (!['for-you', 'following'].includes(nextTab)) return
+
+    event.preventDefault()
+    state.activeTab = nextTab
+    state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
+    state.view = { type: 'feed' }
+    state.activeCommunityId = ''
+    state.activeCommunitySlug = ''
+    state.detailPostId = ''
+    state.feedError = ''
+    state.feedStillLoading = false
+    state.followingFeedCache = nextTab === 'following'
+      ? state.followingFeedCache
+      : { key: '', posts: [] }
+
+    const targetUrl = `${ROUTES.community}?feed=${encodeURIComponent(nextTab)}`
+    window.history.pushState({}, '', targetUrl)
+    render()
+    void loadFeedPage({ reset: true }).catch((error) => {
+      console.warn('[community] desktop feed rail load failed', error)
+      state.feedError = error?.message || 'Community feed could not be loaded.'
+      state.feedInitialLoading = false
+      state.feedLoadingMore = false
+      state.feedStillLoading = false
+      render()
+    })
+  })
+}
+
 // melogic-community-spa-lifecycle-v4
 function installCommunitySpaLifecycle() {
   if (!isMobileSpaRuntime() || window.__melogicCommunitySpaLifecycleV4) return
@@ -3382,10 +3423,10 @@ function renderLeftNav() {
 
       <nav>
         <section class="community-network-nav-section" aria-label="Network">
-          <a class="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'is-active' : ''}" href="${ROUTES.community}?feed=for-you" aria-current="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'page' : 'false'}">
+          <a class="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'is-active' : ''}" href="${ROUTES.community}?feed=for-you" aria-current="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'page' : 'false'}" data-community-desktop-feed-link="for-you">
             <span class="community-network-home-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span> <span>For You</span>
           </a>
-          <a class="${state.view.type === 'feed' && state.activeTab === 'following' ? 'is-active' : ''}" href="${ROUTES.community}?feed=following" aria-current="${state.view.type === 'feed' && state.activeTab === 'following' ? 'page' : 'false'}">
+          <a class="${state.view.type === 'feed' && state.activeTab === 'following' ? 'is-active' : ''}" href="${ROUTES.community}?feed=following" aria-current="${state.view.type === 'feed' && state.activeTab === 'following' ? 'page' : 'false'}" data-community-desktop-feed-link="following">
             ${iconSvg('users')} <span>Following</span>
           </a>
           <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}" aria-current="${state.view.type === 'communities' ? 'page' : 'false'}">
