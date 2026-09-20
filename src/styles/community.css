@@ -13851,8 +13851,8 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
 @media (min-width: 761px) {
   .community-desktop-compose-fab {
     position: fixed;
-    /* Sit in the feed column's bottom-right corner with a clean 16px inset. */
-    right: max(16px, calc((100vw - min(1600px, calc(100vw - 48px))) / 2 + 350px + 32px + 16px));
+    /* Desktop shell is 270px | feed | 390-430px. Anchor to the feed's right edge. */
+    right: max(16px, calc((100vw - min(1840px, calc(100vw - 24px))) / 2 + clamp(390px, calc((min(1840px, calc(100vw - 24px)) - 890px) * .5), 430px) + 16px));
     bottom: 28px;
     z-index: 88;
     display: grid;
