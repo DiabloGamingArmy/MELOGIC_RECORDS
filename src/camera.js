@@ -149,6 +149,18 @@ cameraSurface.innerHTML = `
           <label class="camera-pen-rail-slider"><span>Size</span><input type="range" min="2" max="32" value="8" data-camera-pen-rail-size aria-label="Pen size"></label>
           <label class="camera-pen-rail-slider"><span>Opacity</span><input type="range" min="10" max="100" value="100" data-camera-pen-rail-opacity aria-label="Pen opacity"></label>
         </div>
+        <div class="camera-text-rail-controls" data-camera-text-rail-controls aria-hidden="true">
+          <label class="camera-text-rail-field camera-text-rail-font"><span>Font</span><select data-camera-text-rail-font aria-label="Text font"><option value="system">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option><option value="rounded">Rounded</option></select></label>
+          <div class="camera-text-rail-field camera-text-rail-style"><span>Style</span><div>
+            <button type="button" data-camera-text-rail-style="bold" aria-label="Bold text"><strong>B</strong></button>
+            <button type="button" data-camera-text-rail-style="italic" aria-label="Italic text"><em>I</em></button>
+            <button type="button" data-camera-text-rail-style="underline" aria-label="Underline text"><u>U</u></button>
+          </div></div>
+          <label class="camera-text-rail-field camera-text-rail-color"><span>Colors</span><input type="color" value="#ffffff" data-camera-text-rail-color aria-label="Text color"><i></i></label>
+          <label class="camera-text-rail-field camera-text-rail-color"><span>Border Color</span><input type="color" value="#000000" data-camera-text-rail-border-color aria-label="Text border color"><i></i></label>
+          <label class="camera-text-rail-field camera-text-rail-slider"><span>Size</span><input type="range" min="12" max="96" value="36" data-camera-text-rail-size aria-label="Text size"></label>
+          <label class="camera-text-rail-field camera-text-rail-slider"><span>Opacity</span><input type="range" min="10" max="100" value="100" data-camera-text-rail-opacity aria-label="Text opacity"></label>
+        </div>
         <input data-camera-edit-image-input type="file" accept="image/*" hidden>
       </div>
       <div class="camera-editor-functions" data-camera-editor-functions aria-label="Editor actions">
@@ -692,8 +704,12 @@ function renderCameraEditorLayers(){
       node.style.fontFamily=fontMap[layer.fontFamily]||fontMap.system
       node.style.fontSize=`${clampEditorValue(Number(layer.fontSize)||36,12,96)}px`
       node.style.fontWeight=layer.fontWeight||700
+      node.style.fontStyle=layer.fontStyle||'normal'
+      node.style.textDecoration=layer.textDecoration||'none'
       node.style.textAlign=layer.textAlign||'center'
       node.style.color=layer.color||'#fff'
+      const borderColor=layer.borderColor||'transparent',borderWidth=borderColor==='transparent'?0:Math.max(.5,Number(layer.borderWidth)||1)
+      node.style.webkitTextStroke=borderWidth?`${borderWidth}px ${borderColor}`:'0 transparent'
       node.style.lineHeight='1.08'
       node.style.whiteSpace='pre-wrap'
       node.style.overflowWrap='anywhere'
@@ -808,7 +824,7 @@ function moveCameraEditorLayer(id,direction=1){
 function cameraEditorSnapshot(){return JSON.parse(JSON.stringify(editorState))}
 function cameraEditorLayerToStoryLayer(layer,index=0){
   const base={id:layer.id||`layer-${index+1}`,x:clampEditorValue(Number(layer.x)??.5,0,1),y:clampEditorValue(Number(layer.y)??.5,0,1),width:clampEditorValue(Number(layer.width)??.25,.02,1),height:clampEditorValue(Number(layer.height)??.1,.02,1),rotation:clampEditorValue(Number(layer.rotation)||0,-180,180),scale:clampEditorValue(Number(layer.scale)||1,.1,8),opacity:clampEditorValue(Number(layer.opacity)??1,0,1),zIndex:Math.max(0,Number(layer.zIndex)||index),startMs:0,endMs:0,content:'',targetId:'',targetURL:'',metadata:{}}
-  if(layer.type==='text')return{...base,type:'text',content:String(layer.text||''),metadata:{fontFamily:String(layer.fontFamily||'system'),fontSize:Number(layer.fontSize)||36,fontWeight:Number(layer.fontWeight)||700,textAlign:String(layer.textAlign||'center'),color:String(layer.color||'#fff'),background:!!layer.background}}
+  if(layer.type==='text')return{...base,type:'text',content:String(layer.text||''),metadata:{fontFamily:String(layer.fontFamily||'system'),fontSize:Number(layer.fontSize)||36,fontWeight:Number(layer.fontWeight)||700,fontStyle:String(layer.fontStyle||'normal'),textDecoration:String(layer.textDecoration||'none'),textAlign:String(layer.textAlign||'center'),color:String(layer.color||'#fff'),borderColor:String(layer.borderColor||'transparent'),borderWidth:Number(layer.borderWidth)||0,background:!!layer.background}}
   if(layer.type==='draw')return{...base,type:'drawing',content:'',metadata:{brush:String(layer.brush||'pen'),color:String(layer.color||'#fff'),size:Number(layer.size)||8,points:JSON.stringify(Array.isArray(layer.points)?layer.points:[])}}
   if(layer.type==='interactive'){
     const kind=String(layer.interactiveType||''),typeMap={mention:'person',profile:'person',location:'location',link:'link',poll:'poll',music:'audio',track:'audio',product:'product',soura:'project',vertix:'project',project:'project',hashtag:'community'}
@@ -1356,6 +1372,7 @@ function setCameraToolRail(tool=''){
   editToolRail.querySelectorAll(':scope > [data-camera-edit-tool]').forEach(button=>{const active=button.dataset.cameraEditTool===tool;button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active))})
   if(editToolContext){editToolContext.textContent=tool?(CAMERA_TOOL_LABELS[tool]||tool):'';editToolContext.setAttribute('aria-hidden',String(!tool))}
   const penRailControls=editToolRail.querySelector('[data-camera-pen-rail-controls]');if(penRailControls)penRailControls.setAttribute('aria-hidden',String(tool!=='pen'))
+  const textRailControls=editToolRail.querySelector('[data-camera-text-rail-controls]');if(textRailControls)textRailControls.setAttribute('aria-hidden',String(tool!=='text'))
 }
 function closeCameraToolPanels(except=''){
   const panels={text:editTextbox,pen:drawControls,sticker:cameraSurface.querySelector('[data-camera-sticker-picker]'),crop:cameraSurface.querySelector('[data-camera-crop-controls]'),video:videoControls,adjust:adjustControls,music:audioControls}
@@ -1371,7 +1388,7 @@ function toggleCameraToolRail(tool,button){
   if(closing){editMode='';return false}
   editMode=tool;return true
 }
-cameraSurface.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b||!b.closest('[data-camera-edit-tools],[data-camera-editor-functions]'))return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='video'){if(playback.dataset.captureType!=='video')return;const open=toggleCameraToolRail(t,b);if(videoControls){videoControls.hidden=!open;if(open)syncCameraVideoControls()}return}if(t==='adjust'){const open=toggleCameraToolRail(t,b);if(adjustControls){adjustControls.hidden=!open;if(open)syncCameraAdjustmentControls()}return}if(t==='music'){const open=toggleCameraToolRail(t,b);if(audioControls){audioControls.hidden=!open;if(open)syncCameraAudioControls()}return}if(t==='image'){closeCameraToolPanels('');editMode='';setCameraToolRail('');editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const open=toggleCameraToolRail(t,b),picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!open;if(open){renderCameraStickerGrid('featured','');void loadCameraStickerAssets()}}return}const open=toggleCameraToolRail(t,b);if(open&&t==='pen')syncPenRailControls();editTextbox.hidden=!(open&&t==='text');if(drawControls)drawControls.hidden=true;editCanvas.classList.toggle('is-drawing-mode',open&&t==='pen');editCanvas.classList.toggle('is-crop-mode',open&&t==='crop');const cropControls=cameraSurface.querySelector('[data-camera-crop-controls]');if(cropControls)cropControls.hidden=!(open&&t==='crop');cameraSurface.classList.toggle('is-media-transforming',open&&t==='crop');if(open&&t==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editorState.selectedLayerId='';editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}cameraSurface.querySelector('[data-camera-text-dim]')?.removeAttribute('hidden');requestAnimationFrame(()=>editTextInput.focus({preventScroll:true}))}})
+cameraSurface.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b||!b.closest('[data-camera-edit-tools],[data-camera-editor-functions]'))return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='video'){if(playback.dataset.captureType!=='video')return;const open=toggleCameraToolRail(t,b);if(videoControls){videoControls.hidden=!open;if(open)syncCameraVideoControls()}return}if(t==='adjust'){const open=toggleCameraToolRail(t,b);if(adjustControls){adjustControls.hidden=!open;if(open)syncCameraAdjustmentControls()}return}if(t==='music'){const open=toggleCameraToolRail(t,b);if(audioControls){audioControls.hidden=!open;if(open)syncCameraAudioControls()}return}if(t==='image'){closeCameraToolPanels('');editMode='';setCameraToolRail('');editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const open=toggleCameraToolRail(t,b),picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!open;if(open){renderCameraStickerGrid('featured','');void loadCameraStickerAssets()}}return}const open=toggleCameraToolRail(t,b);if(open&&t==='pen')syncPenRailControls();editTextbox.hidden=!(open&&t==='text');if(drawControls)drawControls.hidden=true;editCanvas.classList.toggle('is-drawing-mode',open&&t==='pen');editCanvas.classList.toggle('is-crop-mode',open&&t==='crop');const cropControls=cameraSurface.querySelector('[data-camera-crop-controls]');if(cropControls)cropControls.hidden=!(open&&t==='crop');cameraSurface.classList.toggle('is-media-transforming',open&&t==='crop');if(open&&t==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editorState.selectedLayerId='';editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36';syncTextRailControls(null)}cameraSurface.querySelector('[data-camera-text-dim]')?.removeAttribute('hidden');requestAnimationFrame(()=>editTextInput.focus({preventScroll:true}))}})
 const penRailColor=cameraSurface.querySelector('[data-camera-pen-rail-color]'),penRailSize=cameraSurface.querySelector('[data-camera-pen-rail-size]'),penRailOpacity=cameraSurface.querySelector('[data-camera-pen-rail-opacity]')
 const canonicalDrawColor=cameraSurface.querySelector('[data-camera-draw-color]'),canonicalDrawSize=cameraSurface.querySelector('[data-camera-draw-size]'),canonicalDrawOpacity=cameraSurface.querySelector('[data-camera-draw-opacity]')
 function syncPenRailControls(){
@@ -1475,13 +1492,28 @@ cropZoom?.addEventListener('input',()=>{if(!cropZoomHistoryArmed){pushCameraEdit
 cropZoom?.addEventListener('change',()=>{cropZoomHistoryArmed=false})
 
 const textFont=cameraSurface.querySelector('[data-camera-text-font]'),textColor=cameraSurface.querySelector('[data-camera-text-color]'),textSize=cameraSurface.querySelector('[data-camera-text-size]')
+const textRailFont=cameraSurface.querySelector('[data-camera-text-rail-font]'),textRailColor=cameraSurface.querySelector('[data-camera-text-rail-color]'),textRailBorderColor=cameraSurface.querySelector('[data-camera-text-rail-border-color]'),textRailSize=cameraSurface.querySelector('[data-camera-text-rail-size]'),textRailOpacity=cameraSurface.querySelector('[data-camera-text-rail-opacity]')
 function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
+function syncTextRailControls(layer){
+  const value=layer||{}
+  if(textRailFont)textRailFont.value=value.fontFamily||textFont?.value||'system'
+  if(textRailColor)textRailColor.value=value.color||textColor?.value||'#ffffff'
+  if(textRailBorderColor)textRailBorderColor.value=value.borderColor&&value.borderColor!=='transparent'?value.borderColor:'#000000'
+  if(textRailSize)textRailSize.value=String(value.fontSize||Number(textSize?.value)||36)
+  if(textRailOpacity)textRailOpacity.value=String(Math.round((value.opacity??1)*100))
+  cameraSurface.querySelectorAll('[data-camera-text-rail-style]').forEach(button=>{
+    const style=button.dataset.cameraTextRailStyle
+    const active=style==='bold'?Number(value.fontWeight||700)>=700:style==='italic'?value.fontStyle==='italic':value.textDecoration==='underline'
+    button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active))
+  })
+}
 function syncCameraTextControls(layer){
   if(!layer)return
   editTextInput.value=layer.text||''
   if(textFont)textFont.value=layer.fontFamily||'system'
   if(textColor)textColor.value=layer.color||'#ffffff'
   if(textSize)textSize.value=String(layer.fontSize||36)
+  syncTextRailControls(layer)
 }
 function closeCameraTextEditor({commit=true}={}){
   if(commit)commitCameraText();else{editTextbox.hidden=true;cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');editMode='';setCameraToolRail('')}
@@ -1489,7 +1521,7 @@ function closeCameraTextEditor({commit=true}={}){
 function commitCameraText(){
   const value=editTextInput.value.trim();if(!value){editTextbox.hidden=true;cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');editMode='';setCameraToolRail('');return}
   let layer=selectedCameraTextLayer()
-  const props={text:value,fontFamily:textFont?.value||'system',fontSize:Number(textSize?.value)||36,color:textColor?.value||'#ffffff'}
+  const props={text:value,fontFamily:textRailFont?.value||textFont?.value||'system',fontSize:Number(textRailSize?.value||textSize?.value)||36,color:textRailColor?.value||textColor?.value||'#ffffff',borderColor:textRailBorderColor?.value||'#000000',borderWidth:1,opacity:(Number(textRailOpacity?.value)||100)/100}
   if(layer)updateCameraEditorLayer(layer.id,props)
   else layer=addCameraEditorLayer('text',{...props,width:.62,height:.14,fontWeight:700,textAlign:'center',background:false})
   editTextbox.hidden=true;cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');editMode='';setCameraToolRail('');renderCameraEditorLayers()
@@ -1497,7 +1529,7 @@ function commitCameraText(){
 cameraSurface.querySelector('[data-camera-edit-text-add]')?.addEventListener('click',commitCameraText)
 editTextInput?.addEventListener('input',()=>{
   let layer=selectedCameraTextLayer();const text=editTextInput.value
-  if(!layer&&text){layer=addCameraEditorLayer('text',{text,fontFamily:textFont?.value||'system',fontSize:Number(textSize?.value)||36,color:textColor?.value||'#ffffff',width:.72,height:.18,fontWeight:700,textAlign:'center',background:false});editorState.__textDraftId=layer.id}
+  if(!layer&&text){layer=addCameraEditorLayer('text',{text,fontFamily:textRailFont?.value||textFont?.value||'system',fontSize:Number(textRailSize?.value||textSize?.value)||36,color:textRailColor?.value||textColor?.value||'#ffffff',borderColor:textRailBorderColor?.value||'#000000',borderWidth:1,opacity:(Number(textRailOpacity?.value)||100)/100,width:.72,height:.18,fontWeight:700,fontStyle:'normal',textDecoration:'none',textAlign:'center',background:false});editorState.__textDraftId=layer.id;syncTextRailControls(layer)}
   else if(layer)updateCameraEditorLayer(layer.id,{text},{history:false})
 })
 editTextInput?.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();commitCameraText()}})
@@ -1510,6 +1542,20 @@ cameraSurface.querySelectorAll('[data-camera-text-style]').forEach(button=>butto
   if(style==='weight')updateCameraEditorLayer(layer.id,{fontWeight:Number(layer.fontWeight)===400?700:400})
   if(style==='align'){const values=['left','center','right'],index=values.indexOf(layer.textAlign||'center');updateCameraEditorLayer(layer.id,{textAlign:values[(index+1)%values.length]})}
   if(style==='background')updateCameraEditorLayer(layer.id,{background:!layer.background})
+}))
+function updateTextRailLayer(patch){const layer=selectedCameraTextLayer();if(!layer)return;const updated=updateCameraEditorLayer(layer.id,patch);if(updated)syncTextRailControls(updated)}
+textRailFont?.addEventListener('change',()=>updateTextRailLayer({fontFamily:textRailFont.value}))
+textRailColor?.addEventListener('input',()=>updateTextRailLayer({color:textRailColor.value}))
+textRailBorderColor?.addEventListener('input',()=>updateTextRailLayer({borderColor:textRailBorderColor.value,borderWidth:1}))
+textRailSize?.addEventListener('input',()=>updateTextRailLayer({fontSize:Number(textRailSize.value)||36}))
+textRailOpacity?.addEventListener('input',()=>updateTextRailLayer({opacity:(Number(textRailOpacity.value)||100)/100}))
+cameraSurface.querySelectorAll('[data-camera-text-rail-style]').forEach(button=>button.addEventListener('click',event=>{
+  event.preventDefault();event.stopPropagation()
+  const layer=selectedCameraTextLayer();if(!layer)return
+  const style=button.dataset.cameraTextRailStyle
+  if(style==='bold')updateTextRailLayer({fontWeight:Number(layer.fontWeight||700)>=700?400:700})
+  if(style==='italic')updateTextRailLayer({fontStyle:layer.fontStyle==='italic'?'normal':'italic'})
+  if(style==='underline')updateTextRailLayer({textDecoration:layer.textDecoration==='underline'?'none':'underline'})
 }))
 editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[0];if(!file)return;const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{
   const aspect=i.naturalWidth&&i.naturalHeight?i.naturalWidth/i.naturalHeight:1
