@@ -461,3 +461,12 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-video-times{display:flex;justify-content:space-between;margin:4px 1px 10px;font-size:10px;color:#999}
 .camera-video-controls>label{display:grid;grid-template-columns:68px 1fr;align-items:center;gap:8px;margin:8px 0;font-size:11px;color:#bbb}.camera-video-controls input[type="range"]{width:100%;accent-color:#fff}
 .camera-video-speeds{display:flex;gap:6px;margin-top:11px}.camera-video-speeds button,.camera-video-controls>[data-camera-video-reset]{height:38px;border:0;border-radius:999px;background:rgba(255,255,255,.08);color:#bbb}.camera-video-speeds button{flex:1}.camera-video-speeds button.is-active{background:#fff;color:#090a0d}.camera-video-controls>[data-camera-video-reset]{width:100%;margin-top:9px}
+
+
+/* camera-editor-interactive-p11 */
+.camera-interactive-editor{display:grid;gap:6px;margin-top:9px;padding-top:9px;border-top:1px solid rgba(255,255,255,.1)}.camera-interactive-editor[hidden]{display:none!important}.camera-interactive-editor strong{font-size:12px;color:#fff}.camera-interactive-editor input[type="text"]{height:37px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.06);color:#fff;padding:0 10px}.camera-interactive-editor>button{height:38px;border:0;border-radius:10px;background:#fff;color:#090a0d;font-weight:750}
+.camera-reactive-toggle{display:flex;align-items:center;gap:7px;font-size:11px;color:#aaa;padding:3px 1px}
+.camera-editor-layer.is-interactive{display:flex;align-items:center;justify-content:center;gap:7px;padding:7px 10px;border:1px solid rgba(255,255,255,.2);border-radius:13px;background:rgba(8,9,13,.78);color:#fff;font:700 13px/1 system-ui,-apple-system,sans-serif;white-space:nowrap}
+.camera-interactive-icon{display:grid;place-items:center;min-width:25px;height:25px;padding:0 5px;border-radius:8px;background:#fff;color:#090a0d;font-size:14px}.camera-interactive-copy{overflow:hidden;text-overflow:ellipsis}
+.camera-editor-layer.is-interactive[data-namespace="melogic"]{border-color:rgba(255,255,255,.32);background:rgba(5,6,9,.9)}
+.camera-editor-layer.is-interactive[data-audio-reactive="true"]::after{content:"";position:absolute;right:-5px;top:-5px;width:8px;height:8px;border:2px solid #090a0d;border-radius:50%;background:#fff}
