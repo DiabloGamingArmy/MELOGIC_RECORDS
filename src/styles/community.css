@@ -6769,3 +6769,50 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     display:none !important;
   }
 }
+
+
+/* melogic-desktop-feed-nav-left-rail-v1
+   For You / Following / Discover live in the left Network rail on desktop.
+   The shared master-tab markup remains available to mobile. */
+@media (min-width:761px) {
+  .community-network-home-header .community-master-tabs > .community-mobile-feed-tab,
+  .community-network-home-header .community-master-tabs > .community-following-feed-tab,
+  .community-network-home-header .community-master-tabs > .community-mobile-discover-tab {
+    display:none !important;
+  }
+
+  .community-left-nav .community-network-nav-section > button[data-community-desktop-feed] {
+    display:flex;
+    align-items:center;
+    gap:.65rem;
+    width:100%;
+    min-height:46px;
+    padding:.68rem .75rem;
+    border:0;
+    border-radius:12px;
+    color:#b8c4d8;
+    background:transparent;
+    font:inherit;
+    font-size:.96rem;
+    font-weight:650;
+    text-align:left;
+    cursor:pointer;
+  }
+
+  .community-left-nav .community-network-nav-section > button[data-community-desktop-feed]:hover {
+    color:#f5f8ff;
+    background:rgba(255,255,255,.055);
+  }
+
+  .community-left-nav .community-network-nav-section > button[data-community-desktop-feed].is-active {
+    color:#fff;
+    background:rgba(101,205,255,.1);
+    box-shadow:inset 3px 0 0 #70dbff;
+  }
+
+  .community-left-nav .community-network-nav-section > button[data-community-desktop-feed] svg {
+    width:20px;
+    height:20px;
+    flex:0 0 20px;
+  }
+}

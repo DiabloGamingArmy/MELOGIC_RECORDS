@@ -3366,9 +3366,12 @@ function renderLeftNav() {
 
       <nav>
         <section class="community-network-nav-section" aria-label="Network">
-          <a class="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'is-active' : ''}" href="${ROUTES.community}" aria-current="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'page' : 'false'}" data-community-desktop-feed="for-you">
+          <button type="button" class="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'is-active' : ''}" aria-current="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'page' : 'false'}" data-community-tab="for-you" data-community-desktop-feed="for-you">
             <span class="community-network-home-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span> <span>For You</span>
-          </a>
+          </button>
+          <button type="button" class="${state.view.type === 'feed' && state.activeTab === 'following' ? 'is-active' : ''}" aria-current="${state.view.type === 'feed' && state.activeTab === 'following' ? 'page' : 'false'}" data-community-tab="following" data-community-desktop-feed="following">
+            ${iconSvg('users')} <span>Following</span>
+          </button>
           <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}" aria-current="${state.view.type === 'communities' ? 'page' : 'false'}">
             ${iconSvg('search')} <span>Discover</span>
           </a>
