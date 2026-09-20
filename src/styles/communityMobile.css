@@ -2457,3 +2457,33 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-story-type-badge.is-moment { opacity:.62; }
   .community-story-type-badge.is-live { border-color:rgba(255,255,255,.32); color:#fff; }
 }
+
+
+/* melogic-story-context-drawer-push-17 */
+@media (max-width:760px) {
+  .community-story-context-drawer {
+    position:absolute; z-index:30; left:0; right:0; bottom:0; max-height:min(72vh,620px);
+    padding:14px 14px calc(env(safe-area-inset-bottom,0px) + 18px); overflow:auto;
+    border-radius:22px 22px 0 0; border-top:1px solid rgba(255,255,255,.13);
+    background:rgba(7,8,11,.94); color:#fff; box-shadow:0 -18px 55px rgba(0,0,0,.42);
+    backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
+    transform:translateY(104%); transition:transform 220ms ease;
+  }
+  .community-story-context-drawer.is-open { transform:translateY(0); }
+  .community-story-context-drawer > header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  .community-story-context-drawer > header div { display:flex; flex-direction:column; gap:2px; }
+  .community-story-context-drawer > header small { font-size:.58rem; font-weight:900; letter-spacing:.14em; opacity:.5; }
+  .community-story-context-drawer > header strong { font-size:.94rem; }
+  .community-story-context-drawer > header button { width:44px; height:44px; border:0; border-radius:50%; background:rgba(255,255,255,.07); color:#fff; }
+  .community-story-context-summary { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px; }
+  .community-story-context-summary span { padding:5px 8px; border:1px solid rgba(255,255,255,.1); border-radius:999px; font-size:.62rem; opacity:.72; }
+  .community-story-context-caption { margin:0 0 14px; padding:10px 11px; border-radius:11px; background:rgba(255,255,255,.045); font-size:.78rem; line-height:1.4; }
+  .community-story-context-drawer section { display:grid; gap:5px; margin-top:14px; }
+  .community-story-context-drawer h3 { margin:0 0 3px; font-size:.66rem; letter-spacing:.08em; text-transform:uppercase; opacity:.5; }
+  .community-story-context-drawer section button {
+    display:flex; flex-direction:column; align-items:flex-start; justify-content:center; min-height:48px; width:100%;
+    padding:7px 10px; border:0; border-radius:10px; background:rgba(255,255,255,.035); color:#fff; text-align:left;
+  }
+  .community-story-context-drawer section button small { font-size:.58rem; text-transform:uppercase; letter-spacing:.08em; opacity:.46; }
+  .community-story-context-drawer section button strong { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:.78rem; }
+}
