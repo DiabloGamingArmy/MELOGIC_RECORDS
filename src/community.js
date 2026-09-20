@@ -627,6 +627,13 @@ function setupCommunityFeedTabs() {
     state.activeTab = nextTab
     state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
 
+    if (isMobileSpaRuntime() && state.view.type === 'communities') {
+      state.view = { type: 'feed' }
+      state.activeCommunityId = ''
+      state.activeCommunitySlug = ''
+      window.history.pushState({}, '', `${ROUTES.community}?feed=${encodeURIComponent(nextTab)}`)
+    }
+
     // Desktop left-rail feed controls are also visible while Discover is open.
     // Switching feed must therefore leave the Discover route/view, not merely
     // mutate activeTab behind the still-mounted discovery screen.
@@ -658,6 +665,28 @@ function setupCommunityFeedTabs() {
 }
 
 setupCommunityFeedTabs()
+
+if (!window.__melogicMobileCommunityDiscoverRouterV1) {
+  window.__melogicMobileCommunityDiscoverRouterV1 = true
+  document.addEventListener('click', (event) => {
+    if (!isMobileSpaRuntime() || event.defaultPrevented || event.button !== 0) return
+    const link = event.target instanceof Element
+      ? event.target.closest('a[data-community-mobile-discover]')
+      : null
+    if (!(link instanceof HTMLAnchorElement)) return
+    event.preventDefault()
+    if (state.view.type === 'communities') return
+    state.view = { type: 'communities' }
+    state.activeCommunityId = ''
+    state.activeCommunitySlug = ''
+    window.history.pushState({}, '', ROUTES.communityCommunities)
+    render()
+    void Promise.allSettled([
+      loadStories({ renderAfter: true, hydrateIdentity: true }),
+      loadCommunities({ renderOnStart: false, renderAfter: true, bootstrap: true })
+    ])
+  })
+}
 
 // Desktop Network rail SPA: For You / Following / Discover retain mounted DOM,
  // loaded media/entities, feed state, and independent scroll positions.
@@ -1276,6 +1305,16 @@ function visibleTopicCommunities() {
   return displayedCommunities().slice(0, 18)
 }
 
+function renderMobileCommunityTabs({ active = '' } = {}) {
+  return `
+    <div class="community-master-tabs community-mobile-primary-tabs" role="tablist" aria-label="Community navigation">
+      <button type="button" role="tab" aria-selected="${active === 'for-you' ? 'true' : 'false'}" class="community-mobile-feed-tab ${active === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
+      <button type="button" role="tab" aria-selected="${active === 'following' ? 'true' : 'false'}" class="community-following-feed-tab ${active === 'following' ? 'is-active' : ''}" data-community-tab="following">Following</button>
+      <a class="community-mobile-discover-tab ${active === 'discover' ? 'is-active' : ''}" role="tab" aria-selected="${active === 'discover' ? 'true' : 'false'}" href="${ROUTES.communityCommunities}" data-community-mobile-discover>Discover</a>
+    </div>
+  `
+}
+
 function renderTopicBar() {
   // melogic-network-topics-p2
   // The current backend still filters these values by communityId. On desktop
@@ -1295,11 +1334,8 @@ function renderTopicBar() {
         <span>Network</span>
         <strong>Home</strong>
       </div>
-      <div class="community-master-tabs" role="tablist" aria-label="Home feed">
-        <button type="button" role="tab" aria-selected="${state.activeTab === 'for-you' ? 'true' : 'false'}" class="community-mobile-feed-tab ${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
-        <button type="button" role="tab" aria-selected="${state.activeTab === 'following' ? 'true' : 'false'}" class="community-following-feed-tab ${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Following</button>
-        <a class="community-mobile-discover-tab" role="tab" aria-selected="false" href="${ROUTES.communityCommunities}">Discover</a>
-        <label class="community-sort-control" title="Sort feed">
+      ${renderMobileCommunityTabs({ active: state.activeTab })}
+      <label class="community-sort-control" title="Sort feed">
           <span class="sr-only">Sort feed</span>
           ${iconSvg('barChart')}
           <select data-community-feed-sort aria-label="Sort feed">
@@ -1309,7 +1345,6 @@ function renderTopicBar() {
             <option value="most-discussed" ${state.feedSort === 'most-discussed' ? 'selected' : ''}>Most Discussed</option>
           </select>
         </label>
-      </div>
       <div class="community-topic-context">
         <span class="community-topic-context-label">Topics</span>
         <div class="community-filter-shell">
@@ -3219,6 +3254,8 @@ function renderCommunitiesView() {
     <div class="community-layout is-home is-directory community-network-directory">
       ${renderLeftNav()}
       <div class="community-main community-route-main">
+        <div class="community-mobile-stories community-mobile-discover-stories">${renderStoriesRow()}</div>
+        <div class="community-mobile-discover-navigation">${renderMobileCommunityTabs({ active: 'discover' })}</div>
         <section class="community-hero compact community-network-discover-hero">
           <div>
             <p class="eyebrow">Network</p>
