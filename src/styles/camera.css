@@ -618,3 +618,61 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   .camera-draw-parameters label{height:142px}
   .camera-draw-parameters input[type="range"]{width:120px;margin:47px -43px 0}
 }
+
+
+/* camera-editor-redesign-p3-keyboard-text */
+.camera-text-dim{position:absolute;z-index:37;inset:0;background:rgba(0,0,0,.46);backdrop-filter:brightness(.72);-webkit-backdrop-filter:brightness(.72);pointer-events:none;transition:opacity .16s ease}
+.camera-text-dim[hidden]{display:none!important}
+.camera-edit-textbox{
+  position:absolute;z-index:62;inset:0!important;
+  display:block!important;pointer-events:none;
+}
+.camera-edit-textbox[hidden]{display:none!important}
+.camera-edit-textbox textarea{
+  position:absolute;left:50%;top:46%;transform:translate(-50%,-50%);
+  width:min(78vw,560px);min-height:56px;max-height:36vh;
+  box-sizing:border-box;resize:none;overflow:auto;
+  padding:8px 12px;border:0!important;outline:0!important;border-radius:12px;
+  background:transparent!important;color:#fff!important;
+  text-align:center;font:700 clamp(32px,8vw,58px)/1.08 system-ui,-apple-system,sans-serif;
+  text-shadow:0 2px 12px rgba(0,0,0,.45);caret-color:#fff;
+  pointer-events:auto;
+}
+.camera-edit-textbox textarea::placeholder{color:rgba(255,255,255,.48)}
+.camera-text-done{
+  position:absolute;right:max(72px,calc(env(safe-area-inset-right,0px) + 64px));top:calc(env(safe-area-inset-top,0px) + 18px);
+  height:40px;padding:0 17px;border:0!important;border-radius:999px!important;
+  background:#fff!important;color:#090a0d!important;font:800 14px system-ui!important;
+  pointer-events:auto;
+}
+.camera-text-controls{
+  position:absolute;right:max(8px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px);
+  width:56px;max-height:calc(100% - env(safe-area-inset-top,0px) - 130px);
+  box-sizing:border-box;display:flex!important;flex-direction:column;align-items:center;gap:3px;
+  padding:6px;border:1px solid rgba(255,255,255,.16);border-radius:999px;
+  background:rgba(8,9,13,.78);box-shadow:0 14px 42px rgba(0,0,0,.3);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  overflow-y:auto;overflow-x:hidden;pointer-events:auto;scrollbar-width:none;
+}
+.camera-text-controls::-webkit-scrollbar{display:none}
+.camera-text-controls select{
+  width:42px!important;height:42px!important;padding:0!important;border:0!important;border-radius:50%!important;
+  background:rgba(255,255,255,.08)!important;color:transparent!important;font-size:0!important;
+}
+.camera-text-controls select:focus{color:#fff!important;font-size:12px!important;width:92px!important}
+.camera-text-controls button,.camera-text-controls input[type="color"]{
+  width:42px!important;height:42px!important;min-width:42px!important;padding:0!important;border:0!important;border-radius:50%!important;
+  display:grid;place-items:center;background:transparent!important;color:#fff!important;
+}
+.camera-text-controls svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.camera-text-controls input[type="color"]{padding:8px!important}
+.camera-text-controls input[type="range"]{
+  width:112px!important;height:26px;margin:44px -35px;transform:rotate(-90deg);accent-color:#fff;touch-action:none;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-edit-tools{opacity:0;pointer-events:none!important}
+.camera-surface[data-camera-active-tool="text"] .camera-editor-functions{opacity:.28;pointer-events:none!important}
+@media(max-width:760px){
+ .camera-edit-textbox textarea{top:42%;width:82vw;font-size:clamp(30px,9vw,52px)}
+ .camera-text-done{right:max(70px,calc(env(safe-area-inset-right,0px) + 62px));top:calc(env(safe-area-inset-top,0px) + 12px)}
+ .camera-text-controls{top:calc(env(safe-area-inset-top,0px) + 62px)}
+}
