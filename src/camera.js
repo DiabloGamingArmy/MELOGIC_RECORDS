@@ -100,8 +100,16 @@ cameraSurface.innerHTML = `
         <input type="range" min="10" max="100" value="100" data-camera-draw-opacity aria-label="Brush opacity">
       </div>
       <div class="camera-sticker-picker" data-camera-sticker-picker hidden>
-        <div class="camera-sticker-tabs"><button type="button" data-sticker-tab="emoji" class="is-active">Emoji</button><button type="button" data-sticker-tab="shape">Shapes</button><button type="button" data-sticker-tab="utility">Utility</button></div>
+        <div class="camera-sticker-tabs"><button type="button" data-sticker-tab="emoji" class="is-active">Emoji</button><button type="button" data-sticker-tab="shape">Shapes</button><button type="button" data-sticker-tab="utility">Utility</button><button type="button" data-sticker-tab="melogic">Melogic</button></div>
         <div class="camera-sticker-grid" data-camera-sticker-grid></div>
+        <form class="camera-interactive-editor" data-camera-interactive-editor hidden>
+          <strong data-camera-interactive-title>Interactive object</strong>
+          <input type="text" data-camera-interactive-label placeholder="Label">
+          <input type="text" data-camera-interactive-value placeholder="Value / URL / ID">
+          <input type="text" data-camera-interactive-extra placeholder="Optional second value">
+          <label class="camera-reactive-toggle"><input type="checkbox" data-camera-interactive-reactive> React to audio</label>
+          <button type="submit">Add</button>
+        </form>
       </div>
       <div class="camera-edit-tools" data-camera-edit-tools>
         <button type="button" data-camera-edit-tool="text" aria-label="Add text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8.5 19h7"/></svg></button>
@@ -677,6 +685,11 @@ function renderCameraEditorLayers(){
       node.textContent=layer.value||'☺'
       if(layer.stickerKind==='shape'){node.style.background=layer.fill||'#fff';node.style.color=layer.color||'#111';node.style.borderRadius=layer.shape==='circle'?'50%':layer.shape==='pill'?'999px':'14px'}
       if(layer.stickerKind==='utility')node.dataset.utility=layer.utility||''
+    }
+    else if(layer.type==='interactive'){
+      node.classList.add('is-interactive',`is-interactive-${layer.interactiveType||'object'}`);node.dataset.namespace=layer.namespace||'web';node.dataset.audioReactive=String(!!layer.audioReactive)
+      const icon=document.createElement('span'),copy=document.createElement('span');icon.className='camera-interactive-icon';copy.className='camera-interactive-copy'
+      const icons={mention:'@',hashtag:'#',location:'⌖',link:'↗',poll:'?',music:'♪',soura:'S',vertix:'V',product:'P',project:'▶',track:'♪',profile:'M'};icon.textContent=icons[layer.interactiveType]||'•';copy.textContent=layer.label||layer.interactiveType;node.append(icon,copy)
     }
     else if(layer.type==='image'&&layer.previewURL){const img=document.createElement('img');img.src=layer.previewURL;img.alt='';node.append(img)}
     else node.textContent=layer.label||layer.type
@@ -1382,7 +1395,8 @@ editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[
 const CAMERA_STICKERS={
   emoji:['😀','😂','😍','🔥','❤️','✨','🤯','👏','💀','🎵','🎸','🎧','⚡','⭐','🚀','👀'],
   shape:[{value:'',shape:'circle'},{value:'',shape:'square'},{value:'',shape:'pill'},{value:'★',shape:'circle'},{value:'!',shape:'circle'},{value:'+',shape:'circle'}],
-  utility:[{value:'@',utility:'mention'},{value:'#',utility:'hashtag'},{value:'⌖',utility:'location'},{value:'↗',utility:'link'},{value:'?',utility:'question'},{value:'♪',utility:'music'}]
+  utility:[{value:'@',utility:'mention'},{value:'#',utility:'hashtag'},{value:'⌖',utility:'location'},{value:'↗',utility:'link'},{value:'?',utility:'poll'},{value:'♪',utility:'music'}],
+  melogic:[{value:'S',utility:'soura'},{value:'V',utility:'vertix'},{value:'P',utility:'product'},{value:'▶',utility:'project'},{value:'♪',utility:'track'},{value:'M',utility:'profile'}]
 }
 function renderCameraStickerGrid(tab='emoji'){
   const grid=cameraSurface.querySelector('[data-camera-sticker-grid]');if(!grid)return
@@ -1398,9 +1412,24 @@ cameraSurface.querySelector('[data-camera-sticker-picker]')?.addEventListener('c
   const button=event.target.closest('[data-camera-sticker-index]');if(!button)return
   const type=button.dataset.cameraStickerTab,index=Number(button.dataset.cameraStickerIndex),raw=CAMERA_STICKERS[type]?.[index];if(raw==null)return
   const data=typeof raw==='string'?{value:raw}:raw
-  addCameraEditorLayer('sticker',{...data,stickerKind:type,width:type==='utility'?.18:.2,height:.12,fontSize:44,fill:'#ffffff',color:'#111111'})
+  if(type==='utility'||type==='melogic'){openCameraInteractiveEditor(data.utility,type);return}
+  addCameraEditorLayer('sticker',{...data,stickerKind:type,width:.2,height:.12,fontSize:44,fill:'#ffffff',color:'#111111'})
 })
 cameraSurface.querySelectorAll('[data-sticker-tab]').forEach(button=>button.addEventListener('click',()=>renderCameraStickerGrid(button.dataset.stickerTab)))
+const interactiveEditor=cameraSurface.querySelector('[data-camera-interactive-editor]'),interactiveTitle=cameraSurface.querySelector('[data-camera-interactive-title]'),interactiveLabel=cameraSurface.querySelector('[data-camera-interactive-label]'),interactiveValue=cameraSurface.querySelector('[data-camera-interactive-value]'),interactiveExtra=cameraSurface.querySelector('[data-camera-interactive-extra]'),interactiveReactive=cameraSurface.querySelector('[data-camera-interactive-reactive]')
+let pendingInteractive={kind:'',group:''}
+function openCameraInteractiveEditor(kind,group='utility'){
+  pendingInteractive={kind,group};interactiveEditor.hidden=false;interactiveTitle.textContent=kind[0].toUpperCase()+kind.slice(1)
+  interactiveLabel.value='';interactiveValue.value='';interactiveExtra.value='';interactiveReactive.checked=false
+  const placeholders={mention:['Display name','Profile ID or @handle',''],location:['Location','Place ID / coordinates',''],link:['Link title','https://…',''],poll:['Question','Option 1','Option 2'],music:['Track title','Track ID / URL',''],soura:['Soura project','Project ID / URL',''],vertix:['Vertix scene','Scene ID / URL',''],product:['Product','Product ID / URL',''],project:['Project','Project ID / URL',''],track:['Track','Track ID / URL',''],profile:['Profile','Profile ID / @handle',''],hashtag:['Hashtag','#tag','']}
+  const p=placeholders[kind]||['Label','Value','Optional'];interactiveLabel.placeholder=p[0];interactiveValue.placeholder=p[1];interactiveExtra.placeholder=p[2]||'Optional second value'
+}
+interactiveEditor?.addEventListener('submit',event=>{
+  event.preventDefault();const kind=pendingInteractive.kind;if(!kind)return
+  const label=interactiveLabel.value.trim()||kind,value=interactiveValue.value.trim(),extra=interactiveExtra.value.trim()
+  const layer=addCameraEditorLayer('interactive',{interactiveType:kind,namespace:pendingInteractive.group==='melogic'?'melogic':'web',label,value,extra,audioReactive:interactiveReactive.checked,reaction:interactiveReactive.checked?{source:'master',mode:'scale',amount:.12,smoothing:.72}:null,width:.34,height:.11})
+  interactiveEditor.hidden=true;selectCameraEditorLayer(layer.id)
+})
 
 const editorLayerStage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
 let mediaTransformPointer=null
