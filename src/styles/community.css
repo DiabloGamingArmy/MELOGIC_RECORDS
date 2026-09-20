@@ -13784,3 +13784,15 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     font-size: 1rem;
   }
 }
+
+
+/* melogic-desktop-discover-clean-header-v1 */
+@media (min-width: 761px) {
+  .community-network-directory .community-mobile-discover-navigation {
+    display: none !important;
+  }
+
+  .community-network-directory .community-network-discover-hero .eyebrow {
+    display: none !important;
+  }
+}
