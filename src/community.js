@@ -1393,7 +1393,7 @@ function renderStoryViewerModal() {
         </header>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
           ${story.mediaType === 'video' && story.mediaURL
-            ? `<video src="${escapeHtml(story.mediaURL)}" autoplay muted loop playsinline preload="auto" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture></video>`
+            ? `<video src="${escapeHtml(story.mediaURL)}" autoplay muted playsinline preload="auto" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture></video>`
             : story.mediaType === 'image' && story.mediaURL
               ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="eager" decoding="async" />`
               : `<p>${escapeHtml(story.text)}</p>`
@@ -1402,10 +1402,10 @@ function renderStoryViewerModal() {
         </div>
         <div class="community-story-mobile-interactions">
           <div class="community-story-reply-shell" aria-label="Story reply">
-            <input type="text" aria-label="Send message" placeholder="Send message…" maxlength="240" disabled />
+            <input type="text" aria-label="Send message" placeholder="Send message…" maxlength="240" readonly inputmode="none" />
           </div>
           <button type="button" class="community-story-mobile-like" data-story-reaction="like:${escapeHtml(story.storyId)}" aria-label="Like story">${iconSvg('heart')}</button>
-          <button type="button" class="community-story-mobile-share" aria-label="Share story">${iconSvg('send')}</button>
+          <button type="button" class="community-story-mobile-share" data-story-mobile-share="${escapeHtml(story.storyId)}" aria-label="Share story">${iconSvg('send')}</button>
         </div>
         <div class="community-story-desktop-controls">
           <div class="community-story-discussion">
@@ -6949,6 +6949,31 @@ function bindStoryViewerPlayback() {
   })
 }
 
+async function shareStoryFromViewer(storyId = '') {
+  const story = storyById(storyId)
+  if (!story) return
+  const url = new URL(window.location.href)
+  url.searchParams.set('story', storyId)
+  const shareData = {
+    title: story.authorName ? `${story.authorName}'s Story on Melogic` : 'Story on Melogic',
+    text: story.caption || story.text || 'View this Story on Melogic.',
+    url: url.toString()
+  }
+  try {
+    if (navigator.share) {
+      await navigator.share(shareData)
+      return
+    }
+    await navigator.clipboard?.writeText(shareData.url)
+    showCommunityToast('Story link copied.')
+  } catch (error) {
+    if (error?.name !== 'AbortError') {
+      console.warn('[community] story share failed', { name: error?.name, message: error?.message })
+      showCommunityToast('Could not share this Story.')
+    }
+  }
+}
+
 function openStoryViewer(storyId = '') {
   const story = storyById(storyId)
   if (!story) return
@@ -7609,6 +7634,14 @@ function bindEvents() {
   app.querySelectorAll('[data-story-reaction]').forEach((button) => button.addEventListener('click', () => {
     showCommunityToast('Story reactions are coming soon.')
   }))
+  app.querySelector('[data-story-mobile-share]')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    shareStoryFromViewer(event.currentTarget.getAttribute('data-story-mobile-share') || '')
+  })
+  app.querySelector('.community-story-reply-shell')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    showCommunityToast('Story replies are coming soon.')
+  })
   app.querySelector('[data-story-comment-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     showCommunityToast('Story comments are coming soon.')
