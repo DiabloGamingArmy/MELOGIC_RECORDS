@@ -419,3 +419,17 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-editor-layer.is-sticker-shape{font-size:28px;font-weight:800}
 .camera-editor-layer.is-sticker-utility{min-width:48px;padding:7px 10px;border-radius:12px;background:rgba(8,9,13,.72);font-size:25px;font-weight:750}
 .camera-editor-layer[data-camera-editor-layer] img{border-radius:8px}
+
+
+/* camera-editor-crop-transform-p7 */
+.camera-crop-controls{position:absolute;z-index:34;left:12px;right:62px;bottom:calc(80px + env(safe-area-inset-bottom,0px));padding:9px;border:1px solid rgba(255,255,255,.16);border-radius:18px;background:rgba(8,9,13,.88);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.camera-crop-controls[hidden]{display:none!important}
+.camera-crop-aspects,.camera-crop-actions{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}.camera-crop-aspects::-webkit-scrollbar,.camera-crop-actions::-webkit-scrollbar{display:none}
+.camera-crop-aspects{margin-bottom:7px}.camera-crop-actions{margin-bottom:7px}
+.camera-crop-controls button{flex:0 0 auto;height:34px;padding:0 11px;border:0;border-radius:999px;background:rgba(255,255,255,.08);color:#bbb}
+.camera-crop-controls button.is-active,.camera-crop-controls [data-camera-crop-action="done"]{background:#fff;color:#090a0d}
+.camera-crop-controls input[type="range"]{display:block;width:100%;accent-color:#fff}
+.camera-surface.is-media-transforming .camera-editor-layer-stage{pointer-events:none}
+.camera-surface.is-media-transforming .camera-edit-canvas{pointer-events:none}
+.camera-surface.is-media-transforming .camera-playback{touch-action:none;overflow:hidden}
+.camera-edit-canvas.is-crop-mode{outline:1px dashed rgba(255,255,255,.72);outline-offset:-12px}
