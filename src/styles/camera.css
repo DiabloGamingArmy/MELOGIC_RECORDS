@@ -989,3 +989,116 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   border-radius:28px!important;
  }
 }
+
+
+/* camera-editor-cleanup-p3-final-contract
+   Final cascade contract. This intentionally supersedes legacy editor geometry
+   without adding another independent surface. */
+.camera-surface{
+ --camera-tool-size:42px;
+ --camera-tool-gap:3px;
+ --camera-tool-rail:56px;
+}
+.camera-edit-tools{
+ z-index:64!important;
+ right:max(8px,env(safe-area-inset-right,0px))!important;
+ top:calc(env(safe-area-inset-top,0px) + 64px)!important;
+ width:var(--camera-tool-rail)!important;
+ padding:6px!important;
+ gap:var(--camera-tool-gap)!important;
+ border:1px solid rgba(255,255,255,.15)!important;
+ border-radius:999px!important;
+ background:rgba(8,9,13,.74)!important;
+ overflow-x:hidden!important;
+ scrollbar-width:none!important;
+}
+.camera-edit-tools::-webkit-scrollbar{display:none!important}
+.camera-edit-tools>button{
+ width:var(--camera-tool-size)!important;height:var(--camera-tool-size)!important;
+ min-width:var(--camera-tool-size)!important;min-height:var(--camera-tool-size)!important;
+ border:0!important;border-radius:50%!important;
+ background:transparent!important;color:#fff!important;
+ box-shadow:none!important;
+}
+.camera-edit-tools>button.is-active,
+.camera-edit-tools>button[aria-pressed="true"]{background:#fff!important;color:#55585f!important}
+.camera-edit-tools.is-expanded>:is(button[data-camera-edit-tool]):not(.is-active){display:none!important}
+.camera-edit-tools.is-expanded .camera-edit-tool-context{display:none!important}
+
+/* Context slot is the continuation of the same pill, not another toolbar. */
+.camera-edit-tool-slot{width:42px!important;min-width:42px!important;display:flex;flex-direction:column;align-items:center;gap:3px}
+.camera-edit-tool-slot[hidden]{display:none!important}
+.camera-edit-tool-slot :is(.camera-text-controls,.camera-draw-brushes,.camera-crop-rail){
+ position:static!important;inset:auto!important;transform:none!important;
+ width:42px!important;max-width:42px!important;margin:0!important;padding:0!important;
+ border:0!important;border-radius:0!important;background:transparent!important;
+ box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+}
+.camera-edit-tool-slot :is(.camera-text-controls,.camera-draw-brushes,.camera-crop-rail)>*{max-width:42px}
+
+/* Secondary continuous-value controls are the only permitted adjacent pills. */
+.camera-draw-parameters,.camera-crop-zoom-pill{
+ border:1px solid rgba(255,255,255,.15)!important;
+ background:rgba(8,9,13,.78)!important;
+ box-shadow:0 12px 32px rgba(0,0,0,.26)!important;
+ backdrop-filter:blur(18px)!important;-webkit-backdrop-filter:blur(18px)!important;
+}
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-controls,
+.camera-surface[data-camera-active-tool="crop"] .camera-crop-controls{
+ background:transparent!important;border:0!important;box-shadow:none!important;
+}
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-controls{
+ right:max(70px,calc(env(safe-area-inset-right,0px) + 62px))!important;
+ top:calc(env(safe-area-inset-top,0px) + 64px)!important;
+}
+.camera-surface[data-camera-active-tool="crop"] .camera-crop-controls{
+ right:max(70px,calc(env(safe-area-inset-right,0px) + 62px))!important;
+ top:calc(env(safe-area-inset-top,0px) + 64px)!important;
+}
+
+/* Left rail remains function-only and visually subordinate. */
+.camera-editor-functions{z-index:63!important}
+.camera-editor-functions>button,.camera-editor-functions .camera-editor-selection-actions button{
+ border:1px solid rgba(255,255,255,.14)!important;background:rgba(8,9,13,.58)!important;
+}
+
+/* Bottom contextual panels share one geometry and never collide with review actions. */
+.camera-adjust-controls,.camera-video-controls{
+ z-index:62!important;
+ left:max(8px,env(safe-area-inset-left,0px))!important;
+ right:max(8px,env(safe-area-inset-right,0px))!important;
+ bottom:calc(92px + env(safe-area-inset-bottom,0px))!important;
+ max-width:none!important;
+ border-radius:20px!important;
+}
+.camera-adjust-controls[hidden],.camera-video-controls[hidden]{display:none!important}
+
+/* Modal ownership is absolute: no stale editor chrome can remain visible/clickable. */
+.camera-surface.has-editor-modal .camera-edit-tools,
+.camera-surface.has-editor-modal .camera-editor-functions,
+.camera-surface.has-editor-modal .camera-adjust-controls,
+.camera-surface.has-editor-modal .camera-video-controls,
+.camera-surface.has-editor-modal .camera-draw-controls,
+.camera-surface.has-editor-modal .camera-crop-controls,
+.camera-surface.has-editor-modal .camera-edit-textbox{
+ visibility:hidden!important;pointer-events:none!important;
+}
+.camera-surface.has-editor-modal :is(.camera-sticker-picker,.camera-audio-controls){visibility:visible!important;pointer-events:auto!important}
+
+/* Normalize interactive hit targets and prevent browser gesture theft. */
+.camera-edit-tools button,.camera-editor-functions button,.camera-edit-tool-slot button,
+.camera-sticker-picker button,.camera-audio-controls button,.camera-adjust-controls button,.camera-video-controls button{
+ touch-action:manipulation;-webkit-tap-highlight-color:transparent;
+}
+.camera-edit-tool-slot input[type="range"],.camera-draw-parameters input,.camera-crop-zoom-pill input,
+.camera-adjust-controls input[type="range"],.camera-video-controls input[type="range"]{touch-action:none}
+
+/* Review action bar is always the final foreground layer. */
+.camera-review-bottom-actions,.camera-playback .camera-review-actions{z-index:2300!important}
+
+/* Explicit small-screen containment. */
+@media(max-width:430px){
+ .camera-edit-tools{right:max(8px,env(safe-area-inset-right,0px))!important}
+ .camera-adjust-controls,.camera-video-controls{width:auto!important}
+ .camera-editor-functions{left:max(8px,env(safe-area-inset-left,0px))!important}
+}
