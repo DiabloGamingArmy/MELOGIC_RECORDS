@@ -776,3 +776,56 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 }
 /* Retire obsolete panel rules after the redesigned controls. */
 .camera-music-source,.camera-filter-presets,.camera-adjust-sliders{display:none!important}
+
+
+/* camera-pen-same-rail-p1
+   Pen is the first tool to use the original right sidebar as its contextual surface. */
+.camera-pen-rail-controls{display:none}
+.camera-edit-tools[data-active-tool="pen"]{
+  opacity:1!important;pointer-events:auto!important;
+  width:56px!important;padding:6px!important;gap:2px!important;
+  overflow-y:auto!important;overflow-x:hidden!important;
+  animation:none!important;
+}
+.camera-edit-tools[data-active-tool="pen"] .camera-edit-tool-context{display:none!important}
+.camera-edit-tools[data-active-tool="pen"]>button[data-camera-edit-tool]{
+  transition:opacity .16s ease,transform .22s cubic-bezier(.2,.8,.2,1),height .22s ease,margin .22s ease;
+}
+.camera-edit-tools[data-active-tool="pen"]>button[data-camera-edit-tool]:not([data-camera-edit-tool="pen"]){
+  opacity:0!important;pointer-events:none!important;height:0!important;min-height:0!important;
+  margin:0!important;padding:0!important;overflow:hidden!important;transform:translateY(-5px) scale(.88)!important;
+}
+.camera-edit-tools[data-active-tool="pen"]>button[data-camera-edit-tool="pen"]{
+  order:-2;opacity:1!important;transform:translateY(0)!important;
+  background:#fff!important;color:rgba(25,26,30,.68)!important;
+  flex:0 0 42px!important;
+}
+.camera-edit-tools[data-active-tool="pen"] .camera-pen-rail-controls{
+  order:-1;display:flex;flex-direction:column;align-items:center;gap:8px;
+  width:42px;animation:cameraPenRailControlsIn .2s .08s ease-out both;
+}
+@keyframes cameraPenRailControlsIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.camera-pen-rail-color{
+  position:relative;width:42px;height:42px;flex:0 0 42px;
+  display:grid;place-items:center;border:0;border-radius:50%;background:transparent;
+}
+.camera-pen-rail-color input{position:absolute;inset:0;width:100%!important;height:100%!important;opacity:0;cursor:pointer}
+.camera-pen-rail-color span{
+  width:25px;height:25px;border:3px solid #fff;border-radius:50%;
+  background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.38);pointer-events:none;
+}
+.camera-pen-rail-color:has(input:not([value="#ffffff"])) span{background:currentColor}
+.camera-pen-rail-slider{
+  width:42px;height:126px;display:flex;flex-direction:column;align-items:center;gap:4px;
+  color:rgba(255,255,255,.72);font:650 8px/1 system-ui;text-transform:uppercase;letter-spacing:.04em;
+}
+.camera-pen-rail-slider>span{height:11px;display:block}
+.camera-pen-rail-slider input[type="range"]{
+  width:96px!important;height:26px!important;margin:34px -27px 0!important;
+  transform:rotate(-90deg);transform-origin:center;accent-color:#fff;touch-action:none;
+}
+/* The old standalone pen rail must never appear in this pen-only implementation. */
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-controls{display:none!important}
+@media(max-width:760px){
+ .camera-edit-tools[data-active-tool="pen"]{max-height:calc(100% - var(--melogic-mobile-safe-top,0px) - 104px)!important}
+}
