@@ -6,6 +6,7 @@ import { isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { navigateMobileRuntimeUrl, registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { auth, waitForInitialAuthState } from './firebase/auth'
 import { listInboxThreads, sendMessage, createGroupThread, getThreadParticipantUids } from './data/inboxService'
+import { listCameraStickerAssets } from './data/cameraStickerService'
 
 const app = document.querySelector('#app')
 // melogic-camera-safe-prewarm-v5c1
@@ -111,8 +112,12 @@ cameraSurface.innerHTML = `
         </div>
       </div>
       <div class="camera-sticker-picker" data-camera-sticker-picker hidden>
-        <div class="camera-sticker-tabs"><button type="button" data-sticker-tab="emoji" class="is-active">Emoji</button><button type="button" data-sticker-tab="shape">Shapes</button><button type="button" data-sticker-tab="utility">Utility</button><button type="button" data-sticker-tab="melogic">Melogic</button></div>
+        <div class="camera-sheet-grabber" data-camera-sticker-dismiss aria-label="Close stickers"></div>
+        <div class="camera-sticker-head"><strong>Stickers</strong><button type="button" data-camera-sticker-close aria-label="Close stickers">×</button></div>
+        <div class="camera-sticker-search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg><input type="search" data-camera-sticker-search placeholder="Search stickers & GIFs" autocomplete="off"></div>
+        <div class="camera-sticker-tabs"><button type="button" data-sticker-tab="featured" class="is-active">Featured</button><button type="button" data-sticker-tab="stickers">Stickers</button><button type="button" data-sticker-tab="gifs">GIFs</button><button type="button" data-sticker-tab="utility">Tools</button><button type="button" data-sticker-tab="melogic">Melogic</button></div>
         <div class="camera-sticker-grid" data-camera-sticker-grid></div>
+        <div class="camera-sticker-empty" data-camera-sticker-empty hidden>No stickers found.</div>
         <form class="camera-interactive-editor" data-camera-interactive-editor hidden>
           <strong data-camera-interactive-title>Interactive object</strong>
           <input type="text" data-camera-interactive-label placeholder="Label">
@@ -1345,7 +1350,7 @@ function toggleCameraToolRail(tool,button){
   if(closing){editMode='';return false}
   editMode=tool;return true
 }
-cameraSurface.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b||!b.closest('[data-camera-edit-tools],[data-camera-editor-functions]'))return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='video'){if(playback.dataset.captureType!=='video')return;const open=toggleCameraToolRail(t,b);if(videoControls){videoControls.hidden=!open;if(open)syncCameraVideoControls()}return}if(t==='adjust'){const open=toggleCameraToolRail(t,b);if(adjustControls){adjustControls.hidden=!open;if(open)syncCameraAdjustmentControls()}return}if(t==='music'){const open=toggleCameraToolRail(t,b);if(audioControls){audioControls.hidden=!open;if(open)syncCameraAudioControls()}return}if(t==='image'){setCameraToolRail('image');editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const open=toggleCameraToolRail(t,b),picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!open;if(open)renderCameraStickerGrid('emoji')}return}const open=toggleCameraToolRail(t,b);editTextbox.hidden=!(open&&t==='text');if(drawControls)drawControls.hidden=!(open&&t==='pen');editCanvas.classList.toggle('is-drawing-mode',open&&t==='pen');editCanvas.classList.toggle('is-crop-mode',open&&t==='crop');const cropControls=cameraSurface.querySelector('[data-camera-crop-controls]');if(cropControls)cropControls.hidden=!(open&&t==='crop');cameraSurface.classList.toggle('is-media-transforming',open&&t==='crop');if(open&&t==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editorState.selectedLayerId='';editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}cameraSurface.querySelector('[data-camera-text-dim]')?.removeAttribute('hidden');requestAnimationFrame(()=>editTextInput.focus({preventScroll:true}))}})
+cameraSurface.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b||!b.closest('[data-camera-edit-tools],[data-camera-editor-functions]'))return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='video'){if(playback.dataset.captureType!=='video')return;const open=toggleCameraToolRail(t,b);if(videoControls){videoControls.hidden=!open;if(open)syncCameraVideoControls()}return}if(t==='adjust'){const open=toggleCameraToolRail(t,b);if(adjustControls){adjustControls.hidden=!open;if(open)syncCameraAdjustmentControls()}return}if(t==='music'){const open=toggleCameraToolRail(t,b);if(audioControls){audioControls.hidden=!open;if(open)syncCameraAudioControls()}return}if(t==='image'){setCameraToolRail('image');editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const open=toggleCameraToolRail(t,b),picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!open;if(open){renderCameraStickerGrid('featured','');void loadCameraStickerAssets()}}return}const open=toggleCameraToolRail(t,b);editTextbox.hidden=!(open&&t==='text');if(drawControls)drawControls.hidden=!(open&&t==='pen');editCanvas.classList.toggle('is-drawing-mode',open&&t==='pen');editCanvas.classList.toggle('is-crop-mode',open&&t==='crop');const cropControls=cameraSurface.querySelector('[data-camera-crop-controls]');if(cropControls)cropControls.hidden=!(open&&t==='crop');cameraSurface.classList.toggle('is-media-transforming',open&&t==='crop');if(open&&t==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editorState.selectedLayerId='';editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}cameraSurface.querySelector('[data-camera-text-dim]')?.removeAttribute('hidden');requestAnimationFrame(()=>editTextInput.focus({preventScroll:true}))}})
 const videoControls=cameraSurface.querySelector('[data-camera-video-controls]'),videoTrimStart=cameraSurface.querySelector('[data-camera-video-trim-start]'),videoTrimEnd=cameraSurface.querySelector('[data-camera-video-trim-end]'),videoSelection=cameraSurface.querySelector('[data-camera-video-selection]')
 function cameraVideoDuration(){return Math.max(0,editorState.media.durationMs||Math.round((recordedVideo.duration||0)*1000))}
 function formatCameraVideoTime(ms){const seconds=Math.max(0,ms)/1000,m=Math.floor(seconds/60),s=(seconds-m*60).toFixed(1).padStart(4,'0');return `${m}:${s}`}
@@ -1452,29 +1457,46 @@ editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[
   addCameraEditorLayer('image',{previewURL:u,fileName:file.name||'',mimeType:file.type||'',naturalWidth:i.naturalWidth||0,naturalHeight:i.naturalHeight||0,width:clampEditorValue(width,.12,.72),height:clampEditorValue(height,.12,.72),fit:'contain'})
 };i.onerror=()=>URL.revokeObjectURL(u);i.src=u})
 const CAMERA_STICKERS={
-  emoji:['😀','😂','😍','🔥','❤️','✨','🤯','👏','💀','🎵','🎸','🎧','⚡','⭐','🚀','👀'],
-  shape:[{value:'',shape:'circle'},{value:'',shape:'square'},{value:'',shape:'pill'},{value:'★',shape:'circle'},{value:'!',shape:'circle'},{value:'+',shape:'circle'}],
   utility:[{value:'@',utility:'mention'},{value:'#',utility:'hashtag'},{value:'⌖',utility:'location'},{value:'↗',utility:'link'},{value:'?',utility:'poll'},{value:'♪',utility:'music'}],
   melogic:[{value:'S',utility:'soura'},{value:'V',utility:'vertix'},{value:'P',utility:'product'},{value:'▶',utility:'project'},{value:'♪',utility:'track'},{value:'M',utility:'profile'}]
 }
-function renderCameraStickerGrid(tab='emoji'){
-  const grid=cameraSurface.querySelector('[data-camera-sticker-grid]');if(!grid)return
-  cameraSurface.querySelectorAll('[data-sticker-tab]').forEach(button=>button.classList.toggle('is-active',button.dataset.stickerTab===tab))
-  grid.replaceChildren(...CAMERA_STICKERS[tab].map((item,index)=>{
-    const data=typeof item==='string'?{value:item}:item,button=document.createElement('button');button.type='button';button.dataset.cameraStickerIndex=String(index);button.dataset.cameraStickerTab=tab;button.textContent=data.value||''
-    if(tab==='shape'){button.classList.add('is-shape',`is-${data.shape}`)}
-    return button
-  }))
+let cameraStickerAssets=[],cameraStickerTab='featured',cameraStickerQuery='',cameraStickerLoading=false
+async function loadCameraStickerAssets(){
+  if(cameraStickerLoading)return;cameraStickerLoading=true
+  try{cameraStickerAssets=await listCameraStickerAssets({limitCount:120})}catch(error){console.warn('[camera/stickers] Unable to load sticker catalog.',error?.message||error);cameraStickerAssets=[]}
+  finally{cameraStickerLoading=false;renderCameraStickerGrid(cameraStickerTab,cameraStickerQuery)}
 }
+function renderCameraStickerGrid(tab='featured',search=''){
+  const grid=cameraSurface.querySelector('[data-camera-sticker-grid]'),empty=cameraSurface.querySelector('[data-camera-sticker-empty]');if(!grid)return
+  cameraStickerTab=tab;cameraStickerQuery=String(search||'').trim().toLowerCase()
+  cameraSurface.querySelectorAll('[data-sticker-tab]').forEach(button=>button.classList.toggle('is-active',button.dataset.stickerTab===tab))
+  if(tab==='utility'||tab==='melogic'){
+    const items=CAMERA_STICKERS[tab]||[]
+    grid.replaceChildren(...items.map((data,index)=>{const button=document.createElement('button');button.type='button';button.dataset.cameraStickerIndex=String(index);button.dataset.cameraStickerTab=tab;button.className='is-interactive';button.textContent=data.value||'';return button}))
+    if(empty)empty.hidden=items.length>0;return
+  }
+  const assets=cameraStickerAssets.filter(asset=>{
+    if(tab==='stickers'&&asset.kind==='gif')return false;if(tab==='gifs'&&asset.kind!=='gif')return false
+    if(!cameraStickerQuery)return true
+    return [asset.title,...(asset.tags||[])].join(' ').toLowerCase().includes(cameraStickerQuery)
+  })
+  grid.replaceChildren(...assets.map(asset=>{const button=document.createElement('button');button.type='button';button.dataset.cameraStickerAsset=asset.id;button.className='is-asset';const img=document.createElement('img');img.src=asset.thumbnailUrl||asset.url;img.alt=asset.title||'Sticker';img.loading='lazy';button.append(img);return button}))
+  if(empty)empty.hidden=assets.length>0
+}
+function closeCameraStickerSheet(){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker)picker.hidden=true;if(editToolRail?.dataset.activeTool==='sticker'){editMode='';setCameraToolRail('')}}
 cameraSurface.querySelector('[data-camera-sticker-picker]')?.addEventListener('click',event=>{
-  const tab=event.target.closest('[data-sticker-tab]');if(tab){renderCameraStickerGrid(tab.dataset.stickerTab);return}
+  const assetButton=event.target.closest('[data-camera-sticker-asset]');if(assetButton){const asset=cameraStickerAssets.find(item=>item.id===assetButton.dataset.cameraStickerAsset);if(asset){addCameraEditorLayer('image',{previewURL:asset.url,assetId:asset.id,assetKind:asset.kind||'sticker',title:asset.title||'',width:.34,height:.34,fit:'contain'});closeCameraStickerSheet()}return}
+
+  const tab=event.target.closest('[data-sticker-tab]');if(tab){renderCameraStickerGrid(tab.dataset.stickerTab,cameraStickerQuery);return}
   const button=event.target.closest('[data-camera-sticker-index]');if(!button)return
   const type=button.dataset.cameraStickerTab,index=Number(button.dataset.cameraStickerIndex),raw=CAMERA_STICKERS[type]?.[index];if(raw==null)return
   const data=typeof raw==='string'?{value:raw}:raw
   if(type==='utility'||type==='melogic'){openCameraInteractiveEditor(data.utility,type);return}
   addCameraEditorLayer('sticker',{...data,stickerKind:type,width:.2,height:.12,fontSize:44,fill:'#ffffff',color:'#111111'})
 })
-cameraSurface.querySelectorAll('[data-sticker-tab]').forEach(button=>button.addEventListener('click',()=>renderCameraStickerGrid(button.dataset.stickerTab)))
+cameraSurface.querySelector('[data-camera-sticker-search]')?.addEventListener('input',event=>renderCameraStickerGrid(cameraStickerTab,event.target.value))
+cameraSurface.querySelector('[data-camera-sticker-close]')?.addEventListener('click',closeCameraStickerSheet)
+cameraSurface.querySelector('[data-camera-sticker-dismiss]')?.addEventListener('click',closeCameraStickerSheet)
 const interactiveEditor=cameraSurface.querySelector('[data-camera-interactive-editor]'),interactiveTitle=cameraSurface.querySelector('[data-camera-interactive-title]'),interactiveLabel=cameraSurface.querySelector('[data-camera-interactive-label]'),interactiveValue=cameraSurface.querySelector('[data-camera-interactive-value]'),interactiveExtra=cameraSurface.querySelector('[data-camera-interactive-extra]'),interactiveReactive=cameraSurface.querySelector('[data-camera-interactive-reactive]')
 let pendingInteractive={kind:'',group:''}
 function openCameraInteractiveEditor(kind,group='utility'){
