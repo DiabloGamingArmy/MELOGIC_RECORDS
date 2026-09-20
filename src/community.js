@@ -1068,6 +1068,18 @@ function storyById(storyId = '') {
   return state.stories.find((story) => story.storyId === storyId) || null
 }
 
+function safeStoryTargetURL(value = '') {
+  const clean = String(value || '').trim()
+  if (!clean) return ''
+  if (clean.startsWith('/') && !clean.startsWith('//')) return clean
+  try {
+    const parsed = new URL(clean, window.location.origin)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.href : ''
+  } catch {
+    return ''
+  }
+}
+
 function storyProvenance(story = {}) {
   const nativeLayer = (story.layers || []).find((layer) => layer.type === 'project' && layer.metadata?.source === 'melogic')
   const kind = String(nativeLayer?.metadata?.melogicKind || '')
@@ -1546,7 +1558,7 @@ function renderStoryViewerModal() {
             <span>${escapeHtml(storyExpiresLabel(story.expiresAt))}</span>
           </div>
           ${story.caption || story.text ? `<p class="community-story-context-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
-          ${contextItems.length ? `<section><h3>In this Story</h3>${contextItems.map((layer) => `<button type="button" data-story-context-url="${escapeHtml(layer.targetURL || '')}"><small>${escapeHtml(contextLabels[layer.type] || 'Item')}</small><strong>${escapeHtml(layer.content || contextLabels[layer.type] || 'Story item')}</strong></button>`).join('')}</section>` : ''}
+          ${contextItems.length ? `<section><h3>In this Story</h3>${contextItems.map((layer) => `<button type="button" data-story-context-url="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '')}"><small>${escapeHtml(contextLabels[layer.type] || 'Item')}</small><strong>${escapeHtml(layer.content || contextLabels[layer.type] || 'Story item')}</strong></button>`).join('')}</section>` : ''}
           ${provenance.length ? `<section><h3>Sources</h3>${provenance.map((item) => `<button type="button" data-story-context-url="${escapeHtml(item.url || '')}" data-story-context-story-id="${escapeHtml(item.targetId || '')}"><small>${escapeHtml(item.kind || 'source')}</small><strong>${escapeHtml(item.label)}</strong></button>`).join('')}</section>` : ''}
         </aside>
         <div class="community-story-type-badge is-${escapeHtml(story.storyType || 'moment')}">${escapeHtml((story.storyType || 'moment').toUpperCase())}</div>
@@ -1562,12 +1574,12 @@ function renderStoryViewerModal() {
             ${story.layers.map((layer) => {
               const style = `--layer-x:${layer.x};--layer-y:${layer.y};--layer-w:${layer.width};--layer-scale:${layer.scale || 1};--layer-rotation:${layer.rotation || 0}deg;--layer-z:${layer.zIndex || 0}`
               if (layer.type === 'person') return `<a class="community-story-object is-person" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? publicProfileRoute({ uid: layer.targetId }) : '#'))}"><span>@</span><strong>${escapeHtml(layer.content || 'Person')}</strong></a>`
-              if (layer.type === 'link') return `<a class="community-story-object is-link" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('link')}<strong>${escapeHtml(layer.content || 'Open link')}</strong></a>`
-              if (layer.type === 'location') return `<a class="community-story-object is-location" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer"><span>⌖</span><strong>${escapeHtml(layer.content || 'Location')}</strong></a>`
+              if (layer.type === 'link') return `<a class="community-story-object is-link" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('link')}<strong>${escapeHtml(layer.content || 'Open link')}</strong></a>`
+              if (layer.type === 'location') return `<a class="community-story-object is-location" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '#')}" target="_blank" rel="noopener noreferrer"><span>⌖</span><strong>${escapeHtml(layer.content || 'Location')}</strong></a>`
               if (layer.type === 'community') return `<a class="community-story-object is-community" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? `/community/${encodeURIComponent(layer.targetId)}` : '#'))}"><span>◎</span><strong>${escapeHtml(layer.content || 'Community')}</strong></a>`
-              if (layer.type === 'audio') return `<a class="community-story-object is-audio" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('play')}<span><small>LISTEN</small><strong>${escapeHtml(layer.content || 'Song')}</strong></span></a>`
+              if (layer.type === 'audio') return `<a class="community-story-object is-audio" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('play')}<span><small>LISTEN</small><strong>${escapeHtml(layer.content || 'Song')}</strong></span></a>`
               if (layer.type === 'product') return `<a class="community-story-object is-product" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? productRoute({ productId: layer.targetId }) : '#'))}"><span>◇</span><span><small>PRODUCT</small><strong>${escapeHtml(layer.content || 'View product')}</strong></span></a>`
-              if (layer.type === 'event') return `<a class="community-story-object is-event" style="${style}" href="${escapeHtml(layer.targetURL || '#')}"><span>◫</span><span><small>EVENT</small><strong>${escapeHtml(layer.content || 'View event')}</strong></span></a>`
+              if (layer.type === 'event') return `<a class="community-story-object is-event" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '#')}"><span>◫</span><span><small>EVENT</small><strong>${escapeHtml(layer.content || 'View event')}</strong></span></a>`
               if (layer.type === 'poll') {
                 const options = String(layer.metadata?.options || '').split('|').filter(Boolean)
                 return `<div class="community-story-object is-poll" style="${style}" data-story-poll><strong>${escapeHtml(layer.content || 'Poll')}</strong><div>${options.map((option, optionIndex) => `<button type="button" data-story-poll-option="${optionIndex}">${escapeHtml(option)}</button>`).join('')}</div></div>`
@@ -1576,7 +1588,7 @@ function renderStoryViewerModal() {
                 const kind = String(layer.metadata?.melogicKind || 'project')
                 const labels = { soura: 'SOURA PROJECT', vertix: 'VERTIX SCENE', preset: 'PRESET', sample: 'SAMPLE', stage: 'STAGE PLAN', project: 'MELOGIC' }
                 const glyphs = { soura: '◈', vertix: '⬡', preset: '≋', sample: '⌁', stage: '▦', project: '◆' }
-                return `<a class="community-story-object is-melogic-native is-${escapeHtml(kind)}" style="${style}" href="${escapeHtml(layer.targetURL || '#')}"><span class="community-story-native-glyph">${glyphs[kind] || '◆'}</span><span><small>${labels[kind] || 'MELOGIC'}</small><strong>${escapeHtml(layer.content || 'Open in Melogic')}</strong></span><em>Open</em></a>`
+                return `<a class="community-story-object is-melogic-native is-${escapeHtml(kind)}" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '#')}"><span class="community-story-native-glyph">${glyphs[kind] || '◆'}</span><span><small>${labels[kind] || 'MELOGIC'}</small><strong>${escapeHtml(layer.content || 'Open in Melogic')}</strong></span><em>Open</em></a>`
               }
               if (layer.type === 'text') return `<span class="community-story-object is-text" style="${style}"><strong>${escapeHtml(layer.content || '')}</strong></span>`
               return ''
@@ -8035,6 +8047,10 @@ function bindEvents() {
   })
   app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
   app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
+  app.querySelectorAll('.community-story-object').forEach((object) => {
+    object.addEventListener('pointerdown', (event) => event.stopPropagation())
+    object.addEventListener('click', (event) => event.stopPropagation())
+  })
   app.querySelector('[data-story-reply-form]')?.addEventListener('submit', async (event) => {
     event.preventDefault()
     event.stopPropagation()
@@ -8237,7 +8253,7 @@ function bindEvents() {
   }))
   app.querySelectorAll('[data-story-provenance-url], [data-story-provenance-id]').forEach((button) => button.addEventListener('click', (event) => {
     event.stopPropagation()
-    const url = button.getAttribute('data-story-provenance-url') || ''
+    const url = safeStoryTargetURL(button.getAttribute('data-story-provenance-url') || '')
     const sourceId = button.getAttribute('data-story-provenance-id') || ''
     if (sourceId) {
       const sourceStory = storyById(sourceId)
@@ -8262,7 +8278,7 @@ function bindEvents() {
   app.querySelectorAll('[data-story-context-url], [data-story-context-story-id]').forEach((button) => button.addEventListener('click', (event) => {
     event.stopPropagation()
     const sourceStoryId = button.getAttribute('data-story-context-story-id') || ''
-    const url = button.getAttribute('data-story-context-url') || ''
+    const url = safeStoryTargetURL(button.getAttribute('data-story-context-url') || '')
     if (sourceStoryId) {
       const sourceStory = storyById(sourceStoryId)
       if (sourceStory) { state.storyViewer = { open:true, storyId:sourceStoryId, loading:false, error:'' }; render() }
