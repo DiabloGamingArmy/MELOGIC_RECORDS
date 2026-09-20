@@ -3,7 +3,7 @@ import './styles/camera.css'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { isMobileSpaRuntime } from './pwa/mobileSpaRouter'
-import { registerMobileRuntimeView } from './pwa/mobileAppRuntime'
+import { navigateMobileRuntimeUrl, registerMobileRuntimeView } from './pwa/mobileAppRuntime'
 import { auth, waitForInitialAuthState } from './firebase/auth'
 import { listInboxThreads, sendMessage, createGroupThread, getThreadParticipantUids } from './data/inboxService'
 
@@ -1033,12 +1033,25 @@ function handoffCameraMediaToCommunity(destination) {
   const mime=String(blob.type||'')||(type==='photo'?'image/jpeg':'video/webm')
   const ext=mime.includes('png')?'png':mime.includes('webp')?'webp':mime.includes('jpeg')?'jpg':mime.includes('quicktime')?'mov':mime.includes('mp4')?'mp4':'webm'
   const file=blob instanceof File?blob:new File([blob],`melogic-${type}-${Date.now()}.${ext}`,{type:mime,lastModified:Date.now()})
-  window.__melogicCommunityMediaHandoff={destination,file,type,createdAt:Date.now()}
+  const createdAt=Date.now()
+  window.__melogicCommunityMediaHandoff={destination,file,type,createdAt}
   sessionStorage.setItem('melogicCommunityMediaHandoffDestination',destination)
-  // melogic-camera-share-final-p5-v1
+  // melogic-mobile-story-direct-publish-v1
+  // Hand ownership to Community through the persistent runtime. Never mutate
+  // history manually here: that changed the URL without activating Community,
+  // which left Camera visible and let the legacy Story composer surface later.
   if(isMobileSpaRuntime()){
-    history.pushState({...(history.state||{}),melogicMobileSpa:true,routeId:'community',pathname:'/community'},'', '/community')
-    window.dispatchEvent(new CustomEvent('melogic:mobile-spa-navigation',{detail:{type:'camera-share',pathname:'/community'}}))
+    closeShareScreen()
+    setCameraReviewBottomBar(false)
+    void navigateMobileRuntimeUrl('/community',{
+      historyMode:'push',
+      source:destination==='story'?'camera-story-share':'camera-feed-share'
+    }).then(opened=>{
+      if(opened)return
+      console.warn('[camera] Community runtime did not accept media handoff')
+      setStatus('Could not open Community. Try again.')
+      setCameraReviewBottomBar(true)
+    })
     return
   }
   setStatus('Open Camera from the mobile app to post this media to Community.')
