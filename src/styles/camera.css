@@ -1078,3 +1078,29 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   -webkit-text-fill-color:currentColor;
   caret-color:#fff!important;
 }
+
+
+/* camera-direct-layer-text-edit-p7
+   The selected camera-editor-layer is now the actual typing surface.
+   The legacy textarea remains only as a hidden value mirror for commit compatibility. */
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox textarea{
+  display:none!important;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-editor-layer-stage [data-camera-editor-layer].is-selected{
+  visibility:visible!important;
+}
+.camera-editor-layer[data-camera-live-text-editor="true"]{
+  cursor:text!important;
+  pointer-events:auto!important;
+  user-select:text!important;
+  -webkit-user-select:text!important;
+  outline:none!important;
+  z-index:64!important;
+  caret-color:#fff!important;
+}
+.camera-editor-layer[data-camera-live-text-editor="true"]:empty::after{
+  content:"Type something…";
+  color:rgba(255,255,255,.48);
+  -webkit-text-stroke:0 transparent;
+  text-shadow:none;
+}
