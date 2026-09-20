@@ -2115,3 +2115,21 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     background:rgba(255,255,255,.08) !important;
   }
 }
+
+
+/* melogic-story-signal-foundation-push-02 */
+@media (max-width:760px) {
+  /* Story Signal is now driven by viewer/media state. CSS no longer owns time. */
+  .community-story-progress-rail > span.is-active > i {
+    width:100% !important;
+    transform:scaleX(var(--story-signal-progress,0));
+    transform-origin:left center !important;
+    animation:none !important;
+    transition:none !important;
+    will-change:transform;
+  }
+
+  .community-story-viewer.is-paused .community-story-progress-rail > span.is-active > i {
+    animation:none !important;
+  }
+}
