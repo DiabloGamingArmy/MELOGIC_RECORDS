@@ -7063,8 +7063,8 @@ function animateToStory(storyId = '', delta = 1) {
   }
   clearStoryViewerAdvanceTimer()
   viewer.classList.remove('is-shifting-left', 'is-shifting-right')
-  viewer.classList.add(delta > 0 ? 'is-shifting-left' : 'is-shifting-right')
-  window.setTimeout(() => openStoryViewer(storyId), 220)
+  viewer.classList.add('is-creator-transition', delta > 0 ? 'is-shifting-left' : 'is-shifting-right')
+  window.setTimeout(() => openStoryViewer(storyId), 260)
 }
 
 function advanceStory(delta = 1) {
