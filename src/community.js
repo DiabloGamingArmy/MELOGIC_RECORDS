@@ -1376,15 +1376,20 @@ function renderStoryViewerModal() {
   return `
     <div class="community-modal-backdrop">
       <section class="community-story-viewer" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
-        <header>
-          <a class="community-author" href="${profileHref}">
-            <span class="community-avatar">${storyAvatar(story)}</span>
-            <span>
-              ${communityDisplayNameMarkup(story, 'Melogic Creator', 'community-story-viewer-title')}
-              <em>${escapeHtml(formatUsername(story.authorUsername) || 'Creator')} · ${escapeHtml(storyExpiresLabel(story.expiresAt))}</em>
-            </span>
-          </a>
-          <button type="button" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
+        <header class="community-story-viewer-hud">
+          <div class="community-story-progress-rail" aria-label="Story ${formatCount(index + 1)} of ${formatCount(state.stories.length)}">
+            ${state.stories.map((_, storyIndex) => `<span class="${storyIndex < index ? 'is-complete' : storyIndex === index ? 'is-active' : ''}"><i></i></span>`).join('')}
+          </div>
+          <div class="community-story-viewer-hud-row">
+            <a class="community-author" href="${profileHref}">
+              <span class="community-avatar">${storyAvatar(story)}</span>
+              <span class="community-story-viewer-identity">
+                ${communityDisplayNameMarkup(story, 'Melogic Creator', 'community-story-viewer-title')}
+                <em>${escapeHtml(formatUsername(story.authorUsername) || 'Creator')} · ${escapeHtml(storyExpiresLabel(story.expiresAt))}</em>
+              </span>
+            </a>
+            <button type="button" class="community-story-viewer-close" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
+          </div>
         </header>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
           ${story.mediaType === 'video' && story.mediaURL
