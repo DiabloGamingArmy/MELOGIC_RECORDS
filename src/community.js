@@ -1501,6 +1501,8 @@ function renderStoryViewerModal() {
   const isOwn = state.currentUser?.uid && state.currentUser.uid === story.authorUid
   const profileHref = story.authorUid ? publicProfileRoute({ uid: story.authorUid }) : ROUTES.profilePublic
   const provenance = storyProvenance(story)
+  const contextItems = (story.layers || []).filter((layer) => ['person','location','community','audio','product','event','poll','project'].includes(layer.type))
+  const contextLabels = { person:'Person', location:'Location', community:'Community', audio:'Sound', product:'Product', event:'Event', poll:'Poll', project:'Project' }
   return `
     <div class="community-modal-backdrop">
       <section class="community-story-viewer" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
@@ -1529,12 +1531,24 @@ function renderStoryViewerModal() {
           <button type="button" data-story-action="remix">${iconSvg('refreshCw')}<span>Remix</span></button>
           <button type="button" data-story-action="save">${iconSvg('bookmark')}<span>Save</span></button>
           <button type="button" data-story-action="collection">${iconSvg('plus')}<span>Collection</span></button>
+          <button type="button" data-story-action="context">${iconSvg('info')}<span>Context</span></button>
           <button type="button" data-story-action="source">${iconSvg('link')}<span>Source</span></button>
           <button type="button" data-story-action="report">${iconSvg('alertCircle')}<span>Report</span></button>
         </div>
         ${provenance.length ? `<div class="community-story-provenance" data-story-provenance>
           ${provenance.map((item) => `<button type="button" data-story-provenance-kind="${escapeHtml(item.kind)}" data-story-provenance-url="${escapeHtml(item.url || '')}" data-story-provenance-id="${escapeHtml(item.targetId || '')}"><span>${iconSvg(item.kind === 'remix' ? 'refreshCw' : item.kind === 'product' ? 'shoppingBag' : 'link')}</span><span><strong>${escapeHtml(item.label)}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}</span></button>`).join('')}
         </div>` : ''}
+        <aside class="community-story-context-drawer" data-story-context-drawer aria-hidden="true">
+          <header><div><small>STORY CONTEXT</small><strong>${escapeHtml(story.authorDisplayName || story.authorUsername || 'Melogic Creator')}</strong></div><button type="button" data-close-story-context aria-label="Close Story context">${iconSvg('x')}</button></header>
+          <div class="community-story-context-summary">
+            <span>${escapeHtml((story.storyType || 'moment').toUpperCase())}</span>
+            <span>${escapeHtml(story.mediaType || 'story')}</span>
+            <span>${escapeHtml(storyExpiresLabel(story.expiresAt))}</span>
+          </div>
+          ${story.caption || story.text ? `<p class="community-story-context-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
+          ${contextItems.length ? `<section><h3>In this Story</h3>${contextItems.map((layer) => `<button type="button" data-story-context-url="${escapeHtml(layer.targetURL || '')}"><small>${escapeHtml(contextLabels[layer.type] || 'Item')}</small><strong>${escapeHtml(layer.content || contextLabels[layer.type] || 'Story item')}</strong></button>`).join('')}</section>` : ''}
+          ${provenance.length ? `<section><h3>Sources</h3>${provenance.map((item) => `<button type="button" data-story-context-url="${escapeHtml(item.url || '')}" data-story-context-story-id="${escapeHtml(item.targetId || '')}"><small>${escapeHtml(item.kind || 'source')}</small><strong>${escapeHtml(item.label)}</strong></button>`).join('')}</section>` : ''}
+        </aside>
         <div class="community-story-type-badge is-${escapeHtml(story.storyType || 'moment')}">${escapeHtml((story.storyType || 'moment').toUpperCase())}</div>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
           ${story.mediaType === 'video' && story.mediaURL
@@ -8159,6 +8173,16 @@ function bindEvents() {
     const action = button.getAttribute('data-story-action') || ''
     const story = storyById(state.storyViewer.storyId)
     if (!story) return
+    if (action === 'context') {
+      const drawer = app.querySelector('[data-story-context-drawer]')
+      if (drawer) {
+        drawer.classList.add('is-open')
+        drawer.setAttribute('aria-hidden', 'false')
+        app.querySelector('[data-story-action-rail]')?.setAttribute('hidden', '')
+        pauseStoryViewerPlayback()
+      }
+      return
+    }
     if (action === 'report') {
       openStoryReport(story.storyId)
       return
@@ -8223,6 +8247,26 @@ function bindEvents() {
         return
       }
       showCommunityToast('The original Story is no longer active.')
+      return
+    }
+    if (url && url !== '#') window.location.assign(url)
+  }))
+  app.querySelector('[data-close-story-context]')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    const drawer = app.querySelector('[data-story-context-drawer]')
+    drawer?.classList.remove('is-open')
+    drawer?.setAttribute('aria-hidden', 'true')
+    resumeStoryViewerPlayback()
+  })
+  app.querySelector('[data-story-context-drawer]')?.addEventListener('pointerdown', (event) => event.stopPropagation())
+  app.querySelectorAll('[data-story-context-url], [data-story-context-story-id]').forEach((button) => button.addEventListener('click', (event) => {
+    event.stopPropagation()
+    const sourceStoryId = button.getAttribute('data-story-context-story-id') || ''
+    const url = button.getAttribute('data-story-context-url') || ''
+    if (sourceStoryId) {
+      const sourceStory = storyById(sourceStoryId)
+      if (sourceStory) { state.storyViewer = { open:true, storyId:sourceStoryId, loading:false, error:'' }; render() }
+      else showCommunityToast('The original Story is no longer active.')
       return
     }
     if (url && url !== '#') window.location.assign(url)
