@@ -766,44 +766,75 @@ function editorStagePoint(event){
   if(!r?.width||!r?.height)return{x:.5,y:.5}
   return{x:clampEditorValue((event.clientX-r.left)/r.width,0,1),y:clampEditorValue((event.clientY-r.top)/r.height,0,1)}
 }
-function beginEditorGesture({allowDrag=false}={}){
-  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
-  if(!layer)return
-  const points=[...editorPointers.values()]
-  if(points.length>=2){
-    const [a,b]=points,dx=b.x-a.x,dy=b.y-a.y
-    editorGestureHistoryCommitted=false
-    editorGesture={kind:'transform',layerId:layer.id,distance:Math.hypot(dx,dy)||1,angle:Math.atan2(dy,dx)*180/Math.PI,scale:layer.scale||1,rotation:layer.rotation||0,x:layer.x,y:layer.y}
-  }else if(points.length===1&&allowDrag){
-    editorGestureHistoryCommitted=false
-    editorGesture={kind:'drag',layerId:layer.id,start:{...points[0]},layer:{x:layer.x,y:layer.y}}
-  }else editorGesture=null
+function paintCameraEditorLayerTransform(layer){
+  const stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
+  const node=stage?.querySelector(`[data-camera-editor-layer="${layer.id}"]`)
+  if(!node)return
+  node.style.left=`${clampEditorValue(layer.x,.02,.98)*100}%`
+  node.style.top=`${clampEditorValue(layer.y,.02,.98)*100}%`
+  node.style.transform=`translate(-50%,-50%) rotate(${Number(layer.rotation)||0}deg) scale(${clampEditorValue(Number(layer.scale)||1,.15,8)})`
 }
-function updateEditorGesture(){
+function beginEditorDrag(pointer){
   const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
-  if(!layer)return
-  const points=[...editorPointers.values()]
-  if(points.length>=2){
-    // Two fingers are exclusively scale + rotation. X/Y are frozen for the entire transform.
-    if(editorGesture?.kind!=='transform')beginEditorGesture()
-    if(editorGesture?.kind!=='transform')return
-    if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
-    const [a,b]=points,dx=b.x-a.x,dy=b.y-a.y,distance=Math.hypot(dx,dy)||1,angle=Math.atan2(dy,dx)*180/Math.PI
-    layer.scale=clampEditorValue(editorGesture.scale*(distance/editorGesture.distance),.15,8)
-    let delta=angle-editorGesture.angle
-    while(delta>180)delta-=360
-    while(delta<-180)delta+=360
-    layer.rotation=editorGesture.rotation+delta
-    layer.x=editorGesture.x
-    layer.y=editorGesture.y
-  }else if(points.length===1&&editorGesture?.kind==='drag'){
-    if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
-    const p=points[0],stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]'),r=stage?.getBoundingClientRect()
-    if(!r?.width||!r?.height)return
-    layer.x=clampEditorValue(editorGesture.layer.x+(p.x-editorGesture.start.x)/r.width,.02,.98)
-    layer.y=clampEditorValue(editorGesture.layer.y+(p.y-editorGesture.start.y)/r.height,.02,.98)
-  }else return
-  editorState.revision+=1;renderCameraEditorLayers()
+  if(!layer||!pointer)return
+  editorGestureHistoryCommitted=false
+  editorGesture={kind:'drag',layerId:layer.id,start:{x:pointer.x,y:pointer.y},layer:{x:layer.x,y:layer.y}}
+}
+function updateEditorDrag(pointer){
+  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!layer||editorGesture?.kind!=='drag'||!pointer)return
+  const stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]'),r=stage?.getBoundingClientRect()
+  if(!r?.width||!r?.height)return
+  if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
+  layer.x=clampEditorValue(editorGesture.layer.x+(pointer.x-editorGesture.start.x)/r.width,.02,.98)
+  layer.y=clampEditorValue(editorGesture.layer.y+(pointer.y-editorGesture.start.y)/r.height,.02,.98)
+  editorState.revision+=1
+  paintCameraEditorLayerTransform(layer)
+}
+function beginEditorTouchTransform(touches){
+  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!layer||touches.length<2)return false
+  const a=touches[0],b=touches[1],dx=b.clientX-a.clientX,dy=b.clientY-a.clientY
+  editorGestureHistoryCommitted=false
+  editorGesture={kind:'touch-transform',layerId:layer.id,distance:Math.hypot(dx,dy)||1,angle:Math.atan2(dy,dx)*180/Math.PI,scale:layer.scale||1,rotation:layer.rotation||0,x:layer.x,y:layer.y}
+  return true
+}
+function updateEditorTouchTransform(touches){
+  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!layer||editorGesture?.kind!=='touch-transform'||touches.length<2)return
+  if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
+  const a=touches[0],b=touches[1],dx=b.clientX-a.clientX,dy=b.clientY-a.clientY
+  const distance=Math.hypot(dx,dy)||1,angle=Math.atan2(dy,dx)*180/Math.PI
+  let delta=angle-editorGesture.angle
+  while(delta>180)delta-=360
+  while(delta<-180)delta+=360
+  layer.scale=clampEditorValue(editorGesture.scale*(distance/editorGesture.distance),.15,8)
+  layer.rotation=editorGesture.rotation+delta
+  layer.x=editorGesture.x;layer.y=editorGesture.y
+  editorState.revision+=1
+  paintCameraEditorLayerTransform(layer)
+}
+function beginEditorWebKitGesture(event){
+  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!layer)return false
+  editorGestureHistoryCommitted=false
+  editorGesture={kind:'webkit-transform',layerId:layer.id,scale:layer.scale||1,rotation:layer.rotation||0,x:layer.x,y:layer.y}
+  return true
+}
+function updateEditorWebKitGesture(event){
+  const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!layer||editorGesture?.kind!=='webkit-transform')return
+  if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
+  layer.scale=clampEditorValue(editorGesture.scale*(Number(event.scale)||1),.15,8)
+  layer.rotation=editorGesture.rotation+(Number(event.rotation)||0)
+  layer.x=editorGesture.x;layer.y=editorGesture.y
+  editorState.revision+=1
+  paintCameraEditorLayerTransform(layer)
+}
+function finishEditorTransform(){
+  const hadGesture=!!editorGesture
+  editorGesture=null;editorPointers.clear()
+  if(hadGesture)renderCameraEditorLayers()
 }
 function cameraEditorStateForHistory(){return cameraEditorSnapshot()}
 function syncCameraEditorSelectionActions(){
@@ -1677,40 +1708,68 @@ editorLayerStage?.addEventListener('keydown',event=>{
   if(event.key==='Escape'){event.preventDefault();commitCameraText()}
 })
 editorLayerStage?.addEventListener('pointerdown',event=>{
+  // Touch pinch/rotate is owned by TouchEvent/GestureEvent below. PointerEvent is
+  // retained only for direct one-pointer layer dragging (mouse/pen/touch).
+  if(editorGesture?.kind==='touch-transform'||editorGesture?.kind==='webkit-transform')return
   const target=event.target.closest?.('[data-camera-editor-layer]')
-  const selected=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
-  if(!selected&&!target)return
-  if(target?.matches('[data-camera-live-text-editor="true"]')&&event.isPrimary){event.stopPropagation();return}
-  // One finger only drags when it starts on the selected layer. A finger on empty
-  // stage is merely tracked so a second finger anywhere can promote to transform.
-  if(target&&target.dataset.cameraEditorLayer!==editorState.selectedLayerId)selectCameraEditorLayer(target.dataset.cameraEditorLayer||'')
-  const active=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
-  if(!active)return
+  if(!target)return
+  if(target.matches('[data-camera-live-text-editor="true"]')){event.stopPropagation();return}
   event.preventDefault();event.stopPropagation()
-  const onSelected=!!target&&target.dataset.cameraEditorLayer===active.id
-  editorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY,onSelected})
-  editorLayerStage.setPointerCapture?.(event.pointerId)
-  if(editorPointers.size>=2)beginEditorGesture()
-  else beginEditorGesture({allowDrag:onSelected})
+  selectCameraEditorLayer(target.dataset.cameraEditorLayer||'')
+  const pointer={x:event.clientX,y:event.clientY}
+  editorPointers.clear();editorPointers.set(event.pointerId,pointer)
+  if(event.pointerType!=='touch')editorLayerStage.setPointerCapture?.(event.pointerId)
+  beginEditorDrag(pointer)
 })
 editorLayerStage?.addEventListener('pointermove',event=>{
-  if(!editorPointers.has(event.pointerId))return
+  if(editorGesture?.kind!=='drag'||!editorPointers.has(event.pointerId))return
+  // Once iOS reports multiple touches, TouchEvent takes authority and pointer drag stops.
+  if(event.pointerType==='touch'&&editorPointers.size>1)return
   event.preventDefault()
-  const prior=editorPointers.get(event.pointerId)
-  editorPointers.set(event.pointerId,{...prior,x:event.clientX,y:event.clientY})
-  if(editorPointers.size>=2&&editorGesture?.kind!=='transform')beginEditorGesture()
-  updateEditorGesture()
+  const pointer={x:event.clientX,y:event.clientY}
+  editorPointers.set(event.pointerId,pointer);updateEditorDrag(pointer)
 })
 function finishEditorPointer(event){
   if(!editorPointers.has(event.pointerId))return
-  const wasTransform=editorGesture?.kind==='transform'||editorPointers.size>=2
   editorPointers.delete(event.pointerId)
-  // Never downgrade a pinch/twist into drag: wait for a fresh touch.
-  if(wasTransform){editorGesture=null;editorPointers.clear()}
-  else if(!editorPointers.size)editorGesture=null
+  if(editorGesture?.kind==='drag'){editorGesture=null;renderCameraEditorLayers()}
 }
 editorLayerStage?.addEventListener('pointerup',finishEditorPointer)
 editorLayerStage?.addEventListener('pointercancel',finishEditorPointer)
+
+editorLayerStage?.addEventListener('touchstart',event=>{
+  if(event.touches.length<2||!editorState.selectedLayerId)return
+  event.preventDefault()
+  editorPointers.clear()
+  // On WebKit, gesturestart may follow this event and become authoritative.
+  beginEditorTouchTransform(event.touches)
+},{passive:false})
+editorLayerStage?.addEventListener('touchmove',event=>{
+  if(event.touches.length<2||editorGesture?.kind!=='touch-transform')return
+  event.preventDefault();updateEditorTouchTransform(event.touches)
+},{passive:false})
+editorLayerStage?.addEventListener('touchend',event=>{
+  if(editorGesture?.kind!=='touch-transform')return
+  event.preventDefault()
+  if(event.touches.length<2)finishEditorTransform()
+},{passive:false})
+editorLayerStage?.addEventListener('touchcancel',event=>{
+  if(editorGesture?.kind==='touch-transform')finishEditorTransform()
+},{passive:false})
+
+// Safari/iOS exposes native scale + rotation. Prefer it when emitted.
+editorLayerStage?.addEventListener('gesturestart',event=>{
+  if(!editorState.selectedLayerId)return
+  event.preventDefault();beginEditorWebKitGesture(event)
+},{passive:false})
+editorLayerStage?.addEventListener('gesturechange',event=>{
+  if(editorGesture?.kind!=='webkit-transform')return
+  event.preventDefault();updateEditorWebKitGesture(event)
+},{passive:false})
+editorLayerStage?.addEventListener('gestureend',event=>{
+  if(editorGesture?.kind!=='webkit-transform')return
+  event.preventDefault();finishEditorTransform()
+},{passive:false})
 editorLayerStage?.addEventListener('click',event=>event.stopPropagation())
 editorLayerStage?.addEventListener('dblclick',event=>{
   const target=event.target.closest?.('[data-camera-editor-layer]');if(!target)return
