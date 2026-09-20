@@ -14116,3 +14116,14 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     font-size: 12px;
   }
 }
+
+
+/* melogic-desktop-feed-fab-authoritative-v2 */
+@media (min-width:761px) {
+  /* Current desktop shell: 12px outer inset + 270px left rail + fluid feed +
+     clamp(390px, right rail, 430px). This anchors the FAB 16px inside feed. */
+  .community-layout.is-home ~ .community-desktop-compose-fab {
+    right:calc(12px + clamp(390px, calc((100vw - 914px) / 2), 430px) + 16px) !important;
+    bottom:16px !important;
+  }
+}
