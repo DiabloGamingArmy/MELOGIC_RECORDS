@@ -1414,7 +1414,10 @@ function renderStoryViewerModal() {
       <section class="community-story-viewer" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
         <header class="community-story-viewer-hud">
           <div class="community-story-progress-rail" aria-label="Story ${formatCount(index + 1)} of ${formatCount(groupStories.length)}">
-            ${groupStories.map((_, storyIndex) => `<span class="${storyIndex < index ? 'is-complete' : storyIndex === index ? 'is-active' : ''}"><i></i></span>`).join('')}
+            ${groupStories.map((groupStory, storyIndex) => {
+              const signalBars = Array.from({ length: 18 }, (_, barIndex) => `<b style="--signal-bar:${barIndex};--signal-height:${18 + ((barIndex * 17 + storyIndex * 11) % 64)}%"></b>`).join('')
+              return `<span class="${storyIndex < index ? 'is-complete' : storyIndex === index ? 'is-active' : ''} ${groupStory.mediaType === 'video' ? 'has-story-signal' : ''}"><span class="community-story-signal-bars" aria-hidden="true">${signalBars}</span><i></i></span>`
+            }).join('')}
           </div>
           <div class="community-story-viewer-hud-row">
             <a class="community-author" href="${profileHref}">
