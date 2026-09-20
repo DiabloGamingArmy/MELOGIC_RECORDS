@@ -4103,7 +4103,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
       .then(() => loadComments({ renderAfter: true }))
       .catch(() => loadComments({ renderAfter: true }))
     if (!state.communities.length) {
-      loadCommunities({ renderOnStart: false, renderAfter: false })
+      loadCommunities({ renderOnStart: false, renderAfter: false, bootstrap: true })
         .then(updateCommunityAncillaryDom)
         .catch(() => null)
     }
@@ -4127,7 +4127,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
         loadFocusedComment({ renderAfter: true }).then(() => loadComments({ renderAfter: true })),
         loadViewerState().then(() => renderPostViewerStateOnly()),
         loadAttachmentMediaUrls().then(() => renderPostMediaOnly()),
-        !state.communities.length ? loadCommunities({ renderOnStart: false, renderAfter: true }) : Promise.resolve()
+        !state.communities.length ? loadCommunities({ renderOnStart: false, renderAfter: true, bootstrap: true }) : Promise.resolve()
       ]).then(() => {
         logCommunityPerf('detail enrichment complete', { postId: id })
       }).catch(() => null)
@@ -4160,15 +4160,21 @@ async function loadCommunityFocusState() {
   state.communityFocus = nextFocusState
 }
 
-async function loadCommunities({ renderOnStart = true, renderAfter = true } = {}) {
+async function loadCommunities({ renderOnStart = true, renderAfter = true, bootstrap = false } = {}) {
   state.communityFilters.loading = true
   state.communityFilters.error = ''
   if (renderOnStart) render()
   try {
+    // melogic-community-bootstrap-query-budget-v1
+    // Home/post bootstrap only needs enough communities to populate the compact
+    // navigator + discovery rail. The full directory keeps its 50-document
+    // budget when users explicitly open/search Discover.
+    const bootstrapLimit = 16
+    const limitCount = bootstrap ? bootstrapLimit : 50
     state.communities = await listCommunities({
-      category: state.communityFilters.category,
-      search: state.communityFilters.search,
-      limitCount: 50
+      category: bootstrap ? 'all' : state.communityFilters.category,
+      search: bootstrap ? '' : state.communityFilters.search,
+      limitCount
     })
     await loadCommunityFocusState()
   } catch (error) {
@@ -4434,14 +4440,14 @@ async function loadCommunity() {
 
   let homeCommunitiesPromise = null
   if (state.view.type === 'feed') {
-    homeCommunitiesPromise = loadCommunities({ renderOnStart: false, renderAfter: false })
+    homeCommunitiesPromise = loadCommunities({ renderOnStart: false, renderAfter: false, bootstrap: true })
       .then(() => {
         updateCommunityAncillaryDom()
         return true
       })
       .catch(() => false)
   } else if (!state.communities.length && state.view.type !== 'community') {
-    loadCommunities({ renderOnStart: false, renderAfter: false })
+    loadCommunities({ renderOnStart: false, renderAfter: false, bootstrap: true })
       .then(updateCommunityAncillaryDom)
       .catch(() => null)
   }
