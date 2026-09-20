@@ -776,3 +776,87 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 }
 /* Retire obsolete panel rules after the redesigned controls. */
 .camera-music-source,.camera-filter-presets,.camera-adjust-sliders{display:none!important}
+
+
+/* camera-editor-sidebar-single-surface-v1
+   Active tool replaces the original tool list. The selected source icon stays
+   pinned as the exit affordance; contextual controls occupy the same rail. */
+.camera-edit-tools.is-expanded{
+  width:56px!important;
+  height:auto!important;
+  min-height:56px!important;
+  max-height:calc(100dvh - env(safe-area-inset-top,0px) - 150px)!important;
+  padding:6px!important;
+  gap:3px!important;
+  overflow-y:auto!important;
+  opacity:1!important;
+  pointer-events:auto!important;
+}
+.camera-edit-tools.is-expanded .camera-edit-tool-context{display:none!important}
+.camera-edit-tools.is-expanded>:is(button[data-camera-edit-tool]):not(.is-active){display:none!important}
+.camera-edit-tools.is-expanded>button[data-camera-edit-tool].is-active{
+  display:grid!important;order:-100;width:42px!important;height:42px!important;min-height:42px!important;
+  margin:0!important;flex:0 0 42px!important;
+}
+/* Persistent sheets own the screen, so their source rail is intentionally hidden. */
+.camera-surface[data-camera-active-tool="sticker"] .camera-edit-tools,
+.camera-surface[data-camera-active-tool="music"] .camera-edit-tools{opacity:0!important;pointer-events:none!important}
+
+/* Draw: source Draw button remains at the top; brush rail continues directly below it. */
+.camera-surface[data-camera-active-tool="pen"] .camera-edit-tools{opacity:1!important;pointer-events:auto!important}
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-controls{
+  right:max(8px,env(safe-area-inset-right,0px))!important;
+  top:calc(env(safe-area-inset-top,0px) + 116px)!important;
+}
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-brushes{border-top-left-radius:28px!important;border-top-right-radius:28px!important}
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-parameters{
+  position:absolute!important;right:64px!important;top:0!important;
+}
+
+/* Text: the source Text icon is the top/exit control. Text style rail begins below it. */
+.camera-surface[data-camera-active-tool="text"] .camera-edit-tools{opacity:1!important;pointer-events:auto!important;z-index:64!important}
+.camera-surface[data-camera-active-tool="text"] .camera-text-controls{
+  top:calc(env(safe-area-inset-top,0px) + 116px)!important;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-text-done{
+  right:max(72px,calc(env(safe-area-inset-right,0px) + 64px))!important;
+}
+
+/* Crop: source Crop icon is pinned; crop controls replace the old list below it. */
+.camera-surface[data-camera-active-tool="crop"] .camera-edit-tools{opacity:1!important;pointer-events:auto!important}
+.camera-surface[data-camera-active-tool="crop"] .camera-crop-controls{
+  top:calc(env(safe-area-inset-top,0px) + 116px)!important;
+}
+
+/* Adjust uses its requested bottom controller. The right rail becomes one selected
+   Adjust button rather than leaving the entire original toolbar visible behind it. */
+.camera-surface[data-camera-active-tool="adjust"] .camera-edit-tools{opacity:1!important;pointer-events:auto!important}
+
+/* Video follows the same no-duplicate rule while its contextual panel is open. */
+.camera-surface[data-camera-active-tool="video"] .camera-edit-tools{opacity:1!important;pointer-events:auto!important}
+
+/* Keep the short Adjust panel clear of the review Share/Cancel bar. */
+.camera-surface.is-reviewing .camera-adjust-controls{
+  bottom:calc(92px + env(safe-area-inset-bottom,0px))!important;
+}
+
+/* The large modal sheets should stop above the review action bar instead of
+   rendering beneath it; this removes the clipped/overlapping lower edge. */
+.camera-surface.is-reviewing .camera-sticker-picker,
+.camera-surface.is-reviewing .camera-audio-controls{
+  bottom:88px!important;
+  height:auto!important;
+  max-height:calc(var(--camera-editor-viewport-height,100dvh) - env(safe-area-inset-top,0px) - 132px)!important;
+}
+
+/* Remove the accidental white crescent/second rail caused by overlapping
+   text/draw/crop controls at the same right coordinate. */
+.camera-text-controls,.camera-draw-brushes,.camera-crop-rail{box-shadow:0 14px 42px rgba(0,0,0,.32)!important}
+
+/* Keep controls inside narrow iPhone widths. */
+@media(max-width:430px){
+ .camera-surface[data-camera-active-tool="pen"] .camera-draw-parameters{right:62px!important}
+ .camera-draw-parameters{gap:2px!important;padding-inline:5px!important}
+ .camera-adjust-controls{left:8px!important;right:8px!important;max-width:calc(100% - 16px)!important}
+ .camera-adjust-parameters{padding-right:4px!important}
+}
