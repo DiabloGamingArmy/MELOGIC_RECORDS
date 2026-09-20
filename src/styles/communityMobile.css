@@ -1824,3 +1824,100 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     left:max(18px,env(safe-area-inset-left,0px)) !important;
   }
 }
+
+
+/* melogic-mobile-story-viewer-screenshot-fixes */
+@media (max-width:760px) {
+  /* Keep the verified badge visible and proportioned inside the compact Story identity. */
+  .community-story-viewer-identity .community-display-name {
+    display:inline-flex !important;
+    align-items:center !important;
+    gap:4px !important;
+    overflow:visible !important;
+    max-width:48vw !important;
+  }
+
+  .community-story-viewer-identity .community-verified-badge {
+    display:inline-block !important;
+    flex:0 0 13px !important;
+    width:13px !important;
+    height:13px !important;
+    margin:0 !important;
+    object-fit:contain !important;
+    vertical-align:-2px !important;
+  }
+
+  /* Timestamp is deliberately separate from @username. It defaults to posted age;
+     tapping it toggles to remaining Story lifetime. */
+  .community-story-time-toggle {
+    position:relative !important;
+    top:-1px !important;
+    display:inline-flex !important;
+    align-items:center !important;
+    min-width:0 !important;
+    min-height:32px !important;
+    margin:0 0 0 -2px !important;
+    padding:0 8px 0 0 !important;
+    border:0 !important;
+    border-radius:0 !important;
+    background:transparent !important;
+    box-shadow:none !important;
+    color:rgba(255,255,255,.74) !important;
+    font:inherit !important;
+    font-size:.68rem !important;
+    font-weight:500 !important;
+    line-height:1 !important;
+    white-space:nowrap !important;
+    cursor:pointer !important;
+  }
+
+  /* Make the right-side controls impossible to lose to generic button/icon rules. */
+  .community-story-mobile-interactions {
+    grid-template-columns:minmax(0,1fr) 46px 46px !important;
+    overflow:visible !important;
+  }
+
+  .community-story-mobile-interactions > .community-story-mobile-like,
+  .community-story-mobile-interactions > .community-story-mobile-share {
+    display:grid !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    place-items:center !important;
+    position:relative !important;
+    z-index:2 !important;
+    flex:none !important;
+    width:46px !important;
+    height:46px !important;
+    color:#fff !important;
+    background:transparent !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-mobile-interactions > .community-story-mobile-like svg,
+  .community-story-mobile-interactions > .community-story-mobile-share svg {
+    display:block !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    width:28px !important;
+    height:28px !important;
+    min-width:28px !important;
+    min-height:28px !important;
+    color:currentColor !important;
+    stroke:currentColor !important;
+    fill:none !important;
+  }
+
+  .community-story-reply-shell {
+    min-width:0 !important;
+  }
+}
+
+@media (max-width:360px) {
+  .community-story-viewer-identity .community-display-name {
+    max-width:44vw !important;
+  }
+
+  .community-story-time-toggle {
+    font-size:.64rem !important;
+  }
+}
