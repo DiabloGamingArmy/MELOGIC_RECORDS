@@ -1044,51 +1044,207 @@ function storyMediaExtension(file) {
   const name = String(file?.name || '').toLowerCase()
   if (type.includes('webm') || name.endsWith('.webm')) return 'webm'
   if (type.includes('mp4') || name.endsWith('.mp4')) return 'mp4'
-  if (name.endsWith('.png')) return 'png'
-  if (name.endsWith('.webp')) return 'webp'
+  if (type.includes('quicktime') || name.endsWith('.mov')) return 'mov'
+  if (type.includes('webp') || name.endsWith('.webp')) return 'webp'
+  if (type.includes('png') || name.endsWith('.png')) return 'png'
   return 'jpg'
 }
 
 function storyMediaType(file) {
   const type = String(file?.type || '').toLowerCase()
-  if (type.startsWith('video/')) return 'video'
-  if (type.startsWith('image/')) return 'image'
+  const name = String(file?.name || '').toLowerCase()
+  if (type.startsWith('video/') || /\.(mov|mp4|m4v|webm|avi|mkv|3gp|3g2|mpeg|mpg|ogv)$/i.test(name)) return 'video'
+  if (type.startsWith('image/') || /\.(heic|heif|avif|jpg|jpeg|jfif|png|webp|gif|bmp|tif|tiff)$/i.test(name)) return 'image'
   return ''
 }
 
-export function validateCommunityStoryMedia(file = null) {
-  const type = String(file?.type || '').toLowerCase()
-  const size = Number(file?.size || 0)
-  if (!file) throw new Error('Choose a video or image for this story.')
-  const allowedImages = ['image/jpeg', 'image/png', 'image/webp']
-  const allowedVideos = ['video/mp4', 'video/webm']
-  if (!allowedImages.includes(type) && !allowedVideos.includes(type)) {
-    throw new Error('Stories support MP4, WebM, JPG, PNG, and WebP files.')
-  }
-  if (type.startsWith('video/') && size > 50 * 1024 * 1024) throw new Error('Story videos must be 50 MB or smaller.')
-  if (type.startsWith('image/') && size > 10 * 1024 * 1024) throw new Error('Story images must be 10 MB or smaller.')
-  return { mediaType: storyMediaType(file), contentType: type }
+function storyFileFromBlob(blob, name, type) {
+  if (typeof File === 'function') return new File([blob], name, { type, lastModified: Date.now() })
+  blob.name = name
+  return blob
 }
 
-export async function uploadCommunityStoryMedia({ uid = '', storyId = '', file = null, onProgress = null } = {}) {
+async function storyCanvasBlob(canvas, preferredType = 'image/webp', quality = 0.82) {
+  const makeBlob = (type, q) => new Promise((resolve) => canvas.toBlob(resolve, type, q))
+  let blob = await makeBlob(preferredType, quality)
+  if (!blob || (preferredType === 'image/webp' && blob.type !== 'image/webp')) blob = await makeBlob('image/jpeg', 0.86)
+  if (!blob) throw new Error('This image could not be converted for Story upload.')
+  return blob
+}
+
+async function decodeStoryImage(file) {
+  if (typeof createImageBitmap === 'function') {
+    try { return await createImageBitmap(file, { imageOrientation: 'from-image' }) } catch {}
+  }
+  const url = URL.createObjectURL(file)
+  try {
+    const image = new Image()
+    image.decoding = 'async'
+    image.src = url
+    await image.decode()
+    return image
+  } finally {
+    // Revoked by the caller after draw for Image elements; ImageBitmap does not use this URL.
+    if (!url) URL.revokeObjectURL(url)
+  }
+}
+
+async function normalizeStoryImage(file) {
+  let source = null
+  let sourceUrl = ''
+  try {
+    if (typeof createImageBitmap === 'function') {
+      try { source = await createImageBitmap(file, { imageOrientation: 'from-image' }) } catch {}
+    }
+    if (!source) {
+      sourceUrl = URL.createObjectURL(file)
+      const image = new Image()
+      image.decoding = 'async'
+      image.src = sourceUrl
+      await image.decode()
+      source = image
+    }
+    const sourceWidth = Number(source.naturalWidth || source.width || 0)
+    const sourceHeight = Number(source.naturalHeight || source.height || 0)
+    if (!sourceWidth || !sourceHeight) throw new Error('This image has no readable dimensions.')
+    const maxDimension = 2160
+    const scale = Math.min(1, maxDimension / Math.max(sourceWidth, sourceHeight))
+    const width = Math.max(1, Math.round(sourceWidth * scale))
+    const height = Math.max(1, Math.round(sourceHeight * scale))
+    const canvas = document.createElement('canvas')
+    canvas.width = width
+    canvas.height = height
+    const context = canvas.getContext('2d', { alpha: true })
+    if (!context) throw new Error('Image conversion is unavailable in this browser.')
+    context.drawImage(source, 0, 0, width, height)
+    const blob = await storyCanvasBlob(canvas, 'image/webp', 0.82)
+    const contentType = blob.type === 'image/webp' ? 'image/webp' : 'image/jpeg'
+    const extension = contentType === 'image/webp' ? 'webp' : 'jpg'
+    return storyFileFromBlob(blob, `story-${Date.now()}.${extension}`, contentType)
+  } catch (error) {
+    throw new Error(`This image format cannot be decoded on this device. ${error?.message || ''}`.trim())
+  } finally {
+    if (sourceUrl) URL.revokeObjectURL(sourceUrl)
+    if (source && typeof source.close === 'function') source.close()
+  }
+}
+
+function preferredStoryVideoMimeType() {
+  if (typeof MediaRecorder === 'undefined') return ''
+  const candidates = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ]
+  return candidates.find((type) => MediaRecorder.isTypeSupported(type)) || ''
+}
+
+async function normalizeStoryVideo(file) {
+  const outputType = preferredStoryVideoMimeType()
+  if (!outputType || typeof document === 'undefined') return file
+  const video = document.createElement('video')
+  const sourceUrl = URL.createObjectURL(file)
+  video.src = sourceUrl
+  video.muted = false
+  video.playsInline = true
+  video.preload = 'auto'
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Video decoding timed out.')), 12000)
+      video.onloadedmetadata = () => { clearTimeout(timer); resolve() }
+      video.onerror = () => { clearTimeout(timer); reject(new Error('This video codec cannot be decoded on this device.')) }
+      video.load()
+    })
+    // captureStream keeps the source audio track when the browser exposes it,
+    // unlike canvas-only capture. If unavailable, retain the original rather
+    // than silently destroying Story audio.
+    const capture = video.captureStream || video.mozCaptureStream
+    if (typeof capture !== 'function') return file
+    video.currentTime = 0
+    await video.play()
+    const stream = capture.call(video)
+    const recorder = new MediaRecorder(stream, { mimeType: outputType, videoBitsPerSecond: 3500000, audioBitsPerSecond: 128000 })
+    const chunks = []
+    recorder.ondataavailable = (event) => { if (event.data?.size) chunks.push(event.data) }
+    const finished = new Promise((resolve, reject) => {
+      recorder.onerror = () => reject(new Error('Video conversion failed.'))
+      recorder.onstop = resolve
+    })
+    recorder.start(1000)
+    await new Promise((resolve) => {
+      const stop = () => resolve()
+      video.addEventListener('ended', stop, { once: true })
+      setTimeout(stop, Math.min(61000, Math.max(1000, Number(video.duration || 60) * 1000 + 750)))
+    })
+    if (recorder.state !== 'inactive') recorder.stop()
+    video.pause()
+    await finished
+    stream.getTracks().forEach((track) => track.stop())
+    const baseType = outputType.startsWith('video/mp4') ? 'video/mp4' : 'video/webm'
+    const blob = new Blob(chunks, { type: baseType })
+    if (!blob.size) return file
+    return storyFileFromBlob(blob, `story-${Date.now()}.${baseType === 'video/mp4' ? 'mp4' : 'webm'}`, baseType)
+  } catch (error) {
+    // If the browser can play the selected video but cannot expose a safe
+    // transcoding stream, preserve the original file. Storage accepts it and
+    // Story playback can use the browser-native codec on capable devices.
+    if (video.readyState >= 1) return file
+    throw error
+  } finally {
+    video.pause()
+    video.removeAttribute('src')
+    video.load()
+    URL.revokeObjectURL(sourceUrl)
+  }
+}
+
+export function validateCommunityStoryMedia(file = null, { normalized = false } = {}) {
+  if (!file) throw new Error('Choose a video or image for this story.')
+  const mediaType = storyMediaType(file)
+  const type = String(file?.type || '').toLowerCase()
+  const size = Number(file?.size || 0)
+  if (!mediaType) throw new Error('Stories support image and video files only.')
+  // Source files are intentionally broad: normalization happens before final
+  // upload. Final normalized assets keep conservative storage limits.
+  if (!normalized) {
+    if (size > 500 * 1024 * 1024) throw new Error('Story source media must be 500 MB or smaller.')
+    return { mediaType, contentType: type || (mediaType === 'image' ? 'application/octet-stream' : 'application/octet-stream') }
+  }
+  if (mediaType === 'video' && size > 150 * 1024 * 1024) throw new Error('Converted Story videos must be 150 MB or smaller.')
+  if (mediaType === 'image' && size > 12 * 1024 * 1024) throw new Error('Converted Story images must be 12 MB or smaller.')
+  return { mediaType, contentType: type || 'application/octet-stream' }
+}
+
+export async function normalizeCommunityStoryMedia(file = null) {
+  const { mediaType } = validateCommunityStoryMedia(file)
+  const normalizedFile = mediaType === 'image' ? await normalizeStoryImage(file) : await normalizeStoryVideo(file)
+  const normalized = validateCommunityStoryMedia(normalizedFile, { normalized: true })
+  return { file: normalizedFile, mediaType: normalized.mediaType, contentType: normalized.contentType }
+}
+
+export async function uploadCommunityStoryMedia({ uid = '', storyId = '', file = null, onProgress = null, normalize = true } = {}) {
   const ownerUid = String(uid || '').trim()
   const id = String(storyId || '').trim()
   if (!storage) throw new Error('Storage is not available.')
   if (!ownerUid || ownerUid.includes('/')) throw new Error('A signed-in account is required.')
   if (!id || id.includes('/')) throw new Error('A valid story id is required.')
-  const { mediaType, contentType } = validateCommunityStoryMedia(file)
+  const prepared = normalize ? await normalizeCommunityStoryMedia(file) : { file, ...validateCommunityStoryMedia(file, { normalized: true }) }
+  const uploadFile = prepared.file
+  const { mediaType, contentType } = prepared
 
-  const mediaPath = `${STORY_COLLECTION}/${ownerUid}/${id}/original-${Date.now()}.${storyMediaExtension(file)}`
+  const mediaPath = `${STORY_COLLECTION}/${ownerUid}/${id}/normalized-${Date.now()}.${storyMediaExtension(uploadFile)}`
   const fileRef = ref(storage, mediaPath)
   await new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(fileRef, file, { contentType })
+    const task = uploadBytesResumable(fileRef, uploadFile, { contentType })
     task.on('state_changed', (snapshot) => {
       const progress = snapshot.totalBytes ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) : 0
       if (typeof onProgress === 'function') onProgress(progress)
     }, reject, resolve)
   })
   const mediaURL = await getDownloadURL(fileRef).catch(() => '')
-  return { mediaPath, mediaURL, mediaType }
+  return { mediaPath, mediaURL, mediaType, contentType, size: Number(uploadFile.size || 0) }
 }
 
 export async function uploadCommunityStoryImage({ uid = '', storyId = '', file = null } = {}) {
