@@ -1668,12 +1668,15 @@ editorLayerStage?.addEventListener('keydown',event=>{
 })
 editorLayerStage?.addEventListener('pointerdown',event=>{
   const target=event.target.closest?.('[data-camera-editor-layer]')
-  if(!target)return
-  if(target.matches('[data-camera-live-text-editor="true"]')){event.stopPropagation();return}
+  const selected=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  // A selected layer owns two-finger gestures anywhere on the editor stage.
+  // One-finger drag still starts directly on the layer so normal canvas interaction remains intact.
+  if(!target&&!selected)return
+  if(target?.matches('[data-camera-live-text-editor="true"]')&&event.isPrimary){event.stopPropagation();return}
   event.preventDefault();event.stopPropagation()
-  selectCameraEditorLayer(target.dataset.cameraEditorLayer||'')
+  if(target)selectCameraEditorLayer(target.dataset.cameraEditorLayer||'')
   editorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
-  target.setPointerCapture?.(event.pointerId)
+  editorLayerStage.setPointerCapture?.(event.pointerId)
   beginEditorGesture()
 })
 editorLayerStage?.addEventListener('pointermove',event=>{
@@ -1685,6 +1688,13 @@ function finishEditorPointer(event){
   editorPointers.delete(event.pointerId)
   if(editorPointers.size)beginEditorGesture();else editorGesture=null
 }
+editorLayerStage?.addEventListener('pointerdown',event=>{
+  if(event.isPrimary||!editorState.selectedLayerId||editorPointers.has(event.pointerId))return
+  event.preventDefault();event.stopPropagation()
+  editorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+  editorLayerStage.setPointerCapture?.(event.pointerId)
+  beginEditorGesture()
+},{capture:true})
 editorLayerStage?.addEventListener('pointerup',finishEditorPointer)
 editorLayerStage?.addEventListener('pointercancel',finishEditorPointer)
 editorLayerStage?.addEventListener('click',event=>event.stopPropagation())
