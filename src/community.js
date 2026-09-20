@@ -67,6 +67,7 @@ import { navigateMobileRuntimeUrl, registerMobileRuntimeView } from './pwa/mobil
 import { formatUsername } from './utils/format'
 import { iconSvg } from './utils/icons'
 import { getStorageAssetUrl } from './firebase/storageAssets'
+import communityLoadingLogoUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
 
 const app = document.querySelector('#app')
 // melogic-community-lifecycle-contract-v4b
@@ -197,6 +198,7 @@ const state = {
   attachmentMediaUrls: {},
   viewerState: {},
   loading: true,
+  initialHomeHydration: true,
   feedInitialLoading: false,
   feedLoadingMore: false,
   feedHasMore: true,
@@ -2834,6 +2836,16 @@ function renderCommunityPlaceholderPage({ title = '', description = '', eyebrow 
   `
 }
 
+function renderCommunityInitialFeedLoader() {
+  return `
+    <section class="community-initial-feed-loader" role="status" aria-live="polite" aria-label="Loading Community">
+      <span class="community-initial-feed-loader-mark" aria-hidden="true">
+        <img src="${communityLoadingLogoUrl}" alt="" />
+      </span>
+    </section>
+  `
+}
+
 function renderActiveCommunityTabContent() {
   if (state.activeTab === 'forms') return renderFormsPage()
   if (state.activeTab === 'live') {
@@ -2860,6 +2872,7 @@ function renderActiveCommunityTabContent() {
       description: 'Community account preferences and identity controls will be collected here.'
     })
   }
+  if (state.view.type === 'feed' && state.initialHomeHydration) return `<div data-community-feed-region>${renderCommunityInitialFeedLoader()}</div>`
   return `<div data-community-feed-region>${renderFeed()}</div>`
 }
 
@@ -4378,6 +4391,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
 async function loadCommunity() {
   state.error = ''
   state.feedError = ''
+  const isInitialHomeHydration = state.view.type === 'feed' && state.initialHomeHydration
   if (state.detailPostId) {
     await loadPostDetail({ postId: state.detailPostId })
     return
@@ -4445,6 +4459,10 @@ async function loadCommunity() {
 
   state.loading = false
   await loadFeedPage({ reset: true })
+  if (isInitialHomeHydration) {
+    state.initialHomeHydration = false
+    render()
+  }
 }
 
 function updatePostCounts(postId, patch = {}) {
