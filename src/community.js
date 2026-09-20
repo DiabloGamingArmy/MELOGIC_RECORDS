@@ -355,6 +355,8 @@ let communityShellMounted = false
 let communityShellChromeInitialized = false
 let communityPagePreloaderInitialized = false
 let feedNavigationSnapshot = null
+const desktopCommunitySurfaceCache = new Map()
+let desktopCommunitySurfaceKey = ''
 const communityPendingActions = new Map()
 const communityPostReactionVersions = new Map()
 const communityPostSaveVersions = new Map()
@@ -649,44 +651,21 @@ function setupCommunityFeedTabs() {
 
 setupCommunityFeedTabs()
 
-// Desktop Network rail routing. These are visually the exact same anchors as
-// Discover, but feed selection must explicitly transition out of Discover.
-if (!window.__melogicDesktopCommunityFeedRailV1) {
-  window.__melogicDesktopCommunityFeedRailV1 = true
+// Desktop Network rail SPA: For You / Following / Discover retain mounted DOM,
+ // loaded media/entities, feed state, and independent scroll positions.
+if (!window.__melogicDesktopCommunitySurfaceRouterV1) {
+  window.__melogicDesktopCommunitySurfaceRouterV1 = true
   document.addEventListener('click', (event) => {
     if (isMobileSpaRuntime() || event.defaultPrevented || event.button !== 0) return
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const link = event.target instanceof Element
-      ? event.target.closest('a[data-community-desktop-feed-link]')
+      ? event.target.closest('a[data-community-desktop-surface]')
       : null
     if (!(link instanceof HTMLAnchorElement)) return
-    const nextTab = String(link.dataset.communityDesktopFeedLink || '').trim()
-    if (!['for-you', 'following'].includes(nextTab)) return
-
+    const nextKey = String(link.dataset.communityDesktopSurface || '').trim()
+    if (!['for-you', 'following', 'discover'].includes(nextKey)) return
     event.preventDefault()
-    state.activeTab = nextTab
-    state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
-    state.view = { type: 'feed' }
-    state.activeCommunityId = ''
-    state.activeCommunitySlug = ''
-    state.detailPostId = ''
-    state.feedError = ''
-    state.feedStillLoading = false
-    state.followingFeedCache = nextTab === 'following'
-      ? state.followingFeedCache
-      : { key: '', posts: [] }
-
-    const targetUrl = `${ROUTES.community}?feed=${encodeURIComponent(nextTab)}`
-    window.history.pushState({}, '', targetUrl)
-    render()
-    void loadFeedPage({ reset: true }).catch((error) => {
-      console.warn('[community] desktop feed rail load failed', error)
-      state.feedError = error?.message || 'Community feed could not be loaded.'
-      state.feedInitialLoading = false
-      state.feedLoadingMore = false
-      state.feedStillLoading = false
-      render()
-    })
+    navigateDesktopCommunitySurface(nextKey)
   })
 }
 
@@ -3421,13 +3400,13 @@ function renderLeftNav() {
 
       <nav>
         <section class="community-network-nav-section" aria-label="Network">
-          <a class="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'is-active' : ''}" href="${ROUTES.community}?feed=for-you" aria-current="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'page' : 'false'}" data-community-desktop-feed-link="for-you">
+          <a class="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'is-active' : ''}" href="${ROUTES.community}?feed=for-you" aria-current="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'page' : 'false'}" data-community-desktop-feed-link="for-you" data-community-desktop-surface="for-you">
             <span class="community-network-home-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span> <span>For You</span>
           </a>
-          <a class="${state.view.type === 'feed' && state.activeTab === 'following' ? 'is-active' : ''}" href="${ROUTES.community}?feed=following" aria-current="${state.view.type === 'feed' && state.activeTab === 'following' ? 'page' : 'false'}" data-community-desktop-feed-link="following">
+          <a class="${state.view.type === 'feed' && state.activeTab === 'following' ? 'is-active' : ''}" href="${ROUTES.community}?feed=following" aria-current="${state.view.type === 'feed' && state.activeTab === 'following' ? 'page' : 'false'}" data-community-desktop-feed-link="following" data-community-desktop-surface="following">
             ${iconSvg('users')} <span>Following</span>
           </a>
-          <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}" aria-current="${state.view.type === 'communities' ? 'page' : 'false'}">
+          <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}" aria-current="${state.view.type === 'communities' ? 'page' : 'false'}" data-community-desktop-surface="discover">
             ${iconSvg('search')} <span>Discover</span>
           </a>
         </section>
@@ -4029,6 +4008,7 @@ function restoreCommunityDesktopScrollAnchor(anchor) {
 
 function render() {
   if (!app) return
+  if (!isMobileSpaRuntime()) desktopCommunitySurfaceKey = desktopCommunitySurfaceKeyFor()
   const desktopScrollAnchor = captureCommunityDesktopScrollAnchor()
   document.body.classList.toggle('community-modal-open', communityModalIsOpen())
   const communityRoot = renderCommunityShellOnce()
@@ -6656,6 +6636,105 @@ function setupFeedPaginationObserver() {
     rootMargin: '0px 0px 420px 0px'
   })
   feedPaginationObserver.observe(sentinel)
+}
+
+// melogic-desktop-community-surface-cache-v1
+function desktopCommunitySurfaceKeyFor(viewType = state.view?.type, activeTab = state.activeTab) {
+  if (viewType === 'communities') return 'discover'
+  if (viewType === 'feed' && activeTab === 'following') return 'following'
+  if (viewType === 'feed') return 'for-you'
+  return ''
+}
+
+function captureDesktopCommunitySurface(key = desktopCommunitySurfaceKeyFor()) {
+  if (isMobileSpaRuntime() || !key) return false
+  const root = app?.querySelector('[data-community-root]')
+  if (!root || state.detailPostId) return false
+  const viewport = communityScrollViewport(root)
+  const fragment = document.createDocumentFragment()
+  while (root.firstChild) fragment.append(root.firstChild)
+  desktopCommunitySurfaceCache.set(key, {
+    fragment,
+    scrollTop: viewport?.scrollTop || 0,
+    state: {
+      activeTab: state.activeTab,
+      activeCommunityId: state.activeCommunityId,
+      activeCommunitySlug: state.activeCommunitySlug,
+      activeTopicLabel: state.activeTopicLabel,
+      selectedCommunityFilters: [...state.selectedCommunityFilters],
+      activeTag: state.activeTag,
+      feedSearch: state.feedSearch,
+      feedSort: state.feedSort,
+      view: { ...state.view },
+      communities: state.communities,
+      communityFocus: { ...state.communityFocus },
+      communityFilters: { ...state.communityFilters },
+      posts: state.posts,
+      attachmentMediaUrls: state.attachmentMediaUrls,
+      viewerState: state.viewerState,
+      feedInitialLoading: state.feedInitialLoading,
+      feedLoadingMore: state.feedLoadingMore,
+      feedHasMore: state.feedHasMore,
+      feedCursor: state.feedCursor,
+      feedError: state.feedError,
+      feedRequestId: state.feedRequestId,
+      activeFeedQueryKey: state.activeFeedQueryKey,
+      followingFeedCache: state.followingFeedCache
+    }
+  })
+  return true
+}
+
+function restoreDesktopCommunitySurface(key) {
+  if (isMobileSpaRuntime() || !key) return false
+  const cached = desktopCommunitySurfaceCache.get(key)
+  const root = app?.querySelector('[data-community-root]')
+  if (!cached || !root || !cached.fragment?.childNodes?.length) return false
+  desktopCommunitySurfaceCache.delete(key)
+  Object.assign(state, cached.state)
+  root.replaceChildren(cached.fragment)
+  desktopCommunitySurfaceKey = key
+  bindEvents()
+  const viewport = communityScrollViewport(root)
+  if (viewport) viewport.scrollTop = cached.scrollTop
+  window.requestAnimationFrame(() => {
+    const nextViewport = communityScrollViewport(root)
+    if (nextViewport) nextViewport.scrollTop = cached.scrollTop
+  })
+  updateTopicArrowState()
+  updateCommunityRailFadeState()
+  setupFeedPaginationObserver()
+  hydrateCommunityIdentityDom()
+  return true
+}
+
+function navigateDesktopCommunitySurface(nextKey) {
+  if (isMobileSpaRuntime() || !['for-you', 'following', 'discover'].includes(nextKey)) return false
+  const currentKey = desktopCommunitySurfaceKey || desktopCommunitySurfaceKeyFor()
+  if (currentKey === nextKey) return true
+  captureDesktopCommunitySurface(currentKey)
+
+  if (nextKey === 'discover') {
+    state.view = { type: 'communities' }
+    window.history.pushState({}, '', ROUTES.communityCommunities)
+  } else {
+    state.view = { type: 'feed' }
+    state.activeTab = nextKey
+    state.activeTopicLabel = nextKey === 'following' ? 'Following' : 'For You'
+    state.activeCommunityId = ''
+    state.activeCommunitySlug = ''
+    window.history.pushState({}, '', `${ROUTES.community}?feed=${encodeURIComponent(nextKey)}`)
+  }
+
+  if (restoreDesktopCommunitySurface(nextKey)) return true
+  desktopCommunitySurfaceKey = nextKey
+  render()
+  if (nextKey === 'discover') {
+    void loadCommunities().catch(() => null)
+  } else {
+    void loadFeedPage({ reset: true }).catch(() => null)
+  }
+  return true
 }
 
 function isPostCardInteractiveTarget(target) {
