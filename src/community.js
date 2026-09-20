@@ -7051,6 +7051,98 @@ let storyViewerPointerDownAt = 0
 let storyViewerPointerStartX = 0
 let storyViewerPointerStartY = 0
 let storyViewerHeld = false
+
+// melogic-mobile-story-lookahead-v1
+// Keep only the next two media assets warm on mobile. Detached media elements
+// let the browser fetch/decode/buffer without duplicating the Story viewer DOM.
+const STORY_MOBILE_LOOKAHEAD_COUNT = 2
+const storyMediaLookahead = new Map()
+
+function mobileStoryLookaheadEnabled() {
+  return isMobileSpaRuntime() || window.matchMedia?.('(max-width: 760px)').matches
+}
+
+function nextStoriesForLookahead(count = STORY_MOBILE_LOOKAHEAD_COUNT) {
+  const group = currentStoryGroup()
+  if (!group) return []
+  const groups = storyGroups()
+  const groupIndex = groups.findIndex((item) => item.key === group.key)
+  const storyIndex = currentStoryIndex()
+  const next = []
+
+  // Match advanceStory(1): finish this creator before moving to the next one.
+  for (let index = storyIndex + 1; index < group.stories.length && next.length < count; index += 1) {
+    next.push(group.stories[index])
+  }
+  for (let index = groupIndex + 1; index < groups.length && next.length < count; index += 1) {
+    for (const story of groups[index].stories) {
+      next.push(story)
+      if (next.length >= count) break
+    }
+  }
+  return next
+}
+
+function releaseStoryLookaheadEntry(entry) {
+  const media = entry?.media
+  if (!media) return
+  if (media instanceof HTMLVideoElement) {
+    media.pause()
+    media.removeAttribute('src')
+    try { media.load() } catch {}
+  } else if (media instanceof HTMLImageElement) {
+    media.src = ''
+  }
+}
+
+function clearStoryMediaLookahead() {
+  storyMediaLookahead.forEach(releaseStoryLookaheadEntry)
+  storyMediaLookahead.clear()
+}
+
+function warmStoryMediaLookahead() {
+  if (!state.storyViewer.open || !mobileStoryLookaheadEnabled()) {
+    clearStoryMediaLookahead()
+    return
+  }
+  const targets = nextStoriesForLookahead()
+    .filter((story) => story?.mediaURL && (story.mediaType === 'image' || story.mediaType === 'video'))
+  const keep = new Set(targets.map((story) => story.storyId))
+
+  for (const [storyId, entry] of storyMediaLookahead) {
+    if (keep.has(storyId)) continue
+    releaseStoryLookaheadEntry(entry)
+    storyMediaLookahead.delete(storyId)
+  }
+
+  targets.forEach((story, priority) => {
+    const existing = storyMediaLookahead.get(story.storyId)
+    if (existing?.url === story.mediaURL) return
+    if (existing) releaseStoryLookaheadEntry(existing)
+
+    if (story.mediaType === 'image') {
+      const image = new Image()
+      image.decoding = 'async'
+      image.fetchPriority = priority === 0 ? 'high' : 'auto'
+      image.src = story.mediaURL
+      // decode() is opportunistic; a failed decode must never affect viewing.
+      image.decode?.().catch(() => {})
+      storyMediaLookahead.set(story.storyId, { media: image, url: story.mediaURL, type: 'image' })
+      return
+    }
+
+    const video = document.createElement('video')
+    video.preload = 'auto'
+    video.muted = true
+    video.defaultMuted = true
+    video.playsInline = true
+    video.disablePictureInPicture = true
+    video.src = story.mediaURL
+    video.load()
+    storyMediaLookahead.set(story.storyId, { media: video, url: story.mediaURL, type: 'video' })
+  })
+}
+
 const STORY_SIGNAL_BAR_COUNT = 36
 const storySignalCache = new Map()
 let storySignalAnalysisToken = 0
@@ -7192,6 +7284,7 @@ function resumeStoryViewerPlayback() {
 function closeStoryViewer() {
   clearStoryViewerAdvanceTimer()
   clearStoryViewerProgressFrame()
+  clearStoryMediaLookahead()
   if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
   storyViewerHoldTimer = 0
   state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
@@ -7344,6 +7437,9 @@ function openStoryViewer(storyId = '') {
   const alreadyOpen = state.storyViewer.open && state.storyViewer.storyId === storyId
   state.storyViewer = { open: true, storyId, loading: false, error: '' }
   if (!alreadyOpen) render()
+  // Start warming the exact next two Story media assets after the active Story
+  // has rendered. This never blocks current playback.
+  if (!alreadyOpen) window.requestAnimationFrame(() => warmStoryMediaLookahead())
   if (recordedStoryViews.has(storyId)) return
   recordedStoryViews.add(storyId)
   recordCommunityStoryView(storyId).then((result) => {
