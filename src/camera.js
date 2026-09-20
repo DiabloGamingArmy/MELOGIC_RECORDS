@@ -65,6 +65,12 @@ cameraSurface.innerHTML = `
           <input type="range" min="16" max="72" value="36" data-camera-text-size aria-label="Text size">
         </div>
       </div>
+      <div class="camera-draw-controls" data-camera-draw-controls hidden>
+        <select data-camera-draw-brush aria-label="Brush"><option value="pen">Pen</option><option value="marker">Marker</option><option value="highlighter">Highlighter</option><option value="neon">Neon</option><option value="eraser">Eraser</option></select>
+        <input type="color" value="#ffffff" data-camera-draw-color aria-label="Brush color">
+        <input type="range" min="2" max="32" value="8" data-camera-draw-size aria-label="Brush size">
+        <input type="range" min="10" max="100" value="100" data-camera-draw-opacity aria-label="Brush opacity">
+      </div>
       <div class="camera-edit-tools" data-camera-edit-tools>
         <button type="button" data-camera-edit-tool="text" aria-label="Add text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8.5 19h7"/></svg></button>
         <button type="button" data-camera-edit-tool="pen" aria-label="Draw"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.8 6.4 2.8 2.8"/></svg></button>
@@ -546,7 +552,7 @@ function clampEditorValue(value,min,max){return Math.min(max,Math.max(min,value)
 function renderCameraEditorLayers(){
   const stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
   if(!stage)return
-  const nodes=editorState.layers.filter(layer=>layer.type!=='draw').sort((a,b)=>(a.zIndex||0)-(b.zIndex||0)).map(layer=>{
+  const nodes=editorState.layers.sort((a,b)=>(a.zIndex||0)-(b.zIndex||0)).map(layer=>{
     const node=document.createElement('div')
     node.className='camera-editor-layer'+(layer.id===editorState.selectedLayerId?' is-selected':'')
     node.dataset.cameraEditorLayer=layer.id
@@ -572,6 +578,22 @@ function renderCameraEditorLayers(){
       node.style.borderRadius=layer.background?'10px':'0'
       node.style.background=layer.background?'rgba(0,0,0,.58)':'transparent'
       node.style.textShadow=layer.background?'none':'0 2px 8px rgba(0,0,0,.72)'
+    }
+    else if(layer.type==='draw'){
+      node.classList.add('is-drawing')
+      node.style.left='0';node.style.top='0';node.style.width='100%';node.style.height='100%';node.style.transform='none';node.style.pointerEvents='none'
+      const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 1000 1000');svg.setAttribute('preserveAspectRatio','none')
+      const path=document.createElementNS('http://www.w3.org/2000/svg','path'),pts=Array.isArray(layer.points)?layer.points:[]
+      if(pts.length){
+        let d=`M ${pts[0].x*1000} ${pts[0].y*1000}`
+        for(let i=1;i<pts.length;i++){const p=pts[i],prev=pts[i-1],mx=(prev.x+p.x)*500,my=(prev.y+p.y)*500;d+=` Q ${prev.x*1000} ${prev.y*1000} ${mx} ${my}`}
+        const last=pts[pts.length-1];d+=` L ${last.x*1000} ${last.y*1000}`;path.setAttribute('d',d)
+      }
+      path.setAttribute('fill','none');path.setAttribute('stroke',layer.color||'#fff');path.setAttribute('stroke-width',String((layer.size||8)*2.2));path.setAttribute('stroke-linecap','round');path.setAttribute('stroke-linejoin','round');path.setAttribute('opacity',String(layer.opacity??1))
+      if(layer.brush==='marker')path.setAttribute('stroke-width',String((layer.size||8)*3.4))
+      if(layer.brush==='highlighter'){path.setAttribute('stroke-width',String((layer.size||8)*4.5));path.setAttribute('opacity',String(Math.min(layer.opacity??.35,.45)))}
+      if(layer.brush==='neon'){path.style.filter='drop-shadow(0 0 5px currentColor)';path.style.color=layer.color||'#fff'}
+      svg.append(path);node.append(svg)
     }
     else if(layer.type==='sticker')node.textContent=layer.value||'☺'
     else if(layer.type==='image'&&layer.previewURL){const img=document.createElement('img');img.src=layer.previewURL;img.alt='';node.append(img)}
@@ -656,7 +678,7 @@ window.__melogicCameraEditor={getState:exportCameraEditorState,addLayer:addCamer
 function sizeEditCanvas(){if(!editCanvas)return;const r=playback.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(editCanvas.width!==w||editCanvas.height!==h){editCanvas.width=w;editCanvas.height=h}}
 function pushEditHistory(){if(!editCanvas)return;editHistory.push(editCanvas.toDataURL());if(editHistory.length>20)editHistory.shift()}
 function restoreEditSnapshot(url){if(!editCtx)return;editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);if(!url)return;const i=new Image();i.onload=()=>editCtx.drawImage(i,0,0,editCanvas.width,editCanvas.height);i.src=url}
-function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
+function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;const dc=cameraSurface.querySelector('[data-camera-draw-controls]');if(dc)dc.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
 function editorPoint(e){const r=editCanvas.getBoundingClientRect();return{x:(e.clientX-r.left)*editCanvas.width/r.width,y:(e.clientY-r.top)*editCanvas.height/r.height}}
 async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
@@ -1177,7 +1199,7 @@ cameraSurface.querySelector('[data-camera-editor-selection-actions]')?.addEventL
   else if(action==='forward')moveCameraEditorLayer(editorState.selectedLayerId,1)
   else if(action==='back')moveCameraEditorLayer(editorState.selectedLayerId,-1)
 })
-cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}editTextInput.focus()}})
+cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';if(drawControls)drawControls.hidden=editMode!=='pen';editCanvas.classList.toggle('is-drawing-mode',editMode==='pen');editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}editTextInput.focus()}})
 const textFont=cameraSurface.querySelector('[data-camera-text-font]'),textColor=cameraSurface.querySelector('[data-camera-text-color]'),textSize=cameraSurface.querySelector('[data-camera-text-size]')
 function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
 function syncCameraTextControls(layer){
@@ -1236,9 +1258,27 @@ editorLayerStage?.addEventListener('dblclick',event=>{
   event.preventDefault();event.stopPropagation();selectCameraEditorLayer(layer.id);syncCameraTextControls(layer);editMode='text';editTextbox.hidden=false;editTextInput.focus();editTextInput.select()
 })
 
-editCanvas.addEventListener('pointerdown',e=>{if(editMode!=='pen')return;e.preventDefault();sizeEditCanvas();pushEditHistory();editDrawing=true;editCanvas.setPointerCapture?.(e.pointerId);const p=editorPoint(e);editCtx.beginPath();editCtx.moveTo(p.x,p.y)})
-editCanvas.addEventListener('pointermove',e=>{if(!editDrawing||editMode!=='pen')return;e.preventDefault();const p=editorPoint(e);editCtx.lineWidth=Math.max(5,editCanvas.width*.008);editCtx.lineCap='round';editCtx.strokeStyle='#fff';editCtx.lineTo(p.x,p.y);editCtx.stroke()})
-editCanvas.addEventListener('pointerup',()=>editDrawing=false);editCanvas.addEventListener('pointercancel',()=>editDrawing=false)
+const drawControls=cameraSurface.querySelector('[data-camera-draw-controls]'),drawBrush=cameraSurface.querySelector('[data-camera-draw-brush]'),drawColor=cameraSurface.querySelector('[data-camera-draw-color]'),drawSize=cameraSurface.querySelector('[data-camera-draw-size]'),drawOpacity=cameraSurface.querySelector('[data-camera-draw-opacity]')
+let activeDrawLayerId=''
+function normalizedDrawPoint(event){const r=editCanvas.getBoundingClientRect();return{x:clampEditorValue((event.clientX-r.left)/r.width,0,1),y:clampEditorValue((event.clientY-r.top)/r.height,0,1)}}
+editCanvas.addEventListener('pointerdown',e=>{
+  if(editMode!=='pen')return;e.preventDefault();e.stopPropagation();editDrawing=true;editCanvas.setPointerCapture?.(e.pointerId)
+  const brush=drawBrush?.value||'pen'
+  if(brush==='eraser'){
+    const p=normalizedDrawPoint(e),hit=[...editorState.layers].reverse().find(layer=>layer.type==='draw'&&layer.points?.some(point=>Math.hypot(point.x-p.x,point.y-p.y)<.045))
+    if(hit)removeCameraEditorLayer(hit.id);editDrawing=false;return
+  }
+  const layer=addCameraEditorLayer('draw',{points:[normalizedDrawPoint(e)],brush,color:drawColor?.value||'#ffffff',size:Number(drawSize?.value)||8,opacity:(Number(drawOpacity?.value)||100)/100,x:.5,y:.5,width:1,height:1})
+  activeDrawLayerId=layer.id
+})
+editCanvas.addEventListener('pointermove',e=>{
+  if(!editDrawing||editMode!=='pen'||!activeDrawLayerId)return;e.preventDefault()
+  const layer=editorState.layers.find(item=>item.id===activeDrawLayerId);if(!layer)return
+  const point=normalizedDrawPoint(e),last=layer.points[layer.points.length-1];if(last&&Math.hypot(point.x-last.x,point.y-last.y)<.003)return
+  layer.points.push(point);editorState.revision+=1;renderCameraEditorLayers()
+})
+function finishDrawing(){editDrawing=false;activeDrawLayerId=''}
+editCanvas.addEventListener('pointerup',finishDrawing);editCanvas.addEventListener('pointercancel',finishDrawing)
 async function cancelCameraReview() {
   closeShareScreen()
   playback.hidden = true; playback._melogicCapture = null
