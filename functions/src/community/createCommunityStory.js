@@ -36,6 +36,9 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
   const linkedProductId = sanitizeLinkedId(request.data?.linkedProductId || '')
   const remixOfStoryId = sanitizeLinkedId(request.data?.remixOfStoryId || '')
   const remixPermission = request.data?.remixPermission === true
+  const storyTypeRaw = cleanString(request.data?.storyType || 'moment', 24).toLowerCase()
+  const storyTypes = new Set(['moment', 'sound', 'thought', 'drop', 'ask', 'live', 'project'])
+  const storyType = storyTypes.has(storyTypeRaw) ? storyTypeRaw : 'moment'
   const layers = sanitizeStoryLayers(request.data?.layers || [])
 
   if (!STORY_MEDIA_TYPES.has(mediaType)) {
@@ -87,6 +90,7 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
     background: mediaType === 'text' ? sanitizeBackground(request.data?.background || '') : '',
     linkedPostId,
     linkedProductId,
+    storyType,
     remixPermission,
     remixOfStoryId,
     remixSourceAuthorUid: remixSource?.authorUid || '',
