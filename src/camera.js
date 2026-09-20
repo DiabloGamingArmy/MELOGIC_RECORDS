@@ -136,7 +136,6 @@ cameraSurface.innerHTML = `
       </div>
       <div class="camera-edit-tools" data-camera-edit-tools data-active-tool="">
         <div class="camera-edit-tool-context" data-camera-edit-tool-context aria-hidden="true"></div>
-        <div class="camera-edit-tool-slot" data-camera-edit-tool-slot hidden></div>
         <button type="button" data-camera-edit-tool="text" aria-label="Add text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8.5 19h7"/></svg></button>
         <button type="button" data-camera-edit-tool="pen" aria-label="Draw"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.8 6.4 2.8 2.8"/></svg></button>
         <button type="button" data-camera-edit-tool="sticker" aria-label="Add sticker"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9V8l-5-5h-4Z"/><path d="M16 3v5h5"/><path d="M8.5 12.5h.01M14.5 12.5h.01M8.8 16c1.8 1.5 4.6 1.5 6.4 0"/></svg></button>
@@ -823,8 +822,7 @@ window.__melogicCameraEditor={getState:exportCameraEditorState,addLayer:addCamer
 function sizeEditCanvas(){if(!editCanvas)return;const r=playback.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(editCanvas.width!==w||editCanvas.height!==h){editCanvas.width=w;editCanvas.height=h}}
 function pushEditHistory(){if(!editCanvas)return;editHistory.push(editCanvas.toDataURL());if(editHistory.length>20)editHistory.shift()}
 function restoreEditSnapshot(url){if(!editCtx)return;editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);if(!url)return;const i=new Image();i.onload=()=>editCtx.drawImage(i,0,0,editCanvas.width,editCanvas.height);i.src=url}
-document.addEventListener('keydown',event=>{if(event.key!=='Escape'||!cameraSurface?.dataset?.cameraActiveTool)return;if(cameraSurface.classList.contains('has-editor-modal')||editMode){event.preventDefault();closeActiveCameraTool()}})
-function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');applyCameraMediaTransform();applyCameraAdjustments();applyCameraAudioPreview();editorPointers.clear();editorGesture=null;editorGestureHistoryCommitted=false;renderCameraEditorLayers();closeCameraToolPanels('');setCameraToolRail('');cameraSurface.classList.remove('has-editor-modal','is-keyboard-open');cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');const interactive=cameraSurface.querySelector('[data-camera-interactive-editor]');if(interactive)interactive.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>{b.classList.remove('is-active');b.setAttribute('aria-pressed','false')})}
+function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');applyCameraMediaTransform();applyCameraAdjustments();applyCameraAudioPreview();editorPointers.clear();editorGesture=null;editorGestureHistoryCommitted=false;renderCameraEditorLayers();closeCameraToolPanels('');setCameraToolRail('');cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');const interactive=cameraSurface.querySelector('[data-camera-interactive-editor]');if(interactive)interactive.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>{b.classList.remove('is-active');b.setAttribute('aria-pressed','false')})}
 function editorPoint(e){const r=editCanvas.getBoundingClientRect();return{x:(e.clientX-r.left)*editCanvas.width/r.width,y:(e.clientY-r.top)*editCanvas.height/r.height}}
 async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
@@ -1345,61 +1343,29 @@ cameraSurface.querySelector('[data-camera-editor-selection-actions]')?.addEventL
   else if(action==='forward')moveCameraEditorLayer(editorState.selectedLayerId,1)
   else if(action==='back')moveCameraEditorLayer(editorState.selectedLayerId,-1)
 })
-const editToolRail=cameraSurface.querySelector('[data-camera-edit-tools]'),editToolContext=cameraSurface.querySelector('[data-camera-edit-tool-context]'),editToolSlot=cameraSurface.querySelector('[data-camera-edit-tool-slot]')
-const cameraToolPanelHomes=new Map()
-function rememberCameraToolPanel(panel){if(panel&&!cameraToolPanelHomes.has(panel))cameraToolPanelHomes.set(panel,{parent:panel.parentNode,next:panel.nextSibling})}
-function restoreCameraToolPanel(panel){
-  const home=cameraToolPanelHomes.get(panel);if(!panel||!home)return
-  if(home.next?.parentNode===home.parent)home.parent.insertBefore(panel,home.next);else home.parent.appendChild(panel)
-}
-function cameraInlineToolPanel(tool){
-  if(tool==='text')return editTextbox?.querySelector('.camera-text-controls')||null
-  if(tool==='pen')return drawControls?.querySelector('.camera-draw-brushes')||null
-  if(tool==='crop')return cameraSurface.querySelector('[data-camera-crop-controls] .camera-crop-rail')
-  return null
-}
-function mountCameraToolPanel(tool){
-  if(!editToolSlot)return
-  const panel=cameraInlineToolPanel(tool)
-  Array.from(editToolSlot.children).forEach(child=>{restoreCameraToolPanel(child)})
-  editToolSlot.replaceChildren()
-  if(!panel){editToolSlot.hidden=true;return}
-  rememberCameraToolPanel(panel);editToolSlot.appendChild(panel);panel.hidden=false;editToolSlot.hidden=false
-}
-function clearCameraToolSlot(){
-  if(!editToolSlot)return
-  Array.from(editToolSlot.children).forEach(child=>restoreCameraToolPanel(child))
-  editToolSlot.replaceChildren();editToolSlot.hidden=true
-}
+const editToolRail=cameraSurface.querySelector('[data-camera-edit-tools]'),editToolContext=cameraSurface.querySelector('[data-camera-edit-tool-context]')
 const CAMERA_TOOL_LABELS={text:'Text',pen:'Draw',sticker:'Stickers',crop:'Crop',video:'Video',adjust:'Adjust',music:'Music',image:'Image'}
 function setCameraToolRail(tool=''){
   if(!editToolRail)return
   editToolRail.dataset.activeTool=tool;editToolRail.classList.toggle('is-expanded',!!tool);cameraSurface.dataset.cameraActiveTool=tool
   editToolRail.querySelectorAll(':scope > [data-camera-edit-tool]').forEach(button=>{const active=button.dataset.cameraEditTool===tool;button.classList.toggle('is-active',active);button.setAttribute('aria-pressed',String(active))})
   if(editToolContext){editToolContext.textContent=tool?(CAMERA_TOOL_LABELS[tool]||tool):'';editToolContext.setAttribute('aria-hidden',String(!tool))}
-  if(tool&&['text','pen','crop'].includes(tool))mountCameraToolPanel(tool);else clearCameraToolSlot()
 }
 function closeCameraToolPanels(except=''){
   const panels={text:editTextbox,pen:drawControls,sticker:cameraSurface.querySelector('[data-camera-sticker-picker]'),crop:cameraSurface.querySelector('[data-camera-crop-controls]'),video:videoControls,adjust:adjustControls,music:audioControls}
-  Object.entries(panels).forEach(([name,panel])=>{if(!panel||name===except)return;panel.hidden=true})
-  if(except!=='text'&&editTextbox)editTextbox.hidden=true
-  if(except!=='pen'&&drawControls)drawControls.hidden=true
-  if(except!=='crop'){const crop=cameraSurface.querySelector('[data-camera-crop-controls]');if(crop)crop.hidden=true}
+  Object.entries(panels).forEach(([name,panel])=>{if(panel&&name!==except)panel.hidden=true})
   if(except!=='text'){cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');if(document.activeElement===editTextInput)editTextInput.blur()}
   if(except!=='sticker'){const form=cameraSurface.querySelector('[data-camera-interactive-editor]');if(form)form.hidden=true}
   if(except!=='pen')editCanvas.classList.remove('is-drawing-mode')
   if(except!=='crop'){editCanvas.classList.remove('is-crop-mode');cameraSurface.classList.remove('is-media-transforming')}
 }
 function toggleCameraToolRail(tool,button){
-  const previous=editToolRail?.dataset.activeTool||'',closing=previous===tool
-  if(previous==='sticker'&&tool!=='sticker')cameraSurface.classList.remove('has-editor-modal')
-  if(previous==='music'&&tool!=='music')cameraSurface.classList.remove('has-editor-modal')
+  const closing=editToolRail?.dataset.activeTool===tool
   closeCameraToolPanels(closing?'':tool);setCameraToolRail(closing?'':tool)
-  if(closing){cameraSurface.classList.remove('has-editor-modal');editMode='';return false}
+  if(closing){editMode='';return false}
   editMode=tool;return true
 }
-function closeActiveCameraTool(){const active=editToolRail?.dataset.activeTool;if(active)toggleCameraToolRail(active)}
-cameraSurface.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b||!b.closest('[data-camera-edit-tools],[data-camera-editor-functions]'))return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='video'){if(playback.dataset.captureType!=='video')return;const open=toggleCameraToolRail(t,b);if(videoControls){videoControls.hidden=!open;if(open)syncCameraVideoControls()}return}if(t==='adjust'){const open=toggleCameraToolRail(t,b);if(adjustControls){adjustControls.hidden=!open;if(open)syncCameraAdjustmentControls()}return}if(t==='music'){const open=toggleCameraToolRail(t,b);if(audioControls){audioControls.hidden=!open;cameraSurface.classList.toggle('has-editor-modal',open);if(open)syncCameraAudioControls()}return}if(t==='image'){closeCameraToolPanels('');editMode='';setCameraToolRail('');editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const open=toggleCameraToolRail(t,b),picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!open;cameraSurface.classList.toggle('has-editor-modal',open);if(open){renderCameraStickerGrid('featured','');void loadCameraStickerAssets()}}return}const open=toggleCameraToolRail(t,b);editTextbox.hidden=!(open&&t==='text');if(drawControls)drawControls.hidden=!(open&&t==='pen');editCanvas.classList.toggle('is-drawing-mode',open&&t==='pen');editCanvas.classList.toggle('is-crop-mode',open&&t==='crop');const cropControls=cameraSurface.querySelector('[data-camera-crop-controls]');if(cropControls)cropControls.hidden=!(open&&t==='crop');cameraSurface.classList.toggle('is-media-transforming',open&&t==='crop');if(open&&['text','pen','crop'].includes(t))mountCameraToolPanel(t);if(open&&t==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editorState.selectedLayerId='';editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}cameraSurface.querySelector('[data-camera-text-dim]')?.removeAttribute('hidden');requestAnimationFrame(()=>editTextInput.focus({preventScroll:true}))}})
+cameraSurface.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b||!b.closest('[data-camera-edit-tools],[data-camera-editor-functions]'))return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='video'){if(playback.dataset.captureType!=='video')return;const open=toggleCameraToolRail(t,b);if(videoControls){videoControls.hidden=!open;if(open)syncCameraVideoControls()}return}if(t==='adjust'){const open=toggleCameraToolRail(t,b);if(adjustControls){adjustControls.hidden=!open;if(open)syncCameraAdjustmentControls()}return}if(t==='music'){const open=toggleCameraToolRail(t,b);if(audioControls){audioControls.hidden=!open;if(open)syncCameraAudioControls()}return}if(t==='image'){closeCameraToolPanels('');editMode='';setCameraToolRail('');editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const open=toggleCameraToolRail(t,b),picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!open;if(open){renderCameraStickerGrid('featured','');void loadCameraStickerAssets()}}return}const open=toggleCameraToolRail(t,b);editTextbox.hidden=!(open&&t==='text');if(drawControls)drawControls.hidden=!(open&&t==='pen');editCanvas.classList.toggle('is-drawing-mode',open&&t==='pen');editCanvas.classList.toggle('is-crop-mode',open&&t==='crop');const cropControls=cameraSurface.querySelector('[data-camera-crop-controls]');if(cropControls)cropControls.hidden=!(open&&t==='crop');cameraSurface.classList.toggle('is-media-transforming',open&&t==='crop');if(open&&t==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editorState.selectedLayerId='';editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}cameraSurface.querySelector('[data-camera-text-dim]')?.removeAttribute('hidden');requestAnimationFrame(()=>editTextInput.focus({preventScroll:true}))}})
 const videoControls=cameraSurface.querySelector('[data-camera-video-controls]'),videoTrimStart=cameraSurface.querySelector('[data-camera-video-trim-start]'),videoTrimEnd=cameraSurface.querySelector('[data-camera-video-trim-end]'),videoSelection=cameraSurface.querySelector('[data-camera-video-selection]')
 function cameraVideoDuration(){return Math.max(0,editorState.media.durationMs||Math.round((recordedVideo.duration||0)*1000))}
 function formatCameraVideoTime(ms){const seconds=Math.max(0,ms)/1000,m=Math.floor(seconds/60),s=(seconds-m*60).toFixed(1).padStart(4,'0');return `${m}:${s}`}
@@ -1416,12 +1382,12 @@ videoTrimStart?.addEventListener('change',()=>{const duration=cameraVideoDuratio
 videoTrimEnd?.addEventListener('change',()=>{const duration=cameraVideoDuration(),start=editorState.video.trimStartMs||0,end=Math.max(Number(videoTrimEnd.value)||duration,start+100);updateCameraVideo({trimEndMs:Math.min(end,duration)})})
 cameraSurface.querySelector('.camera-video-speeds')?.addEventListener('click',event=>{const button=event.target.closest('[data-camera-video-speed]');if(button)updateCameraVideo({playbackRate:Number(button.dataset.cameraVideoSpeed)||1})})
 cameraSurface.querySelector('[data-camera-video-reset]')?.addEventListener('click',()=>updateCameraVideo({trimStartMs:0,trimEndMs:cameraVideoDuration(),playbackRate:1}))
-cameraSurface.querySelector('[data-camera-video-close]')?.addEventListener('click',closeActiveCameraTool)
+cameraSurface.querySelector('[data-camera-video-close]')?.addEventListener('click',()=>{if(editToolRail?.dataset.activeTool==='video')toggleCameraToolRail('video')})
 recordedVideo.addEventListener('timeupdate',()=>{const v=editorState.video||{},start=(v.trimStartMs||0)/1000,end=(v.trimEndMs||cameraVideoDuration())/1000;if(end>start&&recordedVideo.currentTime>=end-.02)recordedVideo.currentTime=start})
 
 const adjustControls=cameraSurface.querySelector('[data-camera-adjust-controls]')
 renderCameraAdjustmentControls()
-cameraSurface.querySelector('[data-camera-adjust-close]')?.addEventListener('click',closeActiveCameraTool)
+cameraSurface.querySelector('[data-camera-adjust-close]')?.addEventListener('click',()=>{if(editToolRail?.dataset.activeTool==='adjust')toggleCameraToolRail('adjust')})
 
 const audioControls=cameraSurface.querySelector('[data-camera-audio-controls]'),originalVolume=cameraSurface.querySelector('[data-camera-original-volume]'),originalMute=cameraSurface.querySelector('[data-camera-original-mute]'),musicVolume=cameraSurface.querySelector('[data-camera-music-volume]'),musicStart=cameraSurface.querySelector('[data-camera-music-start]'),musicEnd=cameraSurface.querySelector('[data-camera-music-end]'),musicFadeIn=cameraSurface.querySelector('[data-camera-music-fade-in]'),musicFadeOut=cameraSurface.querySelector('[data-camera-music-fade-out]'),musicRemove=cameraSurface.querySelector('[data-camera-music-remove]')
 function applyCameraAudioPreview(){
@@ -1441,7 +1407,7 @@ musicFadeIn?.addEventListener('change',()=>updateCameraAudio({fadeInMs:Math.max(
 musicFadeOut?.addEventListener('change',()=>updateCameraAudio({fadeOutMs:Math.max(0,Math.round(Number(musicFadeOut.value||0)*1000))}))
 musicRemove?.addEventListener('click',()=>updateCameraAudio({music:null}))
 let cameraMusicReleases=[],cameraMusicSearchTimer=0,cameraMusicObjectUrl=''
-function closeCameraMusicSheet(){audioControls.querySelector('input:focus')?.blur();audioControls.hidden=true;audioControls.style.removeProperty('--camera-sheet-drag');cameraSurface.classList.remove('has-editor-modal');if(editToolRail?.dataset.activeTool==='music'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
+function closeCameraMusicSheet(){audioControls.hidden=true;if(editToolRail?.dataset.activeTool==='music'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
 function renderCameraMusicResults(releases=[]){
  const host=cameraSurface.querySelector('[data-camera-music-results]'),empty=cameraSurface.querySelector('[data-camera-music-empty]');if(!host)return
  host.replaceChildren(...releases.map(release=>{const button=document.createElement('button');button.type='button';button.className='camera-music-result';button.dataset.cameraMusicRelease=release.id;const art=document.createElement(release.coverArtURL?'img':'span');if(release.coverArtURL){art.src=release.coverArtURL;art.alt=''}else{art.className='camera-music-art-fallback';art.textContent='♪'}const copy=document.createElement('span');copy.innerHTML='<strong></strong><small></small>';copy.querySelector('strong').textContent=release.title;copy.querySelector('small').textContent=release.artistName;button.append(art,copy);return button}))
@@ -1459,23 +1425,15 @@ function installCameraSheetDrag(sheet,close){
  if(!sheet)return;const grabber=sheet.querySelector('.camera-sheet-grabber');if(!grabber)return
  let startY=0,delta=0,active=false
  grabber.addEventListener('pointerdown',event=>{active=true;startY=event.clientY;delta=0;grabber.setPointerCapture?.(event.pointerId);sheet.classList.add('is-dragging')})
- grabber.addEventListener('pointermove',event=>{if(!active)return;delta=Math.max(0,event.clientY-startY);sheet.style.setProperty('--camera-sheet-drag',`${delta}px`)})
- const finish=(cancelled=false)=>{if(!active)return;active=false;sheet.classList.remove('is-dragging');const dismiss=!cancelled&&delta>Math.min(110,sheet.getBoundingClientRect().height*.14);sheet.style.removeProperty('--camera-sheet-drag');delta=0;if(dismiss)close()}
- grabber.addEventListener('pointerup',()=>finish(false));grabber.addEventListener('pointercancel',()=>finish(true))
+ grabber.addEventListener('pointermove',event=>{if(!active)return;delta=Math.max(0,event.clientY-startY);sheet.style.transform=`translateY(${delta}px)`})
+ const finish=()=>{if(!active)return;active=false;sheet.classList.remove('is-dragging');sheet.style.removeProperty('transform');if(delta>90)close()}
+ grabber.addEventListener('pointerup',finish);grabber.addEventListener('pointercancel',finish)
 }
 installCameraSheetDrag(cameraSurface.querySelector('[data-camera-sticker-picker]'),closeCameraStickerSheet)
 installCameraSheetDrag(audioControls,closeCameraMusicSheet)
 const cameraVisualViewport=window.visualViewport
-function syncCameraEditorViewport(){
- const height=Math.round(cameraVisualViewport?.height||window.innerHeight),offsetTop=Math.round(cameraVisualViewport?.offsetTop||0),layoutHeight=Math.round(window.innerHeight)
- cameraSurface.style.setProperty('--camera-editor-viewport-height',`${height}px`)
- cameraSurface.style.setProperty('--camera-editor-viewport-top',`${offsetTop}px`)
- cameraSurface.style.setProperty('--camera-editor-layout-height',`${layoutHeight}px`)
- const keyboardOpen=height<layoutHeight-120
- cameraSurface.classList.toggle('is-keyboard-open',keyboardOpen)
- if(!keyboardOpen&&document.activeElement===editTextInput&&editToolRail?.dataset.activeTool!=='text')editTextInput.blur()
-}
-cameraVisualViewport?.addEventListener('resize',syncCameraEditorViewport,{passive:true});cameraVisualViewport?.addEventListener('scroll',syncCameraEditorViewport,{passive:true});window.addEventListener('orientationchange',()=>requestAnimationFrame(syncCameraEditorViewport),{passive:true});syncCameraEditorViewport()
+function syncCameraEditorViewport(){const height=cameraVisualViewport?.height||window.innerHeight;cameraSurface.style.setProperty('--camera-editor-viewport-height',`${Math.round(height)}px`)}
+cameraVisualViewport?.addEventListener('resize',syncCameraEditorViewport,{passive:true});cameraVisualViewport?.addEventListener('scroll',syncCameraEditorViewport,{passive:true});syncCameraEditorViewport()
 
 cameraSurface.querySelector('[data-camera-audio-close]')?.addEventListener('click',closeCameraMusicSheet)
 
@@ -1494,7 +1452,7 @@ cameraSurface.querySelector('[data-camera-crop-controls]')?.addEventListener('cl
   if(action==='flip-x')setCameraMediaTransform({flipX:!editorState.transform.flipX})
   if(action==='flip-y')setCameraMediaTransform({flipY:!editorState.transform.flipY})
   if(action==='reset'){pushCameraEditorHistory();editorState.transform=createCameraEditorState().transform;editorState.revision+=1;if(cropZoom)cropZoom.value='100';applyCameraMediaTransform();cameraSurface.querySelectorAll('[data-camera-crop-aspect]').forEach(button=>button.classList.toggle('is-active',button.dataset.cameraCropAspect==='free'))}
-  if(action==='done'){editMode='';cameraSurface.classList.remove('is-media-transforming');clearCameraToolSlot();cameraSurface.querySelector('[data-camera-crop-controls]').hidden=true;editCanvas.classList.remove('is-crop-mode');setCameraToolRail('')}
+  if(action==='done'){editMode='';cameraSurface.classList.remove('is-media-transforming');cameraSurface.querySelector('[data-camera-crop-controls]').hidden=true;editCanvas.classList.remove('is-crop-mode');setCameraToolRail('')}
 })
 let cropZoomHistoryArmed=false
 cropZoom?.addEventListener('pointerdown',()=>{cropZoomHistoryArmed=false})
@@ -1570,7 +1528,7 @@ function renderCameraStickerGrid(tab='featured',search=''){
   grid.replaceChildren(...assets.map(asset=>{const button=document.createElement('button');button.type='button';button.dataset.cameraStickerAsset=asset.id;button.className='is-asset';const img=document.createElement('img');img.src=asset.thumbnailUrl||asset.url;img.alt=asset.title||'Sticker';img.loading='lazy';button.append(img);return button}))
   if(empty)empty.hidden=assets.length>0
 }
-function closeCameraStickerSheet(){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');picker?.querySelector('input:focus')?.blur();if(picker)picker.hidden=true;const form=cameraSurface.querySelector('[data-camera-interactive-editor]');if(form)form.hidden=true;if(editToolRail?.dataset.activeTool==='sticker'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
+function closeCameraStickerSheet(){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker)picker.hidden=true;const form=cameraSurface.querySelector('[data-camera-interactive-editor]');if(form)form.hidden=true;if(editToolRail?.dataset.activeTool==='sticker'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
 cameraSurface.querySelector('[data-camera-sticker-picker]')?.addEventListener('click',event=>{
   const assetButton=event.target.closest('[data-camera-sticker-asset]');if(assetButton){const asset=cameraStickerAssets.find(item=>item.id===assetButton.dataset.cameraStickerAsset);if(asset){addCameraEditorLayer('image',{previewURL:asset.url,assetId:asset.id,assetKind:asset.kind||'sticker',title:asset.title||'',width:.34,height:.34,fit:'contain'});closeCameraStickerSheet()}return}
 
