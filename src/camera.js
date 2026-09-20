@@ -1496,25 +1496,36 @@ const textRailFont=cameraSurface.querySelector('[data-camera-text-rail-font]'),t
 function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
 function syncCameraTextInputGeometry(){
   if(!editTextInput||editTextbox.hidden)return
-  const layer=selectedCameraTextLayer(),node=layer&&cameraSurface.querySelector(`[data-camera-editor-layer="${layer.id}"]`)
-  if(!layer||!node)return
-  const nodeRect=node.getBoundingClientRect(),boxRect=editTextbox.getBoundingClientRect(),style=getComputedStyle(node)
-  editTextInput.style.left=`${nodeRect.left-boxRect.left}px`
-  editTextInput.style.top=`${nodeRect.top-boxRect.top}px`
-  editTextInput.style.transform='none'
-  editTextInput.style.width=`${Math.max(1,nodeRect.width)}px`
-  editTextInput.style.height=`${Math.max(1,nodeRect.height)}px`
-  editTextInput.style.minHeight='0'
-  editTextInput.style.maxHeight='none'
-  editTextInput.style.padding=style.padding
-  editTextInput.style.fontFamily=style.fontFamily
-  editTextInput.style.fontSize=style.fontSize
-  editTextInput.style.fontWeight=style.fontWeight
-  editTextInput.style.fontStyle=style.fontStyle
-  editTextInput.style.lineHeight=style.lineHeight
-  editTextInput.style.textAlign=style.textAlign
-  editTextInput.style.letterSpacing=style.letterSpacing
+  const layer=selectedCameraTextLayer()
+  if(!layer)return
+  // While typing the textarea is the single renderer. Match the text layer's
+  // visual state, but keep it in the keyboard-safe editor center.
+  const fontMap={system:'system-ui,-apple-system,sans-serif',serif:'Georgia,serif',mono:'ui-monospace,SFMono-Regular,monospace',rounded:'"Arial Rounded MT Bold",system-ui,sans-serif'}
+  editTextInput.style.left='50%'
+  editTextInput.style.top='50%'
+  editTextInput.style.transform='translate(-50%,-50%)'
+  editTextInput.style.width='min(78%,560px)'
+  editTextInput.style.height='auto'
+  editTextInput.style.minHeight='56px'
+  editTextInput.style.maxHeight='36vh'
+  editTextInput.style.padding=layer.background?'8px 12px':'4px'
+  editTextInput.style.fontFamily=fontMap[layer.fontFamily]||fontMap.system
+  editTextInput.style.fontSize=`${clampEditorValue(Number(layer.fontSize)||36,12,96)}px`
+  editTextInput.style.fontWeight=layer.fontWeight||700
+  editTextInput.style.fontStyle=layer.fontStyle||'normal'
+  editTextInput.style.textDecoration=layer.textDecoration||'none'
+  editTextInput.style.lineHeight='1.08'
+  editTextInput.style.textAlign=layer.textAlign||'center'
+  editTextInput.style.color=layer.color||'#fff'
+  editTextInput.style.webkitTextFillColor=layer.color||'#fff'
+  editTextInput.style.webkitTextStroke=(layer.borderColor&&layer.borderColor!=='transparent')?`${Math.max(.5,Number(layer.borderWidth)||1)}px ${layer.borderColor}`:'0 transparent'
+  editTextInput.style.opacity=String(clampEditorValue(layer.opacity??1,0,1))
+  editTextInput.style.background=layer.background?'rgba(0,0,0,.58)':'transparent'
+  editTextInput.style.borderRadius=layer.background?'10px':'0'
+  editTextInput.style.textShadow=layer.background?'none':'0 2px 8px rgba(0,0,0,.72)'
+  editTextInput.style.caretColor='#fff'
   editTextInput.style.whiteSpace='pre-wrap'
+  editTextInput.style.overflowWrap='anywhere'
   editTextInput.style.overflow='hidden'
 }
 function syncTextRailControls(layer){
@@ -1537,7 +1548,6 @@ function syncCameraTextControls(layer){
   if(textColor)textColor.value=layer.color||'#ffffff'
   if(textSize)textSize.value=String(layer.fontSize||36)
   syncTextRailControls(layer)
-  editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent'
   requestAnimationFrame(syncCameraTextInputGeometry)
 }
 function closeCameraTextEditor({commit=true}={}){
@@ -1556,8 +1566,8 @@ editTextInput?.addEventListener('input',()=>{
   let layer=selectedCameraTextLayer();const text=editTextInput.value
   if(!layer&&text){layer=addCameraEditorLayer('text',{text,x:.5,y:.5,fontFamily:textRailFont?.value||textFont?.value||'system',fontSize:Number(textRailSize?.value||textSize?.value)||36,color:textRailColor?.value||textColor?.value||'#ffffff',borderColor:textRailBorderColor?.value||'#000000',borderWidth:1,opacity:(Number(textRailOpacity?.value)||100)/100,width:.24,height:.08,fontWeight:700,fontStyle:'normal',textDecoration:'none',textAlign:'center',background:false});editorState.__textDraftId=layer.id;syncTextRailControls(layer)}
   else if(layer)updateCameraEditorLayer(layer.id,{text},{history:false})
-  // The actual text layer is the only visible text while typing; textarea is caret/input only.
-  if(layer){editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent';requestAnimationFrame(syncCameraTextInputGeometry)}
+  // The textarea is the sole live renderer while typing; the selected stage layer is hidden by CSS.
+  if(layer)requestAnimationFrame(syncCameraTextInputGeometry)
 })
 editTextInput?.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();commitCameraText()}})
 textFont?.addEventListener('change',()=>{const layer=selectedCameraTextLayer();if(layer)updateCameraEditorLayer(layer.id,{fontFamily:textFont.value})})
