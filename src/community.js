@@ -1037,6 +1037,13 @@ function cleanStoryComposerState(overrides = {}) {
     previewURL: '',
     lifetimeHours: 24,
     visibility: 'public',
+    layers: [],
+    selectedLayerId: '',
+    remixOfStoryId: '',
+    remixPermission: false,
+    remixSourcePreviewURL: '',
+    remixSourceMediaType: '',
+    remixSourceAuthorDisplayName: '',
     uploadProgress: 0,
     recording: false,
     recordingSeconds: 0,
@@ -1286,7 +1293,10 @@ function renderStoryComposerModal() {
   if (!state.storyComposer.open) return ''
   const isRecordMode = state.storyComposer.mode === 'record'
   const isVideo = state.storyComposer.mediaType === 'video'
-  const hasPreview = Boolean(state.storyComposer.previewURL)
+  const hasPreview = Boolean(state.storyComposer.previewURL || state.storyComposer.remixSourcePreviewURL)
+  const previewURL = state.storyComposer.previewURL || state.storyComposer.remixSourcePreviewURL
+  const previewMediaType = state.storyComposer.previewURL ? state.storyComposer.mediaType : state.storyComposer.remixSourceMediaType
+  const isSourceOnlyPreview = Boolean(!state.storyComposer.previewURL && state.storyComposer.remixSourcePreviewURL)
   const progress = Math.max(0, Math.min(100, Number(state.storyComposer.uploadProgress || 0)))
   return `
     <div class="community-modal-backdrop">
@@ -1301,6 +1311,7 @@ function renderStoryComposerModal() {
         </header>
         ${state.storyComposer.message ? `<p class="community-success">${escapeHtml(state.storyComposer.message)}</p>` : `
           <form data-story-composer-form>
+            ${state.storyComposer.remixOfStoryId ? `<div class="community-story-remix-banner"><span>REMIX</span><strong>From ${escapeHtml(state.storyComposer.remixSourceAuthorDisplayName || 'original creator')}</strong><small>Original attribution remains attached to your Story.</small></div>` : ''}
             <div class="community-story-mode-switch" role="group" aria-label="Story media source">
               <button type="button" data-story-mode="upload" class="${state.storyComposer.mode === 'upload' ? 'is-active' : ''}" aria-pressed="${state.storyComposer.mode === 'upload' ? 'true' : 'false'}" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('upload')} <span>Upload</span></button>
               <button type="button" data-story-mode="record" class="${isRecordMode ? 'is-active' : ''}" aria-pressed="${isRecordMode ? 'true' : 'false'}" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('play')} <span>Record</span></button>
@@ -1309,9 +1320,9 @@ function renderStoryComposerModal() {
               <div class="community-story-media-column">
                 <div class="community-story-preview ${hasPreview || state.storyComposer.recording ? 'has-media' : ''}" data-story-dropzone>
                   ${hasPreview
-                    ? isVideo
-                      ? `<video src="${escapeHtml(state.storyComposer.previewURL)}" controls playsinline preload="metadata"></video>`
-                      : `<img src="${escapeHtml(state.storyComposer.previewURL)}" alt="Story preview" />`
+                    ? previewMediaType === 'video'
+                      ? `<video src="${escapeHtml(previewURL)}" controls playsinline preload="metadata"></video>`
+                      : `<img src="${escapeHtml(previewURL)}" alt="Story preview" />`
                     : isRecordMode
                       ? `<video data-story-record-preview autoplay muted playsinline></video>`
                       : `
@@ -1379,7 +1390,8 @@ function renderStoryComposerModal() {
                         Replace
                         <input name="storyMedia" type="file" accept="image/*,video/*,.heic,.heif,.avif,.mov,.m4v,.avi,.mkv,.3gp,.3g2,.mpeg,.mpg,.ogv" data-story-file ${state.storyComposer.submitting ? 'disabled' : ''} />
                       </label>
-                      <button type="button" class="community-story-remove-file" data-remove-story-file aria-label="Remove selected story media" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('x')}</button>
+                      ${!isSourceOnlyPreview ? `<button type="button" class="community-story-remove-file" data-remove-story-file aria-label="Remove selected story media" ${state.storyComposer.submitting ? 'disabled' : ''}>${iconSvg('x')}</button>` : ''}
+                      ${isSourceOnlyPreview ? `<div class="community-story-remix-media-notice"><strong>Original media preview</strong><span>Choose your own photo/video before publishing. The source stays attributed.</span></div>` : ''}
                     </div>
                   ` : ''}
                 `}
@@ -6902,6 +6914,7 @@ async function handleStorySubmit(event) {
 
   state.storyComposer = { ...state.storyComposer, text, lifetimeHours, visibility, error: '', submitting: true, uploadProgress: 0 }
   try {
+    if (!file && state.storyComposer.remixOfStoryId) throw new Error('Choose your own photo or video for this remix before publishing.')
     validateCommunityStoryMedia(file)
   } catch (error) {
     state.storyComposer = { ...state.storyComposer, submitting: false, error: error?.message || 'Choose a supported story video or image.' }
@@ -8124,6 +8137,9 @@ function bindEvents() {
         text: '', caption: '', file: null, previewURL: '',
         mediaType: story.mediaType || 'text',
         background: story.background || 'aurora',
+        remixSourcePreviewURL: story.mediaURL || '',
+        remixSourceMediaType: story.mediaType || '',
+        remixSourceAuthorDisplayName: story.authorDisplayName || story.authorUsername || 'Creator',
         layers: (story.layers || []).map((layer, index) => ({ ...layer, id: `remix-${Date.now().toString(36)}-${index}`, metadata: { ...(layer.metadata || {}), remixedFromLayerId: layer.id || '' } })),
         selectedLayerId: '', remixOfStoryId: story.storyId
       }
