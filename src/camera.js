@@ -71,6 +71,10 @@ cameraSurface.innerHTML = `
         <input type="range" min="2" max="32" value="8" data-camera-draw-size aria-label="Brush size">
         <input type="range" min="10" max="100" value="100" data-camera-draw-opacity aria-label="Brush opacity">
       </div>
+      <div class="camera-sticker-picker" data-camera-sticker-picker hidden>
+        <div class="camera-sticker-tabs"><button type="button" data-sticker-tab="emoji" class="is-active">Emoji</button><button type="button" data-sticker-tab="shape">Shapes</button><button type="button" data-sticker-tab="utility">Utility</button></div>
+        <div class="camera-sticker-grid" data-camera-sticker-grid></div>
+      </div>
       <div class="camera-edit-tools" data-camera-edit-tools>
         <button type="button" data-camera-edit-tool="text" aria-label="Add text"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M12 5v14M8.5 19h7"/></svg></button>
         <button type="button" data-camera-edit-tool="pen" aria-label="Draw"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 20 4.2-1 10.9-10.9a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z"/><path d="m14.8 6.4 2.8 2.8"/></svg></button>
@@ -595,7 +599,12 @@ function renderCameraEditorLayers(){
       if(layer.brush==='neon'){path.style.filter='drop-shadow(0 0 5px currentColor)';path.style.color=layer.color||'#fff'}
       svg.append(path);node.append(svg)
     }
-    else if(layer.type==='sticker')node.textContent=layer.value||'☺'
+    else if(layer.type==='sticker'){
+      node.classList.add('is-sticker',`is-sticker-${layer.stickerKind||'emoji'}`)
+      node.textContent=layer.value||'☺'
+      if(layer.stickerKind==='shape'){node.style.background=layer.fill||'#fff';node.style.color=layer.color||'#111';node.style.borderRadius=layer.shape==='circle'?'50%':layer.shape==='pill'?'999px':'14px'}
+      if(layer.stickerKind==='utility')node.dataset.utility=layer.utility||''
+    }
     else if(layer.type==='image'&&layer.previewURL){const img=document.createElement('img');img.src=layer.previewURL;img.alt='';node.append(img)}
     else node.textContent=layer.label||layer.type
     return node
@@ -678,7 +687,7 @@ window.__melogicCameraEditor={getState:exportCameraEditorState,addLayer:addCamer
 function sizeEditCanvas(){if(!editCanvas)return;const r=playback.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(editCanvas.width!==w||editCanvas.height!==h){editCanvas.width=w;editCanvas.height=h}}
 function pushEditHistory(){if(!editCanvas)return;editHistory.push(editCanvas.toDataURL());if(editHistory.length>20)editHistory.shift()}
 function restoreEditSnapshot(url){if(!editCtx)return;editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);if(!url)return;const i=new Image();i.onload=()=>editCtx.drawImage(i,0,0,editCanvas.width,editCanvas.height);i.src=url}
-function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;const dc=cameraSurface.querySelector('[data-camera-draw-controls]');if(dc)dc.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
+function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;const sp=cameraSurface.querySelector('[data-camera-sticker-picker]');if(sp)sp.hidden=true;const dc=cameraSurface.querySelector('[data-camera-draw-controls]');if(dc)dc.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
 function editorPoint(e){const r=editCanvas.getBoundingClientRect();return{x:(e.clientX-r.left)*editCanvas.width/r.width,y:(e.clientY-r.top)*editCanvas.height/r.height}}
 async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
@@ -1199,7 +1208,7 @@ cameraSurface.querySelector('[data-camera-editor-selection-actions]')?.addEventL
   else if(action==='forward')moveCameraEditorLayer(editorState.selectedLayerId,1)
   else if(action==='back')moveCameraEditorLayer(editorState.selectedLayerId,-1)
 })
-cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){sizeEditCanvas();pushEditHistory();editCtx.font=`${Math.max(48,editCanvas.width*.09)}px system-ui`;editCtx.textAlign='center';editCtx.fillStyle='#fff';editCtx.fillText('☺',editCanvas.width/2,editCanvas.height/2);return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';if(drawControls)drawControls.hidden=editMode!=='pen';editCanvas.classList.toggle('is-drawing-mode',editMode==='pen');editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}editTextInput.focus()}})
+cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!picker.hidden;if(!picker.hidden)renderCameraStickerGrid('emoji')}return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';if(drawControls)drawControls.hidden=editMode!=='pen';editCanvas.classList.toggle('is-drawing-mode',editMode==='pen');editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}editTextInput.focus()}})
 const textFont=cameraSurface.querySelector('[data-camera-text-font]'),textColor=cameraSurface.querySelector('[data-camera-text-color]'),textSize=cameraSurface.querySelector('[data-camera-text-size]')
 function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
 function syncCameraTextControls(layer){
@@ -1229,7 +1238,34 @@ cameraSurface.querySelectorAll('[data-camera-text-style]').forEach(button=>butto
   if(style==='align'){const values=['left','center','right'],index=values.indexOf(layer.textAlign||'center');updateCameraEditorLayer(layer.id,{textAlign:values[(index+1)%values.length]})}
   if(style==='background')updateCameraEditorLayer(layer.id,{background:!layer.background})
 }))
-editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[0];if(!file)return;const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{sizeEditCanvas();pushEditHistory();const m=Math.min(editCanvas.width,editCanvas.height)*.34,s=Math.min(m/i.width,m/i.height,1),w=i.width*s,h=i.height*s;editCtx.drawImage(i,(editCanvas.width-w)/2,(editCanvas.height-h)/2,w,h);URL.revokeObjectURL(u)};i.src=u})
+editImageInput.addEventListener('change',()=>{const file=editImageInput.files?.[0];if(!file)return;const u=URL.createObjectURL(file),i=new Image();i.onload=()=>{
+  const aspect=i.naturalWidth&&i.naturalHeight?i.naturalWidth/i.naturalHeight:1
+  const width=aspect>=1?.42:.42*aspect,height=aspect>=1?.42/aspect:.42
+  addCameraEditorLayer('image',{previewURL:u,fileName:file.name||'',mimeType:file.type||'',naturalWidth:i.naturalWidth||0,naturalHeight:i.naturalHeight||0,width:clampEditorValue(width,.12,.72),height:clampEditorValue(height,.12,.72),fit:'contain'})
+};i.onerror=()=>URL.revokeObjectURL(u);i.src=u})
+const CAMERA_STICKERS={
+  emoji:['😀','😂','😍','🔥','❤️','✨','🤯','👏','💀','🎵','🎸','🎧','⚡','⭐','🚀','👀'],
+  shape:[{value:'',shape:'circle'},{value:'',shape:'square'},{value:'',shape:'pill'},{value:'★',shape:'circle'},{value:'!',shape:'circle'},{value:'+',shape:'circle'}],
+  utility:[{value:'@',utility:'mention'},{value:'#',utility:'hashtag'},{value:'⌖',utility:'location'},{value:'↗',utility:'link'},{value:'?',utility:'question'},{value:'♪',utility:'music'}]
+}
+function renderCameraStickerGrid(tab='emoji'){
+  const grid=cameraSurface.querySelector('[data-camera-sticker-grid]');if(!grid)return
+  cameraSurface.querySelectorAll('[data-sticker-tab]').forEach(button=>button.classList.toggle('is-active',button.dataset.stickerTab===tab))
+  grid.replaceChildren(...CAMERA_STICKERS[tab].map((item,index)=>{
+    const data=typeof item==='string'?{value:item}:item,button=document.createElement('button');button.type='button';button.dataset.cameraStickerIndex=String(index);button.dataset.cameraStickerTab=tab;button.textContent=data.value||''
+    if(tab==='shape'){button.classList.add('is-shape',`is-${data.shape}`)}
+    return button
+  }))
+}
+cameraSurface.querySelector('[data-camera-sticker-picker]')?.addEventListener('click',event=>{
+  const tab=event.target.closest('[data-sticker-tab]');if(tab){renderCameraStickerGrid(tab.dataset.stickerTab);return}
+  const button=event.target.closest('[data-camera-sticker-index]');if(!button)return
+  const type=button.dataset.cameraStickerTab,index=Number(button.dataset.cameraStickerIndex),raw=CAMERA_STICKERS[type]?.[index];if(raw==null)return
+  const data=typeof raw==='string'?{value:raw}:raw
+  addCameraEditorLayer('sticker',{...data,stickerKind:type,width:type==='utility'?.18:.2,height:.12,fontSize:44,fill:'#ffffff',color:'#111111'})
+})
+cameraSurface.querySelectorAll('[data-sticker-tab]').forEach(button=>button.addEventListener('click',()=>renderCameraStickerGrid(button.dataset.stickerTab)))
+
 const editorLayerStage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
 editorLayerStage?.addEventListener('pointerdown',event=>{
   const target=event.target.closest?.('[data-camera-editor-layer]')
