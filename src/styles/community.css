@@ -6771,69 +6771,14 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
 }
 
 
-/* melogic-desktop-feed-nav-left-rail-v2
-   Feed buttons intentionally share the exact same visual contract as Discover. */
+/* melogic-desktop-feed-nav-left-rail-v3
+   For You / Following now use the exact same <a> structure and CSS as Discover. */
 @media (min-width:761px) {
   .community-network-home-header .community-master-tabs > .community-mobile-feed-tab,
   .community-network-home-header .community-master-tabs > .community-following-feed-tab,
   .community-network-home-header .community-master-tabs > .community-mobile-discover-tab {
     display:none !important;
   }
-
-  .community-network-nav-section > button[data-community-desktop-feed] {
-    position:relative;
-    display:flex;
-    align-items:center;
-    gap:.65rem;
-    width:100%;
-    min-height:46px;
-    padding:.68rem .75rem;
-    border:0;
-    border-radius:0;
-    color:var(--community-desktop-mobile-muted, #929db1);
-    background:transparent;
-    font:inherit;
-    font-size:.96rem;
-    font-weight:650;
-    text-align:left;
-    cursor:pointer;
-  }
-
-  .community-network-nav-section > button[data-community-desktop-feed]:hover {
-    background:rgba(255,255,255,.045);
-    color:var(--community-desktop-mobile-text, #f6f8fc);
-  }
-
-  .community-network-nav-section > button[data-community-desktop-feed].is-active {
-    color:#fff;
-    background:rgba(255,255,255,.055);
-    box-shadow:none;
-  }
-
-  .community-network-nav-section > button[data-community-desktop-feed].is-active::before {
-    content:"";
-    position:absolute;
-    left:0;
-    top:0;
-    bottom:0;
-    width:3px;
-    border-radius:0 999px 999px 0;
-    background:#477dff;
-    background-image:var(--ml-accent-gradient, linear-gradient(135deg, #477dff 0%, #765dff 52%, #a65cff 100%));
-  }
-
-  .community-network-nav-section > button[data-community-desktop-feed] svg {
-    width:22px;
-    height:22px;
-    flex:0 0 22px;
-  }
-}community-page {
-  --community-sticky-top: 112px;
-  --community-sticky-top-hidden: 62px;
-  min-height: 100vh;
-  overflow-x: clip;
-  background:var(--community-bg);
-  color: #f5f7fb;
 }
 /* melogic-community-black-foundation-v1 */
 .community-page {
