@@ -377,7 +377,26 @@ export function normalizeCommunityStory(docSnapOrData = {}, explicitId = '') {
     reportCount: Math.max(0, Number(raw.reportCount || 0)),
     moderationStatus: raw.moderationStatus || '',
     status: raw.status || 'active',
-    visibility: raw.visibility || 'public'
+    visibility: raw.visibility || 'public',
+    layers: Array.isArray(raw.layers) ? raw.layers.map((layer, index) => ({
+      id: String(layer?.id || `layer-${index + 1}`),
+      type: String(layer?.type || ''),
+      x: Number(layer?.x ?? .5),
+      y: Number(layer?.y ?? .5),
+      width: Number(layer?.width ?? .25),
+      height: Number(layer?.height ?? .1),
+      rotation: Number(layer?.rotation || 0),
+      scale: Number(layer?.scale ?? 1),
+      opacity: Number(layer?.opacity ?? 1),
+      zIndex: Number(layer?.zIndex ?? index),
+      startMs: Math.max(0, Number(layer?.startMs || 0)),
+      endMs: Math.max(0, Number(layer?.endMs || 0)),
+      content: String(layer?.content || ''),
+      targetId: String(layer?.targetId || ''),
+      targetURL: String(layer?.targetURL || ''),
+      metadata: layer?.metadata && typeof layer.metadata === 'object' ? layer.metadata : {}
+    })) : [],
+    layerSchemaVersion: Math.max(1, Number(raw.layerSchemaVersion || 1))
   }
 }
 
