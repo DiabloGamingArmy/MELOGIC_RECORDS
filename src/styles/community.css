@@ -14127,3 +14127,95 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     bottom:16px !important;
   }
 }
+
+
+/* melogic-desktop-mobile-story-viewer-authoritative-v1
+   Explicit desktop class from community.js: use the mobile interaction model in
+   a centered portrait card. Kept in community.css so desktop cannot miss it. */
+@media (min-width:761px) {
+  .community-modal-backdrop:has(.community-story-viewer--mobile-on-desktop) {
+    position:fixed !important;
+    inset:0 !important;
+    z-index:10000 !important;
+    display:grid !important;
+    place-items:center !important;
+    width:100vw !important;
+    height:100vh !important;
+    padding:24px !important;
+    overflow:hidden !important;
+    background:rgba(0,0,0,.78) !important;
+    backdrop-filter:blur(10px) !important;
+    -webkit-backdrop-filter:blur(10px) !important;
+  }
+  .community-story-viewer--mobile-on-desktop {
+    position:relative !important;
+    inset:auto !important;
+    display:block !important;
+    width:min(430px,calc(100vw - 48px)) !important;
+    height:min(760px,calc(100vh - 48px)) !important;
+    min-width:0 !important;
+    min-height:0 !important;
+    max-width:430px !important;
+    max-height:760px !important;
+    margin:auto !important;
+    padding:0 !important;
+    overflow:hidden !important;
+    border:1px solid rgba(255,255,255,.16) !important;
+    border-radius:22px !important;
+    background:#000 !important;
+    box-shadow:0 28px 90px rgba(0,0,0,.72) !important;
+  }
+  .community-story-viewer--mobile-on-desktop .community-story-surface {
+    position:absolute !important;
+    inset:0 !important;
+    z-index:0 !important;
+    display:grid !important;
+    width:100% !important;
+    height:100% !important;
+    min-height:0 !important;
+    margin:0 !important;
+    padding:0 !important;
+    place-items:center !important;
+    overflow:hidden !important;
+    border:0 !important;
+    border-radius:22px !important;
+    background:#000 !important;
+  }
+  .community-story-viewer--mobile-on-desktop .community-story-surface.has-image > img,
+  .community-story-viewer--mobile-on-desktop .community-story-surface.has-image > video {
+    display:block !important;
+    width:100% !important;
+    height:100% !important;
+    max-width:none !important;
+    max-height:none !important;
+    object-fit:contain !important;
+    border-radius:22px !important;
+    background:#000 !important;
+  }
+  .community-story-viewer--mobile-on-desktop .community-story-viewer-hud {
+    position:absolute !important;
+    inset:0 0 auto !important;
+    z-index:8 !important;
+    display:block !important;
+    padding:12px 12px 22px !important;
+    border:0 !important;
+    background:linear-gradient(180deg,rgba(0,0,0,.62),rgba(0,0,0,.22) 65%,transparent) !important;
+    pointer-events:none !important;
+  }
+  .community-story-viewer--mobile-on-desktop .community-story-viewer-hud-row,
+  .community-story-viewer--mobile-on-desktop .community-story-viewer-hud-row * { pointer-events:auto; }
+  .community-story-viewer--mobile-on-desktop .community-story-progress-rail { display:flex !important; gap:3px !important; width:100% !important; height:3px !important; margin:0 0 11px !important; }
+  .community-story-viewer--mobile-on-desktop .community-story-progress-rail > span { flex:1 1 0 !important; height:3px !important; overflow:hidden !important; border-radius:999px !important; background:rgba(255,255,255,.34) !important; }
+  .community-story-viewer--mobile-on-desktop .community-story-desktop-controls { display:none !important; }
+  .community-story-viewer--mobile-on-desktop .community-story-mobile-interactions {
+    position:absolute !important;
+    right:16px !important;
+    bottom:14px !important;
+    left:16px !important;
+    z-index:10 !important;
+    display:grid !important;
+    grid-template-columns:minmax(0,1fr) 44px 44px !important;
+    align-items:center !important;
+    gap:10px !important;
+  }
+}
