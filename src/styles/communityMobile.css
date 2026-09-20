@@ -2396,3 +2396,22 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-story-reply-shell button:active { transform:scale(.92); }
   .community-story-reply-shell button:disabled { opacity:.32; }
 }
+
+
+/* melogic-story-action-rail-push-12 */
+@media (max-width:760px) {
+  .community-story-action-rail[hidden] { display:none; }
+  .community-story-action-rail {
+    position:absolute; z-index:24; top:calc(env(safe-area-inset-top,0px) + 58px); right:12px;
+    width:176px; padding:6px; border:1px solid rgba(255,255,255,.13); border-radius:16px;
+    background:rgba(8,9,12,.86); box-shadow:0 14px 44px rgba(0,0,0,.42);
+    backdrop-filter:blur(20px) saturate(115%); -webkit-backdrop-filter:blur(20px) saturate(115%);
+  }
+  .community-story-action-rail button {
+    width:100%; min-height:44px; display:flex; align-items:center; gap:11px; padding:0 11px;
+    border:0; border-radius:11px; background:transparent; color:#fff; font:inherit; text-align:left;
+  }
+  .community-story-action-rail button svg { width:18px; height:18px; flex:0 0 auto; }
+  .community-story-action-rail button:active { background:rgba(255,255,255,.09); }
+  .community-story-action-rail button:last-child { color:rgba(255,255,255,.72); }
+}
