@@ -1130,3 +1130,45 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     body.is-community-page .community-story-upload-ring::before { animation:none; }
   }
 }
+
+
+/* melogic-mobile-stories-scale-v1
+   Give the mobile Stories rail more visual weight without changing label type size.
+   Wider item/label bounds also delay the single-line ellipsis. */
+@media (max-width:760px) {
+  body.is-community-page .community-mobile-stories .community-stories-row {
+    padding-top:14px !important;
+    padding-bottom:12px !important;
+    gap:14px !important;
+  }
+
+  body.is-community-page .community-story-item {
+    flex:0 0 76px !important;
+    width:76px !important;
+    gap:7px !important;
+  }
+
+  body.is-community-page .community-story-ring {
+    width:66px !important;
+    height:66px !important;
+  }
+
+  body.is-community-page .community-story-item strong {
+    width:76px !important;
+    max-width:76px !important;
+    font-size:.66rem !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+    white-space:nowrap !important;
+  }
+
+  body.is-community-page .community-story-item.is-pending-story > strong {
+    width:76px !important;
+    max-width:76px !important;
+    font-size:.68rem !important;
+  }
+
+  body.is-community-page .community-story-empty-state {
+    min-height:66px !important;
+  }
+}
