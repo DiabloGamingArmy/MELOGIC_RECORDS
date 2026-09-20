@@ -367,6 +367,7 @@ export function normalizeCommunityStory(docSnapOrData = {}, explicitId = '') {
     background: raw.background || 'aurora',
     linkedPostId: raw.linkedPostId || '',
     linkedProductId: raw.linkedProductId || '',
+    storyType: ['moment', 'sound', 'thought', 'drop', 'ask', 'live', 'project'].includes(raw.storyType) ? raw.storyType : 'moment',
     remixPermission: raw.remixPermission === true,
     remixOfStoryId: raw.remixOfStoryId || '',
     remixSourceAuthorUid: raw.remixSourceAuthorUid || '',
