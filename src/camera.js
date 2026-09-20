@@ -724,7 +724,8 @@ function renderCameraEditorLayers(){
       node.style.padding=layer.background?'8px 12px':'4px'
       node.style.borderRadius=layer.background?'10px':'0'
       node.style.background=layer.background?'rgba(0,0,0,.58)':'transparent'
-      node.style.textShadow=layer.background?'none':'0 2px 8px rgba(0,0,0,.72)'
+      // Keep text single-pass after editing. Stroke supplies contrast without a ghosted glyph/shadow copy.
+      node.style.textShadow='none'
     }
     else if(layer.type==='draw'){
       node.classList.add('is-drawing')
