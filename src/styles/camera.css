@@ -372,3 +372,11 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-editor-layer.is-selected{outline:1.5px solid rgba(255,255,255,.92);outline-offset:4px}
 .camera-editor-layer.is-selected::before,.camera-editor-layer.is-selected::after{content:"";position:absolute;width:8px;height:8px;border:2px solid #0b0c0f;border-radius:50%;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.35)}
 .camera-editor-layer.is-selected::before{left:-9px;top:-9px}.camera-editor-layer.is-selected::after{right:-9px;bottom:-9px}
+
+
+/* camera-editor-history-layers-p3 */
+.camera-edit-tools button:disabled{opacity:.32;pointer-events:none}
+.camera-editor-selection-actions{display:flex;flex-direction:column;gap:6px;padding-top:4px;border-top:1px solid rgba(255,255,255,.16)}
+.camera-editor-selection-actions[hidden]{display:none!important}
+.camera-editor-selection-actions button{width:40px!important;height:40px!important;font-size:17px!important;background:rgba(8,9,13,.68)!important}
+.camera-editor-selection-actions button[data-camera-layer-action="delete"]{font-size:25px!important}
