@@ -178,6 +178,8 @@ const state = {
     visibility: 'public',
     layers: [],
     selectedLayerId: '',
+    remixOfStoryId: '',
+    remixPermission: false,
     uploadProgress: 0,
     recording: false,
     recordingSeconds: 0,
@@ -1387,6 +1389,11 @@ function renderStoryComposerModal() {
                   <span>Story Details</span>
                   <small>Keep it short and easy to scan.</small>
                 </div>
+                <label class="community-story-remix-permission">
+                  <input type="checkbox" data-story-remix-permission ${state.storyComposer.remixPermission ? 'checked' : ''} />
+                  <span>Allow others to remix this Story</span>
+                </label>
+                ${state.storyComposer.remixOfStoryId ? `<p class="community-story-remix-source">Remix · original Story attribution will be preserved</p>` : ''}
                 <label>
                   <span>Caption</span>
                   <textarea name="text" maxlength="500" rows="5" placeholder="What would you like to share?" ${state.storyComposer.submitting ? 'disabled' : ''}>${escapeHtml(state.storyComposer.text)}</textarea>
@@ -6926,7 +6933,9 @@ async function handleStorySubmit(event) {
       lifetimeHours,
       visibility,
       background: state.storyComposer.background,
-      layers: state.storyComposer.layers || []
+      layers: state.storyComposer.layers || [],
+      remixOfStoryId: state.storyComposer.remixOfStoryId || '',
+      remixPermission: state.storyComposer.remixPermission === true
     })
     const story = normalizeCommunityStory({
       ...(result.story || {}),
@@ -7859,6 +7868,9 @@ function bindEvents() {
     state.storyComposer = { ...state.storyComposer, layers, selectedLayerId: id }
     render()
   }))
+  app.querySelector('[data-story-remix-permission]')?.addEventListener('change', (event) => {
+    state.storyComposer.remixPermission = event.currentTarget.checked === true
+  })
   app.querySelector('[data-story-add-text-layer]')?.addEventListener('click', () => {
     const layers = [...(state.storyComposer.layers || [])]
     const id = `layer-${Date.now().toString(36)}`
@@ -8101,7 +8113,22 @@ function bindEvents() {
       return
     }
     if (action === 'remix') {
-      showCommunityToast('Remix foundation is next.')
+      if (!story.remixPermission && story.authorUid !== state.currentUser?.uid) {
+        showCommunityToast('This creator has not enabled Story remixing.')
+        return
+      }
+      state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
+      state.storyComposer = {
+        ...state.storyComposer, open: true,
+        mode: story.mediaType === 'text' ? 'text' : 'upload',
+        text: '', caption: '', file: null, previewURL: '',
+        mediaType: story.mediaType || 'text',
+        background: story.background || 'aurora',
+        layers: (story.layers || []).map((layer, index) => ({ ...layer, id: `remix-${Date.now().toString(36)}-${index}`, metadata: { ...(layer.metadata || {}), remixedFromLayerId: layer.id || '' } })),
+        selectedLayerId: '', remixOfStoryId: story.storyId
+      }
+      render()
+      showCommunityToast(`Remixing ${story.authorDisplayName || story.authorUsername || 'this Story'}.`)
       return
     }
     if (action === 'save') {
