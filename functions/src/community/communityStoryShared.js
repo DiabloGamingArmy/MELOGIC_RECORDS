@@ -25,7 +25,7 @@ function sanitizeStoryText(value = '') {
   return cleanString(value, 500)
 }
 
-const STORY_LAYER_TYPES = new Set(['text', 'audio', 'link', 'person', 'location', 'community', 'product', 'project', 'poll', 'drawing'])
+const STORY_LAYER_TYPES = new Set(['text', 'audio', 'link', 'person', 'location', 'community', 'product', 'project', 'event', 'poll', 'drawing'])
 const STORY_LAYER_MAX_COUNT = 40
 
 function clampStoryLayerNumber(value, fallback = 0, min = 0, max = 1) {
