@@ -174,6 +174,8 @@ const state = {
     previewURL: '',
     lifetimeHours: 24,
     visibility: 'public',
+    layers: [],
+    selectedLayerId: '',
     uploadProgress: 0,
     recording: false,
     recordingSeconds: 0,
@@ -1318,7 +1320,27 @@ function renderStoryComposerModal() {
                         </label>
                       `
                   }
+                  ${hasPreview ? `
+                    <div class="community-story-layer-canvas" data-story-layer-canvas aria-label="Story layer editor">
+                      ${(state.storyComposer.layers || []).map((layer) => `
+                        <button type="button" class="community-story-layer-node ${state.storyComposer.selectedLayerId === layer.id ? 'is-selected' : ''}" data-story-layer-id="${escapeHtml(layer.id)}" style="--layer-x:${layer.x};--layer-y:${layer.y};--layer-w:${layer.width};--layer-scale:${layer.scale || 1};--layer-rotation:${layer.rotation || 0}deg;--layer-z:${layer.zIndex || 0}" aria-label="Edit text layer">
+                          <span>${escapeHtml(layer.content || 'Text')}</span>
+                        </button>
+                      `).join('')}
+                    </div>
+                  ` : ''}
                 </div>
+                ${hasPreview ? `
+                  <div class="community-story-layer-toolbar" aria-label="Story layers">
+                    <button type="button" data-story-add-text-layer>${iconSvg('plus')} <span>Text</span></button>
+                    ${state.storyComposer.selectedLayerId ? `
+                      <button type="button" data-story-layer-scale-down aria-label="Make layer smaller">−</button>
+                      <button type="button" data-story-layer-scale-up aria-label="Make layer larger">+</button>
+                      <button type="button" data-story-layer-forward aria-label="Bring layer forward">↑</button>
+                      <button type="button" data-story-layer-delete aria-label="Delete layer">${iconSvg('trash')}</button>
+                    ` : ''}
+                  </div>
+                ` : ''}
                 ${isRecordMode ? `
                   <div class="community-story-record-controls">
                     <div>
@@ -6856,7 +6878,8 @@ async function handleStorySubmit(event) {
       mediaPath: uploaded.mediaPath,
       lifetimeHours,
       visibility,
-      background: state.storyComposer.background
+      background: state.storyComposer.background,
+      layers: state.storyComposer.layers || []
     })
     const story = normalizeCommunityStory({
       ...(result.story || {}),
@@ -7744,6 +7767,53 @@ function bindEvents() {
     selectStoryFile(event.target.files?.[0] || null)
   }))
   app.querySelector('[data-remove-story-file]')?.addEventListener('click', removeStoryFile)
+  app.querySelector('[data-story-add-text-layer]')?.addEventListener('click', () => {
+    const layers = [...(state.storyComposer.layers || [])]
+    const id = `layer-${Date.now().toString(36)}`
+    layers.push({ id, type: 'text', x: .5, y: .5, width: .42, height: .1, rotation: 0, scale: 1, opacity: 1, zIndex: layers.length + 1, startMs: 0, endMs: 0, content: 'Text', targetId: '', targetURL: '', metadata: {} })
+    state.storyComposer = { ...state.storyComposer, layers, selectedLayerId: id }
+    render()
+  })
+  app.querySelectorAll('[data-story-layer-id]').forEach((node) => {
+    node.addEventListener('pointerdown', (event) => {
+      event.stopPropagation()
+      const id = node.getAttribute('data-story-layer-id') || ''
+      state.storyComposer.selectedLayerId = id
+      node.classList.add('is-selected')
+      const canvas = app.querySelector('[data-story-layer-canvas]')
+      const rect = canvas?.getBoundingClientRect()
+      if (!rect) return
+      const move = (moveEvent) => {
+        const layer = (state.storyComposer.layers || []).find((item) => item.id === id)
+        if (!layer) return
+        layer.x = Math.max(0, Math.min(1, (moveEvent.clientX - rect.left) / rect.width))
+        layer.y = Math.max(0, Math.min(1, (moveEvent.clientY - rect.top) / rect.height))
+        node.style.setProperty('--layer-x', layer.x)
+        node.style.setProperty('--layer-y', layer.y)
+      }
+      const up = () => {
+        window.removeEventListener('pointermove', move)
+        window.removeEventListener('pointerup', up)
+      }
+      window.addEventListener('pointermove', move)
+      window.addEventListener('pointerup', up, { once: true })
+    })
+  })
+  const mutateSelectedStoryLayer = (mutator) => {
+    const layers = [...(state.storyComposer.layers || [])]
+    const layer = layers.find((item) => item.id === state.storyComposer.selectedLayerId)
+    if (!layer) return
+    mutator(layer, layers)
+    state.storyComposer = { ...state.storyComposer, layers }
+    render()
+  }
+  app.querySelector('[data-story-layer-scale-down]')?.addEventListener('click', () => mutateSelectedStoryLayer((layer) => { layer.scale = Math.max(.25, Number(layer.scale || 1) - .1) }))
+  app.querySelector('[data-story-layer-scale-up]')?.addEventListener('click', () => mutateSelectedStoryLayer((layer) => { layer.scale = Math.min(4, Number(layer.scale || 1) + .1) }))
+  app.querySelector('[data-story-layer-forward]')?.addEventListener('click', () => mutateSelectedStoryLayer((layer, layers) => { layer.zIndex = Math.max(...layers.map((item) => Number(item.zIndex || 0)), 0) + 1 }))
+  app.querySelector('[data-story-layer-delete]')?.addEventListener('click', () => {
+    state.storyComposer = { ...state.storyComposer, layers: (state.storyComposer.layers || []).filter((item) => item.id !== state.storyComposer.selectedLayerId), selectedLayerId: '' }
+    render()
+  })
   const storyDropzone = app.querySelector('[data-story-dropzone]')
   if (storyDropzone && state.storyComposer.mode === 'upload') {
     ;['dragenter', 'dragover'].forEach((type) => storyDropzone.addEventListener(type, (event) => {
