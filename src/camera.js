@@ -1507,6 +1507,7 @@ function syncCameraTextControls(layer){
   if(textColor)textColor.value=layer.color||'#ffffff'
   if(textSize)textSize.value=String(layer.fontSize||36)
   syncTextRailControls(layer)
+  editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent'
 }
 function closeCameraTextEditor({commit=true}={}){
   if(commit)commitCameraText();else{editTextbox.hidden=true;cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');editMode='';setCameraToolRail('')}
@@ -1524,6 +1525,8 @@ editTextInput?.addEventListener('input',()=>{
   let layer=selectedCameraTextLayer();const text=editTextInput.value
   if(!layer&&text){layer=addCameraEditorLayer('text',{text,fontFamily:textRailFont?.value||textFont?.value||'system',fontSize:Number(textRailSize?.value||textSize?.value)||36,color:textRailColor?.value||textColor?.value||'#ffffff',borderColor:textRailBorderColor?.value||'#000000',borderWidth:1,opacity:(Number(textRailOpacity?.value)||100)/100,width:.72,height:.18,fontWeight:700,fontStyle:'normal',textDecoration:'none',textAlign:'center',background:false});editorState.__textDraftId=layer.id;syncTextRailControls(layer)}
   else if(layer)updateCameraEditorLayer(layer.id,{text},{history:false})
+  // The actual text layer is the only visible text while typing; textarea is caret/input only.
+  if(layer){editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent'}
 })
 editTextInput?.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();commitCameraText()}})
 textFont?.addEventListener('change',()=>{const layer=selectedCameraTextLayer();if(layer)updateCameraEditorLayer(layer.id,{fontFamily:textFont.value})})
