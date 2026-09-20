@@ -65,6 +65,11 @@ cameraSurface.innerHTML = `
           <input type="range" min="16" max="72" value="36" data-camera-text-size aria-label="Text size">
         </div>
       </div>
+      <div class="camera-crop-controls" data-camera-crop-controls hidden>
+        <div class="camera-crop-aspects"><button type="button" data-camera-crop-aspect="free" class="is-active">Free</button><button type="button" data-camera-crop-aspect="original">Original</button><button type="button" data-camera-crop-aspect="9:16">9:16</button><button type="button" data-camera-crop-aspect="4:5">4:5</button><button type="button" data-camera-crop-aspect="1:1">1:1</button><button type="button" data-camera-crop-aspect="16:9">16:9</button></div>
+        <div class="camera-crop-actions"><button type="button" data-camera-crop-action="rotate">Rotate</button><button type="button" data-camera-crop-action="flip-x">Flip H</button><button type="button" data-camera-crop-action="flip-y">Flip V</button><button type="button" data-camera-crop-action="reset">Reset</button><button type="button" data-camera-crop-action="done">Done</button></div>
+        <input type="range" min="100" max="400" value="100" data-camera-crop-zoom aria-label="Crop zoom">
+      </div>
       <div class="camera-draw-controls" data-camera-draw-controls hidden>
         <select data-camera-draw-brush aria-label="Brush"><option value="pen">Pen</option><option value="marker">Marker</option><option value="highlighter">Highlighter</option><option value="neon">Neon</option><option value="eraser">Eraser</option></select>
         <input type="color" value="#ffffff" data-camera-draw-color aria-label="Brush color">
@@ -553,6 +558,20 @@ function selectCameraEditorLayer(id=''){editorState.selectedLayerId=editorState.
 function updateCameraEditorLayer(id,patch={}){const layer=editorState.layers.find(item=>item.id===id);if(!layer)return null;pushCameraEditorHistory();Object.assign(layer,patch);editorState.revision+=1;renderCameraEditorLayers();return layer}
 function removeCameraEditorLayer(id){const index=editorState.layers.findIndex(layer=>layer.id===id);if(index<0)return false;pushCameraEditorHistory();editorState.layers.splice(index,1);editorState.layers.forEach((layer,zIndex)=>layer.zIndex=zIndex);if(editorState.selectedLayerId===id)editorState.selectedLayerId='';editorState.revision+=1;renderCameraEditorLayers();return true}
 function clampEditorValue(value,min,max){return Math.min(max,Math.max(min,value))}
+function renderCameraMediaTransform(){
+  const t=editorState.transform||{},media=playback.querySelector(t=>t)
+}
+function applyCameraMediaTransform(){
+  const t=editorState.transform||{},crop=t.crop||{},media=[recordedPhoto,recordedVideo]
+  const transform=`translate(${Number(t.x)||0}%,${Number(t.y)||0}%) scale(${clampEditorValue(Number(t.scale)||1,1,4)}) rotate(${Number(t.rotation)||0}deg) scaleX(${t.flipX?-1:1}) scaleY(${t.flipY?-1:1})`
+  media.forEach(el=>{if(!el)return;el.style.transform=transform;el.style.transformOrigin='center center';el.style.objectFit='cover'})
+  playback.style.setProperty('--camera-crop-ratio',crop.ratio||'auto')
+  playback.dataset.cropAspect=crop.aspect||'free'
+}
+function setCameraMediaTransform(patch,{history=true}={}){
+  if(history)pushCameraEditorHistory()
+  editorState.transform={...editorState.transform,...patch};editorState.revision+=1;applyCameraMediaTransform();syncCameraEditorSelectionActions()
+}
 function renderCameraEditorLayers(){
   const stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
   if(!stage)return
@@ -665,7 +684,7 @@ function restoreCameraEditorState(snapshot){
   editorHistorySuspended=true
   editorState=JSON.parse(JSON.stringify(snapshot))
   editorHistorySuspended=false
-  renderCameraEditorLayers();syncCameraEditorSelectionActions();return true
+  renderCameraEditorLayers();applyCameraMediaTransform();syncCameraEditorSelectionActions();return true
 }
 function undoCameraEditor(){if(!editorUndoStack.length)return false;editorRedoStack.push(cameraEditorStateForHistory());return restoreCameraEditorState(editorUndoStack.pop())}
 function redoCameraEditor(){if(!editorRedoStack.length)return false;editorUndoStack.push(cameraEditorStateForHistory());return restoreCameraEditorState(editorRedoStack.pop())}
@@ -687,7 +706,7 @@ window.__melogicCameraEditor={getState:exportCameraEditorState,addLayer:addCamer
 function sizeEditCanvas(){if(!editCanvas)return;const r=playback.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2),w=Math.max(1,Math.round(r.width*d)),h=Math.max(1,Math.round(r.height*d));if(editCanvas.width!==w||editCanvas.height!==h){editCanvas.width=w;editCanvas.height=h}}
 function pushEditHistory(){if(!editCanvas)return;editHistory.push(editCanvas.toDataURL());if(editHistory.length>20)editHistory.shift()}
 function restoreEditSnapshot(url){if(!editCtx)return;editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);if(!url)return;const i=new Image();i.onload=()=>editCtx.drawImage(i,0,0,editCanvas.width,editCanvas.height);i.src=url}
-function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;const sp=cameraSurface.querySelector('[data-camera-sticker-picker]');if(sp)sp.hidden=true;const dc=cameraSurface.querySelector('[data-camera-draw-controls]');if(dc)dc.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
+function resetEditor(){editMode='';editDrawing=false;editHistory=[];editorUndoStack=[];editorRedoStack=[];resetCameraEditorState(playback?.dataset?.captureType||'');applyCameraMediaTransform();editorPointers.clear();editorGesture=null;renderCameraEditorLayers();if(editTextbox)editTextbox.hidden=true;const sp=cameraSurface.querySelector('[data-camera-sticker-picker]');if(sp)sp.hidden=true;const dc=cameraSurface.querySelector('[data-camera-draw-controls]');if(dc)dc.hidden=true;if(editCtx)editCtx.clearRect(0,0,editCanvas.width,editCanvas.height);app.querySelectorAll('[data-camera-edit-tool]').forEach(b=>b.classList.remove('is-active'))}
 function editorPoint(e){const r=editCanvas.getBoundingClientRect();return{x:(e.clientX-r.left)*editCanvas.width/r.width,y:(e.clientY-r.top)*editCanvas.height/r.height}}
 async function startCamera({ preserveFrame=false }={}) {
   if (cameraStarting) return
@@ -1208,7 +1227,27 @@ cameraSurface.querySelector('[data-camera-editor-selection-actions]')?.addEventL
   else if(action==='forward')moveCameraEditorLayer(editorState.selectedLayerId,1)
   else if(action==='back')moveCameraEditorLayer(editorState.selectedLayerId,-1)
 })
-cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!picker.hidden;if(!picker.hidden)renderCameraStickerGrid('emoji')}return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';if(drawControls)drawControls.hidden=editMode!=='pen';editCanvas.classList.toggle('is-drawing-mode',editMode==='pen');editCanvas.classList.toggle('is-crop-mode',editMode==='crop');if(editMode==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}editTextInput.focus()}})
+cameraSurface.querySelector('[data-camera-edit-tools]')?.addEventListener('click',e=>{const b=e.target.closest('[data-camera-edit-tool]');if(!b)return;const t=b.dataset.cameraEditTool;if(t==='undo'){if(!undoCameraEditor())restoreEditSnapshot(editHistory.pop()||'');return}if(t==='redo'){redoCameraEditor();return}if(t==='image'){editImageInput.value='';editImageInput.click();return}if(t==='sticker'){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker){picker.hidden=!picker.hidden;if(!picker.hidden)renderCameraStickerGrid('emoji')}return}editMode=editMode===t?'':t;app.querySelectorAll('[data-camera-edit-tool]').forEach(x=>x.classList.toggle('is-active',x===b&&!!editMode));editTextbox.hidden=editMode!=='text';if(drawControls)drawControls.hidden=editMode!=='pen';editCanvas.classList.toggle('is-drawing-mode',editMode==='pen');editCanvas.classList.toggle('is-crop-mode',editMode==='crop');const cropControls=cameraSurface.querySelector('[data-camera-crop-controls]');if(cropControls)cropControls.hidden=editMode!=='crop';cameraSurface.classList.toggle('is-media-transforming',editMode==='crop');if(editMode==='text'){const selected=selectedCameraTextLayer();if(selected)syncCameraTextControls(selected);else{editTextInput.value='';if(textFont)textFont.value='system';if(textColor)textColor.value='#ffffff';if(textSize)textSize.value='36'}editTextInput.focus()}})
+const cropZoom=cameraSurface.querySelector('[data-camera-crop-zoom]')
+function cameraSourceAspect(){const w=editorState.media.sourceWidth||1,h=editorState.media.sourceHeight||1;return w/h}
+function setCameraCropAspect(aspect){
+  const ratios={original:cameraSourceAspect(),'9:16':9/16,'4:5':4/5,'1:1':1,'16:9':16/9}
+  const ratio=aspect==='free'?null:(ratios[aspect]||cameraSourceAspect())
+  setCameraMediaTransform({crop:{aspect,ratio:ratio?String(ratio):'auto'}})
+  cameraSurface.querySelectorAll('[data-camera-crop-aspect]').forEach(button=>button.classList.toggle('is-active',button.dataset.cameraCropAspect===aspect))
+}
+cameraSurface.querySelector('[data-camera-crop-controls]')?.addEventListener('click',event=>{
+  const aspect=event.target.closest('[data-camera-crop-aspect]');if(aspect){setCameraCropAspect(aspect.dataset.cameraCropAspect);return}
+  const action=event.target.closest('[data-camera-crop-action]')?.dataset.cameraCropAction;if(!action)return
+  if(action==='rotate')setCameraMediaTransform({rotation:(Number(editorState.transform.rotation)||0)+90})
+  if(action==='flip-x')setCameraMediaTransform({flipX:!editorState.transform.flipX})
+  if(action==='flip-y')setCameraMediaTransform({flipY:!editorState.transform.flipY})
+  if(action==='reset'){pushCameraEditorHistory();editorState.transform=createCameraEditorState().transform;editorState.revision+=1;if(cropZoom)cropZoom.value='100';applyCameraMediaTransform();setCameraCropAspect('free')}
+  if(action==='done'){editMode='';cameraSurface.classList.remove('is-media-transforming');cameraSurface.querySelector('[data-camera-crop-controls]').hidden=true;editCanvas.classList.remove('is-crop-mode');cameraSurface.querySelector('[data-camera-edit-tool="crop"]')?.classList.remove('is-active')}
+})
+cropZoom?.addEventListener('input',()=>setCameraMediaTransform({scale:clampEditorValue(Number(cropZoom.value)/100,1,4)},{history:false}))
+cropZoom?.addEventListener('change',()=>pushCameraEditorHistory())
+
 const textFont=cameraSurface.querySelector('[data-camera-text-font]'),textColor=cameraSurface.querySelector('[data-camera-text-color]'),textSize=cameraSurface.querySelector('[data-camera-text-size]')
 function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
 function syncCameraTextControls(layer){
@@ -1267,6 +1306,20 @@ cameraSurface.querySelector('[data-camera-sticker-picker]')?.addEventListener('c
 cameraSurface.querySelectorAll('[data-sticker-tab]').forEach(button=>button.addEventListener('click',()=>renderCameraStickerGrid(button.dataset.stickerTab)))
 
 const editorLayerStage=cameraSurface.querySelector('[data-camera-editor-layer-stage]')
+let mediaTransformPointer=null
+playback.addEventListener('pointerdown',event=>{
+  if(editMode!=='crop'||event.target.closest?.('[data-camera-crop-controls],[data-camera-edit-tools]'))return
+  event.preventDefault();pushCameraEditorHistory();mediaTransformPointer={id:event.pointerId,x:event.clientX,y:event.clientY,startX:Number(editorState.transform.x)||0,startY:Number(editorState.transform.y)||0};playback.setPointerCapture?.(event.pointerId)
+})
+playback.addEventListener('pointermove',event=>{
+  if(!mediaTransformPointer||mediaTransformPointer.id!==event.pointerId)return
+  const r=playback.getBoundingClientRect();if(!r.width||!r.height)return
+  editorState.transform.x=clampEditorValue(mediaTransformPointer.startX+(event.clientX-mediaTransformPointer.x)/r.width*100,-100,100)
+  editorState.transform.y=clampEditorValue(mediaTransformPointer.startY+(event.clientY-mediaTransformPointer.y)/r.height*100,-100,100);editorState.revision+=1;applyCameraMediaTransform()
+})
+function finishMediaTransformPointer(event){if(mediaTransformPointer?.id===event.pointerId)mediaTransformPointer=null}
+playback.addEventListener('pointerup',finishMediaTransformPointer);playback.addEventListener('pointercancel',finishMediaTransformPointer)
+
 editorLayerStage?.addEventListener('pointerdown',event=>{
   const target=event.target.closest?.('[data-camera-editor-layer]')
   if(!target)return
