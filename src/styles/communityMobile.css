@@ -2067,3 +2067,51 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     }
   }
 }
+
+
+/* melogic-story-more-control-fix */
+@media (max-width:760px) {
+  .community-story-viewer-hud-actions {
+    display:flex !important;
+    flex:0 0 auto !important;
+    align-items:center !important;
+    gap:2px !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-more,
+  .community-story-viewer-hud .community-story-viewer-close {
+    display:grid !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    place-items:center !important;
+    width:40px !important;
+    height:40px !important;
+    min-width:40px !important;
+    min-height:40px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:50% !important;
+    background:transparent !important;
+    color:#fff !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-more svg {
+    display:block !important;
+    visibility:visible !important;
+    opacity:1 !important;
+    width:24px !important;
+    height:24px !important;
+    color:#fff !important;
+    fill:currentColor !important;
+    stroke:none !important;
+    filter:drop-shadow(0 1px 4px rgba(0,0,0,.7)) !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-more:active {
+    transform:scale(.92) !important;
+    background:rgba(255,255,255,.08) !important;
+  }
+}
