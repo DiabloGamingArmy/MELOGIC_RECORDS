@@ -46,6 +46,7 @@ import {
   resolveCommunityAttachmentMediaUrls,
   recordCommunityPostShare,
   recordCommunityStoryView,
+  setCommunityStoryReaction,
   toggleCommunityCommentLike,
   toggleCommunityCommentDislike,
   toggleCommunityFocus,
@@ -7815,8 +7816,15 @@ function bindEvents() {
     event.stopPropagation()
     window.clearTimeout(storyReactionHoldTimer)
     if (!storyReactionHoldOpened) {
-      storyLikeButton.classList.toggle('is-reacted')
-      showCommunityToast(storyLikeButton.classList.contains('is-reacted') ? 'Liked Story.' : 'Like removed.')
+      const storyId = String(storyLikeButton.getAttribute('data-story-reaction') || '').split(':').slice(1).join(':')
+      const wasReacted = storyLikeButton.classList.contains('is-reacted')
+      storyLikeButton.classList.toggle('is-reacted', !wasReacted)
+      setCommunityStoryReaction(storyId, wasReacted ? 'none' : 'like').then((result) => {
+        storyLikeButton.classList.toggle('is-reacted', Boolean(result.reaction))
+      }).catch((error) => {
+        storyLikeButton.classList.toggle('is-reacted', wasReacted)
+        showCommunityToast(error?.message || 'Could not save reaction.')
+      })
     }
   })
   storyLikeButton?.addEventListener('pointercancel', () => window.clearTimeout(storyReactionHoldTimer))
@@ -7825,9 +7833,17 @@ function bindEvents() {
     event.preventDefault()
     event.stopPropagation()
     const label = button.querySelector('span')?.textContent || 'Reaction'
+    const reaction = button.getAttribute('data-story-quick-reaction') || ''
+    const storyId = String(storyLikeButton?.getAttribute('data-story-reaction') || '').split(':').slice(1).join(':')
     storyLikeButton?.classList.add('is-reacted')
     closeStoryReactionOrbit()
-    showCommunityToast(`${label} reaction selected.`)
+    setCommunityStoryReaction(storyId, reaction).then((result) => {
+      storyLikeButton?.classList.toggle('is-reacted', Boolean(result.reaction))
+      showCommunityToast(result.reaction ? `${label} reaction sent.` : 'Reaction removed.')
+    }).catch((error) => {
+      storyLikeButton?.classList.remove('is-reacted')
+      showCommunityToast(error?.message || 'Could not save reaction.')
+    })
   }))
   app.querySelectorAll('.community-story-desktop-controls [data-story-reaction]').forEach((button) => button.addEventListener('click', () => {
     showCommunityToast('Story reactions are coming soon.')
