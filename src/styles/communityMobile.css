@@ -1704,3 +1704,123 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     user-select:none !important;
   }
 }
+
+
+/* melogic-mobile-story-viewer-polish-p5 */
+/* Final mobile/PWA Story pass: normalize viewport fallbacks, media crop,
+   safe areas, compact phones, landscape, and interaction hit targets. */
+@media (max-width:760px) {
+  .community-modal-backdrop:has(.community-story-viewer),
+  .community-modal-backdrop > .community-story-viewer {
+    height:100vh !important;
+    height:100svh !important;
+    height:100dvh !important;
+    min-height:100vh !important;
+    min-height:100svh !important;
+    min-height:100dvh !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > img,
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > video {
+    object-fit:cover !important;
+    object-position:center center !important;
+  }
+
+  .community-story-viewer-hud {
+    padding-top:max(10px,calc(env(safe-area-inset-top,0px) + 4px)) !important;
+  }
+
+  .community-story-progress-rail {
+    height:2px !important;
+    gap:3px !important;
+    margin-bottom:10px !important;
+  }
+
+  .community-story-progress-rail > span {
+    height:2px !important;
+  }
+
+  .community-story-viewer-hud .community-avatar {
+    flex-basis:32px !important;
+    width:32px !important;
+    height:32px !important;
+  }
+
+  .community-story-viewer-identity strong {
+    max-width:46vw !important;
+    font-size:.8rem !important;
+  }
+
+  .community-story-viewer-identity em {
+    max-width:30vw !important;
+    font-size:.66rem !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close,
+  .community-story-mobile-interactions > button {
+    min-width:44px !important;
+    min-height:44px !important;
+  }
+
+  .community-story-reply-shell {
+    height:44px !important;
+    border-color:rgba(255,255,255,.64) !important;
+    background:rgba(0,0,0,.16) !important;
+  }
+
+  .community-story-reply-shell input {
+    cursor:pointer !important;
+  }
+
+  .community-story-mobile-interactions {
+    bottom:max(10px,calc(env(safe-area-inset-bottom,0px) + 6px)) !important;
+  }
+
+  .community-story-viewer .community-error {
+    position:absolute !important;
+    right:16px !important;
+    bottom:max(78px,calc(env(safe-area-inset-bottom,0px) + 68px)) !important;
+    left:16px !important;
+    z-index:12 !important;
+    margin:0 !important;
+  }
+}
+
+@media (max-width:360px) {
+  .community-story-mobile-interactions {
+    right:max(10px,env(safe-area-inset-right,0px)) !important;
+    left:max(10px,env(safe-area-inset-left,0px)) !important;
+    grid-template-columns:minmax(0,1fr) 42px 42px !important;
+    gap:6px !important;
+  }
+
+  .community-story-viewer-identity em {
+    display:none !important;
+  }
+}
+
+@media (max-width:760px) and (orientation:landscape) {
+  .community-story-viewer-hud {
+    padding-top:max(6px,env(safe-area-inset-top,0px)) !important;
+  }
+
+  .community-story-viewer-hud-row {
+    min-height:34px !important;
+  }
+
+  .community-story-viewer-hud .community-avatar {
+    flex-basis:28px !important;
+    width:28px !important;
+    height:28px !important;
+  }
+
+  .community-story-mobile-interactions {
+    grid-template-columns:minmax(160px,360px) 44px 44px !important;
+    justify-content:end !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-caption {
+    right:max(18px,env(safe-area-inset-right,0px)) !important;
+    left:max(18px,env(safe-area-inset-left,0px)) !important;
+  }
+}
