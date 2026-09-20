@@ -1052,8 +1052,39 @@ function storyById(storyId = '') {
   return state.stories.find((story) => story.storyId === storyId) || null
 }
 
+// melogic-story-author-groups-v1
+// Stories are grouped by creator in the rail/viewer. Progress segments belong
+// only to the creator currently being viewed, never to the global story list.
+function storyAuthorKey(story = {}) {
+  return String(story.authorUid || story.authorUsername || story.authorDisplayName || story.storyId || '').trim()
+}
+
+function storyGroups() {
+  const groups = []
+  const byAuthor = new Map()
+  state.stories.forEach((story) => {
+    const key = storyAuthorKey(story)
+    let group = byAuthor.get(key)
+    if (!group) {
+      group = { key, stories: [] }
+      byAuthor.set(key, group)
+      groups.push(group)
+    }
+    group.stories.push(story)
+  })
+  return groups
+}
+
+function currentStoryGroup() {
+  const current = storyById(state.storyViewer.storyId)
+  if (!current) return null
+  return storyGroups().find((group) => group.key === storyAuthorKey(current)) || null
+}
+
 function currentStoryIndex() {
-  const index = state.stories.findIndex((story) => story.storyId === state.storyViewer.storyId)
+  const group = currentStoryGroup()
+  if (!group) return 0
+  const index = group.stories.findIndex((story) => story.storyId === state.storyViewer.storyId)
   return index >= 0 ? index : 0
 }
 
@@ -1208,14 +1239,17 @@ function renderStoriesRow() {
       <strong>${pendingStory.status === 'failed' ? 'Retry Story' : 'Uploading…'}</strong>
     </button>
   ` : ''
-  const realStoryItems = state.stories.slice(0, 12).map((story) => `
-    <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
-      <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
-        ${storyAvatar(story)}
-      </span></span>
-      ${communityDisplayNameMarkup(story, story.authorDisplayName || story.authorUsername || 'Creator')}
-    </button>
-  `).join('')
+  const realStoryItems = storyGroups().slice(0, 12).map((group) => {
+    const story = group.stories[0]
+    return `
+      <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
+        <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
+          ${storyAvatar(story)}
+        </span></span>
+        ${communityDisplayNameMarkup(story, story.authorDisplayName || story.authorUsername || 'Creator')}
+      </button>
+    `
+  }).join('')
 
   return `
     <section class="community-stories-row" aria-label="Community stories" data-community-stories-scroll>
@@ -1368,8 +1402,10 @@ function renderStoryComposerModal() {
 
 function renderStoryViewerModal() {
   if (!state.storyViewer.open) return ''
-  const story = storyById(state.storyViewer.storyId) || state.stories[currentStoryIndex()]
+  const story = storyById(state.storyViewer.storyId)
   if (!story) return ''
+  const group = currentStoryGroup()
+  const groupStories = group?.stories || [story]
   const index = currentStoryIndex()
   const isOwn = state.currentUser?.uid && state.currentUser.uid === story.authorUid
   const profileHref = story.authorUid ? publicProfileRoute({ uid: story.authorUid }) : ROUTES.profilePublic
@@ -1377,8 +1413,8 @@ function renderStoryViewerModal() {
     <div class="community-modal-backdrop">
       <section class="community-story-viewer" role="dialog" aria-modal="true" aria-labelledby="community-story-viewer-title">
         <header class="community-story-viewer-hud">
-          <div class="community-story-progress-rail" aria-label="Story ${formatCount(index + 1)} of ${formatCount(state.stories.length)}">
-            ${state.stories.map((_, storyIndex) => `<span class="${storyIndex < index ? 'is-complete' : storyIndex === index ? 'is-active' : ''}"><i></i></span>`).join('')}
+          <div class="community-story-progress-rail" aria-label="Story ${formatCount(index + 1)} of ${formatCount(groupStories.length)}">
+            ${groupStories.map((_, storyIndex) => `<span class="${storyIndex < index ? 'is-complete' : storyIndex === index ? 'is-active' : ''}"><i></i></span>`).join('')}
           </div>
           <div class="community-story-viewer-hud-row">
             <a class="community-author" href="${profileHref}">
@@ -1422,9 +1458,9 @@ function renderStoryViewerModal() {
             </form>
           </div>
           <footer class="community-story-viewer-actions">
-            <button type="button" data-story-prev ${state.stories.length <= 1 ? 'disabled' : ''}>${iconSvg('arrowLeft')} <span>Prev</span></button>
-            <span>${formatCount(index + 1)} / ${formatCount(state.stories.length)} · ${iconSvg('eye')} ${formatCount(story.viewCount)}</span>
-            <button type="button" data-story-next ${state.stories.length <= 1 ? 'disabled' : ''}><span>Next</span> ${iconSvg('chevronRight')}</button>
+            <button type="button" data-story-prev ${storyGroups().length <= 1 && groupStories.length <= 1 ? 'disabled' : ''}>${iconSvg('arrowLeft')} <span>Prev</span></button>
+            <span>${formatCount(index + 1)} / ${formatCount(groupStories.length)} · ${iconSvg('eye')} ${formatCount(story.viewCount)}</span>
+            <button type="button" data-story-next ${storyGroups().length <= 1 && groupStories.length <= 1 ? 'disabled' : ''}><span>Next</span> ${iconSvg('chevronRight')}</button>
             <button type="button" data-story-report="${escapeHtml(story.storyId)}">${iconSvg('alertCircle')} <span>Report</span></button>
             ${isOwn ? `<button type="button" data-story-delete="${escapeHtml(story.storyId)}">${iconSvg('trash')} <span>Delete</span></button>` : ''}
           </footer>
@@ -6992,16 +7028,43 @@ function openStoryViewer(storyId = '') {
   })
 }
 
+function animateToStory(storyId = '', delta = 1) {
+  const viewer = app?.querySelector('.community-story-viewer')
+  if (!viewer) {
+    openStoryViewer(storyId)
+    return
+  }
+  clearStoryViewerAdvanceTimer()
+  viewer.classList.remove('is-shifting-left', 'is-shifting-right')
+  viewer.classList.add(delta > 0 ? 'is-shifting-left' : 'is-shifting-right')
+  window.setTimeout(() => openStoryViewer(storyId), 220)
+}
+
 function advanceStory(delta = 1) {
   if (!state.stories.length) return
   clearStoryViewerAdvanceTimer()
-  const currentIndex = currentStoryIndex()
-  const nextIndex = currentIndex + delta
-  if (nextIndex < 0 || nextIndex >= state.stories.length) {
+  const group = currentStoryGroup()
+  if (!group) return closeStoryViewer()
+  const index = currentStoryIndex()
+  const withinGroupIndex = index + delta
+
+  // Continue through this creator's own Story sequence first.
+  if (withinGroupIndex >= 0 && withinGroupIndex < group.stories.length) {
+    openStoryViewer(group.stories[withinGroupIndex].storyId)
+    return
+  }
+
+  // Creator exhausted: transition the entire viewer to the adjacent creator.
+  const groups = storyGroups()
+  const groupIndex = groups.findIndex((item) => item.key === group.key)
+  const nextGroupIndex = groupIndex + (delta > 0 ? 1 : -1)
+  if (nextGroupIndex < 0 || nextGroupIndex >= groups.length) {
     closeStoryViewer()
     return
   }
-  openStoryViewer(state.stories[nextIndex].storyId)
+  const nextGroup = groups[nextGroupIndex]
+  const targetStory = delta > 0 ? nextGroup.stories[0] : nextGroup.stories[nextGroup.stories.length - 1]
+  animateToStory(targetStory.storyId, delta)
 }
 
 async function handleStoryDelete(storyId = '') {
