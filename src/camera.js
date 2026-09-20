@@ -766,33 +766,43 @@ function editorStagePoint(event){
   if(!r?.width||!r?.height)return{x:.5,y:.5}
   return{x:clampEditorValue((event.clientX-r.left)/r.width,0,1),y:clampEditorValue((event.clientY-r.top)/r.height,0,1)}
 }
-function beginEditorGesture(){
+function beginEditorGesture({allowDrag=false}={}){
   const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
   if(!layer)return
   const points=[...editorPointers.values()]
-  if(points.length===1){editorGestureHistoryCommitted=false;editorGesture={kind:'drag',layerId:layer.id,start:{...points[0]},layer:{x:layer.x,y:layer.y}}}
-  else if(points.length>=2){editorGestureHistoryCommitted=false;
+  if(points.length>=2){
     const [a,b]=points,dx=b.x-a.x,dy=b.y-a.y
-    editorGesture={kind:'transform',layerId:layer.id,distance:Math.hypot(dx,dy)||1,angle:Math.atan2(dy,dx)*180/Math.PI,scale:layer.scale||1,rotation:layer.rotation||0}
-  }
+    editorGestureHistoryCommitted=false
+    editorGesture={kind:'transform',layerId:layer.id,distance:Math.hypot(dx,dy)||1,angle:Math.atan2(dy,dx)*180/Math.PI,scale:layer.scale||1,rotation:layer.rotation||0,x:layer.x,y:layer.y}
+  }else if(points.length===1&&allowDrag){
+    editorGestureHistoryCommitted=false
+    editorGesture={kind:'drag',layerId:layer.id,start:{...points[0]},layer:{x:layer.x,y:layer.y}}
+  }else editorGesture=null
 }
 function updateEditorGesture(){
   const layer=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
-  if(!layer||!editorGesture)return
-  if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
+  if(!layer)return
   const points=[...editorPointers.values()]
-  if(points.length===1&&editorGesture.kind==='drag'){
+  if(points.length>=2){
+    // Two fingers are exclusively scale + rotation. X/Y are frozen for the entire transform.
+    if(editorGesture?.kind!=='transform')beginEditorGesture()
+    if(editorGesture?.kind!=='transform')return
+    if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
+    const [a,b]=points,dx=b.x-a.x,dy=b.y-a.y,distance=Math.hypot(dx,dy)||1,angle=Math.atan2(dy,dx)*180/Math.PI
+    layer.scale=clampEditorValue(editorGesture.scale*(distance/editorGesture.distance),.15,8)
+    let delta=angle-editorGesture.angle
+    while(delta>180)delta-=360
+    while(delta<-180)delta+=360
+    layer.rotation=editorGesture.rotation+delta
+    layer.x=editorGesture.x
+    layer.y=editorGesture.y
+  }else if(points.length===1&&editorGesture?.kind==='drag'){
+    if(!editorGestureHistoryCommitted){pushCameraEditorHistory();editorGestureHistoryCommitted=true}
     const p=points[0],stage=cameraSurface.querySelector('[data-camera-editor-layer-stage]'),r=stage?.getBoundingClientRect()
     if(!r?.width||!r?.height)return
     layer.x=clampEditorValue(editorGesture.layer.x+(p.x-editorGesture.start.x)/r.width,.02,.98)
     layer.y=clampEditorValue(editorGesture.layer.y+(p.y-editorGesture.start.y)/r.height,.02,.98)
-  }else if(points.length>=2){
-    if(editorGesture.kind!=='transform')beginEditorGesture()
-    if(editorGesture?.kind!=='transform')return
-    const [a,b]=points,dx=b.x-a.x,dy=b.y-a.y,distance=Math.hypot(dx,dy)||1,angle=Math.atan2(dy,dx)*180/Math.PI
-    layer.scale=clampEditorValue(editorGesture.scale*(distance/editorGesture.distance),.15,8)
-    layer.rotation=editorGesture.rotation+(angle-editorGesture.angle)
-  }
+  }else return
   editorState.revision+=1;renderCameraEditorLayers()
 }
 function cameraEditorStateForHistory(){return cameraEditorSnapshot()}
@@ -1669,32 +1679,36 @@ editorLayerStage?.addEventListener('keydown',event=>{
 editorLayerStage?.addEventListener('pointerdown',event=>{
   const target=event.target.closest?.('[data-camera-editor-layer]')
   const selected=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
-  // A selected layer owns two-finger gestures anywhere on the editor stage.
-  // One-finger drag still starts directly on the layer so normal canvas interaction remains intact.
-  if(!target&&!selected)return
+  if(!selected&&!target)return
   if(target?.matches('[data-camera-live-text-editor="true"]')&&event.isPrimary){event.stopPropagation();return}
+  // One finger only drags when it starts on the selected layer. A finger on empty
+  // stage is merely tracked so a second finger anywhere can promote to transform.
+  if(target&&target.dataset.cameraEditorLayer!==editorState.selectedLayerId)selectCameraEditorLayer(target.dataset.cameraEditorLayer||'')
+  const active=editorState.layers.find(item=>item.id===editorState.selectedLayerId)
+  if(!active)return
   event.preventDefault();event.stopPropagation()
-  if(target)selectCameraEditorLayer(target.dataset.cameraEditorLayer||'')
-  editorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
+  const onSelected=!!target&&target.dataset.cameraEditorLayer===active.id
+  editorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY,onSelected})
   editorLayerStage.setPointerCapture?.(event.pointerId)
-  beginEditorGesture()
+  if(editorPointers.size>=2)beginEditorGesture()
+  else beginEditorGesture({allowDrag:onSelected})
 })
 editorLayerStage?.addEventListener('pointermove',event=>{
   if(!editorPointers.has(event.pointerId))return
-  event.preventDefault();editorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});updateEditorGesture()
+  event.preventDefault()
+  const prior=editorPointers.get(event.pointerId)
+  editorPointers.set(event.pointerId,{...prior,x:event.clientX,y:event.clientY})
+  if(editorPointers.size>=2&&editorGesture?.kind!=='transform')beginEditorGesture()
+  updateEditorGesture()
 })
 function finishEditorPointer(event){
   if(!editorPointers.has(event.pointerId))return
+  const wasTransform=editorGesture?.kind==='transform'||editorPointers.size>=2
   editorPointers.delete(event.pointerId)
-  if(editorPointers.size)beginEditorGesture();else editorGesture=null
+  // Never downgrade a pinch/twist into drag: wait for a fresh touch.
+  if(wasTransform){editorGesture=null;editorPointers.clear()}
+  else if(!editorPointers.size)editorGesture=null
 }
-editorLayerStage?.addEventListener('pointerdown',event=>{
-  if(event.isPrimary||!editorState.selectedLayerId||editorPointers.has(event.pointerId))return
-  event.preventDefault();event.stopPropagation()
-  editorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY})
-  editorLayerStage.setPointerCapture?.(event.pointerId)
-  beginEditorGesture()
-},{capture:true})
 editorLayerStage?.addEventListener('pointerup',finishEditorPointer)
 editorLayerStage?.addEventListener('pointercancel',finishEditorPointer)
 editorLayerStage?.addEventListener('click',event=>event.stopPropagation())
