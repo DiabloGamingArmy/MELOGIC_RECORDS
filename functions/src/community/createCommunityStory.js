@@ -14,6 +14,7 @@ const {
   sanitizeStoryId,
   sanitizeStoryText,
   serializeStory,
+  storyIsActive,
   validStoryMediaPath
 } = require('./communityStoryShared')
 
@@ -62,8 +63,8 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
     const sourceSnap = await firestore.collection('communityStories').doc(remixOfStoryId).get()
     if (!sourceSnap.exists) throw new HttpsError('not-found', 'The original Story is no longer available.')
     remixSource = sourceSnap.data() || {}
-    if (remixSource.status !== 'active' || remixSource.visibility !== 'public') {
-      throw new HttpsError('failed-precondition', 'This Story cannot be remixed.')
+    if (!storyIsActive(remixSource)) {
+      throw new HttpsError('failed-precondition', 'This Story is expired or cannot be remixed.')
     }
     if (remixSource.authorUid !== uid && remixSource.remixPermission !== true) {
       throw new HttpsError('permission-denied', 'The creator has not enabled remixing for this Story.')
