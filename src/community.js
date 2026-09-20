@@ -358,6 +358,7 @@ let feedNavigationSnapshot = null
 const desktopCommunitySurfaceCache = new Map()
 let desktopCommunitySurfaceKey = ''
 let desktopStoryHydrationGeneration = 0
+let desktopCommunityHydrationGeneration = 0
 const communityPendingActions = new Map()
 const communityPostReactionVersions = new Map()
 const communityPostSaveVersions = new Map()
@@ -3629,6 +3630,73 @@ function bindTopicRailEvents(root = app) {
   updateTopicArrowState()
 }
 
+function updateCommunitySharedRegionsInRoot(root, { bind = false } = {}) {
+  if (!root?.querySelectorAll) return
+
+  root.querySelectorAll('.community-left-nav').forEach((currentNav) => {
+    const holder = document.createElement('div')
+    holder.innerHTML = renderLeftNav().trim()
+    const nextNav = holder.firstElementChild
+    if (nextNav) currentNav.replaceWith(nextNav)
+  })
+
+  root.querySelectorAll('[data-community-discovery-widget]').forEach((discovery) => {
+    discovery.innerHTML = renderCommunityDiscoveryBody()
+    if (bind) {
+      bindCommunityDiscoveryWidgetEvents(discovery)
+      bindCommunityFocusButtons(discovery)
+    }
+  })
+
+  root.querySelectorAll('.community-network-directory-summary').forEach((summary) => {
+    const focusedCount = state.communities.filter((community) =>
+      community?.communityId && state.communityFocus[community.communityId]
+    ).length
+    summary.innerHTML = `<strong>${formatCount(focusedCount)}</strong><span>in your navigator</span>`
+  })
+}
+
+function reconcileCommunitySharedRegions() {
+  updateCommunitySharedRegionsInRoot(app, { bind: true })
+  if (!isMobileSpaRuntime()) {
+    desktopCommunitySurfaceCache.forEach((cached) => {
+      updateCommunitySharedRegionsInRoot(cached?.fragment, { bind: false })
+    })
+  }
+  updateCommunityRailFadeState()
+}
+
+async function hydrateDesktopCommunitySharedState({ fullDirectory = false } = {}) {
+  if (isMobileSpaRuntime()) return false
+  const generation = ++desktopCommunityHydrationGeneration
+  state.communityFilters.loading = true
+  state.communityFilters.error = ''
+  try {
+    const communities = await listCommunities({
+      category: fullDirectory ? state.communityFilters.category : 'all',
+      search: fullDirectory ? state.communityFilters.search : '',
+      limitCount: fullDirectory ? 50 : 16
+    })
+    if (generation !== desktopCommunityHydrationGeneration) return false
+    state.communities = communities
+    await loadCommunityFocusState()
+    if (generation !== desktopCommunityHydrationGeneration) return false
+    reconcileCommunitySharedRegions()
+    return true
+  } catch (error) {
+    if (generation !== desktopCommunityHydrationGeneration) return false
+    console.warn('[community] shared community hydration failed', {
+      code: error?.code,
+      message: error?.message,
+      details: error?.details
+    })
+    state.communityFilters.error = error?.message || 'Communities could not be loaded.'
+    return false
+  } finally {
+    if (generation === desktopCommunityHydrationGeneration) state.communityFilters.loading = false
+  }
+}
+
 function updateCommunityAncillaryDom() {
   const currentHeader = app?.querySelector('.community-feed-header')
   if (currentHeader) {
@@ -4769,7 +4837,12 @@ async function loadCommunity() {
       renderAfter: true,
       hydrateIdentity: !isMobileSpaRuntime()
     }).catch(() => null)
-    await loadCommunities()
+    if (isMobileSpaRuntime()) {
+      await loadCommunities()
+    } else {
+      await hydrateDesktopCommunitySharedState({ fullDirectory: true })
+      render()
+    }
     await storiesPromise
     return
   }
@@ -4785,11 +4858,12 @@ async function loadCommunity() {
 
   let homeCommunitiesPromise = null
   if (state.view.type === 'feed') {
-    homeCommunitiesPromise = loadCommunities({ renderOnStart: false, renderAfter: false, bootstrap: true })
-      .then(() => {
-        updateCommunityAncillaryDom()
-        return true
-      })
+    homeCommunitiesPromise = (isMobileSpaRuntime()
+      ? loadCommunities({ renderOnStart: false, renderAfter: false, bootstrap: true }).then(() => {
+          updateCommunityAncillaryDom()
+          return true
+        })
+      : hydrateDesktopCommunitySharedState({ fullDirectory: false }))
       .catch(() => false)
   } else if (!state.communities.length && state.view.type !== 'community') {
     loadCommunities({ renderOnStart: false, renderAfter: false, bootstrap: true })
@@ -5918,13 +5992,21 @@ async function handleToggleFocus(communityId) {
   if (state.community?.communityId === communityId) {
     state.community = { ...state.community, focusCount: Math.max(0, Number(state.community.focusCount || 0) + delta) }
   }
-  render()
+  if (isMobileSpaRuntime()) render()
+  else reconcileCommunitySharedRegions()
   trackCommunityAction(actionId, toggleCommunityFocus(communityId, nextFocused))
     .then((result) => {
       state.communityFocus[communityId] = Boolean(result.focused)
       state.communities = state.communities.map((community) => community.communityId === communityId ? { ...community, focusCount: Number(result.focusCount ?? community.focusCount) } : community)
       if (state.community?.communityId === communityId) {
         state.community = { ...state.community, focusCount: Number(result.focusCount ?? state.community.focusCount) }
+      }
+      if (!isMobileSpaRuntime()) {
+        reconcileCommunitySharedRegions()
+        if (state.view.type === 'feed' && state.activeTab === 'following') {
+          void loadFeedPage({ reset: true }).catch(() => null)
+        }
+        return
       }
       if (state.view.type === 'feed' && state.activeTab === 'following') {
         loadCommunity()
@@ -5938,7 +6020,8 @@ async function handleToggleFocus(communityId) {
       state.communities = previousCommunities
       state.community = previousCommunity
       showCommunityToast('Could not update focus. Please try again.')
-      render()
+      if (isMobileSpaRuntime()) render()
+      else reconcileCommunitySharedRegions()
     })
 }
 
@@ -6704,9 +6787,6 @@ function captureDesktopCommunitySurface(key = desktopCommunitySurfaceKeyFor()) {
       feedSearch: state.feedSearch,
       feedSort: state.feedSort,
       view: { ...state.view },
-      communities: state.communities,
-      communityFocus: { ...state.communityFocus },
-      communityFilters: { ...state.communityFilters },
       posts: state.posts,
       attachmentMediaUrls: state.attachmentMediaUrls,
       viewerState: state.viewerState,
@@ -6766,14 +6846,14 @@ function navigateDesktopCommunitySurface(nextKey) {
 
   if (restoreDesktopCommunitySurface(nextKey)) {
     void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
+    void hydrateDesktopCommunitySharedState({ fullDirectory: nextKey === 'discover' }).catch(() => null)
     return true
   }
   desktopCommunitySurfaceKey = nextKey
   render()
   void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
-  if (nextKey === 'discover') {
-    void loadCommunities().catch(() => null)
-  } else {
+  void hydrateDesktopCommunitySharedState({ fullDirectory: nextKey === 'discover' }).catch(() => null)
+  if (nextKey !== 'discover') {
     void loadFeedPage({ reset: true }).catch(() => null)
   }
   return true
