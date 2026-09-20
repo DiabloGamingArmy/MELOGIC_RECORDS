@@ -6866,10 +6866,14 @@ async function handleStorySubmit(event) {
   }
 }
 
-// melogic-mobile-story-viewer-behavior-p4
+// melogic-story-signal-foundation-push-02
 const STORY_IMAGE_DURATION_MS = 5000
 let storyViewerAdvanceTimer = 0
 let storyViewerHoldTimer = 0
+let storyViewerProgressFrame = 0
+let storyViewerProgressStartedAt = 0
+let storyViewerProgressElapsedMs = 0
+let storyViewerProgressDurationMs = STORY_IMAGE_DURATION_MS
 let storyViewerPointerDownAt = 0
 let storyViewerPointerStartX = 0
 let storyViewerPointerStartY = 0
@@ -6880,12 +6884,53 @@ function clearStoryViewerAdvanceTimer() {
   storyViewerAdvanceTimer = 0
 }
 
+function clearStoryViewerProgressFrame() {
+  if (storyViewerProgressFrame) window.cancelAnimationFrame(storyViewerProgressFrame)
+  storyViewerProgressFrame = 0
+}
+
+function activeStoryProgressElement() {
+  return app?.querySelector('.community-story-viewer .community-story-progress-rail > span.is-active > i') || null
+}
+
+function setStorySignalProgress(progress = 0) {
+  const fill = activeStoryProgressElement()
+  if (!fill) return
+  const normalized = Math.max(0, Math.min(1, Number(progress) || 0))
+  fill.style.setProperty('--story-signal-progress', String(normalized))
+  fill.style.transform = `scaleX(${normalized})`
+}
+
 function storyViewerMedia() {
   return app?.querySelector('.community-story-viewer .community-story-surface video') || null
 }
 
+function runImageStorySignal() {
+  clearStoryViewerProgressFrame()
+  const tick = (now) => {
+    if (!state.storyViewer.open || app?.querySelector('.community-story-viewer')?.classList.contains('is-paused')) return
+    if (!storyViewerProgressStartedAt) storyViewerProgressStartedAt = now
+    const elapsed = storyViewerProgressElapsedMs + (now - storyViewerProgressStartedAt)
+    const progress = elapsed / storyViewerProgressDurationMs
+    setStorySignalProgress(progress)
+    if (progress >= 1) {
+      storyViewerProgressElapsedMs = storyViewerProgressDurationMs
+      storyViewerProgressStartedAt = 0
+      advanceStory(1)
+      return
+    }
+    storyViewerProgressFrame = window.requestAnimationFrame(tick)
+  }
+  storyViewerProgressFrame = window.requestAnimationFrame(tick)
+}
+
 function pauseStoryViewerPlayback() {
   clearStoryViewerAdvanceTimer()
+  clearStoryViewerProgressFrame()
+  if (storyViewerProgressStartedAt) {
+    storyViewerProgressElapsedMs += performance.now() - storyViewerProgressStartedAt
+    storyViewerProgressStartedAt = 0
+  }
   const video = storyViewerMedia()
   if (video && !video.paused) video.pause()
   app?.querySelector('.community-story-viewer')?.classList.add('is-paused')
@@ -6900,11 +6945,13 @@ function resumeStoryViewerPlayback() {
     video.play().catch(() => {})
     return
   }
-  scheduleStoryViewerAdvance(STORY_IMAGE_DURATION_MS)
+  storyViewerProgressStartedAt = 0
+  runImageStorySignal()
 }
 
 function closeStoryViewer() {
   clearStoryViewerAdvanceTimer()
+  clearStoryViewerProgressFrame()
   if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
   storyViewerHoldTimer = 0
   state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
@@ -6912,55 +6959,52 @@ function closeStoryViewer() {
 }
 
 function scheduleStoryViewerAdvance(delay = STORY_IMAGE_DURATION_MS) {
-  clearStoryViewerAdvanceTimer()
-  if (!state.storyViewer.open || state.stories.length <= 1) return
-  storyViewerAdvanceTimer = window.setTimeout(() => {
-    if (!state.storyViewer.open) return
-    advanceStory(1)
-  }, Math.max(250, Number(delay) || STORY_IMAGE_DURATION_MS))
+  // Compatibility shim for callers outside the viewer. The Story Signal owns
+  // viewer advancement now rather than an independent CSS/timer clock.
+  storyViewerProgressDurationMs = Math.max(250, Number(delay) || STORY_IMAGE_DURATION_MS)
+  storyViewerProgressElapsedMs = 0
+  storyViewerProgressStartedAt = 0
+  setStorySignalProgress(0)
+  runImageStorySignal()
 }
 
 function bindStoryViewerPlayback() {
   clearStoryViewerAdvanceTimer()
+  clearStoryViewerProgressFrame()
   const viewer = app?.querySelector('.community-story-viewer')
   if (!viewer || !state.storyViewer.open) return
   const story = storyById(state.storyViewer.storyId)
   const video = storyViewerMedia()
+  storyViewerProgressElapsedMs = 0
+  storyViewerProgressStartedAt = 0
+  storyViewerProgressDurationMs = STORY_IMAGE_DURATION_MS
+  setStorySignalProgress(0)
+
   if (story?.mediaType === 'video' && video) {
     video.loop = false
     video.muted = false
-    const activeProgress = viewer.querySelector('.community-story-progress-rail > span.is-active > i')
-    const syncVideoProgressDuration = () => {
+    const syncVideoSignal = () => {
       const duration = Number(video.duration)
-      if (!activeProgress || !Number.isFinite(duration) || duration <= 0) return
-      activeProgress.style.animationDuration = `${duration}s`
-      // Restart from the beginning once real media metadata is known.
-      activeProgress.style.animationName = 'none'
-      void activeProgress.offsetWidth
-      activeProgress.style.animationName = 'community-story-progress-fill'
-      activeProgress.style.animationPlayState = video.paused ? 'paused' : 'running'
+      const currentTime = Number(video.currentTime)
+      if (!Number.isFinite(duration) || duration <= 0) return
+      storyViewerProgressDurationMs = duration * 1000
+      setStorySignalProgress(Number.isFinite(currentTime) ? currentTime / duration : 0)
     }
-    const play = () => video.play().then(() => {
-      if (activeProgress) activeProgress.style.animationPlayState = 'running'
-    }).catch(() => {
+    const play = () => video.play().catch(() => {
       video.muted = true
-      return video.play().then(() => {
-        if (activeProgress) activeProgress.style.animationPlayState = 'running'
-      }).catch(() => {})
+      return video.play().catch(() => {})
     })
-    if (video.readyState >= 1) syncVideoProgressDuration()
-    else video.addEventListener('loadedmetadata', syncVideoProgressDuration, { once: true })
-    video.addEventListener('durationchange', syncVideoProgressDuration)
-    video.addEventListener('play', () => {
-      if (activeProgress) activeProgress.style.animationPlayState = 'running'
-    })
-    video.addEventListener('pause', () => {
-      if (activeProgress) activeProgress.style.animationPlayState = 'paused'
-    })
+    if (video.readyState >= 1) syncVideoSignal()
+    else video.addEventListener('loadedmetadata', syncVideoSignal, { once: true })
+    video.addEventListener('durationchange', syncVideoSignal)
+    video.addEventListener('timeupdate', syncVideoSignal)
+    video.addEventListener('seeking', syncVideoSignal)
+    video.addEventListener('play', syncVideoSignal)
+    video.addEventListener('pause', syncVideoSignal)
     if (video.readyState >= 2) play()
     else video.addEventListener('canplay', play, { once: true })
     video.addEventListener('ended', () => {
-      if (activeProgress) activeProgress.style.animationPlayState = 'paused'
+      setStorySignalProgress(1)
       advanceStory(1)
     }, { once: true })
   } else {
