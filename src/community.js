@@ -3622,6 +3622,101 @@ function renderNetworkNextCard() {
   `
 }
 
+const COMMUNITY_TDIH_ENDPOINT = 'https://en.wikipedia.org/api/rest_v1/feed/onthisday/events'
+
+function communityHistoryEvent() {
+  return state.history.events[state.history.index] || null
+}
+
+function communityHistoryPageUrl(event = communityHistoryEvent()) {
+  const page = event?.pages?.[0]
+  return page?.content_urls?.desktop?.page || page?.content_urls?.mobile?.page || ''
+}
+
+function renderCommunityHistoryBody() {
+  if (state.history.loading && !state.history.loaded) {
+    return '<p class="community-history-state">Fetching today’s history from Wikipedia…</p>'
+  }
+  if (state.history.error && !state.history.events.length) {
+    return `<p class="community-history-state is-error">${escapeHtml(state.history.error)}</p>
+      <div class="community-history-actions"><button type="button" class="button" data-community-history-retry>Try again</button></div>`
+  }
+  const event = communityHistoryEvent()
+  if (!event) return '<p class="community-history-state">No historical events were found for today.</p>'
+  const url = communityHistoryPageUrl(event)
+  return `
+    <div class="community-history-event">
+      <strong>${escapeHtml(String(event.year || ''))}</strong>
+      <p>${escapeHtml(event.text || '')}</p>
+    </div>
+    <div class="community-history-actions">
+      ${url ? `<a class="button community-history-learn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Learn more</a>` : ''}
+      <button type="button" class="button community-history-new" data-community-history-new ${state.history.events.length < 2 ? 'disabled' : ''}>New one</button>
+    </div>
+    <a class="community-history-attribution" href="https://en.wikipedia.org/" target="_blank" rel="noopener noreferrer">From Wikipedia</a>
+  `
+}
+
+function updateCommunityHistoryRegions(root = app, { bind = true } = {}) {
+  root?.querySelectorAll?.('[data-community-history-body]').forEach((region) => {
+    region.innerHTML = renderCommunityHistoryBody()
+    if (bind) bindCommunityHistoryEvents(region)
+  })
+}
+
+function pickNextCommunityHistoryEvent() {
+  const total = state.history.events.length
+  if (total < 2) return
+  let next = state.history.index
+  while (next === state.history.index) next = Math.floor(Math.random() * total)
+  state.history.index = next
+  updateCommunityHistoryRegions(app)
+}
+
+function bindCommunityHistoryEvents(root = app) {
+  root?.querySelectorAll?.('[data-community-history-new]').forEach((button) => {
+    button.addEventListener('click', pickNextCommunityHistoryEvent)
+  })
+  root?.querySelectorAll?.('[data-community-history-retry]').forEach((button) => {
+    button.addEventListener('click', () => void loadCommunityHistory({ force: true }))
+  })
+}
+
+async function loadCommunityHistory({ force = false } = {}) {
+  if (isMobileSpaRuntime()) return
+  if (!force && (state.history.loading || state.history.loaded)) {
+    updateCommunityHistoryRegions(app)
+    return
+  }
+  const today = new Date()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  state.history.loading = true
+  state.history.error = ''
+  updateCommunityHistoryRegions(app)
+  try {
+    const response = await fetch(`${COMMUNITY_TDIH_ENDPOINT}/${month}/${day}`, {
+      headers: { accept: 'application/json' }
+    })
+    if (!response.ok) throw new Error(`Wikipedia returned ${response.status}.`)
+    const payload = await response.json()
+    const events = Array.isArray(payload?.events)
+      ? payload.events.filter((event) => event?.text && Number.isFinite(Number(event?.year)))
+      : []
+    state.history.events = events
+    state.history.index = events.length ? Math.floor(Math.random() * events.length) : 0
+    state.history.loaded = true
+    state.history.dateLabel = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(today)
+    if (!events.length) state.history.error = 'No historical events were found for today.'
+  } catch (error) {
+    console.warn('[community] Wikipedia history load failed', error)
+    state.history.error = 'History could not be loaded from Wikipedia.'
+  } finally {
+    state.history.loading = false
+    updateCommunityHistoryRegions(app)
+  }
+}
+
 function renderSidebar() {
   const inCommunity = state.view.type === 'community'
   return `
@@ -3647,7 +3742,9 @@ function renderSidebar() {
             </div>
             <time datetime="${new Date().toISOString().slice(0, 10)}">${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date())}</time>
           </div>
-          <p class="community-history-state">A daily moment from music, technology, art, and culture will appear here.</p>
+          <div data-community-history-body>
+            ${renderCommunityHistoryBody()}
+          </div>
         </section>
       ` : ''}
       ${renderCommunityRailFooter()}
@@ -8471,6 +8568,8 @@ function bindEvents() {
   })
   bindFeedRegionEvents(app)
   bindCommunityDiscoveryWidgetEvents(app)
+  bindCommunityHistoryEvents(app)
+  if (!isMobileSpaRuntime() && !state.history.loaded && !state.history.loading) void loadCommunityHistory()
   setupCommunityOutsideClick()
   if (!isMobileSpaRuntime()) {
     app.querySelectorAll('[data-community-tab]').forEach((button) => {

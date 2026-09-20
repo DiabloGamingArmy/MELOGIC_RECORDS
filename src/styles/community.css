@@ -13626,7 +13626,7 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
 @media (min-width: 761px) {
   /* Shift rail mass left so the central feed reads visually centered. */
   .community-layout:not(.is-detail) {
-    grid-template-columns: 252px minmax(0, 1fr) 300px;
+    grid-template-columns: 280px minmax(0, 1fr) 320px;
   }
 
   .community-network-left-discovery {
@@ -13726,5 +13726,61 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     color: #8d9aae;
     font-size: .78rem;
     line-height: 1.5;
+  }
+}
+
+
+/* melogic-desktop-community-tdih-v2 */
+@media (min-width: 761px) {
+  .community-history-card [data-community-history-body] {
+    display: grid;
+    gap: .7rem;
+  }
+
+  .community-history-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: .45rem;
+  }
+
+  .community-history-actions .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 32px;
+    margin: 0;
+    padding: .4rem .55rem;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, .045);
+    color: #dce5f2;
+    font: inherit;
+    font-size: .72rem;
+    font-weight: 750;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .community-history-actions .button:hover {
+    border-color: rgba(166, 92, 255, .38);
+    background: rgba(118, 93, 255, .1);
+    color: #fff;
+  }
+
+  .community-history-actions .button:disabled {
+    opacity: .45;
+    cursor: default;
+  }
+
+  .community-history-event {
+    gap: .35rem;
+    padding-left: .65rem;
+    border-left-color: rgba(118, 93, 255, .55);
+  }
+
+  .community-history-event strong {
+    color: #a995ff;
+    font-size: 1rem;
   }
 }
