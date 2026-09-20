@@ -1057,3 +1057,76 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     background:linear-gradient(270deg,#000 20%,rgba(0,0,0,0)) !important;
   }
 }
+
+
+/* melogic-mobile-story-optimistic-upload-v1 */
+@media (max-width:760px) {
+  body.is-community-page .community-story-item.is-pending-story {
+    opacity:1 !important;
+    cursor:default;
+  }
+  body.is-community-page .community-story-item.is-pending-story:disabled {
+    color:inherit !important;
+    -webkit-text-fill-color:inherit !important;
+  }
+  body.is-community-page .community-story-item.is-pending-story > strong {
+    max-width:72px;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    color:#b9b9c2;
+    font-size:.68rem;
+  }
+  body.is-community-page .community-story-upload-ring {
+    position:relative;
+    isolation:isolate;
+    border:0 !important;
+    background:transparent !important;
+  }
+  body.is-community-page .community-story-upload-ring::before {
+    content:"";
+    position:absolute;
+    inset:-3px;
+    z-index:-1;
+    border-radius:50%;
+    background:var(--community-accent-gradient,var(--ml-accent-gradient));
+    animation:community-story-upload-spin 1.05s linear infinite,community-story-upload-pulse 1.5s ease-in-out infinite;
+  }
+  body.is-community-page .community-story-upload-ring::after {
+    content:"";
+    position:absolute;
+    inset:1px;
+    z-index:-1;
+    border-radius:50%;
+    background:#000;
+  }
+  body.is-community-page .community-story-item.is-pending-story .community-story-avatar {
+    position:relative;
+    z-index:1;
+    overflow:hidden;
+    background:#111;
+  }
+  body.is-community-page .community-story-item.is-pending-story .community-story-avatar img {
+    width:100%;
+    height:100%;
+    display:block;
+    object-fit:cover;
+  }
+  body.is-community-page .community-story-item.is-pending-story.is-failed .community-story-upload-ring::before {
+    animation:none;
+    background:#777;
+  }
+  body.is-community-page .community-story-item.is-pending-story.is-failed {
+    cursor:pointer;
+  }
+  @keyframes community-story-upload-spin {
+    to { transform:rotate(360deg); }
+  }
+  @keyframes community-story-upload-pulse {
+    0%,100% { opacity:.58; filter:brightness(.9); }
+    50% { opacity:1; filter:brightness(1.25); }
+  }
+  @media (prefers-reduced-motion:reduce) {
+    body.is-community-page .community-story-upload-ring::before { animation:none; }
+  }
+}
