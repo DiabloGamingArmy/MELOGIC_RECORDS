@@ -392,6 +392,7 @@ function hydrateCommunityIdentityDom() {
     textNode.nodeValue = displayName
 
     const badge = node.querySelector(':scope > .community-verified-badge')
+    node.classList.toggle('is-verified', verified)
     if (verified && communityVerifiedBadgeUrl) {
       if (!badge) {
         const img = document.createElement('img')
@@ -464,11 +465,12 @@ function communityVerifiedBadgeMarkup(author = {}) {
 function communityDisplayNameMarkup(author = {}, fallback = 'Melogic Creator', id = '') {
   const displayName = String(author.authorDisplayName || author.displayName || fallback).trim() || fallback
   const uid = String(author.authorUid || author.uid || '').trim()
+  const verified = communityAuthorIsVerified(author)
   const idAttr = id ? ` id="${escapeHtml(id)}"` : ''
   const identityAttrs = uid
     ? ` data-community-author-uid="${escapeHtml(uid)}" data-community-display-fallback="${escapeHtml(displayName)}"`
     : ''
-  return `<strong${idAttr} class="community-display-name"${identityAttrs}>${escapeHtml(displayName)}${communityVerifiedBadgeMarkup(author)}</strong>`
+  return `<strong${idAttr} class="community-display-name ${verified ? 'is-verified' : ''}"${identityAttrs}>${escapeHtml(displayName)}${communityVerifiedBadgeMarkup(author)}</strong>`
 }
 let storyMediaRecorder = null
 let storyRecordingStream = null
@@ -2211,7 +2213,16 @@ function renderNativeMobileComposerShell() {
   if (!state.composer.open || !state.currentUser) return ''
   const community = currentComposerCommunity()
   const canPost = Boolean(String(state.composer.body || '').trim()) && !state.composer.submitting
-  const userName = formatUsername(state.currentUser?.displayName || state.currentUser?.email || 'You')
+  const currentIdentity = communityAuthorIdentityCache.get(state.currentUser.uid)
+  void ensureCommunityAuthorIdentity(state.currentUser.uid).then((identity) => {
+    if (!identity || !state.composer.open) return
+    const nameNode = app?.querySelector('[data-mobile-composer-display-name]')
+    const usernameNode = app?.querySelector('[data-mobile-composer-username]')
+    if (nameNode) nameNode.textContent = identity.displayName || state.currentUser?.displayName || 'You'
+    if (usernameNode) usernameNode.textContent = formatUsername(identity.username || '') || '@user'
+  })
+  const displayName = String(currentIdentity?.displayName || state.currentUser?.displayName || state.currentUser?.email?.split('@')[0] || 'You').trim()
+  const username = formatUsername(currentIdentity?.username || '') || '@user'
   return `
     <div class="community-mobile-composer-screen" data-community-mobile-composer-screen>
       <section class="community-mobile-composer" role="dialog" aria-modal="true" aria-labelledby="community-mobile-composer-title">
@@ -2243,7 +2254,10 @@ function renderNativeMobileComposerShell() {
           <div class="community-mobile-composer-content">
             <div class="community-mobile-composer-author-avatar">${currentUserAvatar()}</div>
             <div class="community-mobile-composer-writing">
-              <strong class="community-mobile-composer-username">${escapeHtml(userName)}</strong>
+              <div class="community-mobile-composer-identity">
+                <strong class="community-mobile-composer-display-name" data-mobile-composer-display-name>${escapeHtml(displayName)}</strong>
+                <small class="community-mobile-composer-username" data-mobile-composer-username>${escapeHtml(username)}</small>
+              </div>
               <textarea name="body" maxlength="2000" rows="8" placeholder="${escapeHtml(communityComposerPrompt)}" data-composer-body>${escapeHtml(state.composer.body)}</textarea>
             </div>
           </div>

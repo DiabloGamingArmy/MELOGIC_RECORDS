@@ -1837,6 +1837,11 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     max-width:48vw !important;
   }
 
+  .community-story-viewer-identity .community-display-name.is-verified {
+    max-width:36vw !important;
+    gap:2px !important;
+  }
+
   .community-story-viewer-identity .community-verified-badge {
     display:inline-block !important;
     flex:0 0 13px !important;
@@ -2778,5 +2783,42 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     border-radius:0 !important;
     background:#000 !important;
     text-align:center !important;
+  }
+}
+
+
+/* melogic-mobile-composer-two-line-identity-v1 */
+@media (max-width:760px) {
+  .community-mobile-composer-identity {
+    display:flex;
+    min-width:0;
+    flex-direction:column;
+    align-items:flex-start;
+    gap:1px;
+    margin:0 0 4px;
+  }
+
+  .community-mobile-composer-display-name {
+    display:block;
+    max-width:100%;
+    overflow:hidden;
+    color:#f4f6f8;
+    font-size:.92rem;
+    font-weight:700;
+    line-height:1.15;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+
+  .community-mobile-composer-username {
+    display:block;
+    max-width:100%;
+    overflow:hidden;
+    color:rgba(160,171,189,.72);
+    font-size:.68rem;
+    font-weight:500;
+    line-height:1.15;
+    text-overflow:ellipsis;
+    white-space:nowrap;
   }
 }
