@@ -6722,3 +6722,50 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
 .community-story-remix-permission { display:flex!important; align-items:center; gap:9px; }
 .community-story-remix-permission input { width:16px; height:16px; }
 .community-story-remix-source { margin:0; font-size:.74rem; opacity:.62; }
+
+
+/* melogic-desktop-story-avatar-verified-v1
+   Desktop right-rail Stories mirror the mobile verified treatment exactly:
+   badge centered on the PFP bottom edge with a larger black copy behind it. */
+@media (min-width:761px) {
+  .community-right-stories .community-story-item.is-verified-story > .community-story-ring {
+    position:relative;
+    overflow:visible;
+  }
+
+  .community-right-stories .community-story-avatar-verified {
+    position:absolute;
+    z-index:5;
+    left:50%;
+    bottom:0;
+    width:16px;
+    height:16px;
+    transform:translate(-50%, 50%);
+    pointer-events:none;
+  }
+
+  .community-right-stories .community-story-avatar-verified-shadow,
+  .community-right-stories .community-story-avatar-verified-icon {
+    position:absolute;
+    left:50%;
+    top:50%;
+    display:block;
+    object-fit:contain;
+    transform:translate(-50%, -50%);
+  }
+
+  .community-right-stories .community-story-avatar-verified-shadow {
+    width:21px;
+    height:21px;
+    filter:brightness(0) saturate(100%);
+  }
+
+  .community-right-stories .community-story-avatar-verified-icon {
+    width:15px;
+    height:15px;
+  }
+
+  .community-right-stories .community-story-item.is-verified-story > .community-display-name .community-verified-badge {
+    display:none !important;
+  }
+}
