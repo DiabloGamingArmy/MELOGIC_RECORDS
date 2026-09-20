@@ -1464,7 +1464,7 @@ function installCameraSheetDrag(sheet,close){
 installCameraSheetDrag(cameraSurface.querySelector('[data-camera-sticker-picker]'),closeCameraStickerSheet)
 installCameraSheetDrag(audioControls,closeCameraMusicSheet)
 const cameraVisualViewport=window.visualViewport
-function syncCameraEditorViewport(){const height=cameraVisualViewport?.height||window.innerHeight;cameraSurface.style.setProperty('--camera-editor-viewport-height',`${Math.round(height)}px`)}
+function syncCameraEditorViewport(){const height=cameraVisualViewport?.height||window.innerHeight;cameraSurface.style.setProperty('--camera-editor-viewport-height',`${Math.round(height)}px`);requestAnimationFrame(syncCameraTextInputGeometry)}
 cameraVisualViewport?.addEventListener('resize',syncCameraEditorViewport,{passive:true});cameraVisualViewport?.addEventListener('scroll',syncCameraEditorViewport,{passive:true});syncCameraEditorViewport()
 
 cameraSurface.querySelector('[data-camera-audio-close]')?.addEventListener('click',closeCameraMusicSheet)
@@ -1494,6 +1494,29 @@ cropZoom?.addEventListener('change',()=>{cropZoomHistoryArmed=false})
 const textFont=cameraSurface.querySelector('[data-camera-text-font]'),textColor=cameraSurface.querySelector('[data-camera-text-color]'),textSize=cameraSurface.querySelector('[data-camera-text-size]')
 const textRailFont=cameraSurface.querySelector('[data-camera-text-rail-font]'),textRailColor=cameraSurface.querySelector('[data-camera-text-rail-color]'),textRailBorderColor=cameraSurface.querySelector('[data-camera-text-rail-border-color]'),textRailSize=cameraSurface.querySelector('[data-camera-text-rail-size]'),textRailOpacity=cameraSurface.querySelector('[data-camera-text-rail-opacity]')
 function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
+function syncCameraTextInputGeometry(){
+  if(!editTextInput||editTextbox.hidden)return
+  const layer=selectedCameraTextLayer(),node=layer&&cameraSurface.querySelector(`[data-camera-editor-layer="${layer.id}"]`)
+  if(!layer||!node)return
+  const nodeRect=node.getBoundingClientRect(),boxRect=editTextbox.getBoundingClientRect(),style=getComputedStyle(node)
+  editTextInput.style.left=`${nodeRect.left-boxRect.left}px`
+  editTextInput.style.top=`${nodeRect.top-boxRect.top}px`
+  editTextInput.style.transform='none'
+  editTextInput.style.width=`${Math.max(1,nodeRect.width)}px`
+  editTextInput.style.height=`${Math.max(1,nodeRect.height)}px`
+  editTextInput.style.minHeight='0'
+  editTextInput.style.maxHeight='none'
+  editTextInput.style.padding=style.padding
+  editTextInput.style.fontFamily=style.fontFamily
+  editTextInput.style.fontSize=style.fontSize
+  editTextInput.style.fontWeight=style.fontWeight
+  editTextInput.style.fontStyle=style.fontStyle
+  editTextInput.style.lineHeight=style.lineHeight
+  editTextInput.style.textAlign=style.textAlign
+  editTextInput.style.letterSpacing=style.letterSpacing
+  editTextInput.style.whiteSpace='pre-wrap'
+  editTextInput.style.overflow='hidden'
+}
 function syncTextRailControls(layer){
   const value=layer||{}
   if(textRailFont)textRailFont.value=value.fontFamily||textFont?.value||'system'
@@ -1515,6 +1538,7 @@ function syncCameraTextControls(layer){
   if(textSize)textSize.value=String(layer.fontSize||36)
   syncTextRailControls(layer)
   editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent'
+  requestAnimationFrame(syncCameraTextInputGeometry)
 }
 function closeCameraTextEditor({commit=true}={}){
   if(commit)commitCameraText();else{editTextbox.hidden=true;cameraSurface.querySelector('[data-camera-text-dim]')?.setAttribute('hidden','');editMode='';setCameraToolRail('')}
@@ -1533,7 +1557,7 @@ editTextInput?.addEventListener('input',()=>{
   if(!layer&&text){layer=addCameraEditorLayer('text',{text,x:.5,y:.5,fontFamily:textRailFont?.value||textFont?.value||'system',fontSize:Number(textRailSize?.value||textSize?.value)||36,color:textRailColor?.value||textColor?.value||'#ffffff',borderColor:textRailBorderColor?.value||'#000000',borderWidth:1,opacity:(Number(textRailOpacity?.value)||100)/100,width:.24,height:.08,fontWeight:700,fontStyle:'normal',textDecoration:'none',textAlign:'center',background:false});editorState.__textDraftId=layer.id;syncTextRailControls(layer)}
   else if(layer)updateCameraEditorLayer(layer.id,{text},{history:false})
   // The actual text layer is the only visible text while typing; textarea is caret/input only.
-  if(layer){editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent'}
+  if(layer){editTextInput.style.color='transparent';editTextInput.style.textShadow='none';editTextInput.style.webkitTextFillColor='transparent';requestAnimationFrame(syncCameraTextInputGeometry)}
 })
 editTextInput?.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();commitCameraText()}})
 textFont?.addEventListener('change',()=>{const layer=selectedCameraTextLayer();if(layer)updateCameraEditorLayer(layer.id,{fontFamily:textFont.value})})
@@ -1546,7 +1570,7 @@ cameraSurface.querySelectorAll('[data-camera-text-style]').forEach(button=>butto
   if(style==='align'){const values=['left','center','right'],index=values.indexOf(layer.textAlign||'center');updateCameraEditorLayer(layer.id,{textAlign:values[(index+1)%values.length]})}
   if(style==='background')updateCameraEditorLayer(layer.id,{background:!layer.background})
 }))
-function updateTextRailLayer(patch){const layer=selectedCameraTextLayer();if(!layer)return;const updated=updateCameraEditorLayer(layer.id,patch);if(updated)syncTextRailControls(updated)}
+function updateTextRailLayer(patch){const layer=selectedCameraTextLayer();if(!layer)return;const updated=updateCameraEditorLayer(layer.id,patch);if(updated){syncTextRailControls(updated);requestAnimationFrame(syncCameraTextInputGeometry)}}
 textRailFont?.addEventListener('change',()=>updateTextRailLayer({fontFamily:textRailFont.value}))
 textRailColor?.addEventListener('input',()=>updateTextRailLayer({color:textRailColor.value}))
 textRailBorderColor?.addEventListener('input',()=>updateTextRailLayer({borderColor:textRailBorderColor.value,borderWidth:1}))
