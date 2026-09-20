@@ -5804,3 +5804,42 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     transform:translateX(-2px);
   }
 }
+
+
+/* melogic-desktop-hosts-exact-mobile-story-v1
+   Desktop host only. The viewer itself is the exact mobile DOM and the exact
+   mobile rules above; this block changes only the containing coordinate space. */
+@media (min-width:761px) {
+  .community-story-mobile-desktop-host {
+    position:fixed !important;
+    inset:0 !important;
+    z-index:10000 !important;
+    display:grid !important;
+    place-items:center !important;
+    width:100vw !important;
+    height:100vh !important;
+    padding:24px !important;
+    overflow:hidden !important;
+    background:rgba(0,0,0,.78) !important;
+    backdrop-filter:blur(10px) !important;
+    -webkit-backdrop-filter:blur(10px) !important;
+  }
+
+  /* Establish a phone-sized viewport for the unmodified mobile viewer. */
+  .community-story-mobile-desktop-host > .community-story-viewer {
+    position:relative !important;
+    inset:auto !important;
+    width:min(430px,calc(100vw - 48px)) !important;
+    height:min(760px,calc(100vh - 48px)) !important;
+    min-width:0 !important;
+    min-height:0 !important;
+    max-width:430px !important;
+    max-height:760px !important;
+    margin:0 !important;
+    overflow:hidden !important;
+    border:1px solid rgba(255,255,255,.14) !important;
+    border-radius:22px !important;
+    background:#000 !important;
+    box-shadow:0 28px 90px rgba(0,0,0,.72) !important;
+  }
+}
