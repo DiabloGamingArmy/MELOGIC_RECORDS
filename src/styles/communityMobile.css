@@ -2378,3 +2378,21 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
 }
+
+
+/* melogic-story-context-replies-push-11 */
+@media (max-width:760px) {
+  .community-story-reply-shell { display:flex; align-items:center; min-width:0; }
+  .community-story-reply-shell input {
+    flex:1 1 auto; min-width:0; height:44px; border:0; outline:0; background:transparent;
+    color:#fff; font:inherit; padding:0 4px 0 2px;
+  }
+  .community-story-reply-shell input::placeholder { color:rgba(255,255,255,.66); }
+  .community-story-reply-shell button {
+    display:grid; place-items:center; width:38px; height:38px; flex:0 0 38px; padding:0;
+    border:0; border-radius:50%; background:transparent; color:#fff; opacity:.84;
+  }
+  .community-story-reply-shell button svg { width:22px; height:22px; }
+  .community-story-reply-shell button:active { transform:scale(.92); }
+  .community-story-reply-shell button:disabled { opacity:.32; }
+}
