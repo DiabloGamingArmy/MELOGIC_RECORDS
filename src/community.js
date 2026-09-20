@@ -162,6 +162,7 @@ const state = {
   stories: [],
   storiesLoading: false,
   storiesError: '',
+  pendingStoryUpload: null,
   storyComposer: {
     open: false,
     mode: 'upload',
@@ -1179,7 +1180,18 @@ function renderTopicBar() {
 }
 
 function renderStoriesRow() {
-  const hasOwnActiveStory = Boolean(state.currentUser?.uid && state.stories.some((story) => story.authorUid === state.currentUser.uid))
+  const pendingStory = state.pendingStoryUpload
+  const hasOwnActiveStory = Boolean(pendingStory || (state.currentUser?.uid && state.stories.some((story) => story.authorUid === state.currentUser.uid)))
+  const pendingStoryItem = pendingStory ? `
+    <button type="button" class="community-story-item is-pending-story ${pendingStory.status === 'failed' ? 'is-failed' : 'is-uploading'}" data-pending-story-action="${pendingStory.status === 'failed' ? 'retry' : ''}" ${pendingStory.status === 'failed' ? '' : 'disabled'}>
+      <span class="community-story-ring community-story-upload-ring">
+        <span class="community-story-avatar">
+          ${pendingStory.previewURL ? `<img src="${escapeHtml(pendingStory.previewURL)}" alt="" />` : iconSvg('upload')}
+        </span>
+      </span>
+      <strong>${pendingStory.status === 'failed' ? 'Retry Story' : 'Uploading…'}</strong>
+    </button>
+  ` : ''
   const realStoryItems = state.stories.slice(0, 12).map((story) => `
     <button type="button" class="community-story-item" data-open-story="${escapeHtml(story.storyId)}">
       <span class="community-story-ring"><span class="community-story-avatar ${story.mediaType === 'text' ? `story-bg-${escapeHtml(story.background)}` : ''} ${story.mediaType === 'video' ? 'has-video' : ''}">
@@ -1195,6 +1207,7 @@ function renderStoriesRow() {
         <strong>Stories</strong>
         <span>Creator updates</span>
       </div>
+      ${pendingStoryItem}
       <button type="button" class="community-story-item is-create ${hasOwnActiveStory ? 'has-active-story' : ''}" data-open-story-composer>
         <span class="community-story-ring"><span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span></span>
         <strong>${hasOwnActiveStory ? 'Add Story' : 'Your Story'}</strong>
@@ -3276,6 +3289,7 @@ function renderSidebar() {
 function bindStoryRailEvents(root = app) {
   root?.querySelectorAll('[data-open-story-composer]').forEach((button) => button.addEventListener('click', openStoryComposer))
   root?.querySelectorAll('[data-open-story]').forEach((button) => button.addEventListener('click', () => openStoryViewer(button.getAttribute('data-open-story') || '')))
+  root?.querySelectorAll('[data-pending-story-action="retry"]').forEach((button) => button.addEventListener('click', () => void publishPendingCameraStory()))
 }
 
 function updateStoryRegionsOnly() {
@@ -6628,8 +6642,58 @@ async function openStoryComposer() {
   render()
 }
 
-// melogic-camera-share-final-p5-v1
+// melogic-mobile-story-optimistic-upload-v1
 let cameraCommunityHandoffConsumedAt=0
+
+async function publishPendingCameraStory(){
+  const pending=state.pendingStoryUpload
+  if(!pending?.file||pending.status==='uploading')return false
+  const token=pending.localId
+  state.pendingStoryUpload={...pending,status:'uploading',progress:0,error:''}
+  updateStoryRegionsOnly()
+  try{
+    validateCommunityStoryMedia(pending.file)
+    const storyId=newCommunityStoryId()
+    const uploaded=await uploadCommunityStoryMedia({
+      uid:state.currentUser.uid,
+      storyId,
+      file:pending.file,
+      onProgress:(progress)=>{
+        if(state.pendingStoryUpload?.localId!==token)return
+        state.pendingStoryUpload={...state.pendingStoryUpload,progress}
+        updateStoryRegionsOnly()
+      }
+    })
+    const result=await createCommunityStory({
+      storyId,
+      mediaType:uploaded.mediaType,
+      text:'',
+      caption:'',
+      mediaPath:uploaded.mediaPath,
+      lifetimeHours:24,
+      visibility:'public',
+      background:'aurora'
+    })
+    if(state.pendingStoryUpload?.localId!==token)return false
+    const story=normalizeCommunityStory({
+      ...(result.story||{}),
+      mediaURL:uploaded.mediaURL||result.story?.mediaURL||''
+    },result.storyId)
+    state.stories=[story,...state.stories.filter(item=>item.storyId!==story.storyId)]
+    if(state.pendingStoryUpload?.previewURL)URL.revokeObjectURL(state.pendingStoryUpload.previewURL)
+    state.pendingStoryUpload=null
+    updateStoryRegionsOnly()
+    return true
+  }catch(error){
+    console.warn('[community] camera story publish failed',{code:error?.code,message:error?.message,details:error?.details})
+    if(state.pendingStoryUpload?.localId===token){
+      state.pendingStoryUpload={...state.pendingStoryUpload,status:'failed',error:error?.message||'Story upload failed.'}
+      updateStoryRegionsOnly()
+    }
+    return false
+  }
+}
+
 async function consumeCameraCommunityMediaHandoff(){
   const h=window.__melogicCommunityMediaHandoff
   if(!h?.file||!['story','feed'].includes(h.destination)||h.createdAt===cameraCommunityHandoffConsumedAt)return false
@@ -6638,9 +6702,22 @@ async function consumeCameraCommunityMediaHandoff(){
   cameraCommunityHandoffConsumedAt=h.createdAt
   try{
     if(h.destination==='story'){
-      validateCommunityStoryMedia(h.file);resetStoryRecording();resetStoryPreviewURL()
-      state.storyComposer={...cleanStoryComposerState({open:true,mode:'upload',mediaType:h.type==='photo'?'image':'video',file:h.file,previewURL:URL.createObjectURL(h.file),lifetimeHours:24,visibility:'public',recordingSupported:typeof MediaRecorder!=='undefined'&&Boolean(navigator.mediaDevices?.getUserMedia)})}
-      render()
+      validateCommunityStoryMedia(h.file)
+      const previewURL=URL.createObjectURL(h.file)
+      state.pendingStoryUpload={
+        localId:`camera-story-${h.createdAt}`,
+        file:h.file,
+        mediaType:h.type==='photo'?'image':'video',
+        previewURL,
+        createdAt:h.createdAt,
+        progress:0,
+        status:'queued',
+        error:''
+      }
+      // Mobile Camera shares publish directly. The desktop Story composer is
+      // deliberately never opened for this path.
+      updateStoryRegionsOnly()
+      void publishPendingCameraStory()
     }else{
       const {type}=validateCommunityPostAttachment(h.file);clearComposerFileAttachments()
       const id=composerFileAttachmentId(),media=await readComposerMediaMetadata(h.file,type)
