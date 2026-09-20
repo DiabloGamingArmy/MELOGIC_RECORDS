@@ -505,3 +505,60 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   .camera-editor-functions>button{width:42px;height:42px}
   .camera-edit-tools{max-height:calc(100% - var(--melogic-mobile-safe-top,0px) - 116px)}
 }
+
+
+/* camera-editor-redesign-p1-expandable-tool-rail */
+.camera-edit-tools{
+  --tool-rail-width:58px;
+  width:var(--tool-rail-width);
+  padding:6px;
+  box-sizing:border-box;
+  border:1px solid rgba(255,255,255,.16);
+  border-radius:999px;
+  background:rgba(8,9,13,.62);
+  box-shadow:0 10px 34px rgba(0,0,0,.22);
+  backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+  gap:2px!important;
+  overflow-x:hidden;
+  transition:max-height .28s cubic-bezier(.2,.75,.25,1),background .2s ease,box-shadow .2s ease;
+}
+.camera-edit-tools.is-expanded{
+  max-height:calc(100% - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px) - 116px);
+  background:rgba(8,9,13,.78);
+  box-shadow:0 14px 42px rgba(0,0,0,.32);
+}
+.camera-edit-tool-context{
+  display:grid;place-items:center;
+  max-height:0;min-height:0;
+  opacity:0;overflow:hidden;
+  color:rgba(255,255,255,.62);
+  font:700 9px/1 system-ui,-apple-system,sans-serif;
+  text-transform:uppercase;letter-spacing:.08em;
+  transition:max-height .24s ease,min-height .24s ease,opacity .18s ease;
+}
+.camera-edit-tools.is-expanded .camera-edit-tool-context{max-height:25px;min-height:25px;opacity:1}
+.camera-edit-tools>button{
+  flex:0 0 auto;
+  width:44px!important;height:44px!important;
+  border-color:transparent!important;
+  background:transparent!important;
+  backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+  transition:background .16s ease,color .16s ease,transform .16s ease,opacity .16s ease;
+  touch-action:manipulation;
+}
+.camera-edit-tools>button:active{transform:scale(.92)}
+.camera-edit-tools>button.is-active{
+  background:#fff!important;
+  color:rgba(25,26,30,.68)!important;
+  border-color:#fff!important;
+  box-shadow:0 2px 10px rgba(0,0,0,.18);
+}
+.camera-edit-tools>button.is-active svg{stroke:currentColor!important}
+.camera-edit-tools svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.camera-edit-tools.is-expanded{overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.camera-edit-tools.is-expanded::-webkit-scrollbar{display:none}
+@media(max-width:760px){
+  .camera-edit-tools{width:56px;padding:6px;gap:1px!important}
+  .camera-edit-tools>button{width:42px!important;height:42px!important}
+  .camera-edit-tools.is-expanded{max-height:calc(100% - var(--melogic-mobile-safe-top,0px) - 104px)}
+}
