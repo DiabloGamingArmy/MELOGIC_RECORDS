@@ -1254,6 +1254,7 @@ function renderTopicBar() {
       <div class="community-master-tabs" role="tablist" aria-label="Home feed">
         <button type="button" role="tab" aria-selected="${state.activeTab === 'for-you' ? 'true' : 'false'}" class="${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
         <button type="button" role="tab" aria-selected="${state.activeTab === 'following' ? 'true' : 'false'}" class="${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Following</button>
+        <a class="community-mobile-discover-tab" role="tab" aria-selected="false" href="${ROUTES.communityCommunities}">Discover</a>
         <label class="community-sort-control" title="Sort feed">
           <span class="sr-only">Sort feed</span>
           ${iconSvg('barChart')}

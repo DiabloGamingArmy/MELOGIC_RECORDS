@@ -2510,3 +2510,34 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     cursor:pointer;
   }
 }
+
+
+/* melogic-community-mobile-discover-routing-p1
+   Patch 1: expose the existing Discover Communities route from the mobile
+   For You / Following selector without changing the desktop selector yet.
+   The anchor intentionally uses the canonical Community route so the existing
+   warm-SPA/popstate lifecycle remains the single navigation owner. */
+.community-mobile-discover-tab {
+  display: none;
+}
+@media (max-width: 760px) {
+  body.is-community-page .community-master-tabs {
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 38px !important;
+  }
+  body.is-community-page .community-master-tabs > .community-mobile-discover-tab {
+    position: relative !important;
+    display: grid !important;
+    place-items: center !important;
+    min-width: 0 !important;
+    min-height: 47px !important;
+    padding: 0 8px !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #777780 !important;
+    font-size: .78rem !important;
+    font-weight: 650 !important;
+    line-height: 1 !important;
+    text-decoration: none !important;
+  }
+}
