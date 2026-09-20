@@ -3490,6 +3490,12 @@ function renderLeftNav() {
             }
           </div>
         </section>
+
+        <section class="community-network-nav-section community-network-left-discovery" aria-label="Suggested communities">
+          <div data-community-discovery-widget>
+            ${renderCommunityDiscoveryBody()}
+          </div>
+        </section>
       </nav>
     </aside>
   `
@@ -3633,8 +3639,15 @@ function renderSidebar() {
       `}
       ${renderNetworkNextCard()}
       ${!inCommunity ? `
-        <section class="community-rail-card community-discovery-card" data-community-discovery-widget>
-          ${renderCommunityDiscoveryBody()}
+        <section class="community-rail-card community-history-card" aria-label="This Day in History">
+          <div class="community-history-heading">
+            <div>
+              <span class="community-network-kicker">History</span>
+              <h2>This Day in History</h2>
+            </div>
+            <time datetime="${new Date().toISOString().slice(0, 10)}">${new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(new Date())}</time>
+          </div>
+          <p class="community-history-state">A daily moment from music, technology, art, and culture will appear here.</p>
         </section>
       ` : ''}
       ${renderCommunityRailFooter()}

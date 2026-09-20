@@ -13620,3 +13620,111 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     flex:0 0 20px;
   }
 }
+
+
+/* melogic-desktop-community-rails-v1 */
+@media (min-width: 761px) {
+  /* Shift rail mass left so the central feed reads visually centered. */
+  .community-layout:not(.is-detail) {
+    grid-template-columns: 252px minmax(0, 1fr) 300px;
+  }
+
+  .community-network-left-discovery {
+    margin-top: .35rem;
+    padding-top: .9rem;
+    border-top: 1px solid rgba(255, 255, 255, .09);
+  }
+
+  .community-network-left-discovery .community-discovery-heading {
+    padding: 0 .72rem;
+  }
+
+  .community-network-left-discovery .community-discovery-heading h2 {
+    margin: 0;
+    color: #eef4fc;
+    font-size: .76rem;
+    font-weight: 800;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .community-network-left-discovery .community-discovery-heading a {
+    font-size: .68rem;
+  }
+
+  .community-network-left-discovery .community-discovery-tabs {
+    margin: .6rem .65rem .2rem;
+    border-radius: 8px;
+  }
+
+  .community-network-left-discovery .community-discovery-tabs button {
+    min-height: 28px;
+    border-radius: 6px;
+    font-size: .7rem;
+  }
+
+  .community-network-left-discovery .community-suggested-list {
+    gap: .12rem;
+    margin-top: .4rem;
+  }
+
+  .community-network-left-discovery .community-suggested-list article {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: .3rem;
+  }
+
+  .community-network-left-discovery .community-suggested-list a {
+    min-width: 0;
+    padding: .4rem .65rem;
+  }
+
+  .community-network-left-discovery .community-suggested-list button {
+    min-height: 28px;
+    margin-right: .55rem;
+    padding: 0 .5rem;
+    font-size: .68rem;
+  }
+
+  .community-network-left-discovery .community-suggested-list a > span {
+    width: 30px;
+    height: 30px;
+  }
+
+  .community-network-left-discovery .community-suggested-list strong {
+    font-size: .76rem;
+  }
+
+  .community-history-card {
+    display: grid;
+    gap: .7rem;
+  }
+
+  .community-history-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: .7rem;
+  }
+
+  .community-history-heading h2 {
+    margin: .08rem 0 0;
+    color: #f4f7fb;
+    font-size: 1rem;
+    letter-spacing: -.01em;
+  }
+
+  .community-history-heading time {
+    flex: 0 0 auto;
+    color: #758398;
+    font-size: .7rem;
+    font-weight: 750;
+    text-transform: uppercase;
+  }
+
+  .community-history-state {
+    margin: 0;
+    color: #8d9aae;
+    font-size: .78rem;
+    line-height: 1.5;
+  }
+}
