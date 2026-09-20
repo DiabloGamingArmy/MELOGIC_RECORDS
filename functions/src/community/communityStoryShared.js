@@ -125,6 +125,7 @@ function serializeStory(story = {}, id = '') {
     background: story.background || 'aurora',
     linkedPostId: story.linkedPostId || '',
     linkedProductId: story.linkedProductId || '',
+    storyType: ['moment', 'sound', 'thought', 'drop', 'ask', 'live', 'project'].includes(story.storyType) ? story.storyType : 'moment',
     remixPermission: story.remixPermission === true,
     remixOfStoryId: story.remixOfStoryId || '',
     remixSourceAuthorUid: story.remixSourceAuthorUid || '',
