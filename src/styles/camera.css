@@ -753,3 +753,26 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-music-selected .camera-audio-mute{display:flex!important}.camera-music-segment,.camera-music-fades{grid-column:1/-1}
 .camera-surface[data-camera-active-tool="music"] .camera-edit-tools,.camera-surface[data-camera-active-tool="music"] .camera-editor-functions{opacity:0;pointer-events:none!important}
 @media(min-width:761px){.camera-audio-controls{left:50%!important;right:auto!important;width:min(620px,calc(100% - 30px))!important;transform:translateX(-50%);top:80px!important}}
+
+
+/* camera-editor-redesign-p7-integration */
+/* Final mobile integration: predictable stacking, sheet gestures and keyboard viewport. */
+.camera-surface{--camera-editor-viewport-height:100dvh}
+.camera-sticker-picker,.camera-audio-controls{max-height:calc(var(--camera-editor-viewport-height,100dvh) - env(safe-area-inset-top,0px) - 44px)!important;touch-action:pan-y}
+.camera-sticker-picker.is-dragging,.camera-audio-controls.is-dragging{transition:none!important;animation:none!important}
+.camera-sheet-grabber{touch-action:none;user-select:none;-webkit-user-select:none}
+.camera-sticker-grid,.camera-music-results,.camera-edit-tools,.camera-crop-rail,.camera-text-controls{-webkit-overflow-scrolling:touch}
+.camera-sticker-search input,.camera-music-search input,.camera-edit-textbox textarea{font-size:16px!important}
+.camera-edit-tools,.camera-editor-functions,.camera-draw-controls,.camera-crop-controls,.camera-text-controls{will-change:opacity,transform}
+.camera-surface[data-camera-active-tool="sticker"] .camera-editor-layer-stage,
+.camera-surface[data-camera-active-tool="music"] .camera-editor-layer-stage{pointer-events:none}
+.camera-surface[data-camera-active-tool="text"] .camera-text-dim{display:block}
+.camera-edit-tool-context{pointer-events:none}
+.camera-edit-tools>button[aria-pressed="true"]{background:#fff!important;color:rgba(25,26,30,.68)!important}
+@media(max-width:760px){
+ .camera-sticker-picker,.camera-audio-controls{height:calc(var(--camera-editor-viewport-height,100dvh) - env(safe-area-inset-top,0px) - 44px)!important}
+ .camera-edit-textbox{height:var(--camera-editor-viewport-height,100dvh)!important}
+ .camera-edit-textbox textarea{max-height:min(36vh,calc(var(--camera-editor-viewport-height,100dvh) * .36))}
+}
+/* Retire obsolete panel rules after the redesigned controls. */
+.camera-music-source,.camera-filter-presets,.camera-adjust-sliders{display:none!important}
