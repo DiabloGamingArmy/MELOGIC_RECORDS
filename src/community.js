@@ -613,6 +613,17 @@ function setupCommunityFeedTabs() {
 
     state.activeTab = nextTab
     state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
+
+    // Desktop left-rail feed controls are also visible while Discover is open.
+    // Switching feed must therefore leave the Discover route/view, not merely
+    // mutate activeTab behind the still-mounted discovery screen.
+    if (!isMobileSpaRuntime() && state.view.type !== 'feed') {
+      state.view = { type: 'feed' }
+      state.activeCommunityId = ''
+      state.activeCommunitySlug = ''
+      window.history.pushState({}, '', ROUTES.community)
+    }
+
     state.feedError = ''
     state.feedStillLoading = false
     state.followingFeedCache = nextTab === 'following'
