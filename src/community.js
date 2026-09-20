@@ -359,6 +359,8 @@ const desktopCommunitySurfaceCache = new Map()
 let desktopCommunitySurfaceKey = ''
 let storyHydrationGeneration = 0
 let desktopCommunityHydrationGeneration = 0
+let mobileDiscoverScrollTop = 0
+let mobileDiscoverScrollRestorePending = false
 const communityPendingActions = new Map()
 const communityPostReactionVersions = new Map()
 const communityPostSaveVersions = new Map()
@@ -627,7 +629,10 @@ function setupCommunityFeedTabs() {
     state.activeTab = nextTab
     state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
 
-    if (isMobileSpaRuntime() && state.view.type === 'communities') {
+    const leavingMobileDiscover = isMobileSpaRuntime() && state.view.type === 'communities'
+    if (leavingMobileDiscover) {
+      const directoryMain = app?.querySelector('.community-layout.is-directory > .community-main')
+      if (directoryMain) mobileDiscoverScrollTop = directoryMain.scrollTop
       state.view = { type: 'feed' }
       state.activeCommunityId = ''
       state.activeCommunitySlug = ''
@@ -661,6 +666,22 @@ function setupCommunityFeedTabs() {
       state.feedStillLoading = false
       render()
     })
+    if (isMobileSpaRuntime()) void hydrateMobileCommunitySharedState({ directory: false })
+  })
+}
+
+async function hydrateMobileCommunitySharedState({ directory = false } = {}) {
+  if (!isMobileSpaRuntime()) return
+  const results = await Promise.allSettled([
+    loadStories({ renderAfter: true, hydrateIdentity: true }),
+    loadCommunities({ renderOnStart: false, renderAfter: false, bootstrap: !directory })
+  ])
+  if (state.view.type === 'feed') updateCommunityAncillaryDom()
+  if (state.view.type === 'communities') {
+    render()
+  }
+  results.forEach((result) => {
+    if (result.status === 'rejected') console.warn('[community] mobile shared hydration failed', result.reason)
   })
 }
 
@@ -681,10 +702,7 @@ if (!window.__melogicMobileCommunityDiscoverRouterV1) {
     state.activeCommunitySlug = ''
     window.history.pushState({}, '', ROUTES.communityCommunities)
     render()
-    void Promise.allSettled([
-      loadStories({ renderAfter: true, hydrateIdentity: true }),
-      loadCommunities({ renderOnStart: false, renderAfter: true, bootstrap: true })
-    ])
+    void hydrateMobileCommunitySharedState({ directory: true })
   })
 }
 
@@ -4142,6 +4160,17 @@ function render() {
   communityRoot.innerHTML = renderCommunityViewContent()
   bindEvents()
   restoreCommunityDesktopScrollAnchor(desktopScrollAnchor)
+  if (isMobileSpaRuntime() && state.view.type === 'communities') {
+    const main = communityRoot.querySelector('.community-main')
+    if (main) {
+      const restore = () => {
+        main.scrollTop = mobileDiscoverScrollTop
+        mobileDiscoverScrollRestorePending = false
+      }
+      mobileDiscoverScrollRestorePending = true
+      window.requestAnimationFrame(restore)
+    }
+  }
 }
 
 /* melogic-community-touch-media-stability-v1 */
@@ -8284,6 +8313,12 @@ function bindCommunityComposerEvents(root = app) {
 
 function bindEvents() {
   setupCommunityPendingLeaveWarning()
+  if (isMobileSpaRuntime() && state.view.type === 'communities') {
+    const directoryMain = app.querySelector('.community-layout.is-directory > .community-main')
+    directoryMain?.addEventListener('scroll', () => {
+      if (!mobileDiscoverScrollRestorePending) mobileDiscoverScrollTop = directoryMain.scrollTop
+    }, { passive: true })
+  }
   app.querySelectorAll('[data-community-membership-action]').forEach((button) => {
     button.addEventListener('click', () => {
       handleCommunityMembership(
@@ -8944,6 +8979,11 @@ function handleCommunityPopstate() {
     }
   }
 
+  if (isMobileSpaRuntime() && !state.detailPostId && state.view.type === 'communities') {
+    render()
+    void hydrateMobileCommunitySharedState({ directory: true })
+    return
+  }
   if (!state.detailPostId && restoreFeedNavigationSnapshot()) return
   loadCommunity()
 }

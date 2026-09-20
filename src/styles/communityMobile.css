@@ -199,7 +199,31 @@
     background: var(--ml-accent-gradient, linear-gradient(135deg, #477dff 0%, #765dff 52%, #a65cff 100%));
   }
   .community-layout.is-directory .community-community-tools {
-    margin-top: 0;
+    margin: 0;
+    padding: 12px var(--community-content-gutter);
+    gap: 10px;
+    border: 0;
+    border-bottom: 1px solid var(--community-divider);
+    border-radius: 0;
+    background: transparent;
+  }
+  .community-layout.is-directory .community-community-tools > label > span {
+    display: none;
+  }
+  .community-layout.is-directory .community-community-tools input,
+  .community-layout.is-directory .community-community-tools select,
+  .community-layout.is-directory .community-network-create-community {
+    min-height: 48px;
+    border-radius: 14px;
+  }
+  .community-layout.is-directory .community-community-grid {
+    gap: 0;
+  }
+  .community-layout.is-directory .community-community-card {
+    border-left: 0;
+    border-right: 0;
+    border-radius: 0;
+    margin: 0;
   }
   .community-master-tabs:not(.community-mobile-primary-tabs) { min-height: 48px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px; }
   .community-master-tabs > button { min-height: 48px; }
