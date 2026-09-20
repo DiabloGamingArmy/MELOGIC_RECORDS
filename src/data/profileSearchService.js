@@ -40,42 +40,65 @@ function normalizeProfile(profileDoc) {
 
 export async function searchProfilesByUsername(input = '') {
   if (!db) return []
-  const normalized = String(input || '').trim().toLowerCase()
+  const rawInput = String(input || '').trim().replace(/^@+/, '')
+  const normalized = rawInput.toLowerCase()
   if (normalized.length < 2) return []
 
-  const profileQuery = query(
+  // Username prefix is the fast/indexed path. Display-name lookups are queried
+  // alongside it so Community Explore can actually find people by either public identity.
+  const usernameQuery = query(
     collection(db, 'profiles'),
     orderBy('usernameLower'),
     startAt(normalized),
-    endAt(`${normalized}\uf8ff`),
-    limit(10)
+    endAt(`${normalized}\\uf8ff`),
+    limit(20)
   )
+  const displayNameExact = query(collection(db, 'profiles'), where('displayName', '==', rawInput), limit(20))
 
+  const matches = new Map()
+  let usernameError = null
   try {
-    const snapshot = await getDocs(profileQuery)
-    return snapshot.docs.map(normalizeProfile)
+    const [usernameResult, displayResult] = await Promise.allSettled([
+      getDocs(usernameQuery),
+      getDocs(displayNameExact)
+    ])
+    if (usernameResult.status === 'fulfilled') usernameResult.value.docs.forEach((snap) => matches.set(snap.id, snap))
+    else usernameError = usernameResult.reason
+    if (displayResult.status === 'fulfilled') displayResult.value.docs.forEach((snap) => matches.set(snap.id, snap))
   } catch (error) {
-    console.warn('[profileSearchService] Prefix profile search failed. Trying exact username lookup.', error?.code || error?.message || error)
-    if (!/^[a-z0-9_-]{3,30}$/.test(normalized)) {
-      const lookupError = new Error('Unable to search users right now.')
-      lookupError.code = 'profile-search/unavailable'
-      throw lookupError
-    }
+    usernameError = error
+  }
 
+  // Existing accounts may predate usernameLower. Exact usernameClaims remains a
+  // reliable fallback and also makes @username searches work.
+  if (/^[a-z0-9_-]{3,30}$/.test(normalized)) {
     try {
       const claimSnap = await getDoc(doc(db, 'usernameClaims', normalized))
-      const uid = claimSnap.exists() ? claimSnap.data()?.uid : ''
-      if (!uid) return []
-      const profileSnap = await getDoc(doc(db, 'profiles', uid))
-      if (!profileSnap.exists()) return []
-      return [normalizeProfile(profileSnap)]
-    } catch (fallbackError) {
-      console.warn('[profileSearchService] Exact username lookup failed.', fallbackError?.code || fallbackError?.message || fallbackError)
-      const lookupError = new Error('Unable to search users right now.')
-      lookupError.code = 'profile-search/unavailable'
-      throw lookupError
+      const uid = claimSnap.exists() ? String(claimSnap.data()?.uid || '') : ''
+      if (uid && !matches.has(uid)) {
+        const profileSnap = await getDoc(doc(db, 'profiles', uid))
+        if (profileSnap.exists()) matches.set(profileSnap.id, profileSnap)
+      }
+    } catch (error) {
+      console.warn('[profileSearchService] Exact username lookup failed.', error?.code || error?.message || error)
     }
   }
+
+  if (usernameError && !matches.size) {
+    console.warn('[profileSearchService] Profile search unavailable.', usernameError?.code || usernameError?.message || usernameError)
+  }
+
+  const profiles = [...matches.values()].map(normalizeProfile)
+  const score = (profile) => {
+    const username = profile.usernameLower || profile.username.toLowerCase()
+    const name = profile.displayName.toLowerCase()
+    if (username === normalized) return 0
+    if (name === normalized) return 1
+    if (username.startsWith(normalized)) return 2
+    if (name.startsWith(normalized)) return 3
+    return 4
+  }
+  return profiles.sort((a, b) => score(a) - score(b) || a.displayName.localeCompare(b.displayName)).slice(0, 20)
 }
 
 // melogic-streaming-legacy-artist-identity-v2
