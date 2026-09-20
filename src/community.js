@@ -1351,7 +1351,9 @@ function renderTopicBar() {
         <span>Network</span>
         <strong>Home</strong>
       </div>
-      ${renderMobileCommunityTabs({ active: state.activeTab })}
+      <div class="community-feed-mobile-tabs">
+        ${renderMobileCommunityTabs({ active: state.activeTab })}
+      </div>
       <label class="community-sort-control" title="Sort feed">
           <span class="sr-only">Sort feed</span>
           ${iconSvg('barChart')}
