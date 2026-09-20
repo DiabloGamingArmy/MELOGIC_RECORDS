@@ -77,9 +77,8 @@ cameraSurface.innerHTML = `
         <button type="button" data-camera-video-reset>Reset video edits</button>
       </div>
       <div class="camera-adjust-controls" data-camera-adjust-controls hidden>
-        <div class="camera-adjust-head"><strong>Adjust</strong><button type="button" data-camera-adjust-close aria-label="Close adjustments">×</button></div>
-        <div class="camera-filter-presets"><button type="button" data-camera-filter="none" class="is-active">Original</button><button type="button" data-camera-filter="clean">Clean</button><button type="button" data-camera-filter="warm">Warm</button><button type="button" data-camera-filter="cool">Cool</button><button type="button" data-camera-filter="mono">Mono</button><button type="button" data-camera-filter="cinema">Cinema</button></div>
-        <div class="camera-adjust-sliders" data-camera-adjust-sliders></div>
+        <div class="camera-adjust-parameters" data-camera-adjust-parameters></div>
+        <div class="camera-adjust-single"><span data-camera-adjust-current-label>Exposure</span><input type="range" min="-100" max="100" value="0" data-camera-adjust-current><output data-camera-adjust-current-value>0</output></div>
       </div>
       <div class="camera-audio-controls" data-camera-audio-controls hidden>
         <div class="camera-audio-head"><strong>Music & Audio</strong><button type="button" data-camera-audio-close aria-label="Close audio controls">×</button></div>
@@ -92,9 +91,11 @@ cameraSurface.innerHTML = `
         <button type="button" data-camera-music-remove hidden>Remove music</button>
       </div>
       <div class="camera-crop-controls" data-camera-crop-controls hidden>
-        <div class="camera-crop-aspects"><button type="button" data-camera-crop-aspect="free" class="is-active">Free</button><button type="button" data-camera-crop-aspect="original">Original</button><button type="button" data-camera-crop-aspect="9:16">9:16</button><button type="button" data-camera-crop-aspect="4:5">4:5</button><button type="button" data-camera-crop-aspect="1:1">1:1</button><button type="button" data-camera-crop-aspect="16:9">16:9</button></div>
-        <div class="camera-crop-actions"><button type="button" data-camera-crop-action="rotate">Rotate</button><button type="button" data-camera-crop-action="flip-x">Flip H</button><button type="button" data-camera-crop-action="flip-y">Flip V</button><button type="button" data-camera-crop-action="reset">Reset</button><button type="button" data-camera-crop-action="done">Done</button></div>
-        <input type="range" min="100" max="400" value="100" data-camera-crop-zoom aria-label="Crop zoom">
+        <div class="camera-crop-rail">
+          <div class="camera-crop-aspects"><button type="button" data-camera-crop-aspect="free" class="is-active">Free</button><button type="button" data-camera-crop-aspect="original">Orig</button><button type="button" data-camera-crop-aspect="9:16">9:16</button><button type="button" data-camera-crop-aspect="4:5">4:5</button><button type="button" data-camera-crop-aspect="1:1">1:1</button><button type="button" data-camera-crop-aspect="16:9">16:9</button></div>
+          <div class="camera-crop-actions"><button type="button" data-camera-crop-action="rotate" aria-label="Rotate"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"/><path d="M18.2 17A8 8 0 1 1 20 12"/></svg></button><button type="button" data-camera-crop-action="flip-x" aria-label="Flip horizontally"><svg viewBox="0 0 24 24"><path d="M12 3v18M9 7 4 12l5 5M15 7l5 5-5 5"/></svg></button><button type="button" data-camera-crop-action="flip-y" aria-label="Flip vertically"><svg viewBox="0 0 24 24"><path d="M3 12h18M7 9l5-5 5 5M7 15l5 5 5-5"/></svg></button><button type="button" data-camera-crop-action="reset" aria-label="Reset crop"><svg viewBox="0 0 24 24"><path d="M5 8V4h4M5 4a9 9 0 1 1-1 11"/></svg></button><button type="button" data-camera-crop-action="done" aria-label="Done"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg></button></div>
+        </div>
+        <div class="camera-crop-zoom-pill"><span>Zoom</span><input type="range" min="100" max="400" value="100" data-camera-crop-zoom aria-label="Crop zoom"></div>
       </div>
       <div class="camera-draw-controls" data-camera-draw-controls hidden>
         <div class="camera-draw-brushes" role="group" aria-label="Brush type">
@@ -615,9 +616,6 @@ function selectCameraEditorLayer(id=''){editorState.selectedLayerId=editorState.
 function updateCameraEditorLayer(id,patch={}){const layer=editorState.layers.find(item=>item.id===id);if(!layer)return null;pushCameraEditorHistory();Object.assign(layer,patch);editorState.revision+=1;renderCameraEditorLayers();return layer}
 function removeCameraEditorLayer(id){const index=editorState.layers.findIndex(layer=>layer.id===id);if(index<0)return false;pushCameraEditorHistory();editorState.layers.splice(index,1);editorState.layers.forEach((layer,zIndex)=>layer.zIndex=zIndex);if(editorState.selectedLayerId===id)editorState.selectedLayerId='';editorState.revision+=1;renderCameraEditorLayers();return true}
 function clampEditorValue(value,min,max){return Math.min(max,Math.max(min,value))}
-function renderCameraMediaTransform(){
-  const t=editorState.transform||{},media=playback.querySelector(t=>t)
-}
 const CAMERA_ADJUSTMENTS=[['exposure',-100,100],['contrast',-100,100],['highlights',-100,100],['shadows',-100,100],['temperature',-100,100],['tint',-100,100],['saturation',-100,100],['vibrance',-100,100],['sharpness',0,100],['fade',0,100],['grain',0,100],['vignette',0,100]]
 const CAMERA_FILTER_PRESETS={
   none:{},clean:{exposure:8,contrast:8,highlights:-8,shadows:10,saturation:4,sharpness:12},warm:{temperature:22,tint:5,saturation:8,contrast:4},cool:{temperature:-22,tint:-4,contrast:6,saturation:-2},mono:{saturation:-100,contrast:14,fade:5,grain:8},cinema:{contrast:18,highlights:-20,shadows:-8,saturation:-12,temperature:7,fade:7,vignette:18}
@@ -635,13 +633,22 @@ function applyCameraAdjustments(){
 function setCameraAdjustments(patch,{history=true}={}){
   if(history)pushCameraEditorHistory();editorState.adjustments={...editorState.adjustments,...patch};editorState.revision+=1;applyCameraAdjustments();syncCameraAdjustmentControls()
 }
+let activeCameraAdjustment='exposure',cameraAdjustmentHistoryArmed=false
+function cameraAdjustmentSpec(name){return CAMERA_ADJUSTMENTS.find(([key])=>key===name)||CAMERA_ADJUSTMENTS[0]}
 function syncCameraAdjustmentControls(){
-  const a=editorState.adjustments||{};cameraSurface.querySelectorAll('[data-camera-adjust]').forEach(input=>input.value=String(a[input.dataset.cameraAdjust]||0));cameraSurface.querySelectorAll('[data-camera-filter]').forEach(button=>button.classList.toggle('is-active',button.dataset.cameraFilter===(a.preset||'none')))
+  const a=editorState.adjustments||{},[name,min,max]=cameraAdjustmentSpec(activeCameraAdjustment),slider=cameraSurface.querySelector('[data-camera-adjust-current]'),label=cameraSurface.querySelector('[data-camera-adjust-current-label]'),value=cameraSurface.querySelector('[data-camera-adjust-current-value]')
+  if(slider){slider.min=String(min);slider.max=String(max);slider.value=String(a[name]||0)}
+  if(label)label.textContent=name[0].toUpperCase()+name.slice(1);if(value)value.textContent=String(a[name]||0)
+  cameraSurface.querySelectorAll('[data-camera-adjust-param]').forEach(button=>button.classList.toggle('is-active',button.dataset.cameraAdjustParam===name))
 }
 function renderCameraAdjustmentControls(){
-  const host=cameraSurface.querySelector('[data-camera-adjust-sliders]');if(!host||host.childElementCount)return
-  host.replaceChildren(...CAMERA_ADJUSTMENTS.map(([name,min,max])=>{const label=document.createElement('label'),title=document.createElement('span'),input=document.createElement('input');title.textContent=name[0].toUpperCase()+name.slice(1);input.type='range';input.min=String(min);input.max=String(max);input.value='0';input.dataset.cameraAdjust=name;label.append(title,input);return label}))
-  host.addEventListener('change',event=>{const input=event.target.closest('[data-camera-adjust]');if(input)setCameraAdjustments({[input.dataset.cameraAdjust]:Number(input.value),preset:'none'})})
+  const host=cameraSurface.querySelector('[data-camera-adjust-parameters]');if(!host||host.childElementCount)return
+  host.replaceChildren(...CAMERA_ADJUSTMENTS.map(([name])=>{const button=document.createElement('button');button.type='button';button.dataset.cameraAdjustParam=name;button.textContent=name[0].toUpperCase()+name.slice(1);return button}))
+  host.addEventListener('click',event=>{const button=event.target.closest('[data-camera-adjust-param]');if(!button)return;activeCameraAdjustment=button.dataset.cameraAdjustParam;syncCameraAdjustmentControls()})
+  const slider=cameraSurface.querySelector('[data-camera-adjust-current]')
+  slider?.addEventListener('pointerdown',()=>{cameraAdjustmentHistoryArmed=false})
+  slider?.addEventListener('input',()=>{if(!cameraAdjustmentHistoryArmed){pushCameraEditorHistory();cameraAdjustmentHistoryArmed=true}editorState.adjustments={...editorState.adjustments,[activeCameraAdjustment]:Number(slider.value),preset:'none'};editorState.revision+=1;applyCameraAdjustments();syncCameraAdjustmentControls()})
+  slider?.addEventListener('change',()=>{cameraAdjustmentHistoryArmed=false})
 }
 function applyCameraMediaTransform(){
   const t=editorState.transform||{},crop=t.crop||{},media=[recordedPhoto,recordedVideo]
@@ -1373,7 +1380,6 @@ recordedVideo.addEventListener('timeupdate',()=>{const v=editorState.video||{},s
 const adjustControls=cameraSurface.querySelector('[data-camera-adjust-controls]')
 renderCameraAdjustmentControls()
 cameraSurface.querySelector('[data-camera-adjust-close]')?.addEventListener('click',()=>{adjustControls.hidden=true;if(editToolRail?.dataset.activeTool==='adjust'){editMode='';setCameraToolRail('')}})
-cameraSurface.querySelector('.camera-filter-presets')?.addEventListener('click',event=>{const button=event.target.closest('[data-camera-filter]');if(!button)return;const name=button.dataset.cameraFilter,preset=CAMERA_FILTER_PRESETS[name]||{};const base=Object.fromEntries(CAMERA_ADJUSTMENTS.map(([key])=>[key,0]));setCameraAdjustments({...base,...preset,preset:name})})
 
 const audioControls=cameraSurface.querySelector('[data-camera-audio-controls]'),originalVolume=cameraSurface.querySelector('[data-camera-original-volume]'),originalMute=cameraSurface.querySelector('[data-camera-original-mute]'),musicVolume=cameraSurface.querySelector('[data-camera-music-volume]'),musicTitle=cameraSurface.querySelector('[data-camera-music-title]'),musicURL=cameraSurface.querySelector('[data-camera-music-url]'),musicStart=cameraSurface.querySelector('[data-camera-music-start]'),musicEnd=cameraSurface.querySelector('[data-camera-music-end]'),musicFadeIn=cameraSurface.querySelector('[data-camera-music-fade-in]'),musicFadeOut=cameraSurface.querySelector('[data-camera-music-fade-out]'),musicRemove=cameraSurface.querySelector('[data-camera-music-remove]')
 function applyCameraAudioPreview(){
@@ -1408,11 +1414,13 @@ cameraSurface.querySelector('[data-camera-crop-controls]')?.addEventListener('cl
   if(action==='rotate')setCameraMediaTransform({rotation:(Number(editorState.transform.rotation)||0)+90})
   if(action==='flip-x')setCameraMediaTransform({flipX:!editorState.transform.flipX})
   if(action==='flip-y')setCameraMediaTransform({flipY:!editorState.transform.flipY})
-  if(action==='reset'){pushCameraEditorHistory();editorState.transform=createCameraEditorState().transform;editorState.revision+=1;if(cropZoom)cropZoom.value='100';applyCameraMediaTransform();setCameraCropAspect('free')}
-  if(action==='done'){editMode='';cameraSurface.classList.remove('is-media-transforming');cameraSurface.querySelector('[data-camera-crop-controls]').hidden=true;editCanvas.classList.remove('is-crop-mode');cameraSurface.querySelector('[data-camera-edit-tool="crop"]')?.classList.remove('is-active')}
+  if(action==='reset'){pushCameraEditorHistory();editorState.transform=createCameraEditorState().transform;editorState.revision+=1;if(cropZoom)cropZoom.value='100';applyCameraMediaTransform();cameraSurface.querySelectorAll('[data-camera-crop-aspect]').forEach(button=>button.classList.toggle('is-active',button.dataset.cameraCropAspect==='free'))}
+  if(action==='done'){editMode='';cameraSurface.classList.remove('is-media-transforming');cameraSurface.querySelector('[data-camera-crop-controls]').hidden=true;editCanvas.classList.remove('is-crop-mode');setCameraToolRail('')}
 })
-cropZoom?.addEventListener('input',()=>setCameraMediaTransform({scale:clampEditorValue(Number(cropZoom.value)/100,1,4)},{history:false}))
-cropZoom?.addEventListener('change',()=>pushCameraEditorHistory())
+let cropZoomHistoryArmed=false
+cropZoom?.addEventListener('pointerdown',()=>{cropZoomHistoryArmed=false})
+cropZoom?.addEventListener('input',()=>{if(!cropZoomHistoryArmed){pushCameraEditorHistory();cropZoomHistoryArmed=true}setCameraMediaTransform({scale:clampEditorValue(Number(cropZoom.value)/100,1,4)},{history:false})})
+cropZoom?.addEventListener('change',()=>{cropZoomHistoryArmed=false})
 
 const textFont=cameraSurface.querySelector('[data-camera-text-font]'),textColor=cameraSurface.querySelector('[data-camera-text-color]'),textSize=cameraSurface.querySelector('[data-camera-text-size]')
 function selectedCameraTextLayer(){return editorState.layers.find(layer=>layer.id===editorState.selectedLayerId&&layer.type==='text')||null}
