@@ -357,6 +357,7 @@ let communityPagePreloaderInitialized = false
 let feedNavigationSnapshot = null
 const desktopCommunitySurfaceCache = new Map()
 let desktopCommunitySurfaceKey = ''
+let desktopStoryHydrationGeneration = 0
 const communityPendingActions = new Map()
 const communityPostReactionVersions = new Map()
 const communityPostSaveVersions = new Map()
@@ -3584,11 +3585,24 @@ function bindStoryRailEvents(root = app) {
   root?.querySelectorAll('[data-pending-story-action="retry"]').forEach((button) => button.addEventListener('click', () => void publishPendingCameraStory()))
 }
 
-function updateStoryRegionsOnly() {
-  app?.querySelectorAll('.community-right-stories, .community-mobile-stories').forEach((region) => {
+function updateStoryRegionsInRoot(root, { bind = false } = {}) {
+  root?.querySelectorAll?.('.community-right-stories, .community-mobile-stories').forEach((region) => {
     region.innerHTML = renderStoriesRow()
-    bindStoryRailEvents(region)
+    if (bind) bindStoryRailEvents(region)
   })
+}
+
+function updateStoryRegionsOnly() {
+  updateStoryRegionsInRoot(app, { bind: true })
+
+  // Detached desktop SPA surfaces are live caches, not historical snapshots.
+  // Reconcile their Story rails now so restoring one cannot resurrect expired
+  // Stories or stale verification badges.
+  if (!isMobileSpaRuntime()) {
+    desktopCommunitySurfaceCache.forEach((cached) => {
+      updateStoryRegionsInRoot(cached?.fragment, { bind: false })
+    })
+  }
   updateCommunityRailFadeState()
 }
 
@@ -4202,12 +4216,28 @@ async function loadFeedEnrichment(requestId = state.feedRequestId, { localOnly =
   renderFeedRegionOnly({ reset: false })
 }
 
-async function loadStories({ renderAfter = false } = {}) {
+async function loadStories({ renderAfter = false, hydrateIdentity = false } = {}) {
+  const generation = ++desktopStoryHydrationGeneration
   state.storiesLoading = true
   state.storiesError = ''
   if (renderAfter) updateStoryRegionsOnly()
   try {
-    state.stories = await listCommunityStories({ limitCount: 30 })
+    const nextStories = await listCommunityStories({ limitCount: 30 })
+    if (generation !== desktopStoryHydrationGeneration) return
+
+    state.stories = nextStories
+
+    // Story snapshots can carry stale badge metadata. On desktop surface entry,
+    // resolve every visible author's canonical public identity before repainting
+    // the rail so verified status is consistent across For You/Following/Discover.
+    if (hydrateIdentity) {
+      const authorUids = [...new Set(nextStories
+        .map((story) => String(story.authorUid || '').trim())
+        .filter(Boolean))]
+      await Promise.allSettled(authorUids.map((uid) => ensureCommunityAuthorIdentity(uid)))
+      if (generation !== desktopStoryHydrationGeneration) return
+    }
+
     const requestedStoryId = new URLSearchParams(window.location.search).get('story') || ''
     if (requestedStoryId && state.stories.some((story) => story.storyId === requestedStoryId)) {
       state.storyViewer = { ...state.storyViewer, open: true, storyId: requestedStoryId, error: '' }
@@ -4735,7 +4765,12 @@ async function loadCommunity() {
 
   if (state.view.type === 'communities') {
     state.loading = false
+    const storiesPromise = loadStories({
+      renderAfter: true,
+      hydrateIdentity: !isMobileSpaRuntime()
+    }).catch(() => null)
     await loadCommunities()
+    await storiesPromise
     return
   }
 
@@ -4743,7 +4778,10 @@ async function loadCommunity() {
   // Stories, Home feed, and Community navigation data are independent reads.
   // Start them together; ancillary navigation data must never sit in front of
   // first-feed paint on the critical path.
-  loadStories({ renderAfter: true }).catch(() => null)
+  loadStories({
+    renderAfter: true,
+    hydrateIdentity: !isMobileSpaRuntime()
+  }).catch(() => null)
 
   let homeCommunitiesPromise = null
   if (state.view.type === 'feed') {
@@ -6726,9 +6764,13 @@ function navigateDesktopCommunitySurface(nextKey) {
     window.history.pushState({}, '', `${ROUTES.community}?feed=${encodeURIComponent(nextKey)}`)
   }
 
-  if (restoreDesktopCommunitySurface(nextKey)) return true
+  if (restoreDesktopCommunitySurface(nextKey)) {
+    void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
+    return true
+  }
   desktopCommunitySurfaceKey = nextKey
   render()
+  void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
   if (nextKey === 'discover') {
     void loadCommunities().catch(() => null)
   } else {
