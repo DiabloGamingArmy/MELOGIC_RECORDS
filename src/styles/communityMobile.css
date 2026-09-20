@@ -1346,3 +1346,239 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     box-shadow:none !important;
   }
 }
+
+
+/* melogic-mobile-story-viewer-hud-p2 */
+/* Instagram-derived visual grammar: edge-to-edge media, segmented progress,
+   compact creator identity, and a transparent top HUD over the Story. */
+@media (max-width:760px) {
+  .community-modal-backdrop > .community-story-viewer {
+    display:block !important;
+    position:relative !important;
+    padding:0 !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface {
+    position:absolute !important;
+    inset:0 !important;
+    display:grid !important;
+    width:100% !important;
+    height:100% !important;
+    min-height:0 !important;
+    padding:0 !important;
+    place-items:center !important;
+    z-index:0 !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > img,
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > video {
+    display:block !important;
+    width:100% !important;
+    height:100% !important;
+    max-width:none !important;
+    max-height:none !important;
+    border-radius:0 !important;
+    object-fit:contain !important;
+    background:#000 !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-surface > p:not(.community-story-caption) {
+    max-width:min(84vw,32rem) !important;
+    margin:0 !important;
+    padding:24px !important;
+    color:#fff !important;
+    text-shadow:0 2px 18px rgba(0,0,0,.48) !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-caption {
+    position:absolute !important;
+    right:18px !important;
+    bottom:max(112px,calc(env(safe-area-inset-bottom,0px) + 88px)) !important;
+    left:18px !important;
+    z-index:4 !important;
+    max-width:none !important;
+    margin:0 !important;
+    padding:0 !important;
+    color:#fff !important;
+    font-size:.92rem !important;
+    line-height:1.35 !important;
+    text-align:left !important;
+    text-shadow:0 1px 8px rgba(0,0,0,.9),0 2px 18px rgba(0,0,0,.55) !important;
+    pointer-events:none !important;
+  }
+
+  .community-story-viewer-hud {
+    position:absolute !important;
+    top:0 !important;
+    right:0 !important;
+    left:0 !important;
+    z-index:8 !important;
+    display:block !important;
+    margin:0 !important;
+    padding:
+      max(8px,env(safe-area-inset-top,0px))
+      max(12px,env(safe-area-inset-right,0px))
+      22px
+      max(12px,env(safe-area-inset-left,0px)) !important;
+    border:0 !important;
+    background:linear-gradient(180deg,rgba(0,0,0,.58) 0%,rgba(0,0,0,.24) 62%,rgba(0,0,0,0) 100%) !important;
+    pointer-events:none !important;
+  }
+
+  .community-story-progress-rail {
+    display:flex !important;
+    width:100% !important;
+    height:3px !important;
+    gap:3px !important;
+    margin:0 0 11px !important;
+    padding:0 !important;
+  }
+
+  .community-story-progress-rail > span {
+    position:relative !important;
+    flex:1 1 0 !important;
+    height:3px !important;
+    overflow:hidden !important;
+    border-radius:999px !important;
+    background:rgba(255,255,255,.34) !important;
+  }
+
+  .community-story-progress-rail > span > i {
+    display:block !important;
+    width:0 !important;
+    height:100% !important;
+    border-radius:inherit !important;
+    background:#fff !important;
+  }
+
+  .community-story-progress-rail > span.is-complete > i {
+    width:100% !important;
+  }
+
+  .community-story-progress-rail > span.is-active > i {
+    width:100% !important;
+    transform-origin:left center !important;
+    animation:community-story-progress-fill 5s linear both;
+  }
+
+  .community-story-viewer-hud-row {
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    gap:10px !important;
+    min-height:40px !important;
+    pointer-events:auto !important;
+  }
+
+  .community-story-viewer-hud .community-author {
+    display:flex !important;
+    flex:1 1 auto !important;
+    min-width:0 !important;
+    align-items:center !important;
+    gap:9px !important;
+    color:#fff !important;
+    text-decoration:none !important;
+  }
+
+  .community-story-viewer-hud .community-avatar {
+    flex:0 0 34px !important;
+    width:34px !important;
+    height:34px !important;
+    border:1px solid rgba(255,255,255,.82) !important;
+    border-radius:50% !important;
+    overflow:hidden !important;
+    background:#151515 !important;
+    box-shadow:0 1px 8px rgba(0,0,0,.35) !important;
+  }
+
+  .community-story-viewer-hud .community-avatar :is(img,picture) {
+    width:100% !important;
+    height:100% !important;
+    object-fit:cover !important;
+  }
+
+  .community-story-viewer-identity {
+    display:flex !important;
+    min-width:0 !important;
+    align-items:baseline !important;
+    gap:6px !important;
+    white-space:nowrap !important;
+    text-shadow:0 1px 6px rgba(0,0,0,.9) !important;
+  }
+
+  .community-story-viewer-identity strong {
+    overflow:hidden !important;
+    max-width:42vw !important;
+    color:#fff !important;
+    font-size:.82rem !important;
+    font-weight:700 !important;
+    text-overflow:ellipsis !important;
+  }
+
+  .community-story-viewer-identity em {
+    overflow:hidden !important;
+    max-width:38vw !important;
+    color:rgba(255,255,255,.74) !important;
+    font-size:.68rem !important;
+    font-style:normal !important;
+    font-weight:500 !important;
+    text-overflow:ellipsis !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close {
+    display:grid !important;
+    place-items:center !important;
+    flex:0 0 40px !important;
+    width:40px !important;
+    height:40px !important;
+    margin:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    border-radius:50% !important;
+    background:transparent !important;
+    color:#fff !important;
+    filter:drop-shadow(0 1px 4px rgba(0,0,0,.7)) !important;
+  }
+
+  .community-story-viewer-hud .community-story-viewer-close svg {
+    width:24px !important;
+    height:24px !important;
+    stroke-width:2 !important;
+  }
+
+  /* Existing lower controls stay functional but float above the media.
+     Their full redesign belongs to Push 3. */
+  .community-modal-backdrop > .community-story-viewer .community-story-discussion {
+    position:absolute !important;
+    right:12px !important;
+    bottom:max(62px,calc(env(safe-area-inset-bottom,0px) + 46px)) !important;
+    left:12px !important;
+    z-index:6 !important;
+    min-height:0 !important;
+    padding:0 !important;
+    border:0 !important;
+    background:transparent !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer .community-story-viewer-actions {
+    position:absolute !important;
+    right:12px !important;
+    bottom:max(8px,env(safe-area-inset-bottom,0px)) !important;
+    left:12px !important;
+    z-index:7 !important;
+    padding:0 !important;
+    background:transparent !important;
+  }
+
+  @keyframes community-story-progress-fill {
+    from { transform:scaleX(0); }
+    to { transform:scaleX(1); }
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-story-progress-rail > span.is-active > i {
+      animation:none !important;
+      transform:none !important;
+    }
+  }
+}
