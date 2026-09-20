@@ -6594,3 +6594,80 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     margin-left: 0;
   }
 }
+
+
+/* melogic-community-initial-feed-loader-v1
+   Cold Community loads should never flash a false empty feed while topology
+   and the first feed page are hydrating. Keep the shell visible and place the
+   familiar Melogic sheen loader only in the feed workspace. */
+.community-initial-feed-loader {
+  min-height: clamp(280px, 52vh, 620px);
+  display: grid;
+  place-items: center;
+  background: transparent;
+}
+
+.community-initial-feed-loader-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: clamp(68px, 7vw, 104px);
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  isolation: isolate;
+  animation: community-brand-loader-pulse 2.2s ease-in-out infinite;
+}
+
+.community-initial-feed-loader-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.community-initial-feed-loader-mark::after {
+  content: '';
+  position: absolute;
+  inset: -18%;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0) 34%,
+    rgba(255, 255, 255, .38) 49%,
+    rgba(255, 255, 255, .08) 58%,
+    transparent 72%
+  );
+  mix-blend-mode: screen;
+  transform: translateX(-135%);
+  animation: community-brand-loader-sheen 1.75s linear infinite;
+  -webkit-mask-image: url('../assets/brand/melogic-logo-mark-white-transparent.png');
+  mask-image: url('../assets/brand/melogic-logo-mark-white-transparent.png');
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+
+@keyframes community-brand-loader-sheen {
+  to { transform: translateX(135%); }
+}
+
+@keyframes community-brand-loader-pulse {
+  0%, 100% { transform: scale(.98); opacity: .82; }
+  50% { transform: scale(1.02); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .community-initial-feed-loader-mark,
+  .community-initial-feed-loader-mark::after {
+    animation: none;
+  }
+
+  .community-initial-feed-loader-mark::after {
+    opacity: 0;
+  }
+}
