@@ -2496,3 +2496,17 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-story-context-drawer[aria-hidden="true"] { pointer-events:none; }
   .community-story-context-drawer[aria-hidden="false"] { pointer-events:auto; }
 }
+
+
+/* story-signal-interactive */
+@media (max-width:760px) {
+  .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars {
+    pointer-events:auto !important;
+    overflow:visible !important;
+    touch-action:manipulation;
+  }
+  .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars > b {
+    position:relative;
+    cursor:pointer;
+  }
+}
