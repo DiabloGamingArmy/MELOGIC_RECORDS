@@ -1333,6 +1333,10 @@ function renderStoryComposerModal() {
                 ${hasPreview ? `
                   <div class="community-story-layer-toolbar" aria-label="Story layers">
                     <button type="button" data-story-add-text-layer>${iconSvg('plus')} <span>Text</span></button>
+                    <button type="button" data-story-add-object="person"><span>@</span><span>Person</span></button>
+                    <button type="button" data-story-add-object="link">${iconSvg('link')}<span>Link</span></button>
+                    <button type="button" data-story-add-object="location"><span>⌖</span><span>Location</span></button>
+                    <button type="button" data-story-add-object="community"><span>◎</span><span>Community</span></button>
                     ${state.storyComposer.selectedLayerId ? `
                       <button type="button" data-story-layer-scale-down aria-label="Make layer smaller">−</button>
                       <button type="button" data-story-layer-scale-up aria-label="Make layer larger">+</button>
@@ -1464,6 +1468,17 @@ function renderStoryViewerModal() {
               : `<p>${escapeHtml(story.text)}</p>`
           }
           ${(story.mediaType === 'image' || story.mediaType === 'video') && (story.caption || story.text) ? `<p class="community-story-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
+          ${(story.layers || []).length ? `<div class="community-story-viewer-layers">
+            ${story.layers.map((layer) => {
+              const style = `--layer-x:${layer.x};--layer-y:${layer.y};--layer-w:${layer.width};--layer-scale:${layer.scale || 1};--layer-rotation:${layer.rotation || 0}deg;--layer-z:${layer.zIndex || 0}`
+              if (layer.type === 'person') return `<a class="community-story-object is-person" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? publicProfileRoute({ uid: layer.targetId }) : '#'))}"><span>@</span><strong>${escapeHtml(layer.content || 'Person')}</strong></a>`
+              if (layer.type === 'link') return `<a class="community-story-object is-link" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('link')}<strong>${escapeHtml(layer.content || 'Open link')}</strong></a>`
+              if (layer.type === 'location') return `<a class="community-story-object is-location" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer"><span>⌖</span><strong>${escapeHtml(layer.content || 'Location')}</strong></a>`
+              if (layer.type === 'community') return `<a class="community-story-object is-community" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? `/community/${encodeURIComponent(layer.targetId)}` : '#'))}"><span>◎</span><strong>${escapeHtml(layer.content || 'Community')}</strong></a>`
+              if (layer.type === 'text') return `<span class="community-story-object is-text" style="${style}"><strong>${escapeHtml(layer.content || '')}</strong></span>`
+              return ''
+            }).join('')}
+          </div>` : ''}
         </div>
         <div class="community-story-mobile-interactions">
           <div class="community-story-reply-shell" aria-label="Story reply">
@@ -7767,6 +7782,29 @@ function bindEvents() {
     selectStoryFile(event.target.files?.[0] || null)
   }))
   app.querySelector('[data-remove-story-file]')?.addEventListener('click', removeStoryFile)
+  app.querySelectorAll('[data-story-add-object]').forEach((button) => button.addEventListener('click', () => {
+    const type = button.getAttribute('data-story-add-object') || ''
+    const prompts = {
+      person: ['Person', 'Enter a display name or @username:', 'Enter profile URL (optional):'],
+      link: ['Open link', 'Enter a label for this link:', 'Enter the full URL:'],
+      location: ['Location', 'Enter a location name:', 'Enter a map URL (optional):'],
+      community: ['Community', 'Enter the Community name:', 'Enter the Community URL (optional):']
+    }
+    const config = prompts[type]
+    if (!config) return
+    const content = window.prompt(config[1], config[0])?.trim()
+    if (!content) return
+    const targetURL = window.prompt(config[2], '')?.trim() || ''
+    if (targetURL && !/^(https?:\/\/|\/)/i.test(targetURL)) {
+      showCommunityToast('Use a full https:// URL or an internal / path.')
+      return
+    }
+    const layers = [...(state.storyComposer.layers || [])]
+    const id = `layer-${Date.now().toString(36)}`
+    layers.push({ id, type, x: .5, y: .58, width: .48, height: .1, rotation: 0, scale: 1, opacity: 1, zIndex: layers.length + 1, startMs: 0, endMs: 0, content, targetId: '', targetURL, metadata: {} })
+    state.storyComposer = { ...state.storyComposer, layers, selectedLayerId: id }
+    render()
+  }))
   app.querySelector('[data-story-add-text-layer]')?.addEventListener('click', () => {
     const layers = [...(state.storyComposer.layers || [])]
     const id = `layer-${Date.now().toString(36)}`
