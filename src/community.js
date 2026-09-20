@@ -139,12 +139,15 @@ const STORY_MAX_RECORD_SECONDS = 60
 const recordedStoryViews = new Set()
 const COMMUNITY_DEBUG = Boolean(import.meta.env?.DEV) || new URLSearchParams(window.location.search).has('debugCommunity')
 
+const initialRequestedFeed = new URLSearchParams(window.location.search).get('feed')
+const initialActiveTab = initialRequestedFeed === 'following' ? 'following' : 'for-you'
+
 const state = {
   currentUser: null,
-  activeTab: 'for-you',
+  activeTab: initialActiveTab,
   activeCommunityId: '',
   activeCommunitySlug: '',
-  activeTopicLabel: 'For You',
+  activeTopicLabel: initialActiveTab === 'following' ? 'Following' : 'For You',
   selectedCommunityFilters: [],
   discoveryTab: 'suggested',
   activeTag: normalizeTagKey(parseFeedParam('tag')),
@@ -1008,11 +1011,6 @@ function parseFeedParam(key = '') {
 
 function parseCommunityView() {
   const path = window.location.pathname
-  const requestedFeed = new URLSearchParams(window.location.search).get('feed')
-  if (requestedFeed === 'for-you' || requestedFeed === 'following') {
-    state.activeTab = requestedFeed
-    state.activeTopicLabel = requestedFeed === 'following' ? 'Following' : 'For You'
-  }
   const communityMatch = path.match(/^\/community\/c\/([^/]+)/)
   if (communityMatch) return { type: 'community', slug: decodeURIComponent(communityMatch[1] || '') }
   if (path.startsWith('/community/communities')) return { type: 'communities' }
@@ -8644,6 +8642,11 @@ function bindEvents() {
 // melogic-mobile-unified-runtime-v2
 // melogic-community-lifecycle-contract-v4b
 function syncCommunityRouteStateFromLocation() {
+  const requestedFeed = new URLSearchParams(window.location.search).get('feed')
+  if (requestedFeed === 'for-you' || requestedFeed === 'following') {
+    state.activeTab = requestedFeed
+    state.activeTopicLabel = requestedFeed === 'following' ? 'Following' : 'For You'
+  }
   state.detailPostId = parseDetailPostId()
   state.focusedCommentId = parseFeedParam('comment')
   state.focusedReplyId = parseFeedParam('reply')
