@@ -1838,8 +1838,12 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   }
 
   .community-story-viewer-identity .community-display-name.is-verified {
-    max-width:36vw !important;
-    gap:2px !important;
+    max-width:32vw !important;
+    gap:0 !important;
+  }
+
+  .community-story-viewer-identity .community-display-name.is-verified .community-verified-badge {
+    transform:translateX(-3px) !important;
   }
 
   .community-story-viewer-identity .community-verified-badge {
