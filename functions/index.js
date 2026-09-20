@@ -57,6 +57,7 @@ const { toggleCommunityCommentLike, toggleCommunityCommentDislike } = require('.
 const { createCommunityStory } = require('./src/community/createCommunityStory')
 const { deleteCommunityStory } = require('./src/community/deleteCommunityStory')
 const { recordCommunityStoryView } = require('./src/community/recordCommunityStoryView')
+const { setCommunityStoryReaction } = require('./src/community/setCommunityStoryReaction')
 const {
   hideCommunityPost,
   restoreCommunityPost,
@@ -244,6 +245,7 @@ exports.toggleCommunityCommentDislike = toggleCommunityCommentDislike
 exports.createCommunityStory = createCommunityStory
 exports.deleteCommunityStory = deleteCommunityStory
 exports.recordCommunityStoryView = recordCommunityStoryView
+exports.setCommunityStoryReaction = setCommunityStoryReaction
 exports.hideCommunityPost = hideCommunityPost
 exports.restoreCommunityPost = restoreCommunityPost
 exports.lockCommunityPostComments = lockCommunityPostComments
