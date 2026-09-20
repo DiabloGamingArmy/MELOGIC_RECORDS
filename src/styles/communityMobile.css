@@ -1355,6 +1355,50 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
 }
 
 
+/* melogic-desktop-story-viewer-mobile-shell-v1
+   Desktop deliberately reuses the mobile Story UI, but presents that UI as a
+   centered floating portrait viewer rather than taking ownership of the viewport. */
+@media (min-width:761px) {
+  body:has(.community-modal-backdrop .community-story-viewer) {
+    overflow:hidden !important;
+    background:#000 !important;
+  }
+
+  .community-modal-backdrop:has(.community-story-viewer) {
+    position:fixed !important;
+    inset:0 !important;
+    z-index:10000 !important;
+    display:grid !important;
+    place-items:center !important;
+    width:100vw !important;
+    height:100vh !important;
+    padding:28px !important;
+    overflow:hidden !important;
+    background:rgba(0,0,0,.78) !important;
+    backdrop-filter:blur(10px) !important;
+    -webkit-backdrop-filter:blur(10px) !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer {
+    position:relative !important;
+    inset:auto !important;
+    display:block !important;
+    width:min(430px,calc(100vw - 56px)) !important;
+    height:min(760px,calc(100vh - 56px)) !important;
+    min-width:0 !important;
+    min-height:0 !important;
+    max-width:430px !important;
+    max-height:760px !important;
+    margin:0 !important;
+    padding:0 !important;
+    overflow:hidden !important;
+    border:1px solid rgba(255,255,255,.14) !important;
+    border-radius:22px !important;
+    background:#000 !important;
+    box-shadow:0 28px 90px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.04) !important;
+  }
+}
+
 /* melogic-mobile-story-viewer-fullscreen-p1 */
 /* Story Viewer is an immersive viewport mode, not a modal card.
    Push 1 intentionally preserves the existing viewer controls/content hierarchy;
@@ -5802,5 +5846,34 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     height:12px;
     margin-left:-4px !important;
     transform:translateX(-2px);
+  }
+}
+
+
+/* melogic-desktop-story-viewer-mobile-shell-final-v1 */
+@media (min-width:761px) {
+  .community-modal-backdrop:has(.community-story-viewer) {
+    display:grid !important;
+    place-items:center !important;
+    padding:28px !important;
+    background:rgba(0,0,0,.78) !important;
+    backdrop-filter:blur(10px) !important;
+    -webkit-backdrop-filter:blur(10px) !important;
+  }
+  .community-modal-backdrop > .community-story-viewer {
+    width:min(430px,calc(100vw - 56px)) !important;
+    height:min(760px,calc(100vh - 56px)) !important;
+    min-height:0 !important;
+    max-width:430px !important;
+    max-height:760px !important;
+    margin:auto !important;
+    border:1px solid rgba(255,255,255,.14) !important;
+    border-radius:22px !important;
+    box-shadow:0 28px 90px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.04) !important;
+  }
+  .community-modal-backdrop > .community-story-viewer .community-story-surface,
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > img,
+  .community-modal-backdrop > .community-story-viewer .community-story-surface.has-image > video {
+    border-radius:inherit !important;
   }
 }
