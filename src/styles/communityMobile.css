@@ -2354,3 +2354,27 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     background:rgba(255,255,255,.19); border-color:rgba(255,255,255,.72);
   }
 }
+
+
+/* melogic-story-native-objects-push-10 */
+@media (max-width:760px) {
+  .community-story-object.is-melogic-native {
+    justify-content:flex-start; text-align:left; min-height:54px; border-radius:14px;
+    border-color:rgba(255,255,255,.22); background:rgba(5,7,10,.78);
+    box-shadow:0 8px 26px rgba(0,0,0,.32),inset 0 1px 0 rgba(255,255,255,.055);
+  }
+  .community-story-object.is-melogic-native > span:nth-child(2) {
+    display:flex; flex:1 1 auto; min-width:0; flex-direction:column; gap:3px;
+  }
+  .community-story-native-glyph {
+    display:grid; place-items:center; width:29px; height:29px; flex:0 0 29px;
+    border:1px solid rgba(255,255,255,.16); border-radius:9px; background:rgba(255,255,255,.07);
+    font-size:1rem;
+  }
+  .community-story-object.is-melogic-native em {
+    flex:0 0 auto; font-size:.66rem; font-style:normal; font-weight:800; opacity:.68;
+  }
+  .community-story-object.is-melogic-native strong {
+    display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+}
