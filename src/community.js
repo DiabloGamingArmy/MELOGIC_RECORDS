@@ -356,6 +356,8 @@ let communityShellChromeInitialized = false
 let communityPagePreloaderInitialized = false
 let feedNavigationSnapshot = null
 const desktopCommunitySurfaceCache = new Map()
+const mobileCommunitySurfaceCache = new Map()
+let mobileCommunitySurfaceKey = ''
 let desktopCommunitySurfaceKey = ''
 let storyHydrationGeneration = 0
 let desktopCommunityHydrationGeneration = 0
@@ -632,14 +634,9 @@ function setupCommunityFeedTabs() {
     state.activeTab = nextTab
     state.activeTopicLabel = nextTab === 'following' ? 'Following' : 'For You'
 
-    const leavingMobileDiscover = isMobileSpaRuntime() && state.view.type === 'communities'
-    if (leavingMobileDiscover) {
-      const directoryMain = app?.querySelector('.community-layout.is-directory > .community-main')
-      if (directoryMain) mobileDiscoverScrollTop = directoryMain.scrollTop
-      state.view = { type: 'feed' }
-      state.activeCommunityId = ''
-      state.activeCommunitySlug = ''
-      window.history.pushState({}, '', `${ROUTES.community}?feed=${encodeURIComponent(nextTab)}`)
+    if (isMobileSpaRuntime()) {
+      navigateMobileCommunitySurface(nextTab)
+      return
     }
 
     // Desktop left-rail feed controls are also visible while Discover is open.
@@ -700,12 +697,7 @@ if (!window.__melogicMobileCommunityDiscoverRouterV1) {
     if (!(link instanceof HTMLAnchorElement)) return
     event.preventDefault()
     if (state.view.type === 'communities') return
-    state.view = { type: 'communities' }
-    state.activeCommunityId = ''
-    state.activeCommunitySlug = ''
-    window.history.pushState({}, '', ROUTES.communityCommunities)
-    render()
-    void hydrateMobileCommunitySharedState({ directory: true })
+    navigateMobileCommunitySurface('discover')
   })
 }
 
@@ -6834,6 +6826,118 @@ function setupFeedPaginationObserver() {
   feedPaginationObserver.observe(sentinel)
 }
 
+// melogic-mobile-community-subpage-cache-v1
+// For You / Following / Discover are persistent mobile surfaces. Switching
+// among them detaches/reattaches the existing DOM instead of rebuilding posts,
+// Stories, images or video elements.
+function mobileCommunitySurfaceKeyFor(viewType = state.view?.type, activeTab = state.activeTab) {
+  if (viewType === 'communities') return 'discover'
+  if (viewType === 'feed' && activeTab === 'following') return 'following'
+  if (viewType === 'feed') return 'for-you'
+  return ''
+}
+
+function captureMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
+  if (!isMobileSpaRuntime() || !key || state.detailPostId) return false
+  const root = app?.querySelector('[data-community-root]')
+  if (!root) return false
+  const viewport = communityScrollViewport(root)
+  const fragment = document.createDocumentFragment()
+  while (root.firstChild) fragment.append(root.firstChild)
+  mobileCommunitySurfaceCache.set(key, {
+    fragment,
+    scrollTop: viewport?.scrollTop || 0,
+    state: {
+      activeTab: state.activeTab,
+      activeCommunityId: state.activeCommunityId,
+      activeCommunitySlug: state.activeCommunitySlug,
+      activeTopicLabel: state.activeTopicLabel,
+      selectedCommunityFilters: [...state.selectedCommunityFilters],
+      activeTag: state.activeTag,
+      feedSearch: state.feedSearch,
+      feedSort: state.feedSort,
+      view: { ...state.view },
+      posts: state.posts,
+      attachmentMediaUrls: state.attachmentMediaUrls,
+      viewerState: state.viewerState,
+      feedInitialLoading: state.feedInitialLoading,
+      feedLoadingMore: state.feedLoadingMore,
+      feedHasMore: state.feedHasMore,
+      feedCursor: state.feedCursor,
+      feedError: state.feedError,
+      feedRequestId: state.feedRequestId,
+      activeFeedQueryKey: state.activeFeedQueryKey,
+      followingFeedCache: state.followingFeedCache,
+      communityFilters: { ...state.communityFilters }
+    }
+  })
+  return true
+}
+
+function restoreMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
+  if (!isMobileSpaRuntime() || !key) return false
+  const cached = mobileCommunitySurfaceCache.get(key)
+  const root = app?.querySelector('[data-community-root]')
+  if (!cached?.fragment?.childNodes?.length || !root) return false
+  mobileCommunitySurfaceCache.delete(key)
+
+  // Stories/community topology are shared live state. Surface-specific feed
+  // data comes from the snapshot, but shared state must never roll backward.
+  const sharedState = {
+    currentUser: state.currentUser,
+    stories: state.stories,
+    storiesLoading: state.storiesLoading,
+    storiesError: state.storiesError,
+    communities: state.communities,
+    communityFocus: state.communityFocus,
+    communityMembership: state.communityMembership
+  }
+  Object.assign(state, cached.state, sharedState)
+  root.replaceChildren(cached.fragment)
+  mobileCommunitySurfaceKey = key
+  syncCommunityMobileHeader(false, app)
+  setCommunityScroll(cached.scrollTop, root)
+  window.requestAnimationFrame(() => setCommunityScroll(cached.scrollTop, root))
+  updateTopicArrowState()
+  updateCommunityRailFadeState()
+  setupFeedPaginationObserver()
+  hydrateCommunityIdentityDom()
+  return true
+}
+
+function navigateMobileCommunitySurface(nextKey) {
+  if (!isMobileSpaRuntime() || !['for-you', 'following', 'discover'].includes(nextKey)) return false
+  const currentKey = mobileCommunitySurfaceKey || mobileCommunitySurfaceKeyFor()
+  if (currentKey === nextKey) return true
+  if (currentKey) captureMobileCommunitySurface(currentKey)
+
+  state.detailPostId = ''
+  state.focusedCommentId = ''
+  state.focusedReplyId = ''
+  state.activeCommunityId = ''
+  state.activeCommunitySlug = ''
+  if (nextKey === 'discover') {
+    state.view = { type: 'communities' }
+    history.pushState({}, '', ROUTES.communityCommunities)
+  } else {
+    state.view = { type: 'feed' }
+    state.activeTab = nextKey
+    state.activeTopicLabel = nextKey === 'following' ? 'Following' : 'For You'
+    history.pushState({}, '', `${ROUTES.community}?feed=${encodeURIComponent(nextKey)}`)
+  }
+
+  if (restoreMobileCommunitySurface(nextKey)) return true
+
+  mobileCommunitySurfaceKey = nextKey
+  render()
+  if (nextKey === 'discover') {
+    void loadCommunities({ renderOnStart: false, renderAfter: true, bootstrap: false }).catch(() => null)
+  } else {
+    void loadFeedPage({ reset: true }).catch(() => null)
+  }
+  return true
+}
+
 // melogic-desktop-community-surface-cache-v1
 function desktopCommunitySurfaceKeyFor(viewType = state.view?.type, activeTab = state.activeTab) {
   if (viewType === 'communities') return 'discover'
@@ -8982,10 +9086,21 @@ function handleCommunityPopstate() {
     }
   }
 
-  if (isMobileSpaRuntime() && !state.detailPostId && state.view.type === 'communities') {
-    render()
-    void hydrateMobileCommunitySharedState({ directory: true })
-    return
+  if (isMobileSpaRuntime() && !state.detailPostId) {
+    const nextKey = mobileCommunitySurfaceKeyFor()
+    if (['for-you', 'following', 'discover'].includes(nextKey)) {
+      const previousKey = mobileCommunitySurfaceKey
+      if (previousKey && previousKey !== nextKey) captureMobileCommunitySurface(previousKey)
+      if (restoreMobileCommunitySurface(nextKey)) return
+      mobileCommunitySurfaceKey = nextKey
+      render()
+      if (nextKey === 'discover') {
+        void loadCommunities({ renderOnStart: false, renderAfter: true, bootstrap: false }).catch(() => null)
+      } else {
+        void loadFeedPage({ reset: true }).catch(() => null)
+      }
+      return
+    }
   }
   if (!state.detailPostId && restoreFeedNavigationSnapshot()) return
   loadCommunity()
@@ -9004,6 +9119,7 @@ async function bootstrapCommunityDocument() {
     state.currentUser = user
     render()
     await loadCommunity()
+    if (isMobileSpaRuntime() && !state.detailPostId) mobileCommunitySurfaceKey = mobileCommunitySurfaceKeyFor()
     await consumeCameraCommunityMediaHandoff()
 
     if (!communityAuthUnsubscribe) {
@@ -9074,9 +9190,7 @@ if (isMobileSpaRuntime()) {
       }
       syncCommunityMobileHeader(Boolean(state.detailPostId), app)
       await consumeCameraCommunityMediaHandoff()
-      if (!state.detailPostId) {
-        void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
-      }
+      if (!state.detailPostId) mobileCommunitySurfaceKey = mobileCommunitySurfaceKeyFor()
     },
     async deactivate({ instance }) {
       document.body.classList.remove('community-modal-open')
