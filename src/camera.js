@@ -1437,7 +1437,7 @@ musicFadeIn?.addEventListener('change',()=>updateCameraAudio({fadeInMs:Math.max(
 musicFadeOut?.addEventListener('change',()=>updateCameraAudio({fadeOutMs:Math.max(0,Math.round(Number(musicFadeOut.value||0)*1000))}))
 musicRemove?.addEventListener('click',()=>updateCameraAudio({music:null}))
 let cameraMusicReleases=[],cameraMusicSearchTimer=0,cameraMusicObjectUrl=''
-function closeCameraMusicSheet(){audioControls.hidden=true;if(editToolRail?.dataset.activeTool==='music'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
+function closeCameraMusicSheet(){audioControls.querySelector('input:focus')?.blur();audioControls.hidden=true;if(editToolRail?.dataset.activeTool==='music'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
 function renderCameraMusicResults(releases=[]){
  const host=cameraSurface.querySelector('[data-camera-music-results]'),empty=cameraSurface.querySelector('[data-camera-music-empty]');if(!host)return
  host.replaceChildren(...releases.map(release=>{const button=document.createElement('button');button.type='button';button.className='camera-music-result';button.dataset.cameraMusicRelease=release.id;const art=document.createElement(release.coverArtURL?'img':'span');if(release.coverArtURL){art.src=release.coverArtURL;art.alt=''}else{art.className='camera-music-art-fallback';art.textContent='♪'}const copy=document.createElement('span');copy.innerHTML='<strong></strong><small></small>';copy.querySelector('strong').textContent=release.title;copy.querySelector('small').textContent=release.artistName;button.append(art,copy);return button}))
@@ -1455,15 +1455,20 @@ function installCameraSheetDrag(sheet,close){
  if(!sheet)return;const grabber=sheet.querySelector('.camera-sheet-grabber');if(!grabber)return
  let startY=0,delta=0,active=false
  grabber.addEventListener('pointerdown',event=>{active=true;startY=event.clientY;delta=0;grabber.setPointerCapture?.(event.pointerId);sheet.classList.add('is-dragging')})
- grabber.addEventListener('pointermove',event=>{if(!active)return;delta=Math.max(0,event.clientY-startY);sheet.style.transform=`translateY(${delta}px)`})
- const finish=()=>{if(!active)return;active=false;sheet.classList.remove('is-dragging');sheet.style.removeProperty('transform');if(delta>90)close()}
- grabber.addEventListener('pointerup',finish);grabber.addEventListener('pointercancel',finish)
+ grabber.addEventListener('pointermove',event=>{if(!active)return;delta=Math.max(0,event.clientY-startY);sheet.style.setProperty('--camera-sheet-drag',`${delta}px`)})
+ const finish=(cancelled=false)=>{if(!active)return;active=false;sheet.classList.remove('is-dragging');const dismiss=!cancelled&&delta>Math.min(110,sheet.getBoundingClientRect().height*.14);sheet.style.removeProperty('--camera-sheet-drag');delta=0;if(dismiss)close()}
+ grabber.addEventListener('pointerup',()=>finish(false));grabber.addEventListener('pointercancel',()=>finish(true))
 }
 installCameraSheetDrag(cameraSurface.querySelector('[data-camera-sticker-picker]'),closeCameraStickerSheet)
 installCameraSheetDrag(audioControls,closeCameraMusicSheet)
 const cameraVisualViewport=window.visualViewport
-function syncCameraEditorViewport(){const height=cameraVisualViewport?.height||window.innerHeight;cameraSurface.style.setProperty('--camera-editor-viewport-height',`${Math.round(height)}px`)}
-cameraVisualViewport?.addEventListener('resize',syncCameraEditorViewport,{passive:true});cameraVisualViewport?.addEventListener('scroll',syncCameraEditorViewport,{passive:true});syncCameraEditorViewport()
+function syncCameraEditorViewport(){
+ const height=Math.round(cameraVisualViewport?.height||window.innerHeight),offsetTop=Math.round(cameraVisualViewport?.offsetTop||0)
+ cameraSurface.style.setProperty('--camera-editor-viewport-height',`${height}px`)
+ cameraSurface.style.setProperty('--camera-editor-viewport-top',`${offsetTop}px`)
+ cameraSurface.classList.toggle('is-keyboard-open',height<window.innerHeight-120)
+}
+cameraVisualViewport?.addEventListener('resize',syncCameraEditorViewport,{passive:true});cameraVisualViewport?.addEventListener('scroll',syncCameraEditorViewport,{passive:true});window.addEventListener('orientationchange',()=>requestAnimationFrame(syncCameraEditorViewport),{passive:true});syncCameraEditorViewport()
 
 cameraSurface.querySelector('[data-camera-audio-close]')?.addEventListener('click',closeCameraMusicSheet)
 
@@ -1558,7 +1563,7 @@ function renderCameraStickerGrid(tab='featured',search=''){
   grid.replaceChildren(...assets.map(asset=>{const button=document.createElement('button');button.type='button';button.dataset.cameraStickerAsset=asset.id;button.className='is-asset';const img=document.createElement('img');img.src=asset.thumbnailUrl||asset.url;img.alt=asset.title||'Sticker';img.loading='lazy';button.append(img);return button}))
   if(empty)empty.hidden=assets.length>0
 }
-function closeCameraStickerSheet(){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');if(picker)picker.hidden=true;const form=cameraSurface.querySelector('[data-camera-interactive-editor]');if(form)form.hidden=true;if(editToolRail?.dataset.activeTool==='sticker'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
+function closeCameraStickerSheet(){const picker=cameraSurface.querySelector('[data-camera-sticker-picker]');picker?.querySelector('input:focus')?.blur();if(picker)picker.hidden=true;const form=cameraSurface.querySelector('[data-camera-interactive-editor]');if(form)form.hidden=true;if(editToolRail?.dataset.activeTool==='sticker'){editMode='';closeCameraToolPanels('');setCameraToolRail('')}}
 cameraSurface.querySelector('[data-camera-sticker-picker]')?.addEventListener('click',event=>{
   const assetButton=event.target.closest('[data-camera-sticker-asset]');if(assetButton){const asset=cameraStickerAssets.find(item=>item.id===assetButton.dataset.cameraStickerAsset);if(asset){addCameraEditorLayer('image',{previewURL:asset.url,assetId:asset.id,assetKind:asset.kind||'sticker',title:asset.title||'',width:.34,height:.34,fit:'contain'});closeCameraStickerSheet()}return}
 
