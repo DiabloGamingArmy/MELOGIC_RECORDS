@@ -2133,3 +2133,66 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     animation:none !important;
   }
 }
+
+
+/* melogic-story-signal-waveform-push-03 */
+@media (max-width:760px) {
+  .community-story-progress-rail > span {
+    isolation:isolate !important;
+  }
+
+  .community-story-signal-bars {
+    display:none;
+  }
+
+  /* Video-bearing Stories get Melogic's compact Signal signature. The bars are
+     intentionally restrained: the viewer stays media-first, not DAW-like. */
+  .community-story-progress-rail > span.has-story-signal .community-story-signal-bars {
+    position:absolute !important;
+    inset:-3px 0 !important;
+    z-index:1 !important;
+    display:flex !important;
+    align-items:center !important;
+    justify-content:space-between !important;
+    gap:1px !important;
+    overflow:hidden !important;
+    border-radius:inherit !important;
+    opacity:.46 !important;
+    pointer-events:none !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal .community-story-signal-bars > b {
+    flex:1 1 0 !important;
+    min-width:1px !important;
+    max-width:3px !important;
+    height:var(--signal-height,40%) !important;
+    min-height:1px !important;
+    border-radius:999px !important;
+    background:rgba(255,255,255,.74) !important;
+    transform-origin:center !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal > i {
+    z-index:2 !important;
+    opacity:.88 !important;
+    mix-blend-mode:screen !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal.is-active {
+    box-shadow:0 0 0 1px rgba(255,255,255,.025),0 0 10px rgba(255,255,255,.035) !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal.is-active .community-story-signal-bars {
+    opacity:.66 !important;
+  }
+
+  .community-story-progress-rail > span.has-story-signal.is-complete .community-story-signal-bars {
+    opacity:.30 !important;
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-story-progress-rail > span.has-story-signal .community-story-signal-bars {
+      transition:none !important;
+    }
+  }
+}
