@@ -10,6 +10,7 @@ const {
   normalizeLifetimeHours,
   sanitizeBackground,
   sanitizeLinkedId,
+  sanitizeStoryLayers,
   sanitizeStoryId,
   sanitizeStoryText,
   serializeStory,
@@ -33,6 +34,7 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
   const lifetimeHours = normalizeLifetimeHours(request.data?.lifetimeHours || 24)
   const linkedPostId = sanitizeLinkedId(request.data?.linkedPostId || '')
   const linkedProductId = sanitizeLinkedId(request.data?.linkedProductId || '')
+  const layers = sanitizeStoryLayers(request.data?.layers || [])
 
   if (!STORY_MEDIA_TYPES.has(mediaType)) {
     throw new HttpsError('invalid-argument', 'Story media type must be text, image, or video.')
@@ -70,6 +72,8 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
     background: mediaType === 'text' ? sanitizeBackground(request.data?.background || '') : '',
     linkedPostId,
     linkedProductId,
+    layers,
+    layerSchemaVersion: 1,
     expiresAt: admin.firestore.Timestamp.fromDate(expiresDate),
     lifetimeHours,
     createdAt: serverNow,
