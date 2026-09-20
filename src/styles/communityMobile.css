@@ -2323,3 +2323,34 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-story-object.is-text { border:0; border-radius:8px; background:rgba(0,0,0,.28); }
   .community-story-object:active { transform:translate(-50%,-50%) scale(calc(var(--layer-scale,1) * .96)) rotate(var(--layer-rotation,0deg)); }
 }
+
+
+/* melogic-story-rich-objects-push-09 */
+@media (max-width:760px) {
+  .community-story-object.is-audio,
+  .community-story-object.is-product,
+  .community-story-object.is-event {
+    justify-content:flex-start; text-align:left; border-radius:14px; min-height:48px;
+  }
+  .community-story-object.is-audio > span:last-child,
+  .community-story-object.is-product > span:last-child,
+  .community-story-object.is-event > span:last-child {
+    min-width:0; display:flex; flex-direction:column; gap:2px;
+  }
+  .community-story-object small {
+    display:block; font-size:.58rem; line-height:1; letter-spacing:.12em; opacity:.58; font-weight:800;
+  }
+  .community-story-object.is-poll {
+    width:min(calc(var(--layer-w,.7) * 100%),82%); border-radius:16px; padding:10px;
+    display:block; text-align:left;
+  }
+  .community-story-object.is-poll > strong { display:block; padding:2px 3px 8px; white-space:normal; }
+  .community-story-object.is-poll > div { display:grid; gap:5px; }
+  .community-story-object.is-poll button {
+    width:100%; min-height:34px; border:1px solid rgba(255,255,255,.15); border-radius:10px;
+    background:rgba(255,255,255,.07); color:#fff; padding:6px 9px; text-align:left; font:inherit;
+  }
+  .community-story-object.is-poll button.is-selected {
+    background:rgba(255,255,255,.19); border-color:rgba(255,255,255,.72);
+  }
+}
