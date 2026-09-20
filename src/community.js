@@ -1548,7 +1548,7 @@ function renderStoryViewerModal() {
           <button type="button" data-story-action="report">${iconSvg('alertCircle')}<span>Report</span></button>
         </div>
         ${provenance.length ? `<div class="community-story-provenance" data-story-provenance>
-          ${provenance.map((item) => `<button type="button" data-story-provenance-kind="${escapeHtml(item.kind)}" data-story-provenance-url="${escapeHtml(item.url || '')}" data-story-provenance-id="${escapeHtml(item.targetId || '')}"><span>${iconSvg(item.kind === 'remix' ? 'refreshCw' : item.kind === 'product' ? 'shoppingBag' : 'link')}</span><span><strong>${escapeHtml(item.label)}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}</span></button>`).join('')}
+          ${provenance.map((item) => `<button type="button" data-story-provenance-kind="${escapeHtml(item.kind)}" data-story-provenance-url="${escapeHtml(safeStoryTargetURL(item.url) || '')}" data-story-provenance-id="${escapeHtml(item.targetId || '')}"><span>${iconSvg(item.kind === 'remix' ? 'refreshCw' : item.kind === 'product' ? 'shoppingBag' : 'link')}</span><span><strong>${escapeHtml(item.label)}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}</span></button>`).join('')}
         </div>` : ''}
         <aside class="community-story-context-drawer" data-story-context-drawer aria-hidden="true">
           <header><div><small>STORY CONTEXT</small><strong>${escapeHtml(story.authorDisplayName || story.authorUsername || 'Melogic Creator')}</strong></div><button type="button" data-close-story-context aria-label="Close Story context">${iconSvg('x')}</button></header>
@@ -1559,7 +1559,7 @@ function renderStoryViewerModal() {
           </div>
           ${story.caption || story.text ? `<p class="community-story-context-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
           ${contextItems.length ? `<section><h3>In this Story</h3>${contextItems.map((layer) => `<button type="button" data-story-context-url="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '')}"><small>${escapeHtml(contextLabels[layer.type] || 'Item')}</small><strong>${escapeHtml(layer.content || contextLabels[layer.type] || 'Story item')}</strong></button>`).join('')}</section>` : ''}
-          ${provenance.length ? `<section><h3>Sources</h3>${provenance.map((item) => `<button type="button" data-story-context-url="${escapeHtml(item.url || '')}" data-story-context-story-id="${escapeHtml(item.targetId || '')}"><small>${escapeHtml(item.kind || 'source')}</small><strong>${escapeHtml(item.label)}</strong></button>`).join('')}</section>` : ''}
+          ${provenance.length ? `<section><h3>Sources</h3>${provenance.map((item) => `<button type="button" data-story-context-url="${escapeHtml(safeStoryTargetURL(item.url) || '')}" data-story-context-story-id="${escapeHtml(item.targetId || '')}"><small>${escapeHtml(item.kind || 'source')}</small><strong>${escapeHtml(item.label)}</strong></button>`).join('')}</section>` : ''}
         </aside>
         <div class="community-story-type-badge is-${escapeHtml(story.storyType || 'moment')}">${escapeHtml((story.storyType || 'moment').toUpperCase())}</div>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
@@ -1573,7 +1573,7 @@ function renderStoryViewerModal() {
           ${(story.layers || []).length ? `<div class="community-story-viewer-layers">
             ${story.layers.map((layer) => {
               const style = `--layer-x:${layer.x};--layer-y:${layer.y};--layer-w:${layer.width};--layer-scale:${layer.scale || 1};--layer-rotation:${layer.rotation || 0}deg;--layer-z:${layer.zIndex || 0}`
-              if (layer.type === 'person') return `<a class="community-story-object is-person" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? publicProfileRoute({ uid: layer.targetId }) : '#'))}"><span>@</span><strong>${escapeHtml(layer.content || 'Person')}</strong></a>`
+              if (layer.type === 'person') return `<a class="community-story-object is-person" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || (layer.targetId ? publicProfileRoute({ uid: layer.targetId }) : '#'))}"><span>@</span><strong>${escapeHtml(layer.content || 'Person')}</strong></a>`
               if (layer.type === 'link') return `<a class="community-story-object is-link" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('link')}<strong>${escapeHtml(layer.content || 'Open link')}</strong></a>`
               if (layer.type === 'location') return `<a class="community-story-object is-location" style="${style}" href="${escapeHtml(safeStoryTargetURL(layer.targetURL) || '#')}" target="_blank" rel="noopener noreferrer"><span>⌖</span><strong>${escapeHtml(layer.content || 'Location')}</strong></a>`
               if (layer.type === 'community') return `<a class="community-story-object is-community" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? `/community/${encodeURIComponent(layer.targetId)}` : '#'))}"><span>◎</span><strong>${escapeHtml(layer.content || 'Community')}</strong></a>`
@@ -8051,6 +8051,11 @@ function bindEvents() {
     object.addEventListener('pointerdown', (event) => event.stopPropagation())
     object.addEventListener('click', (event) => event.stopPropagation())
   })
+  const storyReplyInput = app.querySelector('[data-story-reply-input]')
+  storyReplyInput?.addEventListener('focus', pauseStoryViewerPlayback)
+  storyReplyInput?.addEventListener('blur', () => {
+    if (!app.querySelector('[data-story-context-drawer].is-open') && app.querySelector('[data-story-action-rail]')?.hidden !== false) resumeStoryViewerPlayback()
+  })
   app.querySelector('[data-story-reply-form]')?.addEventListener('submit', async (event) => {
     event.preventDefault()
     event.stopPropagation()
@@ -8245,7 +8250,13 @@ function bindEvents() {
       const collectionName = window.prompt('Collection name:', 'Stories')?.trim()
       if (!collectionName) return
       const key = `melogic:story-collection:${collectionName.toLowerCase()}`
-      const ids = JSON.parse(window.localStorage.getItem(key) || '[]')
+      let ids = []
+      try {
+        const stored = JSON.parse(window.localStorage.getItem(key) || '[]')
+        ids = Array.isArray(stored) ? stored.filter((id) => typeof id === 'string') : []
+      } catch {
+        ids = []
+      }
       if (!ids.includes(story.storyId)) ids.push(story.storyId)
       window.localStorage.setItem(key, JSON.stringify(ids.slice(-250)))
       showCommunityToast(`Added to ${collectionName}.`)
