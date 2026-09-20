@@ -2863,7 +2863,9 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-stories-row .community-story-item.is-verified-story > .community-display-name .community-verified-badge {
     display:none !important;
   }
-}* Authoritative Community phone layout. Desktop columns stay in community.css.
+}
+
+/* Authoritative Community phone layout. Desktop columns stay in community.css.
    The document scrolls; only the shared title bar is sticky. No scroll animation. */
 .community-mobile-back { display: none; }
 @media (max-width: 760px) {
