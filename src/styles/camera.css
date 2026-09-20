@@ -470,3 +470,16 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 .camera-interactive-icon{display:grid;place-items:center;min-width:25px;height:25px;padding:0 5px;border-radius:8px;background:#fff;color:#090a0d;font-size:14px}.camera-interactive-copy{overflow:hidden;text-overflow:ellipsis}
 .camera-editor-layer.is-interactive[data-namespace="melogic"]{border-color:rgba(255,255,255,.32);background:rgba(5,6,9,.9)}
 .camera-editor-layer.is-interactive[data-audio-reactive="true"]::after{content:"";position:absolute;right:-5px;top:-5px;width:8px;height:8px;border:2px solid #090a0d;border-radius:50%;background:#fff}
+
+
+/* camera-editor-final-integration-p12 */
+/* Keep the editor's structured layer plane above preview-only adjustment overlays. */
+.camera-editor-layer-stage{z-index:8}
+.camera-edit-tools{z-index:40}
+.camera-edit-textbox,.camera-draw-controls,.camera-sticker-picker,.camera-crop-controls,.camera-audio-controls,.camera-adjust-controls,.camera-video-controls{max-width:calc(100vw - env(safe-area-inset-left,0px) - env(safe-area-inset-right,0px) - 16px);box-sizing:border-box}
+@media (max-width:760px){
+  .camera-edit-tools{right:max(8px,env(safe-area-inset-right,0px));top:calc(env(safe-area-inset-top,0px) + 64px);gap:7px}
+  .camera-edit-tools>button{width:42px;height:42px}
+  .camera-sticker-grid{grid-template-columns:repeat(6,minmax(38px,1fr))}
+  .camera-adjust-controls,.camera-video-controls,.camera-audio-controls,.camera-crop-controls{left:max(8px,env(safe-area-inset-left,0px));right:58px}
+}
