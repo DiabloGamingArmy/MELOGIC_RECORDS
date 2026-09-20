@@ -895,3 +895,96 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
 @media(max-width:760px){
   .camera-edit-tools[data-active-tool="text"]{max-height:calc(100% - var(--melogic-mobile-safe-top,0px) - 104px)!important}
 }
+
+
+/* camera-text-rail-consistency-p2
+   Match Pen rail geometry, center every control, and show actual selected colors. */
+.camera-edit-tools[data-active-tool="text"]{
+  width:56px!important;
+  padding:6px!important;
+  gap:2px!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-controls{
+  align-items:center!important;
+  width:42px!important;
+  padding:2px 0 7px!important;
+  gap:8px!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-field{
+  width:42px!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  text-align:center!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-field>span{
+  width:42px!important;
+  text-align:center!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-font select{
+  width:42px!important;
+  height:30px!important;
+  padding:0 3px!important;
+  text-align:center!important;
+  text-align-last:center!important;
+  font-size:9px!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-style>div{
+  width:42px!important;
+  align-items:center!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-style button{
+  width:30px!important;
+  height:30px!important;
+  min-width:30px!important;
+  min-height:30px!important;
+  margin:0 auto!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-color{
+  width:42px!important;
+  height:48px!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-color input{
+  left:50%!important;
+  bottom:0!important;
+  transform:translateX(-50%)!important;
+  width:30px!important;
+  height:30px!important;
+  opacity:1!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:50%!important;
+  overflow:hidden!important;
+  background:transparent!important;
+  -webkit-appearance:none!important;
+  appearance:none!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-color input::-webkit-color-swatch-wrapper{
+  padding:0!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-color input::-webkit-color-swatch{
+  border:2px solid rgba(255,255,255,.9)!important;
+  border-radius:50%!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-color input::-moz-color-swatch{
+  border:2px solid rgba(255,255,255,.9)!important;
+  border-radius:50%!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-color i{display:none!important}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-slider{
+  width:42px!important;
+  height:126px!important;
+  align-items:center!important;
+  gap:4px!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-slider>span{
+  width:42px!important;
+  height:11px!important;
+  text-align:center!important;
+}
+.camera-edit-tools[data-active-tool="text"] .camera-text-rail-slider input[type="range"]{
+  width:96px!important;
+  height:26px!important;
+  margin:34px -27px 0!important;
+  transform:rotate(-90deg)!important;
+  transform-origin:center!important;
+}
