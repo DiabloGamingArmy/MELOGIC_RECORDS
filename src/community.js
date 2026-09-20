@@ -62,6 +62,8 @@ import {
   validateCommunityStoryMedia
 } from './data/communityService'
 import { getPublicProfileIdentityByUid, searchProfilesByUsername } from './data/profileSearchService'
+import { createOrGetDm } from './data/threadService'
+import { sendMessage } from './data/messageService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime } from './pwa/mobileSpaRouter'
 import { navigateMobileRuntimeUrl, registerMobileRuntimeView } from './pwa/mobileAppRuntime'
@@ -1503,9 +1505,10 @@ function renderStoryViewerModal() {
           </div>` : ''}
         </div>
         <div class="community-story-mobile-interactions">
-          <div class="community-story-reply-shell" aria-label="Story reply">
-            <input type="text" aria-label="Send message" placeholder="Send message…" maxlength="240" readonly inputmode="none" />
-          </div>
+          <form class="community-story-reply-shell" data-story-reply-form aria-label="Reply to Story">
+            <input type="text" data-story-reply-input aria-label="Reply to ${escapeHtml(story.authorDisplayName || story.username || 'creator')}" placeholder="${escapeHtml((story.layers || []).some((layer) => layer.type === 'audio') ? 'Ask about this track…' : `Reply to ${story.authorDisplayName || story.username || 'creator'}…`)}" maxlength="240" autocomplete="off" />
+            <button type="submit" data-story-reply-send aria-label="Send Story reply">${iconSvg('send')}</button>
+          </form>
           <div class="community-story-reaction-anchor">
             <div class="community-story-reaction-orbit" data-story-reaction-orbit aria-hidden="true">
               <button type="button" data-story-quick-reaction="fire" aria-label="React fire"><span>🔥</span></button>
@@ -7941,6 +7944,55 @@ function bindEvents() {
   })
   app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
   app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
+  app.querySelector('[data-story-reply-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const story = storyById(state.storyViewer.storyId)
+    const input = event.currentTarget.querySelector('[data-story-reply-input]')
+    const button = event.currentTarget.querySelector('[data-story-reply-send]')
+    const body = String(input?.value || '').trim()
+    if (!story || !body) return
+    if (!state.currentUser?.uid) {
+      window.location.assign(authRoute({ redirect: window.location.pathname }))
+      return
+    }
+    if (!story.authorUid || story.authorUid === state.currentUser.uid) {
+      showCommunityToast('You cannot reply to your own Story.')
+      return
+    }
+    if (button) button.disabled = true
+    if (input) input.disabled = true
+    try {
+      const thread = await createOrGetDm({ creatorId: state.currentUser.uid, targetUid: story.authorUid })
+      await sendMessage(thread.id, {
+        senderId: state.currentUser.uid,
+        body,
+        type: 'story_reply',
+        clientMessageId: `story-${story.storyId}-${Date.now().toString(36)}`,
+        safePageContext: {
+          contextSource: 'community_story',
+          contextType: 'story_reply',
+          contextId: story.storyId,
+          contextLabel: story.caption || story.text || 'Story',
+          route: window.location.pathname,
+          storyAuthorUid: story.authorUid,
+          storyMediaType: story.mediaType || '',
+          storyMediaURL: story.mediaURL || ''
+        }
+      })
+      if (input) input.value = ''
+      showCommunityToast('Reply sent.')
+    } catch (error) {
+      showCommunityToast(error?.message || 'Could not send Story reply.')
+    } finally {
+      if (button) button.disabled = false
+      if (input) {
+        input.disabled = false
+        input.focus()
+      }
+    }
+  })
+  app.querySelector('[data-story-reply-form]')?.addEventListener('pointerdown', (event) => event.stopPropagation())
   app.querySelectorAll('[data-story-poll-option]').forEach((button) => button.addEventListener('click', (event) => {
     event.preventDefault()
     event.stopPropagation()
