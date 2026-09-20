@@ -13851,7 +13851,8 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
 @media (min-width: 761px) {
   .community-desktop-compose-fab {
     position: fixed;
-    right: 28px;
+    /* Align the FAB to the feed column, not the viewport/right sidebar. */
+    right: max(24px, calc((100vw - min(1600px, calc(100vw - 48px))) / 2 + 350px + 32px + 28px));
     bottom: 28px;
     z-index: 88;
     display: grid;
