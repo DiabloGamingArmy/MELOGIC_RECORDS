@@ -1843,7 +1843,8 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   }
 
   .community-story-viewer-identity .community-display-name.is-verified .community-verified-badge {
-    transform:translateX(-3px) !important;
+    margin-left:-5px !important;
+    transform:translateX(-2px) !important;
   }
 
   .community-story-viewer-identity .community-verified-badge {
