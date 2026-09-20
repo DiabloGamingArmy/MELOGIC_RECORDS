@@ -1424,7 +1424,10 @@ function renderStoryViewerModal() {
                 <button type="button" class="community-story-time-toggle" data-story-time-toggle data-story-posted-label="${escapeHtml(formatTime(story.createdAt))}" data-story-left-label="${escapeHtml(storyExpiresLabel(story.expiresAt))}" aria-label="Show time remaining">${escapeHtml(formatTime(story.createdAt))}</button>
               </span>
             </a>
-            <button type="button" class="community-story-viewer-close" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
+            <div class="community-story-viewer-hud-actions">
+              <button type="button" class="community-story-viewer-more" data-story-report="${escapeHtml(story.storyId)}" aria-label="More Story options">${iconSvg('moreHorizontal')}</button>
+              <button type="button" class="community-story-viewer-close" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
+            </div>
           </div>
         </header>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
