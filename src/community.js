@@ -989,6 +989,22 @@ function currentUserAvatar() {
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
+function currentUserStoryAvatar() {
+  const user = state.currentUser || {}
+  const name = user.displayName || user.email || 'M'
+  const photoURL = user.photoURL || user.avatarURL || ''
+  return `
+    <span class="community-own-story-avatar ${photoURL ? 'has-photo' : 'has-fallback'}">
+      ${photoURL
+        ? `<img src="${escapeHtml(photoURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
+        : `<span class="community-own-story-fallback">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
+      }
+      <span class="community-own-story-dim" aria-hidden="true"></span>
+      <span class="community-own-story-plus" aria-hidden="true">${iconSvg('plus')}</span>
+    </span>
+  `
+}
+
 function storyExpiresLabel(value = '') {
   const expiresMs = new Date(value || 0).getTime()
   if (!Number.isFinite(expiresMs)) return '24h'
@@ -1209,7 +1225,7 @@ function renderStoriesRow() {
       </div>
       ${pendingStoryItem}
       <button type="button" class="community-story-item is-create ${hasOwnActiveStory ? 'has-active-story' : ''}" data-open-story-composer>
-        <span class="community-story-ring"><span class="community-story-avatar is-create">${iconSvg('folderPlus')}</span></span>
+        <span class="community-story-ring"><span class="community-story-avatar is-create">${currentUserStoryAvatar()}</span></span>
         <strong>${hasOwnActiveStory ? 'Add Story' : 'Your Story'}</strong>
       </button>
       ${realStoryItems}
