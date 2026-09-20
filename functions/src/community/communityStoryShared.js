@@ -33,6 +33,18 @@ function clampStoryLayerNumber(value, fallback = 0, min = 0, max = 1) {
   return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
 }
 
+function sanitizeStoryTargetURL(value = '') {
+  const clean = cleanString(value, 1200)
+  if (!clean) return ''
+  if (clean.startsWith('/') && !clean.startsWith('//')) return clean
+  try {
+    const parsed = new URL(clean)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : ''
+  } catch {
+    return ''
+  }
+}
+
 function sanitizeStoryLayers(value = []) {
   if (!Array.isArray(value)) return []
   return value.slice(0, STORY_LAYER_MAX_COUNT).map((raw, index) => {
@@ -53,7 +65,7 @@ function sanitizeStoryLayers(value = []) {
       endMs: Math.max(0, Math.round(Number(raw?.endMs || 0))),
       content: cleanString(raw?.content || '', 1000),
       targetId: sanitizeLinkedId(raw?.targetId || ''),
-      targetURL: cleanString(raw?.targetURL || '', 1200),
+      targetURL: sanitizeStoryTargetURL(raw?.targetURL || ''),
       metadata: {}
     }
     const metadata = raw?.metadata && typeof raw.metadata === 'object' && !Array.isArray(raw.metadata) ? raw.metadata : {}
