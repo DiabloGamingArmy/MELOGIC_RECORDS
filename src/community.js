@@ -1252,8 +1252,8 @@ function renderTopicBar() {
         <strong>Home</strong>
       </div>
       <div class="community-master-tabs" role="tablist" aria-label="Home feed">
-        <button type="button" role="tab" aria-selected="${state.activeTab === 'for-you' ? 'true' : 'false'}" class="${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
-        <button type="button" role="tab" aria-selected="${state.activeTab === 'following' ? 'true' : 'false'}" class="${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Following</button>
+        <button type="button" role="tab" aria-selected="${state.activeTab === 'for-you' ? 'true' : 'false'}" class="community-mobile-feed-tab ${state.activeTab === 'for-you' ? 'is-active' : ''}" data-community-tab="for-you">For You</button>
+        <button type="button" role="tab" aria-selected="${state.activeTab === 'following' ? 'true' : 'false'}" class="community-following-feed-tab ${state.activeTab === 'following' ? 'is-active' : ''}" data-community-tab="following">Following</button>
         <a class="community-mobile-discover-tab" role="tab" aria-selected="false" href="${ROUTES.communityCommunities}">Discover</a>
         <label class="community-sort-control" title="Sort feed">
           <span class="sr-only">Sort feed</span>
@@ -3348,8 +3348,8 @@ function renderLeftNav() {
 
       <nav>
         <section class="community-network-nav-section" aria-label="Network">
-          <a class="${state.view.type === 'feed' ? 'is-active' : ''}" href="${ROUTES.community}" aria-current="${state.view.type === 'feed' ? 'page' : 'false'}">
-            <span class="community-network-home-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span> <span>Home</span>
+          <a class="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'is-active' : ''}" href="${ROUTES.community}" aria-current="${state.view.type === 'feed' && state.activeTab === 'for-you' ? 'page' : 'false'}" data-community-desktop-feed="for-you">
+            <span class="community-network-home-glyph" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 10.8 12 3.8l8.5 7v9.4a.8.8 0 0 1-.8.8h-5.2v-6.2h-5V21H4.3a.8.8 0 0 1-.8-.8v-9.4Z"/></svg></span> <span>For You</span>
           </a>
           <a class="${state.view.type === 'communities' ? 'is-active' : ''}" href="${ROUTES.communityCommunities}" aria-current="${state.view.type === 'communities' ? 'page' : 'false'}">
             ${iconSvg('search')} <span>Discover</span>
