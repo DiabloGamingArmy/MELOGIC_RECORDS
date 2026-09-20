@@ -1521,7 +1521,8 @@ function renderStoryViewerModal() {
         <header class="community-story-viewer-hud">
           <div class="community-story-progress-rail" aria-label="Story ${formatCount(index + 1)} of ${formatCount(groupStories.length)}">
             ${groupStories.map((groupStory, storyIndex) => {
-              const signalBars = Array.from({ length: 18 }, (_, barIndex) => `<b style="--signal-bar:${barIndex};--signal-height:${18 + ((barIndex * 17 + storyIndex * 11) % 64)}%"></b>`).join('')
+              const signalValues = storySignalCache.get(groupStory.storyId) || storySignalFallback(groupStory.storyId)
+              const signalBars = signalValues.map((value, barIndex) => `<b style="--signal-bar:${barIndex};--signal-height:${Math.round(value * 100)}%" data-story-signal-index="${barIndex}"></b>`).join('')
               return `<span class="${storyIndex < index ? 'is-complete' : storyIndex === index ? 'is-active' : ''} ${groupStory.mediaType === 'video' ? 'has-story-signal' : ''}"><span class="community-story-signal-bars" aria-hidden="true">${signalBars}</span><i></i></span>`
             }).join('')}
           </div>
@@ -7049,6 +7050,73 @@ let storyViewerPointerDownAt = 0
 let storyViewerPointerStartX = 0
 let storyViewerPointerStartY = 0
 let storyViewerHeld = false
+const STORY_SIGNAL_BAR_COUNT = 36
+const storySignalCache = new Map()
+let storySignalAnalysisToken = 0
+
+function storySignalFallback(storyId = '', count = STORY_SIGNAL_BAR_COUNT) {
+  let seed = 2166136261
+  for (const char of String(storyId)) seed = Math.imul(seed ^ char.charCodeAt(0), 16777619)
+  return Array.from({ length: count }, (_, index) => {
+    seed = Math.imul(seed ^ (index + 1), 16777619)
+    return 0.18 + ((seed >>> 0) % 64) / 100
+  })
+}
+
+function applyStorySignalBars(values = []) {
+  const bars = app?.querySelectorAll('.community-story-progress-rail > span.is-active .community-story-signal-bars > b')
+  if (!bars?.length) return
+  bars.forEach((bar, index) => {
+    const value = Math.max(.12, Math.min(1, Number(values[index]) || .18))
+    bar.style.setProperty('--signal-height', `${Math.round(value * 100)}%`)
+  })
+}
+
+async function analyzeStorySignal(story = {}, video = null) {
+  if (!story?.storyId || story.mediaType !== 'video' || !story.mediaURL) return
+  const cached = storySignalCache.get(story.storyId)
+  if (cached) { applyStorySignalBars(cached); return }
+  const token = ++storySignalAnalysisToken
+  try {
+    const response = await fetch(story.mediaURL, { mode: 'cors', credentials: 'omit' })
+    if (!response.ok) throw new Error('Story media unavailable for signal analysis.')
+    const buffer = await response.arrayBuffer()
+    const AudioContextCtor = window.AudioContext || window.webkitAudioContext
+    if (!AudioContextCtor) throw new Error('Web Audio unavailable.')
+    const audioContext = new AudioContextCtor()
+    try {
+      const audio = await audioContext.decodeAudioData(buffer.slice(0))
+      const channels = Array.from({ length: audio.numberOfChannels }, (_, index) => audio.getChannelData(index))
+      const samplesPerBar = Math.max(1, Math.floor(audio.length / STORY_SIGNAL_BAR_COUNT))
+      const values = Array.from({ length: STORY_SIGNAL_BAR_COUNT }, (_, barIndex) => {
+        const start = barIndex * samplesPerBar
+        const end = barIndex === STORY_SIGNAL_BAR_COUNT - 1 ? audio.length : Math.min(audio.length, start + samplesPerBar)
+        let sum = 0
+        let peak = 0
+        let sampled = 0
+        const stride = Math.max(1, Math.floor((end - start) / 900))
+        for (let i = start; i < end; i += stride) {
+          let sample = 0
+          for (const channel of channels) sample += Math.abs(channel[i] || 0)
+          sample /= Math.max(1, channels.length)
+          sum += sample * sample
+          peak = Math.max(peak, sample)
+          sampled += 1
+        }
+        const rms = Math.sqrt(sum / Math.max(1, sampled))
+        return Math.max(rms * 2.8, peak * .72)
+      })
+      const max = Math.max(...values, .001)
+      const normalized = values.map((value) => .14 + .86 * Math.pow(Math.min(1, value / max), .72))
+      storySignalCache.set(story.storyId, normalized)
+      if (token === storySignalAnalysisToken && state.storyViewer.storyId === story.storyId) applyStorySignalBars(normalized)
+    } finally {
+      audioContext.close().catch(() => {})
+    }
+  } catch (error) {
+    console.debug('[community] Story Signal audio analysis unavailable; using deterministic fallback.', { message: error?.message })
+  }
+}
 
 function clearStoryViewerAdvanceTimer() {
   if (storyViewerAdvanceTimer) window.clearTimeout(storyViewerAdvanceTimer)
@@ -7154,6 +7222,7 @@ function bindStoryViewerPlayback() {
   if (story?.mediaType === 'video' && video) {
     video.loop = false
     video.muted = false
+    analyzeStorySignal(story, video)
     const syncVideoSignal = () => {
       const duration = Number(video.duration)
       const currentTime = Number(video.currentTime)
@@ -7182,7 +7251,20 @@ function bindStoryViewerPlayback() {
     scheduleStoryViewerAdvance(STORY_IMAGE_DURATION_MS)
   }
 
-  const surface = viewer.querySelector('.community-story-surface')
+  viewer.querySelectorAll('.community-story-progress-rail > span.is-active .community-story-signal-bars > b').forEach((bar) => {
+    bar.addEventListener('pointerdown', (event) => event.stopPropagation())
+    bar.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return
+      const index = Number(bar.getAttribute('data-story-signal-index') || 0)
+      const target = Math.max(0, Math.min(video.duration - .01, ((index + .5) / STORY_SIGNAL_BAR_COUNT) * video.duration))
+      video.currentTime = target
+      setStorySignalProgress(target / video.duration)
+    })
+  })
+
+    const surface = viewer.querySelector('.community-story-surface')
   if (!surface) return
   surface.addEventListener('pointerdown', (event) => {
     if (event.button != null && event.button !== 0) return
