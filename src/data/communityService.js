@@ -1575,6 +1575,12 @@ export async function recordCommunityStoryView(storyId = '') {
   return result?.data || { ok: false }
 }
 
+export async function setCommunityStoryReaction(storyId = '', reaction = '') {
+  const callable = httpsCallable(functions, 'setCommunityStoryReaction')
+  const result = await callable({ storyId, reaction })
+  return result?.data || { ok: false }
+}
+
 export async function createCommunity(payload = {}) {
   const callable = httpsCallable(functions, 'createCommunity')
   const result = await callable(payload)
