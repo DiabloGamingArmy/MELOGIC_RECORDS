@@ -1684,3 +1684,23 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     display:none !important;
   }
 }
+
+
+/* melogic-mobile-story-viewer-behavior-p4 */
+@media (max-width:760px) {
+  .community-story-viewer .community-story-surface {
+    touch-action:none !important;
+    -webkit-user-select:none !important;
+    user-select:none !important;
+  }
+
+  .community-story-viewer.is-paused .community-story-progress-rail > span.is-active > i {
+    animation-play-state:paused !important;
+  }
+
+  .community-story-viewer .community-story-surface > img,
+  .community-story-viewer .community-story-surface > video {
+    -webkit-user-drag:none !important;
+    user-select:none !important;
+  }
+}
