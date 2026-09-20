@@ -860,3 +860,63 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
  .camera-adjust-controls{left:8px!important;right:8px!important;max-width:calc(100% - 16px)!important}
  .camera-adjust-parameters{padding-right:4px!important}
 }
+
+
+/* camera-editor-cleanup-p1-structural-rail
+   Contextual controls now physically mount inside the original right toolbar. */
+.camera-edit-tool-slot{display:flex;flex-direction:column;align-items:center;gap:3px;width:44px;min-width:44px}
+.camera-edit-tool-slot[hidden]{display:none!important}
+.camera-edit-tools.is-expanded:has(.camera-edit-tool-slot:not([hidden])){
+  overflow-y:auto!important;overflow-x:visible!important;
+}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-text-controls,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-draw-brushes,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-crop-rail{
+  position:static!important;inset:auto!important;transform:none!important;
+  width:44px!important;max-width:44px!important;max-height:none!important;
+  margin:0!important;padding:0!important;border:0!important;border-radius:0!important;
+  background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+  overflow:visible!important;
+}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-text-controls{display:flex!important}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-text-controls select,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-text-controls button,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-text-controls input[type="color"],
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-draw-brushes button,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-draw-color-button,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-crop-aspects button,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-crop-actions button{
+  width:42px!important;height:42px!important;min-width:42px!important;min-height:42px!important;flex:0 0 42px!important;
+}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-crop-aspects,
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-crop-actions{width:44px!important;align-items:center}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-crop-aspects{padding-bottom:4px!important}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-text-controls input[type="range"]{
+  width:106px!important;height:26px!important;margin:42px -32px!important;
+}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-draw-brushes{display:flex!important;flex-direction:column!important;align-items:center!important;gap:2px!important}
+.camera-edit-tools.is-expanded .camera-edit-tool-slot .camera-crop-rail{display:flex!important;flex-direction:column!important;align-items:center!important;gap:3px!important}
+
+/* Parent wrappers now only carry secondary controls; they must not draw a duplicate pill. */
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-controls{background:transparent!important;border:0!important;box-shadow:none!important;pointer-events:none!important}
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-parameters{pointer-events:auto!important}
+.camera-surface[data-camera-active-tool="crop"] .camera-crop-controls{background:transparent!important;border:0!important;box-shadow:none!important;pointer-events:none!important}
+.camera-surface[data-camera-active-tool="crop"] .camera-crop-zoom-pill{pointer-events:auto!important}
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox{pointer-events:none!important}
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox textarea,
+.camera-surface[data-camera-active-tool="text"] .camera-text-done{pointer-events:auto!important}
+
+/* Once mounted, old absolute positioning rules must not reserve a second rail. */
+.camera-surface[data-camera-active-tool="text"] .camera-text-controls,
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-brushes,
+.camera-surface[data-camera-active-tool="crop"] .camera-crop-rail{top:auto!important;right:auto!important}
+
+/* Keep the secondary slider pills adjacent to the single structural rail. */
+.camera-surface[data-camera-active-tool="pen"] .camera-draw-controls{
+ right:max(70px,calc(env(safe-area-inset-right,0px) + 62px))!important;
+ top:calc(env(safe-area-inset-top,0px) + 64px)!important;
+}
+.camera-surface[data-camera-active-tool="crop"] .camera-crop-controls{
+ right:max(70px,calc(env(safe-area-inset-right,0px) + 62px))!important;
+ top:calc(env(safe-area-inset-top,0px) + 64px)!important;
+}
