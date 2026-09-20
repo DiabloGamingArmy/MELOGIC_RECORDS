@@ -357,7 +357,7 @@ let communityPagePreloaderInitialized = false
 let feedNavigationSnapshot = null
 const desktopCommunitySurfaceCache = new Map()
 let desktopCommunitySurfaceKey = ''
-let desktopStoryHydrationGeneration = 0
+let storyHydrationGeneration = 0
 let desktopCommunityHydrationGeneration = 0
 const communityPendingActions = new Map()
 const communityPostReactionVersions = new Map()
@@ -4290,14 +4290,14 @@ async function loadFeedEnrichment(requestId = state.feedRequestId, { localOnly =
   renderFeedRegionOnly({ reset: false })
 }
 
-async function loadStories({ renderAfter = false, hydrateIdentity = false } = {}) {
-  const generation = ++desktopStoryHydrationGeneration
+async function loadStories({ renderAfter = false, hydrateIdentity = true } = {}) {
+  const generation = ++storyHydrationGeneration
   state.storiesLoading = true
   state.storiesError = ''
   if (renderAfter) updateStoryRegionsOnly()
   try {
     const nextStories = await listCommunityStories({ limitCount: 30 })
-    if (generation !== desktopStoryHydrationGeneration) return
+    if (generation !== storyHydrationGeneration) return
 
     state.stories = nextStories
 
@@ -4309,7 +4309,7 @@ async function loadStories({ renderAfter = false, hydrateIdentity = false } = {}
         .map((story) => String(story.authorUid || '').trim())
         .filter(Boolean))]
       await Promise.allSettled(authorUids.map((uid) => ensureCommunityAuthorIdentity(uid)))
-      if (generation !== desktopStoryHydrationGeneration) return
+      if (generation !== storyHydrationGeneration) return
     }
 
     const requestedStoryId = new URLSearchParams(window.location.search).get('story') || ''
@@ -4841,7 +4841,7 @@ async function loadCommunity() {
     state.loading = false
     const storiesPromise = loadStories({
       renderAfter: true,
-      hydrateIdentity: !isMobileSpaRuntime()
+      hydrateIdentity: true
     }).catch(() => null)
     if (isMobileSpaRuntime()) {
       await loadCommunities()
@@ -4859,7 +4859,7 @@ async function loadCommunity() {
   // first-feed paint on the critical path.
   loadStories({
     renderAfter: true,
-    hydrateIdentity: !isMobileSpaRuntime()
+    hydrateIdentity: true
   }).catch(() => null)
 
   let homeCommunitiesPromise = null
@@ -8931,7 +8931,13 @@ async function bootstrapCommunityDocument() {
         state.currentUser = nextUser
         // Auth/viewer enrichment is not a Community topology change. Never
         // rebuild the desktop scroll owner merely to update reaction state.
-        Promise.all([loadViewerState(), loadCommentViewerState()])
+        Promise.all([
+          loadViewerState(),
+          loadCommentViewerState(),
+          !state.detailPostId
+            ? loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
+            : Promise.resolve()
+        ])
           .then(() => {
             renderPostViewerStateOnly()
             allLoadedComments().forEach((comment) => updateCommentActionDom(comment.commentId))
@@ -8988,6 +8994,9 @@ if (isMobileSpaRuntime()) {
       }
       syncCommunityMobileHeader(Boolean(state.detailPostId), app)
       await consumeCameraCommunityMediaHandoff()
+      if (!state.detailPostId) {
+        void loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
+      }
     },
     async deactivate({ instance }) {
       document.body.classList.remove('community-modal-open')
