@@ -1337,6 +1337,10 @@ function renderStoryComposerModal() {
                     <button type="button" data-story-add-object="link">${iconSvg('link')}<span>Link</span></button>
                     <button type="button" data-story-add-object="location"><span>⌖</span><span>Location</span></button>
                     <button type="button" data-story-add-object="community"><span>◎</span><span>Community</span></button>
+                    <button type="button" data-story-add-object="audio">${iconSvg('play')}<span>Song</span></button>
+                    <button type="button" data-story-add-object="product"><span>◇</span><span>Product</span></button>
+                    <button type="button" data-story-add-object="event"><span>◫</span><span>Event</span></button>
+                    <button type="button" data-story-add-object="poll"><span>▥</span><span>Poll</span></button>
                     ${state.storyComposer.selectedLayerId ? `
                       <button type="button" data-story-layer-scale-down aria-label="Make layer smaller">−</button>
                       <button type="button" data-story-layer-scale-up aria-label="Make layer larger">+</button>
@@ -1475,6 +1479,13 @@ function renderStoryViewerModal() {
               if (layer.type === 'link') return `<a class="community-story-object is-link" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('link')}<strong>${escapeHtml(layer.content || 'Open link')}</strong></a>`
               if (layer.type === 'location') return `<a class="community-story-object is-location" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer"><span>⌖</span><strong>${escapeHtml(layer.content || 'Location')}</strong></a>`
               if (layer.type === 'community') return `<a class="community-story-object is-community" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? `/community/${encodeURIComponent(layer.targetId)}` : '#'))}"><span>◎</span><strong>${escapeHtml(layer.content || 'Community')}</strong></a>`
+              if (layer.type === 'audio') return `<a class="community-story-object is-audio" style="${style}" href="${escapeHtml(layer.targetURL || '#')}" target="_blank" rel="noopener noreferrer">${iconSvg('play')}<span><small>LISTEN</small><strong>${escapeHtml(layer.content || 'Song')}</strong></span></a>`
+              if (layer.type === 'product') return `<a class="community-story-object is-product" style="${style}" href="${escapeHtml(layer.targetURL || (layer.targetId ? productRoute({ productId: layer.targetId }) : '#'))}"><span>◇</span><span><small>PRODUCT</small><strong>${escapeHtml(layer.content || 'View product')}</strong></span></a>`
+              if (layer.type === 'event') return `<a class="community-story-object is-event" style="${style}" href="${escapeHtml(layer.targetURL || '#')}"><span>◫</span><span><small>EVENT</small><strong>${escapeHtml(layer.content || 'View event')}</strong></span></a>`
+              if (layer.type === 'poll') {
+                const options = String(layer.metadata?.options || '').split('|').filter(Boolean)
+                return `<div class="community-story-object is-poll" style="${style}" data-story-poll><strong>${escapeHtml(layer.content || 'Poll')}</strong><div>${options.map((option, optionIndex) => `<button type="button" data-story-poll-option="${optionIndex}">${escapeHtml(option)}</button>`).join('')}</div></div>`
+              }
               if (layer.type === 'text') return `<span class="community-story-object is-text" style="${style}"><strong>${escapeHtml(layer.content || '')}</strong></span>`
               return ''
             }).join('')}
@@ -7788,20 +7799,34 @@ function bindEvents() {
       person: ['Person', 'Enter a display name or @username:', 'Enter profile URL (optional):'],
       link: ['Open link', 'Enter a label for this link:', 'Enter the full URL:'],
       location: ['Location', 'Enter a location name:', 'Enter a map URL (optional):'],
-      community: ['Community', 'Enter the Community name:', 'Enter the Community URL (optional):']
+      community: ['Community', 'Enter the Community name:', 'Enter the Community URL (optional):'],
+      audio: ['Song', 'Enter the song or audio title:', 'Enter its Melogic or streaming URL:'],
+      product: ['Product', 'Enter the product name:', 'Enter the product URL:'],
+      event: ['Event', 'Enter the event name:', 'Enter the event URL (optional):'],
+      poll: ['Poll', 'Enter the poll question:', 'Enter choices separated by commas:']
     }
     const config = prompts[type]
     if (!config) return
     const content = window.prompt(config[1], config[0])?.trim()
     if (!content) return
-    const targetURL = window.prompt(config[2], '')?.trim() || ''
+    let targetURL = window.prompt(config[2], '')?.trim() || ''
+    let metadata = {}
+    if (type === 'poll') {
+      const options = targetURL.split(',').map((item) => item.trim()).filter(Boolean).slice(0, 6)
+      if (options.length < 2) {
+        showCommunityToast('Add at least two poll choices.')
+        return
+      }
+      metadata = { options: options.join('|') }
+      targetURL = ''
+    }
     if (targetURL && !/^(https?:\/\/|\/)/i.test(targetURL)) {
       showCommunityToast('Use a full https:// URL or an internal / path.')
       return
     }
     const layers = [...(state.storyComposer.layers || [])]
     const id = `layer-${Date.now().toString(36)}`
-    layers.push({ id, type, x: .5, y: .58, width: .48, height: .1, rotation: 0, scale: 1, opacity: 1, zIndex: layers.length + 1, startMs: 0, endMs: 0, content, targetId: '', targetURL, metadata: {} })
+    layers.push({ id, type, x: .5, y: .58, width: .48, height: .1, rotation: 0, scale: 1, opacity: 1, zIndex: layers.length + 1, startMs: 0, endMs: 0, content, targetId: '', targetURL, metadata })
     state.storyComposer = { ...state.storyComposer, layers, selectedLayerId: id }
     render()
   }))
@@ -7897,6 +7922,13 @@ function bindEvents() {
   })
   app.querySelector('[data-story-prev]')?.addEventListener('click', () => advanceStory(-1))
   app.querySelector('[data-story-next]')?.addEventListener('click', () => advanceStory(1))
+  app.querySelectorAll('[data-story-poll-option]').forEach((button) => button.addEventListener('click', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const poll = button.closest('[data-story-poll]')
+    poll?.querySelectorAll('[data-story-poll-option]').forEach((item) => item.classList.toggle('is-selected', item === button))
+    showCommunityToast('Poll choice selected. Voting persistence arrives with Story interaction analytics.')
+  }))
   bindStoryViewerPlayback()
   const storyLikeButton = app.querySelector('.community-story-mobile-like')
   const storyReactionOrbit = app.querySelector('[data-story-reaction-orbit]')
