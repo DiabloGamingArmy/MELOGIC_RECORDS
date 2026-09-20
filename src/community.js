@@ -1466,11 +1466,18 @@ function renderStoryViewerModal() {
               </span>
             </a>
             <div class="community-story-viewer-hud-actions">
-              <button type="button" class="community-story-viewer-more" data-story-report="${escapeHtml(story.storyId)}" aria-label="More Story options">${iconSvg('moreHorizontal')}</button>
+              <button type="button" class="community-story-viewer-more" data-story-actions-toggle aria-label="More Story options" aria-expanded="false">${iconSvg('moreHorizontal')}</button>
               <button type="button" class="community-story-viewer-close" data-close-story-viewer aria-label="Close story viewer">${iconSvg('x')}</button>
             </div>
           </div>
         </header>
+        <div class="community-story-action-rail" data-story-action-rail hidden>
+          <button type="button" data-story-action="remix">${iconSvg('refreshCw')}<span>Remix</span></button>
+          <button type="button" data-story-action="save">${iconSvg('bookmark')}<span>Save</span></button>
+          <button type="button" data-story-action="collection">${iconSvg('plus')}<span>Collection</span></button>
+          <button type="button" data-story-action="source">${iconSvg('link')}<span>Source</span></button>
+          <button type="button" data-story-action="report">${iconSvg('alertCircle')}<span>Report</span></button>
+        </div>
         <div class="community-story-surface story-bg-${escapeHtml(story.background || 'aurora')} ${story.mediaType === 'image' || story.mediaType === 'video' ? 'has-image' : ''}">
           ${story.mediaType === 'video' && story.mediaURL
             ? `<video src="${escapeHtml(story.mediaURL)}" autoplay muted playsinline preload="auto" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture></video>`
@@ -8063,14 +8070,57 @@ function bindEvents() {
     event.stopPropagation()
     shareStoryFromViewer(event.currentTarget.getAttribute('data-story-mobile-share') || '')
   })
-  app.querySelector('.community-story-reply-shell')?.addEventListener('click', (event) => {
-    event.stopPropagation()
-    showCommunityToast('Story replies are coming soon.')
-  })
   app.querySelector('[data-story-comment-form]')?.addEventListener('submit', (event) => {
     event.preventDefault()
     showCommunityToast('Story comments are coming soon.')
   })
+  app.querySelector('[data-story-actions-toggle]')?.addEventListener('click', (event) => {
+    event.stopPropagation()
+    const rail = app.querySelector('[data-story-action-rail]')
+    if (!rail) return
+    rail.hidden = !rail.hidden
+    event.currentTarget.setAttribute('aria-expanded', rail.hidden ? 'false' : 'true')
+    if (rail.hidden) resumeStoryViewerPlayback()
+    else pauseStoryViewerPlayback()
+  })
+  app.querySelector('[data-story-action-rail]')?.addEventListener('pointerdown', (event) => event.stopPropagation())
+  app.querySelectorAll('[data-story-action]').forEach((button) => button.addEventListener('click', async (event) => {
+    event.stopPropagation()
+    const action = button.getAttribute('data-story-action') || ''
+    const story = storyById(state.storyViewer.storyId)
+    if (!story) return
+    if (action === 'report') {
+      openStoryReport(story.storyId)
+      return
+    }
+    if (action === 'source') {
+      const sourceLayer = (story.layers || []).find((layer) => layer.targetURL)
+      const sourceURL = sourceLayer?.targetURL || communityPostRoute({ postId: story.linkedPostId || '' })
+      if (sourceURL && sourceURL !== '#') window.location.assign(sourceURL)
+      else showCommunityToast('This Story has no linked source.')
+      return
+    }
+    if (action === 'remix') {
+      showCommunityToast('Remix foundation is next.')
+      return
+    }
+    if (action === 'save') {
+      const key = `melogic:saved-story:${story.storyId}`
+      const saved = window.localStorage.getItem(key) === '1'
+      window.localStorage.setItem(key, saved ? '0' : '1')
+      showCommunityToast(saved ? 'Story removed from saved.' : 'Story saved.')
+      return
+    }
+    if (action === 'collection') {
+      const collectionName = window.prompt('Collection name:', 'Stories')?.trim()
+      if (!collectionName) return
+      const key = `melogic:story-collection:${collectionName.toLowerCase()}`
+      const ids = JSON.parse(window.localStorage.getItem(key) || '[]')
+      if (!ids.includes(story.storyId)) ids.push(story.storyId)
+      window.localStorage.setItem(key, JSON.stringify(ids.slice(-250)))
+      showCommunityToast(`Added to ${collectionName}.`)
+    }
+  }))
   app.querySelectorAll('[data-story-report]').forEach((button) => button.addEventListener('click', () => openStoryReport(button.getAttribute('data-story-report') || '')))
   app.querySelectorAll('[data-story-delete]').forEach((button) => button.addEventListener('click', () => handleStoryDelete(button.getAttribute('data-story-delete') || '')))
   app.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
