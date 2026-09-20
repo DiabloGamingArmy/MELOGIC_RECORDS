@@ -1921,3 +1921,40 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
     font-size:.64rem !important;
   }
 }
+
+
+/* melogic-story-author-transition-v1 */
+@media (max-width:760px) {
+  .community-modal-backdrop > .community-story-viewer {
+    transform:translate3d(0,0,0);
+    opacity:1;
+    will-change:transform,opacity;
+  }
+
+  .community-modal-backdrop > .community-story-viewer.is-shifting-left {
+    animation:community-story-author-shift-left 220ms cubic-bezier(.4,0,.2,1) forwards !important;
+    pointer-events:none !important;
+  }
+
+  .community-modal-backdrop > .community-story-viewer.is-shifting-right {
+    animation:community-story-author-shift-right 220ms cubic-bezier(.4,0,.2,1) forwards !important;
+    pointer-events:none !important;
+  }
+
+  @keyframes community-story-author-shift-left {
+    from { transform:translate3d(0,0,0); opacity:1; }
+    to { transform:translate3d(-100%,0,0); opacity:.72; }
+  }
+
+  @keyframes community-story-author-shift-right {
+    from { transform:translate3d(0,0,0); opacity:1; }
+    to { transform:translate3d(100%,0,0); opacity:.72; }
+  }
+
+  @media (prefers-reduced-motion:reduce) {
+    .community-modal-backdrop > .community-story-viewer.is-shifting-left,
+    .community-modal-backdrop > .community-story-viewer.is-shifting-right {
+      animation-duration:1ms !important;
+    }
+  }
+}
