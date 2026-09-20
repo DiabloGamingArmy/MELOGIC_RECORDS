@@ -1054,3 +1054,27 @@ html:has(body.melogic-camera-page),body.melogic-camera-page,.melogic-camera-page
   resize:none!important;
   overflow:hidden!important;
 }
+
+
+/* camera-text-single-renderer-p6 */
+/* During text entry there is exactly one visual renderer: the textarea.
+   The persisted editor layer returns when the text editor closes. */
+.camera-surface[data-camera-active-tool="text"] .camera-editor-layer-stage [data-camera-editor-layer].is-selected{
+  visibility:hidden!important;
+}
+.camera-surface[data-camera-active-tool="text"] .camera-edit-textbox textarea{
+  left:50%!important;
+  top:50%!important;
+  transform:translate(-50%,-50%)!important;
+  width:min(78%,560px)!important;
+  height:auto!important;
+  min-height:56px!important;
+  max-height:36vh!important;
+  box-sizing:border-box!important;
+  margin:0!important;
+  resize:none!important;
+  overflow:hidden!important;
+  color:inherit;
+  -webkit-text-fill-color:currentColor;
+  caret-color:#fff!important;
+}
