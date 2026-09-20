@@ -453,8 +453,10 @@ service firebase.storage {
       allow create, update: if signedIn()
         && request.auth.uid == uid
         && (
-          isImageUpload(10 * 1024 * 1024)
-          || isVideoUpload(50 * 1024 * 1024)
+          // Story media is normalized client-side before final upload.
+          // Keep enough headroom for high-quality <=60s video and converted images.
+          isImageUpload(12 * 1024 * 1024)
+          || isVideoUpload(150 * 1024 * 1024)
         );
       allow delete: if signedIn()
         && (
