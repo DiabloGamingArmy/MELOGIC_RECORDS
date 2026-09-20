@@ -2415,3 +2415,25 @@ html.community-mobile-overlay-open .community-mobile-destination-search,html.com
   .community-story-action-rail button:active { background:rgba(255,255,255,.09); }
   .community-story-action-rail button:last-child { color:rgba(255,255,255,.72); }
 }
+
+
+/* melogic-story-provenance-push-15 */
+@media (max-width:760px) {
+  .community-story-provenance {
+    position:absolute; z-index:23; left:12px; right:12px; bottom:calc(env(safe-area-inset-bottom,0px) + 76px);
+    display:none; padding:6px; border:1px solid rgba(255,255,255,.12); border-radius:15px;
+    background:rgba(7,8,11,.88); box-shadow:0 14px 42px rgba(0,0,0,.4);
+    backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px);
+  }
+  .community-story-provenance.is-open { display:grid; gap:2px; }
+  .community-story-provenance button {
+    min-height:48px; display:flex; align-items:center; gap:10px; width:100%; padding:7px 10px;
+    border:0; border-radius:10px; background:transparent; color:#fff; text-align:left;
+  }
+  .community-story-provenance button > span:first-child { display:grid; place-items:center; width:25px; opacity:.72; }
+  .community-story-provenance button svg { width:18px; height:18px; }
+  .community-story-provenance button > span:last-child { display:flex; min-width:0; flex-direction:column; gap:2px; }
+  .community-story-provenance strong { font-size:.78rem; font-weight:760; }
+  .community-story-provenance small { font-size:.66rem; opacity:.58; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .community-story-provenance button:active { background:rgba(255,255,255,.08); }
+}
