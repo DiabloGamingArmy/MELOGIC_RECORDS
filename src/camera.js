@@ -60,14 +60,7 @@ cameraSurface.innerHTML = `
       <div class="camera-edit-textbox" data-camera-edit-textbox hidden>
         <textarea data-camera-edit-text-input maxlength="160" rows="1" placeholder="Type something…" aria-label="Story text"></textarea>
         <button type="button" class="camera-text-done" data-camera-edit-text-add>Done</button>
-        <div class="camera-text-controls">
-          <select data-camera-text-font aria-label="Text font"><option value="system">Sans</option><option value="serif">Serif</option><option value="mono">Mono</option><option value="rounded">Rounded</option></select>
-          <button type="button" data-camera-text-style="weight" aria-label="Bold text"><strong>B</strong></button>
-          <button type="button" data-camera-text-style="align" aria-label="Change alignment"><svg viewBox="0 0 24 24"><path d="M5 7h14M8 12h11M5 17h14"/></svg></button>
-          <button type="button" data-camera-text-style="background" aria-label="Toggle text background"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="3"/><path d="M8 9h8M8 13h6"/></svg></button>
-          <input type="color" value="#ffffff" data-camera-text-color aria-label="Text color">
-          <input type="range" min="16" max="72" value="36" data-camera-text-size aria-label="Text size">
-        </div>
+        
       </div>
       <div class="camera-video-controls" data-camera-video-controls hidden>
         <div class="camera-video-head"><strong>Video</strong><button type="button" data-camera-video-close aria-label="Close video tools">×</button></div>
