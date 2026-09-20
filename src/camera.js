@@ -1087,21 +1087,18 @@ function showCapturedMedia(blob, type) {
     if (!usingBlobSrcObject) recordedVideo.src = previewUrl
 
     const playPreview = async () => {
+      // Editor/review video must preserve and expose the source audio.
+      // Keep the element unmuted; if iOS blocks audible autoplay, leave it
+      // paused/unmuted so the user's next tap starts playback with sound.
+      recordedVideo.muted = false
+      recordedVideo.defaultMuted = false
+      recordedVideo.volume = 1
       try {
-        recordedVideo.muted = false
         await recordedVideo.play()
       } catch (error) {
-        // iOS may reject audible programmatic playback after MediaRecorder's
-        // asynchronous stop event. Never leave the review as a black screen:
-        // retry muted while retaining audio in the actual recorded Blob.
-        console.warn('[camera] audible review autoplay blocked; retrying muted', error)
-        try {
-          recordedVideo.muted = true
-          await recordedVideo.play()
-        } catch (mutedError) {
-          console.error('[camera] recorded video preview failed', mutedError)
-          setStatus('Video was recorded, but this browser could not start the preview.')
-        }
+        console.warn('[camera] audible review autoplay blocked; waiting for user playback gesture', error)
+        recordedVideo.muted = false
+        recordedVideo.defaultMuted = false
       }
     }
 
@@ -1381,13 +1378,21 @@ capture.addEventListener('pointercancel', event => {
 const flipButton = cameraSurface.querySelector('[data-camera-flip]')
 if (flipButton) flipButton.addEventListener('click', flipCamera)
 libraryButton.addEventListener('click', () => {
+  // Device-library selection and live capture are mutually exclusive on mobile.
+  // Release BOTH camera and microphone before handing control to the OS picker.
+  // If the user cancels, the change/cancel handlers below restore live capture.
+  stopCaptureEngines()
+  liveCanvas.classList.remove('is-ready')
   // No `capture` attribute: request existing photo/video media instead of forcing a new camera capture.
   libraryInput.value = ''
   libraryInput.click()
 })
 libraryInput.addEventListener('change', () => {
   const file = libraryInput.files?.[0]
-  if (!file) return
+  if (!file) {
+    if (playback.hidden && cameraRuntimeActive && !stream && !cameraStarting) void startCamera()
+    return
+  }
   const name=String(file.name||'').toLowerCase()
   const type = file.type.startsWith('video/') || /\.(mov|mp4|m4v|webm|avi|mkv|3gp|3g2|mpeg|mpg|ogv)$/i.test(name)
     ? 'video'
@@ -1398,6 +1403,9 @@ libraryInput.addEventListener('change', () => {
   // The file input is intentionally single-select. Once iOS hands the chosen
   // asset back to the page, enter the editor/review immediately.
   showCapturedMedia(file, type)
+})
+libraryInput.addEventListener('cancel', () => {
+  if (playback.hidden && cameraRuntimeActive && !stream && !cameraStarting) void startCamera()
 })
 liveCanvas.addEventListener('pointerup', event => {
   if (event.pointerType === 'mouse' && event.button !== 0) return
