@@ -35,6 +35,18 @@ test('monotonic request ownership never rolls backward', () => {
   assert.equal(owner.isCurrent(second), false)
 })
 
+test('deliberately out-of-order feed and Story completions cannot overwrite newer state', () => {
+  for (const domain of ['feed', 'stories']) {
+    const owner = createMonotonicRequestOwner()
+    const state = { value: '' }
+    const slowFirst = owner.next()
+    const fastSecond = owner.next()
+    if (owner.isCurrent(fastSecond)) state.value = `${domain}-new`
+    if (owner.isCurrent(slowFirst)) state.value = `${domain}-stale`
+    assert.equal(state.value, `${domain}-new`)
+  }
+})
+
 test('50 preserved-surface restores do not multiply existing listeners', () => {
   const action = new EventTarget()
   let invocations = 0

@@ -364,6 +364,7 @@ let mobileCommunitySurfaceKey = ''
 let desktopCommunitySurfaceKey = ''
 let storyHydrationGeneration = 0
 let desktopCommunityHydrationGeneration = 0
+let communityListGeneration = 0
 const communityAuthScope = createCommunityAuthScope()
 const communityFeedRequestOwner = createMonotonicRequestOwner()
 let mobileDiscoverScrollTop = 0
@@ -586,6 +587,7 @@ function transitionCommunityAuth(nextUser) {
   communityAuthScope.transition(nextUid)
   storyHydrationGeneration += 1
   desktopCommunityHydrationGeneration += 1
+  communityListGeneration += 1
   state.feedRequestId = communityFeedRequestOwner.invalidate()
   state.activeFeedQueryKey = ''
   state.feedInitialLoading = false
@@ -4108,6 +4110,7 @@ function reconcileCommunitySharedRegions() {
 async function hydrateDesktopCommunitySharedState({ fullDirectory = false } = {}) {
   if (isMobileSpaRuntime()) return false
   const generation = ++desktopCommunityHydrationGeneration
+  const listGeneration = ++communityListGeneration
   state.communityFilters.loading = true
   state.communityFilters.error = ''
   try {
@@ -4116,14 +4119,14 @@ async function hydrateDesktopCommunitySharedState({ fullDirectory = false } = {}
       search: fullDirectory ? state.communityFilters.search : '',
       limitCount: fullDirectory ? 50 : 16
     })
-    if (generation !== desktopCommunityHydrationGeneration) return false
+    if (generation !== desktopCommunityHydrationGeneration || listGeneration !== communityListGeneration) return false
     state.communities = communities
     await loadCommunityFocusState()
-    if (generation !== desktopCommunityHydrationGeneration) return false
+    if (generation !== desktopCommunityHydrationGeneration || listGeneration !== communityListGeneration) return false
     reconcileCommunitySharedRegions()
     return true
   } catch (error) {
-    if (generation !== desktopCommunityHydrationGeneration) return false
+    if (generation !== desktopCommunityHydrationGeneration || listGeneration !== communityListGeneration) return false
     console.warn('[community] shared community hydration failed', {
       code: error?.code,
       message: error?.message,
@@ -4132,7 +4135,7 @@ async function hydrateDesktopCommunitySharedState({ fullDirectory = false } = {}
     state.communityFilters.error = error?.message || 'Communities could not be loaded.'
     return false
   } finally {
-    if (generation === desktopCommunityHydrationGeneration) state.communityFilters.loading = false
+    if (generation === desktopCommunityHydrationGeneration && listGeneration === communityListGeneration) state.communityFilters.loading = false
   }
 }
 
@@ -4826,12 +4829,15 @@ function scrollFocusedCommentIntoView() {
 async function loadFocusedComment({ renderAfter = true } = {}) {
   const targetId = state.focusedReplyId || state.focusedCommentId
   if (!state.detailPostId || !targetId) return null
+  const postId = state.detailPostId
   try {
-    const target = await getCommunityComment(state.detailPostId, targetId)
+    const target = await getCommunityComment(postId, targetId)
+    if (state.detailPostId !== postId) return null
     if (!target) return null
-    const page = commentsPageFor(state.detailPostId)
+    const page = commentsPageFor(postId)
     if (target.parentCommentId) {
-      const parent = await getCommunityComment(state.detailPostId, target.parentCommentId)
+      const parent = await getCommunityComment(postId, target.parentCommentId)
+      if (state.detailPostId !== postId) return null
       if (parent) page.items = mergeCommentsById(page.items || [], [parent])
       const replyPage = repliesPageFor(target.parentCommentId)
       replyPage.items = mergeCommentsById(replyPage.items || [], [target])
@@ -4845,6 +4851,7 @@ async function loadFocusedComment({ renderAfter = true } = {}) {
     scrollFocusedCommentIntoView()
     return target
   } catch (error) {
+    if (state.detailPostId !== postId) return null
     console.warn('[community] focused comment load failed', {
       postId: state.detailPostId,
       commentId: targetId,
@@ -4857,7 +4864,8 @@ async function loadFocusedComment({ renderAfter = true } = {}) {
 
 async function loadComments({ renderAfter = true, append = false } = {}) {
   if (!state.detailPostId) return
-  const page = commentsPageFor(state.detailPostId)
+  const postId = state.detailPostId
+  const page = commentsPageFor(postId)
   if (append && (!page.hasMore || page.loadingMore || page.loading)) return
   if (!append && (page.loading || page.loaded)) {
     syncActiveCommentState()
@@ -4871,11 +4879,12 @@ async function loadComments({ renderAfter = true, append = false } = {}) {
   if (renderAfter) renderCommentState()
   try {
     const result = await listCommunityCommentsPage({
-      postId: state.detailPostId,
+      postId,
       parentCommentId: '',
       limitCount: 10,
       cursor: append ? page.cursor : null
     })
+    if (state.detailPostId !== postId) return
     page.items = mergeCommentsById(page.items || [], result.comments)
     page.cursor = result.cursor || null
     page.hasMore = Boolean(result.hasMore)
@@ -4886,11 +4895,13 @@ async function loadComments({ renderAfter = true, append = false } = {}) {
     syncActiveCommentState()
     await loadCommentViewerStateFor(result.comments)
   } catch (error) {
+    if (state.detailPostId !== postId) return
     console.warn('[community] comments load failed', { code: error?.code, message: error?.message, details: error?.details })
     page.error = error?.message || 'Comments could not be loaded.'
   } finally {
     page.loading = false
     page.loadingMore = false
+    if (state.detailPostId !== postId) return
     syncActiveCommentState()
     if (renderAfter) renderCommentState()
     scrollFocusedCommentIntoView()
@@ -4899,6 +4910,7 @@ async function loadComments({ renderAfter = true, append = false } = {}) {
 
 async function loadReplies(parentCommentId = '', { append = false, renderAfter = true } = {}) {
   if (!state.detailPostId || !parentCommentId) return
+  const postId = state.detailPostId
   const page = repliesPageFor(parentCommentId)
   if (append && (!page.hasMore || page.loadingMore || page.loading)) return
   if (!append && (page.loading || page.loaded)) {
@@ -4915,11 +4927,12 @@ async function loadReplies(parentCommentId = '', { append = false, renderAfter =
   if (renderAfter) renderCommentState()
   try {
     const result = await listCommunityCommentsPage({
-      postId: state.detailPostId,
+      postId,
       parentCommentId,
       limitCount: 5,
       cursor: append ? page.cursor : null
     })
+    if (state.detailPostId !== postId) return
     page.items = append ? mergeCommentsById(page.items || [], result.comments) : result.comments
     page.cursor = result.cursor || null
     page.hasMore = Boolean(result.hasMore)
@@ -4927,11 +4940,13 @@ async function loadReplies(parentCommentId = '', { append = false, renderAfter =
     syncActiveCommentState()
     await loadCommentViewerStateFor(result.comments)
   } catch (error) {
+    if (state.detailPostId !== postId) return
     console.warn('[community] replies load failed', { code: error?.code, message: error?.message, details: error?.details })
     page.error = error?.message || 'Replies could not be loaded.'
   } finally {
     page.loading = false
     page.loadingMore = false
+    if (state.detailPostId !== postId) return
     syncActiveCommentState()
     if (renderAfter) renderCommentState()
   }
@@ -4989,6 +5004,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
   const startedAt = performance.now()
   try {
     const post = await getCommunityPost(id)
+    if (state.detailPostId !== id) return
     state.posts = post ? [post] : []
     state.detailPostLoading = false
     logCommunityPerf('detail post loaded', { durationMs: Math.round(performance.now() - startedAt), postId: id, found: Boolean(post) })
@@ -5004,6 +5020,7 @@ async function loadPostDetail({ postId = state.detailPostId, seedPost = null, re
       }).catch(() => null)
     }
   } catch (error) {
+    if (state.detailPostId !== id) return
     console.warn('[community] detail load failed', { code: error?.code, message: error?.message, details: error?.details })
     state.error = error?.message || 'This post could not be loaded.'
     state.detailPostLoading = false
@@ -5032,6 +5049,7 @@ async function loadCommunityFocusState() {
 }
 
 async function loadCommunities({ renderOnStart = true, renderAfter = true, bootstrap = false } = {}) {
+  const generation = ++communityListGeneration
   state.communityFilters.loading = true
   state.communityFilters.error = ''
   if (renderOnStart) render()
@@ -5042,16 +5060,21 @@ async function loadCommunities({ renderOnStart = true, renderAfter = true, boots
     // budget when users explicitly open/search Discover.
     const bootstrapLimit = 16
     const limitCount = bootstrap ? bootstrapLimit : 50
-    state.communities = await listCommunities({
+    const communities = await listCommunities({
       category: bootstrap ? 'all' : state.communityFilters.category,
       search: bootstrap ? '' : state.communityFilters.search,
       limitCount
     })
+    if (generation !== communityListGeneration) return
+    state.communities = communities
     await loadCommunityFocusState()
+    if (generation !== communityListGeneration) return
   } catch (error) {
+    if (generation !== communityListGeneration) return
     console.warn('[community] communities load failed', { code: error?.code, message: error?.message, details: error?.details })
     state.communityFilters.error = error?.message || 'Communities could not be loaded.'
   } finally {
+    if (generation !== communityListGeneration) return
     state.communityFilters.loading = false
     if (renderAfter) render()
   }
