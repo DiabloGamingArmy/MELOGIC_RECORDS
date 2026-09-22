@@ -2,25 +2,23 @@ import { collection, doc, getDoc, getDocs, limit, orderBy, query, startAt, endAt
 import { doc as liteDoc, getDoc as liteGetDoc, getFirestore as getLiteFirestore } from 'firebase/firestore/lite'
 import { app } from '../firebase/firebaseConfig.js'
 import { db } from '../firebase/firestore'
+import { createPublicIdentityCache } from './publicIdentityCache.js'
 
 // melogic-shared-public-identity-cache-v1
-const sharedPublicIdentityCache = new Map()
+const sharedPublicIdentityCache = createPublicIdentityCache({
+  onKnown(uid, identity) {
+    try {
+      globalThis.dispatchEvent?.(new CustomEvent('melogic:public-profile-identity', {
+        detail: { uid, identity }
+      }))
+    } catch {}
+  }
+})
 
 export function getCachedPublicProfileIdentityByUid(uid = '') {
   const cleanUid = String(uid || '').trim()
-  return cleanUid ? (sharedPublicIdentityCache.get(cleanUid) || null) : null
-}
-
-function publishPublicProfileIdentity(uid = '', identity = null) {
-  const cleanUid = String(uid || '').trim()
-  if (!cleanUid || !identity) return identity
-  sharedPublicIdentityCache.set(cleanUid, identity)
-  try {
-    globalThis.dispatchEvent?.(new CustomEvent('melogic:public-profile-identity', {
-      detail: { uid: cleanUid, identity }
-    }))
-  } catch {}
-  return identity
+  const cached = cleanUid ? sharedPublicIdentityCache.peek(cleanUid) : null
+  return cached?.status === 'known' ? cached.identity : null
 }
 
 function normalizeProfile(profileDoc) {
@@ -154,16 +152,16 @@ function publicIdentityTimeout(ms, uid = '') {
   return { promise, cancel: () => { if (timer) clearTimeout(timer) } }
 }
 
-export async function getPublicProfileIdentityByUid(uid = '') {
-  const cleanUid = String(uid || '').trim()
+async function readPublicProfileIdentityByUid(cleanUid = '') {
   tracePublicIdentity('identity-call', { uid: cleanUid, hasDb: Boolean(db) })
   if (!db || !cleanUid) {
     tracePublicIdentity('identity-short-circuit', { uid: cleanUid, hasDb: Boolean(db) })
     return null
   }
+  let primaryTimeout = null
   try {
     tracePublicIdentity('primary-getdoc-start', { uid: cleanUid })
-    const primaryTimeout = publicIdentityTimeout(2500, cleanUid)
+    primaryTimeout = publicIdentityTimeout(2500, cleanUid)
     const snap = await Promise.race([
       getDoc(doc(db, 'profiles', cleanUid)).then((value) => {
         tracePublicIdentity('primary-getdoc-settled', { uid: cleanUid, exists: value.exists() })
@@ -174,10 +172,9 @@ export async function getPublicProfileIdentityByUid(uid = '') {
       }),
       primaryTimeout.promise
     ])
-    primaryTimeout.cancel()
     const result = snap.exists() ? normalizeProfile(snap) : null
     tracePublicIdentity('identity-return-primary', { uid: cleanUid, found: Boolean(result), badges: result?.badges || [] })
-    return result ? publishPublicProfileIdentity(cleanUid, result) : null
+    return result
   } catch (primaryError) {
     tracePublicIdentity('primary-catch', { uid: cleanUid, code: String(primaryError?.code || ''), message: String(primaryError?.message || primaryError || '') })
     console.warn('[profileSearchService] Primary public identity read unavailable; trying Firestore Lite.', primaryError?.code || primaryError?.message || primaryError)
@@ -188,12 +185,26 @@ export async function getPublicProfileIdentityByUid(uid = '') {
       tracePublicIdentity('lite-settled', { uid: cleanUid, exists: liteSnap.exists() })
       const result = liteSnap.exists() ? normalizeProfile(liteSnap) : null
       tracePublicIdentity('identity-return-lite', { uid: cleanUid, found: Boolean(result), badges: result?.badges || [] })
-      return result ? publishPublicProfileIdentity(cleanUid, result) : null
+      return result
     } catch (fallbackError) {
       tracePublicIdentity('lite-error', { uid: cleanUid, code: String(fallbackError?.code || ''), message: String(fallbackError?.message || fallbackError || '') })
       console.warn('[profileSearchService] Firestore Lite public identity fallback failed.', fallbackError?.code || fallbackError?.message || fallbackError)
-      tracePublicIdentity('identity-return-null', { uid: cleanUid })
-      return null
+      tracePublicIdentity('identity-return-error', { uid: cleanUid })
+      const error = new Error('Public profile identity is temporarily unavailable.', { cause: fallbackError })
+      error.code = 'profile-identity/unavailable'
+      throw error
     }
+  } finally {
+    primaryTimeout?.cancel()
   }
+}
+
+export async function getPublicProfileIdentityStateByUid(uid = '', options = {}) {
+  const cleanUid = String(uid || '').trim()
+  return sharedPublicIdentityCache.load(cleanUid, readPublicProfileIdentityByUid, options)
+}
+
+export async function getPublicProfileIdentityByUid(uid = '') {
+  const state = await getPublicProfileIdentityStateByUid(uid)
+  return state.status === 'known' ? state.identity : null
 }

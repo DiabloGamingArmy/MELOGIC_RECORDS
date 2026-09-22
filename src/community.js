@@ -62,7 +62,7 @@ import {
   validateCommunityPostAttachment,
   validateCommunityStoryMedia
 } from './data/communityService'
-import { getPublicProfileIdentityByUid, searchProfilesByUsername } from './data/profileSearchService'
+import { getCachedPublicProfileIdentityByUid, getPublicProfileIdentityStateByUid, searchProfilesByUsername } from './data/profileSearchService'
 import { createOrGetDm } from './data/threadService'
 import { sendMessage } from './data/messageService'
 import { ROUTES, authRoute, communityPostRoute, communityRoute, productRoute, publicProfileRoute, stageProjectRoute, studioProjectRoute } from './utils/routes'
@@ -385,10 +385,10 @@ let communityIdentityRenderQueued = false
 // Identity lookups are asynchronous enrichment. They must never trigger the
 // page-level render(), because render() replaces communityRoot.innerHTML and
 // destroys every mounted feed image/video/audio element.
-function hydrateCommunityIdentityDom() {
-  if (!app) return
+function hydrateCommunityIdentityDom(root = app) {
+  if (!root) return
 
-  app.querySelectorAll('[data-community-author-uid]').forEach((node) => {
+  root.querySelectorAll('[data-community-author-uid]').forEach((node) => {
     const uid = String(node.getAttribute('data-community-author-uid') || '').trim()
     if (!uid) return
     const identity = communityAuthorIdentityCache.get(uid)
@@ -439,14 +439,19 @@ function queueCommunityIdentityRender() {
 function ensureCommunityAuthorIdentity(uid = '') {
   const cleanUid = String(uid || '').trim()
   if (!cleanUid || communityAuthorIdentityCache.has(cleanUid)) return Promise.resolve(communityAuthorIdentityCache.get(cleanUid) || null)
+  const cached = getCachedPublicProfileIdentityByUid(cleanUid)
+  if (cached) {
+    communityAuthorIdentityCache.set(cleanUid, cached)
+    return Promise.resolve(cached)
+  }
   if (communityAuthorIdentityRequests.has(cleanUid)) return communityAuthorIdentityRequests.get(cleanUid)
-  const request = getPublicProfileIdentityByUid(cleanUid).then((profile) => {
-    communityAuthorIdentityCache.set(cleanUid, profile || { uid: cleanUid, badges: [] })
+  const request = getPublicProfileIdentityStateByUid(cleanUid).then((identityState) => {
+    if (identityState.status === 'known') communityAuthorIdentityCache.set(cleanUid, identityState.identity)
+    else if (identityState.status === 'missing') communityAuthorIdentityCache.set(cleanUid, { uid: cleanUid, badges: [] })
     communityAuthorIdentityRequests.delete(cleanUid)
-    queueCommunityIdentityRender()
-    return profile
+    if (identityState.status === 'known' || identityState.status === 'missing') queueCommunityIdentityRender()
+    return identityState.identity || null
   }).catch(() => {
-    communityAuthorIdentityCache.set(cleanUid, { uid: cleanUid, badges: [] })
     communityAuthorIdentityRequests.delete(cleanUid)
     return null
   })
@@ -715,6 +720,16 @@ function setupMobileCommunityShellActions() {
 function bindCommunityGlobalUiOnce() {
   if (communityGlobalUiBound) return
   communityGlobalUiBound = true
+
+  window.addEventListener('melogic:public-profile-identity', (event) => {
+    const uid = String(event.detail?.uid || '').trim()
+    const identity = event.detail?.identity || null
+    if (!uid || !identity) return
+    communityAuthorIdentityCache.set(uid, identity)
+    queueCommunityIdentityRender()
+    desktopCommunitySurfaceCache.forEach((cached) => hydrateCommunityIdentityDom(cached?.fragment))
+    mobileCommunitySurfaceCache.forEach((cached) => hydrateCommunityIdentityDom(cached?.fragment))
+  })
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') {
