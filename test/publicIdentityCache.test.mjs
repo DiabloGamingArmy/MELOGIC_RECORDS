@@ -5,10 +5,12 @@ import { createPublicIdentityCache } from '../src/data/publicIdentityCache.js'
 test('transient identity failure retries and recovers verified state', async () => {
   let clock = 1_000
   let attempts = 0
+  const scheduled = []
   const published = []
   const cache = createPublicIdentityCache({
     now: () => clock,
     errorRetryMs: 50,
+    schedule: (callback, delay) => scheduled.push({ callback, delay }),
     onKnown: (uid, identity) => published.push({ uid, identity })
   })
   const loader = async () => {
@@ -22,7 +24,9 @@ test('transient identity failure retries and recovers verified state', async () 
   assert.equal(attempts, 1)
 
   clock += 51
-  const recovered = await cache.load('creator-1', loader)
+  assert.equal(scheduled[0].delay, 50)
+  await scheduled[0].callback()
+  const recovered = cache.peek('creator-1')
   assert.equal(recovered.status, 'known')
   assert.deepEqual(recovered.identity.badges, ['verified'])
   assert.equal(attempts, 2)

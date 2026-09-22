@@ -7,7 +7,12 @@ export function createPublicIdentityCache({
   missingTtlMs = 60_000,
   errorRetryMs = 5_000,
   now = () => Date.now(),
-  onKnown = null
+  onKnown = null,
+  schedule = (callback, delay) => {
+    const timer = globalThis.setTimeout?.(callback, delay)
+    timer?.unref?.()
+    return timer
+  }
 } = {}) {
   const entries = new Map()
 
@@ -55,6 +60,10 @@ export function createPublicIdentityCache({
       .catch((error) => {
         const entry = { status: 'error', identity: null, error, retryAt: now() + errorRetryMs }
         entries.set(key, entry)
+        schedule?.(() => {
+          if (entries.get(key) !== entry) return
+          return load(key, loader, { force: true })
+        }, errorRetryMs)
         return snapshot(entry)
       })
     entries.set(key, { status: 'loading', identity: existing?.identity || null, error: null, promise })
