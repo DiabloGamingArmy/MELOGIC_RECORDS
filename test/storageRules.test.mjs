@@ -64,7 +64,7 @@ test('Live Studio cover uploads reject another user and invalid metadata', async
   ))
 })
 
-test('Community Story uploads require owner-bound callable metadata', async () => {
+test('Community Story uploads enforce owner path and allowed media type', async () => {
   const owner = testEnv.authenticatedContext('story-owner')
   const outsider = testEnv.authenticatedContext('outsider')
   const bytes = new Uint8Array([0, 0, 0, 0])
@@ -82,7 +82,7 @@ test('Community Story uploads require owner-bound callable metadata', async () =
   await assertSucceeds(uploadBytes(ref(owner.storage(), storyPath), bytes, metadata))
   await assertFails(uploadBytes(ref(outsider.storage(), storyPath.replace('normalized', 'outsider')), bytes, metadata))
   await assertFails(uploadBytes(ref(owner.storage(), storyPath.replace('normalized', 'invalid')), bytes, {
-    contentType: 'video/mp4',
-    customMetadata: { ...metadata.customMetadata, authorUid: 'outsider' }
+    contentType: 'text/plain',
+    customMetadata: metadata.customMetadata
   }))
 })

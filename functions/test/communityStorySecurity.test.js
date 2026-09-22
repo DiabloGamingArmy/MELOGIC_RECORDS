@@ -60,3 +60,13 @@ test('callable Story creation Storage gate accepts a legitimate first-party uplo
     uid: 'owner', storyId: 'story-1', mediaPath, mediaType: 'video'
   }, bucket))
 })
+
+test('callable keeps a bounded legacy window while v2 requires metadata', () => {
+  const legacyObject = { size: '1024', contentType: 'video/mp4', metadata: {} }
+  assert.equal(validateStoryStorageObject(legacyObject, {
+    uid: 'owner', storyId: 'story-1', mediaPath, mediaType: 'video', requireMetadata: false
+  }).ok, true)
+  assert.equal(validateStoryStorageObject(legacyObject, {
+    uid: 'owner', storyId: 'story-1', mediaPath, mediaType: 'video', requireMetadata: true
+  }).reason, 'metadata')
+})

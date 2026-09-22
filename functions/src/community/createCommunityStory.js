@@ -19,14 +19,14 @@ const {
   validateStoryStorageObject
 } = require('./communityStoryShared')
 
-async function verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType }, bucket = admin.storage().bucket()) {
+async function verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType, requireMetadata = true }, bucket = admin.storage().bucket()) {
   let metadata
   try {
     ;[metadata] = await bucket.file(mediaPath).getMetadata()
   } catch {
     throw new HttpsError('failed-precondition', 'Story media upload was not found.')
   }
-  const validation = validateStoryStorageObject(metadata, { uid, storyId, mediaPath, mediaType })
+  const validation = validateStoryStorageObject(metadata, { uid, storyId, mediaPath, mediaType, requireMetadata })
   if (!validation.ok) {
     throw new HttpsError('failed-precondition', `Story media upload failed ${validation.reason} validation.`)
   }
@@ -55,6 +55,7 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
   const storyTypes = new Set(['moment', 'sound', 'thought', 'drop', 'ask', 'live', 'project'])
   const storyType = storyTypes.has(storyTypeRaw) ? storyTypeRaw : 'moment'
   const layers = sanitizeStoryLayers(request.data?.layers || [])
+  const storyUploadVersion = Math.max(1, Math.round(Number(request.data?.storyUploadVersion || 1)))
 
   if (!STORY_MEDIA_TYPES.has(mediaType)) {
     throw new HttpsError('invalid-argument', 'Story media type must be text, image, or video.')
@@ -73,10 +74,10 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
   if (existing.exists) throw new HttpsError('failed-precondition', 'This story already exists.')
 
   if (mediaType === 'image' || mediaType === 'video') {
-    await verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType })
+    await verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType, requireMetadata: storyUploadVersion >= 2 })
   }
   if (thumbnailPath) {
-    await verifyStoryStorageObject({ uid, storyId, mediaPath: thumbnailPath, mediaType: 'image' })
+    await verifyStoryStorageObject({ uid, storyId, mediaPath: thumbnailPath, mediaType: 'image', requireMetadata: storyUploadVersion >= 2 })
   }
 
   let remixSource = null

@@ -1640,7 +1640,7 @@ export async function toggleCommunityCommentDislike(payload = {}) {
 
 export async function createCommunityStory(payload = {}) {
   const callable = httpsCallable(functions, 'createCommunityStory')
-  const result = await callable(payload)
+  const result = await callable({ ...payload, storyUploadVersion: 2 })
   return result?.data || { ok: false }
 }
 

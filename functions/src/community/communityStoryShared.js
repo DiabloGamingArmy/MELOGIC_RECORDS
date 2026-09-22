@@ -97,7 +97,7 @@ function validStoryMediaPath(mediaPath = '', uid = '', storyId = '') {
   return clean.startsWith(`communityStories/${uid}/${storyId}/`)
 }
 
-function validateStoryStorageObject(metadata = {}, { uid = '', storyId = '', mediaPath = '', mediaType = '' } = {}) {
+function validateStoryStorageObject(metadata = {}, { uid = '', storyId = '', mediaPath = '', mediaType = '', requireMetadata = true } = {}) {
   const custom = metadata.metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {}
   const contentType = cleanString(metadata.contentType || '', 180).toLowerCase()
   const size = Number(metadata.size || 0)
@@ -105,7 +105,13 @@ function validateStoryStorageObject(metadata = {}, { uid = '', storyId = '', med
   if (!validStoryMediaPath(mediaPath, uid, storyId)) return { ok: false, reason: 'path' }
   if (!maxBytes || !Number.isFinite(size) || size <= 0 || size > maxBytes) return { ok: false, reason: 'size' }
   if (!contentType.startsWith(`${mediaType}/`)) return { ok: false, reason: 'content-type' }
-  if (custom.authorUid !== uid || custom.storyId !== storyId || custom.mediaType !== mediaType || custom.storyUploadVersion !== '2') {
+  const hasStoryMetadata = Object.keys(custom).some((key) => ['authorUid', 'storyId', 'mediaType', 'storyUploadVersion'].includes(key))
+  if ((requireMetadata || hasStoryMetadata) && (
+    custom.authorUid !== uid
+    || custom.storyId !== storyId
+    || custom.mediaType !== mediaType
+    || custom.storyUploadVersion !== '2'
+  )) {
     return { ok: false, reason: 'metadata' }
   }
   return { ok: true, reason: '' }
