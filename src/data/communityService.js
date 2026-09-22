@@ -1310,7 +1310,15 @@ export async function uploadCommunityStoryMedia({ uid = '', storyId = '', file =
   const mediaPath = `${STORY_COLLECTION}/${ownerUid}/${id}/normalized-${Date.now()}.${storyMediaExtension(uploadFile)}`
   const fileRef = ref(storage, mediaPath)
   await new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(fileRef, uploadFile, { contentType })
+    const task = uploadBytesResumable(fileRef, uploadFile, {
+      contentType,
+      customMetadata: {
+        authorUid: ownerUid,
+        storyId: id,
+        mediaType,
+        storyUploadVersion: '2'
+      }
+    })
     task.on('state_changed', (snapshot) => {
       const progress = snapshot.totalBytes ? Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100) : 0
       if (typeof onProgress === 'function') onProgress(progress)

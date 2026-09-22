@@ -8,6 +8,7 @@ import {
 } from '@firebase/rules-unit-testing'
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -43,6 +44,34 @@ async function seed(path, data) {
     await setDoc(doc(context.firestore(), path), data)
   })
 }
+
+test('Community Stories are publicly readable only while active and are callable-owned for writes', async () => {
+  const future = new Date(Date.now() + 60_000)
+  const past = new Date(Date.now() - 60_000)
+  const baseStory = {
+    storyId: 'active-story',
+    authorUid: 'owner',
+    mediaType: 'text',
+    text: 'hello',
+    status: 'active',
+    visibility: 'public',
+    expiresAt: future,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    viewCount: 0,
+    reportCount: 0
+  }
+  await seed('communityStories/active-story', baseStory)
+  await seed('communityStories/expired-story', { ...baseStory, storyId: 'expired-story', expiresAt: past })
+
+  const publicDb = testEnv.unauthenticatedContext().firestore()
+  const ownerDb = testEnv.authenticatedContext('owner').firestore()
+  await assertSucceeds(getDoc(doc(publicDb, 'communityStories/active-story')))
+  await assertFails(getDoc(doc(publicDb, 'communityStories/expired-story')))
+  await assertSucceeds(getDoc(doc(ownerDb, 'communityStories/expired-story')))
+  await assertFails(setDoc(doc(ownerDb, 'communityStories/client-created'), { ...baseStory, storyId: 'client-created' }))
+  await assertFails(deleteDoc(doc(ownerDb, 'communityStories/active-story')))
+})
 
 test('Streaming history and saved music are private to the account owner', async () => {
   await seed('users/owner/recentlyPlayedMusic/release-1', {

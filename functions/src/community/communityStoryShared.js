@@ -97,6 +97,25 @@ function validStoryMediaPath(mediaPath = '', uid = '', storyId = '') {
   return clean.startsWith(`communityStories/${uid}/${storyId}/`)
 }
 
+function validateStoryStorageObject(metadata = {}, { uid = '', storyId = '', mediaPath = '', mediaType = '' } = {}) {
+  const custom = metadata.metadata && typeof metadata.metadata === 'object' ? metadata.metadata : {}
+  const contentType = cleanString(metadata.contentType || '', 180).toLowerCase()
+  const size = Number(metadata.size || 0)
+  const maxBytes = mediaType === 'image' ? 12 * 1024 * 1024 : mediaType === 'video' ? 150 * 1024 * 1024 : 0
+  if (!validStoryMediaPath(mediaPath, uid, storyId)) return { ok: false, reason: 'path' }
+  if (!maxBytes || !Number.isFinite(size) || size <= 0 || size > maxBytes) return { ok: false, reason: 'size' }
+  if (!contentType.startsWith(`${mediaType}/`)) return { ok: false, reason: 'content-type' }
+  if (custom.authorUid !== uid || custom.storyId !== storyId || custom.mediaType !== mediaType || custom.storyUploadVersion !== '2') {
+    return { ok: false, reason: 'metadata' }
+  }
+  return { ok: true, reason: '' }
+}
+
+function storyViewDecision({ authorUid = '', viewerUid = '', alreadyViewed = false } = {}) {
+  if (!viewerUid || viewerUid === authorUid || alreadyViewed) return { incremented: false }
+  return { incremented: true }
+}
+
 function normalizeLifetimeHours(value = 24) {
   const hours = Math.round(Number(value || 24))
   if (!Number.isFinite(hours)) return 24
@@ -193,5 +212,7 @@ module.exports = {
   serializeStory,
   storyIsActive,
   storyRefFor,
-  validStoryMediaPath
+  storyViewDecision,
+  validStoryMediaPath,
+  validateStoryStorageObject
 }

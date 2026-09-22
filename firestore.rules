@@ -2226,10 +2226,11 @@ service cloud.firestore {
         )
         || (signedIn() && resource.data.authorUid == request.auth.uid)
         || hasUserModerateClaim();
-      allow create: if communityStoryCreateIsValid(storyId);
+      // Story creation and deletion are callable-owned so Storage validation,
+      // moderation fields, counters, and cleanup cannot be bypassed by clients.
+      allow create: if false;
       allow update: if communityStoryOwnerDeleteIsSafe() || communityStoryAdminUpdateIsSafe();
-      allow delete: if signedIn()
-        && (resource.data.authorUid == request.auth.uid || hasUserModerateClaim());
+      allow delete: if false;
 
       match /views/{uid} {
         allow read: if signedIn()

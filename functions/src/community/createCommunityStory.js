@@ -15,8 +15,22 @@ const {
   sanitizeStoryText,
   serializeStory,
   storyIsActive,
-  validStoryMediaPath
+  validStoryMediaPath,
+  validateStoryStorageObject
 } = require('./communityStoryShared')
+
+async function verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType }) {
+  let metadata
+  try {
+    ;[metadata] = await admin.storage().bucket().file(mediaPath).getMetadata()
+  } catch {
+    throw new HttpsError('failed-precondition', 'Story media upload was not found.')
+  }
+  const validation = validateStoryStorageObject(metadata, { uid, storyId, mediaPath, mediaType })
+  if (!validation.ok) {
+    throw new HttpsError('failed-precondition', `Story media upload failed ${validation.reason} validation.`)
+  }
+}
 
 const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async (request) => {
   const uid = requireAuth(request)
@@ -57,6 +71,13 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
 
   const existing = await storyRef.get()
   if (existing.exists) throw new HttpsError('failed-precondition', 'This story already exists.')
+
+  if (mediaType === 'image' || mediaType === 'video') {
+    await verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType })
+  }
+  if (thumbnailPath) {
+    await verifyStoryStorageObject({ uid, storyId, mediaPath: thumbnailPath, mediaType: 'image' })
+  }
 
   let remixSource = null
   if (remixOfStoryId) {

@@ -66,6 +66,14 @@ service firebase.storage {
         && request.resource.contentType.matches('video/.*');
     }
 
+    function communityStoryMetadataIsValid(uid, storyId, mediaType) {
+      return request.resource.metadata.keys().hasAll(['authorUid', 'storyId', 'mediaType', 'storyUploadVersion'])
+        && request.resource.metadata.authorUid == uid
+        && request.resource.metadata.storyId == storyId
+        && request.resource.metadata.mediaType == mediaType
+        && request.resource.metadata.storyUploadVersion == '2';
+    }
+
     function isPdfUpload(maxBytes) {
       return request.resource != null
         && request.resource.size <= maxBytes
@@ -455,8 +463,8 @@ service firebase.storage {
         && (
           // Story media is normalized client-side before final upload.
           // Keep enough headroom for high-quality <=60s video and converted images.
-          isImageUpload(12 * 1024 * 1024)
-          || isVideoUpload(150 * 1024 * 1024)
+          (isImageUpload(12 * 1024 * 1024) && communityStoryMetadataIsValid(uid, storyId, 'image'))
+          || (isVideoUpload(150 * 1024 * 1024) && communityStoryMetadataIsValid(uid, storyId, 'video'))
         );
       allow delete: if signedIn()
         && (
