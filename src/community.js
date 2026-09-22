@@ -2,7 +2,7 @@ import './styles/base.css'
 import './styles/community.css'
 import './styles/communityMobile.css'
 import { communityScrollViewport, setCommunityScroll, syncCommunityMobileHeader } from './community/viewport.js'
-import { createCommunityAuthScope, createMonotonicRequestOwner, restorePreservedCommunitySurface } from './community/lifecycleState.js'
+import { createCommunityAuthScope, createMonotonicRequestOwner, restorePreservedCommunitySurface, suspendCommunityMediaResources } from './community/lifecycleState.js'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -717,9 +717,25 @@ function bindCommunityGlobalUiOnce() {
   communityGlobalUiBound = true
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible' || isMobileSpaRuntime()) return
+    if (document.visibilityState !== 'visible') {
+      if (state.storyViewer.open) suspendStoryViewerResources({ releaseMedia: true })
+      return
+    }
+    if (!document.body.classList.contains('is-community-page')) return
+    resumeStoryViewerResources()
+    if (isMobileSpaRuntime()) {
+      void hydrateMobileCommunitySharedState({ directory: state.view.type === 'communities' })
+      if (state.activeCommunityId) void loadActiveCommunityMembership(state.activeCommunityId)
+      return
+    }
     const key = desktopCommunitySurfaceKeyFor()
     if (['for-you', 'following', 'discover'].includes(key)) refreshDesktopCommunitySharedContent(key)
+  })
+  window.addEventListener('pageshow', (event) => {
+    if (!event.persisted || !document.body.classList.contains('is-community-page')) return
+    resumeStoryViewerResources()
+    if (isMobileSpaRuntime()) void hydrateMobileCommunitySharedState({ directory: state.view.type === 'communities' })
+    else refreshDesktopCommunitySharedContent(desktopCommunitySurfaceKeyFor())
   })
   setupMobileCommunityShellActions()
   setupMobileCommunitySurfaceBehavior()
@@ -1270,6 +1286,40 @@ function storyFileLabel(file = null) {
 
 function storyById(storyId = '') {
   return state.stories.find((story) => story.storyId === storyId) || null
+}
+
+function pruneExpiredCommunityStories(now = Date.now()) {
+  const activeStories = state.stories.filter((story) => {
+    const expiresAt = new Date(story.expiresAt || 0).getTime()
+    return !Number.isFinite(expiresAt) || expiresAt > now
+  })
+  if (activeStories.length === state.stories.length) return false
+  const activeStoryExpired = state.storyViewer.open && !activeStories.some((story) => story.storyId === state.storyViewer.storyId)
+  state.stories = activeStories
+  if (activeStoryExpired) {
+    suspendStoryViewerResources({ releaseMedia: true })
+    state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
+  }
+  return true
+}
+
+function scheduleCommunityStoryExpiry() {
+  if (storyExpiryTimer) window.clearTimeout(storyExpiryTimer)
+  storyExpiryTimer = 0
+  const now = Date.now()
+  const nearest = state.stories
+    .map((story) => new Date(story.expiresAt || 0).getTime())
+    .filter((expiresAt) => Number.isFinite(expiresAt) && expiresAt > now)
+    .sort((a, b) => a - b)[0]
+  if (!nearest) return
+  storyExpiryTimer = window.setTimeout(() => {
+    storyExpiryTimer = 0
+    if (pruneExpiredCommunityStories()) {
+      updateStoryRegionsOnly()
+      reconcileCommunitySharedRegions()
+    }
+    scheduleCommunityStoryExpiry()
+  }, Math.min(2_147_000_000, Math.max(25, nearest - now + 25)))
 }
 
 function safeStoryTargetURL(value = '') {
@@ -4678,6 +4728,8 @@ async function loadStories({ renderAfter = false, hydrateIdentity = true } = {})
     if (generation !== storyHydrationGeneration) return
 
     state.stories = nextStories
+    pruneExpiredCommunityStories()
+    scheduleCommunityStoryExpiry()
 
     // Story snapshots can carry stale badge metadata. On desktop surface entry,
     // resolve every visible author's canonical public identity before repainting
@@ -7860,6 +7912,7 @@ async function handleStorySubmit(event) {
       mediaURL: uploaded.mediaURL || result.story?.mediaURL || ''
     }, result.storyId)
     state.stories = [story, ...state.stories.filter((item) => item.storyId !== story.storyId)]
+    scheduleCommunityStoryExpiry()
     resetStoryRecording()
     resetStoryPreviewURL()
     state.storyComposer = cleanStoryComposerState()
@@ -7888,6 +7941,12 @@ let storyViewerPointerDownAt = 0
 let storyViewerPointerStartX = 0
 let storyViewerPointerStartY = 0
 let storyViewerHeld = false
+let storyExpiryTimer = 0
+let storyViewerTransitionTimer = 0
+let storyViewerPlaybackBindings = null
+let storySignalAbortController = null
+let storyViewerSuspendedPosition = null
+const storyViewerResourceOwner = createMonotonicRequestOwner()
 
 // melogic-mobile-story-lookahead-v1
 // Keep only the next two media assets warm on mobile. Detached media elements
@@ -8007,8 +8066,11 @@ async function analyzeStorySignal(story = {}, video = null) {
   const cached = storySignalCache.get(story.storyId)
   if (cached) { applyStorySignalBars(cached); return }
   const token = ++storySignalAnalysisToken
+  storySignalAbortController?.abort()
+  storySignalAbortController = new AbortController()
+  const signal = storySignalAbortController.signal
   try {
-    const response = await fetch(story.mediaURL, { mode: 'cors', credentials: 'omit' })
+    const response = await fetch(story.mediaURL, { mode: 'cors', credentials: 'omit', signal })
     if (!response.ok) throw new Error('Story media unavailable for signal analysis.')
     const buffer = await response.arrayBuffer()
     const AudioContextCtor = window.AudioContext || window.webkitAudioContext
@@ -8038,13 +8100,17 @@ async function analyzeStorySignal(story = {}, video = null) {
       })
       const max = Math.max(...values, .001)
       const normalized = values.map((value) => .14 + .86 * Math.pow(Math.min(1, value / max), .72))
+      if (signal.aborted || token !== storySignalAnalysisToken) return
       storySignalCache.set(story.storyId, normalized)
-      if (token === storySignalAnalysisToken && state.storyViewer.storyId === story.storyId) applyStorySignalBars(normalized)
+      if (state.storyViewer.open && state.storyViewer.storyId === story.storyId) applyStorySignalBars(normalized)
     } finally {
       audioContext.close().catch(() => {})
     }
   } catch (error) {
+    if (error?.name === 'AbortError' || signal.aborted) return
     console.debug('[community] Story Signal audio analysis unavailable; using deterministic fallback.', { message: error?.message })
+  } finally {
+    if (storySignalAbortController?.signal === signal) storySignalAbortController = null
   }
 }
 
@@ -8072,6 +8138,53 @@ function setStorySignalProgress(progress = 0) {
 
 function storyViewerMedia() {
   return app?.querySelector('.community-story-viewer .community-story-surface video') || null
+}
+
+function suspendStoryViewerResources({ releaseMedia = true } = {}) {
+  storyViewerResourceOwner.invalidate()
+  const video = storyViewerMedia()
+  if (video) {
+    storyViewerSuspendedPosition = {
+      storyId: state.storyViewer.storyId,
+      currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+      progressElapsedMs: storyViewerProgressElapsedMs
+    }
+  }
+  suspendCommunityMediaResources({
+    media: [video],
+    abortControllers: [storyViewerPlaybackBindings, storySignalAbortController],
+    timeoutIds: [storyViewerAdvanceTimer, storyViewerHoldTimer, storyViewerTransitionTimer],
+    animationFrameIds: [storyViewerProgressFrame],
+    clearTimeoutFn: window.clearTimeout.bind(window),
+    cancelAnimationFrameFn: window.cancelAnimationFrame.bind(window),
+    releaseMedia
+  })
+  storyViewerPlaybackBindings = null
+  storySignalAbortController = null
+  storySignalAnalysisToken += 1
+  storyViewerAdvanceTimer = 0
+  storyViewerHoldTimer = 0
+  storyViewerTransitionTimer = 0
+  storyViewerProgressFrame = 0
+  clearStoryMediaLookahead()
+}
+
+function resumeStoryViewerResources() {
+  if (!state.storyViewer.open) return
+  const story = storyById(state.storyViewer.storyId)
+  const video = storyViewerMedia()
+  if (story?.mediaType === 'video' && video && !video.getAttribute('src') && story.mediaURL) {
+    video.src = story.mediaURL
+    const suspended = storyViewerSuspendedPosition?.storyId === story.storyId ? storyViewerSuspendedPosition : null
+    if (suspended?.currentTime) {
+      video.addEventListener('loadedmetadata', () => {
+        video.currentTime = Math.min(suspended.currentTime, Math.max(0, Number(video.duration || 0) - .01))
+      }, { once: true })
+    }
+    video.load()
+  }
+  bindStoryViewerPlayback({ preservePosition: true })
+  warmStoryMediaLookahead()
 }
 
 function runImageStorySignal() {
@@ -8119,11 +8232,8 @@ function resumeStoryViewerPlayback() {
 }
 
 function closeStoryViewer() {
-  clearStoryViewerAdvanceTimer()
-  clearStoryViewerProgressFrame()
-  clearStoryMediaLookahead()
-  if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
-  storyViewerHoldTimer = 0
+  suspendStoryViewerResources({ releaseMedia: true })
+  storyViewerSuspendedPosition = null
   state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
   render()
 }
@@ -8138,14 +8248,20 @@ function scheduleStoryViewerAdvance(delay = STORY_IMAGE_DURATION_MS) {
   runImageStorySignal()
 }
 
-function bindStoryViewerPlayback() {
+function bindStoryViewerPlayback({ preservePosition = false } = {}) {
   clearStoryViewerAdvanceTimer()
   clearStoryViewerProgressFrame()
+  storyViewerPlaybackBindings?.abort()
+  storyViewerPlaybackBindings = new AbortController()
+  const signal = storyViewerPlaybackBindings.signal
+  const resourceToken = storyViewerResourceOwner.next()
   const viewer = app?.querySelector('.community-story-viewer')
   if (!viewer || !state.storyViewer.open) return
   const story = storyById(state.storyViewer.storyId)
   const video = storyViewerMedia()
-  storyViewerProgressElapsedMs = 0
+  storyViewerProgressElapsedMs = preservePosition && storyViewerSuspendedPosition?.storyId === story?.storyId
+    ? storyViewerSuspendedPosition.progressElapsedMs
+    : 0
   storyViewerProgressStartedAt = 0
   storyViewerProgressDurationMs = STORY_IMAGE_DURATION_MS
   setStorySignalProgress(0)
@@ -8166,24 +8282,24 @@ function bindStoryViewerPlayback() {
       return video.play().catch(() => {})
     })
     if (video.readyState >= 1) syncVideoSignal()
-    else video.addEventListener('loadedmetadata', syncVideoSignal, { once: true })
-    video.addEventListener('durationchange', syncVideoSignal)
-    video.addEventListener('timeupdate', syncVideoSignal)
-    video.addEventListener('seeking', syncVideoSignal)
-    video.addEventListener('play', syncVideoSignal)
-    video.addEventListener('pause', syncVideoSignal)
+    else video.addEventListener('loadedmetadata', syncVideoSignal, { once: true, signal })
+    video.addEventListener('durationchange', syncVideoSignal, { signal })
+    video.addEventListener('timeupdate', syncVideoSignal, { signal })
+    video.addEventListener('seeking', syncVideoSignal, { signal })
+    video.addEventListener('play', syncVideoSignal, { signal })
+    video.addEventListener('pause', syncVideoSignal, { signal })
     if (video.readyState >= 2) play()
-    else video.addEventListener('canplay', play, { once: true })
+    else video.addEventListener('canplay', play, { once: true, signal })
     video.addEventListener('ended', () => {
       setStorySignalProgress(1)
       advanceStory(1)
-    }, { once: true })
+    }, { once: true, signal })
   } else {
     scheduleStoryViewerAdvance(STORY_IMAGE_DURATION_MS)
   }
 
   viewer.querySelectorAll('.community-story-progress-rail > span.is-active .community-story-signal-bars > b').forEach((bar) => {
-    bar.addEventListener('pointerdown', (event) => event.stopPropagation())
+    bar.addEventListener('pointerdown', (event) => event.stopPropagation(), { signal })
     bar.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
@@ -8192,7 +8308,7 @@ function bindStoryViewerPlayback() {
       const target = Math.max(0, Math.min(video.duration - .01, ((index + .5) / STORY_SIGNAL_BAR_COUNT) * video.duration))
       video.currentTime = target
       setStorySignalProgress(target / video.duration)
-    })
+    }, { signal })
   })
 
     const surface = viewer.querySelector('.community-story-surface')
@@ -8208,7 +8324,7 @@ function bindStoryViewerPlayback() {
       storyViewerHeld = true
       pauseStoryViewerPlayback()
     }, 220)
-  })
+  }, { signal })
   const finishPointer = (event) => {
     if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
     storyViewerHoldTimer = 0
@@ -8234,13 +8350,14 @@ function bindStoryViewerPlayback() {
       advanceStory(localX < rect.width * .35 ? -1 : 1)
     }
   }
-  surface.addEventListener('pointerup', finishPointer)
+  surface.addEventListener('pointerup', finishPointer, { signal })
   surface.addEventListener('pointercancel', () => {
     if (storyViewerHoldTimer) window.clearTimeout(storyViewerHoldTimer)
     storyViewerHoldTimer = 0
     if (storyViewerHeld) resumeStoryViewerPlayback()
     storyViewerHeld = false
-  })
+  }, { signal })
+  if (!storyViewerResourceOwner.isCurrent(resourceToken)) storyViewerPlaybackBindings?.abort()
 }
 
 async function shareStoryFromViewer(storyId = '') {
@@ -8277,13 +8394,16 @@ function openStoryViewer(storyId = '') {
   // Start warming the exact next two Story media assets after the active Story
   // has rendered. This never blocks current playback.
   if (!alreadyOpen) window.requestAnimationFrame(() => warmStoryMediaLookahead())
-  if (recordedStoryViews.has(storyId)) return
+  if (!state.currentUser?.uid || recordedStoryViews.has(storyId)) return
+  const authToken = communityAuthScope.current()
   recordedStoryViews.add(storyId)
   recordCommunityStoryView(storyId).then((result) => {
+    if (!communityAuthScope.isCurrent(authToken)) return
     if (Number.isFinite(Number(result.viewCount))) {
       state.stories = state.stories.map((item) => item.storyId === storyId ? { ...item, viewCount: Number(result.viewCount) } : item)
     }
   }).catch((error) => {
+    if (!communityAuthScope.isCurrent(authToken)) return
     console.warn('[community] story view count failed', { code: error?.code, message: error?.message, details: error?.details })
     recordedStoryViews.delete(storyId)
   })
@@ -8298,7 +8418,11 @@ function animateToStory(storyId = '', delta = 1) {
   clearStoryViewerAdvanceTimer()
   viewer.classList.remove('is-shifting-left', 'is-shifting-right')
   viewer.classList.add('is-creator-transition', delta > 0 ? 'is-shifting-left' : 'is-shifting-right')
-  window.setTimeout(() => openStoryViewer(storyId), 260)
+  if (storyViewerTransitionTimer) window.clearTimeout(storyViewerTransitionTimer)
+  storyViewerTransitionTimer = window.setTimeout(() => {
+    storyViewerTransitionTimer = 0
+    openStoryViewer(storyId)
+  }, 260)
 }
 
 function advanceStory(delta = 1) {
@@ -8340,6 +8464,7 @@ async function handleStoryDelete(storyId = '') {
   try {
     await deleteCommunityStory({ storyId })
     state.stories = state.stories.filter((item) => item.storyId !== storyId)
+    scheduleCommunityStoryExpiry()
     state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
     state.message = 'Story deleted.'
     render()
@@ -9546,13 +9671,18 @@ if (isMobileSpaRuntime()) {
       syncCommunityMobileHeader(Boolean(state.detailPostId), app)
       await consumeCameraCommunityMediaHandoff()
       if (!state.detailPostId) mobileCommunitySurfaceKey = mobileCommunitySurfaceKeyFor()
+      resumeStoryViewerResources()
+      void hydrateMobileCommunitySharedState({ directory: state.view.type === 'communities' })
+      if (state.activeCommunityId) void loadActiveCommunityMembership(state.activeCommunityId)
     },
     async deactivate({ instance }) {
       document.body.classList.remove('community-modal-open')
+      suspendStoryViewerResources({ releaseMedia: true })
       resetStoryRecording()
       detachCommunitySurface(instance)
     },
     async unmount({ instance }) {
+      suspendStoryViewerResources({ releaseMedia: true })
       resetStoryRecording()
       instance.fragment = null
     }

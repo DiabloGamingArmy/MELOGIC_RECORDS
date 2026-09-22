@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import {
   createCommunityAuthScope,
   createMonotonicRequestOwner,
-  restorePreservedCommunitySurface
+  restorePreservedCommunitySurface,
+  suspendCommunityMediaResources
 } from '../src/community/lifecycleState.js'
 
 test('Community auth tokens become stale across A → B, B → anonymous, and anonymous → A', () => {
@@ -54,4 +55,28 @@ test('50 preserved-surface restores do not multiply existing listeners', () => {
   root.current.action.dispatchEvent(new Event('activate'))
   assert.equal(reconciliations, 50)
   assert.equal(invocations, 1)
+})
+
+test('Story resource suspension aborts async work, cancels clocks, and releases playback', () => {
+  const calls = []
+  const controller = { abort: () => calls.push('abort') }
+  const media = {
+    pause: () => calls.push('pause'),
+    removeAttribute: (name) => calls.push(`remove:${name}`),
+    load: () => calls.push('load')
+  }
+
+  suspendCommunityMediaResources({
+    media: [media],
+    abortControllers: [controller],
+    timeoutIds: [11, 12],
+    animationFrameIds: [13],
+    clearTimeoutFn: (id) => calls.push(`timeout:${id}`),
+    cancelAnimationFrameFn: (id) => calls.push(`frame:${id}`)
+  })
+
+  assert.deepEqual(calls, [
+    'abort', 'timeout:11', 'timeout:12', 'frame:13',
+    'pause', 'remove:src', 'load'
+  ])
 })

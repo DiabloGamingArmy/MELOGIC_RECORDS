@@ -57,3 +57,23 @@ export function restorePreservedCommunitySurface({ root, fragment, reconcile } =
   if (typeof reconcile === 'function') reconcile(root)
   return true
 }
+
+export function suspendCommunityMediaResources({
+  media = [],
+  abortControllers = [],
+  timeoutIds = [],
+  animationFrameIds = [],
+  clearTimeoutFn = globalThis.clearTimeout,
+  cancelAnimationFrameFn = globalThis.cancelAnimationFrame,
+  releaseMedia = true
+} = {}) {
+  abortControllers.filter(Boolean).forEach((controller) => controller.abort())
+  timeoutIds.filter(Boolean).forEach((id) => clearTimeoutFn?.(id))
+  animationFrameIds.filter(Boolean).forEach((id) => cancelAnimationFrameFn?.(id))
+  media.filter(Boolean).forEach((element) => {
+    element.pause?.()
+    if (!releaseMedia) return
+    element.removeAttribute?.('src')
+    try { element.load?.() } catch {}
+  })
+}
