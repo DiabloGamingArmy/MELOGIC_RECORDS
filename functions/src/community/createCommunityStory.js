@@ -19,10 +19,10 @@ const {
   validateStoryStorageObject
 } = require('./communityStoryShared')
 
-async function verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType }) {
+async function verifyStoryStorageObject({ uid, storyId, mediaPath, mediaType }, bucket = admin.storage().bucket()) {
   let metadata
   try {
-    ;[metadata] = await admin.storage().bucket().file(mediaPath).getMetadata()
+    ;[metadata] = await bucket.file(mediaPath).getMetadata()
   } catch {
     throw new HttpsError('failed-precondition', 'Story media upload was not found.')
   }
@@ -148,5 +148,6 @@ const createCommunityStory = onCall({ timeoutSeconds: 60, memory: '256MiB' }, as
 })
 
 module.exports = {
-  createCommunityStory
+  createCommunityStory,
+  verifyStoryStorageObject
 }

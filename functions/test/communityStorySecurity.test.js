@@ -4,6 +4,7 @@ const {
   storyViewDecision,
   validateStoryStorageObject
 } = require('../src/community/communityStoryShared')
+const { verifyStoryStorageObject } = require('../src/community/createCommunityStory')
 
 const mediaPath = 'communityStories/owner/story-1/normalized-1.mp4'
 
@@ -32,4 +33,30 @@ test('Story views increment once per authenticated non-owner viewer', () => {
   assert.equal(storyViewDecision({ authorUid: 'owner', viewerUid: 'owner' }).incremented, false)
   assert.equal(storyViewDecision({ authorUid: 'owner', viewerUid: 'viewer' }).incremented, true)
   assert.equal(storyViewDecision({ authorUid: 'owner', viewerUid: 'viewer', alreadyViewed: true }).incremented, false)
+})
+
+test('callable Story creation Storage gate accepts a legitimate first-party upload', async () => {
+  const bucket = {
+    file(path) {
+      assert.equal(path, mediaPath)
+      return {
+        async getMetadata() {
+          return [{
+            size: String(2 * 1024 * 1024),
+            contentType: 'video/mp4',
+            metadata: {
+              authorUid: 'owner',
+              storyId: 'story-1',
+              mediaType: 'video',
+              storyUploadVersion: '2'
+            }
+          }]
+        }
+      }
+    }
+  }
+
+  await assert.doesNotReject(verifyStoryStorageObject({
+    uid: 'owner', storyId: 'story-1', mediaPath, mediaType: 'video'
+  }, bucket))
 })
