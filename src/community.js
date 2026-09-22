@@ -2,7 +2,7 @@ import './styles/base.css'
 import './styles/community.css'
 import './styles/communityMobile.css'
 import { communityScrollViewport, setCommunityScroll, syncCommunityMobileHeader } from './community/viewport.js'
-import { createCommunityAuthScope, createMonotonicRequestOwner, restorePreservedCommunitySurface, suspendCommunityMediaResources } from './community/lifecycleState.js'
+import { createCommunityAuthScope, createMonotonicRequestOwner, releaseOwnedOperation, restorePreservedCommunitySurface, suspendCommunityMediaResources } from './community/lifecycleState.js'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -551,26 +551,26 @@ function trackCommunityAction(actionId, promise) {
   const id = String(actionId || '').trim()
   if (!id) return promise
   const authToken = communityAuthScope.current()
-  communityPendingActions.set(id, { startedAt: Date.now(), promise })
+  const entry = { startedAt: Date.now(), promise, authToken }
+  communityPendingActions.set(id, entry)
   dispatchCommunityPendingActionsChanged()
   return promise.then((result) => {
-    if (!communityAuthScope.isCurrent(authToken)) {
-      const error = new Error('Community authentication scope changed while the action was pending.')
-      error.code = 'community/auth-scope-changed'
-      throw error
-    }
+    assertCommunityAuthToken(authToken)
     return result
   }, (error) => {
-    if (!communityAuthScope.isCurrent(authToken)) {
-      const staleError = new Error('Community authentication scope changed while the action was pending.')
-      staleError.code = 'community/auth-scope-changed'
-      throw staleError
-    }
+    assertCommunityAuthToken(authToken)
     throw error
   }).finally(() => {
-    communityPendingActions.delete(id)
+    releaseOwnedOperation(communityPendingActions, id, entry)
     dispatchCommunityPendingActionsChanged()
   })
+}
+
+function assertCommunityAuthToken(token) {
+  if (communityAuthScope.isCurrent(token)) return
+  const error = new Error('Community authentication scope changed while the operation was pending.')
+  error.code = 'community/auth-scope-changed'
+  throw error
 }
 
 function isCommunityAuthScopeError(error) {
@@ -593,6 +593,10 @@ function transitionCommunityAuth(nextUser) {
   state.feedStillLoading = false
   state.viewerState = {}
   state.commentViewerState = {}
+  state.openPostMenuId = ''
+  state.openCommentMenuKey = ''
+  state.message = ''
+  state.error = ''
   state.communityFocus = {}
   state.communityMembership = {}
   state.followingFeedCache = { uid: nextUid, key: '', posts: [] }
@@ -617,6 +621,8 @@ function transitionCommunityAuth(nextUser) {
   mobileCommunitySurfaceKey = ''
 
   resetStoryRecording()
+  if (state.pendingStoryUpload?.previewURL) URL.revokeObjectURL(state.pendingStoryUpload.previewURL)
+  state.pendingStoryUpload = null
   if (state.storyComposer.previewURL) URL.revokeObjectURL(state.storyComposer.previewURL)
   state.storyComposer = {
     ...state.storyComposer,
@@ -630,6 +636,7 @@ function transitionCommunityAuth(nextUser) {
     error: '',
     message: ''
   }
+  clearComposerFileAttachments()
   state.composer = {
     ...state.composer,
     open: false,
@@ -5596,6 +5603,9 @@ async function handleComposerSubmit(event) {
     render()
     return
   }
+  const authToken = communityAuthScope.current()
+  const authorUid = authToken.uid
+  if (!authorUid) return
 
   state.composer.submitting = true
   state.composer.uploadProgress = state.composer.fileAttachments.length ? 0 : 100
@@ -5619,11 +5629,12 @@ async function handleComposerSubmit(event) {
     const postId = newCommunityPostId()
     if (state.composer.fileAttachments.length) {
       uploadedAttachments = await uploadCommunityPostAttachments({
-        uid: state.currentUser.uid,
+        uid: authorUid,
         postId,
         files: state.composer.fileAttachments,
         metadataById: Object.fromEntries(state.composer.fileAttachments.map((attachment) => [attachment.id, attachment.metadata || {}])),
         onProgress: (progress) => {
+          if (!communityAuthScope.isCurrent(authToken)) return
           state.composer.uploadProgress = Math.round(progress)
           const status = app?.querySelector('[data-community-post-upload-progress]')
           if (status) {
@@ -5632,8 +5643,9 @@ async function handleComposerSubmit(event) {
           }
         }
       })
+      assertCommunityAuthToken(authToken)
     }
-    const result = await createCommunityPost({
+    const result = await trackCommunityAction(`create-post:${postId}`, createCommunityPost({
       postId,
       type: 'post',
       title,
@@ -5674,7 +5686,7 @@ async function handleComposerSubmit(event) {
       communityId: community?.communityId || '',
       communitySlug: community?.slug || '',
       tags: tags.split(/[,\s]+/).filter(Boolean)
-    })
+    }))
     postCreated = true
     const post = normalizeCommunityPost(result.post || {}, result.postId)
     post.attachments = post.attachments.map((attachment) => {
@@ -5705,7 +5717,8 @@ async function handleComposerSubmit(event) {
       render()
     }, 3000)
   } catch (error) {
-    if (!postCreated && uploadedAttachments.length) await deleteCommunityPostAttachments(uploadedAttachments)
+    if (!postCreated && uploadedAttachments.length) await deleteCommunityPostAttachments(uploadedAttachments).catch(() => null)
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] create post failed', { code: error?.code, message: error?.message, details: error?.details })
     state.composer.submitting = false
     state.composer.uploadProgress = 0
@@ -7789,6 +7802,9 @@ let cameraCommunityHandoffConsumedAt=0
 async function publishPendingCameraStory(){
   const pending=state.pendingStoryUpload
   if(!pending?.file||pending.status==='uploading')return false
+  const authToken=communityAuthScope.current()
+  const authorUid=authToken.uid
+  if(!authorUid)return false
   const token=pending.localId
   state.pendingStoryUpload={...pending,status:'uploading',progress:0,error:''}
   updateStoryRegionsOnly()
@@ -7796,16 +7812,18 @@ async function publishPendingCameraStory(){
     validateCommunityStoryMedia(pending.file)
     const storyId=newCommunityStoryId()
     const uploaded=await uploadCommunityStoryMedia({
-      uid:state.currentUser.uid,
+      uid:authorUid,
       storyId,
       file:pending.file,
       onProgress:(progress)=>{
+        if(!communityAuthScope.isCurrent(authToken))return
         if(state.pendingStoryUpload?.localId!==token)return
         state.pendingStoryUpload={...state.pendingStoryUpload,progress}
         updateStoryRegionsOnly()
       }
     })
-    const result=await createCommunityStory({
+    assertCommunityAuthToken(authToken)
+    const result=await trackCommunityAction(`create-story:${storyId}`,createCommunityStory({
       storyId,
       mediaType:uploaded.mediaType,
       text:'',
@@ -7814,7 +7832,7 @@ async function publishPendingCameraStory(){
       lifetimeHours:24,
       visibility:'public',
       background:'aurora'
-    })
+    }))
     if(state.pendingStoryUpload?.localId!==token)return false
     const story=normalizeCommunityStory({
       ...(result.story||{}),
@@ -7826,6 +7844,7 @@ async function publishPendingCameraStory(){
     updateStoryRegionsOnly()
     return true
   }catch(error){
+    if(isCommunityAuthScopeError(error))return false
     console.warn('[community] camera story publish failed',{code:error?.code,message:error?.message,details:error?.details})
     if(state.pendingStoryUpload?.localId===token){
       state.pendingStoryUpload={...state.pendingStoryUpload,status:'failed',error:error?.message||'Story upload failed.'}
@@ -7882,6 +7901,9 @@ async function handleStorySubmit(event) {
   const lifetimeHours = Math.min(48, Math.max(1, Number(formData.get('lifetimeHours') || state.storyComposer.lifetimeHours || 24)))
   const visibility = String(formData.get('visibility') || 'public') === 'public' ? 'public' : 'public'
   const file = state.storyComposer.file || formData.get('storyMedia')
+  const authToken = communityAuthScope.current()
+  const authorUid = authToken.uid
+  if (!authorUid) return
 
   state.storyComposer = { ...state.storyComposer, text, lifetimeHours, visibility, error: '', submitting: true, uploadProgress: 0 }
   try {
@@ -7897,10 +7919,11 @@ async function handleStorySubmit(event) {
   try {
     const storyId = newCommunityStoryId()
     const uploaded = await uploadCommunityStoryMedia({
-      uid: state.currentUser.uid,
+      uid: authorUid,
       storyId,
       file,
       onProgress: (progress) => {
+        if (!communityAuthScope.isCurrent(authToken)) return
         state.storyComposer = { ...state.storyComposer, uploadProgress: progress }
         const bar = app?.querySelector('.community-story-progress span')
         const text = app?.querySelector('.community-story-progress em')
@@ -7908,7 +7931,8 @@ async function handleStorySubmit(event) {
         if (text) text.textContent = `${progress}%`
       }
     })
-    const result = await createCommunityStory({
+    assertCommunityAuthToken(authToken)
+    const result = await trackCommunityAction(`create-story:${storyId}`, createCommunityStory({
       storyId,
       mediaType: uploaded.mediaType,
       text,
@@ -7921,7 +7945,7 @@ async function handleStorySubmit(event) {
       layers: state.storyComposer.layers || [],
       remixOfStoryId: state.storyComposer.remixOfStoryId || '',
       remixPermission: state.storyComposer.remixPermission === true
-    })
+    }))
     const story = normalizeCommunityStory({
       ...(result.story || {}),
       mediaURL: uploaded.mediaURL || result.story?.mediaURL || ''
@@ -7938,6 +7962,7 @@ async function handleStorySubmit(event) {
       render()
     }, 3000)
   } catch (error) {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] create story failed', { code: error?.code, message: error?.message, details: error?.details })
     state.storyComposer = { ...state.storyComposer, submitting: false, error: error?.message || 'Could not publish this story.' }
     render()
@@ -8477,7 +8502,7 @@ async function handleStoryDelete(storyId = '') {
   state.storyViewer = { ...state.storyViewer, error: '' }
   render()
   try {
-    await deleteCommunityStory({ storyId })
+    await trackCommunityAction(`delete-story:${storyId}`, deleteCommunityStory({ storyId }))
     state.stories = state.stories.filter((item) => item.storyId !== storyId)
     scheduleCommunityStoryExpiry()
     state.storyViewer = { open: false, storyId: '', loading: false, error: '' }
@@ -8488,6 +8513,7 @@ async function handleStoryDelete(storyId = '') {
       render()
     }, 3000)
   } catch (error) {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] delete story failed', { code: error?.code, message: error?.message, details: error?.details })
     state.storyViewer = { ...state.storyViewer, error: error?.message || 'Could not delete this story.' }
     render()

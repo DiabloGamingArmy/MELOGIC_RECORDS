@@ -77,3 +77,9 @@ export function suspendCommunityMediaResources({
     try { element.load?.() } catch {}
   })
 }
+
+export function releaseOwnedOperation(registry, key, entry) {
+  if (!registry || registry.get(key) !== entry) return false
+  registry.delete(key)
+  return true
+}

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   createCommunityAuthScope,
   createMonotonicRequestOwner,
+  releaseOwnedOperation,
   restorePreservedCommunitySurface,
   suspendCommunityMediaResources
 } from '../src/community/lifecycleState.js'
@@ -79,4 +80,18 @@ test('Story resource suspension aborts async work, cancels clocks, and releases 
     'abort', 'timeout:11', 'timeout:12', 'frame:13',
     'pause', 'remove:src', 'load'
   ])
+})
+
+test('a stale operation completion cannot remove the new account operation with the same key', () => {
+  const operations = new Map()
+  const oldEntry = { account: 'a' }
+  const newEntry = { account: 'b' }
+  operations.set('publish', oldEntry)
+  operations.clear()
+  operations.set('publish', newEntry)
+
+  assert.equal(releaseOwnedOperation(operations, 'publish', oldEntry), false)
+  assert.equal(operations.get('publish'), newEntry)
+  assert.equal(releaseOwnedOperation(operations, 'publish', newEntry), true)
+  assert.equal(operations.has('publish'), false)
 })
