@@ -2,6 +2,7 @@ import './styles/base.css'
 import './styles/community.css'
 import './styles/communityMobile.css'
 import { communityScrollViewport, setCommunityScroll, syncCommunityMobileHeader } from './community/viewport.js'
+import { createCommunityAuthScope, createMonotonicRequestOwner, restorePreservedCommunitySurface } from './community/lifecycleState.js'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -221,6 +222,7 @@ const state = {
   feedRequestId: 0,
   activeFeedQueryKey: '',
   followingFeedCache: {
+    uid: '',
     key: '',
     posts: []
   },
@@ -362,6 +364,8 @@ let mobileCommunitySurfaceKey = ''
 let desktopCommunitySurfaceKey = ''
 let storyHydrationGeneration = 0
 let desktopCommunityHydrationGeneration = 0
+const communityAuthScope = createCommunityAuthScope()
+const communityFeedRequestOwner = createMonotonicRequestOwner()
 let mobileDiscoverScrollTop = 0
 let mobileDiscoverScrollRestorePending = false
 const communityPendingActions = new Map()
@@ -541,12 +545,121 @@ function dispatchCommunityPendingActionsChanged() {
 function trackCommunityAction(actionId, promise) {
   const id = String(actionId || '').trim()
   if (!id) return promise
+  const authToken = communityAuthScope.current()
   communityPendingActions.set(id, { startedAt: Date.now(), promise })
   dispatchCommunityPendingActionsChanged()
-  return promise.finally(() => {
+  return promise.then((result) => {
+    if (!communityAuthScope.isCurrent(authToken)) {
+      const error = new Error('Community authentication scope changed while the action was pending.')
+      error.code = 'community/auth-scope-changed'
+      throw error
+    }
+    return result
+  }, (error) => {
+    if (!communityAuthScope.isCurrent(authToken)) {
+      const staleError = new Error('Community authentication scope changed while the action was pending.')
+      staleError.code = 'community/auth-scope-changed'
+      throw staleError
+    }
+    throw error
+  }).finally(() => {
     communityPendingActions.delete(id)
     dispatchCommunityPendingActionsChanged()
   })
+}
+
+function isCommunityAuthScopeError(error) {
+  return error?.code === 'community/auth-scope-changed'
+}
+
+function transitionCommunityAuth(nextUser) {
+  const nextUid = String(nextUser?.uid || '').trim()
+  const previousUid = String(state.currentUser?.uid || '').trim()
+  state.currentUser = nextUser || null
+  if (nextUid === previousUid && communityAuthScope.current().uid === nextUid) return false
+
+  communityAuthScope.transition(nextUid)
+  storyHydrationGeneration += 1
+  desktopCommunityHydrationGeneration += 1
+  state.feedRequestId = communityFeedRequestOwner.invalidate()
+  state.activeFeedQueryKey = ''
+  state.feedInitialLoading = false
+  state.feedLoadingMore = false
+  state.feedStillLoading = false
+  state.viewerState = {}
+  state.commentViewerState = {}
+  state.communityFocus = {}
+  state.communityMembership = {}
+  state.followingFeedCache = { uid: nextUid, key: '', posts: [] }
+  if (state.activeTab === 'following') {
+    state.posts = []
+    state.feedCursor = null
+    state.feedHasMore = true
+  }
+
+  recordedStoryViews.clear()
+  communityPendingActions.clear()
+  communityPostReactionVersions.clear()
+  communityPostSaveVersions.clear()
+  communityCommentReactionVersions.clear()
+  communityFocusVersions.clear()
+  dispatchCommunityPendingActionsChanged()
+
+  desktopCommunitySurfaceCache.clear()
+  mobileCommunitySurfaceCache.clear()
+  feedNavigationSnapshot = null
+  desktopCommunitySurfaceKey = ''
+  mobileCommunitySurfaceKey = ''
+
+  resetStoryRecording()
+  if (state.storyComposer.previewURL) URL.revokeObjectURL(state.storyComposer.previewURL)
+  state.storyComposer = {
+    ...state.storyComposer,
+    open: false,
+    file: null,
+    previewURL: '',
+    submitting: false,
+    recording: false,
+    recordingSeconds: 0,
+    uploadProgress: 0,
+    error: '',
+    message: ''
+  }
+  state.composer = {
+    ...state.composer,
+    open: false,
+    attachments: [],
+    fileAttachments: [],
+    submitting: false,
+    uploadProgress: 0,
+    error: ''
+  }
+  state.editPost = { ...state.editPost, open: false, submitting: false, error: '' }
+  state.report = { ...state.report, open: false, submitting: false, error: '', message: '' }
+  state.commentDraft = ''
+  state.replyDrafts = {}
+  state.commentAttachmentDrafts = {}
+  state.commentAttachmentErrors = {}
+  state.commentAttachmentProgress = {}
+  state.commentSubmitting = false
+  state.replySubmittingFor = ''
+  return true
+}
+
+async function rehydrateCommunityAuthState() {
+  const token = communityAuthScope.current()
+  await Promise.allSettled([
+    loadViewerState(),
+    loadCommentViewerState(),
+    loadCommunityFocusState(),
+    state.activeCommunityId ? loadActiveCommunityMembership(state.activeCommunityId) : Promise.resolve(),
+    !state.detailPostId ? loadStories({ renderAfter: false, hydrateIdentity: true }) : Promise.resolve(),
+    state.activeTab === 'following' && state.view.type === 'feed'
+      ? loadFeedPage({ reset: true })
+      : Promise.resolve()
+  ])
+  if (!communityAuthScope.isCurrent(token)) return
+  render()
 }
 
 function hasPendingCommunityActions() {
@@ -658,7 +771,7 @@ function setupCommunityFeedTabs() {
     state.feedStillLoading = false
     state.followingFeedCache = nextTab === 'following'
       ? state.followingFeedCache
-      : { key: '', posts: [] }
+      : { uid: '', key: '', posts: [] }
 
     // Render the selected state synchronously so a network request can never
     // make the tab appear dead. The loader owns pagination/error state.
@@ -3859,11 +3972,8 @@ function updateStoryRegionsOnly() {
   // Detached desktop SPA surfaces are live caches, not historical snapshots.
   // Reconcile their Story rails now so restoring one cannot resurrect expired
   // Stories or stale verification badges.
-  if (!isMobileSpaRuntime()) {
-    desktopCommunitySurfaceCache.forEach((cached) => {
-      updateStoryRegionsInRoot(cached?.fragment, { bind: false })
-    })
-  }
+  desktopCommunitySurfaceCache.forEach((cached) => updateStoryRegionsInRoot(cached?.fragment, { bind: false }))
+  mobileCommunitySurfaceCache.forEach((cached) => updateStoryRegionsInRoot(cached?.fragment, { bind: false }))
   updateCommunityRailFadeState()
 }
 
@@ -3918,11 +4028,8 @@ function updateCommunitySharedRegionsInRoot(root, { bind = false } = {}) {
 
 function reconcileCommunitySharedRegions() {
   updateCommunitySharedRegionsInRoot(app, { bind: true })
-  if (!isMobileSpaRuntime()) {
-    desktopCommunitySurfaceCache.forEach((cached) => {
-      updateCommunitySharedRegionsInRoot(cached?.fragment, { bind: false })
-    })
-  }
+  desktopCommunitySurfaceCache.forEach((cached) => updateCommunitySharedRegionsInRoot(cached?.fragment, { bind: false }))
+  mobileCommunitySurfaceCache.forEach((cached) => updateCommunitySharedRegionsInRoot(cached?.fragment, { bind: false }))
   updateCommunityRailFadeState()
 }
 
@@ -4535,7 +4642,7 @@ async function loadFeedCommunityMetadata(requestId = state.feedRequestId) {
   if (!sourcePosts.length) return
   try {
     const hydrated = await hydrateCommunityPostCommunities(sourcePosts)
-    if (requestId !== state.feedRequestId) return
+    if (!communityFeedRequestOwner.isCurrent(requestId)) return
     const hydratedById = new Map(hydrated.map((post) => [post.postId, post]))
     state.posts = state.posts.map((post) => hydratedById.get(post.postId) || post)
   } catch (error) {
@@ -4556,7 +4663,7 @@ async function loadFeedEnrichment(requestId = state.feedRequestId, { localOnly =
     loadTopCommentPreviews(),
     loadFeedCommunityMetadata(requestId)
   ])
-  if (requestId !== state.feedRequestId) return
+  if (!communityFeedRequestOwner.isCurrent(requestId)) return
   logCommunityPerf('feed enrichment complete', { durationMs: Math.round(performance.now() - startedAt), posts: state.posts.length })
   renderFeedRegionOnly({ reset: false })
 }
@@ -4586,17 +4693,25 @@ async function loadStories({ renderAfter = false, hydrateIdentity = true } = {})
     const requestedStoryId = new URLSearchParams(window.location.search).get('story') || ''
     if (requestedStoryId && state.stories.some((story) => story.storyId === requestedStoryId)) {
       state.storyViewer = { ...state.storyViewer, open: true, storyId: requestedStoryId, error: '' }
-      recordedStoryViews.add(requestedStoryId)
-      recordCommunityStoryView(requestedStoryId).then((result) => {
-        if (Number.isFinite(Number(result.viewCount))) {
-          state.stories = state.stories.map((story) => story.storyId === requestedStoryId ? { ...story, viewCount: Number(result.viewCount) } : story)
-        }
-      }).catch(() => recordedStoryViews.delete(requestedStoryId))
+      if (state.currentUser?.uid) {
+        const authToken = communityAuthScope.current()
+        recordedStoryViews.add(requestedStoryId)
+        recordCommunityStoryView(requestedStoryId).then((result) => {
+          if (!communityAuthScope.isCurrent(authToken)) return
+          if (Number.isFinite(Number(result.viewCount))) {
+            state.stories = state.stories.map((story) => story.storyId === requestedStoryId ? { ...story, viewCount: Number(result.viewCount) } : story)
+          }
+        }).catch(() => {
+          if (communityAuthScope.isCurrent(authToken)) recordedStoryViews.delete(requestedStoryId)
+        })
+      }
     }
   } catch (error) {
+    if (generation !== storyHydrationGeneration) return
     console.warn('[community] stories load failed', { code: error?.code, message: error?.message, details: error?.details })
     state.storiesError = error?.message || 'Stories could not be loaded.'
   } finally {
+    if (generation !== storyHydrationGeneration) return
     state.storiesLoading = false
     if (renderAfter) updateStoryRegionsOnly()
   }
@@ -4998,7 +5113,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
   if (reset && state.feedInitialLoading && state.activeFeedQueryKey === queryKey) return
   if (reset) resetFeedPagination()
   if (!reset && (!state.feedHasMore || state.feedLoadingMore || state.feedInitialLoading)) return
-  const requestId = reset ? state.feedRequestId + 1 : state.feedRequestId
+  const requestId = communityFeedRequestOwner.next()
   state.feedRequestId = requestId
   if (reset) state.activeFeedQueryKey = queryKey
   state.feedError = ''
@@ -5018,7 +5133,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
   let stillLoadingTimer = null
   if (reset) {
     stillLoadingTimer = window.setTimeout(() => {
-      if (state.feedRequestId === requestId && state.feedInitialLoading) {
+      if (communityFeedRequestOwner.isCurrent(requestId) && state.feedInitialLoading) {
         state.feedStillLoading = true
         if (localOnly) renderFeedRegionOnly({ reset: true })
         else render()
@@ -5033,14 +5148,16 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
     let hasMore = false
     if (state.activeTab === 'following') {
       if (state.currentUser?.uid) {
-        if (reset || state.followingFeedCache.key !== queryKey) {
-          const followedPosts = await withFeedTimeout(listFollowedCreatorPosts(state.currentUser.uid, {
+        const viewerUid = state.currentUser.uid
+        if (reset || state.followingFeedCache.uid !== viewerUid || state.followingFeedCache.key !== queryKey) {
+          const followedPosts = await withFeedTimeout(listFollowedCreatorPosts(viewerUid, {
             limitCount: COMMUNITY_FOLLOWING_CACHE_SIZE,
             selectedCommunityIds: state.selectedCommunityFilters,
             tag: state.activeTag,
             search: state.feedSearch
           }))
           state.followingFeedCache = {
+            uid: viewerUid,
             key: queryKey,
             posts: filterPostsForActiveTab(followedPosts)
           }
@@ -5060,7 +5177,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
       cursor = result.cursor || null
       hasMore = Boolean(result.hasMore)
     }
-    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
+    if (!communityFeedRequestOwner.isCurrent(requestId) || queryKey !== state.activeFeedQueryKey) return
 
     // melogic-community-progressive-community-metadata-v1
     // Feed documents already carry denormalized communitySlug/communityName,
@@ -5076,7 +5193,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
       hasMore
     })
   } catch (error) {
-    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
+    if (!communityFeedRequestOwner.isCurrent(requestId) || queryKey !== state.activeFeedQueryKey) return
     console.warn('[community] feed page load failed', { code: error?.code, message: error?.message, details: error?.details })
     if (isFirestoreIndexError(error)) {
       const indexUrl = firebaseIndexUrl(error)
@@ -5089,7 +5206,7 @@ async function loadFeedPage({ reset = false, localOnly = false } = {}) {
     }
   } finally {
     if (stillLoadingTimer) window.clearTimeout(stillLoadingTimer)
-    if (requestId !== state.feedRequestId || queryKey !== state.activeFeedQueryKey) return
+    if (!communityFeedRequestOwner.isCurrent(requestId) || queryKey !== state.activeFeedQueryKey) return
     state.feedInitialLoading = false
     state.feedLoadingMore = false
     state.feedStillLoading = false
@@ -5559,6 +5676,7 @@ async function handleLike(postId) {
       updatePostActionDom(postId)
     })
     .catch((error) => {
+      if (isCommunityAuthScopeError(error)) return
       console.warn('[community] like failed', { code: error?.code, message: error?.message, details: error?.details })
       setPostViewerFlag(postId, 'liked', previousLiked)
       setPostViewerFlag(postId, 'disliked', previousDisliked)
@@ -5598,6 +5716,7 @@ async function handleDislike(postId) {
       updatePostActionDom(postId)
     })
     .catch((error) => {
+      if (isCommunityAuthScopeError(error)) return
       console.warn('[community] dislike failed', { code: error?.code, message: error?.message, details: error?.details })
       setPostViewerFlag(postId, 'liked', previousLiked)
       setPostViewerFlag(postId, 'disliked', previousDisliked)
@@ -5631,6 +5750,7 @@ async function handleSave(postId) {
       updatePostActionDom(postId)
     })
     .catch((error) => {
+      if (isCommunityAuthScopeError(error)) return
       console.warn('[community] save failed', { code: error?.code, message: error?.message, details: error?.details })
       setPostViewerFlag(postId, 'saved', previousSaved)
       setPostCount(postId, 'saves', previousSaves)
@@ -5657,6 +5777,7 @@ async function handleShare(postId) {
         updatePostActionDom(postId)
       }
     }).catch((error) => {
+      if (isCommunityAuthScopeError(error)) return
       console.warn('[community] share count failed', { code: error?.code, message: error?.message })
       setPostCount(postId, 'shares', previousShares)
       updatePostActionDom(postId)
@@ -5765,6 +5886,7 @@ async function handleEditPostSubmit(event) {
       showCommunityToast('Post updated.')
     })
     .catch((error) => {
+      if (isCommunityAuthScopeError(error)) return
       console.warn('[community] edit post failed', { code: error?.code, message: error?.message, details: error?.details })
       state.posts = state.posts.map((item) => item.postId === postId ? previousPost : item)
       render()
@@ -5809,6 +5931,7 @@ async function handleDeleteOwnPost(postId = '') {
   showCommunityToast('Post removed.')
   trackCommunityAction(actionId, deleteOwnCommunityPost({ postId, reason: 'Author removed post from community.' }))
     .catch((error) => {
+      if (isCommunityAuthScopeError(error)) return
       console.warn('[community] delete post failed', { code: error?.code, message: error?.message, details: error?.details })
       state.posts = previousPosts
       showCommunityToast('Could not delete post. Restored.')
@@ -5964,6 +6087,7 @@ async function handleCommentSubmit(event) {
     else updateDetailCommentCount(1)
     renderCommentState()
   } catch (error) {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] create comment failed', { code: error?.code, message: error?.message, details: error?.details })
     await deleteCommunityCommentAttachments(attachments)
     state.commentSubmitting = false
@@ -6023,6 +6147,7 @@ async function handleReplySubmit(event, parentCommentId = '') {
     else updateDetailCommentCount(1)
     renderCommentState()
   } catch (error) {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] create reply failed', { code: error?.code, message: error?.message, details: error?.details })
     await deleteCommunityCommentAttachments(attachments)
     state.replySubmittingFor = ''
@@ -6057,6 +6182,7 @@ async function handleCommentLike(commentId = '') {
     if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
     updateCommentActionDom(commentId)
   }).catch((error) => {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] comment like failed', { code: error?.code, message: error?.message, details: error?.details })
     state.commentViewerState[commentId] = { liked: previousLiked, disliked: previousDisliked }
     updateCommentCount(commentId, { likeCount: previousLikeCount })
@@ -6092,6 +6218,7 @@ async function handleCommentDislike(commentId = '') {
     if (Number.isFinite(Number(result.dislikeCount))) updateCommentCount(commentId, { dislikeCount: Number(result.dislikeCount) })
     updateCommentActionDom(commentId)
   }).catch((error) => {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] comment dislike failed', { code: error?.code, message: error?.message, details: error?.details })
     state.commentViewerState[commentId] = { liked: previousLiked, disliked: previousDisliked }
     updateCommentCount(commentId, { likeCount: previousLikeCount })
@@ -6136,6 +6263,7 @@ async function handleFeedPreviewCommentDelete(commentId = '', postId = '') {
     updatePostActionDom(postId)
     updateTopCommentPreviewDom(postId)
   } catch (error) {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] feed preview comment delete failed', { postId, commentId, code: error?.code, message: error?.message })
     state.topCommentPreviews[postId] = previousPreview
     setPostCount(postId, 'comments', previousCount)
@@ -6192,6 +6320,7 @@ async function handleCommentDelete(commentId = '', postId = state.detailPostId) 
     if (Number.isFinite(Number(result.commentCount))) updateDetailCommentCount(0, Number(result.commentCount))
     renderCommentState()
   }).catch((error) => {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] comment delete failed', { code: error?.code, message: error?.message, details: error?.details })
     state.comments = previousComments
     state.commentsByPostId = previousCommentsByPostId
@@ -6206,8 +6335,10 @@ async function handleCommentDelete(commentId = '', postId = state.detailPostId) 
 async function loadActiveCommunityMembership(communityId = '') {
   const id = String(communityId || '').trim()
   if (!id || !state.currentUser?.uid) return
+  const authToken = communityAuthScope.current()
   try {
     const result = await getCommunityMembership(id)
+    if (!communityAuthScope.isCurrent(authToken)) return
     state.communityMembership[id] = {
       loading: false,
       policy: result?.policy || 'open',
@@ -6215,6 +6346,7 @@ async function loadActiveCommunityMembership(communityId = '') {
       error: ''
     }
   } catch (error) {
+    if (!communityAuthScope.isCurrent(authToken)) return
     console.warn('[community] membership load failed', { code: error?.code, message: error?.message })
     state.communityMembership[id] = { loading: false, policy: 'open', membership: null, error: error?.message || 'Membership unavailable.' }
   }
@@ -6241,6 +6373,7 @@ async function handleCommunityMembership(communityId = '', action = 'join') {
     else showCommunityToast('You joined this community.')
     render()
   } catch (error) {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] membership action failed', { code: error?.code, message: error?.message })
     state.communityMembership[id] = { ...(previous || {}), loading: false, error: error?.message || 'Membership could not be updated.' }
     showCommunityToast(error?.message || 'Membership could not be updated.')
@@ -6292,6 +6425,7 @@ async function handleToggleFocus(communityId) {
       render()
     })
     .catch((error) => {
+      if (isCommunityAuthScopeError(error)) return
       console.warn('[community] focus failed', { code: error?.code, message: error?.message, details: error?.details })
       state.communityFocus[communityId] = previousFocused
       state.communities = previousCommunities
@@ -6896,7 +7030,7 @@ async function applyCommunityFilterSelection(nextFilters = []) {
   state.selectedCommunityFilters=normalized
   state.feedCursor=null;state.feedHasMore=true;state.feedError='';state.feedStillLoading=false
   state.activeFeedQueryKey=''
-  state.followingFeedCache={key:'',posts:[]}
+  state.followingFeedCache = { uid: '', key: '', posts: [] }
   syncCommunityFilterControls()
   await loadFeed({reset:true})
 }
@@ -7075,7 +7209,6 @@ function captureMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
       feedHasMore: state.feedHasMore,
       feedCursor: state.feedCursor,
       feedError: state.feedError,
-      feedRequestId: state.feedRequestId,
       activeFeedQueryKey: state.activeFeedQueryKey,
       followingFeedCache: state.followingFeedCache,
       communityFilters: { ...state.communityFilters }
@@ -7103,9 +7236,15 @@ function restoreMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
     communityMembership: state.communityMembership
   }
   Object.assign(state, cached.state, sharedState)
-  root.replaceChildren(cached.fragment)
+  restorePreservedCommunitySurface({
+    root,
+    fragment: cached.fragment,
+    reconcile: (surface) => {
+      updateStoryRegionsInRoot(surface, { bind: true })
+      updateCommunitySharedRegionsInRoot(surface, { bind: true })
+    }
+  })
   mobileCommunitySurfaceKey = key
-  bindEvents()
   syncCommunityMobileHeader(false, app)
   setCommunityScroll(cached.scrollTop, root)
   window.requestAnimationFrame(() => setCommunityScroll(cached.scrollTop, root))
@@ -7185,7 +7324,6 @@ function captureDesktopCommunitySurface(key = desktopCommunitySurfaceKeyFor()) {
       feedHasMore: state.feedHasMore,
       feedCursor: state.feedCursor,
       feedError: state.feedError,
-      feedRequestId: state.feedRequestId,
       activeFeedQueryKey: state.activeFeedQueryKey,
       followingFeedCache: state.followingFeedCache
     }
@@ -7212,9 +7350,15 @@ function restoreDesktopCommunitySurface(key) {
     storiesError: state.storiesError
   }
   Object.assign(state, cached.state, sharedState)
-  root.replaceChildren(cached.fragment)
+  restorePreservedCommunitySurface({
+    root,
+    fragment: cached.fragment,
+    reconcile: (surface) => {
+      updateStoryRegionsInRoot(surface, { bind: true })
+      updateCommunitySharedRegionsInRoot(surface, { bind: true })
+    }
+  })
   desktopCommunitySurfaceKey = key
-  bindEvents()
   const viewport = communityScrollViewport(root)
   if (viewport) viewport.scrollTop = cached.scrollTop
   window.requestAnimationFrame(() => {
@@ -7303,7 +7447,6 @@ function captureFeedNavigationSnapshot() {
       feedHasMore: state.feedHasMore,
       feedCursor: state.feedCursor,
       feedError: state.feedError,
-      feedRequestId: state.feedRequestId,
       activeFeedQueryKey: state.activeFeedQueryKey,
       followingFeedCache: state.followingFeedCache
     }
@@ -7325,7 +7468,14 @@ function restoreFeedNavigationSnapshot() {
     error: '',
     imageViewer: { open: false, url: '', name: '' }
   })
-  root.replaceChildren(snapshot.fragment)
+  restorePreservedCommunitySurface({
+    root,
+    fragment: snapshot.fragment,
+    reconcile: (surface) => {
+      updateStoryRegionsInRoot(surface, { bind: true })
+      updateCommunitySharedRegionsInRoot(surface, { bind: true })
+    }
+  })
   root.querySelectorAll('.community-image-viewer-backdrop').forEach((overlay) => overlay.remove())
   document.body.classList.remove('community-modal-open')
   syncCommunityMobileHeader(false, app)
@@ -8272,6 +8422,7 @@ async function handleReportSubmit(event) {
     state.report = { ...state.report, submitting: false, message: 'Thank you. Your report has been submitted.' }
     render()
   } catch (error) {
+    if (isCommunityAuthScopeError(error)) return
     console.warn('[community] report failed', { code: error?.code, message: error?.message, details: error?.details })
     state.report = { ...state.report, submitting: false, error: error?.message || 'Could not submit this report.' }
     render()
@@ -9268,6 +9419,9 @@ function syncCommunityRouteStateFromLocation() {
   if (requestedFeed === 'for-you' || requestedFeed === 'following') {
     state.activeTab = requestedFeed
     state.activeTopicLabel = requestedFeed === 'following' ? 'Following' : 'For You'
+  } else if (window.location.pathname === ROUTES.community) {
+    state.activeTab = 'for-you'
+    state.activeTopicLabel = 'For You'
   }
   state.detailPostId = parseDetailPostId()
   state.focusedCommentId = parseFeedParam('comment')
@@ -9332,7 +9486,7 @@ async function bootstrapCommunityDocument() {
     bindCommunityGlobalUiOnce()
 
     const user = await waitForInitialAuthState()
-    state.currentUser = user
+    transitionCommunityAuth(user)
     render()
     await loadCommunity()
     if (isMobileSpaRuntime() && !state.detailPostId) mobileCommunitySurfaceKey = mobileCommunitySurfaceKeyFor()
@@ -9340,24 +9494,9 @@ async function bootstrapCommunityDocument() {
 
     if (!communityAuthUnsubscribe) {
       communityAuthUnsubscribe = subscribeToAuthState((nextUser) => {
-        state.currentUser = nextUser
-        // Auth/viewer enrichment is not a Community topology change. Never
-        // rebuild the desktop scroll owner merely to update reaction state.
-        Promise.all([
-          loadViewerState(),
-          loadCommentViewerState(),
-          !state.detailPostId
-            ? loadStories({ renderAfter: true, hydrateIdentity: true }).catch(() => null)
-            : Promise.resolve()
-        ])
-          .then(() => {
-            renderPostViewerStateOnly()
-            allLoadedComments().forEach((comment) => updateCommentActionDom(comment.commentId))
-          })
-          .catch(() => {
-            renderPostViewerStateOnly()
-            allLoadedComments().forEach((comment) => updateCommentActionDom(comment.commentId))
-          })
+        if (!transitionCommunityAuth(nextUser)) return
+        render()
+        void rehydrateCommunityAuthState()
       })
     }
 
@@ -9436,4 +9575,3 @@ const isCommunityDocumentRoute =
 if (isCommunityDocumentRoute) {
   void bootstrapCommunityDocument()
 }
-
