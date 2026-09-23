@@ -67,6 +67,8 @@ function configureInlineVideo(video, { resetMute = false } = {}) {
   video.removeAttribute('controls')
   video.autoplay = false
   video.removeAttribute('autoplay')
+  video.loop = true
+  video.setAttribute('loop', '')
   if (resetMute) {
     video.muted = true
     video.defaultMuted = true
@@ -533,9 +535,16 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     })
     listen(video, 'ended', () => {
       clearReliabilityTimers(video, { keepRelease: true })
-      if (video === activeVideo) activeVideo = null
       reliabilityFor(video).resumeTime = 0
       video.dataset.communityVideoResumeTime = ''
+      // Native loop should normally prevent "ended", but keep a fallback for
+      // browsers/WebViews that still emit it around source/recovery changes.
+      if (video.loop && !userPaused.has(video) && !playbackBlockedByUi() && ratioFor(video) >= STOP_THRESHOLD) {
+        try { video.currentTime = 0 } catch {}
+        requestPlayback(video)
+        return
+      }
+      if (video === activeVideo) activeVideo = null
       setVideoState(video, 'ended')
     })
     listen(video, 'loadstart', () => setVideoState(video, 'loading', 'Loading video…'))

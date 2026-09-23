@@ -2906,6 +2906,7 @@ function renderUploadedPostAttachment(attachment = {}, { priority = false } = {}
             data-community-storage-path="${escapeHtml(path)}"
             data-community-feed-video
             muted
+            loop
             playsinline
             webkit-playsinline
             preload="none"
