@@ -14127,3 +14127,67 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     bottom:16px !important;
   }
 }
+
+
+/* melogic-community-feed-video-foundation-v1 */
+.community-post-file-attachment.is-video {
+  position: relative;
+  background: #000;
+}
+
+.community-feed-video-frame {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.community-feed-video-frame > video[data-community-feed-video] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  background: #000;
+  pointer-events: none;
+}
+
+.community-feed-video-frame > video[data-community-feed-video]::-webkit-media-controls,
+.community-feed-video-frame > video[data-community-feed-video]::-webkit-media-controls-enclosure {
+  display: none !important;
+}
+
+.community-feed-video-load-state {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  padding: 1rem;
+  background: rgb(0 0 0 / 42%);
+  color: rgb(255 255 255 / 82%);
+  font-size: .78rem;
+  font-weight: 650;
+  letter-spacing: .01em;
+  pointer-events: none;
+}
+
+.community-post-file-attachment.is-video:is(
+  [data-community-video-state="resolving"],
+  [data-community-video-state="loading"],
+  [data-community-video-state="error"],
+  [data-community-video-state="blocked"]
+) .community-feed-video-load-state {
+  display: grid;
+}
+
+.community-post-file-attachment.is-video[data-community-video-state="error"] .community-feed-video-load-state {
+  background: rgb(0 0 0 / 68%);
+}
+
+@media (max-width: 760px) {
+  .community-feed-video-frame,
+  .community-feed-video-frame > video[data-community-feed-video] {
+    width: 100%;
+    max-width: none;
+  }
+}

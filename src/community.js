@@ -3,6 +3,7 @@ import './styles/community.css'
 import './styles/communityMobile.css'
 import { communityScrollViewport, setCommunityScroll, syncCommunityMobileHeader } from './community/viewport.js'
 import { createCommunityAuthScope, createMonotonicRequestOwner, releaseOwnedOperation, restorePreservedCommunitySurface, suspendCommunityMediaResources } from './community/lifecycleState.js'
+import { createCommunityFeedVideoCoordinator } from './community/videoPlayback.js'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -74,6 +75,7 @@ import { getStorageAssetUrl } from './firebase/storageAssets'
 import communityLoadingLogoUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
 
 const app = document.querySelector('#app')
+const communityFeedVideoPlayback = createCommunityFeedVideoCoordinator()
 // melogic-community-lifecycle-contract-v4b
 // Page ownership is established by bootstrap/activate, not module evaluation.
 let communityBootstrapped = false
@@ -2895,9 +2897,24 @@ function renderUploadedPostAttachment(attachment = {}, { priority = false } = {}
   }
   if (attachment.type === 'video') {
     return `
-      <article class="community-post-file-attachment is-video" data-stop-card-nav>
-        ${url ? `<video src="${escapeHtml(url)}" data-community-storage-path="${escapeHtml(path)}" controls preload="metadata"${dimensions}></video>` : '<span class="community-attachment-load-state">Video unavailable</span>'}
-        <small>${escapeHtml(name)}</small>
+      <article class="community-post-file-attachment is-video" data-community-video-shell data-community-video-state="${url ? 'idle' : 'resolving'}" data-stop-card-nav>
+        <div class="community-feed-video-frame">
+          <video
+            ${url ? `src="${escapeHtml(url)}"` : ''}
+            data-community-storage-path="${escapeHtml(path)}"
+            data-community-feed-video
+            muted
+            playsinline
+            webkit-playsinline
+            preload="metadata"
+            controlslist="nodownload nofullscreen noremoteplayback"
+            disablepictureinpicture
+            disableremoteplayback
+            aria-label="${escapeHtml(name)}"
+            ${dimensions}
+          ></video>
+          <span class="community-feed-video-load-state" data-community-video-load-state aria-live="polite">Loading video…</span>
+        </div>
       </article>
     `
   }
@@ -4545,6 +4562,7 @@ function render() {
   syncCommunityMobileHeader(Boolean(state.detailPostId), app)
   communityRoot.innerHTML = renderCommunityViewContent()
   bindEvents()
+  communityFeedVideoPlayback.sync(communityRoot)
   restoreCommunityDesktopScrollAnchor(desktopScrollAnchor)
   if (isMobileSpaRuntime() && state.view.type === 'communities') {
     const main = communityRoot.querySelector('.community-main')
@@ -4575,9 +4593,16 @@ function renderPostMediaOnly(){
   app?.querySelectorAll('[data-community-storage-path]').forEach((node)=>{
     const path=node.getAttribute('data-community-storage-path')||''
     const url=state.attachmentMediaUrls[path]||''
-    if(url && !node.getAttribute('src')) node.setAttribute('src',url)
+    if(url && !node.getAttribute('src')) {
+      node.setAttribute('src',url)
+      if(node.matches?.('video[data-community-feed-video]')) {
+        node.closest?.('[data-community-video-shell]')?.setAttribute('data-community-video-state','loading')
+        try { node.load?.() } catch {}
+      }
+    }
   })
   bindCommunityImageReliability(app)
+  communityFeedVideoPlayback.sync(app?.querySelector('[data-community-root]') || app)
 }
 /*
  * melogic-mobile-native-activation-v1
@@ -7355,6 +7380,7 @@ function restoreMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
   updateCommunityRailFadeState()
   setupFeedPaginationObserver()
   hydrateCommunityIdentityDom()
+  communityFeedVideoPlayback.sync(root)
   return true
 }
 
@@ -7474,6 +7500,7 @@ function restoreDesktopCommunitySurface(key) {
   hydrateCommunityIdentityDom()
   updateStoryRegionsOnly()
   reconcileCommunitySharedRegions()
+  communityFeedVideoPlayback.sync(root)
   return true
 }
 
@@ -7587,6 +7614,7 @@ function restoreFeedNavigationSnapshot() {
   updateTopicArrowState()
   updateCommunityRailFadeState()
   setupFeedPaginationObserver()
+  communityFeedVideoPlayback.sync(root)
   return true
 }
 
@@ -9736,16 +9764,19 @@ if (isMobileSpaRuntime()) {
       await consumeCameraCommunityMediaHandoff()
       if (!state.detailPostId) mobileCommunitySurfaceKey = mobileCommunitySurfaceKeyFor()
       resumeStoryViewerResources()
+      communityFeedVideoPlayback.resume(app?.querySelector('[data-community-root]') || app)
       void hydrateMobileCommunitySharedState({ directory: state.view.type === 'communities' })
       if (state.activeCommunityId) void loadActiveCommunityMembership(state.activeCommunityId)
     },
     async deactivate({ instance }) {
       document.body.classList.remove('community-modal-open')
+      communityFeedVideoPlayback.suspend()
       suspendStoryViewerResources({ releaseMedia: true })
       resetStoryRecording()
       detachCommunitySurface(instance)
     },
     async unmount({ instance }) {
+      communityFeedVideoPlayback.suspend()
       suspendStoryViewerResources({ releaseMedia: true })
       resetStoryRecording()
       instance.fragment = null
