@@ -12,6 +12,12 @@ const RELEASE_DELAY_MS = 8000
 const RETRY_DELAYS_MS = [700, 2200, 5500]
 const RETRY_PARAM = 'melogic_video_retry'
 
+// One session-wide audio preference for every Community feed video. It starts
+// muted on each fresh page load, then follows the user's latest mute/unmute
+// choice across For You, Following, restored feed surfaces, and newly rendered
+// videos for the remainder of that page session.
+let communityFeedMuted = true
+
 function clamp(value, min = 0, max = 1) {
   return Math.min(max, Math.max(min, Number(value) || 0))
 }
@@ -212,13 +218,26 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     syncControlState(video)
   }
 
-  function setVideoMuted(video, muted) {
+  function applyGlobalMutedState(video) {
     if (!video) return
-    video.muted = Boolean(muted)
-    video.defaultMuted = Boolean(muted)
-    if (muted) video.setAttribute('muted', '')
+    video.muted = communityFeedMuted
+    video.defaultMuted = communityFeedMuted
+    if (communityFeedMuted) video.setAttribute('muted', '')
     else video.removeAttribute('muted')
     syncControlState(video)
+  }
+
+  function setVideoMuted(video, muted) {
+    if (!video) return
+    communityFeedMuted = Boolean(muted)
+
+    // Update every currently registered feed video immediately. Cached or
+    // detached feed surfaces inherit this same module-level state the moment
+    // they are restored and bound again.
+    const targets = new Set(visibility.keys())
+    targets.add(video)
+    if (activeVideo) targets.add(activeVideo)
+    targets.forEach((candidate) => applyGlobalMutedState(candidate))
   }
 
   function baseSourceFor(video) {
@@ -502,8 +521,8 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
 
   function bindVideo(video) {
     if (!video || bindings.has(video)) return
-    const firstRegistration = video.dataset.communityVideoInitialized !== 'true'
-    configureInlineVideo(video, { resetMute: firstRegistration })
+    configureInlineVideo(video, { resetMute: false })
+    applyGlobalMutedState(video)
     video.dataset.communityVideoInitialized = 'true'
     const existingSource = cleanSource(video.getAttribute('data-community-video-src') || video.getAttribute('src') || '')
     if (existingSource) video.setAttribute('data-community-video-src', existingSource)
