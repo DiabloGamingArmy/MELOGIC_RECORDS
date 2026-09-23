@@ -292,8 +292,8 @@ export function createCommunityFeedVideoCoordinator() {
   }
 
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  globalThis.addEventListener?.('pagehide', pauseAll)
-  globalThis.addEventListener?.('pageshow', scheduleEvaluate)
+  globalThis.addEventListener?.('pagehide', () => pauseAll())
+  globalThis.addEventListener?.('pageshow', () => scheduleEvaluate())
 
   return {
     sync,
