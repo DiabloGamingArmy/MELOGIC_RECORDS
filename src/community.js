@@ -5201,6 +5201,7 @@ function renderFeedRegionOnly({ reset = false } = {}) {
   if (reset || !feed || !state.posts.length) {
     region.innerHTML = renderFeed()
     bindFeedRegionEvents(region)
+    communityFeedVideoPlayback.sync(region)
     setupFeedPaginationObserver()
     return
   }
@@ -5233,6 +5234,7 @@ function renderFeedRegionOnly({ reset = false } = {}) {
       : '<div class="community-feed-more-state">You are caught up.</div>'
   bindFeedRegionEvents(footerHolder)
   feed.append(footerHolder.firstElementChild)
+  communityFeedVideoPlayback.sync(region)
   setupFeedPaginationObserver()
 }
 
