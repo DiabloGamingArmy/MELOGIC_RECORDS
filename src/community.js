@@ -75,7 +75,9 @@ import { getStorageAssetUrl } from './firebase/storageAssets'
 import communityLoadingLogoUrl from './assets/brand/melogic-logo-mark-white-transparent.png'
 
 const app = document.querySelector('#app')
-const communityFeedVideoPlayback = createCommunityFeedVideoCoordinator()
+const communityFeedVideoPlayback = createCommunityFeedVideoCoordinator({
+  onDoubleLike: (postId) => handleVideoDoubleLike(postId)
+})
 // melogic-community-lifecycle-contract-v4b
 // Page ownership is established by bootstrap/activate, not module evaluation.
 let communityBootstrapped = false
@@ -2913,6 +2915,10 @@ function renderUploadedPostAttachment(attachment = {}, { priority = false } = {}
             aria-label="${escapeHtml(name)}"
             ${dimensions}
           ></video>
+          <button type="button" class="community-feed-video-hit-target" data-community-video-toggle aria-label="Pause video"></button>
+          <span class="community-feed-video-play-indicator" data-community-video-play-indicator aria-hidden="true">${iconSvg('play')}</span>
+          <button type="button" class="community-feed-video-mute-toggle" data-community-video-mute aria-label="Unmute video" aria-pressed="true" data-muted="true">${iconSvg('volume2')}</button>
+          <span class="community-feed-video-like-burst" data-community-video-like-burst aria-hidden="true">${iconSvg('thumbsUp')}</span>
           <span class="community-feed-video-load-state" data-community-video-load-state aria-live="polite">Loading video…</span>
         </div>
       </article>
@@ -5773,6 +5779,19 @@ async function handleComposerSubmit(event) {
     state.composer.error = error?.message || 'Could not publish this post.'
     render()
   }
+}
+
+function handleVideoDoubleLike(postId) {
+  const cleanPostId = String(postId || '').trim()
+  if (!cleanPostId) return
+  // Double-tap means "like", never "toggle like off". If the post is already
+  // liked, keep the authoritative state intact and let the playback layer show
+  // its acknowledgement animation without issuing another write.
+  if (state.viewerState[cleanPostId]?.liked) {
+    updatePostActionDom(cleanPostId)
+    return
+  }
+  void handleLike(cleanPostId)
 }
 
 async function handleLike(postId) {
