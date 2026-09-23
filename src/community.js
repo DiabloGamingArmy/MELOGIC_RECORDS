@@ -7335,6 +7335,7 @@ function captureMobileCommunitySurface(key = mobileCommunitySurfaceKeyFor()) {
   if (!isMobileSpaRuntime() || !key || state.detailPostId) return false
   const root = app?.querySelector('[data-community-root]')
   if (!root) return false
+  communityFeedVideoPlayback.pause(root)
   const viewport = communityScrollViewport(root)
   const fragment = document.createDocumentFragment()
   while (root.firstChild) fragment.append(root.firstChild)
@@ -7451,6 +7452,7 @@ function captureDesktopCommunitySurface(key = desktopCommunitySurfaceKeyFor()) {
   if (isMobileSpaRuntime() || !key) return false
   const root = app?.querySelector('[data-community-root]')
   if (!root || state.detailPostId) return false
+  communityFeedVideoPlayback.pause(root)
   const viewport = communityScrollViewport(root)
   const fragment = document.createDocumentFragment()
   while (root.firstChild) fragment.append(root.firstChild)
@@ -7573,6 +7575,7 @@ function captureFeedNavigationSnapshot() {
   const root = app?.querySelector('[data-community-root]')
   const main = root?.querySelector('.community-main')
   if (!root || !main || state.detailPostId) return
+  communityFeedVideoPlayback.pause(root)
   const scrollTop = communityScrollViewport(root).scrollTop
   if (root.contains(document.activeElement)) document.activeElement?.blur?.()
   const fragment = document.createDocumentFragment()

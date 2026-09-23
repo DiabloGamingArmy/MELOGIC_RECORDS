@@ -14382,3 +14382,18 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
   outline: 2px solid #fff;
   outline-offset: 2px;
 }
+
+
+/* melogic-community-feed-video-browser-hardening-v4 */
+.community-post-file-attachment.is-video[data-community-video-state="blocked"] .community-feed-video-load-state {
+  display: none;
+}
+
+.community-post-file-attachment.is-video[data-community-video-state="blocked"] .community-feed-video-play-indicator,
+.community-post-file-attachment.is-video[data-community-video-state="blocked"] .community-feed-video-mute-toggle {
+  visibility: visible;
+}
+
+.community-post-file-attachment.is-video[data-community-video-state="resolving"] .community-feed-video-hit-target {
+  cursor: default;
+}

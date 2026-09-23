@@ -138,7 +138,8 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
         retryTimer: 0,
         releaseTimer: 0,
         resumeTime: Number(video?.dataset?.communityVideoResumeTime || 0) || 0,
-        exhausted: false
+        exhausted: false,
+        intentionalRelease: false
       }
       reliabilityState.set(video, state)
     }
@@ -248,6 +249,10 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     return Boolean(video?.getAttribute?.('src') || video?.currentSrc)
   }
 
+  function playbackBlockedByUi() {
+    return Boolean(document.hidden || document.body?.classList?.contains('community-modal-open'))
+  }
+
   function attachSource(video, { retryAttempt = 0 } = {}) {
     const source = baseSourceFor(video)
     if (!video || !source) {
@@ -258,6 +263,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     if (video.getAttribute('src') === desired && sourceAttached(video)) return true
 
     const state = reliabilityFor(video)
+    state.intentionalRelease = false
     state.generation += 1
     clearTimer(state.releaseTimer)
     state.releaseTimer = 0
@@ -274,16 +280,21 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     const source = baseSourceFor(video)
     if (!sourceAttached(video) || !source) return
     saveResumeTime(video)
+    const state = reliabilityFor(video)
+    state.intentionalRelease = true
     try { video.pause?.() } catch {}
     video.removeAttribute('src')
     video.preload = 'none'
     video.setAttribute('preload', 'none')
     try { video.load?.() } catch {}
     if (video === activeVideo) activeVideo = null
-    const state = reliabilityFor(video)
     state.generation += 1
     clearReliabilityTimers(video)
     setVideoState(video, userPaused.has(video) ? 'paused' : 'idle')
+    globalThis.setTimeout(() => {
+      const current = reliabilityState.get(video)
+      if (current) current.intentionalRelease = false
+    }, 0)
   }
 
   function scheduleRelease(video) {
@@ -341,7 +352,12 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
   function recoverVideo(video, { manual = false, reason = 'error' } = {}) {
     if (!video) return
     const state = reliabilityFor(video)
-    if (state.retryTimer) return
+    if (state.retryTimer || state.intentionalRelease) return
+
+    if (!manual && video !== activeVideo && !warmVisibility.get(video)) {
+      setVideoState(video, userPaused.has(video) ? 'paused' : 'idle')
+      return
+    }
 
     if (!globalThis.navigator?.onLine) {
       state.exhausted = true
@@ -400,7 +416,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
   }
 
   function requestPlayback(video) {
-    if (!video || suspended || document.hidden || userPaused.has(video)) return
+    if (!video || suspended || playbackBlockedByUi() || userPaused.has(video)) return
     if (!sourceAttached(video) && !attachSource(video)) return
     if (activeVideo && activeVideo !== video) pauseVideo(activeVideo)
     activeVideo = video
@@ -531,7 +547,9 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
       if (video !== activeVideo && !userPaused.has(video)) setVideoState(video, 'idle')
     })
     listen(video, 'canplay', () => {
-      resetRecovery(video)
+      const state = reliabilityFor(video)
+      clearTimer(state.stallTimer)
+      state.stallTimer = 0
       restoreResumeTime(video)
       if (video !== activeVideo) setVideoState(video, userPaused.has(video) ? 'paused' : 'idle')
       scheduleEvaluate()
@@ -552,6 +570,12 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
       if (video === activeVideo && video.readyState < 3) armStallWatch(video)
     })
     listen(video, 'error', () => {
+      const state = reliabilityFor(video)
+      if (state.intentionalRelease || !video.hasAttribute('src')) {
+        if (video === activeVideo) activeVideo = null
+        setVideoState(video, userPaused.has(video) ? 'paused' : 'idle')
+        return
+      }
       if (video === activeVideo) activeVideo = null
       recoverVideo(video, { reason: 'error' })
     })
@@ -614,7 +638,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     }
 
     bindings.set(video, cleanups)
-    setVideoState(video, 'idle')
+    setVideoState(video, existingSource ? 'idle' : 'resolving', existingSource ? '' : 'Loading video…')
   }
 
   function unbindVideo(video) {
@@ -699,7 +723,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
 
   function evaluate() {
     evaluateFrame = 0
-    if (suspended || document.hidden) {
+    if (suspended || playbackBlockedByUi()) {
       clearDwell()
       pauseAll()
       return
@@ -854,12 +878,36 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
   }
 
   function handleVisibilityChange() {
-    if (document.hidden) {
+    if (playbackBlockedByUi()) {
       clearDwell()
       pauseAll()
     } else {
       scheduleEvaluate()
     }
+  }
+
+  function handleCommunityUiMutation() {
+    if (playbackBlockedByUi()) {
+      clearDwell()
+      pauseAll()
+    } else {
+      scheduleEvaluate()
+    }
+  }
+
+  function handleVolumeKey(event) {
+    const key = String(event?.key || '')
+    if (key !== 'AudioVolumeUp' && key !== 'VolumeUp') return
+    if (!activeVideo || playbackBlockedByUi() || !activeVideo.muted) return
+    setVideoMuted(activeVideo, false)
+  }
+
+  function pauseWithin(nextScope = scope) {
+    clearDwell()
+    const videos = nextScope?.querySelectorAll
+      ? Array.from(nextScope.querySelectorAll(VIDEO_SELECTOR))
+      : Array.from(visibility.keys())
+    videos.forEach((video) => pauseVideo(video))
   }
 
   function handleOnline() {
@@ -877,6 +925,11 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
   }
 
   document.addEventListener('visibilitychange', handleVisibilityChange)
+  document.addEventListener('keydown', handleVolumeKey, { capture: true })
+  const uiMutationObserver = typeof MutationObserver !== 'undefined' && document.body
+    ? new MutationObserver(handleCommunityUiMutation)
+    : null
+  uiMutationObserver?.observe(document.body, { attributes: true, attributeFilter: ['class'] })
   globalThis.addEventListener?.('online', handleOnline)
   globalThis.addEventListener?.('pagehide', handlePageHide)
   globalThis.addEventListener?.('pageshow', () => {
@@ -889,6 +942,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     sync,
     suspend,
     resume,
+    pause: pauseWithin,
     get activeVideo() { return activeVideo }
   }
 }
