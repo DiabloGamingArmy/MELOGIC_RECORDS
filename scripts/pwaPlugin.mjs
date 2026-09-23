@@ -29,7 +29,7 @@ export function melogicPwaPlugin() {
       const offline = await readFile(resolve(outputDir, 'offline.html'))
       const manifest = await readFile(resolve(outputDir, 'manifest.webmanifest'))
       const version = createHash('sha256').update(worker).update(offline).update(manifest).update(assets.join('\n')).digest('hex').slice(0, 16)
-      await writeFile(path, worker.replace('__MELOGIC_PWA_BUILD__', version))
+      await writeFile(path, worker.replaceAll('__MELOGIC_PWA_BUILD__', version))
       await writeFile(resolve(outputDir, 'melogic-build.json'), JSON.stringify({ build: version }, null, 2) + '\n')
     }
   }

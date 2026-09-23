@@ -4,6 +4,7 @@ import { deleteObject, getDownloadURL, ref, uploadBytesResumable } from 'firebas
 import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
+import { getCachedStorageUrl, invalidateCachedStoragePath } from '../services/pageMediaCache.js'
 
 const POST_COLLECTION = 'communityPosts'
 const COMMUNITY_COLLECTION = 'communities'
@@ -192,8 +193,6 @@ function safeProductAudioPreviewPath(product = {}, requestedPath = '') {
   return candidates.find((path) => String(path || '').startsWith(`products/${productId}/audio-previews/`)) || ''
 }
 
-const storageUrlCache = new Map()
-const storageUrlRequests = new Map()
 const COMMUNITY_STORAGE_RETRY_DELAYS = [0, 750, 2000, 5000, 10000]
 
 function waitForCommunityStorageRetry(delayMs = 0) {
@@ -237,15 +236,10 @@ async function getFreshDocument(documentRef) {
 async function safeStorageUrl(path = '') {
   const clean = String(path || '').trim()
   if (!clean || !storage) return ''
-  if (storageUrlCache.has(clean)) return storageUrlCache.get(clean)
-  if (storageUrlRequests.has(clean)) return storageUrlRequests.get(clean)
-
-  const request = resolveStorageUrlWithRetry(clean)
-    .then((url) => {
-      if (url) storageUrlCache.set(clean, url)
-      return url || ''
-    })
-    .catch((error) => {
+  return getCachedStorageUrl(clean, resolveStorageUrlWithRetry, {
+    scopeKey: 'community-public-media',
+    type: 'community-media'
+  }).catch((error) => {
       // Never poison the session cache with a transient failure. A later
       // Community enrichment pass or explicit media retry gets a fresh chance.
       console.warn('[community] storage url resolution exhausted retries', {
@@ -255,10 +249,6 @@ async function safeStorageUrl(path = '') {
       })
       return ''
     })
-    .finally(() => storageUrlRequests.delete(clean))
-
-  storageUrlRequests.set(clean, request)
-  return request
 }
 
 export function normalizeCommunityStagePlan(rawOrSnap = {}, explicitId = '') {
@@ -1324,6 +1314,7 @@ export async function uploadCommunityStoryMedia({ uid = '', storyId = '', file =
       if (typeof onProgress === 'function') onProgress(progress)
     }, reject, resolve)
   })
+  invalidateCachedStoragePath(mediaPath)
   const mediaURL = await getDownloadURL(fileRef).catch(() => '')
   return { mediaPath, mediaURL, mediaType, contentType, size: Number(uploadFile.size || 0) }
 }
@@ -1362,6 +1353,7 @@ export async function uploadCommunityImage({ slug = '', kind = 'profile', file =
     const task = uploadBytesResumable(fileRef, file, { contentType })
     task.on('state_changed', null, reject, resolve)
   })
+  invalidateCachedStoragePath(storagePath)
   const downloadURL = await getDownloadURL(fileRef).catch(() => '')
   return { storagePath, downloadURL }
 }
@@ -1481,6 +1473,7 @@ export async function uploadCommunityPostAttachments({
           onProgress?.(((index + current) / selectedFiles.length) * 100)
         }, reject, resolve)
       })
+      invalidateCachedStoragePath(path)
       const url = await getDownloadURL(fileRef).catch(() => '')
       const mediaMetadata = metadataById[id] || entry?.metadata || {}
       uploads.push({
@@ -1511,7 +1504,9 @@ export async function deleteCommunityPostAttachments(attachments = []) {
   await Promise.allSettled((Array.isArray(attachments) ? attachments : [])
     .map((attachment) => String(attachment?.path || attachment?.storagePath || '').trim())
     .filter((path) => path.startsWith('community/posts/'))
-    .map((path) => deleteObject(ref(storage, path))))
+    .map(async (path) => {
+      try { await deleteObject(ref(storage, path)) } finally { invalidateCachedStoragePath(path) }
+    }))
 }
 
 export function newCommunityCommentId(postId = '') {
@@ -1595,6 +1590,7 @@ export async function uploadCommunityCommentAttachments({
           onProgress?.(((index + current) / selectedFiles.length) * 100)
         }, reject, resolve)
       })
+      invalidateCachedStoragePath(path)
       const url = await getDownloadURL(fileRef).catch(() => '')
       uploads.push({ type, name: file.name || name, path, url, size, contentType })
     }
@@ -1611,7 +1607,9 @@ export async function deleteCommunityCommentAttachments(attachments = []) {
   await Promise.allSettled((Array.isArray(attachments) ? attachments : [])
     .map((attachment) => String(attachment?.path || '').trim())
     .filter((path) => path.startsWith('community/comments/'))
-    .map((path) => deleteObject(ref(storage, path))))
+    .map(async (path) => {
+      try { await deleteObject(ref(storage, path)) } finally { invalidateCachedStoragePath(path) }
+    }))
 }
 
 export async function createCommunityComment(payload = {}) {

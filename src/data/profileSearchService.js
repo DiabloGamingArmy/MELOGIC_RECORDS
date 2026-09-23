@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, limit, orderBy, query, startAt, endAt, where } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocFromCache, getDocs, limit, orderBy, query, startAt, endAt, where } from 'firebase/firestore'
 import { doc as liteDoc, getDoc as liteGetDoc, getFirestore as getLiteFirestore } from 'firebase/firestore/lite'
 import { app } from '../firebase/firebaseConfig.js'
 import { db } from '../firebase/firestore'
@@ -160,6 +160,19 @@ async function readPublicProfileIdentityByUid(cleanUid = '') {
   }
   let primaryTimeout = null
   try {
+    try {
+      tracePublicIdentity('local-getdoc-start', { uid: cleanUid })
+      const localSnap = await getDocFromCache(doc(db, 'profiles', cleanUid))
+      if (localSnap.exists()) {
+        const localResult = normalizeProfile(localSnap)
+        tracePublicIdentity('identity-return-local', { uid: cleanUid, found: true })
+        // The normal SDK read revalidates in the background without blocking paint.
+        void getDoc(doc(db, 'profiles', cleanUid)).then((freshSnap) => {
+          sharedPublicIdentityCache.publish(cleanUid, freshSnap.exists() ? normalizeProfile(freshSnap) : null)
+        }).catch(() => {})
+        return localResult
+      }
+    } catch {}
     tracePublicIdentity('primary-getdoc-start', { uid: cleanUid })
     primaryTimeout = publicIdentityTimeout(2500, cleanUid)
     const snap = await Promise.race([
@@ -207,4 +220,12 @@ export async function getPublicProfileIdentityStateByUid(uid = '', options = {})
 export async function getPublicProfileIdentityByUid(uid = '') {
   const state = await getPublicProfileIdentityStateByUid(uid)
   return state.status === 'known' ? state.identity : null
+}
+
+export function invalidatePublicProfileIdentity(uid = '') {
+  sharedPublicIdentityCache.invalidate(String(uid || '').trim())
+}
+
+export function updateCachedPublicProfileIdentity(uid = '', identity = null) {
+  return sharedPublicIdentityCache.publish(String(uid || '').trim(), identity)
 }

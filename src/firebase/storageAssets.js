@@ -1,9 +1,8 @@
 import { getDownloadURL, getStorage, ref } from 'firebase/storage'
 import { app } from './firebaseConfig'
-import { getCachedStorageUrl, markMissingStoragePath } from '../services/pageMediaCache'
+import { getCachedStorageUrl, invalidateCachedStoragePath } from '../services/pageMediaCache'
 
 const storage = getStorage(app)
-const urlCache = new Map()
 
 function devWarn(...args) {
   if (typeof import.meta !== 'undefined' && import.meta?.env?.DEV) console.warn(...args)
@@ -20,22 +19,20 @@ export async function getPublicStorageUrl(path, options = {}) {
   const key = String(path || '').trim()
   if (!key) return ''
   const scopeKey = options.scopeKey || 'global-storage-assets'
-  const cacheKey = `${scopeKey}:${key}`
-  if (urlCache.has(cacheKey)) return urlCache.get(cacheKey)
   const warnOnFail = options.warnOnFail !== false
 
-  const promise = getCachedStorageUrl(key, async (storagePath) => {
+  return getCachedStorageUrl(key, async (storagePath) => {
     try {
       return await getDownloadURL(ref(storage, storagePath))
     } catch (error) {
       if (warnOnFail) devWarn('[storageAssets] Could not load public asset', { path: storagePath, code: error?.code })
-      markMissingStoragePath(storagePath, { scopeKey, type: options.type || 'asset' })
-      return ''
+      throw error
     }
   }, { scopeKey, type: options.type || 'asset' })
+}
 
-  urlCache.set(cacheKey, promise)
-  return promise
+export function invalidateStorageAssetUrl(path = '', options = {}) {
+  invalidateCachedStoragePath(path, { scopeKey: options.scopeKey || '' })
 }
 
 export async function getStorageAssetCandidates(path, options = {}) {

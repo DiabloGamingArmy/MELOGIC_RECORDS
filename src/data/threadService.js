@@ -21,6 +21,7 @@ import { db } from '../firebase/firestore'
 import { functions } from '../firebase/functions'
 let hasWarnedThreadFallback = false
 const sourceThreadCache = new Map()
+globalThis.addEventListener?.('melogic:auth-identity-changed', () => sourceThreadCache.clear())
 const RESONA_OPEN_RETRY_CODES = new Set([
   'functions/aborted',
   'functions/deadline-exceeded',
@@ -346,6 +347,7 @@ export async function hydrateThreadFromSourceIfNeeded(thread) {
   const sourceThread = await getThread(threadId)
   if (!sourceThread) return thread
   sourceThreadCache.set(threadId, sourceThread)
+  if (sourceThreadCache.size > 100) sourceThreadCache.delete(sourceThreadCache.keys().next().value)
 
   return {
     ...sourceThread,
@@ -453,6 +455,7 @@ export function subscribeToThread(threadId, callback, onError) {
     }
     const normalized = normalizeThread(docSnap.id, docSnap.data())
     sourceThreadCache.set(threadId, normalized)
+    if (sourceThreadCache.size > 100) sourceThreadCache.delete(sourceThreadCache.keys().next().value)
     callback(normalized)
   }, onError)
 }

@@ -232,6 +232,13 @@ body {
   will-change: transform;
 }
 
+img.public-hero-bg.has-profile-banner {
+  width: 100%;
+  height: 112%;
+  object-fit: cover;
+  object-position: center bottom;
+}
+
 .public-hero-bg.is-fallback::after {
   content: attr(data-initials);
   position: absolute;

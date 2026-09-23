@@ -7,12 +7,15 @@ import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './compo
 import { addToCart } from './data/cartService'
 import { loadPublicProfileStats, setProfileFollowState } from './data/profileService'
 import { createReport, normalizeProduct, resolveProductMedia } from './data/productService'
-import { getPublicProfile, getUidForUsername, db } from './firebase/firestore'
+import { getCachedPublicProfile, getPublicProfile, getUidForUsername, db } from './firebase/firestore'
 import { waitForInitialAuthState } from './firebase/auth'
 import { getStorageAssetUrl } from './firebase/storageAssets'
 import { ROUTES, authRoute, cleanRedirectTarget, getCurrentPath, productRoute, stageProjectRoute } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import { formatUsername } from './utils/format'
+import { markDevPerformance, measureDevPerformance } from './services/devPerformance.js'
+
+markDevPerformance('profile-navigation-start')
 
 // melogic-public-profile-spa-lifecycle-v5
 function initPublicProfileSpaLifecycle() {
@@ -107,6 +110,7 @@ const uiState = {
   postsByUid: new Map(),
   stagePlansByUid: new Map(),
   communitiesByUid: new Map(),
+  categoryErrors: new Map(),
   parallaxBound: false,
   marqueeTicker: null,
   badgeUrls: {},
@@ -158,6 +162,7 @@ function getCachedProfileMedia(profile = {}) {
     resolvedAt: Date.now()
   }
   profileMediaCache.set(uid, next)
+  if (profileMediaCache.size > 50) profileMediaCache.delete(profileMediaCache.keys().next().value)
   return next
 }
 
@@ -319,19 +324,9 @@ async function loadPublicCommunityPostsForAuthor(uid) {
     orderBy('createdAt', 'desc'),
     limit(40)
   )
-  const snap = await getDocs(postsQuery).catch(async (error) => {
-    if (!String(error?.message || '').includes('requires an index') && !String(error?.code || '').includes('failed-precondition')) throw error
-    return getDocs(query(
-      postsRef,
-      where('status', '==', 'published'),
-      where('visibility', '==', 'public'),
-      orderBy('createdAt', 'desc'),
-      limit(80)
-    ))
-  })
+  const snap = await getDocs(postsQuery)
   const rows = snap.docs
     .map((docSnap) => ({ id: docSnap.id, postId: docSnap.id, ...(docSnap.data() || {}) }))
-    .filter((post) => post.authorUid === uid)
   uiState.postsByUid.set(uid, rows)
   return rows
 }
@@ -541,7 +536,7 @@ function productCardMarkup(product, displayName) {
     <article class="public-product-card">
       <a class="public-product-link" href="${productRoute(product)}" aria-label="View ${escapeHtml(title)}">
         <div class="public-product-thumb ${art ? 'has-image' : ''}">
-          ${art ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(title)} cover" loading="lazy" />` : '<div class="public-product-fallback"></div>'}
+          ${art ? `<img src="${escapeHtml(art)}" alt="${escapeHtml(title)} cover" loading="lazy" decoding="async" data-reliable-image />` : '<div class="public-product-fallback"></div>'}
         </div>
       </a>
       <div class="public-product-body">
@@ -649,6 +644,9 @@ function renderAboutSection(profile) {
 function renderCategorySection(profile) {
   const displayName = profile.displayName || 'Melogic Creator'
   const renderEmpty = () => `<section class="public-content-section"><article class="public-content-empty"><p>${EMPTY_COPY[uiState.activeCategory]}</p></article></section>`
+  if (uiState.categoryErrors.has(uiState.activeCategory)) {
+    return '<section class="public-content-section"><article class="public-content-empty"><p>This public content is temporarily unavailable. Please try again shortly.</p></article></section>'
+  }
   if (uiState.activeCategory === 'about') return renderAboutSection(profile)
   if (uiState.activeCategory === 'posts') {
     const posts = uiState.postsByUid.get(profile.uid || '') || []
@@ -934,13 +932,21 @@ async function handleFollowToggle(profile = uiState.profile) {
 
 function bindProfileMediaFallbacks(profile = uiState.profile) {
   const avatar = profileRoot.querySelector('[data-profile-avatar]')
-  avatar?.addEventListener('error', () => {
+  avatar?.addEventListener('melogic:image-exhausted', () => {
     markProfileMediaFailed(profile, 'avatar')
     const fallback = document.createElement('div')
     fallback.className = 'public-avatar public-avatar-fallback'
     fallback.setAttribute('data-profile-avatar-fallback', '')
     fallback.textContent = profileInitials(profile.displayName || '')
     avatar.replaceWith(fallback)
+  }, { once: true })
+  const banner = profileRoot.querySelector('[data-profile-banner]')
+  banner?.addEventListener('melogic:image-exhausted', () => {
+    markProfileMediaFailed(profile, 'banner')
+    const fallback = document.createElement('div')
+    fallback.className = 'public-hero-bg is-fallback'
+    fallback.dataset.initials = profileInitials(profile.displayName || '')
+    banner.replaceWith(fallback)
   }, { once: true })
 }
 
@@ -951,7 +957,12 @@ function bindStableProfileInteractions(profile = uiState.profile) {
       if (!nextCategory || nextCategory === uiState.activeCategory) return
       uiState.activeCategory = nextCategory
       uiState.visibleCount = 8
-      await loadProfileCategory(profile, nextCategory)
+      uiState.categoryErrors.delete(nextCategory)
+      try {
+        await loadProfileCategory(profile, nextCategory)
+      } catch (error) {
+        uiState.categoryErrors.set(nextCategory, error)
+      }
       renderProfileContent(profile)
     })
   })
@@ -986,14 +997,16 @@ function renderPublicProfile(profile, currentUser, previewMode = false) {
 
   profileRoot.innerHTML = `
     <section class="public-hero">
-      <div class="public-hero-bg ${bannerURL ? 'has-profile-banner' : 'is-fallback'}" data-initials="${escapeHtml(profileInitials(displayName))}" style="${bannerURL ? `background-image:url('${escapeHtml(bannerURL)}')` : ''}"></div>
+      ${bannerURL
+        ? `<img class="public-hero-bg has-profile-banner" src="${escapeHtml(bannerURL)}" alt="" width="1800" height="600" loading="eager" fetchpriority="high" decoding="async" data-profile-banner data-reliable-image />`
+        : `<div class="public-hero-bg is-fallback" data-initials="${escapeHtml(profileInitials(displayName))}"></div>`}
       <div class="public-hero-overlay"></div>
       <div class="public-hero-inner">
         <div class="public-hero-identity">
-          ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" data-profile-avatar />` : `<div class="public-avatar public-avatar-fallback" data-profile-avatar-fallback>${escapeHtml(profileInitials(displayName))}</div>`}
+          ${avatarURL ? `<img src="${escapeHtml(avatarURL)}" alt="${escapeHtml(displayName)} avatar" class="public-avatar" width="210" height="210" loading="eager" fetchpriority="high" decoding="async" data-profile-avatar data-reliable-image />` : `<div class="public-avatar public-avatar-fallback" data-profile-avatar-fallback>${escapeHtml(profileInitials(displayName))}</div>`}
           <div class="public-hero-copy ${isLongName ? 'is-marquee-name' : ''}">
             <div class="public-name-mask"><h1 class="public-name-track">${escapeHtml(displayName)}</h1></div>
-            <p class="public-handle"><span>${escapeHtml(username || 'No username')}</span>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</p>
+            <p class="public-handle"><span>${escapeHtml(username || 'No username')}</span><span data-inline-verified>${hasVerified ? badgeIconMarkup('verified', 'is-inline-verified') : ''}</span></p>
             <p class="public-role">${escapeHtml(roleLabel)}</p>
             <div class="public-badge-row" aria-label="Profile badges">${profileBadgeKeys.map((key) => badgeIconMarkup(key)).join('') || '<span class="public-badge-empty">No badges yet</span>'}</div>
             <div class="public-header-stats" aria-label="Creator stats">
@@ -1064,9 +1077,11 @@ async function resolveUid(params) {
 }
 
 async function initPublicProfile() {
-  const currentUser = await waitForInitialAuthState()
   const params = new URLSearchParams(window.location.search)
-  const uid = await resolveUid(params)
+  const [currentUser, uid] = await Promise.all([
+    waitForInitialAuthState(),
+    resolveUid(params)
+  ])
   const previewMode = params.get('preview') === 'public'
 
   if (!uid) return renderNotFound()
@@ -1078,7 +1093,8 @@ async function initPublicProfile() {
     return
   }
 
-  const profile = await getPublicProfile(uid) || await buildPublicProfileFallback(uid)
+  const cachedProfile = getCachedPublicProfile(uid)
+  const profile = cachedProfile || await getPublicProfile(uid) || await buildPublicProfileFallback(uid)
   if (!profile) return renderNotFound()
 
   uiState.profile = profile
@@ -1087,23 +1103,32 @@ async function initPublicProfile() {
   uiState.activeCategory = 'posts'
   uiState.visibleCount = 8
   uiState.follow = { isFollowing: false, loading: false, error: '' }
+  renderPublicProfile(profile, currentUser, uiState.previewMode)
+  measureDevPerformance('profile-core', 'melogic:profile-navigation-start', { cached: Boolean(cachedProfile) })
+  if (cachedProfile) void getPublicProfile(uid, { force: true }).catch(() => null)
 
-  const contentResults = await Promise.allSettled([
-    loadPublicCommunityPostsForAuthor(uid),
-    loadPublicProductsForArtist(uid),
-    loadPublicStagePlansForOwner(uid),
-    loadPublicCommunitiesForProfile(uid),
+  const [statsResult, categoryResult, badgeResult] = await Promise.allSettled([
+    refreshPublicStats(profile),
+    loadProfileCategory(profile, uiState.activeCategory),
     loadBadgeAssetUrls()
   ])
-  if (contentResults[4].status === 'fulfilled') uiState.badgeUrls = contentResults[4].value
-  contentResults.slice(0, 4).forEach((result, index) => {
-    if (result.status === 'rejected') {
-      console.warn('[profilePublic] public content load failed', { source: ['posts', 'products', 'stagePlans', 'communities'][index], code: result.reason?.code, message: result.reason?.message })
-    }
-  })
-  await refreshPublicStats(profile)
-
-  renderPublicProfile(profile, currentUser, uiState.previewMode)
+  if (statsResult.status === 'fulfilled') {
+    updateProfileStats(profile)
+    updateFollowControls()
+  }
+  if (categoryResult.status === 'rejected') {
+    uiState.categoryErrors.set(uiState.activeCategory, categoryResult.reason)
+    console.warn('[profilePublic] active public content unavailable', categoryResult.reason?.code || categoryResult.reason?.message || categoryResult.reason)
+  }
+  renderProfileContent(profile)
+  if (badgeResult.status === 'fulfilled') {
+    uiState.badgeUrls = badgeResult.value
+    const badges = getProfileBadges(profile)
+    const row = profileRoot.querySelector('.public-badge-row')
+    if (row) row.innerHTML = ['founder', 'moderator', 'beta', 'pro'].filter((key) => badges.includes(key)).map((key) => badgeIconMarkup(key)).join('') || '<span class="public-badge-empty">No badges yet</span>'
+    const verified = profileRoot.querySelector('[data-inline-verified]')
+    if (verified) verified.innerHTML = badges.includes('verified') ? badgeIconMarkup('verified', 'is-inline-verified') : ''
+  }
 }
 
 if (window.location.pathname === '/profile-public.html') {

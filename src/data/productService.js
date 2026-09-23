@@ -20,7 +20,7 @@ import { functions } from '../firebase/functions'
 import { storage } from '../firebase/storage'
 import { FIRESTORE_COLLECTIONS } from '../config/firestoreCollections'
 import { STORAGE_PATHS } from '../config/storagePaths'
-import { getCachedStorageUrl } from '../services/pageMediaCache'
+import { getCachedStorageUrl, invalidateCachedStoragePath } from '../services/pageMediaCache'
 import { normalizeProductFulfillment } from '../utils/productFulfillment'
 import { deriveProductVertixCapability, normalizeVertixArchiveCapability } from '../vertix/marketplace/vertixAssetFiles.js'
 import { deriveProductSouraCapability, normalizeSouraArchiveCapability } from '../soura/marketplace/souraAssetFiles.js'
@@ -194,7 +194,7 @@ async function safeStorageUrl(path, fallback = '') {
       return await getDownloadURL(ref(storage, storagePath))
     } catch (error) {
       if (isDevelopmentRuntime) warnOnce('media', '[productService] Storage URL resolution failed.', { path: storagePath, code: error?.code, message: error?.message })
-      return ''
+      throw error
     }
   }, { scopeKey: `product-media:${String(path).split('/').slice(0, 2).join('/')}`, type: 'product-media' })
   return resolved || fallback
@@ -1012,6 +1012,7 @@ export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
     try {
       const coverPath = STORAGE_PATHS.productCover(productId)
       await uploadBytes(ref(storage, coverPath), mediaFiles.cover, { contentType: mediaFiles.cover.type || 'image/webp' })
+      invalidateCachedStoragePath(coverPath)
       uploads.coverPath = coverPath
       uploads.coverURL = await safeStorageUrl(coverPath)
     } catch (error) {
@@ -1023,6 +1024,7 @@ export async function uploadProductMediaFiles(productId, mediaFiles = {}) {
     try {
       const thumbnailPath = STORAGE_PATHS.productThumb(productId)
       await uploadBytes(ref(storage, thumbnailPath), mediaFiles.thumbnail, { contentType: mediaFiles.thumbnail.type || 'image/webp' })
+      invalidateCachedStoragePath(thumbnailPath)
       uploads.thumbnailPath = thumbnailPath
       uploads.thumbnailURL = await safeStorageUrl(thumbnailPath)
     } catch (error) {
@@ -1214,6 +1216,7 @@ export async function uploadProductFiles(productId, files = [], options = {}) {
       ? `products/${productId}/files/${fileId}/${baseName}`
       : `products/${productId}/downloads/${baseName}`
     await uploadBytes(ref(storage, storagePath), file, { contentType: file.type || 'application/octet-stream' })
+    invalidateCachedStoragePath(storagePath)
     uploaded.push({
       id: fileId,
       productId,
@@ -1429,6 +1432,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
       galleryUploads = await Promise.all(options.galleryFiles.map(async (file, index) => {
         const path = `${STORAGE_PATHS.productGalleryRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
         await uploadBytes(ref(storage, path), file, { contentType: file.type || 'image/*' })
+        invalidateCachedStoragePath(path)
         return path
       }))
     }
@@ -1441,6 +1445,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
         }
         const path = `${STORAGE_PATHS.productAudioPreviewsRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
         await uploadBytes(ref(storage, path), file, { contentType: file.type || 'audio/*' })
+        invalidateCachedStoragePath(path)
         return path
       }))
     }
@@ -1453,6 +1458,7 @@ export async function saveProductDraft(user, input = {}, options = {}) {
         }
         const path = `${STORAGE_PATHS.productVideoPreviewsRoot(productId)}/${Date.now()}-${index}-${sanitizeStorageFileName(file.name)}`
         await uploadBytes(ref(storage, path), file, { contentType: file.type || 'video/*' })
+        invalidateCachedStoragePath(path)
         return path
       }))
     }
@@ -1683,6 +1689,7 @@ export async function uploadProductFile({ productId, queueItem, onProgress } = {
   })
   const fullPath = task.snapshot?.ref?.fullPath || storageRef.fullPath || storagePath
   if (!isProductScopedStoragePath(productId, fullPath)) throw new Error('Replacement upload did not resolve to the current product Storage namespace.')
+  invalidateCachedStoragePath(fullPath)
   return { ...queueItem, storagePath: fullPath, progress: 100, status: 'uploaded' }
 }
 
@@ -1691,9 +1698,13 @@ export async function deleteProductStorageFile(storagePath = '') {
   if (!normalized || !storage) return { ok: false, skipped: true }
   try {
     await deleteObject(ref(storage, normalized))
+    invalidateCachedStoragePath(normalized)
     return { ok: true, skipped: false }
   } catch (error) {
-    if (error?.code === 'storage/object-not-found') return { ok: true, skipped: true, objectNotFound: true }
+    if (error?.code === 'storage/object-not-found') {
+      invalidateCachedStoragePath(normalized)
+      return { ok: true, skipped: true, objectNotFound: true }
+    }
     return { ok: false, skipped: false, error }
   }
 }
@@ -2176,6 +2187,7 @@ export async function uploadSellerAgreementMarkdown({ file, version = '', agreem
   }
   const storagePath = `legal/agreements/${cleanAgreementId}/${cleanVersion}.md`
   await uploadBytes(ref(storage, storagePath), file, { contentType: 'text/markdown' })
+  invalidateCachedStoragePath(storagePath)
   return {
     ok: true,
     storagePath,

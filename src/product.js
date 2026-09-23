@@ -507,6 +507,9 @@ function renderMainMedia() {
             src="${escapeHtml(selected.url)}"
             alt="${escapeHtml(selected.label)}"
             loading="eager"
+            fetchpriority="high"
+            decoding="async"
+            data-reliable-image
           />
         </div>
       </div>
@@ -1353,7 +1356,7 @@ function renderProduct(product, recommendations = [], ownerPreview = false, prod
           <aside class="dashboard-lower-sidebar">
             <article class="panel-surface dashboard-overview">
               <p class="dashboard-breadcrumbs"><a href="${ROUTES.products}">Products</a> <span>&gt;</span> <span>${escapeHtml((product.categories || [])[0] || 'Catalog')}</span> <span>&gt;</span> <span>${escapeHtml(typeLabel)}</span></p>
-              ${listingThumbnailURL ? `<img class="dashboard-cover-banner" src="${escapeHtml(listingThumbnailURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />` : ''}
+              ${listingThumbnailURL ? `<img class="dashboard-cover-banner" src="${escapeHtml(listingThumbnailURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" decoding="async" data-reliable-image />` : ''}
               <h2>${escapeHtml(product.title)}</h2>
               <p class="dashboard-short-description">${escapeHtml(product.shortDescription || product.description || 'No description has been shared yet.')}</p>
               <div class="dashboard-top-badges">

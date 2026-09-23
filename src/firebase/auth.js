@@ -20,6 +20,7 @@ import { functions } from './functions.js'
 export const auth = getAuth(app)
 let hasWarnedPersistence = false
 let initialAuthStatePromise = null
+let observedAuthUid
 
 /* melogic-auth-persistence-v2 */
 export const authPersistenceReady = setPersistence(auth, indexedDBLocalPersistence)
@@ -34,6 +35,20 @@ export const authPersistenceReady = setPersistence(auth, indexedDBLocalPersisten
 const googleProvider = new GoogleAuthProvider()
 const googleProviderWithAccountSelect = new GoogleAuthProvider()
 googleProviderWithAccountSelect.setCustomParameters({ prompt: 'select_account' })
+
+onAuthStateChanged(auth, (user) => {
+  const nextUid = String(user?.uid || '')
+  if (observedAuthUid === undefined) {
+    observedAuthUid = nextUid
+    return
+  }
+  if (nextUid === observedAuthUid) return
+  const previousUid = observedAuthUid
+  observedAuthUid = nextUid
+  globalThis.dispatchEvent?.(new CustomEvent('melogic:auth-identity-changed', {
+    detail: { previousUid, uid: nextUid }
+  }))
+})
 
 export function subscribeToAuthState(callback) {
   return onAuthStateChanged(auth, callback)

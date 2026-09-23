@@ -1,11 +1,14 @@
+import { createBoundedRequestCache } from '../services/boundedRequestCache.js'
+
 function cleanUid(value = '') {
   return String(value || '').trim()
 }
 
 export function createPublicIdentityCache({
   positiveTtlMs = 5 * 60_000,
-  missingTtlMs = 60_000,
-  errorRetryMs = 5_000,
+  missingTtlMs = 30_000,
+  errorRetryMs = 1_000,
+  maxEntries = 500,
   now = () => Date.now(),
   onKnown = null,
   schedule = (callback, delay) => {
@@ -14,61 +17,65 @@ export function createPublicIdentityCache({
     return timer
   }
 } = {}) {
-  const entries = new Map()
+  const cache = createBoundedRequestCache({
+    name: 'public-identity',
+    maxEntries,
+    ttlMs: positiveTtlMs,
+    negativeTtlMs: missingTtlMs,
+    errorTtlMs: errorRetryMs,
+    now
+  })
 
-  const snapshot = (entry) => entry
-    ? { status: entry.status, identity: entry.identity || null, error: entry.error || null }
-    : { status: 'unknown', identity: null, error: null }
+  function snapshot(entry) {
+    if (!entry) return { status: 'unknown', identity: null, error: null }
+    if (entry.status === 'resolved') return { status: 'known', identity: entry.value || null, error: null }
+    if (entry.status === 'negative') return { status: 'missing', identity: null, error: null }
+    if (entry.status === 'pending') return { status: 'loading', identity: null, error: null }
+    return { status: 'error', identity: null, error: entry.error || null }
+  }
 
   function peek(uid = '') {
     const key = cleanUid(uid)
-    if (!key) return snapshot(null)
-    const entry = entries.get(key)
-    if (!entry) return snapshot(null)
-    if ((entry.status === 'known' || entry.status === 'missing') && entry.expiresAt <= now()) {
-      entries.delete(key)
-      return snapshot(null)
-    }
-    return snapshot(entry)
+    return key ? snapshot(cache.peek(key)) : snapshot(null)
   }
 
   function publish(uid = '', identity = null) {
     const key = cleanUid(uid)
     if (!key) return snapshot(null)
-    const entry = identity
-      ? { status: 'known', identity, error: null, expiresAt: now() + positiveTtlMs }
-      : { status: 'missing', identity: null, error: null, expiresAt: now() + missingTtlMs }
-    entries.set(key, entry)
+    cache.set(key, identity || null, { negative: !identity })
     if (identity && typeof onKnown === 'function') onKnown(key, identity)
-    return snapshot(entry)
+    return identity
+      ? { status: 'known', identity, error: null }
+      : { status: 'missing', identity: null, error: null }
   }
 
   async function load(uid = '', loader, { force = false } = {}) {
     const key = cleanUid(uid)
     if (!key || typeof loader !== 'function') return snapshot(null)
-    const existing = entries.get(key)
-    const currentTime = now()
-    if (!force && existing) {
-      if (existing.status === 'loading') return existing.promise
-      if ((existing.status === 'known' || existing.status === 'missing') && existing.expiresAt > currentTime) return snapshot(existing)
-      if (existing.status === 'error' && existing.retryAt > currentTime) return snapshot(existing)
+    try {
+      const identity = await cache.get(key, async (requestedUid) => {
+        const loaded = await loader(requestedUid)
+        if (loaded && typeof onKnown === 'function') onKnown(key, loaded)
+        return loaded
+      }, { force, isNegative: (value) => !value })
+      return identity
+        ? { status: 'known', identity, error: null }
+        : { status: 'missing', identity: null, error: null }
+    } catch (error) {
+      schedule?.(() => {
+        const current = cache.peek(key)
+        if (!current || current.status === 'error') return load(key, loader, { force: true })
+        return snapshot(current)
+      }, errorRetryMs)
+      return { status: 'error', identity: null, error }
     }
-
-    const promise = Promise.resolve()
-      .then(() => loader(key))
-      .then((identity) => publish(key, identity || null))
-      .catch((error) => {
-        const entry = { status: 'error', identity: null, error, retryAt: now() + errorRetryMs }
-        entries.set(key, entry)
-        schedule?.(() => {
-          if (entries.get(key) !== entry) return
-          return load(key, loader, { force: true })
-        }, errorRetryMs)
-        return snapshot(entry)
-      })
-    entries.set(key, { status: 'loading', identity: existing?.identity || null, error: null, promise })
-    return promise
   }
 
-  return { peek, publish, load, clear: () => entries.clear() }
+  return {
+    peek,
+    publish,
+    load,
+    invalidate: (uid = '') => cache.invalidate(cleanUid(uid)),
+    clear: () => cache.clear()
+  }
 }

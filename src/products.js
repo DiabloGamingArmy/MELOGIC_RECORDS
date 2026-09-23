@@ -181,7 +181,7 @@ function normalizeSearchTokens(value) {
   return String(value || '').toLowerCase().trim().split(/\s+/).filter((token) => token.length > 1)
 }
 
-function productCardMarkup(product) {
+function productCardMarkup(product, { priority = false } = {}) {
   const artistId = product.artistId || product.artistUid || product.uid || ''
   const artistHref = artistId
     ? publicProfileRoute({ uid: artistId })
@@ -207,7 +207,7 @@ function productCardMarkup(product) {
         : 'Add to cart'
 
   const mediaMarkup = product.thumbnailURL || product.coverURL
-    ? `<img src="${escapeHtml(product.thumbnailURL || product.coverURL)}" alt="${escapeHtml(product.title)} cover" loading="lazy" />`
+    ? `<img src="${escapeHtml(product.thumbnailURL || product.coverURL)}" alt="${escapeHtml(product.title)} cover" loading="${priority ? 'eager' : 'lazy'}" ${priority ? 'fetchpriority="high"' : ''} decoding="async" data-reliable-image />`
     : '<div class="product-cover-fallback" aria-hidden="true"></div>'
 
   const hasHoverPreview = Boolean((product.previewVideoURLs?.[0] || product.previewAssignment?.hoverVideoURL || product.previewAudioURLs?.[0] || product.previewAssignment?.hoverAudioURL || product.primaryPreviewURL))
@@ -398,13 +398,18 @@ function renderProducts() {
       { type: 'physical', title: 'Physical Products' },
       { type: 'hybrid', title: 'Hybrid Products' }
     ]
+    let prioritizedProduct = false
     grid.innerHTML = groups.map((group) => {
       const products = filtered.filter((product) => normalizeProductFulfillment(product).type === group.type)
       if (!products.length) return ''
       return `
         <section class="products-group" data-product-group="${group.type}">
           <div class="products-group-header"><h2>${escapeHtml(group.title)}</h2><span>${products.length}</span></div>
-          <div class="products-group-grid">${products.map((product) => productCardMarkup(product)).join('')}</div>
+          <div class="products-group-grid">${products.map((product) => {
+            const priority = !prioritizedProduct
+            prioritizedProduct = true
+            return productCardMarkup(product, { priority })
+          }).join('')}</div>
         </section>
       `
     }).join('')

@@ -1,14 +1,55 @@
-import { doc, getDoc, getFirestore, runTransaction, serverTimestamp, setDoc } from 'firebase/firestore'
+import {
+  doc,
+  getDoc,
+  getDocFromCache,
+  getFirestore,
+  initializeFirestore,
+  memoryLocalCache,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  runTransaction,
+  serverTimestamp,
+  setDoc
+} from 'firebase/firestore'
 import { app } from './firebaseConfig.js'
 import { normalizeNotificationPreferences } from '../data/notificationPreferences'
+import { createBoundedRequestCache } from '../services/boundedRequestCache.js'
 
 let hasWarnedProfileRead = false
 
-// melogic-community-// melogic-firestore-auto-transport-v2
+// melogic-community-// melogic-firestore-auto-transport-v3
 // Do not force WebChannel long polling for Safari/WebKit. Firebase's current
 // Firestore SDK owns transport selection and can apply its normal compatibility
 // behavior without a site-wide Safari override.
-export const db = getFirestore(app)
+function initializeMainFirestore() {
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+    })
+  } catch (error) {
+    try { return initializeFirestore(app, { localCache: memoryLocalCache() }) } catch {}
+    try { return getFirestore(app) } catch {}
+    if (import.meta.env?.DEV) console.warn('[firebase/firestore] Persistent cache unavailable; continuing without it.', error)
+    return null
+  }
+}
+
+export const db = initializeMainFirestore()
+
+const publicProfileRequestCache = createBoundedRequestCache({
+  name: 'public-profile-core',
+  maxEntries: 250,
+  ttlMs: 5 * 60_000,
+  negativeTtlMs: 20_000,
+  errorTtlMs: 1_000
+})
+const publicUsernameRequestCache = createBoundedRequestCache({
+  name: 'public-profile-username',
+  maxEntries: 250,
+  ttlMs: 10 * 60_000,
+  negativeTtlMs: 20_000,
+  errorTtlMs: 1_000
+})
 
 const ACCESS_GATE_FALLBACK_CONFIG = {
   isKeyRequired: false,
@@ -608,22 +649,54 @@ export async function getUserProfile(uid, authUser = null) {
   return result?.effectiveProfile || null
 }
 
-export async function getPublicProfile(uid) {
+export async function getPublicProfile(uid, options = {}) {
   if (!db || !uid) return null
-  const profileRef = doc(db, 'profiles', uid)
-  const profileSnap = await getDoc(profileRef)
-  if (!profileSnap.exists()) return null
-  return { uid, ...profileSnap.data() }
+  const cleanUid = String(uid).trim()
+  return publicProfileRequestCache.get(cleanUid, async () => {
+    const profileRef = doc(db, 'profiles', cleanUid)
+    try {
+      const localSnap = await getDocFromCache(profileRef)
+      if (localSnap.exists()) {
+        const localProfile = { uid: cleanUid, ...localSnap.data() }
+        void getDoc(profileRef).then((serverSnap) => {
+          const fresh = serverSnap.exists() ? { uid: cleanUid, ...serverSnap.data() } : null
+          publicProfileRequestCache.set(cleanUid, fresh, { negative: !fresh })
+          globalThis.dispatchEvent?.(new CustomEvent('melogic:public-profile-core', { detail: { uid: cleanUid, profile: fresh } }))
+        }).catch(() => {})
+        return localProfile
+      }
+    } catch {}
+    const profileSnap = await getDoc(profileRef)
+    return profileSnap.exists() ? { uid: cleanUid, ...profileSnap.data() } : null
+  }, { force: Boolean(options.force), isNegative: (profile) => !profile })
+}
+
+export function getCachedPublicProfile(uid = '') {
+  const entry = publicProfileRequestCache.peek(String(uid || '').trim())
+  return entry?.status === 'resolved' ? entry.value : null
+}
+
+export function prewarmPublicProfile(uid = '') {
+  return getPublicProfile(uid).catch(() => null)
+}
+
+export function invalidatePublicProfile(uid = '') {
+  publicProfileRequestCache.invalidate(String(uid || '').trim())
 }
 
 export async function getUidForUsername(username) {
   if (!db) return null
   const usernameLower = normalizeUsername(username)
   if (!usernameLower) return null
-  const claimRef = doc(db, 'usernameClaims', usernameLower)
-  const claimSnap = await getDoc(claimRef)
-  if (!claimSnap.exists()) return null
-  return claimSnap.data()?.uid || null
+  return publicUsernameRequestCache.get(usernameLower, async () => {
+    const claimRef = doc(db, 'usernameClaims', usernameLower)
+    try {
+      const localSnap = await getDocFromCache(claimRef)
+      if (localSnap.exists()) return localSnap.data()?.uid || null
+    } catch {}
+    const claimSnap = await getDoc(claimRef)
+    return claimSnap.exists() ? claimSnap.data()?.uid || null : null
+  }, { isNegative: (uid) => !uid })
 }
 
 export async function saveProfileChanges(user, payload = {}) {
@@ -764,6 +837,8 @@ export async function saveProfileChanges(user, payload = {}) {
       transaction.set(userRef, privatePayload, { merge: true })
       saveStage = 'transaction-commit'
     })
+    publicProfileRequestCache.invalidate(uid)
+    publicUsernameRequestCache.clear()
   } catch (error) {
     if (!error?.code) {
       if (

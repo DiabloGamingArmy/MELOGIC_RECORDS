@@ -5,7 +5,7 @@ import vm from 'node:vm'
 import { melogicPwaPlugin } from '../scripts/pwaPlugin.mjs'
 const source = await fs.readFile(new URL('../public/melogic-push-sw.js', import.meta.url), 'utf8')
 function worker({ offline = false, cacheFailure = false } = {}) {
-  const handlers = {}, deleted = [], stored = new Map(), requests = []
+  const handlers = {}, deleted = [], stored = new Map(), requests = [], lifecycleCalls = []
   const cache = {
     addAll: async files => files.forEach(file => stored.set(file, new Response(file === '/offline.html' ? 'Reconnect' : file))),
     match: async key => stored.get(typeof key === 'string' ? key : new URL(key.url).pathname)?.clone(),
@@ -14,7 +14,13 @@ function worker({ offline = false, cacheFailure = false } = {}) {
     delete: async key => stored.delete(new URL(key.url).pathname)
   }
   const context = {
-    URL, Response, console, self: { location: { origin: 'https://melogic.test' }, addEventListener: (type, callback) => handlers[type] = callback },
+    URL, Response, Headers, console, self: {
+      location: { origin: 'https://melogic.test' },
+      registration: { navigationPreload: { enable: async () => lifecycleCalls.push('navigation-preload') } },
+      skipWaiting: async () => lifecycleCalls.push('skip-waiting'),
+      addEventListener: (type, callback) => handlers[type] = callback
+    },
+    clients: { claim: async () => lifecycleCalls.push('claim'), matchAll: async () => [] },
     caches: { open: async () => cache, keys: async () => ['melogic-shell-old', 'unrelated-cache'], delete: async key => deleted.push(key) },
     fetch: async request => { requests.push(request); if (offline) throw Error('offline'); const response = new Response('asset'); Object.defineProperty(response, 'type', { value: 'basic' }); return response }
   }
@@ -26,7 +32,7 @@ function worker({ offline = false, cacheFailure = false } = {}) {
     handlers.fetch({ request, respondWith: p => result = p })
     return result ? await result : null
   }
-  return { lifecycle, fetch, stored, requests, deleted, handlers }
+  return { lifecycle, fetch, stored, requests, deleted, handlers, lifecycleCalls }
 }
 test('offline shell installs and unavailable deep links receive fallback', async () => {
   const w = worker({ offline: true }); await w.lifecycle('install')
@@ -34,10 +40,11 @@ test('offline shell installs and unavailable deep links receive fallback', async
   assert.equal(await result.text(), 'Reconnect')
   assert.ok(w.handlers.push && w.handlers.notificationclick)
 })
-test('activation removes only older Melogic shell caches; no forced activation', async () => {
+test('activation removes older Melogic caches and promotes the versioned worker', async () => {
   const w = worker(); await w.lifecycle('activate')
   assert.deepEqual(w.deleted, ['melogic-shell-old'])
-  assert.doesNotMatch(source, /skipWaiting\(|clients\.claim\(/)
+  assert.ok(w.lifecycleCalls.includes('claim'))
+  assert.match(source, /skipWaiting\(|clients\.claim\(/)
 })
 test('authenticated data, audio, uploads, ranges and third-party requests bypass worker', async () => {
   const w = worker()

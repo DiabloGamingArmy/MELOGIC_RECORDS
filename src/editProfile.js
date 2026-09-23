@@ -7,6 +7,8 @@ import { initShellChrome, refreshShellState } from './appBoot'
 import { signOutUser, updateCurrentUserProfile, waitForInitialAuthState } from './firebase/auth'
 import { db, getEffectiveProfile, savePrivateProfilePreferences, saveProfileChanges } from './firebase/firestore'
 import { storage } from './firebase/storage'
+import { invalidateStorageAssetUrl } from './firebase/storageAssets'
+import { invalidatePublicProfileIdentity } from './data/profileSearchService.js'
 import { ROUTES } from './utils/routes'
 import { emitMobileSpaNavigation, isMobileSpaRuntime, prewarmMobileSpaRoute } from './pwa/mobileSpaRouter'
 import { normalizeNotificationPreferences } from './data/notificationPreferences'
@@ -462,6 +464,7 @@ async function uploadProfileMedia(uid, files) {
   if (files.avatar instanceof File && files.avatar.size > 0) {
     const avatarPath = `users/${uid}/avatar/current.webp`
     await uploadBytes(ref(storage, avatarPath), files.avatar, { contentType: files.avatar.type || 'image/webp' })
+    invalidateStorageAssetUrl(avatarPath)
     result.avatarPath = avatarPath
     result.avatarURL = await getDownloadURL(ref(storage, avatarPath))
   }
@@ -469,6 +472,7 @@ async function uploadProfileMedia(uid, files) {
   if (files.banner instanceof File && files.banner.size > 0) {
     const bannerPath = `users/${uid}/banner/current.webp`
     await uploadBytes(ref(storage, bannerPath), files.banner, { contentType: files.banner.type || 'image/webp' })
+    invalidateStorageAssetUrl(bannerPath)
     result.bannerPath = bannerPath
     result.bannerURL = await getDownloadURL(ref(storage, bannerPath))
   }
@@ -1414,6 +1418,7 @@ function renderSettingsPage() {
       })
 
       await saveProfileChanges(state.user, nextPayload)
+      invalidatePublicProfileIdentity(state.user.uid)
 
       if (nextPayload.displayName && nextPayload.displayName !== state.user.displayName) {
         await updateCurrentUserProfile({ displayName: nextPayload.displayName })

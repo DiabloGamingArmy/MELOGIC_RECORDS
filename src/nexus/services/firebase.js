@@ -1,13 +1,13 @@
 import { getAuth, browserLocalPersistence, setPersistence } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
 
 import { app } from "../../firebase/firebaseConfig.js";
+import { db } from "../../firebase/firestore.js";
 
 // Nexus reuses the existing Melogic Firebase application.
 export const firebaseApp = app;
 
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+export { db };
 
 export const firebaseConfigurationReady = true;
 export const firebaseConfigurationError = null;

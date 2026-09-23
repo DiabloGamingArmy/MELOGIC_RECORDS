@@ -1,3 +1,6 @@
+import './services/remoteImageReliability.js'
+import './services/profilePrewarm.js'
+
 export {
   getCurrentShellState,
   initShellChrome,

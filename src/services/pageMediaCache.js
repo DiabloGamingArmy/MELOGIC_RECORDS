@@ -1,5 +1,16 @@
+import { createBoundedRequestCache } from './boundedRequestCache.js'
+
 const DEFAULT_SCOPE = 'page'
-const cacheByScope = new Map()
+const SUCCESS_TTL_MS = 45 * 60_000
+const MISSING_TTL_MS = 45_000
+const TRANSIENT_TTL_MS = 750
+const cache = createBoundedRequestCache({
+  name: 'storage-url',
+  maxEntries: 600,
+  ttlMs: SUCCESS_TTL_MS,
+  negativeTtlMs: MISSING_TTL_MS,
+  errorTtlMs: TRANSIENT_TTL_MS
+})
 
 function normalizedScope(scopeKey = DEFAULT_SCOPE) {
   return String(scopeKey || DEFAULT_SCOPE).trim() || DEFAULT_SCOPE
@@ -9,21 +20,18 @@ function normalizedKey(path = '') {
   return String(path || '').trim()
 }
 
-function scopeCache(scopeKey = DEFAULT_SCOPE) {
-  const scope = normalizedScope(scopeKey)
-  if (!cacheByScope.has(scope)) cacheByScope.set(scope, new Map())
-  return cacheByScope.get(scope)
+function cacheKey(path, scopeKey = DEFAULT_SCOPE) {
+  return `${normalizedScope(scopeKey)}:${normalizedKey(path)}`
+}
+
+function isMissingStorageError(error) {
+  return String(error?.code || '').includes('storage/object-not-found')
 }
 
 export function rememberMissingStoragePath(path = '', { scopeKey = DEFAULT_SCOPE, type = 'storage' } = {}) {
   const key = normalizedKey(path)
   if (!key) return
-  scopeCache(scopeKey).set(key, {
-    resolvedUrl: '',
-    resolvedAt: Date.now(),
-    type,
-    status: 'missing'
-  })
+  cache.set(cacheKey(key, scopeKey), '', { negative: true })
 }
 
 export const markMissingStoragePath = rememberMissingStoragePath
@@ -31,67 +39,53 @@ export const markMissingStoragePath = rememberMissingStoragePath
 export async function getCachedStorageUrl(path = '', resolverFn, { scopeKey = DEFAULT_SCOPE, type = 'storage' } = {}) {
   const key = normalizedKey(path)
   if (!key || typeof resolverFn !== 'function') return ''
-  const cache = scopeCache(scopeKey)
-  const cached = cache.get(key)
-  if (cached) {
-    if (cached.status === 'resolved') return cached.resolvedUrl || ''
-    if (cached.status === 'missing' || cached.status === 'failed') return ''
-    if (cached.promise) return cached.promise
+  try {
+    const value = await cache.get(cacheKey(key, scopeKey), async () => {
+      const resolvedUrl = await resolverFn(key)
+      return String(resolvedUrl || '').trim()
+    }, {
+      isNegative: (value) => !value,
+      classifyError: (error) => isMissingStorageError(error) ? 'missing' : 'transient'
+    })
+    return String(value || '')
+  } catch {
+    return ''
   }
-
-  const promise = Promise.resolve()
-    .then(() => resolverFn(key))
-    .then((resolvedUrl) => {
-      const value = String(resolvedUrl || '').trim()
-      cache.set(key, {
-        resolvedUrl: value,
-        resolvedAt: Date.now(),
-        type,
-        status: value ? 'resolved' : 'missing'
-      })
-      return value
-    })
-    .catch((error) => {
-      const code = String(error?.code || '')
-      cache.set(key, {
-        resolvedUrl: '',
-        resolvedAt: Date.now(),
-        type,
-        status: code.includes('object-not-found') ? 'missing' : 'failed'
-      })
-      return ''
-    })
-
-  cache.set(key, {
-    promise,
-    resolvedUrl: '',
-    resolvedAt: Date.now(),
-    type,
-    status: 'pending'
-  })
-  return promise
 }
 
 export function getPageMediaCacheSnapshot(scopeKey = DEFAULT_SCOPE) {
-  const cache = scopeCache(scopeKey)
-  return Array.from(cache.entries()).map(([path, entry]) => ({
-    path,
-    resolvedAt: entry.resolvedAt || 0,
-    status: entry.status || 'unknown',
-    type: entry.type || 'storage'
-  }))
+  const prefix = `${normalizedScope(scopeKey)}:`
+  return cache.snapshot()
+    .filter((entry) => entry.key.startsWith(prefix))
+    .map((entry) => ({
+      path: entry.key.slice(prefix.length),
+      resolvedAt: entry.createdAt || 0,
+      status: entry.status === 'negative' ? 'missing' : entry.status,
+      type: 'storage'
+    }))
 }
 
 export function clearPageMediaCache(scopeKey = '') {
   if (scopeKey) {
-    cacheByScope.delete(normalizedScope(scopeKey))
+    const prefix = `${normalizedScope(scopeKey)}:`
+    cache.invalidateWhere((key) => key.startsWith(prefix))
     return
   }
-  cacheByScope.clear()
+  cache.clear()
 }
 
 export function clearAllPageMediaCache() {
   clearPageMediaCache()
 }
 
-window.addEventListener?.('pagehide', () => clearPageMediaCache())
+export function invalidateCachedStoragePath(path = '', { scopeKey = '' } = {}) {
+  const key = normalizedKey(path)
+  if (!key) return
+  if (scopeKey) {
+    cache.invalidate(cacheKey(key, scopeKey))
+    return
+  }
+  cache.invalidateWhere((candidate) => candidate.endsWith(`:${key}`))
+}
+
+globalThis.addEventListener?.('pagehide', () => cache.prune())

@@ -1227,9 +1227,9 @@ function formatTime(value = '') {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' })
 }
 
-function postAvatar(post) {
+function postAvatar(post, { priority = false } = {}) {
   const name = post.authorDisplayName || post.authorUsername || 'M'
-  if (post.authorAvatarURL) return `<img src="${escapeHtml(post.authorAvatarURL)}" alt="${escapeHtml(name)} avatar" width="48" height="48" loading="lazy" decoding="async" />`
+  if (post.authorAvatarURL) return `<img src="${escapeHtml(post.authorAvatarURL)}" alt="${escapeHtml(name)} avatar" width="48" height="48" loading="${priority ? 'eager' : 'lazy'}" ${priority ? 'fetchpriority="high"' : ''} decoding="async" data-reliable-image />`
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
@@ -1420,9 +1420,9 @@ function currentStoryIndex() {
   return index >= 0 ? index : 0
 }
 
-function storyAvatar(story) {
+function storyAvatar(story, { priority = false } = {}) {
   const name = story.authorDisplayName || story.authorUsername || 'M'
-  if (story.authorAvatarURL || story.authorPhotoURL) return `<img src="${escapeHtml(story.authorAvatarURL || story.authorPhotoURL)}" alt="${escapeHtml(name)} avatar" loading="lazy" />`
+  if (story.authorAvatarURL || story.authorPhotoURL) return `<img src="${escapeHtml(story.authorAvatarURL || story.authorPhotoURL)}" alt="${escapeHtml(name)} avatar" width="48" height="48" loading="${priority ? 'eager' : 'lazy'}" ${priority ? 'fetchpriority="high"' : ''} decoding="async" data-reliable-image />`
   return `<span>${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`
 }
 
@@ -1819,7 +1819,7 @@ function renderStoryViewerModal() {
           </div>
           <div class="community-story-viewer-hud-row">
             <a class="community-author" href="${profileHref}">
-              <span class="community-avatar">${storyAvatar(story)}</span>
+              <span class="community-avatar">${storyAvatar(story, { priority: true })}</span>
               <span class="community-story-viewer-identity">
                 ${communityDisplayNameMarkup(story, 'Melogic Creator', 'community-story-viewer-title')}
                 <button type="button" class="community-story-time-toggle" data-story-time-toggle data-story-posted-label="${escapeHtml(formatTime(story.createdAt))}" data-story-left-label="${escapeHtml(storyExpiresLabel(story.expiresAt))}" aria-label="Show time remaining">${escapeHtml(formatTime(story.createdAt))}</button>
@@ -1858,7 +1858,7 @@ function renderStoryViewerModal() {
           ${story.mediaType === 'video' && story.mediaURL
             ? `<video src="${escapeHtml(story.mediaURL)}" autoplay muted playsinline preload="auto" controlslist="nodownload nofullscreen noremoteplayback" disablepictureinpicture></video>`
             : story.mediaType === 'image' && story.mediaURL
-              ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="eager" decoding="async" />`
+              ? `<img src="${escapeHtml(story.mediaURL)}" alt="" loading="eager" fetchpriority="high" decoding="async" data-reliable-image />`
               : `<p>${escapeHtml(story.text)}</p>`
           }
           ${(story.mediaType === 'image' || story.mediaType === 'video') && (story.caption || story.text) ? `<p class="community-story-caption">${escapeHtml(story.caption || story.text)}</p>` : ''}
@@ -2876,7 +2876,7 @@ function bindCommunityImageReliability(root = app) {
   })
 }
 
-function renderUploadedPostAttachment(attachment = {}) {
+function renderUploadedPostAttachment(attachment = {}, { priority = false } = {}) {
   const path = attachment.path || attachment.storagePath || ''
   const url = attachment.url || state.attachmentMediaUrls[path] || ''
   const name = attachment.name || 'Attachment'
@@ -2887,7 +2887,7 @@ function renderUploadedPostAttachment(attachment = {}) {
     return `
       <button type="button" class="community-post-file-attachment is-image ${url ? 'is-loading' : 'is-resolving'}" data-community-image-shell data-open-community-image="${escapeHtml(url)}" data-community-image-name="${escapeHtml(name)}" data-stop-card-nav ${url ? '' : 'disabled'}>
         ${url
-          ? `<img src="${escapeHtml(url)}" data-community-storage-path="${escapeHtml(path)}" alt="${escapeHtml(name)}" loading="lazy" decoding="async"${dimensions} /><span class="community-attachment-load-state" data-community-image-status>Loading image…</span>`
+          ? `<img src="${escapeHtml(url)}" data-community-storage-path="${escapeHtml(path)}" alt="${escapeHtml(name)}" loading="${priority ? 'eager' : 'lazy'}" ${priority ? 'fetchpriority="high"' : ''} decoding="async"${dimensions} /><span class="community-attachment-load-state" data-community-image-status>Loading image…</span>`
           : `<span class="community-attachment-load-state" data-community-image-status>Loading image…</span>`
         }
       </button>
@@ -2920,17 +2920,17 @@ function renderUploadedPostAttachment(attachment = {}) {
   `
 }
 
-function renderPostAttachments(post) {
+function renderPostAttachments(post, { priority = false } = {}) {
   const attachments = Array.isArray(post.attachments) ? post.attachments : []
   if (!attachments.length) return linkedProductMarkup(post)
   return `
     <div class="community-post-attachments">
-      ${attachments.map((attachment) => {
+      ${attachments.map((attachment, index) => {
         if (attachment.type === 'product') return linkedProductMarkup({ ...post, attachments: [attachment], linkedProductId: '', linkedProductSnapshot: {} })
         if (attachment.type === 'music') return renderMusicAttachment(attachment)
         if (attachment.type === 'stage_plan') return renderStagePlanAttachment(attachment)
         if (attachment.type === 'studio_project') return renderStudioProjectAttachment(attachment)
-        if (['image', 'video', 'audio', 'file'].includes(attachment.type)) return renderUploadedPostAttachment(attachment)
+        if (['image', 'video', 'audio', 'file'].includes(attachment.type)) return renderUploadedPostAttachment(attachment, { priority: priority && index === 0 })
         return ''
       }).join('')}
     </div>
@@ -3039,7 +3039,7 @@ function postAttachmentRenderKey(post = {}) {
 }
 
 
-function postCard(post, { detail = false } = {}) {
+function postCard(post, { detail = false, priority = false } = {}) {
   const viewer = state.viewerState[post.postId] || {}
   const liveCommunity = post.community && post.community.communityId === post.communityId ? post.community : null
   const communitySlug = liveCommunity?.slug || post.communitySlug || ''
@@ -3054,7 +3054,7 @@ function postCard(post, { detail = false } = {}) {
     <article ${articleAttrs}>
       <header class="community-post-header">
         <a class="community-author" href="${authorHref}">
-          <span class="community-avatar">${postAvatar(post)}</span>
+          <span class="community-avatar">${postAvatar(post, { priority })}</span>
           <span>
             ${communityDisplayNameMarkup(post)}
             <em>${escapeHtml(formatUsername(post.authorUsername) || 'Creator')} · ${escapeHtml(formatTime(post.createdAt))}${post.edited ? ' · edited' : ''}</em>
@@ -3075,7 +3075,7 @@ function postCard(post, { detail = false } = {}) {
       <p class="community-post-body">${escapeHtml(body)}${!detail && post.body.length > body.length ? '...' : ''}</p>
       ${renderPostIntent(post)}
       <div data-post-attachments-region data-attachment-render-key="${escapeHtml(postAttachmentRenderKey(post))}">
-        ${renderPostAttachments(post)}
+        ${renderPostAttachments(post, { priority })}
       </div>
       ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<button type="button" data-community-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join('')}</div>` : ''}
       <footer class="community-post-actions">
@@ -3410,7 +3410,7 @@ function renderFeed() {
   }
   return `
     <section class="community-feed" aria-label="Community posts">
-      ${state.posts.map((post) => postCard(post)).join('')}
+      ${state.posts.map((post, index) => postCard(post, { priority: index === 0 })).join('')}
       ${state.feedError ? `<div class="community-feed-state community-panel"><strong>Could not load more posts.</strong><span>${escapeHtml(state.feedError)}</span></div>` : ''}
       <div class="community-feed-sentinel" data-community-feed-sentinel aria-hidden="true"></div>
       ${state.feedLoadingMore ? '<div class="community-feed-more-state">Loading more posts...</div>' : state.feedHasMore ? '<button type="button" class="community-load-more button button-muted" data-load-more-posts>Load more</button>' : '<div class="community-feed-more-state">You are caught up.</div>'}
@@ -4215,7 +4215,7 @@ function renderDetail() {
           </div>
           <a class="button button-muted" href="${ROUTES.community}" data-community-back-to-feed>${iconSvg('arrowLeft')} <span>Back</span></a>
         </section>
-        ${postLoading ? renderDetailSkeleton() : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
+        ${postLoading ? renderDetailSkeleton() : state.error ? `<section class="community-feed-state community-panel"><strong>Could not load post.</strong><span>${escapeHtml(state.error)}</span></section>` : post ? postCard(post, { detail: true, priority: true }) : '<section class="community-feed-state community-panel">This post is not available.</section>'}
       </div>
       ${renderSidebar()}
     </div>

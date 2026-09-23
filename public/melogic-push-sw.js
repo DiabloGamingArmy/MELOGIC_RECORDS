@@ -82,6 +82,8 @@ const SHELL_CACHE_PREFIX = 'melogic-shell-'
 const SHELL_CACHE = `${SHELL_CACHE_PREFIX}__MELOGIC_PWA_BUILD__`
 const ROUTE_CACHE_PREFIX = 'melogic-mobile-routes-'
 const ROUTE_CACHE = `${ROUTE_CACHE_PREFIX}__MELOGIC_PWA_BUILD__`
+const CURRENT_BUILD = '__MELOGIC_PWA_BUILD__'
+const ROUTE_FRESH_MS = 30_000
 const SHELL_FILES = ['/offline.html', '/manifest.webmanifest', '/branding/icons/pwa-192.png', '/branding/icons/pwa-512.png', '/branding/icons/pwa-maskable-512.png', '/branding/icons/apple-touch-icon.png']
 
 // Patch 1 foundation only: these are public HTML route documents. Their JS/CSS
@@ -135,7 +137,7 @@ self.addEventListener('activate', event => {
     const keys = await caches.keys()
     await Promise.all(keys.filter(key =>
       (key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE) ||
-      key.startsWith(ROUTE_CACHE_PREFIX)
+      (key.startsWith(ROUTE_CACHE_PREFIX) && key !== ROUTE_CACHE)
     ).map(key => caches.delete(key)))
     await clients.claim()
     const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true })
@@ -158,16 +160,46 @@ self.addEventListener('fetch', event => {
       // checking the current deployment: its fingerprinted asset references may
       // belong to an older Firebase release whose files no longer exist.
       event.respondWith((async () => {
+        const routeCache = await caches.open(ROUTE_CACHE)
+        const cachedRoute = await routeCache.match(routeKey)
+        const cachedAt = Number(cachedRoute?.headers.get('X-Melogic-Cached-At') || 0)
+        const cachedBuild = String(cachedRoute?.headers.get('X-Melogic-Build') || '')
+        const networkRoute = Promise.resolve(event.preloadResponse).then((preloaded) => preloaded || fetch(request, { cache: 'no-store' }))
+
+        // A warm HTML response is only eligible after the deployment manifest
+        // confirms this worker's fingerprint set is still the active release.
+        if (cachedRoute && cachedBuild === CURRENT_BUILD && Date.now() - cachedAt < ROUTE_FRESH_MS) {
+          try {
+            const manifestResponse = await fetch(`/melogic-build.json?t=${Date.now()}`, { cache: 'no-store', credentials: 'same-origin' })
+            const serverBuild = manifestResponse.ok ? String((await manifestResponse.json())?.build || '') : ''
+            if (serverBuild === CURRENT_BUILD) {
+              event.waitUntil(networkRoute.then(async (response) => {
+                if (!response?.ok || !String(response.headers.get('Content-Type') || '').includes('text/html')) return
+                const headers = new Headers(response.headers)
+                headers.set('X-Melogic-Build', CURRENT_BUILD)
+                headers.set('X-Melogic-Cached-At', String(Date.now()))
+                await routeCache.put(routeKey, new Response(await response.clone().blob(), { status: response.status, statusText: response.statusText, headers }))
+              }).catch(() => {}))
+              return cachedRoute
+            }
+          } catch {}
+        }
+
         try {
-          const preloaded = await event.preloadResponse
-          const response = preloaded || await fetch(request, { cache: 'no-store' })
-          if (response?.ok) return response
+          const response = await networkRoute
+          if (response?.ok) {
+            if (String(response.headers.get('Content-Type') || '').includes('text/html') && !/no-store|private/i.test(response.headers.get('Cache-Control') || '')) {
+              const headers = new Headers(response.headers)
+              headers.set('X-Melogic-Build', CURRENT_BUILD)
+              headers.set('X-Melogic-Cached-At', String(Date.now()))
+              try { await routeCache.put(routeKey, new Response(await response.clone().blob(), { status: response.status, statusText: response.statusText, headers })) } catch {}
+            }
+            return response
+          }
         } catch {}
 
         // Offline-only fallback may use the most recently cached route document.
         // It is never used while the network succeeds.
-        const cache = await caches.open(ROUTE_CACHE)
-        const cachedRoute = await cache.match(routeKey)
         if (cachedRoute) return cachedRoute
 
         const offline = await caches.open(SHELL_CACHE).then(shell => shell.match('/offline.html'))
