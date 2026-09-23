@@ -520,17 +520,20 @@ function buildProductsPageQuery({ filters = {}, sort = 'featured', pageSize = 10
   }
 }
 
+function normalizeProductSnapshot(snapshot) {
+  return snapshot.docs.map((docSnap) => normalizeProduct(docSnap.id, docSnap.data(), {}))
+}
+
 export async function listPublicProductsPage({ filters = {}, sort = 'featured', pageSize = 10, cursor = null } = {}) {
   if (!db) return { products: [], nextCursor: null, hasMore: false }
 
   try {
     const { firestoreQuery, rangePlan } = buildProductsPageQuery({ filters, sort, pageSize, cursor })
     const snapshot = await getDocs(firestoreQuery)
-    let products = await Promise.all(snapshot.docs.map(async (docSnap) => {
-      const raw = docSnap.data()
-      const media = await resolveProductMedia({ id: docSnap.id, ...raw })
-      return normalizeProduct(docSnap.id, raw, media)
-    }))
+
+    // Keep catalog availability independent from Firebase Storage. Grid callers only
+    // need product metadata to render; media is hydrated lazily by the UI.
+    let products = normalizeProductSnapshot(snapshot)
 
     if (rangePlan.applyContributorClientFilter) {
       products = products.filter((item) => Number(item.contributorCount || 0) >= Number(filters.minContributorCount || 0))
@@ -545,19 +548,11 @@ export async function listPublicProductsPage({ filters = {}, sort = 'featured', 
       hasMore: snapshot.docs.length === pageSize
     }
   } catch (error) {
-    const errorCode = String(error?.code || '')
-    const isMissingIndex = errorCode === 'failed-precondition' || /index/i.test(String(error?.message || ''))
+    warnOnce('fetch', '[productService] Paginated product query failed; attempting lightweight public-catalog fallback.', error?.message || error)
 
-    if (!isDevelopmentRuntime) {
-      warnOnce('fetch', '[productService] Production product query failed.', error?.message || error)
-      if (isMissingIndex) {
-        throw new Error('Products could not be loaded right now. Try refreshing in a moment.')
-      }
-      throw new Error('Products could not be loaded right now. Try refreshing in a moment.')
-    }
-
-    warnOnce('fetch', '[productService] Paginated product query failed; running dev-only lightweight fallback query.', error?.message || error)
-
+    // The fallback is intentionally available in production. Security-sensitive
+    // visibility/status constraints remain server-side; optional filtering/sorting
+    // can degrade client-side instead of taking the whole marketplace offline.
     const fallbackConstraints = [
       where('status', '==', 'published'),
       where('visibility', '==', 'public')
@@ -567,11 +562,19 @@ export async function listPublicProductsPage({ filters = {}, sort = 'featured', 
 
     try {
       const fallbackSnapshot = await getDocs(query(collection(db, FIRESTORE_COLLECTIONS.products), ...fallbackConstraints))
-      const fallbackProducts = await Promise.all(fallbackSnapshot.docs.map(async (docSnap) => {
-        const raw = docSnap.data()
-        const media = await resolveProductMedia({ id: docSnap.id, ...raw })
-        return normalizeProduct(docSnap.id, raw, media)
-      }))
+      let fallbackProducts = normalizeProductSnapshot(fallbackSnapshot)
+
+      // Preserve the requested user-facing filters when the optimized Firestore
+      // query cannot run. The marketplace also reapplies these filters in its UI.
+      if (Number.isFinite(filters.minPriceCents)) {
+        fallbackProducts = fallbackProducts.filter((item) => Number(item.priceCents || 0) >= filters.minPriceCents)
+      }
+      if (Number.isFinite(filters.maxPriceCents)) {
+        fallbackProducts = fallbackProducts.filter((item) => Number(item.priceCents || 0) <= filters.maxPriceCents)
+      }
+      if (Number.isFinite(filters.minContributorCount) && filters.minContributorCount > 0) {
+        fallbackProducts = fallbackProducts.filter((item) => Number(item.contributorCount || 0) >= filters.minContributorCount)
+      }
 
       return {
         products: sortProductsClientSide(fallbackProducts, sort),
@@ -579,8 +582,8 @@ export async function listPublicProductsPage({ filters = {}, sort = 'featured', 
         hasMore: fallbackSnapshot.docs.length === pageSize
       }
     } catch (fallbackError) {
-      warnOnce('fetch', '[productService] Paginated product query failed. Missing Firestore index or invalid query.', fallbackError?.message || fallbackError)
-      return { products: [], nextCursor: null, hasMore: false }
+      warnOnce('fetch', '[productService] Public-catalog fallback also failed.', fallbackError?.message || fallbackError)
+      throw new Error('Products could not be loaded right now. Try refreshing in a moment.')
     }
   }
 }
