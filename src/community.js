@@ -2902,13 +2902,13 @@ function renderUploadedPostAttachment(attachment = {}, { priority = false } = {}
       <article class="community-post-file-attachment is-video" data-community-video-shell data-community-video-state="${url ? 'idle' : 'resolving'}" data-stop-card-nav>
         <div class="community-feed-video-frame">
           <video
-            ${url ? `src="${escapeHtml(url)}"` : ''}
+            data-community-video-src="${escapeHtml(url)}"
             data-community-storage-path="${escapeHtml(path)}"
             data-community-feed-video
             muted
             playsinline
             webkit-playsinline
-            preload="metadata"
+            preload="none"
             controlslist="nodownload nofullscreen noremoteplayback"
             disablepictureinpicture
             disableremoteplayback
@@ -2919,7 +2919,10 @@ function renderUploadedPostAttachment(attachment = {}, { priority = false } = {}
           <span class="community-feed-video-play-indicator" data-community-video-play-indicator aria-hidden="true">${iconSvg('play')}</span>
           <button type="button" class="community-feed-video-mute-toggle" data-community-video-mute aria-label="Unmute video" aria-pressed="true" data-muted="true">${iconSvg('volume2')}</button>
           <span class="community-feed-video-like-burst" data-community-video-like-burst aria-hidden="true">${iconSvg('thumbsUp')}</span>
-          <span class="community-feed-video-load-state" data-community-video-load-state aria-live="polite">Loading video…</span>
+          <div class="community-feed-video-load-state" data-community-video-load-state aria-live="polite">
+            <span data-community-video-status-text>Loading video…</span>
+            <button type="button" class="community-feed-video-retry" data-community-video-retry>Retry video</button>
+          </div>
         </div>
       </article>
     `
@@ -4599,12 +4602,10 @@ function renderPostMediaOnly(){
   app?.querySelectorAll('[data-community-storage-path]').forEach((node)=>{
     const path=node.getAttribute('data-community-storage-path')||''
     const url=state.attachmentMediaUrls[path]||''
-    if(url && !node.getAttribute('src')) {
+    if(url && node.matches?.('video[data-community-feed-video]')) {
+      node.setAttribute('data-community-video-src',url)
+    } else if(url && !node.getAttribute('src')) {
       node.setAttribute('src',url)
-      if(node.matches?.('video[data-community-feed-video]')) {
-        node.closest?.('[data-community-video-shell]')?.setAttribute('data-community-video-state','loading')
-        try { node.load?.() } catch {}
-      }
     }
   })
   bindCommunityImageReliability(app)

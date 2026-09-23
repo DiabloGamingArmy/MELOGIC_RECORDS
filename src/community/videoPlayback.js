@@ -6,9 +6,24 @@ const DOUBLE_TAP_DELAY_MS = 280
 const TAP_MAX_DURATION_MS = 650
 const TAP_MOVE_TOLERANCE_PX = 14
 const DOUBLE_TAP_DISTANCE_PX = 48
+const AUTOPLAY_DWELL_MS = 130
+const STALL_TIMEOUT_MS = 7000
+const RELEASE_DELAY_MS = 8000
+const RETRY_DELAYS_MS = [700, 2200, 5500]
+const RETRY_PARAM = 'melogic_video_retry'
 
 function clamp(value, min = 0, max = 1) {
   return Math.min(max, Math.max(min, Number(value) || 0))
+}
+
+function nowMs() {
+  return globalThis.performance?.now?.() ?? Date.now()
+}
+
+function connectionIsConstrained() {
+  const connection = globalThis.navigator?.connection || globalThis.navigator?.mozConnection || globalThis.navigator?.webkitConnection
+  if (connection?.saveData) return true
+  return /^(slow-)?2g$/i.test(String(connection?.effectiveType || ''))
 }
 
 function mediaViewportRoot(scope) {
@@ -60,7 +75,6 @@ function configureInlineVideo(video, { resetMute = false } = {}) {
   video.playsInline = true
   video.setAttribute('playsinline', '')
   video.setAttribute('webkit-playsinline', '')
-  video.preload = video.preload || 'metadata'
   video.setAttribute('controlslist', 'nodownload nofullscreen noremoteplayback')
   video.setAttribute('disablepictureinpicture', '')
   video.setAttribute('disableremoteplayback', '')
@@ -68,20 +82,86 @@ function configureInlineVideo(video, { resetMute = false } = {}) {
   try { video.disableRemotePlayback = true } catch {}
 }
 
+function cleanSource(source = '') {
+  const value = String(source || '').trim()
+  if (!value) return ''
+  try {
+    const url = new URL(value, globalThis.location?.href)
+    url.searchParams.delete(RETRY_PARAM)
+    return url.href
+  } catch {
+    return value
+  }
+}
+
+function retrySource(source = '', attempt = 0) {
+  const value = cleanSource(source)
+  if (!value || value.startsWith('blob:') || value.startsWith('data:')) return value
+  try {
+    const url = new URL(value, globalThis.location?.href)
+    url.searchParams.set(RETRY_PARAM, String(Math.max(1, Number(attempt) || 1)))
+    return url.href
+  } catch {
+    return value
+  }
+}
+
 export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}) {
   let scope = null
   let observerRoot = null
   let observer = null
+  let warmObserver = null
   let fallbackScrollTarget = null
   let activeVideo = null
   let suspended = false
   let evaluateFrame = 0
+  let dwellTimer = 0
+  let pendingWinner = null
+  let pendingWinnerSince = 0
+
   const visibility = new Map()
+  const warmVisibility = new Map()
   const bindings = new WeakMap()
   const userPaused = new WeakSet()
   const tapState = new WeakMap()
+  const reliabilityState = new WeakMap()
 
   const shellFor = (video) => video?.closest?.('[data-community-video-shell]') || null
+
+  function reliabilityFor(video) {
+    let state = reliabilityState.get(video)
+    if (!state) {
+      state = {
+        attempts: 0,
+        generation: 0,
+        stallTimer: 0,
+        retryTimer: 0,
+        releaseTimer: 0,
+        resumeTime: Number(video?.dataset?.communityVideoResumeTime || 0) || 0,
+        exhausted: false
+      }
+      reliabilityState.set(video, state)
+    }
+    return state
+  }
+
+  function clearTimer(id) {
+    if (id) globalThis.clearTimeout(id)
+  }
+
+  function clearReliabilityTimers(video, { keepRelease = false } = {}) {
+    const state = reliabilityFor(video)
+    clearTimer(state.stallTimer)
+    clearTimer(state.retryTimer)
+    if (!keepRelease) clearTimer(state.releaseTimer)
+    state.stallTimer = 0
+    state.retryTimer = 0
+    if (!keepRelease) state.releaseTimer = 0
+  }
+
+  function statusTextNode(video) {
+    return shellFor(video)?.querySelector?.('[data-community-video-status-text]') || null
+  }
 
   function tapStateFor(video) {
     let state = tapState.get(video)
@@ -118,12 +198,14 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     }
   }
 
-  function setVideoState(video, state, statusText = '') {
+  function setVideoState(video, state, text = '') {
     const shell = shellFor(video)
     if (!shell) return
     shell.setAttribute('data-community-video-state', state)
-    const status = shell.querySelector('[data-community-video-load-state]')
-    if (status && statusText) status.textContent = statusText
+    if (text) {
+      const status = statusTextNode(video)
+      if (status) status.textContent = text
+    }
     syncControlState(video)
   }
 
@@ -136,8 +218,88 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     syncControlState(video)
   }
 
+  function baseSourceFor(video) {
+    const dataSource = video?.getAttribute?.('data-community-video-src') || ''
+    const liveSource = video?.getAttribute?.('src') || video?.currentSrc || ''
+    const source = cleanSource(dataSource || liveSource)
+    if (source && source !== dataSource) video?.setAttribute?.('data-community-video-src', source)
+    return source
+  }
+
+  function saveResumeTime(video) {
+    if (!video) return
+    const time = Number(video.currentTime)
+    if (!Number.isFinite(time) || time < 0.05) return
+    const state = reliabilityFor(video)
+    state.resumeTime = time
+    video.dataset.communityVideoResumeTime = String(time)
+  }
+
+  function restoreResumeTime(video) {
+    const state = reliabilityFor(video)
+    const time = Number(state.resumeTime || video?.dataset?.communityVideoResumeTime || 0)
+    if (!Number.isFinite(time) || time <= 0 || !Number.isFinite(Number(video.duration)) || Number(video.duration) <= 0) return
+    const safe = Math.min(time, Math.max(0, Number(video.duration) - 0.1))
+    if (safe <= 0) return
+    try { video.currentTime = safe } catch {}
+  }
+
+  function sourceAttached(video) {
+    return Boolean(video?.getAttribute?.('src') || video?.currentSrc)
+  }
+
+  function attachSource(video, { retryAttempt = 0 } = {}) {
+    const source = baseSourceFor(video)
+    if (!video || !source) {
+      setVideoState(video, 'resolving', 'Loading video…')
+      return false
+    }
+    const desired = retryAttempt > 0 ? retrySource(source, retryAttempt) : source
+    if (video.getAttribute('src') === desired && sourceAttached(video)) return true
+
+    const state = reliabilityFor(video)
+    state.generation += 1
+    clearTimer(state.releaseTimer)
+    state.releaseTimer = 0
+    video.preload = 'metadata'
+    video.setAttribute('preload', 'metadata')
+    video.setAttribute('src', desired)
+    setVideoState(video, retryAttempt > 0 ? 'retrying' : 'loading', retryAttempt > 0 ? 'Retrying video…' : 'Loading video…')
+    try { video.load?.() } catch {}
+    return true
+  }
+
+  function releaseSource(video, { force = false } = {}) {
+    if (!video || (!force && video === activeVideo)) return
+    const source = baseSourceFor(video)
+    if (!sourceAttached(video) || !source) return
+    saveResumeTime(video)
+    try { video.pause?.() } catch {}
+    video.removeAttribute('src')
+    video.preload = 'none'
+    video.setAttribute('preload', 'none')
+    try { video.load?.() } catch {}
+    if (video === activeVideo) activeVideo = null
+    const state = reliabilityFor(video)
+    state.generation += 1
+    clearReliabilityTimers(video)
+    setVideoState(video, userPaused.has(video) ? 'paused' : 'idle')
+  }
+
+  function scheduleRelease(video) {
+    if (!video || video === activeVideo) return
+    const state = reliabilityFor(video)
+    clearTimer(state.releaseTimer)
+    state.releaseTimer = globalThis.setTimeout(() => {
+      state.releaseTimer = 0
+      if (warmVisibility.get(video) || video === activeVideo) return
+      releaseSource(video)
+    }, RELEASE_DELAY_MS)
+  }
+
   function pauseVideo(video, state = 'paused') {
     if (!video) return
+    saveResumeTime(video)
     try {
       if (!video.paused) video.pause()
     } catch {}
@@ -154,10 +316,72 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     if (!except) activeVideo = null
   }
 
+  function resetRecovery(video) {
+    const state = reliabilityFor(video)
+    clearTimer(state.stallTimer)
+    clearTimer(state.retryTimer)
+    state.stallTimer = 0
+    state.retryTimer = 0
+    state.attempts = 0
+    state.exhausted = false
+  }
+
+  function armStallWatch(video) {
+    if (!video || video.paused || video.ended) return
+    const state = reliabilityFor(video)
+    clearTimer(state.stallTimer)
+    const generation = state.generation
+    state.stallTimer = globalThis.setTimeout(() => {
+      state.stallTimer = 0
+      if (generation !== state.generation || video.paused || video.ended) return
+      recoverVideo(video, { reason: 'stall' })
+    }, STALL_TIMEOUT_MS)
+  }
+
+  function recoverVideo(video, { manual = false, reason = 'error' } = {}) {
+    if (!video) return
+    const state = reliabilityFor(video)
+    if (state.retryTimer) return
+
+    if (!globalThis.navigator?.onLine) {
+      state.exhausted = true
+      setVideoState(video, 'error', 'Waiting for connection…')
+      return
+    }
+
+    if (manual) {
+      state.attempts = 0
+      state.exhausted = false
+    }
+
+    if (state.attempts >= RETRY_DELAYS_MS.length) {
+      state.exhausted = true
+      setVideoState(video, 'error', 'Video is taking longer than expected.')
+      return
+    }
+
+    saveResumeTime(video)
+    const attempt = state.attempts + 1
+    state.attempts = attempt
+    state.generation += 1
+    const generation = state.generation
+    const delay = manual ? 0 : RETRY_DELAYS_MS[attempt - 1]
+    setVideoState(video, 'retrying', reason === 'stall' ? 'Reconnecting video…' : 'Retrying video…')
+
+    state.retryTimer = globalThis.setTimeout(() => {
+      state.retryTimer = 0
+      if (generation !== state.generation) return
+      video.removeAttribute('src')
+      try { video.load?.() } catch {}
+      attachSource(video, { retryAttempt: attempt })
+    }, delay)
+  }
+
   function onNativePlay(video) {
     userPaused.delete(video)
     pauseAll(video)
     activeVideo = video
+    resetRecovery(video)
     setVideoState(video, 'playing')
   }
 
@@ -177,10 +401,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
 
   function requestPlayback(video) {
     if (!video || suspended || document.hidden || userPaused.has(video)) return
-    if (!video.getAttribute('src') && !video.currentSrc) {
-      setVideoState(video, 'resolving', 'Loading video…')
-      return
-    }
+    if (!sourceAttached(video) && !attachSource(video)) return
     if (activeVideo && activeVideo !== video) pauseVideo(activeVideo)
     activeVideo = video
     configureInlineVideo(video, { resetMute: false })
@@ -203,10 +424,13 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     if (!video || suspended) return
     if (video.paused || video.ended) {
       if (video.ended) {
+        reliabilityFor(video).resumeTime = 0
+        video.dataset.communityVideoResumeTime = ''
         try { video.currentTime = 0 } catch {}
       }
       userPaused.delete(video)
       setVideoMuted(video, false)
+      attachSource(video)
       requestPlayback(video)
       return
     }
@@ -234,7 +458,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
 
   function commitTap(video, x, y) {
     const taps = tapStateFor(video)
-    const now = globalThis.performance?.now?.() ?? Date.now()
+    const now = nowMs()
     const isDouble = taps.lastTapAt > 0
       && now - taps.lastTapAt <= DOUBLE_TAP_DELAY_MS
       && distance(taps.lastTapX, taps.lastTapY, x, y) <= DOUBLE_TAP_DISTANCE_PX
@@ -260,10 +484,22 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
 
   function bindVideo(video) {
     if (!video || bindings.has(video)) return
-    configureInlineVideo(video, { resetMute: true })
+    const firstRegistration = video.dataset.communityVideoInitialized !== 'true'
+    configureInlineVideo(video, { resetMute: firstRegistration })
+    video.dataset.communityVideoInitialized = 'true'
+    const existingSource = cleanSource(video.getAttribute('data-community-video-src') || video.getAttribute('src') || '')
+    if (existingSource) video.setAttribute('data-community-video-src', existingSource)
+    if (video.hasAttribute('src')) {
+      video.removeAttribute('src')
+      video.preload = 'none'
+      video.setAttribute('preload', 'none')
+      try { video.load?.() } catch {}
+    }
+
     const shell = shellFor(video)
     const hitTarget = shell?.querySelector('[data-community-video-toggle]') || null
     const muteButton = shell?.querySelector('[data-community-video-mute]') || null
+    const retryButton = shell?.querySelector('[data-community-video-retry]') || null
     const cleanups = []
     const listen = (target, type, handler, options) => {
       if (!target?.addEventListener) return
@@ -273,23 +509,59 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
 
     listen(video, 'play', () => onNativePlay(video))
     listen(video, 'pause', () => {
+      const state = reliabilityFor(video)
+      clearTimer(state.stallTimer)
+      state.stallTimer = 0
       if (video === activeVideo && video.paused) activeVideo = null
       if (!video.ended) setVideoState(video, 'paused')
     })
     listen(video, 'ended', () => {
+      clearReliabilityTimers(video, { keepRelease: true })
       if (video === activeVideo) activeVideo = null
+      reliabilityFor(video).resumeTime = 0
+      video.dataset.communityVideoResumeTime = ''
       setVideoState(video, 'ended')
     })
     listen(video, 'loadstart', () => setVideoState(video, 'loading', 'Loading video…'))
-    listen(video, 'waiting', () => setVideoState(video, 'loading', 'Loading video…'))
-    listen(video, 'canplay', () => {
-      if (video !== activeVideo) setVideoState(video, video.paused ? 'paused' : 'idle')
+    listen(video, 'loadedmetadata', () => {
+      restoreResumeTime(video)
       scheduleEvaluate()
     })
-    listen(video, 'loadedmetadata', () => scheduleEvaluate())
+    listen(video, 'loadeddata', () => {
+      if (video !== activeVideo && !userPaused.has(video)) setVideoState(video, 'idle')
+    })
+    listen(video, 'canplay', () => {
+      resetRecovery(video)
+      restoreResumeTime(video)
+      if (video !== activeVideo) setVideoState(video, userPaused.has(video) ? 'paused' : 'idle')
+      scheduleEvaluate()
+    })
+    listen(video, 'playing', () => {
+      resetRecovery(video)
+      setVideoState(video, 'playing')
+    })
+    listen(video, 'waiting', () => {
+      setVideoState(video, 'loading', 'Loading video…')
+      armStallWatch(video)
+    })
+    listen(video, 'stalled', () => {
+      setVideoState(video, 'loading', 'Reconnecting video…')
+      armStallWatch(video)
+    })
+    listen(video, 'suspend', () => {
+      if (video === activeVideo && video.readyState < 3) armStallWatch(video)
+    })
     listen(video, 'error', () => {
       if (video === activeVideo) activeVideo = null
-      setVideoState(video, 'error', 'Video unavailable')
+      recoverVideo(video, { reason: 'error' })
+    })
+    listen(video, 'timeupdate', () => {
+      const state = reliabilityFor(video)
+      const time = Number(video.currentTime)
+      if (Number.isFinite(time) && time > 0) {
+        state.resumeTime = time
+        video.dataset.communityVideoResumeTime = String(time)
+      }
     })
     listen(video, 'volumechange', () => syncControlState(video))
 
@@ -300,14 +572,13 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
         taps.pointerId = event.pointerId
         taps.downX = event.clientX
         taps.downY = event.clientY
-        taps.downAt = globalThis.performance?.now?.() ?? Date.now()
+        taps.downAt = nowMs()
       })
       listen(hitTarget, 'pointerup', (event) => {
         const taps = tapStateFor(video)
         if (taps.pointerId !== event.pointerId) return
-        const now = globalThis.performance?.now?.() ?? Date.now()
+        const duration = nowMs() - taps.downAt
         const moved = distance(taps.downX, taps.downY, event.clientX, event.clientY)
-        const duration = now - taps.downAt
         taps.pointerId = null
         event.preventDefault()
         event.stopPropagation()
@@ -333,6 +604,15 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
       })
     }
 
+    if (retryButton) {
+      listen(retryButton, 'pointerdown', (event) => event.stopPropagation())
+      listen(retryButton, 'click', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        recoverVideo(video, { manual: true, reason: 'manual' })
+      })
+    }
+
     bindings.set(video, cleanups)
     setVideoState(video, 'idle')
   }
@@ -342,13 +622,17 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     if (cleanups) cleanups.forEach((cleanup) => cleanup())
     bindings.delete(video)
     visibility.delete(video)
+    warmVisibility.delete(video)
     userPaused.delete(video)
     const taps = tapState.get(video)
     if (taps?.singleTapTimer) globalThis.clearTimeout(taps.singleTapTimer)
     if (taps?.likeBurstTimer) globalThis.clearTimeout(taps.likeBurstTimer)
     tapState.delete(video)
+    clearReliabilityTimers(video)
     try { observer?.unobserve(video) } catch {}
-    pauseVideo(video)
+    try { warmObserver?.unobserve(video) } catch {}
+    releaseSource(video, { force: true })
+    reliabilityState.delete(video)
   }
 
   function ratioFor(video) {
@@ -362,7 +646,13 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
   }
 
   function chooseWinner(videos) {
-    const eligible = videos.filter((video) => ratioFor(video) >= PLAY_THRESHOLD && !video.error && !video.ended && !userPaused.has(video))
+    const eligible = videos.filter((video) => {
+      const state = reliabilityFor(video)
+      return ratioFor(video) >= PLAY_THRESHOLD
+        && !video.ended
+        && !userPaused.has(video)
+        && !state.exhausted
+    })
     if (!eligible.length) {
       if (activeVideo && videos.includes(activeVideo) && ratioFor(activeVideo) > STOP_THRESHOLD && !activeVideo.ended && !userPaused.has(activeVideo)) {
         return activeVideo
@@ -377,17 +667,50 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     return best
   }
 
+  function clearDwell() {
+    if (dwellTimer) globalThis.clearTimeout(dwellTimer)
+    dwellTimer = 0
+    pendingWinner = null
+    pendingWinnerSince = 0
+  }
+
+  function scheduleWinnerAfterDwell(video) {
+    if (!video) {
+      clearDwell()
+      return
+    }
+    if (pendingWinner !== video) {
+      clearDwell()
+      pendingWinner = video
+      pendingWinnerSince = nowMs()
+    }
+    const remaining = Math.max(0, AUTOPLAY_DWELL_MS - (nowMs() - pendingWinnerSince))
+    if (remaining <= 0) {
+      clearDwell()
+      requestPlayback(video)
+      return
+    }
+    if (dwellTimer) return
+    dwellTimer = globalThis.setTimeout(() => {
+      dwellTimer = 0
+      scheduleEvaluate()
+    }, remaining)
+  }
+
   function evaluate() {
     evaluateFrame = 0
     if (suspended || document.hidden) {
+      clearDwell()
       pauseAll()
       return
     }
     const videos = Array.from(visibility.keys()).filter((video) => video.isConnected && scope?.contains?.(video))
     if (!videos.length) {
+      clearDwell()
       activeVideo = null
       return
     }
+
     if (!observer) {
       videos.forEach((video) => {
         const ratio = measuredIntersectionRatio(video, observerRoot)
@@ -395,13 +718,26 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
         if (ratio <= STOP_THRESHOLD) userPaused.delete(video)
       })
     }
+
     const winner = chooseWinner(videos)
     if (!winner) {
-      if (activeVideo) pauseVideo(activeVideo)
+      clearDwell()
+      if (activeVideo && ratioFor(activeVideo) <= STOP_THRESHOLD) pauseVideo(activeVideo)
       return
     }
-    if (activeVideo && activeVideo !== winner) pauseVideo(activeVideo)
-    if (winner.paused && !winner.ended) requestPlayback(winner)
+
+    attachSource(winner)
+
+    if (winner === activeVideo && !winner.paused) {
+      clearDwell()
+      return
+    }
+
+    if (activeVideo && activeVideo !== winner && ratioFor(activeVideo) <= STOP_THRESHOLD) {
+      pauseVideo(activeVideo)
+    }
+
+    scheduleWinnerAfterDwell(winner)
   }
 
   function scheduleEvaluate() {
@@ -412,7 +748,9 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
 
   function clearObservation() {
     observer?.disconnect?.()
+    warmObserver?.disconnect?.()
     observer = null
+    warmObserver = null
     if (fallbackScrollTarget) {
       fallbackScrollTarget.removeEventListener?.('scroll', scheduleEvaluate)
       fallbackScrollTarget = null
@@ -425,6 +763,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     if (suspended || !scope) return
     observerRoot = mediaViewportRoot(scope)
     const videos = Array.from(visibility.keys()).filter((video) => video.isConnected && scope.contains(video))
+
     if ('IntersectionObserver' in globalThis) {
       observer = new IntersectionObserver((entries) => {
         entries.forEach((entry) => {
@@ -437,12 +776,44 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
         root: observerRoot,
         threshold: OBSERVER_THRESHOLDS
       })
-      videos.forEach((video) => observer.observe(video))
+
+      const rootMargin = connectionIsConstrained() ? '45% 0px' : '150% 0px'
+      warmObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          const video = entry.target
+          const warm = Boolean(entry.isIntersecting)
+          warmVisibility.set(video, warm)
+          const state = reliabilityFor(video)
+          if (warm) {
+            clearTimer(state.releaseTimer)
+            state.releaseTimer = 0
+            attachSource(video)
+          } else {
+            scheduleRelease(video)
+          }
+        })
+      }, {
+        root: observerRoot,
+        rootMargin,
+        threshold: 0
+      })
+
+      videos.forEach((video) => {
+        observer.observe(video)
+        warmObserver.observe(video)
+      })
     } else {
       fallbackScrollTarget = observerRoot || globalThis
       fallbackScrollTarget.addEventListener?.('scroll', scheduleEvaluate, { passive: true })
       globalThis.addEventListener?.('resize', scheduleEvaluate, { passive: true })
-      videos.forEach((video) => visibility.set(video, measuredIntersectionRatio(video, observerRoot)))
+      videos.forEach((video) => {
+        const ratio = measuredIntersectionRatio(video, observerRoot)
+        visibility.set(video, ratio)
+        const warm = ratio > 0
+        warmVisibility.set(video, warm)
+        if (warm) attachSource(video)
+        else scheduleRelease(video)
+      })
     }
     scheduleEvaluate()
   }
@@ -457,12 +828,14 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     current.forEach((video) => {
       bindVideo(video)
       if (!visibility.has(video)) visibility.set(video, 0)
+      if (!warmVisibility.has(video)) warmVisibility.set(video, false)
     })
     rebuildObservation()
   }
 
   function suspend() {
     suspended = true
+    clearDwell()
     if (evaluateFrame) {
       const cancel = globalThis.cancelAnimationFrame || globalThis.clearTimeout
       cancel?.(evaluateFrame)
@@ -470,6 +843,7 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     }
     clearObservation()
     pauseAll()
+    for (const video of visibility.keys()) releaseSource(video, { force: true })
   }
 
   function resume(nextScope = scope) {
@@ -480,13 +854,36 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
   }
 
   function handleVisibilityChange() {
-    if (document.hidden) pauseAll()
-    else scheduleEvaluate()
+    if (document.hidden) {
+      clearDwell()
+      pauseAll()
+    } else {
+      scheduleEvaluate()
+    }
+  }
+
+  function handleOnline() {
+    for (const video of visibility.keys()) {
+      const state = reliabilityFor(video)
+      if (!state.exhausted || !warmVisibility.get(video)) continue
+      recoverVideo(video, { manual: true, reason: 'online' })
+    }
+  }
+
+  function handlePageHide() {
+    clearDwell()
+    pauseAll()
+    for (const video of visibility.keys()) releaseSource(video, { force: true })
   }
 
   document.addEventListener('visibilitychange', handleVisibilityChange)
-  globalThis.addEventListener?.('pagehide', () => pauseAll())
-  globalThis.addEventListener?.('pageshow', () => scheduleEvaluate())
+  globalThis.addEventListener?.('online', handleOnline)
+  globalThis.addEventListener?.('pagehide', handlePageHide)
+  globalThis.addEventListener?.('pageshow', () => {
+    suspended = false
+    rebuildObservation()
+    scheduleEvaluate()
+  })
 
   return {
     sync,

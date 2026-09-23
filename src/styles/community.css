@@ -14343,3 +14343,42 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
     animation-duration: 1ms;
   }
 }
+
+
+/* melogic-community-feed-video-reliability-v3 */
+.community-feed-video-load-state {
+  z-index: 5;
+  gap: 10px;
+  text-align: center;
+}
+
+.community-feed-video-retry {
+  display: none;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid rgb(255 255 255 / 34%);
+  border-radius: 999px;
+  background: rgb(0 0 0 / 62%);
+  color: #fff;
+  font: inherit;
+  font-size: .76rem;
+  font-weight: 700;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+.community-post-file-attachment.is-video[data-community-video-state="error"] .community-feed-video-retry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.community-post-file-attachment.is-video[data-community-video-state="retrying"] .community-feed-video-load-state {
+  display: grid;
+}
+
+.community-feed-video-retry:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
