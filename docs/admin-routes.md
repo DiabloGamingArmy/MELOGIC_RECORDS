@@ -19,6 +19,7 @@
 | `/admin/team/{uid}` | `roleManage` | Admin user and profile context | `listAdminTeam`, `getAdminUserProfile` | View role audit | No |
 | `/admin/logs` | `auditRead` | Admin logs | `listAdminLogs` | View audit logs | No |
 | `/admin/logs/{logId}` | `auditRead` | Admin log detail | `getAdminLog` | View log detail, open target, copy JSON | No |
+| `/admin/engineering` | owner admin role | `engineeringJobs` through callables | `createEngineeringJob`, `listEngineeringJobs`, `getEngineeringJob` | Create and inspect controlled engineering jobs; phase 1 does not mutate GitHub or deploy | Yes, job creation only |
 | `/admin/settings` | `admin`; edit requires `settingsManage`, `roleManage`, or `emailSend` for email tools | `platformConfig/current`, `emailLogs` through callables | `getAdminSettings`, `updateAdminSettings`, `getEmailAdminStatus`, `sendAdminEmail` | Edit marketplace, agreements, AI moderation, upload limits, review policy, and send support/admin emails | Yes |
 
 ## Account and Inbox Trust Routes

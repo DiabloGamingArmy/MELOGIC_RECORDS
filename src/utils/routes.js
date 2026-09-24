@@ -45,6 +45,7 @@ export const ROUTES = {
   adminContact: '/admin/contact',
   adminTools: '/admin/tools',
   adminOperations: '/admin/operations',
+  adminEngineering: '/admin/engineering',
   adminSettings: '/admin/settings',
   adminMarketplaceReview: '/admin/reviews',
   community: '/community',

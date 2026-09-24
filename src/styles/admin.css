@@ -4779,3 +4779,13 @@
  .admin-role-badge-list-head,.admin-role-badge-row{padding-left:10px;padding-right:10px}
  .admin-role-badge-choice span{display:none}
 }
+
+/* Melogic Engineering automation foundation */
+.admin-engineering-compose{display:grid;gap:1rem}
+.admin-engineering-job-list{display:grid;gap:.75rem;margin-top:.85rem}
+.admin-engineering-job{display:grid;gap:.75rem;border:1px solid var(--admin-border);border-radius:10px;background:var(--admin-card-subtle);padding:.9rem}
+.admin-engineering-job-head{display:flex;align-items:start;justify-content:space-between;gap:1rem}
+.admin-engineering-job-head>div{display:grid;gap:.2rem;min-width:0}
+.admin-engineering-job-head strong{color:var(--admin-text);font-size:.98rem}
+.admin-engineering-job-head span:not(.review-badge){color:var(--admin-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;overflow-wrap:anywhere}
+.admin-engineering-job>p{margin:0;color:var(--admin-muted);line-height:1.55;white-space:pre-wrap}

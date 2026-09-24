@@ -123,6 +123,7 @@ import {
   listMusicReleaseReviewQueue,
   reviewMusicRelease
 } from './data/distributionService'
+import { createEngineeringJob, listEngineeringJobs } from './data/engineeringService'
 import {
   STUDIO_LIBRARY_ENGINE_TYPES,
   STUDIO_SAMPLE_STRATEGIES,
@@ -346,6 +347,7 @@ const SECTIONS = [
   { key: 'contact', route: ROUTES.adminContact, label: 'Support Queue', icon: 'mailSend', permission: 'emailSend' },
   { key: 'tools', route: ROUTES.adminTools, label: 'Tools', icon: 'folderPlus', permission: 'admin' },
   { key: 'operations', route: ROUTES.adminOperations, label: 'Operations', icon: 'fileText', permission: 'admin' },
+  { key: 'engineering', route: ROUTES.adminEngineering, label: 'Engineering', icon: 'edit', permission: 'admin' },
   { key: 'settings', route: ROUTES.adminSettings, label: 'Settings', icon: 'edit', permission: 'admin' }
 ]
 
@@ -667,6 +669,7 @@ const state = {
     emailStatus: null,
     resonaStats: null
   },
+  engineering: { jobs: [], loading: false, loaded: false, creating: false, error: '', message: '' },
   operations: {
     loading: false,
     loaded: false,
@@ -4392,6 +4395,45 @@ function operationCheckbox({ name, label, checked = false, helper = '' } = {}) {
   `
 }
 
+function engineeringView() {
+  if ((state.claims.adminRole || '') !== 'owner') {
+    return `${adminPageHeader({ eyebrow: 'Automation', title: 'Engineering', description: 'AI-assisted engineering jobs are restricted to the Melogic owner account.' })}<article class="admin-empty-state">Owner access is required.</article>`
+  }
+  const engineering = state.engineering
+  const jobs = engineering.jobs || []
+  return `
+    ${adminPageHeader({ eyebrow: 'Automation', title: 'Engineering', description: 'Create controlled engineering jobs. Phase 1 records the job and security boundaries; repository mutation and AI execution remain disabled until later phases.', refreshLabel: 'Refresh engineering jobs' })}
+    ${engineering.error ? `<p class="admin-status is-error">${escapeHtml(engineering.error)}</p>` : ''}
+    ${engineering.message ? `<p class="admin-status is-success">${escapeHtml(engineering.message)}</p>` : ''}
+    <section class="admin-section-slab admin-engineering-compose">
+      <div class="admin-slab-heading"><div><h2>New Engineering Job</h2><p class="admin-muted">Describe the bug or technical problem. Creating a job does not modify GitHub or deploy anything.</p></div><span class="review-badge">Manual / Owner</span></div>
+      <form class="admin-email-form" data-engineering-job-form>
+        <label><span>Title <small>(optional)</small></span><input name="title" maxlength="180" placeholder="Camera fails after switching lenses" /></label>
+        <label><span>Issue / prompt</span><textarea name="report" rows="8" maxlength="12000" required placeholder="Describe what is happening, what should happen, and any reproduction steps you know."></textarea></label>
+        <div class="admin-modal-actions"><button type="submit" class="admin-primary-button" ${engineering.creating ? 'disabled' : ''}>${engineering.creating ? 'Creating...' : 'Create Engineering Job'}</button></div>
+      </form>
+    </section>
+    <section class="admin-section-slab">
+      <div class="admin-slab-heading"><div><h2>Engineering Queue</h2><p class="admin-muted">The pipeline is intentionally inert in this first phase. Jobs stop at Submitted until the triage worker is added.</p></div><span class="review-badge">${jobs.length} loaded</span></div>
+      ${engineering.loading ? '<article class="admin-empty-state">Loading engineering jobs...</article>' : ''}
+      ${!engineering.loading && !jobs.length ? '<article class="admin-empty-state">No engineering jobs yet.</article>' : ''}
+      <div class="admin-engineering-job-list">
+        ${jobs.map((job) => `<article class="admin-engineering-job">
+          <div class="admin-engineering-job-head"><div><strong>${escapeHtml(job.title || 'Engineering job')}</strong><span>${escapeHtml(job.id || '')}</span></div><span class="review-badge is-${statusClass(job.status)}">${escapeHtml(humanLabel(job.status || 'submitted'))}</span></div>
+          <p>${escapeHtml(job.report || '')}</p>
+          <dl class="admin-detail-list">
+            <div><dt>Source</dt><dd>${escapeHtml(job.source || 'admin')}</dd></div>
+            <div><dt>Stage</dt><dd>${escapeHtml(humanLabel(job.stage || 'submitted'))}</dd></div>
+            <div><dt>Repository</dt><dd>${escapeHtml(job.repository || '')}</dd></div>
+            <div><dt>Branch</dt><dd>${escapeHtml(job.targetBranch || 'main')}</dd></div>
+            <div><dt>Classification</dt><dd>${escapeHtml(humanLabel(job.classification?.status || 'pending'))}</dd></div>
+            <div><dt>Created</dt><dd>${escapeHtml(formatDate(job.createdAt))}</dd></div>
+          </dl>
+        </article>`).join('')}
+      </div>
+    </section>`
+}
+
 function operationsView() {
   if (!can('admin')) return permissionState('admin')
   const mode = operationsMode()
@@ -6319,6 +6361,7 @@ function render() {
   if (state.section === 'contact') return renderLayout(contactView())
   if (state.section === 'tools') return renderLayout(toolsView())
   if (state.section === 'operations') return renderLayout(operationsView())
+  if (state.section === 'engineering') return renderLayout(engineeringView())
   if (state.section === 'settings') return renderLayout(settingsView())
   return renderLayout(placeholderView(state.section))
 }
@@ -6397,6 +6440,11 @@ async function loadAdminOverview({ silent = false } = {}) {
 async function loadAdminSectionData(sectionKey = state.section, { silent = false, append = false } = {}) {
   state.accountActionsMenuUid = ''
   const map = {
+    engineering: async () => {
+      if ((state.claims.adminRole || '') !== 'owner') return
+      const result = await listEngineeringJobs({ limit: 60 })
+      state.engineering.jobs = result.jobs || []
+    },
     distribution: async () => {
       const result = await listMusicReleaseReviewQueue({ limit: 80 })
       state.adminData.distribution.items = result.releases || []
@@ -6619,7 +6667,7 @@ async function loadAdminSectionData(sectionKey = state.section, { silent = false
     }
   }
   if (!map[sectionKey]) return
-  const data = sectionKey === 'settings' ? state.settings : sectionKey === 'contact' ? state.contact : sectionKey === 'operations' ? state.operations : adminData(sectionKey)
+  const data = sectionKey === 'engineering' ? state.engineering : sectionKey === 'settings' ? state.settings : sectionKey === 'contact' ? state.contact : sectionKey === 'operations' ? state.operations : adminData(sectionKey)
   if (!canLoadAdminSection(sectionKey)) return
   if (append && data.loadingMore) return
   if (append && !data.hasMore) return
@@ -6722,6 +6770,7 @@ function canLoadAdminSection(sectionKey = '') {
   if (sectionKey === 'contact') return can('emailSend')
   if (sectionKey === 'tools') return can('admin') || can('userRead') || can('emailSend') || can('auditRead')
   if (sectionKey === 'operations') return can('admin')
+  if (sectionKey === 'engineering') return can('admin') && (state.claims.adminRole || '') === 'owner'
   if (sectionKey === 'settings') return can('admin')
   return false
 }
@@ -9044,6 +9093,31 @@ function leaveAdminContactCallRoom() {
 }
 
 function bindEvents() {
+  app.querySelector('[data-engineering-job-form]')?.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    if (state.engineering.creating) return
+    const form = event.currentTarget
+    const formData = new FormData(form)
+    const title = String(formData.get('title') || '').trim()
+    const report = String(formData.get('report') || '').trim()
+    if (report.length < 10) { state.engineering.error = 'Describe the engineering issue in at least 10 characters.'; render(); return }
+    state.engineering.creating = true
+    state.engineering.error = ''
+    state.engineering.message = ''
+    render()
+    try {
+      const result = await createEngineeringJob({ title, report })
+      state.engineering.message = `Engineering job ${result.job?.id || ''} created. No repository changes have been authorized.`
+      const refreshed = await listEngineeringJobs({ limit: 60 })
+      state.engineering.jobs = refreshed.jobs || []
+      state.engineering.loaded = true
+    } catch (error) {
+      state.engineering.error = error?.message || 'Could not create engineering job.'
+    } finally {
+      state.engineering.creating = false
+      render()
+    }
+  })
   app.querySelector('[data-admin-theme-toggle]')?.addEventListener('click', () => {
     applyAdminTheme(state.theme === 'dark' ? 'light' : 'dark')
     render()
