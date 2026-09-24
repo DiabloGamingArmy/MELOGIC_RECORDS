@@ -200,6 +200,44 @@ async function safeStorageUrl(path, fallback = '') {
   return resolved || fallback
 }
 
+
+export async function resolveProductCardMedia(product = {}) {
+  const explicitThumbnailPath = String(product.thumbnailPath || '').trim()
+  const explicitCoverPath = String(product.coverPath || '').trim()
+  const previewAudioPaths = Array.isArray(product.previewAudioPaths) ? product.previewAudioPaths.filter(Boolean) : []
+  const previewVideoPaths = Array.isArray(product.previewVideoPaths) ? product.previewVideoPaths.filter(Boolean) : []
+  const assignment = normalizePreviewAssignment(product.previewAssignment || {}, product.productType)
+
+  // Resolve only assets a marketplace card can actually consume. Keep every
+  // resolution independent so a missing/slow preview cannot suppress the cover.
+  const [coverURL, thumbnailDirectURL, primaryPreviewURL, firstAudioURL, firstVideoURL, hoverAudioResolved, hoverVideoResolved] = await Promise.all([
+    explicitCoverPath ? safeStorageUrl(explicitCoverPath) : Promise.resolve(''),
+    explicitThumbnailPath ? safeStorageUrl(explicitThumbnailPath) : Promise.resolve(''),
+    product.primaryPreviewPath ? safeStorageUrl(product.primaryPreviewPath) : Promise.resolve(''),
+    previewAudioPaths[0] ? safeStorageUrl(previewAudioPaths[0]) : Promise.resolve(''),
+    previewVideoPaths[0] ? safeStorageUrl(previewVideoPaths[0]) : Promise.resolve(''),
+    assignment.hoverAudioURL ? Promise.resolve(assignment.hoverAudioURL) : assignment.hoverAudioPath ? safeStorageUrl(assignment.hoverAudioPath) : Promise.resolve(''),
+    assignment.hoverVideoURL ? Promise.resolve(assignment.hoverVideoURL) : assignment.hoverVideoPath ? safeStorageUrl(assignment.hoverVideoPath) : Promise.resolve('')
+  ])
+
+  const thumbnailURL = thumbnailDirectURL || coverURL
+  const audioURL = primaryPreviewURL || firstAudioURL
+  return {
+    thumbnailPath: explicitThumbnailPath || explicitCoverPath,
+    coverPath: explicitCoverPath,
+    thumbnailURL,
+    coverURL: coverURL || thumbnailURL,
+    previewAudioURLs: firstAudioURL ? [firstAudioURL] : [],
+    primaryPreviewURL: audioURL || '',
+    previewVideoURLs: firstVideoURL ? [firstVideoURL] : [],
+    previewAssignment: {
+      ...assignment,
+      hoverAudioURL: hoverAudioResolved || '',
+      hoverVideoURL: hoverVideoResolved || ''
+    }
+  }
+}
+
 export async function resolveProductMedia(product) {
   const explicitThumbnailPath = String(product.thumbnailPath || '').trim()
   const explicitCoverPath = String(product.coverPath || '').trim()
