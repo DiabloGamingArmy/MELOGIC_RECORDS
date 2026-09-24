@@ -894,11 +894,16 @@ function installCommunitySpaLifecycle() {
     const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null
     if (!(anchor instanceof HTMLAnchorElement)) return
 
-    // Post detail Back has its own history-restoration handler below. When a
-    // preserved feed snapshot exists, do not let the capture-phase Community
-    // SPA interceptor push /community first or the later history.back() will
-    // immediately traverse back into the post we are trying to leave.
-    if (anchor.matches('[data-community-back-to-feed]') && feedNavigationSnapshot) return
+    // The persistent mobile shell owns the visible Back control, so handle it
+    // here at the document boundary. Prevent native /community navigation and
+    // traverse exactly one history entry; popstate will restore the preserved
+    // feed DOM, media nodes, state, and scroll position in-place.
+    if (anchor.matches('[data-community-back-to-feed]') && feedNavigationSnapshot) {
+      event.preventDefault()
+      event.stopPropagation()
+      window.history.back()
+      return
+    }
 
     if (anchor.target && anchor.target !== '_self') return
     if (anchor.hasAttribute('download')) return
