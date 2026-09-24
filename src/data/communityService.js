@@ -652,6 +652,22 @@ function logFirestoreIndexUrl(error, scope = 'community query') {
   if (url) console.warn(`[communityService] ${scope} index URL`, url)
 }
 
+function withCommunityQueryDeadline(promise, timeoutMs = 6000) {
+  let timer = 0
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error('Community Firestore query timed out.')
+      error.code = 'community-query-timeout'
+      reject(error)
+    }, timeoutMs)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
+function shouldUseCommunityQueryFallback(error) {
+  return isFirestoreIndexError(error) || error?.code === 'community-query-timeout'
+}
+
 export async function listCommunityPosts({ tab = 'for-you', communityId = '', communitySlug = '', communityIds = [], limitCount = 25, tag = '', search = '', sort = 'new', pageMode = false, cursor = null } = {}) {
   const tagKey = normalizeTagKey(tag)
   const searchToken = normalizeFeedSearchToken(search)
@@ -679,12 +695,14 @@ export async function listCommunityPosts({ tab = 'for-you', communityId = '', co
   const fallbackConstraints = [
     where('status', '==', 'published'),
     where('visibility', '==', 'public'),
-    limit(Math.max(50, pageLimit * 3))
+    limit(Math.max(pageLimit + 5, Math.min(40, pageLimit * 2)))
   ]
 
   if (pageMode) {
     try {
-      const snapshot = await getDocs(query(collection(db, POST_COLLECTION), ...constraints))
+      const snapshot = await withCommunityQueryDeadline(
+        getDocs(query(collection(db, POST_COLLECTION), ...constraints))
+      )
       const visibleDocs = snapshot.docs.slice(0, pageLimit)
       const posts = visibleDocs
         .map((docSnap) => normalizeCommunityPost(docSnap))
@@ -695,9 +713,13 @@ export async function listCommunityPosts({ tab = 'for-you', communityId = '', co
         hasMore: snapshot.docs.length > pageLimit
       }
     } catch (error) {
-      if (!isFirestoreIndexError(error)) throw error
-      logFirestoreIndexUrl(error, 'feed')
-      const snapshot = await getDocs(query(collection(db, POST_COLLECTION), ...fallbackConstraints))
+      if (!shouldUseCommunityQueryFallback(error)) throw error
+      if (isFirestoreIndexError(error)) logFirestoreIndexUrl(error, 'feed')
+      else console.warn('[communityService] feed primary query timed out; using lightweight fallback.')
+      const snapshot = await withCommunityQueryDeadline(
+        getDocs(query(collection(db, POST_COLLECTION), ...fallbackConstraints)),
+        6000
+      )
       const rows = snapshot.docs
         .map((docSnap) => normalizeCommunityPost(docSnap))
         .filter((post) => (
@@ -779,10 +801,10 @@ export async function listFollowedCreatorPosts(uid = '', {
   const viewerUid = String(uid || '').trim()
   if (!viewerUid) return []
 
-  const followingSnapshot = await getDocs(query(
+  const followingSnapshot = await withCommunityQueryDeadline(getDocs(query(
     collection(db, 'users', viewerUid, 'following'),
     limit(50)
-  ))
+  )))
   const followedIds = followingSnapshot.docs
     .map((entry) => String(entry.id || '').trim())
     .filter((authorUid) => authorUid && authorUid !== viewerUid)
@@ -799,14 +821,20 @@ export async function listFollowedCreatorPosts(uid = '', {
     chunks.push(followedIds.slice(index, index + 30))
   }
 
-  const snapshots = await Promise.all(chunks.map((authorIds) => getDocs(query(
+  const chunkResults = await Promise.allSettled(chunks.map((authorIds) => withCommunityQueryDeadline(getDocs(query(
     collection(db, POST_COLLECTION),
     where('authorUid', 'in', authorIds),
     where('status', '==', 'published'),
     where('visibility', '==', 'public'),
     orderBy('createdAt', 'desc'),
     limit(pageLimit)
-  ))))
+  )))))
+  const snapshots = chunkResults
+    .filter((result) => result.status === 'fulfilled')
+    .map((result) => result.value)
+  if (!snapshots.length && chunkResults.some((result) => result.status === 'rejected')) {
+    throw chunkResults.find((result) => result.status === 'rejected').reason
+  }
   const posts = snapshots
     .flatMap((snapshot) => snapshot.docs.map((docSnap) => normalizeCommunityPost(docSnap)))
     .filter((post) => post.authorUid !== viewerUid)
