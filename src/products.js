@@ -8,7 +8,7 @@ import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './compo
 import { getPageHeroVideoPaths } from './firebase/pageHeroVideos'
 import { addToCart } from './data/cartService'
 import { claimFreeProduct } from './data/entitlementService'
-import { listPublicProductsPage } from './data/productService'
+import { listPublicProductsPage, resolveProductCardMedia } from './data/productService'
 import { getProductReactionSummary } from './data/productEngagementService'
 import { getPublicProfileIdentityByUid, getCachedPublicProfileIdentityByUid } from './data/profileSearchService'
 import { getStorageAssetUrl } from './firebase/storageAssets'
@@ -105,6 +105,8 @@ const reactionCountCache = new Map()
 const reactionCountRequests = new Map()
 const productCreatorIdentityCache = new Map()
 const productCreatorIdentityRequests = new Map()
+const productMediaRequests = new Map()
+const productMediaReady = new Set()
 let productsTransparentVerifiedBadgeUrl = ''
 let productsRegularVerifiedBadgeUrl = ''
 
@@ -305,6 +307,38 @@ function hydrateProductReactionCounts(products = []) {
   })
 }
 
+async function hydrateProductCardMedia(product, { rerender = true } = {}) {
+  if (!product?.id || productMediaReady.has(product.id)) return product
+  if (productMediaRequests.has(product.id)) return productMediaRequests.get(product.id)
+
+  const request = resolveProductCardMedia(product)
+    .then((media) => {
+      Object.assign(product, media)
+      productMediaReady.add(product.id)
+      return product
+    })
+    .catch((error) => {
+      // Media is enhancement, never a catalog-fatal dependency.
+      if (import.meta.env.DEV) console.warn('[products] Card media hydration failed.', { productId: product.id, message: error?.message })
+      return product
+    })
+    .finally(() => {
+      productMediaRequests.delete(product.id)
+      if (rerender) renderProducts()
+    })
+
+  productMediaRequests.set(product.id, request)
+  return request
+}
+
+function hydrateProductCardMediaBatch(products = []) {
+  products.forEach((product) => {
+    if (!productMediaReady.has(product?.id) && !productMediaRequests.has(product?.id)) {
+      void hydrateProductCardMedia(product)
+    }
+  })
+}
+
 function toReleaseTimestamp(product) {
   return new Date(product.releasedAt || product.createdAt || 0).getTime() || 0
 }
@@ -423,6 +457,7 @@ function renderProducts() {
   bindProductActions(filtered)
   hydrateProductReactionCounts(filtered)
   hydrateProductCreatorIdentities(filtered)
+  hydrateProductCardMediaBatch(filtered)
 }
 
 function mapFiltersForService() {
@@ -516,6 +551,19 @@ function bindProductActions(visibleProducts = []) {
       const productId = card?.getAttribute('data-product-id') || ''
       const product = visibleProducts.find((entry) => entry.id === productId)
       if (!product) return
+      if (!productMediaReady.has(product.id)) {
+        button.disabled = true
+        button.textContent = 'Loading…'
+        void hydrateProductCardMedia(product, { rerender: false }).then(() => {
+          const currentCard = app.querySelector(`[data-open-product][data-product-id="${CSS.escape(product.id)}"]`) || card
+          const currentButton = currentCard?.querySelector('.preview-btn') || button
+          const hasPreview = Boolean(getAssignedAudio(product) || getAssignedVideo(product))
+          currentButton.disabled = !hasPreview
+          currentButton.textContent = hasPreview ? '▶ Preview' : 'Preview unavailable'
+          if (hasPreview) togglePreview(product, currentCard, currentButton)
+        })
+        return
+      }
       togglePreview(product, card, button)
     })
   })
