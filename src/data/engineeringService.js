@@ -27,6 +27,6 @@ export async function getEngineeringJob(jobId = '') {
 
 export async function startEngineeringTriage(jobId = '') {
   await requireAdminStepUp('Start engineering triage')
-  const result = await call('startEngineeringTriage')({ jobId })
+  const result = await httpsCallable(functions, 'startEngineeringTriage')({ jobId })
   return result.data || {}
 }
