@@ -4789,3 +4789,8 @@
 .admin-engineering-job-head strong{color:var(--admin-text);font-size:.98rem}
 .admin-engineering-job-head span:not(.review-badge){color:var(--admin-muted);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;overflow-wrap:anywhere}
 .admin-engineering-job>p{margin:0;color:var(--admin-muted);line-height:1.55;white-space:pre-wrap}
+
+
+.admin-engineering-triage-result{border-top:1px solid var(--admin-border);padding-top:.75rem}
+.admin-engineering-triage-result>strong{color:var(--admin-text);font-size:.82rem;text-transform:uppercase;letter-spacing:.05em}
+.admin-engineering-triage-result p{margin:.35rem 0 0;color:var(--admin-muted);line-height:1.5}

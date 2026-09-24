@@ -4415,7 +4415,7 @@ function engineeringView() {
       </form>
     </section>
     <section class="admin-section-slab">
-      <div class="admin-slab-heading"><div><h2>Engineering Queue</h2><p class="admin-muted">The pipeline is intentionally inert in this first phase. Jobs stop at Submitted until the triage worker is added.</p></div><span class="review-badge">${jobs.length} loaded</span></div>
+      <div class="admin-slab-heading"><div><h2>Engineering Queue</h2><p class="admin-muted">AI triage classifies reports into constrained categories. Only high-confidence bugs can advance toward repository audit; code mutation and deployment remain disabled.</p></div><span class="review-badge">${jobs.length} loaded</span></div>
       ${engineering.loading ? '<article class="admin-empty-state">Loading engineering jobs...</article>' : ''}
       ${!engineering.loading && !jobs.length ? '<article class="admin-empty-state">No engineering jobs yet.</article>' : ''}
       <div class="admin-engineering-job-list">
@@ -4427,11 +4427,16 @@ function engineeringView() {
             <div><dt>Stage</dt><dd>${escapeHtml(humanLabel(job.stage || 'submitted'))}</dd></div>
             <div><dt>Repository</dt><dd>${escapeHtml(job.repository || '')}</dd></div>
             <div><dt>Branch</dt><dd>${escapeHtml(job.targetBranch || 'main')}</dd></div>
-            <div><dt>Classification</dt><dd>${escapeHtml(humanLabel(job.classification?.status || 'pending'))}</dd></div>
+            <div><dt>Classification</dt><dd>${escapeHtml(job.classification?.status === 'complete' ? humanLabel(job.classification?.category || 'uncertain') : humanLabel(job.classification?.status || 'pending'))}</dd></div>
+            ${job.classification?.status === 'complete' ? `<div><dt>Confidence</dt><dd>${Math.round(Number(job.classification?.confidence || 0) * 100)}%</dd></div>` : ''}
             <div><dt>Created</dt><dd>${escapeHtml(formatDate(job.createdAt))}</dd></div>
           </dl>
           ${job.status === 'submitted' ? `<div class="admin-modal-actions"><button type="button" class="admin-secondary-button" data-engineering-triage="${escapeHtml(job.id || '')}">Start Triage</button></div>` : ''}
-          ${job.stage === 'awaiting_triage_model' ? '<p class="admin-muted">Orchestrator validated this job. AI classification is the next patch.</p>' : ''}
+          ${job.classification?.status === 'complete' ? `<div class="admin-engineering-triage-result"><strong>Triage</strong><p>${escapeHtml(job.classification?.reason || '')}</p><p><strong>Sanitized issue:</strong> ${escapeHtml(job.classification?.sanitizedIssue?.summary || '')}</p></div>` : ''}
+          ${job.stage === 'awaiting_repository_audit' ? '<p class="admin-muted">Classified as a bug. Repository audit is the next controlled stage.</p>' : ''}
+          ${job.stage === 'security_review_required' ? '<p class="admin-muted">Security report isolated for dedicated human/security review.</p>' : ''}
+          ${job.stage === 'feature_review_required' ? '<p class="admin-muted">Feature request detected; automatic bug-fixing is blocked.</p>' : ''}
+          ${job.stage === 'human_triage_required' ? '<p class="admin-muted">AI confidence/category requires human triage.</p>' : ''}
           
         </article>`).join('')}
       </div>
