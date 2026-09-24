@@ -5145,7 +5145,11 @@ function isFirestoreIndexError(error) {
   return detail.includes('failed-precondition') || detail.includes('requires an index') || detail.includes('query requires an index')
 }
 
-function withFeedTimeout(promise, timeoutMs = 15000) {
+// listCommunityPosts may make a primary read and then a lightweight fallback.
+// Leave enough room for both 12-second Firestore deadlines on Safari.
+const COMMUNITY_FEED_TIMEOUT_MS = 30_000
+
+function withFeedTimeout(promise, timeoutMs = COMMUNITY_FEED_TIMEOUT_MS) {
   let timeoutId = 0
   const timeout = new Promise((_, reject) => {
     timeoutId = window.setTimeout(() => {

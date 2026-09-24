@@ -9,6 +9,10 @@ import { getCachedStorageUrl, invalidateCachedStoragePath } from '../services/pa
 const POST_COLLECTION = 'communityPosts'
 const COMMUNITY_COLLECTION = 'communities'
 const STORY_COLLECTION = 'communityStories'
+// Desktop Safari uses Firestore's 10-second long-poll transport. Keep the
+// application deadline above that transport window so a healthy read is not
+// mistaken for a stalled query before WebKit can deliver its response.
+const COMMUNITY_QUERY_TIMEOUT_MS = 12_000
 
 function serializeDate(value) {
   if (!value) return ''
@@ -652,7 +656,7 @@ function logFirestoreIndexUrl(error, scope = 'community query') {
   if (url) console.warn(`[communityService] ${scope} index URL`, url)
 }
 
-function withCommunityQueryDeadline(promise, timeoutMs = 6000) {
+function withCommunityQueryDeadline(promise, timeoutMs = COMMUNITY_QUERY_TIMEOUT_MS) {
   let timer = 0
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
@@ -717,8 +721,7 @@ export async function listCommunityPosts({ tab = 'for-you', communityId = '', co
       if (isFirestoreIndexError(error)) logFirestoreIndexUrl(error, 'feed')
       else console.warn('[communityService] feed primary query timed out; using lightweight fallback.')
       const snapshot = await withCommunityQueryDeadline(
-        getDocs(query(collection(db, POST_COLLECTION), ...fallbackConstraints)),
-        6000
+        getDocs(query(collection(db, POST_COLLECTION), ...fallbackConstraints))
       )
       const rows = snapshot.docs
         .map((docSnap) => normalizeCommunityPost(docSnap))

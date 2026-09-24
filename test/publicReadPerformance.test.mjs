@@ -57,3 +57,17 @@ test('main Firestore uses the persistent local-cache API and pagehide only prune
   assert.match(mediaSource, /pagehide[^\n]+cache\.prune/)
   assert.doesNotMatch(mediaSource, /pagehide[^\n]+clearPageMediaCache/)
 })
+
+test('Community feed deadlines allow Safari long polling and its fallback read to finish', async () => {
+  const firestoreSource = await fs.readFile(new URL('../src/firebase/firestore.js', import.meta.url), 'utf8')
+  const serviceSource = await fs.readFile(new URL('../src/data/communityService.js', import.meta.url), 'utf8')
+  const pageSource = await fs.readFile(new URL('../src/community.js', import.meta.url), 'utf8')
+
+  const longPollSeconds = Number(firestoreSource.match(/timeoutSeconds:\s*(\d+)/)?.[1])
+  const queryTimeoutMs = Number(serviceSource.match(/COMMUNITY_QUERY_TIMEOUT_MS\s*=\s*([\d_]+)/)?.[1]?.replaceAll('_', ''))
+  const feedTimeoutMs = Number(pageSource.match(/COMMUNITY_FEED_TIMEOUT_MS\s*=\s*([\d_]+)/)?.[1]?.replaceAll('_', ''))
+
+  assert.ok(Number.isFinite(longPollSeconds))
+  assert.ok(queryTimeoutMs > longPollSeconds * 1000)
+  assert.ok(feedTimeoutMs > queryTimeoutMs * 2)
+})
