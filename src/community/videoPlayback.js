@@ -554,19 +554,40 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     })
     listen(video, 'ended', () => {
       clearReliabilityTimers(video, { keepRelease: true })
-      reliabilityFor(video).resumeTime = 0
+      const state = reliabilityFor(video)
+      state.resumeTime = 0
       video.dataset.communityVideoResumeTime = ''
-      // Native loop should normally prevent "ended", but keep a fallback for
-      // browsers/WebViews that still emit it around source/recovery changes.
+      // Native loop is authoritative. Some WebKit builds still surface an
+      // `ended` event at the wrap boundary; restart from zero without routing
+      // a healthy loop through the loading/recovery state machine.
       if (video.loop && !userPaused.has(video) && !playbackBlockedByUi() && ratioFor(video) >= STOP_THRESHOLD) {
         try { video.currentTime = 0 } catch {}
-        requestPlayback(video)
+        if (video === activeVideo || ratioFor(video) >= PLAY_THRESHOLD) {
+          activeVideo = video
+          setVideoState(video, 'playing')
+          try {
+            const playResult = video.play()
+            playResult?.catch?.(() => {
+              if (activeVideo === video) activeVideo = null
+              setVideoState(video, 'blocked', 'Tap to play')
+            })
+          } catch {
+            if (activeVideo === video) activeVideo = null
+            setVideoState(video, 'blocked', 'Tap to play')
+          }
+        }
         return
       }
       if (video === activeVideo) activeVideo = null
       setVideoState(video, 'ended')
     })
-    listen(video, 'loadstart', () => setVideoState(video, 'loading', 'Loading video…'))
+    listen(video, 'loadstart', () => {
+      // A looping video may briefly expose a lower readyState while WebKit
+      // wraps the media timeline. Do not flash the loading overlay unless this
+      // is an actual source load/reload.
+      if (video.loop && video === activeVideo && !video.paused && !video.ended) return
+      setVideoState(video, 'loading', 'Loading video…')
+    })
     listen(video, 'loadedmetadata', () => {
       restoreResumeTime(video)
       scheduleEvaluate()
@@ -587,11 +608,17 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
       setVideoState(video, 'playing')
     })
     listen(video, 'waiting', () => {
-      setVideoState(video, 'loading', 'Loading video…')
+      // Keep a healthy native loop visually in the playing state. The stall
+      // watchdog remains armed, so a genuine buffer failure still recovers.
+      if (!(video.loop && video === activeVideo && !video.paused && !video.ended)) {
+        setVideoState(video, 'loading', 'Loading video…')
+      }
       armStallWatch(video)
     })
     listen(video, 'stalled', () => {
-      setVideoState(video, 'loading', 'Reconnecting video…')
+      if (!(video.loop && video === activeVideo && !video.paused && !video.ended)) {
+        setVideoState(video, 'loading', 'Reconnecting video…')
+      }
       armStallWatch(video)
     })
     listen(video, 'suspend', () => {
