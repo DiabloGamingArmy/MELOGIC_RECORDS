@@ -9714,6 +9714,11 @@ function handleCommunityPopstate() {
   const previousSurfaceKey = desktopCommunitySurfaceKey || desktopCommunitySurfaceKeyFor()
   syncCommunityRouteStateFromLocation()
 
+  // Post -> feed restoration is the most specific history transition we own.
+  // Restore the exact detached feed DOM before generic For You / Following /
+  // Discover routing can render or reset the feed.
+  if (!state.detailPostId && feedNavigationSnapshot && restoreFeedNavigationSnapshot()) return
+
   if (!isMobileSpaRuntime() && !state.detailPostId) {
     const nextSurfaceKey = desktopCommunitySurfaceKeyFor()
     if (['for-you', 'following', 'discover'].includes(nextSurfaceKey)) {
@@ -9748,7 +9753,6 @@ function handleCommunityPopstate() {
       return
     }
   }
-  if (!state.detailPostId && restoreFeedNavigationSnapshot()) return
   loadCommunity()
 }
 

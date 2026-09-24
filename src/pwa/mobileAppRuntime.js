@@ -498,6 +498,14 @@ async function handleRuntimePopstate() {
     return
   }
 
+  // Community post/detail/feed subroutes are internal states of the already
+  // mounted Community view. Its local router owns these popstates so the global
+  // runtime cannot reactivate the same view after an in-place DOM restoration.
+  if (route.id === 'community' && activeViewId === 'community') {
+    publish('community-local-popstate-owned', { pathname: normalizedPath() })
+    return
+  }
+
   const handled = await navigateMobileRuntimeUrl(location.href, {
     historyMode: 'none',
     source: 'primary-tab-popstate'
