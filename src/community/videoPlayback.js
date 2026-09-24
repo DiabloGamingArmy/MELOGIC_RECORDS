@@ -261,6 +261,10 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
     const state = reliabilityFor(video)
     const time = Number(state.resumeTime || video?.dataset?.communityVideoResumeTime || 0)
     if (!Number.isFinite(time) || time <= 0 || !Number.isFinite(Number(video.duration)) || Number(video.duration) <= 0) return
+    // Resume positions exist only to restore media after we intentionally
+    // detach/re-attach its source. Never seek an already-playing active video:
+    // doing so can race a native loop transition, especially in WebKit.
+    if (video === activeVideo && !video.paused) return
     const safe = Math.min(time, Math.max(0, Number(video.duration) - 0.1))
     if (safe <= 0) return
     try { video.currentTime = safe } catch {}
@@ -557,25 +561,12 @@ export function createCommunityFeedVideoCoordinator({ onDoubleLike = null } = {}
       const state = reliabilityFor(video)
       state.resumeTime = 0
       video.dataset.communityVideoResumeTime = ''
-      // Native loop is authoritative. Some WebKit builds still surface an
-      // `ended` event at the wrap boundary; restart from zero without routing
-      // a healthy loop through the loading/recovery state machine.
-      if (video.loop && !userPaused.has(video) && !playbackBlockedByUi() && ratioFor(video) >= STOP_THRESHOLD) {
-        try { video.currentTime = 0 } catch {}
-        if (video === activeVideo || ratioFor(video) >= PLAY_THRESHOLD) {
-          activeVideo = video
-          setVideoState(video, 'playing')
-          try {
-            const playResult = video.play()
-            playResult?.catch?.(() => {
-              if (activeVideo === video) activeVideo = null
-              setVideoState(video, 'blocked', 'Tap to play')
-            })
-          } catch {
-            if (activeVideo === video) activeVideo = null
-            setVideoState(video, 'blocked', 'Tap to play')
-          }
-        }
+      // A looping element owns its duration -> 0 transition. In particular,
+      // WebKit can expose `ended` while completing that native transition;
+      // seeking or calling play() here races the browser and can pin playback
+      // to the first frame.
+      if (video.loop && !userPaused.has(video)) {
+        if (video === activeVideo) setVideoState(video, 'playing')
         return
       }
       if (video === activeVideo) activeVideo = null
