@@ -8970,11 +8970,11 @@ function bindCommunityComposerEvents(root = app) {
   root?.querySelector('[data-community-composer-form]')?.addEventListener('submit', handleComposerSubmit)
   root?.querySelector('[data-community-composer-form]')?.addEventListener('input', (event) => {
     updateComposerFromForm()
-    if (!useNativeMobileCommunityComposer()) return
     const form = event.currentTarget
     const post = form?.querySelector('.community-mobile-composer-post')
-    const count = form?.querySelector('.community-mobile-composer-count')
     if (post instanceof HTMLButtonElement) post.disabled = !canPublishCommunityPost(state.composer)
+    if (!useNativeMobileCommunityComposer()) return
+    const count = form?.querySelector('.community-mobile-composer-count')
     if (count instanceof HTMLElement) count.textContent = String(Math.max(0, 2000 - state.composer.body.length))
   })
   root?.querySelector('[data-open-product-picker]')?.addEventListener('click', () => {
