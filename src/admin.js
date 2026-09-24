@@ -1272,7 +1272,8 @@ function sidebar() {
       <nav class="admin-sidebar-nav">
         ${SECTIONS.map((section) => {
           const active = state.section === section.key
-          const allowed = can(section.permission)
+          const ownerEngineering = section.key === 'engineering' && (state.claims.adminRole || '') === 'owner'
+          const allowed = ownerEngineering || can(section.permission)
           return `<a class="${active ? 'is-active' : ''} ${allowed ? '' : 'is-locked'}" href="${section.route}" data-guide-id="admin-sidebar-${escapeHtml(section.key)}" data-guide-label="${escapeHtml(section.label)}" data-guide-role="admin-sidebar-nav-item" ${active ? 'aria-current="page"' : ''} title="${allowed ? section.label : 'Permission required'}">${iconSvg(section.icon)}<span>${section.label}</span></a>`
         }).join('')}
       </nav>
