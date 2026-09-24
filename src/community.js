@@ -4,6 +4,7 @@ import './styles/communityMobile.css'
 import { communityScrollViewport, setCommunityScroll, syncCommunityMobileHeader } from './community/viewport.js'
 import { createCommunityAuthScope, createMonotonicRequestOwner, releaseOwnedOperation, restorePreservedCommunitySurface, suspendCommunityMediaResources } from './community/lifecycleState.js'
 import { createCommunityFeedVideoCoordinator } from './community/videoPlayback.js'
+import { canPublishCommunityPost } from './community/postContentValidation.js'
 import { navShell } from './components/navShell'
 import { initShellChrome } from './appBoot'
 import { createCriticalAssetPreloader, renderPagePreloaderMarkup } from './components/pagePreloader'
@@ -2082,12 +2083,13 @@ function composerFileAttachmentPreview(attachment = {}) {
         ? `<span class="community-attachment-fallback">${iconSvg('music')}</span>`
         : `<span class="community-attachment-fallback">${iconSvg('file')}</span>`
   return `
-    <article class="community-composer-attachment is-file">
+    <article class="community-composer-attachment is-file ${attachment.status === 'failed' ? 'is-failed' : ''}">
       ${media}
       <span>
         <strong>${escapeHtml(attachment.file?.name || 'Attachment')}</strong>
-        <em>${escapeHtml([attachment.type, formatAttachmentSize(attachment.file?.size)].filter(Boolean).join(' · '))}</em>
+        <em>${escapeHtml(attachment.status === 'failed' ? 'Upload failed · retry or remove' : [attachment.type, formatAttachmentSize(attachment.file?.size)].filter(Boolean).join(' · '))}</em>
       </span>
+      ${attachment.status === 'failed' ? `<button type="button" data-retry-composer-file="${escapeHtml(attachment.id)}" aria-label="Retry ${escapeHtml(attachment.file?.name || 'image')} upload">Retry</button>` : ''}
       <button type="button" data-remove-composer-file="${escapeHtml(attachment.id)}" aria-label="Remove ${escapeHtml(attachment.file?.name || 'attachment')}">${iconSvg('x')}</button>
       ${attachment.type === 'audio' && preview ? `<audio class="community-composer-audio-preview" src="${escapeHtml(preview)}" controls preload="metadata"></audio>` : ''}
     </article>
@@ -2508,7 +2510,7 @@ function useUnifiedCommunityComposer() {
 function renderNativeMobileComposerShell() {
   if (!state.composer.open || !state.currentUser) return ''
   const community = currentComposerCommunity()
-  const canPost = Boolean(String(state.composer.body || '').trim()) && !state.composer.submitting
+  const canPost = canPublishCommunityPost(state.composer)
   const currentIdentity = communityAuthorIdentityCache.get(state.currentUser.uid)
   void ensureCommunityAuthorIdentity(state.currentUser.uid).then((identity) => {
     if (!identity || !state.composer.open) return
@@ -2555,6 +2557,7 @@ function renderNativeMobileComposerShell() {
                 <small class="community-mobile-composer-username" data-mobile-composer-username>${escapeHtml(username)}</small>
               </div>
               <textarea name="body" maxlength="2000" rows="8" placeholder="${escapeHtml(communityComposerPrompt)}" data-composer-body>${escapeHtml(state.composer.body)}</textarea>
+              <small class="community-composer-content-hint">Add text or a ready image to publish.</small>
             </div>
           </div>
 
@@ -3099,20 +3102,20 @@ function postCard(post, { detail = false, priority = false } = {}) {
         </div>
       </header>
       ${post.title ? `<h2>${escapeHtml(post.title)}</h2>` : ''}
-      <p class="community-post-body">${escapeHtml(body)}${!detail && post.body.length > body.length ? '...' : ''}</p>
+      ${body ? `<p class="community-post-body">${escapeHtml(body)}${!detail && post.body.length > body.length ? '...' : ''}</p>` : ''}
       ${renderPostIntent(post)}
       <div data-post-attachments-region data-attachment-render-key="${escapeHtml(postAttachmentRenderKey(post))}">
         ${renderPostAttachments(post, { priority })}
       </div>
       ${post.tags.length ? `<div class="community-tags">${post.tags.map((tag) => `<button type="button" data-community-tag="${escapeHtml(tag)}">#${escapeHtml(tag)}</button>`).join('')}</div>` : ''}
       <footer class="community-post-actions">
-        <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
-        <button type="button" class="${viewer.disliked ? 'is-active' : ''}" data-community-dislike="${escapeHtml(post.postId)}">${iconSvg('thumbsDown')} <span>Dislike</span><em>${formatCount(post.counts.dislikes)}</em></button>
+        <button type="button" class="${viewer.liked ? 'is-active' : ''}" data-community-like="${escapeHtml(post.postId)}" aria-label="Like post, ${formatCount(post.counts.likes)} likes">${iconSvg('thumbsUp')} <span>Like</span><em>${formatCount(post.counts.likes)}</em></button>
+        <button type="button" class="${viewer.disliked ? 'is-active' : ''}" data-community-dislike="${escapeHtml(post.postId)}" aria-label="Dislike post, ${formatCount(post.counts.dislikes)} dislikes">${iconSvg('thumbsDown')} <span>Dislike</span><em>${formatCount(post.counts.dislikes)}</em></button>
         ${detail
-          ? `<button type="button" data-scroll-comments>${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></button>`
-          : `<a href="${communityPostRoute(post.postId)}#comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></a>`}
-        <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
-        <button type="button" data-community-share="${escapeHtml(post.postId)}">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
+          ? `<button type="button" data-scroll-comments aria-label="${post.intent === 'feedback_request' ? 'Give feedback' : 'Comment'}, ${formatCount(post.counts.comments)} comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></button>`
+          : `<a href="${communityPostRoute(post.postId)}#comments" aria-label="${post.intent === 'feedback_request' ? 'Give feedback' : 'Comment'}, ${formatCount(post.counts.comments)} comments">${iconSvg('messageCircle')} <span>${post.intent === 'feedback_request' ? 'Give Feedback' : 'Comment'}</span><em>${formatCount(post.counts.comments)}</em></a>`}
+        <button type="button" class="${viewer.saved ? 'is-active' : ''}" data-community-save="${escapeHtml(post.postId)}" aria-label="Save post, ${formatCount(post.counts.saves)} saves">${iconSvg('bookmark')} <span>Save</span><em>${formatCount(post.counts.saves)}</em></button>
+        <button type="button" data-community-share="${escapeHtml(post.postId)}" aria-label="Share post, ${formatCount(post.counts.shares)} shares">${iconSvg('share2')} <span>Share</span><em>${formatCount(post.counts.shares)}</em></button>
       </footer>
       ${detail ? renderComments(post) : renderTopCommentPreview(post)}
     </article>
@@ -5646,8 +5649,8 @@ async function handleComposerSubmit(event) {
   state.composer = { ...state.composer, title, body, communityId, tags, error: '' }
   updateComposerFromForm()
   persistComposerDraft()
-  if (!body && !title && !state.composer.attachments.length && !state.composer.fileAttachments.length) {
-    state.composer.error = 'Add text, a title, or an attachment before publishing.'
+  if (!canPublishCommunityPost(state.composer)) {
+    state.composer.error = 'Add text or a ready image before publishing.'
     render()
     return
   }
@@ -5666,6 +5669,7 @@ async function handleComposerSubmit(event) {
   if (!authorUid) return
 
   state.composer.submitting = true
+  state.composer.fileAttachments = state.composer.fileAttachments.map((attachment) => ({ ...attachment, status: 'uploading' }))
   state.composer.uploadProgress = state.composer.fileAttachments.length ? 0 : 100
   // melogic-mobile-community-publish-transition-v6
   // Preserve the mounted mobile composer while publishing so its entrance animation cannot replay.
@@ -5779,6 +5783,9 @@ async function handleComposerSubmit(event) {
     if (isCommunityAuthScopeError(error)) return
     console.warn('[community] create post failed', { code: error?.code, message: error?.message, details: error?.details })
     state.composer.submitting = false
+    state.composer.fileAttachments = state.composer.fileAttachments.map((attachment) => (
+      attachment.status === 'uploading' ? { ...attachment, status: 'failed' } : attachment
+    ))
     state.composer.uploadProgress = 0
     state.composer.error = error?.message || 'Could not publish this post.'
     render()
@@ -5995,8 +6002,9 @@ async function handleEditPostSubmit(event) {
   const body = String(formData.get('body') || '').trim()
   const tags = parseEditTags(String(formData.get('tags') || ''))
   const visibility = String(formData.get('visibility') || 'public').trim()
-  if (!title && !body && !(Array.isArray(post.attachments) && post.attachments.length)) {
-    state.editPost = { ...state.editPost, title, body, tags: tags.join(', '), visibility, error: 'Add text, a title, or keep an attachment before saving.' }
+  const hasImage = Array.isArray(post.attachments) && post.attachments.some((attachment) => attachment?.type === 'image')
+  if (!title && !body && !hasImage) {
+    state.editPost = { ...state.editPost, title, body, tags: tags.join(', '), visibility, error: 'Add text or keep an image before saving.' }
     render()
     return
   }
@@ -6934,7 +6942,7 @@ async function addComposerFiles(files = []) {
       const { type } = validateCommunityPostAttachment(file)
       const id = composerFileAttachmentId()
       const media = await readComposerMediaMetadata(file, type)
-      next.push({ id, file, type, previewURL: media.previewURL || '', metadata: media.metadata || {} })
+      next.push({ id, file, type, status: 'ready', previewURL: media.previewURL || '', metadata: media.metadata || {} })
     }
   } catch (error) {
     next.forEach((item) => item.previewURL && URL.revokeObjectURL(item.previewURL))
@@ -6956,6 +6964,17 @@ function removeComposerFileAttachment(id = '') {
   state.composer = {
     ...state.composer,
     fileAttachments: state.composer.fileAttachments.filter((attachment) => attachment.id !== id),
+    error: ''
+  }
+  updateCommunityComposerLayer()
+}
+
+function retryComposerFileAttachment(id = '') {
+  state.composer = {
+    ...state.composer,
+    fileAttachments: state.composer.fileAttachments.map((attachment) => (
+      attachment.id === id ? { ...attachment, status: 'ready' } : attachment
+    )),
     error: ''
   }
   updateCommunityComposerLayer()
@@ -7958,7 +7977,7 @@ async function consumeCameraCommunityMediaHandoff(){
     }else{
       const {type}=validateCommunityPostAttachment(h.file);clearComposerFileAttachments()
       const id=composerFileAttachmentId(),media=await readComposerMediaMetadata(h.file,type)
-      state.composer=defaultComposerState({open:true,communityId:state.view.type==='community'?state.community?.communityId||'':'',fileAttachments:[{id,file:h.file,type,previewURL:media.previewURL||'',metadata:media.metadata||{}}],destinationItems:state.communities,error:''})
+      state.composer=defaultComposerState({open:true,communityId:state.view.type==='community'?state.community?.communityId||'':'',fileAttachments:[{id,file:h.file,type,status:'ready',previewURL:media.previewURL||'',metadata:media.metadata||{}}],destinationItems:state.communities,error:''})
       updateCommunityComposerLayer();focusMobileCommunityComposerAfterEntrance()
     }
     delete window.__melogicCommunityMediaHandoff;sessionStorage.removeItem('melogicCommunityMediaHandoffDestination');return true
@@ -8955,7 +8974,7 @@ function bindCommunityComposerEvents(root = app) {
     const form = event.currentTarget
     const post = form?.querySelector('.community-mobile-composer-post')
     const count = form?.querySelector('.community-mobile-composer-count')
-    if (post instanceof HTMLButtonElement) post.disabled = !String(state.composer.body || '').trim() || state.composer.submitting
+    if (post instanceof HTMLButtonElement) post.disabled = !canPublishCommunityPost(state.composer)
     if (count instanceof HTMLElement) count.textContent = String(Math.max(0, 2000 - state.composer.body.length))
   })
   root?.querySelector('[data-open-product-picker]')?.addEventListener('click', () => {
@@ -9012,6 +9031,7 @@ function bindCommunityComposerEvents(root = app) {
   root?.querySelectorAll('[data-remove-composer-attachment]').forEach((button) => button.addEventListener('click', () => removeComposerAttachment(button.getAttribute('data-remove-composer-attachment') || '')))
   root?.querySelectorAll('[data-remove-composer-attachment-key]').forEach((button) => button.addEventListener('click', () => removeComposerAttachmentByKey(button.getAttribute('data-remove-composer-attachment-key') || '')))
   root?.querySelectorAll('[data-remove-composer-file]').forEach((button) => button.addEventListener('click', () => removeComposerFileAttachment(button.getAttribute('data-remove-composer-file') || '')))
+  root?.querySelectorAll('[data-retry-composer-file]').forEach((button) => button.addEventListener('click', () => retryComposerFileAttachment(button.getAttribute('data-retry-composer-file') || '')))
   root?.querySelectorAll('[data-set-composer-intent]').forEach((button) => button.addEventListener('click', () => setComposerIntent(button.getAttribute('data-set-composer-intent') || '')))
   root?.querySelectorAll('[data-clear-composer-intent]').forEach((button) => button.addEventListener('click', clearComposerIntent))
   root?.querySelector('[data-toggle-emoji-panel]')?.addEventListener('click', () => {
@@ -9619,6 +9639,7 @@ function bindEvents() {
   app.querySelectorAll('[data-remove-composer-attachment]').forEach((button) => button.addEventListener('click', () => removeComposerAttachment(button.getAttribute('data-remove-composer-attachment') || '')))
   app.querySelectorAll('[data-remove-composer-attachment-key]').forEach((button) => button.addEventListener('click', () => removeComposerAttachmentByKey(button.getAttribute('data-remove-composer-attachment-key') || '')))
   app.querySelectorAll('[data-remove-composer-file]').forEach((button) => button.addEventListener('click', () => removeComposerFileAttachment(button.getAttribute('data-remove-composer-file') || '')))
+  app.querySelectorAll('[data-retry-composer-file]').forEach((button) => button.addEventListener('click', () => retryComposerFileAttachment(button.getAttribute('data-retry-composer-file') || '')))
   app.querySelectorAll('[data-set-composer-intent]').forEach((button) => button.addEventListener('click', () => setComposerIntent(button.getAttribute('data-set-composer-intent') || '')))
   app.querySelectorAll('[data-clear-composer-intent]').forEach((button) => button.addEventListener('click', clearComposerIntent))
   app.querySelector('[data-toggle-emoji-panel]')?.addEventListener('click', () => {

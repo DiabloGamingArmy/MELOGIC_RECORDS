@@ -1,6 +1,7 @@
 const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
+const { hasSufficientPostContent } = require('./communityPostContent')
 
 function db() {
   return admin.firestore()
@@ -67,8 +68,8 @@ const updateCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   if (post.visibility !== 'public') throw new HttpsError('failed-precondition', 'This post visibility cannot be edited right now.')
 
   const attachments = Array.isArray(post.attachments) ? post.attachments : []
-  if (!title && !body && !attachments.length) {
-    throw new HttpsError('invalid-argument', 'Add text, a title, or keep an attachment before saving.')
+  if (!hasSufficientPostContent({ title, body, attachments })) {
+    throw new HttpsError('invalid-argument', 'Add text or keep an image before saving.')
   }
 
   const visibility = requestedVisibility === 'public' || !requestedVisibility ? 'public' : post.visibility

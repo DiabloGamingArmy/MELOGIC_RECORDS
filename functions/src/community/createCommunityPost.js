@@ -2,6 +2,7 @@ const { onCall, HttpsError } = require('firebase-functions/v2/https')
 const admin = require('firebase-admin')
 const { cleanString } = require('../admin/adminAuth')
 const { cleanSlug } = require('./communityShared')
+const { hasSufficientPostContent } = require('./communityPostContent')
 
 const POST_TYPES = new Set(['post', 'text', 'product_share'])
 const ATTACHMENT_TYPES = new Set(['product', 'music', 'stage_plan', 'studio_project', 'image', 'video', 'audio', 'file'])
@@ -466,11 +467,11 @@ const createCommunityPost = onCall({ timeoutSeconds: 60, memory: '256MiB' }, asy
   const attachments = type === 'product_share'
     ? []
     : await normalizeAttachments(request.data?.attachments || [], uid, author, postRef.id)
-  if (!body && !title && !attachments.length && type !== 'product_share') {
-    throw new HttpsError('invalid-argument', 'Add text, a title, or an attachment before publishing.')
+  if (!hasSufficientPostContent({ title, body, attachments }) && type !== 'product_share') {
+    throw new HttpsError('invalid-argument', 'Add text or an image before publishing.')
   }
-  if (intent.intent === 'feedback_request' && !body && !attachments.length) {
-    throw new HttpsError('invalid-argument', 'Feedback requests need a body or an attachment.')
+  if (intent.intent === 'feedback_request' && !hasSufficientPostContent({ title, body, attachments })) {
+    throw new HttpsError('invalid-argument', 'Feedback requests need text or an image.')
   }
   const attachmentTypes = Array.from(new Set(attachments.map((attachment) => attachment.type).filter(Boolean)))
   const authorDisplayNameLower = String(author.authorDisplayName || '').toLowerCase()
