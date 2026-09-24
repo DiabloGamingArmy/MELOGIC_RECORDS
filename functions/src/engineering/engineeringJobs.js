@@ -107,4 +107,4 @@ const getEngineeringJob = onCall({ timeoutSeconds: 60, memory: '256MiB' }, async
   return { ok: true, job: normalizeJob(snapshot.id, snapshot.data()) }
 })
 
-module.exports = { createEngineeringJob, getEngineeringJob, listEngineeringJobs, __test: { ALLOWED_STATUSES, normalizeJob } }
+module.exports = { createEngineeringJob, getEngineeringJob, listEngineeringJobs, normalizeJob, __test: { ALLOWED_STATUSES, normalizeJob } }

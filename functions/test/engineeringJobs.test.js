@@ -15,3 +15,20 @@ test('engineering jobs normalize to inert defaults', () => {
   assert.equal(job.approval.status, 'not_requested')
   assert.equal(job.deployment.status, 'blocked')
 })
+
+test('engineering state machine rejects unsafe skips', () => {
+  const { canTransition } = require('../src/engineering/engineeringOrchestrator').__test
+  assert.equal(canTransition('submitted', 'triaging'), true)
+  assert.equal(canTransition('submitted', 'deploying'), false)
+  assert.equal(canTransition('triaging', 'approved'), false)
+  assert.equal(canTransition('awaiting_approval', 'approved'), true)
+  assert.equal(canTransition('approved', 'deploying'), true)
+})
+test('triage classification normalizer constrains categories and confidence', () => {
+  const { normalizeClassification } = require('../src/engineering/engineeringOrchestrator').__test
+  const value = normalizeClassification({ status: 'complete', category: 'bug', confidence: 4, reason: 'Reproducible defect.' })
+  assert.equal(value.category, 'bug')
+  assert.equal(value.confidence, 1)
+  assert.equal(value.status, 'complete')
+  assert.equal(normalizeClassification({ category: 'do_whatever' }).category, 'uncertain')
+})

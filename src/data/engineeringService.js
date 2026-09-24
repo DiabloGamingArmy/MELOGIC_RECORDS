@@ -24,3 +24,9 @@ export async function getEngineeringJob(jobId = '') {
   const result = await httpsCallable(functions, 'getEngineeringJob')({ jobId })
   return result.data || {}
 }
+
+export async function startEngineeringTriage(jobId = '') {
+  await requireAdminStepUp('Start engineering triage')
+  const result = await call('startEngineeringTriage')({ jobId })
+  return result.data || {}
+}

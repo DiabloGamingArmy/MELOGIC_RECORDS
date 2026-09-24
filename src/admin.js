@@ -123,7 +123,7 @@ import {
   listMusicReleaseReviewQueue,
   reviewMusicRelease
 } from './data/distributionService'
-import { createEngineeringJob, listEngineeringJobs } from './data/engineeringService'
+import { createEngineeringJob, listEngineeringJobs, startEngineeringTriage } from './data/engineeringService'
 import {
   STUDIO_LIBRARY_ENGINE_TYPES,
   STUDIO_SAMPLE_STRATEGIES,
@@ -4429,6 +4429,9 @@ function engineeringView() {
             <div><dt>Classification</dt><dd>${escapeHtml(humanLabel(job.classification?.status || 'pending'))}</dd></div>
             <div><dt>Created</dt><dd>${escapeHtml(formatDate(job.createdAt))}</dd></div>
           </dl>
+          ${job.status === 'submitted' ? `<div class="admin-modal-actions"><button type="button" class="admin-secondary-button" data-engineering-triage="${escapeHtml(job.id || '')}">Start Triage</button></div>` : ''}
+          ${job.stage === 'awaiting_triage_model' ? '<p class="admin-muted">Orchestrator validated this job. AI classification is the next patch.</p>' : ''}
+          
         </article>`).join('')}
       </div>
     </section>`
@@ -9093,6 +9096,24 @@ function leaveAdminContactCallRoom() {
 }
 
 function bindEvents() {
+  app.querySelectorAll('[data-engineering-triage]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const jobId = String(button.dataset.engineeringTriage || '').trim()
+      if (!jobId) return
+      state.engineering.error = ''
+      state.engineering.message = ''
+      button.disabled = true
+      try {
+        const result = await startEngineeringTriage(jobId)
+        state.engineering.message = `Orchestrator accepted ${jobId}. AI triage is ready to be connected.`
+        state.engineering.jobs = state.engineering.jobs.map((job) => job.id === jobId ? (result.job || job) : job)
+      } catch (error) {
+        state.engineering.error = error?.message || 'Could not start engineering triage.'
+      } finally {
+        render()
+      }
+    })
+  })
   app.querySelector('[data-engineering-job-form]')?.addEventListener('submit', async (event) => {
     event.preventDefault()
     if (state.engineering.creating) return

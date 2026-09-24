@@ -108,6 +108,7 @@ const {
   startCreatorAgeVerification
 } = require('./src/compliance/creatorAgeVerification')
 const { createEngineeringJob, getEngineeringJob, listEngineeringJobs } = require('./src/engineering/engineeringJobs')
+const { startEngineeringTriage } = require('./src/engineering/engineeringOrchestrator')
 const { createLiveKitToken } = require('./src/livekit/createLiveKitToken')
 const {
   prepareMusicLiveStreamDraft,
@@ -316,6 +317,7 @@ exports.listAdminEmailLogs = listAdminEmailLogs
 exports.createEngineeringJob = createEngineeringJob
 exports.getEngineeringJob = getEngineeringJob
 exports.listEngineeringJobs = listEngineeringJobs
+exports.startEngineeringTriage = startEngineeringTriage
 exports.createLiveKitToken = createLiveKitToken
 exports.prepareMusicLiveStreamDraft = prepareMusicLiveStreamDraft
 exports.startMusicLiveStream = startMusicLiveStream
