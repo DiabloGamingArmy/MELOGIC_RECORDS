@@ -5197,7 +5197,41 @@ body.community-mobile-composer-visual-underlay::after{content:"";position:fixed;
 /* melogic-network-topics-p2 */
 @media (min-width: 761px) {
   .community-network-home-header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 42px;
+    align-items: stretch;
     background: rgba(0, 0, 0, .94);
+  }
+
+  .community-network-home-header > .community-feed-mobile-tabs {
+    display: none;
+  }
+
+  .community-network-home-header > .community-network-home-title {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .community-network-home-header > .community-sort-control {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: stretch;
+    justify-self: stretch;
+    width: 42px;
+    min-width: 42px;
+    max-width: 42px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-left: 1px solid rgba(145, 169, 211, .09);
+    border-bottom: 1px solid rgba(145, 169, 211, .09);
+    background: transparent;
+  }
+
+  .community-network-home-header > .community-topic-context {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .community-network-home-title {
