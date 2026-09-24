@@ -17,19 +17,70 @@ import { createBoundedRequestCache } from '../services/boundedRequestCache.js'
 
 let hasWarnedProfileRead = false
 
-// melogic-community-// melogic-firestore-auto-transport-v3
-// Do not force WebChannel long polling for Safari/WebKit. Firebase's current
-// Firestore SDK owns transport selection and can apply its normal compatibility
-// behavior without a site-wide Safari override.
+// Firestore's WebChannel transport can remain pending indefinitely in some
+// Safari/WebKit network environments. Use long polling only for WebKit so the
+// rest of the browser population keeps Firebase's normal transport path.
+function isWebKitRuntime() {
+  if (typeof navigator === 'undefined') return false
+  const ua = String(navigator.userAgent || '')
+  const vendor = String(navigator.vendor || '')
+  const isAppleWebKit = /AppleWebKit/i.test(ua)
+  const isChromium = /Chrome|CriOS|Chromium|Edg|EdgiOS|OPR|OPiOS/i.test(ua)
+  return isAppleWebKit && !isChromium && (/Apple/i.test(vendor) || /Safari/i.test(ua))
+}
+
+function firestoreTransportSettings() {
+  const webkit = isWebKitRuntime()
+  return {
+    webkit,
+    transport: webkit ? 'forced-long-polling' : 'auto-detect',
+    settings: webkit
+      ? {
+          experimentalForceLongPolling: true,
+          experimentalAutoDetectLongPolling: false,
+          experimentalLongPollingOptions: { timeoutSeconds: 10 }
+        }
+      : {
+          experimentalAutoDetectLongPolling: true,
+          experimentalLongPollingOptions: { timeoutSeconds: 10 }
+        }
+  }
+}
+
 function initializeMainFirestore() {
+  const transport = firestoreTransportSettings()
+  const persistentSettings = {
+    ...transport.settings,
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  }
+
   try {
-    return initializeFirestore(app, {
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-    })
+    const instance = initializeFirestore(app, persistentSettings)
+    if (typeof console !== 'undefined') {
+      console.info('[firebase/firestore] transport initialized', {
+        webkit: transport.webkit,
+        transport: transport.transport,
+        cache: 'persistent-multitab'
+      })
+    }
+    return instance
   } catch (error) {
-    try { return initializeFirestore(app, { localCache: memoryLocalCache() }) } catch {}
+    // Persistence can fail independently of networking (private browsing,
+    // IndexedDB state, multi-tab coordination). Preserve the transport policy
+    // while falling back to memory rather than silently changing both variables.
+    try {
+      const instance = initializeFirestore(app, {
+        ...transport.settings,
+        localCache: memoryLocalCache()
+      })
+      console.warn('[firebase/firestore] Persistent cache unavailable; using memory cache.', {
+        transport: transport.transport,
+        message: error?.message || String(error)
+      })
+      return instance
+    } catch {}
     try { return getFirestore(app) } catch {}
-    if (import.meta.env?.DEV) console.warn('[firebase/firestore] Persistent cache unavailable; continuing without it.', error)
+    console.warn('[firebase/firestore] Firestore initialization failed.', error?.message || error)
     return null
   }
 }
