@@ -178,28 +178,83 @@ public:
                         OscProcessType p2,float a2,std::uint32_t s2,
                         std::size_t index,std::size_t nextIndex,float fraction,
                         double fallbackPhase) noexcept {
-        SpectralKey key{&table,table.generation,
-                        static_cast<std::uint16_t>(frame),static_cast<std::uint16_t>(band),
-                        p1,p2,quantizedSpectralAmount(p1,a1),quantizedSpectralAmount(p2,a2),s1,s2};
-        const auto hash=spectralKeyHash(key);
-        const auto bucket=(hash%cacheBuckets)*cacheWays;
-        for(std::size_t w=0;w<cacheWays;++w) {
-            auto& slot=cache_[bucket+w];
-            if(slot.state.load(std::memory_order_acquire)!=ready) continue;
-            slot.readers.fetch_add(1,std::memory_order_acquire);
-            if(slot.state.load(std::memory_order_acquire)!=ready) {
-                slot.readers.fetch_sub(1,std::memory_order_release);continue;
-            }
-            if(sameSpectralKey(slot.key,key)) {
-                const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
-                slot.age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+        const auto isRandomMorph=[](OscProcessType type) noexcept {
+            return type==OscProcessType::RandAmp || type==OscProcessType::RandSparse;
+        };
+        constexpr float spectralSteps=32.0f;
+        const auto anchor=[](float amount,bool upper) noexcept {
+            const float scaled=std::clamp(amount,0.0f,1.0f)*spectralSteps;
+            const float step=upper?std::ceil(scaled):std::floor(scaled);
+            return step/spectralSteps;
+        };
+        const auto blend=[](float amount) noexcept {
+            const float scaled=std::clamp(amount,0.0f,1.0f)*spectralSteps;
+            return scaled-std::floor(scaled);
+        };
+
+        // Read an exact compiled anchor without ever building spectral data on
+        // the audio thread. A miss queues the worker and reports unavailable.
+        auto readAnchor=[&](float keyA1,float keyA2,float& value) noexcept {
+            SpectralKey key{&table,table.generation,
+                            static_cast<std::uint16_t>(frame),static_cast<std::uint16_t>(band),
+                            p1,p2,keyA1,keyA2,s1,s2};
+            const auto hash=spectralKeyHash(key);
+            const auto bucket=(hash%cacheBuckets)*cacheWays;
+            for(std::size_t w=0;w<cacheWays;++w) {
+                auto& slot=cache_[bucket+w];
+                if(slot.state.load(std::memory_order_acquire)!=ready) continue;
+                slot.readers.fetch_add(1,std::memory_order_acquire);
+                if(slot.state.load(std::memory_order_acquire)!=ready) {
+                    slot.readers.fetch_sub(1,std::memory_order_release);continue;
+                }
+                if(sameSpectralKey(slot.key,key)) {
+                    value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
+                    slot.age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+                    slot.readers.fetch_sub(1,std::memory_order_release);
+                    return true;
+                }
                 slot.readers.fetch_sub(1,std::memory_order_release);
-                return value;
             }
-            slot.readers.fetch_sub(1,std::memory_order_release);
+            request(table,key,hash);
+            return false;
+        };
+
+        const bool random1=isRandomMorph(p1);
+        const bool random2=isRandomMorph(p2);
+        const float lo1=random1?anchor(a1,false):quantizedSpectralAmount(p1,a1);
+        const float hi1=random1?anchor(a1,true):lo1;
+        const float lo2=random2?anchor(a2,false):quantizedSpectralAmount(p2,a2);
+        const float hi2=random2?anchor(a2,true):lo2;
+        const float t1=random1?blend(a1):0.0f;
+        const float t2=random2?blend(a2):0.0f;
+
+        float v00=0.0f,v10=0.0f,v01=0.0f,v11=0.0f;
+        const bool ok00=readAnchor(lo1,lo2,v00);
+        const bool ok10=(hi1==lo1)?ok00:readAnchor(hi1,lo2,v10);
+        if(hi1==lo1) v10=v00;
+        const bool ok01=(hi2==lo2)?ok00:readAnchor(lo1,hi2,v01);
+        if(hi2==lo2) v01=v00;
+        const bool same11=hi1==lo1 && hi2==lo2;
+        const bool ok11=same11?ok00:readAnchor(hi1,hi2,v11);
+        if(same11) v11=v00;
+
+        // Interpolate between the bounded FFT anchor states at audio rate. This
+        // preserves the aggressive seeded masks while removing the 1/32-step
+        // discontinuities during knob moves and modulation.
+        if(ok00 && ok10 && ok01 && ok11) {
+            const float low=v00+(v10-v00)*t1;
+            const float high=v01+(v11-v01)*t1;
+            return low+(high-low)*t2;
         }
+
+        // Never snap back to dry merely because the next anchor is still being
+        // prepared. Prefer the nearest available processed anchor.
+        if(ok00) return v00;
+        if(ok10) return v10;
+        if(ok01) return v01;
+        if(ok11) return v11;
+
         fallbackReads_.fetch_add(1,std::memory_order_relaxed);
-        request(table,key,hash);
         const auto& source=table.frames[frame].bands[band].samples;
         const double pos=(fallbackPhase-std::floor(fallbackPhase))*static_cast<double>(table.tableLength);
         const auto i=static_cast<std::size_t>(pos)%table.tableLength;
