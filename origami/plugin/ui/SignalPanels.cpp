@@ -145,9 +145,9 @@ void FilterPanel::syncFromModel() {
 void FilterPanel::resized() {
     auto body=contentBounds();
 
-    constexpr int railWidth=124;
+    constexpr int railWidth=116;
     filterRail_=body.removeFromLeft(railWidth);
-    body.removeFromLeft(4);
+    body.removeFromLeft(6);
 
     auto rail=filterRail_.reduced(4,5);
     auto collectionControls=rail.removeFromBottom(24);
@@ -157,13 +157,13 @@ void FilterPanel::resized() {
     filterAdd_.setBounds(collectionControls);
     rail.removeFromBottom(5);
     filterViewport_.setBounds(rail);
-    constexpr int filterRowHeight=42;
+    constexpr int filterRowHeight=38;
     const int contentWidth=juce::jmax(1,filterViewport_.getWidth()-6);
     filter1_.setBounds(filterEnabled_ ? juce::Rectangle<int>(0,0,contentWidth,filterRowHeight-2)
                                       : juce::Rectangle<int>{});
     filterContent_.setSize(contentWidth,juce::jmax(filterRowHeight,filterViewport_.getHeight()));
 
-    auto controls=body.removeFromBottom(juce::jmin(64,body.getHeight()/3+14));
+    auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     const int w=controls.getWidth()/6;
     auto place=[&](int idx,juce::Slider& slider,juce::Label& label){
         auto cell=controls.withX(controls.getX()+idx*w).withWidth(w);
@@ -176,12 +176,12 @@ void FilterPanel::resized() {
 }
 
 void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    constexpr int railWidth=124;
+    constexpr int railWidth=116;
     auto rail=body.removeFromLeft(railWidth);
-    body.removeFromLeft(4);
+    body.removeFromLeft(6);
 
     well(g,rail);
-    text(g,"FILTERS",rail.removeFromTop(20).reduced(5,0),8.8f,Palette::muted());
+    text(g,"FILTERS",rail.removeFromTop(18).reduced(5,0),8.0f,Palette::muted());
 
     if(!filterEnabled_) {
         text(g,"NO FILTER — PRESS + TO ADD FILTER 1",body.reduced(12),10.5f,
@@ -189,17 +189,17 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         return;
     }
 
-    text(g,"LOW-PASS",{body.getX()+6,5,110,24},10.5f,Palette::muted());
-    text(g,"ROUTING",{body.getRight()-102,5,96,24},9.5f,Palette::muted(),juce::Justification::centredRight);
+    text(g,"LOW-PASS",{body.getX()+4,5,100,24},10,Palette::muted());
+    text(g,"ROUTING",{body.getRight()-96,5,90,24},9,Palette::muted(),juce::Justification::centredRight);
 
-    auto controls=body.removeFromBottom(juce::jmin(64,body.getHeight()/3+14));
+    auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     body.removeFromBottom(7);
-    auto routing=body.removeFromRight(92);
+    auto routing=body.removeFromRight(82);
     body.removeFromRight(8);
 
     well(g,body);
 
-    auto graphArea=body.reduced(12,10);
+    auto graphArea=body.reduced(8);
     g.setColour(Palette::border().withAlpha(.7f));
     for(int i=1;i<5;++i)
         g.drawVerticalLine(graphArea.getX()+graphArea.getWidth()*i/5,float(graphArea.getY()),float(graphArea.getBottom()));
@@ -225,7 +225,7 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     g.setColour(Palette::accent());
     g.strokePath(response,juce::PathStrokeType(1.3f));
 
-    const int rowHeight=juce::jmin(28,routing.getHeight()/3);
+    const int rowHeight=juce::jmin(24,routing.getHeight()/3);
     for(const auto& label:juce::StringArray{"Serial","Parallel","Split"}) {
         auto row=routing.removeFromTop(rowHeight).reduced(1,1);
         well(g,row);
