@@ -85,6 +85,25 @@ inline const char* oscRouteName(OscRouteType type) noexcept {
     return "Off";
 }
 
+using OscProcessSlotId = std::uint32_t;
+using OscRouteSlotId = std::uint32_t;
+inline constexpr std::size_t maxOscProcesses = 8;
+inline constexpr std::size_t maxOscRoutes = 8;
+
+struct OscProcessSlot {
+    OscProcessSlotId id = 0;
+    dsp::OscProcessType type = dsp::OscProcessType::Off;
+    float amount = 0.0f;
+    std::uint32_t seed = 0;
+};
+
+struct OscRouteSlot {
+    OscRouteSlotId id = 0;
+    OscillatorModuleId sourceId = 0;
+    OscRouteType type = OscRouteType::Off;
+    float amount = 0.0f;
+};
+
 struct OscillatorModuleState {
     OscillatorModuleId id = 0;
     bool enabled = false;
@@ -114,6 +133,17 @@ struct OscillatorModuleState {
     OscillatorModuleId route2SourceId = 0;
     OscRouteType route2Type = OscRouteType::Off;
     float route2Amount = 0.0f;
+
+    // Dynamic collection foundation. The legacy two-slot fields remain
+    // authoritative until the DSP/UI migration patches switch consumers over.
+    // This lets old presets and the current engine remain bit-for-bit compatible
+    // while subsequent patches adopt stable-ID collections incrementally.
+    std::array<OscProcessSlot,maxOscProcesses> processes{};
+    std::uint8_t processCount = 0;
+    OscProcessSlotId nextProcessId = 1;
+    std::array<OscRouteSlot,maxOscRoutes> routes{};
+    std::uint8_t routeCount = 0;
+    OscRouteSlotId nextRouteId = 1;
 };
 
 // mct-origami-deep-audit-p05-coherent-osc-generations
@@ -268,6 +298,41 @@ private:
         s.route2Amount=std::clamp(s.route2Amount,-1.0f,1.0f);
         if(s.route1Type==OscRouteType::Off) s.route1SourceId=0;
         if(s.route2Type==OscRouteType::Off) s.route2SourceId=0;
+
+        // Keep collection storage bounded and internally valid. During the
+        // migration the legacy slots are mirrored into an empty collection so
+        // every existing oscillator immediately has stable process/route IDs.
+        if(s.processCount>maxOscProcesses) s.processCount=maxOscProcesses;
+        if(s.routeCount>maxOscRoutes) s.routeCount=maxOscRoutes;
+        if(s.processCount==0) {
+            if(s.process1!=dsp::OscProcessType::Off)
+                s.processes[s.processCount++]={s.nextProcessId++,s.process1,s.process1Amount,s.process1Seed};
+            if(s.process2!=dsp::OscProcessType::Off && s.processCount<maxOscProcesses)
+                s.processes[s.processCount++]={s.nextProcessId++,s.process2,s.process2Amount,s.process2Seed};
+        }
+        for(std::size_t i=0;i<s.processCount;++i) {
+            auto& p=s.processes[i];
+            if(p.id==0) p.id=s.nextProcessId++;
+            if(!dsp::validOscProcessType(p.type)) p.type=dsp::OscProcessType::Off;
+            if(!std::isfinite(p.amount)) p.amount=0.0f;
+            p.amount=std::clamp(p.amount,dsp::oscProcessAmountMinimum(p.type),1.0f);
+            s.nextProcessId=std::max(s.nextProcessId,p.id+1);
+        }
+        if(s.routeCount==0) {
+            if(s.route1Type!=OscRouteType::Off)
+                s.routes[s.routeCount++]={s.nextRouteId++,s.route1SourceId,s.route1Type,s.route1Amount};
+            if(s.route2Type!=OscRouteType::Off && s.routeCount<maxOscRoutes)
+                s.routes[s.routeCount++]={s.nextRouteId++,s.route2SourceId,s.route2Type,s.route2Amount};
+        }
+        for(std::size_t i=0;i<s.routeCount;++i) {
+            auto& r=s.routes[i];
+            if(r.id==0) r.id=s.nextRouteId++;
+            if(!validOscRouteType(r.type)) r.type=OscRouteType::Off;
+            if(!std::isfinite(r.amount)) r.amount=0.0f;
+            r.amount=std::clamp(r.amount,-1.0f,1.0f);
+            if(r.type==OscRouteType::Off) r.sourceId=0;
+            s.nextRouteId=std::max(s.nextRouteId,r.id+1);
+        }
     }
 
     void publish() noexcept {
