@@ -750,60 +750,52 @@ void OscillatorCard::resized() {
 
     auto upper=body;
     constexpr int columnGap=7;
-    const int columnWidth=juce::jlimit(104,122,upper.getWidth()*25/100);
-    auto routing=upper.removeFromRight(columnWidth);
+    const int chainWidth=juce::jlimit(208,251,upper.getWidth()*50/100);
+    auto chain=upper.removeFromRight(chainWidth);
     upper.removeFromRight(columnGap);
-    auto process=upper.removeFromRight(columnWidth);
 
-    auto layoutCollection=[&](juce::Rectangle<int> area,juce::Viewport& viewport,
-                              juce::Component& content,auto& tabs,
-                              juce::TextButton& remove,juce::TextButton& add,
-                              std::size_t count) {
-        auto inner=area.reduced(6,24);
-        auto buttons=inner.removeFromBottom(22);
-        remove.setBounds(buttons.removeFromLeft((buttons.getWidth()-3)/2));
-        buttons.removeFromLeft(3);add.setBounds(buttons);
-        inner.removeFromBottom(4);
-        constexpr int railWidth=52;
-        auto rail=inner.removeFromLeft(railWidth);
-        viewport.setBounds(rail);
-        constexpr int rowHeight=24;
-        const int contentWidth=juce::jmax(1,rail.getWidth()-4);
-        for(std::size_t i=0;i<tabs.size();++i)
-            tabs[i].setBounds(i<count?juce::Rectangle<int>(0,int(i)*rowHeight,contentWidth,rowHeight-2):juce::Rectangle<int>{});
-        content.setSize(contentWidth,juce::jmax(int(count)*rowHeight,rail.getHeight()));
-        return inner.reduced(5,0);
-    };
+    auto chainInner=chain.reduced(7,24);
+    auto buttons=chainInner.removeFromBottom(22);
+    chainRemove_.setBounds(buttons.removeFromLeft((buttons.getWidth()-4)/2));
+    buttons.removeFromLeft(4);chainAdd_.setBounds(buttons);
+    chainInner.removeFromBottom(5);
+    const int railWidth=juce::jlimit(92,116,chainInner.getWidth()*44/100);
+    auto rail=chainInner.removeFromLeft(railWidth);
+    chainViewport_.setBounds(rail);
+    constexpr int rowHeight=24;
+    const int contentWidth=juce::jmax(1,rail.getWidth()-4);
+    for(std::size_t i=0;i<chainTabs_.size();++i)
+        chainTabs_[i].setBounds(i<chainItemCount_?juce::Rectangle<int>(0,int(i)*rowHeight,contentWidth,rowHeight-2):juce::Rectangle<int>{});
+    chainContent_.setSize(contentWidth,juce::jmax(int(chainItemCount_)*rowHeight,rail.getHeight()));
+    auto editor=chainInner.reduced(7,0);
 
-    std::size_t processCount=0,routeCount=0;
-    if(moduleGetter_) {const auto s=moduleGetter_(display_.id);processCount=s.processCount;routeCount=s.routeCount;}
-    auto processEditor=layoutCollection(process,processViewport_,processContent_,processTabs_,processRemove_,processAdd_,processCount);
-    auto routeEditor=layoutCollection(routing,routeViewport_,routeContent_,routeTabs_,routeRemove_,routeAdd_,routeCount);
-
-    auto placeProcessEditor=[&](juce::Rectangle<int> area) {
-        auto row=area.removeFromTop(24);constexpr int arrow=16;
-        process1Menu_.setBounds(row);
-        process1Previous_.setBounds(row.removeFromLeft(arrow));process1Next_.setBounds(row.removeFromRight(arrow));
-        auto label=area.removeFromBottom(13);process1AmountLabel_.setBounds(label);
-        auto knobArea=area.reduced(2,3);
-        process1Amount_.setBounds(juce::Rectangle<int>(42,42).withCentre(knobArea.getCentre()));
+    const bool processSelected=selectedChainItem_.kind==ChainItemKind::Process;
+    const bool routeSelected=selectedChainItem_.kind==ChainItemKind::Route;
+    process1Menu_.setVisible(processSelected);process1Previous_.setVisible(false);process1Next_.setVisible(false);
+    process1Amount_.setVisible(processSelected);process1AmountLabel_.setVisible(processSelected);
+    route1Menu_.setVisible(routeSelected);route1Previous_.setVisible(false);route1Next_.setVisible(false);
+    route1Amount_.setVisible(routeSelected);route1AmountLabel_.setVisible(routeSelected);
+    if(processSelected) {
+        process1Menu_.setBounds(editor.removeFromTop(24));
+        process1AmountLabel_.setBounds(editor.removeFromBottom(14));
+        auto knobArea=editor.reduced(3,5);
+        process1Amount_.setBounds(juce::Rectangle<int>(50,50).withCentre(knobArea.getCentre()));
         if(process1Randomize_.isVisible())
-            process1Randomize_.setBounds(knobArea.removeFromBottom(20).removeFromRight(20));
+            process1Randomize_.setBounds(knobArea.removeFromBottom(22).removeFromRight(22));
         else process1Randomize_.setBounds({});
-    };
-    auto placeRouteEditor=[&](juce::Rectangle<int> area) {
-        auto row=area.removeFromTop(24);constexpr int arrow=16;
-        route1Previous_.setBounds(row.removeFromLeft(arrow));route1Next_.setBounds(row.removeFromRight(arrow));
-        route1Menu_.setBounds(row);
-        route1AmountLabel_.setBounds(area.removeFromBottom(13));
-        route1Amount_.setBounds(juce::Rectangle<int>(42,42).withCentre(area.getCentre()));
-    };
-    placeProcessEditor(processEditor);placeRouteEditor(routeEditor);
+    } else {
+        process1Menu_.setBounds({});process1Amount_.setBounds({});process1AmountLabel_.setBounds({});process1Randomize_.setBounds({});
+    }
+    if(routeSelected) {
+        route1Menu_.setBounds(editor.removeFromTop(24));
+        route1AmountLabel_.setBounds(editor.removeFromBottom(14));
+        route1Amount_.setBounds(juce::Rectangle<int>(50,50).withCentre(editor.getCentre()));
+    } else {
+        route1Menu_.setBounds({});route1Amount_.setBounds({});route1AmountLabel_.setBounds({});
+    }
     for(auto* component:std::initializer_list<juce::Component*>{
         &process2Menu_,&process2Previous_,&process2Next_,&process2Randomize_,&process2Amount_,&process2AmountLabel_,
         &route2Menu_,&route2Previous_,&route2Next_,&route2Amount_,&route2AmountLabel_}) component->setBounds({});
-
-    upper.removeFromRight(columnGap);
 
     auto tuning=upper.removeFromBottom(30);
     upper.removeFromBottom(4);
