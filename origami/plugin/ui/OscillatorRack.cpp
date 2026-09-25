@@ -762,91 +762,53 @@ void OscillatorCard::resized() {
     upper.removeFromRight(columnGap);
     auto process=upper.removeFromRight(columnWidth);
 
-    auto processControls=process.reduced(7,25);
-    const int processSlotHeight=processControls.getHeight()/2;
-
-    auto placeProcessSlot=[](juce::Rectangle<int> slot,
-                             juce::TextButton& previous,
-                             NativeOscProcessSelector& selector,
-                             juce::TextButton& next,
-                             juce::TextButton& randomize,
-                             RackSlider& amount,
-                             juce::Label& amountLabel) {
-        auto selectorRow=slot.removeFromTop(24);
-        constexpr int arrowWidth=19;
-
-        // Selector owns the full width. Navigation arrows sit ON its left/right
-        // edges like integrated end-caps. LookAndFeel reserves text padding so
-        // long process names never render underneath them.
-        selector.setBounds(selectorRow);
-        previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
-        next.setBounds(selectorRow.removeFromRight(arrowWidth));
-        previous.toFront(false);
-        next.toFront(false);
-
-        auto knobArea=slot.reduced(4,3);
-        knobArea.removeFromBottom(13);
-        const int knobSize=44;
-
-        if(randomize.isVisible()) {
-            // Seeded processes shift the knob left only while the seed control
-            // is actually required. No permanent empty right-side gap.
-            constexpr int randomWidth=22;
-            constexpr int spacing=3;
-            const int groupWidth=knobSize+spacing+randomWidth;
-            auto group=juce::Rectangle<int>(
-                knobArea.getCentreX()-groupWidth/2,knobArea.getY(),
-                groupWidth,juce::jmin(knobSize,knobArea.getHeight()));
-
-            amount.setBounds(group.removeFromLeft(knobSize));
-            group.removeFromLeft(spacing);
-            randomize.setBounds(
-                group.removeFromLeft(randomWidth).withSizeKeepingCentre(randomWidth,22));
-        } else {
-            amount.setBounds(
-                juce::Rectangle<int>(knobSize,knobSize).withCentre(knobArea.getCentre()));
-            randomize.setBounds({});
-        }
-
-        amountLabel.setBounds(slot.removeFromBottom(13));
+    auto layoutCollection=[&](juce::Rectangle<int> area,juce::Viewport& viewport,
+                              juce::Component& content,auto& tabs,
+                              juce::TextButton& remove,juce::TextButton& add,
+                              std::size_t count) {
+        auto inner=area.reduced(6,24);
+        auto buttons=inner.removeFromBottom(22);
+        remove.setBounds(buttons.removeFromLeft((buttons.getWidth()-3)/2));
+        buttons.removeFromLeft(3);add.setBounds(buttons);
+        inner.removeFromBottom(4);
+        constexpr int railWidth=52;
+        auto rail=inner.removeFromLeft(railWidth);
+        viewport.setBounds(rail);
+        constexpr int rowHeight=24;
+        const int contentWidth=juce::jmax(1,rail.getWidth()-4);
+        for(std::size_t i=0;i<tabs.size();++i)
+            tabs[i].setBounds(i<count?juce::Rectangle<int>(0,int(i)*rowHeight,contentWidth,rowHeight-2):juce::Rectangle<int>{});
+        content.setSize(contentWidth,juce::jmax(int(count)*rowHeight,rail.getHeight()));
+        return inner.reduced(5,0);
     };
 
-    auto slot1=processControls.removeFromTop(processSlotHeight);
-    placeProcessSlot(slot1,process1Previous_,process1Menu_,process1Next_,process1Randomize_,
-                     process1Amount_,process1AmountLabel_);
+    std::size_t processCount=0,routeCount=0;
+    if(moduleGetter_) {const auto s=moduleGetter_(display_.id);processCount=s.processCount;routeCount=s.routeCount;}
+    auto processEditor=layoutCollection(process,processViewport_,processContent_,processTabs_,processRemove_,processAdd_,processCount);
+    auto routeEditor=layoutCollection(routing,routeViewport_,routeContent_,routeTabs_,routeRemove_,routeAdd_,routeCount);
 
-    auto slot2=processControls;
-    placeProcessSlot(slot2,process2Previous_,process2Menu_,process2Next_,process2Randomize_,
-                     process2Amount_,process2AmountLabel_);
-
-    auto routingControls=routing.reduced(7,25);
-    const int routingSlotHeight=routingControls.getHeight()/2;
-
-    auto placeRoutingSlot=[](juce::Rectangle<int> slot,
-                             juce::TextButton& previous,
-                             OscRouteSelector& selector,
-                             juce::TextButton& next,
-                             RackSlider& amount,
-                             juce::Label& amountLabel) {
-        auto selectorRow=slot.removeFromTop(24);
-        constexpr int arrowWidth=19;
-        previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
-        selectorRow.removeFromLeft(2);
-        next.setBounds(selectorRow.removeFromRight(arrowWidth));
-        selectorRow.removeFromRight(2);
-        selector.setBounds(selectorRow);
-
-        auto knob=slot.reduced(8,3);
-        amount.setBounds(knob.removeFromTop(44));
-        amountLabel.setBounds(slot.removeFromBottom(13));
+    auto placeProcessEditor=[&](juce::Rectangle<int> area) {
+        auto row=area.removeFromTop(24);constexpr int arrow=16;
+        process1Menu_.setBounds(row);
+        process1Previous_.setBounds(row.removeFromLeft(arrow));process1Next_.setBounds(row.removeFromRight(arrow));
+        auto label=area.removeFromBottom(13);process1AmountLabel_.setBounds(label);
+        auto knobArea=area.reduced(2,3);
+        process1Amount_.setBounds(juce::Rectangle<int>(42,42).withCentre(knobArea.getCentre()));
+        if(process1Randomize_.isVisible())
+            process1Randomize_.setBounds(knobArea.removeFromBottom(20).removeFromRight(20));
+        else process1Randomize_.setBounds({});
     };
-
-    auto routeSlot1=routingControls.removeFromTop(routingSlotHeight);
-    placeRoutingSlot(routeSlot1,route1Previous_,route1Menu_,route1Next_,
-                     route1Amount_,route1AmountLabel_);
-    auto routeSlot2=routingControls;
-    placeRoutingSlot(routeSlot2,route2Previous_,route2Menu_,route2Next_,
-                     route2Amount_,route2AmountLabel_);
+    auto placeRouteEditor=[&](juce::Rectangle<int> area) {
+        auto row=area.removeFromTop(24);constexpr int arrow=16;
+        route1Previous_.setBounds(row.removeFromLeft(arrow));route1Next_.setBounds(row.removeFromRight(arrow));
+        route1Menu_.setBounds(row);
+        route1AmountLabel_.setBounds(area.removeFromBottom(13));
+        route1Amount_.setBounds(juce::Rectangle<int>(42,42).withCentre(area.getCentre()));
+    };
+    placeProcessEditor(processEditor);placeRouteEditor(routeEditor);
+    for(auto* component:std::initializer_list<juce::Component*>{
+        &process2Menu_,&process2Previous_,&process2Next_,&process2Randomize_,&process2Amount_,&process2AmountLabel_,
+        &route2Menu_,&route2Previous_,&route2Next_,&route2Amount_,&route2AmountLabel_}) component->setBounds({});
 
     upper.removeFromRight(columnGap);
 
