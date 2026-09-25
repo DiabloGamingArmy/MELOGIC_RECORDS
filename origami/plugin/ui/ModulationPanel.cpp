@@ -1398,9 +1398,9 @@ void ModulationPanel::resized() {
 
     // Mixed modulation-source collection. ENV + LFO + generator sources share
     // one vertical rail so the editor area always represents ONE selected source.
-    constexpr int railWidth=116;
+    constexpr int railWidth=124;
     sourceRail_=body.removeFromLeft(railWidth);
-    body.removeFromLeft(6);
+    body.removeFromLeft(4);
 
     auto rail=sourceRail_.reduced(4,5);
     auto collectionControls=rail.removeFromBottom(24);
@@ -1426,8 +1426,8 @@ void ModulationPanel::resized() {
         }
     }
 
-    constexpr int baseRowHeight=36;
-    constexpr int routedRowHeight=54;
+    constexpr int baseRowHeight=40;
+    constexpr int routedRowHeight=58;
     const int contentWidth=juce::jmax(1,sourceViewport_.getWidth()-6);
     int y=0;
     for(std::size_t i=0;i<tabs_.size();++i) {
@@ -1441,7 +1441,7 @@ void ModulationPanel::resized() {
     }
     sourceContent_.setSize(contentWidth,juce::jmax(y,sourceViewport_.getHeight()));
 
-    auto controls=body.removeFromBottom(62);
+    auto controls=body.removeFromBottom(68);
     if(selected_<=6) {
         // V33: ENV and LFO/MSEG deliberately share editor geometry.
         // V30.0.1: ENV utility controls belong with the parameter controls, not
@@ -1485,8 +1485,8 @@ void ModulationPanel::resized() {
         // Only the caption remains above the graph. Horizontal scrolling stays
         // immediately below the graph, preserving the existing zoom/scroll math.
         body.removeFromTop(17);
-        envScroll_.setBounds(body.removeFromBottom(12).reduced(2,0));
-        envCanvas_=body.reduced(10,6).toFloat();
+        envScroll_.setBounds(body.removeFromBottom(9).reduced(2,1));
+        envCanvas_=body.reduced(12,8).toFloat();
         updateScrollbar();
     } else {
         envCanvas_={};
