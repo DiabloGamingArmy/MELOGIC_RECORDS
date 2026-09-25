@@ -262,6 +262,10 @@ public:
 private:
     struct Group {
         ModAddress address{};std::size_t slot=0;
+        // Destination domain captured at compile time. OSC process amounts are
+        // process-dependent (unipolar 0..1 or bipolar -1..1), so they cannot
+        // safely use the generic ModDestination range table.
+        float minimum=0.0f,maximum=1.0f;
         std::array<float,sourceSlotCount> weight{},target{};
         std::array<bool,sourceSlotCount> bipolar{};
         std::array<std::uint8_t,globalSourceCount> globalSlots{};
