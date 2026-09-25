@@ -240,6 +240,9 @@ private:
     std::uint32_t visualizationMask_=defaultVisualizationMask;
     juce::Point<float> previousChaosPoint_{};
     bool havePreviousChaosPoint_=false;
+    // UI-only high-density Chaos monitor. Restores the V38.2 genuine ODE
+    // trajectory used by the large Chaos viewport; it never feeds audio DSP.
+    ChaosGenerator sourceMonitorChaos_{};
 
     std::uint32_t routeDragId_=0;
     float routeDragStartY_=0.0f;
