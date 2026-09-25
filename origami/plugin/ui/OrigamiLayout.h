@@ -20,13 +20,13 @@ struct EditorLayout {
         EditorLayout result;
         auto area=bounds;
 
-        result.header=area.removeFromTop(72);
+        result.header=area.removeFromTop(66);
 
         // V23.1: thinner performance keyboard; reclaimed vertical space
         // returns to the main synth workspace.
         // V23.3.1: taller performance strip for usable Pitch/Mod travel.
         // Keyboard remains compact via its internal top reserve.
-        result.performance=area.removeFromBottom(76);
+        result.performance=area.removeFromBottom(94);
 
         const int usable=area.getHeight();
 
