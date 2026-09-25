@@ -655,7 +655,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
         juce::String label;
         if(item.kind==ChainItemKind::Process) {
             const auto& process=state.processes[processIndex++];
-            label=dsp::oscProcessName(process.type).toUpperCase();
+            label=juce::String(dsp::oscProcessName(process.type)).toUpperCase();
         } else {
             const auto& route=state.routes[routeIndex++];
             if(route.type==OscRouteType::Off) label="ROUTING";
