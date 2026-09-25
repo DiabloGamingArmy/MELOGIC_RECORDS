@@ -175,19 +175,19 @@ public:
         const auto surface = oscillatorCard ? Palette::oscillatorCard()
                            : oscillatorRack ? Palette::oscillatorRack()
                                             : Palette::panel();
-        g.setColour(surface);g.fillRoundedRectangle(shell,3.0f);
+        g.setColour(surface);g.fillRect(shell);
 
         // Subtle monochrome title shelf. Derive it from the active surface so
         // the brighter V34.5 oscillator hierarchy remains intact.
         auto header=shell.withHeight(31.0f).reduced(1.0f);
-        g.setColour(surface.brighter(0.055f));g.fillRoundedRectangle(header,2.5f);
+        g.setColour(surface.brighter(0.055f));g.fillRect(header);
 
-        g.setColour(Palette::borderSoft());g.drawRoundedRectangle(shell,3.0f,1.0f);
+        g.setColour(Palette::borderSoft());g.drawRect(shell,1.0f);
         g.setColour(Palette::borderStrong().withAlpha(.34f));g.drawHorizontalLine(30,10.0f,float(getWidth()-10));
         text(g,title_,{12,5,getWidth()-24,22},11,Palette::secondary());
         paintContent(g,contentBounds());
     }
-    juce::Rectangle<int> contentBounds() const { return getLocalBounds().reduced(10).withTrimmedTop(24); }
+    juce::Rectangle<int> contentBounds() const { return getLocalBounds().reduced(7).withTrimmedTop(24); }
 protected:
     virtual void paintContent(juce::Graphics&,juce::Rectangle<int>) {}
     juce::String title_;
