@@ -567,8 +567,14 @@ void OscillatorCard::selectChainItem(ChainItem item) {
 }
 void OscillatorCard::addChainItem() {
     juce::PopupMenu menu;
-    menu.addItem(1,"PROCESS");
-    menu.addItem(2,"ROUTING");
+    bool canProcess=true,canRoute=true;
+    if(moduleGetter_) {
+        const auto state=moduleGetter_(display_.id);
+        canProcess=state.processCount<maxOscProcesses;
+        canRoute=state.routeCount<maxOscRoutes;
+    }
+    menu.addItem(1,"PROCESS",canProcess);
+    menu.addItem(2,"ROUTING",canRoute);
     auto safe=juce::Component::SafePointer<OscillatorCard>(this);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&chainAdd_),
         [safe](int result) {if(safe==nullptr)return;if(result==1)safe->addProcess();else if(result==2)safe->addRoute();});
@@ -610,12 +616,21 @@ void OscillatorCard::addProcess() {
     });
 }
 void OscillatorCard::addRoute() {
-    if(!moduleGetter_ || !moduleSetter_)return;
-    auto state=moduleGetter_(display_.id);if(!state.id || state.routeCount>=maxOscRoutes)return;
-    auto& slot=state.routes[state.routeCount++];
-    slot.id=state.nextRouteId++;slot.sourceId=0;slot.type=OscRouteType::Off;slot.amount=0.0f;
-    if(moduleSetter_(display_.id,state))selectedChainItem_={ChainItemKind::Route,slot.id};
-    syncFromModel();resized();repaint();
+    if(!moduleGetter_ || !moduleSetter_ || !snapshotGetter_)return;
+    const auto state=moduleGetter_(display_.id);if(!state.id || state.routeCount>=maxOscRoutes)return;
+    const auto snapshot=snapshotGetter_();
+    auto safe=juce::Component::SafePointer<OscillatorCard>(this);
+    showNativeOscRouteMenu(chainAdd_,display_.id,0,OscRouteType::Off,snapshot,
+        [safe](OscillatorModuleId sourceId,OscRouteType type) {
+            if(safe==nullptr || type==OscRouteType::Off || sourceId==0 || !safe->moduleGetter_ || !safe->moduleSetter_)return;
+            auto current=safe->moduleGetter_(safe->display_.id);
+            if(!current.id || current.routeCount>=maxOscRoutes)return;
+            auto& slot=current.routes[current.routeCount++];
+            slot.id=current.nextRouteId++;slot.sourceId=sourceId;slot.type=type;slot.amount=0.5f;
+            if(safe->moduleSetter_(safe->display_.id,current))
+                safe->selectedChainItem_={ChainItemKind::Route,slot.id};
+            safe->syncFromModel();safe->resized();safe->repaint();
+        });
 }
 void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) {
     chainItemCount_=0;
@@ -643,7 +658,19 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             label=dsp::oscProcessName(process.type).toUpperCase();
         } else {
             const auto& route=state.routes[routeIndex++];
-            label=route.type==OscRouteType::Off?"ROUTING":"OSC "+juce::String(route.sourceId)+" · ROUTING";
+            if(route.type==OscRouteType::Off) label="ROUTING";
+            else {
+                unsigned ordinal=0,displayOrdinal=0;
+                if(snapshotGetter_) {
+                    const auto snapshot=snapshotGetter_();
+                    for(const auto& osc:snapshot.oscillators) {
+                        if(osc.id==0)continue;
+                        ++displayOrdinal;
+                        if(osc.id==route.sourceId){ordinal=displayOrdinal;break;}
+                    }
+                }
+                label="OSC "+juce::String(ordinal?ordinal:route.sourceId)+" · "+juce::String(oscRouteName(route.type)).toUpperCase();
+            }
         }
         chainTabs_[i].setButtonText(label);
         chainTabs_[i].setToggleState(item.kind==selectedChainItem_.kind && item.id==selectedChainItem_.id,juce::dontSendNotification);
@@ -676,8 +703,8 @@ void OscillatorCard::syncFromModel() {
                 if(state.processes[i].id==selectedProcessId_) {selectedProcess=&state.processes[i];break;}
             const bool haveProcess=selectedProcess!=nullptr;
             process1Menu_.setVisible(haveProcess);
-            process1Previous_.setVisible(haveProcess);
-            process1Next_.setVisible(haveProcess);
+            process1Previous_.setVisible(false);
+            process1Next_.setVisible(false);
             process1Amount_.setVisible(haveProcess);
             process1AmountLabel_.setVisible(haveProcess);
             if(haveProcess) {
@@ -700,8 +727,8 @@ void OscillatorCard::syncFromModel() {
             for(std::size_t i=0;i<state.routeCount;++i)
                 if(state.routes[i].id==selectedRouteId_) {selectedRoute=&state.routes[i];break;}
             const bool haveRoute=selectedRoute!=nullptr;
-            route1Menu_.setVisible(haveRoute);route1Previous_.setVisible(haveRoute);
-            route1Next_.setVisible(haveRoute);route1Amount_.setVisible(haveRoute);
+            route1Menu_.setVisible(haveRoute);route1Previous_.setVisible(false);
+            route1Next_.setVisible(false);route1Amount_.setVisible(haveRoute);
             route1AmountLabel_.setVisible(haveRoute);
             if(haveRoute) {
                 route1Menu_.setSelection(selectedRoute->sourceId,selectedRoute->type,juce::dontSendNotification);
