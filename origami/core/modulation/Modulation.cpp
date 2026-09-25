@@ -62,6 +62,8 @@ Range limits(ModDestination d) {
         case ModDestination::Process2Amount:
         case ModDestination::Route1Amount:
         case ModDestination::Route2Amount:
+        case ModDestination::ProcessAmount:
+        case ModDestination::RouteAmount:
             return {-1,1};
         default:return {0,1};
     }
@@ -159,9 +161,24 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
         if(isGlobalDestination(r.destination.parameter)) {
             if(r.destination.oscillator!=0) return false;
         } else {
-            if(r.destination.parameter<ModDestination::WtPosition || r.destination.parameter>ModDestination::Route2Amount) return false;
-            bool found=false;for(const auto& m:modules) if(m.id && m.id==r.destination.oscillator) found=true;
-            if(!found) return false;
+            const auto d=r.destination.parameter;
+            if(d<ModDestination::WtPosition || d>ModDestination::RouteAmount) return false;
+            const OscillatorModuleState* module=nullptr;
+            for(const auto& m:modules) if(m.id && m.id==r.destination.oscillator) {module=&m;break;}
+            if(!module) return false;
+            if(d==ModDestination::ProcessAmount) {
+                if(!r.destination.itemId) return false;
+                bool found=false;
+                for(std::size_t i=0;i<module->processCount;++i)
+                    if(module->processes[i].id==r.destination.itemId) {found=true;break;}
+                if(!found) return false;
+            } else if(d==ModDestination::RouteAmount) {
+                if(!r.destination.itemId) return false;
+                bool found=false;
+                for(std::size_t i=0;i<module->routeCount;++i)
+                    if(module->routes[i].id==r.destination.itemId) {found=true;break;}
+                if(!found) return false;
+            } else if(r.destination.itemId!=0) return false;
         }
     }
     return true;
@@ -427,6 +444,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         if(i==count_) {
             groups_[i].address=route.destination;
             groups_[i].slot=slot;
+            groups_[i].itemSlot=0;
             const auto generic=limits(route.destination.parameter);
             groups_[i].minimum=generic.lo;
             groups_[i].maximum=generic.hi;
@@ -434,6 +452,18 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                 groups_[i].minimum=dsp::oscProcessAmountMinimum(modules[slot].process1);
             else if(route.destination.parameter==ModDestination::Process2Amount)
                 groups_[i].minimum=dsp::oscProcessAmountMinimum(modules[slot].process2);
+            else if(route.destination.parameter==ModDestination::ProcessAmount) {
+                while(groups_[i].itemSlot<modules[slot].processCount &&
+                      modules[slot].processes[groups_[i].itemSlot].id!=route.destination.itemId)
+                    ++groups_[i].itemSlot;
+                if(groups_[i].itemSlot>=modules[slot].processCount) continue;
+                groups_[i].minimum=dsp::oscProcessAmountMinimum(modules[slot].processes[groups_[i].itemSlot].type);
+            } else if(route.destination.parameter==ModDestination::RouteAmount) {
+                while(groups_[i].itemSlot<modules[slot].routeCount &&
+                      modules[slot].routes[groups_[i].itemSlot].id!=route.destination.itemId)
+                    ++groups_[i].itemSlot;
+                if(groups_[i].itemSlot>=modules[slot].routeCount) continue;
+            }
             ++count_;
         }
         const auto sourceSlot=slotFor(route.source,state);
@@ -493,6 +523,10 @@ float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept
         case ModDestination::Process2Amount:return m.process2Amount;
         case ModDestination::Route1Amount:return m.route1Amount;
         case ModDestination::Route2Amount:return m.route2Amount;
+        case ModDestination::ProcessAmount:
+            return g.itemSlot<m.processCount?m.processes[g.itemSlot].amount:0.0f;
+        case ModDestination::RouteAmount:
+            return g.itemSlot<m.routeCount?m.routes[g.itemSlot].amount:0.0f;
     }
     return 0;
 }
@@ -514,6 +548,12 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
         case ModDestination::Process2Amount:m.process2Amount=v;break;
         case ModDestination::Route1Amount:m.route1Amount=v;break;
         case ModDestination::Route2Amount:m.route2Amount=v;break;
+        case ModDestination::ProcessAmount:
+            if(g.itemSlot<m.processCount) m.processes[g.itemSlot].amount=v;
+            break;
+        case ModDestination::RouteAmount:
+            if(g.itemSlot<m.routeCount) m.routes[g.itemSlot].amount=v;
+            break;
     }
 }
 void CompiledModulation::prepare(double sampleRate) noexcept {
