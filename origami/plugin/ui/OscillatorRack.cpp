@@ -1077,17 +1077,6 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         g.setColour(Palette::text());
         g.strokePath(outline,juce::PathStrokeType(1.5f));
         g.restoreState();
-        // Visualization effects are overlays only. Disabling OSC effects must
-        // never suppress the authoritative waveform; it only replaces the rich
-        // effect treatment with the lightweight runtime phase playhead.
-        if(!oscEffects) {
-            const float phase=visualModule<visual.moduleIds.size()
-                ? juce::jlimit(0.0f,1.0f,visual.oscillatorPhases[visualModule]) : 0.0f;
-            const float x=wtRect.getX()+phase*wtRect.getWidth();
-            g.setColour(signalSourceColour().withAlpha(.96f));
-            g.drawVerticalLine(juce::roundToInt(x),wtRect.getY(),wtRect.getBottom());
-        }
-
     }
 }
 
