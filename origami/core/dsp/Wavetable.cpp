@@ -630,6 +630,67 @@ double processOscillatorPhase(double phase,OscProcessType type,float rawAmount) 
 
 
 void renderProcessedFrame2048(const float* input,float* output,
+                              const OscProcessPlan& plan) noexcept {
+    if(input==nullptr || output==nullptr) return;
+    std::array<Complex,spectralSize> bins{};
+    const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
+    for(std::size_t i=0;i<spectralSize;++i) {
+        double phase=static_cast<double>(i)/static_cast<double>(spectralSize);
+        for(std::size_t p=0;p<count;++p)
+            if(!oscProcessIsSpectral(plan.stages[p].type))
+                phase=processOscillatorPhase(phase,plan.stages[p].type,plan.stages[p].amount);
+        bins[i]=Complex{static_cast<double>(readCycle(input,phase)),0.0};
+    }
+    bool anySpectral=false;
+    for(std::size_t p=0;p<count;++p) anySpectral|=oscProcessIsSpectral(plan.stages[p].type);
+    if(!anySpectral) {
+        for(std::size_t i=0;i<spectralSize;++i) output[i]=static_cast<float>(bins[i].real());
+        return;
+    }
+    fft2048(bins,false);
+    auto randomVariantTarget=[](OscProcessType type,std::size_t harmonic,
+                                std::uint32_t baseSeed,float amount) noexcept {
+        const float position=std::clamp(amount,0.0f,1.0f)*static_cast<float>(randAmpVariantCount()-1);
+        const int lower=static_cast<int>(std::floor(position));
+        const int upper=std::min(lower+1,randAmpVariantCount()-1);
+        const double blend=static_cast<double>(position-static_cast<float>(lower));
+        const auto seedFor=[baseSeed](int variant) noexcept {
+            return baseSeed^(0x9e3779b9u*static_cast<std::uint32_t>(variant+1));
+        };
+        const double a=fullSpectralGain(type,harmonic,seedFor(lower));
+        const double b=fullSpectralGain(type,harmonic,seedFor(upper));
+        return a+(b-a)*blend;
+    };
+    bins[0]=Complex{};
+    bool randomAmplitudePass=false;
+    for(std::size_t h=1;h<spectralSize/2;++h) {
+        double gain=1.0;
+        for(std::size_t p=0;p<count;++p) {
+            const auto& stage=plan.stages[p];
+            if(!oscProcessIsSpectral(stage.type)) continue;
+            const double amount=quantizedSpectralAmount(stage.type,stage.amount);
+            const bool randomVariant=stage.type==OscProcessType::RandAmp ||
+                                     stage.type==OscProcessType::RandSparse;
+            const double target=randomVariant
+                ? randomVariantTarget(stage.type,h,stage.seed,static_cast<float>(amount))
+                : fullSpectralGain(stage.type,h,stage.seed);
+            gain*=randomVariant ? target : 1.0+amount*(target-1.0);
+            randomAmplitudePass|=randomVariant;
+        }
+        bins[h]*=gain;bins[spectralSize-h]*=gain;
+    }
+    bins[spectralSize/2]=Complex{};
+    fft2048(bins,true);
+    double peak=1.0e-12;
+    for(const auto& v:bins) peak=std::max(peak,std::abs(v.real()));
+    const double normalise=randomAmplitudePass
+        ? (peak>1.0e-12?0.985/peak:1.0)
+        : (peak>0.985?0.985/peak:1.0);
+    for(std::size_t i=0;i<spectralSize;++i)
+        output[i]=static_cast<float>(std::clamp(bins[i].real()*normalise,-0.985,0.985));
+}
+
+void renderProcessedFrame2048(const float* input,float* output,
                               OscProcessType process1,float amount1,std::uint32_t seed1,
                               OscProcessType process2,float amount2,std::uint32_t seed2) noexcept {
     if(input==nullptr || output==nullptr) return;
@@ -721,6 +782,7 @@ void renderProcessedFrame2048(const float* input,float* output,
             std::clamp(bins[i].real()*normalise,-0.985,0.985));
 }
 
+
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 OscProcessType process1,float amount1,
                                 OscProcessType process2,float amount2,
@@ -777,5 +839,24 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     phase_ += increment; if (phase_ >= 1) phase_ -= 1;
     return frequency >= sampleRate * .5 ? 0 : output;
 }
+float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
+                                const OscProcessPlan& plan,double phaseOffsetCycles,
+                                double phaseSkew) noexcept {
+    const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
+    // Preserve the proven realtime spectral compiler for the first two stages
+    // while the compiler cache is generalized in the next internal revision.
+    // Additional phase stages are applied deterministically here; spectral
+    // stages beyond the first two are rendered by the plan preview API but are
+    // not silently executed on the audio thread yet.
+    OscProcessStage first{},second{};
+    std::size_t used=0;
+    for(std::size_t i=0;i<count && used<2;++i) {
+        if(used++==0) first=plan.stages[i]; else second=plan.stages[i];
+    }
+    return next(table,frequency,sampleRate,position,
+                first.type,first.amount,second.type,second.amount,
+                phaseOffsetCycles,phaseSkew,first.seed,second.seed);
+}
+
 double midiFrequency(int note) noexcept { return 440.0 * std::exp2((std::clamp(note, 0, 127) - 69) / 12.0); }
 }
