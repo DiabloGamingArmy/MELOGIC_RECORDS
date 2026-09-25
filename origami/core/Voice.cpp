@@ -145,12 +145,23 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
         baseFrequency=std::clamp(baseFrequency,1.0,std::max(20.0,sampleRate_*0.49));
+        dsp::OscProcessPlan processPlan{};
+        if(module.processCount>0) {
+            processPlan.count=static_cast<std::uint8_t>(std::min<std::size_t>(module.processCount,maxOscProcesses));
+            for(std::size_t p=0;p<processPlan.count;++p)
+                processPlan.stages[p]={module.processes[p].type,module.processes[p].amount,module.processes[p].seed};
+        } else {
+            if(module.process1!=dsp::OscProcessType::Off)
+                processPlan.stages[processPlan.count++]={module.process1,module.process1Amount,module.process1Seed};
+            if(module.process2!=dsp::OscProcessType::Off && processPlan.count<dsp::maxOscProcessStages)
+                processPlan.stages[processPlan.count++]={module.process2,module.process2Amount,module.process2Seed};
+        }
+
         float oscillatorMix=0.0f;
         if(count==1) {
             oscillatorMix=moduleOscillators_[m][0].next(
                 table,baseFrequency,sampleRate_,position,
-                module.process1,module.process1Amount,module.process2,module.process2Amount,
-                routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
+                processPlan,routedPhaseOffset,routedPhaseSkew);
         } else {
             float unisonStack=0.0f;
             for(unsigned u=0;u<count;++u) {
@@ -163,8 +174,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
 
             const float centre=moduleBlendCenters_[m].next(
                 table,baseFrequency,sampleRate_,position,
-                module.process1,module.process1Amount,module.process2,module.process2Amount,
-                routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
+                processPlan,routedPhaseOffset,routedPhaseSkew);
             oscillatorMix=centre+(unisonStack-centre)*prepared.blend;
         }
         visualization_.moduleSamples[m]=oscillatorMix;
