@@ -542,7 +542,12 @@ inline bool signedGeneratorSlot(std::size_t slot) noexcept {
 }
 inline float routeSourceValue(std::size_t slot,float raw,bool bipolar) noexcept {
     if(!std::isfinite(raw)) return 0.0f;
-    if(!signedGeneratorSlot(slot) || bipolar) return raw;
+    if(!signedGeneratorSlot(slot)) return raw;
+    // Route depth is expressed as a fraction of the destination's full span.
+    // A 100% bipolar generator therefore contributes +/- 50% of that span:
+    // a destination centred at 50% traverses exactly 0..100% without spending
+    // half of each LFO cycle clipped at the endpoints.
+    if(bipolar) return raw*0.5f;
     return std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
 }
 }
