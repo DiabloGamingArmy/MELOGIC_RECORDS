@@ -122,23 +122,26 @@ private:
     juce::Label route1AmountLabel_,route2AmountLabel_;
     bool syncingProcess_=false;
 
-    // Dynamic OSC PROCESS / OSC ROUTING collections. The first legacy editor
-    // controls are reused as the selected-item editor until Patch 5 removes the
-    // compatibility members entirely.
-    juce::Viewport processViewport_,routeViewport_;
-    juce::Component processContent_,routeContent_;
-    std::array<juce::TextButton,maxOscProcesses> processTabs_;
-    std::array<juce::TextButton,maxOscRoutes> routeTabs_;
-    juce::TextButton processAdd_{"+ "},processRemove_{"- "};
-    juce::TextButton routeAdd_{"+ "},routeRemove_{"- "};
+    // Unified presentation layer for dynamic processes and routes. DSP/state
+    // remain separate collections; this list deliberately does not imply an
+    // arbitrarily interleaved execution graph.
+    enum class ChainItemKind : std::uint8_t { None,Process,Route };
+    struct ChainItem { ChainItemKind kind=ChainItemKind::None; std::uint32_t id=0; };
+    static constexpr std::size_t maxChainItems=maxOscProcesses+maxOscRoutes;
+    juce::Viewport chainViewport_;
+    juce::Component chainContent_;
+    std::array<juce::TextButton,maxChainItems> chainTabs_;
+    std::array<ChainItem,maxChainItems> chainItems_{};
+    std::size_t chainItemCount_=0;
+    juce::TextButton chainAdd_{"+ "},chainRemove_{"- "};
+    ChainItem selectedChainItem_{};
     OscProcessSlotId selectedProcessId_=0;
     OscRouteSlotId selectedRouteId_=0;
-    void selectProcess(OscProcessSlotId);
-    void selectRoute(OscRouteSlotId);
+    void selectChainItem(ChainItem);
+    void addChainItem();
+    void removeSelectedChainItem();
     void addProcess();
-    void removeSelectedProcess();
     void addRoute();
-    void removeSelectedRoute();
     void syncDynamicCollections(const OscillatorModuleState&);
 
     // mct-origami-tuning-labels-v18.3
