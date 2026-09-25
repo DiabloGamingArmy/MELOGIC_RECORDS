@@ -2261,16 +2261,27 @@ void ModulationPanel::updateSourceHistory(float) {
     }
 
     if((cached_.generatorActiveMask&0x04u)!=0u) {
-        const juce::Point<float> current{
-            runtimeVisualization_.sourcePhases[9]*2.0f-1.0f,
-            runtimeVisualization_.chaosY*2.0f-1.0f};
-        const auto from=havePreviousChaosPoint_ ? previousChaosPoint_ : current;
-        for(int i=1;i<=visualTraceSubsteps_;++i) {
-            const float alpha=float(i)/float(visualTraceSubsteps_);
-            chaosViewportHistory_.push_back(from+(current-from)*alpha);
+        // V38.2 Chaos viewport: integrate genuine intermediate attractor states
+        // instead of linearly interpolating sparse runtime telemetry endpoints.
+        // 64 states x the 30 Hz UI tick = 1920 visual trajectory samples/sec.
+        // This monitor is message-thread/UI-only and never feeds the audio DSP.
+        constexpr double monitorRate=30.0;
+        if(selected_==9) {
+            constexpr int trajectorySamplesPerFrame=64;
+            constexpr double trajectoryMonitorRate=monitorRate*trajectorySamplesPerFrame;
+            for(int i=0;i<trajectorySamplesPerFrame;++i) {
+                sourceMonitorChaos_.next(cached_.chaos,trajectoryMonitorRate);
+                chaosViewportHistory_.push_back({
+                    sourceMonitorChaos_.xNormalized(),
+                    sourceMonitorChaos_.yNormalized()
+                });
+            }
+        } else {
+            // Advance the hidden visual monitor by the same elapsed time cheaply.
+            sourceMonitorChaos_.next(cached_.chaos,monitorRate);
         }
-        previousChaosPoint_=current;havePreviousChaosPoint_=true;
-        while(chaosViewportHistory_.size()>chaosHistoryLength_) chaosViewportHistory_.pop_front();
+        while(chaosViewportHistory_.size()>chaosHistoryLength_)
+            chaosViewportHistory_.pop_front();
     }
     telemetry.sourceValues=samples;
 
