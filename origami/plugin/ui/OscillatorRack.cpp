@@ -416,21 +416,17 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         label->setInterceptsMouseClicks(false,false);
     }
     auto commitProcess=[this] {
-        if(syncingProcess_ || !moduleGetter_ || !moduleSetter_) return;
-        auto state=moduleGetter_(display_.id);
-        if(!state.id) return;
-        state.process1=static_cast<mct::origami::dsp::OscProcessType>(
-            juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,process1Menu_.getSelectedId()-1));
-        state.process2=static_cast<mct::origami::dsp::OscProcessType>(
-            juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,process2Menu_.getSelectedId()-1));
-        const auto type1=state.process1;
-        const auto type2=state.process2;
-        state.process1Amount=juce::jlimit(dsp::oscProcessAmountMinimum(type1),1.0f,
-                                          static_cast<float>(process1Amount_.getValue()));
-        state.process2Amount=juce::jlimit(dsp::oscProcessAmountMinimum(type2),1.0f,
-                                          static_cast<float>(process2Amount_.getValue()));
-        moduleSetter_(display_.id,state);
-        syncFromModel();
+        if(syncingProcess_ || !selectedProcessId_ || !moduleGetter_ || !moduleSetter_) return;
+        auto state=moduleGetter_(display_.id); if(!state.id) return;
+        for(std::size_t i=0;i<state.processCount;++i) if(state.processes[i].id==selectedProcessId_) {
+            auto& process=state.processes[i];
+            process.type=static_cast<dsp::OscProcessType>(
+                juce::jlimit(0,static_cast<int>(dsp::OscProcessType::Count)-1,process1Menu_.getSelectedId()-1));
+            process.amount=juce::jlimit(dsp::oscProcessAmountMinimum(process.type),1.0f,
+                                        static_cast<float>(process1Amount_.getValue()));
+            break;
+        }
+        moduleSetter_(display_.id,state);syncFromModel();
     };
     process1Menu_.onChange=commitProcess;
     process2Menu_.onChange=commitProcess;
@@ -484,19 +480,16 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     }
 
     auto commitRouting=[this] {
-        if(syncingProcess_ || !moduleGetter_ || !moduleSetter_) return;
-        auto state=moduleGetter_(display_.id);
-        if(!state.id) return;
-
-        state.route1SourceId=route1Menu_.sourceId();
-        state.route1Type=route1Menu_.routeType();
-        state.route1Amount=static_cast<float>(route1Amount_.getValue());
-        state.route2SourceId=route2Menu_.sourceId();
-        state.route2Type=route2Menu_.routeType();
-        state.route2Amount=static_cast<float>(route2Amount_.getValue());
-
-        moduleSetter_(display_.id,state);
-        syncFromModel();
+        if(syncingProcess_ || !selectedRouteId_ || !moduleGetter_ || !moduleSetter_) return;
+        auto state=moduleGetter_(display_.id); if(!state.id) return;
+        for(std::size_t i=0;i<state.routeCount;++i) if(state.routes[i].id==selectedRouteId_) {
+            auto& route=state.routes[i];
+            route.sourceId=route1Menu_.sourceId();
+            route.type=route1Menu_.routeType();
+            route.amount=static_cast<float>(route1Amount_.getValue());
+            break;
+        }
+        moduleSetter_(display_.id,state);syncFromModel();
     };
 
     route1Menu_.onChange=commitRouting;
