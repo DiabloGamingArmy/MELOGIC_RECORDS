@@ -1194,8 +1194,8 @@ OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
     addTile_.setName("Add oscillator module");content_.addAndMakeVisible(addTile_);
     add_.onClick=[this]{addOscillator();};addTile_.onClick=add_.onClick;
     left_.setName("Scroll oscillators left");right_.setName("Scroll oscillators right");
-    left_.onClick=[this]{viewport_.setViewPosition(juce::jmax(0,viewport_.getViewPositionX()-cardWidth_-8),0);};
-    right_.onClick=[this]{viewport_.setViewPosition(viewport_.getViewPositionX()+cardWidth_+8,0);};
+    left_.onClick=[this]{viewport_.setViewPosition(juce::jmax(0,viewport_.getViewPositionX()-cardWidth_-4),0);};
+    right_.onClick=[this]{viewport_.setViewPosition(viewport_.getViewPositionX()+cardWidth_+4,0);};
     // mct-origami-audio-reengineer-p05.4-initial-editor-model-sync
     // Hidden timer polling stays suppressed, but construction requires one
     // unconditional model -> card topology synchronization.
@@ -1334,14 +1334,14 @@ void OscillatorRack::layoutCards() {
     const auto previousX=viewport_.getViewPositionX();
     cardWidth_=420;
     const int height=juce::jmax(0,viewport_.getHeight()-12);
-    int x=0;for(auto& card:cards_) {card->setBounds(x,0,cardWidth_,height);x+=cardWidth_+8;}
+    int x=0;for(auto& card:cards_) {card->setBounds(x,0,cardWidth_,height);x+=cardWidth_+4;}
     addTile_.setBounds(x,0,74,height);content_.setSize(juce::jmax(viewport_.getWidth(),x+74),height);
     viewport_.setViewPosition(juce::jmin(previousX,juce::jmax(0,content_.getWidth()-viewport_.getMaximumVisibleWidth())),0);
 }
 void OscillatorRack::resized() {
     add_.setBounds(getWidth()-155,5,143,23);
-    auto body=contentBounds();left_.setBounds(body.removeFromLeft(25).reduced(0,8));body.removeFromLeft(7);
-    right_.setBounds(body.removeFromRight(25).reduced(0,8));body.removeFromRight(7);viewport_.setBounds(body);layoutCards();
+    auto body=contentBounds();left_.setBounds(body.removeFromLeft(25).reduced(0,5));body.removeFromLeft(4);
+    right_.setBounds(body.removeFromRight(25).reduced(0,5));body.removeFromRight(4);viewport_.setBounds(body);layoutCards();
 }
 void OscillatorRack::paintContent(juce::Graphics& g,juce::Rectangle<int>) {
     text(g,juce::String(count())+" MODULES",{140,5,getWidth()-305,24},8.5f,Palette::muted(),juce::Justification::centredRight);
