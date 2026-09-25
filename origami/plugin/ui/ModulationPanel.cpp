@@ -1173,6 +1173,8 @@ juce::String ModulationPanel::routeTargetLabel(std::uint32_t routeId) const {
         case ModDestination::Process2Amount:target="PROCESS 2 AMOUNT";break;
         case ModDestination::Route1Amount:target="ROUTE 1 AMOUNT";break;
         case ModDestination::Route2Amount:target="ROUTE 2 AMOUNT";break;
+        case ModDestination::ProcessAmount:target="OSC PROCESS AMOUNT";break;
+        case ModDestination::RouteAmount:target="OSC ROUTE AMOUNT";break;
     }
 
     if(found->destination.oscillator!=0 && bindings_.snapshot) {
