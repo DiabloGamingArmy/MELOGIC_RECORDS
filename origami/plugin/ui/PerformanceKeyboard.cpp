@@ -16,10 +16,10 @@
 #include "PerformanceKeyboard.h"
 namespace mct::origami::ui {
 namespace {
-constexpr int leftReserve=96;
-constexpr int bendPanelWidth=54;
-constexpr int performancePanelWidth=176;
-constexpr int futureReserve=282;
+constexpr int leftReserve=108;
+constexpr int bendPanelWidth=64;
+constexpr int performancePanelWidth=196;
+constexpr int futureReserve=312;
 constexpr int rightReserve=bendPanelWidth+futureReserve;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
 }
@@ -57,7 +57,7 @@ juce::Rectangle<int> PerformanceKeyboard::pitchWheelArea() const noexcept {
     auto a=getLocalBounds().reduced(3,1);
     auto left=a.removeFromLeft(leftReserve);
     auto wheel=left.removeFromLeft(leftReserve/2).reduced(4,1);
-    wheel.removeFromBottom(12);
+    wheel.removeFromBottom(15);
     return wheel;
 }
 juce::Rectangle<int> PerformanceKeyboard::modWheelArea() const noexcept {
@@ -73,26 +73,26 @@ void PerformanceKeyboard::resized() {
     const int right=juce::jmin(rightReserve,juce::jmax(bendPanelWidth,a.getWidth()/3));
     auto rightBay=a.removeFromRight(right);
     auto bend=rightBay.removeFromLeft(bendPanelWidth).reduced(2,2);
-    bend.removeFromTop(14);bendRange_.setBounds(bend.reduced(3,1));
+    bend.removeFromTop(16);bendRange_.setBounds(bend.reduced(4,1));
 
     // Compact Origami performance cluster.
     auto perf=rightBay.removeFromLeft(performancePanelWidth).reduced(3,2);
-    auto top=perf.removeFromTop(22);
+    auto top=perf.removeFromTop(26);
     const int third=top.getWidth()/3;
     voiceMode_.setBounds(top.removeFromLeft(third).reduced(1));
     priority_.setBounds(top.removeFromLeft(third).reduced(1));
     legato_.setBounds(top.reduced(1));
 
     perf.removeFromTop(1);
-    auto glideCell=perf.removeFromLeft(58);
-    glide_.setBounds(glideCell.reduced(6,0));
+    auto glideCell=perf.removeFromLeft(70);
+    glide_.setBounds(glideCell.reduced(6,1));
     auto arp=rightBay.reduced(3,2);
-    auto controls=arp.removeFromTop(22);
-    arpEnable_.setBounds(controls.removeFromLeft(62).reduced(1));
-    controls.removeFromLeft(3);
-    arpSettings_.setBounds(controls.removeFromLeft(30).reduced(1));
-    arpClockSummary_.setBounds(arp.removeFromTop(12));
-    arpPatternSummary_.setBounds(arp.removeFromTop(10));
+    auto controls=arp.removeFromTop(26);
+    arpEnable_.setBounds(controls.removeFromLeft(70).reduced(1));
+    controls.removeFromLeft(4);
+    arpSettings_.setBounds(controls.removeFromLeft(34).reduced(1));
+    arpClockSummary_.setBounds(arp.removeFromTop(15));
+    arpPatternSummary_.setBounds(arp.removeFromTop(13));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
@@ -155,22 +155,22 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
     auto rightBay=area.removeFromRight(right);
     auto bendParent=rightBay.removeFromLeft(bendPanelWidth);
     well(g,bendParent.reduced(1,0));
-    text(g,"BEND",bendParent.removeFromTop(14),7.2f,Palette::muted(),juce::Justification::centred);
+    text(g,"BEND",bendParent.removeFromTop(16),8.2f,Palette::muted(),juce::Justification::centred);
 
     auto performanceParent=rightBay.removeFromLeft(performancePanelWidth);
     well(g,performanceParent.reduced(1,0));
     auto perfCaptionArea=performanceParent;
     perfCaptionArea.removeFromTop(22);
-    auto glideCaption=perfCaptionArea.removeFromLeft(58).removeFromBottom(10);
-    text(g,"GLIDE",glideCaption,7.0f,Palette::muted(),juce::Justification::centred);
+    auto glideCaption=perfCaptionArea.removeFromLeft(70).removeFromBottom(12);
+    text(g,"GLIDE",glideCaption,8.0f,Palette::muted(),juce::Justification::centred);
     auto future=rightBay;
     well(g,future.reduced(1,0));
-    text(g,"ARP / CLOCK",future.removeFromBottom(14),7.0f,Palette::muted(),juce::Justification::centred);
+    text(g,"ARP / CLOCK",future.removeFromBottom(16),8.0f,Palette::muted(),juce::Justification::centred);
 
     auto leftControls=area.removeFromLeft(leftReserve);
     for(const auto& label:juce::StringArray{"PITCH","MOD"}) {
         auto wheel=leftControls.removeFromLeft(leftReserve/2).reduced(3,0);
-        auto caption=wheel.removeFromBottom(12);
+        auto caption=wheel.removeFromBottom(15);
         well(g,wheel);
         auto track=wheel.reduced(7,2);
         g.setColour(Palette::border());g.fillRoundedRectangle(track.toFloat(),3);
@@ -179,7 +179,7 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         const float unit=label=="PITCH"?(value+1.0f)*0.5f:value;
         const int y=track.getBottom()-juce::roundToInt(unit*float(track.getHeight()));
         g.fillRoundedRectangle(juce::Rectangle<float>(float(track.getX()+2),float(y-2),float(track.getWidth()-4),4.0f),1.5f);
-        text(g,label,caption,7.5f,Palette::muted(),juce::Justification::centred);
+        text(g,label,caption,8.4f,Palette::muted(),juce::Justification::centred);
     }
 
     auto keys=area;
@@ -197,8 +197,8 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
         g.fillRoundedRectangle(key,1.5f);
         g.setColour(juce::Colour(0xff8b969e));g.drawRoundedRectangle(key,.8f,.7f);
         if(i%7==0)
-            text(g,"C"+juce::String(3+i/7),key.toNearestInt().removeFromBottom(13),
-                 7.5f,juce::Colour(0xff596770),juce::Justification::centred);
+            text(g,"C"+juce::String(3+i/7),key.toNearestInt().removeFromBottom(15),
+                 8.2f,juce::Colour(0xff596770),juce::Justification::centred);
     }
 
     for(int i=0;i<whiteKeyCount-1;++i) {
