@@ -852,18 +852,16 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
     auto upper=working;
 
-    // Right: oscillator-local processing + cross-oscillator routing.
+    // Right: one presentation surface for oscillator-local processes and routes.
     constexpr int columnGap=7;
-    const int columnWidth=juce::jlimit(104,122,upper.getWidth()*25/100);
-    auto routing=upper.removeFromRight(columnWidth);
-    upper.removeFromRight(columnGap);
-    auto process=upper.removeFromRight(columnWidth);
+    const int chainWidth=juce::jlimit(208,251,upper.getWidth()*50/100);
+    auto chain=upper.removeFromRight(chainWidth);
     upper.removeFromRight(columnGap);
     const int tuningHeight=30;
     auto tuning=upper.removeFromBottom(tuningHeight);
     upper.removeFromBottom(4);
 
-    // Left: authoritative 1:1 wavetable viewport + compact browser strip.
+    // Left: authoritative wavetable viewport + compact browser strip.
     const int browserHeight=22;
     auto browser=upper.removeFromBottom(browserHeight);
     upper.removeFromBottom(4);
@@ -894,29 +892,15 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     // Sine/Saw/Square/Triangle are internal anchor frames within Basic Shapes.
     text(g,"BASIC SHAPES",browserBox,8.2f,Palette::secondary(),juce::Justification::centred);
 
-    // OSC PROCESS stays dense and local to the source.
-    auto processBox=process.reduced(1,0);
-    well(g,processBox);
-    auto processInner=processBox.reduced(8);
-    auto processTitle=processInner.removeFromTop(18);
-    text(g,"OSC PROCESS",processTitle,8.5f,Palette::secondary(),juce::Justification::centredLeft);
-
-    auto slotGuide=processInner;
-    slotGuide.removeFromTop(24);
-    g.setColour(Palette::borderSoft().withAlpha(0.45f));
-    g.drawHorizontalLine(slotGuide.getCentreY(),float(slotGuide.getX()),float(slotGuide.getRight()));
-
-    // OSC ROUTING mirrors the exact visual hierarchy of OSC PROCESS.
-    auto routingBox=routing.reduced(1,0);
-    well(g,routingBox);
-    auto routingInner=routingBox.reduced(8);
-    auto routingTitle=routingInner.removeFromTop(18);
-    text(g,"OSC ROUTING",routingTitle,8.5f,Palette::secondary(),juce::Justification::centredLeft);
-
-    auto routingGuide=routingInner;
-    routingGuide.removeFromTop(24);
-    g.setColour(Palette::borderSoft().withAlpha(0.45f));
-    g.drawHorizontalLine(routingGuide.getCentreY(),float(routingGuide.getX()),float(routingGuide.getRight()));
+    // Unified OSC CHAIN: the list is presentation-only. Process and routing
+    // execution remain separate, preserving the engine's established semantics.
+    auto chainBox=chain.reduced(1,0);
+    well(g,chainBox);
+    auto chainInner=chainBox.reduced(8);
+    auto chainTitle=chainInner.removeFromTop(18);
+    text(g,"OSC CHAIN",chainTitle,8.5f,Palette::secondary(),juce::Justification::centredLeft);
+    if(chainItemCount_==0)
+        text(g,"NO PROCESSING OR ROUTING",chainInner,7.2f,Palette::muted(),juce::Justification::centred);
 
     // Conventional oscillator pitch identity: OCT / SEM / FIN.
     const juce::StringArray tuneLabels{"OCT","SEM","FIN"};
