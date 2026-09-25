@@ -12,25 +12,23 @@ struct EditorLayout {
     // mct-origami-fixed-ratio-zoom-v1
     // 16:10 is the canonical Origami design canvas: wide enough for the horizontal
     // oscillator workflow without sacrificing vertical room for modulation and keys.
-    static constexpr int defaultWidth=1440,defaultHeight=900,minWidth=960,minHeight=600,maxWidth=1920,maxHeight=1200,gap=4;
+    static constexpr int defaultWidth=1440,defaultHeight=900,minWidth=960,minHeight=600,maxWidth=1920,maxHeight=1200,gap=0;
     static constexpr double aspectRatio=16.0/10.0;
     juce::Rectangle<int> header,oscillators,mixer,filter,fxPre,fxPost,modulation,macros,performance;
     static EditorLayout calculate(juce::Rectangle<int> bounds) {
         // mct-origami-two-row-synth-layout-v10
         EditorLayout result;
-        auto area=bounds.reduced(6);
+        auto area=bounds;
 
         result.header=area.removeFromTop(72);
-        area.removeFromTop(4);
 
         // V23.1: thinner performance keyboard; reclaimed vertical space
         // returns to the main synth workspace.
         // V23.3.1: taller performance strip for usable Pitch/Mod travel.
         // Keyboard remains compact via its internal top reserve.
         result.performance=area.removeFromBottom(76);
-        area.removeFromBottom(4);
 
-        const int usable=area.getHeight()-4;
+        const int usable=area.getHeight();
 
         // V30: MACROS becomes the fixed top-left utility bay. OSCILLATORS uses
         // the remaining horizontal space, giving the top row a modular rack
@@ -38,10 +36,8 @@ struct EditorLayout {
         auto upper=area.removeFromTop(juce::roundToInt(usable*.52f));
         const int macroWidth=juce::jlimit(150,190,juce::roundToInt(bounds.getWidth()*.12f));
         result.macros=upper.removeFromLeft(macroWidth);
-        upper.removeFromLeft(4);
         result.oscillators=upper;
 
-        area.removeFromTop(4);
 
         // Lower row is now two independently-scaffolded collections:
         // MODULATION SOURCES | editor    and    FILTERS | editor.
@@ -51,7 +47,6 @@ struct EditorLayout {
         // editor remains the larger single panel, but FILTER now has enough
         // horizontal room for its graph/routing controls to breathe.
         result.filter=lower.removeFromRight(juce::roundToInt(bounds.getWidth()*.46f));
-        lower.removeFromRight(4);
         result.modulation=lower;
 
         result.mixer={};
