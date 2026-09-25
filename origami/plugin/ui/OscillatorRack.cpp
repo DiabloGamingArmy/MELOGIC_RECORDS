@@ -676,83 +676,50 @@ void OscillatorCard::syncFromModel() {
             if(!blendSlider_.isMouseButtonDown() && !blendSlider_.isEditingText())
                 blendSlider_.setValue(state.blend,juce::dontSendNotification);
             const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
-            process1Menu_.setSelectedId(static_cast<int>(state.process1)+1,juce::dontSendNotification);
-            process2Menu_.setSelectedId(static_cast<int>(state.process2)+1,juce::dontSendNotification);
+            syncDynamicCollections(state);
 
-            auto syncAmount=[](RackSlider& slider,juce::Label& label,
-                               dsp::OscProcessType type,float value) {
-                const bool bipolar=dsp::oscProcessIsBipolar(type);
-                const bool randomVariant=
-                    type==dsp::OscProcessType::RandAmp ||
-                    type==dsp::OscProcessType::RandSparse;
-                const double minimum=static_cast<double>(dsp::oscProcessAmountMinimum(type));
-                // Seeded random spectral modes have 12 visual anchor states,
-                // but the knob is continuous so interpolation can glide.
-                const double interval=0.001;
+            const OscProcessSlot* selectedProcess=nullptr;
+            for(std::size_t i=0;i<state.processCount;++i)
+                if(state.processes[i].id==selectedProcessId_) {selectedProcess=&state.processes[i];break;}
+            const bool haveProcess=selectedProcess!=nullptr;
+            process1Menu_.setVisible(haveProcess);
+            process1Previous_.setVisible(haveProcess);
+            process1Next_.setVisible(haveProcess);
+            process1Amount_.setVisible(haveProcess);
+            process1AmountLabel_.setVisible(haveProcess);
+            if(haveProcess) {
+                process1Menu_.setSelectedId(static_cast<int>(selectedProcess->type)+1,juce::dontSendNotification);
+                const double minimum=dsp::oscProcessAmountMinimum(selectedProcess->type);
+                process1Amount_.setRange(minimum,1.0,0.001);
+                process1Amount_.setName(dsp::oscProcessIsBipolar(selectedProcess->type)?"OSC PROCESS BIPOLAR":"OSC PROCESS UNIPOLAR");
+                process1Amount_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::ProcessAmount));
+                process1Amount_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+                process1Amount_.getProperties().set("mct.mod.itemId",static_cast<int>(selectedProcessId_));
+                if(!process1Amount_.isMouseButtonDown())
+                    process1Amount_.setValue(selectedProcess->amount,juce::dontSendNotification);
+                const bool random=dsp::oscProcessUsesSeed(selectedProcess->type);
+                process1Randomize_.setVisible(random);process1Randomize_.setEnabled(random);
+                const int percent=juce::roundToInt(selectedProcess->amount*100.0f);
+                process1AmountLabel_.setText((percent>0&&dsp::oscProcessIsBipolar(selectedProcess->type)?"+":"")+juce::String(percent)+"%",juce::dontSendNotification);
+            } else process1Randomize_.setVisible(false);
 
-                if(std::abs(slider.getMinimum()-minimum)>1.0e-9 ||
-                   std::abs(slider.getMaximum()-1.0)>1.0e-9 ||
-                   std::abs(slider.getInterval()-interval)>1.0e-9)
-                    slider.setRange(minimum,1.0,interval);
-
-                slider.setName(bipolar ? "OSC PROCESS BIPOLAR" : "OSC PROCESS UNIPOLAR");
-
-                if(!slider.isMouseButtonDown())
-                    slider.setValue(juce::jlimit(minimum,1.0,static_cast<double>(value)),
-                                    juce::dontSendNotification);
-
-                if(randomVariant) {
-                    const int variant=dsp::randAmpVariantIndex(
-                        static_cast<float>(slider.getValue()))+1;
-                    label.setText(juce::String(variant)+"/"+
-                                  juce::String(dsp::randAmpVariantCount()),
-                                  juce::dontSendNotification);
-                    return;
-                }
-
-                const int percent=juce::roundToInt(value*100.0f);
-                const juce::String prefix=(bipolar && percent>0) ? "+" : "";
-                label.setText(prefix+juce::String(percent)+"%",juce::dontSendNotification);
-            };
-
-            syncAmount(process1Amount_,process1AmountLabel_,state.process1,state.process1Amount);
-            syncAmount(process2Amount_,process2AmountLabel_,state.process2,state.process2Amount);
-            process1Amount_.setEnabled(state.process1!=dsp::OscProcessType::Off);
-            process2Amount_.setEnabled(state.process2!=dsp::OscProcessType::Off);
-            const bool process1Seeded=dsp::oscProcessUsesSeed(state.process1);
-            const bool process2Seeded=dsp::oscProcessUsesSeed(state.process2);
-
-            // Visibility changes alter the process-slot geometry: seeded modes
-            // shift the knob left and place the re-seed button on its right.
-            // Previously visibility changed after the last resized() pass, so
-            // the button could become visible while still owning empty bounds.
-            const bool processLayoutChanged=
-                process1Randomize_.isVisible()!=process1Seeded ||
-                process2Randomize_.isVisible()!=process2Seeded;
-
-            process1Randomize_.setEnabled(process1Seeded);
-            process2Randomize_.setEnabled(process2Seeded);
-            process1Randomize_.setVisible(process1Seeded);
-            process2Randomize_.setVisible(process2Seeded);
-
-            if(processLayoutChanged)
-                resized();
-
-            route1Menu_.setSelection(state.route1SourceId,state.route1Type,juce::dontSendNotification);
-            route2Menu_.setSelection(state.route2SourceId,state.route2Type,juce::dontSendNotification);
-            if(!route1Amount_.isMouseButtonDown())
-                route1Amount_.setValue(state.route1Amount,juce::dontSendNotification);
-            if(!route2Amount_.isMouseButtonDown())
-                route2Amount_.setValue(state.route2Amount,juce::dontSendNotification);
-
-            auto routeLabel=[](juce::Label& label,float value) {
-                const int percent=juce::roundToInt(value*100.0f);
-                label.setText((percent>0?"+":"")+juce::String(percent)+"%",juce::dontSendNotification);
-            };
-            routeLabel(route1AmountLabel_,state.route1Amount);
-            routeLabel(route2AmountLabel_,state.route2Amount);
-            route1Amount_.setEnabled(state.route1Type!=OscRouteType::Off);
-            route2Amount_.setEnabled(state.route2Type!=OscRouteType::Off);
+            const OscRouteSlot* selectedRoute=nullptr;
+            for(std::size_t i=0;i<state.routeCount;++i)
+                if(state.routes[i].id==selectedRouteId_) {selectedRoute=&state.routes[i];break;}
+            const bool haveRoute=selectedRoute!=nullptr;
+            route1Menu_.setVisible(haveRoute);route1Previous_.setVisible(haveRoute);
+            route1Next_.setVisible(haveRoute);route1Amount_.setVisible(haveRoute);
+            route1AmountLabel_.setVisible(haveRoute);
+            if(haveRoute) {
+                route1Menu_.setSelection(selectedRoute->sourceId,selectedRoute->type,juce::dontSendNotification);
+                route1Amount_.getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::RouteAmount));
+                route1Amount_.getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+                route1Amount_.getProperties().set("mct.mod.itemId",static_cast<int>(selectedRouteId_));
+                if(!route1Amount_.isMouseButtonDown()) route1Amount_.setValue(selectedRoute->amount,juce::dontSendNotification);
+                const int percent=juce::roundToInt(selectedRoute->amount*100.0f);
+                route1AmountLabel_.setText((percent>0?"+":"")+juce::String(percent)+"%",juce::dontSendNotification);
+                route1Amount_.setEnabled(selectedRoute->type!=OscRouteType::Off);
+            }
         }
     }
     // Compatibility-only nearest frame index; never used as wavetable identity.
