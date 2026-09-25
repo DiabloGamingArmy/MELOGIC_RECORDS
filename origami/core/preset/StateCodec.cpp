@@ -35,7 +35,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(22);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(23);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -117,14 +117,48 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     for(float probability:mod.sequencer.probability) w.real(probability);
     for(auto ratchet:mod.sequencer.ratchets) w.word(ratchet);
     w.real(mod.sequencer.humanize);
+    // V23: stable-ID oscillator child collections and modulation child IDs.
+    // Legacy fixed slots remain in their original fields for backward-safe
+    // runtime/UI migration; these collections are the authoritative future path.
+    for(const auto& m:s.oscillators) if(m.id) {
+        std::array<OscProcessSlot,maxOscProcesses> processes=m.processes;
+        std::uint8_t processCount=m.processCount;
+        OscProcessSlotId nextProcessId=m.nextProcessId;
+        if(processCount==0) {
+            if(m.process1!=dsp::OscProcessType::Off)
+                processes[processCount++]={nextProcessId++,m.process1,m.process1Amount,m.process1Seed};
+            if(m.process2!=dsp::OscProcessType::Off && processCount<maxOscProcesses)
+                processes[processCount++]={nextProcessId++,m.process2,m.process2Amount,m.process2Seed};
+        }
+        w.word(processCount);w.word(nextProcessId);
+        for(std::size_t i=0;i<processCount;++i) {
+            const auto& p=processes[i];
+            w.word(p.id);w.word(static_cast<std::uint32_t>(p.type));w.real(p.amount);w.word(p.seed);
+        }
+        std::array<OscRouteSlot,maxOscRoutes> routes=m.routes;
+        std::uint8_t routeCount=m.routeCount;
+        OscRouteSlotId nextRouteId=m.nextRouteId;
+        if(routeCount==0) {
+            if(m.route1Type!=OscRouteType::Off)
+                routes[routeCount++]={nextRouteId++,m.route1SourceId,m.route1Type,m.route1Amount};
+            if(m.route2Type!=OscRouteType::Off && routeCount<maxOscRoutes)
+                routes[routeCount++]={nextRouteId++,m.route2SourceId,m.route2Type,m.route2Amount};
+        }
+        w.word(routeCount);w.word(nextRouteId);
+        for(std::size_t i=0;i<routeCount;++i) {
+            const auto& route=routes[i];
+            w.word(route.id);w.word(route.sourceId);w.word(static_cast<std::uint32_t>(route.type));w.real(route.amount);
+        }
+    }
+    for(const auto& route:mod.routes) if(route.id) w.word(route.destination.itemId);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
-    if(!data || size<12 || size>8192) return false;
+    if(!data || size<12 || size>16384) return false;
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>22) return false;
+    if(version<1 || version>23) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -259,6 +293,43 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     }
     if(version>=21) { s.modulation.sequencer.activeSteps=r.word();s.modulation.sequencer.direction=static_cast<SequenceDirection>(r.word());const auto loop=r.word();if(loop>1u) return false;s.modulation.sequencer.loop=loop==1u; }
     if(version>=22) { for(auto& probability:s.modulation.sequencer.probability) probability=r.real(); for(auto& ratchet:s.modulation.sequencer.ratchets) ratchet=r.word(); s.modulation.sequencer.humanize=r.real(); }
+    if(version>=23) {
+        for(auto& m:s.oscillators) if(m.id) {
+            const auto processCount=r.word();m.nextProcessId=r.word();
+            if(processCount>maxOscProcesses || m.nextProcessId==0) return false;
+            m.processCount=static_cast<std::uint8_t>(processCount);
+            for(std::size_t i=0;i<m.processCount;++i) {
+                auto& p=m.processes[i];p.id=r.word();p.type=static_cast<dsp::OscProcessType>(r.word());
+                p.amount=r.real();p.seed=r.word();
+            }
+            const auto routeCount=r.word();m.nextRouteId=r.word();
+            if(routeCount>maxOscRoutes || m.nextRouteId==0) return false;
+            m.routeCount=static_cast<std::uint8_t>(routeCount);
+            for(std::size_t i=0;i<m.routeCount;++i) {
+                auto& route=m.routes[i];route.id=r.word();route.sourceId=r.word();
+                route.type=static_cast<OscRouteType>(r.word());route.amount=r.real();
+            }
+        }
+        for(auto& route:s.modulation.routes) if(route.id) route.destination.itemId=r.word();
+    } else {
+        // Materialize stable child IDs for every legacy preset without changing
+        // its fixed-slot modulation semantics yet. Patch 4 can bind the new UI
+        // directly to these IDs while old destinations continue to sound exact.
+        for(auto& m:s.oscillators) if(m.id) {
+            if(m.processCount==0) {
+                if(m.process1!=dsp::OscProcessType::Off)
+                    m.processes[m.processCount++]={m.nextProcessId++,m.process1,m.process1Amount,m.process1Seed};
+                if(m.process2!=dsp::OscProcessType::Off && m.processCount<maxOscProcesses)
+                    m.processes[m.processCount++]={m.nextProcessId++,m.process2,m.process2Amount,m.process2Seed};
+            }
+            if(m.routeCount==0) {
+                if(m.route1Type!=OscRouteType::Off)
+                    m.routes[m.routeCount++]={m.nextRouteId++,m.route1SourceId,m.route1Type,m.route1Amount};
+                if(m.route2Type!=OscRouteType::Off && m.routeCount<maxOscRoutes)
+                    m.routes[m.routeCount++]={m.nextRouteId++,m.route2SourceId,m.route2Type,m.route2Amount};
+            }
+        }
+    }
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;
 }
