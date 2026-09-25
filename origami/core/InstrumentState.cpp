@@ -56,21 +56,18 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
 
         if(m.processCount>maxOscProcesses || m.routeCount>maxOscRoutes ||
            m.nextProcessId==0 || m.nextRouteId==0) return false;
-        OscProcessSlotId previousProcessId=0;
         for(std::size_t i=0;i<m.processCount;++i) {
             const auto& p=m.processes[i];
-            if(!p.id || p.id<=previousProcessId || p.id>=m.nextProcessId ||
-               !dsp::validOscProcessType(p.type) ||
+            if(!p.id || p.id>=m.nextProcessId || !dsp::validOscProcessType(p.type) ||
                !range(p.amount,dsp::oscProcessAmountMinimum(p.type),1)) return false;
-            previousProcessId=p.id;
+            for(std::size_t j=0;j<i;++j) if(m.processes[j].id==p.id) return false;
         }
-        OscRouteSlotId previousRouteId=0;
         for(std::size_t i=0;i<m.routeCount;++i) {
             const auto& route=m.routes[i];
-            if(!route.id || route.id<=previousRouteId || route.id>=m.nextRouteId ||
+            if(!route.id || route.id>=m.nextRouteId ||
                !validOscRouteType(route.type) || !range(route.amount,-1,1) ||
                !validRoute(route.sourceId,route.type)) return false;
-            previousRouteId=route.id;
+            for(std::size_t j=0;j<i;++j) if(m.routes[j].id==route.id) return false;
         }
     }
     auto first=s.oscillators[0];applyLegacyOscillatorParameters(first,s.parameters);
