@@ -504,6 +504,52 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     route1Amount_.onValueChange=commitRouting;
     route2Amount_.onValueChange=commitRouting;
 
+    // Dynamic collection rails use the same compact viewport + bottom -/+
+    // grammar as Filters/Modulators, scaled down for the oscillator card.
+    addAndMakeVisible(processViewport_);
+    processViewport_.setViewedComponent(&processContent_,false);
+    processViewport_.setScrollBarsShown(true,false);
+    processViewport_.setScrollBarThickness(4);
+    addAndMakeVisible(routeViewport_);
+    routeViewport_.setViewedComponent(&routeContent_,false);
+    routeViewport_.setScrollBarsShown(true,false);
+    routeViewport_.setScrollBarThickness(4);
+    for(std::size_t i=0;i<processTabs_.size();++i) {
+        processContent_.addAndMakeVisible(processTabs_[i]);
+        processTabs_[i].setClickingTogglesState(true);
+        processTabs_[i].onClick=[this,i] {
+            if(!moduleGetter_) return;
+            const auto state=moduleGetter_(display_.id);
+            if(i<state.processCount) selectProcess(state.processes[i].id);
+        };
+    }
+    for(std::size_t i=0;i<routeTabs_.size();++i) {
+        routeContent_.addAndMakeVisible(routeTabs_[i]);
+        routeTabs_[i].setClickingTogglesState(true);
+        routeTabs_[i].onClick=[this,i] {
+            if(!moduleGetter_) return;
+            const auto state=moduleGetter_(display_.id);
+            if(i<state.routeCount) selectRoute(state.routes[i].id);
+        };
+    }
+    for(auto* b:{&processAdd_,&processRemove_,&routeAdd_,&routeRemove_}) addAndMakeVisible(*b);
+    processAdd_.setTooltip("Add oscillator process");
+    processRemove_.setTooltip("Remove selected oscillator process");
+    routeAdd_.setTooltip("Add oscillator route");
+    routeRemove_.setTooltip("Remove selected oscillator route");
+    processAdd_.onClick=[this]{addProcess();};
+    processRemove_.onClick=[this]{removeSelectedProcess();};
+    routeAdd_.onClick=[this]{addRoute();};
+    routeRemove_.onClick=[this]{removeSelectedRoute();};
+
+    // Slot two controls are compatibility-only now; the dynamic collection
+    // exposes one editor for the selected stable-ID child.
+    for(auto* component:std::initializer_list<juce::Component*>{
+        &process2Menu_,&process2Previous_,&process2Next_,&process2Randomize_,
+        &process2Amount_,&process2AmountLabel_,&route2Menu_,&route2Previous_,
+        &route2Next_,&route2Amount_,&route2AmountLabel_})
+        component->setVisible(false);
+
     refreshVisibleNumber();
 
     addAndMakeVisible(power_);
@@ -537,6 +583,88 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
             parameterSetter_(mct::origami::ParameterId::Waveform,float(wtPositionSlider_.getValue()*3.0));
         syncFromModel();
     };}
+
+void OscillatorCard::selectProcess(OscProcessSlotId id) {
+    selectedProcessId_=id; syncFromModel(); resized(); repaint();
+}
+void OscillatorCard::selectRoute(OscRouteSlotId id) {
+    selectedRouteId_=id; syncFromModel(); resized(); repaint();
+}
+void OscillatorCard::addProcess() {
+    if(!moduleGetter_ || !moduleSetter_) return;
+    auto safe=juce::Component::SafePointer<OscillatorCard>(this);
+    showNativeOscProcessMenu(processAdd_,dsp::OscProcessType::Off,[safe](dsp::OscProcessType type) {
+        if(safe==nullptr || type==dsp::OscProcessType::Off || !safe->moduleGetter_ || !safe->moduleSetter_) return;
+        auto state=safe->moduleGetter_(safe->display_.id);
+        if(!state.id || state.processCount>=maxOscProcesses) return;
+        auto& slot=state.processes[state.processCount++];
+        slot.id=state.nextProcessId++;
+        slot.type=type;
+        slot.amount=juce::jlimit(dsp::oscProcessAmountMinimum(type),1.0f,0.5f);
+        slot.seed=static_cast<std::uint32_t>(juce::Random::getSystemRandom().nextInt());
+        if(slot.seed==0) slot.seed=0x6d2b79f5u;
+        if(safe->moduleSetter_(safe->display_.id,state)) safe->selectedProcessId_=slot.id;
+        safe->syncFromModel();safe->resized();safe->repaint();
+    });
+}
+void OscillatorCard::removeSelectedProcess() {
+    if(!selectedProcessId_ || !moduleGetter_ || !moduleSetter_) return;
+    auto state=moduleGetter_(display_.id); if(!state.id) return;
+    std::size_t index=state.processCount;
+    for(std::size_t i=0;i<state.processCount;++i) if(state.processes[i].id==selectedProcessId_) {index=i;break;}
+    if(index>=state.processCount) return;
+    for(std::size_t i=index+1;i<state.processCount;++i) state.processes[i-1]=state.processes[i];
+    state.processes[--state.processCount]={};
+    selectedProcessId_=state.processCount ? state.processes[juce::jmin(index,std::size_t(state.processCount-1))].id : 0;
+    moduleSetter_(display_.id,state);syncFromModel();resized();repaint();
+}
+void OscillatorCard::addRoute() {
+    if(!moduleGetter_ || !moduleSetter_) return;
+    auto state=moduleGetter_(display_.id); if(!state.id || state.routeCount>=maxOscRoutes) return;
+    auto& slot=state.routes[state.routeCount++];
+    slot.id=state.nextRouteId++;slot.sourceId=0;slot.type=OscRouteType::Off;slot.amount=0.0f;
+    if(moduleSetter_(display_.id,state)) selectedRouteId_=slot.id;
+    syncFromModel();resized();repaint();
+}
+void OscillatorCard::removeSelectedRoute() {
+    if(!selectedRouteId_ || !moduleGetter_ || !moduleSetter_) return;
+    auto state=moduleGetter_(display_.id); if(!state.id) return;
+    std::size_t index=state.routeCount;
+    for(std::size_t i=0;i<state.routeCount;++i) if(state.routes[i].id==selectedRouteId_) {index=i;break;}
+    if(index>=state.routeCount) return;
+    for(std::size_t i=index+1;i<state.routeCount;++i) state.routes[i-1]=state.routes[i];
+    state.routes[--state.routeCount]={};
+    selectedRouteId_=state.routeCount ? state.routes[juce::jmin(index,std::size_t(state.routeCount-1))].id : 0;
+    moduleSetter_(display_.id,state);syncFromModel();resized();repaint();
+}
+void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) {
+    auto processExists=[&](OscProcessSlotId id){for(std::size_t i=0;i<state.processCount;++i) if(state.processes[i].id==id)return true;return false;};
+    auto routeExists=[&](OscRouteSlotId id){for(std::size_t i=0;i<state.routeCount;++i) if(state.routes[i].id==id)return true;return false;};
+    if(!processExists(selectedProcessId_)) selectedProcessId_=state.processCount?state.processes[0].id:0;
+    if(!routeExists(selectedRouteId_)) selectedRouteId_=state.routeCount?state.routes[0].id:0;
+    for(std::size_t i=0;i<processTabs_.size();++i) {
+        const bool active=i<state.processCount;
+        processTabs_[i].setVisible(active);
+        if(active) {
+            processTabs_[i].setButtonText(dsp::oscProcessName(state.processes[i].type));
+            processTabs_[i].setToggleState(state.processes[i].id==selectedProcessId_,juce::dontSendNotification);
+        }
+    }
+    for(std::size_t i=0;i<routeTabs_.size();++i) {
+        const bool active=i<state.routeCount;
+        routeTabs_[i].setVisible(active);
+        if(active) {
+            const auto& route=state.routes[i];
+            juce::String name=route.type==OscRouteType::Off ? "OFF" : ("OSC "+juce::String(route.sourceId));
+            routeTabs_[i].setButtonText(name);
+            routeTabs_[i].setToggleState(route.id==selectedRouteId_,juce::dontSendNotification);
+        }
+    }
+    processAdd_.setEnabled(state.processCount<maxOscProcesses);
+    processRemove_.setEnabled(selectedProcessId_!=0);
+    routeAdd_.setEnabled(state.routeCount<maxOscRoutes);
+    routeRemove_.setEnabled(selectedRouteId_!=0);
+}
 
 void OscillatorCard::syncFromModel() {
     if(!parameterGetter_) return;
