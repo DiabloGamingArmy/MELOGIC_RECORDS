@@ -649,43 +649,49 @@ void renderProcessedFrame2048(const float* input,float* output,
     const double a1=oscProcessIsSpectral(process1)?quantizedSpectralAmount(process1,amount1):0.0;
     const double a2=oscProcessIsSpectral(process2)?quantizedSpectralAmount(process2,amount2):0.0;
 
-    // Rand Amp / Rand Sparse use one deterministic harmonic field per seed.
-    // Amount changes the strength of that field; it never swaps to a different
-    // random mask. This makes the process continuous with respect to Amount.
-    const auto isRandomContinuous=[](OscProcessType type) noexcept {
+    // Rand Amp and Rand Sparse both expose 12 full-strength seeded anchor
+    // spectra. The knob morphs continuously between adjacent masks.
+    auto randomVariantTarget=[](OscProcessType type,
+                                std::size_t harmonic,
+                                std::uint32_t baseSeed,
+                                float amount) noexcept {
+        const float position=std::clamp(amount,0.0f,1.0f)*
+                             static_cast<float>(randAmpVariantCount()-1);
+        const int lower=static_cast<int>(std::floor(position));
+        const int upper=std::min(lower+1,randAmpVariantCount()-1);
+        const double blend=static_cast<double>(position-static_cast<float>(lower));
+
+        const auto seedFor=[baseSeed](int variant) noexcept {
+            return baseSeed ^
+                   (0x9e3779b9u*static_cast<std::uint32_t>(variant+1));
+        };
+
+        const double a=fullSpectralGain(type,harmonic,seedFor(lower));
+        const double b=fullSpectralGain(type,harmonic,seedFor(upper));
+        return a+(b-a)*blend;
+    };
+
+    const auto isRandomVariant=[](OscProcessType type) noexcept {
         return type==OscProcessType::RandAmp ||
                type==OscProcessType::RandSparse;
-    };
-    const auto randomContinuousGain=[](OscProcessType type,
-                                       std::size_t harmonic,
-                                       std::uint32_t seed,
-                                       double amount) noexcept {
-        const double target=fullSpectralGain(type,harmonic,seed);
-        // Smoothstep the control itself so entry/exit from each cached anchor is
-        // slope-continuous while retaining the exact endpoints.
-        const double t=std::clamp(amount,0.0,1.0);
-        const double smooth=t*t*(3.0-2.0*t);
-        return 1.0+smooth*(target-1.0);
     };
 
     bins[0]=Complex{};
     for(std::size_t h=1;h<spectralSize/2;++h) {
         double gain=1.0;
         if(oscProcessIsSpectral(process1)) {
-            if(isRandomContinuous(process1))
-                gain*=randomContinuousGain(process1,h,seed1,a1);
-            else {
-                const double target=fullSpectralGain(process1,h,seed1);
-                gain*=1.0+a1*(target-1.0);
-            }
+            const bool randomVariant=isRandomVariant(process1);
+            const double target=randomVariant
+                ? randomVariantTarget(process1,h,seed1,static_cast<float>(a1))
+                : fullSpectralGain(process1,h,seed1);
+            gain*=randomVariant ? target : 1.0+a1*(target-1.0);
         }
         if(oscProcessIsSpectral(process2)) {
-            if(isRandomContinuous(process2))
-                gain*=randomContinuousGain(process2,h,seed2,a2);
-            else {
-                const double target=fullSpectralGain(process2,h,seed2);
-                gain*=1.0+a2*(target-1.0);
-            }
+            const bool randomVariant=isRandomVariant(process2);
+            const double target=randomVariant
+                ? randomVariantTarget(process2,h,seed2,static_cast<float>(a2))
+                : fullSpectralGain(process2,h,seed2);
+            gain*=randomVariant ? target : 1.0+a2*(target-1.0);
         }
         // gain is a real scalar applied to the existing complex FFT value:
         // magnitude changes, phase angle is preserved exactly.
