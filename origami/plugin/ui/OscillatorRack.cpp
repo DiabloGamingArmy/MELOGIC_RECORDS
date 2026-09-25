@@ -978,6 +978,11 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 spectralPreviewSeed2_!=moduleState.process2Seed;
 
             if(stale) {
+                // Preserve the last complete preview and morph into the newly
+                // rendered one instead of replacing the viewport in one frame.
+                // At the rack's 60 Hz cadence, 0.22 advances over ~75 ms.
+                if(spectralPreviewValid_)
+                    spectralPreviewPrevious_=spectralPreviewCache_;
                 std::array<float,previewSize> previewSource{};
                 const float visualPhysical=static_cast<float>(wtKey)/128.0f;
                 const int va=juce::jlimit(0,3,int(std::floor(visualPhysical)));
@@ -1005,10 +1010,16 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 spectralPreviewProcess2_=moduleState.process2;
                 spectralPreviewSeed1_=moduleState.process1Seed;
                 spectralPreviewSeed2_=moduleState.process2Seed;
+                if(!spectralPreviewValid_)
+                    spectralPreviewPrevious_=spectralPreviewCache_;
                 spectralPreviewValid_=true;
+                spectralPreviewMorph_=0.0f;
+            } else if(spectralPreviewMorph_<1.0f) {
+                spectralPreviewMorph_=juce::jmin(1.0f,spectralPreviewMorph_+0.22f);
             }
         } else {
             spectralPreviewValid_=false;
+            spectralPreviewMorph_=1.0f;
         }
 
         auto processedSample=[&](float sourcePhase) {
@@ -1018,8 +1029,13 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 const auto i=static_cast<std::size_t>(pos)%previewSize;
                 const auto j=(i+1)%previewSize;
                 const float fraction=pos-static_cast<float>(static_cast<std::size_t>(pos));
-                return spectralPreviewCache_[i]+
+                const float current=spectralPreviewCache_[i]+
                     fraction*(spectralPreviewCache_[j]-spectralPreviewCache_[i]);
+                const float previous=spectralPreviewPrevious_[i]+
+                    fraction*(spectralPreviewPrevious_[j]-spectralPreviewPrevious_[i]);
+                const float t=spectralPreviewMorph_*spectralPreviewMorph_*
+                    (3.0f-2.0f*spectralPreviewMorph_);
+                return previous+(current-previous)*t;
             }
             double phase=static_cast<double>(sourcePhase);
             if(moduleState.id) {
