@@ -735,20 +735,34 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 const OscProcessPlan& plan,double phaseOffsetCycles,
                                 double phaseSkew) noexcept {
+    if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
+    const double increment=std::clamp(frequency/sampleRate,0.0,.499);
+    const double available=frequency>0?sampleRate*.45/frequency:1;
+    const auto& bands=table.frames[0].bands;std::size_t bandIndex=0;
+    while(bandIndex+1<bands.size()&&bands[bandIndex+1].maximumHarmonic<=available)++bandIndex;
+    const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
+    const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
+    double readPhase=phase_+(std::isfinite(phaseOffsetCycles)?phaseOffsetCycles:0.0);readPhase-=std::floor(readPhase);
+    if(std::isfinite(phaseSkew)&&std::abs(phaseSkew)>1.0e-12){
+        const double midpoint=std::clamp(0.5+phaseSkew,0.06,0.94);
+        readPhase=readPhase<midpoint?0.5*(readPhase/midpoint):0.5+0.5*((readPhase-midpoint)/(1.0-midpoint));}
     const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
-    // Preserve the proven realtime spectral compiler for the first two stages
-    // while the compiler cache is generalized in the next internal revision.
-    // Additional phase stages are applied deterministically here; spectral
-    // stages beyond the first two are rendered by the plan preview API but are
-    // not silently executed on the audio thread yet.
-    OscProcessStage first{},second{};
-    std::size_t used=0;
-    for(std::size_t i=0;i<count && used<2;++i) {
-        if(used++==0) first=plan.stages[i]; else second=plan.stages[i];
-    }
-    return next(table,frequency,sampleRate,position,
-                first.type,first.amount,second.type,second.amount,
-                phaseOffsetCycles,phaseSkew,first.seed,second.seed);
+    bool spectral=table.tableLength==spectralSize;
+    if(spectral){bool found=false;for(std::size_t i=0;i<count;++i)found|=oscProcessIsSpectral(plan.stages[i].type);spectral=found;}
+    double fallbackPhase=readPhase;
+    for(std::size_t i=0;i<count;++i)if(!oscProcessIsSpectral(plan.stages[i].type))
+        fallbackPhase=processOscillatorPhase(fallbackPhase,plan.stages[i].type,plan.stages[i].amount);
+    if(!spectral)readPhase=fallbackPhase;
+    const double tablePosition=readPhase*static_cast<double>(table.tableLength);
+    const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength,nextIndex=(index+1)%table.tableLength;
+    const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
+    auto read=[&](std::size_t frame){
+        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,fallbackPhase);
+        const auto& samples=table.frames[frame].bands[bandIndex].samples;
+        return samples[index]+fraction*(samples[nextIndex]-samples[index]);};
+    const float a=read(first),b=read(second),output=a+(framePosition-static_cast<float>(first))*(b-a);
+    phase_+=increment;if(phase_>=1)phase_-=1;
+    return frequency>=sampleRate*.5?0:output;
 }
 
 double midiFrequency(int note) noexcept { return 440.0 * std::exp2((std::clamp(note, 0, 127) - 69) / 12.0); }
