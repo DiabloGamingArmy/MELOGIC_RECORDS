@@ -658,18 +658,18 @@ void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
     setOrdinal(ordinal);
 }
 void OscillatorCard::resized() {
-    remove_.setBounds(getWidth()-32,6,24,21);
-    power_.setBounds(getWidth()-65,6,28,21);
+    remove_.setBounds(getWidth()-31,6,24,21);
+    power_.setBounds(getWidth()-62,6,27,21);
     if(!engineBacked_) return;
 
     auto body=contentBounds();
     body.removeFromTop(2);
-    auto controls=body.removeFromBottom(64);
+    auto controls=body.removeFromBottom(56);
     body.removeFromBottom(4);
 
     auto upper=body;
-    constexpr int columnGap=5;
-    const int columnWidth=juce::jlimit(112,132,upper.getWidth()*27/100);
+    constexpr int columnGap=7;
+    const int columnWidth=juce::jlimit(104,122,upper.getWidth()*25/100);
     auto routing=upper.removeFromRight(columnWidth);
     upper.removeFromRight(columnGap);
     auto process=upper.removeFromRight(columnWidth);
@@ -685,7 +685,7 @@ void OscillatorCard::resized() {
                              RackSlider& amount,
                              juce::Label& amountLabel) {
         auto selectorRow=slot.removeFromTop(24);
-        constexpr int arrowWidth=22;
+        constexpr int arrowWidth=19;
 
         // Selector owns the full width. Navigation arrows sit ON its left/right
         // edges like integrated end-caps. LookAndFeel reserves text padding so
@@ -698,7 +698,7 @@ void OscillatorCard::resized() {
 
         auto knobArea=slot.reduced(4,3);
         knobArea.removeFromBottom(13);
-        const int knobSize=48;
+        const int knobSize=44;
 
         if(randomize.isVisible()) {
             // Seeded processes shift the knob left only while the seed control
@@ -741,15 +741,15 @@ void OscillatorCard::resized() {
                              RackSlider& amount,
                              juce::Label& amountLabel) {
         auto selectorRow=slot.removeFromTop(24);
-        constexpr int arrowWidth=22;
+        constexpr int arrowWidth=19;
         previous.setBounds(selectorRow.removeFromLeft(arrowWidth));
         selectorRow.removeFromLeft(2);
         next.setBounds(selectorRow.removeFromRight(arrowWidth));
         selectorRow.removeFromRight(2);
         selector.setBounds(selectorRow);
 
-        auto knob=slot.reduced(6,3);
-        amount.setBounds(knob.removeFromTop(48));
+        auto knob=slot.reduced(8,3);
+        amount.setBounds(knob.removeFromTop(44));
         amountLabel.setBounds(slot.removeFromBottom(13));
     };
 
@@ -762,7 +762,7 @@ void OscillatorCard::resized() {
 
     upper.removeFromRight(columnGap);
 
-    auto tuning=upper.removeFromBottom(34);
+    auto tuning=upper.removeFromBottom(30);
     upper.removeFromBottom(4);
     const int tuningCellWidth=tuning.getWidth()/3;
     auto placeTuning=[&](int index,juce::Slider& slider,juce::Label& title) {
@@ -1194,8 +1194,8 @@ OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
     addTile_.setName("Add oscillator module");content_.addAndMakeVisible(addTile_);
     add_.onClick=[this]{addOscillator();};addTile_.onClick=add_.onClick;
     left_.setName("Scroll oscillators left");right_.setName("Scroll oscillators right");
-    left_.onClick=[this]{viewport_.setViewPosition(juce::jmax(0,viewport_.getViewPositionX()-cardWidth_-3),0);};
-    right_.onClick=[this]{viewport_.setViewPosition(viewport_.getViewPositionX()+cardWidth_+3,0);};
+    left_.onClick=[this]{viewport_.setViewPosition(juce::jmax(0,viewport_.getViewPositionX()-cardWidth_-4),0);};
+    right_.onClick=[this]{viewport_.setViewPosition(viewport_.getViewPositionX()+cardWidth_+4,0);};
     // mct-origami-audio-reengineer-p05.4-initial-editor-model-sync
     // Hidden timer polling stays suppressed, but construction requires one
     // unconditional model -> card topology synchronization.
@@ -1333,15 +1333,15 @@ void OscillatorRack::renumberOscillators() {
 void OscillatorRack::layoutCards() {
     const auto previousX=viewport_.getViewPositionX();
     cardWidth_=420;
-    const int height=juce::jmax(0,viewport_.getHeight()-8);
-    int x=0;for(auto& card:cards_) {card->setBounds(x,0,cardWidth_,height);x+=cardWidth_+3;}
-    addTile_.setBounds(x,0,96,height);content_.setSize(juce::jmax(viewport_.getWidth(),x+96),height);
+    const int height=juce::jmax(0,viewport_.getHeight()-12);
+    int x=0;for(auto& card:cards_) {card->setBounds(x,0,cardWidth_,height);x+=cardWidth_+4;}
+    addTile_.setBounds(x,0,74,height);content_.setSize(juce::jmax(viewport_.getWidth(),x+74),height);
     viewport_.setViewPosition(juce::jmin(previousX,juce::jmax(0,content_.getWidth()-viewport_.getMaximumVisibleWidth())),0);
 }
 void OscillatorRack::resized() {
     add_.setBounds(getWidth()-155,5,143,23);
-    auto body=contentBounds();left_.setBounds(body.removeFromLeft(20).reduced(0,4));body.removeFromLeft(2);
-    right_.setBounds(body.removeFromRight(20).reduced(0,4));body.removeFromRight(2);viewport_.setBounds(body);layoutCards();
+    auto body=contentBounds();left_.setBounds(body.removeFromLeft(25).reduced(0,5));body.removeFromLeft(4);
+    right_.setBounds(body.removeFromRight(25).reduced(0,5));body.removeFromRight(4);viewport_.setBounds(body);layoutCards();
 }
 void OscillatorRack::paintContent(juce::Graphics& g,juce::Rectangle<int>) {
     text(g,juce::String(count())+" MODULES",{140,5,getWidth()-305,24},8.5f,Palette::muted(),juce::Justification::centredRight);
