@@ -121,6 +121,26 @@ private:
     RackSlider route1Amount_,route2Amount_;
     juce::Label route1AmountLabel_,route2AmountLabel_;
     bool syncingProcess_=false;
+
+    // Dynamic OSC PROCESS / OSC ROUTING collections. The first legacy editor
+    // controls are reused as the selected-item editor until Patch 5 removes the
+    // compatibility members entirely.
+    juce::Viewport processViewport_,routeViewport_;
+    juce::Component processContent_,routeContent_;
+    std::array<juce::TextButton,maxOscProcesses> processTabs_;
+    std::array<juce::TextButton,maxOscRoutes> routeTabs_;
+    juce::TextButton processAdd_{"+ "},processRemove_{"- "};
+    juce::TextButton routeAdd_{"+ "},routeRemove_{"- "};
+    OscProcessSlotId selectedProcessId_=0;
+    OscRouteSlotId selectedRouteId_=0;
+    void selectProcess(OscProcessSlotId);
+    void selectRoute(OscRouteSlotId);
+    void addProcess();
+    void removeSelectedProcess();
+    void addRoute();
+    void removeSelectedRoute();
+    void syncDynamicCollections(const OscillatorModuleState&);
+
     // mct-origami-tuning-labels-v18.3
     juce::Label octaveTitle_,semitoneTitle_,fineTitle_;
     juce::Label panLabel_,levelLabel_;
