@@ -21,7 +21,7 @@ void OrigamiHeader::selectSynth() {
 void OrigamiHeader::paint(juce::Graphics& g) {
     // Supplied artwork is 800x182. Display the complete composition without
     // cropping or stretching inside the existing 72px header.
-    const juce::Rectangle<int> brandBounds{10,4,286,64};
+    const juce::Rectangle<int> brandBounds{12,3,278,60};
     if(logo_.isValid()) {
         g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
         g.drawImageWithin(logo_,brandBounds.getX(),brandBounds.getY(),
@@ -34,10 +34,10 @@ void OrigamiHeader::paint(juce::Graphics& g) {
     g.drawHorizontalLine(getHeight()-1,0.f,float(getWidth()));
 }
 void OrigamiHeader::resized() {
-    auto area=getLocalBounds().withTrimmedLeft(324).reduced(0,10);
+    auto area=getLocalBounds().withTrimmedLeft(314).reduced(0,7);
     auto utilities=area.removeFromRight(juce::jmin(170,area.getWidth()/4));
-    settings_.setBounds(utilities.removeFromRight(34).reduced(2,6));save_.setBounds(utilities.removeFromRight(55).reduced(2,6));browse_.setBounds(utilities.reduced(2,6));
-    area.removeFromRight(10);auto modes=area.removeFromRight(300);for(auto& mode:modes_)mode.setBounds(modes.removeFromLeft(60).reduced(1,6));
-    area.removeFromRight(14);previous_.setBounds(area.removeFromLeft(27).reduced(0,6));next_.setBounds(area.removeFromRight(27).reduced(0,6));preset_.setBounds(area.reduced(3,6));
+    settings_.setBounds(utilities.removeFromRight(36).reduced(2,4));save_.setBounds(utilities.removeFromRight(58).reduced(2,4));browse_.setBounds(utilities.reduced(2,4));
+    area.removeFromRight(10);auto modes=area.removeFromRight(310);for(auto& mode:modes_)mode.setBounds(modes.removeFromLeft(62).reduced(1,4));
+    area.removeFromRight(14);previous_.setBounds(area.removeFromLeft(29).reduced(0,4));next_.setBounds(area.removeFromRight(29).reduced(0,4));preset_.setBounds(area.reduced(3,4));
 }
 }
