@@ -83,12 +83,16 @@ private:
         int route2SourceIndex=-1;
         OscillatorModuleId compiledRoute1SourceId=0;
         OscillatorModuleId compiledRoute2SourceId=0;
+        std::array<int,maxOscRoutes> routeSourceIndices{};
+        std::array<OscillatorModuleId,maxOscRoutes> compiledRouteSourceIds{};
+        std::uint8_t compiledRouteCount=0;
         bool routesValid=false;
         bool valid=false;
         void invalidate() noexcept {
             valid=false;routesValid=false;id=0;
             route1SourceIndex=-1;route2SourceIndex=-1;
             compiledRoute1SourceId=0;compiledRoute2SourceId=0;
+            routeSourceIndices.fill(-1);compiledRouteSourceIds.fill(0);compiledRouteCount=0;
         }
         void update(const OscillatorModuleState& m) noexcept {
             const float o=std::isfinite(m.octave)?m.octave:0.0f;
@@ -127,16 +131,27 @@ private:
 
         void compileRoutes(const OscillatorModuleState& module,
                            const std::array<OscillatorModuleId,maxOscillatorModules>& moduleIds) noexcept {
-            if(routesValid &&
-               compiledRoute1SourceId==module.route1SourceId &&
-               compiledRoute2SourceId==module.route2SourceId) return;
-
             auto resolve=[&](OscillatorModuleId sourceId) noexcept {
                 if(sourceId==0) return -1;
                 for(std::size_t i=0;i<moduleIds.size();++i)
                     if(moduleIds[i]==sourceId) return static_cast<int>(i);
                 return -1;
             };
+
+            const auto count=std::min<std::size_t>(module.routeCount,maxOscRoutes);
+            bool same=routesValid && compiledRouteCount==count;
+            if(same) for(std::size_t i=0;i<count;++i)
+                if(compiledRouteSourceIds[i]!=module.routes[i].sourceId) { same=false;break; }
+            if(same) return;
+
+            routeSourceIndices.fill(-1);compiledRouteSourceIds.fill(0);
+            compiledRouteCount=static_cast<std::uint8_t>(count);
+            for(std::size_t i=0;i<count;++i) {
+                compiledRouteSourceIds[i]=module.routes[i].sourceId;
+                routeSourceIndices[i]=resolve(module.routes[i].sourceId);
+            }
+
+            // Keep legacy prepared slots populated during the migration.
             route1SourceIndex=resolve(module.route1SourceId);
             route2SourceIndex=resolve(module.route2SourceId);
             compiledRoute1SourceId=module.route1SourceId;
