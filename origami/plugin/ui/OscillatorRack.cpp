@@ -382,14 +382,15 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
 
     auto reseed=[this](int slot) {
         if(!moduleGetter_ || !moduleSetter_) return;
-        auto state=moduleGetter_(display_.id);
-        if(!state.id) return;
+        auto state=moduleGetter_(display_.id); if(!state.id) return;
         auto seed=static_cast<std::uint32_t>(juce::Random::getSystemRandom().nextInt());
         if(seed==0) seed=0x6d2b79f5u;
-        if(slot==0) state.process1Seed=seed; else state.process2Seed=seed;
-        moduleSetter_(display_.id,state);
-        syncFromModel();
-        repaint();
+        if(slot==0 && selectedProcessId_) {
+            for(std::size_t i=0;i<state.processCount;++i)
+                if(state.processes[i].id==selectedProcessId_) {state.processes[i].seed=seed;break;}
+        } else if(slot==0) state.process1Seed=seed;
+        else state.process2Seed=seed;
+        moduleSetter_(display_.id,state);syncFromModel();repaint();
     };
     process1Randomize_.onClick=[reseed]{reseed(0);};
     process2Randomize_.onClick=[reseed]{reseed(1);};
