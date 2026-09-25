@@ -169,6 +169,8 @@ bool OrigamiAudioProcessorEditor::createDraggedRoute(
         target.getProperties()["mct.mod.destination"]);
     const int oscillatorRaw=target.getProperties().contains("mct.mod.oscillator")
         ? static_cast<int>(target.getProperties()["mct.mod.oscillator"]) : 0;
+    const auto itemId=target.getProperties().contains("mct.mod.itemId")
+        ? static_cast<std::uint32_t>(static_cast<int>(target.getProperties()["mct.mod.itemId"])) : 0u;
 
     const auto destination=static_cast<mct::origami::ModDestination>(destinationRaw);
     const auto stateBefore=dragBindings_.snapshot();
@@ -178,7 +180,8 @@ bool OrigamiAudioProcessorEditor::createDraggedRoute(
     for(const auto& existing:stateBefore.modulation.routes) {
         if(existing.id!=0 && existing.source==source &&
            existing.destination.parameter==destination &&
-           existing.destination.oscillator==static_cast<unsigned>(oscillatorRaw)) {
+           existing.destination.oscillator==static_cast<unsigned>(oscillatorRaw) &&
+           existing.destination.itemId==itemId) {
             auto route=existing;
             route.enabled=true;
             route.bipolar=false;
@@ -195,7 +198,7 @@ bool OrigamiAudioProcessorEditor::createDraggedRoute(
         if(existing.id!=id) continue;
         auto route=existing;
         route.source=source;
-        route.destination={destination,static_cast<unsigned>(oscillatorRaw)};
+        route.destination={destination,static_cast<unsigned>(oscillatorRaw),itemId};
         route.enabled=true;
         route.bipolar=(source>=mct::origami::ModSource::Lfo1
                         && source<=mct::origami::ModSource::Lfo4);
