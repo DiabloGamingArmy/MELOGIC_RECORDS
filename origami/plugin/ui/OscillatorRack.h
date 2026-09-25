@@ -128,6 +128,17 @@ private:
     bool engineBacked_=false;
     int waveformIndex_=0;
 
+
+    // UI-only spectral preview cache. FFT/IFFT work is reused until a visually
+    // meaningful source/process key changes.
+    std::array<float,2048> spectralPreviewCache_{};
+    int spectralPreviewWtKey_=-1;
+    int spectralPreviewAmount1Key_=std::numeric_limits<int>::min();
+    int spectralPreviewAmount2Key_=std::numeric_limits<int>::min();
+    dsp::OscProcessType spectralPreviewProcess1_=dsp::OscProcessType::Off;
+    dsp::OscProcessType spectralPreviewProcess2_=dsp::OscProcessType::Off;
+    std::uint32_t spectralPreviewSeed1_=0,spectralPreviewSeed2_=0;
+    bool spectralPreviewValid_=false;
 };
 // Observe native wheel delivery across all content descendants, including JUCE
 // SliderLabelComp (which swallows mouseWheelMove). Ignore their bubbled copy;
