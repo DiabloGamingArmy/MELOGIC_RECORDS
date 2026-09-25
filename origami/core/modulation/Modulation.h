@@ -33,7 +33,9 @@ enum class ModSource : std::uint32_t {
 enum class ModDestination : std::uint32_t {
     Cutoff=1, Resonance=2, MasterGain=3,
     WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107,
-    Process1Amount=108, Process2Amount=109, Route1Amount=110, Route2Amount=111
+    Process1Amount=108, Process2Amount=109, Route1Amount=110, Route2Amount=111,
+    // Stable-ID dynamic destinations. 108..111 remain readable legacy values.
+    ProcessAmount=112, RouteAmount=113
 };
 enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
 // Preserve serialized values: legacy NoteRetrigger (2) is now named Loop.
@@ -94,7 +96,12 @@ float performanceSourceCurveValue(const PerformanceSourceCurve&,float input) noe
 struct ModAddress {
     ModDestination parameter=ModDestination::Cutoff;
     OscillatorModuleId oscillator=0;
-    bool operator==(const ModAddress& o) const noexcept {return parameter==o.parameter && oscillator==o.oscillator;}
+    // Stable child identity for ProcessAmount / RouteAmount. Zero for all
+    // scalar and legacy destinations.
+    std::uint32_t itemId=0;
+    bool operator==(const ModAddress& o) const noexcept {
+        return parameter==o.parameter && oscillator==o.oscillator && itemId==o.itemId;
+    }
 };
 struct ModRoute {
     std::uint32_t id=0;
@@ -262,6 +269,8 @@ public:
 private:
     struct Group {
         ModAddress address{};std::size_t slot=0;
+        // Resolved once during compile(); never searched by ID on the audio thread.
+        std::size_t itemSlot=0;
         // Destination domain captured at compile time. OSC process amounts are
         // process-dependent (unipolar 0..1 or bipolar -1..1), so they cannot
         // safely use the generic ModDestination range table.
