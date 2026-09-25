@@ -720,9 +720,13 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
             double fallbackPhase=readPhase;
             if(!oscProcessIsSpectral(process1)) fallbackPhase=processOscillatorPhase(fallbackPhase,process1,amount1);
             if(!oscProcessIsSpectral(process2)) fallbackPhase=processOscillatorPhase(fallbackPhase,process2,amount2);
+            OscProcessPlan compatibilityPlan{};
+            if(process1!=OscProcessType::Off)
+                compatibilityPlan.stages[compatibilityPlan.count++]={process1,amount1,process1Seed};
+            if(process2!=OscProcessType::Off && compatibilityPlan.count<maxOscProcessStages)
+                compatibilityPlan.stages[compatibilityPlan.count++]={process2,amount2,process2Seed};
             return spectralCompiler().readOrRequest(table,frame,bandIndex,
-                process1,amount1,process1Seed,process2,amount2,process2Seed,
-                index,nextIndex,fraction,fallbackPhase);
+                compatibilityPlan,index,nextIndex,fraction,fallbackPhase);
         }
         const auto& samples=table.frames[frame].bands[bandIndex].samples;
         return samples[index]+fraction*(samples[nextIndex]-samples[index]);
