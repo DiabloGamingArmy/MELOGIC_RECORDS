@@ -150,12 +150,25 @@ constexpr int randAmpVariantIndex(float amount) noexcept {
     return static_cast<int>(clamped*static_cast<float>(randAmpVariantCount()-1)+0.5f);
 }
 
+inline constexpr std::size_t maxOscProcessStages=8;
+struct OscProcessStage {
+    OscProcessType type=OscProcessType::Off;
+    float amount=0.0f;
+    std::uint32_t seed=0;
+};
+struct OscProcessPlan {
+    std::array<OscProcessStage,maxOscProcessStages> stages{};
+    std::uint8_t count=0;
+};
+
 const char* oscProcessName(OscProcessType type) noexcept;
 const char* oscProcessCategory(OscProcessType type) noexcept;
 double processOscillatorPhase(double phase,OscProcessType type,float amount) noexcept;
 void renderProcessedFrame2048(const float* input,float* output,
                               OscProcessType process1,float amount1,std::uint32_t seed1,
                               OscProcessType process2,float amount2,std::uint32_t seed2) noexcept;
+void renderProcessedFrame2048(const float* input,float* output,
+                              const OscProcessPlan& plan) noexcept;
 
 // mct-origami-deep-audit-p01-no-rt-spectral-build
 bool prepareSpectralCompiler() noexcept;
@@ -187,6 +200,9 @@ public:
                double phaseSkew=0.0,
                std::uint32_t process1Seed=0x13579bdfu,
                std::uint32_t process2Seed=0x2468ace1u) noexcept;
+    float next(const Wavetable& table,double frequency,double sampleRate,float position,
+               const OscProcessPlan& plan,double phaseOffsetCycles=0.0,
+               double phaseSkew=0.0) noexcept;
     double phase() const noexcept { return phase_; }
 private:
     double phase_ = 0;
