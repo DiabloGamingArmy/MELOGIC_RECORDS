@@ -132,8 +132,15 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             }
         };
 
-        applyPreRoute(prepared.route1SourceIndex,module.route1Type,module.route1Amount);
-        applyPreRoute(prepared.route2SourceIndex,module.route2Type,module.route2Amount);
+        if(module.routeCount>0) {
+            const auto routeCount=std::min<std::size_t>(module.routeCount,maxOscRoutes);
+            for(std::size_t r=0;r<routeCount;++r)
+                applyPreRoute(prepared.routeSourceIndices[r],module.routes[r].type,module.routes[r].amount);
+        } else {
+            // Compatibility path while legacy presets/UI still expose two slots.
+            applyPreRoute(prepared.route1SourceIndex,module.route1Type,module.route1Amount);
+            applyPreRoute(prepared.route2SourceIndex,module.route2Type,module.route2Amount);
+        }
 
         double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
@@ -229,10 +236,17 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             return signal;
         };
 
-        oscillatorMix=applyPostRoute(oscillatorMix,prepared.route1SourceIndex,
-                                     module.route1Type,module.route1Amount);
-        oscillatorMix=applyPostRoute(oscillatorMix,prepared.route2SourceIndex,
-                                     module.route2Type,module.route2Amount);
+        if(module.routeCount>0) {
+            const auto routeCount=std::min<std::size_t>(module.routeCount,maxOscRoutes);
+            for(std::size_t r=0;r<routeCount;++r)
+                oscillatorMix=applyPostRoute(oscillatorMix,prepared.routeSourceIndices[r],
+                                             module.routes[r].type,module.routes[r].amount);
+        } else {
+            oscillatorMix=applyPostRoute(oscillatorMix,prepared.route1SourceIndex,
+                                         module.route1Type,module.route1Amount);
+            oscillatorMix=applyPostRoute(oscillatorMix,prepared.route2SourceIndex,
+                                         module.route2Type,module.route2Amount);
+        }
 
         if(!std::isfinite(oscillatorMix)) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
