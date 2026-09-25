@@ -49,25 +49,25 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
        button.getName()=="FILTER SOURCE TAB") {
         if(over || down) {
             g.setColour(Palette::raised().withAlpha(down?0.28f:0.16f));
-            g.fillRoundedRectangle(bounds,3.5f);
+            g.fillRect(bounds);
         }
         g.setColour(active ? signalSourceColour()
                            : Palette::borderSoft().withAlpha(0.88f));
-        g.drawRoundedRectangle(bounds,3.5f,active?1.25f:0.8f);
+        g.drawRect(bounds,active?1.25f:0.8f);
         return;
     }
     const bool oscillatorPower=button.getName().startsWithIgnoreCase("Power OSC");
     auto fill=active?Palette::raised():Palette::inset();
     if(over) fill=fill.brighter(.08f);
     if(down) fill=fill.brighter(.13f);
-    g.setColour(fill);g.fillRoundedRectangle(bounds,4.5f);
+    g.setColour(fill);g.fillRect(bounds);
     g.setColour(active && oscillatorPower ? signalSourceColour()
                                           : (active?Palette::borderStrong():Palette::borderSoft()));
-    g.drawRoundedRectangle(bounds,4.5f,active && oscillatorPower ? 1.35f : 1.0f);
+    g.drawRect(bounds,active && oscillatorPower ? 1.35f : 1.0f);
     if(active) {
         g.setColour(oscillatorPower ? signalSourceColour() : Palette::accent().withAlpha(.95f));
-        g.fillRoundedRectangle(bounds.getX()+9.0f,bounds.getBottom()-2.2f,
-                               bounds.getWidth()-18.0f,1.55f,0.7f);
+        g.fillRect(bounds.getX()+9.0f,bounds.getBottom()-2.2f,
+                   bounds.getWidth()-18.0f,1.55f);
     }
 }
 void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& button,bool,bool) {
@@ -208,7 +208,7 @@ void OrigamiLookAndFeel::drawToggleButton(juce::Graphics& g,juce::ToggleButton& 
     if(down) fill=fill.brighter(.10f);
 
     g.setColour(fill);
-    g.fillRoundedRectangle(b,3.0f);
+    g.fillRect(b);
 
     // Oscillator power is the primary signal-source activity indicator.
     // Keep every other toggle monochrome, but drive this outline from the
@@ -218,14 +218,14 @@ void OrigamiLookAndFeel::drawToggleButton(juce::Graphics& g,juce::ToggleButton& 
         : Palette::borderSoft();
 
     g.setColour(outline);
-    g.drawRoundedRectangle(b,3.0f,oscillatorPower && active ? 1.25f : 1.0f);
+    g.drawRect(b,oscillatorPower && active ? 1.25f : 1.0f);
 
     if(active) {
         // Existing bottom "pill" indicator becomes full-bright source red for
         // oscillator power; non-power toggles retain the monochrome contract.
         g.setColour(oscillatorPower ? signalSourceColour() : Palette::accent());
-        g.fillRoundedRectangle(b.getX()+5.0f,b.getBottom()-2.1f,
-                               b.getWidth()-10.0f,1.35f,0.65f);
+        g.fillRect(b.getX()+5.0f,b.getBottom()-2.1f,
+                   b.getWidth()-10.0f,1.35f);
     }
 
     text(g,button.getButtonText(),button.getLocalBounds().reduced(3),8.0f,
