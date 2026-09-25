@@ -132,6 +132,8 @@ private:
     // UI-only spectral preview cache. FFT/IFFT work is reused until a visually
     // meaningful source/process key changes.
     std::array<float,2048> spectralPreviewCache_{};
+    std::array<float,2048> spectralPreviewPrevious_{};
+    float spectralPreviewMorph_=1.0f;
     int spectralPreviewWtKey_=-1;
     int spectralPreviewAmount1Key_=std::numeric_limits<int>::min();
     int spectralPreviewAmount2Key_=std::numeric_limits<int>::min();
