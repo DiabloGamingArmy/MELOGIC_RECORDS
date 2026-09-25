@@ -53,6 +53,25 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
         };
         if(!validRoute(m.route1SourceId,m.route1Type) ||
            !validRoute(m.route2SourceId,m.route2Type)) return false;
+
+        if(m.processCount>maxOscProcesses || m.routeCount>maxOscRoutes ||
+           m.nextProcessId==0 || m.nextRouteId==0) return false;
+        OscProcessSlotId previousProcessId=0;
+        for(std::size_t i=0;i<m.processCount;++i) {
+            const auto& p=m.processes[i];
+            if(!p.id || p.id<=previousProcessId || p.id>=m.nextProcessId ||
+               !dsp::validOscProcessType(p.type) ||
+               !range(p.amount,dsp::oscProcessAmountMinimum(p.type),1)) return false;
+            previousProcessId=p.id;
+        }
+        OscRouteSlotId previousRouteId=0;
+        for(std::size_t i=0;i<m.routeCount;++i) {
+            const auto& route=m.routes[i];
+            if(!route.id || route.id<=previousRouteId || route.id>=m.nextRouteId ||
+               !validOscRouteType(route.type) || !range(route.amount,-1,1) ||
+               !validRoute(route.sourceId,route.type)) return false;
+            previousRouteId=route.id;
+        }
     }
     auto first=s.oscillators[0];applyLegacyOscillatorParameters(first,s.parameters);
     const auto& m=s.oscillators[0];
