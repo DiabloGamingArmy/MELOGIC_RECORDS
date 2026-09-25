@@ -74,7 +74,7 @@ public:
         addAndMakeVisible(bendRange_);
         bendRange_.setName("Pitch bend range");
         bendRange_.setSliderStyle(juce::Slider::LinearBarVertical);
-        bendRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,68,20);
+        bendRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,62,18);
         bendRange_.setRange(1.0,48.0,1.0);
         // V23.3.4: relative drag. Clicking does not teleport the value.
         bendRange_.setSliderSnapsToMousePosition(false);
@@ -98,7 +98,7 @@ public:
         // V23.4.5: native Origami rotary glide control.
         glide_.setName("Glide");
         glide_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,54,16);
+        glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,48,14);
         glide_.setRange(0.0,5.0,0.001);
         glide_.setRotaryParameters(juce::MathConstants<float>::pi*1.25f,
                                    juce::MathConstants<float>::pi*2.75f,true);
@@ -127,10 +127,10 @@ public:
         arpEnable_.setTooltip("Enable arpeggiator");
         arpClockSummary_.setJustificationType(juce::Justification::centred);
         arpClockSummary_.setColour(juce::Label::textColourId,Palette::secondary());
-        arpClockSummary_.setFont(juce::FontOptions(8.4f));
+        arpClockSummary_.setFont(juce::FontOptions(7.2f));
         arpPatternSummary_.setJustificationType(juce::Justification::centred);
         arpPatternSummary_.setColour(juce::Label::textColourId,Palette::muted());
-        arpPatternSummary_.setFont(juce::FontOptions(8.0f));
+        arpPatternSummary_.setFont(juce::FontOptions(6.7f));
         syncArpFromModel();
         arpEnable_.onClick=[this]{
             if(!arpSetter_) return;
