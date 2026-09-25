@@ -129,30 +129,34 @@ struct SpectralKey {
     const Wavetable* table=nullptr;
     std::uint64_t generation=0;
     std::uint16_t frame=0,band=0;
-    OscProcessType p1=OscProcessType::Off,p2=OscProcessType::Off;
-    float a1=0.0f,a2=0.0f;
-    std::uint32_t s1=0,s2=0;
+    OscProcessPlan plan{};
 };
 bool sameSpectralKey(const SpectralKey& a,const SpectralKey& b) noexcept {
-    return a.table==b.table && a.generation==b.generation &&
-           a.frame==b.frame && a.band==b.band &&
-           a.p1==b.p1 && a.p2==b.p2 &&
-           a.a1==b.a1 && a.a2==b.a2 && a.s1==b.s1 && a.s2==b.s2;
+    if(a.table!=b.table || a.generation!=b.generation || a.frame!=b.frame ||
+       a.band!=b.band || a.plan.count!=b.plan.count) return false;
+    const auto count=std::min<std::size_t>(a.plan.count,maxOscProcessStages);
+    for(std::size_t i=0;i<count;++i) {
+        const auto& x=a.plan.stages[i]; const auto& y=b.plan.stages[i];
+        if(x.type!=y.type || x.amount!=y.amount || x.seed!=y.seed) return false;
+    }
+    return true;
 }
 std::uint64_t spectralKeyHash(const SpectralKey& k) noexcept {
     auto mix=[](std::uint64_t h,std::uint64_t v) noexcept {
         v^=v>>33;v*=0xff51afd7ed558ccduLL;v^=v>>33;
-        h^=v+0x9e3779b97f4a7c15uLL+(h<<6)+(h>>2);
-        return h;
+        h^=v+0x9e3779b97f4a7c15uLL+(h<<6)+(h>>2);return h;
     };
     std::uint64_t h=0xcbf29ce484222325uLL;
     h=mix(h,static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(k.table)));
-    h=mix(h,k.generation);h=mix(h,k.frame);h=mix(h,k.band);
-    h=mix(h,static_cast<std::uint32_t>(k.p1));h=mix(h,static_cast<std::uint32_t>(k.p2));
-    std::uint32_t f1=0,f2=0;
-    std::memcpy(&f1,&k.a1,sizeof(f1));std::memcpy(&f2,&k.a2,sizeof(f2));
-    h=mix(h,f1);h=mix(h,f2);h=mix(h,k.s1);h=mix(h,k.s2);
-    return h ? h : 1u;
+    h=mix(h,k.generation);h=mix(h,k.frame);h=mix(h,k.band);h=mix(h,k.plan.count);
+    const auto count=std::min<std::size_t>(k.plan.count,maxOscProcessStages);
+    for(std::size_t i=0;i<count;++i) {
+        const auto& stage=k.plan.stages[i];
+        h=mix(h,static_cast<std::uint32_t>(stage.type));
+        std::uint32_t bits=0;std::memcpy(&bits,&stage.amount,sizeof(bits));
+        h=mix(h,bits);h=mix(h,stage.seed);
+    }
+    return h?h:1u;
 }
 struct SpectralRequest {
     SpectralKey key{};
@@ -163,102 +167,41 @@ class SpectralCompiler {
 public:
     static constexpr std::size_t cacheWays=8,cacheBuckets=64,cacheSize=cacheWays*cacheBuckets;
     static constexpr std::size_t queueSize=64,pendingSize=256;
-    ~SpectralCompiler() {
-        stop_.store(true,std::memory_order_release);
-        if(worker_.joinable()) worker_.join();
-    }
+    ~SpectralCompiler(){stop_.store(true,std::memory_order_release);if(worker_.joinable())worker_.join();}
     bool start() noexcept {
         std::lock_guard<std::mutex> guard(startMutex_);
-        if(started_) return true;
-        try { worker_=std::thread([this]{workerLoop();});started_=true;return true; }
-        catch(...) { return false; }
+        if(started_)return true;
+        try{worker_=std::thread([this]{workerLoop();});started_=true;return true;}catch(...){return false;}
     }
     float readOrRequest(const Wavetable& table,std::size_t frame,std::size_t band,
-                        OscProcessType p1,float a1,std::uint32_t s1,
-                        OscProcessType p2,float a2,std::uint32_t s2,
+                        const OscProcessPlan& sourcePlan,
                         std::size_t index,std::size_t nextIndex,float fraction,
                         double fallbackPhase) noexcept {
-        const auto isRandomMorph=[](OscProcessType type) noexcept {
-            return type==OscProcessType::RandAmp || type==OscProcessType::RandSparse;
-        };
-        constexpr float spectralSteps=32.0f;
-        const auto anchor=[](float amount,bool upper) noexcept {
-            const float scaled=std::clamp(amount,0.0f,1.0f)*spectralSteps;
-            const float step=upper?std::ceil(scaled):std::floor(scaled);
-            return step/spectralSteps;
-        };
-        const auto blend=[](float amount) noexcept {
-            const float scaled=std::clamp(amount,0.0f,1.0f)*spectralSteps;
-            return scaled-std::floor(scaled);
-        };
-
-        // Read an exact compiled anchor without ever building spectral data on
-        // the audio thread. A miss queues the worker and reports unavailable.
-        auto readAnchor=[&](float keyA1,float keyA2,float& value) noexcept {
-            SpectralKey key{&table,table.generation,
-                            static_cast<std::uint16_t>(frame),static_cast<std::uint16_t>(band),
-                            p1,p2,keyA1,keyA2,s1,s2};
-            const auto hash=spectralKeyHash(key);
-            const auto bucket=(hash%cacheBuckets)*cacheWays;
-            for(std::size_t w=0;w<cacheWays;++w) {
-                auto& slot=cache_[bucket+w];
-                if(slot.state.load(std::memory_order_acquire)!=ready) continue;
-                slot.readers.fetch_add(1,std::memory_order_acquire);
-                if(slot.state.load(std::memory_order_acquire)!=ready) {
-                    slot.readers.fetch_sub(1,std::memory_order_release);continue;
-                }
-                if(sameSpectralKey(slot.key,key)) {
-                    value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
-                    slot.age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
-                    slot.readers.fetch_sub(1,std::memory_order_release);
-                    return true;
-                }
-                slot.readers.fetch_sub(1,std::memory_order_release);
+        OscProcessPlan keyPlan=sourcePlan;
+        keyPlan.count=static_cast<std::uint8_t>(std::min<std::size_t>(keyPlan.count,maxOscProcessStages));
+        for(std::size_t i=0;i<keyPlan.count;++i)
+            if(oscProcessIsSpectral(keyPlan.stages[i].type))
+                keyPlan.stages[i].amount=quantizedSpectralAmount(keyPlan.stages[i].type,keyPlan.stages[i].amount);
+        SpectralKey key{&table,table.generation,static_cast<std::uint16_t>(frame),
+                        static_cast<std::uint16_t>(band),keyPlan};
+        const auto hash=spectralKeyHash(key),bucket=(hash%cacheBuckets)*cacheWays;
+        for(std::size_t w=0;w<cacheWays;++w){
+            auto& slot=cache_[bucket+w];
+            if(slot.state.load(std::memory_order_acquire)!=ready)continue;
+            slot.readers.fetch_add(1,std::memory_order_acquire);
+            if(slot.state.load(std::memory_order_acquire)!=ready){slot.readers.fetch_sub(1,std::memory_order_release);continue;}
+            if(sameSpectralKey(slot.key,key)){
+                const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
+                slot.age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+                slot.readers.fetch_sub(1,std::memory_order_release);return value;
             }
-            request(table,key,hash);
-            return false;
-        };
-
-        const bool random1=isRandomMorph(p1);
-        const bool random2=isRandomMorph(p2);
-        const float lo1=random1?anchor(a1,false):quantizedSpectralAmount(p1,a1);
-        const float hi1=random1?anchor(a1,true):lo1;
-        const float lo2=random2?anchor(a2,false):quantizedSpectralAmount(p2,a2);
-        const float hi2=random2?anchor(a2,true):lo2;
-        const float t1=random1?blend(a1):0.0f;
-        const float t2=random2?blend(a2):0.0f;
-
-        float v00=0.0f,v10=0.0f,v01=0.0f,v11=0.0f;
-        const bool ok00=readAnchor(lo1,lo2,v00);
-        const bool ok10=(hi1==lo1)?ok00:readAnchor(hi1,lo2,v10);
-        if(hi1==lo1) v10=v00;
-        const bool ok01=(hi2==lo2)?ok00:readAnchor(lo1,hi2,v01);
-        if(hi2==lo2) v01=v00;
-        const bool same11=hi1==lo1 && hi2==lo2;
-        const bool ok11=same11?ok00:readAnchor(hi1,hi2,v11);
-        if(same11) v11=v00;
-
-        // Interpolate between the bounded FFT anchor states at audio rate. This
-        // preserves the aggressive seeded masks while removing the 1/32-step
-        // discontinuities during knob moves and modulation.
-        if(ok00 && ok10 && ok01 && ok11) {
-            const float low=v00+(v10-v00)*t1;
-            const float high=v01+(v11-v01)*t1;
-            return low+(high-low)*t2;
+            slot.readers.fetch_sub(1,std::memory_order_release);
         }
-
-        // Never snap back to dry merely because the next anchor is still being
-        // prepared. Prefer the nearest available processed anchor.
-        if(ok00) return v00;
-        if(ok10) return v10;
-        if(ok01) return v01;
-        if(ok11) return v11;
-
+        request(table,key,hash);
         fallbackReads_.fetch_add(1,std::memory_order_relaxed);
         const auto& source=table.frames[frame].bands[band].samples;
         const double pos=(fallbackPhase-std::floor(fallbackPhase))*static_cast<double>(table.tableLength);
-        const auto i=static_cast<std::size_t>(pos)%table.tableLength;
-        const auto j=(i+1)%table.tableLength;
+        const auto i=static_cast<std::size_t>(pos)%table.tableLength,j=(i+1)%table.tableLength;
         const float f=static_cast<float>(pos-static_cast<double>(static_cast<std::size_t>(pos)));
         return source[i]+f*(source[j]-source[i]);
     }
@@ -267,107 +210,57 @@ public:
                 fallbackReads_.load(std::memory_order_relaxed),dropped_.load(std::memory_order_relaxed)};
     }
 private:
-    enum : std::uint8_t {empty=0,building=1,ready=2,retiring=3};
-    struct CacheSlot {
-        std::atomic<std::uint8_t> state{empty};
-        std::atomic<std::uint32_t> readers{0};
-        std::atomic<std::uint64_t> age{0};
-        SpectralKey key{};
-        std::array<float,spectralSize> samples{};
-    };
-    struct QueueSlot { std::atomic<bool> readyFlag{false}; SpectralRequest request{}; };
+    enum:std::uint8_t{empty=0,building=1,ready=2,retiring=3};
+    struct CacheSlot{std::atomic<std::uint8_t> state{empty};std::atomic<std::uint32_t> readers{0};
+        std::atomic<std::uint64_t> age{0};SpectralKey key{};std::array<float,spectralSize> samples{};};
+    struct QueueSlot{std::atomic<bool> readyFlag{false};SpectralRequest request{};};
     void request(const Wavetable& table,const SpectralKey& key,std::uint64_t hash) noexcept {
-        const auto pendingIndex=hash%pendingSize;
-        std::uint64_t expected=0;
-        if(!pending_[pendingIndex].compare_exchange_strong(expected,hash,std::memory_order_acq_rel,std::memory_order_relaxed))
-            return;
+        const auto pendingIndex=hash%pendingSize;std::uint64_t expected=0;
+        if(!pending_[pendingIndex].compare_exchange_strong(expected,hash,std::memory_order_acq_rel,std::memory_order_relaxed))return;
         std::uint64_t write=write_.load(std::memory_order_relaxed);
-        for(;;) {
-            const auto read=read_.load(std::memory_order_acquire);
-            if(write-read>=queueSize) {
-                pending_[pendingIndex].store(0,std::memory_order_release);
-                dropped_.fetch_add(1,std::memory_order_relaxed);return;
-            }
-            if(write_.compare_exchange_weak(write,write+1,std::memory_order_acq_rel,std::memory_order_relaxed))
-                break;
-        }
-        auto& slot=queue_[write%queueSize];
-        slot.request.key=key;slot.request.hash=hash;
+        for(;;){const auto read=read_.load(std::memory_order_acquire);
+            if(write-read>=queueSize){pending_[pendingIndex].store(0,std::memory_order_release);dropped_.fetch_add(1,std::memory_order_relaxed);return;}
+            if(write_.compare_exchange_weak(write,write+1,std::memory_order_acq_rel,std::memory_order_relaxed))break;}
+        auto& slot=queue_[write%queueSize];slot.request.key=key;slot.request.hash=hash;
         const auto& source=table.frames[key.frame].bands[key.band].samples;
         std::copy_n(source.data(),spectralSize,slot.request.source.data());
-        slot.readyFlag.store(true,std::memory_order_release);
-        requests_.fetch_add(1,std::memory_order_relaxed);
+        slot.readyFlag.store(true,std::memory_order_release);requests_.fetch_add(1,std::memory_order_relaxed);
     }
-    bool pop(SpectralRequest& requestValue) noexcept {
+    bool pop(SpectralRequest& out) noexcept {
         const auto read=read_.load(std::memory_order_relaxed);
-        if(read>=write_.load(std::memory_order_acquire)) return false;
-        auto& slot=queue_[read%queueSize];
-        if(!slot.readyFlag.load(std::memory_order_acquire)) return false;
-        requestValue=slot.request;
-        slot.readyFlag.store(false,std::memory_order_release);
-        read_.store(read+1,std::memory_order_release);
-        return true;
+        if(read>=write_.load(std::memory_order_acquire))return false;
+        auto& slot=queue_[read%queueSize];if(!slot.readyFlag.load(std::memory_order_acquire))return false;
+        out=slot.request;slot.readyFlag.store(false,std::memory_order_release);read_.store(read+1,std::memory_order_release);return true;
     }
     CacheSlot* claimSlot(const SpectralKey& key,std::uint64_t hash) noexcept {
-        const auto bucket=(hash%cacheBuckets)*cacheWays;
-        CacheSlot* oldest=nullptr;
+        const auto bucket=(hash%cacheBuckets)*cacheWays;CacheSlot* oldest=nullptr;
         std::uint64_t oldestAge=std::numeric_limits<std::uint64_t>::max();
-        for(std::size_t w=0;w<cacheWays;++w) {
-            auto& slot=cache_[bucket+w];
-            auto state=slot.state.load(std::memory_order_acquire);
-            if(state==ready) {
-                slot.readers.fetch_add(1,std::memory_order_acquire);
-                if(slot.state.load(std::memory_order_acquire)==ready && sameSpectralKey(slot.key,key)) {
-                    slot.readers.fetch_sub(1,std::memory_order_release);return nullptr;
-                }
-                slot.readers.fetch_sub(1,std::memory_order_release);
-                const auto age=slot.age.load(std::memory_order_relaxed);
+        for(std::size_t w=0;w<cacheWays;++w){auto& slot=cache_[bucket+w];auto state=slot.state.load(std::memory_order_acquire);
+            if(state==ready){slot.readers.fetch_add(1,std::memory_order_acquire);
+                if(slot.state.load(std::memory_order_acquire)==ready&&sameSpectralKey(slot.key,key)){slot.readers.fetch_sub(1,std::memory_order_release);return nullptr;}
+                slot.readers.fetch_sub(1,std::memory_order_release);const auto age=slot.age.load(std::memory_order_relaxed);
                 if(age<oldestAge){oldestAge=age;oldest=&slot;}
-            } else if(state==empty) {
-                std::uint8_t expected=empty;
-                if(slot.state.compare_exchange_strong(expected,building,std::memory_order_acq_rel,std::memory_order_relaxed))
-                    return &slot;
-            }
-        }
-        if(oldest) {
-            std::uint8_t expected=ready;
-            if(oldest->state.compare_exchange_strong(expected,retiring,std::memory_order_acq_rel,std::memory_order_relaxed)) {
-                while(oldest->readers.load(std::memory_order_acquire)!=0) std::this_thread::yield();
-                oldest->state.store(building,std::memory_order_release);
-                return oldest;
-            }
-        }
+            }else if(state==empty){std::uint8_t expected=empty;if(slot.state.compare_exchange_strong(expected,building,std::memory_order_acq_rel,std::memory_order_relaxed))return &slot;}}
+        if(oldest){std::uint8_t expected=ready;if(oldest->state.compare_exchange_strong(expected,retiring,std::memory_order_acq_rel,std::memory_order_relaxed)){
+            while(oldest->readers.load(std::memory_order_acquire)!=0)std::this_thread::yield();oldest->state.store(building,std::memory_order_release);return oldest;}}
         return nullptr;
     }
     void workerLoop() noexcept {
-        SpectralRequest requestValue{};
-        while(!stop_.load(std::memory_order_acquire)) {
-            if(!pop(requestValue)) {
-                std::this_thread::sleep_for(std::chrono::microseconds(250));continue;
-            }
-            if(auto* slot=claimSlot(requestValue.key,requestValue.hash)) {
-                renderProcessedFrame2048(requestValue.source.data(),slot->samples.data(),
-                    requestValue.key.p1,requestValue.key.a1,requestValue.key.s1,
-                    requestValue.key.p2,requestValue.key.a2,requestValue.key.s2);
-                slot->key=requestValue.key;
-                slot->age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
-                slot->state.store(ready,std::memory_order_release);
-                prepared_.fetch_add(1,std::memory_order_relaxed);
-            }
-            const auto pendingIndex=requestValue.hash%pendingSize;
-            auto expected=requestValue.hash;
-            pending_[pendingIndex].compare_exchange_strong(expected,0,std::memory_order_acq_rel,std::memory_order_relaxed);
-        }
+        SpectralRequest req{};
+        while(!stop_.load(std::memory_order_acquire)){
+            if(!pop(req)){std::this_thread::sleep_for(std::chrono::microseconds(250));continue;}
+            if(auto* slot=claimSlot(req.key,req.hash)){
+                renderProcessedFrame2048(req.source.data(),slot->samples.data(),req.key.plan);
+                slot->key=req.key;slot->age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+                slot->state.store(ready,std::memory_order_release);prepared_.fetch_add(1,std::memory_order_relaxed);}
+            const auto pendingIndex=req.hash%pendingSize;auto expected=req.hash;
+            pending_[pendingIndex].compare_exchange_strong(expected,0,std::memory_order_acq_rel,std::memory_order_relaxed);}
     }
-    std::array<CacheSlot,cacheSize> cache_{};
-    std::array<QueueSlot,queueSize> queue_{};
+    std::array<CacheSlot,cacheSize> cache_{};std::array<QueueSlot,queueSize> queue_{};
     std::array<std::atomic<std::uint64_t>,pendingSize> pending_{};
     std::atomic<std::uint64_t> write_{0},read_{0},clock_{1};
     std::atomic<std::uint64_t> requests_{0},prepared_{0},fallbackReads_{0},dropped_{0};
-    std::atomic<bool> stop_{false};
-    std::mutex startMutex_;
-    std::thread worker_;
-    bool started_=false;
+    std::atomic<bool> stop_{false};std::mutex startMutex_;std::thread worker_;bool started_=false;
 };
 SpectralCompiler& spectralCompiler() noexcept { static SpectralCompiler compiler; return compiler; }
 std::atomic<std::uint64_t> wavetableGeneration{1};
