@@ -424,7 +424,18 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             if(slot==modules.size()) continue;
         }
         std::size_t i=0;while(i<count_ && !(groups_[i].address==route.destination)) ++i;
-        if(i==count_) {groups_[i].address=route.destination;groups_[i].slot=slot;++count_;}
+        if(i==count_) {
+            groups_[i].address=route.destination;
+            groups_[i].slot=slot;
+            const auto generic=limits(route.destination.parameter);
+            groups_[i].minimum=generic.lo;
+            groups_[i].maximum=generic.hi;
+            if(route.destination.parameter==ModDestination::Process1Amount)
+                groups_[i].minimum=dsp::oscProcessAmountMinimum(modules[slot].process1);
+            else if(route.destination.parameter==ModDestination::Process2Amount)
+                groups_[i].minimum=dsp::oscProcessAmountMinimum(modules[slot].process2);
+            ++count_;
+        }
         const auto sourceSlot=slotFor(route.source,state);
         groups_[i].target[sourceSlot]+=route.amount;
         groups_[i].bipolar[sourceSlot]=route.bipolar;
@@ -486,7 +497,13 @@ float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept
     return 0;
 }
 void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexcept {
-    const float v=modulationFromNormalized(g.address.parameter,n);auto& m=f.modules[g.slot];
+    if(!std::isfinite(n)) n=0.0f;
+    n=std::clamp(n,0.0f,1.0f);
+    float v=g.minimum+n*(g.maximum-g.minimum);
+    if(g.address.parameter==ModDestination::Cutoff)
+        v=g.minimum*static_cast<float>(dsp::fastExp2Audio(
+            static_cast<double>(n)*std::log2(g.maximum/g.minimum)));
+    auto& m=f.modules[g.slot];
     switch(g.address.parameter) {
         case ModDestination::Cutoff:f.cutoff=v;break;case ModDestination::Resonance:f.resonance=v;break;
         case ModDestination::MasterGain:f.master=v;break;case ModDestination::WtPosition:m.wtPosition=v;break;
@@ -532,7 +549,11 @@ inline float routeSourceValue(std::size_t slot,float raw,bool bipolar) noexcept 
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
     f.filterEnabled=filterEnabled_;
     for(std::size_t i=0;i<count_;++i) {
-        const auto& g=groups_[i];float n=modulationToNormalized(g.address.parameter,read(f,g));
+        const auto& g=groups_[i];
+        const float base=std::clamp(read(f,g),g.minimum,g.maximum);
+        float n=g.address.parameter==ModDestination::Cutoff
+            ? std::log(base/g.minimum)/std::log(g.maximum/g.minimum)
+            : (base-g.minimum)/(g.maximum-g.minimum);
         for(std::size_t k=0;k<g.globalSlotCount;++k) {
             const auto s=static_cast<std::size_t>(g.globalSlots[k]);
             const float src=routeSourceValue(s,sources[s],g.bipolar[s]);
