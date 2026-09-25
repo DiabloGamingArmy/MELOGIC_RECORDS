@@ -21,6 +21,7 @@
 #include <JuceHeader.h>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
+#include "ui/VisualizationSettings.h"
 
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
 
@@ -84,6 +85,9 @@ public:
     mct::origami::RenderBudgetSnapshot getUiRenderBudgetSnapshot() const noexcept;
     double getUiHostBpm() noexcept;
     void clearUiArpeggiatorLatch() noexcept;
+    std::uint32_t getUiVisualizationMask() const noexcept;
+    void setUiVisualizationMask(std::uint32_t) noexcept;
+    mct::origami::RuntimeVisualizationSnapshot getUiRuntimeVisualizationSnapshot() noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
@@ -161,6 +165,9 @@ private:
     std::atomic<std::uint32_t> qosLevel_{0},qosFlags_{0};
     std::atomic<std::uint32_t> qosVoices_{0},qosModules_{0},qosUnison_{0},qosOscEvals_{0},qosVoiceCeiling_{16};
     std::atomic<std::uint64_t> qosDeadlineMisses_{0};
+    std::atomic<std::uint32_t> visualizationMask_{mct::origami::ui::defaultVisualizationMask};
+    mct::origami::LatestStateMailbox<mct::origami::RuntimeVisualizationSnapshot> visualizationMailbox_;
+    mct::origami::RuntimeVisualizationSnapshot uiVisualizationSnapshot_{};
 
     // UI telemetry is intentionally control-rate, not render-span-rate.
     // Countdown is audio-thread-owned; publication remains lock-free atomics.

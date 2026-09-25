@@ -599,7 +599,20 @@ void run() {
     playabilityAudit();
 
     OrigamiAudioProcessor p;check(p.getUiInstrumentState().oscillators[3].id==4,"processor owns initial four modules");
+    check(p.getUiVisualizationMask()==ui::visualizationBit(ui::VisualizationEffect::Chaos),
+          "visualization defaults enable only Chaos");
+    const auto customVisualMask=ui::visualizationBit(ui::VisualizationEffect::Env) |
+                                ui::visualizationBit(ui::VisualizationEffect::Osc);
+    p.setUiVisualizationMask(customVisualMask);
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    juce::TextButton* globalButton=nullptr;ui::GlobalPanel* globalPanel=nullptr;
+    walk(*editor,[&](auto& component){
+        if(auto* button=dynamic_cast<juce::TextButton*>(&component);button && button->getButtonText()=="GLOBAL") globalButton=button;
+        if(auto* panel=dynamic_cast<ui::GlobalPanel*>(&component)) globalPanel=panel;
+    });
+    check(globalButton!=nullptr && globalPanel!=nullptr,"GLOBAL workspace controls are present");
+    globalButton->onClick();
+    check(globalPanel->isVisible(),"GLOBAL header button opens the GLOBAL workspace");
     auto& r=rack(*editor);check(r.count()==4,"editor mirrors model");
     auto& viewport=const_cast<juce::Viewport&>(r.viewport());
     std::vector<juce::Component*> targets;
@@ -712,10 +725,12 @@ void run() {
     const auto initial=encodeInstrumentState(p.getUiInstrumentState());
     editor.reset();editor.reset(p.createEditor());
     check(encodeInstrumentState(p.getUiInstrumentState())==initial,"reopening editor never adds oscillators");
+    check(p.getUiVisualizationMask()==customVisualMask,"editor reconstruction preserves visualization preferences");
     p.removeUiOscillator(2);p.setUiOscillatorEnabled(1,false);p.setUiOscillatorEnabled(3,false);
     auto m=p.getUiOscillatorState(4);m.wtPosition=.375f;m.pan=-.75f;m.level=.25f;p.setUiOscillatorState(4,m);
     juce::MemoryBlock bytes;p.getStateInformation(bytes);
     OrigamiAudioProcessor restored;restored.setStateInformation(bytes.getData(),static_cast<int>(bytes.getSize()));
+    check(restored.getUiVisualizationMask()==customVisualMask,"plugin state restores visualization preferences");
     juce::MemoryBlock again;restored.getStateInformation(again);check(bytes==again,"processor state round trip");
     auto restoredEditor=std::unique_ptr<juce::AudioProcessorEditor>(restored.createEditor());
     check(rack(*restoredEditor).count()==3,"restored topology shown on editor open");
@@ -738,6 +753,12 @@ void run() {
     restored.prepareToPlay(48000,128);juce::AudioBuffer<float> audio(2,128);juce::MidiBuffer midi;
     midi.addEvent(juce::MidiMessage::noteOn(1,60,.8f),0);restored.processBlock(audio,midi);
     check(audio.getMagnitude(0,128)>0,"restored processor produces audio");
+    const auto visual=restored.getUiRuntimeVisualizationSnapshot();
+    check(visual.active,"runtime visualization observes an audio-rendered voice");
+    bool observedWaveform=false;
+    for(const auto& module:visual.oscillatorWaveformValid)
+        for(auto valid:module) observedWaveform|=valid!=0;
+    check(observedWaveform,"oscillator viewport telemetry contains audio-rendered samples");
 }
 }
 int main(){juce::ScopedJuceInitialiser_GUI gui;try{run();std::cout<<"PASS: "<<checks<<" plugin/UI checks\n";return 0;}

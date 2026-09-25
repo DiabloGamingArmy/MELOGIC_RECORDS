@@ -383,6 +383,26 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             sources[11]=globalDrift_.next(audioModulation_.drift,sampleRate_);
         if(compiledModulation_.usesGlobalSource(12) && (audioModulation_.generatorActiveMask&0x10u))
             sources[12]=globalSequencer_.next(audioModulation_.sequencer,sampleRate_);
+
+        // Audio-owned visualization observation. These are the exact generator
+        // values/phases advanced above; the UI never runs a parallel generator.
+        for(std::size_t i=0;i<4;++i) {
+            runtimeVisualization_.sourceValues[3+i]=sources[i];
+            runtimeVisualization_.sourcePhases[3+i]=static_cast<float>(globalLfos_[i].phase());
+        }
+        runtimeVisualization_.sourceValues[7]=sources[9];
+        runtimeVisualization_.sourceValues[8]=sources[8];
+        runtimeVisualization_.sourceValues[9]=sources[10];
+        runtimeVisualization_.sourceValues[10]=sources[11];
+        runtimeVisualization_.sourceValues[11]=sources[12];
+        runtimeVisualization_.sourcePhases[7]=static_cast<float>(globalFunction_.phase());
+        runtimeVisualization_.sourcePhases[8]=static_cast<float>(globalRandom_.phase());
+        runtimeVisualization_.sourcePhases[9]=std::clamp(globalChaos_.xNormalized()*0.5f+0.5f,0.0f,1.0f);
+        runtimeVisualization_.sourcePhases[10]=static_cast<float>(globalDrift_.phase());
+        runtimeVisualization_.sourcePhases[11]=static_cast<float>(
+            (static_cast<double>(globalSequencer_.currentStep())+globalSequencer_.phase()) /
+            static_cast<double>(std::max<std::uint32_t>(1,audioModulation_.sequencer.activeSteps)));
+        runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
         compiledModulation_.advance(modulationSmoothing_);
         ModulationFrame frame;
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
@@ -391,6 +411,13 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         const float sustain=value(ParameterId::Sustain);
 
         double left=0.0,right=0.0,mono=0.0;
+
+        std::uint64_t newestOrder=0;
+        for(std::size_t v=0;v<voiceCount;++v) {
+            const auto candidate=voices_[v].info();
+            if(candidate.active) newestOrder=std::max(newestOrder,candidate.order);
+        }
+        runtimeVisualization_.active=newestOrder!=0;
 
         for(std::size_t v=0;v<voiceCount;++v) {
             const auto info=voices_[v].info();
@@ -401,6 +428,45 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
                                                 modWheel_[channel],aftertouch_[channel]);
+            if(info.order==newestOrder) {
+                const auto& visual=voices_[v].visualizationSnapshot();
+                for(std::size_t i=0;i<3;++i) {
+                    runtimeVisualization_.sourceValues[i]=visual.sources[i];
+                    const auto& envelope=info.envelopes[i];
+                    runtimeVisualization_.sourcePhases[i]=std::clamp(envelope.progress,0.0f,1.0f);
+                }
+                for(std::size_t i=0;i<4;++i) {
+                    if(lfoSettings(audioModulation_,i).mode!=LfoMode::Free) {
+                        runtimeVisualization_.sourceValues[3+i]=visual.sources[3+i];
+                        runtimeVisualization_.sourcePhases[3+i]=visual.lfoPhases[i];
+                    }
+                }
+                for(std::size_t m=0;m<visual.modules.size();++m) {
+                    const auto& observed=visual.modules[m];
+                    auto& previous=runtimeVisualizationModules_[m];
+                    const bool waveformChanged=previous.id!=observed.id ||
+                        previous.wtPosition!=observed.wtPosition ||
+                        previous.unison!=observed.unison || previous.blend!=observed.blend ||
+                        previous.detuneCents!=observed.detuneCents ||
+                        previous.process1!=observed.process1 ||
+                        previous.process1Amount!=observed.process1Amount ||
+                        previous.process1Seed!=observed.process1Seed ||
+                        previous.process2!=observed.process2 ||
+                        previous.process2Amount!=observed.process2Amount ||
+                        previous.process2Seed!=observed.process2Seed;
+                    if(waveformChanged) {
+                        runtimeVisualization_.oscillatorWaveformValid[m].fill(0);
+                        previous=observed;
+                    }
+                    runtimeVisualization_.moduleIds[m]=visual.modules[m].id;
+                    runtimeVisualization_.oscillatorPhases[m]=visual.modulePhases[m];
+                    if(visual.modules[m].id==0) continue;
+                    const auto bin=std::min<std::size_t>(RuntimeVisualizationSnapshot::waveformBins-1,
+                        static_cast<std::size_t>(visual.modulePhases[m]*RuntimeVisualizationSnapshot::waveformBins));
+                    runtimeVisualization_.oscillatorWaveforms[m][bin]=visual.moduleSamples[m];
+                    runtimeVisualization_.oscillatorWaveformValid[m][bin]=1;
+                }
+            }
             lastVoiceSamples_[v]=fresh;
 
             float oldWeight=0.0f;

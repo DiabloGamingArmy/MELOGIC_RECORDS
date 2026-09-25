@@ -42,6 +42,13 @@ struct PerformanceInputSnapshot {
     std::uint64_t heldLow=0,heldHigh=0;
     std::array<std::uint8_t,128> velocity{};
 };
+struct VoiceVisualizationSnapshot {
+    std::array<float,13> sources{};
+    std::array<float,4> lfoPhases{};
+    std::array<float,16> moduleSamples{};
+    std::array<float,16> modulePhases{};
+    std::array<OscillatorModuleState,16> modules{};
+};
 class Voice {
 public:
     void prepare(double sampleRate) noexcept;
@@ -55,6 +62,7 @@ public:
                         float pitchBendSemitones,float pitchBendNormalized,
                         float modWheel,float aftertouch) noexcept;
     VoiceInfo info() const noexcept;
+    const VoiceVisualizationSnapshot& visualizationSnapshot() const noexcept { return visualization_; }
 private:
     // mct-origami-unison-detune-v19.2
     static constexpr unsigned maxOscillatorModules = 16;
@@ -155,5 +163,6 @@ private:
     std::size_t glideRemaining_ = 0;
     float velocity_ = 0;
     bool active_ = false, releasing_ = false;
+    VoiceVisualizationSnapshot visualization_{};
 };
 }

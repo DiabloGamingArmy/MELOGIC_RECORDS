@@ -166,6 +166,7 @@ void OrigamiAudioProcessor::serviceVisualTelemetry(int hostBlockSamples) noexcep
     }
 
     publishEnvelopeUiSnapshot();
+    visualizationMailbox_.publish(engine_.runtimeVisualizationSnapshot());
     do envUiSamplesUntilPublish_+=interval;
     while(envUiSamplesUntilPublish_<=0);
 }
@@ -509,17 +510,40 @@ void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
         const juce::ScopedLock lock(stateLock_);
         snapshot=uiInstrumentState_;
     }
-    const auto bytes=mct::origami::encodeInstrumentState(snapshot);
+    auto bytes=mct::origami::encodeInstrumentState(snapshot);
+    constexpr std::uint32_t visualMagic=0x56495331u;
+    const auto appendWord=[&bytes](std::uint32_t value) {
+        for(int shift=24;shift>=0;shift-=8)
+            bytes.push_back(static_cast<std::uint8_t>(value>>shift));
+    };
+    appendWord(visualMagic);
+    appendWord(visualizationMask_.load(std::memory_order_acquire));
     dest.replaceAll(bytes.data(),bytes.size());
 }
 void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     if(size<=0) return;
 
+    int instrumentSize=size;
+    if(size>=8) {
+        const auto* bytes=static_cast<const std::uint8_t*>(data);
+        const auto readWord=[bytes](int offset) {
+            std::uint32_t value=0;
+            for(int i=0;i<4;++i) value=(value<<8)|bytes[offset+i];
+            return value;
+        };
+        if(readWord(size-8)==0x56495331u) {
+            visualizationMask_.store(
+                readWord(size-4)&mct::origami::ui::validVisualizationMask,
+                std::memory_order_release);
+            instrumentSize-=8;
+        }
+    }
+
     // Decode + validate completely before publication. The renderer receives one
     // complete fixed-size generation at the next callback boundary.
     mct::origami::InstrumentState state;
     if(!mct::origami::decodeInstrumentState(
-            data,static_cast<std::size_t>(size),state)) return;
+            data,static_cast<std::size_t>(instrumentSize),state)) return;
 
     const juce::ScopedLock lock(stateLock_);
     uiInstrumentState_=state;
@@ -528,6 +552,19 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     // Keep the independent performance mailbox generation coherent with the
     // complete restore. Any subsequent UI performance edit overwrites this.
     performanceMailbox_.publish(uiPerformanceState_);
+}
+
+std::uint32_t OrigamiAudioProcessor::getUiVisualizationMask() const noexcept {
+    return visualizationMask_.load(std::memory_order_acquire);
+}
+void OrigamiAudioProcessor::setUiVisualizationMask(std::uint32_t mask) noexcept {
+    visualizationMask_.store(mask&mct::origami::ui::validVisualizationMask,
+                             std::memory_order_release);
+}
+mct::origami::RuntimeVisualizationSnapshot
+OrigamiAudioProcessor::getUiRuntimeVisualizationSnapshot() noexcept {
+    visualizationMailbox_.consume(uiVisualizationSnapshot_);
+    return uiVisualizationSnapshot_;
 }
 bool OrigamiAudioProcessor::setUiMacro(unsigned index,float value) noexcept {
     const juce::ScopedLock lock(stateLock_);

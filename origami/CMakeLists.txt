@@ -186,7 +186,7 @@ if(ORIGAMI_BUILD_VST3)
   target_compile_definitions(OrigamiPlugin_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
   target_sources(OrigamiPlugin_Standalone PRIVATE plugin/StandaloneApp.cpp)
   target_sources(OrigamiPlugin PRIVATE
-    plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp
+    plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp plugin/ui/GlobalPanel.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
     plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp
     plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp)

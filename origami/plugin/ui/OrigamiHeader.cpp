@@ -11,8 +11,8 @@ OrigamiHeader::OrigamiHeader() {
     wordmark_={};
     for(auto* button:{&previous_,&next_,&preset_,&browse_,&save_,&settings_}) {addAndMakeVisible(button);button->setEnabled(false);button->setTooltip("Preset and utility controls are reserved for a later release.");}
     const juce::StringArray labels{"SYNTH","MIXER","FX","MATRIX","GLOBAL"};
-    for(int i=0;i<5;++i) {auto& button=modes_[static_cast<std::size_t>(i)];button.setButtonText(labels[i]);button.setToggleState(i==0,juce::dontSendNotification);button.setEnabled(i==0 || i==3);button.setTooltip(i==0?"Synthesizer":i==3?"Modulation routing":"Not implemented");addAndMakeVisible(button);
-        button.onClick=[this,i] {for(std::size_t j=0;j<modes_.size();++j) modes_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);if(onMatrixSelected) onMatrixSelected(i==3);};}
+    for(int i=0;i<5;++i) {auto& button=modes_[static_cast<std::size_t>(i)];button.setButtonText(labels[i]);button.setToggleState(i==0,juce::dontSendNotification);button.setEnabled(i==0 || i==3 || i==4);button.setTooltip(i==0?"Synthesizer":i==3?"Modulation routing":i==4?"Global visualization settings":"Not implemented");addAndMakeVisible(button);
+        button.onClick=[this,i] {for(std::size_t j=0;j<modes_.size();++j) modes_[j].setToggleState(j==static_cast<std::size_t>(i),juce::dontSendNotification);if(onModeSelected) onModeSelected(i);};}
 }
 void OrigamiHeader::selectSynth() {
     for(std::size_t i=0;i<modes_.size();++i)

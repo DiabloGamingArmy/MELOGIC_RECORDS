@@ -18,6 +18,7 @@
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
+#include "VisualizationSettings.h"
 #include <deque>
 #include <optional>
 
@@ -203,6 +204,7 @@ private:
     float performanceCurveForHandleY(const MsegShape&,std::size_t,float) const noexcept;
     void showPerformanceToolsMenu();
     void paintPerformanceCurve(juce::Graphics&);
+    bool visualizationEnabled(VisualizationEffect) const noexcept;
     struct TraceSample {juce::Point<float> point{}; float age=0.0f;};
     EnvelopeTraceSnapshot trace_{};
     std::deque<TraceSample> traceTail_;
@@ -234,12 +236,10 @@ private:
     std::deque<juce::Point<float>> chaosViewportHistory_{};
     EnvelopeTraceSnapshot sourceTrace_{};
     std::uint64_t sourceTraceOrder_=0;
-    std::array<Lfo,4> sourceMonitorLfos_{};
-    RandomGenerator sourceMonitorRandom_{};
-    FunctionGenerator sourceMonitorFunction_{};
-    ChaosGenerator sourceMonitorChaos_{};
-    DriftGenerator sourceMonitorDrift_{};
-    SequencerGenerator sourceMonitorSequencer_{};
+    RuntimeVisualizationSnapshot runtimeVisualization_{};
+    std::uint32_t visualizationMask_=defaultVisualizationMask;
+    juce::Point<float> previousChaosPoint_{};
+    bool havePreviousChaosPoint_=false;
 
     std::uint32_t routeDragId_=0;
     float routeDragStartY_=0.0f;

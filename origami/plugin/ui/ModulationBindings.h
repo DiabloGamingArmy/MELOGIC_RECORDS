@@ -5,6 +5,7 @@
 #pragma once
 #include "core/InstrumentState.h"
 #include "core/Voice.h"
+#include "core/Engine.h"
 #include <functional>
 namespace mct::origami::ui {
 // UI commands mutate only their own model field under the processor's writer lock.
@@ -19,5 +20,7 @@ struct ModulationBindings {
     std::function<EnvelopeTraceSnapshot()> envelopeTrace;
     std::function<PerformanceInputSnapshot()> performanceInput;
     std::function<double()> hostBpm;
+    std::function<RuntimeVisualizationSnapshot()> visualization;
+    std::function<std::uint32_t()> visualizationMask;
 };
 }

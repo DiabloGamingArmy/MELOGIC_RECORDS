@@ -157,6 +157,7 @@ public:
         current_=next_=value_=0;initialized_=false;
     }
     float next(const RandomSettings&,double sampleRate) noexcept;
+    double phase() const noexcept { return phase_; }
 private:
     float randomValue() noexcept;
     double phase_=0;
@@ -171,6 +172,7 @@ public:
     void reset() noexcept {phase_=0;}
     float next(const FunctionSettings&,double sampleRate) noexcept;
     static float shape(float curve,double phase) noexcept;
+    double phase() const noexcept { return phase_; }
 private: double phase_=0;
 };
 
@@ -192,6 +194,7 @@ class DriftGenerator {
 public:
     void reset() noexcept {phase_=0;state_=0x9e3779b9u;target_=0;value_=0;}
     float next(const DriftSettings&,double sampleRate) noexcept;
+    double phase() const noexcept { return phase_; }
 private:
     double phase_=0;
     std::uint32_t state_=0x9e3779b9u;
@@ -203,6 +206,7 @@ public:
     void reset() noexcept {phase_=0;step_=0;forward_=true;finished_=false;held_=0.0f;substep_=0;rng_=0x8f7011eeu;stepScale_=1.0;}
     float next(const SequencerSettings&,double sampleRate) noexcept;
     std::size_t currentStep() const noexcept { return step_; } // UI monitor inspection only
+    double phase() const noexcept { return phase_; }
 private:
     double phase_=0;
     std::size_t step_=0;

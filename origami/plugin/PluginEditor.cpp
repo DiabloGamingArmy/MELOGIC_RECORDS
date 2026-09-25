@@ -32,7 +32,9 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
         [&owner](const mct::origami::ModulationState& s){return owner.setUiModulationState(s);},
         [&owner]{return owner.getUiEnvelopeTraceSnapshot();},
         [&owner]{return owner.getUiPerformanceInputSnapshot();},
-        [&owner]{return owner.getUiHostBpm();}};
+        [&owner]{return owner.getUiHostBpm();},
+        [&owner]{return owner.getUiRuntimeVisualizationSnapshot();},
+        [&owner]{return owner.getUiVisualizationMask();}};
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
@@ -65,22 +67,27 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner](const mct::origami::ArpeggiatorState& a){return owner.setUiArpeggiatorState(a);},
           [&owner]{return owner.getUiArpeggiatorState();},
           [&owner]{return owner.getUiArpeggiatorRuntimeSnapshot();},
-          [&owner]{owner.clearUiArpeggiatorLatch();}) {
+          [&owner]{owner.clearUiArpeggiatorLatch();}),
+      global_([&owner]{return owner.getUiVisualizationMask();},
+              [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}) {
     setLookAndFeel(&theme_);
-    const std::array<juce::Component*,11> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_}};
+    const std::array<juce::Component*,12> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_}};
     for(auto* component:components) addAndMakeVisible(component);
     // mct-origami-fixed-ratio-zoom-v1
     // Resize behaves as whole-interface zoom: the editor is constrained to one
     // canonical 16:10 canvas and every child is scaled from that same design space.
-    header_.onMatrixSelected=[this](bool selected){
-        matrixSelected_=selected;
+    header_.onModeSelected=[this](int mode){
+        matrixSelected_=mode==3;
+        globalSelected_=mode==4;
         arpSelected_=false;
+        if(globalSelected_) global_.syncFromModel();
         resized();
     };
     performance_.onArpSettingsRequested=[this]{
         arpSelected_=!arpSelected_;
         if(arpSelected_) {
             matrixSelected_=false;
+            globalSelected_=false;
             header_.selectSynth();
             arpeggiator_.syncFromModel();
         }
@@ -256,6 +263,7 @@ void OrigamiAudioProcessorEditor::timerCallback() {
     modulation_.syncFromModel();macros_.syncFromModel();matrix_.syncFromModel();filter_.syncFromModel();
     performance_.syncArpFromModel();
     if(arpSelected_) arpeggiator_.syncFromModel();
+    if(globalSelected_) global_.syncFromModel();
 }
 
 juce::Slider* OrigamiAudioProcessorEditor::sliderFromMouseEvent(const juce::MouseEvent& event) noexcept {
@@ -497,9 +505,11 @@ void OrigamiAudioProcessorEditor::resized() {
     const auto mainArea=layout.oscillators.getUnion(layout.modulation).getUnion(layout.filter).getUnion(layout.macros);
     matrix_.setBounds(mainArea);
     arpeggiator_.setBounds(mainArea);
+    global_.setBounds(mainArea);
     matrix_.setVisible(matrixSelected_ && !arpSelected_);
     arpeggiator_.setVisible(arpSelected_);
-    const bool synthVisible=!matrixSelected_ && !arpSelected_;
+    global_.setVisible(globalSelected_ && !arpSelected_);
+    const bool synthVisible=!matrixSelected_ && !arpSelected_ && !globalSelected_;
     for(auto* component:std::array<juce::Component*,4>{{&oscillators_,&modulation_,&filter_,&macros_}})
         component->setVisible(synthVisible);
 
@@ -515,8 +525,8 @@ void OrigamiAudioProcessorEditor::resized() {
     const float scale=juce::jmin(sx,sy);
 
     const auto transform=juce::AffineTransform::scale(scale);
-    const std::array<juce::Component*,8> visibleComponents{{
-        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_
+    const std::array<juce::Component*,9> visibleComponents{{
+        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_
     }};
 
     for(auto* component:visibleComponents)

@@ -16,6 +16,17 @@
 #include <atomic>
 #include <cstddef>
 namespace mct::origami {
+struct RuntimeVisualizationSnapshot {
+    static constexpr std::size_t waveformBins=256;
+    std::array<float,12> sourceValues{};
+    std::array<float,12> sourcePhases{};
+    float chaosY=0.5f;
+    std::array<OscillatorModuleId,16> moduleIds{};
+    std::array<float,16> oscillatorPhases{};
+    std::array<std::array<float,waveformBins>,16> oscillatorWaveforms{};
+    std::array<std::array<std::uint8_t,waveformBins>,16> oscillatorWaveformValid{};
+    bool active=false;
+};
 class OrigamiEngine {
 public:
     static constexpr std::size_t voiceCount = 16;
@@ -63,6 +74,7 @@ public:
     OscillatorModuleState oscillatorModuleState(OscillatorModuleId id) const noexcept;
     bool setOscillatorModuleEnabled(OscillatorModuleId id,bool enabled) noexcept;
     bool oscillatorModuleEnabled(OscillatorModuleId id) const noexcept;
+    const RuntimeVisualizationSnapshot& runtimeVisualizationSnapshot() const noexcept { return runtimeVisualization_; }
 private:
     struct Smoothed { float value=0, target=0; double step=0; std::size_t remaining=0; };
     dsp::EnvelopeSettings envelopeSettings() const noexcept;
@@ -120,6 +132,8 @@ private:
     // voices are never terminated when the ceiling drops.
     std::size_t voiceAdmissionCeiling_=voiceCount;
     bool prepared_ = false;
+    RuntimeVisualizationSnapshot runtimeVisualization_{};
+    std::array<OscillatorModuleState,16> runtimeVisualizationModules_{};
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Origami requires lock-free float parameter targets");
 }

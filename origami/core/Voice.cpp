@@ -17,7 +17,7 @@
 #include <cmath>
 namespace mct::origami {
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
-void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& prepared:preparedModules_)prepared.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0; }
+void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& prepared:preparedModules_)prepared.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     reset();address_=address;velocity_=velocity;order_=order;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -52,7 +52,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     const float env2=env2_.next(modulation.env2.sustain),env3=env3_.next(modulation.env3.sustain);
     std::array<float,CompiledModulation::voiceSourceCount> voiceSources{};
     voiceSources[0]=envelope;voiceSources[1]=env2;voiceSources[2]=env3;
-    for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_):0.0f;}
+    for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_):0.0f;visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].phase());}
     voiceSources[7]=performanceSourceCurveValue(modulation.velocityCurve,velocity_);
     voiceSources[8]=modWheel;
     voiceSources[9]=performanceSourceCurveValue(
@@ -61,9 +61,11 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     voiceSources[10]=aftertouch;
     voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
     voiceSources[12]=releasing_ ? 0.0f : 1.0f;
+    visualization_.sources=voiceSources;
     ModulationFrame local;const ModulationFrame* effective=&global;
     if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
     const auto& modules=effective->modules;
+    visualization_.modules=modules;
     bool filtersQuiet=true;
     // One bend ratio per voice/sample, not one exp2 per active oscillator module.
     const double pitchBendScale=dsp::fastExp2Audio(static_cast<double>(pitchBendSemitones)/12.0);
@@ -158,6 +160,8 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                 routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
             oscillatorMix=centre+(unisonStack-centre)*prepared.blend;
         }
+        visualization_.moduleSamples[m]=oscillatorMix;
+        visualization_.modulePhases[m]=static_cast<float>(moduleOscillators_[m][0].phase());
 
         // Post-generation routes are intentionally executed in slot order.
         // This makes combinations such as WF -> XOR or RM -> RECT genuinely

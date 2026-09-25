@@ -12,6 +12,7 @@
 #include "ui/PerformanceKeyboard.h"
 #include "ui/ArpeggiatorPanel.h"
 #include "ui/OrigamiLayout.h"
+#include "ui/GlobalPanel.h"
 class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
@@ -48,6 +49,7 @@ private:
 
     bool matrixSelected_=false;
     bool arpSelected_=false;
+    bool globalSelected_=false;
     [[maybe_unused]] OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;
@@ -60,6 +62,7 @@ private:
     mct::origami::ui::ModulationMatrix matrix_;
     mct::origami::ui::PerformanceKeyboard performance_;
     mct::origami::ui::ArpeggiatorPanel arpeggiator_;
+    mct::origami::ui::GlobalPanel global_;
     // Tooltips intentionally disabled. Origami now relies on direct labels,
     // native context menus and explicit controls instead of stale hover copy.
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessorEditor)

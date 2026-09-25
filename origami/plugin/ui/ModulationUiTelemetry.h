@@ -3,6 +3,8 @@
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
 #pragma once
 #include "core/modulation/Modulation.h"
+#include "core/Engine.h"
+#include "VisualizationSettings.h"
 #include <array>
 #include <cmath>
 
@@ -16,6 +18,8 @@ struct ModulationUiTelemetry {
     float keytrackValue=0.0f;
     bool performanceInputActive=false;
     bool synthActive=false;
+    RuntimeVisualizationSnapshot runtime{};
+    std::uint32_t visualizationMask=defaultVisualizationMask;
 };
 
 inline ModulationUiTelemetry& modulationUiTelemetry() noexcept {
