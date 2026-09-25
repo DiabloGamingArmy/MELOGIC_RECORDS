@@ -1200,8 +1200,9 @@ OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
     // Hidden timer polling stays suppressed, but construction requires one
     // unconditional model -> card topology synchronization.
     syncFromModel();
-    // Model polling/animated overlays do not need audio-rate cadence.
-    startTimerHz(12);
+    // Keep oscillator animation at display cadence. This timer only drives
+    // visible-card synchronization/repaint; DSP remains audio-thread driven.
+    startTimerHz(60);
 }
 OscillatorRack::~OscillatorRack() {stopTimer();content_.removeMouseListener(&viewport_);viewport_.setViewedComponent(nullptr,false);}
 void OscillatorRack::addOscillator() {
