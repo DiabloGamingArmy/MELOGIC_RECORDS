@@ -67,7 +67,7 @@ struct Palette {
     static juce::Colour muted()        { return juce::Colour(0xff858585); }
     static juce::Colour accent()       { return juce::Colour(0xffd6d6d6); }
 };
-inline void text(juce::Graphics& g, const juce::String& value, juce::Rectangle<int> bounds, float size = 11, juce::Colour colour = Palette::text(), juce::Justification alignment = juce::Justification::centredLeft) {
+inline void text(juce::Graphics& g, const juce::String& value, juce::Rectangle<int> bounds, float size = 12, juce::Colour colour = Palette::text(), juce::Justification alignment = juce::Justification::centredLeft) {
     g.setColour(colour); g.setFont(juce::FontOptions(size)); g.drawText(value, bounds, alignment, true);
 }
 inline void well(juce::Graphics& g, juce::Rectangle<int> bounds) {
@@ -95,12 +95,12 @@ inline void paintKnob(juce::Graphics& g,juce::Rectangle<float> circle,float posi
 // mct-origami-control-surface-v2.1
 inline void dial(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::String& label, float position = .4f) {
     auto labelBounds=bounds.removeFromBottom(18);
-    const float diameter=float(juce::jlimit(20,36,juce::jmin(bounds.getWidth()-8,bounds.getHeight()-4)));
+    const float diameter=float(juce::jlimit(24,42,juce::jmin(bounds.getWidth()-6,bounds.getHeight()-2)));
     auto circle=juce::Rectangle<float>(diameter,diameter).withCentre(bounds.toFloat().getCentre());
     constexpr float start=-2.35f, sweep=4.70f;
 
     paintKnob(g,circle,position,start,start+sweep);
-    text(g,label,labelBounds,8.7f,Palette::muted(),juce::Justification::centred);
+    text(g,label,labelBounds,9.6f,Palette::muted(),juce::Justification::centred);
 }
 inline void dials(juce::Graphics& g, juce::Rectangle<int> bounds, const juce::StringArray& labels) {
     const int width = bounds.getWidth()/juce::jmax(1,labels.size());
@@ -184,10 +184,10 @@ public:
 
         g.setColour(Palette::borderSoft());g.drawRect(shell,1.0f);
         g.setColour(Palette::borderStrong().withAlpha(.34f));g.drawHorizontalLine(30,10.0f,float(getWidth()-10));
-        text(g,title_,{12,5,getWidth()-24,22},11,Palette::secondary());
+        text(g,title_,{10,5,getWidth()-20,22},12,Palette::secondary());
         paintContent(g,contentBounds());
     }
-    juce::Rectangle<int> contentBounds() const { return getLocalBounds().reduced(7).withTrimmedTop(24); }
+    juce::Rectangle<int> contentBounds() const { return getLocalBounds().reduced(4).withTrimmedTop(24); }
 protected:
     virtual void paintContent(juce::Graphics&,juce::Rectangle<int>) {}
     juce::String title_;
