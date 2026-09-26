@@ -108,11 +108,16 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
         return;
     }
 
-    // OSC PROCESS uses overlaid left/right navigation end-caps. Keep the
-    // selector itself full-width for maximum label space, but reserve exactly
-    // the arrow footprints so text can never disappear underneath them.
-    if(button.getName()=="OSC PROCESS SELECTOR")
-        bounds=button.getLocalBounds().withTrimmedLeft(21).withTrimmedRight(21).reduced(2,3);
+    if(button.getName()=="OSC PROCESS SELECTOR") {
+        // The chain-row selector no longer has navigation end-caps. Give the
+        // label the full interior width and compress long process names
+        // horizontally before ever resorting to an ellipsis.
+        bounds=button.getLocalBounds().reduced(5,3);
+        g.setColour(button.isEnabled()?Palette::text():Palette::muted());
+        g.setFont(juce::FontOptions(11.0f));
+        g.drawFittedText(button.getButtonText(),bounds,juce::Justification::centred,1,0.62f);
+        return;
+    }
 
     text(g,button.getButtonText(),bounds,11,
          button.isEnabled()?Palette::text():Palette::muted(),
