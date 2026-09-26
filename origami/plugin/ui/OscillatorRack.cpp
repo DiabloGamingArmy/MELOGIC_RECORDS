@@ -850,21 +850,37 @@ void OscillatorCard::resized() {
     auto chain=upper.removeFromRight(chainWidth);
     upper.removeFromRight(columnGap);
 
-    // Visual reset: keep all chain state/DSP machinery alive, but clear the
-    // selector/editor presentation so the new rack can be rebuilt one row at a time.
-    auto chainInner=chain.reduced(7,20);
-    chainViewport_.setBounds({});
-    chainContent_.setSize(1,1);
-    for(auto& tab:chainTabs_) { tab.setBounds({});tab.setVisible(false); }
-    // Anchor the split controls to the actual bottom edge of the OSC CHAIN box.
+    // OSC CHAIN is a real collection: every process/route gets its own
+    // persistent list row. The selected row still owns the detailed editor
+    // controls below the title; adding a child never visually replaces its
+    // siblings.
     auto chainButtons=chain.withTrimmedLeft(7).withTrimmedRight(7).withTrimmedBottom(7).removeFromBottom(24);
-    constexpr int chainButtonGap=4;
-    const int halfWidth=(chainButtons.getWidth()-chainButtonGap)/2;
     chainRemove_.setVisible(false);
     chainRemove_.setBounds({});
     chainAdd_.setVisible(true);
     chainAdd_.setButtonText("+");
     chainAdd_.setBounds(chainButtons);
+
+    constexpr int chainRowHeight=22;
+    constexpr int chainRowGap=2;
+    const int editorBottom=chain.getY()+82;
+    auto listArea=chain.withTrimmedLeft(7).withTrimmedRight(7);
+    listArea.setY(editorBottom+4);
+    listArea.setBottom(chainButtons.getY()-5);
+    chainViewport_.setBounds(listArea);
+    chainViewport_.setVisible(chainItemCount_>0);
+    const int contentWidth=juce::jmax(1,listArea.getWidth()-4);
+    const int contentHeight=juce::jmax(1,static_cast<int>(chainItemCount_)*(chainRowHeight+chainRowGap));
+    chainContent_.setSize(contentWidth,contentHeight);
+    for(std::size_t i=0;i<chainTabs_.size();++i) {
+        if(i<chainItemCount_) {
+            chainTabs_[i].setBounds(0,static_cast<int>(i)*(chainRowHeight+chainRowGap),contentWidth,chainRowHeight);
+            chainTabs_[i].setVisible(true);
+        } else {
+            chainTabs_[i].setBounds({});
+            chainTabs_[i].setVisible(false);
+        }
+    }
 
     for(auto* component:std::initializer_list<juce::Component*>{
         &process1Menu_,&process1Previous_,&process1Next_,&process1Randomize_,&process1Amount_,&process1AmountLabel_,
