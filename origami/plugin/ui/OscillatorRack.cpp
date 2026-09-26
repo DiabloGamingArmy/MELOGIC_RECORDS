@@ -343,10 +343,33 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
 
         addAndMakeVisible(waveformPrevious_);
         addAndMakeVisible(waveformNext_);
+        addAndMakeVisible(wavetableBrowser_);
         waveformPrevious_.setTooltip("Previous wavetable (only Basic Shapes is currently installed)");
         waveformNext_.setTooltip("Next wavetable (only Basic Shapes is currently installed)");
         waveformPrevious_.setEnabled(false);
         waveformNext_.setEnabled(false);
+        wavetableBrowser_.setTooltip("Browse or import a wavetable");
+        wavetableBrowser_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        wavetableBrowser_.onClick=[safe=juce::Component::SafePointer<OscillatorCard>(this)] {
+            if(safe==nullptr) return;
+            const std::vector<NativeChoiceItem> choices{
+                {1,"Basic Shapes",true,"Factory",true},
+                {100,"Import Wavetable...",true,"Import",false}
+            };
+            showNativeChoiceMenu(safe->wavetableBrowser_,"Wavetable",choices,1,[safe](int result) {
+                if(safe==nullptr || result==0) return;
+                if(result==1) {
+                    safe->wavetableBrowser_.setButtonText("BASIC SHAPES");
+                    return;
+                }
+                if(result==100) {
+                    // Patch 2 owns native file selection, validation and the
+                    // stable wavetable asset model. Keep this action explicit
+                    // but non-destructive until that backend exists.
+                    safe->wavetableBrowser_.setTooltip("Import Wavetable... — file import arrives in the next patch");
+                }
+            });
+        };
         panSlider_.setName("OSC PAN");
         panSlider_.getProperties().set("mct.origami.knobDefault",0.0);
         panSlider_.setRange(-1.0,1.0,0.001);
@@ -1146,7 +1169,7 @@ void OscillatorCard::resized() {
         // PHASE/ROUTE own the entire body. Patch 2 establishes takeover/navigation;
         // their dedicated controls are populated in Patches 3 and 4.
         for(auto* component:std::initializer_list<juce::Component*>{
-            &waveformPrevious_,&waveformNext_,
+            &waveformPrevious_,&waveformNext_,&wavetableBrowser_,
             &octaveSlider_,&semitoneSlider_,&fineSlider_,
             &wtPositionSlider_,&unisonSlider_,&detuneSlider_,&blendSlider_,&panSlider_,&levelSlider_,
             &octaveTitle_,&semitoneTitle_,&fineTitle_,
@@ -1254,7 +1277,7 @@ void OscillatorCard::resized() {
         component->setBounds({});
     }
 
-    waveformPrevious_.setVisible(true); waveformNext_.setVisible(true);
+    waveformPrevious_.setVisible(true); waveformNext_.setVisible(true); wavetableBrowser_.setVisible(true);
     for(auto* component:std::initializer_list<juce::Component*>{
         &octaveSlider_,&semitoneSlider_,&fineSlider_,
         &wtPositionSlider_,&unisonSlider_,&detuneSlider_,&blendSlider_,&panSlider_,&levelSlider_,
@@ -1349,6 +1372,7 @@ void OscillatorCard::resized() {
     auto browser=upper.removeFromBottom(22);
     waveformPrevious_.setBounds(browser.removeFromLeft(22));
     waveformNext_.setBounds(browser.removeFromRight(22));
+    wavetableBrowser_.setBounds(browser);
 
     const int cellWidth=controls.getWidth()/6;
     auto wtPositionCell=controls.withX(controls.getX()).withWidth(cellWidth);
@@ -1471,14 +1495,10 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     g.setColour(Palette::borderStrong().withAlpha(.34f));
     g.drawHorizontalLine(inner.getCentreY(),float(inner.getX()),float(inner.getRight()));
 
-    // Basic Shapes anchor label for the live continuous position.
+    // Wavetable browser strip. The arrows and selected-name surface are live
+    // child controls; paint only the shared recessed backing here.
     auto browserBox=browser.withX(preview.getX()).withWidth(preview.getWidth());
     well(g,browserBox);
-    text(g,"<",browserBox.removeFromLeft(18),8.5f,Palette::muted(),juce::Justification::centred);
-    text(g,">",browserBox.removeFromRight(18),8.5f,Palette::muted(),juce::Justification::centred);
-    // V22.6: this strip names the selected wavetable, not the current frame.
-    // Sine/Saw/Square/Triangle are internal anchor frames within Basic Shapes.
-    text(g,"BASIC SHAPES",browserBox,8.2f,Palette::secondary(),juce::Justification::centred);
 
     // Unified OSC CHAIN: the list is presentation-only. Process and routing
     // execution remain separate, preserving the engine's established semantics.
