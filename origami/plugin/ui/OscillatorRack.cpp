@@ -152,14 +152,25 @@ void NativeOscProcessSelector::setSelectedId(int id,juce::NotificationType notif
     setButtonText(dsp::oscProcessName(type_));
     if(changed && notification!=juce::dontSendNotification && onChange) onChange();
 }
+void NativeOscProcessSelector::setRoutingContext(
+    OscillatorModuleId target,std::function<InstrumentState()> getter,
+    std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected) {
+    routeTarget_=target;routeStateGetter_=std::move(getter);onRouteSelected_=std::move(onRouteSelected);
+}
 void NativeOscProcessSelector::openProcessMenu() {
     if(popupActive_) return;
     popupActive_=true;
     auto safe=juce::Component::SafePointer<NativeOscProcessSelector>(this);
+    auto state=routeStateGetter_?routeStateGetter_():InstrumentState{};
+    const auto* routeState=routeStateGetter_?&state:nullptr;
     showNativeOscProcessMenu(*this,type_,[safe](dsp::OscProcessType selected) {
         if(safe==nullptr) return;
         safe->popupActive_=false;
         safe->setSelectedId(static_cast<int>(selected)+1,juce::sendNotification);
+    },routeTarget_,routeState,[safe](OscillatorModuleId source,OscRouteType type) {
+        if(safe==nullptr)return;
+        safe->popupActive_=false;
+        if(safe->onRouteSelected_)safe->onRouteSelected_(source,type);
     });
     if(safe!=nullptr) safe->popupActive_=false;
 }
@@ -444,6 +455,23 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         }
         moduleSetter_(display_.id,state);syncFromModel();
     };
+    process1Menu_.setRoutingContext(display_.id,snapshotGetter_,
+        [this](OscillatorModuleId sourceId,OscRouteType type) {
+            if(!selectedProcessId_ || !moduleGetter_ || !moduleSetter_ ||
+               sourceId==0 || type==OscRouteType::Off) return;
+            auto state=moduleGetter_(display_.id);if(!state.id || state.routeCount>=maxOscRoutes)return;
+            std::size_t index=state.processCount;
+            for(std::size_t i=0;i<state.processCount;++i)
+                if(state.processes[i].id==selectedProcessId_){index=i;break;}
+            if(index>=state.processCount)return;
+            for(std::size_t i=index+1;i<state.processCount;++i)state.processes[i-1]=state.processes[i];
+            state.processes[--state.processCount]={};
+            auto& route=state.routes[state.routeCount++];
+            route.id=state.nextRouteId++;route.sourceId=sourceId;route.type=type;route.amount=0.5f;
+            if(moduleSetter_(display_.id,state))
+                selectedChainItem_={ChainItemKind::Route,route.id};
+            syncFromModel();resized();repaint();
+        });
     process1Menu_.onChange=commitProcess;
     process2Menu_.onChange=commitProcess;
     process1Amount_.onValueChange=commitProcess;
@@ -830,10 +858,8 @@ void OscillatorCard::resized() {
     auto chainButtons=chain.withTrimmedLeft(7).withTrimmedRight(7).withTrimmedBottom(7).removeFromBottom(24);
     constexpr int chainButtonGap=4;
     const int halfWidth=(chainButtons.getWidth()-chainButtonGap)/2;
-    chainRemove_.setVisible(true);
-    chainRemove_.setButtonText("-");
-    chainRemove_.setBounds(chainButtons.removeFromLeft(halfWidth));
-    chainButtons.removeFromLeft(chainButtonGap);
+    chainRemove_.setVisible(false);
+    chainRemove_.setBounds({});
     chainAdd_.setVisible(true);
     chainAdd_.setButtonText("+");
     chainAdd_.setBounds(chainButtons);
