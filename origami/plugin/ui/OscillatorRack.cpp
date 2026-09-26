@@ -1231,15 +1231,20 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 void OscillatorCard::paintOverChildren(juce::Graphics& g) {
     const auto& telemetry=modulationUiTelemetry();
 
-    const auto drawRotary=[&](juce::Slider& slider,ModDestination destination) {
-        const float depth=modulationUiSelectedRouteAmount(destination,display_.id);
+    const auto drawRotary=[&](juce::Slider& slider,ModDestination destination,std::uint32_t itemId=0) {
+        const float selectedDepth=modulationUiSelectedRouteAmount(destination,display_.id);
+        const bool selectedHasRoute=std::abs(selectedDepth)>=1.0e-4f;
+        const float persistentDepth=modulationUiPersistentRouteAmount(destination,display_.id,itemId);
         const bool anyRoute=modulationUiHasAnyRoute(destination,display_.id);
+        const float depth=selectedHasRoute?selectedDepth:persistentDepth;
         if(std::abs(depth)<1.0e-4f && !anyRoute) return;
 
         const double min=slider.getMinimum(),max=slider.getMaximum();
         if(max<=min) return;
         const float base=static_cast<float>((slider.getValue()-min)/(max-min));
-        const bool bipolar=modulationUiSelectedRouteIsBipolar(destination,display_.id);
+        const bool bipolar=selectedHasRoute
+            ?modulationUiSelectedRouteIsBipolar(destination,display_.id)
+            :modulationUiPersistentRoutesAreBipolar(destination,display_.id,itemId);
         const float extent=std::abs(depth);
         const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
         const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
@@ -1319,10 +1324,12 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
     drawRotary(detuneSlider_,ModDestination::Detune);
     drawRotary(panSlider_,ModDestination::Pan);
     drawRotary(levelSlider_,ModDestination::Level);
-    drawRotary(process1Amount_,ModDestination::Process1Amount);
-    drawRotary(process2Amount_,ModDestination::Process2Amount);
-    drawRotary(route1Amount_,ModDestination::Route1Amount);
-    drawRotary(route2Amount_,ModDestination::Route2Amount);
+    // Dynamic chain editors must address the selected stable child ID. Never
+    // paint a hidden/removed editor merely because an old generic route exists.
+    if(process1Amount_.isVisible() && selectedProcessId_!=0)
+        drawRotary(process1Amount_,ModDestination::ProcessAmount,selectedProcessId_);
+    if(route1Amount_.isVisible() && selectedRouteId_!=0)
+        drawRotary(route1Amount_,ModDestination::RouteAmount,selectedRouteId_);
 }
 
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
