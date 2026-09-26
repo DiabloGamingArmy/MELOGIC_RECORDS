@@ -1775,7 +1775,10 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     // the future dynamic ENV/LFO collection surface.
     well(g,rail);
     paintSourceHistoryBackgrounds(g);
-    text(g,"SOURCES",rail.removeFromTop(18).reduced(5,0),8.0f,Palette::muted());
+    auto sourceTitle=rail.removeFromTop(18);
+    g.setColour(juce::Colours::black);
+    g.fillRect(sourceTitle);
+    text(g,"SOURCE",sourceTitle.reduced(5,0),8.5f,Palette::secondary(),juce::Justification::centred);
 
     body.removeFromBottom(66);auto caption=body.removeFromTop(17);
     juce::String title;
