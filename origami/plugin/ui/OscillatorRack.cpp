@@ -547,6 +547,7 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     chainViewport_.setScrollBarsShown(true,false);
     chainViewport_.setScrollBarThickness(4);
     for(std::size_t i=0;i<maxChainItems;++i) {
+        chainContent_.addAndMakeVisible(chainRowBackgrounds_[i]);
         chainContent_.addAndMakeVisible(chainSelectors_[i]);
         chainContent_.addAndMakeVisible(chainAmounts_[i]);
         chainContent_.addAndMakeVisible(chainPowers_[i]);
@@ -755,7 +756,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
     const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
     for(std::size_t i=0;i<maxChainItems;++i) {
         const bool active=i<chainItemCount_;
-        chainSelectors_[i].setVisible(active);chainAmounts_[i].setVisible(active);
+        chainRowBackgrounds_[i].setVisible(active);chainSelectors_[i].setVisible(active);chainAmounts_[i].setVisible(active);
         chainPowers_[i].setVisible(active);chainDeletes_[i].setVisible(active);chainKinds_[i].setVisible(active);
         if(!active)continue;
         const auto item=chainItems_[i];
@@ -917,12 +918,14 @@ void OscillatorCard::resized() {
 
     for(std::size_t i=0;i<maxChainItems;++i) {
         if(i>=chainItemCount_) {
-            chainSelectors_[i].setBounds({});chainAmounts_[i].setBounds({});
+            chainRowBackgrounds_[i].setBounds({});chainSelectors_[i].setBounds({});chainAmounts_[i].setBounds({});
             chainPowers_[i].setBounds({});chainDeletes_[i].setBounds({});chainKinds_[i].setBounds({});
             continue;
         }
         auto row=juce::Rectangle<int>(0,static_cast<int>(i)*(chainRowHeight+chainRowGap),contentWidth,chainRowHeight);
-        auto actions=row.removeFromRight(27);
+        chainRowBackgrounds_[i].setBounds(row);
+        chainRowBackgrounds_[i].toBack();
+        auto actions=row.removeFromRight(34);
         auto amountArea=row.removeFromRight(43);
         row.removeFromRight(5);
         auto selector=row.reduced(3,2).withTrimmedBottom(17);
@@ -1052,19 +1055,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     text(g,"OSC CHAIN",chainTitle,8.5f,Palette::secondary(),juce::Justification::centred);
     if(chainItemCount_==0)
         text(g,"NO PROCESSING OR ROUTING",chainInner,7.2f,Palette::muted(),juce::Justification::centred);
-    else if(selectedProcessId_!=0) {
-        auto row=chain.withTrimmedLeft(7).withTrimmedRight(7);
-        row.setY(chain.getY()+24);
-        row.setHeight(54);
-        g.setColour(Palette::panel().darker(0.18f));
-        g.fillRect(row);
-        g.setColour(Palette::borderSoft());
-        g.drawRect(row,1);
-        auto selectorArea=row;
-        selectorArea.removeFromRight(75);
-        auto typeLabel=selectorArea.removeFromBottom(18).reduced(3,0);
-        text(g,"O S C   E F F E C T",typeLabel,7.2f,Palette::muted(),juce::Justification::centred);
-    }
+
 
     // Conventional oscillator pitch identity: OCT / SEM / FIN.
     const juce::StringArray tuneLabels{"OCT","SEM","FIN"};
