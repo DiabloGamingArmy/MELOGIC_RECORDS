@@ -277,6 +277,50 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     phaseFree_.onClick=[this]{phaseStartMode_=PhaseStartMode::Free;refreshPhaseWorkspace();};
     refreshPhaseWorkspace();
 
+    for(auto* button:{&routeDirect_,&routeFilter1_,&routeFilter2_,&routeMulti_,&routePostChain_}) {
+        addChildComponent(*button);
+        button->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+    routeDirect_.setTooltip("Route oscillator directly to the instrument output");
+    routeFilter1_.setTooltip("Route oscillator through Filter 1");
+    routeFilter2_.setTooltip("Route oscillator through Filter 2");
+    routeMulti_.setTooltip("Use multiple oscillator output destinations");
+    routePostChain_.setClickingTogglesState(true);
+    routePostChain_.setToggleState(true,juce::dontSendNotification);
+    routePostChain_.setTooltip("Route the post-OSC-CHAIN signal");
+
+    for(auto* slider:{&routeDirectLevel_,&routeFilter1Level_,&routeFilter2Level_}) {
+        addChildComponent(*slider);
+        slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        slider->setTextBoxStyle(juce::Slider::TextBoxBelow,false,44,14);
+        slider->setRotaryParameters(juce::MathConstants<float>::pi*1.20f,
+                                    juce::MathConstants<float>::pi*2.80f,true);
+        slider->setRange(0.0,1.0,0.001);
+        slider->setMouseDragSensitivity(180);
+        slider->setDoubleClickReturnValue(true,1.0);
+    }
+    routeDirectLevel_.setValue(1.0,juce::dontSendNotification);
+    routeFilter1Level_.setValue(1.0,juce::dontSendNotification);
+    routeFilter2Level_.setValue(1.0,juce::dontSendNotification);
+
+    struct RouteLevelLabel { juce::Label* label; const char* text; };
+    for(auto item:std::array<RouteLevelLabel,3>{
+        RouteLevelLabel{&routeDirectLevelLabel_,"DIRECT LEVEL"},
+        RouteLevelLabel{&routeFilter1LevelLabel_,"FILTER 1 LEVEL"},
+        RouteLevelLabel{&routeFilter2LevelLabel_,"FILTER 2 LEVEL"}}) {
+        addChildComponent(*item.label);
+        item.label->setText(item.text,juce::dontSendNotification);
+        item.label->setJustificationType(juce::Justification::centred);
+        item.label->setColour(juce::Label::textColourId,Palette::muted());
+        item.label->setFont(juce::FontOptions(7.2f));
+        item.label->setInterceptsMouseClicks(false,false);
+    }
+    routeDirect_.onClick=[this]{outputRouteMode_=OutputRouteMode::Direct;refreshRoutingWorkspace();};
+    routeFilter1_.onClick=[this]{outputRouteMode_=OutputRouteMode::Filter1;refreshRoutingWorkspace();};
+    routeFilter2_.onClick=[this]{outputRouteMode_=OutputRouteMode::Filter2;refreshRoutingWorkspace();};
+    routeMulti_.onClick=[this]{outputRouteMode_=OutputRouteMode::Multi;refreshRoutingWorkspace();};
+    refreshRoutingWorkspace();
+
     engineBacked_ = static_cast<bool>(parameterSetter_) && static_cast<bool>(parameterGetter_);
     if(engineBacked_) {
         for(auto* slider:{&panSlider_,&levelSlider_}) {
@@ -1026,6 +1070,26 @@ void OscillatorCard::refreshPhaseWorkspace() {
     repaint();
 }
 
+void OscillatorCard::refreshRoutingWorkspace() {
+    routeDirect_.setToggleState(outputRouteMode_==OutputRouteMode::Direct,juce::dontSendNotification);
+    routeFilter1_.setToggleState(outputRouteMode_==OutputRouteMode::Filter1,juce::dontSendNotification);
+    routeFilter2_.setToggleState(outputRouteMode_==OutputRouteMode::Filter2,juce::dontSendNotification);
+    routeMulti_.setToggleState(outputRouteMode_==OutputRouteMode::Multi,juce::dontSendNotification);
+
+    const bool direct=outputRouteMode_==OutputRouteMode::Direct;
+    const bool filter1=outputRouteMode_==OutputRouteMode::Filter1;
+    const bool filter2=outputRouteMode_==OutputRouteMode::Filter2;
+    const bool multi=outputRouteMode_==OutputRouteMode::Multi;
+    routeDirectLevel_.setEnabled(direct||multi);
+    routeFilter1Level_.setEnabled(filter1||multi);
+    routeFilter2Level_.setEnabled(filter2||multi);
+
+    outputSelector_.setButtonText(direct ? "DIRECT OUT"
+                                  : filter1 ? "FILTER 1"
+                                  : filter2 ? "FILTER 2" : "MULTI");
+    repaint();
+}
+
 void OscillatorCard::setWorkspacePage(WorkspacePage page) {
     if(workspacePage_==page) return;
     workspacePage_=page;
@@ -1090,10 +1154,16 @@ void OscillatorCard::resized() {
         }
 
         const bool phasePage=workspacePage_==WorkspacePage::Phase;
+        const bool routingPage=workspacePage_==WorkspacePage::Routing;
         for(auto* component:std::initializer_list<juce::Component*>{
             &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
             &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_})
             component->setVisible(phasePage);
+        for(auto* component:std::initializer_list<juce::Component*>{
+            &routeDirect_,&routeFilter1_,&routeFilter2_,&routeMulti_,
+            &routeDirectLevel_,&routeFilter1Level_,&routeFilter2Level_,
+            &routeDirectLevelLabel_,&routeFilter1LevelLabel_,&routeFilter2LevelLabel_,&routePostChain_})
+            component->setVisible(routingPage);
 
         if(phasePage) {
             auto page=workspaceBounds_.reduced(12,10);
@@ -1125,13 +1195,52 @@ void OscillatorCard::resized() {
             toggles.removeFromLeft(toggleGap);
             phasePerUnison_.setBounds(toggles);
             refreshPhaseWorkspace();
+        } else if(routingPage) {
+            auto page=workspaceBounds_.reduced(12,10);
+            page.removeFromTop(30);
+
+            auto destinations=page.removeFromTop(30);
+            constexpr int destinationGap=4;
+            const int destinationW=(destinations.getWidth()-destinationGap*3)/4;
+            routeDirect_.setBounds(destinations.removeFromLeft(destinationW));
+            destinations.removeFromLeft(destinationGap);
+            routeFilter1_.setBounds(destinations.removeFromLeft(destinationW));
+            destinations.removeFromLeft(destinationGap);
+            routeFilter2_.setBounds(destinations.removeFromLeft(destinationW));
+            destinations.removeFromLeft(destinationGap);
+            routeMulti_.setBounds(destinations);
+
+            page.removeFromTop(14);
+            auto levels=page.removeFromTop(92);
+            constexpr int levelGap=6;
+            const int levelW=(levels.getWidth()-levelGap*2)/3;
+            auto directArea=levels.removeFromLeft(levelW);
+            levels.removeFromLeft(levelGap);
+            auto filter1Area=levels.removeFromLeft(levelW);
+            levels.removeFromLeft(levelGap);
+            auto filter2Area=levels;
+
+            auto layoutLevel=[](juce::Rectangle<int> area,juce::Label& label,RackSlider& slider) {
+                label.setBounds(area.removeFromTop(16));
+                slider.setBounds(area.reduced(8,0));
+            };
+            layoutLevel(directArea,routeDirectLevelLabel_,routeDirectLevel_);
+            layoutLevel(filter1Area,routeFilter1LevelLabel_,routeFilter1Level_);
+            layoutLevel(filter2Area,routeFilter2LevelLabel_,routeFilter2Level_);
+
+            page.removeFromTop(10);
+            routePostChain_.setBounds(page.removeFromTop(26).withSizeKeepingCentre(132,26));
+            refreshRoutingWorkspace();
         }
         return;
     }
 
     for(auto* component:std::initializer_list<juce::Component*>{
         &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
-        &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_}) {
+        &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_,
+        &routeDirect_,&routeFilter1_,&routeFilter2_,&routeMulti_,
+        &routeDirectLevel_,&routeFilter1Level_,&routeFilter2Level_,
+        &routeDirectLevelLabel_,&routeFilter1LevelLabel_,&routeFilter2LevelLabel_,&routePostChain_}) {
         component->setVisible(false);
         component->setBounds({});
     }
@@ -1295,10 +1404,11 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         g.setColour(Palette::borderSoft());
         g.drawHorizontalLine(titleArea.getBottom(),float(page.getX()+8),float(page.getRight()-8));
 
-        if(workspacePage_==WorkspacePage::Phase) {
-            auto hint=page.removeFromBottom(20);
+        auto hint=page.removeFromBottom(20);
+        if(workspacePage_==WorkspacePage::Phase)
             text(g,"OSCILLATOR START BEHAVIOR",hint,7.0f,Palette::muted(),juce::Justification::centred);
-        }
+        else
+            text(g,"OSCILLATOR OUTPUT DESTINATIONS",hint,7.0f,Palette::muted(),juce::Justification::centred);
         return;
     }
 
