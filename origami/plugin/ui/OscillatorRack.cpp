@@ -781,48 +781,28 @@ void OscillatorCard::resized() {
     auto chain=upper.removeFromRight(chainWidth);
     upper.removeFromRight(columnGap);
 
+    // Visual reset: keep all chain state/DSP machinery alive, but clear the
+    // selector/editor presentation so the new rack can be rebuilt one row at a time.
     auto chainInner=chain.reduced(7,24);
-    auto buttons=chainInner.removeFromBottom(22);
-    chainRemove_.setBounds(buttons.removeFromLeft((buttons.getWidth()-4)/2));
-    buttons.removeFromLeft(4);chainAdd_.setBounds(buttons);
-    chainInner.removeFromBottom(5);
-    const int railWidth=juce::jlimit(92,116,chainInner.getWidth()*44/100);
-    auto rail=chainInner.removeFromLeft(railWidth);
-    chainViewport_.setBounds(rail);
-    constexpr int rowHeight=24;
-    const int contentWidth=juce::jmax(1,rail.getWidth()-4);
-    for(std::size_t i=0;i<chainTabs_.size();++i)
-        chainTabs_[i].setBounds(i<chainItemCount_?juce::Rectangle<int>(0,int(i)*rowHeight,contentWidth,rowHeight-2):juce::Rectangle<int>{});
-    chainContent_.setSize(contentWidth,juce::jmax(int(chainItemCount_)*rowHeight,rail.getHeight()));
-    auto editor=chainInner.reduced(7,0);
+    chainViewport_.setBounds({});
+    chainContent_.setSize(1,1);
+    for(auto& tab:chainTabs_) { tab.setBounds({});tab.setVisible(false); }
+    chainRemove_.setBounds({});chainRemove_.setVisible(false);
 
-    const bool processSelected=selectedChainItem_.kind==ChainItemKind::Process;
-    const bool routeSelected=selectedChainItem_.kind==ChainItemKind::Route;
-    process1Menu_.setVisible(processSelected);process1Previous_.setVisible(false);process1Next_.setVisible(false);
-    process1Amount_.setVisible(processSelected);process1AmountLabel_.setVisible(processSelected);
-    route1Menu_.setVisible(routeSelected);route1Previous_.setVisible(false);route1Next_.setVisible(false);
-    route1Amount_.setVisible(routeSelected);route1AmountLabel_.setVisible(routeSelected);
-    if(processSelected) {
-        process1Menu_.setBounds(editor.removeFromTop(24));
-        process1AmountLabel_.setBounds(editor.removeFromBottom(14));
-        auto knobArea=editor.reduced(3,5);
-        process1Amount_.setBounds(juce::Rectangle<int>(50,50).withCentre(knobArea.getCentre()));
-        if(process1Randomize_.isVisible())
-            process1Randomize_.setBounds(knobArea.removeFromBottom(22).removeFromRight(22));
-        else process1Randomize_.setBounds({});
-    } else {
-        process1Menu_.setBounds({});process1Amount_.setBounds({});process1AmountLabel_.setBounds({});process1Randomize_.setBounds({});
-    }
-    if(routeSelected) {
-        route1Menu_.setBounds(editor.removeFromTop(24));
-        route1AmountLabel_.setBounds(editor.removeFromBottom(14));
-        route1Amount_.setBounds(juce::Rectangle<int>(50,50).withCentre(editor.getCentre()));
-    } else {
-        route1Menu_.setBounds({});route1Amount_.setBounds({});route1AmountLabel_.setBounds({});
-    }
+    // For this baseline the only visible chain interaction is ADD.
+    auto addArea=chainInner.removeFromBottom(24);
+    chainAdd_.setVisible(true);
+    chainAdd_.setButtonText("+ ADD");
+    chainAdd_.setBounds(addArea.removeFromRight(74));
+
     for(auto* component:std::initializer_list<juce::Component*>{
+        &process1Menu_,&process1Previous_,&process1Next_,&process1Randomize_,&process1Amount_,&process1AmountLabel_,
+        &route1Menu_,&route1Previous_,&route1Next_,&route1Amount_,&route1AmountLabel_,
         &process2Menu_,&process2Previous_,&process2Next_,&process2Randomize_,&process2Amount_,&process2AmountLabel_,
-        &route2Menu_,&route2Previous_,&route2Next_,&route2Amount_,&route2AmountLabel_}) component->setBounds({});
+        &route2Menu_,&route2Previous_,&route2Next_,&route2Amount_,&route2AmountLabel_}) {
+        component->setBounds({});
+        component->setVisible(false);
+    }
 
     auto tuning=upper.removeFromBottom(30);
     upper.removeFromBottom(4);
