@@ -304,12 +304,8 @@ private:
         // every existing oscillator immediately has stable process/route IDs.
         if(s.processCount>maxOscProcesses) s.processCount=maxOscProcesses;
         if(s.routeCount>maxOscRoutes) s.routeCount=maxOscRoutes;
-        if(s.processCount==0) {
-            if(s.process1!=dsp::OscProcessType::Off)
-                s.processes[s.processCount++]={s.nextProcessId++,s.process1,s.process1Amount,s.process1Seed};
-            if(s.process2!=dsp::OscProcessType::Off && s.processCount<maxOscProcesses)
-                s.processes[s.processCount++]={s.nextProcessId++,s.process2,s.process2Amount,s.process2Seed};
-        }
+        // Legacy preset migration is handled by StateCodec. Do not recreate
+        // deleted dynamic processes from compatibility slots during normal edits.
         for(std::size_t i=0;i<s.processCount;++i) {
             auto& p=s.processes[i];
             if(p.id==0) p.id=s.nextProcessId++;
@@ -318,12 +314,8 @@ private:
             p.amount=std::clamp(p.amount,dsp::oscProcessAmountMinimum(p.type),1.0f);
             s.nextProcessId=std::max(s.nextProcessId,p.id+1);
         }
-        if(s.routeCount==0) {
-            if(s.route1Type!=OscRouteType::Off)
-                s.routes[s.routeCount++]={s.nextRouteId++,s.route1SourceId,s.route1Type,s.route1Amount};
-            if(s.route2Type!=OscRouteType::Off && s.routeCount<maxOscRoutes)
-                s.routes[s.routeCount++]={s.nextRouteId++,s.route2SourceId,s.route2Type,s.route2Amount};
-        }
+        // Routes follow the same rule: codec migration materializes old slots;
+        // an empty dynamic collection must remain empty after deletion.
         for(std::size_t i=0;i<s.routeCount;++i) {
             auto& r=s.routes[i];
             if(r.id==0) r.id=s.nextRouteId++;
