@@ -555,6 +555,34 @@ void dynamicTopologyRecompilation() {
     module.processes[1]={4,dsp::OscProcessType::SineWarp,-0.2f,6,true};
     module.processCount=2;module.nextProcessId=5;publish();
 
+    const auto sourceA=actual->addOscillatorModule();
+    const auto sourceB=actual->addOscillatorModule();
+    check(sourceA==reference->addOscillatorModule() && sourceB==reference->addOscillatorModule(),
+          "oscillator additions preserve stable identities");
+    module.routeCount=2;module.nextRouteId=12;
+    module.routes[0]={10,sourceB,OscRouteType::RingMod,0.1f,true};
+    module.routes[1]={11,sourceA,OscRouteType::Crossfade,0.2f,true};
+    publish();
+    state.modulation.routes[1]={2,true,ModSource::Lfo1,{ModDestination::RouteAmount,1,10},0.3f,true};
+    state.modulation.nextRouteId=3;
+    check(actual->setModulationState(state.modulation) && reference->setModulationState(state.modulation),
+          "stable route-child modulation accepted");
+    compare();
+    std::swap(module.routes[0],module.routes[1]);publish();
+    module.routes[1].enabled=false;publish();
+    module.routes[1].enabled=true;publish();
+    module.routes[0]=module.routes[1];module.routeCount=1;publish();
+    check(actual->removeOscillatorModule(sourceA) && reference->removeOscillatorModule(sourceA),
+          "deleting an oscillator compacts source slots");
+    compare();
+    check(actual->removeOscillatorModule(sourceB) && reference->removeOscillatorModule(sourceB),
+          "deleting the routed source succeeds");
+    compare();
+    const auto remaining=actual->instrumentState();
+    check(validInstrumentState(remaining) && remaining.oscillators[0].routes[0].sourceId==0 &&
+          remaining.oscillators[0].routes[0].type==OscRouteType::Off,
+          "source deletion clears dynamic routing references and preserves valid presets");
+
     OscillatorRenderPlan plan;
     auto modules=state.oscillators;
     modules[1].id=42;modules[1].enabled=true;
@@ -591,11 +619,13 @@ void voiceObservationDoesNotChangeAudio() {
     compiled.globalFrame(frame,{},48000);
     dsp::EnvelopeSettings envelope;
     OscillatorRenderPlan topology;topology.compile(frame.modules);
+    OscillatorProcessPlans sharedProcesses;
+    topology.processPlan(0,frame.modules[0],sharedProcesses[0]);
     observed.start({},0.8f,1,envelope,state.env2,state.env3);
     unobserved.start({},0.8f,1,envelope,state.env2,state.env3);
     for(unsigned i=0;i<512;++i) {
-        const auto a=observed.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,true);
-        const auto b=unobserved.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,false);
+        const auto a=observed.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,true);
+        const auto b=unobserved.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,false);
         check(a.left==b.left && a.right==b.right && a.mono==b.mono,
               "visualization observation does not affect modulated unison audio");
     }

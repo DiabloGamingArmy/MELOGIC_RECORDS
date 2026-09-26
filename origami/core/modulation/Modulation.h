@@ -262,6 +262,7 @@ public:
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
     void voiceFrame(ModulationFrame&,const std::array<float,voiceSourceCount>&,double sampleRate) const noexcept;
     bool hasVoiceRoutes() const noexcept {return voiceCount_!=0;}
+    bool hasVoiceProcessRoutes(std::size_t module) const noexcept {return voiceProcessModules_[module];}
     bool usesGlobalSource(std::size_t index) const noexcept {
         return index<globalSourceCount && globalSourceUsed_[index];
     }
@@ -287,6 +288,7 @@ private:
     std::array<std::size_t,ModulationState::capacity> voiceGroups_{};
     std::array<bool,globalSourceCount> globalSourceUsed_{};
     std::size_t count_=0,voiceCount_=0;
+    std::array<bool,16> voiceProcessModules_{};
     bool voiceFilter_=false;
     bool filterEnabled_=true;
     bool smoothingActive_=false;

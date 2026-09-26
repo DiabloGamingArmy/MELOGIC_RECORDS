@@ -431,6 +431,7 @@ float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noe
 void CompiledModulation::compile(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules,bool immediate) noexcept {
     const auto old=groups_;const auto oldCount=count_;
     count_=voiceCount_=0;voiceFilter_=false;groups_={};globalSourceUsed_.fill(false);
+    voiceProcessModules_.fill(false);
     smoothingActive_=false;
     filterEnabled_=state.filterEnabled;
     for(const auto& route:state.routes) {
@@ -488,6 +489,9 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         const bool voice=g.voiceSlotCount!=0;
         if(voice) {
             voiceGroups_[voiceCount_++]=i;
+            if(g.address.parameter==ModDestination::ProcessAmount ||
+               g.address.parameter==ModDestination::Process1Amount ||
+               g.address.parameter==ModDestination::Process2Amount) voiceProcessModules_[g.slot]=true;
             if(g.address.parameter==ModDestination::Cutoff || g.address.parameter==ModDestination::Resonance) voiceFilter_=true;
         }
     }

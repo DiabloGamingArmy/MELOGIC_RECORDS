@@ -60,8 +60,11 @@ public:
     Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
                         const CompiledModulation&,const ModulationState&,
                         float pitchBendSemitones,float pitchBendNormalized,
-                        float modWheel,float aftertouch,const OscillatorRenderPlan&,bool observe=true) noexcept;
+                        float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe=true) noexcept;
     VoiceInfo info() const noexcept;
+    bool active() const noexcept { return active_; }
+    std::uint64_t order() const noexcept { return order_; }
+    std::uint8_t channel() const noexcept { return address_.channel; }
     const VoiceVisualizationSnapshot& visualizationSnapshot() const noexcept { return visualization_; }
 private:
     // mct-origami-unison-detune-v19.2
@@ -138,6 +141,7 @@ private:
     // Reuse storage; default construction of this large editable-state snapshot
     // must not run for every voice/sample when no voice modulation is present.
     ModulationFrame localFrame_{};
+    dsp::OscProcessPlan processScratch_{};
     VoiceVisualizationSnapshot visualization_{};
 };
 }

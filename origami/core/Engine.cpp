@@ -345,6 +345,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     const double normalization=hostNormalization_;
     const float bendRange=hostBendRange_;
     ModulationFrame frame;
+    OscillatorProcessPlans sharedProcesses;
 
     for(std::size_t sample=0;sample<sampleCount;++sample) {
         for(auto& s:smooth_) if(s.remaining) {
@@ -414,31 +415,35 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
         frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
+        for(std::size_t a=0;a<oscillatorPlan_.activeCount;++a) {
+            const auto m=oscillatorPlan_.active[a];
+            oscillatorPlan_.processPlan(m,frame.modules[m],sharedProcesses[m]);
+        }
         const float sustain=value(ParameterId::Sustain);
 
         double left=0.0,right=0.0,mono=0.0;
 
         std::uint64_t newestOrder=0;
         for(std::size_t v=0;v<voiceCount;++v) {
-            const auto candidate=voices_[v].info();
-            if(candidate.active) newestOrder=std::max(newestOrder,candidate.order);
+            if(voices_[v].active()) newestOrder=std::max(newestOrder,voices_[v].order());
         }
         runtimeVisualization_.active=newestOrder!=0;
 
+        VoiceInfo observedInfo;
         for(std::size_t v=0;v<voiceCount;++v) {
-            const auto info=voices_[v].info();
-            if(!info.active && tailRemaining_[v]==0) continue;
-
-            const auto channel=std::min<std::size_t>(info.address.channel,15);
+            if(!voices_[v].active() && tailRemaining_[v]==0) continue;
+            const bool observe=voices_[v].order()==newestOrder;
+            if(observe) observedInfo=voices_[v].info();
+            const auto channel=std::min<std::size_t>(voices_[v].channel(),15);
             const float bend=pitchBendNormalized_[channel]*bendRange;
             auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
-                                                modWheel_[channel],aftertouch_[channel],oscillatorPlan_,info.order==newestOrder);
-            if(info.order==newestOrder) {
+                                                modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);
+            if(observe) {
                 const auto& visual=voices_[v].visualizationSnapshot();
                 for(std::size_t i=0;i<3;++i) {
                     runtimeVisualization_.sourceValues[i]=visual.sources[i];
-                    const auto& envelope=info.envelopes[i];
+                    const auto& envelope=observedInfo.envelopes[i];
                     runtimeVisualization_.sourcePhases[i]=std::clamp(envelope.progress,0.0f,1.0f);
                 }
                 for(std::size_t i=0;i<4;++i) {
@@ -548,6 +553,13 @@ bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
             changed=true;
         }
 
+        for(std::size_t r=0;r<std::min<std::size_t>(updatedModule.routeCount,maxOscRoutes);++r) {
+            auto& route=updatedModule.routes[r];
+            if(route.sourceId==id) {
+                route.sourceId=0;route.type=OscRouteType::Off;route.amount=0.0f;
+                changed=true;
+            }
+        }
         if(changed)
             oscillatorModules_.set(existing.id,updatedModule);
     }

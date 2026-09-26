@@ -40,7 +40,7 @@ void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSet
 }
 Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
-    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,const OscillatorRenderPlan& topology,bool observe) noexcept {
+    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,const OscillatorRenderPlan& topology,const OscillatorProcessPlans& sharedProcesses,bool observe) noexcept {
     Samples outputs{};
     if(!active_) return outputs;
     if(glideRemaining_) {
@@ -143,18 +143,12 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
         baseFrequency=std::clamp(baseFrequency,1.0,std::max(20.0,sampleRate_*0.49));
-        dsp::OscProcessPlan processPlan{};
-        for(std::size_t p=0;p<modulePlan.processCount;++p) {
-            const auto slot=modulePlan.processes[p];
-            if(modulePlan.dynamicProcesses) {
-                const auto& process=module.processes[slot];
-                processPlan.stages[processPlan.count++]={process.type,process.amount,process.seed};
-            } else if(slot==0) {
-                processPlan.stages[processPlan.count++]={module.process1,module.process1Amount,module.process1Seed};
-            } else {
-                processPlan.stages[processPlan.count++]={module.process2,module.process2Amount,module.process2Seed};
-            }
+        const dsp::OscProcessPlan* processes=&sharedProcesses[m];
+        if(compiled.hasVoiceProcessRoutes(m)) {
+            topology.processPlan(m,module,processScratch_);
+            processes=&processScratch_;
         }
+        const auto& processPlan=*processes;
 
         float oscillatorMix=0.0f;
         if(count==1) {
