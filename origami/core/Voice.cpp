@@ -134,8 +134,10 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
 
         if(module.routeCount>0) {
             const auto routeCount=std::min<std::size_t>(module.routeCount,maxOscRoutes);
-            for(std::size_t r=0;r<routeCount;++r)
+            for(std::size_t r=0;r<routeCount;++r) {
+                if(!module.routes[r].enabled) continue;
                 applyPreRoute(prepared.routeSourceIndices[r],module.routes[r].type,module.routes[r].amount);
+            }
         } else {
             // Compatibility path while legacy presets/UI still expose two slots.
             applyPreRoute(prepared.route1SourceIndex,module.route1Type,module.route1Amount);
@@ -147,9 +149,12 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         baseFrequency=std::clamp(baseFrequency,1.0,std::max(20.0,sampleRate_*0.49));
         dsp::OscProcessPlan processPlan{};
         if(module.processCount>0) {
-            processPlan.count=static_cast<std::uint8_t>(std::min<std::size_t>(module.processCount,maxOscProcesses));
-            for(std::size_t p=0;p<processPlan.count;++p)
-                processPlan.stages[p]={module.processes[p].type,module.processes[p].amount,module.processes[p].seed};
+            const auto processCount=std::min<std::size_t>(module.processCount,maxOscProcesses);
+            for(std::size_t p=0;p<processCount && processPlan.count<dsp::maxOscProcessStages;++p) {
+                const auto& process=module.processes[p];
+                if(!process.enabled || process.type==dsp::OscProcessType::Off) continue;
+                processPlan.stages[processPlan.count++]={process.type,process.amount,process.seed};
+            }
         } else {
             if(module.process1!=dsp::OscProcessType::Off)
                 processPlan.stages[processPlan.count++]={module.process1,module.process1Amount,module.process1Seed};
@@ -167,8 +172,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             for(unsigned u=0;u<count;++u) {
                 unisonStack+=moduleOscillators_[m][u].next(
                     table,baseFrequency*prepared.detuneRatios[u],sampleRate_,position,
-                    module.process1,module.process1Amount,module.process2,module.process2Amount,
-                    routedPhaseOffset,routedPhaseSkew,module.process1Seed,module.process2Seed);
+                    processPlan,routedPhaseOffset,routedPhaseSkew);
             }
             unisonStack/=static_cast<float>(count);
 
@@ -248,9 +252,11 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
 
         if(module.routeCount>0) {
             const auto routeCount=std::min<std::size_t>(module.routeCount,maxOscRoutes);
-            for(std::size_t r=0;r<routeCount;++r)
+            for(std::size_t r=0;r<routeCount;++r) {
+                if(!module.routes[r].enabled) continue;
                 oscillatorMix=applyPostRoute(oscillatorMix,prepared.routeSourceIndices[r],
                                              module.routes[r].type,module.routes[r].amount);
+            }
         } else {
             oscillatorMix=applyPostRoute(oscillatorMix,prepared.route1SourceIndex,
                                          module.route1Type,module.route1Amount);
