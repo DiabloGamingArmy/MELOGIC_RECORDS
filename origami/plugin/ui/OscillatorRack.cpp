@@ -344,6 +344,10 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         addAndMakeVisible(waveformPrevious_);
         addAndMakeVisible(waveformNext_);
         addAndMakeVisible(wavetableBrowser_);
+        addAndMakeVisible(wavetableEditAffordance_);
+        // Patch 3 is deliberately affordance-only. Patch 4 wires this callback
+        // to the application-level editor takeover after that shell exists.
+        wavetableEditAffordance_.onEdit=[] {};
         waveformPrevious_.setTooltip("Previous wavetable (only Basic Shapes is currently installed)");
         waveformNext_.setTooltip("Next wavetable (only Basic Shapes is currently installed)");
         waveformPrevious_.setEnabled(false);
@@ -1252,7 +1256,7 @@ void OscillatorCard::resized() {
         // PHASE/ROUTE own the entire body. Patch 2 establishes takeover/navigation;
         // their dedicated controls are populated in Patches 3 and 4.
         for(auto* component:std::initializer_list<juce::Component*>{
-            &waveformPrevious_,&waveformNext_,&wavetableBrowser_,
+            &waveformPrevious_,&waveformNext_,&wavetableBrowser_,&wavetableEditAffordance_,
             &octaveSlider_,&semitoneSlider_,&fineSlider_,
             &wtPositionSlider_,&unisonSlider_,&detuneSlider_,&blendSlider_,&panSlider_,&levelSlider_,
             &octaveTitle_,&semitoneTitle_,&fineTitle_,
@@ -1361,6 +1365,7 @@ void OscillatorCard::resized() {
     }
 
     waveformPrevious_.setVisible(true); waveformNext_.setVisible(true); wavetableBrowser_.setVisible(true);
+    wavetableEditAffordance_.setVisible(true);
     for(auto* component:std::initializer_list<juce::Component*>{
         &octaveSlider_,&semitoneSlider_,&fineSlider_,
         &wtPositionSlider_,&unisonSlider_,&detuneSlider_,&blendSlider_,&panSlider_,&levelSlider_,
@@ -1456,6 +1461,13 @@ void OscillatorCard::resized() {
     waveformPrevious_.setBounds(browser.removeFromLeft(22));
     waveformNext_.setBounds(browser.removeFromRight(22));
     wavetableBrowser_.setBounds(browser);
+
+    // Mirror paintContent()'s exact source-viewport geometry. The transparent
+    // overlay owns only hover/click affordance; waveform rendering remains
+    // untouched underneath it.
+    upper.removeFromBottom(4);
+    wavetableEditAffordance_.setBounds(upper.reduced(0,1));
+    wavetableEditAffordance_.toFront(false);
 
     const int cellWidth=controls.getWidth()/6;
     auto wtPositionCell=controls.withX(controls.getX()).withWidth(cellWidth);
