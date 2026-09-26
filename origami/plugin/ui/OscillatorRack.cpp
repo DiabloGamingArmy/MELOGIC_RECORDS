@@ -822,7 +822,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             if(!r)continue;
             unsigned ordinal=0,displayOrdinal=0;
             if(snapshotGetter_)for(const auto& osc:snapshotGetter_().oscillators){if(!osc.id)continue;++displayOrdinal;if(osc.id==r->sourceId){ordinal=displayOrdinal;break;}}
-            chainSelectors_[i].setButtonText("OSC "+juce::String(ordinal?ordinal:r->sourceId)+" · "+juce::String(oscRouteName(r->type)));
+            chainSelectors_[i].setButtonText("OSC "+juce::String(ordinal?ordinal:r->sourceId)+" · "+juce::String(oscRouteAbbreviation(r->type)));
             chainKinds_[i].setText("O S C   R O U T E",juce::dontSendNotification);
             chainAmounts_[i].setRange(-1.0,1.0,0.001);
             chainAmounts_[i].setValue(r->amount,juce::dontSendNotification);
