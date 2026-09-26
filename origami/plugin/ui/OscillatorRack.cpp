@@ -898,72 +898,54 @@ void OscillatorCard::resized() {
     auto chain=upper.removeFromRight(chainWidth);
     upper.removeFromRight(columnGap);
 
-    // OSC CHAIN is a real collection: every process/route gets its own
-    // persistent list row. The selected row still owns the detailed editor
-    // controls below the title; adding a child never visually replaces its
-    // siblings.
+    // Full template rows stack vertically. The viewport scrolls once the
+    // available chain height is exhausted; the + control remains fixed.
     auto chainButtons=chain.withTrimmedLeft(7).withTrimmedRight(7).withTrimmedBottom(7).removeFromBottom(24);
-    chainRemove_.setVisible(false);
-    chainRemove_.setBounds({});
-    chainAdd_.setVisible(true);
-    chainAdd_.setButtonText("+");
-    chainAdd_.setBounds(chainButtons);
+    chainRemove_.setVisible(false);chainRemove_.setBounds({});
+    chainAdd_.setVisible(true);chainAdd_.setButtonText("+");chainAdd_.setBounds(chainButtons);
 
-    constexpr int chainRowHeight=22;
-    constexpr int chainRowGap=2;
-    const int editorBottom=chain.getY()+82;
+    constexpr int chainRowHeight=58;
+    constexpr int chainRowGap=4;
     auto listArea=chain.withTrimmedLeft(7).withTrimmedRight(7);
-    listArea.setY(editorBottom+4);
+    listArea.removeFromTop(24);
     listArea.setBottom(chainButtons.getY()-5);
     chainViewport_.setBounds(listArea);
     chainViewport_.setVisible(chainItemCount_>0);
     const int contentWidth=juce::jmax(1,listArea.getWidth()-4);
     const int contentHeight=juce::jmax(1,static_cast<int>(chainItemCount_)*(chainRowHeight+chainRowGap));
     chainContent_.setSize(contentWidth,contentHeight);
-    for(std::size_t i=0;i<chainTabs_.size();++i) {
-        if(i<chainItemCount_) {
-            chainTabs_[i].setBounds(0,static_cast<int>(i)*(chainRowHeight+chainRowGap),contentWidth,chainRowHeight);
-            chainTabs_[i].setVisible(true);
-        } else {
-            chainTabs_[i].setBounds({});
-            chainTabs_[i].setVisible(false);
+
+    for(std::size_t i=0;i<maxChainItems;++i) {
+        if(i>=chainItemCount_) {
+            chainSelectors_[i].setBounds({});chainAmounts_[i].setBounds({});
+            chainPowers_[i].setBounds({});chainDeletes_[i].setBounds({});chainKinds_[i].setBounds({});
+            continue;
         }
+        auto row=juce::Rectangle<int>(0,static_cast<int>(i)*(chainRowHeight+chainRowGap),contentWidth,chainRowHeight);
+        auto actions=row.removeFromRight(27);
+        auto amountArea=row.removeFromRight(43);
+        row.removeFromRight(5);
+        auto selector=row.reduced(3,2).withTrimmedBottom(17);
+        selector.setWidth(juce::jmin(selector.getWidth(),128));
+        chainSelectors_[i].setBounds(selector);
+        auto knob=juce::Rectangle<int>(34,34).withCentre(amountArea.getCentre()).translated(-2,2);
+        chainAmounts_[i].setBounds(knob);
+        chainKinds_[i].setBounds(selector.getX(),selector.getBottom(),selector.getWidth(),15);
+        auto pwr=actions.removeFromTop(27).reduced(1,2);
+        chainPowers_[i].setBounds(pwr);
+        chainDeletes_[i].setBounds(actions.reduced(1,2));
     }
 
+    // Retire the old single selected-item editor. Each list row now owns the
+    // complete selector/amount/power/delete template.
     for(auto* component:std::initializer_list<juce::Component*>{
         &process1Menu_,&process1Previous_,&process1Next_,&process1Randomize_,&process1Amount_,&process1AmountLabel_,
         &route1Menu_,&route1Previous_,&route1Next_,&route1Amount_,&route1AmountLabel_,
         &process2Menu_,&process2Previous_,&process2Next_,&process2Randomize_,&process2Amount_,&process2AmountLabel_,
         &route2Menu_,&route2Previous_,&route2Next_,&route2Amount_,&route2AmountLabel_,
         &processRowPower_,&processRowRemove_}) {
-        component->setBounds({});
-        component->setVisible(false);
+        component->setBounds({});component->setVisible(false);
     }
-
-    // First rack row geometry is stable regardless of when model selection is
-    // synchronized. syncFromModel() owns visibility; resized() owns placement.
-    auto firstProcessRow=chain.withTrimmedLeft(7).withTrimmedRight(7);
-    firstProcessRow.setY(chain.getY()+24);
-    firstProcessRow.setHeight(54);
-
-    // Concept proportions: selector / amount / action stack.
-    auto firstProcessActionsArea=firstProcessRow.removeFromRight(27);
-    auto firstProcessAmountArea=firstProcessRow.removeFromRight(43);
-    firstProcessRow.removeFromRight(5);
-    auto firstProcessSelectorArea=firstProcessRow.reduced(3,2).withTrimmedBottom(17);
-    firstProcessSelectorArea.setWidth(juce::jmin(firstProcessSelectorArea.getWidth(),128));
-    process1Menu_.setBounds(firstProcessSelectorArea);
-    route1Menu_.setBounds(firstProcessSelectorArea);
-    auto knobBounds=juce::Rectangle<int>(34,34).withCentre(firstProcessAmountArea.getCentre());
-    knobBounds.translate(-2,2);
-    process1Amount_.setBounds(knobBounds);
-    route1Amount_.setBounds(knobBounds);
-    process1AmountLabel_.setBounds({});
-    route1AmountLabel_.setBounds({});
-    auto powerArea=firstProcessActionsArea.removeFromTop(25).reduced(1,2);
-    processRowPower_.setBounds(powerArea);
-    processRowRemove_.setBounds(firstProcessActionsArea.reduced(1,2));
-
 
     auto tuning=upper.removeFromBottom(30);
     upper.removeFromBottom(4);
