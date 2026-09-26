@@ -1443,7 +1443,9 @@ void ModulationPanel::resized() {
     constexpr int baseRowHeight=36;
     constexpr int routedRowHeight=54;
     const int contentWidth=juce::jmax(1,sourceViewport_.getWidth());
-    int y=0;
+    // Small breathing gap below the fixed SOURCE header before the first row.
+    constexpr int sourceListTopGap=3;
+    int y=sourceListTopGap;
     for(std::size_t i=0;i<tabs_.size();++i) {
         if(!sourceTabActive(i)) {
             tabs_[i].setBounds({});
