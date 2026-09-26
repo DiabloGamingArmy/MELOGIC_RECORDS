@@ -11,6 +11,12 @@ void showNativeOscProcessMenu(
     juce::Component& anchor,
     mct::origami::dsp::OscProcessType current,
     std::function<void(mct::origami::dsp::OscProcessType)> onSelected);
+void showNativeOscChainAddMenu(
+    juce::Component& anchor,
+    mct::origami::OscillatorModuleId target,
+    const mct::origami::InstrumentState& state,
+    std::function<void(mct::origami::dsp::OscProcessType)> onProcessSelected,
+    std::function<void(mct::origami::OscillatorModuleId,mct::origami::OscRouteType)> onRouteSelected);
 void showNativeOscRouteMenu(
     juce::Component& anchor,
     mct::origami::OscillatorModuleId target,
