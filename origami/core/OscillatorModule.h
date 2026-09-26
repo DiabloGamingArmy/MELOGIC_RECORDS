@@ -118,7 +118,8 @@ struct OscillatorModuleState {
     float blend = 0.35f;
     float pan = 0.0f;
     float level = 0.7f;
-    dsp::OscProcessType process1 = dsp::OscProcessType::BendPlus;
+    // Init/new oscillators are intentionally clean. Processes are opt-in via OSC CHAIN.
+    dsp::OscProcessType process1 = dsp::OscProcessType::Off;
     float process1Amount = 0.0f;
     std::uint32_t process1Seed = 0x13579bdfu;
     dsp::OscProcessType process2 = dsp::OscProcessType::Off;
