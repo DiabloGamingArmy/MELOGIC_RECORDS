@@ -170,6 +170,39 @@ inline bool modulationUiHasAnyRoute(ModDestination destination,
     return false;
 }
 
+
+inline bool modulationUiRouteMatches(const ModRoute& route,ModDestination destination,
+                                     OscillatorModuleId oscillator=0,std::uint32_t itemId=0) noexcept {
+    if(route.id==0 || !route.enabled) return false;
+    if(route.destination.parameter!=destination || route.destination.oscillator!=oscillator) return false;
+    return itemId==0 || route.destination.itemId==itemId;
+}
+
+inline float modulationUiPersistentRouteAmount(ModDestination destination,
+                                               OscillatorModuleId oscillator=0,
+                                               std::uint32_t itemId=0) noexcept {
+    const auto& telemetry=modulationUiTelemetry();
+    float total=0.0f;
+    for(const auto& route:telemetry.state.routes) {
+        if(!modulationUiRouteMatches(route,destination,oscillator,itemId)) continue;
+        total+=route.amount;
+    }
+    return juce::jlimit(-1.0f,1.0f,total);
+}
+
+inline bool modulationUiPersistentRoutesAreBipolar(ModDestination destination,
+                                                   OscillatorModuleId oscillator=0,
+                                                   std::uint32_t itemId=0) noexcept {
+    const auto& telemetry=modulationUiTelemetry();
+    bool found=false,bipolar=false;
+    for(const auto& route:telemetry.state.routes) {
+        if(!modulationUiRouteMatches(route,destination,oscillator,itemId)) continue;
+        if(!found){bipolar=route.bipolar;found=true;}
+        else if(route.bipolar!=bipolar)return true;
+    }
+    return found && bipolar;
+}
+
 inline float modulationUiAllRoutesValue(ModDestination destination,
                                         OscillatorModuleId oscillator=0) noexcept {
     const auto& telemetry=modulationUiTelemetry();
