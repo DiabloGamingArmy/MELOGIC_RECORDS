@@ -553,6 +553,26 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         chainContent_.addAndMakeVisible(chainPowers_[i]);
         chainContent_.addAndMakeVisible(chainDeletes_[i]);
         chainContent_.addAndMakeVisible(chainKinds_[i]);
+        chainContent_.addAndMakeVisible(chainActions_[i]);
+        chainActions_[i].setButtonText({});
+        chainActions_[i].setName("OSC PROCESS RESEED");
+        chainActions_[i].setTooltip("Re-seed this random oscillator process");
+        chainActions_[i].setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        chainActions_[i].onClick=[this,i] {
+            if(syncingProcess_ || i>=chainItemCount_ || !moduleGetter_ || !moduleSetter_) return;
+            const auto item=chainItems_[i];
+            if(item.kind!=ChainItemKind::Process) return;
+            auto state=moduleGetter_(display_.id); if(!state.id) return;
+            for(std::size_t n=0;n<state.processCount;++n) {
+                auto& process=state.processes[n];
+                if(process.id!=item.id || !dsp::oscProcessUsesSeed(process.type)) continue;
+                auto seed=static_cast<std::uint32_t>(juce::Random::getSystemRandom().nextInt());
+                if(seed==0) seed=0x6d2b79f5u;
+                process.seed=seed;
+                if(moduleSetter_(display_.id,state)) { syncFromModel(); repaint(); }
+                return;
+            }
+        };
         chainAmounts_[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
         chainAmounts_[i].setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
         chainAmounts_[i].setRotaryParameters(juce::MathConstants<float>::pi*1.20f,juce::MathConstants<float>::pi*2.80f,true);
@@ -777,6 +797,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
         const bool active=i<chainItemCount_;
         chainRowBackgrounds_[i].setVisible(active);chainSelectors_[i].setVisible(active);chainAmounts_[i].setVisible(active);
         chainPowers_[i].setVisible(active);chainDeletes_[i].setVisible(active);chainKinds_[i].setVisible(active);
+        chainActions_[i].setVisible(false);
         if(!active)continue;
         const auto item=chainItems_[i];
         if(item.kind==ChainItemKind::Process) {
@@ -792,6 +813,9 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             chainAmounts_[i].getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
             chainAmounts_[i].getProperties().set("mct.mod.itemId",static_cast<int>(p->id));
             chainAmounts_[i].setName(dsp::oscProcessIsBipolar(p->type)?"OSC PROCESS BIPOLAR":"OSC PROCESS UNIPOLAR");
+            const bool hasAction=dsp::oscProcessUsesSeed(p->type);
+            chainActions_[i].setVisible(hasAction);
+            chainActions_[i].setEnabled(hasAction);
         } else {
             const OscRouteSlot* r=nullptr;
             for(std::size_t n=0;n<state.routeCount;++n)if(state.routes[n].id==item.id){r=&state.routes[n];break;}
@@ -940,7 +964,7 @@ void OscillatorCard::resized() {
     for(std::size_t i=0;i<maxChainItems;++i) {
         if(i>=chainItemCount_) {
             chainRowBackgrounds_[i].setBounds({});chainSelectors_[i].setBounds({});chainAmounts_[i].setBounds({});
-            chainPowers_[i].setBounds({});chainDeletes_[i].setBounds({});chainKinds_[i].setBounds({});
+            chainPowers_[i].setBounds({});chainDeletes_[i].setBounds({});chainKinds_[i].setBounds({});chainActions_[i].setBounds({});
             continue;
         }
         auto row=juce::Rectangle<int>(0,static_cast<int>(i)*(chainRowHeight+chainRowGap),contentWidth,chainRowHeight);
@@ -954,7 +978,14 @@ void OscillatorCard::resized() {
         chainSelectors_[i].setBounds(selector);
         auto knob=juce::Rectangle<int>(34,34).withCentre(amountArea.getCentre()).translated(-2,2);
         chainAmounts_[i].setBounds(knob);
-        chainKinds_[i].setBounds(selector.getX(),selector.getBottom(),selector.getWidth(),15);
+        auto subtype=juce::Rectangle<int>(selector.getX(),selector.getBottom(),selector.getWidth(),15);
+        if(chainActions_[i].isVisible()) {
+            constexpr int actionSize=15;
+            auto actionArea=subtype.removeFromLeft(actionSize);
+            chainActions_[i].setBounds(actionArea.reduced(1));
+            subtype.removeFromLeft(4);
+        } else chainActions_[i].setBounds({});
+        chainKinds_[i].setBounds(subtype);
         auto pwr=actions.removeFromTop(27).reduced(1,2);
         chainPowers_[i].setBounds(pwr);
         chainDeletes_[i].setBounds(actions.reduced(1,2));
