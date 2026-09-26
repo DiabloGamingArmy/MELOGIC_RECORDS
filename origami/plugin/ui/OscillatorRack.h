@@ -92,6 +92,7 @@ public:
     void resized() override;
     void syncFromModel();
     void setDisplayOrdinal(unsigned ordinal);
+    std::function<void(unsigned)> onWavetableEditorRequested;
 private:
     // Oscillator body navigation. The top bar remains persistent while the
     // content below it can be replaced by focused configuration workspaces.
@@ -320,6 +321,7 @@ public:
     void removeOscillator(unsigned id);
     int count() const { return static_cast<int>(cards_.size()); }
     const juce::Viewport& viewport() const { return viewport_; }
+    std::function<void(unsigned)> onWavetableEditorRequested;
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void timerCallback() override {
