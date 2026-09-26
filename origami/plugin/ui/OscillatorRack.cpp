@@ -808,19 +808,16 @@ void OscillatorCard::resized() {
         component->setVisible(false);
     }
 
-    // First rack row: geometry only. Reuse the authoritative selected-process
-    // selector/amount controls; leave reseed and route rows for later visual passes.
-    if(selectedProcessId_!=0) {
-        auto row=chain.withTrimmedLeft(7).withTrimmedRight(7);
-        row.setY(chain.getY()+24);
-        row.setHeight(54);
-        auto right=row.removeFromRight(58);
-        process1Menu_.setVisible(true);
-        process1Menu_.setBounds(row.reduced(3,4).withTrimmedBottom(18));
-        process1Amount_.setVisible(true);
-        process1Amount_.setBounds(juce::Rectangle<int>(46,46).withCentre(right.getCentre()));
-        process1AmountLabel_.setVisible(false);
-    }
+    // First rack row geometry is stable regardless of when model selection is
+    // synchronized. syncFromModel() owns visibility; resized() owns placement.
+    auto firstProcessRow=chain.withTrimmedLeft(7).withTrimmedRight(7);
+    firstProcessRow.setY(chain.getY()+24);
+    firstProcessRow.setHeight(54);
+    auto firstProcessAmountArea=firstProcessRow.removeFromRight(58);
+    process1Menu_.setBounds(firstProcessRow.reduced(3,4).withTrimmedBottom(18));
+    process1Amount_.setBounds(juce::Rectangle<int>(46,46).withCentre(firstProcessAmountArea.getCentre()));
+    process1AmountLabel_.setBounds({});
+
 
     auto tuning=upper.removeFromBottom(30);
     upper.removeFromBottom(4);
