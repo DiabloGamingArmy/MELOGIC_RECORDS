@@ -1784,8 +1784,13 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     // Match the fixed SOURCE header to the exact horizontal inset used by the
     // scrolling source viewport below it, rather than the full structural rail.
     auto sourceTitle=rail.reduced(4,5).removeFromTop(18);
+    // Match the list well exactly: the header begins at the scroll viewport's
+    // top edge and uses the same 2.5 px corner radius instead of a square fill.
+    auto sourceTitleBox=sourceTitle.toFloat().reduced(.5f);
     g.setColour(juce::Colours::black);
-    g.fillRect(sourceTitle);
+    g.fillRoundedRectangle(sourceTitleBox,2.5f);
+    g.setColour(Palette::borderSoft());
+    g.drawRoundedRectangle(sourceTitleBox,2.5f,1.0f);
     text(g,"SOURCE",sourceTitle,8.5f,Palette::secondary(),juce::Justification::centred);
 
     body.removeFromBottom(66);auto caption=body.removeFromTop(17);
