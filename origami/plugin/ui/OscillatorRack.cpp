@@ -343,6 +343,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     addAndMakeVisible(processRowPower_);
     addAndMakeVisible(processRowRemove_);
     processRowPower_.setClickingTogglesState(true);
+    processRowPower_.setName("OSC PROCESS POWER");
+    processRowPower_.setButtonText("PWR");
     processRowPower_.setToggleState(true,juce::dontSendNotification);
     processRowPower_.setTooltip("Bypass this oscillator process");
     processRowRemove_.setTooltip("Remove this oscillator process");
@@ -894,7 +896,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     text(g,display_.source.toUpperCase(),{87,5,getWidth()-128,25},8.2f,Palette::muted(),juce::Justification::centred);
 
     auto working=body;
-    working.removeFromTop(2);
+    working.removeFromTop(4);
 
     const int controlsHeight=56;
     working.removeFromBottom(controlsHeight);
