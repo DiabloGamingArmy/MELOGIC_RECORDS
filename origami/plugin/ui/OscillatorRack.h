@@ -93,9 +93,19 @@ public:
     void syncFromModel();
     void setDisplayOrdinal(unsigned ordinal);
 private:
+    // Oscillator body navigation. The top bar remains persistent while the
+    // content below it can be replaced by focused configuration workspaces.
+    // Patch 1 establishes Main as the authoritative existing workspace; Phase
+    // and Routing are activated by the following interaction/UI patches.
+    enum class WorkspacePage : std::uint8_t { Main, Phase, Routing };
+    void setWorkspacePage(WorkspacePage);
+    bool isMainWorkspace() const noexcept { return workspacePage_==WorkspacePage::Main; }
+
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void paintOverChildren(juce::Graphics&) override;
     void refreshVisibleNumber();
+    WorkspacePage workspacePage_=WorkspacePage::Main;
+    juce::Rectangle<int> workspaceBounds_;
     OscillatorDisplay display_;
     juce::TextButton remove_{"-"};
     juce::TextButton power_{"PWR"};
