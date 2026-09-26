@@ -56,7 +56,10 @@ NSMenuItem* makeItem(dsp::OscProcessType type,
 
 void showNativeOscProcessMenu(juce::Component& anchor,
                               dsp::OscProcessType current,
-                              std::function<void(dsp::OscProcessType)> onSelected) {
+                              std::function<void(dsp::OscProcessType)> onSelected,
+                              OscillatorModuleId routeTarget,
+                              const InstrumentState* routeState,
+                              std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected) {
     auto* peer=anchor.getPeer();
     if(peer==nullptr || peer->getNativeHandle()==nullptr)
         return;
@@ -68,14 +71,6 @@ void showNativeOscProcessMenu(juce::Component& anchor,
     MCTOrigamiProcessMenuTarget* target=[[MCTOrigamiProcessMenuTarget alloc] init];
     NSMenu* menu=[[NSMenu alloc] initWithTitle:@"OSC PROCESS"];
     [menu setAutoenablesItems:NO];
-
-    NSMenuItem* off=makeItem(dsp::OscProcessType::Off,current,target);
-    [menu addItem:off];
-#if !__has_feature(objc_arc)
-    [off release];
-#endif
-
-    [menu addItem:[NSMenuItem separatorItem]];
 
     constexpr const char* categories[]={
         "Curve / Warp",
@@ -116,6 +111,34 @@ void showNativeOscProcessMenu(juce::Component& anchor,
 #endif
     }
 
+    if(routeState!=nullptr && routeTarget!=0) {
+        [menu addItem:[NSMenuItem separatorItem]];
+        NSInteger resultId=1000;
+        unsigned displayOrdinal=0;
+        for(const auto& source:routeState->oscillators) {
+            if(source.id==0) continue;
+            ++displayOrdinal;
+            if(source.id==routeTarget) continue;
+            NSString* title=[NSString stringWithFormat:@"OSC %u",displayOrdinal];
+            NSMenuItem* parent=[[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+            NSMenu* submenu=[[NSMenu alloc] initWithTitle:title];
+            [submenu setAutoenablesItems:NO];
+            for(auto type:oscRouteTypes) {
+                NSMenuItem* item=[[NSMenuItem alloc] initWithTitle:toNS(oscRouteName(type))
+                                                           action:@selector(chooseProcess:) keyEquivalent:@""];
+                [item setTarget:target];[item setTag:resultId++];
+                [submenu addItem:item];
+#if !__has_feature(objc_arc)
+                [item release];
+#endif
+            }
+            [parent setSubmenu:submenu];[menu addItem:parent];
+#if !__has_feature(objc_arc)
+            [submenu release];[parent release];
+#endif
+        }
+    }
+
     const NSPoint screen=[NSEvent mouseLocation];
     const NSPoint window=[view.window convertPointFromScreen:screen];
     const NSPoint local=[view convertPoint:window fromView:nil];
@@ -123,11 +146,17 @@ void showNativeOscProcessMenu(juce::Component& anchor,
     [menu popUpMenuPositioningItem:nil atLocation:local inView:view];
 
     const NSInteger selected=target->selectedTag_;
-    if(selected>=0 &&
-       selected<static_cast<NSInteger>(dsp::OscProcessType::Count) &&
-       onSelected) {
+    if(selected>0 && selected<static_cast<NSInteger>(dsp::OscProcessType::Count) && onSelected) {
         onSelected(static_cast<dsp::OscProcessType>(selected));
+    } else if(selected>=1000 && routeState!=nullptr && onRouteSelected) {
+        NSInteger cursor=1000;
+        for(const auto& source:routeState->oscillators) {
+            if(source.id==0 || source.id==routeTarget) continue;
+            for(auto type:oscRouteTypes)
+                if(cursor++==selected){onRouteSelected(source.id,type);goto processMenuDone;}
+        }
     }
+processMenuDone:
 
 #if !__has_feature(objc_arc)
     [menu release];
