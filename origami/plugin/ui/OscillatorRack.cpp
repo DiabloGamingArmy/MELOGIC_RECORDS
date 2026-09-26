@@ -211,18 +211,19 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         if(safe==nullptr) return;
         const std::vector<NativeChoiceItem> choices{
             {1,"Wavetable",true,{},true},
-            {2,"Granular",false,{},false},
-            {3,"Spectral",false,{},false},
-            {4,"Field",false,{},false},
-            {5,"Gendrift",false,{},false},
-            {6,"Quasar",false,{},false},
-            {7,"Kinetic",false,{},false},
-            {8,"Automata",false,{},false},
-            {9,"Hive",false,{},false},
-            {10,"Recursion",false,{},false},
-            {11,"Collider",false,{},false},
-            {12,"Cipher",false,{},false},
-            {13,"Daemon",false,{},false}
+            {2,"Sample",false,{},false},
+            {3,"Granular",false,{},false},
+            {4,"Spectral",false,{},false},
+            {5,"Field",false,{},false},
+            {6,"Gendrift",false,{},false},
+            {7,"Quasar",false,{},false},
+            {8,"Kinetic",false,{},false},
+            {9,"Automata",false,{},false},
+            {10,"Hive",false,{},false},
+            {11,"Recursion",false,{},false},
+            {12,"Collider",false,{},false},
+            {13,"Cipher",false,{},false},
+            {14,"Daemon",false,{},false}
         };
         showNativeChoiceMenu(safe->modeSelector_,"Oscillator Mode",choices,1,[safe](int result) {
             if(safe==nullptr || result!=1) return;
