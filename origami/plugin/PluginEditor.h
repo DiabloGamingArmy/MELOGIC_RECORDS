@@ -37,10 +37,21 @@ private:
         WavetableEditorSurface() {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
+            addAndMakeVisible(close_);
+            close_.setButtonText("X");
+            close_.setTooltip("Close wavetable editor");
+            close_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            close_.onClick=[this] { if(onClose) onClose(); };
+        }
+        void resized() override {
+            constexpr int size=24;
+            constexpr int inset=8;
+            close_.setBounds(getWidth()-inset-size,inset,size,size);
+            close_.toFront(false);
         }
         void paint(juce::Graphics& g) override {
-            // Patch 4 intentionally establishes only the editor shell.
-            // Editing tools/content are added in later patches.
+            // Editing tools/content intentionally remain absent. The close
+            // control is navigation chrome, not part of the editor toolset.
             g.fillAll(mct::origami::ui::Palette::background());
         }
         bool keyPressed(const juce::KeyPress& key) override {
@@ -50,6 +61,8 @@ private:
             }
             return false;
         }
+    private:
+        juce::TextButton close_{"X"};
     };
     void openWavetableEditor(unsigned oscillatorId);
     void closeWavetableEditor();
