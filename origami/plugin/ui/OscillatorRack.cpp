@@ -786,7 +786,8 @@ void OscillatorCard::resized() {
     if(!engineBacked_) return;
 
     auto body=contentBounds();
-    body.removeFromTop(2);
+    // Match the oscillator body's top inset to its left/right structural inset.
+    body.removeFromTop(4);
     auto controls=body.removeFromBottom(56);
     body.removeFromBottom(4);
 
@@ -960,7 +961,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         g.setColour(Palette::borderSoft());
         g.drawRect(row,1);
         auto selectorArea=row;
-        selectorArea.removeFromRight(58);
+        selectorArea.removeFromRight(75);
         auto typeLabel=selectorArea.removeFromBottom(18).reduced(3,0);
         text(g,"O S C   E F F E C T",typeLabel,7.2f,Palette::muted(),juce::Justification::centred);
     }
