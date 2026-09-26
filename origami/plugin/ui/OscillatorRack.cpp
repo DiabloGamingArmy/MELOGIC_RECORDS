@@ -787,8 +787,8 @@ void OscillatorCard::resized() {
     chainViewport_.setBounds({});
     chainContent_.setSize(1,1);
     for(auto& tab:chainTabs_) { tab.setBounds({});tab.setVisible(false); }
-    // Keep the rack's center clear: controls hug the lower edge.
-    auto chainButtons=chainInner.removeFromBottom(24);
+    // Anchor the split controls to the actual bottom edge of the OSC CHAIN box.
+    auto chainButtons=chain.withTrimmedLeft(7).withTrimmedRight(7).withTrimmedBottom(3).removeFromBottom(24);
     constexpr int chainButtonGap=4;
     const int halfWidth=(chainButtons.getWidth()-chainButtonGap)/2;
     chainRemove_.setVisible(true);
