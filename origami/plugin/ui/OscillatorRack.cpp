@@ -905,10 +905,13 @@ void OscillatorCard::resized() {
     auto firstProcessSelectorArea=firstProcessRow.reduced(3,2).withTrimmedBottom(17);
     firstProcessSelectorArea.setWidth(juce::jmin(firstProcessSelectorArea.getWidth(),128));
     process1Menu_.setBounds(firstProcessSelectorArea);
+    route1Menu_.setBounds(firstProcessSelectorArea);
     auto knobBounds=juce::Rectangle<int>(34,34).withCentre(firstProcessAmountArea.getCentre());
     knobBounds.translate(-2,2);
     process1Amount_.setBounds(knobBounds);
+    route1Amount_.setBounds(knobBounds);
     process1AmountLabel_.setBounds({});
+    route1AmountLabel_.setBounds({});
     auto powerArea=firstProcessActionsArea.removeFromTop(25).reduced(1,2);
     processRowPower_.setBounds(powerArea);
     processRowRemove_.setBounds(firstProcessActionsArea.reduced(1,2));
