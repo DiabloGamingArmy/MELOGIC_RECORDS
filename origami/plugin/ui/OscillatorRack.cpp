@@ -1113,48 +1113,64 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             ? moduleGetter_(display_.id)
             : mct::origami::OscillatorModuleState{};
 
+        dsp::OscProcessPlan visualPlan{};
         if(moduleState.id) {
-            const auto modAmount=[&](ModDestination destination,float base,float minimum) {
-                const float span=1.0f-minimum;
-                return juce::jlimit(minimum,1.0f,
-                    base+modulationUiAllRoutesValue(destination,display_.id)*span);
-            };
-            moduleState.process1Amount=modAmount(
-                ModDestination::Process1Amount,moduleState.process1Amount,
-                dsp::oscProcessAmountMinimum(moduleState.process1));
-            moduleState.process2Amount=modAmount(
-                ModDestination::Process2Amount,moduleState.process2Amount,
-                dsp::oscProcessAmountMinimum(moduleState.process2));
-            moduleState.route1Amount=juce::jlimit(-1.0f,1.0f,
-                moduleState.route1Amount+modulationUiAllRoutesValue(ModDestination::Route1Amount,display_.id));
-            moduleState.route2Amount=juce::jlimit(-1.0f,1.0f,
-                moduleState.route2Amount+modulationUiAllRoutesValue(ModDestination::Route2Amount,display_.id));
+            if(moduleState.processCount>0) {
+                const auto count=std::min<std::size_t>(moduleState.processCount,maxOscProcesses);
+                for(std::size_t i=0;i<count && visualPlan.count<dsp::maxOscProcessStages;++i) {
+                    const auto& process=moduleState.processes[i];
+                    if(!process.enabled || process.type==dsp::OscProcessType::Off) continue;
+                    const float minimum=dsp::oscProcessAmountMinimum(process.type);
+                    const float span=1.0f-minimum;
+                    const float modulated=juce::jlimit(minimum,1.0f,
+                        process.amount+
+                        modulationUiAllRoutesValue(ModDestination::ProcessAmount,display_.id,process.id)*span);
+                    // Quantise the VISUAL amount only. The audio path remains
+                    // continuous; this bounds repaint-driven FFT work while the
+                    // existing preview morph removes visible stepping.
+                    const float visualAmount=std::round(modulated*64.0f)/64.0f;
+                    visualPlan.stages[visualPlan.count++]={process.type,visualAmount,process.seed};
+                }
+            } else {
+                auto appendLegacy=[&](dsp::OscProcessType type,float amount,std::uint32_t seed,
+                                      ModDestination destination) {
+                    if(type==dsp::OscProcessType::Off || visualPlan.count>=dsp::maxOscProcessStages) return;
+                    const float minimum=dsp::oscProcessAmountMinimum(type);
+                    const float span=1.0f-minimum;
+                    amount=juce::jlimit(minimum,1.0f,
+                        amount+modulationUiAllRoutesValue(destination,display_.id)*span);
+                    amount=std::round(amount*64.0f)/64.0f;
+                    visualPlan.stages[visualPlan.count++]={type,amount,seed};
+                };
+                appendLegacy(moduleState.process1,moduleState.process1Amount,moduleState.process1Seed,
+                             ModDestination::Process1Amount);
+                appendLegacy(moduleState.process2,moduleState.process2Amount,moduleState.process2Seed,
+                             ModDestination::Process2Amount);
+            }
         }
 
         constexpr std::size_t previewSize=2048;
-        const bool spectralPreview=moduleState.id &&
-            (dsp::oscProcessIsSpectral(moduleState.process1) ||
-             dsp::oscProcessIsSpectral(moduleState.process2));
+        bool spectralPreview=false;
+        for(std::size_t i=0;i<visualPlan.count;++i)
+            spectralPreview=spectralPreview || dsp::oscProcessIsSpectral(visualPlan.stages[i].type);
+
+        const auto samePlan=[](const dsp::OscProcessPlan& a,const dsp::OscProcessPlan& b) {
+            if(a.count!=b.count) return false;
+            for(std::size_t i=0;i<a.count;++i) {
+                if(a.stages[i].type!=b.stages[i].type ||
+                   a.stages[i].amount!=b.stages[i].amount ||
+                   a.stages[i].seed!=b.stages[i].seed) return false;
+            }
+            return true;
+        };
+
         if(spectralPreview) {
-            // Quantise the VISUAL cache key only. This prevents repaint-driven
-            // FFT storms while preserving more resolution than the viewport can
-            // physically display.
             const int wtKey=juce::roundToInt(physical*128.0f);
-            const int amount1Key=juce::roundToInt(moduleState.process1Amount*64.0f);
-            const int amount2Key=juce::roundToInt(moduleState.process2Amount*64.0f);
             const bool stale=!spectralPreviewValid_ ||
                 spectralPreviewWtKey_!=wtKey ||
-                spectralPreviewAmount1Key_!=amount1Key ||
-                spectralPreviewAmount2Key_!=amount2Key ||
-                spectralPreviewProcess1_!=moduleState.process1 ||
-                spectralPreviewProcess2_!=moduleState.process2 ||
-                spectralPreviewSeed1_!=moduleState.process1Seed ||
-                spectralPreviewSeed2_!=moduleState.process2Seed;
+                !samePlan(spectralPreviewPlan_,visualPlan);
 
             if(stale) {
-                // Preserve the last complete preview and morph into the newly
-                // rendered one instead of replacing the viewport in one frame.
-                // At the rack's 60 Hz cadence, 0.22 advances over ~75 ms.
                 if(spectralPreviewValid_)
                     spectralPreviewPrevious_=spectralPreviewCache_;
                 std::array<float,previewSize> previewSource{};
@@ -1162,28 +1178,16 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 const int va=juce::jlimit(0,3,int(std::floor(visualPhysical)));
                 const int vb=juce::jmin(3,va+1);
                 const float vblend=visualPhysical-float(va);
-
                 for(std::size_t sampleIndex=0;sampleIndex<previewSize;++sampleIndex) {
                     const float phase=static_cast<float>(sampleIndex)/static_cast<float>(previewSize);
                     const float ya=shape(va,phase),yb=shape(vb,phase);
                     previewSource[sampleIndex]=ya+(yb-ya)*vblend;
                 }
                 dsp::renderProcessedFrame2048(
-                    previewSource.data(),spectralPreviewCache_.data(),
-                    moduleState.process1,
-                    static_cast<float>(amount1Key)/64.0f,
-                    moduleState.process1Seed,
-                    moduleState.process2,
-                    static_cast<float>(amount2Key)/64.0f,
-                    moduleState.process2Seed);
+                    previewSource.data(),spectralPreviewCache_.data(),visualPlan);
 
                 spectralPreviewWtKey_=wtKey;
-                spectralPreviewAmount1Key_=amount1Key;
-                spectralPreviewAmount2Key_=amount2Key;
-                spectralPreviewProcess1_=moduleState.process1;
-                spectralPreviewProcess2_=moduleState.process2;
-                spectralPreviewSeed1_=moduleState.process1Seed;
-                spectralPreviewSeed2_=moduleState.process2Seed;
+                spectralPreviewPlan_=visualPlan;
                 if(!spectralPreviewValid_)
                     spectralPreviewPrevious_=spectralPreviewCache_;
                 spectralPreviewValid_=true;
@@ -1194,6 +1198,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         } else {
             spectralPreviewValid_=false;
             spectralPreviewMorph_=1.0f;
+            spectralPreviewPlan_={};
         }
 
         auto processedSample=[&](float sourcePhase) {
@@ -1212,9 +1217,9 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 return previous+(current-previous)*t;
             }
             double phase=static_cast<double>(sourcePhase);
-            if(moduleState.id) {
-                phase=dsp::processOscillatorPhase(phase,moduleState.process1,moduleState.process1Amount);
-                phase=dsp::processOscillatorPhase(phase,moduleState.process2,moduleState.process2Amount);
+            for(std::size_t i=0;i<visualPlan.count;++i) {
+                const auto& stage=visualPlan.stages[i];
+                phase=dsp::processOscillatorPhase(phase,stage.type,stage.amount);
             }
             const float visualPhase=static_cast<float>(phase);
             const float ya=shape(a,visualPhase),yb=shape(next,visualPhase);
