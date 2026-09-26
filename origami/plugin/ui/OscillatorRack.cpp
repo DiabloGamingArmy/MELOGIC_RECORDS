@@ -751,45 +751,43 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
         chainItems_[chainItemCount_++]={ChainItemKind::Process,state.processes[i].id};
     for(std::size_t i=0;i<state.routeCount && chainItemCount_<maxChainItems;++i)
         chainItems_[chainItemCount_++]={ChainItemKind::Route,state.routes[i].id};
-    auto exists=[&](ChainItem item) {
-        for(std::size_t i=0;i<chainItemCount_;++i)
-            if(chainItems_[i].kind==item.kind && chainItems_[i].id==item.id)return true;
-        return false;
-    };
-    if(!exists(selectedChainItem_))
-        selectedChainItem_=chainItemCount_?chainItems_[0]:ChainItem{};
-    selectedProcessId_=selectedChainItem_.kind==ChainItemKind::Process?static_cast<OscProcessSlotId>(selectedChainItem_.id):0;
-    selectedRouteId_=selectedChainItem_.kind==ChainItemKind::Route?static_cast<OscRouteSlotId>(selectedChainItem_.id):0;
-    std::size_t processIndex=0,routeIndex=0;
-    for(std::size_t i=0;i<chainTabs_.size();++i) {
-        const bool active=i<chainItemCount_;chainTabs_[i].setVisible(active);
+
+    const juce::ScopedValueSetter<bool> guard(syncingProcess_,true);
+    for(std::size_t i=0;i<maxChainItems;++i) {
+        const bool active=i<chainItemCount_;
+        chainSelectors_[i].setVisible(active);chainAmounts_[i].setVisible(active);
+        chainPowers_[i].setVisible(active);chainDeletes_[i].setVisible(active);chainKinds_[i].setVisible(active);
         if(!active)continue;
         const auto item=chainItems_[i];
-        juce::String label;
         if(item.kind==ChainItemKind::Process) {
-            const auto& process=state.processes[processIndex++];
-            label=juce::String(dsp::oscProcessName(process.type)).toUpperCase();
+            const OscProcessSlot* p=nullptr;
+            for(std::size_t n=0;n<state.processCount;++n)if(state.processes[n].id==item.id){p=&state.processes[n];break;}
+            if(!p)continue;
+            chainSelectors_[i].setButtonText(juce::String(dsp::oscProcessName(p->type)));
+            chainKinds_[i].setText("O S C   E F F E C T",juce::dontSendNotification);
+            chainAmounts_[i].setRange(dsp::oscProcessAmountMinimum(p->type),1.0,0.001);
+            chainAmounts_[i].setValue(p->amount,juce::dontSendNotification);
+            chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::ProcessAmount));
+            chainAmounts_[i].getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+            chainAmounts_[i].getProperties().set("mct.mod.itemId",static_cast<int>(p->id));
+            chainAmounts_[i].setName(dsp::oscProcessIsBipolar(p->type)?"OSC PROCESS BIPOLAR":"OSC PROCESS UNIPOLAR");
         } else {
-            const auto& route=state.routes[routeIndex++];
-            if(route.type==OscRouteType::Off) label="ROUTING";
-            else {
-                unsigned ordinal=0,displayOrdinal=0;
-                if(snapshotGetter_) {
-                    const auto snapshot=snapshotGetter_();
-                    for(const auto& osc:snapshot.oscillators) {
-                        if(osc.id==0)continue;
-                        ++displayOrdinal;
-                        if(osc.id==route.sourceId){ordinal=displayOrdinal;break;}
-                    }
-                }
-                label="OSC "+juce::String(ordinal?ordinal:route.sourceId)+" · "+juce::String(oscRouteName(route.type)).toUpperCase();
-            }
+            const OscRouteSlot* r=nullptr;
+            for(std::size_t n=0;n<state.routeCount;++n)if(state.routes[n].id==item.id){r=&state.routes[n];break;}
+            if(!r)continue;
+            unsigned ordinal=0,displayOrdinal=0;
+            if(snapshotGetter_)for(const auto& osc:snapshotGetter_().oscillators){if(!osc.id)continue;++displayOrdinal;if(osc.id==r->sourceId){ordinal=displayOrdinal;break;}}
+            chainSelectors_[i].setButtonText("OSC "+juce::String(ordinal?ordinal:r->sourceId)+" · "+juce::String(oscRouteName(r->type)));
+            chainKinds_[i].setText("O S C   R O U T E",juce::dontSendNotification);
+            chainAmounts_[i].setRange(-1.0,1.0,0.001);
+            chainAmounts_[i].setValue(r->amount,juce::dontSendNotification);
+            chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::RouteAmount));
+            chainAmounts_[i].getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
+            chainAmounts_[i].getProperties().set("mct.mod.itemId",static_cast<int>(r->id));
+            chainAmounts_[i].setName("OSC ROUTE AMOUNT");
         }
-        chainTabs_[i].setButtonText(label);
-        chainTabs_[i].setToggleState(item.kind==selectedChainItem_.kind && item.id==selectedChainItem_.id,juce::dontSendNotification);
     }
     chainAdd_.setEnabled(state.processCount<maxOscProcesses || state.routeCount<maxOscRoutes);
-    chainRemove_.setEnabled(selectedChainItem_.kind!=ChainItemKind::None);
 }
 
 void OscillatorCard::syncFromModel() {
