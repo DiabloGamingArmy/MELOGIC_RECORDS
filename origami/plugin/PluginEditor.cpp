@@ -73,6 +73,11 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,12> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_}};
     for(auto* component:components) addAndMakeVisible(component);
+    addChildComponent(wavetableEditor_);
+    wavetableEditor_.onClose=[this]{closeWavetableEditor();};
+    oscillators_.onWavetableEditorRequested=[this](unsigned oscillatorId) {
+        openWavetableEditor(oscillatorId);
+    };
     // mct-origami-fixed-ratio-zoom-v1
     // Resize behaves as whole-interface zoom: the editor is constrained to one
     // canonical 16:10 canvas and every child is scaled from that same design space.
@@ -494,6 +499,22 @@ void OrigamiAudioProcessorEditor::openKnobValueEditor(juce::Slider& slider) {
         false);
 }
 void OrigamiAudioProcessorEditor::paint(juce::Graphics& g) {g.fillAll(Palette::background());}
+
+void OrigamiAudioProcessorEditor::openWavetableEditor(unsigned oscillatorId) {
+    wavetableEditorOscillatorId_=oscillatorId;
+    wavetableEditorSelected_=true;
+    resized();
+    wavetableEditor_.toFront(false);
+    wavetableEditor_.grabKeyboardFocus();
+}
+
+void OrigamiAudioProcessorEditor::closeWavetableEditor() {
+    if(!wavetableEditorSelected_) return;
+    wavetableEditorSelected_=false;
+    wavetableEditorOscillatorId_=0;
+    resized();
+}
+
 void OrigamiAudioProcessorEditor::resized() {
     // mct-origami-consistent-resize-v11
     const auto designBounds=juce::Rectangle<int>(0,0,EditorLayout::defaultWidth,EditorLayout::defaultHeight);
@@ -509,10 +530,14 @@ void OrigamiAudioProcessorEditor::resized() {
     matrix_.setBounds(mainArea);
     arpeggiator_.setBounds(mainArea);
     global_.setBounds(mainArea);
-    matrix_.setVisible(matrixSelected_ && !arpSelected_);
-    arpeggiator_.setVisible(arpSelected_);
-    global_.setVisible(globalSelected_ && !arpSelected_);
-    const bool synthVisible=!matrixSelected_ && !arpSelected_ && !globalSelected_;
+    // Wavetable editing is an application-level takeover: preserve the global
+    // Origami header and performance keyboard, replace everything between them.
+    wavetableEditor_.setBounds(mainArea);
+    wavetableEditor_.setVisible(wavetableEditorSelected_);
+    matrix_.setVisible(!wavetableEditorSelected_ && matrixSelected_ && !arpSelected_);
+    arpeggiator_.setVisible(!wavetableEditorSelected_ && arpSelected_);
+    global_.setVisible(!wavetableEditorSelected_ && globalSelected_ && !arpSelected_);
+    const bool synthVisible=!wavetableEditorSelected_ && !matrixSelected_ && !arpSelected_ && !globalSelected_;
     for(auto* component:std::array<juce::Component*,4>{{&oscillators_,&modulation_,&filter_,&macros_}})
         component->setVisible(synthVisible);
 
@@ -528,10 +553,13 @@ void OrigamiAudioProcessorEditor::resized() {
     const float scale=juce::jmin(sx,sy);
 
     const auto transform=juce::AffineTransform::scale(scale);
-    const std::array<juce::Component*,9> visibleComponents{{
-        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_
+    const std::array<juce::Component*,10> visibleComponents{{
+        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&wavetableEditor_
     }};
 
     for(auto* component:visibleComponents)
         component->setTransform(transform);
+
+    if(wavetableEditorSelected_)
+        wavetableEditor_.toFront(false);
 }
