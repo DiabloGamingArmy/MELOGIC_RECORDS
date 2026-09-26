@@ -112,6 +112,7 @@ private:
     // Dedicated oscillator header controls. These are UI structure first:
     // backend mode/output switching is wired in the follow-up model patch.
     juce::TextButton modeSelector_{"WAVETABLE"};
+    juce::TextButton phaseSelector_{"RAND"};
     juce::TextButton outputSelector_{"DIRECT OUT"};
     std::function<bool(unsigned,bool)> enabledSetter_;
     std::function<bool(unsigned)> enabledGetter_;
