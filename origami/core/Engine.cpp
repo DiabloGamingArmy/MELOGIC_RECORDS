@@ -338,6 +338,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     auto modules=hostModules_;
     const double normalization=hostNormalization_;
     const float bendRange=hostBendRange_;
+    ModulationFrame frame;
 
     for(std::size_t sample=0;sample<sampleCount;++sample) {
         for(auto& s:smooth_) if(s.remaining) {
@@ -404,7 +405,6 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             static_cast<double>(std::max<std::uint32_t>(1,audioModulation_.sequencer.activeSteps)));
         runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
         compiledModulation_.advance(modulationSmoothing_);
-        ModulationFrame frame;
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
         frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
@@ -427,7 +427,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             const float bend=pitchBendNormalized_[channel]*bendRange;
             auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
-                                                modWheel_[channel],aftertouch_[channel]);
+                                                modWheel_[channel],aftertouch_[channel],info.order==newestOrder);
             if(info.order==newestOrder) {
                 const auto& visual=voices_[v].visualizationSnapshot();
                 for(std::size_t i=0;i<3;++i) {

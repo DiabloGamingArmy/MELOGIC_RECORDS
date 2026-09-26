@@ -40,7 +40,7 @@ void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSet
 }
 Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
-    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch) noexcept {
+    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,bool observe) noexcept {
     Samples outputs{};
     if(!active_) return outputs;
     if(glideRemaining_) {
@@ -52,7 +52,7 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     const float env2=env2_.next(modulation.env2.sustain),env3=env3_.next(modulation.env3.sustain);
     std::array<float,CompiledModulation::voiceSourceCount> voiceSources{};
     voiceSources[0]=envelope;voiceSources[1]=env2;voiceSources[2]=env3;
-    for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_):0.0f;visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].phase());}
+    for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_):0.0f;if(observe) visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].phase());}
     voiceSources[7]=performanceSourceCurveValue(modulation.velocityCurve,velocity_);
     voiceSources[8]=modWheel;
     voiceSources[9]=performanceSourceCurveValue(
@@ -61,11 +61,11 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     voiceSources[10]=aftertouch;
     voiceSources[11]=std::clamp(pitchBendNormalized,-1.0f,1.0f);
     voiceSources[12]=releasing_ ? 0.0f : 1.0f;
-    visualization_.sources=voiceSources;
-    ModulationFrame local;const ModulationFrame* effective=&global;
+    if(observe) visualization_.sources=voiceSources;
+    auto& local=localFrame_;const ModulationFrame* effective=&global;
     if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
     const auto& modules=effective->modules;
-    visualization_.modules=modules;
+    if(observe) visualization_.modules=modules;
     bool filtersQuiet=true;
     // One bend ratio per voice/sample, not one exp2 per active oscillator module.
     const double pitchBendScale=dsp::fastExp2Audio(static_cast<double>(pitchBendSemitones)/12.0);
@@ -181,8 +181,10 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
                 processPlan,routedPhaseOffset,routedPhaseSkew);
             oscillatorMix=centre+(unisonStack-centre)*prepared.blend;
         }
-        visualization_.moduleSamples[m]=oscillatorMix;
-        visualization_.modulePhases[m]=static_cast<float>(moduleOscillators_[m][0].phase());
+        if(observe) {
+            visualization_.moduleSamples[m]=oscillatorMix;
+            visualization_.modulePhases[m]=static_cast<float>(moduleOscillators_[m][0].phase());
+        }
 
         // Post-generation routes are intentionally executed in slot order.
         // This makes combinations such as WF -> XOR or RM -> RECT genuinely

@@ -24,6 +24,7 @@ struct Scenario {
     unsigned modules;
     unsigned unison;
     unsigned blocks;
+    unsigned spectralStages=0;
 };
 
 double runSynth(const Scenario& s) {
@@ -47,6 +48,14 @@ double runSynth(const Scenario& s) {
         state.process1=mct::origami::dsp::OscProcessType::BendPlus;
         state.process1Amount=0.17f;
         state.process2=mct::origami::dsp::OscProcessType::Off;
+        if(s.spectralStages) {
+            state.processCount=static_cast<std::uint8_t>(s.spectralStages);
+            state.nextProcessId=s.spectralStages+1;
+            for(unsigned p=0;p<s.spectralStages;++p)
+                state.processes[p]={p+1, p%2 ? mct::origami::dsp::OscProcessType::RandSparse
+                                            : mct::origami::dsp::OscProcessType::RandAmp,
+                                    0.35f+0.05f*static_cast<float>(p),0x12345678u+p,true};
+        }
         if(!engine.setOscillatorModuleState(ids[m],state))
             return -1.0;
     }
@@ -104,11 +113,14 @@ double runSpectral(unsigned iterations) {
 }
 
 int main() {
-    const std::array<Scenario,4> scenarios{{
+    const std::array<Scenario,7> scenarios{{
         {"1voice_1module_1unison",1,1,1,5000},
         {"8voice_4module_4unison",8,4,4,1200},
         {"16voice_4module_8unison",16,4,8,500},
-        {"16voice_4module_16unison",16,4,16,250}
+        {"16voice_4module_16unison",16,4,16,250},
+        {"8voice_4module_4unison_rand1",8,4,4,500,1},
+        {"8voice_4module_4unison_rand2",8,4,4,500,2},
+        {"8voice_4module_4unison_rand8",8,4,4,500,8}
     }};
 
     std::cout << "MCT Origami Patch 18 SIMD/vectorization profile\n";

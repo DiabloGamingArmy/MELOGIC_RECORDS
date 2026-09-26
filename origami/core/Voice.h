@@ -60,7 +60,7 @@ public:
     Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
                         const CompiledModulation&,const ModulationState&,
                         float pitchBendSemitones,float pitchBendNormalized,
-                        float modWheel,float aftertouch) noexcept;
+                        float modWheel,float aftertouch,bool observe=true) noexcept;
     VoiceInfo info() const noexcept;
     const VoiceVisualizationSnapshot& visualizationSnapshot() const noexcept { return visualization_; }
 private:
@@ -178,6 +178,9 @@ private:
     std::size_t glideRemaining_ = 0;
     float velocity_ = 0;
     bool active_ = false, releasing_ = false;
+    // Reuse storage; default construction of this large editable-state snapshot
+    // must not run for every voice/sample when no voice modulation is present.
+    ModulationFrame localFrame_{};
     VoiceVisualizationSnapshot visualization_{};
 };
 }

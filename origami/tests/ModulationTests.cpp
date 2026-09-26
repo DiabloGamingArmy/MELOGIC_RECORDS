@@ -176,9 +176,9 @@ void stateV3RoundTrip() {
 
     auto state=engine.instrumentState();
     state.modulation.lfo1.shape=LfoShape::Triangle;
-    state.modulation.lfo1.mode=LfoMode::NoteRetrigger;
+    state.modulation.lfo1.mode=LfoMode::Loop;
     state.modulation.lfo1.rateHz=3.5f;
-    state.modulation.lfo2.shape=LfoShape::Square;state.modulation.lfo2.mode=LfoMode::NoteRetrigger;state.modulation.lfo2.rateHz=7.0f;
+    state.modulation.lfo2.shape=LfoShape::Square;state.modulation.lfo2.mode=LfoMode::Loop;state.modulation.lfo2.rateHz=7.0f;
     state.modulation.env2={.02f,.3f,.4f,.5f};state.modulation.env3={.03f,.2f,.6f,.7f};
     state.modulation.random.rateHz=5.0f;state.modulation.function.rateHz=2.5f;state.modulation.function.curve=.4f;
     state.modulation.macros={.1f,.2f,.3f,.4f};
@@ -193,9 +193,9 @@ void stateV3RoundTrip() {
     InstrumentState decoded;
     check(decodeInstrumentState(encoded.data(),encoded.size(),decoded),"state v3 decoded");
     check(decoded.modulation.lfo1.shape==LfoShape::Triangle,"LFO shape persisted");
-    check(decoded.modulation.lfo1.mode==LfoMode::NoteRetrigger,"LFO mode persisted");
+    check(decoded.modulation.lfo1.mode==LfoMode::Loop,"LFO mode persisted");
     check(near(decoded.modulation.lfo1.rateHz,3.5f),"LFO rate persisted");
-    check(decoded.modulation.lfo2.shape==LfoShape::Square && decoded.modulation.lfo2.mode==LfoMode::NoteRetrigger && near(decoded.modulation.lfo2.rateHz,7.0f),"LFO2 persisted");
+    check(decoded.modulation.lfo2.shape==LfoShape::Square && decoded.modulation.lfo2.mode==LfoMode::Loop && near(decoded.modulation.lfo2.rateHz,7.0f),"LFO2 persisted");
     check(near(decoded.modulation.env2.attack,.02f) && near(decoded.modulation.env3.release,.7f),"ENV2/3 persisted");
     check(near(decoded.modulation.random.rateHz,5.0f) && near(decoded.modulation.function.curve,.4f),"random/function persisted");
     check(decoded.modulation.macros==std::array<float,4>{.1f,.2f,.3f,.4f},"macro values persisted");

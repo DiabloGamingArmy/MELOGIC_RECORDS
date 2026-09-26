@@ -229,6 +229,7 @@ void realtimeThreadPolicyAudit() {
 }
 
 void spectralPreparationBoundaryAudit() {
+    using namespace mct::origami::dsp;
     const auto root=std::filesystem::path(__FILE__).parent_path().parent_path();
     std::ifstream sourceFile(root/"core/dsp/Wavetable.cpp");
     const std::string source((std::istreambuf_iterator<char>(sourceFile)),std::istreambuf_iterator<char>());
@@ -421,6 +422,35 @@ void qosVoiceAdmissionAudit() {
 }
 
 
+void voiceObservationDoesNotChangeAudio() {
+    Voice observed,unobserved;
+    observed.prepare(48000);unobserved.prepare(48000);
+    ModulationState state;
+    ModulationFrame frame;
+    frame.modules[0].id=1;frame.modules[0].enabled=true;
+    frame.modules[0].unison=4;
+    frame.modules[0].processCount=2;
+    frame.modules[0].processes[0]={1,dsp::OscProcessType::BendPlus,0.4f,7,true};
+    frame.modules[0].processes[1]={2,dsp::OscProcessType::PhaseShift,-0.2f,8,true};
+    state.routes[0]={1,true,ModSource::Env1,{ModDestination::ProcessAmount,1,1},0.2f,false};
+    CompiledModulation compiled;
+    compiled.prepare(48000);compiled.compile(state,frame.modules,true);
+    compiled.globalFrame(frame,{},48000);
+    dsp::EnvelopeSettings envelope;
+    observed.start({},0.8f,1,envelope,state.env2,state.env3);
+    unobserved.start({},0.8f,1,envelope,state.env2,state.env3);
+    for(unsigned i=0;i<512;++i) {
+        const auto a=observed.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,true);
+        const auto b=unobserved.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,false);
+        check(a.left==b.left && a.right==b.right && a.mono==b.mono,
+              "visualization observation does not affect modulated unison audio");
+    }
+    check(observed.visualizationSnapshot().modules[0].id==1,
+          "observed voice publishes current modules");
+    check(unobserved.visualizationSnapshot().modules[0].id==0,
+          "unobserved voice skips snapshot copies");
+}
+
 void performanceSourceCurveAudit() {
     PerformanceSourceCurve linear{};
     check(std::abs(performanceSourceCurveValue(linear,0.0f)-0.0f)<1.0e-6f,
@@ -429,10 +459,10 @@ void performanceSourceCurveAudit() {
           "default performance curve is linear at midpoint");
     check(std::abs(performanceSourceCurveValue(linear,1.0f)-1.0f)<1.0e-6f,
           "performance curve preserves one endpoint");
-    PerformanceSourceCurve sensitive{0.75f};
+    PerformanceSourceCurve sensitive{};sensitive.points[1].y=0.75f;
     check(std::abs(performanceSourceCurveValue(sensitive,0.5f)-0.75f)<1.0e-5f,
           "raised midpoint increases velocity/note sensitivity");
-    PerformanceSourceCurve gentle{0.25f};
+    PerformanceSourceCurve gentle{};gentle.points[1].y=0.25f;
     check(std::abs(performanceSourceCurveValue(gentle,0.5f)-0.25f)<1.0e-5f,
           "lowered midpoint decreases velocity/note sensitivity");
     const float base=0.5f,depth=0.5f;
@@ -443,6 +473,7 @@ void performanceSourceCurveAudit() {
 }
 
 int main() {
+    voiceObservationDoesNotChangeAudio();
     performanceSourceCurveAudit();
     qosVoiceAdmissionAudit();
     audioRateFastMathAudit();
