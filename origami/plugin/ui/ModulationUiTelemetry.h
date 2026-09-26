@@ -208,13 +208,15 @@ inline bool modulationUiPersistentRoutesAreBipolar(ModDestination destination,
 }
 
 inline float modulationUiAllRoutesValue(ModDestination destination,
-                                        OscillatorModuleId oscillator=0) noexcept {
+                                        OscillatorModuleId oscillator=0,
+                                        std::uint32_t itemId=0) noexcept {
     const auto& telemetry=modulationUiTelemetry();
     if(!telemetry.synthActive) return 0.0f;
     float total=0.0f;
     for(const auto& route:telemetry.state.routes) {
         if(route.id==0 || !route.enabled) continue;
         if(route.destination.parameter!=destination || route.destination.oscillator!=oscillator) continue;
+        if(itemId!=0 && route.destination.itemId!=itemId) continue;
         total+=route.amount*modulationUiSourceValue(route.source);
     }
     return juce::jlimit(-1.0f,1.0f,total);
