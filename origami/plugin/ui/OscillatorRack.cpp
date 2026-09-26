@@ -831,14 +831,14 @@ void OscillatorCard::resized() {
     firstProcessRow.setHeight(54);
 
     // Concept proportions: selector / amount / action stack.
-    auto firstProcessActionsArea=firstProcessRow.removeFromRight(32);
-    auto firstProcessAmountArea=firstProcessRow.removeFromRight(40);
-    firstProcessRow.removeFromRight(6);
-    auto firstProcessSelectorArea=firstProcessRow.reduced(3,4).withTrimmedBottom(18);
-    firstProcessSelectorArea.setWidth(juce::jmin(firstProcessSelectorArea.getWidth(),136));
+    auto firstProcessActionsArea=firstProcessRow.removeFromRight(27);
+    auto firstProcessAmountArea=firstProcessRow.removeFromRight(43);
+    firstProcessRow.removeFromRight(5);
+    auto firstProcessSelectorArea=firstProcessRow.reduced(3,2).withTrimmedBottom(17);
+    firstProcessSelectorArea.setWidth(juce::jmin(firstProcessSelectorArea.getWidth(),128));
     process1Menu_.setBounds(firstProcessSelectorArea);
-    auto knobBounds=juce::Rectangle<int>(30,30).withCentre(firstProcessAmountArea.getCentre());
-    knobBounds.translate(0,-3);
+    auto knobBounds=juce::Rectangle<int>(34,34).withCentre(firstProcessAmountArea.getCentre());
+    knobBounds.translate(-2,2);
     process1Amount_.setBounds(knobBounds);
     process1AmountLabel_.setBounds({});
     auto powerArea=firstProcessActionsArea.removeFromTop(25).reduced(1,2);
