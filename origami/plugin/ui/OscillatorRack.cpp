@@ -1391,6 +1391,16 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         drawRotary(process1Amount_,ModDestination::ProcessAmount,selectedProcessId_);
     if(route1Amount_.isVisible() && selectedRouteId_!=0)
         drawRotary(route1Amount_,ModDestination::RouteAmount,selectedRouteId_);
+
+    // Each full OSC CHAIN row owns its modulation target and visualization.
+    for(std::size_t i=0;i<chainItemCount_;++i) {
+        if(!chainAmounts_[i].isVisible())continue;
+        const auto item=chainItems_[i];
+        if(item.kind==ChainItemKind::Process)
+            drawRotary(chainAmounts_[i],ModDestination::ProcessAmount,item.id);
+        else if(item.kind==ChainItemKind::Route)
+            drawRotary(chainAmounts_[i],ModDestination::RouteAmount,item.id);
+    }
 }
 
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
