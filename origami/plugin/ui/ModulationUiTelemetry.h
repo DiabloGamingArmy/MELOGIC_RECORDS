@@ -148,23 +148,27 @@ inline float modulationUiRouteDisplaySourceValue(ModSource source,bool bipolar) 
 }
 
 inline float modulationUiSelectedRouteAmount(ModDestination destination,
-                                             OscillatorModuleId oscillator=0) noexcept {
+                                             OscillatorModuleId oscillator=0,
+                                             std::uint32_t itemId=0) noexcept {
     const auto& telemetry=modulationUiTelemetry();
     float total=0.0f;
     for(const auto& route:telemetry.state.routes) {
         if(route.id==0 || !route.enabled || route.source!=telemetry.selectedSource) continue;
         if(route.destination.parameter!=destination || route.destination.oscillator!=oscillator) continue;
+        if(itemId!=0 && route.destination.itemId!=itemId) continue;
         total+=route.amount;
     }
     return juce::jlimit(-1.0f,1.0f,total);
 }
 
 inline bool modulationUiHasAnyRoute(ModDestination destination,
-                                    OscillatorModuleId oscillator=0) noexcept {
+                                    OscillatorModuleId oscillator=0,
+                                    std::uint32_t itemId=0) noexcept {
     const auto& telemetry=modulationUiTelemetry();
     for(const auto& route:telemetry.state.routes) {
         if(route.id==0 || !route.enabled) continue;
-        if(route.destination.parameter==destination && route.destination.oscillator==oscillator)
+        if(route.destination.parameter==destination && route.destination.oscillator==oscillator &&
+           (itemId==0 || route.destination.itemId==itemId))
             return true;
     }
     return false;
