@@ -787,13 +787,17 @@ void OscillatorCard::resized() {
     chainViewport_.setBounds({});
     chainContent_.setSize(1,1);
     for(auto& tab:chainTabs_) { tab.setBounds({});tab.setVisible(false); }
-    chainRemove_.setBounds({});chainRemove_.setVisible(false);
-
-    // For this baseline the only visible chain interaction is ADD.
-    auto addArea=chainInner.removeFromBottom(24);
+    // Full-width split chain controls: remove on the left, add on the right.
+    auto chainButtons=chainInner.removeFromBottom(24);
+    constexpr int chainButtonGap=4;
+    const int halfWidth=(chainButtons.getWidth()-chainButtonGap)/2;
+    chainRemove_.setVisible(true);
+    chainRemove_.setButtonText("-");
+    chainRemove_.setBounds(chainButtons.removeFromLeft(halfWidth));
+    chainButtons.removeFromLeft(chainButtonGap);
     chainAdd_.setVisible(true);
-    chainAdd_.setButtonText("+ ADD");
-    chainAdd_.setBounds(addArea.removeFromRight(74));
+    chainAdd_.setButtonText("+");
+    chainAdd_.setBounds(chainButtons);
 
     for(auto* component:std::initializer_list<juce::Component*>{
         &process1Menu_,&process1Previous_,&process1Next_,&process1Randomize_,&process1Amount_,&process1AmountLabel_,
@@ -905,7 +909,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     well(g,chainBox);
     auto chainInner=chainBox.reduced(8);
     auto chainTitle=chainInner.removeFromTop(18);
-    text(g,"OSC CHAIN",chainTitle,8.5f,Palette::secondary(),juce::Justification::centredLeft);
+    text(g,"OSC CHAIN",chainTitle,8.5f,Palette::secondary(),juce::Justification::centred);
     if(chainItemCount_==0)
         text(g,"NO PROCESSING OR ROUTING",chainInner,7.2f,Palette::muted(),juce::Justification::centred);
 
