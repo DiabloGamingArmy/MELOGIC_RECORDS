@@ -164,9 +164,11 @@ void FilterPanel::resized() {
     filterViewport_.setBounds(rail);
     constexpr int filterRowHeight=38;
     const int contentWidth=juce::jmax(1,filterViewport_.getWidth());
-    filter1_.setBounds(filterEnabled_ ? juce::Rectangle<int>(0,0,contentWidth,filterRowHeight-2)
+    // Small breathing gap below the fixed SOURCE header before the first row.
+    constexpr int sourceListTopGap=3;
+    filter1_.setBounds(filterEnabled_ ? juce::Rectangle<int>(0,sourceListTopGap,contentWidth,filterRowHeight-2)
                                       : juce::Rectangle<int>{});
-    filterContent_.setSize(contentWidth,juce::jmax(filterRowHeight,filterViewport_.getHeight()));
+    filterContent_.setSize(contentWidth,juce::jmax(filterRowHeight+sourceListTopGap,filterViewport_.getHeight()));
 
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
     const int w=controls.getWidth()/6;
