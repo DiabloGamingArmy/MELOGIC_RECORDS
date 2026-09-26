@@ -123,6 +123,18 @@ private:
     juce::TextButton phaseRetrigger_{"RETRIGGER"};
     juce::TextButton phasePerUnison_{"PER-UNISON"};
     void refreshPhaseWorkspace();
+
+    // Oscillator-local output routing workspace. This is deliberately separate
+    // from OSC CHAIN cross-oscillator routes: it describes where this oscillator
+    // feeds the instrument after its own processing chain.
+    enum class OutputRouteMode : std::uint8_t { Direct, Filter1, Filter2, Multi };
+    OutputRouteMode outputRouteMode_=OutputRouteMode::Direct;
+    juce::TextButton routeDirect_{"DIRECT"},routeFilter1_{"FILTER 1"},routeFilter2_{"FILTER 2"},routeMulti_{"MULTI"};
+    RackSlider routeDirectLevel_,routeFilter1Level_,routeFilter2Level_;
+    juce::Label routeDirectLevelLabel_,routeFilter1LevelLabel_,routeFilter2LevelLabel_;
+    juce::TextButton routePostChain_{"POST CHAIN"};
+    void refreshRoutingWorkspace();
+
     std::function<bool(unsigned,bool)> enabledSetter_;
     std::function<bool(unsigned)> enabledGetter_;
     std::function<bool(mct::origami::ParameterId,float)> parameterSetter_;
