@@ -65,10 +65,15 @@ public:
     bool isPopupActive() const noexcept { return popupActive_; }
     void setScrollWheelEnabled(bool) noexcept {}
     std::function<void()> onChange;
+    void setRoutingContext(OscillatorModuleId target,std::function<InstrumentState()> getter,
+                           std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected);
 private:
     void openProcessMenu();
     dsp::OscProcessType type_=dsp::OscProcessType::Off;
     bool popupActive_=false;
+    OscillatorModuleId routeTarget_=0;
+    std::function<InstrumentState()> routeStateGetter_;
+    std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected_;
 };
 
 class OscillatorCard final : public Panel {
