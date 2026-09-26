@@ -680,40 +680,53 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
 }
 bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleId id,const mct::origami::OscillatorModuleState& state) noexcept {
     const juce::ScopedLock lock(stateLock_);
-    if(!engine_.setOscillatorModuleState(id,state)) return false;
-    const auto canonical=engine_.oscillatorModuleState(id);
 
-    bool stored=false;
-    for(auto& module:uiInstrumentState_.oscillators)
-        if(module.id==id) { module=canonical; stored=true; break; }
-    if(!stored) return false;
-
-    // Child destinations use stable IDs. Whenever a dynamic child disappears,
-    // prune every modulation edge that targets that now-nonexistent child.
-    // Keep this at the state boundary (rather than in the OSC UI) so future
-    // editors/removal paths cannot leave ghost Matrix destinations behind.
+    // A child can itself be a modulation destination. Prune routes against the
+    // requested child set BEFORE asking the engine to remove that child;
+    // otherwise whole-state validation correctly rejects the temporarily
+    // dangling destination and the UI appears unable to delete the row.
     auto childExists=[&](const mct::origami::ModRoute& route) noexcept {
         if(route.destination.oscillator!=id) return true;
         if(route.destination.parameter==mct::origami::ModDestination::ProcessAmount) {
-            for(std::size_t i=0;i<canonical.processCount;++i)
-                if(canonical.processes[i].id==route.destination.itemId) return true;
+            for(std::size_t i=0;i<state.processCount;++i)
+                if(state.processes[i].id==route.destination.itemId) return true;
             return false;
         }
         if(route.destination.parameter==mct::origami::ModDestination::RouteAmount) {
-            for(std::size_t i=0;i<canonical.routeCount;++i)
-                if(canonical.routes[i].id==route.destination.itemId) return true;
+            for(std::size_t i=0;i<state.routeCount;++i)
+                if(state.routes[i].id==route.destination.itemId) return true;
             return false;
         }
         return true;
     };
-    auto mod=uiInstrumentState_.modulation;
+
+    const auto previousMod=uiInstrumentState_.modulation;
+    auto prunedMod=previousMod;
     std::size_t routeOut=0;
-    for(const auto& route:mod.routes)
+    for(const auto& route:previousMod.routes)
         if(route.id && childExists(route))
-            mod.routes[routeOut++]=route;
-    while(routeOut<mod.routes.size()) mod.routes[routeOut++]={};
-    uiInstrumentState_.modulation=mod;
-    return true;
+            prunedMod.routes[routeOut++]=route;
+    while(routeOut<prunedMod.routes.size()) prunedMod.routes[routeOut++]={};
+
+    const bool modulationChanged=!(prunedMod.routes==previousMod.routes);
+    if(modulationChanged && !engine_.setModulationState(prunedMod)) return false;
+    if(!engine_.setOscillatorModuleState(id,state)) {
+        if(modulationChanged) engine_.setModulationState(previousMod);
+        return false;
+    }
+
+    const auto canonical=engine_.oscillatorModuleState(id);
+    for(auto& module:uiInstrumentState_.oscillators) {
+        if(module.id!=id) continue;
+        module=canonical;
+        uiInstrumentState_.modulation=prunedMod;
+        return true;
+    }
+
+    // Keep engine/UI snapshots coherent even if an unexpected stale module ID
+    // reaches this boundary.
+    if(modulationChanged) engine_.setModulationState(previousMod);
+    return false;
 }
 mct::origami::OscillatorModuleState OrigamiAudioProcessor::getUiOscillatorState(mct::origami::OscillatorModuleId id) const noexcept {
     const juce::ScopedLock lock(stateLock_);
