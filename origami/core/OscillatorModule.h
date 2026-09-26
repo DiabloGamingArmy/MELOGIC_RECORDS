@@ -85,6 +85,23 @@ inline const char* oscRouteName(OscRouteType type) noexcept {
     return "Off";
 }
 
+inline const char* oscRouteAbbreviation(OscRouteType type) noexcept {
+    switch(type) {
+        case OscRouteType::Off: return "OFF";
+        case OscRouteType::PhaseMod: return "PD";
+        case OscRouteType::FrequencyMod: return "FM";
+        case OscRouteType::RingMod: return "RM";
+        case OscRouteType::AmpMod: return "AM";
+        case OscRouteType::Crossfade: return "XF";
+        case OscRouteType::WaveFold: return "WF";
+        case OscRouteType::LogicXor: return "XOR";
+        case OscRouteType::PhaseSkew: return "PSK";
+        case OscRouteType::RectifyMod: return "RECT";
+        case OscRouteType::Count: break;
+    }
+    return "OFF";
+}
+
 using OscProcessSlotId = std::uint32_t;
 using OscRouteSlotId = std::uint32_t;
 inline constexpr std::size_t maxOscProcesses = 8;
