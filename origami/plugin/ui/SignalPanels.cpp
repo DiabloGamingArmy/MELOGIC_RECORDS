@@ -181,7 +181,10 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     body.removeFromLeft(6);
 
     well(g,rail);
-    text(g,"FILTERS",rail.removeFromTop(18).reduced(5,0),8.0f,Palette::muted());
+    auto sourceTitle=rail.removeFromTop(18);
+    g.setColour(juce::Colours::black);
+    g.fillRect(sourceTitle);
+    text(g,"SOURCE",sourceTitle.reduced(5,0),8.5f,Palette::secondary(),juce::Justification::centred);
 
     if(!filterEnabled_) {
         text(g,"NO FILTER — PRESS + TO ADD FILTER 1",body.reduced(12),10.5f,
