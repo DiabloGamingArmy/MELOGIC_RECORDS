@@ -360,10 +360,9 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     processRowPower_.setTooltip("Bypass this oscillator process");
     processRowRemove_.setTooltip("Remove this oscillator process");
     processRowRemove_.onClick=[this] {
-        if(selectedProcessId_!=0) {
-            selectedChainItem_={ChainItemKind::Process,selectedProcessId_};
-            removeSelectedChainItem();
-        }
+        // The row action belongs to the selected chain child, regardless of
+        // whether that child is a process or an oscillator route.
+        removeSelectedChainItem();
     };
 
     for(auto* menu:{&process1Menu_,&process2Menu_}) {
@@ -767,7 +766,7 @@ void OscillatorCard::syncFromModel() {
                 if(state.processes[i].id==selectedProcessId_) {selectedProcess=&state.processes[i];break;}
             const bool haveProcess=selectedProcess!=nullptr;
             processRowPower_.setVisible(haveProcess);
-            processRowRemove_.setVisible(haveProcess);
+            processRowRemove_.setVisible(selectedChainItem_.kind!=ChainItemKind::None);
             process1Menu_.setVisible(haveProcess);
             process1Previous_.setVisible(false);
             process1Next_.setVisible(false);
@@ -793,6 +792,9 @@ void OscillatorCard::syncFromModel() {
             for(std::size_t i=0;i<state.routeCount;++i)
                 if(state.routes[i].id==selectedRouteId_) {selectedRoute=&state.routes[i];break;}
             const bool haveRoute=selectedRoute!=nullptr;
+            // Route rows share the same per-row remove action. There is no
+            // separate bottom-chain remove control anymore.
+            processRowRemove_.setVisible(haveProcess || haveRoute);
             route1Menu_.setVisible(haveRoute);route1Previous_.setVisible(false);
             route1Next_.setVisible(false);route1Amount_.setVisible(haveRoute);
             route1AmountLabel_.setVisible(haveRoute);
