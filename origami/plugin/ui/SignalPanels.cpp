@@ -144,6 +144,9 @@ void FilterPanel::syncFromModel() {
 }
 void FilterPanel::resized() {
     auto body=contentBounds();
+    // Keep the FILTER title band visually isolated from source, graph and routing.
+    constexpr int panelContentTopGap=4;
+    body.removeFromTop(panelContentTopGap);
 
     constexpr int railWidth=116;
     filterRail_=body.removeFromLeft(railWidth);
@@ -183,6 +186,10 @@ void FilterPanel::resized() {
 }
 
 void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
+    // Mirror resized(): every filter working surface starts below the title band.
+    constexpr int panelContentTopGap=4;
+    body.removeFromTop(panelContentTopGap);
+
     constexpr int railWidth=116;
     auto rail=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
