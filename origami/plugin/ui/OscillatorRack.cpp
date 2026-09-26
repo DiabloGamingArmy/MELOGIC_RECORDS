@@ -1274,10 +1274,10 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
     const auto& telemetry=modulationUiTelemetry();
 
     const auto drawRotary=[&](juce::Slider& slider,ModDestination destination,std::uint32_t itemId=0) {
-        const float selectedDepth=modulationUiSelectedRouteAmount(destination,display_.id);
+        const float selectedDepth=modulationUiSelectedRouteAmount(destination,display_.id,itemId);
         const bool selectedHasRoute=std::abs(selectedDepth)>=1.0e-4f;
         const float persistentDepth=modulationUiPersistentRouteAmount(destination,display_.id,itemId);
-        const bool anyRoute=modulationUiHasAnyRoute(destination,display_.id);
+        const bool anyRoute=modulationUiHasAnyRoute(destination,display_.id,itemId);
         const float depth=selectedHasRoute?selectedDepth:persistentDepth;
         if(std::abs(depth)<1.0e-4f && !anyRoute) return;
 
@@ -1293,7 +1293,10 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         const float current=juce::jlimit(0.0f,1.0f,
             base+depth*modulationUiRouteDisplaySourceValue(telemetry.selectedSource,bipolar));
 
-        auto circle=slider.getBounds().toFloat().reduced(1.0f).expanded(2.0f);
+        // Sliders in OSC CHAIN rows are descendants of chainContent_, not
+        // direct OscillatorCard children. Convert their bounds into this
+        // component's coordinate space before painting modulation overlays.
+        auto circle=getLocalArea(&slider,slider.getLocalBounds()).toFloat().reduced(1.0f).expanded(2.0f);
         const float d=juce::jmin(circle.getWidth(),circle.getHeight());
         circle=juce::Rectangle<float>(d,d).withCentre(circle.getCentre());
         const float start=juce::MathConstants<float>::pi*1.20f;
