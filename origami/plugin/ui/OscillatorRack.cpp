@@ -1617,7 +1617,10 @@ void OscillatorRack::renumberOscillators() {
 void OscillatorRack::layoutCards() {
     const auto previousX=viewport_.getViewPositionX();
     cardWidth_=420;
-    const int height=juce::jmax(0,viewport_.getHeight()-12);
+    // Fill the oscillator viewport vertically. The previous -12 px allowance
+    // left a dead strip beneath every oscillator card even when no horizontal
+    // scrollbar occupied that space.
+    const int height=juce::jmax(0,viewport_.getHeight());
     int x=0;for(auto& card:cards_) {card->setBounds(x,0,cardWidth_,height);x+=cardWidth_+4;}
     addTile_.setBounds(x,0,74,height);content_.setSize(juce::jmax(viewport_.getWidth(),x+74),height);
     viewport_.setViewPosition(juce::jmin(previousX,juce::jmax(0,content_.getWidth()-viewport_.getMaximumVisibleWidth())),0);
