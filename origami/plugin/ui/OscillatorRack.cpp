@@ -938,6 +938,14 @@ void OscillatorCard::setOrdinal(unsigned ordinal) {
 void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
     setOrdinal(ordinal);
 }
+
+void OscillatorCard::setWorkspacePage(WorkspacePage page) {
+    if(workspacePage_==page) return;
+    workspacePage_=page;
+    resized();
+    repaint();
+}
+
 void OscillatorCard::resized() {
     // Structured top bar: OSC identity | MODE | ROUTE | PWR | remove.
     // It consumes the existing Panel header only, preserving body height.
@@ -965,6 +973,10 @@ void OscillatorCard::resized() {
     if(!engineBacked_) return;
 
     auto body=contentBounds();
+    // The complete area below the persistent top bar is the oscillator
+    // workspace. Main owns it today; Phase/Routing will take over this exact
+    // rectangle without disturbing header geometry.
+    workspaceBounds_=body;
     // Match the oscillator body's top inset to its left/right structural inset.
     body.removeFromTop(4);
     auto controls=body.removeFromBottom(56);
@@ -1099,6 +1111,12 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     auto routeLabel=juce::Rectangle<int>(left+modeGroup+gap,headerY,labelW,headerH);
     text(g,"MODE",modeLabel,7.2f,Palette::muted(),juce::Justification::centred);
     text(g,"ROUTE",routeLabel,7.2f,Palette::muted(),juce::Justification::centred);
+
+    // Patch 1 keeps the established oscillator body as the Main workspace.
+    // Future Phase/Routing pages replace this body while the header above stays
+    // persistent. No existing geometry or rendering is altered in Main.
+    if(!isMainWorkspace())
+        return;
 
     auto working=body;
     working.removeFromTop(4);
