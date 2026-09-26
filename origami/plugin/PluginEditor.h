@@ -32,11 +32,31 @@ public:
     void itemDropped(const SourceDetails&) override;
 private:
     class WavetableEditorSurface final : public juce::Component {
+        class EditorRegion final : public juce::Component {
+        public:
+            explicit EditorRegion(juce::String title):title_(std::move(title)) {}
+            void paint(juce::Graphics& g) override {
+                const auto bounds=getLocalBounds().toFloat().reduced(0.5f);
+                g.setColour(juce::Colour(0xff0b0b0b));
+                g.fillRect(getLocalBounds());
+                g.setColour(juce::Colour(0xff303030));
+                g.drawRect(bounds,1.0f);
+                g.setColour(juce::Colours::white.withAlpha(0.54f));
+                g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
+                g.drawText(title_,getLocalBounds(),juce::Justification::centred,false);
+            }
+        private:
+            juce::String title_;
+        };
     public:
         std::function<void()> onClose;
-        WavetableEditorSurface() {
+        WavetableEditorSurface()
+            : tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
+              timeline_("FRAME TIMELINE"),controlBar_("CONTROL BAR") {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
+            for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&controlBar_}})
+                addAndMakeVisible(region);
             addAndMakeVisible(close_);
             close_.setButtonText("X");
             close_.setTooltip("Close wavetable editor");
@@ -44,15 +64,38 @@ private:
             close_.onClick=[this] { if(onClose) onClose(); };
         }
         void resized() override {
-            constexpr int size=24;
-            constexpr int inset=8;
-            close_.setBounds(getWidth()-inset-size,inset,size,size);
+            constexpr int titleHeight=30;
+            constexpr int closeSize=24;
+            constexpr int inset=5;
+            constexpr int timelineHeight=110;
+            constexpr int controlHeight=44;
+
+            auto area=getLocalBounds();
+            auto title=area.removeFromTop(titleHeight);
+            close_.setBounds(title.removeFromRight(closeSize).withSizeKeepingCentre(closeSize,closeSize)
+                                 .translated(-inset,0));
+
+            controlBar_.setBounds(area.removeFromBottom(controlHeight));
+            timeline_.setBounds(area.removeFromBottom(timelineHeight));
+
+            const int toolsWidth=juce::roundToInt(static_cast<float>(area.getWidth())*.14f);
+            const int spectrumWidth=juce::roundToInt(static_cast<float>(area.getWidth())*.30f);
+            tools_.setBounds(area.removeFromLeft(toolsWidth));
+            spectrum_.setBounds(area.removeFromRight(spectrumWidth));
+            waveform_.setBounds(area);
+
             close_.toFront(false);
         }
         void paint(juce::Graphics& g) override {
-            // Editing tools/content intentionally remain absent. The close
-            // control is navigation chrome, not part of the editor toolset.
             g.fillAll(mct::origami::ui::Palette::background());
+            const auto title=juce::Rectangle<int>(0,0,getWidth(),30);
+            g.setColour(juce::Colour(0xff0b0b0b));
+            g.fillRect(title);
+            g.setColour(juce::Colour(0xff303030));
+            g.drawLine(0.0f,29.5f,static_cast<float>(getWidth()),29.5f,1.0f);
+            g.setColour(juce::Colours::white.withAlpha(0.72f));
+            g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
+            g.drawText("WAVETABLE EDITOR",title.reduced(10,0),juce::Justification::centredLeft,false);
         }
         bool keyPressed(const juce::KeyPress& key) override {
             if(key==juce::KeyPress::escapeKey && onClose) {
@@ -62,6 +105,7 @@ private:
             return false;
         }
     private:
+        EditorRegion tools_,waveform_,spectrum_,timeline_,controlBar_;
         juce::TextButton close_{"X"};
     };
     void openWavetableEditor(unsigned oscillatorId);
