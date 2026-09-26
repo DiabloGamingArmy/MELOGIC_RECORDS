@@ -133,10 +133,20 @@ private:
     enum class ChainItemKind : std::uint8_t { None,Process,Route };
     struct ChainItem { ChainItemKind kind=ChainItemKind::None; std::uint32_t id=0; };
     static constexpr std::size_t maxChainItems=maxOscProcesses+maxOscRoutes;
+    class ChainRowBackground final : public juce::Component {
+    public:
+        ChainRowBackground() { setInterceptsMouseClicks(false,false); }
+        void paint(juce::Graphics& g) override {
+            g.fillAll(Palette::panel().darker(0.18f));
+            g.setColour(Palette::borderSoft());
+            g.drawRect(getLocalBounds(),1);
+        }
+    };
     juce::Viewport chainViewport_;
     juce::Component chainContent_;
     // Every OSC CHAIN child is a complete row/template. There is deliberately
     // no separate "selected editor" plus text-only list representation.
+    std::array<ChainRowBackground,maxChainItems> chainRowBackgrounds_;
     std::array<juce::TextButton,maxChainItems> chainSelectors_;
     std::array<RackSlider,maxChainItems> chainAmounts_;
     std::array<juce::TextButton,maxChainItems> chainPowers_;
