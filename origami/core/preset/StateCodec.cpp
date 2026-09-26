@@ -35,7 +35,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(23);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(24);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -151,6 +151,12 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         }
     }
     for(const auto& route:mod.routes) if(route.id) w.word(route.destination.itemId);
+    // V24: persistent per-child OSC CHAIN bypass state. Appended after the
+    // complete V23 payload so every older preset remains byte-layout compatible.
+    for(const auto& m:s.oscillators) if(m.id) {
+        for(std::size_t i=0;i<m.processCount;++i) w.word(m.processes[i].enabled?1u:0u);
+        for(std::size_t i=0;i<m.routeCount;++i) w.word(m.routes[i].enabled?1u:0u);
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -158,7 +164,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>23) return false;
+    if(version<1 || version>24) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -311,6 +317,18 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             }
         }
         for(auto& route:s.modulation.routes) if(route.id) route.destination.itemId=r.word();
+        if(version>=24) {
+            for(auto& m:s.oscillators) if(m.id) {
+                for(std::size_t i=0;i<m.processCount;++i) {
+                    const auto enabled=r.word(); if(enabled>1u) return false;
+                    m.processes[i].enabled=enabled==1u;
+                }
+                for(std::size_t i=0;i<m.routeCount;++i) {
+                    const auto enabled=r.word(); if(enabled>1u) return false;
+                    m.routes[i].enabled=enabled==1u;
+                }
+            }
+        }
     } else {
         // Materialize stable child IDs for every legacy preset without changing
         // its fixed-slot modulation semantics yet. Patch 4 can bind the new UI
