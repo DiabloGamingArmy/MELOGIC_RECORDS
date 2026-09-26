@@ -195,13 +195,43 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     // The header is now an explicit oscillator configuration strip rather than
     // free-painted source text plus controls pinned to the right edge.
     addAndMakeVisible(modeSelector_);
+    addAndMakeVisible(phaseSelector_);
     addAndMakeVisible(outputSelector_);
     modeSelector_.setTooltip("Oscillator mode");
-    outputSelector_.setTooltip("Oscillator output route");
+    phaseSelector_.setTooltip("Oscillator phase configuration");
+    outputSelector_.setTooltip("Oscillator output routing");
     modeSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    phaseSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
     outputSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-    // Phase one is intentionally presentation-only; do not mutate DSP/state
-    // until the mode/output model is introduced.
+
+    // MODE remains a discrete selector; Patch 2 exposes the currently available
+    // oscillator mode through the native menu without inventing unsupported DSP.
+    modeSelector_.onClick=[safe=juce::Component::SafePointer<OscillatorCard>(this)] {
+        if(safe==nullptr) return;
+        juce::PopupMenu menu;
+        menu.addItem(1,"Wavetable",true,true);
+        menu.addSeparator();
+        menu.addItem(2,"Granular",false,false);
+        menu.addItem(3,"Spectral",false,false);
+        menu.addItem(4,"Field",false,false);
+        menu.showMenuAsync(juce::PopupMenu::Options{}.withTargetComponent(&safe->modeSelector_),
+                           [safe](int result) {
+            if(safe==nullptr || result==0) return;
+            // Wavetable is the only engine-backed oscillator mode today.
+            safe->modeSelector_.setButtonText("WAVETABLE");
+            safe->setWorkspacePage(WorkspacePage::Main);
+        });
+    };
+    phaseSelector_.onClick=[safe=juce::Component::SafePointer<OscillatorCard>(this)] {
+        if(safe==nullptr) return;
+        safe->setWorkspacePage(safe->workspacePage_==WorkspacePage::Phase
+                               ? WorkspacePage::Main : WorkspacePage::Phase);
+    };
+    outputSelector_.onClick=[safe=juce::Component::SafePointer<OscillatorCard>(this)] {
+        if(safe==nullptr) return;
+        safe->setWorkspacePage(safe->workspacePage_==WorkspacePage::Routing
+                               ? WorkspacePage::Main : WorkspacePage::Routing);
+    };
 
     engineBacked_ = static_cast<bool>(parameterSetter_) && static_cast<bool>(parameterGetter_);
     if(engineBacked_) {
@@ -947,16 +977,17 @@ void OscillatorCard::setWorkspacePage(WorkspacePage page) {
 }
 
 void OscillatorCard::resized() {
-    // Structured top bar: OSC identity | MODE | ROUTE | PWR | remove.
-    // It consumes the existing Panel header only, preserving body height.
+    // Persistent top bar: OSC identity | MODE | PHASE | ROUTE | PWR | remove.
+    // MODE is shifted left and all three configuration entries share the same
+    // compact rhythm so the bar remains readable at the fixed card width.
     constexpr int headerY=6;
     constexpr int headerH=21;
     constexpr int edge=7;
     constexpr int removeW=24;
     constexpr int powerW=31;
-    constexpr int gap=4;
-    constexpr int identityW=66;
-    constexpr int labelW=30;
+    constexpr int gap=3;
+    constexpr int identityW=54;
+    constexpr int labelW=24;
 
     int right=getWidth()-edge;
     remove_.setBounds(right-removeW,headerY,removeW,headerH); right-=removeW+gap;
@@ -964,11 +995,14 @@ void OscillatorCard::resized() {
 
     const int left=edge+identityW;
     const int available=juce::jmax(0,right-left);
-    const int modeGroup=available*48/100;
-    const int routeGroup=juce::jmax(0,available-modeGroup-gap);
-    modeSelector_.setBounds(left+labelW,headerY,juce::jmax(0,modeGroup-labelW),headerH);
-    const int routeX=left+modeGroup+gap;
-    outputSelector_.setBounds(routeX+labelW,headerY,juce::jmax(0,routeGroup-labelW),headerH);
+    const int groupWidth=juce::jmax(1,(available-gap*2)/3);
+    auto placeHeaderSelector=[&](juce::TextButton& selector,int index) {
+        const int x=left+index*(groupWidth+gap);
+        selector.setBounds(x+labelW,headerY,juce::jmax(1,groupWidth-labelW),headerH);
+    };
+    placeHeaderSelector(modeSelector_,0);
+    placeHeaderSelector(phaseSelector_,1);
+    placeHeaderSelector(outputSelector_,2);
 
     if(!engineBacked_) return;
 
@@ -977,6 +1011,39 @@ void OscillatorCard::resized() {
     // workspace. Main owns it today; Phase/Routing will take over this exact
     // rectangle without disturbing header geometry.
     workspaceBounds_=body;
+
+    if(!isMainWorkspace()) {
+        // PHASE/ROUTE own the entire body. Patch 2 establishes takeover/navigation;
+        // their dedicated controls are populated in Patches 3 and 4.
+        for(auto* component:std::initializer_list<juce::Component*>{
+            &waveformPrevious_,&waveformNext_,
+            &octaveSlider_,&semitoneSlider_,&fineSlider_,
+            &wtPositionSlider_,&unisonSlider_,&detuneSlider_,&blendSlider_,&panSlider_,&levelSlider_,
+            &octaveTitle_,&semitoneTitle_,&fineTitle_,
+            &wtPositionLabel_,&unisonLabel_,&detuneLabel_,&blendLabel_,&panLabel_,&levelLabel_,
+            &chainViewport_,&chainAdd_,&chainRemove_}) {
+            component->setVisible(false);
+            component->setBounds({});
+        }
+        for(std::size_t i=0;i<maxChainItems;++i) {
+            chainRowBackgrounds_[i].setVisible(false); chainSelectors_[i].setVisible(false);
+            chainAmounts_[i].setVisible(false); chainPowers_[i].setVisible(false);
+            chainDeletes_[i].setVisible(false); chainKinds_[i].setVisible(false);
+            chainActions_[i].setVisible(false);
+        }
+        return;
+    }
+
+    waveformPrevious_.setVisible(true); waveformNext_.setVisible(true);
+    for(auto* component:std::initializer_list<juce::Component*>{
+        &octaveSlider_,&semitoneSlider_,&fineSlider_,
+        &wtPositionSlider_,&unisonSlider_,&detuneSlider_,&blendSlider_,&panSlider_,&levelSlider_,
+        &octaveTitle_,&semitoneTitle_,&fineTitle_,
+        &wtPositionLabel_,&unisonLabel_,&detuneLabel_,&blendLabel_,&panLabel_,&levelLabel_,
+        &chainAdd_})
+        component->setVisible(true);
+    syncDynamicCollections(moduleGetter_ ? moduleGetter_(display_.id) : OscillatorModuleState{});
+
     // Match the oscillator body's top inset to its left/right structural inset.
     body.removeFromTop(4);
     auto controls=body.removeFromBottom(56);
@@ -1095,28 +1162,35 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     constexpr int headerY=6;
     constexpr int headerH=21;
     constexpr int edge=7;
-    constexpr int identityW=66;
+    constexpr int identityW=54;
     constexpr int removeW=24;
     constexpr int powerW=31;
-    constexpr int gap=4;
-    constexpr int labelW=30;
+    constexpr int gap=3;
+    constexpr int labelW=24;
 
-    // Panel already owns and paints the original "OSC N" title. Do not paint a
-    // second identity over it; only reserve its space for the new header controls.
+    // Panel owns the original "OSC N" title. The three configuration groups
+    // begin immediately after that reserved identity region.
     const int right=getWidth()-edge-removeW-gap-powerW-gap;
     const int left=edge+identityW;
     const int available=juce::jmax(0,right-left);
-    const int modeGroup=available*48/100;
-    auto modeLabel=juce::Rectangle<int>(left,headerY,labelW,headerH);
-    auto routeLabel=juce::Rectangle<int>(left+modeGroup+gap,headerY,labelW,headerH);
-    text(g,"MODE",modeLabel,7.2f,Palette::muted(),juce::Justification::centred);
-    text(g,"ROUTE",routeLabel,7.2f,Palette::muted(),juce::Justification::centred);
+    const int groupWidth=juce::jmax(1,(available-gap*2)/3);
+    auto headerLabel=[&](int index) {
+        return juce::Rectangle<int>(left+index*(groupWidth+gap),headerY,labelW,headerH);
+    };
+    text(g,"MODE",headerLabel(0),6.8f,Palette::muted(),juce::Justification::centred);
+    text(g,"PHASE",headerLabel(1),6.8f,Palette::muted(),juce::Justification::centred);
+    text(g,"ROUTE",headerLabel(2),6.8f,Palette::muted(),juce::Justification::centred);
 
     // Patch 1 keeps the established oscillator body as the Main workspace.
     // Future Phase/Routing pages replace this body while the header above stays
     // persistent. No existing geometry or rendering is altered in Main.
-    if(!isMainWorkspace())
+    if(!isMainWorkspace()) {
+        auto page=body.reduced(4);
+        well(g,page);
+        const auto title=workspacePage_==WorkspacePage::Phase ? "PHASE" : "ROUTING";
+        text(g,title,page.removeFromTop(28),9.0f,Palette::secondary(),juce::Justification::centred);
         return;
+    }
 
     auto working=body;
     working.removeFromTop(4);
