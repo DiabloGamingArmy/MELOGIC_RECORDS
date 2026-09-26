@@ -6,10 +6,11 @@
 namespace mct::origami::ui {
 void showNativeOscProcessMenu(juce::Component& anchor,
                               dsp::OscProcessType current,
-                              std::function<void(dsp::OscProcessType)> onSelected) {
+                              std::function<void(dsp::OscProcessType)> onSelected,
+                              OscillatorModuleId routeTarget,
+                              const InstrumentState* routeState,
+                              std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected) {
     juce::PopupMenu root;
-    root.addItem(1,dsp::oscProcessName(dsp::OscProcessType::Off),true,current==dsp::OscProcessType::Off);
-    root.addSeparator();
     constexpr const char* categories[]={
         "Curve / Warp","Sync / Repeat","Fold / Reflect",
         "Phase / Motion","Digital / Experimental","Spectral / Harmonics"
@@ -19,17 +20,38 @@ void showNativeOscProcessMenu(juce::Component& anchor,
         for(std::uint32_t raw=1;raw<static_cast<std::uint32_t>(dsp::OscProcessType::Count);++raw) {
             const auto type=static_cast<dsp::OscProcessType>(raw);
             if(std::strcmp(dsp::oscProcessCategory(type),category)!=0) continue;
-            folder.addItem(static_cast<int>(raw)+1,dsp::oscProcessName(type),true,type==current);
+            folder.addItem(static_cast<int>(raw),dsp::oscProcessName(type),true,type==current);
         }
         root.addSubMenu(category,folder);
     }
+    if(routeState!=nullptr && routeTarget!=0) {
+        root.addSeparator();
+        int routeId=1000; unsigned ordinal=0;
+        for(const auto& source:routeState->oscillators) {
+            if(source.id==0) continue;
+            ++ordinal; if(source.id==routeTarget) continue;
+            juce::PopupMenu folder;
+            for(auto type:oscRouteTypes) folder.addItem(routeId++,oscRouteName(type));
+            root.addSubMenu("OSC "+juce::String(ordinal),folder);
+        }
+    }
     auto safe=juce::Component::SafePointer<juce::Component>(&anchor);
     root.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor),
-        [safe,onSelected=std::move(onSelected)](int result) mutable {
-            if(safe==nullptr || result<=0 || !onSelected) return;
-            const auto raw=static_cast<std::uint32_t>(result-1);
-            if(raw>=static_cast<std::uint32_t>(dsp::OscProcessType::Count)) return;
-            onSelected(static_cast<dsp::OscProcessType>(raw));
+        [safe,routeTarget,routeState,onSelected=std::move(onSelected),onRouteSelected=std::move(onRouteSelected)](int result) mutable {
+            if(safe==nullptr || result<=0) return;
+            if(result<1000) {
+                const auto raw=static_cast<std::uint32_t>(result);
+                if(raw>0 && raw<static_cast<std::uint32_t>(dsp::OscProcessType::Count) && onSelected)
+                    onSelected(static_cast<dsp::OscProcessType>(raw));
+                return;
+            }
+            if(routeState==nullptr || !onRouteSelected) return;
+            int id=1000;
+            for(const auto& source:routeState->oscillators) {
+                if(source.id==0 || source.id==routeTarget) continue;
+                for(auto type:oscRouteTypes)
+                    if(id++==result){onRouteSelected(source.id,type);return;}
+            }
         });
 }
 void showNativeOscChainAddMenu(juce::Component& anchor,
