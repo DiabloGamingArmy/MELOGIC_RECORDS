@@ -99,6 +99,10 @@ private:
     OscillatorDisplay display_;
     juce::TextButton remove_{"-"};
     juce::TextButton power_{"PWR"};
+    // Dedicated oscillator header controls. These are UI structure first:
+    // backend mode/output switching is wired in the follow-up model patch.
+    juce::TextButton modeSelector_{"WAVETABLE"};
+    juce::TextButton outputSelector_{"DIRECT OUT"};
     std::function<bool(unsigned,bool)> enabledSetter_;
     std::function<bool(unsigned)> enabledGetter_;
     std::function<bool(mct::origami::ParameterId,float)> parameterSetter_;
