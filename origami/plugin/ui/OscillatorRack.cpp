@@ -1263,10 +1263,20 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
             range.addCentredArc(circle.getCentreX(),circle.getCentreY(),
                                 circle.getWidth()*.51f,circle.getHeight()*.51f,0.0f,
                                 angle(lo),angle(hi),true);
-            g.setColour(signalSourceColour().withAlpha(.96f));
-            g.strokePath(range,juce::PathStrokeType(2.2f));
+            // Keep the selected source vivid. Persistent modulation from other
+            // sources stays derived from the user's signal colour, but is
+            // deliberately quieter: half saturation, half brightness, thinner.
+            auto rangeColour=signalSourceColour();
+            float rangeThickness=2.2f;
+            if(!selectedHasRoute) {
+                rangeColour=rangeColour.withSaturation(rangeColour.getSaturation()*0.5f)
+                                       .withBrightness(rangeColour.getBrightness()*0.5f);
+                rangeThickness=1.35f;
+            }
+            g.setColour(rangeColour.withAlpha(.96f));
+            g.strokePath(range,juce::PathStrokeType(rangeThickness));
 
-            if(telemetry.synthActive) {
+            if(selectedHasRoute && telemetry.synthActive) {
                 const float a=angle(current);
                 const auto c=circle.getCentre();
                 const auto p=juce::Point<float>(
