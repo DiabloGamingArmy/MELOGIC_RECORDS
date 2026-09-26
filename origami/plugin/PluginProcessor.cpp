@@ -679,9 +679,38 @@ bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleI
     const juce::ScopedLock lock(stateLock_);
     if(!engine_.setOscillatorModuleState(id,state)) return false;
     const auto canonical=engine_.oscillatorModuleState(id);
+
+    bool stored=false;
     for(auto& module:uiInstrumentState_.oscillators)
-        if(module.id==id) { module=canonical; return true; }
-    return false;
+        if(module.id==id) { module=canonical; stored=true; break; }
+    if(!stored) return false;
+
+    // Child destinations use stable IDs. Whenever a dynamic child disappears,
+    // prune every modulation edge that targets that now-nonexistent child.
+    // Keep this at the state boundary (rather than in the OSC UI) so future
+    // editors/removal paths cannot leave ghost Matrix destinations behind.
+    auto childExists=[&](const mct::origami::ModRoute& route) noexcept {
+        if(route.destination.oscillator!=id) return true;
+        if(route.destination.parameter==mct::origami::ModDestination::ProcessAmount) {
+            for(std::size_t i=0;i<canonical.processCount;++i)
+                if(canonical.processes[i].id==route.destination.itemId) return true;
+            return false;
+        }
+        if(route.destination.parameter==mct::origami::ModDestination::RouteAmount) {
+            for(std::size_t i=0;i<canonical.routeCount;++i)
+                if(canonical.routes[i].id==route.destination.itemId) return true;
+            return false;
+        }
+        return true;
+    };
+    auto mod=uiInstrumentState_.modulation;
+    std::size_t routeOut=0;
+    for(const auto& route:mod.routes)
+        if(route.id && childExists(route))
+            mod.routes[routeOut++]=route;
+    while(routeOut<mod.routes.size()) mod.routes[routeOut++]={};
+    uiInstrumentState_.modulation=mod;
+    return true;
 }
 mct::origami::OscillatorModuleState OrigamiAudioProcessor::getUiOscillatorState(mct::origami::OscillatorModuleId id) const noexcept {
     const juce::ScopedLock lock(stateLock_);
