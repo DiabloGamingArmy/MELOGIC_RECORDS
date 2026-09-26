@@ -202,8 +202,6 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     outputSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
     // Phase one is intentionally presentation-only; do not mutate DSP/state
     // until the mode/output model is introduced.
-    modeSelector_.onClick=[this]{};
-    outputSelector_.onClick=[this]{};
 
     engineBacked_ = static_cast<bool>(parameterSetter_) && static_cast<bool>(parameterGetter_);
     if(engineBacked_) {
@@ -943,8 +941,8 @@ void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
 void OscillatorCard::resized() {
     // Structured top bar: OSC identity | MODE | ROUTE | PWR | remove.
     // It consumes the existing Panel header only, preserving body height.
-    constexpr int headerY=4;
-    constexpr int headerH=25;
+    constexpr int headerY=6;
+    constexpr int headerH=21;
     constexpr int edge=7;
     constexpr int removeW=24;
     constexpr int powerW=31;
@@ -1082,8 +1080,8 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
     // Dedicated oscillator configuration strip. Child buttons own the selector
     // surfaces; paint only the identity and compact vertical section labels here.
-    constexpr int headerY=4;
-    constexpr int headerH=25;
+    constexpr int headerY=6;
+    constexpr int headerH=21;
     constexpr int edge=7;
     constexpr int identityW=66;
     constexpr int removeW=24;
@@ -1091,16 +1089,12 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     constexpr int gap=4;
     constexpr int labelW=30;
 
-    auto identity=juce::Rectangle<int>(edge,headerY,identityW,headerH);
-    text(g,"OSC "+juce::String(display_.ordinal),identity,9.0f,Palette::secondary(),juce::Justification::centredLeft);
-    g.setColour(Palette::borderSoft());
-    g.drawVerticalLine(identity.getRight()-1,float(headerY+2),float(headerY+headerH-2));
-
+    // Panel already owns and paints the original "OSC N" title. Do not paint a
+    // second identity over it; only reserve its space for the new header controls.
     const int right=getWidth()-edge-removeW-gap-powerW-gap;
     const int left=edge+identityW;
     const int available=juce::jmax(0,right-left);
     const int modeGroup=available*48/100;
-    const int routeGroup=juce::jmax(0,available-modeGroup-gap);
     auto modeLabel=juce::Rectangle<int>(left,headerY,labelW,headerH);
     auto routeLabel=juce::Rectangle<int>(left+modeGroup+gap,headerY,labelW,headerH);
     text(g,"MODE",modeLabel,7.2f,Palette::muted(),juce::Justification::centred);
