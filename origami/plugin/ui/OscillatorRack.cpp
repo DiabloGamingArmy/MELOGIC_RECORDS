@@ -233,6 +233,50 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
                                ? WorkspacePage::Main : WorkspacePage::Routing);
     };
 
+    for(auto* button:{&phaseRandom_,&phaseFixed_,&phaseFree_,&phaseRetrigger_,&phasePerUnison_}) {
+        addChildComponent(*button);
+        button->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+    phaseRandom_.setTooltip("Randomize oscillator start phase per note");
+    phaseFixed_.setTooltip("Use a fixed oscillator start phase");
+    phaseFree_.setTooltip("Let oscillator phase free-run");
+    phaseRetrigger_.setClickingTogglesState(true);
+    phaseRetrigger_.setToggleState(true,juce::dontSendNotification);
+    phaseRetrigger_.setTooltip("Retrigger phase on each note");
+    phasePerUnison_.setClickingTogglesState(true);
+    phasePerUnison_.setToggleState(true,juce::dontSendNotification);
+    phasePerUnison_.setTooltip("Randomize phase independently across unison voices");
+
+    for(auto* slider:{&phaseAngle_,&phaseRandomRange_}) {
+        addChildComponent(*slider);
+        slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        slider->setTextBoxStyle(juce::Slider::TextBoxBelow,false,46,14);
+        slider->setRotaryParameters(juce::MathConstants<float>::pi*1.20f,
+                                    juce::MathConstants<float>::pi*2.80f,true);
+        slider->setMouseDragSensitivity(180);
+    }
+    phaseAngle_.setRange(0.0,360.0,1.0);
+    phaseAngle_.setValue(0.0,juce::dontSendNotification);
+    phaseAngle_.setTextValueSuffix(juce::String::fromUTF8("°"));
+    phaseRandomRange_.setRange(0.0,360.0,1.0);
+    phaseRandomRange_.setValue(360.0,juce::dontSendNotification);
+    phaseRandomRange_.setTextValueSuffix(juce::String::fromUTF8("°"));
+
+    for(auto* label:{&phaseAngleLabel_,&phaseRandomRangeLabel_}) {
+        addChildComponent(*label);
+        label->setJustificationType(juce::Justification::centred);
+        label->setColour(juce::Label::textColourId,Palette::muted());
+        label->setFont(juce::FontOptions(7.4f));
+        label->setInterceptsMouseClicks(false,false);
+    }
+    phaseAngleLabel_.setText("FIXED PHASE",juce::dontSendNotification);
+    phaseRandomRangeLabel_.setText("RANDOM RANGE",juce::dontSendNotification);
+
+    phaseRandom_.onClick=[this]{phaseStartMode_=PhaseStartMode::Random;refreshPhaseWorkspace();};
+    phaseFixed_.onClick=[this]{phaseStartMode_=PhaseStartMode::Fixed;refreshPhaseWorkspace();};
+    phaseFree_.onClick=[this]{phaseStartMode_=PhaseStartMode::Free;refreshPhaseWorkspace();};
+    refreshPhaseWorkspace();
+
     engineBacked_ = static_cast<bool>(parameterSetter_) && static_cast<bool>(parameterGetter_);
     if(engineBacked_) {
         for(auto* slider:{&panSlider_,&levelSlider_}) {
@@ -969,6 +1013,19 @@ void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
     setOrdinal(ordinal);
 }
 
+void OscillatorCard::refreshPhaseWorkspace() {
+    phaseRandom_.setToggleState(phaseStartMode_==PhaseStartMode::Random,juce::dontSendNotification);
+    phaseFixed_.setToggleState(phaseStartMode_==PhaseStartMode::Fixed,juce::dontSendNotification);
+    phaseFree_.setToggleState(phaseStartMode_==PhaseStartMode::Free,juce::dontSendNotification);
+    phaseSelector_.setButtonText(phaseStartMode_==PhaseStartMode::Random ? "RAND"
+                                 : phaseStartMode_==PhaseStartMode::Fixed ? "FIXED" : "FREE");
+    phaseAngle_.setEnabled(phaseStartMode_==PhaseStartMode::Fixed);
+    phaseRandomRange_.setEnabled(phaseStartMode_==PhaseStartMode::Random);
+    phaseRetrigger_.setEnabled(phaseStartMode_!=PhaseStartMode::Free);
+    phasePerUnison_.setEnabled(phaseStartMode_==PhaseStartMode::Random);
+    repaint();
+}
+
 void OscillatorCard::setWorkspacePage(WorkspacePage page) {
     if(workspacePage_==page) return;
     workspacePage_=page;
@@ -1031,7 +1088,52 @@ void OscillatorCard::resized() {
             chainDeletes_[i].setVisible(false); chainKinds_[i].setVisible(false);
             chainActions_[i].setVisible(false);
         }
+
+        const bool phasePage=workspacePage_==WorkspacePage::Phase;
+        for(auto* component:std::initializer_list<juce::Component*>{
+            &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
+            &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_})
+            component->setVisible(phasePage);
+
+        if(phasePage) {
+            auto page=workspaceBounds_.reduced(12,10);
+            page.removeFromTop(30);
+            auto modes=page.removeFromTop(30);
+            const int modeGap=5;
+            const int modeW=(modes.getWidth()-modeGap*2)/3;
+            phaseRandom_.setBounds(modes.removeFromLeft(modeW));
+            modes.removeFromLeft(modeGap);
+            phaseFixed_.setBounds(modes.removeFromLeft(modeW));
+            modes.removeFromLeft(modeGap);
+            phaseFree_.setBounds(modes);
+
+            page.removeFromTop(14);
+            auto controls=page.removeFromTop(88);
+            const int half=controls.getWidth()/2;
+            auto fixedArea=controls.removeFromLeft(half).reduced(8,0);
+            auto randomArea=controls.reduced(8,0);
+            phaseAngleLabel_.setBounds(fixedArea.removeFromTop(16));
+            phaseAngle_.setBounds(fixedArea.reduced(12,0));
+            phaseRandomRangeLabel_.setBounds(randomArea.removeFromTop(16));
+            phaseRandomRange_.setBounds(randomArea.reduced(12,0));
+
+            page.removeFromTop(12);
+            auto toggles=page.removeFromTop(26);
+            const int toggleGap=6;
+            const int toggleW=(toggles.getWidth()-toggleGap)/2;
+            phaseRetrigger_.setBounds(toggles.removeFromLeft(toggleW));
+            toggles.removeFromLeft(toggleGap);
+            phasePerUnison_.setBounds(toggles);
+            refreshPhaseWorkspace();
+        }
         return;
+    }
+
+    for(auto* component:std::initializer_list<juce::Component*>{
+        &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
+        &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_}) {
+        component->setVisible(false);
+        component->setBounds({});
     }
 
     waveformPrevious_.setVisible(true); waveformNext_.setVisible(true);
@@ -1187,8 +1289,16 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     if(!isMainWorkspace()) {
         auto page=body.reduced(4);
         well(g,page);
+        auto titleArea=page.removeFromTop(28);
         const auto title=workspacePage_==WorkspacePage::Phase ? "PHASE" : "ROUTING";
-        text(g,title,page.removeFromTop(28),9.0f,Palette::secondary(),juce::Justification::centred);
+        text(g,title,titleArea,9.0f,Palette::secondary(),juce::Justification::centred);
+        g.setColour(Palette::borderSoft());
+        g.drawHorizontalLine(titleArea.getBottom(),float(page.getX()+8),float(page.getRight()-8));
+
+        if(workspacePage_==WorkspacePage::Phase) {
+            auto hint=page.removeFromBottom(20);
+            text(g,"OSCILLATOR START BEHAVIOR",hint,7.0f,Palette::muted(),juce::Justification::centred);
+        }
         return;
     }
 
