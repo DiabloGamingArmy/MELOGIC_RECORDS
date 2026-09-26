@@ -340,6 +340,19 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         levelLabel_.setText("LEVEL",juce::dontSendNotification);
     }
 
+    addAndMakeVisible(processRowPower_);
+    addAndMakeVisible(processRowRemove_);
+    processRowPower_.setClickingTogglesState(true);
+    processRowPower_.setToggleState(true,juce::dontSendNotification);
+    processRowPower_.setTooltip("Bypass this oscillator process");
+    processRowRemove_.setTooltip("Remove this oscillator process");
+    processRowRemove_.onClick=[this] {
+        if(selectedProcessId_!=0) {
+            selectedChainItem_={ChainItemKind::Process,selectedProcessId_};
+            removeSelectedChainItem();
+        }
+    };
+
     for(auto* menu:{&process1Menu_,&process2Menu_}) {
         addAndMakeVisible(*menu);
         menu->setScrollWheelEnabled(false);
@@ -702,6 +715,8 @@ void OscillatorCard::syncFromModel() {
             for(std::size_t i=0;i<state.processCount;++i)
                 if(state.processes[i].id==selectedProcessId_) {selectedProcess=&state.processes[i];break;}
             const bool haveProcess=selectedProcess!=nullptr;
+            processRowPower_.setVisible(haveProcess);
+            processRowRemove_.setVisible(haveProcess);
             process1Menu_.setVisible(haveProcess);
             process1Previous_.setVisible(false);
             process1Next_.setVisible(false);
@@ -803,7 +818,8 @@ void OscillatorCard::resized() {
         &process1Menu_,&process1Previous_,&process1Next_,&process1Randomize_,&process1Amount_,&process1AmountLabel_,
         &route1Menu_,&route1Previous_,&route1Next_,&route1Amount_,&route1AmountLabel_,
         &process2Menu_,&process2Previous_,&process2Next_,&process2Randomize_,&process2Amount_,&process2AmountLabel_,
-        &route2Menu_,&route2Previous_,&route2Next_,&route2Amount_,&route2AmountLabel_}) {
+        &route2Menu_,&route2Previous_,&route2Next_,&route2Amount_,&route2AmountLabel_,
+        &processRowPower_,&processRowRemove_}) {
         component->setBounds({});
         component->setVisible(false);
     }
@@ -814,17 +830,20 @@ void OscillatorCard::resized() {
     firstProcessRow.setY(chain.getY()+24);
     firstProcessRow.setHeight(54);
 
-    // Match the concept's horizontal proportions: a compact selector, a modest
-    // amount control, and reserved space at the far right for row actions.
+    // Concept proportions: selector / amount / action stack.
     auto firstProcessActionsArea=firstProcessRow.removeFromRight(32);
-    auto firstProcessAmountArea=firstProcessRow.removeFromRight(44);
+    auto firstProcessAmountArea=firstProcessRow.removeFromRight(40);
     firstProcessRow.removeFromRight(6);
     auto firstProcessSelectorArea=firstProcessRow.reduced(3,4).withTrimmedBottom(18);
-    firstProcessSelectorArea.setWidth(juce::jmin(firstProcessSelectorArea.getWidth(),118));
+    firstProcessSelectorArea.setWidth(juce::jmin(firstProcessSelectorArea.getWidth(),136));
     process1Menu_.setBounds(firstProcessSelectorArea);
-    process1Amount_.setBounds(juce::Rectangle<int>(34,34).withCentre(firstProcessAmountArea.getCentre()));
+    auto knobBounds=juce::Rectangle<int>(30,30).withCentre(firstProcessAmountArea.getCentre());
+    knobBounds.translate(0,-3);
+    process1Amount_.setBounds(knobBounds);
     process1AmountLabel_.setBounds({});
-    juce::ignoreUnused(firstProcessActionsArea);
+    auto powerArea=firstProcessActionsArea.removeFromTop(25).reduced(1,2);
+    processRowPower_.setBounds(powerArea);
+    processRowRemove_.setBounds(firstProcessActionsArea.reduced(1,2));
 
 
     auto tuning=upper.removeFromBottom(30);
@@ -943,7 +962,7 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         auto selectorArea=row;
         selectorArea.removeFromRight(58);
         auto typeLabel=selectorArea.removeFromBottom(18).reduced(3,0);
-        text(g,"OSC EFFECT",typeLabel,7.2f,Palette::muted(),juce::Justification::centred);
+        text(g,"O S C   E F F E C T",typeLabel,7.2f,Palette::muted(),juce::Justification::centred);
     }
 
     // Conventional oscillator pitch identity: OCT / SEM / FIN.
