@@ -362,12 +362,8 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
                     safe->wavetableBrowser_.setButtonText("BASIC SHAPES");
                     return;
                 }
-                if(result==100) {
-                    // Patch 2 owns native file selection, validation and the
-                    // stable wavetable asset model. Keep this action explicit
-                    // but non-destructive until that backend exists.
-                    safe->wavetableBrowser_.setTooltip("Import Wavetable... — file import arrives in the next patch");
-                }
+                if(result==100)
+                    safe->beginWavetableImport();
             });
         };
         panSlider_.setName("OSC PAN");
@@ -1119,6 +1115,93 @@ void OscillatorCard::refreshRoutingWorkspace() {
     outputSelector_.setButtonText(direct ? "DIRECT OUT"
                                   : filter1 ? "FILTER 1"
                                   : filter2 ? "FILTER 2" : "MULTI");
+    repaint();
+}
+
+void OscillatorCard::beginWavetableImport() {
+    wavetableFileChooser_=std::make_unique<juce::FileChooser>(
+        "Import Wavetable",juce::File{},"*.wav;*.aif;*.aiff");
+    auto safe=juce::Component::SafePointer<OscillatorCard>(this);
+    wavetableFileChooser_->launchAsync(
+        juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,
+        [safe](const juce::FileChooser& chooser) {
+            if(safe==nullptr) return;
+            const auto file=chooser.getResult();
+            if(file.existsAsFile()) safe->finishWavetableImport(file);
+            safe->wavetableFileChooser_.reset();
+        });
+}
+
+void OscillatorCard::finishWavetableImport(const juce::File& file) {
+    juce::AudioFormatManager formats;
+    formats.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+    if(!reader) {
+        wavetableBrowser_.setTooltip("Import failed: unsupported or unreadable audio file");
+        return;
+    }
+
+    constexpr std::size_t frameLength=2048;
+    constexpr std::size_t maximumFrames=256;
+    const auto totalSamples=static_cast<std::size_t>(reader->lengthInSamples);
+    if(totalSamples<frameLength || totalSamples%frameLength!=0 ||
+       totalSamples/frameLength>maximumFrames) {
+        wavetableBrowser_.setTooltip(
+            "Import failed: wavetable audio must contain 1-256 contiguous 2048-sample frames");
+        return;
+    }
+
+    juce::AudioBuffer<float> source(juce::jmax(1,static_cast<int>(reader->numChannels)),
+                                    static_cast<int>(totalSamples));
+    if(!reader->read(&source,0,static_cast<int>(totalSamples),0,true,true)) {
+        wavetableBrowser_.setTooltip("Import failed: audio data could not be read");
+        return;
+    }
+
+    auto asset=std::make_unique<ImportedWavetableAsset>();
+    asset->sourceFile=file;
+    asset->name=file.getFileNameWithoutExtension();
+    asset->frameLength=frameLength;
+    asset->monoSamples.resize(totalSamples);
+
+    float peak=0.0f;
+    for(std::size_t i=0;i<totalSamples;++i) {
+        double sum=0.0;
+        for(int channel=0;channel<source.getNumChannels();++channel)
+            sum+=source.getSample(channel,static_cast<int>(i));
+        const float sample=static_cast<float>(sum/static_cast<double>(source.getNumChannels()));
+        if(!std::isfinite(sample)) {
+            wavetableBrowser_.setTooltip("Import failed: audio contains non-finite samples");
+            return;
+        }
+        asset->monoSamples[i]=sample;
+        peak=juce::jmax(peak,std::abs(sample));
+    }
+    if(peak<=1.0e-8f) {
+        wavetableBrowser_.setTooltip("Import failed: wavetable contains no usable signal");
+        return;
+    }
+
+    // Normalize once off the audio thread. The raw frame asset is deliberately
+    // separate from the realtime Wavetable representation; the engine compiler
+    // can generate band-limited tables from this immutable source without ever
+    // parsing files in processBlock().
+    if(peak>1.0f)
+        for(auto& sample:asset->monoSamples) sample/=peak;
+
+    const auto canonical=file.getFullPathName().toLowerCase();
+    const auto identity=static_cast<juce::uint64>(canonical.hashCode64());
+    asset->key="user."+juce::String::toHexString(static_cast<juce::int64>(identity));
+
+    importedWavetable_=std::move(asset);
+    wavetableBrowser_.setButtonText(importedWavetable_->name.toUpperCase());
+    wavetableBrowser_.setTooltip(
+        juce::String(importedWavetable_->frameCount())+" frames · 2048 samples · "+file.getFileName());
+
+    // Do not point OscillatorModuleState::tableId at data the realtime engine
+    // cannot resolve yet. Current Engine/Voice still render one hard-coded
+    // Wavetable for every oscillator; publishing a fake tableId here would make
+    // preset/state validation lie about what is actually audible.
     repaint();
 }
 
