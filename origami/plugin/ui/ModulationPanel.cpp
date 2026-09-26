@@ -1442,7 +1442,7 @@ void ModulationPanel::resized() {
 
     constexpr int baseRowHeight=36;
     constexpr int routedRowHeight=54;
-    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth()-6);
+    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth());
     int y=0;
     for(std::size_t i=0;i<tabs_.size();++i) {
         if(!sourceTabActive(i)) {
@@ -1784,9 +1784,6 @@ void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) 
     // Match the fixed SOURCE header to the exact horizontal inset used by the
     // scrolling source viewport below it, rather than the full structural rail.
     auto sourceTitle=rail.reduced(4,5).removeFromTop(18);
-    // Match the actual scrollable row width, including the viewport's reserved
-    // scrollbar gutter. Keep the already-correct left edge and trim only right.
-    sourceTitle.removeFromRight(6);
     // Match the list well exactly: the header begins at the scroll viewport's
     // top edge and uses the same 2.5 px corner radius instead of a square fill.
     auto sourceTitleBox=sourceTitle.toFloat().reduced(.5f);
