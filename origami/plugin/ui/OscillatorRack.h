@@ -215,6 +215,51 @@ private:
     // real interactive control. Import is exposed now; file loading lands in
     // the asset-model patch so this change cannot alter synthesis state.
     juce::TextButton wavetableBrowser_{"BASIC SHAPES"};
+    class WavetableEditAffordance final : public juce::Component {
+    public:
+        std::function<void()> onEdit;
+        WavetableEditAffordance() { setMouseCursor(juce::MouseCursor::NormalCursor); }
+        void mouseEnter(const juce::MouseEvent&) override { hovered_=true; repaint(); }
+        void mouseMove(const juce::MouseEvent& e) override {
+            const bool overPencil=pencilBounds().contains(e.getPosition());
+            setMouseCursor(overPencil ? juce::MouseCursor::PointingHandCursor
+                                     : juce::MouseCursor::NormalCursor);
+        }
+        void mouseExit(const juce::MouseEvent&) override {
+            hovered_=false;
+            setMouseCursor(juce::MouseCursor::NormalCursor);
+            repaint();
+        }
+        void mouseUp(const juce::MouseEvent& e) override {
+            if(hovered_ && pencilBounds().contains(e.getPosition()) && onEdit) onEdit();
+        }
+        void paint(juce::Graphics& g) override {
+            if(!hovered_) return;
+            const auto button=pencilBounds().toFloat();
+            g.setColour(juce::Colours::black.withAlpha(0.50f));
+            g.fillRoundedRectangle(button,3.0f);
+
+            // Small vector pencil: no font/glyph dependency and remains crisp
+            // under Origami's whole-interface scaling transform.
+            const auto centre=button.getCentre();
+            juce::Path pencil;
+            pencil.startNewSubPath(centre.x-4.5f,centre.y+3.0f);
+            pencil.lineTo(centre.x+3.0f,centre.y-4.5f);
+            pencil.lineTo(centre.x+5.0f,centre.y-2.5f);
+            pencil.lineTo(centre.x-2.5f,centre.y+5.0f);
+            pencil.closeSubPath();
+            g.setColour(juce::Colours::white.withAlpha(0.94f));
+            g.fillPath(pencil);
+            g.drawLine(centre.x+2.4f,centre.y-3.9f,
+                       centre.x+4.4f,centre.y-1.9f,1.0f);
+        }
+    private:
+        juce::Rectangle<int> pencilBounds() const noexcept {
+            return {6,6,24,24};
+        }
+        bool hovered_=false;
+    };
+    WavetableEditAffordance wavetableEditAffordance_;
     struct ImportedWavetableAsset {
         juce::String key;
         juce::String name;
