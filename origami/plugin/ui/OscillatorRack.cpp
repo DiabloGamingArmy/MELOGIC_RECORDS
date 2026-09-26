@@ -581,18 +581,39 @@ void OscillatorCard::selectChainItem(ChainItem item) {
     syncFromModel();resized();repaint();
 }
 void OscillatorCard::addChainItem() {
-    juce::PopupMenu menu;
-    bool canProcess=true,canRoute=true;
-    if(moduleGetter_) {
-        const auto state=moduleGetter_(display_.id);
-        canProcess=state.processCount<maxOscProcesses;
-        canRoute=state.routeCount<maxOscRoutes;
-    }
-    menu.addItem(1,"PROCESS",canProcess);
-    menu.addItem(2,"ROUTING",canRoute);
+    if(!moduleGetter_ || !moduleSetter_ || !snapshotGetter_) return;
+    const auto module=moduleGetter_(display_.id);
+    if(!module.id) return;
+    const bool canProcess=module.processCount<maxOscProcesses;
+    const bool canRoute=module.routeCount<maxOscRoutes;
+    const auto snapshot=snapshotGetter_();
     auto safe=juce::Component::SafePointer<OscillatorCard>(this);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&chainAdd_),
-        [safe](int result) {if(safe==nullptr)return;if(result==1)safe->addProcess();else if(result==2)safe->addRoute();});
+    showNativeOscChainAddMenu(chainAdd_,display_.id,snapshot,
+        [safe,canProcess](dsp::OscProcessType type) {
+            if(safe==nullptr || !canProcess || type==dsp::OscProcessType::Off ||
+               !safe->moduleGetter_ || !safe->moduleSetter_) return;
+            auto state=safe->moduleGetter_(safe->display_.id);
+            if(!state.id || state.processCount>=maxOscProcesses) return;
+            auto& slot=state.processes[state.processCount++];
+            slot.id=state.nextProcessId++;slot.type=type;
+            slot.amount=juce::jlimit(dsp::oscProcessAmountMinimum(type),1.0f,0.5f);
+            slot.seed=static_cast<std::uint32_t>(juce::Random::getSystemRandom().nextInt());
+            if(slot.seed==0)slot.seed=0x6d2b79f5u;
+            if(safe->moduleSetter_(safe->display_.id,state))
+                safe->selectedChainItem_={ChainItemKind::Process,slot.id};
+            safe->syncFromModel();safe->resized();safe->repaint();
+        },
+        [safe,canRoute](OscillatorModuleId sourceId,OscRouteType type) {
+            if(safe==nullptr || !canRoute || sourceId==0 || type==OscRouteType::Off ||
+               !safe->moduleGetter_ || !safe->moduleSetter_) return;
+            auto state=safe->moduleGetter_(safe->display_.id);
+            if(!state.id || state.routeCount>=maxOscRoutes) return;
+            auto& slot=state.routes[state.routeCount++];
+            slot.id=state.nextRouteId++;slot.sourceId=sourceId;slot.type=type;slot.amount=0.5f;
+            if(safe->moduleSetter_(safe->display_.id,state))
+                safe->selectedChainItem_={ChainItemKind::Route,slot.id};
+            safe->syncFromModel();safe->resized();safe->repaint();
+        });
 }
 void OscillatorCard::removeSelectedChainItem() {
     if(selectedChainItem_.kind==ChainItemKind::None || !moduleGetter_ || !moduleSetter_) return;
