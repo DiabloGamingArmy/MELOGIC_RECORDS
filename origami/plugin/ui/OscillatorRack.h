@@ -134,6 +134,7 @@ private:
     std::array<ChainItem,maxChainItems> chainItems_{};
     std::size_t chainItemCount_=0;
     juce::TextButton chainAdd_{"+ "},chainRemove_{"- "};
+    juce::TextButton processRowPower_{"PWR"},processRowRemove_{"-"};
     ChainItem selectedChainItem_{};
     OscProcessSlotId selectedProcessId_=0;
     OscRouteSlotId selectedRouteId_=0;
