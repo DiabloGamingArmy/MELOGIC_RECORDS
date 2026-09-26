@@ -186,10 +186,12 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     body.removeFromLeft(6);
 
     well(g,rail);
-    auto sourceTitle=rail.removeFromTop(18);
+    // Match the fixed SOURCE header to the exact horizontal inset used by the
+    // scrolling filter viewport below it, rather than the full structural rail.
+    auto sourceTitle=rail.reduced(4,5).removeFromTop(18);
     g.setColour(juce::Colours::black);
     g.fillRect(sourceTitle);
-    text(g,"SOURCE",sourceTitle.reduced(5,0),8.5f,Palette::secondary(),juce::Justification::centred);
+    text(g,"SOURCE",sourceTitle,8.5f,Palette::secondary(),juce::Justification::centred);
 
     if(!filterEnabled_) {
         text(g,"NO FILTER — PRESS + TO ADD FILTER 1",body.reduced(12),10.5f,
