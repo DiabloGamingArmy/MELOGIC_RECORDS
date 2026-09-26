@@ -30,6 +30,7 @@
 // mct-origami-osc-power-compact-pitch-v21.4.1
 #include "OscillatorRack.h"
 #include "NativeOscProcessMenu.h"
+#include "NativeChoiceMenu.h"
 #include "ModulationUiTelemetry.h"
 // mct-origami-v19.3-visual-cleanup
 namespace mct::origami::ui {
@@ -204,20 +205,18 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     phaseSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
     outputSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
 
-    // MODE remains a discrete selector; Patch 2 exposes the currently available
-    // oscillator mode through the native menu without inventing unsupported DSP.
+    // MODE is a discrete choice, so use Origami's platform-native choice menu
+    // (NSMenu on macOS) rather than a JUCE-styled PopupMenu.
     modeSelector_.onClick=[safe=juce::Component::SafePointer<OscillatorCard>(this)] {
         if(safe==nullptr) return;
-        juce::PopupMenu menu;
-        menu.addItem(1,"Wavetable",true,true);
-        menu.addSeparator();
-        menu.addItem(2,"Granular",false,false);
-        menu.addItem(3,"Spectral",false,false);
-        menu.addItem(4,"Field",false,false);
-        menu.showMenuAsync(juce::PopupMenu::Options{}.withTargetComponent(&safe->modeSelector_),
-                           [safe](int result) {
-            if(safe==nullptr || result==0) return;
-            // Wavetable is the only engine-backed oscillator mode today.
+        const std::vector<NativeChoiceItem> choices{
+            {1,"Wavetable",true,{},true},
+            {2,"Granular",false},
+            {3,"Spectral",false},
+            {4,"Field",false}
+        };
+        showNativeChoiceMenu(safe->modeSelector_,"Oscillator Mode",choices,1,[safe](int result) {
+            if(safe==nullptr || result!=1) return;
             safe->modeSelector_.setButtonText("WAVETABLE");
             safe->setWorkspacePage(WorkspacePage::Main);
         });
@@ -1167,7 +1166,7 @@ void OscillatorCard::resized() {
 
         if(phasePage) {
             auto page=workspaceBounds_.reduced(12,10);
-            page.removeFromTop(30);
+            page.removeFromTop(42); // title + START MODE section label
             auto modes=page.removeFromTop(30);
             const int modeGap=5;
             const int modeW=(modes.getWidth()-modeGap*2)/3;
@@ -1177,18 +1176,18 @@ void OscillatorCard::resized() {
             modes.removeFromLeft(modeGap);
             phaseFree_.setBounds(modes);
 
-            page.removeFromTop(14);
-            auto controls=page.removeFromTop(88);
+            page.removeFromTop(25); // PHASE POSITION section label
+            auto controls=page.removeFromTop(94);
             const int half=controls.getWidth()/2;
-            auto fixedArea=controls.removeFromLeft(half).reduced(8,0);
-            auto randomArea=controls.reduced(8,0);
+            auto fixedArea=controls.removeFromLeft(half).reduced(12,0);
+            auto randomArea=controls.reduced(12,0);
             phaseAngleLabel_.setBounds(fixedArea.removeFromTop(16));
-            phaseAngle_.setBounds(fixedArea.reduced(12,0));
+            phaseAngle_.setBounds(fixedArea.reduced(10,0));
             phaseRandomRangeLabel_.setBounds(randomArea.removeFromTop(16));
-            phaseRandomRange_.setBounds(randomArea.reduced(12,0));
+            phaseRandomRange_.setBounds(randomArea.reduced(10,0));
 
-            page.removeFromTop(12);
-            auto toggles=page.removeFromTop(26);
+            page.removeFromTop(22); // BEHAVIOR section label
+            auto toggles=page.removeFromTop(28);
             const int toggleGap=6;
             const int toggleW=(toggles.getWidth()-toggleGap)/2;
             phaseRetrigger_.setBounds(toggles.removeFromLeft(toggleW));
@@ -1197,7 +1196,7 @@ void OscillatorCard::resized() {
             refreshPhaseWorkspace();
         } else if(routingPage) {
             auto page=workspaceBounds_.reduced(12,10);
-            page.removeFromTop(30);
+            page.removeFromTop(42); // title + DESTINATION section label
 
             auto destinations=page.removeFromTop(30);
             constexpr int destinationGap=4;
@@ -1210,8 +1209,8 @@ void OscillatorCard::resized() {
             destinations.removeFromLeft(destinationGap);
             routeMulti_.setBounds(destinations);
 
-            page.removeFromTop(14);
-            auto levels=page.removeFromTop(92);
+            page.removeFromTop(25); // SEND LEVELS section label
+            auto levels=page.removeFromTop(98);
             constexpr int levelGap=6;
             const int levelW=(levels.getWidth()-levelGap*2)/3;
             auto directArea=levels.removeFromLeft(levelW);
@@ -1222,14 +1221,14 @@ void OscillatorCard::resized() {
 
             auto layoutLevel=[](juce::Rectangle<int> area,juce::Label& label,RackSlider& slider) {
                 label.setBounds(area.removeFromTop(16));
-                slider.setBounds(area.reduced(8,0));
+                slider.setBounds(area.reduced(7,0));
             };
             layoutLevel(directArea,routeDirectLevelLabel_,routeDirectLevel_);
             layoutLevel(filter1Area,routeFilter1LevelLabel_,routeFilter1Level_);
             layoutLevel(filter2Area,routeFilter2LevelLabel_,routeFilter2Level_);
 
-            page.removeFromTop(10);
-            routePostChain_.setBounds(page.removeFromTop(26).withSizeKeepingCentre(132,26));
+            page.removeFromTop(20); // SIGNAL POINT section label
+            routePostChain_.setBounds(page.removeFromTop(28).withSizeKeepingCentre(150,28));
             refreshRoutingWorkspace();
         }
         return;
@@ -1404,11 +1403,21 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
         g.setColour(Palette::borderSoft());
         g.drawHorizontalLine(titleArea.getBottom(),float(page.getX()+8),float(page.getRight()-8));
 
-        auto hint=page.removeFromBottom(20);
-        if(workspacePage_==WorkspacePage::Phase)
-            text(g,"OSCILLATOR START BEHAVIOR",hint,7.0f,Palette::muted(),juce::Justification::centred);
-        else
-            text(g,"OSCILLATOR OUTPUT DESTINATIONS",hint,7.0f,Palette::muted(),juce::Justification::centred);
+        auto section=body.reduced(12,10);
+        section.removeFromTop(29);
+        if(workspacePage_==WorkspacePage::Phase) {
+            text(g,"START MODE",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            section.removeFromTop(34);
+            text(g,"PHASE POSITION",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            section.removeFromTop(106);
+            text(g,"BEHAVIOR",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+        } else {
+            text(g,"DESTINATION",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            section.removeFromTop(34);
+            text(g,"SEND LEVELS",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            section.removeFromTop(110);
+            text(g,"SIGNAL POINT",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+        }
         return;
     }
 
