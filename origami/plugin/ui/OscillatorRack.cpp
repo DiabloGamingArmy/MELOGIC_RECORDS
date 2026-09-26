@@ -1431,6 +1431,11 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         drawRotary(route1Amount_,ModDestination::RouteAmount,selectedRouteId_);
 
     // Each full OSC CHAIN row owns its modulation target and visualization.
+    // These overlays are painted by OscillatorCard (above its children), while
+    // the row controls live inside a clipped Viewport. Mirror the viewport clip
+    // here so modulation arcs/dots cannot escape the scrolling OSC CHAIN area.
+    g.saveState();
+    g.reduceClipRegion(getLocalArea(&chainViewport_,chainViewport_.getLocalBounds()));
     for(std::size_t i=0;i<chainItemCount_;++i) {
         if(!chainAmounts_[i].isVisible())continue;
         const auto item=chainItems_[i];
@@ -1439,6 +1444,7 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         else if(item.kind==ChainItemKind::Route)
             drawRotary(chainAmounts_[i],ModDestination::RouteAmount,item.id);
     }
+    g.restoreState();
 }
 
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
