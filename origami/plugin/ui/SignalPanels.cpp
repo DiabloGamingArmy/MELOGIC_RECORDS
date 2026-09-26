@@ -156,6 +156,11 @@ void FilterPanel::resized() {
     collectionControls.removeFromLeft(3);
     filterAdd_.setBounds(collectionControls);
     rail.removeFromBottom(5);
+
+    // SOURCE is a fixed rail header, identical in structure to OSC CHAIN.
+    // Only the filter rows scroll; the header remains owned by the panel.
+    constexpr int sourceHeaderHeight=18;
+    rail.removeFromTop(sourceHeaderHeight);
     filterViewport_.setBounds(rail);
     constexpr int filterRowHeight=38;
     const int contentWidth=juce::jmax(1,filterViewport_.getWidth()-6);
