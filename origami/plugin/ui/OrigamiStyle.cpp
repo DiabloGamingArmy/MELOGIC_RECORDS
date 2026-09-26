@@ -108,6 +108,13 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
         return;
     }
 
+    if(button.getName()=="OSC PROCESS POWER") {
+        g.setColour(button.isEnabled()?Palette::text():Palette::muted());
+        g.setFont(juce::FontOptions(9.2f));
+        g.drawText("PWR",button.getLocalBounds().reduced(1),juce::Justification::centred,false);
+        return;
+    }
+
     if(button.getName()=="OSC PROCESS SELECTOR") {
         // The chain-row selector no longer has navigation end-caps. Give the
         // label the full interior width and compress long process names
