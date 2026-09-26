@@ -152,6 +152,11 @@ private:
     std::array<juce::TextButton,maxChainItems> chainPowers_;
     std::array<juce::TextButton,maxChainItems> chainDeletes_;
     std::array<juce::Label,maxChainItems> chainKinds_;
+    // Small process-specific interaction control(s) live beside the row subtype
+    // label, never in the primary selector line. Currently used for seeded
+    // random/spectral processes; the array leaves the row template extensible
+    // for other compact process actions later.
+    std::array<juce::TextButton,maxChainItems> chainActions_;
     std::array<ChainItem,maxChainItems> chainItems_{};
     std::size_t chainItemCount_=0;
     juce::TextButton chainAdd_{"+ "},chainRemove_{"- "};
