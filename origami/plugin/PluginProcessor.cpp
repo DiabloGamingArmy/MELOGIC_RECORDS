@@ -672,6 +672,9 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
         if(route.id && route.destination.oscillator!=id)
             mod.routes[routeOut++]=route;
     while(routeOut<mod.routes.size()) mod.routes[routeOut++]={};
+    // Keep the audio engine and UI snapshot atomic from the caller's point of
+    // view: a deleted child must stop receiving modulation immediately.
+    if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
     return true;
 }
