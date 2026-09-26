@@ -180,11 +180,7 @@ private:
     std::array<float,2048> spectralPreviewPrevious_{};
     float spectralPreviewMorph_=1.0f;
     int spectralPreviewWtKey_=-1;
-    int spectralPreviewAmount1Key_=std::numeric_limits<int>::min();
-    int spectralPreviewAmount2Key_=std::numeric_limits<int>::min();
-    dsp::OscProcessType spectralPreviewProcess1_=dsp::OscProcessType::Off;
-    dsp::OscProcessType spectralPreviewProcess2_=dsp::OscProcessType::Off;
-    std::uint32_t spectralPreviewSeed1_=0,spectralPreviewSeed2_=0;
+    dsp::OscProcessPlan spectralPreviewPlan_{};
     bool spectralPreviewValid_=false;
 };
 // Observe native wheel delivery across all content descendants, including JUCE
