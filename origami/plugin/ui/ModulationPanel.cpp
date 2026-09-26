@@ -1401,6 +1401,12 @@ void ModulationPanel::updateScrollbar() {
 
 void ModulationPanel::resized() {
     auto body=contentBounds();
+    // Keep the MODULATION title band visually isolated from all working surfaces.
+    constexpr int panelContentTopGap=4;
+    body.removeFromTop(panelContentTopGap);
+    // Keep the editor's right boundary inside the panel so its stroke remains visible.
+    constexpr int editorRightInset=4;
+    body.removeFromRight(editorRightInset);
     performanceCurveCanvas_={};
     sequenceCanvas_={};
 
@@ -1775,6 +1781,12 @@ bool ModulationPanel::visualizationEnabled(VisualizationEffect effect) const noe
 }
 
 void ModulationPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
+    // Mirror resized(): title clearance and right-edge containment are structural.
+    constexpr int panelContentTopGap=4;
+    body.removeFromTop(panelContentTopGap);
+    constexpr int editorRightInset=4;
+    body.removeFromRight(editorRightInset);
+
     constexpr int railWidth=116;
     auto rail=body.removeFromLeft(railWidth);
     body.removeFromLeft(6);
