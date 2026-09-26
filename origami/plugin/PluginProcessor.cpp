@@ -703,12 +703,15 @@ bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleI
     const auto previousMod=uiInstrumentState_.modulation;
     auto prunedMod=previousMod;
     std::size_t routeOut=0;
-    for(const auto& route:previousMod.routes)
-        if(route.id && childExists(route))
+    std::size_t previousRouteCount=0;
+    for(const auto& route:previousMod.routes) {
+        if(!route.id) continue;
+        ++previousRouteCount;
+        if(childExists(route))
             prunedMod.routes[routeOut++]=route;
+    }
+    const bool modulationChanged=routeOut!=previousRouteCount;
     while(routeOut<prunedMod.routes.size()) prunedMod.routes[routeOut++]={};
-
-    const bool modulationChanged=!(prunedMod.routes==previousMod.routes);
     if(modulationChanged && !engine_.setModulationState(prunedMod)) return false;
     if(!engine_.setOscillatorModuleState(id,state)) {
         if(modulationChanged) engine_.setModulationState(previousMod);
