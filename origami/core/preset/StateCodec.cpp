@@ -154,8 +154,18 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     // V24: persistent per-child OSC CHAIN bypass state. Appended after the
     // complete V23 payload so every older preset remains byte-layout compatible.
     for(const auto& m:s.oscillators) if(m.id) {
-        for(std::size_t i=0;i<m.processCount;++i) w.word(m.processes[i].enabled?1u:0u);
-        for(std::size_t i=0;i<m.routeCount;++i) w.word(m.routes[i].enabled?1u:0u);
+        if(m.processCount>0) {
+            for(std::size_t i=0;i<m.processCount;++i) w.word(m.processes[i].enabled?1u:0u);
+        } else {
+            if(m.process1!=dsp::OscProcessType::Off) w.word(1u);
+            if(m.process2!=dsp::OscProcessType::Off) w.word(1u);
+        }
+        if(m.routeCount>0) {
+            for(std::size_t i=0;i<m.routeCount;++i) w.word(m.routes[i].enabled?1u:0u);
+        } else {
+            if(m.route1Type!=OscRouteType::Off) w.word(1u);
+            if(m.route2Type!=OscRouteType::Off) w.word(1u);
+        }
     }
     return w.bytes;
 }
