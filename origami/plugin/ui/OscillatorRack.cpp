@@ -1439,8 +1439,21 @@ void OscillatorRack::syncFromModel() {
     for(std::size_t i=0;!changed && i<ids.size();++i) changed=ids[i]!=cards_[i]->id();
     if(changed) {
         const auto x=viewport_.getViewPositionX();
-        cards_.clear();
-        for(auto id:ids) createCard(id);
+
+        // Stable module IDs own card lifetime. A sibling topology change must
+        // not destroy/recreate every existing OSC CHAIN editor.
+        std::vector<std::unique_ptr<OscillatorCard>> oldCards;
+        oldCards.swap(cards_);
+        cards_.reserve(ids.size());
+        for(auto id:ids) {
+            auto existing=std::find_if(oldCards.begin(),oldCards.end(),
+                [id](const auto& card){return card && card->id()==id;});
+            if(existing!=oldCards.end())
+                cards_.push_back(std::move(*existing));
+            else
+                createCard(id);
+        }
+
         layoutCards();viewport_.setViewPosition(x,0);repaint();
     }
     const auto visible=juce::Rectangle<int>(
