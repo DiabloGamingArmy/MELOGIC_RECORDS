@@ -211,6 +211,10 @@ private:
     juce::Label octaveTitle_,semitoneTitle_,fineTitle_;
     juce::Label panLabel_,levelLabel_;
     juce::TextButton waveformPrevious_{"<"},waveformNext_{">"};
+    // Patch 1 wavetable-browser foundation: the selected wavetable name is a
+    // real interactive control. Import is exposed now; file loading lands in
+    // the asset-model patch so this change cannot alter synthesis state.
+    juce::TextButton wavetableBrowser_{"BASIC SHAPES"};
     bool engineBacked_=false;
     int waveformIndex_=0;
 
