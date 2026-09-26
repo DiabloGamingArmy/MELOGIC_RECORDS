@@ -783,11 +783,11 @@ void OscillatorCard::resized() {
 
     // Visual reset: keep all chain state/DSP machinery alive, but clear the
     // selector/editor presentation so the new rack can be rebuilt one row at a time.
-    auto chainInner=chain.reduced(7,24);
+    auto chainInner=chain.reduced(7,20);
     chainViewport_.setBounds({});
     chainContent_.setSize(1,1);
     for(auto& tab:chainTabs_) { tab.setBounds({});tab.setVisible(false); }
-    // Full-width split chain controls: remove on the left, add on the right.
+    // Keep the rack's center clear: controls hug the lower edge.
     auto chainButtons=chainInner.removeFromBottom(24);
     constexpr int chainButtonGap=4;
     const int halfWidth=(chainButtons.getWidth()-chainButtonGap)/2;
@@ -908,7 +908,8 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     auto chainBox=chain.reduced(1,0);
     well(g,chainBox);
     auto chainInner=chainBox.reduced(8);
-    auto chainTitle=chainInner.removeFromTop(18);
+    auto chainTitle=chainInner.removeFromTop(14);
+    chainTitle.translate(0,-4);
     text(g,"OSC CHAIN",chainTitle,8.5f,Palette::secondary(),juce::Justification::centred);
     if(chainItemCount_==0)
         text(g,"NO PROCESSING OR ROUTING",chainInner,7.2f,Palette::muted(),juce::Justification::centred);
