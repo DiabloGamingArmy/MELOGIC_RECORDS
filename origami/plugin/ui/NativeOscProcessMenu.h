@@ -10,7 +10,10 @@ namespace mct::origami::ui {
 void showNativeOscProcessMenu(
     juce::Component& anchor,
     mct::origami::dsp::OscProcessType current,
-    std::function<void(mct::origami::dsp::OscProcessType)> onSelected);
+    std::function<void(mct::origami::dsp::OscProcessType)> onSelected,
+    mct::origami::OscillatorModuleId routeTarget=0,
+    const mct::origami::InstrumentState* routeState=nullptr,
+    std::function<void(mct::origami::OscillatorModuleId,mct::origami::OscRouteType)> onRouteSelected={});
 void showNativeOscChainAddMenu(
     juce::Component& anchor,
     mct::origami::OscillatorModuleId target,
