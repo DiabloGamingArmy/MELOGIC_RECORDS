@@ -347,7 +347,10 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         addAndMakeVisible(wavetableEditAffordance_);
         // Patch 3 is deliberately affordance-only. Patch 4 wires this callback
         // to the application-level editor takeover after that shell exists.
-        wavetableEditAffordance_.onEdit=[] {};
+        wavetableEditAffordance_.onEdit=[safe=juce::Component::SafePointer<OscillatorCard>(this)] {
+            if(safe!=nullptr && safe->onWavetableEditorRequested)
+                safe->onWavetableEditorRequested(safe->id());
+        };
         waveformPrevious_.setTooltip("Previous wavetable (only Basic Shapes is currently installed)");
         waveformNext_.setTooltip("Next wavetable (only Basic Shapes is currently installed)");
         waveformPrevious_.setEnabled(false);
@@ -2088,6 +2091,10 @@ void OscillatorRack::createCard(unsigned moduleId) {
             return snapshotGetter_ ? snapshotGetter_() : mct::origami::InstrumentState{};
         });
 
+    card->onWavetableEditorRequested=[safe](unsigned id) {
+        if(safe!=nullptr && safe->onWavetableEditorRequested)
+            safe->onWavetableEditorRequested(id);
+    };
     content_.addAndMakeVisible(*card);
     cards_.push_back(std::move(card));
     layoutCards();
