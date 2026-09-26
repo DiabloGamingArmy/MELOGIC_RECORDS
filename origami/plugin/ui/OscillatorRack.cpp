@@ -546,11 +546,61 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     chainViewport_.setViewedComponent(&chainContent_,false);
     chainViewport_.setScrollBarsShown(true,false);
     chainViewport_.setScrollBarThickness(4);
-    for(std::size_t i=0;i<chainTabs_.size();++i) {
-        chainContent_.addAndMakeVisible(chainTabs_[i]);
-        chainTabs_[i].setClickingTogglesState(true);
-        chainTabs_[i].onClick=[this,i] {
-            if(i<chainItemCount_) selectChainItem(chainItems_[i]);
+    for(std::size_t i=0;i<maxChainItems;++i) {
+        chainContent_.addAndMakeVisible(chainSelectors_[i]);
+        chainContent_.addAndMakeVisible(chainAmounts_[i]);
+        chainContent_.addAndMakeVisible(chainPowers_[i]);
+        chainContent_.addAndMakeVisible(chainDeletes_[i]);
+        chainContent_.addAndMakeVisible(chainKinds_[i]);
+        chainAmounts_[i].setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        chainAmounts_[i].setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        chainAmounts_[i].setRotaryParameters(juce::MathConstants<float>::pi*1.20f,juce::MathConstants<float>::pi*2.80f,true);
+        chainAmounts_[i].setMouseDragSensitivity(180);
+        chainPowers_[i].setButtonText("PWR");
+        chainPowers_[i].setClickingTogglesState(true);
+        chainPowers_[i].setToggleState(true,juce::dontSendNotification);
+        chainDeletes_[i].setButtonText("-");
+        chainKinds_[i].setJustificationType(juce::Justification::centred);
+        chainKinds_[i].setColour(juce::Label::textColourId,Palette::muted());
+        chainKinds_[i].setFont(juce::FontOptions(7.2f));
+        chainKinds_[i].setInterceptsMouseClicks(false,false);
+        chainDeletes_[i].onClick=[this,i] {
+            if(i>=chainItemCount_)return;
+            selectedChainItem_=chainItems_[i];removeSelectedChainItem();
+        };
+        chainSelectors_[i].onClick=[this,i] {
+            if(i>=chainItemCount_ || !moduleGetter_ || !moduleSetter_)return;
+            const auto item=chainItems_[i];auto state=moduleGetter_(display_.id);if(!state.id)return;
+            auto safe=juce::Component::SafePointer<OscillatorCard>(this);
+            if(item.kind==ChainItemKind::Process) {
+                OscProcessSlot* slot=nullptr;
+                for(std::size_t n=0;n<state.processCount;++n)if(state.processes[n].id==item.id){slot=&state.processes[n];break;}
+                if(!slot)return;
+                showNativeOscProcessMenu(chainSelectors_[i],slot->type,[safe,item](dsp::OscProcessType type) {
+                    if(safe==nullptr || type==dsp::OscProcessType::Off)return;
+                    auto s=safe->moduleGetter_(safe->display_.id);
+                    for(std::size_t n=0;n<s.processCount;++n)if(s.processes[n].id==item.id){s.processes[n].type=type;s.processes[n].amount=juce::jlimit(dsp::oscProcessAmountMinimum(type),1.0f,s.processes[n].amount);break;}
+                    safe->moduleSetter_(safe->display_.id,s);safe->syncFromModel();
+                });
+            } else if(item.kind==ChainItemKind::Route && snapshotGetter_) {
+                OscRouteSlot* slot=nullptr;
+                for(std::size_t n=0;n<state.routeCount;++n)if(state.routes[n].id==item.id){slot=&state.routes[n];break;}
+                if(!slot)return;
+                const auto snapshot=snapshotGetter_();
+                showNativeOscRouteMenu(chainSelectors_[i],display_.id,slot->sourceId,slot->type,snapshot,[safe,item](OscillatorModuleId sourceId,OscRouteType type) {
+                    if(safe==nullptr || sourceId==0 || type==OscRouteType::Off)return;
+                    auto s=safe->moduleGetter_(safe->display_.id);
+                    for(std::size_t n=0;n<s.routeCount;++n)if(s.routes[n].id==item.id){s.routes[n].sourceId=sourceId;s.routes[n].type=type;break;}
+                    safe->moduleSetter_(safe->display_.id,s);safe->syncFromModel();
+                });
+            }
+        };
+        chainAmounts_[i].onValueChange=[this,i] {
+            if(syncingProcess_ || i>=chainItemCount_ || !moduleGetter_ || !moduleSetter_)return;
+            auto s=moduleGetter_(display_.id);const auto item=chainItems_[i];
+            if(item.kind==ChainItemKind::Process)for(std::size_t n=0;n<s.processCount;++n)if(s.processes[n].id==item.id){s.processes[n].amount=float(chainAmounts_[i].getValue());break;}
+            if(item.kind==ChainItemKind::Route)for(std::size_t n=0;n<s.routeCount;++n)if(s.routes[n].id==item.id){s.routes[n].amount=float(chainAmounts_[i].getValue());break;}
+            moduleSetter_(display_.id,s);
         };
     }
     addAndMakeVisible(chainAdd_);addAndMakeVisible(chainRemove_);
