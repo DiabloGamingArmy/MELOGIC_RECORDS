@@ -192,6 +192,19 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     remove_.setTooltip("Remove this oscillator module");
     remove_.onClick=[id=display_.id,removeCallback=std::move(remove)] { removeCallback(id); };
 
+    // The header is now an explicit oscillator configuration strip rather than
+    // free-painted source text plus controls pinned to the right edge.
+    addAndMakeVisible(modeSelector_);
+    addAndMakeVisible(outputSelector_);
+    modeSelector_.setTooltip("Oscillator mode");
+    outputSelector_.setTooltip("Oscillator output route");
+    modeSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    outputSelector_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    // Phase one is intentionally presentation-only; do not mutate DSP/state
+    // until the mode/output model is introduced.
+    modeSelector_.onClick=[this]{};
+    outputSelector_.onClick=[this]{};
+
     engineBacked_ = static_cast<bool>(parameterSetter_) && static_cast<bool>(parameterGetter_);
     if(engineBacked_) {
         for(auto* slider:{&panSlider_,&levelSlider_}) {
@@ -928,8 +941,29 @@ void OscillatorCard::setDisplayOrdinal(unsigned ordinal) {
     setOrdinal(ordinal);
 }
 void OscillatorCard::resized() {
-    remove_.setBounds(getWidth()-31,6,24,21);
-    power_.setBounds(getWidth()-62,6,27,21);
+    // Structured top bar: OSC identity | MODE | ROUTE | PWR | remove.
+    // It consumes the existing Panel header only, preserving body height.
+    constexpr int headerY=4;
+    constexpr int headerH=25;
+    constexpr int edge=7;
+    constexpr int removeW=24;
+    constexpr int powerW=31;
+    constexpr int gap=4;
+    constexpr int identityW=66;
+    constexpr int labelW=30;
+
+    int right=getWidth()-edge;
+    remove_.setBounds(right-removeW,headerY,removeW,headerH); right-=removeW+gap;
+    power_.setBounds(right-powerW,headerY,powerW,headerH); right-=powerW+gap;
+
+    const int left=edge+identityW;
+    const int available=juce::jmax(0,right-left);
+    const int modeGroup=available*48/100;
+    const int routeGroup=juce::jmax(0,available-modeGroup-gap);
+    modeSelector_.setBounds(left+labelW,headerY,juce::jmax(0,modeGroup-labelW),headerH);
+    const int routeX=left+modeGroup+gap;
+    outputSelector_.setBounds(routeX+labelW,headerY,juce::jmax(0,routeGroup-labelW),headerH);
+
     if(!engineBacked_) return;
 
     auto body=contentBounds();
@@ -1046,7 +1080,31 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     // Dense by design: this is a wavetable synth. Preserve the established
     // source -> process -> tuning -> performance-control hierarchy.
 
-    text(g,display_.source.toUpperCase(),{87,5,getWidth()-128,25},8.2f,Palette::muted(),juce::Justification::centred);
+    // Dedicated oscillator configuration strip. Child buttons own the selector
+    // surfaces; paint only the identity and compact vertical section labels here.
+    constexpr int headerY=4;
+    constexpr int headerH=25;
+    constexpr int edge=7;
+    constexpr int identityW=66;
+    constexpr int removeW=24;
+    constexpr int powerW=31;
+    constexpr int gap=4;
+    constexpr int labelW=30;
+
+    auto identity=juce::Rectangle<int>(edge,headerY,identityW,headerH);
+    text(g,"OSC "+juce::String(display_.ordinal),identity,9.0f,Palette::secondary(),juce::Justification::centredLeft);
+    g.setColour(Palette::borderSoft());
+    g.drawVerticalLine(identity.getRight()-1,float(headerY+2),float(headerY+headerH-2));
+
+    const int right=getWidth()-edge-removeW-gap-powerW-gap;
+    const int left=edge+identityW;
+    const int available=juce::jmax(0,right-left);
+    const int modeGroup=available*48/100;
+    const int routeGroup=juce::jmax(0,available-modeGroup-gap);
+    auto modeLabel=juce::Rectangle<int>(left,headerY,labelW,headerH);
+    auto routeLabel=juce::Rectangle<int>(left+modeGroup+gap,headerY,labelW,headerH);
+    text(g,"MODE",modeLabel,7.2f,Palette::muted(),juce::Justification::centred);
+    text(g,"ROUTE",routeLabel,7.2f,Palette::muted(),juce::Justification::centred);
 
     auto working=body;
     working.removeFromTop(4);
