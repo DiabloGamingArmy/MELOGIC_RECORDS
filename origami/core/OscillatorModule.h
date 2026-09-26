@@ -95,6 +95,7 @@ struct OscProcessSlot {
     dsp::OscProcessType type = dsp::OscProcessType::Off;
     float amount = 0.0f;
     std::uint32_t seed = 0;
+    bool enabled = true;
 };
 
 struct OscRouteSlot {
@@ -102,6 +103,7 @@ struct OscRouteSlot {
     OscillatorModuleId sourceId = 0;
     OscRouteType type = OscRouteType::Off;
     float amount = 0.0f;
+    bool enabled = true;
 };
 
 struct OscillatorModuleState {
