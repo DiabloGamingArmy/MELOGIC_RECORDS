@@ -32,6 +32,53 @@ void showNativeOscProcessMenu(juce::Component& anchor,
             onSelected(static_cast<dsp::OscProcessType>(raw));
         });
 }
+void showNativeOscChainAddMenu(juce::Component& anchor,
+                               OscillatorModuleId target,
+                               const InstrumentState& state,
+                               std::function<void(dsp::OscProcessType)> onProcessSelected,
+                               std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected) {
+    juce::PopupMenu root;
+    constexpr const char* categories[]={
+        "Curve / Warp","Sync / Repeat","Fold / Reflect",
+        "Phase / Motion","Digital / Experimental","Spectral / Harmonics"
+    };
+    for(const char* category:categories) {
+        juce::PopupMenu folder;
+        for(std::uint32_t raw=1;raw<static_cast<std::uint32_t>(dsp::OscProcessType::Count);++raw) {
+            const auto type=static_cast<dsp::OscProcessType>(raw);
+            if(std::strcmp(dsp::oscProcessCategory(type),category)!=0) continue;
+            folder.addItem(static_cast<int>(raw),dsp::oscProcessName(type));
+        }
+        root.addSubMenu(category,folder);
+    }
+    root.addSeparator();
+    int routeId=1000;
+    unsigned ordinal=0;
+    for(const auto& source:state.oscillators) {
+        if(source.id==0) continue;
+        ++ordinal;
+        if(source.id==target) continue;
+        juce::PopupMenu folder;
+        for(auto type:oscRouteTypes) folder.addItem(routeId++,oscRouteName(type));
+        root.addSubMenu("OSC "+juce::String(ordinal),folder);
+    }
+    auto safe=juce::Component::SafePointer<juce::Component>(&anchor);
+    root.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor),
+        [safe,state,target,onProcessSelected=std::move(onProcessSelected),onRouteSelected=std::move(onRouteSelected)](int selected) mutable {
+            if(safe==nullptr || selected<=0) return;
+            if(selected<1000) {
+                if(onProcessSelected && selected<static_cast<int>(dsp::OscProcessType::Count))
+                    onProcessSelected(static_cast<dsp::OscProcessType>(selected));
+                return;
+            }
+            int id=1000;
+            for(const auto& source:state.oscillators) {
+                if(source.id==0 || source.id==target) continue;
+                for(auto type:oscRouteTypes)
+                    if(id++==selected){if(onRouteSelected)onRouteSelected(source.id,type);return;}
+            }
+        });
+}
 void showNativeOscRouteMenu(juce::Component& anchor,
                             OscillatorModuleId target,
                             OscillatorModuleId currentSource,
