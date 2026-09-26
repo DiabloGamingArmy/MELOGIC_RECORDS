@@ -560,6 +560,25 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
         chainPowers_[i].setButtonText("PWR");
         chainPowers_[i].setClickingTogglesState(true);
         chainPowers_[i].setToggleState(true,juce::dontSendNotification);
+        chainPowers_[i].setTooltip("Enable / bypass this OSC CHAIN item");
+        chainPowers_[i].onClick=[this,i] {
+            if(syncingProcess_ || i>=chainItemCount_ || !moduleGetter_ || !moduleSetter_) return;
+            auto state=moduleGetter_(display_.id);
+            if(!state.id) return;
+            const auto item=chainItems_[i];
+            const bool enabled=chainPowers_[i].getToggleState();
+            if(item.kind==ChainItemKind::Process) {
+                for(std::size_t n=0;n<state.processCount;++n)
+                    if(state.processes[n].id==item.id) { state.processes[n].enabled=enabled; break; }
+            } else if(item.kind==ChainItemKind::Route) {
+                for(std::size_t n=0;n<state.routeCount;++n)
+                    if(state.routes[n].id==item.id) { state.routes[n].enabled=enabled; break; }
+            }
+            if(!moduleSetter_(display_.id,state))
+                chainPowers_[i].setToggleState(!enabled,juce::dontSendNotification);
+            syncFromModel();
+            repaint();
+        };
         chainDeletes_[i].setButtonText("-");
         chainKinds_[i].setJustificationType(juce::Justification::centred);
         chainKinds_[i].setColour(juce::Label::textColourId,Palette::muted());
@@ -768,6 +787,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             chainKinds_[i].setText("O S C   E F F E C T",juce::dontSendNotification);
             chainAmounts_[i].setRange(dsp::oscProcessAmountMinimum(p->type),1.0,0.001);
             chainAmounts_[i].setValue(p->amount,juce::dontSendNotification);
+            chainPowers_[i].setToggleState(p->enabled,juce::dontSendNotification);
             chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::ProcessAmount));
             chainAmounts_[i].getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
             chainAmounts_[i].getProperties().set("mct.mod.itemId",static_cast<int>(p->id));
@@ -782,6 +802,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             chainKinds_[i].setText("O S C   R O U T E",juce::dontSendNotification);
             chainAmounts_[i].setRange(-1.0,1.0,0.001);
             chainAmounts_[i].setValue(r->amount,juce::dontSendNotification);
+            chainPowers_[i].setToggleState(r->enabled,juce::dontSendNotification);
             chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::RouteAmount));
             chainAmounts_[i].getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
             chainAmounts_[i].getProperties().set("mct.mod.itemId",static_cast<int>(r->id));
