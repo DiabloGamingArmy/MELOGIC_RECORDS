@@ -189,6 +189,9 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     // Match the fixed SOURCE header to the exact horizontal inset used by the
     // scrolling filter viewport below it, rather than the full structural rail.
     auto sourceTitle=rail.reduced(4,5).removeFromTop(18);
+    // Match the actual scrollable row width, including the viewport's reserved
+    // scrollbar gutter. Keep the already-correct left edge and trim only right.
+    sourceTitle.removeFromRight(6);
     // Match the list well exactly: the header begins at the scroll viewport's
     // top edge and uses the same 2.5 px corner radius instead of a square fill.
     auto sourceTitleBox=sourceTitle.toFloat().reduced(.5f);
