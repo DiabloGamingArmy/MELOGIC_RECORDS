@@ -131,15 +131,18 @@ struct SpectralKey {
     std::uint16_t frame=0,band=0;
     OscProcessPlan plan{};
 };
-bool sameSpectralKey(const SpectralKey& a,const SpectralKey& b) noexcept {
-    if(a.table!=b.table || a.generation!=b.generation || a.frame!=b.frame ||
-       a.band!=b.band || a.plan.count!=b.plan.count) return false;
-    const auto count=std::min<std::size_t>(a.plan.count,maxOscProcessStages);
+bool sameProcessPlan(const OscProcessPlan& a,const OscProcessPlan& b) noexcept {
+    if(a.count!=b.count) return false;
+    const auto count=std::min<std::size_t>(a.count,maxOscProcessStages);
     for(std::size_t i=0;i<count;++i) {
-        const auto& x=a.plan.stages[i]; const auto& y=b.plan.stages[i];
+        const auto& x=a.stages[i];const auto& y=b.stages[i];
         if(x.type!=y.type || x.amount!=y.amount || x.seed!=y.seed) return false;
     }
     return true;
+}
+bool sameSpectralKey(const SpectralKey& a,const SpectralKey& b) noexcept {
+    return a.table==b.table && a.generation==b.generation && a.frame==b.frame &&
+           a.band==b.band && sameProcessPlan(a.plan,b.plan);
 }
 std::uint64_t spectralKeyHash(const SpectralKey& k) noexcept {
     auto mix=[](std::uint64_t h,std::uint64_t v) noexcept {
@@ -176,7 +179,22 @@ public:
     float readOrRequest(const Wavetable& table,std::size_t frame,std::size_t band,
                         const OscProcessPlan& sourcePlan,
                         std::size_t index,std::size_t nextIndex,float fraction,
-                        double fallbackPhase) noexcept {
+                        double fallbackPhase,SpectralReadHint& hint) noexcept {
+        // A stable chain needs neither re-quantization nor re-hashing per sample.
+        // Revision validation under the pin handles eviction and table reuse.
+        if(hint.revision && hint.table==&table && hint.generation==table.generation &&
+           hint.frame==frame && hint.band==band && sameProcessPlan(hint.plan,sourcePlan)) {
+            auto& slot=cache_[hint.slot];
+            if(pin(slot)) {
+                if(slot.revision==hint.revision) {
+                    const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
+                    touch(slot,hint);
+                    unpin(slot);
+                    return value;
+                }
+                unpin(slot);
+            }
+        }
         OscProcessPlan keyPlan=sourcePlan;
         keyPlan.count=static_cast<std::uint8_t>(std::min<std::size_t>(keyPlan.count,maxOscProcessStages));
         for(std::size_t i=0;i<keyPlan.count;++i)
@@ -187,19 +205,23 @@ public:
         const auto hash=spectralKeyHash(key),bucket=(hash%cacheBuckets)*cacheWays;
         for(std::size_t w=0;w<cacheWays;++w){
             auto& slot=cache_[bucket+w];
-            if(slot.state.load(std::memory_order_acquire)!=ready)continue;
-            slot.readers.fetch_add(1,std::memory_order_acquire);
-            if(slot.state.load(std::memory_order_acquire)!=ready){slot.readers.fetch_sub(1,std::memory_order_release);continue;}
+            if(!pin(slot))continue;
             if(sameSpectralKey(slot.key,key)){
                 const float value=slot.samples[index]+fraction*(slot.samples[nextIndex]-slot.samples[index]);
-                slot.age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
-                slot.readers.fetch_sub(1,std::memory_order_release);return value;
+                hint.table=&table;hint.generation=table.generation;
+                hint.frame=frame;hint.band=band;hint.plan=sourcePlan;
+                hint.slot=bucket+w;hint.revision=slot.revision;hint.hits=0;
+                touch(slot,hint);
+                unpin(slot);return value;
             }
-            slot.readers.fetch_sub(1,std::memory_order_release);
+            unpin(slot);
         }
         request(table,key,hash);
         fallbackReads_.fetch_add(1,std::memory_order_relaxed);
         const auto& source=table.frames[frame].bands[band].samples;
+        for(std::size_t p=0;p<std::min<std::size_t>(sourcePlan.count,maxOscProcessStages);++p)
+            if(!oscProcessIsSpectral(sourcePlan.stages[p].type))
+                fallbackPhase=processOscillatorPhase(fallbackPhase,sourcePlan.stages[p].type,sourcePlan.stages[p].amount);
         const double pos=(fallbackPhase-std::floor(fallbackPhase))*static_cast<double>(table.tableLength);
         const auto i=static_cast<std::size_t>(pos)%table.tableLength,j=(i+1)%table.tableLength;
         const float f=static_cast<float>(pos-static_cast<double>(static_cast<std::size_t>(pos)));
@@ -212,15 +234,43 @@ public:
 private:
     enum:std::uint8_t{empty=0,building=1,ready=2,retiring=3};
     struct CacheSlot{std::atomic<std::uint8_t> state{empty};std::atomic<std::uint32_t> readers{0};
-        std::atomic<std::uint64_t> age{0};SpectralKey key{};std::array<float,spectralSize> samples{};};
+        std::atomic<std::uint64_t> age{0};std::uint64_t revision=0;SpectralKey key{};std::array<float,spectralSize> samples{};};
+    static constexpr std::uint32_t writerPin=0x80000000u;
+    static bool pin(CacheSlot& slot) noexcept {
+        if(slot.state.load(std::memory_order_acquire)!=ready) return false;
+        auto readers=slot.readers.load(std::memory_order_relaxed);
+        if(readers>=writerPin-1) return false;
+        // One attempt: a concurrent reader/writer causes a bounded cache miss.
+        if(!slot.readers.compare_exchange_strong(readers,readers+1,
+                std::memory_order_acquire,std::memory_order_relaxed)) return false;
+        if(slot.state.load(std::memory_order_acquire)==ready) return true;
+        unpin(slot);return false;
+    }
+    static void unpin(CacheSlot& slot) noexcept {
+        slot.readers.fetch_sub(1,std::memory_order_release);
+    }
+    void touch(CacheSlot& slot,SpectralReadHint& hint) noexcept {
+        // Approximate LRU is sufficient. Avoid a shared clock RMW per sample.
+        if((hint.hits++ & 255u)==0)
+            slot.age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+    }
     struct QueueSlot{std::atomic<bool> readyFlag{false};SpectralRequest request{};};
     void request(const Wavetable& table,const SpectralKey& key,std::uint64_t hash) noexcept {
         const auto pendingIndex=hash%pendingSize;std::uint64_t expected=0;
         if(!pending_[pendingIndex].compare_exchange_strong(expected,hash,std::memory_order_acq_rel,std::memory_order_relaxed))return;
         std::uint64_t write=write_.load(std::memory_order_relaxed);
-        for(;;){const auto read=read_.load(std::memory_order_acquire);
-            if(write-read>=queueSize){pending_[pendingIndex].store(0,std::memory_order_release);dropped_.fetch_add(1,std::memory_order_relaxed);return;}
-            if(write_.compare_exchange_weak(write,write+1,std::memory_order_acq_rel,std::memory_order_relaxed))break;}
+        bool reserved=false;
+        for(unsigned attempt=0;attempt<4;++attempt) {
+            const auto read=read_.load(std::memory_order_acquire);
+            if(write-read>=queueSize) break;
+            if(write_.compare_exchange_strong(write,write+1,std::memory_order_acq_rel,std::memory_order_relaxed)) {
+                reserved=true;break;
+            }
+        }
+        if(!reserved) {
+            pending_[pendingIndex].store(0,std::memory_order_release);
+            dropped_.fetch_add(1,std::memory_order_relaxed);return;
+        }
         auto& slot=queue_[write%queueSize];slot.request.key=key;slot.request.hash=hash;
         const auto& source=table.frames[key.frame].bands[key.band].samples;
         std::copy_n(source.data(),spectralSize,slot.request.source.data());
@@ -235,14 +285,32 @@ private:
     CacheSlot* claimSlot(const SpectralKey& key,std::uint64_t hash) noexcept {
         const auto bucket=(hash%cacheBuckets)*cacheWays;CacheSlot* oldest=nullptr;
         std::uint64_t oldestAge=std::numeric_limits<std::uint64_t>::max();
-        for(std::size_t w=0;w<cacheWays;++w){auto& slot=cache_[bucket+w];auto state=slot.state.load(std::memory_order_acquire);
-            if(state==ready){slot.readers.fetch_add(1,std::memory_order_acquire);
-                if(slot.state.load(std::memory_order_acquire)==ready&&sameSpectralKey(slot.key,key)){slot.readers.fetch_sub(1,std::memory_order_release);return nullptr;}
-                slot.readers.fetch_sub(1,std::memory_order_release);const auto age=slot.age.load(std::memory_order_relaxed);
+        // Only this worker writes keys. Readers only access keys after pinning.
+        for(std::size_t w=0;w<cacheWays;++w) {
+            auto& slot=cache_[bucket+w];
+            const auto state=slot.state.load(std::memory_order_acquire);
+            if(state==ready) {
+                if(sameSpectralKey(slot.key,key)) return nullptr;
+                const auto age=slot.age.load(std::memory_order_relaxed);
                 if(age<oldestAge){oldestAge=age;oldest=&slot;}
-            }else if(state==empty){std::uint8_t expected=empty;if(slot.state.compare_exchange_strong(expected,building,std::memory_order_acq_rel,std::memory_order_relaxed))return &slot;}}
-        if(oldest){std::uint8_t expected=ready;if(oldest->state.compare_exchange_strong(expected,retiring,std::memory_order_acq_rel,std::memory_order_relaxed)){
-            while(oldest->readers.load(std::memory_order_acquire)!=0)std::this_thread::yield();oldest->state.store(building,std::memory_order_release);return oldest;}}
+            } else if(state==empty) {
+                slot.readers.store(writerPin,std::memory_order_relaxed);
+                slot.state.store(building,std::memory_order_release);
+                return &slot;
+            }
+        }
+        if(oldest) {
+            oldest->state.store(retiring,std::memory_order_release);
+            std::uint32_t expected=0;
+            // Ownership and the reader count share one atomic. Separate state
+            // and count checks alone permit a late reader to race a rewrite.
+            if(oldest->readers.compare_exchange_strong(expected,writerPin,
+                    std::memory_order_acquire,std::memory_order_relaxed)) {
+                oldest->state.store(building,std::memory_order_release);
+                return oldest;
+            }
+            oldest->state.store(ready,std::memory_order_release);
+        }
         return nullptr;
     }
     void workerLoop() noexcept {
@@ -251,7 +319,9 @@ private:
             if(!pop(req)){std::this_thread::sleep_for(std::chrono::microseconds(250));continue;}
             if(auto* slot=claimSlot(req.key,req.hash)){
                 renderProcessedFrame2048(req.source.data(),slot->samples.data(),req.key.plan);
-                slot->key=req.key;slot->age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+                slot->key=req.key;slot->revision=++revision_;
+                slot->age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
+                slot->readers.store(0,std::memory_order_release);
                 slot->state.store(ready,std::memory_order_release);prepared_.fetch_add(1,std::memory_order_relaxed);}
             const auto pendingIndex=req.hash%pendingSize;auto expected=req.hash;
             pending_[pendingIndex].compare_exchange_strong(expected,0,std::memory_order_acq_rel,std::memory_order_relaxed);}
@@ -260,6 +330,7 @@ private:
     std::array<std::atomic<std::uint64_t>,pendingSize> pending_{};
     std::atomic<std::uint64_t> write_{0},read_{0},clock_{1};
     std::atomic<std::uint64_t> requests_{0},prepared_{0},fallbackReads_{0},dropped_{0};
+    std::uint64_t revision_=0; // worker-owned publication sequence
     std::atomic<bool> stop_{false};std::mutex startMutex_;std::thread worker_;bool started_=false;
 };
 SpectralCompiler& spectralCompiler() noexcept { static SpectralCompiler compiler; return compiler; }
@@ -683,59 +754,12 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
                                 double phaseSkew,
                                 std::uint32_t process1Seed,
                                 std::uint32_t process2Seed) noexcept {
-    if (table.frames.empty() || sampleRate <= 0 || !std::isfinite(frequency) || !std::isfinite(position)) return 0;
-    // Caller installs validated banks. Bound phase every sample, never accumulate time.
-    const double increment = std::clamp(frequency / sampleRate, 0.0, .499);
-    const double available = frequency > 0 ? sampleRate * .45 / frequency : 1;
-    const auto& bands = table.frames[0].bands;
-    std::size_t bandIndex = 0;
-    while (bandIndex + 1 < bands.size() && bands[bandIndex + 1].maximumHarmonic <= available) ++bandIndex;
-    const float framePosition = std::clamp(position, 0.f, 1.f) * static_cast<float>(table.frames.size() - 1);
-    const auto first = static_cast<std::size_t>(framePosition);
-    const auto second = std::min(first + 1, table.frames.size() - 1);
-    double readPhase=phase_ + (std::isfinite(phaseOffsetCycles) ? phaseOffsetCycles : 0.0);
-    readPhase-=std::floor(readPhase);
-
-    // Cross-oscillator PSK dynamically moves the half-cycle split point while
-    // preserving a continuous 0..1 phase domain.
-    if(std::isfinite(phaseSkew) && std::abs(phaseSkew)>1.0e-12) {
-        const double midpoint=std::clamp(0.5+phaseSkew,0.06,0.94);
-        readPhase=readPhase<midpoint
-            ? 0.5*(readPhase/midpoint)
-            : 0.5+0.5*((readPhase-midpoint)/(1.0-midpoint));
-    }
-
-    const bool spectral=table.tableLength==spectralSize &&
-        (oscProcessIsSpectral(process1) || oscProcessIsSpectral(process2));
-    if(!spectral) {
-        readPhase=processOscillatorPhase(readPhase,process1,amount1);
-        readPhase=processOscillatorPhase(readPhase,process2,amount2);
-    }
-    const double tablePosition=readPhase*static_cast<double>(table.tableLength);
-    const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength;
-    const auto nextIndex=(index+1)%table.tableLength;
-    const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
-    auto read=[&](std::size_t frame) {
-        if(spectral) {
-            double fallbackPhase=readPhase;
-            if(!oscProcessIsSpectral(process1)) fallbackPhase=processOscillatorPhase(fallbackPhase,process1,amount1);
-            if(!oscProcessIsSpectral(process2)) fallbackPhase=processOscillatorPhase(fallbackPhase,process2,amount2);
-            OscProcessPlan compatibilityPlan{};
-            if(process1!=OscProcessType::Off)
-                compatibilityPlan.stages[compatibilityPlan.count++]={process1,amount1,process1Seed};
-            if(process2!=OscProcessType::Off && compatibilityPlan.count<maxOscProcessStages)
-                compatibilityPlan.stages[compatibilityPlan.count++]={process2,amount2,process2Seed};
-            return spectralCompiler().readOrRequest(table,frame,bandIndex,
-                compatibilityPlan,index,nextIndex,fraction,fallbackPhase);
-        }
-        const auto& samples=table.frames[frame].bands[bandIndex].samples;
-        return samples[index]+fraction*(samples[nextIndex]-samples[index]);
-    };
-    const float a=read(first),b=read(second);
-    const float output = a + (framePosition - static_cast<float>(first)) * (b - a);
-    phase_ += increment; if (phase_ >= 1) phase_ -= 1;
-    return frequency >= sampleRate * .5 ? 0 : output;
+    OscProcessPlan plan{};
+    if(process1!=OscProcessType::Off) plan.stages[plan.count++]={process1,amount1,process1Seed};
+    if(process2!=OscProcessType::Off) plan.stages[plan.count++]={process2,amount2,process2Seed};
+    return next(table,frequency,sampleRate,position,plan,phaseOffsetCycles,phaseSkew);
 }
+
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 const OscProcessPlan& plan,double phaseOffsetCycles,
                                 double phaseSkew) noexcept {
@@ -753,18 +777,23 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
     bool spectral=table.tableLength==spectralSize;
     if(spectral){bool found=false;for(std::size_t i=0;i<count;++i)found|=oscProcessIsSpectral(plan.stages[i].type);spectral=found;}
-    double fallbackPhase=readPhase;
-    for(std::size_t i=0;i<count;++i)if(!oscProcessIsSpectral(plan.stages[i].type))
-        fallbackPhase=processOscillatorPhase(fallbackPhase,plan.stages[i].type,plan.stages[i].amount);
-    if(!spectral)readPhase=fallbackPhase;
+    // Spectral tables already include phase processes. Evaluate those only
+    // on a cache miss; the normal prepared read needs just interpolation.
+    if(!spectral) for(std::size_t i=0;i<count;++i)
+        readPhase=processOscillatorPhase(readPhase,plan.stages[i].type,plan.stages[i].amount);
     const double tablePosition=readPhase*static_cast<double>(table.tableLength);
     const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength,nextIndex=(index+1)%table.tableLength;
     const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));
-    auto read=[&](std::size_t frame){
-        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,fallbackPhase);
+    auto read=[&](std::size_t frame,std::size_t hintIndex){
+        if(spectral)return spectralCompiler().readOrRequest(table,frame,bandIndex,plan,index,nextIndex,fraction,readPhase,spectralHints_[hintIndex]);
         const auto& samples=table.frames[frame].bands[bandIndex].samples;
         return samples[index]+fraction*(samples[nextIndex]-samples[index]);};
-    const float a=read(first),b=read(second),output=a+(framePosition-static_cast<float>(first))*(b-a);
+    const float frameFraction=framePosition-static_cast<float>(first);
+    const float a=read(first,0);
+    // An exact frame does not consume the adjacent frame, so it needs no
+    // lookup, pin, or spectral compilation request for that frame.
+    const float b=frameFraction>0.0f && second!=first ? read(second,1) : a;
+    const float output=a+frameFraction*(b-a);
     phase_+=increment;if(phase_>=1)phase_-=1;
     return frequency>=sampleRate*.5?0:output;
 }

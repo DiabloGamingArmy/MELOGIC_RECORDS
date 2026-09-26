@@ -296,7 +296,6 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     latchParameters();
     const bool oscillatorGenerationChanged=
         oscillatorModules_.consumeSnapshot(hostModules_,hostModuleGeneration_);
-    (void)oscillatorGenerationChanged;
     const bool modulationChanged=modulationMailbox_.consume(audioModulation_);
     bool moduleTopologyChanged=false;
     for(std::size_t i=0;i<hostModules_.size();++i) {
@@ -305,7 +304,7 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
             compiledModuleIds_[i]=hostModules_[i].id;
         }
     }
-    if(modulationChanged || moduleTopologyChanged)
+    if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged)
         compiledModulation_.compile(audioModulation_,hostModules_);
     std::size_t activeModules=0;
     for(const auto& m:hostModules_) if(m.enabled) ++activeModules;
@@ -323,7 +322,12 @@ void OrigamiEngine::endHostBlock() noexcept {
 
 bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t sampleCount) noexcept {
     if(!sampleCount) return true;
-    if(!beginHostBlock(channels)) return false;
+    if(!beginHostBlock(channels)) {
+        if(output && channels>=1 && channels<=2)
+            for(unsigned c=0;c<channels;++c)
+                if(output[c]) std::fill_n(output[c],sampleCount,0.0f);
+        return false;
+    }
     const bool ok=processSpan(output,channels,sampleCount);
     endHostBlock();
     return ok;

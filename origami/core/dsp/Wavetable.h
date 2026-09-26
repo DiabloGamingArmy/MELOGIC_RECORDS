@@ -8,6 +8,7 @@
 // mct-origami-v26.1.0-live-wavetable-process-view
 // mct-origami-v26.0.0-osc-process-foundation
 #pragma once
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -190,6 +191,15 @@ struct Wavetable {
     bool valid() const noexcept;
     static Wavetable builtIns(); // Non-realtime generation only.
 };
+// Audio-owned lookup metadata only. Cache samples remain worker-owned and are
+// read under a bounded pin; no pointer to recyclable sample storage escapes.
+struct SpectralReadHint {
+    const Wavetable* table=nullptr;
+    std::uint64_t generation=0,revision=0;
+    std::size_t frame=0,band=0,slot=0;
+    OscProcessPlan plan{};
+    unsigned hits=0;
+};
 class WavetableOscillator {
 public:
     void reset(double phase = 0) noexcept;
@@ -206,6 +216,7 @@ public:
     double phase() const noexcept { return phase_; }
 private:
     double phase_ = 0;
+    std::array<SpectralReadHint,2> spectralHints_{};
 };
 double midiFrequency(int note) noexcept;
 }

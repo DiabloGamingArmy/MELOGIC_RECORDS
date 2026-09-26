@@ -261,6 +261,60 @@ void spectralPreparationBoundaryAudit() {
     check(after.fallbackReads>=before.fallbackReads+1,"spectral miss used realtime-safe fallback");
 }
 
+void spectralCachePlayback() {
+    using namespace mct::origami::dsp;
+    check(prepareSpectralCompiler(),"spectral worker prepared before rendering");
+    auto table=Wavetable::builtIns();
+    WavetableOscillator oscillator;
+    OscProcessPlan plan;
+    const std::array<OscProcessType,8> types{{OscProcessType::RandAmp,OscProcessType::RandSparse,
+        OscProcessType::PhaseShift,OscProcessType::BendPlus,OscProcessType::OddFocus,
+        OscProcessType::HarmonicTilt,OscProcessType::RandAmp,OscProcessType::RandSparse}};
+    for(std::size_t p=0;p<types.size();++p)
+        plan.stages[p]={types[p],0.375f,0x753100u+static_cast<std::uint32_t>(p)};
+    auto verify=[&] {
+        // At 93.75 Hz the renderer selects the 128-harmonic band (index 7).
+        std::array<float,2048> expected{};
+        renderProcessedFrame2048(table.frames[1].bands[7].samples.data(),expected.data(),plan);
+        auto reference=[&](double phase) {
+            const double pos=phase*2048.0;
+            const auto index=static_cast<std::size_t>(pos);
+            const float f=static_cast<float>(pos-static_cast<double>(index));
+            return expected[index]+f*(expected[(index+1)%2048]-expected[index]);
+        };
+        bool ready=false;
+        for(unsigned attempt=0;attempt<500 && !ready;++attempt) {
+            ready=true;
+            for(double phase:{0.137,0.271,0.463,0.791}) {
+                oscillator.reset(phase);
+                const float actual=oscillator.next(table,93.75,48000,1.0f/3.0f,plan);
+                ready=ready && std::abs(actual-reference(phase))<1.0e-6f;
+            }
+            if(!ready) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        check(ready,"spectral cache converges to full offline chain output");
+        oscillator.reset(0.137);
+        const auto before=spectralCompilerStats();
+        allocations.store(0);guardAllocations.store(true);
+        bool equal=true;
+        for(unsigned sample=0;sample<2048;++sample) {
+            const float wanted=reference(oscillator.phase());
+            equal=std::abs(oscillator.next(table,93.75,48000,1.0f/3.0f,plan)-wanted)<1.0e-6f && equal;
+        }
+        guardAllocations.store(false);
+        check(equal,"cached spectral samples preserve interpolation and seeded chain output");
+        check(allocations.load()==0,"warm spectral playback allocates no heap");
+        check(spectralCompilerStats().requests==before.requests,"warm spectral playback does not rebuild frames");
+    };
+    for(auto count:{1u,2u,8u}) {plan.count=static_cast<std::uint8_t>(count);verify();}
+    plan.stages[0].seed+=77;verify();
+    plan.stages[1].amount=0.625f;verify();
+    std::swap(plan.stages[2],plan.stages[3]);verify();
+    for(auto& frame:table.frames) for(auto& band:frame.bands)
+        for(auto& sample:band.samples) sample=-sample;
+    assignWavetableGeneration(table);verify();
+}
+
 void oscillatorGenerationCoherenceAudit() {
     const auto root=std::filesystem::path(__FILE__).parent_path().parent_path();
     auto read=[](const std::filesystem::path& path) {
@@ -479,6 +533,7 @@ int main() {
     audioRateFastMathAudit();
     oscillatorGenerationCoherenceAudit();
     spectralPreparationBoundaryAudit();
+    spectralCachePlayback();
     realtimeThreadPolicyAudit();
     try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"performance modes\n";performanceModes();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}
     catch(const std::exception& error) {guardAllocations.store(false);std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}
