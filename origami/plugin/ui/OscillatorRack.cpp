@@ -808,6 +808,20 @@ void OscillatorCard::resized() {
         component->setVisible(false);
     }
 
+    // First rack row: geometry only. Reuse the authoritative selected-process
+    // selector/amount controls; leave reseed and route rows for later visual passes.
+    if(selectedProcessId_!=0) {
+        auto row=chain.withTrimmedLeft(7).withTrimmedRight(7);
+        row.setY(chain.getY()+24);
+        row.setHeight(54);
+        auto right=row.removeFromRight(58);
+        process1Menu_.setVisible(true);
+        process1Menu_.setBounds(row.reduced(3,4).withTrimmedBottom(18));
+        process1Amount_.setVisible(true);
+        process1Amount_.setBounds(juce::Rectangle<int>(46,46).withCentre(right.getCentre()));
+        process1AmountLabel_.setVisible(false);
+    }
+
     auto tuning=upper.removeFromBottom(30);
     upper.removeFromBottom(4);
     const int tuningCellWidth=tuning.getWidth()/3;
@@ -913,6 +927,19 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     text(g,"OSC CHAIN",chainTitle,8.5f,Palette::secondary(),juce::Justification::centred);
     if(chainItemCount_==0)
         text(g,"NO PROCESSING OR ROUTING",chainInner,7.2f,Palette::muted(),juce::Justification::centred);
+    else if(selectedProcessId_!=0) {
+        auto row=chain.withTrimmedLeft(7).withTrimmedRight(7);
+        row.setY(chain.getY()+24);
+        row.setHeight(54);
+        g.setColour(Palette::panel().darker(0.18f));
+        g.fillRect(row);
+        g.setColour(Palette::borderSoft());
+        g.drawRect(row,1);
+        auto selectorArea=row;
+        selectorArea.removeFromRight(58);
+        auto typeLabel=selectorArea.removeFromBottom(18).reduced(3,0);
+        text(g,"OSC EFFECT",typeLabel,7.2f,Palette::muted(),juce::Justification::centred);
+    }
 
     // Conventional oscillator pitch identity: OCT / SEM / FIN.
     const juce::StringArray tuneLabels{"OCT","SEM","FIN"};
