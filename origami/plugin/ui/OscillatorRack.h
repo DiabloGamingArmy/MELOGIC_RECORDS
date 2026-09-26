@@ -135,7 +135,13 @@ private:
     static constexpr std::size_t maxChainItems=maxOscProcesses+maxOscRoutes;
     juce::Viewport chainViewport_;
     juce::Component chainContent_;
-    std::array<juce::TextButton,maxChainItems> chainTabs_;
+    // Every OSC CHAIN child is a complete row/template. There is deliberately
+    // no separate "selected editor" plus text-only list representation.
+    std::array<juce::TextButton,maxChainItems> chainSelectors_;
+    std::array<RackSlider,maxChainItems> chainAmounts_;
+    std::array<juce::TextButton,maxChainItems> chainPowers_;
+    std::array<juce::TextButton,maxChainItems> chainDeletes_;
+    std::array<juce::Label,maxChainItems> chainKinds_;
     std::array<ChainItem,maxChainItems> chainItems_{};
     std::size_t chainItemCount_=0;
     juce::TextButton chainAdd_{"+ "},chainRemove_{"- "};
