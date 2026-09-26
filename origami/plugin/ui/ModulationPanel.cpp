@@ -1448,7 +1448,11 @@ void ModulationPanel::resized() {
 
     constexpr int baseRowHeight=36;
     constexpr int routedRowHeight=54;
-    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth());
+    // Keep the cards visually full-width while reserving a single drawable
+    // pixel at the viewport's right clip edge. This prevents the selected
+    // button's right stroke from being clipped when the vertical scrollbar is active.
+    constexpr int sourceRowRightStrokeInset=1;
+    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth()-sourceRowRightStrokeInset);
     // Small breathing gap below the fixed SOURCE header before the first row.
     constexpr int sourceListTopGap=3;
     int y=sourceListTopGap;
