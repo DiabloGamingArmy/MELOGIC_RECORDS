@@ -17,7 +17,7 @@
 #include <cmath>
 namespace mct::origami {
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
-void Voice::reset() noexcept { for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& prepared:preparedModules_)prepared.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
+void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& prepared:preparedModules_)prepared.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     reset();address_=address;velocity_=velocity;order_=order;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -40,7 +40,7 @@ void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSet
 }
 Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
-    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,bool observe) noexcept {
+    float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,const OscillatorRenderPlan& topology,bool observe) noexcept {
     Samples outputs{};
     if(!active_) return outputs;
     if(glideRemaining_) {
@@ -70,21 +70,20 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
     // One bend ratio per voice/sample, not one exp2 per active oscillator module.
     const double pitchBendScale=dsp::fastExp2Audio(static_cast<double>(pitchBendSemitones)/12.0);
 
-    for(std::size_t m=0;m<modules.size();++m) {
-        const auto& module=modules[m];
-        if(moduleIds_[m]!=module.id) {
+    if(topologyGeneration_!=topology.generation) {
+        for(std::size_t m=0;m<modules.size();++m) if(moduleIds_[m]!=topology.ids[m]) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
-            moduleBlendCenters_[m].reset();
-            moduleFilters_[m].reset();moduleIds_[m]=module.id;
-            preparedModules_[m].invalidate();
-            // A topology identity change can invalidate routes in every module.
-            for(auto& preparedRoute:preparedModules_) preparedRoute.routesValid=false;
+            moduleBlendCenters_[m].reset();moduleFilters_[m].reset();
+            moduleIds_[m]=topology.ids[m];preparedModules_[m].invalidate();
         }
-        if(module.id==0 || !module.enabled) continue;
-
+        topologyGeneration_=topology.generation;
+    }
+    for(std::size_t active=0;active<topology.activeCount;++active) {
+        const auto m=topology.active[active];
+        const auto& module=modules[m];
+        const auto& modulePlan=topology.modules[m];
         auto& prepared=preparedModules_[m];
         prepared.update(module);
-        prepared.compileRoutes(module,moduleIds_);
         // Pitch bend remains audio-rate; the ratio uses bounded fast exp2.
         const double frequencyScale=prepared.pitchScale*pitchBendScale;
         const unsigned count=prepared.unison;
@@ -132,34 +131,29 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             }
         };
 
-        if(module.routeCount>0) {
-            const auto routeCount=std::min<std::size_t>(module.routeCount,maxOscRoutes);
-            for(std::size_t r=0;r<routeCount;++r) {
-                if(!module.routes[r].enabled) continue;
-                applyPreRoute(prepared.routeSourceIndices[r],module.routes[r].type,module.routes[r].amount);
-            }
-        } else {
-            // Compatibility path while legacy presets/UI still expose two slots.
-            applyPreRoute(prepared.route1SourceIndex,module.route1Type,module.route1Amount);
-            applyPreRoute(prepared.route2SourceIndex,module.route2Type,module.route2Amount);
+        const auto routeAmount=[&](const OscillatorRenderPlan::Route& route) noexcept {
+            return modulePlan.dynamicRoutes ? module.routes[route.amountSlot].amount
+                : (route.amountSlot==0 ? module.route1Amount : module.route2Amount);
+        };
+        for(std::size_t r=0;r<modulePlan.preCount;++r) {
+            const auto& route=modulePlan.preRoutes[r];
+            applyPreRoute(route.source,route.type,routeAmount(route));
         }
 
         double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
         baseFrequency=std::clamp(baseFrequency,1.0,std::max(20.0,sampleRate_*0.49));
         dsp::OscProcessPlan processPlan{};
-        if(module.processCount>0) {
-            const auto processCount=std::min<std::size_t>(module.processCount,maxOscProcesses);
-            for(std::size_t p=0;p<processCount && processPlan.count<dsp::maxOscProcessStages;++p) {
-                const auto& process=module.processes[p];
-                if(!process.enabled || process.type==dsp::OscProcessType::Off) continue;
+        for(std::size_t p=0;p<modulePlan.processCount;++p) {
+            const auto slot=modulePlan.processes[p];
+            if(modulePlan.dynamicProcesses) {
+                const auto& process=module.processes[slot];
                 processPlan.stages[processPlan.count++]={process.type,process.amount,process.seed};
-            }
-        } else {
-            if(module.process1!=dsp::OscProcessType::Off)
+            } else if(slot==0) {
                 processPlan.stages[processPlan.count++]={module.process1,module.process1Amount,module.process1Seed};
-            if(module.process2!=dsp::OscProcessType::Off && processPlan.count<dsp::maxOscProcessStages)
+            } else {
                 processPlan.stages[processPlan.count++]={module.process2,module.process2Amount,module.process2Seed};
+            }
         }
 
         float oscillatorMix=0.0f;
@@ -252,18 +246,9 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
             return signal;
         };
 
-        if(module.routeCount>0) {
-            const auto routeCount=std::min<std::size_t>(module.routeCount,maxOscRoutes);
-            for(std::size_t r=0;r<routeCount;++r) {
-                if(!module.routes[r].enabled) continue;
-                oscillatorMix=applyPostRoute(oscillatorMix,prepared.routeSourceIndices[r],
-                                             module.routes[r].type,module.routes[r].amount);
-            }
-        } else {
-            oscillatorMix=applyPostRoute(oscillatorMix,prepared.route1SourceIndex,
-                                         module.route1Type,module.route1Amount);
-            oscillatorMix=applyPostRoute(oscillatorMix,prepared.route2SourceIndex,
-                                         module.route2Type,module.route2Amount);
+        for(std::size_t r=0;r<modulePlan.postCount;++r) {
+            const auto& route=modulePlan.postRoutes[r];
+            oscillatorMix=applyPostRoute(oscillatorMix,route.source,route.type,routeAmount(route));
         }
 
         if(!std::isfinite(oscillatorMix)) {

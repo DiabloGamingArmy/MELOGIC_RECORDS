@@ -52,6 +52,7 @@ void OrigamiEngine::reset() noexcept {
     globalRandom_.reset();globalFunction_.reset();globalChaos_.reset();globalDrift_.reset();globalSequencer_.reset();
     const auto resetModules=oscillatorModules_.snapshot();
     compiledModulation_.compile(audioModulation_,resetModules,true);
+    oscillatorPlan_.compile(resetModules);
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) voice.reset();
     lastVoiceSamples_.fill({});
@@ -304,6 +305,7 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
             compiledModuleIds_[i]=hostModules_[i].id;
         }
     }
+    if(oscillatorGenerationChanged || moduleTopologyChanged) oscillatorPlan_.compile(hostModules_);
     if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged)
         compiledModulation_.compile(audioModulation_,hostModules_);
     std::size_t activeModules=0;
@@ -431,7 +433,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             const float bend=pitchBendNormalized_[channel]*bendRange;
             auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
-                                                modWheel_[channel],aftertouch_[channel],info.order==newestOrder);
+                                                modWheel_[channel],aftertouch_[channel],oscillatorPlan_,info.order==newestOrder);
             if(info.order==newestOrder) {
                 const auto& visual=voices_[v].visualizationSnapshot();
                 for(std::size_t i=0;i<3;++i) {

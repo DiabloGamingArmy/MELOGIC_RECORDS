@@ -17,6 +17,7 @@
 #include <iostream>
 #include <limits>
 #include <new>
+#include <memory>
 #include <chrono>
 #include <thread>
 #include <sstream>
@@ -315,6 +316,48 @@ void spectralCachePlayback() {
     assignWavetableGeneration(table);verify();
 }
 
+void spectralCacheConcurrentEviction() {
+    using namespace mct::origami::dsp;
+    // More keys than a cache set can hold, with readers sharing the same slots
+    // while the worker evicts them. All storage/threads are prepared off RT.
+    const auto table=Wavetable::builtIns();
+    constexpr std::size_t keys=640;
+    std::vector<std::array<float,2048>> expected(keys);
+    auto makePlan=[](std::size_t key) {
+        OscProcessPlan plan;plan.count=2;
+        plan.stages[0]={OscProcessType::RandAmp,0.375f,static_cast<std::uint32_t>(0x740000u+key)};
+        plan.stages[1]={OscProcessType::RandSparse,0.625f,static_cast<std::uint32_t>(0x840000u+key)};
+        return plan;
+    };
+    const auto& dry=table.frames[1].bands[7].samples;
+    for(std::size_t key=0;key<keys;++key)
+        renderProcessedFrame2048(dry.data(),expected[key].data(),makePlan(key));
+    std::atomic<bool> start{false},failed{false};
+    std::array<std::thread,4> readers;
+    for(std::size_t r=0;r<readers.size();++r) readers[r]=std::thread([&,r] {
+        WavetableOscillator oscillator;oscillator.reset(0.137);
+        while(!start.load(std::memory_order_acquire)) std::this_thread::yield(); // test barrier only
+        for(std::size_t sample=0;sample<32000;++sample) {
+            const auto key=(sample/8+r*97)%keys;
+            const double position=oscillator.phase()*2048.0;
+            const auto index=static_cast<std::size_t>(position);
+            const float fraction=static_cast<float>(position-static_cast<double>(index));
+            const auto lookup=[&](const auto& wave) {
+                return wave[index]+fraction*(wave[(index+1)%2048]-wave[index]);
+            };
+            const float output=oscillator.next(table,93.75,48000,1.0f/3.0f,makePlan(key));
+            if(!std::isfinite(output) || (std::abs(output-lookup(expected[key]))>1.0e-6f &&
+                                        std::abs(output-lookup(dry))>1.0e-6f))
+                failed.store(true,std::memory_order_relaxed);
+        }
+    });
+    start.store(true,std::memory_order_release);
+    for(auto& reader:readers) reader.join();
+    check(!failed.load(),"concurrent eviction returns only the requested seeded waveform or dry fallback");
+    // Requests own their source samples; table destruction is safe even if
+    // the worker still has queued requests from this temporary generation.
+}
+
 void oscillatorGenerationCoherenceAudit() {
     const auto root=std::filesystem::path(__FILE__).parent_path().parent_path();
     auto read=[](const std::filesystem::path& path) {
@@ -476,6 +519,62 @@ void qosVoiceAdmissionAudit() {
 }
 
 
+void dynamicTopologyRecompilation() {
+    auto actual=std::make_unique<OrigamiEngine>();
+    auto reference=std::make_unique<OrigamiEngine>();
+    prepare(*actual);prepare(*reference);
+    auto state=actual->instrumentState();
+    auto& module=state.oscillators[0];
+    module.processCount=3;module.nextProcessId=4;
+    module.processes[0]={1,dsp::OscProcessType::BendPlus,0.1f,9,true};
+    module.processes[1]={2,dsp::OscProcessType::PhaseShift,0.3f,8,true};
+    module.processes[2]={3,dsp::OscProcessType::Reverse,0.2f,7,false};
+    state.modulation.routes[0]={1,true,ModSource::Env1,{ModDestination::ProcessAmount,1,2},0.2f,true};
+    state.modulation.nextRouteId=2;
+    check(actual->restoreInstrumentState(state) && reference->restoreInstrumentState(state),
+          "dynamic topology preset restores");
+    actual->noteOn(60,0.8f);reference->noteOn(60,0.8f);
+    auto compare=[&] {
+        check(render(*actual,512)==render(*reference,512),
+              "topology edits preserve stable child modulation addressing");
+    };
+    auto publish=[&] {
+        check(actual->setOscillatorModuleState(1,module) && reference->setOscillatorModuleState(1,module),
+              "live child topology update accepted");
+        // Force the reference to recompile via a modulation publication too.
+        // The actual engine must detect child edits from the oscillator state.
+        check(reference->setModulationState(state.modulation),"reference modulation republished");
+        compare();
+    };
+    compare();
+    std::swap(module.processes[0],module.processes[1]);publish();
+    module.processes[0].type=dsp::OscProcessType::BendMinus;publish();
+    module.processes[1].enabled=false;publish();
+    module.processes[2].enabled=true;publish();
+    module.processCount=1;publish(); // remove unrelated children, keep ID 2
+    module.processes[1]={4,dsp::OscProcessType::SineWarp,-0.2f,6,true};
+    module.processCount=2;module.nextProcessId=5;publish();
+
+    OscillatorRenderPlan plan;
+    auto modules=state.oscillators;
+    modules[1].id=42;modules[1].enabled=true;
+    modules[0].routeCount=4;
+    modules[0].routes[0]={1,42,OscRouteType::RingMod,0.4f,true};
+    modules[0].routes[1]={2,42,OscRouteType::PhaseMod,0.2f,true};
+    modules[0].routes[2]={3,42,OscRouteType::WaveFold,0.3f,false};
+    modules[0].routes[3]={4,42,OscRouteType::Crossfade,0.1f,true};
+    plan.compile(modules);
+    check(plan.activeCount==2 && plan.modules[0].preCount==1 && plan.modules[0].postCount==2,
+          "compiled plan excludes bypassed routes and separates routing domains");
+    check(plan.modules[0].postRoutes[0].amountSlot==0 && plan.modules[0].postRoutes[1].amountSlot==3,
+          "post-routing order and amount slots survive compilation");
+    std::swap(modules[1],modules[3]);plan.compile(modules);
+    check(plan.modules[0].preRoutes[0].source==3,"source IDs resolve after oscillator slot changes");
+    modules[3]={};plan.compile(modules);
+    check(plan.modules[0].preCount==0 && plan.modules[0].postCount==0,
+          "removed sources are absent from active routing");
+}
+
 void voiceObservationDoesNotChangeAudio() {
     Voice observed,unobserved;
     observed.prepare(48000);unobserved.prepare(48000);
@@ -491,11 +590,12 @@ void voiceObservationDoesNotChangeAudio() {
     compiled.prepare(48000);compiled.compile(state,frame.modules,true);
     compiled.globalFrame(frame,{},48000);
     dsp::EnvelopeSettings envelope;
+    OscillatorRenderPlan topology;topology.compile(frame.modules);
     observed.start({},0.8f,1,envelope,state.env2,state.env3);
     unobserved.start({},0.8f,1,envelope,state.env2,state.env3);
     for(unsigned i=0;i<512;++i) {
-        const auto a=observed.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,true);
-        const auto b=unobserved.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,false);
+        const auto a=observed.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,true);
+        const auto b=unobserved.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,false);
         check(a.left==b.left && a.right==b.right && a.mono==b.mono,
               "visualization observation does not affect modulated unison audio");
     }
@@ -527,6 +627,7 @@ void performanceSourceCurveAudit() {
 }
 
 int main() {
+    dynamicTopologyRecompilation();
     voiceObservationDoesNotChangeAudio();
     performanceSourceCurveAudit();
     qosVoiceAdmissionAudit();
@@ -534,6 +635,7 @@ int main() {
     oscillatorGenerationCoherenceAudit();
     spectralPreparationBoundaryAudit();
     spectralCachePlayback();
+    spectralCacheConcurrentEviction();
     realtimeThreadPolicyAudit();
     try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"performance modes\n";performanceModes();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}
     catch(const std::exception& error) {guardAllocations.store(false);std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}

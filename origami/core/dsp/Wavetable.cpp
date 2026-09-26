@@ -238,12 +238,11 @@ private:
     static constexpr std::uint32_t writerPin=0x80000000u;
     static bool pin(CacheSlot& slot) noexcept {
         if(slot.state.load(std::memory_order_acquire)!=ready) return false;
-        auto readers=slot.readers.load(std::memory_order_relaxed);
-        if(readers>=writerPin-1) return false;
-        // One attempt: a concurrent reader/writer causes a bounded cache miss.
-        if(!slot.readers.compare_exchange_strong(readers,readers+1,
-                std::memory_order_acquire,std::memory_order_relaxed)) return false;
-        if(slot.state.load(std::memory_order_acquire)==ready) return true;
+        // Readers never compete via a retry loop. The writer bit prevents
+        // payload access during replacement, even for a late reader that saw
+        // the previous ready state. Other readers cannot cause a dry fallback.
+        const auto readers=slot.readers.fetch_add(1,std::memory_order_acquire);
+        if(!(readers&writerPin) && slot.state.load(std::memory_order_acquire)==ready) return true;
         unpin(slot);return false;
     }
     static void unpin(CacheSlot& slot) noexcept {
@@ -321,7 +320,8 @@ private:
                 renderProcessedFrame2048(req.source.data(),slot->samples.data(),req.key.plan);
                 slot->key=req.key;slot->revision=++revision_;
                 slot->age.store(clock_.fetch_add(1,std::memory_order_relaxed),std::memory_order_relaxed);
-                slot->readers.store(0,std::memory_order_release);
+                // Preserve late rejected readers until they finish unpinning.
+                slot->readers.fetch_and(~writerPin,std::memory_order_release);
                 slot->state.store(ready,std::memory_order_release);prepared_.fetch_add(1,std::memory_order_relaxed);}
             const auto pendingIndex=req.hash%pendingSize;auto expected=req.hash;
             pending_[pendingIndex].compare_exchange_strong(expected,0,std::memory_order_acq_rel,std::memory_order_relaxed);}

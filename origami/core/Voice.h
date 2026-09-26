@@ -12,7 +12,7 @@
 #include "dsp/Wavetable.h"
 #include "dsp/Envelope.h"
 #include "dsp/Filter.h"
-#include "OscillatorModule.h"
+#include "OscillatorRenderPlan.h"
 #include "modulation/Modulation.h"
 #include <cstdint>
 #include <array>
@@ -60,7 +60,7 @@ public:
     Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
                         const CompiledModulation&,const ModulationState&,
                         float pitchBendSemitones,float pitchBendNormalized,
-                        float modWheel,float aftertouch,bool observe=true) noexcept;
+                        float modWheel,float aftertouch,const OscillatorRenderPlan&,bool observe=true) noexcept;
     VoiceInfo info() const noexcept;
     const VoiceVisualizationSnapshot& visualizationSnapshot() const noexcept { return visualization_; }
 private:
@@ -76,24 +76,8 @@ private:
         double pitchScale=1.0;
         float panLeft=0.70710678f,panRight=0.70710678f;
         std::array<double,maxUnisonVoices> detuneRatios{};
-        // Patch 08/19: route IDs are compiled to direct oscillator-slot indices.
-        // -1 means no valid source. This removes O(module-count) ID searches
-        // from every route evaluation on every rendered sample.
-        int route1SourceIndex=-1;
-        int route2SourceIndex=-1;
-        OscillatorModuleId compiledRoute1SourceId=0;
-        OscillatorModuleId compiledRoute2SourceId=0;
-        std::array<int,maxOscRoutes> routeSourceIndices{};
-        std::array<OscillatorModuleId,maxOscRoutes> compiledRouteSourceIds{};
-        std::uint8_t compiledRouteCount=0;
-        bool routesValid=false;
         bool valid=false;
-        void invalidate() noexcept {
-            valid=false;routesValid=false;id=0;
-            route1SourceIndex=-1;route2SourceIndex=-1;
-            compiledRoute1SourceId=0;compiledRoute2SourceId=0;
-            routeSourceIndices.fill(-1);compiledRouteSourceIds.fill(0);compiledRouteCount=0;
-        }
+        void invalidate() noexcept { valid=false;id=0; }
         void update(const OscillatorModuleState& m) noexcept {
             const float o=std::isfinite(m.octave)?m.octave:0.0f;
             const float s=std::isfinite(m.semitone)?m.semitone:0.0f;
@@ -129,39 +113,12 @@ private:
             level=l;blend=b;unison=u;valid=true;
         }
 
-        void compileRoutes(const OscillatorModuleState& module,
-                           const std::array<OscillatorModuleId,maxOscillatorModules>& moduleIds) noexcept {
-            auto resolve=[&](OscillatorModuleId sourceId) noexcept {
-                if(sourceId==0) return -1;
-                for(std::size_t i=0;i<moduleIds.size();++i)
-                    if(moduleIds[i]==sourceId) return static_cast<int>(i);
-                return -1;
-            };
-
-            const auto count=std::min<std::size_t>(module.routeCount,maxOscRoutes);
-            bool same=routesValid && compiledRouteCount==count;
-            if(same) for(std::size_t i=0;i<count;++i)
-                if(compiledRouteSourceIds[i]!=module.routes[i].sourceId) { same=false;break; }
-            if(same) return;
-
-            routeSourceIndices.fill(-1);compiledRouteSourceIds.fill(0);
-            compiledRouteCount=static_cast<std::uint8_t>(count);
-            for(std::size_t i=0;i<count;++i) {
-                compiledRouteSourceIds[i]=module.routes[i].sourceId;
-                routeSourceIndices[i]=resolve(module.routes[i].sourceId);
-            }
-
-            // Keep legacy prepared slots populated during the migration.
-            route1SourceIndex=resolve(module.route1SourceId);
-            route2SourceIndex=resolve(module.route2SourceId);
-            compiledRoute1SourceId=module.route1SourceId;
-            compiledRoute2SourceId=module.route2SourceId;
-            routesValid=true;
-        }
     };
+
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
     std::array<dsp::WavetableOscillator,maxOscillatorModules> moduleBlendCenters_{};
     std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
+    std::uint64_t topologyGeneration_=0;
     std::array<PreparedOscillatorModule,maxOscillatorModules> preparedModules_{};
 
     // One-sample-delayed oscillator taps used for cross-osc routing.

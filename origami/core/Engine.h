@@ -86,6 +86,7 @@ private:
     LatestStateMailbox<ModulationState> modulationMailbox_;
     ModulationState audioModulation_{};
     CompiledModulation compiledModulation_;
+    OscillatorRenderPlan oscillatorPlan_;
     std::array<OscillatorModuleId,16> compiledModuleIds_{};
     std::array<Lfo,4> globalLfos_{};
     RandomGenerator globalRandom_{};
