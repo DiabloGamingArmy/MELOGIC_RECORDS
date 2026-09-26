@@ -1418,6 +1418,12 @@ void ModulationPanel::resized() {
     sourceAdd_.setBounds(collectionControls);
     rail.removeFromBottom(5);
 
+    // SOURCE is a fixed rail header, identical in structure to OSC CHAIN:
+    // reserve its geometry outside the scrolling viewport so the first source
+    // can never scroll underneath it.
+    constexpr int sourceHeaderHeight=18;
+    rail.removeFromTop(sourceHeaderHeight);
+
     // V32.2: source cards no longer shrink to fit the rail. The list is a real
     // scrolling collection with stable item geometry. A route-bearing item gets
     // additional height only for its divider + magnitude-circle chamber.
