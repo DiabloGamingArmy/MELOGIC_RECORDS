@@ -1167,37 +1167,24 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
 
         dsp::OscProcessPlan visualPlan{};
         if(moduleState.id) {
-            if(moduleState.processCount>0) {
-                const auto count=std::min<std::size_t>(moduleState.processCount,maxOscProcesses);
-                for(std::size_t i=0;i<count && visualPlan.count<dsp::maxOscProcessStages;++i) {
-                    const auto& process=moduleState.processes[i];
-                    if(!process.enabled || process.type==dsp::OscProcessType::Off) continue;
-                    const float minimum=dsp::oscProcessAmountMinimum(process.type);
-                    const float span=1.0f-minimum;
-                    const float modulated=juce::jlimit(minimum,1.0f,
-                        process.amount+
-                        modulationUiAllRoutesValue(ModDestination::ProcessAmount,display_.id,process.id)*span);
-                    // Quantise the VISUAL amount only. The audio path remains
-                    // continuous; this bounds repaint-driven FFT work while the
-                    // existing preview morph removes visible stepping.
-                    const float visualAmount=std::round(modulated*64.0f)/64.0f;
-                    visualPlan.stages[visualPlan.count++]={process.type,visualAmount,process.seed};
-                }
-            } else {
-                auto appendLegacy=[&](dsp::OscProcessType type,float amount,std::uint32_t seed,
-                                      ModDestination destination) {
-                    if(type==dsp::OscProcessType::Off || visualPlan.count>=dsp::maxOscProcessStages) return;
-                    const float minimum=dsp::oscProcessAmountMinimum(type);
-                    const float span=1.0f-minimum;
-                    amount=juce::jlimit(minimum,1.0f,
-                        amount+modulationUiAllRoutesValue(destination,display_.id)*span);
-                    amount=std::round(amount*64.0f)/64.0f;
-                    visualPlan.stages[visualPlan.count++]={type,amount,seed};
-                };
-                appendLegacy(moduleState.process1,moduleState.process1Amount,moduleState.process1Seed,
-                             ModDestination::Process1Amount);
-                appendLegacy(moduleState.process2,moduleState.process2Amount,moduleState.process2Seed,
-                             ModDestination::Process2Amount);
+            // Dynamic OSC CHAIN state is authoritative here, including an
+            // intentionally empty chain. Legacy process1/process2 fields are
+            // migration compatibility data and must not be resurrected after
+            // the last dynamic process is removed.
+            const auto count=std::min<std::size_t>(moduleState.processCount,maxOscProcesses);
+            for(std::size_t i=0;i<count && visualPlan.count<dsp::maxOscProcessStages;++i) {
+                const auto& process=moduleState.processes[i];
+                if(!process.enabled || process.type==dsp::OscProcessType::Off) continue;
+                const float minimum=dsp::oscProcessAmountMinimum(process.type);
+                const float span=1.0f-minimum;
+                const float modulated=juce::jlimit(minimum,1.0f,
+                    process.amount+
+                    modulationUiAllRoutesValue(ModDestination::ProcessAmount,display_.id,process.id)*span);
+                // Quantise the VISUAL amount only. The audio path remains
+                // continuous; this bounds repaint-driven FFT work while the
+                // existing preview morph removes visible stepping.
+                const float visualAmount=std::round(modulated*64.0f)/64.0f;
+                visualPlan.stages[visualPlan.count++]={process.type,visualAmount,process.seed};
             }
         }
 
