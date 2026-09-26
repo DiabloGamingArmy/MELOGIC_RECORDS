@@ -813,10 +813,18 @@ void OscillatorCard::resized() {
     auto firstProcessRow=chain.withTrimmedLeft(7).withTrimmedRight(7);
     firstProcessRow.setY(chain.getY()+24);
     firstProcessRow.setHeight(54);
-    auto firstProcessAmountArea=firstProcessRow.removeFromRight(58);
-    process1Menu_.setBounds(firstProcessRow.reduced(3,4).withTrimmedBottom(18));
-    process1Amount_.setBounds(juce::Rectangle<int>(46,46).withCentre(firstProcessAmountArea.getCentre()));
+
+    // Match the concept's horizontal proportions: a compact selector, a modest
+    // amount control, and reserved space at the far right for row actions.
+    auto firstProcessActionsArea=firstProcessRow.removeFromRight(32);
+    auto firstProcessAmountArea=firstProcessRow.removeFromRight(44);
+    firstProcessRow.removeFromRight(6);
+    auto firstProcessSelectorArea=firstProcessRow.reduced(3,4).withTrimmedBottom(18);
+    firstProcessSelectorArea.setWidth(juce::jmin(firstProcessSelectorArea.getWidth(),118));
+    process1Menu_.setBounds(firstProcessSelectorArea);
+    process1Amount_.setBounds(juce::Rectangle<int>(34,34).withCentre(firstProcessAmountArea.getCentre()));
     process1AmountLabel_.setBounds({});
+    juce::ignoreUnused(firstProcessActionsArea);
 
 
     auto tuning=upper.removeFromBottom(30);
