@@ -136,6 +136,93 @@ void showNativeOscProcessMenu(juce::Component& anchor,
 }
 
 
+void showNativeOscChainAddMenu(juce::Component& anchor,
+                               OscillatorModuleId targetId,
+                               const InstrumentState& state,
+                               std::function<void(dsp::OscProcessType)> onProcessSelected,
+                               std::function<void(OscillatorModuleId,OscRouteType)> onRouteSelected) {
+    auto* peer=anchor.getPeer();
+    if(peer==nullptr || peer->getNativeHandle()==nullptr) return;
+    NSView* view=(__bridge NSView*)peer->getNativeHandle();
+    if(view==nil || view.window==nil) return;
+
+    MCTOrigamiProcessMenuTarget* target=[[MCTOrigamiProcessMenuTarget alloc] init];
+    NSMenu* menu=[[NSMenu alloc] initWithTitle:@"OSC CHAIN"];
+    [menu setAutoenablesItems:NO];
+
+    constexpr const char* categories[]={
+        "Curve / Warp","Sync / Repeat","Fold / Reflect",
+        "Phase / Motion","Digital / Experimental","Spectral / Harmonics"
+    };
+    for(const char* category:categories) {
+        NSMenuItem* parent=[[NSMenuItem alloc] initWithTitle:toNS(category) action:nil keyEquivalent:@""];
+        NSMenu* submenu=[[NSMenu alloc] initWithTitle:toNS(category)];
+        [submenu setAutoenablesItems:NO];
+        for(std::uint32_t raw=1;raw<static_cast<std::uint32_t>(dsp::OscProcessType::Count);++raw) {
+            const auto type=static_cast<dsp::OscProcessType>(raw);
+            if(std::strcmp(dsp::oscProcessCategory(type),category)!=0) continue;
+            NSMenuItem* item=makeItem(type,dsp::OscProcessType::Off,target);
+            [submenu addItem:item];
+#if !__has_feature(objc_arc)
+            [item release];
+#endif
+        }
+        [parent setSubmenu:submenu];[menu addItem:parent];
+#if !__has_feature(objc_arc)
+        [submenu release];[parent release];
+#endif
+    }
+
+    [menu addItem:[NSMenuItem separatorItem]];
+
+    NSInteger resultId=1000;
+    unsigned displayOrdinal=0;
+    for(const auto& source:state.oscillators) {
+        if(source.id==0) continue;
+        ++displayOrdinal;
+        if(source.id==targetId) continue;
+        NSString* title=[NSString stringWithFormat:@"OSC %u",displayOrdinal];
+        NSMenuItem* parent=[[NSMenuItem alloc] initWithTitle:title action:nil keyEquivalent:@""];
+        NSMenu* submenu=[[NSMenu alloc] initWithTitle:title];
+        [submenu setAutoenablesItems:NO];
+        for(auto type:oscRouteTypes) {
+            NSMenuItem* item=[[NSMenuItem alloc] initWithTitle:toNS(oscRouteName(type))
+                                                       action:@selector(chooseProcess:) keyEquivalent:@""];
+            [item setTarget:target];[item setTag:resultId++];
+            [submenu addItem:item];
+#if !__has_feature(objc_arc)
+            [item release];
+#endif
+        }
+        [parent setSubmenu:submenu];[menu addItem:parent];
+#if !__has_feature(objc_arc)
+        [submenu release];[parent release];
+#endif
+    }
+
+    const NSPoint screen=[NSEvent mouseLocation];
+    const NSPoint window=[view.window convertPointFromScreen:screen];
+    const NSPoint local=[view convertPoint:window fromView:nil];
+    [menu popUpMenuPositioningItem:nil atLocation:local inView:view];
+
+    const NSInteger selected=target->selectedTag_;
+    if(selected>0 && selected<static_cast<NSInteger>(dsp::OscProcessType::Count)) {
+        if(onProcessSelected) onProcessSelected(static_cast<dsp::OscProcessType>(selected));
+    } else if(selected>=1000 && onRouteSelected) {
+        NSInteger cursor=1000;
+        for(const auto& source:state.oscillators) {
+            if(source.id==0 || source.id==targetId) continue;
+            for(auto type:oscRouteTypes)
+                if(cursor++==selected){onRouteSelected(source.id,type);goto chainDone;}
+        }
+    }
+chainDone:
+#if !__has_feature(objc_arc)
+    [menu release];[target release];
+#endif
+}
+
+
 void showNativeOscRouteMenu(juce::Component& anchor,
                             OscillatorModuleId targetId,
                             OscillatorModuleId currentSource,
