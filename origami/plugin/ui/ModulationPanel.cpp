@@ -78,8 +78,10 @@ ModulationPanel::ModulationPanel(ParameterSetter setter,ParameterGetter getter,
 
     addAndMakeVisible(sourceViewport_);
     sourceViewport_.setViewedComponent(&sourceContent_,false);
-    sourceViewport_.setScrollBarsShown(true,false);
-    sourceViewport_.setScrollBarThickness(6);
+    // The source rail is intentionally scrollbar-less. JUCE still permits
+    // vertical wheel/trackpad scrolling, but no scrollbar is allowed to steal
+    // horizontal pixels from the source cards or clip their selection outline.
+    sourceViewport_.setScrollBarsShown(false,false,true,false);
     sourceViewport_.setWantsKeyboardFocus(false);
 
     const juce::StringArray names{
@@ -1448,11 +1450,10 @@ void ModulationPanel::resized() {
 
     constexpr int baseRowHeight=36;
     constexpr int routedRowHeight=54;
-    // JUCE's vertical scrollbar consumes sourceViewport_ width when the list
-    // overflows. Size cards to the viewport's *visible* content width, not the
-    // outer Viewport component width, so the complete selected outline remains
-    // inside the clipping region.
-    const int contentWidth=juce::jmax(1,sourceViewport_.getMaximumVisibleWidth());
+    // The rebuilt rail has no visible scrollbar, so every source card owns the
+    // complete viewport width. Selection borders therefore remain fully inside
+    // the clip while preserving the rail width established by the surrounding UI.
+    const int contentWidth=juce::jmax(1,sourceViewport_.getWidth());
     // Small breathing gap below the fixed SOURCE header before the first row.
     constexpr int sourceListTopGap=3;
     int y=sourceListTopGap;
