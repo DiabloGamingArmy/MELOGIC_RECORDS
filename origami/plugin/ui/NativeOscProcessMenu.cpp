@@ -35,9 +35,11 @@ void showNativeOscProcessMenu(juce::Component& anchor,
             root.addSubMenu("OSC "+juce::String(ordinal),folder);
         }
     }
+    const bool hasRouteState=routeState!=nullptr;
+    const InstrumentState routeSnapshot=hasRouteState?*routeState:InstrumentState{};
     auto safe=juce::Component::SafePointer<juce::Component>(&anchor);
     root.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor),
-        [safe,routeTarget,routeState,onSelected=std::move(onSelected),onRouteSelected=std::move(onRouteSelected)](int result) mutable {
+        [safe,routeTarget,hasRouteState,routeSnapshot,onSelected=std::move(onSelected),onRouteSelected=std::move(onRouteSelected)](int result) mutable {
             if(safe==nullptr || result<=0) return;
             if(result<1000) {
                 const auto raw=static_cast<std::uint32_t>(result);
@@ -45,9 +47,9 @@ void showNativeOscProcessMenu(juce::Component& anchor,
                     onSelected(static_cast<dsp::OscProcessType>(raw));
                 return;
             }
-            if(routeState==nullptr || !onRouteSelected) return;
+            if(!hasRouteState || !onRouteSelected) return;
             int id=1000;
-            for(const auto& source:routeState->oscillators) {
+            for(const auto& source:routeSnapshot.oscillators) {
                 if(source.id==0 || source.id==routeTarget) continue;
                 for(auto type:oscRouteTypes)
                     if(id++==result){onRouteSelected(source.id,type);return;}
