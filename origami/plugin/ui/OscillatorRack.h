@@ -215,6 +215,18 @@ private:
     // real interactive control. Import is exposed now; file loading lands in
     // the asset-model patch so this change cannot alter synthesis state.
     juce::TextButton wavetableBrowser_{"BASIC SHAPES"};
+    struct ImportedWavetableAsset {
+        juce::String key;
+        juce::String name;
+        juce::File sourceFile;
+        std::size_t frameLength=2048;
+        std::vector<float> monoSamples;
+        std::size_t frameCount() const noexcept { return frameLength ? monoSamples.size()/frameLength : 0; }
+    };
+    std::unique_ptr<juce::FileChooser> wavetableFileChooser_;
+    std::unique_ptr<ImportedWavetableAsset> importedWavetable_;
+    void beginWavetableImport();
+    void finishWavetableImport(const juce::File&);
     bool engineBacked_=false;
     int waveformIndex_=0;
 
