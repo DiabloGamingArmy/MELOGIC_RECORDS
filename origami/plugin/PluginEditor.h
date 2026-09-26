@@ -31,6 +31,28 @@ public:
     void itemDragExit(const SourceDetails&) override;
     void itemDropped(const SourceDetails&) override;
 private:
+    class WavetableEditorSurface final : public juce::Component {
+    public:
+        std::function<void()> onClose;
+        WavetableEditorSurface() {
+            setWantsKeyboardFocus(true);
+            setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
+        }
+        void paint(juce::Graphics& g) override {
+            // Patch 4 intentionally establishes only the editor shell.
+            // Editing tools/content are added in later patches.
+            g.fillAll(mct::origami::ui::Palette::background());
+        }
+        bool keyPressed(const juce::KeyPress& key) override {
+            if(key==juce::KeyPress::escapeKey && onClose) {
+                onClose();
+                return true;
+            }
+            return false;
+        }
+    };
+    void openWavetableEditor(unsigned oscillatorId);
+    void closeWavetableEditor();
     void timerCallback() override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
@@ -50,6 +72,9 @@ private:
     bool matrixSelected_=false;
     bool arpSelected_=false;
     bool globalSelected_=false;
+    bool wavetableEditorSelected_=false;
+    unsigned wavetableEditorOscillatorId_=0;
+    WavetableEditorSurface wavetableEditor_;
     [[maybe_unused]] OrigamiAudioProcessor& processor_;
     mct::origami::ui::OrigamiLookAndFeel theme_;
     mct::origami::ui::OrigamiHeader header_;
