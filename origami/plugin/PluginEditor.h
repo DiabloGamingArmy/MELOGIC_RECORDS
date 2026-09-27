@@ -687,18 +687,18 @@ private:
         class SpectrumCanvas final : public juce::Component {
         public:
             explicit SpectrumCanvas(mct::origami::ui::WavetableDocument& document)
-                :document_(document),fft_(11) {
-                magnitudes_.fill(0.0f); phases_.fill(0.0f); fftData_.fill(0.0f);
+                :document_(document) {
+                magnitudes_.fill(0.0f); phases_.fill(0.0f); real_.fill(0.0f); imag_.fill(0.0f);
             }
             void refresh() {
-                magnitudes_.fill(0.0f); phases_.fill(0.0f); fftData_.fill(0.0f);
+                magnitudes_.fill(0.0f); phases_.fill(0.0f); real_.fill(0.0f); imag_.fill(0.0f);
                 if(!document_.valid()) { repaint(); return; }
                 const auto& samples=document_.frames[document_.selectedFrame].samples;
-                for(std::size_t i=0;i<mct::origami::ui::kWavetableFrameSize;++i) fftData_[i]=samples[i];
-                fft_.performRealOnlyForwardTransform(fftData_.data(),true);
+                for(std::size_t i=0;i<mct::origami::ui::kWavetableFrameSize;++i) real_[i]=samples[i];
+                performForwardFft();
                 float peak=0.0f;
                 for(std::size_t bin=0;bin<kBins;++bin) {
-                    const float real=fftData_[bin*2],imag=fftData_[bin*2+1];
+                    const float real=real_[bin],imag=imag_[bin];
                     const float magnitude=std::sqrt(real*real+imag*imag);
                     magnitudes_[bin]=magnitude; phases_[bin]=std::atan2(imag,real);
                     if(bin>0) peak=juce::jmax(peak,magnitude);
@@ -738,10 +738,38 @@ private:
                 g.drawText("HARMONICS · 72 dB",bounds.getX(),bounds.getY()+2,bounds.getWidth()-4,12,juce::Justification::topRight,false);
             }
         private:
-            static constexpr std::size_t kBins=mct::origami::ui::kWavetableFrameSize/2+1;
+            static constexpr std::size_t kFftSize=mct::origami::ui::kWavetableFrameSize;
+            static constexpr std::size_t kBins=kFftSize/2+1;
+            void performForwardFft() noexcept {
+                // In-place radix-2 Cooley-Tukey FFT. The wavetable size is fixed at 2048.
+                for(std::size_t i=1,j=0;i<kFftSize;++i) {
+                    std::size_t bit=kFftSize>>1;
+                    for(;j&bit;bit>>=1) j^=bit;
+                    j^=bit;
+                    if(i<j) { std::swap(real_[i],real_[j]); std::swap(imag_[i],imag_[j]); }
+                }
+                constexpr float twoPi=6.28318530717958647692f;
+                for(std::size_t length=2;length<=kFftSize;length<<=1) {
+                    const float angle=-twoPi/static_cast<float>(length);
+                    const float stepReal=std::cos(angle),stepImag=std::sin(angle);
+                    for(std::size_t base=0;base<kFftSize;base+=length) {
+                        float wReal=1.0f,wImag=0.0f;
+                        const std::size_t half=length>>1;
+                        for(std::size_t j=0;j<half;++j) {
+                            const std::size_t even=base+j,odd=even+half;
+                            const float oddReal=real_[odd]*wReal-imag_[odd]*wImag;
+                            const float oddImag=real_[odd]*wImag+imag_[odd]*wReal;
+                            const float evenReal=real_[even],evenImag=imag_[even];
+                            real_[even]=evenReal+oddReal; imag_[even]=evenImag+oddImag;
+                            real_[odd]=evenReal-oddReal; imag_[odd]=evenImag-oddImag;
+                            const float nextReal=wReal*stepReal-wImag*stepImag;
+                            wImag=wReal*stepImag+wImag*stepReal; wReal=nextReal;
+                        }
+                    }
+                }
+            }
             mct::origami::ui::WavetableDocument& document_;
-            juce::dsp::FFT fft_;
-            std::array<float,mct::origami::ui::kWavetableFrameSize*2> fftData_{};
+            std::array<float,kFftSize> real_{},imag_{};
             std::array<float,kBins> magnitudes_{},phases_{};
             float normalizer_=1.0f;
         };
