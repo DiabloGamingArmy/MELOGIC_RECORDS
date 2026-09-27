@@ -468,6 +468,10 @@ private:
                 addAndMakeVisible(pencil_);
                 pencil_.setButtonText("PENCIL");
                 pencil_.setEnabled(false);
+                addAndMakeVisible(gridResolution_);
+                addAndMakeVisible(xSnap_);
+                addAndMakeVisible(zeroSnap_);
+                addAndMakeVisible(yQuant_);
                 setupCombo(gridResolution_,{"OFF","1/4","1/8","1/16","1/32","1/64"});
                 setupCombo(xSnap_,{"OFF","ON"});
                 setupCombo(zeroSnap_,{"OFF","ON"});
@@ -701,9 +705,9 @@ private:
         GridSettings gridSettings_;
         EditorHeader header_;
         EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
-        ToolsPanel toolsPanel_;
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
+        ToolsPanel toolsPanel_;
         std::vector<HistoryEntry> history_;
         std::size_t historyIndex_=0;
     };
