@@ -31,6 +31,12 @@ public:
         return true;
     }
 
+    bool setFrameSample(std::size_t frameIndex,std::size_t sampleIndex,float value) noexcept {
+        if(frameIndex>=frames.size() || sampleIndex>=kWavetableFrameSize || !std::isfinite(value)) return false;
+        frames[frameIndex].samples[sampleIndex]=juce::jlimit(-1.0f,1.0f,value);
+        return true;
+    }
+
     bool valid() const noexcept {
         return !frames.empty() && frames.size()<=kMaxWavetableFrames && selectedFrame<frames.size();
     }
