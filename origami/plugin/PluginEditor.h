@@ -89,20 +89,21 @@ private:
         class FrameStrip final : public juce::Component {
             class FrameCard final : public juce::Component {
             public:
-                std::function<void(std::uint64_t)> onSelected;
+                std::function<void(unsigned)> onSelected;
                 FrameCard(std::uint64_t frameId,unsigned displayIndex,
                           const std::array<float,mct::origami::ui::kWavetableFrameSize>& samples)
                     :frameId_(frameId),displayIndex_(displayIndex),samples_(&samples) {
                     setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                    setInterceptsMouseClicks(true,false);
                 }
                 void setSelected(bool selected) {
                     if(selected_==selected) return;
                     selected_=selected;
                     repaint();
                 }
-                std::uint64_t frameId() const noexcept { return frameId_; }
                 void mouseDown(const juce::MouseEvent&) override {
-                    if(onSelected) onSelected(frameId_);
+                    grabKeyboardFocus();
+                    if(onSelected) onSelected(displayIndex_);
                 }
                 void paint(juce::Graphics& g) override {
                     const auto b=getLocalBounds().toFloat().reduced(0.5f);
@@ -144,15 +145,29 @@ private:
 
             class AddCard final : public juce::Component {
             public:
-                AddCard() { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+                std::function<void()> onClicked;
+                AddCard() {
+                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                    setInterceptsMouseClicks(true,false);
+                }
+                void setAvailable(bool available) {
+                    available_=available;
+                    setEnabled(available);
+                    repaint();
+                }
+                void mouseDown(const juce::MouseEvent&) override {
+                    if(available_ && onClicked) onClicked();
+                }
                 void paint(juce::Graphics& g) override {
                     const auto b=getLocalBounds().toFloat().reduced(0.5f);
                     g.setColour(juce::Colour(0xff0d0d0d)); g.fillRect(getLocalBounds());
-                    g.setColour(juce::Colour(0xff353535)); g.drawRect(b,1.0f);
-                    g.setColour(juce::Colours::white.withAlpha(0.62f));
+                    g.setColour(available_ ? juce::Colour(0xff353535) : juce::Colour(0xff242424)); g.drawRect(b,1.0f);
+                    g.setColour(juce::Colours::white.withAlpha(available_ ? 0.62f : 0.24f));
                     g.setFont(juce::Font(juce::FontOptions("Arial",16.0f,juce::Font::plain)));
                     g.drawText("+",getLocalBounds(),juce::Justification::centred,false);
                 }
+            private:
+                bool available_=true;
             };
 
         public:
@@ -162,6 +177,12 @@ private:
                 viewport_.setScrollBarsShown(false,false,false,false);
                 viewport_.setWantsKeyboardFocus(true);
                 addAndMakeVisible(viewport_);
+                add_.onClicked=[this] {
+                    if(document_.duplicateFrameAfter(document_.selectedFrame)) {
+                        rebuild();
+                        select(static_cast<unsigned>(document_.selectedFrame));
+                    }
+                };
                 rebuild();
             }
             void rebuild() {
@@ -169,11 +190,12 @@ private:
                 for(unsigned i=0;i<document_.frames.size();++i) {
                     const auto& frame=document_.frames[i];
                     auto card=std::make_unique<FrameCard>(frame.id,i,frame.samples);
-                    card->onSelected=[this](std::uint64_t id){ selectById(id); };
+                    card->onSelected=[this](unsigned index){ select(index); };
                     content_.addAndMakeVisible(*card);
                     cards_.push_back(std::move(card));
                 }
                 content_.addAndMakeVisible(add_);
+                add_.setAvailable(document_.frames.size()<mct::origami::ui::kMaxWavetableFrames);
                 if(document_.selectedFrame>=cards_.size()) document_.selectedFrame=0;
                 for(unsigned i=0;i<cards_.size();++i)
                     cards_[i]->setSelected(i==document_.selectedFrame);
@@ -210,10 +232,6 @@ private:
                 if(onFrameSelected) onFrameSelected(index);
             }
         private:
-            void selectById(std::uint64_t id) {
-                for(unsigned i=0;i<cards_.size();++i)
-                    if(cards_[i]->frameId()==id) { select(i); return; }
-            }
             void reveal(unsigned index) {
                 if(index>=cards_.size()) return;
                 const auto card=cards_[index]->getBounds();
