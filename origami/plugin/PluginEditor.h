@@ -684,6 +684,68 @@ private:
             std::array<float,mct::origami::ui::kWavetableFrameSize> editBefore_{};
         };
 
+        class SpectrumCanvas final : public juce::Component {
+        public:
+            explicit SpectrumCanvas(mct::origami::ui::WavetableDocument& document)
+                :document_(document),fft_(11) {
+                magnitudes_.fill(0.0f); phases_.fill(0.0f); fftData_.fill(0.0f);
+            }
+            void refresh() {
+                magnitudes_.fill(0.0f); phases_.fill(0.0f); fftData_.fill(0.0f);
+                if(!document_.valid()) { repaint(); return; }
+                const auto& samples=document_.frames[document_.selectedFrame].samples;
+                for(std::size_t i=0;i<mct::origami::ui::kWavetableFrameSize;++i) fftData_[i]=samples[i];
+                fft_.performRealOnlyForwardTransform(fftData_.data(),true);
+                float peak=0.0f;
+                for(std::size_t bin=0;bin<kBins;++bin) {
+                    const float real=fftData_[bin*2],imag=fftData_[bin*2+1];
+                    const float magnitude=std::sqrt(real*real+imag*imag);
+                    magnitudes_[bin]=magnitude; phases_[bin]=std::atan2(imag,real);
+                    if(bin>0) peak=juce::jmax(peak,magnitude);
+                }
+                normalizer_=juce::jmax(peak,1.0e-9f); repaint();
+            }
+            void paint(juce::Graphics& g) override {
+                g.fillAll(juce::Colour(0xff080808));
+                auto bounds=getLocalBounds().reduced(8,7);
+                if(bounds.getWidth()<8 || bounds.getHeight()<8) return;
+                auto labelArea=bounds.removeFromBottom(18);
+                g.setColour(juce::Colour(0xff1c1c1c));
+                for(int i=0;i<=4;++i) {
+                    const float y=static_cast<float>(bounds.getY())+static_cast<float>(i)/4.0f*static_cast<float>(bounds.getHeight());
+                    g.drawHorizontalLine(juce::roundToInt(y),static_cast<float>(bounds.getX()),static_cast<float>(bounds.getRight()));
+                }
+                const int visibleBins=juce::jmin<int>(128,static_cast<int>(kBins)-1);
+                const float slot=static_cast<float>(bounds.getWidth())/static_cast<float>(visibleBins);
+                for(int i=1;i<=visibleBins;++i) {
+                    const float normalized=magnitudes_[static_cast<std::size_t>(i)]/normalizer_;
+                    const float db=juce::Decibels::gainToDecibels(normalized,-72.0f);
+                    const float level=juce::jlimit(0.0f,1.0f,(db+72.0f)/72.0f);
+                    const float h=level*static_cast<float>(bounds.getHeight());
+                    const float x=static_cast<float>(bounds.getX())+static_cast<float>(i-1)*slot;
+                    const float width=juce::jmax(1.0f,slot-1.0f);
+                    g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.78f));
+                    g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-h,width,h));
+                }
+                g.setColour(juce::Colours::white.withAlpha(0.38f));
+                g.setFont(juce::Font(juce::FontOptions("Arial",7.0f,juce::Font::plain)));
+                const int marks[]{1,16,32,64,128};
+                for(const int harmonic:marks) {
+                    const float x=static_cast<float>(bounds.getX())+(static_cast<float>(harmonic)-0.5f)/static_cast<float>(visibleBins)*static_cast<float>(bounds.getWidth());
+                    g.drawText(juce::String(harmonic),juce::roundToInt(x)-14,labelArea.getY(),28,labelArea.getHeight(),juce::Justification::centred,false);
+                }
+                g.setColour(juce::Colours::white.withAlpha(0.52f));
+                g.drawText("HARMONICS · 72 dB",bounds.getX(),bounds.getY()+2,bounds.getWidth()-4,12,juce::Justification::topRight,false);
+            }
+        private:
+            static constexpr std::size_t kBins=mct::origami::ui::kWavetableFrameSize/2+1;
+            mct::origami::ui::WavetableDocument& document_;
+            juce::dsp::FFT fft_;
+            std::array<float,mct::origami::ui::kWavetableFrameSize*2> fftData_{};
+            std::array<float,kBins> magnitudes_{},phases_{};
+            float normalizer_=1.0f;
+        };
+
         class NativeChoiceBox final : public juce::Component {
         public:
             std::function<void()> onChange;
@@ -1167,7 +1229,7 @@ private:
         WavetableEditorSurface()
             : document_(mct::origami::ui::WavetableDocument::basicShapes()),
               tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
-              timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_),waveformCanvas_(document_,gridSettings_),
+              timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_),waveformCanvas_(document_,gridSettings_),spectrumCanvas_(document_),
               toolsPanel_(gridSettings_,waveformCanvas_),toolsScroller_(toolsPanel_),curveInspector_(waveformCanvas_) {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
@@ -1180,8 +1242,9 @@ private:
             tools_.setContentComponent(toolsScroller_);
             timeline_.setContentComponent(frameStrip_);
             waveform_.setContentComponent(waveformCanvas_);
+            spectrum_.setContentComponent(spectrumCanvas_);
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
-            waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); };
+            waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); spectrumCanvas_.refresh(); };
             waveformCanvas_.onSelectionChanged=[this](bool active) { toolsPanel_.setSelectionAvailable(active); };
             waveformCanvas_.onCurveDraftChanged=[this](bool active) {
                 if(active) { tools_.setContentComponent(curveInspector_); curveInspector_.refresh(); }
@@ -1212,6 +1275,7 @@ private:
             header_.setFrameStatus(static_cast<unsigned>(document_.selectedFrame),
                                    static_cast<unsigned>(document_.frames.size()));
             waveformCanvas_.refresh();
+            spectrumCanvas_.refresh();
         }
         void resized() override {
             auto area=getLocalBounds();
@@ -1365,6 +1429,7 @@ private:
         EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
+        SpectrumCanvas spectrumCanvas_;
         ToolsPanel toolsPanel_;
         ToolsScroller toolsScroller_;
         CurveInspector curveInspector_;
