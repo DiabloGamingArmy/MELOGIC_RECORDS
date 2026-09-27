@@ -44,6 +44,14 @@ private:
             juce::Rectangle<int> contentBounds() const noexcept {
                 return getLocalBounds().withTrimmedTop(regionHeaderHeight).reduced(contentGutter);
             }
+            void setContentComponent(juce::Component& component) {
+                content_=&component;
+                addAndMakeVisible(component);
+                resized();
+            }
+            void resized() override {
+                if(content_!=nullptr) content_->setBounds(contentBounds());
+            }
             void paint(juce::Graphics& g) override {
                 const auto bounds=getLocalBounds();
                 const auto header=bounds.withHeight(regionHeaderHeight);
@@ -74,6 +82,122 @@ private:
             }
         private:
             juce::String title_;
+            juce::Component* content_=nullptr;
+        };
+
+        class FrameStrip final : public juce::Component {
+            class FrameCard final : public juce::Component {
+            public:
+                std::function<void(unsigned)> onSelected;
+                explicit FrameCard(unsigned index):index_(index) {
+                    setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                }
+                void setSelected(bool selected) {
+                    if(selected_==selected) return;
+                    selected_=selected;
+                    repaint();
+                }
+                void mouseDown(const juce::MouseEvent&) override {
+                    if(onSelected) onSelected(index_);
+                }
+                void paint(juce::Graphics& g) override {
+                    const auto b=getLocalBounds().toFloat().reduced(0.5f);
+                    g.setColour(juce::Colour(0xff0d0d0d));
+                    g.fillRect(getLocalBounds());
+                    g.setColour(selected_ ? juce::Colour(0xffff1018) : juce::Colour(0xff353535));
+                    g.drawRect(b,selected_ ? 1.5f : 1.0f);
+
+                    auto wave=getLocalBounds().reduced(8,7);
+                    wave.removeFromBottom(17);
+                    juce::Path p;
+                    const float mid=static_cast<float>(wave.getCentreY());
+                    const float amp=static_cast<float>(wave.getHeight())*.32f;
+                    constexpr int points=48;
+                    for(int i=0;i<points;++i) {
+                        const float phase=static_cast<float>(i)/static_cast<float>(points-1);
+                        float value=0.0f;
+                        switch(index_) {
+                            case 0: value=std::sin(phase*juce::MathConstants<float>::twoPi); break;
+                            case 1: value=2.0f*phase-1.0f; break;
+                            case 2: value=phase<0.5f ? 1.0f : -1.0f; break;
+                            default: value=phase<0.5f ? (-1.0f+4.0f*phase) : (3.0f-4.0f*phase); break;
+                        }
+                        const float x=static_cast<float>(wave.getX())+phase*static_cast<float>(wave.getWidth());
+                        const float y=mid-value*amp;
+                        if(i==0) p.startNewSubPath(x,y); else p.lineTo(x,y);
+                    }
+                    g.setColour(juce::Colours::white.withAlpha(0.78f));
+                    g.strokePath(p,juce::PathStrokeType(1.0f));
+                    g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
+                    g.drawText(juce::String(index_+1),getLocalBounds().removeFromBottom(18),
+                               juce::Justification::centred,false);
+                }
+            private:
+                unsigned index_=0;
+                bool selected_=false;
+            };
+
+            class AddCard final : public juce::Component {
+            public:
+                AddCard() { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+                void paint(juce::Graphics& g) override {
+                    const auto b=getLocalBounds().toFloat().reduced(0.5f);
+                    g.setColour(juce::Colour(0xff0d0d0d)); g.fillRect(getLocalBounds());
+                    g.setColour(juce::Colour(0xff353535)); g.drawRect(b,1.0f);
+                    g.setColour(juce::Colours::white.withAlpha(0.62f));
+                    g.setFont(juce::Font(juce::FontOptions("Arial",16.0f,juce::Font::plain)));
+                    g.drawText("+",getLocalBounds(),juce::Justification::centred,false);
+                }
+            };
+
+        public:
+            std::function<void(unsigned)> onFrameSelected;
+            FrameStrip() {
+                for(unsigned i=0;i<cards_.size();++i) {
+                    cards_[i]=std::make_unique<FrameCard>(i);
+                    cards_[i]->onSelected=[this](unsigned index){ select(index); };
+                    content_.addAndMakeVisible(*cards_[i]);
+                }
+                content_.addAndMakeVisible(add_);
+                viewport_.setViewedComponent(&content_,false);
+                viewport_.setScrollBarsShown(false,false,false,false);
+                viewport_.setWantsKeyboardFocus(true);
+                addAndMakeVisible(viewport_);
+                select(0);
+            }
+            void resized() override {
+                viewport_.setBounds(getLocalBounds());
+                constexpr int cardWidth=80;
+                constexpr int gap=5;
+                const int h=getHeight();
+                int x=0;
+                for(auto& card:cards_) {
+                    card->setBounds(x,0,cardWidth,h);
+                    x+=cardWidth+gap;
+                }
+                add_.setBounds(x,0,52,h);
+                content_.setSize(juce::jmax(getWidth(),x+52),h);
+            }
+            bool keyPressed(const juce::KeyPress& key) override {
+                if(key==juce::KeyPress::leftKey && selected_>0) { select(selected_-1); return true; }
+                if(key==juce::KeyPress::rightKey && selected_+1<cards_.size()) { select(selected_+1); return true; }
+                return false;
+            }
+            void select(unsigned index) {
+                if(index>=cards_.size()) return;
+                selected_=index;
+                for(unsigned i=0;i<cards_.size();++i) cards_[i]->setSelected(i==selected_);
+                viewport_.getHorizontalScrollBar().setCurrentRangeStart(
+                    juce::jlimit(0.0,juce::jmax(0.0,static_cast<double>(content_.getWidth()-viewport_.getWidth())),
+                                 static_cast<double>(cards_[index]->getX())));
+                if(onFrameSelected) onFrameSelected(selected_);
+            }
+        private:
+            juce::Viewport viewport_;
+            juce::Component content_;
+            std::array<std::unique_ptr<FrameCard>,4> cards_;
+            AddCard add_;
+            unsigned selected_=0;
         };
 
         class EditorHeader final : public juce::Component {
@@ -101,6 +225,11 @@ private:
                 close_.setTooltip("Close wavetable editor");
                 close_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
                 close_.onClick=[this] { if(onClose) onClose(); };
+            }
+            void setFrameStatus(unsigned zeroBasedIndex,unsigned count) {
+                const auto display=zeroBasedIndex+1u;
+                frame_.setText("FRAME "+juce::String(display).paddedLeft('0',3)+" / "+
+                               juce::String(count).paddedLeft('0',3),juce::dontSendNotification);
             }
             void resized() override {
                 constexpr int closeSize=24;
@@ -147,6 +276,11 @@ private:
             header_.onClose=[this] { if(onClose) onClose(); };
             for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&table_}})
                 addAndMakeVisible(region);
+            timeline_.setContentComponent(frameStrip_);
+            frameStrip_.onFrameSelected=[this](unsigned index) {
+                header_.setFrameStatus(index,4);
+            };
+            header_.setFrameStatus(0,4);
         }
         void resized() override {
             auto area=getLocalBounds();
@@ -174,6 +308,7 @@ private:
     private:
         EditorHeader header_;
         EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
+        FrameStrip frameStrip_;
     };
     void openWavetableEditor(unsigned oscillatorId);
     void closeWavetableEditor();
