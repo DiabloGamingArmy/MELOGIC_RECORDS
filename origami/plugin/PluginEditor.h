@@ -281,28 +281,37 @@ private:
         };
 
         enum class WaveformTool { pencil, line, curve, select };
-        struct ShapeSegment {
-            std::size_t startSample=0,endSample=0;
-            float startValue=0.0f,endValue=0.0f,curve=0.0f;
-            float evaluate(float t) const noexcept {
-                t=juce::jlimit(0.0f,1.0f,t);
-                if(std::abs(curve)>0.0001f) {
-                    const float power=std::pow(2.0f,std::abs(curve)*3.0f);
-                    t=curve>0.0f ? std::pow(t,power) : 1.0f-std::pow(1.0f-t,power);
-                }
-                return startValue+(endValue-startValue)*t;
-            }
-        };
         struct WaveformSelection {
             bool active=false;
             std::uint64_t frameId=0;
             std::size_t start=0,end=0;
+        };
+        struct CurvePoint {
+            std::uint64_t id=0;
+            std::size_t sample=0;
+            float value=0.0f;
+        };
+        struct CurveSegment {
+            std::uint64_t leftId=0,rightId=0;
+            float controlX=0.5f;
+            float controlY=0.0f;
+            float hardness=0.5f;
+        };
+        struct CurveDraft {
+            bool active=false;
+            std::uint64_t frameId=0;
+            std::array<float,mct::origami::ui::kWavetableFrameSize> original{};
+            std::vector<CurvePoint> points;
+            std::vector<CurveSegment> segments;
+            std::uint64_t selectedPointId=0;
+            int selectedSegment=-1;
         };
 
         class WaveformCanvas final : public juce::Component {
         public:
             std::function<void()> onSamplesChanged;
             std::function<void(bool)> onSelectionChanged;
+            std::function<void(bool)> onCurveDraftChanged;
             std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
                                const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
             explicit WaveformCanvas(mct::origami::ui::WavetableDocument& document,GridSettings& grid)
@@ -311,9 +320,35 @@ private:
                 setMouseCursor(juce::MouseCursor::CrosshairCursor);
             }
             void refresh() { repaint(); }
-            bool hasPendingShape() const noexcept { return shapeState_!=ShapeEditState::idle; }
-            void cancelPendingShape() { shapeState_=ShapeEditState::idle; shapeDraggingHandle_=false; repaint(); }
-            void setTool(WaveformTool tool) { cancelPendingShape(); tool_=tool; setMouseCursor(juce::MouseCursor::CrosshairCursor); repaint(); }
+            bool hasPendingShape() const noexcept { return lineDrawing_ || curve_.active; }
+            bool hasCurveDraft() const noexcept { return curve_.active; }
+            void cancelPendingShape() {
+                lineDrawing_=false;
+                if(curve_.active) {
+                    curve_={};
+                    curvePreview_={};
+                    if(onCurveDraftChanged) onCurveDraftChanged(false);
+                }
+                repaint();
+            }
+            void applyCurveDraft() {
+                if(!curve_.active || !document_.valid()) return;
+                auto& frame=document_.frames[document_.selectedFrame];
+                if(frame.id!=curve_.frameId) { cancelPendingShape(); return; }
+                const auto before=curve_.original;
+                frame.samples=curvePreview_;
+                const auto after=frame.samples;
+                const auto id=curve_.frameId;
+                curve_={};
+                samplesChanged();
+                if(onCurveDraftChanged) onCurveDraftChanged(false);
+                if(after!=before && onEditCommitted) onEditCommitted(id,before,after);
+                repaint();
+            }
+            void setTool(WaveformTool tool) {
+                if(tool_!=tool) cancelPendingShape();
+                tool_=tool; setMouseCursor(juce::MouseCursor::CrosshairCursor); repaint();
+            }
             WaveformTool tool() const noexcept { return tool_; }
             bool hasSelection() const noexcept { return selection_.active; }
             const WaveformSelection& selection() const noexcept { return selection_; }
@@ -326,319 +361,276 @@ private:
             void mouseDown(const juce::MouseEvent& event) override {
                 if(!document_.valid()) return;
                 if(tool_==WaveformTool::select) {
-                    selecting_=true;
-                    selectionAnchor_=sampleForX(event.position.x);
+                    selecting_=true; selectionAnchor_=sampleForX(event.position.x);
                     selection_={true,document_.frames[document_.selectedFrame].id,selectionAnchor_,selectionAnchor_};
                     repaint(); if(onSelectionChanged) onSelectionChanged(true); return;
                 }
-                if(tool_==WaveformTool::curve && shapeState_==ShapeEditState::editingCurve) {
-                    const auto handle=curveHandlePosition();
-                    if(event.position.getDistanceFrom(handle)<14.0f) {
-                        shapeDraggingHandle_=true; return;
-                    }
-                    commitPendingShape(); return;
-                }
-                if(tool_==WaveformTool::line || tool_==WaveformTool::curve) {
-                    shapeState_=ShapeEditState::drawingEndpoints;
-                    editFrameId_=document_.frames[document_.selectedFrame].id;
+                if(tool_==WaveformTool::curve) { curveMouseDown(event); return; }
+                if(tool_==WaveformTool::line) {
+                    lineDrawing_=true; editFrameId_=document_.frames[document_.selectedFrame].id;
                     editBefore_=document_.frames[document_.selectedFrame].samples;
                     const auto p=pointForEvent(event);
-                    shape_={p.first,p.first,p.second,p.second,0.0f};
-                    shapePreview_=editBefore_;
-                    repaint(); return;
+                    lineStart_=p; lineEnd_=p; linePreview_=editBefore_; repaint(); return;
                 }
-                drawing_=true;
-                editFrameId_=document_.frames[document_.selectedFrame].id;
+                drawing_=true; editFrameId_=document_.frames[document_.selectedFrame].id;
                 editBefore_=document_.frames[document_.selectedFrame].samples;
-                const auto point=pointForEvent(event);
-                lastSample_=point.first;
-                lastValue_=point.second;
-                document_.setFrameSample(document_.selectedFrame,lastSample_,lastValue_);
-                samplesChanged();
+                const auto point=pointForEvent(event); lastSample_=point.first; lastValue_=point.second;
+                document_.setFrameSample(document_.selectedFrame,lastSample_,lastValue_); samplesChanged();
             }
             void mouseDrag(const juce::MouseEvent& event) override {
                 if(tool_==WaveformTool::select) {
                     if(!selecting_ || !document_.valid()) return;
                     const auto sample=sampleForX(event.position.x);
-                    selection_.start=juce::jmin(selectionAnchor_,sample);
-                    selection_.end=juce::jmax(selectionAnchor_,sample);
+                    selection_.start=juce::jmin(selectionAnchor_,sample); selection_.end=juce::jmax(selectionAnchor_,sample);
                     repaint(); return;
                 }
-                if(tool_==WaveformTool::curve && shapeState_==ShapeEditState::editingCurve && shapeDraggingHandle_) {
-                    const auto plot=plotBounds();
-                    const float midY=(valueToY(shape_.startValue)+valueToY(shape_.endValue))*0.5f;
-                    const float scale=juce::jmax(48.0f,static_cast<float>(plot.getHeight())*0.28f);
-                    shape_.curve=juce::jlimit(-1.0f,1.0f,(midY-event.position.y)/scale);
-                    renderShapePreview(); repaint(); return;
-                }
-                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeState_==ShapeEditState::drawingEndpoints) {
-                    const auto p=pointForEvent(event);
-                    shape_.endSample=p.first; shape_.endValue=p.second; shape_.curve=0.0f;
-                    renderShapePreview(); repaint(); return;
+                if(tool_==WaveformTool::curve) { curveMouseDrag(event); return; }
+                if(tool_==WaveformTool::line && lineDrawing_) {
+                    lineEnd_=pointForEvent(event); renderLinePreview(); repaint(); return;
                 }
                 if(!drawing_ || !document_.valid()) return;
-                const auto point=pointForEvent(event);
-                const auto currentSample=point.first;
-                const float currentValue=point.second;
-                if(currentSample==lastSample_) {
-                    document_.setFrameSample(document_.selectedFrame,currentSample,currentValue);
-                } else {
-                    const auto low=juce::jmin(lastSample_,currentSample);
-                    const auto high=juce::jmax(lastSample_,currentSample);
+                const auto point=pointForEvent(event); const auto currentSample=point.first; const float currentValue=point.second;
+                if(currentSample==lastSample_) document_.setFrameSample(document_.selectedFrame,currentSample,currentValue);
+                else {
+                    const auto low=juce::jmin(lastSample_,currentSample), high=juce::jmax(lastSample_,currentSample);
                     const float denominator=static_cast<float>(static_cast<long long>(currentSample)-static_cast<long long>(lastSample_));
                     for(std::size_t sample=low;sample<=high;++sample) {
                         const float t=static_cast<float>(static_cast<long long>(sample)-static_cast<long long>(lastSample_))/denominator;
                         document_.setFrameSample(document_.selectedFrame,sample,lastValue_+t*(currentValue-lastValue_));
                     }
                 }
-                lastSample_=currentSample;
-                lastValue_=currentValue;
-                samplesChanged();
+                lastSample_=currentSample; lastValue_=currentValue; samplesChanged();
             }
-            void mouseUp(const juce::MouseEvent&) override {
+            void mouseUp(const juce::MouseEvent& event) override {
                 if(tool_==WaveformTool::select) {
-                    if(!selecting_) return;
-                    selecting_=false;
-                    if(selection_.start==selection_.end) clearSelection();
-                    return;
+                    if(!selecting_) return; selecting_=false; if(selection_.start==selection_.end) clearSelection(); return;
                 }
-                if(tool_==WaveformTool::curve && shapeState_==ShapeEditState::editingCurve && shapeDraggingHandle_) {
-                    shapeDraggingHandle_=false; repaint(); return;
+                if(tool_==WaveformTool::curve) { curveMouseUp(event); return; }
+                if(tool_==WaveformTool::line && lineDrawing_) {
+                    lineDrawing_=false; if(!document_.valid()) return;
+                    auto& frame=document_.frames[document_.selectedFrame]; frame.samples=linePreview_;
+                    samplesChanged(); if(frame.samples!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,frame.samples);
+                    repaint(); return;
                 }
-                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeState_==ShapeEditState::drawingEndpoints) {
-                    if(tool_==WaveformTool::curve) {
-                        shapeState_=ShapeEditState::editingCurve; renderShapePreview(); repaint(); return;
-                    }
-                    commitPendingShape(); return;
-                }
-                if(!drawing_) return;
-                drawing_=false;
-                if(!document_.valid()) return;
+                if(!drawing_) return; drawing_=false; if(!document_.valid()) return;
                 const auto& after=document_.frames[document_.selectedFrame].samples;
                 if(after!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,after);
             }
-
             void paint(juce::Graphics& g) override {
                 const auto bounds=getLocalBounds();
                 if(bounds.isEmpty() || !document_.valid()) return;
+                g.fillAll(juce::Colour(0xff080808));
                 const auto plot=plotBounds();
-                if(plot.getWidth()<2 || plot.getHeight()<2) return;
-
-                const auto mapY=[&](float value) {
-                    return static_cast<float>(plot.getCentreY())-
-                           value*(static_cast<float>(plot.getHeight())*0.5f);
-                };
-
-                g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::plain)));
-                const std::array<float,5> levels{{1.0f,0.5f,0.0f,-0.5f,-1.0f}};
-                for(const float level:levels) {
-                    const float y=mapY(level);
-                    const bool zero=std::abs(level)<0.001f;
-                    g.setColour(juce::Colours::white.withAlpha(zero ? 0.22f : 0.09f));
-                    g.drawHorizontalLine(juce::roundToInt(y),static_cast<float>(plot.getX()),
-                                         static_cast<float>(plot.getRight()));
-                    g.setColour(juce::Colours::white.withAlpha(zero ? 0.48f : 0.28f));
-                    const juce::String label=zero ? "0.0" : juce::String(level,1);
-                    g.drawText(label,2,juce::roundToInt(y)-7,27,14,juce::Justification::centredRight,false);
-                }
-
-                constexpr int divisions=8;
-                if(grid_.showGrid && grid_.divisions>divisions) {
-                    for(int division=1;division<grid_.divisions;++division) {
-                        if((division*divisions)%grid_.divisions==0) continue;
-                        const float t=static_cast<float>(division)/static_cast<float>(grid_.divisions);
-                        const float x=static_cast<float>(plot.getX())+t*static_cast<float>(plot.getWidth());
-                        g.setColour(juce::Colours::white.withAlpha(0.035f));
-                        g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),
-                                           static_cast<float>(plot.getBottom()));
-                    }
-                }
-                for(int division=0;division<=divisions;++division) {
-                    const float t=static_cast<float>(division)/static_cast<float>(divisions);
-                    const float x=static_cast<float>(plot.getX())+t*static_cast<float>(plot.getWidth());
-                    g.setColour(juce::Colours::white.withAlpha(division==0 || division==divisions ? 0.12f : 0.065f));
+                g.setColour(juce::Colour(0xff1d1d1d));
+                for(int division=0;division<=8;++division) {
+                    const float x=static_cast<float>(plot.getX())+static_cast<float>(division)/8.0f*static_cast<float>(plot.getWidth());
                     g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
-                    const int sample=division==divisions ? 2047 : division*256;
-                    g.setColour(juce::Colours::white.withAlpha(0.25f));
-                    g.drawText(juce::String(sample),juce::roundToInt(x)-19,plot.getBottom()+3,38,12,juce::Justification::centred,false);
                 }
-
-                if(selection_.active && selection_.frameId==document_.frames[document_.selectedFrame].id) {
-                    const float left=static_cast<float>(plot.getX())+
-                        static_cast<float>(selection_.start)/2047.0f*static_cast<float>(plot.getWidth());
-                    const float right=static_cast<float>(plot.getX())+
-                        static_cast<float>(selection_.end)/2047.0f*static_cast<float>(plot.getWidth());
-                    const juce::Rectangle<float> selected(left,static_cast<float>(plot.getY()),
-                        juce::jmax(1.0f,right-left),static_cast<float>(plot.getHeight()));
-                    g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.08f)); g.fillRect(selected);
-                    g.setColour(juce::Colours::white.withAlpha(0.42f));
-                    g.drawVerticalLine(juce::roundToInt(left),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
-                    g.drawVerticalLine(juce::roundToInt(right),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
+                for(int division=0;division<=4;++division) {
+                    const float y=static_cast<float>(plot.getY())+static_cast<float>(division)/4.0f*static_cast<float>(plot.getHeight());
+                    g.drawHorizontalLine(juce::roundToInt(y),static_cast<float>(plot.getX()),static_cast<float>(plot.getRight()));
                 }
-
-                const auto& samples=document_.frames[document_.selectedFrame].samples;
+                if(grid_.showGrid && grid_.divisions>0) {
+                    g.setColour(juce::Colours::white.withAlpha(0.035f));
+                    for(int division=0;division<=grid_.divisions;++division) {
+                        const float x=static_cast<float>(plot.getX())+static_cast<float>(division)/static_cast<float>(grid_.divisions)*static_cast<float>(plot.getWidth());
+                        g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
+                    }
+                }
+                g.setFont(juce::Font(juce::FontOptions("Arial",7.0f,juce::Font::plain)));
+                g.setColour(juce::Colours::white.withAlpha(0.34f));
+                const char* ampLabels[]{"+1.0","+0.5","0.0","-0.5","-1.0"};
+                for(int i=0;i<5;++i) {
+                    const float y=static_cast<float>(plot.getY())+static_cast<float>(i)/4.0f*static_cast<float>(plot.getHeight());
+                    g.drawText(ampLabels[i],2,juce::roundToInt(y)-7,28,14,juce::Justification::centredRight,false);
+                }
+                for(int i=0;i<=8;++i) {
+                    const int sample=i==8?2047:i*256;
+                    const float x=static_cast<float>(plot.getX())+static_cast<float>(i)/8.0f*static_cast<float>(plot.getWidth());
+                    g.drawText(juce::String(sample),juce::roundToInt(x)-18,plot.getBottom()+4,36,12,juce::Justification::centred,false);
+                }
+                const auto& source=curve_.active ? curvePreview_ : (lineDrawing_ ? linePreview_ : document_.frames[document_.selectedFrame].samples);
                 const int columns=juce::jmax(1,plot.getWidth());
-                juce::Path envelope,fill;
-                const float zeroY=mapY(0.0f);
-                bool envelopeStarted=false;
+                juce::Path body,trace;
+                const float mid=static_cast<float>(plot.getCentreY());
                 for(int column=0;column<columns;++column) {
-                    const std::size_t begin=static_cast<std::size_t>((static_cast<std::uint64_t>(column)*samples.size())/static_cast<std::uint64_t>(columns));
-                    const std::size_t end=juce::jmax(begin+1,static_cast<std::size_t>((static_cast<std::uint64_t>(column+1)*samples.size())/static_cast<std::uint64_t>(columns)));
-                    float minimum=1.0f,maximum=-1.0f,sum=0.0f;
-                    std::size_t count=0;
-                    for(std::size_t i=begin;i<juce::jmin(end,samples.size());++i) {
-                        minimum=juce::jmin(minimum,samples[i]);
-                        maximum=juce::jmax(maximum,samples[i]);
-                        sum+=samples[i];
-                        ++count;
-                    }
-                    if(count==0) continue;
-                    const float x=static_cast<float>(plot.getX()+column)+0.5f;
-                    const float representative=sum/static_cast<float>(count);
-                    const float y=mapY(representative);
-                    if(!envelopeStarted) {
-                        envelope.startNewSubPath(x,y);
-                        envelopeStarted=true;
-                    } else {
-                        envelope.lineTo(x,y);
-                    }
-
-                    // Preserve the min/max bucket in the coloured body so narrow
-                    // transients remain visible even when 2048 samples are compressed.
-                    const float top=mapY(maximum),bottom=mapY(minimum);
-                    fill.startNewSubPath(x,zeroY); fill.lineTo(x,top);
-                    fill.startNewSubPath(x,zeroY); fill.lineTo(x,bottom);
+                    const auto begin=static_cast<std::size_t>((static_cast<long long>(column)*2048)/columns);
+                    const auto end=juce::jmin<std::size_t>(2047,static_cast<std::size_t>((static_cast<long long>(column+1)*2048)/columns));
+                    float minValue=1.0f,maxValue=-1.0f;
+                    for(std::size_t sample=begin;sample<=end;++sample) { minValue=juce::jmin(minValue,source[sample]); maxValue=juce::jmax(maxValue,source[sample]); }
+                    const float x=static_cast<float>(plot.getX()+column);
+                    const float yMin=valueToY(minValue),yMax=valueToY(maxValue);
+                    if(column==0) body.startNewSubPath(x,mid);
+                    body.lineTo(x,yMax); body.lineTo(x,yMin);
                 }
-                g.setColour(mct::origami::ui::signalSurfaceColour(0.48f,0.34f));
-                g.strokePath(fill,juce::PathStrokeType(1.0f));
-
-                // The primary trace is a continuous waveform path. Previously it
-                // was made from independent vertical min/max segments; thick rounded
-                // strokes exposed tiny visual gaps between those disconnected pieces.
-                g.setColour(juce::Colours::white.withAlpha(0.97f));
-                g.strokePath(envelope,juce::PathStrokeType(3.5f,juce::PathStrokeType::curved,
-                                                          juce::PathStrokeType::rounded));
-
-                g.setColour(juce::Colours::white.withAlpha(0.32f));
-                g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
-                if(shapeState_!=ShapeEditState::idle) {
-                    juce::Path preview;
-                    const auto low=juce::jmin(shape_.startSample,shape_.endSample);
-                    const auto high=juce::jmax(shape_.startSample,shape_.endSample);
-                    for(std::size_t i=low;i<=high;++i) {
-                        const float x=static_cast<float>(plot.getX())+static_cast<float>(i)/2047.0f*static_cast<float>(plot.getWidth());
-                        const float y=mapY(shapePreview_[i]);
-                        if(i==low) preview.startNewSubPath(x,y); else preview.lineTo(x,y);
-                    }
-                    g.setColour(juce::Colours::white.withAlpha(0.95f));
-                    g.strokePath(preview,juce::PathStrokeType(2.0f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
-                    auto handle=[&](std::size_t i,float v) {
-                        const float x=static_cast<float>(plot.getX())+static_cast<float>(i)/2047.0f*static_cast<float>(plot.getWidth());
-                        g.fillEllipse(x-3.0f,mapY(v)-3.0f,6.0f,6.0f);
-                    };
-                    handle(shape_.startSample,shape_.startValue); handle(shape_.endSample,shape_.endValue);
-                    if(shapeState_==ShapeEditState::editingCurve) {
-                        const auto hp=curveHandlePosition();
-                        g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.95f));
-                        g.fillEllipse(hp.x-4.0f,hp.y-4.0f,8.0f,8.0f);
-                        g.setColour(juce::Colours::white.withAlpha(0.65f));
-                        g.drawEllipse(hp.x-4.0f,hp.y-4.0f,8.0f,8.0f,1.0f);
-                    }
+                body.lineTo(static_cast<float>(plot.getRight()),mid); body.closeSubPath();
+                g.setColour(mct::origami::ui::signalSurfaceColour(0.48f,0.34f)); g.fillPath(body);
+                for(int column=0;column<columns;++column) {
+                    const auto sample=juce::jmin<std::size_t>(2047,static_cast<std::size_t>((static_cast<long long>(column)*2047)/juce::jmax(1,columns-1)));
+                    const float x=static_cast<float>(plot.getX()+column),y=valueToY(source[sample]);
+                    if(column==0) trace.startNewSubPath(x,y); else trace.lineTo(x,y);
                 }
-
+                g.setColour(juce::Colours::white.withAlpha(0.94f));
+                g.strokePath(trace,juce::PathStrokeType(3.5f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
+                if(selection_.active && selection_.frameId==document_.frames[document_.selectedFrame].id) {
+                    const float x1=sampleToX(selection_.start),x2=sampleToX(selection_.end);
+                    g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.10f)); g.fillRect(juce::Rectangle<float>(x1,static_cast<float>(plot.getY()),juce::jmax(1.0f,x2-x1),static_cast<float>(plot.getHeight())));
+                    g.setColour(juce::Colours::white.withAlpha(0.46f)); g.drawVerticalLine(juce::roundToInt(x1),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
+                    g.drawVerticalLine(juce::roundToInt(x2),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
+                }
+                if(curve_.active) paintCurveDraft(g);
                 juce::String readout="FRAME "+juce::String(static_cast<int>(document_.selectedFrame+1)).paddedLeft('0',3)+"     2048 SAMPLES";
-                if(selection_.active) readout+="     "+juce::String(static_cast<int>(selection_.start))+"-"+juce::String(static_cast<int>(selection_.end))+
-                    " · "+juce::String(static_cast<int>(selection_.end-selection_.start+1))+" SELECTED";
+                if(curve_.active) readout+="     CURVE DRAFT · "+juce::String(static_cast<int>(curve_.points.size()))+" POINTS";
+                else if(selection_.active) readout+="     "+juce::String(static_cast<int>(selection_.start))+"-"+juce::String(static_cast<int>(selection_.end))+" · "+juce::String(static_cast<int>(selection_.end-selection_.start+1))+" SELECTED";
                 g.drawText(readout,plot.getX(),3,plot.getWidth(),14,juce::Justification::centredRight,false);
             }
         private:
-            juce::Rectangle<int> plotBounds() const noexcept {
-                return getLocalBounds().withTrimmedLeft(34).withTrimmedRight(10).withTrimmedTop(22).withTrimmedBottom(20);
-            }
-            float valueToY(float value) const noexcept {
-                const auto plot=plotBounds();
-                return static_cast<float>(plot.getCentreY())-value*(static_cast<float>(plot.getHeight())*0.5f);
-            }
-            juce::Point<float> curveHandlePosition() const noexcept {
-                const auto plot=plotBounds();
-                const auto midSample=(shape_.startSample+shape_.endSample)/2;
-                const float x=static_cast<float>(plot.getX())+static_cast<float>(midSample)/2047.0f*static_cast<float>(plot.getWidth());
-                const float base=(valueToY(shape_.startValue)+valueToY(shape_.endValue))*0.5f;
-                const float scale=juce::jmax(48.0f,static_cast<float>(plot.getHeight())*0.28f);
-                return {x,base-shape_.curve*scale};
-            }
-            void commitPendingShape() {
-                if(shapeState_==ShapeEditState::idle || !document_.valid()) return;
-                auto& frame=document_.frames[document_.selectedFrame];
-                frame.samples=shapePreview_;
-                const auto after=frame.samples;
-                shapeState_=ShapeEditState::idle; shapeDraggingHandle_=false;
-                samplesChanged();
-                if(after!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,after);
-                repaint();
-            }
-            void renderShapePreview() {
-                shapePreview_=editBefore_;
-                const auto low=juce::jmin(shape_.startSample,shape_.endSample);
-                const auto high=juce::jmax(shape_.startSample,shape_.endSample);
-                ShapeSegment seg=shape_;
-                if(shape_.startSample>shape_.endSample) {
-                    std::swap(seg.startSample,seg.endSample);
-                    std::swap(seg.startValue,seg.endValue);
-                    seg.curve=-seg.curve;
-                }
-                const float denom=static_cast<float>(juce::jmax<std::size_t>(1,high-low));
-                for(std::size_t i=low;i<=high;++i)
-                    shapePreview_[i]=juce::jlimit(-1.0f,1.0f,seg.evaluate(static_cast<float>(i-low)/denom));
-            }
+            juce::Rectangle<int> plotBounds() const noexcept { return getLocalBounds().withTrimmedLeft(34).withTrimmedRight(10).withTrimmedTop(22).withTrimmedBottom(20); }
+            float sampleToX(std::size_t sample) const noexcept { const auto p=plotBounds(); return static_cast<float>(p.getX())+static_cast<float>(sample)/2047.0f*static_cast<float>(p.getWidth()); }
+            float valueToY(float value) const noexcept { const auto p=plotBounds(); return static_cast<float>(p.getCentreY())-value*(static_cast<float>(p.getHeight())*0.5f); }
+            float yToValue(float y) const noexcept { const auto p=plotBounds(); return juce::jlimit(-1.0f,1.0f,(static_cast<float>(p.getCentreY())-y)/(static_cast<float>(p.getHeight())*0.5f)); }
             std::size_t sampleForX(float eventX) const noexcept {
-                const auto plot=plotBounds();
-                const float x=juce::jlimit(static_cast<float>(plot.getX()),static_cast<float>(plot.getRight()),eventX);
+                const auto plot=plotBounds(); const float x=juce::jlimit(static_cast<float>(plot.getX()),static_cast<float>(plot.getRight()),eventX);
                 const float norm=(x-static_cast<float>(plot.getX()))/static_cast<float>(juce::jmax(1,plot.getWidth()));
                 return static_cast<std::size_t>(juce::jlimit(0,2047,juce::roundToInt(norm*2047.0f)));
             }
             std::pair<std::size_t,float> pointForEvent(const juce::MouseEvent& event) const noexcept {
-                const auto plot=plotBounds();
-                const float x=juce::jlimit(static_cast<float>(plot.getX()),static_cast<float>(plot.getRight()),event.position.x);
+                const auto plot=plotBounds(); const float x=juce::jlimit(static_cast<float>(plot.getX()),static_cast<float>(plot.getRight()),event.position.x);
                 const float y=juce::jlimit(static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()),event.position.y);
-                const float xNorm=(x-static_cast<float>(plot.getX()))/static_cast<float>(juce::jmax(1,plot.getWidth()));
-                const float yNorm=(y-static_cast<float>(plot.getY()))/static_cast<float>(juce::jmax(1,plot.getHeight()));
-                int sample=juce::jlimit(0,2047,juce::roundToInt(xNorm*2047.0f));
-                float value=juce::jlimit(-1.0f,1.0f,1.0f-2.0f*yNorm);
+                int sample=juce::jlimit(0,2047,juce::roundToInt((x-static_cast<float>(plot.getX()))/static_cast<float>(juce::jmax(1,plot.getWidth()))*2047.0f));
+                float value=juce::jlimit(-1.0f,1.0f,1.0f-2.0f*(y-static_cast<float>(plot.getY()))/static_cast<float>(juce::jmax(1,plot.getHeight())));
                 const bool bypass=juce::ModifierKeys::getCurrentModifiersRealtime().isAltDown();
-                if(!bypass && grid_.snapX && grid_.divisions>0) {
-                    const float gridPosition=static_cast<float>(sample)*static_cast<float>(grid_.divisions)/2047.0f;
-                    sample=juce::jlimit(0,2047,juce::roundToInt(std::round(gridPosition)*2047.0f/
-                                                               static_cast<float>(grid_.divisions)));
-                }
-                if(!bypass && grid_.snapZero) {
-                    const float zeroThreshold=12.0f/static_cast<float>(juce::jmax(1,plot.getHeight()));
-                    if(std::abs(value)<=zeroThreshold*2.0f) value=0.0f;
-                }
-                if(!bypass && grid_.snapY && grid_.amplitudeSteps>0) {
-                    const float halfSteps=static_cast<float>(grid_.amplitudeSteps)/2.0f;
-                    value=juce::jlimit(-1.0f,1.0f,std::round(value*halfSteps)/halfSteps);
-                }
+                if(!bypass && grid_.snapX && grid_.divisions>0) { const float step=2047.0f/static_cast<float>(grid_.divisions); sample=juce::jlimit(0,2047,juce::roundToInt(std::round(static_cast<float>(sample)/step)*step)); }
+                if(!bypass && grid_.snapZero && std::abs(value)<=48.0f/static_cast<float>(juce::jmax(1,plot.getHeight()))) value=0.0f;
+                if(!bypass && grid_.snapY && grid_.amplitudeSteps>0) { const float step=2.0f/static_cast<float>(grid_.amplitudeSteps); value=juce::jlimit(-1.0f,1.0f,std::round((value+1.0f)/step)*step-1.0f); }
                 return {static_cast<std::size_t>(sample),value};
             }
-            void samplesChanged() {
-                repaint();
-                if(onSamplesChanged) onSamplesChanged();
+            void renderLinePreview() {
+                linePreview_=editBefore_;
+                auto a=lineStart_,b=lineEnd_; if(a.first>b.first) std::swap(a,b);
+                const float denom=static_cast<float>(juce::jmax<std::size_t>(1,b.first-a.first));
+                for(std::size_t i=a.first;i<=b.first;++i) linePreview_[i]=juce::jlimit(-1.0f,1.0f,a.second+(b.second-a.second)*static_cast<float>(i-a.first)/denom);
             }
-            mct::origami::ui::WavetableDocument& document_;
-            GridSettings& grid_;
+            int hitPoint(juce::Point<float> pos) const {
+                for(int i=static_cast<int>(curve_.points.size())-1;i>=0;--i)
+                    if(pos.getDistanceFrom({sampleToX(curve_.points[static_cast<std::size_t>(i)].sample),valueToY(curve_.points[static_cast<std::size_t>(i)].value)})<10.0f) return i;
+                return -1;
+            }
+            int hitControl(juce::Point<float> pos) const {
+                for(int i=static_cast<int>(curve_.segments.size())-1;i>=0;--i) {
+                    const auto& seg=curve_.segments[static_cast<std::size_t>(i)];
+                    const auto& a=curve_.points[static_cast<std::size_t>(i)],&b=curve_.points[static_cast<std::size_t>(i+1)];
+                    const float sx=static_cast<float>(a.sample)+(static_cast<float>(b.sample)-static_cast<float>(a.sample))*seg.controlX;
+                    if(pos.getDistanceFrom({sampleToX(static_cast<std::size_t>(sx)),valueToY(seg.controlY)})<10.0f) return i;
+                }
+                return -1;
+            }
+            void beginCurve(const std::pair<std::size_t,float>& p) {
+                curve_={}; curve_.active=true; curve_.frameId=document_.frames[document_.selectedFrame].id;
+                curve_.original=document_.frames[document_.selectedFrame].samples;
+                curvePreview_=curve_.original;
+                curve_.points.push_back({nextCurvePointId_++,p.first,p.second}); curve_.selectedPointId=curve_.points.back().id;
+                awaitingSecondPoint_=true; mouseMovedSinceDown_=false;
+                if(onCurveDraftChanged) onCurveDraftChanged(true); repaint();
+            }
+            void addCurvePoint(const std::pair<std::size_t,float>& p) {
+                if(!curve_.active) { beginCurve(p); return; }
+                CurvePoint point{nextCurvePointId_++,p.first,p.second};
+                auto it=std::lower_bound(curve_.points.begin(),curve_.points.end(),point.sample,[](const CurvePoint& a,std::size_t sample){ return a.sample<sample; });
+                if(it!=curve_.points.end() && it->sample==point.sample) { it->value=point.value; curve_.selectedPointId=it->id; renderCurvePreview(); return; }
+                const auto index=static_cast<std::size_t>(std::distance(curve_.points.begin(),it));
+                curve_.points.insert(it,point); curve_.selectedPointId=point.id; rebuildCurveSegments(index); renderCurvePreview();
+            }
+            void rebuildCurveSegments(std::size_t insertedIndex) {
+                juce::ignoreUnused(insertedIndex);
+                std::vector<CurveSegment> rebuilt;
+                for(std::size_t i=0;i+1<curve_.points.size();++i) {
+                    CurveSegment seg; seg.leftId=curve_.points[i].id; seg.rightId=curve_.points[i+1].id;
+                    seg.controlX=0.5f; seg.controlY=(curve_.points[i].value+curve_.points[i+1].value)*0.5f; seg.hardness=0.5f;
+                    rebuilt.push_back(seg);
+                }
+                curve_.segments=std::move(rebuilt);
+            }
+            static float quadratic(float a,float c,float b,float t) noexcept { const float u=1.0f-t; return u*u*a+2.0f*u*t*c+t*t*b; }
+            static float solveBezierTForX(float target,float ax,float cx,float bx) noexcept {
+                float lo=0.0f,hi=1.0f;
+                for(int n=0;n<18;++n) { const float mid=(lo+hi)*0.5f; if(quadratic(ax,cx,bx,mid)<target) lo=mid; else hi=mid; }
+                return (lo+hi)*0.5f;
+            }
+            void renderCurvePreview() {
+                curvePreview_=curve_.original;
+                if(curve_.points.size()<2) return;
+                for(std::size_t si=0;si<curve_.segments.size();++si) {
+                    const auto& a=curve_.points[si],&b=curve_.points[si+1]; const auto& seg=curve_.segments[si];
+                    if(b.sample<=a.sample) continue;
+                    const float ax=static_cast<float>(a.sample),bx=static_cast<float>(b.sample),cx=ax+(bx-ax)*juce::jlimit(0.02f,0.98f,seg.controlX);
+                    const float hardness=juce::jlimit(0.0f,1.0f,seg.hardness);
+                    for(std::size_t sample=a.sample;sample<=b.sample;++sample) {
+                        const float t=solveBezierTForX(static_cast<float>(sample),ax,cx,bx);
+                        const float shaped=hardness==0.5f ? t : (hardness>0.5f ? std::pow(t,1.0f+(hardness-0.5f)*4.0f) : 1.0f-std::pow(1.0f-t,1.0f+(0.5f-hardness)*4.0f));
+                        curvePreview_[sample]=juce::jlimit(-1.0f,1.0f,quadratic(a.value,seg.controlY,b.value,shaped));
+                    }
+                }
+            }
+            void curveMouseDown(const juce::MouseEvent& event) {
+                const auto pointIndex=hitPoint(event.position);
+                if(pointIndex>=0) { draggingPoint_=pointIndex; curve_.selectedPointId=curve_.points[static_cast<std::size_t>(pointIndex)].id; return; }
+                const auto controlIndex=hitControl(event.position);
+                if(controlIndex>=0) { draggingControl_=controlIndex; curve_.selectedSegment=controlIndex; curve_.selectedPointId=0; return; }
+                const auto p=pointForEvent(event);
+                if(!curve_.active) { beginCurve(p); pendingClickPoint_=p; return; }
+                pendingClickPoint_=p; pendingAdd_=true; mouseMovedSinceDown_=false;
+            }
+            void curveMouseDrag(const juce::MouseEvent& event) {
+                mouseMovedSinceDown_=true;
+                if(draggingPoint_>=0) {
+                    auto p=pointForEvent(event); auto& point=curve_.points[static_cast<std::size_t>(draggingPoint_)];
+                    const std::size_t lo=draggingPoint_>0 ? curve_.points[static_cast<std::size_t>(draggingPoint_-1)].sample+1 : 0;
+                    const std::size_t hi=static_cast<std::size_t>(draggingPoint_)+1<curve_.points.size() ? curve_.points[static_cast<std::size_t>(draggingPoint_+1)].sample-1 : 2047;
+                    point.sample=juce::jlimit(lo,hi,p.first); point.value=p.second; rebuildCurveSegments(static_cast<std::size_t>(draggingPoint_)); renderCurvePreview(); repaint(); return;
+                }
+                if(draggingControl_>=0) {
+                    auto& seg=curve_.segments[static_cast<std::size_t>(draggingControl_)];
+                    const auto& a=curve_.points[static_cast<std::size_t>(draggingControl_)],&b=curve_.points[static_cast<std::size_t>(draggingControl_+1)];
+                    const auto p=pointForEvent(event);
+                    seg.controlX=juce::jlimit(0.02f,0.98f,static_cast<float>(static_cast<long long>(p.first)-static_cast<long long>(a.sample))/static_cast<float>(juce::jmax<std::size_t>(1,b.sample-a.sample)));
+                    seg.controlY=p.second; renderCurvePreview(); repaint(); return;
+                }
+                if(curve_.active && curve_.points.size()==1) {
+                    auto p=pointForEvent(event); if(curve_.points.front().sample==p.first) p.first=juce::jmin<std::size_t>(2047,p.first+1);
+                    if(curve_.points.size()==1) { addCurvePoint(p); draggingPoint_=hitPoint(event.position); awaitingSecondPoint_=false; }
+                }
+            }
+            void curveMouseUp(const juce::MouseEvent&) {
+                if(draggingPoint_>=0 || draggingControl_>=0) { draggingPoint_=-1; draggingControl_=-1; repaint(); return; }
+                if(pendingAdd_) { addCurvePoint(pendingClickPoint_); pendingAdd_=false; awaitingSecondPoint_=false; repaint(); return; }
+                if(curve_.active && curve_.points.size()==1 && !mouseMovedSinceDown_) {
+                    if(awaitingSecondPoint_) { awaitingSecondPoint_=false; pendingAdd_=true; }
+                }
+            }
+            void paintCurveDraft(juce::Graphics& g) {
+                for(std::size_t i=0;i<curve_.segments.size();++i) {
+                    const auto& seg=curve_.segments[i]; const auto& a=curve_.points[i],&b=curve_.points[i+1];
+                    const float sx=static_cast<float>(a.sample)+(static_cast<float>(b.sample)-static_cast<float>(a.sample))*seg.controlX;
+                    const juce::Point<float> c{sampleToX(static_cast<std::size_t>(sx)),valueToY(seg.controlY)};
+                    g.setColour(mct::origami::ui::signalSourceColour().withAlpha(curve_.selectedSegment==static_cast<int>(i)?1.0f:0.78f)); g.fillEllipse(c.x-4.0f,c.y-4.0f,8.0f,8.0f);
+                }
+                for(const auto& p:curve_.points) {
+                    const juce::Point<float> pos{sampleToX(p.sample),valueToY(p.value)};
+                    g.setColour(p.id==curve_.selectedPointId?mct::origami::ui::signalSourceColour():juce::Colours::white);
+                    g.fillEllipse(pos.x-4.5f,pos.y-4.5f,9.0f,9.0f);
+                }
+            }
+            GridSettings& grid_; mct::origami::ui::WavetableDocument& document_;
             WaveformTool tool_=WaveformTool::pencil;
-            enum class ShapeEditState { idle, drawingEndpoints, editingCurve };
-            ShapeSegment shape_{};
-            std::array<float,mct::origami::ui::kWavetableFrameSize> shapePreview_{};
-            ShapeEditState shapeState_=ShapeEditState::idle;
-            bool shapeDraggingHandle_=false;
-            WaveformSelection selection_{};
-            bool selecting_=false;
-            std::size_t selectionAnchor_=0;
-            bool drawing_=false;
-            std::size_t lastSample_=0;
-            float lastValue_=0.0f;
+            WaveformSelection selection_{}; bool selecting_=false; std::size_t selectionAnchor_=0;
+            bool drawing_=false; std::size_t lastSample_=0; float lastValue_=0.0f;
+            bool lineDrawing_=false; std::pair<std::size_t,float> lineStart_{},lineEnd_{};
+            std::array<float,mct::origami::ui::kWavetableFrameSize> linePreview_{};
+            CurveDraft curve_{}; std::array<float,mct::origami::ui::kWavetableFrameSize> curvePreview_{};
+            std::uint64_t nextCurvePointId_=1; int draggingPoint_=-1,draggingControl_=-1;
+            bool awaitingSecondPoint_=false,pendingAdd_=false,mouseMovedSinceDown_=false;
+            std::pair<std::size_t,float> pendingClickPoint_{};
             std::uint64_t editFrameId_=0;
             std::array<float,mct::origami::ui::kWavetableFrameSize> editBefore_{};
         };
@@ -1078,6 +1070,7 @@ private:
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
             waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); };
             waveformCanvas_.onSelectionChanged=[this](bool active) { toolsPanel_.setSelectionAvailable(active); };
+            waveformCanvas_.onCurveDraftChanged=[this](bool) { /* Patch 13.3 replaces Tools with contextual Inspector. */ };
             waveformCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) {
                 commitEdit(id,before,after);
             };
@@ -1117,6 +1110,9 @@ private:
             if(mods.isCommandDown() && key.getTextCharacter()=='z') {
                 if(mods.isShiftDown()) redo(); else undo();
                 return true;
+            }
+            if(key==juce::KeyPress::returnKey && waveformCanvas_.hasCurveDraft()) {
+                waveformCanvas_.applyCurveDraft(); return true;
             }
             if(key==juce::KeyPress::escapeKey && waveformCanvas_.hasPendingShape()) {
                 waveformCanvas_.cancelPendingShape(); return true;
