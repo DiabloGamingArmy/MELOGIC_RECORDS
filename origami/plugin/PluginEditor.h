@@ -315,7 +315,7 @@ private:
             std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
                                const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
             explicit WaveformCanvas(mct::origami::ui::WavetableDocument& document,GridSettings& grid)
-                :document_(document),grid_(grid) {
+                :grid_(grid),document_(document) {
                 setInterceptsMouseClicks(true,false);
                 setMouseCursor(juce::MouseCursor::CrosshairCursor);
             }
@@ -545,6 +545,10 @@ private:
                 if(!bypass && grid_.snapZero && std::abs(value)<=48.0f/static_cast<float>(juce::jmax(1,plot.getHeight()))) value=0.0f;
                 if(!bypass && grid_.snapY && grid_.amplitudeSteps>0) { const float step=2.0f/static_cast<float>(grid_.amplitudeSteps); value=juce::jlimit(-1.0f,1.0f,std::round((value+1.0f)/step)*step-1.0f); }
                 return {static_cast<std::size_t>(sample),value};
+            }
+            void samplesChanged() {
+                repaint();
+                if(onSamplesChanged) onSamplesChanged();
             }
             void renderLinePreview() {
                 linePreview_=editBefore_;
