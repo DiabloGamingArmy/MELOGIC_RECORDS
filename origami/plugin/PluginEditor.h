@@ -50,26 +50,6 @@ private:
                 addAndMakeVisible(component);
                 resized();
             }
-        void commitEdit(std::uint64_t id,
-                        const std::array<float,mct::origami::ui::kWavetableFrameSize>& before,
-                        const std::array<float,mct::origami::ui::kWavetableFrameSize>& after) {
-            if(before==after) return;
-            if(historyIndex_<history_.size()) history_.erase(history_.begin()+static_cast<std::ptrdiff_t>(historyIndex_),history_.end());
-            history_.push_back({id,before,after});
-            if(history_.size()>128) history_.erase(history_.begin());
-            historyIndex_=history_.size();
-            refreshHistoryButtons();
-        }
-        void undo() {
-            if(historyIndex_==0) return;
-            --historyIndex_;
-            applyHistory(history_[historyIndex_],false);
-        }
-        void redo() {
-            if(historyIndex_>=history_.size()) return;
-            applyHistory(history_[historyIndex_],true);
-            ++historyIndex_;
-        }
         void resized() override {
                 if(content_!=nullptr) content_->setBounds(contentBounds());
             }
@@ -573,6 +553,28 @@ private:
             return false;
         }
     private:
+        void commitEdit(std::uint64_t id,
+                        const std::array<float,mct::origami::ui::kWavetableFrameSize>& before,
+                        const std::array<float,mct::origami::ui::kWavetableFrameSize>& after) {
+            if(before==after) return;
+            if(historyIndex_<history_.size())
+                history_.erase(history_.begin()+static_cast<std::ptrdiff_t>(historyIndex_),history_.end());
+            history_.push_back({id,before,after});
+            if(history_.size()>128) history_.erase(history_.begin());
+            historyIndex_=history_.size();
+            refreshHistoryButtons();
+        }
+        void undo() {
+            if(historyIndex_==0) return;
+            --historyIndex_;
+            applyHistory(history_[historyIndex_],false);
+        }
+        void redo() {
+            if(historyIndex_>=history_.size()) return;
+            applyHistory(history_[historyIndex_],true);
+            ++historyIndex_;
+            refreshHistoryButtons();
+        }
         struct HistoryEntry {
             std::uint64_t frameId=0;
             std::array<float,mct::origami::ui::kWavetableFrameSize> before{},after{};
