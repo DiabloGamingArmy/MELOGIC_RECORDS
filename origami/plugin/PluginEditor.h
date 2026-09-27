@@ -47,9 +47,13 @@ private:
                 return getLocalBounds().withTrimmedTop(regionHeaderHeight).reduced(contentGutter);
             }
             void setContentComponent(juce::Component& component) {
+                if(content_==&component) { component.setVisible(true); resized(); return; }
+                if(content_!=nullptr) content_->setVisible(false);
                 content_=&component;
                 addAndMakeVisible(component);
+                component.toFront(false);
                 resized();
+                repaint();
             }
         void resized() override {
                 if(content_!=nullptr) content_->setBounds(contentBounds());
