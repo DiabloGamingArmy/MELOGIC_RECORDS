@@ -311,7 +311,9 @@ private:
                 setMouseCursor(juce::MouseCursor::CrosshairCursor);
             }
             void refresh() { repaint(); }
-            void setTool(WaveformTool tool) { tool_=tool; setMouseCursor(juce::MouseCursor::CrosshairCursor); repaint(); }
+            bool hasPendingShape() const noexcept { return shapeState_!=ShapeEditState::idle; }
+            void cancelPendingShape() { shapeState_=ShapeEditState::idle; shapeDraggingHandle_=false; repaint(); }
+            void setTool(WaveformTool tool) { cancelPendingShape(); tool_=tool; setMouseCursor(juce::MouseCursor::CrosshairCursor); repaint(); }
             WaveformTool tool() const noexcept { return tool_; }
             bool hasSelection() const noexcept { return selection_.active; }
             const WaveformSelection& selection() const noexcept { return selection_; }
@@ -329,13 +331,19 @@ private:
                     selection_={true,document_.frames[document_.selectedFrame].id,selectionAnchor_,selectionAnchor_};
                     repaint(); if(onSelectionChanged) onSelectionChanged(true); return;
                 }
+                if(tool_==WaveformTool::curve && shapeState_==ShapeEditState::editingCurve) {
+                    const auto handle=curveHandlePosition();
+                    if(event.position.getDistanceFrom(handle)<14.0f) {
+                        shapeDraggingHandle_=true; return;
+                    }
+                    commitPendingShape(); return;
+                }
                 if(tool_==WaveformTool::line || tool_==WaveformTool::curve) {
-                    shapeDrawing_=true;
+                    shapeState_=ShapeEditState::drawingEndpoints;
                     editFrameId_=document_.frames[document_.selectedFrame].id;
                     editBefore_=document_.frames[document_.selectedFrame].samples;
                     const auto p=pointForEvent(event);
                     shape_={p.first,p.first,p.second,p.second,0.0f};
-                    shapeDragStartY_=event.position.y;
                     shapePreview_=editBefore_;
                     repaint(); return;
                 }
@@ -356,13 +364,16 @@ private:
                     selection_.end=juce::jmax(selectionAnchor_,sample);
                     repaint(); return;
                 }
-                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeDrawing_) {
+                if(tool_==WaveformTool::curve && shapeState_==ShapeEditState::editingCurve && shapeDraggingHandle_) {
+                    const auto plot=plotBounds();
+                    const float midY=(valueToY(shape_.startValue)+valueToY(shape_.endValue))*0.5f;
+                    const float scale=juce::jmax(48.0f,static_cast<float>(plot.getHeight())*0.28f);
+                    shape_.curve=juce::jlimit(-1.0f,1.0f,(midY-event.position.y)/scale);
+                    renderShapePreview(); repaint(); return;
+                }
+                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeState_==ShapeEditState::drawingEndpoints) {
                     const auto p=pointForEvent(event);
-                    shape_.endSample=p.first; shape_.endValue=p.second;
-                    if(tool_==WaveformTool::curve) {
-                        const float dy=event.position.y-shapeDragStartY_;
-                        shape_.curve=juce::jlimit(-1.0f,1.0f,-dy/120.0f);
-                    }
+                    shape_.endSample=p.first; shape_.endValue=p.second; shape_.curve=0.0f;
                     renderShapePreview(); repaint(); return;
                 }
                 if(!drawing_ || !document_.valid()) return;
@@ -391,14 +402,14 @@ private:
                     if(selection_.start==selection_.end) clearSelection();
                     return;
                 }
-                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeDrawing_) {
-                    shapeDrawing_=false;
-                    if(!document_.valid()) return;
-                    auto& frame=document_.frames[document_.selectedFrame];
-                    frame.samples=shapePreview_;
-                    samplesChanged();
-                    if(frame.samples!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,frame.samples);
-                    repaint(); return;
+                if(tool_==WaveformTool::curve && shapeState_==ShapeEditState::editingCurve && shapeDraggingHandle_) {
+                    shapeDraggingHandle_=false; repaint(); return;
+                }
+                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeState_==ShapeEditState::drawingEndpoints) {
+                    if(tool_==WaveformTool::curve) {
+                        shapeState_=ShapeEditState::editingCurve; renderShapePreview(); repaint(); return;
+                    }
+                    commitPendingShape(); return;
                 }
                 if(!drawing_) return;
                 drawing_=false;
@@ -510,7 +521,7 @@ private:
 
                 g.setColour(juce::Colours::white.withAlpha(0.32f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
-                if(shapeDrawing_) {
+                if(shapeState_!=ShapeEditState::idle) {
                     juce::Path preview;
                     const auto low=juce::jmin(shape_.startSample,shape_.endSample);
                     const auto high=juce::jmax(shape_.startSample,shape_.endSample);
@@ -526,6 +537,13 @@ private:
                         g.fillEllipse(x-3.0f,mapY(v)-3.0f,6.0f,6.0f);
                     };
                     handle(shape_.startSample,shape_.startValue); handle(shape_.endSample,shape_.endValue);
+                    if(shapeState_==ShapeEditState::editingCurve) {
+                        const auto hp=curveHandlePosition();
+                        g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.95f));
+                        g.fillEllipse(hp.x-4.0f,hp.y-4.0f,8.0f,8.0f);
+                        g.setColour(juce::Colours::white.withAlpha(0.65f));
+                        g.drawEllipse(hp.x-4.0f,hp.y-4.0f,8.0f,8.0f,1.0f);
+                    }
                 }
 
                 juce::String readout="FRAME "+juce::String(static_cast<int>(document_.selectedFrame+1)).paddedLeft('0',3)+"     2048 SAMPLES";
@@ -536,6 +554,28 @@ private:
         private:
             juce::Rectangle<int> plotBounds() const noexcept {
                 return getLocalBounds().withTrimmedLeft(34).withTrimmedRight(10).withTrimmedTop(22).withTrimmedBottom(20);
+            }
+            float valueToY(float value) const noexcept {
+                const auto plot=plotBounds();
+                return static_cast<float>(plot.getCentreY())-value*(static_cast<float>(plot.getHeight())*0.5f);
+            }
+            juce::Point<float> curveHandlePosition() const noexcept {
+                const auto plot=plotBounds();
+                const auto midSample=(shape_.startSample+shape_.endSample)/2;
+                const float x=static_cast<float>(plot.getX())+static_cast<float>(midSample)/2047.0f*static_cast<float>(plot.getWidth());
+                const float base=(valueToY(shape_.startValue)+valueToY(shape_.endValue))*0.5f;
+                const float scale=juce::jmax(48.0f,static_cast<float>(plot.getHeight())*0.28f);
+                return {x,base-shape_.curve*scale};
+            }
+            void commitPendingShape() {
+                if(shapeState_==ShapeEditState::idle || !document_.valid()) return;
+                auto& frame=document_.frames[document_.selectedFrame];
+                frame.samples=shapePreview_;
+                const auto after=frame.samples;
+                shapeState_=ShapeEditState::idle; shapeDraggingHandle_=false;
+                samplesChanged();
+                if(after!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,after);
+                repaint();
             }
             void renderShapePreview() {
                 shapePreview_=editBefore_;
@@ -588,10 +628,11 @@ private:
             mct::origami::ui::WavetableDocument& document_;
             GridSettings& grid_;
             WaveformTool tool_=WaveformTool::pencil;
+            enum class ShapeEditState { idle, drawingEndpoints, editingCurve };
             ShapeSegment shape_{};
             std::array<float,mct::origami::ui::kWavetableFrameSize> shapePreview_{};
-            bool shapeDrawing_=false;
-            float shapeDragStartY_=0.0f;
+            ShapeEditState shapeState_=ShapeEditState::idle;
+            bool shapeDraggingHandle_=false;
             WaveformSelection selection_{};
             bool selecting_=false;
             std::size_t selectionAnchor_=0;
@@ -662,7 +703,7 @@ private:
             std::function<void(int,float,float,float)> onGenerate;
             std::function<void(int,float,float)> onTransform;
             std::function<void()> onContentHeightChanged;
-            int preferredHeight() const noexcept { return contentHeight_; }
+            int preferredHeight() const noexcept { return calculateRequiredHeight(); }
             ToolsPanel(GridSettings& grid,WaveformCanvas& canvas):grid_(grid),canvas_(canvas) {
                 setWantsKeyboardFocus(true);
                 for(auto* b:std::array<juce::TextButton*,4>{{&drawHeader_,&gridHeader_,&generateHeader_,&transformHeader_}}) {
@@ -789,7 +830,7 @@ private:
                     { auto row=area.removeFromTop(24); fadeIn_.setBounds(row.removeFromLeft(row.getWidth()/2)); fadeOut_.setBounds(row); }
                     area.removeFromTop(3); removeDc_.setBounds(area.removeFromTop(24)); area.removeFromTop(6);
                 }
-                contentHeight_=getHeight()-area.getHeight()+8;
+                contentHeight_=calculateRequiredHeight();
             }
             void paint(juce::Graphics& g) override {
                 g.setColour(juce::Colours::white.withAlpha(0.38f));
@@ -808,11 +849,26 @@ private:
                 if(transformOpen_) g.drawText("GAIN",gainText_,juce::Justification::centredLeft,false);
                 if(transformOpen_) g.drawText("OFFSET",offsetText_,juce::Justification::centredLeft,false);
                 if(transformOpen_) g.drawText("PROCESS",processLabel_,juce::Justification::centredLeft,false);
-                g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.75f));
-                if(drawOpen_) { g.drawRect(pencil_.getBounds().toFloat(),1.0f); g.drawRect(line_.getBounds().toFloat(),1.0f); g.drawRect(curve_.getBounds().toFloat(),1.0f); g.drawRect(select_.getBounds().toFloat(),1.0f); }
-                if(generateOpen_) g.drawRect(apply_.getBounds().toFloat(),1.0f);
+                if(drawOpen_) {
+                    auto drawToolBorder=[&](juce::TextButton& b,WaveformTool tool) {
+                        g.setColour(canvas_.tool()==tool ? mct::origami::ui::signalSourceColour().withAlpha(0.82f)
+                                                        : juce::Colour(0xff383838));
+                        g.drawRect(b.getBounds().toFloat(),1.0f);
+                    };
+                    drawToolBorder(pencil_,WaveformTool::pencil); drawToolBorder(line_,WaveformTool::line);
+                    drawToolBorder(curve_,WaveformTool::curve); drawToolBorder(select_,WaveformTool::select);
+                }
+                if(generateOpen_) { g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.75f)); g.drawRect(apply_.getBounds().toFloat(),1.0f); }
             }
         private:
+            int calculateRequiredHeight() const noexcept {
+                int h=10;
+                h+=29; if(drawOpen_) h+=26+3+26+7;
+                h+=29; if(gridOpen_) h+=5*29+5;
+                h+=29; if(generateOpen_) h+=4*29+26+7;
+                h+=29; if(transformOpen_) h+=2*29+24+3+24+3+24+8+16+24+3+24+3+24+6;
+                return h;
+            }
             void relayout() {
                 resized(); repaint();
                 if(onContentHeightChanged) onContentHeightChanged();
@@ -1019,7 +1075,7 @@ private:
             tools_.setContentComponent(toolsScroller_);
             timeline_.setContentComponent(frameStrip_);
             waveform_.setContentComponent(waveformCanvas_);
-            frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
+            frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
             waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); };
             waveformCanvas_.onSelectionChanged=[this](bool active) { toolsPanel_.setSelectionAvailable(active); };
             waveformCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) {
@@ -1061,6 +1117,9 @@ private:
             if(mods.isCommandDown() && key.getTextCharacter()=='z') {
                 if(mods.isShiftDown()) redo(); else undo();
                 return true;
+            }
+            if(key==juce::KeyPress::escapeKey && waveformCanvas_.hasPendingShape()) {
+                waveformCanvas_.cancelPendingShape(); return true;
             }
             if(key==juce::KeyPress::escapeKey && waveformCanvas_.hasSelection()) {
                 waveformCanvas_.clearSelection(); return true;
