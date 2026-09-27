@@ -231,6 +231,9 @@ private:
                 reveal(index);
                 if(onFrameSelected) onFrameSelected(index);
             }
+            void refreshSelectedThumbnail() {
+                if(document_.selectedFrame<cards_.size()) cards_[document_.selectedFrame]->repaint();
+            }
         private:
             void reveal(unsigned index) {
                 if(index>=cards_.size()) return;
@@ -252,20 +255,47 @@ private:
 
         class WaveformCanvas final : public juce::Component {
         public:
+            std::function<void()> onSamplesChanged;
             explicit WaveformCanvas(mct::origami::ui::WavetableDocument& document):document_(document) {
-                setInterceptsMouseClicks(false,false);
+                setInterceptsMouseClicks(true,false);
+                setMouseCursor(juce::MouseCursor::CrosshairCursor);
             }
             void refresh() { repaint(); }
+            void mouseDown(const juce::MouseEvent& event) override {
+                if(!document_.valid()) return;
+                drawing_=true;
+                const auto point=pointForEvent(event);
+                lastSample_=point.first;
+                lastValue_=point.second;
+                document_.setFrameSample(document_.selectedFrame,lastSample_,lastValue_);
+                samplesChanged();
+            }
+            void mouseDrag(const juce::MouseEvent& event) override {
+                if(!drawing_ || !document_.valid()) return;
+                const auto point=pointForEvent(event);
+                const auto currentSample=point.first;
+                const float currentValue=point.second;
+                if(currentSample==lastSample_) {
+                    document_.setFrameSample(document_.selectedFrame,currentSample,currentValue);
+                } else {
+                    const auto low=juce::jmin(lastSample_,currentSample);
+                    const auto high=juce::jmax(lastSample_,currentSample);
+                    const float denominator=static_cast<float>(static_cast<long long>(currentSample)-static_cast<long long>(lastSample_));
+                    for(std::size_t sample=low;sample<=high;++sample) {
+                        const float t=static_cast<float>(static_cast<long long>(sample)-static_cast<long long>(lastSample_))/denominator;
+                        document_.setFrameSample(document_.selectedFrame,sample,lastValue_+t*(currentValue-lastValue_));
+                    }
+                }
+                lastSample_=currentSample;
+                lastValue_=currentValue;
+                samplesChanged();
+            }
+            void mouseUp(const juce::MouseEvent&) override { drawing_=false; }
+
             void paint(juce::Graphics& g) override {
                 const auto bounds=getLocalBounds();
                 if(bounds.isEmpty() || !document_.valid()) return;
-
-                constexpr int leftPad=34;
-                constexpr int rightPad=10;
-                constexpr int topPad=22;
-                constexpr int bottomPad=20;
-                auto plot=bounds.withTrimmedLeft(leftPad).withTrimmedRight(rightPad)
-                                .withTrimmedTop(topPad).withTrimmedBottom(bottomPad);
+                const auto plot=plotBounds();
                 if(plot.getWidth()<2 || plot.getHeight()<2) return;
 
                 const auto mapY=[&](float value) {
@@ -283,8 +313,7 @@ private:
                                          static_cast<float>(plot.getRight()));
                     g.setColour(juce::Colours::white.withAlpha(zero ? 0.48f : 0.28f));
                     const juce::String label=zero ? "0.0" : juce::String(level,1);
-                    g.drawText(label,2,juce::roundToInt(y)-7,leftPad-7,14,
-                               juce::Justification::centredRight,false);
+                    g.drawText(label,2,juce::roundToInt(y)-7,27,14,juce::Justification::centredRight,false);
                 }
 
                 constexpr int divisions=8;
@@ -292,48 +321,80 @@ private:
                     const float t=static_cast<float>(division)/static_cast<float>(divisions);
                     const float x=static_cast<float>(plot.getX())+t*static_cast<float>(plot.getWidth());
                     g.setColour(juce::Colours::white.withAlpha(division==0 || division==divisions ? 0.12f : 0.065f));
-                    g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),
-                                       static_cast<float>(plot.getBottom()));
+                    g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
                     const int sample=division==divisions ? 2047 : division*256;
                     g.setColour(juce::Colours::white.withAlpha(0.25f));
-                    const int labelWidth=38;
-                    g.drawText(juce::String(sample),juce::roundToInt(x)-labelWidth/2,plot.getBottom()+3,
-                               labelWidth,12,juce::Justification::centred,false);
+                    g.drawText(juce::String(sample),juce::roundToInt(x)-19,plot.getBottom()+3,38,12,juce::Justification::centred,false);
                 }
 
                 const auto& samples=document_.frames[document_.selectedFrame].samples;
                 const int columns=juce::jmax(1,plot.getWidth());
                 juce::Path envelope;
-                bool started=false;
                 for(int column=0;column<columns;++column) {
-                    const std::size_t begin=static_cast<std::size_t>(
-                        (static_cast<std::uint64_t>(column)*samples.size())/static_cast<std::uint64_t>(columns));
-                    const std::size_t end=juce::jmax(begin+1,
-                        static_cast<std::size_t>((static_cast<std::uint64_t>(column+1)*samples.size())/
-                                                 static_cast<std::uint64_t>(columns)));
+                    const std::size_t begin=static_cast<std::size_t>((static_cast<std::uint64_t>(column)*samples.size())/static_cast<std::uint64_t>(columns));
+                    const std::size_t end=juce::jmax(begin+1,static_cast<std::size_t>((static_cast<std::uint64_t>(column+1)*samples.size())/static_cast<std::uint64_t>(columns)));
                     float minimum=1.0f,maximum=-1.0f;
                     for(std::size_t i=begin;i<juce::jmin(end,samples.size());++i) {
-                        minimum=juce::jmin(minimum,samples[i]);
-                        maximum=juce::jmax(maximum,samples[i]);
+                        minimum=juce::jmin(minimum,samples[i]); maximum=juce::jmax(maximum,samples[i]);
                     }
                     const float x=static_cast<float>(plot.getX()+column)+0.5f;
-                    const float yTop=mapY(maximum);
-                    const float yBottom=mapY(minimum);
-                    if(!started) { envelope.startNewSubPath(x,yTop); started=true; }
-                    else envelope.startNewSubPath(x,yTop);
-                    envelope.lineTo(x,yBottom);
+                    envelope.startNewSubPath(x,mapY(maximum));
+                    envelope.lineTo(x,mapY(minimum));
                 }
                 g.setColour(juce::Colours::white.withAlpha(0.90f));
                 g.strokePath(envelope,juce::PathStrokeType(1.0f));
 
                 g.setColour(juce::Colours::white.withAlpha(0.32f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
-                const auto readout="FRAME "+juce::String(static_cast<int>(document_.selectedFrame+1)).paddedLeft('0',3)+
-                                   "     2048 SAMPLES";
+                const auto readout="FRAME "+juce::String(static_cast<int>(document_.selectedFrame+1)).paddedLeft('0',3)+"     2048 SAMPLES";
                 g.drawText(readout,plot.getX(),3,plot.getWidth(),14,juce::Justification::centredRight,false);
             }
         private:
+            juce::Rectangle<int> plotBounds() const noexcept {
+                return getLocalBounds().withTrimmedLeft(34).withTrimmedRight(10).withTrimmedTop(22).withTrimmedBottom(20);
+            }
+            std::pair<std::size_t,float> pointForEvent(const juce::MouseEvent& event) const noexcept {
+                const auto plot=plotBounds();
+                const float x=juce::jlimit(static_cast<float>(plot.getX()),static_cast<float>(plot.getRight()),event.position.x);
+                const float y=juce::jlimit(static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()),event.position.y);
+                const float xNorm=(x-static_cast<float>(plot.getX()))/static_cast<float>(juce::jmax(1,plot.getWidth()));
+                const float yNorm=(y-static_cast<float>(plot.getY()))/static_cast<float>(juce::jmax(1,plot.getHeight()));
+                const auto sample=static_cast<std::size_t>(juce::jlimit(0,2047,juce::roundToInt(xNorm*2047.0f)));
+                return {sample,juce::jlimit(-1.0f,1.0f,1.0f-2.0f*yNorm)};
+            }
+            void samplesChanged() {
+                repaint();
+                if(onSamplesChanged) onSamplesChanged();
+            }
             mct::origami::ui::WavetableDocument& document_;
+            bool drawing_=false;
+            std::size_t lastSample_=0;
+            float lastValue_=0.0f;
+        };
+
+        class ToolsPanel final : public juce::Component {
+        public:
+            ToolsPanel() {
+                addAndMakeVisible(pencil_);
+                pencil_.setButtonText("PENCIL");
+                pencil_.setEnabled(false);
+            }
+            void resized() override {
+                auto area=getLocalBounds().reduced(5);
+                labelBounds_=area.removeFromTop(18);
+                pencil_.setBounds(area.removeFromTop(26));
+            }
+            void paint(juce::Graphics& g) override {
+                g.setColour(juce::Colours::white.withAlpha(0.38f));
+                g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
+                g.drawText("DRAW",labelBounds_,juce::Justification::centredLeft,false);
+                const auto b=pencil_.getBounds().toFloat();
+                g.setColour(juce::Colour(0xffff1018).withAlpha(0.75f));
+                g.drawRect(b,1.0f);
+            }
+        private:
+            juce::Rectangle<int> labelBounds_;
+            juce::TextButton pencil_{"PENCIL"};
         };
 
         class EditorHeader final : public juce::Component {
@@ -416,9 +477,11 @@ private:
             header_.onClose=[this] { if(onClose) onClose(); };
             for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&table_}})
                 addAndMakeVisible(region);
+            tools_.setContentComponent(toolsPanel_);
             timeline_.setContentComponent(frameStrip_);
             waveform_.setContentComponent(waveformCanvas_);
             frameStrip_.onFrameSelected=[this](unsigned) { refreshSelectedFrame(); };
+            waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); };
             header_.setDocumentName(document_.name);
             refreshSelectedFrame();
         }
@@ -455,6 +518,7 @@ private:
         mct::origami::ui::WavetableDocument document_;
         EditorHeader header_;
         EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
+        ToolsPanel toolsPanel_;
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
     };
