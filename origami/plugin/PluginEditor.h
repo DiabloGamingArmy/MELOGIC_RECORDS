@@ -32,18 +32,45 @@ public:
     void itemDropped(const SourceDetails&) override;
 private:
     class WavetableEditorSurface final : public juce::Component {
+        static constexpr int editorHeaderHeight=30;
+        static constexpr int regionHeaderHeight=20;
+        static constexpr int timelineHeight=125;
+        static constexpr int tableHeight=44;
+        static constexpr int contentGutter=4;
+
         class EditorRegion final : public juce::Component {
         public:
             explicit EditorRegion(juce::String title):title_(std::move(title)) {}
+            juce::Rectangle<int> contentBounds() const noexcept {
+                return getLocalBounds().withTrimmedTop(regionHeaderHeight).reduced(contentGutter);
+            }
             void paint(juce::Graphics& g) override {
-                const auto bounds=getLocalBounds().toFloat().reduced(0.5f);
+                const auto bounds=getLocalBounds();
+                const auto header=bounds.withHeight(regionHeaderHeight);
+                const auto content=contentBounds();
+
                 g.setColour(juce::Colour(0xff0b0b0b));
-                g.fillRect(getLocalBounds());
+                g.fillRect(bounds);
                 g.setColour(juce::Colour(0xff303030));
-                g.drawRect(bounds,1.0f);
-                g.setColour(juce::Colours::white.withAlpha(0.54f));
-                g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
-                g.drawText(title_,getLocalBounds(),juce::Justification::centred,false);
+                g.drawRect(bounds.toFloat().reduced(0.5f),1.0f);
+
+                g.setColour(juce::Colour(0xff111111));
+                g.fillRect(header.reduced(1,1));
+                g.setColour(juce::Colour(0xff303030));
+                g.drawLine(1.0f,static_cast<float>(regionHeaderHeight)-0.5f,
+                           static_cast<float>(getWidth())-1.0f,
+                           static_cast<float>(regionHeaderHeight)-0.5f,1.0f);
+
+                if(!content.isEmpty()) {
+                    g.setColour(juce::Colour(0xff080808));
+                    g.fillRect(content);
+                    g.setColour(juce::Colour(0xff242424));
+                    g.drawRect(content.toFloat().reduced(0.5f),1.0f);
+                }
+
+                g.setColour(juce::Colours::white.withAlpha(0.62f));
+                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::bold)));
+                g.drawText(title_,header.reduced(7,0),juce::Justification::centredLeft,false);
             }
         private:
             juce::String title_;
@@ -52,10 +79,10 @@ private:
         std::function<void()> onClose;
         WavetableEditorSurface()
             : tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
-              timeline_("FRAME TIMELINE"),controlBar_("CONTROL BAR") {
+              timeline_("FRAMES"),table_("TABLE") {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
-            for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&controlBar_}})
+            for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&table_}})
                 addAndMakeVisible(region);
             addAndMakeVisible(close_);
             close_.setButtonText("X");
@@ -64,18 +91,15 @@ private:
             close_.onClick=[this] { if(onClose) onClose(); };
         }
         void resized() override {
-            constexpr int titleHeight=30;
             constexpr int closeSize=24;
-            constexpr int inset=5;
-            constexpr int timelineHeight=110;
-            constexpr int controlHeight=44;
+            constexpr int closeInset=5;
 
             auto area=getLocalBounds();
-            auto title=area.removeFromTop(titleHeight);
+            auto title=area.removeFromTop(editorHeaderHeight);
             close_.setBounds(title.removeFromRight(closeSize).withSizeKeepingCentre(closeSize,closeSize)
-                                 .translated(-inset,0));
+                                 .translated(-closeInset,0));
 
-            controlBar_.setBounds(area.removeFromBottom(controlHeight));
+            table_.setBounds(area.removeFromBottom(tableHeight));
             timeline_.setBounds(area.removeFromBottom(timelineHeight));
 
             const int toolsWidth=juce::roundToInt(static_cast<float>(area.getWidth())*.14f);
@@ -88,11 +112,12 @@ private:
         }
         void paint(juce::Graphics& g) override {
             g.fillAll(mct::origami::ui::Palette::background());
-            const auto title=juce::Rectangle<int>(0,0,getWidth(),30);
+            const auto title=juce::Rectangle<int>(0,0,getWidth(),editorHeaderHeight);
             g.setColour(juce::Colour(0xff0b0b0b));
             g.fillRect(title);
             g.setColour(juce::Colour(0xff303030));
-            g.drawLine(0.0f,29.5f,static_cast<float>(getWidth()),29.5f,1.0f);
+            g.drawLine(0.0f,static_cast<float>(editorHeaderHeight)-0.5f,
+                       static_cast<float>(getWidth()),static_cast<float>(editorHeaderHeight)-0.5f,1.0f);
             g.setColour(juce::Colours::white.withAlpha(0.72f));
             g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
             g.drawText("WAVETABLE EDITOR",title.reduced(10,0),juce::Justification::centredLeft,false);
@@ -105,7 +130,7 @@ private:
             return false;
         }
     private:
-        EditorRegion tools_,waveform_,spectrum_,timeline_,controlBar_;
+        EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
         juce::TextButton close_{"X"};
     };
     void openWavetableEditor(unsigned oscillatorId);
