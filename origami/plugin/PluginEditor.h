@@ -322,6 +322,47 @@ private:
             void refresh() { repaint(); }
             bool hasPendingShape() const noexcept { return lineDrawing_ || curve_.active; }
             bool hasCurveDraft() const noexcept { return curve_.active; }
+            std::function<void()> onCurveSelectionChanged;
+            int curvePointCount() const noexcept { return static_cast<int>(curve_.points.size()); }
+            int selectedCurvePointIndex() const noexcept {
+                for(std::size_t i=0;i<curve_.points.size();++i) if(curve_.points[i].id==curve_.selectedPointId) return static_cast<int>(i);
+                return -1;
+            }
+            int selectedCurveSegmentIndex() const noexcept { return curve_.selectedSegment; }
+            bool selectedCurvePointValues(int& sample,float& value) const noexcept {
+                const int i=selectedCurvePointIndex(); if(i<0) return false;
+                sample=static_cast<int>(curve_.points[static_cast<std::size_t>(i)].sample); value=curve_.points[static_cast<std::size_t>(i)].value; return true;
+            }
+            bool selectedCurveSegmentValues(float& x,float& y,float& hardness) const noexcept {
+                const int i=curve_.selectedSegment; if(i<0 || i>=static_cast<int>(curve_.segments.size())) return false;
+                const auto& seg=curve_.segments[static_cast<std::size_t>(i)]; x=seg.controlX; y=seg.controlY; hardness=seg.hardness; return true;
+            }
+            void setSelectedCurvePoint(int sample,float value) {
+                const int i=selectedCurvePointIndex(); if(i<0) return;
+                auto& p=curve_.points[static_cast<std::size_t>(i)];
+                const std::size_t lo=i>0 ? curve_.points[static_cast<std::size_t>(i-1)].sample+1 : 0;
+                const std::size_t hi=static_cast<std::size_t>(i)+1<curve_.points.size() ? curve_.points[static_cast<std::size_t>(i+1)].sample-1 : 2047;
+                p.sample=juce::jlimit(lo,hi,static_cast<std::size_t>(juce::jlimit(0,2047,sample)));
+                p.value=juce::jlimit(-1.0f,1.0f,value); rebuildCurveSegments(static_cast<std::size_t>(i)); renderCurvePreview(); repaint();
+                if(onCurveSelectionChanged) onCurveSelectionChanged();
+            }
+            void setSelectedCurveSegment(float x,float y,float hardness) {
+                const int i=curve_.selectedSegment; if(i<0 || i>=static_cast<int>(curve_.segments.size())) return;
+                auto& seg=curve_.segments[static_cast<std::size_t>(i)];
+                seg.controlX=juce::jlimit(0.02f,0.98f,x); seg.controlY=juce::jlimit(-1.0f,1.0f,y); seg.hardness=juce::jlimit(0.0f,1.0f,hardness);
+                renderCurvePreview(); repaint(); if(onCurveSelectionChanged) onCurveSelectionChanged();
+            }
+            void resetSelectedCurveSegment() {
+                const int i=curve_.selectedSegment; if(i<0 || i>=static_cast<int>(curve_.segments.size())) return;
+                auto& seg=curve_.segments[static_cast<std::size_t>(i)]; const auto& a=curve_.points[static_cast<std::size_t>(i)]; const auto& b=curve_.points[static_cast<std::size_t>(i+1)];
+                seg.controlX=0.5f; seg.controlY=(a.value+b.value)*0.5f; seg.hardness=0.5f; renderCurvePreview(); repaint();
+                if(onCurveSelectionChanged) onCurveSelectionChanged();
+            }
+            void deleteSelectedCurvePoint() {
+                const int i=selectedCurvePointIndex(); if(i<0 || curve_.points.size()<=1) return;
+                curve_.points.erase(curve_.points.begin()+i); curve_.selectedPointId=0; curve_.selectedSegment=-1;
+                rebuildCurveSegments(0); renderCurvePreview(); repaint(); if(onCurveSelectionChanged) onCurveSelectionChanged();
+            }
             void cancelPendingShape() {
                 lineDrawing_=false;
                 if(curve_.active) {
@@ -539,7 +580,7 @@ private:
                 auto it=std::lower_bound(curve_.points.begin(),curve_.points.end(),point.sample,[](const CurvePoint& a,std::size_t sample){ return a.sample<sample; });
                 if(it!=curve_.points.end() && it->sample==point.sample) { it->value=point.value; curve_.selectedPointId=it->id; renderCurvePreview(); return; }
                 const auto index=static_cast<std::size_t>(std::distance(curve_.points.begin(),it));
-                curve_.points.insert(it,point); curve_.selectedPointId=point.id; rebuildCurveSegments(index); renderCurvePreview();
+                curve_.points.insert(it,point); curve_.selectedPointId=point.id; curve_.selectedSegment=-1; rebuildCurveSegments(index); renderCurvePreview(); if(onCurveSelectionChanged) onCurveSelectionChanged();
             }
             void rebuildCurveSegments(std::size_t insertedIndex) {
                 juce::ignoreUnused(insertedIndex);
@@ -574,9 +615,9 @@ private:
             }
             void curveMouseDown(const juce::MouseEvent& event) {
                 const auto pointIndex=hitPoint(event.position);
-                if(pointIndex>=0) { draggingPoint_=pointIndex; curve_.selectedPointId=curve_.points[static_cast<std::size_t>(pointIndex)].id; return; }
+                if(pointIndex>=0) { draggingPoint_=pointIndex; curve_.selectedPointId=curve_.points[static_cast<std::size_t>(pointIndex)].id; curve_.selectedSegment=-1; if(onCurveSelectionChanged) onCurveSelectionChanged(); return; }
                 const auto controlIndex=hitControl(event.position);
-                if(controlIndex>=0) { draggingControl_=controlIndex; curve_.selectedSegment=controlIndex; curve_.selectedPointId=0; return; }
+                if(controlIndex>=0) { draggingControl_=controlIndex; curve_.selectedSegment=controlIndex; curve_.selectedPointId=0; if(onCurveSelectionChanged) onCurveSelectionChanged(); return; }
                 const auto p=pointForEvent(event);
                 if(!curve_.active) { beginCurve(p); pendingClickPoint_=p; return; }
                 pendingClickPoint_=p; pendingAdd_=true; mouseMovedSinceDown_=false;
@@ -587,14 +628,14 @@ private:
                     auto p=pointForEvent(event); auto& point=curve_.points[static_cast<std::size_t>(draggingPoint_)];
                     const std::size_t lo=draggingPoint_>0 ? curve_.points[static_cast<std::size_t>(draggingPoint_-1)].sample+1 : 0;
                     const std::size_t hi=static_cast<std::size_t>(draggingPoint_)+1<curve_.points.size() ? curve_.points[static_cast<std::size_t>(draggingPoint_+1)].sample-1 : 2047;
-                    point.sample=juce::jlimit(lo,hi,p.first); point.value=p.second; rebuildCurveSegments(static_cast<std::size_t>(draggingPoint_)); renderCurvePreview(); repaint(); return;
+                    point.sample=juce::jlimit(lo,hi,p.first); point.value=p.second; rebuildCurveSegments(static_cast<std::size_t>(draggingPoint_)); renderCurvePreview(); repaint(); if(onCurveSelectionChanged) onCurveSelectionChanged(); return;
                 }
                 if(draggingControl_>=0) {
                     auto& seg=curve_.segments[static_cast<std::size_t>(draggingControl_)];
                     const auto& a=curve_.points[static_cast<std::size_t>(draggingControl_)],&b=curve_.points[static_cast<std::size_t>(draggingControl_+1)];
                     const auto p=pointForEvent(event);
                     seg.controlX=juce::jlimit(0.02f,0.98f,static_cast<float>(static_cast<long long>(p.first)-static_cast<long long>(a.sample))/static_cast<float>(juce::jmax<std::size_t>(1,b.sample-a.sample)));
-                    seg.controlY=p.second; renderCurvePreview(); repaint(); return;
+                    seg.controlY=p.second; renderCurvePreview(); repaint(); if(onCurveSelectionChanged) onCurveSelectionChanged(); return;
                 }
                 if(curve_.active && curve_.points.size()==1) {
                     auto p=pointForEvent(event); if(curve_.points.front().sample==p.first) p.first=juce::jmin<std::size_t>(2047,p.first+1);
@@ -953,6 +994,70 @@ private:
             int contentHeight_=0;
         };
 
+        class CurveInspector final : public juce::Component {
+        public:
+            std::function<void()> onApply,onCancel;
+            explicit CurveInspector(WaveformCanvas& canvas):canvas_(canvas) {
+                for(auto* c:std::array<juce::Component*,11>{{&mode_,&selection_,&x_,&y_,&hardness_,&deletePoint_,&resetCurve_,&addHint_,&apply_,&cancel_,&title_}}) addAndMakeVisible(c);
+                title_.setText("CURVE",juce::dontSendNotification); mode_.setText("INSPECTOR",juce::dontSendNotification);
+                addHint_.setText("CLICK WAVEFORM TO ADD POINT",juce::dontSendNotification);
+                for(auto* l:std::array<juce::Label*,4>{{&title_,&mode_,&selection_,&addHint_}}) {
+                    l->setColour(juce::Label::textColourId,juce::Colours::white.withAlpha(l==&title_?0.82f:0.55f));
+                    l->setFont(juce::Font(juce::FontOptions("Arial",l==&title_?10.0f:8.0f,l==&title_?juce::Font::bold:juce::Font::plain)));
+                    l->setJustificationType(juce::Justification::centredLeft);
+                }
+                setupNumber(x_); setupNumber(y_); setupNumber(hardness_);
+                for(auto* b:std::array<juce::TextButton*,4>{{&deletePoint_,&resetCurve_,&apply_,&cancel_}}) styleButton(*b);
+                deletePoint_.setButtonText("DELETE POINT"); resetCurve_.setButtonText("RESET CURVE"); apply_.setButtonText("APPLY CURVE"); cancel_.setButtonText("CANCEL");
+                deletePoint_.onClick=[this]{ canvas_.deleteSelectedCurvePoint(); refresh(); };
+                resetCurve_.onClick=[this]{ canvas_.resetSelectedCurveSegment(); refresh(); };
+                apply_.onClick=[this]{ if(onApply) onApply(); }; cancel_.onClick=[this]{ if(onCancel) onCancel(); };
+                auto commit=[this]{ commitEditors(); }; x_.onReturnKey=commit; y_.onReturnKey=commit; hardness_.onReturnKey=commit;
+                x_.onFocusLost=commit; y_.onFocusLost=commit; hardness_.onFocusLost=commit;
+                refresh();
+            }
+            void refresh() {
+                const int point=canvas_.selectedCurvePointIndex(),segment=canvas_.selectedCurveSegmentIndex();
+                selection_.setText(point>=0 ? "POINT "+juce::String(point+1)+" / "+juce::String(canvas_.curvePointCount())
+                                           : (segment>=0 ? "SEGMENT "+juce::String(segment+1) : "NO SELECTION"),juce::dontSendNotification);
+                int sample=0; float value=0.0f,x=0.5f,y=0.0f,hardness=0.5f;
+                const bool hasPoint=canvas_.selectedCurvePointValues(sample,value);
+                const bool hasSegment=canvas_.selectedCurveSegmentValues(x,y,hardness);
+                if(hasPoint) { x_.setText(juce::String(sample),false); y_.setText(juce::String(value,3),false); }
+                else if(hasSegment) { x_.setText(juce::String(x*100.0f,1),false); y_.setText(juce::String(y,3),false); hardness_.setText(juce::String(hardness*100.0f,1),false); }
+                x_.setEnabled(hasPoint||hasSegment); y_.setEnabled(hasPoint||hasSegment); hardness_.setEnabled(hasSegment);
+                deletePoint_.setVisible(hasPoint); resetCurve_.setVisible(hasSegment);
+                repaint();
+            }
+            void resized() override {
+                auto a=getLocalBounds().reduced(7); mode_.setBounds(a.removeFromTop(18)); title_.setBounds(a.removeFromTop(22)); selection_.setBounds(a.removeFromTop(22)); a.removeFromTop(5);
+                xLabel_=a.removeFromTop(14); x_.setBounds(a.removeFromTop(25)); a.removeFromTop(4);
+                yLabel_=a.removeFromTop(14); y_.setBounds(a.removeFromTop(25)); a.removeFromTop(4);
+                hardLabel_=a.removeFromTop(14); hardness_.setBounds(a.removeFromTop(25)); a.removeFromTop(6);
+                if(deletePoint_.isVisible()) deletePoint_.setBounds(a.removeFromTop(25));
+                if(resetCurve_.isVisible()) resetCurve_.setBounds(a.removeFromTop(25));
+                a.removeFromTop(8); addHint_.setBounds(a.removeFromTop(20));
+                auto bottom=getLocalBounds().reduced(7).removeFromBottom(58); apply_.setBounds(bottom.removeFromTop(26)); bottom.removeFromTop(4); cancel_.setBounds(bottom.removeFromTop(26));
+            }
+            void paint(juce::Graphics& g) override {
+                g.fillAll(juce::Colour(0xff080808)); g.setColour(juce::Colours::white.withAlpha(0.42f)); g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
+                const bool point=canvas_.selectedCurvePointIndex()>=0;
+                g.drawText(point?"X SAMPLE":"CONTROL X %",xLabel_,juce::Justification::centredLeft,false);
+                g.drawText(point?"Y VALUE":"CONTROL Y",yLabel_,juce::Justification::centredLeft,false);
+                g.drawText("HARDNESS %",hardLabel_,juce::Justification::centredLeft,false);
+            }
+        private:
+            static void setupNumber(juce::TextEditor& e) { e.setColour(juce::TextEditor::backgroundColourId,juce::Colour(0xff0d0d0d)); e.setColour(juce::TextEditor::textColourId,juce::Colours::white.withAlpha(0.86f)); e.setColour(juce::TextEditor::outlineColourId,juce::Colour(0xff353535)); e.setInputRestrictions(8,"-0123456789."); e.setJustification(juce::Justification::centredLeft); }
+            static void styleButton(juce::TextButton& b) { b.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff101010)); b.setColour(juce::TextButton::textColourOffId,juce::Colours::white.withAlpha(0.78f)); }
+            void commitEditors() {
+                if(canvas_.selectedCurvePointIndex()>=0) canvas_.setSelectedCurvePoint(x_.getText().getIntValue(),y_.getText().getFloatValue());
+                else if(canvas_.selectedCurveSegmentIndex()>=0) canvas_.setSelectedCurveSegment(x_.getText().getFloatValue()/100.0f,y_.getText().getFloatValue(),hardness_.getText().getFloatValue()/100.0f);
+                refresh();
+            }
+            WaveformCanvas& canvas_; juce::Label mode_,title_,selection_,addHint_; juce::TextEditor x_,y_,hardness_;
+            juce::TextButton deletePoint_,resetCurve_,apply_,cancel_; juce::Rectangle<int> xLabel_,yLabel_,hardLabel_;
+        };
+
         class ToolsScroller final : public juce::Component {
         public:
             explicit ToolsScroller(ToolsPanel& panel):panel_(panel) {
@@ -1055,7 +1160,7 @@ private:
             : document_(mct::origami::ui::WavetableDocument::basicShapes()),
               tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
               timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_),waveformCanvas_(document_,gridSettings_),
-              toolsPanel_(gridSettings_,waveformCanvas_),toolsScroller_(toolsPanel_) {
+              toolsPanel_(gridSettings_,waveformCanvas_),toolsScroller_(toolsPanel_),curveInspector_(waveformCanvas_) {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
             addAndMakeVisible(header_);
@@ -1070,7 +1175,13 @@ private:
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
             waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); };
             waveformCanvas_.onSelectionChanged=[this](bool active) { toolsPanel_.setSelectionAvailable(active); };
-            waveformCanvas_.onCurveDraftChanged=[this](bool) { /* Patch 13.3 replaces Tools with contextual Inspector. */ };
+            waveformCanvas_.onCurveDraftChanged=[this](bool active) {
+                if(active) { tools_.setContentComponent(curveInspector_); curveInspector_.refresh(); }
+                else tools_.setContentComponent(toolsScroller_);
+            };
+            waveformCanvas_.onCurveSelectionChanged=[this] { curveInspector_.refresh(); };
+            curveInspector_.onApply=[this] { waveformCanvas_.applyCurveDraft(); };
+            curveInspector_.onCancel=[this] { waveformCanvas_.cancelPendingShape(); };
             waveformCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) {
                 commitEdit(id,before,after);
             };
@@ -1242,6 +1353,7 @@ private:
         WaveformCanvas waveformCanvas_;
         ToolsPanel toolsPanel_;
         ToolsScroller toolsScroller_;
+        CurveInspector curveInspector_;
         std::vector<HistoryEntry> history_;
         std::size_t historyIndex_=0;
         std::uint64_t generationSeed_=0;
