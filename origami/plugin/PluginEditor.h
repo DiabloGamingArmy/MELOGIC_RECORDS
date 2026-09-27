@@ -14,6 +14,7 @@
 #include "ui/OrigamiLayout.h"
 #include "ui/GlobalPanel.h"
 #include "ui/WavetableDocument.h"
+#include "ui/NativeChoiceMenu.h"
 class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
@@ -462,24 +463,52 @@ private:
             std::array<float,mct::origami::ui::kWavetableFrameSize> editBefore_{};
         };
 
+        class NativeChoiceBox final : public juce::ComboBox {
+        public:
+            void addNativeItem(const juce::String& text,int id) {
+                addItem(text,id);
+                nativeItems_.push_back({id,text,true,{},false});
+            }
+            void showPopup() override {
+                mct::origami::ui::showNativeChoiceMenu(
+                    *this,{},nativeItems_,getSelectedId(),
+                    [safe=juce::Component::SafePointer<NativeChoiceBox>(this)](int id) {
+                        if(safe!=nullptr && id>0) safe->setSelectedId(id,juce::sendNotificationAsync);
+                    });
+            }
+        private:
+            std::vector<mct::origami::ui::NativeChoiceItem> nativeItems_;
+        };
+
         class ToolsPanel final : public juce::Component {
         public:
+            std::function<void(int,float,float,float)> onGenerate;
             ToolsPanel(GridSettings& grid,WaveformCanvas& canvas):grid_(grid),canvas_(canvas) {
                 addAndMakeVisible(pencil_);
                 pencil_.setButtonText("PENCIL");
                 pencil_.setEnabled(false);
-                addAndMakeVisible(gridResolution_);
-                addAndMakeVisible(xSnap_);
-                addAndMakeVisible(zeroSnap_);
-                addAndMakeVisible(yQuant_);
+                for(auto* c:std::array<juce::Component*,8>{{&gridResolution_,&xSnap_,&zeroSnap_,&yQuant_,
+                                                            &generatorType_,&cycles_,&phase_,&pulseWidth_}})
+                    addAndMakeVisible(c);
+                addAndMakeVisible(apply_);
+
                 setupCombo(gridResolution_,{"OFF","1/4","1/8","1/16","1/32","1/64"});
                 setupCombo(xSnap_,{"OFF","ON"});
                 setupCombo(zeroSnap_,{"OFF","ON"});
                 setupCombo(yQuant_,{"FREE","1/8","1/16","1/32","1/64"});
+                setupCombo(generatorType_,{"SINE","SAW","SQUARE","TRIANGLE","NOISE"});
                 gridResolution_.setSelectedId(4,juce::dontSendNotification);
                 xSnap_.setSelectedId(1,juce::dontSendNotification);
                 zeroSnap_.setSelectedId(2,juce::dontSendNotification);
                 yQuant_.setSelectedId(1,juce::dontSendNotification);
+                generatorType_.setSelectedId(1,juce::dontSendNotification);
+
+                setupNumber(cycles_,"1.00");
+                setupNumber(phase_,"0.00");
+                setupNumber(pulseWidth_,"50");
+                apply_.setButtonText("APPLY");
+                apply_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+
                 gridResolution_.onChange=[this] {
                     static constexpr int values[]{0,4,8,16,32,64};
                     const int id=juce::jlimit(1,6,gridResolution_.getSelectedId());
@@ -491,6 +520,18 @@ private:
                     static constexpr int values[]{0,8,16,32,64};
                     grid_.amplitudeSteps=values[juce::jlimit(1,5,yQuant_.getSelectedId())-1];
                 };
+                generatorType_.onChange=[this] { updateGeneratorFields(); };
+                apply_.onClick=[this] {
+                    if(!onGenerate) return;
+                    const float cycles=juce::jlimit(0.25f,32.0f,cycles_.getText().getFloatValue());
+                    const float phase=phase_.getText().getFloatValue();
+                    const float width=juce::jlimit(1.0f,99.0f,pulseWidth_.getText().getFloatValue());
+                    cycles_.setText(juce::String(cycles,2),false);
+                    phase_.setText(juce::String(phase,2),false);
+                    pulseWidth_.setText(juce::String(width,0),false);
+                    onGenerate(generatorType_.getSelectedId(),cycles,phase,width*0.01f);
+                };
+                updateGeneratorFields();
             }
             void resized() override {
                 auto area=getLocalBounds().reduced(5);
@@ -498,33 +539,59 @@ private:
                 area.removeFromTop(10); gridLabel_=area.removeFromTop(18);
                 layoutRow(area,gridText_,gridResolution_); layoutRow(area,snapText_,xSnap_);
                 layoutRow(area,zeroText_,zeroSnap_); layoutRow(area,quantText_,yQuant_);
+                area.removeFromTop(9); generateLabel_=area.removeFromTop(18);
+                layoutRow(area,typeText_,generatorType_); layoutRow(area,cyclesText_,cycles_);
+                layoutRow(area,phaseText_,phase_); layoutRow(area,widthText_,pulseWidth_);
+                area.removeFromTop(4); apply_.setBounds(area.removeFromTop(26));
             }
             void paint(juce::Graphics& g) override {
                 g.setColour(juce::Colours::white.withAlpha(0.38f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
                 g.drawText("DRAW",drawLabel_,juce::Justification::centredLeft,false);
                 g.drawText("GRID",gridLabel_,juce::Justification::centredLeft,false);
+                g.drawText("GENERATE",generateLabel_,juce::Justification::centredLeft,false);
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::plain)));
                 g.setColour(juce::Colours::white.withAlpha(0.55f));
                 g.drawText("GRID",gridText_,juce::Justification::centredLeft,false);
                 g.drawText("SNAP",snapText_,juce::Justification::centredLeft,false);
                 g.drawText("ZERO",zeroText_,juce::Justification::centredLeft,false);
                 g.drawText("Y QUANT",quantText_,juce::Justification::centredLeft,false);
+                g.drawText("TYPE",typeText_,juce::Justification::centredLeft,false);
+                g.drawText("CYCLES",cyclesText_,juce::Justification::centredLeft,false);
+                g.drawText("PHASE",phaseText_,juce::Justification::centredLeft,false);
+                g.drawText("P.WIDTH",widthText_,juce::Justification::centredLeft,false);
                 g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.75f));
                 g.drawRect(pencil_.getBounds().toFloat(),1.0f);
+                g.drawRect(apply_.getBounds().toFloat(),1.0f);
             }
         private:
-            static void setupCombo(juce::ComboBox& box,std::initializer_list<const char*> items) {
-                int id=1; for(auto* item:items) box.addItem(item,id++);
+            static void setupCombo(NativeChoiceBox& box,std::initializer_list<const char*> items) {
+                int id=1; for(auto* item:items) box.addNativeItem(item,id++);
                 box.setMouseCursor(juce::MouseCursor::PointingHandCursor);
             }
-            static void layoutRow(juce::Rectangle<int>& area,juce::Rectangle<int>& label,juce::ComboBox& box) {
-                auto row=area.removeFromTop(25); label=row.removeFromLeft(52); box.setBounds(row); area.removeFromTop(3);
+            static void setupNumber(juce::TextEditor& editor,const juce::String& value) {
+                editor.setText(value,false);
+                editor.setJustification(juce::Justification::centredLeft);
+                editor.setInputRestrictions(7,"0123456789.-");
+                editor.setSelectAllWhenFocused(true);
+            }
+            template<typename Control>
+            static void layoutRow(juce::Rectangle<int>& area,juce::Rectangle<int>& label,Control& control) {
+                auto row=area.removeFromTop(25); label=row.removeFromLeft(52); control.setBounds(row); area.removeFromTop(3);
+            }
+            void updateGeneratorFields() {
+                const int type=generatorType_.getSelectedId();
+                const bool noise=type==5;
+                cycles_.setEnabled(!noise);
+                phase_.setEnabled(!noise);
+                pulseWidth_.setEnabled(type==3);
             }
             GridSettings& grid_; WaveformCanvas& canvas_;
-            juce::Rectangle<int> drawLabel_,gridLabel_,gridText_,snapText_,zeroText_,quantText_;
-            juce::TextButton pencil_{"PENCIL"};
-            juce::ComboBox gridResolution_,xSnap_,zeroSnap_,yQuant_;
+            juce::Rectangle<int> drawLabel_,gridLabel_,generateLabel_,gridText_,snapText_,zeroText_,quantText_;
+            juce::Rectangle<int> typeText_,cyclesText_,phaseText_,widthText_;
+            juce::TextButton pencil_{"PENCIL"},apply_{"APPLY"};
+            NativeChoiceBox gridResolution_,xSnap_,zeroSnap_,yQuant_,generatorType_;
+            juce::TextEditor cycles_,phase_,pulseWidth_;
         };
 
         class EditorHeader final : public juce::Component {
@@ -626,6 +693,9 @@ private:
             waveformCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) {
                 commitEdit(id,before,after);
             };
+            toolsPanel_.onGenerate=[this](int type,float cycles,float phase,float pulseWidth) {
+                generateSelectedFrame(type,cycles,phase,pulseWidth);
+            };
             header_.setDocumentName(document_.name);
             refreshSelectedFrame();
         }
@@ -664,6 +734,32 @@ private:
             return false;
         }
     private:
+        void generateSelectedFrame(int type,float cycles,float phaseOffset,float pulseWidth) {
+            if(!document_.valid()) return;
+            auto& frame=document_.frames[document_.selectedFrame];
+            const auto before=frame.samples;
+            juce::Random noise(static_cast<juce::int64>(++generationSeed_));
+            for(std::size_t i=0;i<frame.samples.size();++i) {
+                const float base=static_cast<float>(i)/static_cast<float>(frame.samples.size());
+                const float p=base*cycles+phaseOffset;
+                const float wrapped=p-std::floor(p);
+                float value=0.0f;
+                switch(type) {
+                    case 1: value=std::sin(p*juce::MathConstants<float>::twoPi); break;
+                    case 2: value=2.0f*wrapped-1.0f; break;
+                    case 3: value=wrapped<pulseWidth ? 1.0f : -1.0f; break;
+                    case 4: value=wrapped<0.5f ? (-1.0f+4.0f*wrapped) : (3.0f-4.0f*wrapped); break;
+                    case 5: value=noise.nextFloat()*2.0f-1.0f; break;
+                    default: return;
+                }
+                frame.samples[i]=juce::jlimit(-1.0f,1.0f,value);
+            }
+            const auto after=frame.samples;
+            if(after==before) return;
+            commitEdit(frame.id,before,after);
+            waveformCanvas_.refresh();
+            frameStrip_.refreshSelectedThumbnail();
+        }
         void commitEdit(std::uint64_t id,
                         const std::array<float,mct::origami::ui::kWavetableFrameSize>& before,
                         const std::array<float,mct::origami::ui::kWavetableFrameSize>& after) {
@@ -710,6 +806,7 @@ private:
         ToolsPanel toolsPanel_;
         std::vector<HistoryEntry> history_;
         std::size_t historyIndex_=0;
+        std::uint64_t generationSeed_=0;
     };
     void openWavetableEditor(unsigned oscillatorId);
     void closeWavetableEditor();
