@@ -728,7 +728,8 @@ private:
                 if(onContentHeightChanged) onContentHeightChanged();
             }
             static void styleSectionButton(juce::TextButton& b) {
-                b.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff101010));
+                b.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff151515));
+                b.setColour(juce::TextButton::buttonOnColourId,juce::Colour(0xff181818));
                 b.setColour(juce::TextButton::textColourOffId,juce::Colours::white.withAlpha(0.68f));
                 b.setMouseCursor(juce::MouseCursor::PointingHandCursor);
             }
@@ -736,7 +737,7 @@ private:
                 for(auto* c:items) c->setVisible(visible);
             }
             static void layoutSectionHeader(juce::Rectangle<int>& area,juce::TextButton& b,const juce::String& title,bool open) {
-                b.setButtonText(juce::String(open ? "▾  " : "▸  ")+title);
+                b.setButtonText(juce::String(open ? "▼  " : "▶  ")+title);
                 b.setBounds(area.removeFromTop(24)); area.removeFromTop(5);
             }
             void updateToolButtons() {
