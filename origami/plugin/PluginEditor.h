@@ -522,6 +522,7 @@ private:
         public:
             std::function<void(int,float,float,float)> onGenerate;
             ToolsPanel(GridSettings& grid,WaveformCanvas& canvas):grid_(grid),canvas_(canvas) {
+                setWantsKeyboardFocus(true);
                 addAndMakeVisible(pencil_);
                 pencil_.setButtonText("PENCIL");
                 pencil_.setEnabled(false);
@@ -572,6 +573,12 @@ private:
                 };
                 updateGeneratorFields();
             }
+            void mouseDown(const juce::MouseEvent& event) override {
+                dismissNumberEditorIfNeeded(event.eventComponent);
+            }
+            void mouseUp(const juce::MouseEvent& event) override {
+                dismissNumberEditorIfNeeded(event.eventComponent);
+            }
             void resized() override {
                 auto area=getLocalBounds().reduced(5);
                 drawLabel_=area.removeFromTop(18); pencil_.setBounds(area.removeFromTop(26));
@@ -604,6 +611,14 @@ private:
                 g.drawRect(apply_.getBounds().toFloat(),1.0f);
             }
         private:
+            void dismissNumberEditorIfNeeded(juce::Component* clicked) {
+                if(clicked==&cycles_ || clicked==&phase_ || clicked==&pulseWidth_) return;
+                for(auto* editor:std::array<juce::TextEditor*,3>{{&cycles_,&phase_,&pulseWidth_}}) {
+                    editor->deselectAll();
+                    if(editor->hasKeyboardFocus(true)) editor->giveAwayKeyboardFocus();
+                }
+                grabKeyboardFocus();
+            }
             static void setupCombo(NativeChoiceBox& box,std::initializer_list<const char*> items) {
                 int id=1; for(auto* item:items) box.addNativeItem(item,id++);
                 box.setMouseCursor(juce::MouseCursor::PointingHandCursor);
