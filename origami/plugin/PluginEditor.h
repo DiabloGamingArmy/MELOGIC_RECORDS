@@ -470,6 +470,11 @@ private:
                 nativeItems_.push_back({id,text,true,{},false});
             }
             void showPopup() override {
+                // JUCE's ComboBox toggles an internal popup-active flag before calling
+                // this override. A synchronous native NSMenu does not participate in
+                // JUCE's PopupMenu completion path, so explicitly close that lifecycle
+                // first; otherwise click-away dismissal leaves the ComboBox stuck open.
+                juce::ComboBox::hidePopup();
                 mct::origami::ui::showNativeChoiceMenu(
                     *this,{},nativeItems_,getSelectedId(),
                     [safe=juce::Component::SafePointer<NativeChoiceBox>(this)](int id) {
@@ -508,6 +513,7 @@ private:
                 setupNumber(pulseWidth_,"50");
                 apply_.setButtonText("APPLY");
                 apply_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                styleButton(pencil_); styleButton(apply_);
 
                 gridResolution_.onChange=[this] {
                     static constexpr int values[]{0,4,8,16,32,64};
@@ -568,16 +574,35 @@ private:
             static void setupCombo(NativeChoiceBox& box,std::initializer_list<const char*> items) {
                 int id=1; for(auto* item:items) box.addNativeItem(item,id++);
                 box.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+                box.setColour(juce::ComboBox::backgroundColourId,juce::Colour(0xff080808));
+                box.setColour(juce::ComboBox::textColourId,juce::Colours::white.withAlpha(0.82f));
+                box.setColour(juce::ComboBox::outlineColourId,juce::Colour(0xff383838));
+                box.setColour(juce::ComboBox::arrowColourId,juce::Colours::white.withAlpha(0.72f));
             }
             static void setupNumber(juce::TextEditor& editor,const juce::String& value) {
                 editor.setText(value,false);
                 editor.setJustification(juce::Justification::centredLeft);
                 editor.setInputRestrictions(7,"0123456789.-");
                 editor.setSelectAllWhenFocused(true);
+                editor.setColour(juce::TextEditor::backgroundColourId,juce::Colour(0xff080808));
+                editor.setColour(juce::TextEditor::textColourId,juce::Colours::white.withAlpha(0.82f));
+                editor.setColour(juce::TextEditor::outlineColourId,juce::Colour(0xff383838));
+                editor.setColour(juce::TextEditor::focusedOutlineColourId,
+                                 mct::origami::ui::signalSourceColour().withAlpha(0.85f));
+                editor.setColour(juce::TextEditor::highlightColourId,
+                                 mct::origami::ui::signalSourceColour().withAlpha(0.38f));
+                editor.setColour(juce::TextEditor::highlightedTextColourId,juce::Colours::white);
+            }
+            static void styleButton(juce::TextButton& button) {
+                button.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff080808));
+                button.setColour(juce::TextButton::buttonOnColourId,
+                                 mct::origami::ui::signalSourceColour().withAlpha(0.28f));
+                button.setColour(juce::TextButton::textColourOffId,juce::Colours::white.withAlpha(0.82f));
+                button.setColour(juce::TextButton::textColourOnId,juce::Colours::white);
             }
             template<typename Control>
             static void layoutRow(juce::Rectangle<int>& area,juce::Rectangle<int>& label,Control& control) {
-                auto row=area.removeFromTop(25); label=row.removeFromLeft(52); control.setBounds(row); area.removeFromTop(3);
+                auto row=area.removeFromTop(26); label=row.removeFromLeft(52); control.setBounds(row); area.removeFromTop(3);
             }
             void updateGeneratorFields() {
                 const int type=generatorType_.getSelectedId();
