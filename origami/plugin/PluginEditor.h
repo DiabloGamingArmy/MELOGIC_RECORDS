@@ -463,32 +463,59 @@ private:
             std::array<float,mct::origami::ui::kWavetableFrameSize> editBefore_{};
         };
 
-        class NativeChoiceBox final : public juce::ComboBox {
+        class NativeChoiceBox final : public juce::Component {
         public:
+            std::function<void()> onChange;
             void addNativeItem(const juce::String& text,int id) {
-                addItem(text,id);
                 nativeItems_.push_back({id,text,true,{},false});
+                labels_[id]=text;
             }
-            void showPopup() override {
-                // Do not call ComboBox::hidePopup() here. showPopup() is entered from
-                // JUCE's own click path; forcing hidePopup synchronously re-enters that
-                // path after Cocoa dismisses NSMenu, causing the dismissing click to
-                // launch a second menu at the new cursor position. The native NSMenu is
-                // synchronous, so returning from this method is the complete lifecycle.
+            void setSelectedId(int id,juce::NotificationType notification=juce::sendNotification) {
+                if(selectedId_==id) return;
+                selectedId_=id;
+                repaint();
+                if(notification!=juce::dontSendNotification && onChange) onChange();
+            }
+            int getSelectedId() const noexcept { return selectedId_; }
+            void mouseDown(const juce::MouseEvent&) override {
+                if(!isEnabled() || menuOpen_) return;
+                menuOpen_=true;
+                repaint();
                 mct::origami::ui::showNativeChoiceMenu(
-                    *this,{},nativeItems_,getSelectedId(),
+                    *this,{},nativeItems_,selectedId_,
                     [safe=juce::Component::SafePointer<NativeChoiceBox>(this)](int id) {
-                        if(safe!=nullptr && id>0) safe->setSelectedId(id,juce::sendNotificationAsync);
+                        if(safe!=nullptr && id>0) safe->setSelectedId(id,juce::sendNotification);
                     });
-                // Reset JUCE's popup bookkeeping after the native menu has fully ended,
-                // rather than before it opens. This keeps later clicks reopenable
-                // without replaying the click that dismissed the native menu.
-                juce::MessageManager::callAsync([safe=juce::Component::SafePointer<NativeChoiceBox>(this)] {
-                    if(safe!=nullptr) safe->juce::ComboBox::hidePopup();
-                });
+                menuOpen_=false;
+                repaint();
+            }
+            void paint(juce::Graphics& g) override {
+                const auto bounds=getLocalBounds().toFloat().reduced(0.5f);
+                const float alpha=isEnabled()?1.0f:0.34f;
+                g.setColour(juce::Colour(0xff080808).withMultipliedAlpha(alpha));
+                g.fillRect(bounds);
+                g.setColour((menuOpen_?mct::origami::ui::signalSourceColour():juce::Colour(0xff383838))
+                                .withMultipliedAlpha(alpha));
+                g.drawRect(bounds,1.0f);
+                g.setColour(juce::Colours::white.withAlpha(0.82f*alpha));
+                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
+                const auto text=labels_.count(selectedId_)!=0?labels_.at(selectedId_):juce::String{};
+                g.drawText(text,getLocalBounds().reduced(8,0).withTrimmedRight(18),
+                           juce::Justification::centredLeft,false);
+                juce::Path arrow;
+                const float cx=static_cast<float>(getWidth()-10),cy=static_cast<float>(getHeight())*0.5f;
+                arrow.startNewSubPath(cx-3.0f,cy-1.5f);
+                arrow.lineTo(cx,cy+1.5f);
+                arrow.lineTo(cx+3.0f,cy-1.5f);
+                g.setColour(juce::Colours::white.withAlpha(0.72f*alpha));
+                g.strokePath(arrow,juce::PathStrokeType(1.2f,juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded));
             }
         private:
             std::vector<mct::origami::ui::NativeChoiceItem> nativeItems_;
+            std::map<int,juce::String> labels_;
+            int selectedId_=0;
+            bool menuOpen_=false;
         };
 
         class ToolsPanel final : public juce::Component {
@@ -580,10 +607,6 @@ private:
             static void setupCombo(NativeChoiceBox& box,std::initializer_list<const char*> items) {
                 int id=1; for(auto* item:items) box.addNativeItem(item,id++);
                 box.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-                box.setColour(juce::ComboBox::backgroundColourId,juce::Colour(0xff080808));
-                box.setColour(juce::ComboBox::textColourId,juce::Colours::white.withAlpha(0.82f));
-                box.setColour(juce::ComboBox::outlineColourId,juce::Colour(0xff383838));
-                box.setColour(juce::ComboBox::arrowColourId,juce::Colours::white.withAlpha(0.72f));
             }
             static void setupNumber(juce::TextEditor& editor,const juce::String& value) {
                 editor.setText(value,false);
