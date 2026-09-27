@@ -1184,8 +1184,14 @@ private:
                 else tools_.setContentComponent(toolsScroller_);
             };
             waveformCanvas_.onCurveSelectionChanged=[this] { curveInspector_.refresh(); };
-            curveInspector_.onApply=[this] { waveformCanvas_.applyCurveDraft(); };
-            curveInspector_.onCancel=[this] { waveformCanvas_.cancelPendingShape(); };
+            curveInspector_.onApply=[this] {
+                waveformCanvas_.applyCurveDraft();
+                tools_.setContentComponent(toolsScroller_);
+            };
+            curveInspector_.onCancel=[this] {
+                waveformCanvas_.cancelPendingShape();
+                tools_.setContentComponent(toolsScroller_);
+            };
             waveformCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) {
                 commitEdit(id,before,after);
             };
