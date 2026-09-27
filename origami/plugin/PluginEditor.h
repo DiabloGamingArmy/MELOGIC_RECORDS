@@ -840,11 +840,13 @@ private:
                 select_.setColour(juce::TextButton::buttonColourId,canvas_.tool()==WaveformTool::select ?
                     mct::origami::ui::signalSourceColour().withAlpha(0.24f):juce::Colour(0xff080808));
             }
+        public:
             void setSelectionAvailable(bool available) {
                 for(auto* c:std::array<juce::Component*,9>{{&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_,&smooth_,&fadeIn_}})
                     c->setEnabled(available);
                 fadeOut_.setEnabled(available); removeDc_.setEnabled(available);
             }
+        private:
             void dismissNumberEditorIfNeeded(juce::Component* clicked) {
                 if(clicked==&cycles_ || clicked==&phase_ || clicked==&pulseWidth_ || clicked==&gain_ || clicked==&offset_) return;
                 for(auto* editor:std::array<juce::TextEditor*,5>{{&cycles_,&phase_,&pulseWidth_,&gain_,&offset_}}) {
