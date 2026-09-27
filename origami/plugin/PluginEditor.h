@@ -584,8 +584,17 @@ private:
         public:
             std::function<void(int,float,float,float)> onGenerate;
             std::function<void(int,float,float)> onTransform;
+            std::function<void()> onContentHeightChanged;
+            int preferredHeight() const noexcept { return contentHeight_; }
             ToolsPanel(GridSettings& grid,WaveformCanvas& canvas):grid_(grid),canvas_(canvas) {
                 setWantsKeyboardFocus(true);
+                for(auto* b:std::array<juce::TextButton*,4>{{&drawHeader_,&gridHeader_,&generateHeader_,&transformHeader_}}) {
+                    addAndMakeVisible(b); styleSectionButton(*b);
+                }
+                drawHeader_.onClick=[this]{ drawOpen_=!drawOpen_; relayout(); };
+                gridHeader_.onClick=[this]{ gridOpen_=!gridOpen_; relayout(); };
+                generateHeader_.onClick=[this]{ generateOpen_=!generateOpen_; relayout(); };
+                transformHeader_.onClick=[this]{ transformOpen_=!transformOpen_; relayout(); };
                 addAndMakeVisible(pencil_); addAndMakeVisible(select_);
                 pencil_.setButtonText("PENCIL"); select_.setButtonText("SELECT");
                 pencil_.setClickingTogglesState(false); select_.setClickingTogglesState(false);
@@ -595,7 +604,7 @@ private:
                                                             &generatorType_,&cycles_,&phase_,&pulseWidth_}})
                     addAndMakeVisible(c);
                 addAndMakeVisible(apply_);
-                for(auto* c:std::array<juce::Component*,8>{{&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_,&transformApply_}})
+                for(auto* c:std::array<juce::Component*,7>{{&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_}})
                     addAndMakeVisible(c);
 
                 setupCombo(gridResolution_,{"OFF","1/4","1/8","1/16","1/32","1/64"});
@@ -618,7 +627,7 @@ private:
                 apply_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
                 styleButton(pencil_); styleButton(select_); styleButton(apply_);
                 setupNumber(gain_,"1.00"); setupNumber(offset_,"0.00");
-                transformApply_.setButtonText("APPLY G/O");
+                transformApply_.setButtonText("APPLY");
                 invert_.setButtonText("INVERT"); reverse_.setButtonText("REVERSE");
                 zero_.setButtonText("ZERO"); normalize_.setButtonText("NORMALIZE");
                 for(auto* b:std::array<juce::TextButton*,5>{{&transformApply_,&invert_,&reverse_,&zero_,&normalize_}}) styleButton(*b);
@@ -662,46 +671,74 @@ private:
             }
             void resized() override {
                 auto area=getLocalBounds().reduced(5);
-                drawLabel_=area.removeFromTop(18); { auto row=area.removeFromTop(26); pencil_.setBounds(row.removeFromLeft(row.getWidth()/2)); select_.setBounds(row); }
-                area.removeFromTop(10); gridLabel_=area.removeFromTop(18);
-                layoutRow(area,xGridText_,gridResolution_); layoutRow(area,xSnapText_,xSnap_);
-                layoutRow(area,yGridText_,yGrid_); layoutRow(area,ySnapText_,ySnap_);
-                layoutRow(area,zeroText_,zeroSnap_);
-                area.removeFromTop(9); generateLabel_=area.removeFromTop(18);
-                layoutRow(area,typeText_,generatorType_); layoutRow(area,cyclesText_,cycles_);
-                layoutRow(area,phaseText_,phase_); layoutRow(area,widthText_,pulseWidth_);
-                area.removeFromTop(4); apply_.setBounds(area.removeFromTop(26));
-                area.removeFromTop(9); transformLabel_=area.removeFromTop(18);
-                layoutRow(area,gainText_,gain_); layoutRow(area,offsetText_,offset_);
-                transformApply_.setBounds(area.removeFromTop(24)); area.removeFromTop(3);
-                { auto row=area.removeFromTop(24); invert_.setBounds(row.removeFromLeft(row.getWidth()/2)); reverse_.setBounds(row); }
-                area.removeFromTop(3); { auto row=area.removeFromTop(24); zero_.setBounds(row.removeFromLeft(row.getWidth()/2)); normalize_.setBounds(row); }
+                layoutSectionHeader(area,drawHeader_,"DRAW",drawOpen_);
+                setGroupVisible({&pencil_,&select_},drawOpen_);
+                if(drawOpen_) { auto row=area.removeFromTop(26); pencil_.setBounds(row.removeFromLeft(row.getWidth()/2)); select_.setBounds(row); area.removeFromTop(7); }
+
+                layoutSectionHeader(area,gridHeader_,"SNAP & GRID",gridOpen_);
+                setGroupVisible({&gridResolution_,&xSnap_,&yGrid_,&ySnap_,&zeroSnap_},gridOpen_);
+                if(gridOpen_) {
+                    layoutRow(area,xGridText_,gridResolution_); layoutRow(area,xSnapText_,xSnap_);
+                    layoutRow(area,yGridText_,yGrid_); layoutRow(area,ySnapText_,ySnap_);
+                    layoutRow(area,zeroText_,zeroSnap_); area.removeFromTop(5);
+                }
+
+                layoutSectionHeader(area,generateHeader_,"GENERATE",generateOpen_);
+                setGroupVisible({&generatorType_,&cycles_,&phase_,&pulseWidth_,&apply_},generateOpen_);
+                if(generateOpen_) {
+                    layoutRow(area,typeText_,generatorType_); layoutRow(area,cyclesText_,cycles_);
+                    layoutRow(area,phaseText_,phase_); layoutRow(area,widthText_,pulseWidth_);
+                    apply_.setBounds(area.removeFromTop(26)); area.removeFromTop(7);
+                }
+
+                layoutSectionHeader(area,transformHeader_,"TRANSFORM",transformOpen_);
+                setGroupVisible({&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_},transformOpen_);
+                if(transformOpen_) {
+                    layoutRow(area,gainText_,gain_); layoutRow(area,offsetText_,offset_);
+                    transformApply_.setBounds(area.removeFromTop(24)); area.removeFromTop(3);
+                    { auto row=area.removeFromTop(24); invert_.setBounds(row.removeFromLeft(row.getWidth()/2)); reverse_.setBounds(row); }
+                    area.removeFromTop(3); { auto row=area.removeFromTop(24); zero_.setBounds(row.removeFromLeft(row.getWidth()/2)); normalize_.setBounds(row); }
+                    area.removeFromTop(6);
+                }
+                contentHeight_=getHeight()-area.getHeight()+8;
             }
             void paint(juce::Graphics& g) override {
                 g.setColour(juce::Colours::white.withAlpha(0.38f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
-                g.drawText("DRAW",drawLabel_,juce::Justification::centredLeft,false);
-                g.drawText("GRID",gridLabel_,juce::Justification::centredLeft,false);
-                g.drawText("GENERATE",generateLabel_,juce::Justification::centredLeft,false);
-                g.drawText("TRANSFORM",transformLabel_,juce::Justification::centredLeft,false);
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::plain)));
                 g.setColour(juce::Colours::white.withAlpha(0.55f));
-                g.drawText("X GRID",xGridText_,juce::Justification::centredLeft,false);
-                g.drawText("X SNAP",xSnapText_,juce::Justification::centredLeft,false);
-                g.drawText("Y GRID",yGridText_,juce::Justification::centredLeft,false);
-                g.drawText("Y SNAP",ySnapText_,juce::Justification::centredLeft,false);
-                g.drawText("ZERO SNAP",zeroText_,juce::Justification::centredLeft,false);
-                g.drawText("TYPE",typeText_,juce::Justification::centredLeft,false);
-                g.drawText("CYCLES",cyclesText_,juce::Justification::centredLeft,false);
-                g.drawText("PHASE",phaseText_,juce::Justification::centredLeft,false);
-                g.drawText("P.WIDTH",widthText_,juce::Justification::centredLeft,false);
-                g.drawText("GAIN",gainText_,juce::Justification::centredLeft,false);
-                g.drawText("OFFSET",offsetText_,juce::Justification::centredLeft,false);
+                if(gridOpen_) g.drawText("X GRID",xGridText_,juce::Justification::centredLeft,false);
+                if(gridOpen_) g.drawText("X SNAP",xSnapText_,juce::Justification::centredLeft,false);
+                if(gridOpen_) g.drawText("Y GRID",yGridText_,juce::Justification::centredLeft,false);
+                if(gridOpen_) g.drawText("Y SNAP",ySnapText_,juce::Justification::centredLeft,false);
+                if(gridOpen_) g.drawText("ZERO SNAP",zeroText_,juce::Justification::centredLeft,false);
+                if(generateOpen_) g.drawText("TYPE",typeText_,juce::Justification::centredLeft,false);
+                if(generateOpen_) g.drawText("CYCLES",cyclesText_,juce::Justification::centredLeft,false);
+                if(generateOpen_) g.drawText("PHASE",phaseText_,juce::Justification::centredLeft,false);
+                if(generateOpen_) g.drawText("P.WIDTH",widthText_,juce::Justification::centredLeft,false);
+                if(transformOpen_) g.drawText("GAIN",gainText_,juce::Justification::centredLeft,false);
+                if(transformOpen_) g.drawText("OFFSET",offsetText_,juce::Justification::centredLeft,false);
                 g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.75f));
-                g.drawRect(pencil_.getBounds().toFloat(),1.0f); g.drawRect(select_.getBounds().toFloat(),1.0f);
-                g.drawRect(apply_.getBounds().toFloat(),1.0f);
+                if(drawOpen_) { g.drawRect(pencil_.getBounds().toFloat(),1.0f); g.drawRect(select_.getBounds().toFloat(),1.0f); }
+                if(generateOpen_) g.drawRect(apply_.getBounds().toFloat(),1.0f);
             }
         private:
+            void relayout() {
+                resized(); repaint();
+                if(onContentHeightChanged) onContentHeightChanged();
+            }
+            static void styleSectionButton(juce::TextButton& b) {
+                b.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff101010));
+                b.setColour(juce::TextButton::textColourOffId,juce::Colours::white.withAlpha(0.68f));
+                b.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            }
+            static void setGroupVisible(std::initializer_list<juce::Component*> items,bool visible) {
+                for(auto* c:items) c->setVisible(visible);
+            }
+            static void layoutSectionHeader(juce::Rectangle<int>& area,juce::TextButton& b,const juce::String& title,bool open) {
+                b.setButtonText(juce::String(open ? "▾  " : "▸  ")+title);
+                b.setBounds(area.removeFromTop(24)); area.removeFromTop(5);
+            }
             void updateToolButtons() {
                 pencil_.setColour(juce::TextButton::buttonColourId,canvas_.tool()==WaveformTool::pencil ?
                     mct::origami::ui::signalSourceColour().withAlpha(0.24f):juce::Colour(0xff080808));
@@ -755,12 +792,35 @@ private:
                 pulseWidth_.setEnabled(type==3);
             }
             GridSettings& grid_; WaveformCanvas& canvas_;
-            juce::Rectangle<int> drawLabel_,gridLabel_,generateLabel_,transformLabel_,xGridText_,xSnapText_,yGridText_,ySnapText_,zeroText_;
+            juce::Rectangle<int> xGridText_,xSnapText_,yGridText_,ySnapText_,zeroText_;
             juce::Rectangle<int> typeText_,cyclesText_,phaseText_,widthText_,gainText_,offsetText_;
+            juce::TextButton drawHeader_,gridHeader_,generateHeader_,transformHeader_;
             juce::TextButton pencil_{"PENCIL"},select_{"SELECT"},apply_{"APPLY"};
             juce::TextButton transformApply_{"APPLY G/O"},invert_{"INVERT"},reverse_{"REVERSE"},zero_{"ZERO"},normalize_{"NORMALIZE"};
             NativeChoiceBox gridResolution_,xSnap_,yGrid_,ySnap_,zeroSnap_,generatorType_;
             juce::TextEditor cycles_,phase_,pulseWidth_,gain_,offset_;
+            bool drawOpen_=true,gridOpen_=true,generateOpen_=false,transformOpen_=true;
+            int contentHeight_=0;
+        };
+
+        class ToolsScroller final : public juce::Component {
+        public:
+            explicit ToolsScroller(ToolsPanel& panel):panel_(panel) {
+                addAndMakeVisible(viewport_);
+                viewport_.setViewedComponent(&panel_,false);
+                viewport_.setScrollBarsShown(true,false);
+                viewport_.setScrollBarThickness(5);
+                viewport_.setWantsKeyboardFocus(false);
+                panel_.onContentHeightChanged=[this] { updateContentSize(); };
+            }
+            void resized() override { viewport_.setBounds(getLocalBounds()); updateContentSize(); }
+        private:
+            void updateContentSize() {
+                const int width=juce::jmax(1,viewport_.getMaximumVisibleWidth());
+                panel_.setSize(width,juce::jmax(viewport_.getHeight(),panel_.preferredHeight()));
+            }
+            ToolsPanel& panel_;
+            juce::Viewport viewport_;
         };
 
         class EditorHeader final : public juce::Component {
@@ -845,7 +905,7 @@ private:
             : document_(mct::origami::ui::WavetableDocument::basicShapes()),
               tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
               timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_),waveformCanvas_(document_,gridSettings_),
-              toolsPanel_(gridSettings_,waveformCanvas_) {
+              toolsPanel_(gridSettings_,waveformCanvas_),toolsScroller_(toolsPanel_) {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
             addAndMakeVisible(header_);
@@ -854,7 +914,7 @@ private:
             header_.onRedo=[this] { redo(); };
             for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&table_}})
                 addAndMakeVisible(region);
-            tools_.setContentComponent(toolsPanel_);
+            tools_.setContentComponent(toolsScroller_);
             timeline_.setContentComponent(frameStrip_);
             waveform_.setContentComponent(waveformCanvas_);
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
@@ -1005,6 +1065,7 @@ private:
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
         ToolsPanel toolsPanel_;
+        ToolsScroller toolsScroller_;
         std::vector<HistoryEntry> history_;
         std::size_t historyIndex_=0;
         std::uint64_t generationSeed_=0;
