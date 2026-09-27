@@ -50,12 +50,6 @@ private:
                 addAndMakeVisible(component);
                 resized();
             }
-            void refreshSelectedFrame() {
-            header_.setDocumentName(document_.name);
-            header_.setFrameStatus(static_cast<unsigned>(document_.selectedFrame),
-                                   static_cast<unsigned>(document_.frames.size()));
-            waveformCanvas_.refresh();
-        }
         void resized() override {
                 if(content_!=nullptr) content_->setBounds(contentBounds());
             }
@@ -98,7 +92,8 @@ private:
                 std::function<void(unsigned)> onSelected;
                 FrameCard(std::uint64_t frameId,unsigned displayIndex,
                           const std::array<float,mct::origami::ui::kWavetableFrameSize>& samples)
-                    :frameId_(frameId),displayIndex_(displayIndex),samples_(&samples) {
+                    :displayIndex_(displayIndex),samples_(&samples) {
+                    juce::ignoreUnused(frameId);
                     setMouseCursor(juce::MouseCursor::PointingHandCursor);
                     setInterceptsMouseClicks(true,false);
                 }
@@ -143,7 +138,6 @@ private:
                                juce::Justification::centred,false);
                 }
             private:
-                std::uint64_t frameId_=0;
                 unsigned displayIndex_=0;
                 const std::array<float,mct::origami::ui::kWavetableFrameSize>* samples_=nullptr;
                 bool selected_=false;
@@ -427,6 +421,12 @@ private:
             frameStrip_.onFrameSelected=[this](unsigned) { refreshSelectedFrame(); };
             header_.setDocumentName(document_.name);
             refreshSelectedFrame();
+        }
+        void refreshSelectedFrame() {
+            header_.setDocumentName(document_.name);
+            header_.setFrameStatus(static_cast<unsigned>(document_.selectedFrame),
+                                   static_cast<unsigned>(document_.frames.size()));
+            waveformCanvas_.refresh();
         }
         void resized() override {
             auto area=getLocalBounds();
