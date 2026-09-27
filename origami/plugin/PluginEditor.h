@@ -270,12 +270,21 @@ private:
             AddCard add_;
         };
 
+        struct GridSettings {
+            int divisions=16;
+            int amplitudeSteps=0;
+            bool snapX=false;
+            bool snapZero=true;
+            bool showGrid=true;
+        };
+
         class WaveformCanvas final : public juce::Component {
         public:
             std::function<void()> onSamplesChanged;
             std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
                                const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
-            explicit WaveformCanvas(mct::origami::ui::WavetableDocument& document):document_(document) {
+            explicit WaveformCanvas(mct::origami::ui::WavetableDocument& document,GridSettings& grid)
+                :document_(document),grid_(grid) {
                 setInterceptsMouseClicks(true,false);
                 setMouseCursor(juce::MouseCursor::CrosshairCursor);
             }
@@ -344,6 +353,16 @@ private:
                 }
 
                 constexpr int divisions=8;
+                if(grid_.showGrid && grid_.divisions>divisions) {
+                    for(int division=1;division<grid_.divisions;++division) {
+                        if((division*divisions)%grid_.divisions==0) continue;
+                        const float t=static_cast<float>(division)/static_cast<float>(grid_.divisions);
+                        const float x=static_cast<float>(plot.getX())+t*static_cast<float>(plot.getWidth());
+                        g.setColour(juce::Colours::white.withAlpha(0.035f));
+                        g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),
+                                           static_cast<float>(plot.getBottom()));
+                    }
+                }
                 for(int division=0;division<=divisions;++division) {
                     const float t=static_cast<float>(division)/static_cast<float>(divisions);
                     const float x=static_cast<float>(plot.getX())+t*static_cast<float>(plot.getWidth());
@@ -412,14 +431,30 @@ private:
                 const float y=juce::jlimit(static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()),event.position.y);
                 const float xNorm=(x-static_cast<float>(plot.getX()))/static_cast<float>(juce::jmax(1,plot.getWidth()));
                 const float yNorm=(y-static_cast<float>(plot.getY()))/static_cast<float>(juce::jmax(1,plot.getHeight()));
-                const auto sample=static_cast<std::size_t>(juce::jlimit(0,2047,juce::roundToInt(xNorm*2047.0f)));
-                return {sample,juce::jlimit(-1.0f,1.0f,1.0f-2.0f*yNorm)};
+                int sample=juce::jlimit(0,2047,juce::roundToInt(xNorm*2047.0f));
+                float value=juce::jlimit(-1.0f,1.0f,1.0f-2.0f*yNorm);
+                const bool bypass=juce::ModifierKeys::getCurrentModifiersRealtime().isAltDown();
+                if(!bypass && grid_.snapX && grid_.divisions>0) {
+                    const float gridPosition=static_cast<float>(sample)*static_cast<float>(grid_.divisions)/2047.0f;
+                    sample=juce::jlimit(0,2047,juce::roundToInt(std::round(gridPosition)*2047.0f/
+                                                               static_cast<float>(grid_.divisions)));
+                }
+                if(!bypass && grid_.snapZero) {
+                    const float zeroThreshold=12.0f/static_cast<float>(juce::jmax(1,plot.getHeight()));
+                    if(std::abs(value)<=zeroThreshold*2.0f) value=0.0f;
+                }
+                if(!bypass && grid_.amplitudeSteps>0) {
+                    const float halfSteps=static_cast<float>(grid_.amplitudeSteps)/2.0f;
+                    value=juce::jlimit(-1.0f,1.0f,std::round(value*halfSteps)/halfSteps);
+                }
+                return {static_cast<std::size_t>(sample),value};
             }
             void samplesChanged() {
                 repaint();
                 if(onSamplesChanged) onSamplesChanged();
             }
             mct::origami::ui::WavetableDocument& document_;
+            GridSettings& grid_;
             bool drawing_=false;
             std::size_t lastSample_=0;
             float lastValue_=0.0f;
@@ -429,27 +464,63 @@ private:
 
         class ToolsPanel final : public juce::Component {
         public:
-            ToolsPanel() {
+            ToolsPanel(GridSettings& grid,WaveformCanvas& canvas):grid_(grid),canvas_(canvas) {
                 addAndMakeVisible(pencil_);
                 pencil_.setButtonText("PENCIL");
                 pencil_.setEnabled(false);
+                setupCombo(gridResolution_,{"OFF","1/4","1/8","1/16","1/32","1/64"});
+                setupCombo(xSnap_,{"OFF","ON"});
+                setupCombo(zeroSnap_,{"OFF","ON"});
+                setupCombo(yQuant_,{"FREE","1/8","1/16","1/32","1/64"});
+                gridResolution_.setSelectedId(4,juce::dontSendNotification);
+                xSnap_.setSelectedId(1,juce::dontSendNotification);
+                zeroSnap_.setSelectedId(2,juce::dontSendNotification);
+                yQuant_.setSelectedId(1,juce::dontSendNotification);
+                gridResolution_.onChange=[this] {
+                    static constexpr int values[]{0,4,8,16,32,64};
+                    const int id=juce::jlimit(1,6,gridResolution_.getSelectedId());
+                    grid_.showGrid=id>1; grid_.divisions=values[id-1]; canvas_.repaint();
+                };
+                xSnap_.onChange=[this] { grid_.snapX=xSnap_.getSelectedId()==2; };
+                zeroSnap_.onChange=[this] { grid_.snapZero=zeroSnap_.getSelectedId()==2; };
+                yQuant_.onChange=[this] {
+                    static constexpr int values[]{0,8,16,32,64};
+                    grid_.amplitudeSteps=values[juce::jlimit(1,5,yQuant_.getSelectedId())-1];
+                };
             }
             void resized() override {
                 auto area=getLocalBounds().reduced(5);
-                labelBounds_=area.removeFromTop(18);
-                pencil_.setBounds(area.removeFromTop(26));
+                drawLabel_=area.removeFromTop(18); pencil_.setBounds(area.removeFromTop(26));
+                area.removeFromTop(10); gridLabel_=area.removeFromTop(18);
+                layoutRow(area,gridText_,gridResolution_); layoutRow(area,snapText_,xSnap_);
+                layoutRow(area,zeroText_,zeroSnap_); layoutRow(area,quantText_,yQuant_);
             }
             void paint(juce::Graphics& g) override {
                 g.setColour(juce::Colours::white.withAlpha(0.38f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
-                g.drawText("DRAW",labelBounds_,juce::Justification::centredLeft,false);
-                const auto b=pencil_.getBounds().toFloat();
-                g.setColour(juce::Colour(0xffff1018).withAlpha(0.75f));
-                g.drawRect(b,1.0f);
+                g.drawText("DRAW",drawLabel_,juce::Justification::centredLeft,false);
+                g.drawText("GRID",gridLabel_,juce::Justification::centredLeft,false);
+                g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::plain)));
+                g.setColour(juce::Colours::white.withAlpha(0.55f));
+                g.drawText("GRID",gridText_,juce::Justification::centredLeft,false);
+                g.drawText("SNAP",snapText_,juce::Justification::centredLeft,false);
+                g.drawText("ZERO",zeroText_,juce::Justification::centredLeft,false);
+                g.drawText("Y QUANT",quantText_,juce::Justification::centredLeft,false);
+                g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.75f));
+                g.drawRect(pencil_.getBounds().toFloat(),1.0f);
             }
         private:
-            juce::Rectangle<int> labelBounds_;
+            static void setupCombo(juce::ComboBox& box,std::initializer_list<const char*> items) {
+                int id=1; for(auto* item:items) box.addItem(item,id++);
+                box.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            }
+            static void layoutRow(juce::Rectangle<int>& area,juce::Rectangle<int>& label,juce::ComboBox& box) {
+                auto row=area.removeFromTop(25); label=row.removeFromLeft(52); box.setBounds(row); area.removeFromTop(3);
+            }
+            GridSettings& grid_; WaveformCanvas& canvas_;
+            juce::Rectangle<int> drawLabel_,gridLabel_,gridText_,snapText_,zeroText_,quantText_;
             juce::TextButton pencil_{"PENCIL"};
+            juce::ComboBox gridResolution_,xSnap_,zeroSnap_,yQuant_;
         };
 
         class EditorHeader final : public juce::Component {
@@ -533,7 +604,8 @@ private:
         WavetableEditorSurface()
             : document_(mct::origami::ui::WavetableDocument::basicShapes()),
               tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
-              timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_),waveformCanvas_(document_) {
+              timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_),waveformCanvas_(document_,gridSettings_),
+              toolsPanel_(gridSettings_,waveformCanvas_) {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
             addAndMakeVisible(header_);
@@ -626,6 +698,7 @@ private:
         }
         void refreshHistoryButtons() { header_.setHistoryAvailable(historyIndex_>0,historyIndex_<history_.size()); }
         mct::origami::ui::WavetableDocument document_;
+        GridSettings gridSettings_;
         EditorHeader header_;
         EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
         ToolsPanel toolsPanel_;
