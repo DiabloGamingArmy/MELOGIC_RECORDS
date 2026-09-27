@@ -273,8 +273,9 @@ private:
 
         struct GridSettings {
             int divisions=16;
-            int amplitudeSteps=0;
+            int amplitudeSteps=8;
             bool snapX=false;
+            bool snapY=false;
             bool snapZero=true;
             bool showGrid=true;
         };
@@ -444,7 +445,7 @@ private:
                     const float zeroThreshold=12.0f/static_cast<float>(juce::jmax(1,plot.getHeight()));
                     if(std::abs(value)<=zeroThreshold*2.0f) value=0.0f;
                 }
-                if(!bypass && grid_.amplitudeSteps>0) {
+                if(!bypass && grid_.snapY && grid_.amplitudeSteps>0) {
                     const float halfSteps=static_cast<float>(grid_.amplitudeSteps)/2.0f;
                     value=juce::jlimit(-1.0f,1.0f,std::round(value*halfSteps)/halfSteps);
                 }
@@ -526,20 +527,22 @@ private:
                 addAndMakeVisible(pencil_);
                 pencil_.setButtonText("PENCIL");
                 pencil_.setEnabled(false);
-                for(auto* c:std::array<juce::Component*,8>{{&gridResolution_,&xSnap_,&zeroSnap_,&yQuant_,
+                for(auto* c:std::array<juce::Component*,9>{{&gridResolution_,&xSnap_,&yGrid_,&ySnap_,&zeroSnap_,
                                                             &generatorType_,&cycles_,&phase_,&pulseWidth_}})
                     addAndMakeVisible(c);
                 addAndMakeVisible(apply_);
 
                 setupCombo(gridResolution_,{"OFF","1/4","1/8","1/16","1/32","1/64"});
                 setupCombo(xSnap_,{"OFF","ON"});
+                setupCombo(yGrid_,{"1/8","1/16","1/32","1/64"});
+                setupCombo(ySnap_,{"OFF","ON"});
                 setupCombo(zeroSnap_,{"OFF","ON"});
-                setupCombo(yQuant_,{"FREE","1/8","1/16","1/32","1/64"});
                 setupCombo(generatorType_,{"SINE","SAW","SQUARE","TRIANGLE","NOISE"});
                 gridResolution_.setSelectedId(4,juce::dontSendNotification);
                 xSnap_.setSelectedId(1,juce::dontSendNotification);
+                yGrid_.setSelectedId(1,juce::dontSendNotification);
+                ySnap_.setSelectedId(1,juce::dontSendNotification);
                 zeroSnap_.setSelectedId(2,juce::dontSendNotification);
-                yQuant_.setSelectedId(1,juce::dontSendNotification);
                 generatorType_.setSelectedId(1,juce::dontSendNotification);
 
                 setupNumber(cycles_,"1.00");
@@ -555,11 +558,12 @@ private:
                     grid_.showGrid=id>1; grid_.divisions=values[id-1]; canvas_.repaint();
                 };
                 xSnap_.onChange=[this] { grid_.snapX=xSnap_.getSelectedId()==2; };
-                zeroSnap_.onChange=[this] { grid_.snapZero=zeroSnap_.getSelectedId()==2; };
-                yQuant_.onChange=[this] {
-                    static constexpr int values[]{0,8,16,32,64};
-                    grid_.amplitudeSteps=values[juce::jlimit(1,5,yQuant_.getSelectedId())-1];
+                yGrid_.onChange=[this] {
+                    static constexpr int values[]{8,16,32,64};
+                    grid_.amplitudeSteps=values[juce::jlimit(1,4,yGrid_.getSelectedId())-1];
                 };
+                ySnap_.onChange=[this] { grid_.snapY=ySnap_.getSelectedId()==2; };
+                zeroSnap_.onChange=[this] { grid_.snapZero=zeroSnap_.getSelectedId()==2; };
                 generatorType_.onChange=[this] { updateGeneratorFields(); };
                 apply_.onClick=[this] {
                     if(!onGenerate) return;
@@ -583,8 +587,9 @@ private:
                 auto area=getLocalBounds().reduced(5);
                 drawLabel_=area.removeFromTop(18); pencil_.setBounds(area.removeFromTop(26));
                 area.removeFromTop(10); gridLabel_=area.removeFromTop(18);
-                layoutRow(area,gridText_,gridResolution_); layoutRow(area,snapText_,xSnap_);
-                layoutRow(area,zeroText_,zeroSnap_); layoutRow(area,quantText_,yQuant_);
+                layoutRow(area,xGridText_,gridResolution_); layoutRow(area,xSnapText_,xSnap_);
+                layoutRow(area,yGridText_,yGrid_); layoutRow(area,ySnapText_,ySnap_);
+                layoutRow(area,zeroText_,zeroSnap_);
                 area.removeFromTop(9); generateLabel_=area.removeFromTop(18);
                 layoutRow(area,typeText_,generatorType_); layoutRow(area,cyclesText_,cycles_);
                 layoutRow(area,phaseText_,phase_); layoutRow(area,widthText_,pulseWidth_);
@@ -598,10 +603,11 @@ private:
                 g.drawText("GENERATE",generateLabel_,juce::Justification::centredLeft,false);
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::plain)));
                 g.setColour(juce::Colours::white.withAlpha(0.55f));
-                g.drawText("GRID",gridText_,juce::Justification::centredLeft,false);
-                g.drawText("SNAP",snapText_,juce::Justification::centredLeft,false);
-                g.drawText("ZERO",zeroText_,juce::Justification::centredLeft,false);
-                g.drawText("Y QUANT",quantText_,juce::Justification::centredLeft,false);
+                g.drawText("X GRID",xGridText_,juce::Justification::centredLeft,false);
+                g.drawText("X SNAP",xSnapText_,juce::Justification::centredLeft,false);
+                g.drawText("Y GRID",yGridText_,juce::Justification::centredLeft,false);
+                g.drawText("Y SNAP",ySnapText_,juce::Justification::centredLeft,false);
+                g.drawText("ZERO SNAP",zeroText_,juce::Justification::centredLeft,false);
                 g.drawText("TYPE",typeText_,juce::Justification::centredLeft,false);
                 g.drawText("CYCLES",cyclesText_,juce::Justification::centredLeft,false);
                 g.drawText("PHASE",phaseText_,juce::Justification::centredLeft,false);
@@ -658,10 +664,10 @@ private:
                 pulseWidth_.setEnabled(type==3);
             }
             GridSettings& grid_; WaveformCanvas& canvas_;
-            juce::Rectangle<int> drawLabel_,gridLabel_,generateLabel_,gridText_,snapText_,zeroText_,quantText_;
+            juce::Rectangle<int> drawLabel_,gridLabel_,generateLabel_,xGridText_,xSnapText_,yGridText_,ySnapText_,zeroText_;
             juce::Rectangle<int> typeText_,cyclesText_,phaseText_,widthText_;
             juce::TextButton pencil_{"PENCIL"},apply_{"APPLY"};
-            NativeChoiceBox gridResolution_,xSnap_,zeroSnap_,yQuant_,generatorType_;
+            NativeChoiceBox gridResolution_,xSnap_,yGrid_,ySnap_,zeroSnap_,generatorType_;
             juce::TextEditor cycles_,phase_,pulseWidth_;
         };
 
