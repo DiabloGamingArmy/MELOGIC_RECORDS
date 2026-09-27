@@ -357,10 +357,14 @@ private:
                     fill.startNewSubPath(x,zeroY); fill.lineTo(x,top);
                     fill.startNewSubPath(x,zeroY); fill.lineTo(x,bottom);
                 }
-                g.setColour(mct::origami::ui::Palette::accent().withAlpha(0.16f));
+                // Wavetable body follows Origami's user-customisable global
+                // signal colour; never substitute the neutral Palette::accent().
+                g.setColour(mct::origami::ui::signalSurfaceColour(0.48f,0.34f));
                 g.strokePath(fill,juce::PathStrokeType(1.0f));
-                g.setColour(juce::Colours::white.withAlpha(0.94f));
-                g.strokePath(envelope,juce::PathStrokeType(1.55f));
+                // Deliberately heavy primary trace for precise draw/edit visibility.
+                g.setColour(juce::Colours::white.withAlpha(0.97f));
+                g.strokePath(envelope,juce::PathStrokeType(3.5f,juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
 
                 g.setColour(juce::Colours::white.withAlpha(0.32f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
