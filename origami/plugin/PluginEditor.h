@@ -13,6 +13,7 @@
 #include "ui/ArpeggiatorPanel.h"
 #include "ui/OrigamiLayout.h"
 #include "ui/GlobalPanel.h"
+#include "ui/WavetableDocument.h"
 class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
@@ -88,8 +89,10 @@ private:
         class FrameStrip final : public juce::Component {
             class FrameCard final : public juce::Component {
             public:
-                std::function<void(unsigned)> onSelected;
-                explicit FrameCard(unsigned index):index_(index) {
+                std::function<void(std::uint64_t)> onSelected;
+                FrameCard(std::uint64_t frameId,unsigned displayIndex,
+                          const std::array<float,mct::origami::ui::kWavetableFrameSize>& samples)
+                    :frameId_(frameId),displayIndex_(displayIndex),samples_(&samples) {
                     setMouseCursor(juce::MouseCursor::PointingHandCursor);
                 }
                 void setSelected(bool selected) {
@@ -97,8 +100,9 @@ private:
                     selected_=selected;
                     repaint();
                 }
+                std::uint64_t frameId() const noexcept { return frameId_; }
                 void mouseDown(const juce::MouseEvent&) override {
-                    if(onSelected) onSelected(index_);
+                    if(onSelected) onSelected(frameId_);
                 }
                 void paint(juce::Graphics& g) override {
                     const auto b=getLocalBounds().toFloat().reduced(0.5f);
@@ -107,33 +111,34 @@ private:
                     g.setColour(selected_ ? juce::Colour(0xffff1018) : juce::Colour(0xff353535));
                     g.drawRect(b,selected_ ? 1.5f : 1.0f);
 
-                    auto wave=getLocalBounds().reduced(8,7);
-                    wave.removeFromBottom(17);
-                    juce::Path p;
-                    const float mid=static_cast<float>(wave.getCentreY());
-                    const float amp=static_cast<float>(wave.getHeight())*.32f;
-                    constexpr int points=48;
-                    for(int i=0;i<points;++i) {
-                        const float phase=static_cast<float>(i)/static_cast<float>(points-1);
-                        float value=0.0f;
-                        switch(index_) {
-                            case 0: value=std::sin(phase*juce::MathConstants<float>::twoPi); break;
-                            case 1: value=2.0f*phase-1.0f; break;
-                            case 2: value=phase<0.5f ? 1.0f : -1.0f; break;
-                            default: value=phase<0.5f ? (-1.0f+4.0f*phase) : (3.0f-4.0f*phase); break;
+                    auto wave=getLocalBounds().reduced(11,10);
+                    wave.removeFromBottom(18);
+                    if(samples_!=nullptr && !wave.isEmpty()) {
+                        juce::Path p;
+                        const float mid=static_cast<float>(wave.getCentreY());
+                        const float amp=static_cast<float>(wave.getHeight())*.42f;
+                        const int points=juce::jmax(2,wave.getWidth());
+                        for(int i=0;i<points;++i) {
+                            const float t=static_cast<float>(i)/static_cast<float>(points-1);
+                            const auto sampleIndex=juce::jmin(
+                                samples_->size()-1,
+                                static_cast<std::size_t>(t*static_cast<float>(samples_->size()-1)));
+                            const float x=static_cast<float>(wave.getX())+t*static_cast<float>(wave.getWidth());
+                            const float y=mid-(*samples_)[sampleIndex]*amp;
+                            if(i==0) p.startNewSubPath(x,y); else p.lineTo(x,y);
                         }
-                        const float x=static_cast<float>(wave.getX())+phase*static_cast<float>(wave.getWidth());
-                        const float y=mid-value*amp;
-                        if(i==0) p.startNewSubPath(x,y); else p.lineTo(x,y);
+                        g.setColour(juce::Colours::white.withAlpha(0.78f));
+                        g.strokePath(p,juce::PathStrokeType(1.0f));
                     }
-                    g.setColour(juce::Colours::white.withAlpha(0.78f));
-                    g.strokePath(p,juce::PathStrokeType(1.0f));
                     g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
-                    g.drawText(juce::String(index_+1),getLocalBounds().removeFromBottom(18),
+                    g.setColour(juce::Colours::white.withAlpha(0.78f));
+                    g.drawText(juce::String(displayIndex_+1),getLocalBounds().removeFromBottom(18),
                                juce::Justification::centred,false);
                 }
             private:
-                unsigned index_=0;
+                std::uint64_t frameId_=0;
+                unsigned displayIndex_=0;
+                const std::array<float,mct::origami::ui::kWavetableFrameSize>* samples_=nullptr;
                 bool selected_=false;
             };
 
@@ -152,52 +157,79 @@ private:
 
         public:
             std::function<void(unsigned)> onFrameSelected;
-            FrameStrip() {
-                for(unsigned i=0;i<cards_.size();++i) {
-                    cards_[i]=std::make_unique<FrameCard>(i);
-                    cards_[i]->onSelected=[this](unsigned index){ select(index); };
-                    content_.addAndMakeVisible(*cards_[i]);
-                }
-                content_.addAndMakeVisible(add_);
+            explicit FrameStrip(mct::origami::ui::WavetableDocument& document):document_(document) {
                 viewport_.setViewedComponent(&content_,false);
                 viewport_.setScrollBarsShown(false,false,false,false);
                 viewport_.setWantsKeyboardFocus(true);
                 addAndMakeVisible(viewport_);
-                select(0);
+                rebuild();
+            }
+            void rebuild() {
+                cards_.clear();
+                for(unsigned i=0;i<document_.frames.size();++i) {
+                    const auto& frame=document_.frames[i];
+                    auto card=std::make_unique<FrameCard>(frame.id,i,frame.samples);
+                    card->onSelected=[this](std::uint64_t id){ selectById(id); };
+                    content_.addAndMakeVisible(*card);
+                    cards_.push_back(std::move(card));
+                }
+                content_.addAndMakeVisible(add_);
+                if(document_.selectedFrame>=cards_.size()) document_.selectedFrame=0;
+                for(unsigned i=0;i<cards_.size();++i)
+                    cards_[i]->setSelected(i==document_.selectedFrame);
+                resized();
             }
             void resized() override {
                 viewport_.setBounds(getLocalBounds());
-                constexpr int cardWidth=80;
+                constexpr int cardWidth=90;
                 constexpr int gap=5;
-                const int h=getHeight();
+                constexpr int verticalInset=3;
+                const int cardHeight=juce::jmax(1,getHeight()-verticalInset*2);
                 int x=0;
                 for(auto& card:cards_) {
-                    card->setBounds(x,0,cardWidth,h);
+                    card->setBounds(x,verticalInset,cardWidth,cardHeight);
                     x+=cardWidth+gap;
                 }
-                add_.setBounds(x,0,52,h);
-                content_.setSize(juce::jmax(getWidth(),x+52),h);
+                add_.setBounds(x,verticalInset,cardWidth,cardHeight);
+                content_.setSize(juce::jmax(getWidth(),x+cardWidth),getHeight());
             }
             bool keyPressed(const juce::KeyPress& key) override {
-                if(key==juce::KeyPress::leftKey && selected_>0) { select(selected_-1); return true; }
-                if(key==juce::KeyPress::rightKey && selected_+1<cards_.size()) { select(selected_+1); return true; }
+                if(key==juce::KeyPress::leftKey && document_.selectedFrame>0) {
+                    select(static_cast<unsigned>(document_.selectedFrame-1)); return true;
+                }
+                if(key==juce::KeyPress::rightKey && document_.selectedFrame+1<cards_.size()) {
+                    select(static_cast<unsigned>(document_.selectedFrame+1)); return true;
+                }
                 return false;
             }
             void select(unsigned index) {
                 if(index>=cards_.size()) return;
-                selected_=index;
-                for(unsigned i=0;i<cards_.size();++i) cards_[i]->setSelected(i==selected_);
-                viewport_.getHorizontalScrollBar().setCurrentRangeStart(
-                    juce::jlimit(0.0,juce::jmax(0.0,static_cast<double>(content_.getWidth()-viewport_.getWidth())),
-                                 static_cast<double>(cards_[index]->getX())));
-                if(onFrameSelected) onFrameSelected(selected_);
+                document_.selectedFrame=index;
+                for(unsigned i=0;i<cards_.size();++i) cards_[i]->setSelected(i==index);
+                reveal(index);
+                if(onFrameSelected) onFrameSelected(index);
             }
         private:
+            void selectById(std::uint64_t id) {
+                for(unsigned i=0;i<cards_.size();++i)
+                    if(cards_[i]->frameId()==id) { select(i); return; }
+            }
+            void reveal(unsigned index) {
+                if(index>=cards_.size()) return;
+                const auto card=cards_[index]->getBounds();
+                const int viewLeft=viewport_.getViewPositionX();
+                const int viewRight=viewLeft+viewport_.getWidth();
+                int target=viewLeft;
+                if(card.getX()<viewLeft) target=card.getX();
+                else if(card.getRight()>viewRight) target=card.getRight()-viewport_.getWidth();
+                target=juce::jlimit(0,juce::jmax(0,content_.getWidth()-viewport_.getWidth()),target);
+                viewport_.setViewPosition(target,0);
+            }
+            mct::origami::ui::WavetableDocument& document_;
             juce::Viewport viewport_;
             juce::Component content_;
-            std::array<std::unique_ptr<FrameCard>,4> cards_;
+            std::vector<std::unique_ptr<FrameCard>> cards_;
             AddCard add_;
-            unsigned selected_=0;
         };
 
         class EditorHeader final : public juce::Component {
@@ -225,6 +257,9 @@ private:
                 close_.setTooltip("Close wavetable editor");
                 close_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
                 close_.onClick=[this] { if(onClose) onClose(); };
+            }
+            void setDocumentName(const juce::String& name) {
+                document_.setText(name,juce::dontSendNotification);
             }
             void setFrameStatus(unsigned zeroBasedIndex,unsigned count) {
                 const auto display=zeroBasedIndex+1u;
@@ -268,8 +303,9 @@ private:
     public:
         std::function<void()> onClose;
         WavetableEditorSurface()
-            : tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
-              timeline_("FRAMES"),table_("TABLE") {
+            : document_(mct::origami::ui::WavetableDocument::basicShapes()),
+              tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
+              timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_) {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
             addAndMakeVisible(header_);
@@ -278,9 +314,11 @@ private:
                 addAndMakeVisible(region);
             timeline_.setContentComponent(frameStrip_);
             frameStrip_.onFrameSelected=[this](unsigned index) {
-                header_.setFrameStatus(index,4);
+                header_.setFrameStatus(index,static_cast<unsigned>(document_.frames.size()));
             };
-            header_.setFrameStatus(0,4);
+            header_.setDocumentName(document_.name);
+            header_.setFrameStatus(static_cast<unsigned>(document_.selectedFrame),
+                                   static_cast<unsigned>(document_.frames.size()));
         }
         void resized() override {
             auto area=getLocalBounds();
@@ -306,6 +344,7 @@ private:
             return false;
         }
     private:
+        mct::origami::ui::WavetableDocument document_;
         EditorHeader header_;
         EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
         FrameStrip frameStrip_;
