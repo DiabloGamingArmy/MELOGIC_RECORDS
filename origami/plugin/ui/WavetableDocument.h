@@ -22,8 +22,22 @@ public:
     std::vector<WavetableFrame> frames;
     std::size_t selectedFrame=0;
 
+    bool duplicateFrameAfter(std::size_t index) {
+        if(index>=frames.size() || frames.size()>=kMaxWavetableFrames) return false;
+        auto frame=frames[index];
+        frame.id=nextFrameId();
+        frames.insert(frames.begin()+static_cast<std::ptrdiff_t>(index+1),std::move(frame));
+        selectedFrame=index+1;
+        return true;
+    }
+
     bool valid() const noexcept {
         return !frames.empty() && frames.size()<=kMaxWavetableFrames && selectedFrame<frames.size();
+    }
+
+    static std::uint64_t nextFrameId() noexcept {
+        static std::atomic<std::uint64_t> nextId{1};
+        return nextId.fetch_add(1,std::memory_order_relaxed);
     }
 
     static WavetableDocument basicShapes() {
@@ -34,8 +48,7 @@ public:
 
         auto makeFrame=[](auto generator) {
             WavetableFrame frame;
-            static std::atomic<std::uint64_t> nextId{1};
-            frame.id=nextId.fetch_add(1,std::memory_order_relaxed);
+            frame.id=nextFrameId();
             for(std::size_t i=0;i<frame.samples.size();++i) {
                 const float phase=static_cast<float>(i)/static_cast<float>(frame.samples.size());
                 frame.samples[i]=juce::jlimit(-1.0f,1.0f,generator(phase));
