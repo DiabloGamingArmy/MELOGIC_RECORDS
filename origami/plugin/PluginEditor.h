@@ -116,7 +116,7 @@ private:
                     auto wave=getLocalBounds().reduced(11,10);
                     wave.removeFromBottom(18);
                     if(samples_!=nullptr && !wave.isEmpty()) {
-                        juce::Path p;
+                        juce::Path trace,body;
                         const float mid=static_cast<float>(wave.getCentreY());
                         const float amp=static_cast<float>(wave.getHeight())*.42f;
                         const int points=juce::jmax(2,wave.getWidth());
@@ -127,10 +127,24 @@ private:
                                 static_cast<std::size_t>(t*static_cast<float>(samples_->size()-1)));
                             const float x=static_cast<float>(wave.getX())+t*static_cast<float>(wave.getWidth());
                             const float y=mid-(*samples_)[sampleIndex]*amp;
-                            if(i==0) p.startNewSubPath(x,y); else p.lineTo(x,y);
+                            if(i==0) {
+                                trace.startNewSubPath(x,y);
+                                body.startNewSubPath(x,mid);
+                            } else {
+                                trace.lineTo(x,y);
+                            }
+                            body.lineTo(x,y);
                         }
-                        g.setColour(juce::Colours::white.withAlpha(0.78f));
-                        g.strokePath(p,juce::PathStrokeType(1.0f));
+                        body.lineTo(static_cast<float>(wave.getRight()),mid);
+                        body.closeSubPath();
+
+                        // Match the main editor's visual language: the preview body
+                        // follows Origami's user-customisable global signal colour.
+                        g.setColour(mct::origami::ui::signalSurfaceColour(0.48f,0.34f));
+                        g.fillPath(body);
+                        g.setColour(juce::Colours::white.withAlpha(0.94f));
+                        g.strokePath(trace,juce::PathStrokeType(2.0f,juce::PathStrokeType::curved,
+                                                               juce::PathStrokeType::rounded));
                     }
                     g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
                     g.setColour(juce::Colours::white.withAlpha(0.78f));
