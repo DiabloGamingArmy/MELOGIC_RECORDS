@@ -614,7 +614,7 @@ private:
             void dismissNumberEditorIfNeeded(juce::Component* clicked) {
                 if(clicked==&cycles_ || clicked==&phase_ || clicked==&pulseWidth_) return;
                 for(auto* editor:std::array<juce::TextEditor*,3>{{&cycles_,&phase_,&pulseWidth_}}) {
-                    editor->deselectAll();
+                    editor->setHighlightedRegion({});
                     if(editor->hasKeyboardFocus(true)) editor->giveAwayKeyboardFocus();
                 }
                 grabKeyboardFocus();
