@@ -470,16 +470,22 @@ private:
                 nativeItems_.push_back({id,text,true,{},false});
             }
             void showPopup() override {
-                // JUCE's ComboBox toggles an internal popup-active flag before calling
-                // this override. A synchronous native NSMenu does not participate in
-                // JUCE's PopupMenu completion path, so explicitly close that lifecycle
-                // first; otherwise click-away dismissal leaves the ComboBox stuck open.
-                juce::ComboBox::hidePopup();
+                // Do not call ComboBox::hidePopup() here. showPopup() is entered from
+                // JUCE's own click path; forcing hidePopup synchronously re-enters that
+                // path after Cocoa dismisses NSMenu, causing the dismissing click to
+                // launch a second menu at the new cursor position. The native NSMenu is
+                // synchronous, so returning from this method is the complete lifecycle.
                 mct::origami::ui::showNativeChoiceMenu(
                     *this,{},nativeItems_,getSelectedId(),
                     [safe=juce::Component::SafePointer<NativeChoiceBox>(this)](int id) {
                         if(safe!=nullptr && id>0) safe->setSelectedId(id,juce::sendNotificationAsync);
                     });
+                // Reset JUCE's popup bookkeeping after the native menu has fully ended,
+                // rather than before it opens. This keeps later clicks reopenable
+                // without replaying the click that dismissed the native menu.
+                juce::MessageManager::callAsync([safe=juce::Component::SafePointer<NativeChoiceBox>(this)] {
+                    if(safe!=nullptr) safe->juce::ComboBox::hidePopup();
+                });
             }
         private:
             std::vector<mct::origami::ui::NativeChoiceItem> nativeItems_;
@@ -592,6 +598,8 @@ private:
                 editor.setColour(juce::TextEditor::highlightColourId,
                                  mct::origami::ui::signalSourceColour().withAlpha(0.38f));
                 editor.setColour(juce::TextEditor::highlightedTextColourId,juce::Colours::white);
+                editor.setColour(juce::TextEditor::shadowColourId,juce::Colours::transparentBlack);
+                editor.setIndents(8,0);
             }
             static void styleButton(juce::TextButton& button) {
                 button.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff080808));
