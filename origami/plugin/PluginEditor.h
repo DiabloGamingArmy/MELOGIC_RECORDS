@@ -280,7 +280,19 @@ private:
             bool showGrid=true;
         };
 
-        enum class WaveformTool { pencil, select };
+        enum class WaveformTool { pencil, line, curve, select };
+        struct ShapeSegment {
+            std::size_t startSample=0,endSample=0;
+            float startValue=0.0f,endValue=0.0f,curve=0.0f;
+            float evaluate(float t) const noexcept {
+                t=juce::jlimit(0.0f,1.0f,t);
+                if(std::abs(curve)>0.0001f) {
+                    const float power=std::pow(2.0f,std::abs(curve)*3.0f);
+                    t=curve>0.0f ? std::pow(t,power) : 1.0f-std::pow(1.0f-t,power);
+                }
+                return startValue+(endValue-startValue)*t;
+            }
+        };
         struct WaveformSelection {
             bool active=false;
             std::uint64_t frameId=0;
@@ -290,6 +302,7 @@ private:
         class WaveformCanvas final : public juce::Component {
         public:
             std::function<void()> onSamplesChanged;
+            std::function<void(bool)> onSelectionChanged;
             std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
                                const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
             explicit WaveformCanvas(mct::origami::ui::WavetableDocument& document,GridSettings& grid)
@@ -302,11 +315,11 @@ private:
             WaveformTool tool() const noexcept { return tool_; }
             bool hasSelection() const noexcept { return selection_.active; }
             const WaveformSelection& selection() const noexcept { return selection_; }
-            void clearSelection() { selection_={}; selecting_=false; repaint(); }
+            void clearSelection() { selection_={}; selecting_=false; repaint(); if(onSelectionChanged) onSelectionChanged(false); }
             void selectAll() {
                 if(!document_.valid()) return;
                 selection_={true,document_.frames[document_.selectedFrame].id,0,mct::origami::ui::kWavetableFrameSize-1};
-                repaint();
+                repaint(); if(onSelectionChanged) onSelectionChanged(true);
             }
             void mouseDown(const juce::MouseEvent& event) override {
                 if(!document_.valid()) return;
@@ -314,6 +327,16 @@ private:
                     selecting_=true;
                     selectionAnchor_=sampleForX(event.position.x);
                     selection_={true,document_.frames[document_.selectedFrame].id,selectionAnchor_,selectionAnchor_};
+                    repaint(); if(onSelectionChanged) onSelectionChanged(true); return;
+                }
+                if(tool_==WaveformTool::line || tool_==WaveformTool::curve) {
+                    shapeDrawing_=true;
+                    editFrameId_=document_.frames[document_.selectedFrame].id;
+                    editBefore_=document_.frames[document_.selectedFrame].samples;
+                    const auto p=pointForEvent(event);
+                    shape_={p.first,p.first,p.second,p.second,0.0f};
+                    shapeDragStartY_=event.position.y;
+                    shapePreview_=editBefore_;
                     repaint(); return;
                 }
                 drawing_=true;
@@ -332,6 +355,15 @@ private:
                     selection_.start=juce::jmin(selectionAnchor_,sample);
                     selection_.end=juce::jmax(selectionAnchor_,sample);
                     repaint(); return;
+                }
+                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeDrawing_) {
+                    const auto p=pointForEvent(event);
+                    shape_.endSample=p.first; shape_.endValue=p.second;
+                    if(tool_==WaveformTool::curve) {
+                        const float dy=event.position.y-shapeDragStartY_;
+                        shape_.curve=juce::jlimit(-1.0f,1.0f,-dy/120.0f);
+                    }
+                    renderShapePreview(); repaint(); return;
                 }
                 if(!drawing_ || !document_.valid()) return;
                 const auto point=pointForEvent(event);
@@ -358,6 +390,15 @@ private:
                     selecting_=false;
                     if(selection_.start==selection_.end) clearSelection();
                     return;
+                }
+                if((tool_==WaveformTool::line || tool_==WaveformTool::curve) && shapeDrawing_) {
+                    shapeDrawing_=false;
+                    if(!document_.valid()) return;
+                    auto& frame=document_.frames[document_.selectedFrame];
+                    frame.samples=shapePreview_;
+                    samplesChanged();
+                    if(frame.samples!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,frame.samples);
+                    repaint(); return;
                 }
                 if(!drawing_) return;
                 drawing_=false;
@@ -469,6 +510,24 @@ private:
 
                 g.setColour(juce::Colours::white.withAlpha(0.32f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
+                if(shapeDrawing_) {
+                    juce::Path preview;
+                    const auto low=juce::jmin(shape_.startSample,shape_.endSample);
+                    const auto high=juce::jmax(shape_.startSample,shape_.endSample);
+                    for(std::size_t i=low;i<=high;++i) {
+                        const float x=static_cast<float>(plot.getX())+static_cast<float>(i)/2047.0f*static_cast<float>(plot.getWidth());
+                        const float y=mapY(shapePreview_[i]);
+                        if(i==low) preview.startNewSubPath(x,y); else preview.lineTo(x,y);
+                    }
+                    g.setColour(juce::Colours::white.withAlpha(0.95f));
+                    g.strokePath(preview,juce::PathStrokeType(2.0f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
+                    auto handle=[&](std::size_t i,float v) {
+                        const float x=static_cast<float>(plot.getX())+static_cast<float>(i)/2047.0f*static_cast<float>(plot.getWidth());
+                        g.fillEllipse(x-3.0f,mapY(v)-3.0f,6.0f,6.0f);
+                    };
+                    handle(shape_.startSample,shape_.startValue); handle(shape_.endSample,shape_.endValue);
+                }
+
                 juce::String readout="FRAME "+juce::String(static_cast<int>(document_.selectedFrame+1)).paddedLeft('0',3)+"     2048 SAMPLES";
                 if(selection_.active) readout+="     "+juce::String(static_cast<int>(selection_.start))+"-"+juce::String(static_cast<int>(selection_.end))+
                     " · "+juce::String(static_cast<int>(selection_.end-selection_.start+1))+" SELECTED";
@@ -477,6 +536,20 @@ private:
         private:
             juce::Rectangle<int> plotBounds() const noexcept {
                 return getLocalBounds().withTrimmedLeft(34).withTrimmedRight(10).withTrimmedTop(22).withTrimmedBottom(20);
+            }
+            void renderShapePreview() {
+                shapePreview_=editBefore_;
+                const auto low=juce::jmin(shape_.startSample,shape_.endSample);
+                const auto high=juce::jmax(shape_.startSample,shape_.endSample);
+                ShapeSegment seg=shape_;
+                if(shape_.startSample>shape_.endSample) {
+                    std::swap(seg.startSample,seg.endSample);
+                    std::swap(seg.startValue,seg.endValue);
+                    seg.curve=-seg.curve;
+                }
+                const float denom=static_cast<float>(juce::jmax<std::size_t>(1,high-low));
+                for(std::size_t i=low;i<=high;++i)
+                    shapePreview_[i]=juce::jlimit(-1.0f,1.0f,seg.evaluate(static_cast<float>(i-low)/denom));
             }
             std::size_t sampleForX(float eventX) const noexcept {
                 const auto plot=plotBounds();
@@ -515,6 +588,10 @@ private:
             mct::origami::ui::WavetableDocument& document_;
             GridSettings& grid_;
             WaveformTool tool_=WaveformTool::pencil;
+            ShapeSegment shape_{};
+            std::array<float,mct::origami::ui::kWavetableFrameSize> shapePreview_{};
+            bool shapeDrawing_=false;
+            float shapeDragStartY_=0.0f;
             WaveformSelection selection_{};
             bool selecting_=false;
             std::size_t selectionAnchor_=0;
@@ -595,16 +672,18 @@ private:
                 gridHeader_.onClick=[this]{ gridOpen_=!gridOpen_; relayout(); };
                 generateHeader_.onClick=[this]{ generateOpen_=!generateOpen_; relayout(); };
                 transformHeader_.onClick=[this]{ transformOpen_=!transformOpen_; relayout(); };
-                addAndMakeVisible(pencil_); addAndMakeVisible(select_);
-                pencil_.setButtonText("PENCIL"); select_.setButtonText("SELECT");
-                pencil_.setClickingTogglesState(false); select_.setClickingTogglesState(false);
+                addAndMakeVisible(pencil_); addAndMakeVisible(line_); addAndMakeVisible(curve_); addAndMakeVisible(select_);
+                pencil_.setButtonText("PENCIL"); line_.setButtonText("LINE"); curve_.setButtonText("CURVE"); select_.setButtonText("SELECT");
+                for(auto* b:std::array<juce::TextButton*,4>{{&pencil_,&line_,&curve_,&select_}}) b->setClickingTogglesState(false);
                 pencil_.onClick=[this] { canvas_.setTool(WaveformTool::pencil); updateToolButtons(); };
+                line_.onClick=[this] { canvas_.setTool(WaveformTool::line); updateToolButtons(); };
+                curve_.onClick=[this] { canvas_.setTool(WaveformTool::curve); updateToolButtons(); };
                 select_.onClick=[this] { canvas_.setTool(WaveformTool::select); updateToolButtons(); };
                 for(auto* c:std::array<juce::Component*,9>{{&gridResolution_,&xSnap_,&yGrid_,&ySnap_,&zeroSnap_,
                                                             &generatorType_,&cycles_,&phase_,&pulseWidth_}})
                     addAndMakeVisible(c);
                 addAndMakeVisible(apply_);
-                for(auto* c:std::array<juce::Component*,7>{{&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_}})
+                for(auto* c:std::array<juce::Component*,11>{{&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_,&smooth_,&fadeIn_,&fadeOut_,&removeDc_}})
                     addAndMakeVisible(c);
 
                 setupCombo(gridResolution_,{"OFF","1/4","1/8","1/16","1/32","1/64"});
@@ -625,17 +704,21 @@ private:
                 setupNumber(pulseWidth_,"50");
                 apply_.setButtonText("APPLY");
                 apply_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
-                styleButton(pencil_); styleButton(select_); styleButton(apply_);
+                styleButton(pencil_); styleButton(line_); styleButton(curve_); styleButton(select_); styleButton(apply_);
                 setupNumber(gain_,"1.00"); setupNumber(offset_,"0.00");
                 transformApply_.setButtonText("APPLY");
                 invert_.setButtonText("INVERT"); reverse_.setButtonText("REVERSE");
-                zero_.setButtonText("ZERO"); normalize_.setButtonText("NORMALIZE");
-                for(auto* b:std::array<juce::TextButton*,5>{{&transformApply_,&invert_,&reverse_,&zero_,&normalize_}}) styleButton(*b);
+                zero_.setButtonText("ZERO"); normalize_.setButtonText("NORMALIZE"); smooth_.setButtonText("SMOOTH"); fadeIn_.setButtonText("FADE IN"); fadeOut_.setButtonText("FADE OUT"); removeDc_.setButtonText("REMOVE DC");
+                for(auto* b:std::array<juce::TextButton*,9>{{&transformApply_,&invert_,&reverse_,&zero_,&normalize_,&smooth_,&fadeIn_,&fadeOut_,&removeDc_}}) styleButton(*b);
                 transformApply_.onClick=[this] { if(onTransform) onTransform(1,gain_.getText().getFloatValue(),offset_.getText().getFloatValue()); };
                 invert_.onClick=[this] { if(onTransform) onTransform(2,0,0); };
                 reverse_.onClick=[this] { if(onTransform) onTransform(3,0,0); };
                 zero_.onClick=[this] { if(onTransform) onTransform(4,0,0); };
                 normalize_.onClick=[this] { if(onTransform) onTransform(5,0,0); };
+                smooth_.onClick=[this] { if(onTransform) onTransform(6,0,0); };
+                fadeIn_.onClick=[this] { if(onTransform) onTransform(7,0,0); };
+                fadeOut_.onClick=[this] { if(onTransform) onTransform(8,0,0); };
+                removeDc_.onClick=[this] { if(onTransform) onTransform(9,0,0); };
                 updateToolButtons();
 
                 gridResolution_.onChange=[this] {
@@ -671,11 +754,14 @@ private:
             }
             void resized() override {
                 auto area=getLocalBounds().reduced(5);
-                layoutSectionHeader(area,drawHeader_,"DRAW",drawOpen_);
-                setGroupVisible({&pencil_,&select_},drawOpen_);
-                if(drawOpen_) { auto row=area.removeFromTop(26); pencil_.setBounds(row.removeFromLeft(row.getWidth()/2)); select_.setBounds(row); area.removeFromTop(7); }
+                layoutSectionHeader(area,drawHeader_,"DRAW");
+                setGroupVisible({&pencil_,&line_,&curve_,&select_},drawOpen_);
+                if(drawOpen_) {
+                    auto row=area.removeFromTop(26); pencil_.setBounds(row.removeFromLeft(row.getWidth()/2)); line_.setBounds(row);
+                    area.removeFromTop(3); row=area.removeFromTop(26); curve_.setBounds(row.removeFromLeft(row.getWidth()/2)); select_.setBounds(row); area.removeFromTop(7);
+                }
 
-                layoutSectionHeader(area,gridHeader_,"SNAP & GRID",gridOpen_);
+                layoutSectionHeader(area,gridHeader_,"SNAP & GRID");
                 setGroupVisible({&gridResolution_,&xSnap_,&yGrid_,&ySnap_,&zeroSnap_},gridOpen_);
                 if(gridOpen_) {
                     layoutRow(area,xGridText_,gridResolution_); layoutRow(area,xSnapText_,xSnap_);
@@ -683,7 +769,7 @@ private:
                     layoutRow(area,zeroText_,zeroSnap_); area.removeFromTop(5);
                 }
 
-                layoutSectionHeader(area,generateHeader_,"GENERATE",generateOpen_);
+                layoutSectionHeader(area,generateHeader_,"GENERATE");
                 setGroupVisible({&generatorType_,&cycles_,&phase_,&pulseWidth_,&apply_},generateOpen_);
                 if(generateOpen_) {
                     layoutRow(area,typeText_,generatorType_); layoutRow(area,cyclesText_,cycles_);
@@ -691,14 +777,17 @@ private:
                     apply_.setBounds(area.removeFromTop(26)); area.removeFromTop(7);
                 }
 
-                layoutSectionHeader(area,transformHeader_,"TRANSFORM",transformOpen_);
-                setGroupVisible({&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_},transformOpen_);
+                layoutSectionHeader(area,transformHeader_,"TRANSFORM");
+                setGroupVisible({&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_,&smooth_,&fadeIn_,&fadeOut_,&removeDc_},transformOpen_);
                 if(transformOpen_) {
                     layoutRow(area,gainText_,gain_); layoutRow(area,offsetText_,offset_);
                     transformApply_.setBounds(area.removeFromTop(24)); area.removeFromTop(3);
                     { auto row=area.removeFromTop(24); invert_.setBounds(row.removeFromLeft(row.getWidth()/2)); reverse_.setBounds(row); }
                     area.removeFromTop(3); { auto row=area.removeFromTop(24); zero_.setBounds(row.removeFromLeft(row.getWidth()/2)); normalize_.setBounds(row); }
-                    area.removeFromTop(6);
+                    area.removeFromTop(8); processLabel_=area.removeFromTop(16);
+                    smooth_.setBounds(area.removeFromTop(24)); area.removeFromTop(3);
+                    { auto row=area.removeFromTop(24); fadeIn_.setBounds(row.removeFromLeft(row.getWidth()/2)); fadeOut_.setBounds(row); }
+                    area.removeFromTop(3); removeDc_.setBounds(area.removeFromTop(24)); area.removeFromTop(6);
                 }
                 contentHeight_=getHeight()-area.getHeight()+8;
             }
@@ -718,8 +807,9 @@ private:
                 if(generateOpen_) g.drawText("P.WIDTH",widthText_,juce::Justification::centredLeft,false);
                 if(transformOpen_) g.drawText("GAIN",gainText_,juce::Justification::centredLeft,false);
                 if(transformOpen_) g.drawText("OFFSET",offsetText_,juce::Justification::centredLeft,false);
+                if(transformOpen_) g.drawText("PROCESS",processLabel_,juce::Justification::centredLeft,false);
                 g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.75f));
-                if(drawOpen_) { g.drawRect(pencil_.getBounds().toFloat(),1.0f); g.drawRect(select_.getBounds().toFloat(),1.0f); }
+                if(drawOpen_) { g.drawRect(pencil_.getBounds().toFloat(),1.0f); g.drawRect(line_.getBounds().toFloat(),1.0f); g.drawRect(curve_.getBounds().toFloat(),1.0f); g.drawRect(select_.getBounds().toFloat(),1.0f); }
                 if(generateOpen_) g.drawRect(apply_.getBounds().toFloat(),1.0f);
             }
         private:
@@ -736,15 +826,24 @@ private:
             static void setGroupVisible(std::initializer_list<juce::Component*> items,bool visible) {
                 for(auto* c:items) c->setVisible(visible);
             }
-            static void layoutSectionHeader(juce::Rectangle<int>& area,juce::TextButton& b,const juce::String& title,bool open) {
+            static void layoutSectionHeader(juce::Rectangle<int>& area,juce::TextButton& b,const juce::String& title) {
                 b.setButtonText(title+"    V");
                 b.setBounds(area.removeFromTop(24)); area.removeFromTop(5);
             }
             void updateToolButtons() {
                 pencil_.setColour(juce::TextButton::buttonColourId,canvas_.tool()==WaveformTool::pencil ?
                     mct::origami::ui::signalSourceColour().withAlpha(0.24f):juce::Colour(0xff080808));
+                line_.setColour(juce::TextButton::buttonColourId,canvas_.tool()==WaveformTool::line ?
+                    mct::origami::ui::signalSourceColour().withAlpha(0.24f):juce::Colour(0xff080808));
+                curve_.setColour(juce::TextButton::buttonColourId,canvas_.tool()==WaveformTool::curve ?
+                    mct::origami::ui::signalSourceColour().withAlpha(0.24f):juce::Colour(0xff080808));
                 select_.setColour(juce::TextButton::buttonColourId,canvas_.tool()==WaveformTool::select ?
                     mct::origami::ui::signalSourceColour().withAlpha(0.24f):juce::Colour(0xff080808));
+            }
+            void setSelectionAvailable(bool available) {
+                for(auto* c:std::array<juce::Component*,9>{{&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_,&smooth_,&fadeIn_}})
+                    c->setEnabled(available);
+                fadeOut_.setEnabled(available); removeDc_.setEnabled(available);
             }
             void dismissNumberEditorIfNeeded(juce::Component* clicked) {
                 if(clicked==&cycles_ || clicked==&phase_ || clicked==&pulseWidth_ || clicked==&gain_ || clicked==&offset_) return;
@@ -794,10 +893,10 @@ private:
             }
             GridSettings& grid_; WaveformCanvas& canvas_;
             juce::Rectangle<int> xGridText_,xSnapText_,yGridText_,ySnapText_,zeroText_;
-            juce::Rectangle<int> typeText_,cyclesText_,phaseText_,widthText_,gainText_,offsetText_;
+            juce::Rectangle<int> typeText_,cyclesText_,phaseText_,widthText_,gainText_,offsetText_,processLabel_;
             juce::TextButton drawHeader_,gridHeader_,generateHeader_,transformHeader_;
-            juce::TextButton pencil_{"PENCIL"},select_{"SELECT"},apply_{"APPLY"};
-            juce::TextButton transformApply_{"APPLY G/O"},invert_{"INVERT"},reverse_{"REVERSE"},zero_{"ZERO"},normalize_{"NORMALIZE"};
+            juce::TextButton pencil_{"PENCIL"},line_{"LINE"},curve_{"CURVE"},select_{"SELECT"},apply_{"APPLY"};
+            juce::TextButton transformApply_{"APPLY"},invert_{"INVERT"},reverse_{"REVERSE"},zero_{"ZERO"},normalize_{"NORMALIZE"},smooth_{"SMOOTH"},fadeIn_{"FADE IN"},fadeOut_{"FADE OUT"},removeDc_{"REMOVE DC"};
             NativeChoiceBox gridResolution_,xSnap_,yGrid_,ySnap_,zeroSnap_,generatorType_;
             juce::TextEditor cycles_,phase_,pulseWidth_,gain_,offset_;
             bool drawOpen_=true,gridOpen_=true,generateOpen_=false,transformOpen_=true;
@@ -920,6 +1019,7 @@ private:
             waveform_.setContentComponent(waveformCanvas_);
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
             waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); };
+            waveformCanvas_.onSelectionChanged=[this](bool active) { toolsPanel_.setSelectionAvailable(active); };
             waveformCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) {
                 commitEdit(id,before,after);
             };
@@ -928,6 +1028,7 @@ private:
             };
             toolsPanel_.onTransform=[this](int op,float gain,float offset) { transformSelection(op,gain,offset); };
             header_.setDocumentName(document_.name);
+            toolsPanel_.setSelectionAvailable(false);
             refreshSelectedFrame();
         }
         void refreshSelectedFrame() {
@@ -990,6 +1091,23 @@ private:
                 float peak=0.0f;
                 for(std::size_t i=first;i<=last;++i) peak=juce::jmax(peak,std::abs(frame.samples[i]));
                 if(peak>1.0e-7f) for(std::size_t i=first;i<=last;++i) frame.samples[i]=juce::jlimit(-1.0f,1.0f,frame.samples[i]/peak);
+            } else if(op==6) {
+                const auto source=frame.samples;
+                for(std::size_t i=first;i<=last;++i) {
+                    const auto lo=juce::jmax(first,i>2?i-2:first), hi=juce::jmin(last,i+2);
+                    float sum=0.0f; for(std::size_t j=lo;j<=hi;++j) sum+=source[j];
+                    frame.samples[i]=sum/static_cast<float>(hi-lo+1);
+                }
+            } else if(op==7 || op==8) {
+                const float denom=static_cast<float>(juce::jmax<std::size_t>(1,last-first));
+                for(std::size_t i=first;i<=last;++i) {
+                    float t=static_cast<float>(i-first)/denom; if(op==8) t=1.0f-t;
+                    frame.samples[i]*=t;
+                }
+            } else if(op==9) {
+                float mean=0.0f; for(std::size_t i=first;i<=last;++i) mean+=frame.samples[i];
+                mean/=static_cast<float>(last-first+1);
+                for(std::size_t i=first;i<=last;++i) frame.samples[i]=juce::jlimit(-1.0f,1.0f,frame.samples[i]-mean);
             }
             const auto after=frame.samples;
             if(after==before) return;
