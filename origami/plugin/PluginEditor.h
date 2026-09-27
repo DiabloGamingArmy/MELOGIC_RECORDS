@@ -50,6 +50,26 @@ private:
                 addAndMakeVisible(component);
                 resized();
             }
+        void commitEdit(std::uint64_t id,
+                        const std::array<float,mct::origami::ui::kWavetableFrameSize>& before,
+                        const std::array<float,mct::origami::ui::kWavetableFrameSize>& after) {
+            if(before==after) return;
+            if(historyIndex_<history_.size()) history_.erase(history_.begin()+static_cast<std::ptrdiff_t>(historyIndex_),history_.end());
+            history_.push_back({id,before,after});
+            if(history_.size()>128) history_.erase(history_.begin());
+            historyIndex_=history_.size();
+            refreshHistoryButtons();
+        }
+        void undo() {
+            if(historyIndex_==0) return;
+            --historyIndex_;
+            applyHistory(history_[historyIndex_],false);
+        }
+        void redo() {
+            if(historyIndex_>=history_.size()) return;
+            applyHistory(history_[historyIndex_],true);
+            ++historyIndex_;
+        }
         void resized() override {
                 if(content_!=nullptr) content_->setBounds(contentBounds());
             }
@@ -234,6 +254,9 @@ private:
             void refreshSelectedThumbnail() {
                 if(document_.selectedFrame<cards_.size()) cards_[document_.selectedFrame]->repaint();
             }
+            void refreshThumbnail(unsigned index) {
+                if(index<cards_.size()) cards_[index]->repaint();
+            }
         private:
             void reveal(unsigned index) {
                 if(index>=cards_.size()) return;
@@ -256,6 +279,8 @@ private:
         class WaveformCanvas final : public juce::Component {
         public:
             std::function<void()> onSamplesChanged;
+            std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
+                               const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
             explicit WaveformCanvas(mct::origami::ui::WavetableDocument& document):document_(document) {
                 setInterceptsMouseClicks(true,false);
                 setMouseCursor(juce::MouseCursor::CrosshairCursor);
@@ -264,6 +289,8 @@ private:
             void mouseDown(const juce::MouseEvent& event) override {
                 if(!document_.valid()) return;
                 drawing_=true;
+                editFrameId_=document_.frames[document_.selectedFrame].id;
+                editBefore_=document_.frames[document_.selectedFrame].samples;
                 const auto point=pointForEvent(event);
                 lastSample_=point.first;
                 lastValue_=point.second;
@@ -290,7 +317,13 @@ private:
                 lastValue_=currentValue;
                 samplesChanged();
             }
-            void mouseUp(const juce::MouseEvent&) override { drawing_=false; }
+            void mouseUp(const juce::MouseEvent&) override {
+                if(!drawing_) return;
+                drawing_=false;
+                if(!document_.valid()) return;
+                const auto& after=document_.frames[document_.selectedFrame].samples;
+                if(after!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,after);
+            }
 
             void paint(juce::Graphics& g) override {
                 const auto bounds=getLocalBounds();
@@ -329,7 +362,8 @@ private:
 
                 const auto& samples=document_.frames[document_.selectedFrame].samples;
                 const int columns=juce::jmax(1,plot.getWidth());
-                juce::Path envelope;
+                juce::Path envelope,fill;
+                const float zeroY=mapY(0.0f);
                 for(int column=0;column<columns;++column) {
                     const std::size_t begin=static_cast<std::size_t>((static_cast<std::uint64_t>(column)*samples.size())/static_cast<std::uint64_t>(columns));
                     const std::size_t end=juce::jmax(begin+1,static_cast<std::size_t>((static_cast<std::uint64_t>(column+1)*samples.size())/static_cast<std::uint64_t>(columns)));
@@ -338,11 +372,15 @@ private:
                         minimum=juce::jmin(minimum,samples[i]); maximum=juce::jmax(maximum,samples[i]);
                     }
                     const float x=static_cast<float>(plot.getX()+column)+0.5f;
-                    envelope.startNewSubPath(x,mapY(maximum));
-                    envelope.lineTo(x,mapY(minimum));
+                    const float top=mapY(maximum),bottom=mapY(minimum);
+                    envelope.startNewSubPath(x,top); envelope.lineTo(x,bottom);
+                    fill.startNewSubPath(x,zeroY); fill.lineTo(x,top);
+                    fill.startNewSubPath(x,zeroY); fill.lineTo(x,bottom);
                 }
-                g.setColour(juce::Colours::white.withAlpha(0.90f));
-                g.strokePath(envelope,juce::PathStrokeType(1.0f));
+                g.setColour(mct::origami::ui::Palette::accent().withAlpha(0.16f));
+                g.strokePath(fill,juce::PathStrokeType(1.0f));
+                g.setColour(juce::Colours::white.withAlpha(0.94f));
+                g.strokePath(envelope,juce::PathStrokeType(1.55f));
 
                 g.setColour(juce::Colours::white.withAlpha(0.32f));
                 g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
@@ -370,6 +408,8 @@ private:
             bool drawing_=false;
             std::size_t lastSample_=0;
             float lastValue_=0.0f;
+            std::uint64_t editFrameId_=0;
+            std::array<float,mct::origami::ui::kWavetableFrameSize> editBefore_{};
         };
 
         class ToolsPanel final : public juce::Component {
@@ -400,6 +440,8 @@ private:
         class EditorHeader final : public juce::Component {
         public:
             std::function<void()> onClose;
+            std::function<void()> onUndo;
+            std::function<void()> onRedo;
             EditorHeader() {
                 for(auto* component:std::array<juce::Component*,5>{{&document_,&frame_,&undo_,&redo_,&close_}})
                     addAndMakeVisible(component);
@@ -422,6 +464,12 @@ private:
                 close_.setTooltip("Close wavetable editor");
                 close_.setMouseCursor(juce::MouseCursor::PointingHandCursor);
                 close_.onClick=[this] { if(onClose) onClose(); };
+                undo_.onClick=[this] { if(onUndo) onUndo(); };
+                redo_.onClick=[this] { if(onRedo) onRedo(); };
+            }
+            void setHistoryAvailable(bool canUndo,bool canRedo) {
+                undo_.setEnabled(canUndo);
+                redo_.setEnabled(canRedo);
             }
             void setDocumentName(const juce::String& name) {
                 document_.setText(name,juce::dontSendNotification);
@@ -475,6 +523,8 @@ private:
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
             addAndMakeVisible(header_);
             header_.onClose=[this] { if(onClose) onClose(); };
+            header_.onUndo=[this] { undo(); };
+            header_.onRedo=[this] { redo(); };
             for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&table_}})
                 addAndMakeVisible(region);
             tools_.setContentComponent(toolsPanel_);
@@ -482,6 +532,9 @@ private:
             waveform_.setContentComponent(waveformCanvas_);
             frameStrip_.onFrameSelected=[this](unsigned) { refreshSelectedFrame(); };
             waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); };
+            waveformCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) {
+                commitEdit(id,before,after);
+            };
             header_.setDocumentName(document_.name);
             refreshSelectedFrame();
         }
@@ -508,6 +561,11 @@ private:
             g.fillAll(mct::origami::ui::Palette::background());
         }
         bool keyPressed(const juce::KeyPress& key) override {
+            const auto mods=key.getModifiers();
+            if(mods.isCommandDown() && key.getTextCharacter()=='z') {
+                if(mods.isShiftDown()) redo(); else undo();
+                return true;
+            }
             if(key==juce::KeyPress::escapeKey && onClose) {
                 onClose();
                 return true;
@@ -515,12 +573,29 @@ private:
             return false;
         }
     private:
+        struct HistoryEntry {
+            std::uint64_t frameId=0;
+            std::array<float,mct::origami::ui::kWavetableFrameSize> before{},after{};
+        };
+        void applyHistory(const HistoryEntry& entry,bool useAfter) {
+            for(std::size_t i=0;i<document_.frames.size();++i) {
+                if(document_.frames[i].id!=entry.frameId) continue;
+                document_.frames[i].samples=useAfter ? entry.after : entry.before;
+                if(document_.selectedFrame==i) waveformCanvas_.refresh();
+                frameStrip_.refreshThumbnail(static_cast<unsigned>(i));
+                break;
+            }
+            refreshHistoryButtons();
+        }
+        void refreshHistoryButtons() { header_.setHistoryAvailable(historyIndex_>0,historyIndex_<history_.size()); }
         mct::origami::ui::WavetableDocument document_;
         EditorHeader header_;
         EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
         ToolsPanel toolsPanel_;
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
+        std::vector<HistoryEntry> history_;
+        std::size_t historyIndex_=0;
     };
     void openWavetableEditor(unsigned oscillatorId);
     void closeWavetableEditor();
