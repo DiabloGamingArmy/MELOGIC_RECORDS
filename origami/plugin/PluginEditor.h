@@ -686,92 +686,156 @@ private:
 
         class SpectrumCanvas final : public juce::Component {
         public:
-            explicit SpectrumCanvas(mct::origami::ui::WavetableDocument& document)
-                :document_(document) {
+            std::function<void()> onSamplesChanged;
+            std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
+                               const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
+            explicit SpectrumCanvas(mct::origami::ui::WavetableDocument& document):document_(document) {
                 magnitudes_.fill(0.0f); phases_.fill(0.0f); real_.fill(0.0f); imag_.fill(0.0f);
             }
             void refresh() {
-                magnitudes_.fill(0.0f); phases_.fill(0.0f); real_.fill(0.0f); imag_.fill(0.0f);
-                if(!document_.valid()) { repaint(); return; }
-                const auto& samples=document_.frames[document_.selectedFrame].samples;
-                for(std::size_t i=0;i<mct::origami::ui::kWavetableFrameSize;++i) real_[i]=samples[i];
-                performForwardFft();
-                float peak=0.0f;
-                for(std::size_t bin=0;bin<kBins;++bin) {
-                    const float real=real_[bin],imag=imag_[bin];
-                    const float magnitude=std::sqrt(real*real+imag*imag);
-                    magnitudes_[bin]=magnitude; phases_[bin]=std::atan2(imag,real);
-                    if(bin>0) peak=juce::jmax(peak,magnitude);
-                }
-                normalizer_=juce::jmax(peak,1.0e-9f); repaint();
+                if(editing_) return;
+                analyseDocumentFrame(); repaint();
+            }
+            void mouseMove(const juce::MouseEvent& e) override { hoveredBin_=binForX(e.position.x); repaint(); }
+            void mouseExit(const juce::MouseEvent&) override { hoveredBin_=-1; repaint(); }
+            void mouseDown(const juce::MouseEvent& e) override {
+                if(!document_.valid()) return;
+                editing_=true; editFrameId_=document_.frames[document_.selectedFrame].id;
+                editBefore_=document_.frames[document_.selectedFrame].samples;
+                analyseDocumentFrame(); editMagnitudes_=magnitudes_;
+                lastEditedBin_=-1; editAt(e.position); 
+            }
+            void mouseDrag(const juce::MouseEvent& e) override { if(editing_) editAt(e.position); }
+            void mouseUp(const juce::MouseEvent&) override {
+                if(!editing_ || !document_.valid()) return;
+                editing_=false; const auto after=document_.frames[document_.selectedFrame].samples;
+                if(after!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,after);
+                analyseDocumentFrame(); repaint();
+            }
+            void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails& wheel) override {
+                if(wheel.deltaY==0.0f) return;
+                const int old=zoom_; zoom_=juce::jlimit(1,8,zoom_+(wheel.deltaY>0.0f?1:-1));
+                if(zoom_!=old) { clampFirstBin(); repaint(); }
             }
             void paint(juce::Graphics& g) override {
                 g.fillAll(juce::Colour(0xff080808));
-                auto bounds=getLocalBounds().reduced(8,7);
-                if(bounds.getWidth()<8 || bounds.getHeight()<8) return;
+                auto bounds=getLocalBounds().reduced(8,7); if(bounds.getWidth()<8||bounds.getHeight()<8) return;
                 auto labelArea=bounds.removeFromBottom(18);
                 g.setColour(juce::Colour(0xff1c1c1c));
                 for(int i=0;i<=4;++i) {
                     const float y=static_cast<float>(bounds.getY())+static_cast<float>(i)/4.0f*static_cast<float>(bounds.getHeight());
                     g.drawHorizontalLine(juce::roundToInt(y),static_cast<float>(bounds.getX()),static_cast<float>(bounds.getRight()));
                 }
-                const int visibleBins=juce::jmin<int>(128,static_cast<int>(kBins)-1);
-                const float slot=static_cast<float>(bounds.getWidth())/static_cast<float>(visibleBins);
-                for(int i=1;i<=visibleBins;++i) {
-                    const float normalized=magnitudes_[static_cast<std::size_t>(i)]/normalizer_;
+                const int count=visibleBinCount(); const float slot=static_cast<float>(bounds.getWidth())/static_cast<float>(count);
+                for(int n=0;n<count;++n) {
+                    const int bin=firstBin_+n; if(bin>=static_cast<int>(kBins)) break;
+                    const float normalized=magnitudes_[static_cast<std::size_t>(bin)]/displayReference_;
                     const float db=juce::Decibels::gainToDecibels(normalized,-72.0f);
                     const float level=juce::jlimit(0.0f,1.0f,(db+72.0f)/72.0f);
-                    const float h=level*static_cast<float>(bounds.getHeight());
-                    const float x=static_cast<float>(bounds.getX())+static_cast<float>(i-1)*slot;
+                    const float height=level*static_cast<float>(bounds.getHeight());
+                    const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)*slot;
                     const float width=juce::jmax(1.0f,slot-1.0f);
                     g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.78f));
-                    g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-h,width,h));
+                    g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-height,width,height));
+                    if(bin==hoveredBin_) { g.setColour(juce::Colours::white.withAlpha(0.9f)); g.drawRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getY()),width,static_cast<float>(bounds.getHeight())),1.0f); }
                 }
-                g.setColour(juce::Colours::white.withAlpha(0.38f));
-                g.setFont(juce::Font(juce::FontOptions("Arial",7.0f,juce::Font::plain)));
-                const int marks[]{1,16,32,64,128};
-                for(const int harmonic:marks) {
-                    const float x=static_cast<float>(bounds.getX())+(static_cast<float>(harmonic)-0.5f)/static_cast<float>(visibleBins)*static_cast<float>(bounds.getWidth());
-                    g.drawText(juce::String(harmonic),juce::roundToInt(x)-14,labelArea.getY(),28,labelArea.getHeight(),juce::Justification::centred,false);
+                g.setColour(juce::Colours::white.withAlpha(0.38f)); g.setFont(juce::Font(juce::FontOptions("Arial",7.0f,juce::Font::plain)));
+                for(int n=0;n<=4;++n) {
+                    const int bin=firstBin_+(count-1)*n/4;
+                    const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)/4.0f*static_cast<float>(bounds.getWidth());
+                    g.drawText(juce::String(bin),juce::roundToInt(x)-16,labelArea.getY(),32,labelArea.getHeight(),juce::Justification::centred,false);
                 }
-                g.setColour(juce::Colours::white.withAlpha(0.52f));
-                g.drawText("HARMONICS · 72 dB",bounds.getX(),bounds.getY()+2,bounds.getWidth()-4,12,juce::Justification::topRight,false);
+                juce::String status="HARMONICS · "+juce::String(zoom_)+"x";
+                if(hoveredBin_>0 && hoveredBin_<static_cast<int>(kBins)) {
+                    const float db=juce::Decibels::gainToDecibels(magnitudes_[static_cast<std::size_t>(hoveredBin_)]/displayReference_,-72.0f);
+                    status+="     H "+juce::String(hoveredBin_)+"  "+juce::String(db,1)+" dB";
+                }
+                g.setColour(juce::Colours::white.withAlpha(0.52f)); g.drawText(status,bounds.getX(),bounds.getY()+2,bounds.getWidth()-4,12,juce::Justification::topRight,false);
             }
         private:
             static constexpr std::size_t kFftSize=mct::origami::ui::kWavetableFrameSize;
             static constexpr std::size_t kBins=kFftSize/2+1;
-            void performForwardFft() noexcept {
-                // In-place radix-2 Cooley-Tukey FFT. The wavetable size is fixed at 2048.
+            int visibleBinCount() const noexcept { return juce::jmax(16,128/zoom_); }
+            juce::Rectangle<int> plotBounds() const noexcept { return getLocalBounds().reduced(8,7).withTrimmedBottom(18); }
+            void clampFirstBin() noexcept { firstBin_=juce::jlimit(1,juce::jmax(1,static_cast<int>(kBins)-visibleBinCount()),firstBin_); }
+            int binForX(float x) const noexcept {
+                const auto p=plotBounds(); if(!p.contains(juce::roundToInt(x),p.getCentreY())) return -1;
+                const float norm=juce::jlimit(0.0f,0.999999f,(x-static_cast<float>(p.getX()))/static_cast<float>(juce::jmax(1,p.getWidth())));
+                return juce::jlimit(1,static_cast<int>(kBins)-1,firstBin_+static_cast<int>(norm*static_cast<float>(visibleBinCount())));
+            }
+            float magnitudeForY(float y) const noexcept {
+                const auto p=plotBounds(); const float level=juce::jlimit(0.0f,1.0f,(static_cast<float>(p.getBottom())-y)/static_cast<float>(juce::jmax(1,p.getHeight())));
+                const float db=-72.0f+72.0f*level; return displayReference_*juce::Decibels::decibelsToGain(db);
+            }
+            void editAt(juce::Point<float> pos) {
+                const int bin=binForX(pos.x); if(bin<1) return;
+                const float target=magnitudeForY(pos.y);
+                if(lastEditedBin_>0 && lastEditedBin_!=bin) {
+                    const int lo=juce::jmin(lastEditedBin_,bin),hi=juce::jmax(lastEditedBin_,bin);
+                    const float start=editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
+                    for(int b=lo;b<=hi;++b) {
+                        const float t=static_cast<float>(b-lastEditedBin_)/static_cast<float>(bin-lastEditedBin_);
+                        editMagnitudes_[static_cast<std::size_t>(b)]=juce::jmax(0.0f,start+t*(target-start));
+                    }
+                } else editMagnitudes_[static_cast<std::size_t>(bin)]=target;
+                lastEditedBin_=bin; reconstructPreview(); hoveredBin_=bin; repaint();
+            }
+            void analyseDocumentFrame() {
+                magnitudes_.fill(0.0f); phases_.fill(0.0f); real_.fill(0.0f); imag_.fill(0.0f);
+                if(!document_.valid()) return;
+                const auto& samples=document_.frames[document_.selectedFrame].samples;
+                for(std::size_t i=0;i<kFftSize;++i) real_[i]=samples[i];
+                performFft(false);
+                float peak=0.0f;
+                for(std::size_t bin=0;bin<kBins;++bin) {
+                    const float magnitude=std::sqrt(real_[bin]*real_[bin]+imag_[bin]*imag_[bin]);
+                    magnitudes_[bin]=magnitude; phases_[bin]=std::atan2(imag_[bin],real_[bin]); if(bin>0) peak=juce::jmax(peak,magnitude);
+                }
+                displayReference_=juce::jmax(peak,1.0e-9f);
+            }
+            void reconstructPreview() {
+                if(!document_.valid()) return;
+                real_.fill(0.0f); imag_.fill(0.0f);
+                real_[0]=editMagnitudes_[0]*std::cos(phases_[0]); imag_[0]=0.0f;
+                for(std::size_t bin=1;bin<kFftSize/2;++bin) {
+                    const float magnitude=editMagnitudes_[bin],phase=phases_[bin];
+                    const float re=magnitude*std::cos(phase),im=magnitude*std::sin(phase);
+                    real_[bin]=re; imag_[bin]=im; real_[kFftSize-bin]=re; imag_[kFftSize-bin]=-im;
+                }
+                real_[kFftSize/2]=editMagnitudes_[kFftSize/2]*std::cos(phases_[kFftSize/2]); imag_[kFftSize/2]=0.0f;
+                performFft(true);
+                auto& frame=document_.frames[document_.selectedFrame];
+                for(std::size_t i=0;i<kFftSize;++i) frame.samples[i]=juce::jlimit(-1.0f,1.0f,real_[i]/static_cast<float>(kFftSize));
+                magnitudes_=editMagnitudes_;
+                if(onSamplesChanged) onSamplesChanged();
+            }
+            void performFft(bool inverse) noexcept {
                 for(std::size_t i=1,j=0;i<kFftSize;++i) {
-                    std::size_t bit=kFftSize>>1;
-                    for(;j&bit;bit>>=1) j^=bit;
-                    j^=bit;
+                    std::size_t bit=kFftSize>>1; for(;j&bit;bit>>=1) j^=bit; j^=bit;
                     if(i<j) { std::swap(real_[i],real_[j]); std::swap(imag_[i],imag_[j]); }
                 }
                 constexpr float twoPi=6.28318530717958647692f;
                 for(std::size_t length=2;length<=kFftSize;length<<=1) {
-                    const float angle=-twoPi/static_cast<float>(length);
+                    const float angle=(inverse?1.0f:-1.0f)*twoPi/static_cast<float>(length);
                     const float stepReal=std::cos(angle),stepImag=std::sin(angle);
                     for(std::size_t base=0;base<kFftSize;base+=length) {
-                        float wReal=1.0f,wImag=0.0f;
-                        const std::size_t half=length>>1;
+                        float wr=1.0f,wi=0.0f; const std::size_t half=length>>1;
                         for(std::size_t j=0;j<half;++j) {
                             const std::size_t even=base+j,odd=even+half;
-                            const float oddReal=real_[odd]*wReal-imag_[odd]*wImag;
-                            const float oddImag=real_[odd]*wImag+imag_[odd]*wReal;
-                            const float evenReal=real_[even],evenImag=imag_[even];
-                            real_[even]=evenReal+oddReal; imag_[even]=evenImag+oddImag;
-                            real_[odd]=evenReal-oddReal; imag_[odd]=evenImag-oddImag;
-                            const float nextReal=wReal*stepReal-wImag*stepImag;
-                            wImag=wReal*stepImag+wImag*stepReal; wReal=nextReal;
+                            const float ore=real_[odd]*wr-imag_[odd]*wi, oim=real_[odd]*wi+imag_[odd]*wr;
+                            const float ere=real_[even],eim=imag_[even];
+                            real_[even]=ere+ore; imag_[even]=eim+oim; real_[odd]=ere-ore; imag_[odd]=eim-oim;
+                            const float nr=wr*stepReal-wi*stepImag; wi=wr*stepImag+wi*stepReal; wr=nr;
                         }
                     }
                 }
             }
             mct::origami::ui::WavetableDocument& document_;
             std::array<float,kFftSize> real_{},imag_{};
-            std::array<float,kBins> magnitudes_{},phases_{};
-            float normalizer_=1.0f;
+            std::array<float,kBins> magnitudes_{},phases_{},editMagnitudes_{};
+            std::array<float,kFftSize> editBefore_{};
+            float displayReference_=1.0f; std::uint64_t editFrameId_=0;
+            int zoom_=1,firstBin_=1,hoveredBin_=-1,lastEditedBin_=-1; bool editing_=false;
         };
 
         class NativeChoiceBox final : public juce::Component {
@@ -1273,6 +1337,8 @@ private:
             spectrum_.setContentComponent(spectrumCanvas_);
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
             waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); spectrumCanvas_.refresh(); };
+            spectrumCanvas_.onSamplesChanged=[this] { waveformCanvas_.refresh(); frameStrip_.refreshSelectedThumbnail(); };
+            spectrumCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) { commitEdit(id,before,after); };
             waveformCanvas_.onSelectionChanged=[this](bool active) { toolsPanel_.setSelectionAvailable(active); };
             waveformCanvas_.onCurveDraftChanged=[this](bool active) {
                 if(active) { tools_.setContentComponent(curveInspector_); curveInspector_.refresh(); }
@@ -1444,7 +1510,7 @@ private:
             for(std::size_t i=0;i<document_.frames.size();++i) {
                 if(document_.frames[i].id!=entry.frameId) continue;
                 document_.frames[i].samples=useAfter ? entry.after : entry.before;
-                if(document_.selectedFrame==i) waveformCanvas_.refresh();
+                if(document_.selectedFrame==i) { waveformCanvas_.refresh(); spectrumCanvas_.refresh(); }
                 frameStrip_.refreshThumbnail(static_cast<unsigned>(i));
                 break;
             }
