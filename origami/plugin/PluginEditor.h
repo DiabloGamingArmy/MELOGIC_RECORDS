@@ -344,24 +344,41 @@ private:
                 const int columns=juce::jmax(1,plot.getWidth());
                 juce::Path envelope,fill;
                 const float zeroY=mapY(0.0f);
+                bool envelopeStarted=false;
                 for(int column=0;column<columns;++column) {
                     const std::size_t begin=static_cast<std::size_t>((static_cast<std::uint64_t>(column)*samples.size())/static_cast<std::uint64_t>(columns));
                     const std::size_t end=juce::jmax(begin+1,static_cast<std::size_t>((static_cast<std::uint64_t>(column+1)*samples.size())/static_cast<std::uint64_t>(columns)));
-                    float minimum=1.0f,maximum=-1.0f;
+                    float minimum=1.0f,maximum=-1.0f,sum=0.0f;
+                    std::size_t count=0;
                     for(std::size_t i=begin;i<juce::jmin(end,samples.size());++i) {
-                        minimum=juce::jmin(minimum,samples[i]); maximum=juce::jmax(maximum,samples[i]);
+                        minimum=juce::jmin(minimum,samples[i]);
+                        maximum=juce::jmax(maximum,samples[i]);
+                        sum+=samples[i];
+                        ++count;
                     }
+                    if(count==0) continue;
                     const float x=static_cast<float>(plot.getX()+column)+0.5f;
+                    const float representative=sum/static_cast<float>(count);
+                    const float y=mapY(representative);
+                    if(!envelopeStarted) {
+                        envelope.startNewSubPath(x,y);
+                        envelopeStarted=true;
+                    } else {
+                        envelope.lineTo(x,y);
+                    }
+
+                    // Preserve the min/max bucket in the coloured body so narrow
+                    // transients remain visible even when 2048 samples are compressed.
                     const float top=mapY(maximum),bottom=mapY(minimum);
-                    envelope.startNewSubPath(x,top); envelope.lineTo(x,bottom);
                     fill.startNewSubPath(x,zeroY); fill.lineTo(x,top);
                     fill.startNewSubPath(x,zeroY); fill.lineTo(x,bottom);
                 }
-                // Wavetable body follows Origami's user-customisable global
-                // signal colour; never substitute the neutral Palette::accent().
                 g.setColour(mct::origami::ui::signalSurfaceColour(0.48f,0.34f));
                 g.strokePath(fill,juce::PathStrokeType(1.0f));
-                // Deliberately heavy primary trace for precise draw/edit visibility.
+
+                // The primary trace is a continuous waveform path. Previously it
+                // was made from independent vertical min/max segments; thick rounded
+                // strokes exposed tiny visual gaps between those disconnected pieces.
                 g.setColour(juce::Colours::white.withAlpha(0.97f));
                 g.strokePath(envelope,juce::PathStrokeType(3.5f,juce::PathStrokeType::curved,
                                                           juce::PathStrokeType::rounded));
