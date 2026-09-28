@@ -92,7 +92,7 @@ public:
         bendDownRange_.setTooltip("Bend Down — click/drag vertically or type a semitone value");
         bendDownRange_.textFromValueFunction=[](double value){return juce::String(juce::roundToInt(value));};
         bendDownRange_.valueFromTextFunction=[](const juce::String& value){return value.retainCharacters("0123456789.-").getDoubleValue();};
-        auto styleBend=[this](juce::Slider& slider) {
+        auto styleBend=[](juce::Slider& slider) {
             slider.setColour(juce::Slider::backgroundColourId,juce::Colour(0xff1b1b1b));
             slider.setColour(juce::Slider::trackColourId,juce::Colour(0xff1b1b1b));
             slider.setColour(juce::Slider::thumbColourId,juce::Colours::transparentBlack);
