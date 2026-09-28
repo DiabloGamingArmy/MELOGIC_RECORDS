@@ -2,6 +2,7 @@
 // mct-origami-v26.2.0-native-process-library
 #include "core/dsp/WavetableBank.h"
 #include <cmath>
+#include <algorithm>
 #include <iostream>
 
 using namespace mct::origami::dsp;
@@ -15,9 +16,53 @@ void expect(bool condition, const char* message) {
         std::cerr << "FAIL: " << message << '\n';
     }
 }
+void cachedPitchMatchesReference() {
+    auto table=Wavetable::builtIns();
+    WavetableOscillator oscillator;oscillator.reset(0.137);
+    auto verify=[&](double frequency,double rate,float position) {
+        const auto& bands=table.frames[0].bands;
+        const double available=frequency>0 ? rate*.45/frequency : 1;
+        std::size_t band=0;
+        while(band+1<bands.size() && bands[band+1].maximumHarmonic<=available) ++band;
+        const float frame=position*static_cast<float>(table.frames.size()-1);
+        const auto first=static_cast<std::size_t>(frame),second=std::min(first+1,table.frames.size()-1);
+        const double phase=oscillator.phase();
+        const double offset=phase*static_cast<double>(table.tableLength);
+        const auto i=static_cast<std::size_t>(offset),j=(i+1)%table.tableLength;
+        const float fraction=static_cast<float>(offset-static_cast<double>(i));
+        auto read=[&](std::size_t f) {
+            const auto& values=table.frames[f].bands[band].samples;
+            return values[i]+fraction*(values[j]-values[i]);
+        };
+        const float a=read(first),b=read(second);
+        const float expected=frequency>=rate*.5 ? 0.0f : a+(frame-static_cast<float>(first))*(b-a);
+        expect(oscillator.next(table,frequency,rate,position)==expected,
+               "cached pitch preserves scalar band selection and interpolation");
+        double nextPhase=phase+std::clamp(frequency/rate,0.0,.499);
+        if(nextPhase>=1) nextPhase-=1;
+        expect(oscillator.phase()==nextPhase,"cached pitch preserves exact phase advancement");
+    };
+    for(double rate:{44100.0,48000.0,96000.0}) {
+        for(double frequency:{0.0,-100.0,10.0,93.75,440.0,1000.0,22000.0,48000.0})
+            for(unsigned i=0;i<64;++i) verify(frequency,rate,0.37f);
+        for(unsigned h=2;h<=512;h*=2) {
+            const double edge=rate*.45/h;
+            verify(std::nextafter(edge,0.0),rate,0.0f);
+            verify(edge,rate,0.5f);
+            verify(std::nextafter(edge,rate),rate,1.0f);
+        }
+    }
+    verify(10.0,48000.0,0.4f);
+    for(auto& frame:table.frames) frame.bands.resize(2);
+    assignWavetableGeneration(table);
+    verify(10.0,48000.0,0.4f); // same address/pitch, new band topology
+    for(unsigned i=0;i<1024;++i)
+        verify(220.0+180.0*std::sin(static_cast<double>(i)*0.03),48000.0,0.37f);
+}
 }
 
 int main() {
+    cachedPitchMatchesReference();
     auto bank = WavetableBank::builtIns();
 
     expect(bank.size() == 1, "built-in bank contains one canonical table");

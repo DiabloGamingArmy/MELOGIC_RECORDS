@@ -216,6 +216,13 @@ public:
     double phase() const noexcept { return phase_; }
 private:
     double phase_ = 0;
+    // Pitch metadata is independent of phase and chain amounts. Exact keys
+    // keep FM, glide and sample-rate changes audio-rate without rescanning
+    // band limits for every stable-pitch unison sample.
+    const Wavetable* pitchTable_=nullptr;
+    std::uint64_t pitchGeneration_=0;
+    double pitchFrequency_=0,pitchSampleRate_=0,increment_=0;
+    std::size_t bandIndex_=0;
     std::array<SpectralReadHint,2> spectralHints_{};
 };
 double midiFrequency(int note) noexcept;

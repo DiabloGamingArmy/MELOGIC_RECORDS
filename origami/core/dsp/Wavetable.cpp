@@ -764,10 +764,18 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
                                 const OscProcessPlan& plan,double phaseOffsetCycles,
                                 double phaseSkew) noexcept {
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
-    const double increment=std::clamp(frequency/sampleRate,0.0,.499);
-    const double available=frequency>0?sampleRate*.45/frequency:1;
-    const auto& bands=table.frames[0].bands;std::size_t bandIndex=0;
-    while(bandIndex+1<bands.size()&&bands[bandIndex+1].maximumHarmonic<=available)++bandIndex;
+    if(pitchTable_!=&table || pitchGeneration_!=table.generation ||
+       pitchFrequency_!=frequency || pitchSampleRate_!=sampleRate) {
+        increment_=std::clamp(frequency/sampleRate,0.0,.499);
+        const double available=frequency>0?sampleRate*.45/frequency:1;
+        const auto& bands=table.frames[0].bands;
+        bandIndex_=0;
+        while(bandIndex_+1<bands.size() && bands[bandIndex_+1].maximumHarmonic<=available) ++bandIndex_;
+        pitchTable_=&table;pitchGeneration_=table.generation;
+        pitchFrequency_=frequency;pitchSampleRate_=sampleRate;
+    }
+    const auto bandIndex=bandIndex_;
+    const double increment=increment_;
     const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
     const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
     double readPhase=phase_+(std::isfinite(phaseOffsetCycles)?phaseOffsetCycles:0.0);readPhase-=std::floor(readPhase);
