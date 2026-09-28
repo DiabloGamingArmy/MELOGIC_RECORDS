@@ -74,7 +74,9 @@ public:
     void setUiPitchWheel(float normalized) noexcept;
     void setUiModWheel(float normalized) noexcept;
     bool setUiPitchBendRange(float semitones) noexcept;
+    bool setUiPitchBendRanges(float upSemitones,float downSemitones) noexcept;
     float getUiPitchBendRange() const noexcept;
+    float getUiPitchBendDownRange() const noexcept;
     bool setUiPerformanceState(const mct::origami::PerformanceState&) noexcept;
     mct::origami::PerformanceState getUiPerformanceState() const noexcept;
     bool setUiArpeggiatorState(const mct::origami::ArpeggiatorState&) noexcept;
