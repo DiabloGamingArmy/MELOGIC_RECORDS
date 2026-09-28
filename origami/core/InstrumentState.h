@@ -9,7 +9,8 @@ namespace mct::origami {
 enum class VoiceMode : std::uint32_t { Poly=0, Mono=1 };
 enum class NotePriority : std::uint32_t { Last=0, High=1, Low=2 };
 struct PerformanceState {
-    float pitchBendRangeSemitones=2.0f;
+    float pitchBendRangeSemitones=2.0f; // legacy/up range; retained for preset compatibility
+    float pitchBendDownSemitones=2.0f;
     VoiceMode voiceMode=VoiceMode::Poly;
     NotePriority notePriority=NotePriority::Last;
     bool legato=true;
