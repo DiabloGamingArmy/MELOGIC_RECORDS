@@ -19,6 +19,7 @@
 // mct-origami-playable-keyboard-audio-v23.1
 #pragma once
 #include "OrigamiStyle.h"
+#include "NativeChoiceMenu.h"
 #include "../../core/InstrumentState.h"
 #include "../../core/ArpeggiatorState.h"
 namespace mct::origami::ui {
@@ -118,13 +119,13 @@ public:
             if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getValue()),static_cast<float>(bendDownRange_.getValue()));
         };
         addAndMakeVisible(voiceMode_);addAndMakeVisible(priority_);addAndMakeVisible(legato_);addAndMakeVisible(glide_);
-        voiceMode_.addItem("POLY",1);voiceMode_.addItem("MONO",2);voiceMode_.setScrollWheelEnabled(false);voiceMode_.setTooltip("Voice mode");
-        priority_.addItem("LAST",1);priority_.addItem("HIGH",2);priority_.addItem("LOW",3);priority_.setScrollWheelEnabled(false);priority_.setTooltip("Mono note priority");
+        voiceMode_.setName("PERFORMANCE CHOICE BUTTON");voiceMode_.setTooltip("Voice mode");
+        priority_.setName("PERFORMANCE CHOICE BUTTON");priority_.setTooltip("Mono note priority");
         legato_.setButtonText("LEGATO");legato_.setClickingTogglesState(true);legato_.setTooltip("Legato envelope behavior");
         // V23.4.5: native Origami rotary glide control.
         glide_.setName("Glide");
         glide_.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        glide_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,48,14);
+        glide_.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
         glide_.setRange(0.0,5.0,0.001);
         glide_.setRotaryParameters(juce::MathConstants<float>::pi*1.25f,
                                    juce::MathConstants<float>::pi*2.75f,true);
@@ -133,17 +134,31 @@ public:
         glide_.setTooltip("Glide time — drag vertically; double-click for off");
         glide_.textFromValueFunction=[](double v){return v<0.001?"OFF":juce::String(v,3);};
         const auto initialPerformance=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
-        voiceMode_.setSelectedId(initialPerformance.voiceMode==mct::origami::VoiceMode::Mono?2:1,juce::dontSendNotification);
-        priority_.setSelectedId(initialPerformance.notePriority==mct::origami::NotePriority::High?2:initialPerformance.notePriority==mct::origami::NotePriority::Low?3:1,juce::dontSendNotification);
+        voiceModeId_=initialPerformance.voiceMode==mct::origami::VoiceMode::Mono?2:1;
+        priorityId_=initialPerformance.notePriority==mct::origami::NotePriority::High?2:initialPerformance.notePriority==mct::origami::NotePriority::Low?3:1;
+        voiceMode_.setButtonText(voiceModeId_==2?"MONO":"POLY");
+        priority_.setButtonText(priorityId_==2?"HIGH":priorityId_==3?"LOW":"LAST");
         legato_.setToggleState(initialPerformance.legato,juce::dontSendNotification);glide_.setValue(initialPerformance.glideSeconds,juce::dontSendNotification);
         auto commit=[this]{
             if(!performanceSetter_) return;
             auto performance=performanceGetter_?performanceGetter_():mct::origami::PerformanceState{};
-            performance.voiceMode=voiceMode_.getSelectedId()==2?mct::origami::VoiceMode::Mono:mct::origami::VoiceMode::Poly;
-            performance.notePriority=priority_.getSelectedId()==2?mct::origami::NotePriority::High:priority_.getSelectedId()==3?mct::origami::NotePriority::Low:mct::origami::NotePriority::Last;
+            performance.voiceMode=voiceModeId_==2?mct::origami::VoiceMode::Mono:mct::origami::VoiceMode::Poly;
+            performance.notePriority=priorityId_==2?mct::origami::NotePriority::High:priorityId_==3?mct::origami::NotePriority::Low:mct::origami::NotePriority::Last;
             performance.legato=legato_.getToggleState();performance.glideSeconds=static_cast<float>(glide_.getValue());performanceSetter_(performance);
         };
-        voiceMode_.onChange=commit;priority_.onChange=commit;legato_.onClick=commit;glide_.onValueChange=commit;
+        voiceMode_.onClick=[this,commit]{
+            const std::vector<NativeChoiceItem> items={{1,"POLY",true,"",voiceModeId_==1},{2,"MONO",true,"",voiceModeId_==2}};
+            showNativeChoiceMenu(voiceMode_,"Voice mode",items,voiceModeId_,[this,commit](int id){
+                if(id<1||id>2) return; voiceModeId_=id; voiceMode_.setButtonText(id==2?"MONO":"POLY"); commit();
+            });
+        };
+        priority_.onClick=[this,commit]{
+            const std::vector<NativeChoiceItem> items={{1,"LAST",true,"",priorityId_==1},{2,"HIGH",true,"",priorityId_==2},{3,"LOW",true,"",priorityId_==3}};
+            showNativeChoiceMenu(priority_,"Note priority",items,priorityId_,[this,commit](int id){
+                if(id<1||id>3) return; priorityId_=id; priority_.setButtonText(id==2?"HIGH":id==3?"LOW":"LAST"); commit();
+            });
+        };
+        legato_.onClick=commit;glide_.onValueChange=commit;
         addAndMakeVisible(arpEnable_);
         addAndMakeVisible(arpSettings_);
         addAndMakeVisible(arpClockSummary_);
@@ -191,7 +206,8 @@ private:
     PerformanceSetter performanceSetter_;PerformanceGetter performanceGetter_;
     ArpSetter arpSetter_;ArpGetter arpGetter_;
     juce::Slider bendRange_,bendDownRange_,glide_;
-    NativeComboBox voiceMode_,priority_;
+    juce::TextButton voiceMode_,priority_;
+    int voiceModeId_=1,priorityId_=1;
     juce::ToggleButton legato_,arpEnable_;
     ArpSettingsIconButton arpSettings_;
     juce::Label arpClockSummary_,arpPatternSummary_;
