@@ -75,6 +75,7 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
     state.modulation=modulation_;
     state.performance=performance_;
     state.performance.pitchBendRangeSemitones=pitchBendRange();
+    state.performance.pitchBendDownSemitones=pitchBendDownRange();
     applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
     return state;
 }
@@ -83,6 +84,7 @@ bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcep
     modulation_=state.modulation;publishModEnvelopeTargets(modulation_);modulationMailbox_.publish(modulation_);
     performance_=state.performance;
     pitchBendRange_.store(state.performance.pitchBendRangeSemitones,std::memory_order_relaxed);
+    pitchBendDownRange_.store(state.performance.pitchBendDownSemitones,std::memory_order_relaxed);
     oscillatorModules_.restore(state.oscillators,state.nextId);
     for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
     reset();return true;
@@ -263,14 +265,21 @@ void OrigamiEngine::aftertouch(std::uint8_t channel,int value7) noexcept {
     if(channel>15)return;aftertouch_[channel]=static_cast<float>(std::clamp(value7,0,127))/127.0f;
 }
 bool OrigamiEngine::setPitchBendRange(float semitones) noexcept {
-    if(!std::isfinite(semitones) || semitones<1.0f || semitones>48.0f) return false;
-    pitchBendRange_.store(semitones,std::memory_order_relaxed);return true;
+    return setPitchBendRanges(semitones,semitones);
+}
+bool OrigamiEngine::setPitchBendRanges(float upSemitones,float downSemitones) noexcept {
+    if(!std::isfinite(upSemitones) || !std::isfinite(downSemitones) ||
+       upSemitones<1.0f || upSemitones>48.0f || downSemitones<1.0f || downSemitones>48.0f) return false;
+    pitchBendRange_.store(upSemitones,std::memory_order_relaxed);
+    pitchBendDownRange_.store(downSemitones,std::memory_order_relaxed);
+    return true;
 }
 bool OrigamiEngine::setPerformanceState(const PerformanceState& state) noexcept {
     InstrumentState probe=instrumentState();probe.performance=state;
     if(!validInstrumentState(probe)) return false;
     const bool modeChanged=performance_.voiceMode!=state.voiceMode;
     performance_=state;pitchBendRange_.store(state.pitchBendRangeSemitones,std::memory_order_relaxed);
+    pitchBendDownRange_.store(state.pitchBendDownSemitones,std::memory_order_relaxed);
     if(modeChanged) {
         clearHeldNotes();
         for(auto& voice:voices_) voice.reset();
@@ -281,7 +290,7 @@ bool OrigamiEngine::setPerformanceState(const PerformanceState& state) noexcept 
     return true;
 }
 PerformanceState OrigamiEngine::performanceState() const noexcept {
-    auto s=performance_;s.pitchBendRangeSemitones=pitchBendRange();return s;
+    auto s=performance_;s.pitchBendRangeSemitones=pitchBendRange();s.pitchBendDownSemitones=pitchBendDownRange();return s;
 }
 void OrigamiEngine::latchParameters() noexcept {
     for (const auto& p : parameterRegistry()) {
@@ -312,6 +321,7 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
     for(const auto& m:hostModules_) if(m.enabled) ++activeModules;
     hostNormalization_=activeModules ? 1.0/static_cast<double>(activeModules) : 1.0;
     hostBendRange_=pitchBendRange();
+    hostBendDownRange_=pitchBendDownRange();
     hostChannels_=channels;
     hostBlockActive_=true;
     return true;
@@ -343,7 +353,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     for(unsigned c=0;c<channels;++c) std::fill_n(output[c],sampleCount,0.f);
     auto modules=hostModules_;
     const double normalization=hostNormalization_;
-    const float bendRange=hostBendRange_;
+    const float bendUpRange=hostBendRange_;
+    const float bendDownRange=hostBendDownRange_;
     ModulationFrame frame;
     OscillatorProcessPlans sharedProcesses;
 
@@ -435,7 +446,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             const bool observe=voices_[v].order()==newestOrder;
             if(observe) observedInfo=voices_[v].info();
             const auto channel=std::min<std::size_t>(voices_[v].channel(),15);
-            const float bend=pitchBendNormalized_[channel]*bendRange;
+            const float normalizedBend=pitchBendNormalized_[channel];
+            const float bend=normalizedBend*(normalizedBend>=0.0f ? bendUpRange : bendDownRange);
             auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);
