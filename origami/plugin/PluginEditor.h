@@ -754,7 +754,7 @@ private:
                 const int count=visibleBinCount(); const float slot=static_cast<float>(bounds.getWidth())/static_cast<float>(count);
                 for(int n=0;n<count;++n) {
                     const int bin=firstBin_+n; if(bin>=static_cast<int>(kBins)) break;
-                    const float normalized=magnitudes_[static_cast<std::size_t>(bin)]/displayReference_;
+                    const float normalized=displayAmplitudeForBin(bin,magnitudes_[static_cast<std::size_t>(bin)]);
                     const float db=juce::Decibels::gainToDecibels(normalized,-72.0f);
                     const float level=juce::jlimit(0.0f,1.0f,(db+72.0f)/72.0f);
                     const float height=level*static_cast<float>(bounds.getHeight());
@@ -774,7 +774,7 @@ private:
                 juce::String status="HARMONICS · "+juce::String(zoom_)+"x";
                 if(hoveredBin_>0 && hoveredBin_<static_cast<int>(kBins)) {
                     const float frequency=referenceFundamentalHz_*static_cast<float>(hoveredBin_);
-                    const float db=juce::Decibels::gainToDecibels(magnitudes_[static_cast<std::size_t>(hoveredBin_)]/displayReference_,-72.0f);
+                    const float db=juce::Decibels::gainToDecibels(displayAmplitudeForBin(hoveredBin_,magnitudes_[static_cast<std::size_t>(hoveredBin_)]),-72.0f);
                     status+="     H "+juce::String(hoveredBin_)+"  "+noteNameForFrequency(frequency)+"  "+juce::String(frequency,1)+" Hz  "+juce::String(db,1)+" dB";
                 }
                 g.setColour(juce::Colours::white.withAlpha(0.52f)); g.drawText(status,bounds.getX(),bounds.getY()+2,bounds.getWidth()-4,12,juce::Justification::topRight,false);
@@ -804,13 +804,17 @@ private:
                 const float norm=juce::jlimit(0.0f,0.999999f,(x-static_cast<float>(p.getX()))/static_cast<float>(juce::jmax(1,p.getWidth())));
                 return juce::jlimit(1,static_cast<int>(kBins)-1,firstBin_+static_cast<int>(norm*static_cast<float>(visibleBinCount())));
             }
-            float magnitudeForY(float y) const noexcept {
-                const auto p=plotBounds(); const float level=juce::jlimit(0.0f,1.0f,(static_cast<float>(p.getBottom())-y)/static_cast<float>(juce::jmax(1,p.getHeight())));
-                const float db=-72.0f+72.0f*level; return displayReference_*juce::Decibels::decibelsToGain(db);
+            static float displayAmplitudeForBin(int bin,float magnitude) noexcept {
+                return (bin<=0||bin>=static_cast<int>(kBins)-1)?magnitude/static_cast<float>(kFftSize):2.0f*magnitude/static_cast<float>(kFftSize);
+            }
+            static float fftMagnitudeForDisplayAmplitude(int bin,float amplitude) noexcept {
+                return (bin<=0||bin>=static_cast<int>(kBins)-1)?amplitude*static_cast<float>(kFftSize):0.5f*amplitude*static_cast<float>(kFftSize);
             }
             void editAt(juce::Point<float> pos) {
                 const int bin=binForX(pos.x); if(bin<1) return;
-                const float target=magnitudeForY(pos.y);
+                const auto p=plotBounds();
+                const float level=juce::jlimit(0.0f,1.0f,(static_cast<float>(p.getBottom())-pos.y)/static_cast<float>(juce::jmax(1,p.getHeight())));
+                const float target=fftMagnitudeForDisplayAmplitude(bin,juce::Decibels::decibelsToGain(-72.0f+72.0f*level));
                 if(lastEditedBin_>0 && lastEditedBin_!=bin) {
                     const int lo=juce::jmin(lastEditedBin_,bin),hi=juce::jmax(lastEditedBin_,bin);
                     const float start=editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
@@ -827,12 +831,10 @@ private:
                 const auto& samples=document_.frames[document_.selectedFrame].samples;
                 for(std::size_t i=0;i<kFftSize;++i) real_[i]=samples[i];
                 performFft(false);
-                float peak=0.0f;
                 for(std::size_t bin=0;bin<kBins;++bin) {
                     const float magnitude=std::sqrt(real_[bin]*real_[bin]+imag_[bin]*imag_[bin]);
-                    magnitudes_[bin]=magnitude; phases_[bin]=std::atan2(imag_[bin],real_[bin]); if(bin>0) peak=juce::jmax(peak,magnitude);
+                    magnitudes_[bin]=magnitude; phases_[bin]=std::atan2(imag_[bin],real_[bin]);
                 }
-                displayReference_=juce::jmax(peak,1.0e-9f);
             }
             void reconstructPreview() {
                 if(!document_.valid()) return;
@@ -845,8 +847,12 @@ private:
                 }
                 real_[kFftSize/2]=editMagnitudes_[kFftSize/2]*std::cos(phases_[kFftSize/2]); imag_[kFftSize/2]=0.0f;
                 performFft(true);
+                float peak=0.0f;
+                for(std::size_t i=0;i<kFftSize;++i) peak=juce::jmax(peak,std::abs(real_[i]/static_cast<float>(kFftSize)));
+                const float scale=peak>1.0f?1.0f/peak:1.0f;
+                if(scale<1.0f) for(auto& magnitude:editMagnitudes_) magnitude*=scale;
                 auto& frame=document_.frames[document_.selectedFrame];
-                for(std::size_t i=0;i<kFftSize;++i) frame.samples[i]=juce::jlimit(-1.0f,1.0f,real_[i]/static_cast<float>(kFftSize));
+                for(std::size_t i=0;i<kFftSize;++i) frame.samples[i]=(real_[i]/static_cast<float>(kFftSize))*scale;
                 magnitudes_=editMagnitudes_;
                 if(onSamplesChanged) onSamplesChanged();
             }
@@ -875,7 +881,7 @@ private:
             std::array<float,kFftSize> real_{},imag_{};
             std::array<float,kBins> magnitudes_{},phases_{},editMagnitudes_{};
             std::array<float,kFftSize> editBefore_{};
-            float displayReference_=1.0f; std::uint64_t editFrameId_=0;
+            std::uint64_t editFrameId_=0;
             static constexpr float referenceFundamentalHz_=130.81278265f; // C3 display reference
             int zoom_=1,firstBin_=1,hoveredBin_=-1,lastEditedBin_=-1; bool editing_=false;
         };
