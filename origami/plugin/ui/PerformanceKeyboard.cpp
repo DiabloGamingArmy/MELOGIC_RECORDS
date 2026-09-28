@@ -16,13 +16,46 @@
 #include "PerformanceKeyboard.h"
 namespace mct::origami::ui {
 namespace {
-// Performance strip v1: explicit zones. The keyboard is the elastic region.
-constexpr int leftReserve=86;
-constexpr int bendPanelWidth=62;
-constexpr int performancePanelWidth=178;
-constexpr int clockPanelWidth=142;
-constexpr int rightReserve=bendPanelWidth+performancePanelWidth+clockPanelWidth;
+constexpr int bendWidth=70;
+constexpr int wheelWidth=44;
+constexpr int voiceWidth=132;
+constexpr int glideWidth=70;
+constexpr int arpWidth=142;
+constexpr int utilityWidth=34;
+constexpr int rightReserve=voiceWidth+glideWidth+arpWidth+utilityWidth;
+constexpr int leftReserve=bendWidth+wheelWidth*2;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
+
+struct PerformanceLayout {
+    juce::Rectangle<int> bend,pitch,mod,keyboard,voice,glide,arpClock,utility;
+};
+
+PerformanceLayout layoutFor(juce::Rectangle<int> bounds) {
+    PerformanceLayout l;
+    auto left=bounds;
+    l.bend=left.removeFromLeft(bendWidth);
+    l.pitch=left.removeFromLeft(wheelWidth);
+    l.mod=left.removeFromLeft(wheelWidth);
+
+    const int right=juce::jmin(rightReserve,juce::jmax(300,left.getWidth()*27/100));
+    auto rightBay=left.removeFromRight(right);
+    l.keyboard=left;
+
+    const int utility=juce::jmin(utilityWidth,rightBay.getWidth());
+    l.utility=rightBay.removeFromRight(utility);
+    const int arp=juce::jmin(arpWidth,rightBay.getWidth());
+    l.arpClock=rightBay.removeFromRight(arp);
+    const int glide=juce::jmin(glideWidth,rightBay.getWidth());
+    l.glide=rightBay.removeFromRight(glide);
+    l.voice=rightBay;
+    return l;
+}
+
+void moduleSurface(juce::Graphics& g,juce::Rectangle<int> r,const juce::String& title) {
+    r=r.reduced(2,2);
+    g.setColour(juce::Colour(0xff151515));
+    g.fillRoundedRectangle(r.toFloat(),4.0f);
+    text(g,title,r.removeFromTop(13),6.8f,Palette::muted(),juce::Justification::centred);
 }
 
 PerformanceKeyboard::~PerformanceKeyboard() {
@@ -47,60 +80,42 @@ void PerformanceKeyboard::syncArpFromModel() {
 }
 
 juce::Rectangle<int> PerformanceKeyboard::keyArea() const noexcept {
-    auto area=getLocalBounds();
-    const int right=juce::jmin(rightReserve,juce::jmax(300,area.getWidth()*27/100));
-    area.removeFromRight(right);
-    area.removeFromLeft(leftReserve);
-    // One canonical full-height key rectangle is shared by painting and hit testing.
-    return area;
+    return layoutFor(getLocalBounds()).keyboard;
 }
 
 juce::Rectangle<int> PerformanceKeyboard::pitchWheelArea() const noexcept {
-    auto left=getLocalBounds().removeFromLeft(leftReserve);
-    auto wheel=left.removeFromLeft(leftReserve/2).reduced(5,3);
-    wheel.removeFromBottom(10);
-    return wheel;
+    auto r=layoutFor(getLocalBounds()).pitch.reduced(5,3);
+    r.removeFromTop(13);r.removeFromBottom(3);return r;
 }
 juce::Rectangle<int> PerformanceKeyboard::modWheelArea() const noexcept {
-    auto left=getLocalBounds().removeFromLeft(leftReserve);
-    left.removeFromLeft(leftReserve/2);
-    auto wheel=left.reduced(5,3);
-    wheel.removeFromBottom(10);
-    return wheel;
+    auto r=layoutFor(getLocalBounds()).mod.reduced(5,3);
+    r.removeFromTop(13);r.removeFromBottom(3);return r;
 }
 void PerformanceKeyboard::resized() {
-    auto area=getLocalBounds();
-    const int right=juce::jmin(rightReserve,juce::jmax(300,area.getWidth()*27/100));
-    auto rightBay=area.removeFromRight(right);
+    const auto l=layoutFor(getLocalBounds());
 
-    const int bendWidth=juce::jmin(bendPanelWidth,juce::jmax(54,rightBay.getWidth()/6));
-    auto bend=rightBay.removeFromLeft(bendWidth);
-    bend.removeFromTop(13);
-    auto bendValues=bend.reduced(4,1);
-    auto up=bendValues.removeFromTop(bendValues.getHeight()/2).reduced(0,1);
-    auto down=bendValues.reduced(0,1);
-    // Leave the left side of each pill to the painted UP/DOWN label.
-    bendRange_.setBounds(up.withTrimmedLeft(22));
-    bendDownRange_.setBounds(down.withTrimmedLeft(22));
+    auto bend=l.bend.reduced(5,3);bend.removeFromTop(13);
+    auto up=bend.removeFromTop(bend.getHeight()/2).reduced(0,2);
+    auto down=bend.reduced(0,2);
+    bendRange_.setBounds(up.withTrimmedLeft(24));
+    bendDownRange_.setBounds(down.withTrimmedLeft(24));
 
-    const int perfWidth=juce::jmin(performancePanelWidth,juce::jmax(150,rightBay.getWidth()/2));
-    auto perf=rightBay.removeFromLeft(perfWidth).reduced(4,3);
-    auto top=perf.removeFromTop(21);
-    const int third=top.getWidth()/3;
-    voiceMode_.setBounds(top.removeFromLeft(third).reduced(1));
-    priority_.setBounds(top.removeFromLeft(third).reduced(1));
-    legato_.setBounds(top.reduced(1));
+    auto voice=l.voice.reduced(5,3);voice.removeFromTop(14);
+    auto top=voice.removeFromTop(22);
+    const int half=top.getWidth()/2;
+    voiceMode_.setBounds(top.removeFromLeft(half).reduced(1));
+    priority_.setBounds(top.reduced(1));
+    legato_.setBounds(voice.removeFromTop(22).reduced(1));
 
-    auto lower=perf;
-    auto glideCell=lower.removeFromLeft(58);
-    glide_.setBounds(glideCell.reduced(7,0));
+    auto glide=l.glide.reduced(5,3);glide.removeFromTop(14);
+    glide_.setBounds(glide.reduced(7,0));
 
-    auto clock=rightBay.reduced(4,3);
-    auto controls=clock.removeFromTop(21);
+    auto arp=l.arpClock.reduced(5,3);arp.removeFromTop(14);
+    auto controls=arp.removeFromTop(22);
     arpEnable_.setBounds(controls.removeFromLeft(58).reduced(1));
-    arpSettings_.setBounds(controls.removeFromRight(28).reduced(1));
-    arpClockSummary_.setBounds(clock.removeFromTop(12));
-    arpPatternSummary_.setBounds(clock.removeFromTop(10));
+    arpSettings_.setBounds(l.utility.reduced(6,18));
+    arpClockSummary_.setBounds(arp.removeFromTop(13));
+    arpPatternSummary_.setBounds(arp.removeFromTop(11));
 }
 void PerformanceKeyboard::updateWheel(juce::Point<float> p) {
     const auto area=activeWheel_==1?pitchWheelArea():modWheelArea();if(area.getHeight()<=0) return;
@@ -157,77 +172,52 @@ void PerformanceKeyboard::mouseExit(const juce::MouseEvent& e) {
 }
 
 void PerformanceKeyboard::paint(juce::Graphics& g) {
-    auto area=getLocalBounds();
     g.fillAll(Palette::background());
+    const auto l=layoutFor(getLocalBounds());
 
-    const int right=juce::jmin(rightReserve,juce::jmax(300,area.getWidth()*27/100));
-    auto rightBay=area.removeFromRight(right);
-    const int bendWidth=juce::jmin(bendPanelWidth,juce::jmax(54,rightBay.getWidth()/6));
-
-    auto bendParent=rightBay.removeFromLeft(bendWidth);
-    text(g,"BEND",bendParent.removeFromTop(13),7.2f,Palette::muted(),juce::Justification::centred);
-    auto bendRows=bendParent.reduced(4,1);
-    auto upRow=bendRows.removeFromTop(bendRows.getHeight()/2).reduced(0,1);
-    auto downRow=bendRows.reduced(0,1);
-    // Borderless parameter pills: subtly lifted from the strip, never white outlined.
+    moduleSurface(g,l.bend,"BEND");
+    auto bendRows=l.bend.reduced(5,3);bendRows.removeFromTop(13);
+    auto upRow=bendRows.removeFromTop(bendRows.getHeight()/2).reduced(0,2);
+    auto downRow=bendRows.reduced(0,2);
     g.setColour(juce::Colour(0xff1b1b1b));
     g.fillRoundedRectangle(upRow.toFloat(),3.5f);
     g.fillRoundedRectangle(downRow.toFloat(),3.5f);
-    text(g,"UP",upRow.withTrimmedLeft(5).withWidth(18),6.2f,Palette::muted(),juce::Justification::centredLeft);
-    text(g,"DOWN",downRow.withTrimmedLeft(5).withWidth(22),6.2f,Palette::muted(),juce::Justification::centredLeft);
+    text(g,"UP",upRow.withTrimmedLeft(5).withWidth(20),6.2f,Palette::muted(),juce::Justification::centredLeft);
+    text(g,"DOWN",downRow.withTrimmedLeft(5).withWidth(24),6.2f,Palette::muted(),juce::Justification::centredLeft);
 
-    const int perfWidth=juce::jmin(performancePanelWidth,juce::jmax(150,rightBay.getWidth()/2));
-    auto performanceParent=rightBay.removeFromLeft(perfWidth);
-    well(g,performanceParent.reduced(1,1));
-    auto perfCaptionArea=performanceParent;
-    perfCaptionArea.removeFromTop(21);
-    text(g,"GLIDE",perfCaptionArea.removeFromLeft(58).removeFromBottom(9),
-         6.8f,Palette::muted(),juce::Justification::centred);
-
-    auto clockParent=rightBay;
-    well(g,clockParent.reduced(1,1));
-    text(g,"ARP / CLOCK",clockParent.removeFromBottom(11),6.8f,Palette::muted(),juce::Justification::centred);
-
-    auto leftControls=area.removeFromLeft(leftReserve);
-    for(const auto& label:juce::StringArray{"PITCH","MOD"}) {
-        auto wheel=leftControls.removeFromLeft(leftReserve/2).reduced(2,1);
-        auto caption=wheel.removeFromBottom(10);
-        well(g,wheel);
-        auto track=wheel.reduced(8,3);
-        g.setColour(Palette::border());g.fillRoundedRectangle(track.toFloat(),3);
-        const float value=label=="PITCH"?pitchValue_:modValue_;
-        const float unit=label=="PITCH"?(value+1.0f)*0.5f:value;
+    moduleSurface(g,l.pitch,"PITCH");
+    moduleSurface(g,l.mod,"MOD");
+    for(int index=0;index<2;++index) {
+        auto track=(index==0?pitchWheelArea():modWheelArea()).reduced(8,3);
+        g.setColour(juce::Colour(0xff202020));g.fillRoundedRectangle(track.toFloat(),3.0f);
+        const float value=index==0?pitchValue_:modValue_;
+        const float unit=index==0?(value+1.0f)*0.5f:value;
         const int y=track.getBottom()-juce::roundToInt(unit*float(track.getHeight()));
         g.setColour(signalSourceColour());
         g.fillRoundedRectangle(juce::Rectangle<float>(float(track.getX()+2),float(y-2),float(track.getWidth()-4),4.0f),1.5f);
-        text(g,label,caption,7.0f,Palette::muted(),juce::Justification::centred);
     }
 
-    const auto keys=keyArea();
+    moduleSurface(g,l.voice,"VOICE");
+    moduleSurface(g,l.glide,"GLIDE");
+    moduleSurface(g,l.arpClock,"ARP / CLOCK");
+    moduleSurface(g,l.utility,"");
+
+    const auto keys=l.keyboard;
     const float width=float(keys.getWidth())/float(whiteKeyCount);
     for(int i=0;i<whiteKeyCount;++i) {
         const int note=firstMidiNote+(i/7)*12+whiteOffsets[i%7];
-        juce::Rectangle<float> key(float(keys.getX())+float(i)*width,float(keys.getY()),
-                                   width,float(keys.getHeight()));
+        juce::Rectangle<float> key(float(keys.getX())+float(i)*width,float(keys.getY()),width,float(keys.getHeight()));
         const bool down=(note==mouseNote_);
-        g.setColour(down?signalSurfaceColour(0.42f,0.72f):juce::Colour(0xffcdd5d9));
-        g.fillRect(key);
+        g.setColour(down?signalSurfaceColour(0.42f,0.72f):juce::Colour(0xffcdd5d9));g.fillRect(key);
         g.setColour(juce::Colour(0xff77838a));g.drawRect(key,.7f);
-        if(i%7==0)
-            text(g,"C"+juce::String(3+i/7),key.toNearestInt().removeFromBottom(11),
-                 7.0f,juce::Colour(0xff596770),juce::Justification::centred);
+        if(i%7==0) text(g,"C"+juce::String(3+i/7),key.toNearestInt().removeFromBottom(11),7.0f,juce::Colour(0xff596770),juce::Justification::centred);
     }
-
     for(int i=0;i<whiteKeyCount-1;++i) {
-        const int degree=i%7;
-        if(degree==2 || degree==6) continue;
+        const int degree=i%7;if(degree==2||degree==6) continue;
         const int note=firstMidiNote+(i/7)*12+whiteOffsets[degree]+1;
-        auto key=juce::Rectangle<float>(
-            float(keys.getX())+(float(i)+1)*width-width*.31f,
-            float(keys.getY()),width*.62f,float(keys.getHeight())*.62f);
+        auto key=juce::Rectangle<float>(float(keys.getX())+(float(i)+1)*width-width*.31f,float(keys.getY()),width*.62f,float(keys.getHeight())*.62f);
         const bool down=(note==mouseNote_);
-        g.setColour(down?signalSurfaceColour(0.55f,0.78f):juce::Colour(0xff0c1115));
-        g.fillRect(key);
+        g.setColour(down?signalSurfaceColour(0.55f,0.78f):juce::Colour(0xff0c1115));g.fillRect(key);
         g.setColour(Palette::border());g.drawRect(key,.8f);
     }
 }
