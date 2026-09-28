@@ -22,11 +22,9 @@ struct EditorLayout {
 
         result.header=area.removeFromTop(72);
 
-        // V23.1: thinner performance keyboard; reclaimed vertical space
-        // returns to the main synth workspace.
-        // V23.3.1: taller performance strip for usable Pitch/Mod travel.
-        // Keyboard remains compact via its internal top reserve.
-        result.performance=area.removeFromBottom(76);
+        // Performance strip redesign v1: compact, full-height keyboard bed.
+        // The reclaimed height belongs to the main synthesis workspace.
+        result.performance=area.removeFromBottom(64);
 
         const int usable=area.getHeight();
 
