@@ -46,6 +46,10 @@ private:
             juce::Rectangle<int> contentBounds() const noexcept {
                 return getLocalBounds().withTrimmedTop(regionHeaderHeight).reduced(contentGutter);
             }
+            void setHeaderAccessory(juce::Component& component,int width=116) {
+                headerAccessory_=&component; headerAccessoryWidth_=width;
+                addAndMakeVisible(component); resized(); repaint();
+            }
             void setContentComponent(juce::Component& component) {
                 if(content_==&component) { component.setVisible(true); resized(); return; }
                 if(content_!=nullptr) content_->setVisible(false);
@@ -57,6 +61,8 @@ private:
             }
         void resized() override {
                 if(content_!=nullptr) content_->setBounds(contentBounds());
+                if(headerAccessory_!=nullptr)
+                    headerAccessory_->setBounds(getLocalBounds().withHeight(regionHeaderHeight).removeFromRight(headerAccessoryWidth_).reduced(3,2));
             }
             void paint(juce::Graphics& g) override {
                 const auto bounds=getLocalBounds();
@@ -89,6 +95,8 @@ private:
         private:
             juce::String title_;
             juce::Component* content_=nullptr;
+            juce::Component* headerAccessory_=nullptr;
+            int headerAccessoryWidth_=116;
         };
 
         class FrameStrip final : public juce::Component {
@@ -686,6 +694,9 @@ private:
 
         class SpectrumCanvas final : public juce::Component {
         public:
+            enum class EditMode { Independent, Subtractive };
+            void setEditMode(EditMode mode) { editMode_=mode; refresh(); }
+            EditMode editMode() const noexcept { return editMode_; }
             std::function<void()> onSamplesChanged;
             std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
                                const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
@@ -850,9 +861,12 @@ private:
                 float peak=0.0f;
                 for(std::size_t i=0;i<kFftSize;++i) peak=juce::jmax(peak,std::abs(real_[i]/static_cast<float>(kFftSize)));
                 const float scale=peak>1.0f?1.0f/peak:1.0f;
-                if(scale<1.0f) for(auto& magnitude:editMagnitudes_) magnitude*=scale;
+                if(scale<1.0f && editMode_==EditMode::Subtractive)
+                    for(auto& magnitude:editMagnitudes_) magnitude*=scale;
                 auto& frame=document_.frames[document_.selectedFrame];
                 for(std::size_t i=0;i<kFftSize;++i) frame.samples[i]=(real_[i]/static_cast<float>(kFftSize))*scale;
+                // INDEPENDENT keeps the user's harmonic coefficients authoritative:
+                // output peak fitting must never push untouched bars down.
                 magnitudes_=editMagnitudes_;
                 if(onSamplesChanged) onSamplesChanged();
             }
@@ -884,6 +898,7 @@ private:
             std::uint64_t editFrameId_=0;
             static constexpr float referenceFundamentalHz_=130.81278265f; // C3 display reference
             int zoom_=1,firstBin_=1,hoveredBin_=-1,lastEditedBin_=-1; bool editing_=false;
+            EditMode editMode_=EditMode::Independent;
         };
 
         class NativeChoiceBox final : public juce::Component {
@@ -1383,6 +1398,22 @@ private:
             timeline_.setContentComponent(frameStrip_);
             waveform_.setContentComponent(waveformCanvas_);
             spectrum_.setContentComponent(spectrumCanvas_);
+            spectrumMode_.setButtonText("INDEPENDENT");
+            spectrumMode_.setTooltip("Spectral editing mode");
+            spectrum_.setHeaderAccessory(spectrumMode_,118);
+            spectrumMode_.onClick=[this] {
+                const bool independent=spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent;
+                const std::vector<mct::origami::ui::NativeChoiceItem> items={
+                    {1,"INDEPENDENT",true,"",independent},
+                    {2,"SUBTRACTIVE",true,"",!independent}
+                };
+                mct::origami::ui::showNativeChoiceMenu(spectrumMode_,"Spectral mode",items,independent?1:2,[this](int id) {
+                    if(id!=1 && id!=2) return;
+                    const auto mode=id==1?SpectrumCanvas::EditMode::Independent:SpectrumCanvas::EditMode::Subtractive;
+                    spectrumCanvas_.setEditMode(mode);
+                    spectrumMode_.setButtonText(id==1?"INDEPENDENT":"SUBTRACTIVE");
+                });
+            };
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
             waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); spectrumCanvas_.refresh(); };
             spectrumCanvas_.onSamplesChanged=[this] { waveformCanvas_.refresh(); frameStrip_.refreshSelectedThumbnail(); };
@@ -1572,6 +1603,7 @@ private:
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
         SpectrumCanvas spectrumCanvas_;
+        juce::TextButton spectrumMode_;
         ToolsPanel toolsPanel_;
         ToolsScroller toolsScroller_;
         CurveInspector curveInspector_;
