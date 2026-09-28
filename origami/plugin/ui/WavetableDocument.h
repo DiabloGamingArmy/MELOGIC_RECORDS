@@ -13,6 +13,11 @@ inline constexpr std::size_t kMaxWavetableFrames=256;
 struct WavetableFrame {
     std::uint64_t id=0;
     std::array<float,kWavetableFrameSize> samples{};
+    // Optional control-domain spectral authoring state. This is UI/editor metadata:
+    // playable audio remains the 2048 authoritative samples above.
+    bool hasSpectralAuthoring=false;
+    std::array<float,kWavetableFrameSize/2+1> spectralCoefficients{};
+    std::array<float,kWavetableFrameSize/2+1> spectralPhases{};
 };
 
 class WavetableDocument {
