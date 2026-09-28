@@ -23,7 +23,6 @@ constexpr int glideWidth=70;
 constexpr int arpWidth=142;
 constexpr int utilityWidth=34;
 constexpr int rightReserve=voiceWidth+glideWidth+arpWidth+utilityWidth;
-constexpr int leftReserve=bendWidth+wheelWidth*2;
 constexpr int whiteOffsets[7]={0,2,4,5,7,9,11};
 
 struct PerformanceLayout {
@@ -109,7 +108,7 @@ void PerformanceKeyboard::resized() {
     legato_.setBounds(voice.removeFromTop(22).reduced(1));
 
     auto glide=l.glide.reduced(5,3);glide.removeFromTop(14);
-    glide_.setBounds(glide.reduced(7,0));
+    glide_.setBounds(glide.withSizeKeepingCentre(42,42));
 
     auto arp=l.arpClock.reduced(5,3);arp.removeFromTop(14);
     auto controls=arp.removeFromTop(22);
