@@ -51,7 +51,9 @@ public:
     void modWheel(std::uint8_t channel,int value7) noexcept;
     void aftertouch(std::uint8_t channel,int value7) noexcept;
     bool setPitchBendRange(float semitones) noexcept;
+    bool setPitchBendRanges(float upSemitones,float downSemitones) noexcept;
     float pitchBendRange() const noexcept { return pitchBendRange_.load(std::memory_order_relaxed); }
+    float pitchBendDownRange() const noexcept { return pitchBendDownRange_.load(std::memory_order_relaxed); }
     bool setPerformanceState(const PerformanceState&) noexcept;
     PerformanceState performanceState() const noexcept;
     // Replaces output, planar mono/stereo. Buffers must be distinct and valid for
@@ -103,6 +105,7 @@ private:
     std::array<OscillatorModuleState, OscillatorModuleBank::capacity> hostModules_ {};
     double hostNormalization_ = 1.0;
     float hostBendRange_ = 2.0f;
+    float hostBendDownRange_ = 2.0f;
     unsigned hostChannels_ = 0;
     bool hostBlockActive_ = false;
     std::array<Voice, voiceCount> voices_;
@@ -126,6 +129,7 @@ private:
     std::array<float,16> modWheel_{},aftertouch_{};
     std::array<std::atomic<float>,17> modEnvelopeTargets_{};
     std::atomic<float> pitchBendRange_{2.0f};
+    std::atomic<float> pitchBendDownRange_{2.0f};
     PerformanceState performance_{};
     std::array<HeldNote,128> heldNotes_{};
     std::size_t heldCount_=0;
