@@ -57,6 +57,7 @@ void moduleSurface(juce::Graphics& g,juce::Rectangle<int> r,const juce::String& 
     g.fillRoundedRectangle(r.toFloat(),4.0f);
     text(g,title,r.removeFromTop(13),6.8f,Palette::muted(),juce::Justification::centred);
 }
+} // namespace
 
 PerformanceKeyboard::~PerformanceKeyboard() {
     if(mouseNote_>=0 && noteSetter_) noteSetter_(mouseNote_,false,0.0f);
