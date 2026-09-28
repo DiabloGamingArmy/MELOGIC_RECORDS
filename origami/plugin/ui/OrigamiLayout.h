@@ -22,16 +22,19 @@ struct EditorLayout {
 
         result.header=area.removeFromTop(72);
 
-        // Performance strip redesign v1: compact, full-height keyboard bed.
-        // The reclaimed height belongs to the main synthesis workspace.
-        result.performance=area.removeFromBottom(64);
+        // Performance strip redesign v2: give the keyboard/performance controls
+        // enough vertical breathing room while keeping the piano full-height.
+        result.performance=area.removeFromBottom(76);
 
-        const int usable=area.getHeight();
+        // Preserve the pre-v2 upper synth row at the canonical canvas size.
+        // The extra performance height is therefore paid entirely by the lower
+        // MODULATION / FILTER row instead of shrinking OSCILLATORS / MACROS.
+        const int upperHeight=juce::roundToInt((bounds.getHeight()-72-64)*.52f);
 
         // V30: MACROS becomes the fixed top-left utility bay. OSCILLATORS uses
         // the remaining horizontal space, giving the top row a modular rack
         // hierarchy instead of dedicating the lower-right column to macros.
-        auto upper=area.removeFromTop(juce::roundToInt(usable*.52f));
+        auto upper=area.removeFromTop(upperHeight);
         const int macroWidth=juce::jlimit(150,190,juce::roundToInt(bounds.getWidth()*.12f));
         result.macros=upper.removeFromLeft(macroWidth);
         result.oscillators=upper;
