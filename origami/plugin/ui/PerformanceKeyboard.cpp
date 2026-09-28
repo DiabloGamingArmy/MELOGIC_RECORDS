@@ -76,10 +76,12 @@ void PerformanceKeyboard::resized() {
     const int bendWidth=juce::jmin(bendPanelWidth,juce::jmax(54,rightBay.getWidth()/6));
     auto bend=rightBay.removeFromLeft(bendWidth);
     bend.removeFromTop(13);
-    auto bendValues=bend.reduced(6,1);
-    auto up=bendValues.removeFromTop(bendValues.getHeight()/2);
-    bendRange_.setBounds(up.reduced(1,0));
-    bendDownRange_.setBounds(bendValues.reduced(1,0));
+    auto bendValues=bend.reduced(4,1);
+    auto up=bendValues.removeFromTop(bendValues.getHeight()/2).reduced(0,1);
+    auto down=bendValues.reduced(0,1);
+    // Leave the left side of each pill to the painted UP/DOWN label.
+    bendRange_.setBounds(up.withTrimmedLeft(22));
+    bendDownRange_.setBounds(down.withTrimmedLeft(22));
 
     const int perfWidth=juce::jmin(performancePanelWidth,juce::jmax(150,rightBay.getWidth()/2));
     auto perf=rightBay.removeFromLeft(perfWidth).reduced(4,3);
@@ -163,11 +165,16 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
     const int bendWidth=juce::jmin(bendPanelWidth,juce::jmax(54,rightBay.getWidth()/6));
 
     auto bendParent=rightBay.removeFromLeft(bendWidth);
-    well(g,bendParent.reduced(1,1));
     text(g,"BEND",bendParent.removeFromTop(13),7.2f,Palette::muted(),juce::Justification::centred);
-    auto bendLabels=bendParent.reduced(2,0);
-    text(g,"UP",bendLabels.removeFromTop(bendLabels.getHeight()/2),6.2f,Palette::muted(),juce::Justification::centredLeft);
-    text(g,"DOWN",bendLabels,6.2f,Palette::muted(),juce::Justification::centredLeft);
+    auto bendRows=bendParent.reduced(4,1);
+    auto upRow=bendRows.removeFromTop(bendRows.getHeight()/2).reduced(0,1);
+    auto downRow=bendRows.reduced(0,1);
+    // Borderless parameter pills: subtly lifted from the strip, never white outlined.
+    g.setColour(juce::Colour(0xff1b1b1b));
+    g.fillRoundedRectangle(upRow.toFloat(),3.5f);
+    g.fillRoundedRectangle(downRow.toFloat(),3.5f);
+    text(g,"UP",upRow.withTrimmedLeft(5).withWidth(18),6.2f,Palette::muted(),juce::Justification::centredLeft);
+    text(g,"DOWN",downRow.withTrimmedLeft(5).withWidth(22),6.2f,Palette::muted(),juce::Justification::centredLeft);
 
     const int perfWidth=juce::jmin(performancePanelWidth,juce::jmax(150,rightBay.getWidth()/2));
     auto performanceParent=rightBay.removeFromLeft(perfWidth);
