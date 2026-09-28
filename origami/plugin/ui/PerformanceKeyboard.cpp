@@ -76,7 +76,10 @@ void PerformanceKeyboard::resized() {
     const int bendWidth=juce::jmin(bendPanelWidth,juce::jmax(54,rightBay.getWidth()/6));
     auto bend=rightBay.removeFromLeft(bendWidth);
     bend.removeFromTop(13);
-    bendRange_.setBounds(bend.reduced(8,2));
+    auto bendValues=bend.reduced(6,1);
+    auto up=bendValues.removeFromTop(bendValues.getHeight()/2);
+    bendRange_.setBounds(up.reduced(1,0));
+    bendDownRange_.setBounds(bendValues.reduced(1,0));
 
     const int perfWidth=juce::jmin(performancePanelWidth,juce::jmax(150,rightBay.getWidth()/2));
     auto perf=rightBay.removeFromLeft(perfWidth).reduced(4,3);
@@ -162,6 +165,9 @@ void PerformanceKeyboard::paint(juce::Graphics& g) {
     auto bendParent=rightBay.removeFromLeft(bendWidth);
     well(g,bendParent.reduced(1,1));
     text(g,"BEND",bendParent.removeFromTop(13),7.2f,Palette::muted(),juce::Justification::centred);
+    auto bendLabels=bendParent.reduced(2,0);
+    text(g,"UP",bendLabels.removeFromTop(bendLabels.getHeight()/2),6.2f,Palette::muted(),juce::Justification::centredLeft);
+    text(g,"DOWN",bendLabels,6.2f,Palette::muted(),juce::Justification::centredLeft);
 
     const int perfWidth=juce::jmin(performancePanelWidth,juce::jmax(150,rightBay.getWidth()/2));
     auto performanceParent=rightBay.removeFromLeft(perfWidth);
