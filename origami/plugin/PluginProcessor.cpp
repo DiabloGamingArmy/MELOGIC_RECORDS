@@ -760,15 +760,24 @@ void OrigamiAudioProcessor::setUiModWheel(float normalized) noexcept {
     pendingUiMod_.store(juce::jlimit(0,127,juce::roundToInt(juce::jlimit(0.0f,1.0f,normalized)*127.0f)),std::memory_order_release);
 }
 bool OrigamiAudioProcessor::setUiPitchBendRange(float semitones) noexcept {
+    return setUiPitchBendRanges(semitones,semitones);
+}
+bool OrigamiAudioProcessor::setUiPitchBendRanges(float upSemitones,float downSemitones) noexcept {
     const juce::ScopedLock lock(stateLock_);
-    if(!engine_.setPitchBendRange(semitones)) return false;
-    uiInstrumentState_.performance.pitchBendRangeSemitones=semitones;
-    uiPerformanceState_.pitchBendRangeSemitones=semitones;
+    if(!engine_.setPitchBendRanges(upSemitones,downSemitones)) return false;
+    uiInstrumentState_.performance.pitchBendRangeSemitones=upSemitones;
+    uiInstrumentState_.performance.pitchBendDownSemitones=downSemitones;
+    uiPerformanceState_.pitchBendRangeSemitones=upSemitones;
+    uiPerformanceState_.pitchBendDownSemitones=downSemitones;
     return true;
 }
 float OrigamiAudioProcessor::getUiPitchBendRange() const noexcept {
     const juce::ScopedLock lock(stateLock_);
     return uiInstrumentState_.performance.pitchBendRangeSemitones;
+}
+float OrigamiAudioProcessor::getUiPitchBendDownRange() const noexcept {
+    const juce::ScopedLock lock(stateLock_);
+    return uiInstrumentState_.performance.pitchBendDownSemitones;
 }
 bool OrigamiAudioProcessor::setUiPerformanceState(const mct::origami::PerformanceState& state) noexcept {
     const juce::ScopedLock lock(stateLock_);
