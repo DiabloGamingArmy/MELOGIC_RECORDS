@@ -712,19 +712,44 @@ private:
                 if(after!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,after);
                 analyseDocumentFrame(); repaint();
             }
-            void mouseWheelMove(const juce::MouseEvent&,const juce::MouseWheelDetails& wheel) override {
+            void mouseWheelMove(const juce::MouseEvent& e,const juce::MouseWheelDetails& wheel) override {
+                const bool pan=e.mods.isShiftDown() || std::abs(wheel.deltaX)>std::abs(wheel.deltaY);
+                if(pan) {
+                    const float delta=std::abs(wheel.deltaX)>0.0001f?wheel.deltaX:wheel.deltaY;
+                    const int step=juce::jmax(1,visibleBinCount()/8);
+                    firstBin_+=delta>0.0f?-step:step;
+                    clampFirstBin(); repaint(); return;
+                }
                 if(wheel.deltaY==0.0f) return;
                 const int old=zoom_; zoom_=juce::jlimit(1,8,zoom_+(wheel.deltaY>0.0f?1:-1));
                 if(zoom_!=old) { clampFirstBin(); repaint(); }
             }
             void paint(juce::Graphics& g) override {
                 g.fillAll(juce::Colour(0xff080808));
-                auto bounds=getLocalBounds().reduced(8,7); if(bounds.getWidth()<8||bounds.getHeight()<8) return;
+                auto full=getLocalBounds().reduced(8,7); if(full.getWidth()<8||full.getHeight()<16) return;
+                const int gap=6;
+                auto top=full.removeFromTop((full.getHeight()-gap)/2);
+                full.removeFromTop(gap);
+                auto lower=full;
+                g.setColour(juce::Colour(0xff101010));
+                g.fillRoundedRectangle(lower.toFloat(),2.0f);
+                g.setColour(juce::Colour(0xff202020));
+                g.drawRoundedRectangle(lower.toFloat().reduced(0.5f),2.0f,1.0f);
+                auto bounds=top;
                 auto labelArea=bounds.removeFromBottom(18);
-                g.setColour(juce::Colour(0xff1c1c1c));
-                for(int i=0;i<=4;++i) {
-                    const float y=static_cast<float>(bounds.getY())+static_cast<float>(i)/4.0f*static_cast<float>(bounds.getHeight());
+                auto scaleArea=bounds.removeFromLeft(31);
+                g.setFont(juce::Font(juce::FontOptions("Arial",6.8f,juce::Font::plain)));
+                for(int i=0;i<=6;++i) {
+                    const float y=static_cast<float>(bounds.getY())+static_cast<float>(i)/6.0f*static_cast<float>(bounds.getHeight());
+                    g.setColour(juce::Colour(0xff1c1c1c));
                     g.drawHorizontalLine(juce::roundToInt(y),static_cast<float>(bounds.getX()),static_cast<float>(bounds.getRight()));
+                    g.setColour(juce::Colours::white.withAlpha(0.34f));
+                    g.drawText(juce::String(-12*i),scaleArea.getX(),juce::roundToInt(y)-6,scaleArea.getWidth()-4,12,juce::Justification::centredRight,false);
+                }
+                for(int i=0;i<=4;++i) {
+                    const float x=static_cast<float>(bounds.getX())+static_cast<float>(i)/4.0f*static_cast<float>(bounds.getWidth());
+                    g.setColour(juce::Colour(0xff181818));
+                    g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(bounds.getY()),static_cast<float>(bounds.getBottom()));
                 }
                 const int count=visibleBinCount(); const float slot=static_cast<float>(bounds.getWidth())/static_cast<float>(count);
                 for(int n=0;n<count;++n) {
@@ -743,12 +768,14 @@ private:
                 for(int n=0;n<=4;++n) {
                     const int bin=firstBin_+(count-1)*n/4;
                     const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)/4.0f*static_cast<float>(bounds.getWidth());
-                    g.drawText(juce::String(bin),juce::roundToInt(x)-16,labelArea.getY(),32,labelArea.getHeight(),juce::Justification::centred,false);
+                    const auto label=noteNameForFrequency(referenceFundamentalHz_*static_cast<float>(bin));
+                    g.drawText(label,juce::roundToInt(x)-22,labelArea.getY(),44,labelArea.getHeight(),juce::Justification::centred,false);
                 }
                 juce::String status="HARMONICS · "+juce::String(zoom_)+"x";
                 if(hoveredBin_>0 && hoveredBin_<static_cast<int>(kBins)) {
+                    const float frequency=referenceFundamentalHz_*static_cast<float>(hoveredBin_);
                     const float db=juce::Decibels::gainToDecibels(magnitudes_[static_cast<std::size_t>(hoveredBin_)]/displayReference_,-72.0f);
-                    status+="     H "+juce::String(hoveredBin_)+"  "+juce::String(db,1)+" dB";
+                    status+="     H "+juce::String(hoveredBin_)+"  "+noteNameForFrequency(frequency)+"  "+juce::String(frequency,1)+" Hz  "+juce::String(db,1)+" dB";
                 }
                 g.setColour(juce::Colours::white.withAlpha(0.52f)); g.drawText(status,bounds.getX(),bounds.getY()+2,bounds.getWidth()-4,12,juce::Justification::topRight,false);
             }
@@ -756,7 +783,21 @@ private:
             static constexpr std::size_t kFftSize=mct::origami::ui::kWavetableFrameSize;
             static constexpr std::size_t kBins=kFftSize/2+1;
             int visibleBinCount() const noexcept { return juce::jmax(16,128/zoom_); }
-            juce::Rectangle<int> plotBounds() const noexcept { return getLocalBounds().reduced(8,7).withTrimmedBottom(18); }
+            juce::Rectangle<int> plotBounds() const noexcept {
+                auto full=getLocalBounds().reduced(8,7);
+                const int gap=6;
+                auto top=full.removeFromTop((full.getHeight()-gap)/2);
+                top.removeFromBottom(18);
+                top.removeFromLeft(31);
+                return top;
+            }
+            static juce::String noteNameForFrequency(float hz) {
+                if(!std::isfinite(hz) || hz<=0.0f) return {};
+                const int midi=juce::roundToInt(69.0f+12.0f*std::log2(hz/440.0f));
+                static constexpr const char* names[]={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"};
+                const int pc=((midi%12)+12)%12;
+                return juce::String(names[pc])+juce::String(midi/12-1);
+            }
             void clampFirstBin() noexcept { firstBin_=juce::jlimit(1,juce::jmax(1,static_cast<int>(kBins)-visibleBinCount()),firstBin_); }
             int binForX(float x) const noexcept {
                 const auto p=plotBounds(); if(!p.contains(juce::roundToInt(x),p.getCentreY())) return -1;
@@ -835,6 +876,7 @@ private:
             std::array<float,kBins> magnitudes_{},phases_{},editMagnitudes_{};
             std::array<float,kFftSize> editBefore_{};
             float displayReference_=1.0f; std::uint64_t editFrameId_=0;
+            static constexpr float referenceFundamentalHz_=130.81278265f; // C3 display reference
             int zoom_=1,firstBin_=1,hoveredBin_=-1,lastEditedBin_=-1; bool editing_=false;
         };
 
