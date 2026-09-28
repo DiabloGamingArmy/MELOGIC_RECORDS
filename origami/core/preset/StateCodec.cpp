@@ -35,7 +35,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(24);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(25);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -167,6 +167,8 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             if(m.route2Type!=OscRouteType::Off) w.word(1u);
         }
     }
+    // V25: asymmetric pitch bend. Original V4 field remains the UP range.
+    w.real(s.performance.pitchBendDownSemitones);
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -174,7 +176,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>24) return false;
+    if(version<1 || version>25) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -358,6 +360,8 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             }
         }
     }
+    if(version>=25) s.performance.pitchBendDownSemitones=r.real();
+    else s.performance.pitchBendDownSemitones=s.performance.pitchBendRangeSemitones;
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;
 }
