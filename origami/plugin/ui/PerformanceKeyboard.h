@@ -60,8 +60,8 @@ class PerformanceKeyboard final : public juce::Component, public juce::SettableT
 public:
     using NoteSetter=std::function<bool(int,bool,float)>;
     using WheelSetter=std::function<void(float)>;
-    using RangeSetter=std::function<bool(float)>;
-    using RangeGetter=std::function<float()>;
+    using RangeSetter=std::function<bool(float,float)>;
+    using RangeGetter=std::function<std::pair<float,float>()>;
     using PerformanceSetter=std::function<bool(const mct::origami::PerformanceState&)>;
     using PerformanceGetter=std::function<mct::origami::PerformanceState()>;
     using ArpSetter=std::function<bool(const mct::origami::ArpeggiatorState&)>;
@@ -72,7 +72,8 @@ public:
         setTooltip("Click or drag across keys to play MCT Origami.");
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
         addAndMakeVisible(bendRange_);
-        bendRange_.setName("Pitch bend range");
+        addAndMakeVisible(bendDownRange_);
+        bendRange_.setName("Pitch bend up range");
         bendRange_.setSliderStyle(juce::Slider::LinearBarVertical);
         bendRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,62,18);
         bendRange_.setRange(1.0,48.0,1.0);
@@ -80,16 +81,31 @@ public:
         bendRange_.setSliderSnapsToMousePosition(false);
         bendRange_.setScrollWheelEnabled(false);
         bendRange_.setDoubleClickReturnValue(true,2.0);
-        bendRange_.setTooltip("Bend Range — click/drag vertically or type a semitone value");
+        bendRange_.setTooltip("Bend Up — click/drag vertically or type a semitone value");
+        bendDownRange_.setName("Pitch bend down range");
+        bendDownRange_.setSliderStyle(juce::Slider::LinearBarVertical);
+        bendDownRange_.setTextBoxStyle(juce::Slider::TextBoxBelow,false,62,18);
+        bendDownRange_.setRange(1.0,48.0,1.0);
+        bendDownRange_.setSliderSnapsToMousePosition(false);
+        bendDownRange_.setScrollWheelEnabled(false);
+        bendDownRange_.setDoubleClickReturnValue(true,2.0);
+        bendDownRange_.setTooltip("Bend Down — click/drag vertically or type a semitone value");
+        bendDownRange_.textFromValueFunction=[](double value){return juce::String(juce::roundToInt(value));};
+        bendDownRange_.valueFromTextFunction=[](const juce::String& value){return value.retainCharacters("0123456789.-").getDoubleValue();};
         bendRange_.textFromValueFunction=[](double value) {
             return juce::String(juce::roundToInt(value));
         };
         bendRange_.valueFromTextFunction=[](const juce::String& value) {
             return value.retainCharacters("0123456789.-").getDoubleValue();
         };
-        bendRange_.setValue(rangeGetter_?rangeGetter_():2.0f,juce::dontSendNotification);
+        const auto bendRanges=rangeGetter_?rangeGetter_():std::pair<float,float>{2.0f,2.0f};
+        bendRange_.setValue(bendRanges.first,juce::dontSendNotification);
+        bendDownRange_.setValue(bendRanges.second,juce::dontSendNotification);
         bendRange_.onValueChange=[this]{
-            if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getValue()));
+            if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getValue()),static_cast<float>(bendDownRange_.getValue()));
+        };
+        bendDownRange_.onValueChange=[this]{
+            if(rangeSetter_) rangeSetter_(static_cast<float>(bendRange_.getValue()),static_cast<float>(bendDownRange_.getValue()));
         };
         addAndMakeVisible(voiceMode_);addAndMakeVisible(priority_);addAndMakeVisible(legato_);addAndMakeVisible(glide_);
         voiceMode_.addItem("POLY",1);voiceMode_.addItem("MONO",2);voiceMode_.setScrollWheelEnabled(false);voiceMode_.setTooltip("Voice mode");
@@ -164,7 +180,7 @@ private:
     WheelSetter pitchSetter_,modSetter_;RangeSetter rangeSetter_;RangeGetter rangeGetter_;
     PerformanceSetter performanceSetter_;PerformanceGetter performanceGetter_;
     ArpSetter arpSetter_;ArpGetter arpGetter_;
-    juce::Slider bendRange_,glide_;
+    juce::Slider bendRange_,bendDownRange_,glide_;
     NativeComboBox voiceMode_,priority_;
     juce::ToggleButton legato_,arpEnable_;
     ArpSettingsIconButton arpSettings_;
