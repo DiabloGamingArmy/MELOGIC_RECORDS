@@ -694,8 +694,30 @@ private:
 
         class SpectrumCanvas final : public juce::Component {
         public:
-            enum class EditMode { Independent, Subtractive };
-            void setEditMode(EditMode mode) { editMode_=mode; refresh(); }
+            enum class EditMode { Independent, Subtractive, Additive };
+            void setEditMode(EditMode mode) {
+                if(editMode_==mode) return;
+                editMode_=mode;
+                if(document_.valid()) {
+                    auto& frame=document_.frames[document_.selectedFrame];
+                    if(mode==EditMode::Additive) {
+                        // Additive begins as contribution controls over a square-wave harmonic profile.
+                        additiveContributions_.fill(1.0f);
+                        phases_.fill(0.0f);
+                        phases_[0]=0.0f;
+                        for(std::size_t bin=1;bin<kBins;++bin)
+                            phases_[bin]=-juce::MathConstants<float>::halfPi;
+                        rebuildAdditiveMagnitudes();
+                        editMagnitudes_=magnitudes_;
+                        reconstructPreview();
+                        storeAuthoringState(frame);
+                    } else if(frame.hasSpectralAuthoring) {
+                        magnitudes_=frame.spectralCoefficients;
+                        phases_=frame.spectralPhases;
+                    } else analyseDocumentFrame();
+                }
+                repaint();
+            }
             EditMode editMode() const noexcept { return editMode_; }
             std::function<void()> onSamplesChanged;
             std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
@@ -705,7 +727,14 @@ private:
             }
             void refresh() {
                 if(editing_) return;
-                analyseDocumentFrame(); repaint();
+                if(editMode_==EditMode::Subtractive) analyseDocumentFrame();
+                else {
+                    auto& frame=document_.frames[document_.selectedFrame];
+                    storeAuthoringState(frame);
+                    magnitudes_=frame.spectralCoefficients;
+                    phases_=frame.spectralPhases;
+                }
+                repaint();
             }
             void mouseMove(const juce::MouseEvent& e) override { hoveredBin_=binForX(e.position.x); repaint(); }
             void mouseExit(const juce::MouseEvent&) override { hoveredBin_=-1; repaint(); }
@@ -713,7 +742,7 @@ private:
                 if(!document_.valid()) return;
                 editing_=true; editFrameId_=document_.frames[document_.selectedFrame].id;
                 editBefore_=document_.frames[document_.selectedFrame].samples;
-                analyseDocumentFrame(); editMagnitudes_=magnitudes_;
+                loadAuthoringOrAnalyse(); editMagnitudes_=magnitudes_;
                 lastEditedBin_=-1; editAt(e.position); 
             }
             void mouseDrag(const juce::MouseEvent& e) override { if(editing_) editAt(e.position); }
@@ -825,16 +854,50 @@ private:
                 const int bin=binForX(pos.x); if(bin<1) return;
                 const auto p=plotBounds();
                 const float level=juce::jlimit(0.0f,1.0f,(static_cast<float>(p.getBottom())-pos.y)/static_cast<float>(juce::jmax(1,p.getHeight())));
-                const float target=fftMagnitudeForDisplayAmplitude(bin,juce::Decibels::decibelsToGain(-72.0f+72.0f*level));
+                const float target=editMode_==EditMode::Additive
+                    ? level
+                    : fftMagnitudeForDisplayAmplitude(bin,juce::Decibels::decibelsToGain(-72.0f+72.0f*level));
                 if(lastEditedBin_>0 && lastEditedBin_!=bin) {
                     const int lo=juce::jmin(lastEditedBin_,bin),hi=juce::jmax(lastEditedBin_,bin);
                     const float start=editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
                     for(int b=lo;b<=hi;++b) {
                         const float t=static_cast<float>(b-lastEditedBin_)/static_cast<float>(bin-lastEditedBin_);
-                        editMagnitudes_[static_cast<std::size_t>(b)]=juce::jmax(0.0f,start+t*(target-start));
+                        const float value=juce::jmax(0.0f,start+t*(target-start));
+                        if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(b)]=juce::jlimit(0.0f,1.0f,value);
+                        else editMagnitudes_[static_cast<std::size_t>(b)]=value;
                     }
-                } else editMagnitudes_[static_cast<std::size_t>(bin)]=target;
+                } else {
+                    if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(bin)]=juce::jlimit(0.0f,1.0f,target);
+                    else editMagnitudes_[static_cast<std::size_t>(bin)]=target;
+                }
+                if(editMode_==EditMode::Additive) rebuildAdditiveMagnitudes();
                 lastEditedBin_=bin; reconstructPreview(); hoveredBin_=bin; repaint();
+            }
+            void loadAuthoringOrAnalyse() {
+                if(!document_.valid()) return;
+                const auto& frame=document_.frames[document_.selectedFrame];
+                if(editMode_!=EditMode::Subtractive && frame.hasSpectralAuthoring) {
+                    magnitudes_=frame.spectralCoefficients;
+                    phases_=frame.spectralPhases;
+                    return;
+                }
+                analyseDocumentFrame();
+            }
+            void storeAuthoringState(mct::origami::ui::WavetableFrame& frame) {
+                if(editMode_==EditMode::Subtractive) { frame.hasSpectralAuthoring=false; return; }
+                frame.hasSpectralAuthoring=true;
+                frame.spectralCoefficients=magnitudes_;
+                frame.spectralPhases=phases_;
+            }
+            void rebuildAdditiveMagnitudes() {
+                editMagnitudes_.fill(0.0f);
+                editMagnitudes_[0]=0.0f;
+                for(std::size_t bin=1;bin<kBins;++bin) {
+                    // Square Fourier profile: odd harmonics at 1/n, even harmonics absent.
+                    const float amplitude=(bin%2==1)?additiveContributions_[bin]/static_cast<float>(bin):0.0f;
+                    editMagnitudes_[bin]=fftMagnitudeForDisplayAmplitude(static_cast<int>(bin),amplitude);
+                }
+                magnitudes_=editMagnitudes_;
             }
             void analyseDocumentFrame() {
                 magnitudes_.fill(0.0f); phases_.fill(0.0f); real_.fill(0.0f); imag_.fill(0.0f);
@@ -868,6 +931,10 @@ private:
                 // INDEPENDENT keeps the user's harmonic coefficients authoritative:
                 // output peak fitting must never push untouched bars down.
                 magnitudes_=editMagnitudes_;
+                if(editMode_!=EditMode::Subtractive) {
+                    auto& authored=document_.frames[document_.selectedFrame];
+                    storeAuthoringState(authored);
+                }
                 if(onSamplesChanged) onSamplesChanged();
             }
             void performFft(bool inverse) noexcept {
@@ -893,7 +960,7 @@ private:
             }
             mct::origami::ui::WavetableDocument& document_;
             std::array<float,kFftSize> real_{},imag_{};
-            std::array<float,kBins> magnitudes_{},phases_{},editMagnitudes_{};
+            std::array<float,kBins> magnitudes_{},phases_{},editMagnitudes_{},additiveContributions_{};
             std::array<float,kFftSize> editBefore_{};
             std::uint64_t editFrameId_=0;
             static constexpr float referenceFundamentalHz_=130.81278265f; // C3 display reference
@@ -1404,14 +1471,16 @@ private:
             spectrumMode_.onClick=[this] {
                 const bool independent=spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent;
                 const std::vector<mct::origami::ui::NativeChoiceItem> items={
-                    {1,"INDEPENDENT",true,"",independent},
-                    {2,"SUBTRACTIVE",true,"",!independent}
+                    {1,"INDEPENDENT",true,"",spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent},
+                    {2,"SUBTRACTIVE",true,"",spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Subtractive},
+                    {3,"ADDITIVE",true,"",spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Additive}
                 };
-                mct::origami::ui::showNativeChoiceMenu(spectrumMode_,"Spectral mode",items,independent?1:2,[this](int id) {
-                    if(id!=1 && id!=2) return;
-                    const auto mode=id==1?SpectrumCanvas::EditMode::Independent:SpectrumCanvas::EditMode::Subtractive;
+                const int selected=spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent?1:spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Subtractive?2:3;
+                mct::origami::ui::showNativeChoiceMenu(spectrumMode_,"Spectral mode",items,selected,[this](int id) {
+                    if(id<1 || id>3) return;
+                    const auto mode=id==1?SpectrumCanvas::EditMode::Independent:id==2?SpectrumCanvas::EditMode::Subtractive:SpectrumCanvas::EditMode::Additive;
                     spectrumCanvas_.setEditMode(mode);
-                    spectrumMode_.setButtonText(id==1?"INDEPENDENT":"SUBTRACTIVE");
+                    spectrumMode_.setButtonText(id==1?"INDEPENDENT":id==2?"SUBTRACTIVE":"ADDITIVE");
                 });
             };
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
