@@ -21,6 +21,7 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
     }
     if(s.oscillators[0].id!=1 || !validModulation(s.modulation,s.oscillators)) return false;
     if(!std::isfinite(s.performance.pitchBendRangeSemitones) || s.performance.pitchBendRangeSemitones<1.0f || s.performance.pitchBendRangeSemitones>48.0f) return false;
+    if(!std::isfinite(s.performance.pitchBendDownSemitones) || s.performance.pitchBendDownSemitones<1.0f || s.performance.pitchBendDownSemitones>48.0f) return false;
     if(s.performance.voiceMode!=VoiceMode::Poly && s.performance.voiceMode!=VoiceMode::Mono) return false;
     if(s.performance.notePriority!=NotePriority::Last && s.performance.notePriority!=NotePriority::High && s.performance.notePriority!=NotePriority::Low) return false;
     if(!std::isfinite(s.performance.glideSeconds) || s.performance.glideSeconds<0.0f || s.performance.glideSeconds>5.0f) return false;
