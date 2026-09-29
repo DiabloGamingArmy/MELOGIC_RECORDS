@@ -266,6 +266,115 @@ void audioPurityP0Audit() {
           "P0 purity render executes every requested sample");
 }
 
+void multiOscillatorTopologyP0Audit() {
+    // Reproduce the live Standalone topology at its observed 96 kHz / 512.
+    // Identical, phase-aligned sine modules mixed with 1/N normalization must
+    // not change pitch or waveform as active-module count changes.
+    constexpr double sampleRate=96000.0;
+    constexpr int blockSize=512,warmupBlocks=16,captureBlocks=32,note=69;
+    constexpr double expectedHz=440.0;
+    using Capture=std::array<float,blockSize*captureBlocks>;
+
+    auto capture=[&](int activeCount) {
+        OrigamiAudioProcessor p;
+        p.prepareToPlay(sampleRate,blockSize);
+        check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 topology sine WT accepted");
+        check(p.setUiParameter(ParameterId::Sustain,1.0f),"P0 topology sustain accepted");
+        check(p.setUiParameter(ParameterId::Attack,0.001f),"P0 topology attack accepted");
+        check(p.setUiParameter(ParameterId::OscUnison,1.0f),"P0 topology OSC1 unison accepted");
+        check(p.setUiParameter(ParameterId::OscDetune,0.0f),"P0 topology OSC1 detune disabled");
+        check(p.setUiParameter(ParameterId::OscPan,0.0f),"P0 topology OSC1 pan centered");
+        check(p.setUiParameter(ParameterId::Cutoff,20000.0f),"P0 topology cutoff opened");
+        check(p.setUiParameter(ParameterId::Resonance,0.0f),"P0 topology resonance disabled");
+
+        auto state=p.getUiInstrumentState();
+        state.modulation.filterEnabled=false;
+        check(p.setUiModulationState(state.modulation),"P0 topology filter disabled");
+
+        for(unsigned id=2;id<=4;++id) {
+            auto osc=p.getUiOscillatorState(id);
+            osc.enabled=static_cast<int>(id)<=activeCount;
+            osc.tableId=mct::origami::dsp::BuiltinWavetableId::BasicShapes;
+            osc.wtPosition=0.0f;osc.waveform=0.0f;
+            osc.octave=0.0f;osc.semitone=0.0f;osc.fineCents=0.0f;
+            osc.unison=1;osc.detuneCents=0.0f;osc.blend=0.0f;
+            osc.pan=0.0f;osc.level=p.getUiParameter(ParameterId::OscLevel);
+            osc.processCount=0;osc.routeCount=0;
+            osc.process1=mct::origami::dsp::OscProcessType::Off;
+            osc.process2=mct::origami::dsp::OscProcessType::Off;
+            osc.route1Type=mct::origami::OscRouteType::Off;
+            osc.route2Type=mct::origami::OscRouteType::Off;
+            osc.route1SourceId=0;osc.route2SourceId=0;
+            check(p.setUiOscillatorState(id,osc),"P0 topology module state accepted");
+        }
+
+        p.resetAudioContinuityDiagnostics();
+        juce::AudioBuffer<float> audio(2,blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,note,1.0f),0);
+        for(int b=0;b<warmupBlocks;++b){audio.clear();p.processBlock(audio,midi);midi.clear();}
+
+        Capture out{};std::size_t write=0;
+        for(int b=0;b<captureBlocks;++b){
+            audio.clear();p.processBlock(audio,midi);
+            for(int i=0;i<blockSize;++i) out[write++]=audio.getSample(0,i);
+        }
+        const auto d=p.getAudioContinuityDiagnostics();
+        check(d.beginHostBlockFailures==0 && d.processSpanFailures==0,
+              "P0 topology has no rejected spans");
+        return out;
+    };
+
+    const auto analyse=[&](const Capture& x) {
+        struct Result { double frequency=0,rms=0,dc=0,distortion=0,maxDelta=0; };
+        Result r{};
+        double sum=0,energy=0;
+        int crossings=0;
+        for(std::size_t i=0;i<x.size();++i){
+            sum+=x[i];energy+=double(x[i])*double(x[i]);
+            if(i && x[i-1]<=0.0f && x[i]>0.0f) ++crossings;
+            if(i) r.maxDelta=std::max(r.maxDelta,std::abs(double(x[i])-double(x[i-1])));
+        }
+        r.dc=sum/double(x.size());r.rms=std::sqrt(energy/double(x.size()));
+        r.frequency=double(crossings)*sampleRate/double(x.size());
+
+        const double omega=2.0*juce::MathConstants<double>::pi*expectedHz/sampleRate;
+        double ss=0,cc=0,sc=0,xs=0,xc=0;
+        for(std::size_t i=0;i<x.size();++i){
+            const double sn=std::sin(omega*double(i)),cs=std::cos(omega*double(i));
+            ss+=sn*sn;cc+=cs*cs;sc+=sn*cs;
+            const double y=double(x[i])-r.dc;xs+=y*sn;xc+=y*cs;
+        }
+        const double det=ss*cc-sc*sc;
+        const double a=(xs*cc-xc*sc)/det,b=(xc*ss-xs*sc)/det;
+        double sig=0,res=0;
+        for(std::size_t i=0;i<x.size();++i){
+            const double fit=a*std::sin(omega*double(i))+b*std::cos(omega*double(i));
+            const double y=double(x[i])-r.dc;sig+=fit*fit;res+=(y-fit)*(y-fit);
+        }
+        r.distortion=std::sqrt(res/std::max(sig,1.0e-20));
+        return r;
+    };
+
+    std::array<Capture,4> captures{};
+    std::array<decltype(analyse(captures[0])),4> metrics{};
+    for(int count=1;count<=4;++count) {
+        captures[static_cast<std::size_t>(count-1)]=capture(count);
+        metrics[static_cast<std::size_t>(count-1)]=analyse(captures[static_cast<std::size_t>(count-1)]);
+        const auto& m=metrics[static_cast<std::size_t>(count-1)];
+        std::cout<<"[Origami P0 topology] oscillators="<<count
+                 <<" freq="<<m.frequency<<" rms="<<m.rms<<" dc="<<m.dc
+                 <<" residual="<<m.distortion<<" maxDelta="<<m.maxDelta<<std::endl;
+        check(std::abs(m.frequency-expectedHz)<8.0,"P0 topology preserves sine frequency");
+        check(m.distortion<0.02,"P0 topology remains spectrally clean");
+    }
+
+    const double referenceRms=metrics[0].rms;
+    for(std::size_t i=1;i<metrics.size();++i)
+        check(std::abs(metrics[i].rms-referenceRms)<std::max(0.002,referenceRms*0.05),
+              "P0 topology 1/N normalization preserves identical-oscillator RMS");
+}
+
 void uiKeyboardRealtimeBoundaryAudit() {
     const auto root=juce::File(__FILE__).getParentDirectory().getParentDirectory();
     const auto processor=root.getChildFile("plugin/PluginProcessor.cpp").loadFileAsString();
@@ -1022,6 +1131,7 @@ void frameToolsAudit() {
 void run() {
     audioContinuityP0Audit();
     audioPurityP0Audit();
+    multiOscillatorTopologyP0Audit();
     frameToolsAudit();
     uiKeyboardRealtimeBoundaryAudit();
     renderBudgetPolicyAudit();
