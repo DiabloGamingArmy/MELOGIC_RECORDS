@@ -43,19 +43,6 @@ struct PerformanceInputSnapshot {
     std::uint64_t heldLow=0,heldHigh=0;
     std::array<std::uint8_t,128> velocity{};
 };
-struct VoiceHotPathProfile {
-    std::uint64_t samples=0;
-    std::uint64_t moduleIterations=0;
-    std::uint64_t oscillatorCalls=0;
-    std::uint64_t envelopeNs=0;
-    std::uint64_t modulationNs=0;
-    std::uint64_t prepareNs=0;
-    std::uint64_t preRouteNs=0;
-    std::uint64_t oscillatorNs=0;
-    std::uint64_t postRouteNs=0;
-    std::uint64_t filterNs=0;
-    std::uint64_t accumulateNs=0;
-};
 struct VoiceVisualizationSnapshot {
     std::array<float,13> sources{};
     std::array<float,4> lfoPhases{};
@@ -80,8 +67,6 @@ public:
     std::uint64_t order() const noexcept { return order_; }
     std::uint8_t channel() const noexcept { return address_.channel; }
     const VoiceVisualizationSnapshot& visualizationSnapshot() const noexcept { return visualization_; }
-    const VoiceHotPathProfile& hotPathProfile() const noexcept { return hotPathProfile_; }
-    void clearHotPathProfile() noexcept { hotPathProfile_={}; }
 private:
     // mct-origami-unison-detune-v19.2
     static constexpr unsigned maxOscillatorModules = 16;
@@ -168,6 +153,5 @@ private:
     ModulationFrame localFrame_{};
     dsp::OscProcessPlan processScratch_{};
     VoiceVisualizationSnapshot visualization_{};
-    VoiceHotPathProfile hotPathProfile_{};
 };
 }
