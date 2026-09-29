@@ -362,7 +362,7 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
             }
             const int chosen=chooseArpNote();
             const double baseSamples=(60.0/juce::jmax(20.0,bpm))*arpStepBeats()*sampleRate_;
-            const double swing=juce::jlimit(0.0,0.75,static_cast<double>(arpState_.swing));
+            const double swing=juce::jlimit(0.0,0.75,static_cast<double>(engine_.modulatedSwing()));
             const double stepSamples=juce::jmax(1.0,baseSamples*(arpStepParity_?(1.0+swing*0.5):(1.0-swing*0.5)));
             arpStepParity_=!arpStepParity_;arpStepRemaining_=stepSamples;
             if(chosen>=0) {
@@ -446,6 +446,9 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     }
     if(pendingClearArpLatch_.exchange(false,std::memory_order_acq_rel))
         resetArpeggiatorRuntime(true);
+    // Swing's base remains the ARP control; the Matrix supplies the derived
+    // modulation value through the engine without duplicating a timing engine.
+    engine_.setGlobalSwingBase(arpState_.swing);
 
     // Deep Audit P07: enforce the PREVIOUS completed callback's admission
     // decision for this callback. This avoids self-referential timing and makes
