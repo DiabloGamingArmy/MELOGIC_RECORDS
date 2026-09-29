@@ -604,8 +604,9 @@ void dynamicTopologyRecompilation() {
 }
 
 void voiceObservationDoesNotChangeAudio() {
-    Voice observed,unobserved;
-    observed.prepare(48000);unobserved.prepare(48000);
+    auto observed=std::make_unique<Voice>();
+    auto unobserved=std::make_unique<Voice>();
+    observed->prepare(48000);unobserved->prepare(48000);
     ModulationState state;
     ModulationFrame frame;
     frame.modules[0].id=1;frame.modules[0].enabled=true;
@@ -621,27 +622,28 @@ void voiceObservationDoesNotChangeAudio() {
     OscillatorRenderPlan topology;topology.compile(frame.modules);
     OscillatorProcessPlans sharedProcesses;
     topology.processPlan(0,frame.modules[0],sharedProcesses[0]);
-    observed.start({},0.8f,1,envelope,state.env2,state.env3);
-    unobserved.start({},0.8f,1,envelope,state.env2,state.env3);
+    observed->start({},0.8f,1,envelope,state.env2,state.env3);
+    unobserved->start({},0.8f,1,envelope,state.env2,state.env3);
     std::array<const dsp::Wavetable*,OscillatorModuleBank::capacity> tables{};
     tables.fill(&bank());
     for(unsigned i=0;i<512;++i) {
-        const auto a=observed.nextModules(tables,frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,true);
-        const auto b=unobserved.nextModules(tables,frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,false);
+        const auto a=observed->nextModules(tables,frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,true);
+        const auto b=unobserved->nextModules(tables,frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,false);
         check(a.left==b.left && a.right==b.right && a.mono==b.mono,
               "visualization observation does not affect modulated unison audio");
     }
-    check(observed.visualizationSnapshot().modules[0].id==1,
+    check(observed->visualizationSnapshot().modules[0].id==1,
           "observed voice publishes current modules");
-    check(unobserved.visualizationSnapshot().modules[0].id==0,
+    check(unobserved->visualizationSnapshot().modules[0].id==0,
           "unobserved voice skips snapshot copies");
 }
 
 void engineVisualizationCadenceDoesNotChangeAudio() {
-    OrigamiEngine observed,reference;
-    check(observed.prepare(96000,512,2) && reference.prepare(96000,512,2),
+    auto observed=std::make_unique<OrigamiEngine>();
+    auto reference=std::make_unique<OrigamiEngine>();
+    check(observed->prepare(96000,512,2) && reference->prepare(96000,512,2),
           "visualization cadence engines prepare at live rate");
-    for(auto* engine:{&observed,&reference}) {
+    for(auto* engine:{observed.get(),reference.get()}) {
         check(engine->setParameter(ParameterId::Waveform,0.0f),"visualization cadence sine accepted");
         check(engine->setParameter(ParameterId::Sustain,1.0f),"visualization cadence sustain accepted");
         check(engine->noteOn(69,1.0f),"visualization cadence note accepted");
@@ -650,13 +652,13 @@ void engineVisualizationCadenceDoesNotChangeAudio() {
     float* observedOut[]{observedL.data(),observedR.data()};
     float* referenceOut[]{referenceL.data(),referenceR.data()};
     for(int block=0;block<8;++block) {
-        check(observed.process(observedOut,2,512) && reference.process(referenceOut,2,512),
+        check(observed->process(observedOut,2,512) && reference->process(referenceOut,2,512),
               "visualization cadence renders live-size blocks");
         for(std::size_t i=0;i<512;++i)
             check(observedL[i]==referenceL[i] && observedR[i]==referenceR[i],
                   "visualization cadence is audio-transparent");
     }
-    check(observed.runtimeVisualizationSnapshot().active,
+    check(observed->runtimeVisualizationSnapshot().active,
           "decimated visualization still observes active voice");
 }
 
@@ -682,17 +684,32 @@ void performanceSourceCurveAudit() {
 }
 
 int main() {
-    dynamicTopologyRecompilation();
-    voiceObservationDoesNotChangeAudio();
-    engineVisualizationCadenceDoesNotChangeAudio();
-    performanceSourceCurveAudit();
-    qosVoiceAdmissionAudit();
-    audioRateFastMathAudit();
-    oscillatorGenerationCoherenceAudit();
-    spectralPreparationBoundaryAudit();
-    spectralCachePlayback();
-    spectralCacheConcurrentEviction();
-    realtimeThreadPolicyAudit();
-    try {std::cerr<<"registry and patches\n";registryAndPatches();std::cerr<<"envelope timing\n";envelopeTiming();std::cerr<<"pitch and blocks\n";pitchAndBlocks();std::cerr<<"voices and realtime\n";voicesAndRealtime();std::cerr<<"performance modes\n";performanceModes();std::cerr<<"signal behavior\n";signalBehavior();std::cerr<<"oscillator and filter\n";oscillatorAndFilter();std::cout<<"PASS: "<<checks<<" checks\n";return 0;}
-    catch(const std::exception& error) {guardAllocations.store(false);std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}
+    // OrigamiEngine/Voice are intentionally large fixed-storage realtime
+    // objects. Keep every engine-heavy regression off the process stack so the
+    // test runner cannot overflow before it reaches its first diagnostic.
+    // Production engine ownership already follows this pattern.
+    try {
+        std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();
+        std::cerr<<"voice observation\n";voiceObservationDoesNotChangeAudio();
+        std::cerr<<"visualization cadence\n";engineVisualizationCadenceDoesNotChangeAudio();
+        std::cerr<<"performance source curves\n";performanceSourceCurveAudit();
+        std::cerr<<"QoS voice admission\n";qosVoiceAdmissionAudit();
+        std::cerr<<"audio-rate fast math\n";audioRateFastMathAudit();
+        std::cerr<<"oscillator generation\n";oscillatorGenerationCoherenceAudit();
+        std::cerr<<"spectral preparation\n";spectralPreparationBoundaryAudit();
+        std::cerr<<"spectral playback\n";spectralCachePlayback();
+        std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
+        std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();
+        std::cerr<<"registry and patches\n";registryAndPatches();
+        std::cerr<<"envelope timing\n";envelopeTiming();
+        std::cerr<<"pitch and blocks\n";pitchAndBlocks();
+        std::cerr<<"voices and realtime\n";voicesAndRealtime();
+        std::cerr<<"performance modes\n";performanceModes();
+        std::cerr<<"signal behavior\n";signalBehavior();
+        std::cerr<<"oscillator and filter\n";oscillatorAndFilter();
+        std::cout<<"PASS: "<<checks<<" checks\n";return 0;
+    } catch(const std::exception& error) {
+        guardAllocations.store(false);
+        std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;
+    }
 }
