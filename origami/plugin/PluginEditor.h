@@ -832,13 +832,16 @@ private:
                     const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)*slot;
                     const float width=juce::jmax(1.0f,slot-1.0f);
                     if(editMode_==EditMode::Subtractive && document_.valid()) {
-                        // The gain mask is a control overlay; the red bars remain the
-                        // actual source-spectrum × gain result heard from the frame.
-                        const float gain=juce::jlimit(0.0f,1.0f,
-                            document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(bin)]);
-                        const float maskY=static_cast<float>(bounds.getBottom())-gain*static_cast<float>(bounds.getHeight());
-                        g.setColour(juce::Colours::white.withAlpha(0.18f));
-                        g.drawHorizontalLine(juce::roundToInt(maskY),x,x+width);
+                        // Show the editable subtractive ceiling separately from the
+                        // resulting spectrum. It is intentionally darker than the output bars.
+                        const auto& frame=document_.frames[document_.selectedFrame];
+                        const float sourceAmplitude=displayAmplitudeForBin(
+                            bin,frame.subtractiveSourceMagnitudes[static_cast<std::size_t>(bin)]);
+                        const float sourceLevel=juce::jlimit(0.0f,1.0f,
+                            (juce::Decibels::gainToDecibels(sourceAmplitude,-72.0f)+72.0f)/72.0f);
+                        const float maskY=static_cast<float>(bounds.getBottom())-sourceLevel*static_cast<float>(bounds.getHeight());
+                        g.setColour(mct::origami::ui::signalSourceColour().darker(0.65f).withAlpha(0.90f));
+                        g.fillRect(juce::Rectangle<float>(x,maskY-1.5f,width,3.0f));
                     }
                     g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.78f));
                     g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-height,width,height));
@@ -908,21 +911,26 @@ private:
                 const float displayAmplitude=level<=0.002f
                     ? 0.0f
                     : juce::Decibels::decibelsToGain(-72.0f+72.0f*level);
-                const float target=(editMode_==EditMode::Additive || editMode_==EditMode::Subtractive)
+                const float target=editMode_==EditMode::Additive
                     ? level
                     : fftMagnitudeForDisplayAmplitude(bin,displayAmplitude);
                 if(lastEditedBin_>0 && lastEditedBin_!=bin) {
                     const int lo=juce::jmin(lastEditedBin_,bin),hi=juce::jmax(lastEditedBin_,bin);
                     const float start=editMode_==EditMode::Additive
                         ? additiveContributions_[static_cast<std::size_t>(lastEditedBin_)]
-                        : editMode_==EditMode::Subtractive
-                            ? document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(lastEditedBin_)]
-                            : editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
+                        : editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
                     for(int b=lo;b<=hi;++b) {
                         const float t=static_cast<float>(b-lastEditedBin_)/static_cast<float>(bin-lastEditedBin_);
                         const float value=juce::jmax(0.0f,start+t*(target-start));
                         if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(b)]=juce::jlimit(0.0f,1.0f,value);
-                        else if(editMode_==EditMode::Subtractive) document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(b)]=juce::jlimit(0.0f,1.0f,value);
+                        else if(editMode_==EditMode::Subtractive) {
+                            auto& frame=document_.frames[document_.selectedFrame];
+                            const auto index=static_cast<std::size_t>(b);
+                            const float source=frame.subtractiveSourceMagnitudes[index];
+                            const float desired=juce::jmin(source,value);
+                            frame.subtractiveGains[index]=source>1.0e-9f
+                                ? juce::jlimit(0.0f,1.0f,desired/source) : 0.0f;
+                        }
                         else {
                             auto& frame=document_.frames[document_.selectedFrame];
                             const auto index=static_cast<std::size_t>(b);
@@ -933,7 +941,14 @@ private:
                     }
                 } else {
                     if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(bin)]=juce::jlimit(0.0f,1.0f,target);
-                    else if(editMode_==EditMode::Subtractive) document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(bin)]=juce::jlimit(0.0f,1.0f,target);
+                    else if(editMode_==EditMode::Subtractive) {
+                        auto& frame=document_.frames[document_.selectedFrame];
+                        const auto index=static_cast<std::size_t>(bin);
+                        const float source=frame.subtractiveSourceMagnitudes[index];
+                        const float desired=juce::jmin(source,target);
+                        frame.subtractiveGains[index]=source>1.0e-9f
+                            ? juce::jlimit(0.0f,1.0f,desired/source) : 0.0f;
+                    }
                     else {
                         auto& frame=document_.frames[document_.selectedFrame];
                         const auto index=static_cast<std::size_t>(bin);
