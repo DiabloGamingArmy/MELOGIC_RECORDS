@@ -8,7 +8,7 @@
 namespace mct::origami::ui {
 class ModulationMatrix::Row final : public juce::Component {
 public:
-    Row(ModRoute route,const InstrumentState& state,ModulationBindings bindings):route_(route),bindings_(std::move(bindings)) {
+    Row(ModRoute route,const InstrumentState& state,ModulationBindings bindings,unsigned ordinal):route_(route),bindings_(std::move(bindings)),ordinal_(ordinal) {
         setName("Modulation route "+juce::String(route.id));
         for(auto* box:{&source_,&destination_}) {addAndMakeVisible(box);box->setScrollWheelEnabled(false);}
         source_.setName("Route source");destination_.setName("Route destination");
@@ -91,11 +91,12 @@ public:
                     "[OC] "+juce::String(oscRouteName(m.routes[i].type))+
                     " #"+juce::String(m.routes[i].id));
         }
-        addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
+        addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(duplicate_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
         enabled_.setClickingTogglesState(true);enabled_.setName("Route enabled");
         bipolar_.setClickingTogglesState(true);bipolar_.setName("Bipolar modulation");
         bipolar_.setTooltip("Off: unipolar 0 to +depth. On: bipolar -depth to +depth.");
-        remove_.setName("Delete route");
+        duplicate_.setName("Duplicate route");duplicate_.setTooltip("Duplicate this modulation route");
+        remove_.setName("Delete route");remove_.setTooltip("Delete this modulation route");
         amount_.setName("Route amount");amount_.setSliderStyle(juce::Slider::LinearHorizontal);
         amount_.setTextBoxStyle(juce::Slider::TextBoxRight,false,75,22);amount_.setRange(-100,100,.1);amount_.setTextValueSuffix(" %");amount_.setScrollWheelEnabled(false);
         amount_.setTooltip("Signed fraction of destination range; cutoff uses a logarithmic range");
@@ -122,6 +123,13 @@ public:
             auto edited=route_;edited.amount=static_cast<float>(amount_.getValue()/100.0);
             commit(edited);
         };
+        duplicate_.onClick=[this]{
+            if(!bindings_.addRoute || !bindings_.route) return;
+            const auto newId=bindings_.addRoute();
+            if(!newId) return;
+            auto copy=route_;copy.id=newId;
+            bindings_.route(copy);
+        };
         remove_.onClick=[this]{if(bindings_.removeRoute) bindings_.removeRoute(route_.id);};
     }
     unsigned id() const {return route_.id;}
@@ -143,16 +151,28 @@ public:
         if(!amount_.isMouseButtonDown() && !amount_.hasKeyboardFocus(true)) amount_.setValue(route.amount*100.0,juce::dontSendNotification);
     }
     void resized() override {
-        auto b=getLocalBounds().reduced(10,8);enabled_.setBounds(b.removeFromLeft(50));b.removeFromLeft(10);
-        bipolar_.setBounds(b.removeFromLeft(92));b.removeFromLeft(12);
-        source_.setBounds(b.removeFromLeft(160));b.removeFromLeft(16);destination_.setBounds(b.removeFromLeft(250));b.removeFromLeft(16);
-        remove_.setBounds(b.removeFromRight(40));b.removeFromRight(12);amount_.setBounds(b);
+        auto b=getLocalBounds().reduced(10,8);
+        b.removeFromLeft(48); // route number / future drag handle
+        enabled_.setBounds(b.removeFromLeft(58));b.removeFromLeft(12);
+        bipolar_.setBounds(b.removeFromLeft(110));b.removeFromLeft(18);
+        source_.setBounds(b.removeFromLeft(220));b.removeFromLeft(18);
+        destination_.setBounds(b.removeFromLeft(300));b.removeFromLeft(20);
+        auto actions=b.removeFromRight(94);
+        duplicate_.setBounds(actions.removeFromLeft(42));actions.removeFromLeft(10);
+        remove_.setBounds(actions.removeFromLeft(42));
+        b.removeFromRight(14);
+        amount_.setBounds(b);
     }
-    void paint(juce::Graphics& g) override {well(g,getLocalBounds());}
+    void paint(juce::Graphics& g) override {
+        well(g,getLocalBounds());
+        auto numberArea=getLocalBounds().reduced(10,8).removeFromLeft(38);
+        text(g,juce::String(ordinal_),numberArea,11,Palette::secondary(),juce::Justification::centred);
+    }
 private:
     ModRoute route_;ModulationBindings bindings_;std::vector<ModAddress> addresses_;
+    unsigned ordinal_=0;
     NativeComboBox source_,destination_;
-    juce::TextButton enabled_{"ON"},bipolar_{"BIPOLAR"},remove_{"-"};juce::Slider amount_;
+    juce::TextButton enabled_{"ON"},bipolar_{"BIPOLAR"},duplicate_{"COPY"},remove_{"DEL"};juce::Slider amount_;
 };
 ModulationMatrix::ModulationMatrix(ModulationBindings bindings):Panel("MODULATION MATRIX"),bindings_(std::move(bindings)) {
     addAndMakeVisible(viewport_);viewport_.setViewedComponent(&content_,false);viewport_.setScrollBarsShown(true,false);
@@ -191,7 +211,7 @@ void ModulationMatrix::syncFromModel() {
         filterEnabled_=state.modulation.filterEnabled;
         rows_.clear();
         for(const auto& route:state.modulation.routes) if(route.id) {
-            auto row=std::make_unique<Row>(route,state,bindings_);content_.addAndMakeVisible(*row);rows_.push_back(std::move(row));
+            auto row=std::make_unique<Row>(route,state,bindings_,static_cast<unsigned>(rows_.size()+1));content_.addAndMakeVisible(*row);rows_.push_back(std::move(row));
         }
         resized();
     } else for(std::size_t i=0;i<rows_.size();++i) rows_[i]->sync(state.modulation.routes[i]);
@@ -203,36 +223,27 @@ void ModulationMatrix::resized() {
     for(auto& row:rows_) {row->setBounds(0,y,width,48);y+=56;}content_.setSize(width,juce::jmax(y,viewport_.getHeight()));
 }
 void ModulationMatrix::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    // Header geometry deliberately mirrors Row::resized(): every label starts at
-    // the same x-axis origin as the control below it.
     auto header=body.removeFromTop(28);
     const auto colour=Palette::secondary();
-    constexpr int rowInset=10;
-    constexpr int enabledWidth=50;
-    constexpr int enabledGap=10;
-    constexpr int polarityWidth=92;
-    constexpr int polarityGap=12;
-    constexpr int sourceWidth=160;
-    constexpr int sourceGap=16;
-    constexpr int destinationWidth=250;
-    constexpr int destinationGap=16;
-    constexpr int removeWidth=40;
-    constexpr int removeGap=12;
+    const int y=header.getY(),h=header.getHeight();
+    int x=header.getX()+10;
 
-    int x=header.getX()+rowInset;
-    text(g,"ON",{x,header.getY(),enabledWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
-    x+=enabledWidth+enabledGap;
-    text(g,"POLARITY",{x,header.getY(),polarityWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
-    x+=polarityWidth+polarityGap;
-    text(g,"SOURCE",{x,header.getY(),sourceWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
-    x+=sourceWidth+sourceGap;
-    text(g,"DESTINATION",{x,header.getY(),destinationWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
-    x+=destinationWidth+destinationGap;
+    text(g,"#",{x,y,38,h},11,colour,juce::Justification::centred);
+    x+=48;
+    text(g,"ON",{x,y,58,h},11,colour,juce::Justification::centredLeft);
+    x+=70;
+    text(g,"POLARITY",{x,y,110,h},11,colour,juce::Justification::centredLeft);
+    x+=128;
+    text(g,"SOURCE",{x,y,220,h},11,colour,juce::Justification::centredLeft);
+    x+=238;
+    text(g,"DESTINATION",{x,y,300,h},11,colour,juce::Justification::centredLeft);
+    x+=320;
 
-    const int actionX=header.getRight()-rowInset-removeWidth;
-    const int amountRight=actionX-removeGap;
-    text(g,"AMOUNT",{x,header.getY(),juce::jmax(0,amountRight-x),header.getHeight()},11,colour,juce::Justification::centredLeft);
-    text(g,"ACTIONS",{actionX,header.getY(),removeWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
+    const int actionsWidth=94;
+    const int actionsX=header.getRight()-10-actionsWidth;
+    const int amountRight=actionsX-14;
+    text(g,"AMOUNT",{x,y,juce::jmax(0,amountRight-x),h},11,colour,juce::Justification::centredLeft);
+    text(g,"ACTIONS",{actionsX,y,actionsWidth,h},11,colour,juce::Justification::centred);
 
     if(rows_.empty()) text(g,"No modulation routes. Add a route to connect any envelope, LFO, macro, performance source, random or function source.",body.reduced(12),12,Palette::muted(),juce::Justification::centred);
 }
