@@ -793,6 +793,12 @@ private:
                 ensureSpectralStateInitialized(frame);
                 if(editMode_==EditMode::Independent) {
                     magnitudes_=frame.independentMagnitudes;
+                    // Canonicalise legacy/current frame state before it reaches the
+                    // working spectrum. Only the visible H1..H1023 controls are authoritative.
+                    magnitudes_[0]=0.0f;
+                    magnitudes_[kFftSize/2]=0.0f;
+                    frame.independentMagnitudes[0]=0.0f;
+                    frame.independentMagnitudes[kFftSize/2]=0.0f;
                     setIndependentPhases();
                 } else if(editMode_==EditMode::Additive) {
                     ensureAdditiveStateInitialized(frame);
@@ -1065,6 +1071,11 @@ private:
                 analyseDocumentFrame();
                 if(!frame.hasIndependentSpectrum) {
                     frame.independentMagnitudes=magnitudes_;
+                    // INDEPENDENT exposes H1..H1023 as its complete authored domain.
+                    // DC and Nyquist have no controls, so they must never survive as
+                    // invisible coefficients inherited from the source waveform.
+                    frame.independentMagnitudes[0]=0.0f;
+                    frame.independentMagnitudes[kFftSize/2]=0.0f;
                     frame.independentPhases.fill(0.0f);
                     for(std::size_t bin=1;bin<kBins;++bin)
                         frame.independentPhases[bin]=independentDefaultPhase_;
@@ -1152,6 +1163,12 @@ private:
             }
             void reconstructPreview() {
                 if(!document_.valid()) return;
+                // Final boundary guard for INDEPENDENT: invisible DC/Nyquist bins
+                // cannot influence the IFFT or the authored frame.
+                if(editMode_==EditMode::Independent) {
+                    editMagnitudes_[0]=0.0f;
+                    editMagnitudes_[kFftSize/2]=0.0f;
+                }
                 real_.fill(0.0f); imag_.fill(0.0f);
                 real_[0]=editMagnitudes_[0]*std::cos(phases_[0]); imag_[0]=0.0f;
                 for(std::size_t bin=1;bin<kFftSize/2;++bin) {
