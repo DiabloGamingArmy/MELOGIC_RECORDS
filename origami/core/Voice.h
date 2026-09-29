@@ -72,67 +72,43 @@ private:
     static constexpr unsigned maxOscillatorModules = 16;
     static constexpr unsigned maxUnisonVoices = 16;
     using ModuleOscillators = std::array<dsp::WavetableOscillator, maxUnisonVoices>;
-    // Patch 07/19: fixed-size prepared oscillator representation.
-    struct PreparedOscillatorModule {
+    // Realtime oscillator cache: only genuinely derived state is retained.
+    // Continuous level/blend values are consumed directly from the modulation
+    // frame; pitch and pan are refreshed explicitly without a monolithic
+    // per-sample state-copy/update object.
+    struct OscillatorRuntimeState {
         OscillatorModuleId id=0;
-        float octave=0,semitone=0,fineCents=0,detuneCents=0,pan=0,level=0,blend=0;
+        float detuneCents=0.0f;
         unsigned unison=0;
-        double pitchScale=1.0;
-        float panLeft=0.70710678f,panRight=0.70710678f;
         std::array<double,maxUnisonVoices> detuneRatios{};
-        bool valid=false;
-        void invalidate() noexcept { valid=false;id=0; }
-        void update(const OscillatorModuleState& m) noexcept {
-            // Smoothed/modulated values can asymptotically approach zero and
-            // enter the subnormal range.  Passing those values through libm
-            // exp2/sin/cos from the per-sample render path is catastrophically
-            // slow on the live 96 kHz path.  Canonicalize inaudibly tiny
-            // controls to exact zero so the dirty cache also becomes stable.
-            const auto canonical=[](float value) noexcept {
-                if(!std::isfinite(value) || std::abs(value)<1.0e-12f) return 0.0f;
-                return value;
-            };
-            const float o=canonical(m.octave);
-            const float s=canonical(m.semitone);
-            const float f=canonical(m.fineCents);
-            const float d=std::clamp(canonical(m.detuneCents),0.0f,100.0f);
-            const float p=std::clamp(canonical(m.pan),-1.0f,1.0f);
-            const float l=std::isfinite(m.level)?std::clamp(m.level,0.0f,1.0f):0.0f;
-            const float b=std::isfinite(m.blend)?std::clamp(m.blend,0.0f,1.0f):0.0f;
-            const unsigned u=std::clamp(m.unison,1u,maxUnisonVoices);
-            // Patch 11/19 FIX1: these sanitized cache inputs are finite and
-            // canonicalized before comparison. Exact value comparison is the
-            // intended dirty-state rule; spell it through std::equal_to so the
-            // project remains C++17-compatible without -Wfloat-equal noise.
-            const auto changed=[](float lhs,float rhs) noexcept {
-                return !std::equal_to<float>{}(lhs,rhs);
-            };
-            const bool pitchChanged=!valid||id!=m.id||changed(octave,o)||changed(semitone,s)||changed(fineCents,f);
-            const bool detuneChanged=!valid||id!=m.id||unison!=u||changed(detuneCents,d);
-            const bool panChanged=!valid||id!=m.id||changed(pan,p);
-            if(pitchChanged) pitchScale=dsp::fastExp2Audio((double(o)*12.0+double(s)+double(f)/100.0)/12.0);
-            if(detuneChanged) {
-                detuneRatios.fill(1.0);
-                if(u>1u) for(unsigned i=0;i<u;++i) {
-                    const double unit=(2.0*double(i)/double(u-1u))-1.0;
-                    detuneRatios[i]=dsp::fastExp2Audio((unit*double(d))/1200.0);
-                }
-            }
-            if(panChanged) {
-                const double angle=(double(p)+1.0)*0.78539816339744830962;
-                panLeft=float(std::cos(angle));panRight=float(std::sin(angle));
-            }
-            id=m.id;octave=o;semitone=s;fineCents=f;detuneCents=d;pan=p;
-            level=l;blend=b;unison=u;valid=true;
+
+        void invalidate() noexcept {
+            id=0;detuneCents=0.0f;unison=0;
+            detuneRatios.fill(1.0);
         }
 
+        void prepareDetune(OscillatorModuleId moduleId,unsigned count,float cents) noexcept {
+            const unsigned sanitizedCount=std::clamp(count,1u,maxUnisonVoices);
+            const float sanitizedCents=std::isfinite(cents)
+                ? std::clamp(cents,0.0f,100.0f) : 0.0f;
+            if(id==moduleId && unison==sanitizedCount &&
+               std::equal_to<float>{}(detuneCents,sanitizedCents)) return;
+
+            id=moduleId;unison=sanitizedCount;detuneCents=sanitizedCents;
+            detuneRatios.fill(1.0);
+            if(unison>1u) for(unsigned i=0;i<unison;++i) {
+                const double unit=(2.0*static_cast<double>(i)/static_cast<double>(unison-1u))-1.0;
+                detuneRatios[i]=dsp::fastExp2Audio(
+                    (unit*static_cast<double>(detuneCents))/1200.0);
+            }
+        }
     };
 
     std::array<ModuleOscillators, maxOscillatorModules> moduleOscillators_{};
     std::array<dsp::WavetableOscillator,maxOscillatorModules> moduleBlendCenters_{};
     std::array<OscillatorModuleId,maxOscillatorModules> moduleIds_{};
     std::uint64_t topologyGeneration_=0;
-    std::array<PreparedOscillatorModule,maxOscillatorModules> preparedModules_{};
+    std::array<OscillatorRuntimeState,maxOscillatorModules> oscillatorRuntime_{};
 
     // One-sample-delayed oscillator taps used for cross-osc routing.
     // The delay guarantees deterministic routing with no oscillator-order
