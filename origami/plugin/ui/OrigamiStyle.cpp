@@ -19,11 +19,16 @@ void NativeComboBox::addNativeItem(const juce::String& group,const juce::String&
     addItem(label,id);
     nativeGroups_.push_back({id,group});
 }
+void NativeComboBox::addNativeSeparator(const juce::String& group) {
+    nativeSeparators_.push_back({getNumItems(),group});
+}
 
 void NativeComboBox::mouseDown(const juce::MouseEvent&) {
     std::vector<NativeChoiceItem> items;
     items.reserve(static_cast<std::size_t>(getNumItems()));
     for(int i=0;i<getNumItems();++i) {
+        for(const auto& separator:nativeSeparators_)
+            if(separator.first==i) items.push_back({0,{},false,separator.second});
         const int id=getItemId(i);
         juce::String group;
         for(const auto& entry:nativeGroups_)

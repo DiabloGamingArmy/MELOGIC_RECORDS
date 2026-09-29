@@ -144,9 +144,11 @@ class NativeComboBox : public juce::ComboBox {
 public:
     using juce::ComboBox::ComboBox;
     void addNativeItem(const juce::String& group,const juce::String& label,int id);
+    void addNativeSeparator(const juce::String& group);
     void mouseDown(const juce::MouseEvent&) override;
 private:
     std::vector<std::pair<int,juce::String>> nativeGroups_;
+    std::vector<std::pair<int,juce::String>> nativeSeparators_;
 };
 
 class OrigamiLookAndFeel final : public juce::LookAndFeel_V4 {

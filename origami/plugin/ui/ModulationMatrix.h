@@ -4,6 +4,7 @@
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
 #include <memory>
+#include <utility>
 #include <vector>
 namespace mct::origami::ui {
 class ModulationMatrix final : public Panel {
@@ -21,7 +22,7 @@ private:
     juce::TextButton add_{"+ ADD ROUTE"};
     std::vector<std::unique_ptr<Row>> rows_;
     std::vector<unsigned> moduleIds_;
-    std::vector<ModAddress> dynamicDestinations_;
+    std::vector<std::pair<ModAddress,std::uint32_t>> dynamicDestinations_;
     std::uint32_t envMask_=0,lfoMask_=0,generatorMask_=0;
     bool filterEnabled_=true;
 };

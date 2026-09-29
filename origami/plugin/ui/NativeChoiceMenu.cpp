@@ -7,6 +7,7 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String&,const std:
     for(std::size_t i=0;i<items.size();) {
         if(items[i].group.isEmpty()) {
             const auto& item=items[i++];
+            if(item.id==0) { menu.addSeparator(); continue; }
             menu.addItem(item.id,item.text,item.enabled,item.checked || item.id==current);
             continue;
         }
@@ -15,6 +16,7 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String&,const std:
         juce::PopupMenu submenu;
         while(i<items.size() && items[i].group==group) {
             const auto& item=items[i++];
+            if(item.id==0) { submenu.addSeparator(); continue; }
             submenu.addItem(item.id,item.text,item.enabled,item.checked || item.id==current);
         }
         menu.addSubMenu(group,submenu);

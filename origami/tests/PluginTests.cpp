@@ -1152,6 +1152,104 @@ void frameToolsAudit() {
               "generated frames never inherit stale spectral authoring metadata");
     }
 }
+void matrixStableChainDestinationAudit() {
+    InstrumentState state{};
+    auto& oscillator=state.oscillators[0];
+    oscillator.id=42;oscillator.enabled=true;oscillator.processCount=3;oscillator.nextProcessId=103;
+    oscillator.processes[0]={100,dsp::OscProcessType::RandAmp,0.4f,1,true};
+    oscillator.processes[1]={101,dsp::OscProcessType::BendBoth,0.4f,2,true};
+    oscillator.processes[2]={102,dsp::OscProcessType::RandSparse,0.4f,3,true};
+    auto& route=state.modulation.routes[0];
+    route.id=1;route.source=ModSource::Lfo1;
+    route.destination={ModDestination::ProcessAmount,42,100};
+    state.modulation.nextRouteId=2;
+    ui::ModulationBindings bindings{};
+    bindings.snapshot=[&]{return state;};
+    bindings.route=[&](const ModRoute& edited) {
+        if(edited.id!=1) return false;
+        state.modulation.routes[0]=edited;return true;
+    };
+    ui::ModulationMatrix matrix(bindings);matrix.setBounds(0,0,1300,300);
+    const auto destination=[&]() -> ui::NativeComboBox* {
+        ui::NativeComboBox* result=nullptr;
+        walk(matrix,[&](juce::Component& component) {
+            if(component.getName()=="Route destination")
+                result=dynamic_cast<ui::NativeComboBox*>(&component);
+        });
+        return result;
+    };
+    auto* box=destination();
+    check(box && box->getText().contains("[OC] Rand Amp"),
+          "stable-ID route displays its actual chain process");
+    std::array<std::uint32_t,3> mapped{};
+    std::array<int,3> menuIds{};
+    std::size_t found=0;
+    for(int i=0;i<box->getNumItems();++i) {
+        const auto label=box->getItemText(i);
+        check(label!="PROCESS 1 AMOUNT" && label!="PROCESS 2 AMOUNT" &&
+              label!="ROUTE 1 AMOUNT" && label!="ROUTE 2 AMOUNT",
+              "Matrix omits fixed legacy chain destinations");
+        if(!label.startsWith("[OC]")) continue;
+        check(found<3,"Matrix presents only the three current chain processes");
+        menuIds[found]=box->getItemId(i);
+        box->setSelectedId(menuIds[found],juce::sendNotificationSync);
+        mapped[found++]=state.modulation.routes[0].destination.itemId;
+    }
+    check(found==3 && mapped==std::array<std::uint32_t,3>{{100,101,102}},
+          "Matrix menu IDs resolve to stable process IDs on oscillator 42");
+    struct DirectDestination {const char* label;ModDestination destination;};
+    static constexpr std::array<DirectDestination,7> direct{{
+        {"WT POS",ModDestination::WtPosition},{"OCT",ModDestination::Octave},
+        {"SEM",ModDestination::Semitone},{"FIN",ModDestination::Fine},
+        {"DETUNE",ModDestination::Detune},{"PAN",ModDestination::Pan},
+        {"LEVEL",ModDestination::Level}
+    }};
+    for(const auto& expected:direct) {
+        int selectedId=0;
+        for(int i=0;i<box->getNumItems();++i)
+            if(box->getItemText(i)==expected.label) {
+                selectedId=box->getItemId(i);break;
+            }
+        check(selectedId>0,"supported direct oscillator destination is present");
+        box->setSelectedId(selectedId,juce::sendNotificationSync);
+        matrix.syncFromModel();
+        check(route.destination==ModAddress{expected.destination,42} &&
+              box->getSelectedId()==selectedId,
+              "direct oscillator destination survives Matrix round trip");
+    }
+    box->setSelectedId(menuIds[0],juce::sendNotificationSync);
+    std::swap(oscillator.processes[0],oscillator.processes[2]);
+    matrix.syncFromModel();box=destination();
+    check(route.destination.itemId==100 && box->getText().contains("[OC] Rand Amp"),
+          "process reorder preserves the route's stable target");
+    for(int i=4;i>0;--i) oscillator.processes[static_cast<std::size_t>(i)]=
+        oscillator.processes[static_cast<std::size_t>(i-1)];
+    oscillator.processes[0]={99,dsp::OscProcessType::Sync,0.4f,4,true};
+    oscillator.processCount=4;
+    matrix.syncFromModel();box=destination();
+    check(route.destination.itemId==100 && box->getText().contains("[OC] Rand Amp"),
+          "insertion before a process preserves its route target");
+    oscillator.processes[4]={104,dsp::OscProcessType::RandAmp,0.4f,5,true};
+    oscillator.processCount=5;
+    matrix.syncFromModel();box=destination();
+    bool first=false,second=false;
+    for(int i=0;i<box->getNumItems();++i) {
+        first|=box->getItemText(i).contains("Rand Amp #100");
+        second|=box->getItemText(i).contains("Rand Amp #104");
+    }
+    check(first && second && route.destination.itemId==100,
+          "duplicate process types have distinct stable-ID menu entries");
+    for(std::size_t i=0;i<oscillator.processCount;++i) if(oscillator.processes[i].id==100) {
+        for(std::size_t j=i+1;j<oscillator.processCount;++j)
+            oscillator.processes[j-1]=oscillator.processes[j];
+        --oscillator.processCount;break;
+    }
+    matrix.syncFromModel();box=destination();
+    check(route.destination.itemId==100 && box->getSelectedId()==0 &&
+          box->getText()=="UNAVAILABLE DESTINATION",
+          "deleted process cannot silently retarget a Matrix route");
+}
+
 void matrixDynamicRouteAudit() {
     OrigamiAudioProcessor processor;
     auto module=processor.getUiOscillatorState(2);
@@ -1186,14 +1284,45 @@ void matrixDynamicRouteAudit() {
     check(source && destination && enabled && bipolar && amount,"matrix row controls exist");
     check(source->getSelectedId()==static_cast<int>(ModSource::Lfo1),"matrix shows dragged source");
     check(destination->getSelectedId()>0,"matrix shows dynamic process destination");
-    check(destination->getText().contains("PROCESS"),"matrix labels dynamic process destination");
+    check(destination->getText().contains("[OC] Rand Amp"),"matrix labels dynamic process destination");
+    const auto compiledProcessAmount=[&] {
+        const auto state=processor.getUiInstrumentState();
+        CompiledModulation compiled;compiled.prepare(96000.0);
+        compiled.compile(state.modulation,state.oscillators,true);
+        ModulationFrame frame{};frame.modules=state.oscillators;
+        std::array<float,CompiledModulation::globalSourceCount> sources{};
+        compiled.globalFrame(frame,sources,96000.0);
+        return frame.modules[1].processes[0].amount;
+    };
+    const float unmodulatedAmount=module.processes[0].amount;
 
-    enabled->setToggleState(false,juce::sendNotificationSync);
+    static_cast<juce::Component*>(enabled)->mouseDown(event(*enabled));
+    static_cast<juce::Component*>(enabled)->mouseUp(event(*enabled));
     auto stored=processor.getUiInstrumentState().modulation.routes[0];
     check(stored.id==routeId && !stored.enabled && stored.bipolar,"matrix ON updates same route");
-    bipolar->setToggleState(false,juce::sendNotificationSync);
+    check(std::abs(compiledProcessAmount()-unmodulatedAmount)<1.0e-6f,
+          "matrix OFF disables compiled process modulation");
+    matrix.syncFromModel();
+    check(!enabled->getToggleState() && enabled->getButtonText()=="OFF",
+          "matrix OFF button survives resync");
+    static_cast<juce::Component*>(bipolar)->mouseDown(event(*bipolar));
+    static_cast<juce::Component*>(bipolar)->mouseUp(event(*bipolar));
     stored=processor.getUiInstrumentState().modulation.routes[0];
     check(stored.id==routeId && !stored.bipolar && !stored.enabled,"matrix BIPOLAR persists");
+    matrix.syncFromModel();
+    check(!bipolar->getToggleState() && bipolar->getButtonText()=="UNIPOLAR",
+          "matrix UNIPOLAR button survives resync");
+    static_cast<juce::Component*>(enabled)->mouseDown(event(*enabled));
+    static_cast<juce::Component*>(enabled)->mouseUp(event(*enabled));
+    check(compiledProcessAmount()>unmodulatedAmount,
+          "matrix ON enables unipolar compiled modulation");
+    static_cast<juce::Component*>(bipolar)->mouseDown(event(*bipolar));
+    static_cast<juce::Component*>(bipolar)->mouseUp(event(*bipolar));
+    stored=processor.getUiInstrumentState().modulation.routes[0];
+    check(stored.id==routeId && stored.enabled && stored.bipolar,
+          "matrix buttons turn back on without replacing the route");
+    check(std::abs(compiledProcessAmount()-unmodulatedAmount)<1.0e-6f,
+          "matrix BIPOLAR restores compiled polarity");
     source->setSelectedId(static_cast<int>(ModSource::Macro1),juce::sendNotificationSync);
     stored=processor.getUiInstrumentState().modulation.routes[0];
     check(stored.id==routeId && stored.source==ModSource::Macro1,"matrix SOURCE persists");
@@ -1213,10 +1342,8 @@ void matrixDynamicRouteAudit() {
           "matrix AMOUNT persists");
     matrix.syncFromModel();
     check(source->getSelectedId()==static_cast<int>(ModSource::Macro1) &&
-          destination->getSelectedId()==levelId && !enabled->getToggleState() &&
-          !bipolar->getToggleState(),"matrix resync preserves discrete edits");
-    stored.enabled=true;
-    check(processor.setUiRoute(stored),"matrix edited route can be enabled");
+          destination->getSelectedId()==levelId && enabled->getToggleState() &&
+          bipolar->getToggleState(),"matrix resync preserves discrete edits");
     auto state=processor.getUiInstrumentState();
     CompiledModulation compiled;
     compiled.prepare(96000.0);
@@ -1228,9 +1355,20 @@ void matrixDynamicRouteAudit() {
     compiled.globalFrame(frame,sources,96000.0);
     check(frame.modules[1].level>baseLevel,
           "matrix-edited source and destination reach compiled modulation");
+    stored.destination={ModDestination::ProcessAmount,2,1};
+    check(processor.setUiRoute(stored),"route retargeted to process before deletion");
+    auto withoutProcess=processor.getUiOscillatorState(2);
+    withoutProcess.processCount=0;
+    check(processor.setUiOscillatorState(2,withoutProcess),
+          "deleting a targeted process is accepted");
+    bool routeSurvived=false;
+    for(const auto& candidate:processor.getUiInstrumentState().modulation.routes)
+        routeSurvived|=candidate.id==routeId;
+    check(!routeSurvived,"deleting a targeted process removes its Matrix route");
 }
 
 void run() {
+    matrixStableChainDestinationAudit();
     matrixDynamicRouteAudit();
     audioContinuityP0Audit();
     audioPurityP0Audit();

@@ -47,25 +47,21 @@ public:
             destination_.addNativeItem(group,label,static_cast<int>(addresses_.size()));
         };
 
+        add("Global",{ModDestination::MasterGain,0},"MASTER GAIN");
         if(state.modulation.filterEnabled) {
             add("Filter",{ModDestination::Cutoff,0},"CUTOFF");
             add("Filter",{ModDestination::Resonance,0},"RESONANCE");
         }
-        add("Global",{ModDestination::MasterGain,0},"MASTER GAIN");
 
         struct OscDestinationSpec { ModDestination destination; const char* label; };
         static constexpr OscDestinationSpec oscillatorDestinations[] {
-            {ModDestination::WtPosition,"WT POSITION"},
-            {ModDestination::Octave,"OCTAVE"},
-            {ModDestination::Semitone,"SEMITONE"},
-            {ModDestination::Fine,"FINE"},
+            {ModDestination::WtPosition,"WT POS"},
+            {ModDestination::Octave,"OCT"},
+            {ModDestination::Semitone,"SEM"},
+            {ModDestination::Fine,"FIN"},
             {ModDestination::Detune,"DETUNE"},
             {ModDestination::Pan,"PAN"},
-            {ModDestination::Level,"LEVEL"},
-            {ModDestination::Process1Amount,"PROCESS 1 AMOUNT"},
-            {ModDestination::Process2Amount,"PROCESS 2 AMOUNT"},
-            {ModDestination::Route1Amount,"ROUTE 1 AMOUNT"},
-            {ModDestination::Route2Amount,"ROUTE 2 AMOUNT"}
+            {ModDestination::Level,"LEVEL"}
         };
 
         unsigned ordinal=0;
@@ -74,12 +70,20 @@ public:
             const auto group="OSC "+juce::String(ordinal);
             for(const auto& spec:oscillatorDestinations)
                 add(group,{spec.destination,m.id},spec.label);
-            for(std::size_t i=0;i<m.processCount;++i) if(m.processes[i].id)
-                add(group,{ModDestination::ProcessAmount,m.id,m.processes[i].id},
-                    "PROCESS "+juce::String(i+1)+" AMOUNT");
+            if(m.processCount || m.routeCount) destination_.addNativeSeparator(group);
+            for(std::size_t i=0;i<m.processCount;++i) if(m.processes[i].id) {
+                const auto& process=m.processes[i];
+                unsigned duplicates=0;
+                for(std::size_t j=0;j<m.processCount;++j)
+                    duplicates+=m.processes[j].id && m.processes[j].type==process.type;
+                juce::String label="[OC] "+juce::String(dsp::oscProcessName(process.type));
+                if(duplicates>1) label+=" #"+juce::String(process.id);
+                add(group,{ModDestination::ProcessAmount,m.id,process.id},label);
+            }
             for(std::size_t i=0;i<m.routeCount;++i) if(m.routes[i].id)
                 add(group,{ModDestination::RouteAmount,m.id,m.routes[i].id},
-                    "ROUTE "+juce::String(i+1)+" AMOUNT");
+                    "[OC] "+juce::String(oscRouteName(m.routes[i].type))+
+                    " #"+juce::String(m.routes[i].id));
         }
         addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
         enabled_.setClickingTogglesState(true);enabled_.setName("Route enabled");
@@ -90,24 +94,46 @@ public:
         amount_.setTextBoxStyle(juce::Slider::TextBoxRight,false,75,22);amount_.setRange(-100,100,.1);amount_.setTextValueSuffix(" %");amount_.setScrollWheelEnabled(false);
         amount_.setTooltip("Signed fraction of destination range; cutoff uses a logarithmic range");
         sync(route);
-        auto update=[this] {
+        source_.onChange=[this] {
+            auto edited=route_;
+            edited.source=static_cast<ModSource>(source_.getSelectedId());
+            commit(edited);
+        };
+        destination_.onChange=[this] {
             const int selected=destination_.getSelectedId()-1;
             if(selected<0 || selected>=static_cast<int>(addresses_.size())) return;
-            route_.source=static_cast<ModSource>(source_.getSelectedId());route_.destination=addresses_[static_cast<std::size_t>(selected)];
-            route_.enabled=enabled_.getToggleState();route_.bipolar=bipolar_.getToggleState();
-            route_.amount=static_cast<float>(amount_.getValue()/100.0);
-            if(bindings_.route) bindings_.route(route_);
+            auto edited=route_;
+            edited.destination=addresses_[static_cast<std::size_t>(selected)];
+            commit(edited);
         };
-        source_.onChange=update;destination_.onChange=update;enabled_.onClick=update;
-        bipolar_.onClick=update;amount_.onValueChange=update;
+        enabled_.onClick=[this] {
+            auto edited=route_;edited.enabled=enabled_.getToggleState();commit(edited);
+        };
+        bipolar_.onClick=[this] {
+            auto edited=route_;edited.bipolar=bipolar_.getToggleState();commit(edited);
+        };
+        amount_.onValueChange=[this] {
+            auto edited=route_;edited.amount=static_cast<float>(amount_.getValue()/100.0);
+            commit(edited);
+        };
         remove_.onClick=[this]{if(bindings_.removeRoute) bindings_.removeRoute(route_.id);};
     }
     unsigned id() const {return route_.id;}
+    void commit(const ModRoute& edited) {
+        if(bindings_.route && bindings_.route(edited)) sync(edited);
+        else sync(route_);
+    }
     void sync(const ModRoute& route) {
         route_=route;source_.setSelectedId(static_cast<int>(route.source),juce::dontSendNotification);
-        for(std::size_t i=0;i<addresses_.size();++i) if(addresses_[i]==route.destination) destination_.setSelectedId(static_cast<int>(i+1),juce::dontSendNotification);
+        int selected=0;
+        for(std::size_t i=0;i<addresses_.size();++i)
+            if(addresses_[i]==route.destination) {selected=static_cast<int>(i+1);break;}
+        destination_.setSelectedId(selected,juce::dontSendNotification);
+        if(!selected) destination_.setText("UNAVAILABLE DESTINATION",juce::dontSendNotification);
         enabled_.setToggleState(route.enabled,juce::dontSendNotification);
         bipolar_.setToggleState(route.bipolar,juce::dontSendNotification);
+        enabled_.setButtonText(route.enabled?"ON":"OFF");
+        bipolar_.setButtonText(route.bipolar?"BIPOLAR":"UNIPOLAR");
         if(!amount_.isMouseButtonDown() && !amount_.hasKeyboardFocus(true)) amount_.setValue(route.amount*100.0,juce::dontSendNotification);
     }
     void resized() override {
@@ -131,12 +157,16 @@ ModulationMatrix::~ModulationMatrix(){viewport_.setViewedComponent(nullptr,false
 void ModulationMatrix::syncFromModel() {
     if(!bindings_.snapshot) return;const auto state=bindings_.snapshot();
     std::vector<unsigned> modules,ids;for(const auto& m:state.oscillators) if(m.id) modules.push_back(m.id);
-    std::vector<ModAddress> dynamicDestinations;
+    std::vector<std::pair<ModAddress,std::uint32_t>> dynamicDestinations;
     for(const auto& module:state.oscillators) if(module.id) {
         for(std::size_t i=0;i<module.processCount;++i) if(module.processes[i].id)
-            dynamicDestinations.push_back({ModDestination::ProcessAmount,module.id,module.processes[i].id});
+            dynamicDestinations.push_back({
+                {ModDestination::ProcessAmount,module.id,module.processes[i].id},
+                static_cast<std::uint32_t>(module.processes[i].type)});
         for(std::size_t i=0;i<module.routeCount;++i) if(module.routes[i].id)
-            dynamicDestinations.push_back({ModDestination::RouteAmount,module.id,module.routes[i].id});
+            dynamicDestinations.push_back({
+                {ModDestination::RouteAmount,module.id,module.routes[i].id},
+                static_cast<std::uint32_t>(module.routes[i].type)});
     }
     for(const auto& r:state.modulation.routes) if(r.id) ids.push_back(r.id);
     bool rebuild=modules!=moduleIds_ || ids.size()!=rows_.size() ||
