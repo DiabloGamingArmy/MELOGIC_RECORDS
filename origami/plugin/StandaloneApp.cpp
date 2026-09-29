@@ -70,6 +70,7 @@ public:
         auto* processor=dynamic_cast<OrigamiAudioProcessor*>(window_->getAudioProcessor());
         if(processor==nullptr) return;
         const auto d=processor->getAudioContinuityDiagnostics();
+        const auto q=processor->getUiRenderBudgetSnapshot();
         std::cout << "[Origami P0 runtime] sr=" << d.preparedSampleRate
                   << " preparedBlock=" << d.preparedBlockSize
                   << " callback=" << d.lastCallbackSamples
@@ -82,7 +83,20 @@ public:
                   << " peak=" << d.outputPeak
                   << " maxDelta=" << d.maxAdjacentDelta
                   << " nonFinite=" << d.nonFiniteOutputSamples
-                  << " deadlineMiss=" << processor->getUiRenderBudgetSnapshot().deadlineMisses
+                  << " renderMs=" << d.lastCallbackMs
+                  << "/" << d.callbackBudgetMs
+                  << " worstMs=" << d.worstCallbackMs
+                  << " overBudget=" << d.callbacksOverBudget
+                  << " qos=" << q.callbackDeadlineFraction
+                  << " smooth=" << q.smoothedDeadlineFraction
+                  << " qosPeak=" << q.peakDeadlineFraction
+                  << " level=" << static_cast<unsigned>(q.level)
+                  << " voices=" << q.load.activeVoices
+                  << " modules=" << q.load.activeModules
+                  << " unison=" << q.load.totalUnison
+                  << " oscEval=" << q.load.oscillatorEvaluationsPerSample
+                  << " voiceCeil=" << q.voiceAdmissionCeiling
+                  << " deadlineMiss=" << q.deadlineMisses
                   << std::endl;
     }
 
