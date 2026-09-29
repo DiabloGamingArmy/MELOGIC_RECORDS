@@ -824,13 +824,20 @@ private:
                     const int bin=firstBin_+n; if(bin>=static_cast<int>(kBins)) break;
                     const float level=editMode_==EditMode::Additive
                         ? juce::jlimit(0.0f,1.0f,additiveContributions_[static_cast<std::size_t>(bin)])
-                        : editMode_==EditMode::Subtractive && document_.valid()
-                            ? juce::jlimit(0.0f,1.0f,document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(bin)])
-                            : juce::jlimit(0.0f,1.0f,(juce::Decibels::gainToDecibels(
-                                displayAmplitudeForBin(bin,magnitudes_[static_cast<std::size_t>(bin)]),-72.0f)+72.0f)/72.0f);
+                        : juce::jlimit(0.0f,1.0f,(juce::Decibels::gainToDecibels(
+                            displayAmplitudeForBin(bin,magnitudes_[static_cast<std::size_t>(bin)]),-72.0f)+72.0f)/72.0f);
                     const float height=level*static_cast<float>(bounds.getHeight());
                     const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)*slot;
                     const float width=juce::jmax(1.0f,slot-1.0f);
+                    if(editMode_==EditMode::Subtractive && document_.valid()) {
+                        // The gain mask is a control overlay; the red bars remain the
+                        // actual source-spectrum × gain result heard from the frame.
+                        const float gain=juce::jlimit(0.0f,1.0f,
+                            document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(bin)]);
+                        const float maskY=static_cast<float>(bounds.getBottom())-gain*static_cast<float>(bounds.getHeight());
+                        g.setColour(juce::Colours::white.withAlpha(0.18f));
+                        g.drawHorizontalLine(juce::roundToInt(maskY),x,x+width);
+                    }
                     g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.78f));
                     g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-height,width,height));
                     if(bin==hoveredBin_) { g.setColour(juce::Colours::white.withAlpha(0.9f)); g.drawRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getY()),width,static_cast<float>(bounds.getHeight())),1.0f); }
