@@ -1272,7 +1272,7 @@ private:
             int preferredHeight() const noexcept { return calculateRequiredHeight(); }
             ToolsPanel(GridSettings& grid,WaveformCanvas& canvas):grid_(grid),canvas_(canvas) {
                 setWantsKeyboardFocus(true);
-                for(auto* b:std::array<juce::TextButton*,4>{{&drawHeader_,&gridHeader_,&generateHeader_,&transformHeader_}}) {
+                for(auto* b:std::array<DisclosureButton*,4>{{&drawHeader_,&gridHeader_,&generateHeader_,&transformHeader_}}) {
                     addAndMakeVisible(b); styleSectionButton(*b);
                 }
                 drawHeader_.onClick=[this]{ drawOpen_=!drawOpen_; relayout(); };
