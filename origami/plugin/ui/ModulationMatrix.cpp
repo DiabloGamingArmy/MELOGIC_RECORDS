@@ -92,12 +92,12 @@ public:
                     " #"+juce::String(m.routes[i].id));
         }
         addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(duplicate_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
-        enabled_.setClickingTogglesState(true);enabled_.setName("Route enabled");
-        bipolar_.setClickingTogglesState(true);bipolar_.setName("Bipolar modulation");
+        enabled_.setClickingTogglesState(true);enabled_.setName("MATRIX ROUTE ENABLE");
+        bipolar_.setClickingTogglesState(true);bipolar_.setName("MATRIX ROUTE POLARITY");
         bipolar_.setTooltip("Off: unipolar 0 to +depth. On: bipolar -depth to +depth.");
-        duplicate_.setName("Duplicate route");duplicate_.setTooltip("Duplicate this modulation route");
-        remove_.setName("Delete route");remove_.setTooltip("Delete this modulation route");
-        amount_.setName("Route amount");amount_.setSliderStyle(juce::Slider::LinearHorizontal);
+        duplicate_.setName("MATRIX ROUTE DUPLICATE");duplicate_.setTooltip("Duplicate this modulation route");
+        remove_.setName("MATRIX ROUTE DELETE");remove_.setTooltip("Delete this modulation route");
+        amount_.setName("MATRIX ROUTE AMOUNT");amount_.setSliderStyle(juce::Slider::LinearHorizontal);
         amount_.setTextBoxStyle(juce::Slider::TextBoxRight,false,75,22);amount_.setRange(-100,100,.1);amount_.setTextValueSuffix(" %");amount_.setScrollWheelEnabled(false);
         amount_.setTooltip("Signed fraction of destination range; cutoff uses a logarithmic range");
         sync(route);
@@ -146,7 +146,7 @@ public:
         if(!selected) destination_.setText("UNAVAILABLE DESTINATION",juce::dontSendNotification);
         enabled_.setToggleState(route.enabled,juce::dontSendNotification);
         bipolar_.setToggleState(route.bipolar,juce::dontSendNotification);
-        enabled_.setButtonText(route.enabled?"ON":"OFF");
+        enabled_.setButtonText("");
         bipolar_.setButtonText(route.bipolar?"BIPOLAR":"UNIPOLAR");
         if(!amount_.isMouseButtonDown() && !amount_.hasKeyboardFocus(true)) amount_.setValue(route.amount*100.0,juce::dontSendNotification);
     }
@@ -172,7 +172,7 @@ private:
     ModRoute route_;ModulationBindings bindings_;std::vector<ModAddress> addresses_;
     unsigned ordinal_=0;
     NativeComboBox source_,destination_;
-    juce::TextButton enabled_{"ON"},bipolar_{"BIPOLAR"},duplicate_{"COPY"},remove_{"DEL"};juce::Slider amount_;
+    juce::TextButton enabled_{""},bipolar_{"BIPOLAR"},duplicate_{""},remove_{""};juce::Slider amount_;
 };
 ModulationMatrix::ModulationMatrix(ModulationBindings bindings):Panel("MODULATION MATRIX"),bindings_(std::move(bindings)) {
     addAndMakeVisible(viewport_);viewport_.setViewedComponent(&content_,false);viewport_.setScrollBarsShown(true,false);
@@ -220,7 +220,7 @@ void ModulationMatrix::syncFromModel() {
 void ModulationMatrix::resized() {
     add_.setBounds(getWidth()-155,5,143,23);auto b=contentBounds();b.removeFromTop(36);viewport_.setBounds(b);
     const int width=juce::jmax(0,viewport_.getWidth()-14);int y=0;
-    for(auto& row:rows_) {row->setBounds(0,y,width,48);y+=56;}content_.setSize(width,juce::jmax(y,viewport_.getHeight()));
+    for(auto& row:rows_) {row->setBounds(0,y,width,52);y+=56;}content_.setSize(width,juce::jmax(y,viewport_.getHeight()));
 }
 void ModulationMatrix::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     auto header=body.removeFromTop(28);
