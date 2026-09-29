@@ -207,6 +207,24 @@ inline bool modulationUiPersistentRoutesAreBipolar(ModDestination destination,
     return found && bipolar;
 }
 
+inline float modulationUiEffectiveNormalizedOffset(ModDestination destination,
+                                                   OscillatorModuleId oscillator=0,
+                                                   std::uint32_t itemId=0) noexcept {
+    const auto& telemetry=modulationUiTelemetry();
+    if(!telemetry.synthActive) return 0.0f;
+    float total=0.0f;
+    for(const auto& route:telemetry.state.routes) {
+        if(!modulationUiRouteMatches(route,destination,oscillator,itemId)) continue;
+        float source=modulationUiSourceValue(route.source);
+        if(modulationUiSourceIsBipolar(route.source)) {
+            source=route.bipolar ? source*0.5f
+                                 : juce::jlimit(0.0f,1.0f,source*0.5f+0.5f);
+        }
+        total+=route.amount*source;
+    }
+    return juce::jlimit(-4.0f,4.0f,total);
+}
+
 inline float modulationUiAllRoutesValue(ModDestination destination,
                                         OscillatorModuleId oscillator=0,
                                         std::uint32_t itemId=0) noexcept {
