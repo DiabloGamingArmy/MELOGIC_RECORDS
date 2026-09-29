@@ -95,6 +95,108 @@ void disableExtraOscillators(OrigamiAudioProcessor& p) {
     for(unsigned id=2;id<=4;++id)
         p.setUiOscillatorEnabled(id,false);
 }
+void audioContinuityP0Audit() {
+    auto configure=[](OrigamiAudioProcessor& p) {
+        p.prepareToPlay(48000.0,256);
+        disableExtraOscillators(p);
+        check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 sine WT position accepted");
+        check(p.setUiParameter(ParameterId::Sustain,1.0f),"P0 sustain accepted");
+        check(p.setUiParameter(ParameterId::Attack,0.001f),"P0 fast attack accepted");
+        check(p.setUiParameter(ParameterId::OscUnison,1.0f),"P0 single unison accepted");
+        p.resetAudioContinuityDiagnostics();
+    };
+    auto callbackEnergy=[](const juce::AudioBuffer<float>& audio) {
+        double total=0.0;
+        for(int i=0;i<audio.getNumSamples();++i) {
+            const double v=audio.getSample(0,i);
+            total+=v*v;
+        }
+        return total;
+    };
+    auto runHeld=[&](OrigamiAudioProcessor& p,bool uiInput) {
+        constexpr int block=256,callbacks=18;
+        juce::AudioBuffer<float> audio(2,block);
+        juce::MidiBuffer midi;
+        if(uiInput) check(p.enqueueUiKeyboardNote(74,true,0.85f),
+                          "P0 UI note-on enters queue");
+        else midi.addEvent(juce::MidiMessage::noteOn(1,74,0.85f),0);
+
+        std::array<double,callbacks> energies{};
+        std::array<float,callbacks> firstSamples{},lastSamples{};
+        for(int n=0;n<callbacks;++n) {
+            audio.clear();
+            p.processBlock(audio,midi);
+            midi.clear();
+            energies[static_cast<std::size_t>(n)]=callbackEnergy(audio);
+            firstSamples[static_cast<std::size_t>(n)]=audio.getSample(0,0);
+            lastSamples[static_cast<std::size_t>(n)]=audio.getSample(0,block-1);
+        }
+        // Ignore attack callback. Every later callback of one held note must
+        // contain substantial signal; this catches the observed 256-on/512-off cadence.
+        double reference=0.0;
+        for(int n=3;n<callbacks;++n) reference=juce::jmax(reference,energies[static_cast<std::size_t>(n)]);
+        check(reference>1.0e-5,"P0 held sine establishes callback energy");
+        for(int n=3;n<callbacks;++n)
+            check(energies[static_cast<std::size_t>(n)]>reference*0.10,
+                  "P0 held sine never drops an entire 256-sample callback");
+
+        const auto d=p.getAudioContinuityDiagnostics();
+        check(d.callbacks==callbacks,"P0 diagnostics count every host callback");
+        check(d.beginHostBlockFailures==0,"P0 beginHostBlock never rejects held-note callback");
+        check(d.processSpanFailures==0,"P0 processSpan never rejects held-note span");
+        check(d.requestedSpanSamples==d.renderedSpanSamples,
+              "P0 every requested span reaches engine renderer");
+        check(d.zeroOutputCallbacks==0,"P0 held sine has no zero-output callbacks");
+        check(d.uiMidiEventsDrained==(uiInput?1u:0u),
+              "P0 UI MIDI drain count matches source");
+
+        // A block-boundary discontinuity large enough to sound like the captured
+        // hard gating must not appear on a stable sine. Adjacent sample delta is
+        // bounded generously relative to full-scale output.
+        for(int n=4;n<callbacks;++n)
+            check(std::abs(firstSamples[static_cast<std::size_t>(n)]
+                         -lastSamples[static_cast<std::size_t>(n-1)])<0.25f,
+                  "P0 held sine remains sample-continuous across host callbacks");
+    };
+
+    OrigamiAudioProcessor host;
+    configure(host);
+    runHeld(host,false);
+
+    OrigamiAudioProcessor ui;
+    configure(ui);
+    runHeld(ui,true);
+
+    // Repeat at host sizes surrounding the captured 256-sample cadence. This
+    // distinguishes a true fixed-block failure from a generic oscillator defect.
+    for(const int blockSize:{64,128,512,1024}) {
+        OrigamiAudioProcessor p;
+        p.prepareToPlay(48000.0,blockSize);
+        disableExtraOscillators(p);
+        check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 varied-block sine accepted");
+        check(p.setUiParameter(ParameterId::Sustain,1.0f),"P0 varied-block sustain accepted");
+        juce::AudioBuffer<float> audio(2,blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,74,0.85f),0);
+        p.resetAudioContinuityDiagnostics();
+        double minimum=std::numeric_limits<double>::max(),maximum=0.0;
+        for(int n=0;n<12;++n) {
+            audio.clear();p.processBlock(audio,midi);midi.clear();
+            if(n>=3) {
+                const auto e=callbackEnergy(audio);
+                minimum=std::min(minimum,e);maximum=std::max(maximum,e);
+            }
+        }
+        check(maximum>1.0e-5 && minimum>maximum*0.05,
+              "P0 held sine survives varied host callback sizes");
+        const auto d=p.getAudioContinuityDiagnostics();
+        check(d.beginHostBlockFailures==0 && d.processSpanFailures==0,
+              "P0 varied host sizes never reject render boundaries");
+        check(d.requestedSpanSamples==d.renderedSpanSamples,
+              "P0 varied host sizes render every requested sample");
+    }
+}
+
 void uiKeyboardRealtimeBoundaryAudit() {
     const auto root=juce::File(__FILE__).getParentDirectory().getParentDirectory();
     const auto processor=root.getChildFile("plugin/PluginProcessor.cpp").loadFileAsString();
@@ -849,6 +951,7 @@ void frameToolsAudit() {
     }
 }
 void run() {
+    audioContinuityP0Audit();
     frameToolsAudit();
     uiKeyboardRealtimeBoundaryAudit();
     renderBudgetPolicyAudit();
