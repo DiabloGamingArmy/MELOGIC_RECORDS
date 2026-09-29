@@ -1601,7 +1601,11 @@ private:
                 });
             };
             frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
-            waveformCanvas_.onSamplesChanged=[this] { frameStrip_.refreshSelectedThumbnail(); spectrumCanvas_.refresh(); };
+            waveformCanvas_.onSamplesChanged=[this] {
+                invalidateSelectedTimeDomainSpectralState();
+                frameStrip_.refreshSelectedThumbnail();
+                spectrumCanvas_.refresh();
+            };
             spectrumCanvas_.onSamplesChanged=[this] { waveformCanvas_.refresh(); frameStrip_.refreshSelectedThumbnail(); };
             spectrumCanvas_.onEditCommitted=[this](std::uint64_t id,const auto& before,const auto& after) { commitEdit(id,before,after); };
             waveformCanvas_.onSelectionChanged=[this](bool active) { toolsPanel_.setSelectionAvailable(active); };
@@ -1716,8 +1720,9 @@ private:
             }
             const auto after=frame.samples;
             if(after==before) return;
+            invalidateTimeDomainSpectralState(frame);
             commitEdit(frame.id,before,after);
-            waveformCanvas_.refresh(); frameStrip_.refreshSelectedThumbnail();
+            waveformCanvas_.refresh(); spectrumCanvas_.refresh(); frameStrip_.refreshSelectedThumbnail();
         }
         void generateSelectedFrame(int type,float cycles,float phaseOffset,float pulseWidth) {
             if(!document_.valid()) return;
@@ -1741,9 +1746,23 @@ private:
             }
             const auto after=frame.samples;
             if(after==before) return;
+            invalidateTimeDomainSpectralState(frame);
             commitEdit(frame.id,before,after);
             waveformCanvas_.refresh();
+            spectrumCanvas_.refresh();
             frameStrip_.refreshSelectedThumbnail();
+        }
+        void invalidateTimeDomainSpectralState(mct::origami::ui::WavetableFrame& frame) {
+            // Time-domain edits create a new spectral source. Independent and
+            // subtractive state must be rebuilt from those samples on next refresh.
+            // Additive is intentionally independent and is not touched here.
+            frame.hasIndependentSpectrum=false;
+            frame.hasSubtractiveSpectrum=false;
+            frame.subtractiveGains.fill(1.0f);
+        }
+        void invalidateSelectedTimeDomainSpectralState() {
+            if(document_.valid())
+                invalidateTimeDomainSpectralState(document_.frames[document_.selectedFrame]);
         }
         void commitEdit(std::uint64_t id,
                         const std::array<float,mct::origami::ui::kWavetableFrameSize>& before,
@@ -1775,6 +1794,7 @@ private:
             for(std::size_t i=0;i<document_.frames.size();++i) {
                 if(document_.frames[i].id!=entry.frameId) continue;
                 document_.frames[i].samples=useAfter ? entry.after : entry.before;
+                invalidateTimeDomainSpectralState(document_.frames[i]);
                 if(document_.selectedFrame==i) { waveformCanvas_.refresh(); spectrumCanvas_.refresh(); }
                 frameStrip_.refreshThumbnail(static_cast<unsigned>(i));
                 break;
