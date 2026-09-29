@@ -293,7 +293,6 @@ void multiOscillatorTopologyP0Audit() {
 
         for(unsigned id=2;id<=4;++id) {
             auto osc=p.getUiOscillatorState(id);
-            osc.enabled=static_cast<int>(id)<=activeCount;
             osc.tableId=mct::origami::dsp::BuiltinWavetableId::BasicShapes;
             osc.wtPosition=0.0f;osc.waveform=0.0f;
             osc.octave=0.0f;osc.semitone=0.0f;osc.fineCents=0.0f;
@@ -306,6 +305,8 @@ void multiOscillatorTopologyP0Audit() {
             osc.route2Type=mct::origami::OscRouteType::Off;
             osc.route1SourceId=0;osc.route2SourceId=0;
             check(p.setUiOscillatorState(id,osc),"P0 topology module state accepted");
+            check(p.setUiOscillatorEnabled(id,static_cast<int>(id)<=activeCount),
+                  "P0 topology module power accepted");
         }
 
         p.resetAudioContinuityDiagnostics();
@@ -315,10 +316,33 @@ void multiOscillatorTopologyP0Audit() {
         for(int b=0;b<warmupBlocks;++b){audio.clear();p.processBlock(audio,midi);midi.clear();}
 
         Capture out{};std::size_t write=0;
+        double callbackMs=0.0,worstCallbackMs=0.0;
+        std::array<double,captureBlocks> callbackTimes{};
         for(int b=0;b<captureBlocks;++b){
             audio.clear();p.processBlock(audio,midi);
+            const auto timing=p.getAudioContinuityDiagnostics();
+            callbackTimes[static_cast<std::size_t>(b)]=timing.lastCallbackMs;
+            callbackMs+=timing.lastCallbackMs;
+            worstCallbackMs=std::max(worstCallbackMs,timing.lastCallbackMs);
             for(int i=0;i<blockSize;++i) out[write++]=audio.getSample(0,i);
         }
+        const auto observedState=p.getUiInstrumentState();
+        const auto activeModules=std::count_if(
+            observedState.oscillators.begin(),observedState.oscillators.end(),
+            [](const auto& osc){return osc.id!=0 && osc.enabled;});
+        check(activeModules==activeCount,"P0 topology enables the requested module count");
+        std::sort(callbackTimes.begin(),callbackTimes.end());
+        const double medianCallbackMs=(callbackTimes[captureBlocks/2-1]+callbackTimes[captureBlocks/2])*0.5;
+        std::cout<<"[Origami P0 timing] oscillators="<<activeCount
+                 <<" avgMs="<<callbackMs/captureBlocks
+                 <<" medianMs="<<medianCallbackMs
+                 <<" worstMs="<<worstCallbackMs
+                 <<" activeModules="<<activeModules
+                 <<std::endl;
+#if defined(NDEBUG)
+        check(medianCallbackMs<2.0,
+              "P0 96 kHz callback retains substantial deadline headroom");
+#endif
         const auto d=p.getAudioContinuityDiagnostics();
         check(d.beginHostBlockFailures==0 && d.processSpanFailures==0,
               "P0 topology has no rejected spans");

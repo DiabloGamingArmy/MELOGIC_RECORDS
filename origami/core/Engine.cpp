@@ -30,6 +30,8 @@ OrigamiEngine::OrigamiEngine() noexcept {
 bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, unsigned outputChannels) {
     if (!std::isfinite(sampleRate) || sampleRate < 8000 || sampleRate > 384000 || maximumBlockSize == 0 || (outputChannels != 1 && outputChannels != 2)) return false;
     if (wavetable_.frames.empty()) wavetable_ = dsp::Wavetable::builtIns();
+    // Voices receive only tables validated before entering the render path.
+    if (!wavetable_.valid()) return false;
     dsp::prepareSpectralCompiler();
     modulationSmoothing_=static_cast<float>(1.0-std::exp(-1.0/(sampleRate*.005)));
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;

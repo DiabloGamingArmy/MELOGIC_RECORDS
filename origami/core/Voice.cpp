@@ -84,7 +84,10 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         const auto& module=modules[m];
         const auto& modulePlan=topology.modules[m];
         const auto* tablePtr=tables[m];
-        if(tablePtr==nullptr || !tablePtr->valid()) continue;
+        // Engine::prepare/installWavetable/installWavetableForOscillator validate
+        // complete tables before publication. Rechecking every sample here
+        // scans every frame and band, multiplying callback cost by module count.
+        if(tablePtr==nullptr) continue;
         const auto& table=*tablePtr;
         auto& runtime=oscillatorRuntime_[m];
         const unsigned count=std::clamp(module.unison,1u,maxUnisonVoices);
