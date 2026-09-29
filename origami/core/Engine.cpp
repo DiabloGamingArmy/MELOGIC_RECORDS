@@ -576,6 +576,12 @@ OscillatorModuleId OrigamiEngine::addOscillatorModule() noexcept {
 }
 bool OrigamiEngine::removeOscillatorModule(OscillatorModuleId id) noexcept {
     if(!oscillatorModules_.remove(id)) return false;
+    for(auto& slot:oscillatorWavetables_) {
+        if(slot.id!=id) continue;
+        slot={};
+        break;
+    }
+    rebuildHostWavetables();
 
     // Clear cross-oscillator routing slots whose source just disappeared.
     // Stable module IDs are authoritative, so a later oscillator cannot inherit
