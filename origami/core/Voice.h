@@ -57,7 +57,7 @@ public:
     void retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope) noexcept;
     void release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept;
     struct Samples {double left=0,right=0,mono=0;};
-    Samples nextModules(const dsp::Wavetable&,const ModulationFrame&,float sustain,
+    Samples nextModules(const std::array<const dsp::Wavetable*,16>&,const ModulationFrame&,float sustain,
                         const CompiledModulation&,const ModulationState&,
                         float pitchBendSemitones,float pitchBendNormalized,
                         float modWheel,float aftertouch,const OscillatorRenderPlan&,const OscillatorProcessPlans&,bool observe=true) noexcept;
