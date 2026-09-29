@@ -56,6 +56,7 @@ Range limits(ModDestination d) {
         case ModDestination::MainTuning:return {-1,1};
         case ModDestination::Transpose:return {-24,24};
         case ModDestination::PortaTime:return {0,5};
+        case ModDestination::Swing:return {0,0.75f};
         case ModDestination::EnvelopeScaling:
         case ModDestination::LfoScaling:return {0,2};
         case ModDestination::Octave:return {-4,4};
@@ -120,7 +121,7 @@ bool isGlobalDestination(ModDestination d) noexcept {
     return d==ModDestination::Cutoff || d==ModDestination::Resonance || d==ModDestination::MasterGain ||
            d==ModDestination::MainTuning || d==ModDestination::Transpose ||
            d==ModDestination::PortaTime || d==ModDestination::EnvelopeScaling ||
-           d==ModDestination::LfoScaling;
+           d==ModDestination::LfoScaling || d==ModDestination::Swing;
 }
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
     if((s.envActiveMask&~0x7u)!=0 || (s.envActiveMask&0x1u)==0) return false;
@@ -532,6 +533,7 @@ float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept
         case ModDestination::MasterGain:return f.master;case ModDestination::MainTuning:return f.mainTuning;
         case ModDestination::Transpose:return f.transpose;case ModDestination::PortaTime:return f.portaTime;
         case ModDestination::EnvelopeScaling:return f.envelopeScaling;case ModDestination::LfoScaling:return f.lfoScaling;
+        case ModDestination::Swing:return f.swing;
         case ModDestination::WtPosition:return m.wtPosition;
         case ModDestination::Octave:return m.octave;case ModDestination::Semitone:return m.semitone;
         case ModDestination::Fine:return m.fineCents;case ModDestination::Detune:return m.detuneCents;
@@ -560,6 +562,7 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
         case ModDestination::MasterGain:f.master=v;break;case ModDestination::MainTuning:f.mainTuning=v;break;
         case ModDestination::Transpose:f.transpose=v;break;case ModDestination::PortaTime:f.portaTime=v;break;
         case ModDestination::EnvelopeScaling:f.envelopeScaling=v;break;case ModDestination::LfoScaling:f.lfoScaling=v;break;
+        case ModDestination::Swing:f.swing=v;break;
         case ModDestination::WtPosition:m.wtPosition=v;break;
         case ModDestination::Octave:m.octave=v;break;case ModDestination::Semitone:m.semitone=v;break;
         case ModDestination::Fine:m.fineCents=v;break;case ModDestination::Detune:m.detuneCents=v;break;
