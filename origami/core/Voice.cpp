@@ -15,16 +15,8 @@
 #include "dsp/FastMath.h"
 #include <algorithm>
 #include <cmath>
-#include <chrono>
 namespace mct::origami {
-namespace {
-inline std::uint64_t profileNowNs() noexcept {
-    using Clock=std::chrono::steady_clock;
-    return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            Clock::now().time_since_epoch()).count());
-}
-}
+
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
 void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& prepared:preparedModules_)prepared.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
@@ -56,14 +48,9 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         frequency_*=glideRatio_;
         if(--glideRemaining_==0) {frequency_=targetFrequency_;glideRatio_=1.0;}
     }
-    ++hotPathProfile_.samples;
-    auto profileTick=profileNowNs();
     const float envelope=envelope_.next(sustain);
     const float envelopeValue=envelope*velocity_;
     const float env2=env2_.next(modulation.env2.sustain),env3=env3_.next(modulation.env3.sustain);
-    auto profileTock=profileNowNs();
-    hotPathProfile_.envelopeNs+=profileTock-profileTick;
-    profileTick=profileTock;
     std::array<float,CompiledModulation::voiceSourceCount> voiceSources{};
     voiceSources[0]=envelope;voiceSources[1]=env2;voiceSources[2]=env3;
     for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_):0.0f;if(observe) visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].phase());}
@@ -79,9 +66,6 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     auto& local=localFrame_;const ModulationFrame* effective=&global;
     if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
     const auto& modules=effective->modules;
-    profileTock=profileNowNs();
-    hotPathProfile_.modulationNs+=profileTock-profileTick;
-    profileTick=profileTock;
     if(observe) visualization_.modules=modules;
     bool filtersQuiet=true;
     // One bend ratio per voice/sample, not one exp2 per active oscillator module.
@@ -96,7 +80,6 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         topologyGeneration_=topology.generation;
     }
     for(std::size_t active=0;active<topology.activeCount;++active) {
-        ++hotPathProfile_.moduleIterations;
         const auto m=topology.active[active];
         const auto& module=modules[m];
         const auto& modulePlan=topology.modules[m];
@@ -105,9 +88,6 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         const auto& table=*tablePtr;
         auto& prepared=preparedModules_[m];
         prepared.update(module);
-        profileTock=profileNowNs();
-        hotPathProfile_.prepareNs+=profileTock-profileTick;
-        profileTick=profileTock;
         // Pitch bend remains audio-rate; the ratio uses bounded fast exp2.
         const double frequencyScale=prepared.pitchScale*pitchBendScale;
         const unsigned count=prepared.unison;
@@ -163,9 +143,6 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
             const auto& route=modulePlan.preRoutes[r];
             applyPreRoute(route.source,route.type,routeAmount(route));
         }
-        profileTock=profileNowNs();
-        hotPathProfile_.preRouteNs+=profileTock-profileTick;
-        profileTick=profileTock;
 
         double baseFrequency=frequency_*frequencyScale*routedFrequencyScale;
         if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
@@ -196,10 +173,6 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
                 processPlan,routedPhaseOffset,routedPhaseSkew);
             oscillatorMix=centre+(unisonStack-centre)*prepared.blend;
         }
-        profileTock=profileNowNs();
-        hotPathProfile_.oscillatorNs+=profileTock-profileTick;
-        hotPathProfile_.oscillatorCalls+=count==1 ? 1u : static_cast<std::uint64_t>(count)+1u;
-        profileTick=profileTock;
         if(observe) {
             visualization_.moduleSamples[m]=oscillatorMix;
             visualization_.modulePhases[m]=static_cast<float>(moduleOscillators_[m][0].phase());
@@ -276,9 +249,6 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
             oscillatorMix=applyPostRoute(oscillatorMix,route.source,route.type,routeAmount(route));
         }
 
-        profileTock=profileNowNs();
-        hotPathProfile_.postRouteNs+=profileTock-profileTick;
-        profileTick=profileTock;
         if(!std::isfinite(oscillatorMix)) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
             moduleBlendCenters_[m].reset();oscillatorMix=0.0f;
@@ -292,17 +262,11 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         } else {
             moduleFilters_[m].reset();
         }
-        profileTock=profileNowNs();
-        hotPathProfile_.filterNs+=profileTock-profileTick;
-        profileTick=profileTock;
         sampleValue*=prepared.level;
         if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
         outputs.left+=sampleValue*prepared.panLeft;
         outputs.right+=sampleValue*prepared.panRight;
         outputs.mono+=sampleValue;
-        profileTock=profileNowNs();
-        hotPathProfile_.accumulateNs+=profileTock-profileTick;
-        profileTick=profileTock;
     }
 
     if(envelope_.stage()==dsp::Envelope::Stage::Idle && filtersQuiet) reset();
