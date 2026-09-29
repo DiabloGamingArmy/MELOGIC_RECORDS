@@ -197,6 +197,20 @@ void OrigamiAudioProcessor::finalizeRenderBudget(std::int64_t startTicks,
         ? static_cast<float>(elapsedSeconds/deadlineSeconds)
         : 0.0f;
 
+    // P0 diagnostics: retain the real callback wall time separately from the
+    // QoS policy so the Standalone log can distinguish marginal pressure from
+    // catastrophic deadline excursions. Atomic publication only; no RT I/O.
+    const double elapsedMs=elapsedSeconds*1000.0;
+    const double deadlineMs=deadlineSeconds*1000.0;
+    runtimeCallbackBudgetMs_.store(deadlineMs,std::memory_order_relaxed);
+    runtimeLastCallbackMs_.store(elapsedMs,std::memory_order_relaxed);
+    double priorWorst=runtimeWorstCallbackMs_.load(std::memory_order_relaxed);
+    while(elapsedMs>priorWorst &&
+          !runtimeWorstCallbackMs_.compare_exchange_weak(
+              priorWorst,elapsedMs,std::memory_order_relaxed)) {}
+    if(deadlineSeconds>0.0 && elapsedSeconds>=deadlineSeconds)
+        runtimeCallbacksOverBudget_.fetch_add(1,std::memory_order_relaxed);
+
     auto load=engine_.renderLoad();
     const auto& snapshot=renderBudget_.observe(deadlineFraction,load);
 
@@ -574,6 +588,10 @@ OrigamiAudioProcessor::getAudioContinuityDiagnostics() const noexcept {
     result.outputPeak=runtimeOutputPeak_.load(std::memory_order_relaxed);
     result.maxAdjacentDelta=runtimeMaxAdjacentDelta_.load(std::memory_order_relaxed);
     result.nonFiniteOutputSamples=runtimeNonFiniteOutputSamples_.load(std::memory_order_relaxed);
+    result.callbackBudgetMs=runtimeCallbackBudgetMs_.load(std::memory_order_relaxed);
+    result.lastCallbackMs=runtimeLastCallbackMs_.load(std::memory_order_relaxed);
+    result.worstCallbackMs=runtimeWorstCallbackMs_.load(std::memory_order_relaxed);
+    result.callbacksOverBudget=runtimeCallbacksOverBudget_.load(std::memory_order_relaxed);
     return result;
 }
 void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
@@ -591,6 +609,10 @@ void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
     runtimeOutputPeak_.store(0.0f,std::memory_order_relaxed);
     runtimeMaxAdjacentDelta_.store(0.0f,std::memory_order_relaxed);
     runtimeNonFiniteOutputSamples_.store(0,std::memory_order_relaxed);
+    runtimeCallbackBudgetMs_.store(0.0,std::memory_order_relaxed);
+    runtimeLastCallbackMs_.store(0.0,std::memory_order_relaxed);
+    runtimeWorstCallbackMs_.store(0.0,std::memory_order_relaxed);
+    runtimeCallbacksOverBudget_.store(0,std::memory_order_relaxed);
 }
 
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
