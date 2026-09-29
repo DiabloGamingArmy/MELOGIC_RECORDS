@@ -10,6 +10,7 @@
 // mct-origami-v33.1.2-osc-blend-engine
 #pragma once
 #include "dsp/Wavetable.h"
+#include "dsp/FastMath.h"
 #include "dsp/Envelope.h"
 #include "dsp/Filter.h"
 #include "OscillatorRenderPlan.h"
