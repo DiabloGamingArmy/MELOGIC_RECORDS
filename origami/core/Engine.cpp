@@ -437,25 +437,33 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         if(compiledModulation_.usesGlobalSource(12) && (audioModulation_.generatorActiveMask&0x10u))
             sources[12]=globalSequencer_.next(audioModulation_.sequencer,sampleRate_);
 
-        // Audio-owned visualization observation. These are the exact generator
-        // values/phases advanced above; the UI never runs a parallel generator.
-        for(std::size_t i=0;i<4;++i) {
-            runtimeVisualization_.sourceValues[3+i]=sources[i];
-            runtimeVisualization_.sourcePhases[3+i]=static_cast<float>(globalLfos_[i].phase());
+        // Keep UI observation off the 96 kHz hot path. Generators above still
+        // advance at full audio rate; only copying/inspection is decimated.
+        const auto visualizationPeriod=std::max<std::size_t>(
+            1,static_cast<std::size_t>(std::lround(sampleRate_/1000.0)));
+        const bool observeVisualization=runtimeVisualizationCountdown_==0;
+        if(observeVisualization) {
+            runtimeVisualizationCountdown_=visualizationPeriod-1;
+            for(std::size_t i=0;i<4;++i) {
+                runtimeVisualization_.sourceValues[3+i]=sources[i];
+                runtimeVisualization_.sourcePhases[3+i]=static_cast<float>(globalLfos_[i].phase());
+            }
+            runtimeVisualization_.sourceValues[7]=sources[9];
+            runtimeVisualization_.sourceValues[8]=sources[8];
+            runtimeVisualization_.sourceValues[9]=sources[10];
+            runtimeVisualization_.sourceValues[10]=sources[11];
+            runtimeVisualization_.sourceValues[11]=sources[12];
+            runtimeVisualization_.sourcePhases[7]=static_cast<float>(globalFunction_.phase());
+            runtimeVisualization_.sourcePhases[8]=static_cast<float>(globalRandom_.phase());
+            runtimeVisualization_.sourcePhases[9]=std::clamp(globalChaos_.xNormalized()*0.5f+0.5f,0.0f,1.0f);
+            runtimeVisualization_.sourcePhases[10]=static_cast<float>(globalDrift_.phase());
+            runtimeVisualization_.sourcePhases[11]=static_cast<float>(
+                (static_cast<double>(globalSequencer_.currentStep())+globalSequencer_.phase()) /
+                static_cast<double>(std::max<std::uint32_t>(1,audioModulation_.sequencer.activeSteps)));
+            runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
+        } else {
+            --runtimeVisualizationCountdown_;
         }
-        runtimeVisualization_.sourceValues[7]=sources[9];
-        runtimeVisualization_.sourceValues[8]=sources[8];
-        runtimeVisualization_.sourceValues[9]=sources[10];
-        runtimeVisualization_.sourceValues[10]=sources[11];
-        runtimeVisualization_.sourceValues[11]=sources[12];
-        runtimeVisualization_.sourcePhases[7]=static_cast<float>(globalFunction_.phase());
-        runtimeVisualization_.sourcePhases[8]=static_cast<float>(globalRandom_.phase());
-        runtimeVisualization_.sourcePhases[9]=std::clamp(globalChaos_.xNormalized()*0.5f+0.5f,0.0f,1.0f);
-        runtimeVisualization_.sourcePhases[10]=static_cast<float>(globalDrift_.phase());
-        runtimeVisualization_.sourcePhases[11]=static_cast<float>(
-            (static_cast<double>(globalSequencer_.currentStep())+globalSequencer_.phase()) /
-            static_cast<double>(std::max<std::uint32_t>(1,audioModulation_.sequencer.activeSteps)));
-        runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
         compiledModulation_.advance(modulationSmoothing_);
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
         frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
@@ -469,15 +477,17 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         double left=0.0,right=0.0,mono=0.0;
 
         std::uint64_t newestOrder=0;
-        for(std::size_t v=0;v<voiceCount;++v) {
-            if(voices_[v].active()) newestOrder=std::max(newestOrder,voices_[v].order());
+        if(observeVisualization) {
+            for(std::size_t v=0;v<voiceCount;++v) {
+                if(voices_[v].active()) newestOrder=std::max(newestOrder,voices_[v].order());
+            }
+            runtimeVisualization_.active=newestOrder!=0;
         }
-        runtimeVisualization_.active=newestOrder!=0;
 
         VoiceInfo observedInfo;
         for(std::size_t v=0;v<voiceCount;++v) {
             if(!voices_[v].active() && tailRemaining_[v]==0) continue;
-            const bool observe=voices_[v].order()==newestOrder;
+            const bool observe=observeVisualization && voices_[v].order()==newestOrder;
             if(observe) observedInfo=voices_[v].info();
             const auto channel=std::min<std::size_t>(voices_[v].channel(),15);
             const float normalizedBend=pitchBendNormalized_[channel];
