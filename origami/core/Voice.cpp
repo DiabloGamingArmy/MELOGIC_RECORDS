@@ -49,11 +49,12 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         if(--glideRemaining_==0) {frequency_=targetFrequency_;glideRatio_=1.0;}
     }
     const float envelope=envelope_.next(sustain);
-    const float envelopeValue=envelope*velocity_;
     const float env2=env2_.next(modulation.env2.sustain),env3=env3_.next(modulation.env3.sustain);
     std::array<float,CompiledModulation::voiceSourceCount> voiceSources{};
-    voiceSources[0]=envelope;voiceSources[1]=env2;voiceSources[2]=env3;
-    for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_):0.0f;if(observe) visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].phase());}
+    const float sourceEnvelopeScale=std::clamp(global.envelopeScaling,0.0f,2.0f);
+    const float sourceLfoScale=std::clamp(global.lfoScaling,0.0f,2.0f);
+    voiceSources[0]=envelope*sourceEnvelopeScale;voiceSources[1]=env2*sourceEnvelopeScale;voiceSources[2]=env3*sourceEnvelopeScale;
+    for(std::size_t i=0;i<4;++i){const auto& l=lfoSettings(modulation,i);voiceSources[3+i]=l.mode!=LfoMode::Free?noteLfos_[i].next(l,sampleRate_)*sourceLfoScale:0.0f;if(observe) visualization_.lfoPhases[i]=static_cast<float>(noteLfos_[i].phase());}
     voiceSources[7]=performanceSourceCurveValue(modulation.velocityCurve,velocity_);
     voiceSources[8]=modWheel;
     voiceSources[9]=performanceSourceCurveValue(
@@ -66,6 +67,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     auto& local=localFrame_;const ModulationFrame* effective=&global;
     if(compiled.hasVoiceRoutes()){local=global;compiled.voiceFrame(local,voiceSources,sampleRate_);effective=&local;}
     const auto& modules=effective->modules;
+    const float envelopeValue=envelope*velocity_*std::clamp(effective->envelopeScaling,0.0f,2.0f);
     if(observe) visualization_.modules=modules;
     bool filtersQuiet=true;
     // One bend ratio per voice/sample, not one exp2 per active oscillator module.
