@@ -68,6 +68,8 @@ public:
     VoiceInfo voiceInfo(std::size_t index) const noexcept;
     std::size_t activeVoiceCount() const noexcept;
     RenderLoad renderLoad() const noexcept;
+    VoiceHotPathProfile hotPathProfile() const noexcept;
+    void clearHotPathProfile() noexcept;
     void setVoiceAdmissionCeiling(std::size_t ceiling) noexcept;
     std::size_t voiceAdmissionCeiling() const noexcept { return voiceAdmissionCeiling_; }
     // mct-origami-multi-osc-foundation-v20
