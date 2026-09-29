@@ -861,6 +861,8 @@ private:
         private:
             static constexpr std::size_t kFftSize=mct::origami::ui::kWavetableFrameSize;
             static constexpr std::size_t kBins=kFftSize/2+1;
+            static constexpr float independentPhaseFloor_=1.0e-4f;
+            static constexpr float independentDefaultPhase_=-juce::MathConstants<float>::halfPi;
             int visibleBinCount() const noexcept { return juce::jmax(16,128/zoom_); }
             juce::Rectangle<int> plotBounds() const noexcept {
                 auto full=getLocalBounds().reduced(8,7);
@@ -913,12 +915,30 @@ private:
                         const float value=juce::jmax(0.0f,start+t*(target-start));
                         if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(b)]=juce::jlimit(0.0f,1.0f,value);
                         else if(editMode_==EditMode::Subtractive) document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(b)]=juce::jlimit(0.0f,1.0f,value);
-                        else editMagnitudes_[static_cast<std::size_t>(b)]=value;
+                        else {
+                            auto& frame=document_.frames[document_.selectedFrame];
+                            const auto index=static_cast<std::size_t>(b);
+                            const float previous=editMagnitudes_[index];
+                            editMagnitudes_[index]=value;
+                            // FFT phase is undefined for an effectively absent partial. Never
+                            // amplify numerical residue into a random-phase authored harmonic.
+                            if(previous<=independentPhaseFloor_ && value>independentPhaseFloor_)
+                                phases_[index]=independentDefaultPhase_;
+                            frame.independentPhases[index]=phases_[index];
+                        }
                     }
                 } else {
                     if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(bin)]=juce::jlimit(0.0f,1.0f,target);
                     else if(editMode_==EditMode::Subtractive) document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(bin)]=juce::jlimit(0.0f,1.0f,target);
-                    else editMagnitudes_[static_cast<std::size_t>(bin)]=target;
+                    else {
+                        auto& frame=document_.frames[document_.selectedFrame];
+                        const auto index=static_cast<std::size_t>(bin);
+                        const float previous=editMagnitudes_[index];
+                        editMagnitudes_[index]=target;
+                        if(previous<=independentPhaseFloor_ && target>independentPhaseFloor_)
+                            phases_[index]=independentDefaultPhase_;
+                        frame.independentPhases[index]=phases_[index];
+                    }
                 }
                 if(editMode_==EditMode::Additive) rebuildAdditiveMagnitudes();
                 else if(editMode_==EditMode::Subtractive) rebuildSubtractiveMagnitudes(document_.frames[document_.selectedFrame]);
