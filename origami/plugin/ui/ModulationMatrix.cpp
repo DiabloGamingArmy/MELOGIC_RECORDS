@@ -47,7 +47,9 @@ public:
             destination_.addNativeItem(group,label,static_cast<int>(addresses_.size()));
         };
 
-        add("Global",{ModDestination::MasterGain,0},"MASTER GAIN");
+        add("Global",{ModDestination::MainTuning,0},"MAIN TUNING");
+        add("Global",{ModDestination::MasterGain,0},"AMP");
+        add("Global",{ModDestination::Transpose,0},"TRANSPOSE");
         if(state.modulation.filterEnabled) {
             add("Filter",{ModDestination::Cutoff,0},"CUTOFF");
             add("Filter",{ModDestination::Resonance,0},"RESONANCE");
