@@ -109,6 +109,9 @@ private:
     double hostNormalization_ = 1.0;
     float hostBendRange_ = 2.0f;
     float hostBendDownRange_ = 2.0f;
+    float currentPortaTime_=0.0f;
+    float currentEnvelopeScaling_=1.0f;
+    float currentLfoScaling_=1.0f;
     unsigned hostChannels_ = 0;
     bool hostBlockActive_ = false;
     std::array<Voice, voiceCount> voices_;
