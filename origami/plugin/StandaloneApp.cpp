@@ -33,6 +33,16 @@ public:
 
     void initialise(const juce::String&) override
     {
+        // Standalone policy: always boot the synth itself from canonical Init.
+        // JUCE's audio-device settings remain persistent; only the saved plugin
+        // state blob is discarded before StandaloneFilterWindow can restore it.
+        if(auto* settings=properties_.getUserSettings()) {
+            settings->removeValue("filterState");
+            settings->removeValue("pluginState");
+            settings->removeValue("state");
+            settings->saveIfNeeded();
+        }
+
         window_ = std::make_unique<juce::StandaloneFilterWindow>(
             getApplicationName(),
             juce::LookAndFeel::getDefaultLookAndFeel()
@@ -80,6 +90,15 @@ public:
     {
         diagnosticTimer_.stopTimer();
         window_.reset();
+        // StandaloneFilterWindow may save the processor state while tearing
+        // down. Remove only that state again so the next launch is Init while
+        // device/sample-rate/buffer preferences remain remembered.
+        if(auto* settings=properties_.getUserSettings()) {
+            settings->removeValue("filterState");
+            settings->removeValue("pluginState");
+            settings->removeValue("state");
+            settings->saveIfNeeded();
+        }
         properties_.saveIfNeeded();
     }
 
