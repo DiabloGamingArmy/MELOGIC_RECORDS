@@ -35,6 +35,7 @@ bool OrigamiEngine::prepare(double sampleRate, std::size_t maximumBlockSize, uns
     sampleRate_ = sampleRate; outputChannels_ = outputChannels;
     compiledModulation_.prepare(sampleRate_);
     hostModules_=oscillatorModules_.snapshot();
+    rebuildHostWavetables();
     stealFadeSamples_ = static_cast<std::size_t>(std::max(1.0, std::round(sampleRate * .003)));
     for (auto& voice : voices_) voice.prepare(sampleRate);
     prepared_ = true; reset(); return true;
@@ -43,6 +44,36 @@ bool OrigamiEngine::installWavetable(dsp::Wavetable table) {
     if (!table.valid()) return false;
     dsp::assignWavetableGeneration(table);
     wavetable_ = std::move(table); reset(); return true;
+}
+bool OrigamiEngine::installWavetableForOscillator(OscillatorModuleId id,dsp::Wavetable table) {
+    if(id==0 || oscillatorModules_.state(id).id==0 || !table.valid()) return false;
+    dsp::assignWavetableGeneration(table);
+    OscillatorWavetableSlot* destination=nullptr;
+    for(auto& slot:oscillatorWavetables_) {
+        if(slot.id==id) { destination=&slot; break; }
+        if(destination==nullptr && slot.id==0) destination=&slot;
+    }
+    if(destination==nullptr) return false;
+    destination->id=id;
+    destination->table=std::move(table);
+    rebuildHostWavetables();
+    // Existing voices retain phase but their oscillator lookup caches key on
+    // table pointer/generation, so the authored table becomes authoritative
+    // without assigning it to unrelated oscillator modules.
+    return true;
+}
+void OrigamiEngine::rebuildHostWavetables() noexcept {
+    for(std::size_t i=0;i<hostWavetables_.size();++i) {
+        hostWavetables_[i]=&wavetable_;
+        const auto id=hostModules_[i].id;
+        if(id==0) continue;
+        for(const auto& slot:oscillatorWavetables_) {
+            if(slot.id==id && slot.table.valid()) {
+                hostWavetables_[i]=&slot.table;
+                break;
+            }
+        }
+    }
 }
 void OrigamiEngine::reset() noexcept {
     modulationMailbox_.consume(audioModulation_);
@@ -314,7 +345,10 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
             compiledModuleIds_[i]=hostModules_[i].id;
         }
     }
-    if(oscillatorGenerationChanged || moduleTopologyChanged) oscillatorPlan_.compile(hostModules_);
+    if(oscillatorGenerationChanged || moduleTopologyChanged) {
+        oscillatorPlan_.compile(hostModules_);
+        rebuildHostWavetables();
+    }
     if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged)
         compiledModulation_.compile(audioModulation_,hostModules_);
     std::size_t activeModules=0;
@@ -448,7 +482,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             const auto channel=std::min<std::size_t>(voices_[v].channel(),15);
             const float normalizedBend=pitchBendNormalized_[channel];
             const float bend=normalizedBend*(normalizedBend>=0.0f ? bendUpRange : bendDownRange);
-            auto fresh=voices_[v].nextModules(wavetable_,frame,sustain,compiledModulation_,audioModulation_,
+            auto fresh=voices_[v].nextModules(hostWavetables_,frame,sustain,compiledModulation_,audioModulation_,
                                                 bend,pitchBendNormalized_[channel],
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);
             if(observe) {
