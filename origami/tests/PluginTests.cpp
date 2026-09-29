@@ -17,6 +17,7 @@
 // mct-origami-playability-audio-audit-v23.2
 #include "plugin/PluginProcessor.h"
 #include "plugin/PluginEditor.h"
+#include "plugin/ui/WavetableFrameOps.h"
 #include "core/preset/StateCodec.h"
 #include <iostream>
 #include <stdexcept>
@@ -367,13 +368,18 @@ void telemetryBoundaryAudit() {
 }
 
 void playabilityAudit() {
-    OrigamiAudioProcessor host;
+    std::vector<std::unique_ptr<OrigamiAudioProcessor>> processors;
+    auto create=[&]() -> OrigamiAudioProcessor& {
+        processors.push_back(std::make_unique<OrigamiAudioProcessor>());
+        return *processors.back();
+    };
+    auto& host=create();
     host.prepareToPlay(48000,128);
     disableExtraOscillators(host);
     auto hostAudio=renderNote(host);
     check(magnitude(hostAudio)>1.0e-5f,"host MIDI note produces audible stereo output");
 
-    OrigamiAudioProcessor ui;
+    auto& ui=create();
     ui.prepareToPlay(48000,128);
     disableExtraOscillators(ui);
     // mct-origami-deep-audit-p02-fix1-test-api
@@ -386,14 +392,14 @@ void playabilityAudit() {
     check(ui.enqueueUiKeyboardNote(60,false,0.0f),
           "UI note-off enters fixed realtime-safe queue");
 
-    OrigamiAudioProcessor power;
+    auto& power=create();
     power.prepareToPlay(48000,128);
     disableExtraOscillators(power);
     check(power.setUiOscillatorEnabled(1,false),"OSC1 power can be disabled");
     auto silent=renderNote(power);
     check(magnitude(silent)<1.0e-7f,"all disabled oscillators produce silence");
 
-    OrigamiAudioProcessor levelZero;
+    auto& levelZero=create();
     levelZero.prepareToPlay(48000,128);disableExtraOscillators(levelZero);
     check(levelZero.setUiParameter(ParameterId::OscLevel,0.0f),"OSC1 level zero accepted");
     // OscLevel intentionally has parameter smoothing. Allow the target to settle
@@ -405,12 +411,12 @@ void playabilityAudit() {
     }
     check(magnitude(renderNote(levelZero))<1.0e-7f,"OSC level zero produces silence after smoothing");
 
-    OrigamiAudioProcessor levelAudible;
+    auto& levelAudible=create();
     levelAudible.prepareToPlay(48000,128);disableExtraOscillators(levelAudible);
     check(levelAudible.setUiParameter(ParameterId::OscLevel,.8f),"OSC1 audible level accepted");
     check(magnitude(renderNote(levelAudible))>1.0e-5f,"OSC level restores sound");
 
-    OrigamiAudioProcessor wtA,wtB;
+    auto& wtA=create();auto& wtB=create();
     wtA.prepareToPlay(48000,128);wtB.prepareToPlay(48000,128);
     disableExtraOscillators(wtA);disableExtraOscillators(wtB);
     check(wtA.setUiParameter(ParameterId::Waveform,0.0f) && wtB.setUiParameter(ParameterId::Waveform,2.25f),"WT positions accepted");
@@ -422,7 +428,7 @@ void playabilityAudit() {
     check(wtA.getUiOscillatorState(1).tableId==wtB.getUiOscillatorState(1).tableId,
           "WT POS does not change wavetable identity");
 
-    OrigamiAudioProcessor pitchA,pitchB;
+    auto& pitchA=create();auto& pitchB=create();
     pitchA.prepareToPlay(48000,128);pitchB.prepareToPlay(48000,128);
     disableExtraOscillators(pitchA);disableExtraOscillators(pitchB);
     check(pitchA.setUiParameter(ParameterId::OscOctave,0.0f) && pitchB.setUiParameter(ParameterId::OscOctave,1.0f),"octave states accepted");
@@ -432,7 +438,7 @@ void playabilityAudit() {
         pitchDifferent=std::abs(pa.getSample(0,i)-pb.getSample(0,i))>1.0e-5f;
     check(pitchDifferent,"oscillator octave changes rendered audio");
 
-    OrigamiAudioProcessor uniA,uniB;
+    auto& uniA=create();auto& uniB=create();
     uniA.prepareToPlay(48000,128);uniB.prepareToPlay(48000,128);
     disableExtraOscillators(uniA);disableExtraOscillators(uniB);
     check(uniA.setUiParameter(ParameterId::OscUnison,1.0f)
@@ -441,7 +447,7 @@ void playabilityAudit() {
     const auto ua=renderNote(uniA),ub=renderNote(uniB);
     check(std::abs(energy(ua)-energy(ub))>1.0e-6,"unison/detune changes rendered output");
 
-    OrigamiAudioProcessor pan;
+    auto& pan=create();
     pan.prepareToPlay(48000,128);disableExtraOscillators(pan);
     check(pan.setUiParameter(ParameterId::OscPan,-1.0f),"hard-left pan accepted");
     // OscPan is intentionally smoothed. Let the pan target settle with no
@@ -455,7 +461,7 @@ void playabilityAudit() {
     check(panAudio.getMagnitude(0,0,panAudio.getNumSamples())>1.0e-5f,"hard-left pan keeps left output");
     check(panAudio.getMagnitude(1,0,panAudio.getNumSamples())<1.0e-7f,"hard-left pan silences right output after smoothing");
 
-    OrigamiAudioProcessor filterLow,filterHigh;
+    auto& filterLow=create();auto& filterHigh=create();
     filterLow.prepareToPlay(48000,128);filterHigh.prepareToPlay(48000,128);
     disableExtraOscillators(filterLow);disableExtraOscillators(filterHigh);
     check(filterLow.setUiParameter(ParameterId::Cutoff,100.0f),"low cutoff accepted");
@@ -463,7 +469,7 @@ void playabilityAudit() {
     const auto low=renderNote(filterLow,100,1.0f,4096),high=renderNote(filterHigh,100,1.0f,4096);
     check(energy(low)<energy(high),"filter cutoff affects audible output");
 
-    OrigamiAudioProcessor fastAttack,slowAttack;
+    auto& fastAttack=create();auto& slowAttack=create();
     fastAttack.prepareToPlay(48000,128);slowAttack.prepareToPlay(48000,128);
     disableExtraOscillators(fastAttack);disableExtraOscillators(slowAttack);
     check(fastAttack.setUiParameter(ParameterId::Attack,0.001f),"fast attack accepted");
@@ -474,7 +480,7 @@ void playabilityAudit() {
     juce::AudioBuffer<float> tail(2,128);tail.clear();juce::MidiBuffer none;fastAttack.processBlock(tail,none);
     check(magnitude(tail)<1.0e-6f,"note release eventually reaches silence");
 
-    OrigamiAudioProcessor one,two;
+    auto& one=create();auto& two=create();
     one.prepareToPlay(48000,128);two.prepareToPlay(48000,128);
     disableExtraOscillators(one);disableExtraOscillators(two);
     check(two.setUiOscillatorEnabled(2,true),"OSC2 can be enabled");
@@ -485,7 +491,9 @@ void playabilityAudit() {
 }
 // Patch 05/19: allocation regression gate around the actual AudioProcessor callback.
 void pluginRealtimeAllocationGate() {
-    OrigamiAudioProcessor p;
+    // Keep the large processor off the 8 MB macOS test-thread stack.
+    auto processor=std::make_unique<OrigamiAudioProcessor>();
+    auto& p=*processor;
     p.prepareToPlay(48000.0,512);
 
     juce::AudioBuffer<float> audio64(2,64), audio17(2,17), audio128(2,128);
@@ -583,7 +591,57 @@ void pluginRealtimeAllocationGate() {
                   "adversarial realtime output remains finite");
 }
 
+void frameToolsAudit() {
+    using namespace mct::origami::ui;
+    const auto original=WavetableDocument::basicShapes();
+    auto shifted=original.frames[0];
+    for(std::size_t i=0;i<shifted.samples.size();++i)
+        shifted.samples[i]=original.frames[0].samples[(i+37)%shifted.samples.size()];
+    check(correlationShift(original.frames[0],shifted)==kWavetableFrameSize-37,
+          "FFT correlation finds circular phase offset");
+    for(const auto target:{16u,32u,64u,128u,255u,256u}) {
+        auto document=original;
+        check(densify(document,target,MorphMethod::Crossfade,MorphCurve::Linear),"target densification succeeds");
+        check(document.frames.size()==target,"target densification reaches exact count");
+        std::size_t previous=0;
+        for(const auto& anchor:original.frames) {
+            bool found=false;
+            for(std::size_t i=previous;i<document.frames.size();++i)
+                if(document.frames[i].id==anchor.id) {
+                    check(document.frames[i].samples==anchor.samples,"target preserves exact source samples");
+                    previous=i+1;found=true;break;
+                }
+            check(found,"target retains each source anchor in order");
+        }
+        std::set<std::uint64_t> ids;
+        for(const auto& frame:document.frames) {
+            ids.insert(frame.id);
+            for(const auto value:frame.samples)check(std::isfinite(value),"morph samples remain finite");
+        }
+        check(ids.size()==target,"generated frame identities are unique");
+    }
+    for(const auto method:{MorphMethod::Crossfade,MorphMethod::PhaseAligned,MorphMethod::Spectral,
+                           MorphMethod::Harmonic,MorphMethod::HarmonicShift,MorphMethod::Hybrid}) {
+        auto document=original;
+        check(morphBetween(document,0,1,3,method,MorphCurve::SCurve),"between morph succeeds");
+        check(document.frames.size()==7,"between morph adds requested count");
+        check(document.frames[0].samples==original.frames[0].samples &&
+              document.frames[4].samples==original.frames[1].samples,"between morph retains endpoints");
+        for(std::size_t i=1;i<=3;++i)
+            for(const auto value:document.frames[i].samples)
+                check(std::isfinite(value) && std::abs(value)<=1.0001f,"all methods yield bounded finite samples");
+    }
+    auto document=original;
+    document.frames[0].hasIndependentSpectrum=true;
+    document.frames[0].hasSubtractiveSpectrum=true;
+    document.frames[0].hasAdditiveSpectrum=true;
+    processFrame(document.frames[0],3);
+    check(!document.frames[0].hasIndependentSpectrum && !document.frames[0].hasSubtractiveSpectrum,
+          "time-domain frame operation invalidates dependent spectral state");
+    check(document.frames[0].hasAdditiveSpectrum,"time-domain frame operation preserves additive authoring");
+}
 void run() {
+    frameToolsAudit();
     uiKeyboardRealtimeBoundaryAudit();
     renderBudgetPolicyAudit();
     globalQosBoundaryAudit();
@@ -605,6 +663,65 @@ void run() {
                                 ui::visualizationBit(ui::VisualizationEffect::Osc);
     p.setUiVisualizationMask(customVisualMask);
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto& initialRack=rack(*editor);
+    check(static_cast<bool>(initialRack.onWavetableEditorRequested),"wavetable editor action exists");
+    initialRack.onWavetableEditorRequested(1);
+    ui::FrameTools* frameTools=nullptr;
+    walk(*editor,[&](auto& component) {
+        if(auto* candidate=dynamic_cast<ui::FrameTools*>(&component))frameTools=candidate;
+    });
+    check(frameTools!=nullptr && frameTools->isVisible() && frameTools->getParentComponent()->isVisible(),
+          "Frame Tools replace TABLE in visible editor");
+    check(frameTools->getHeight()>70,"Frame Tools have room for compact controls");
+    {
+        const auto screenshot=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.0f);
+        juce::FileOutputStream output(juce::File("/tmp/origami-frame-tools.png"));
+        juce::PNGImageFormat{}.writeImageToStream(screenshot,output);
+    }
+    juce::Viewport* frameViewport=nullptr;
+    walk(*frameTools->getParentComponent(),[&](auto& component) {
+        if(auto* viewport=dynamic_cast<juce::Viewport*>(&component))
+            if(viewport->getViewedComponent()!=nullptr &&
+               viewport->getViewedComponent()->getNumChildComponents()==5 && viewport->getHeight()>60)
+                frameViewport=viewport;
+    });
+    check(frameViewport!=nullptr,"frame strip viewport remains available");
+    auto frameCardCount=[&] {return frameViewport->getViewedComponent()->getNumChildComponents()-1;};
+    check(frameCardCount()==4,"initial frame strip has four cards");
+    frameTools->onCommand(ui::FrameTools::Command::Duplicate);
+    check(frameCardCount()==5,"duplicate adds one frame through toolbar command");
+    const auto undoKey=juce::KeyPress('z',juce::ModifierKeys::commandModifier,'z');
+    const auto redoKey=juce::KeyPress('z',juce::ModifierKeys::commandModifier|
+                                          juce::ModifierKeys::shiftModifier,'z');
+    check(frameTools->getParentComponent()->keyPressed(undoKey) && frameCardCount()==4,
+          "structural undo restores frame count");
+    check(frameTools->getParentComponent()->keyPressed(redoKey) && frameCardCount()==5,
+          "structural redo restores duplicated frame");
+    frameTools->onCommand(ui::FrameTools::Command::Copy);
+    frameTools->onCommand(ui::FrameTools::Command::Paste);
+    check(frameCardCount()==6,"paste inserts complete copied frame");
+    check(frameTools->getParentComponent()->keyPressed(undoKey) && frameCardCount()==5,
+          "paste is one undoable operation");
+    frameTools->onCommand(ui::FrameTools::Command::Before);
+    check(frameCardCount()==6,"insert before adds frame");
+    check(frameTools->getParentComponent()->keyPressed(undoKey) && frameCardCount()==5,
+          "insert before is undoable");
+    frameTools->onCommand(ui::FrameTools::Command::After);
+    check(frameCardCount()==6,"insert after adds frame");
+    check(frameTools->getParentComponent()->keyPressed(undoKey) && frameCardCount()==5,
+          "insert after is undoable");
+    frameTools->onCommand(ui::FrameTools::Command::Delete);
+    check(frameCardCount()==4,"delete removes active frame");
+    check(frameTools->getParentComponent()->keyPressed(undoKey) && frameCardCount()==5,
+          "delete is undoable");
+    frameTools->onCommand(ui::FrameTools::Command::Morph);
+    check(frameCardCount()==256,"TO TARGET morph reaches 256 frames through editor command");
+    check(frameTools->getParentComponent()->keyPressed(undoKey) && frameCardCount()==5,
+          "one undo restores sparse source after target morph");
+    check(frameTools->getParentComponent()->keyPressed(redoKey) && frameCardCount()==256,
+          "one redo restores densified table");
+    check(frameTools->getParentComponent()->keyPressed(juce::KeyPress(juce::KeyPress::escapeKey)),
+          "wavetable editor closes after visual audit");
     juce::TextButton* globalButton=nullptr;ui::GlobalPanel* globalPanel=nullptr;
     walk(*editor,[&](auto& component){
         if(auto* button=dynamic_cast<juce::TextButton*>(&component);button && button->getButtonText()=="GLOBAL") globalButton=button;

@@ -14,7 +14,11 @@
 #include "ui/OrigamiLayout.h"
 #include "ui/GlobalPanel.h"
 #include "ui/WavetableDocument.h"
+#include "ui/WavetableFrameOps.h"
+#include "ui/FrameTools.h"
 #include "ui/NativeChoiceMenu.h"
+#include <optional>
+#include <set>
 class OrigamiAudioProcessor;
 class OrigamiAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                          public juce::DragAndDropContainer,
@@ -37,7 +41,7 @@ private:
         static constexpr int editorHeaderHeight=30;
         static constexpr int regionHeaderHeight=28;
         static constexpr int timelineHeight=125;
-        static constexpr int tableHeight=66;
+        static constexpr int frameToolsHeight=96;
         static constexpr int contentGutter=4;
 
         class EditorRegion final : public juce::Component {
@@ -105,7 +109,7 @@ private:
         class FrameStrip final : public juce::Component {
             class FrameCard final : public juce::Component {
             public:
-                std::function<void(unsigned)> onSelected;
+                std::function<void(unsigned,juce::ModifierKeys)> onSelected;
                 FrameCard(std::uint64_t frameId,unsigned displayIndex,
                           const std::array<float,mct::origami::ui::kWavetableFrameSize>& samples)
                     :displayIndex_(displayIndex),samples_(&samples) {
@@ -113,20 +117,20 @@ private:
                     setMouseCursor(juce::MouseCursor::PointingHandCursor);
                     setInterceptsMouseClicks(true,false);
                 }
-                void setSelected(bool selected) {
-                    if(selected_==selected) return;
-                    selected_=selected;
+                void setSelected(bool selected,bool primary) {
+                    if(selected_==selected && primary_==primary) return;
+                    selected_=selected; primary_=primary;
                     repaint();
                 }
-                void mouseDown(const juce::MouseEvent&) override {
+                void mouseDown(const juce::MouseEvent& event) override {
                     grabKeyboardFocus();
-                    if(onSelected) onSelected(displayIndex_);
+                    if(onSelected) onSelected(displayIndex_,event.mods);
                 }
                 void paint(juce::Graphics& g) override {
                     const auto b=getLocalBounds().toFloat().reduced(0.5f);
                     g.setColour(juce::Colour(0xff0d0d0d));
                     g.fillRect(getLocalBounds());
-                    g.setColour(selected_ ? juce::Colour(0xffff1018) : juce::Colour(0xff353535));
+                    g.setColour(primary_ ? juce::Colour(0xffff1018) : selected_ ? juce::Colour(0xffb0b0b0) : juce::Colour(0xff353535));
                     g.drawRect(b,selected_ ? 1.5f : 1.0f);
 
                     auto wave=getLocalBounds().reduced(11,10);
@@ -215,6 +219,7 @@ private:
                 unsigned displayIndex_=0;
                 const std::array<float,mct::origami::ui::kWavetableFrameSize>* samples_=nullptr;
                 bool selected_=false;
+                bool primary_=false;
             };
 
             class AddCard final : public juce::Component {
@@ -246,17 +251,13 @@ private:
 
         public:
             std::function<void(unsigned)> onFrameSelected;
+            std::function<void()> onAddRequested;
             explicit FrameStrip(mct::origami::ui::WavetableDocument& document):document_(document) {
                 viewport_.setViewedComponent(&content_,false);
                 viewport_.setScrollBarsShown(false,false,false,false);
                 viewport_.setWantsKeyboardFocus(true);
                 addAndMakeVisible(viewport_);
-                add_.onClicked=[this] {
-                    if(document_.duplicateFrameAfter(document_.selectedFrame)) {
-                        rebuild();
-                        select(static_cast<unsigned>(document_.selectedFrame));
-                    }
-                };
+                add_.onClicked=[this] { if(onAddRequested) onAddRequested(); };
                 rebuild();
             }
             void rebuild() {
@@ -264,15 +265,16 @@ private:
                 for(unsigned i=0;i<document_.frames.size();++i) {
                     const auto& frame=document_.frames[i];
                     auto card=std::make_unique<FrameCard>(frame.id,i,frame.samples);
-                    card->onSelected=[this](unsigned index){ select(index); };
+                    card->onSelected=[this](unsigned index,juce::ModifierKeys mods){ select(index,mods); };
                     content_.addAndMakeVisible(*card);
                     cards_.push_back(std::move(card));
                 }
                 content_.addAndMakeVisible(add_);
                 add_.setAvailable(document_.frames.size()<mct::origami::ui::kMaxWavetableFrames);
                 if(document_.selectedFrame>=cards_.size()) document_.selectedFrame=0;
-                for(unsigned i=0;i<cards_.size();++i)
-                    cards_[i]->setSelected(i==document_.selectedFrame);
+                selected_.clear();selected_.insert(static_cast<unsigned>(document_.selectedFrame));
+                anchor_=static_cast<unsigned>(document_.selectedFrame);
+                updateSelection();
                 resized();
             }
             void resized() override {
@@ -298,12 +300,27 @@ private:
                 }
                 return false;
             }
-            void select(unsigned index) {
+            void select(unsigned index,juce::ModifierKeys mods={}) {
                 if(index>=cards_.size()) return;
-                document_.selectedFrame=index;
-                for(unsigned i=0;i<cards_.size();++i) cards_[i]->setSelected(i==index);
-                reveal(index);
-                if(onFrameSelected) onFrameSelected(index);
+                if(mods.isShiftDown()) {
+                    selected_.clear();
+                    for(unsigned i=std::min(anchor_,index);i<=std::max(anchor_,index);++i) selected_.insert(i);
+                } else if(mods.isCommandDown()) {
+                    if(selected_.find(index) != selected_.end() && selected_.size()>1) selected_.erase(index);
+                    else selected_.insert(index);
+                    anchor_=index;
+                } else { selected_.clear();selected_.insert(index);anchor_=index; }
+                document_.selectedFrame=selected_.find(index)!=selected_.end()?index:*selected_.begin();
+                updateSelection();
+                reveal(static_cast<unsigned>(document_.selectedFrame));
+                if(onFrameSelected) onFrameSelected(static_cast<unsigned>(document_.selectedFrame));
+            }
+            std::vector<unsigned> selectedIndices() const {return {selected_.begin(),selected_.end()};}
+            void selectRange(const std::vector<unsigned>& indices,unsigned primary) {
+                selected_.clear();for(auto index:indices) if(index<cards_.size())selected_.insert(index);
+                if(selected_.empty()) selected_.insert(primary);
+                document_.selectedFrame=primary;anchor_=primary;updateSelection();reveal(primary);
+                if(onFrameSelected) onFrameSelected(primary);
             }
             void refreshSelectedThumbnail() {
                 if(document_.selectedFrame<cards_.size()) cards_[document_.selectedFrame]->repaint();
@@ -312,6 +329,10 @@ private:
                 if(index<cards_.size()) cards_[index]->repaint();
             }
         private:
+            void updateSelection() {
+                for(unsigned i=0;i<cards_.size();++i)
+                    cards_[i]->setSelected(selected_.find(i) != selected_.end(),i==document_.selectedFrame);
+            }
             void reveal(unsigned index) {
                 if(index>=cards_.size()) return;
                 const auto card=cards_[index]->getBounds();
@@ -328,6 +349,8 @@ private:
             juce::Component content_;
             std::vector<std::unique_ptr<FrameCard>> cards_;
             AddCard add_;
+            std::set<unsigned> selected_;
+            unsigned anchor_=0;
         };
 
         struct GridSettings {
@@ -1754,7 +1777,7 @@ private:
         WavetableEditorSurface()
             : document_(mct::origami::ui::WavetableDocument::basicShapes()),
               tools_("TOOLS"),waveform_("WAVEFORM"),spectrum_("SPECTRUM"),
-              timeline_("FRAMES"),table_("TABLE"),frameStrip_(document_),waveformCanvas_(document_,gridSettings_),spectrumCanvas_(document_),
+              timeline_("FRAMES"),frameStrip_(document_),waveformCanvas_(document_,gridSettings_),spectrumCanvas_(document_),
               toolsPanel_(gridSettings_,waveformCanvas_),toolsScroller_(toolsPanel_),curveInspector_(waveformCanvas_) {
             setWantsKeyboardFocus(true);
             setFocusContainerType(juce::Component::FocusContainerType::keyboardFocusContainer);
@@ -1762,8 +1785,12 @@ private:
             header_.onClose=[this] { if(onClose) onClose(); };
             header_.onUndo=[this] { undo(); };
             header_.onRedo=[this] { redo(); };
-            for(auto* region:std::array<EditorRegion*,5>{{&tools_,&waveform_,&spectrum_,&timeline_,&table_}})
+            for(auto* region:std::array<EditorRegion*,4>{{&tools_,&waveform_,&spectrum_,&timeline_}})
                 addAndMakeVisible(region);
+            addAndMakeVisible(frameTools_);
+            frameTools_.onCommand=[this](auto command) { runFrameCommand(command); };
+            frameTools_.onSettingsChanged=[this] { updateFrameTools(); };
+            frameStrip_.onAddRequested=[this] { runFrameCommand(mct::origami::ui::FrameTools::Command::Duplicate); };
             tools_.setContentComponent(toolsScroller_);
             timeline_.setContentComponent(frameStrip_);
             waveform_.setContentComponent(waveformCanvas_);
@@ -1801,7 +1828,7 @@ private:
                     spectrumMode_.setButtonText(id==1?"INDEPENDENT":id==2?"SUBTRACTIVE":"ADDITIVE");
                 });
             };
-            frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame(); };
+            frameStrip_.onFrameSelected=[this](unsigned) { waveformCanvas_.cancelPendingShape(); waveformCanvas_.clearSelection(); refreshSelectedFrame();updateFrameTools(); };
             waveformCanvas_.onSamplesChanged=[this] {
                 invalidateSelectedTimeDomainSpectralState();
                 frameStrip_.refreshSelectedThumbnail();
@@ -1833,6 +1860,7 @@ private:
             header_.setDocumentName(document_.name);
             toolsPanel_.setSelectionAvailable(false);
             refreshSelectedFrame();
+            updateFrameTools();
         }
         void refreshSelectedFrame() {
             header_.setDocumentName(document_.name);
@@ -1845,7 +1873,7 @@ private:
             auto area=getLocalBounds();
             header_.setBounds(area.removeFromTop(editorHeaderHeight));
 
-            table_.setBounds(area.removeFromBottom(tableHeight));
+            frameTools_.setBounds(area.removeFromBottom(frameToolsHeight));
             timeline_.setBounds(area.removeFromBottom(timelineHeight));
 
             const int toolsWidth=juce::roundToInt(static_cast<float>(area.getWidth())*.14f);
@@ -1892,6 +1920,214 @@ private:
             return false;
         }
     private:
+        void updateFrameTools() {
+            const auto selected=frameStrip_.selectedIndices();
+            const auto count=document_.frames.size();
+            const bool contiguous=selected.empty() || selected.back()-selected.front()+1==selected.size();
+            const bool canMorph=frameTools_.mode()==mct::origami::ui::FrameTools::MorphMode::ToTarget
+                ? count>=2 && static_cast<std::size_t>(frameTools_.count())>count
+                : selected.size()==2 && selected[1]==selected[0]+1 && count+static_cast<std::size_t>(frameTools_.count())<=mct::origami::ui::kMaxWavetableFrames;
+            frameTools_.setAvailability(clipboard_.has_value(),count<mct::origami::ui::kMaxWavetableFrames,
+                selected.size()<count && !selected.empty(),
+                contiguous && !selected.empty() && selected.front()>0,
+                contiguous && !selected.empty() && selected.back()+1<count,canMorph);
+        }
+        bool structuralEdit(const std::function<bool(std::vector<unsigned>&)>& edit) {
+            auto before=document_.frames;
+            const auto nameBefore=document_.name;
+            const auto selectedBefore=document_.selectedFrame;
+            const auto selectionBefore=frameStrip_.selectedIndices();
+            std::vector<unsigned> afterSelection;
+            if(!edit(afterSelection)) return false;
+            frameStrip_.rebuild();
+            if(afterSelection.empty()) afterSelection.push_back(static_cast<unsigned>(document_.selectedFrame));
+            frameStrip_.selectRange(afterSelection,static_cast<unsigned>(document_.selectedFrame));
+            commitStructure(std::move(before),selectedBefore,selectionBefore,nameBefore);
+            updateFrameTools();
+            return true;
+        }
+        void runFrameCommand(mct::origami::ui::FrameTools::Command command) {
+            using Command=mct::origami::ui::FrameTools::Command;
+            using Document=mct::origami::ui::WavetableDocument;
+            const auto selected=frameStrip_.selectedIndices();
+            const auto count=document_.frames.size();
+            if(selected.empty() || count==0) return;
+            const auto primary=document_.selectedFrame;
+            const bool space=count<mct::origami::ui::kMaxWavetableFrames;
+            if(command==Command::Copy) {
+                clipboard_=document_.frames[primary];updateFrameTools();return;
+            }
+            if(command==Command::Import) {beginFrameImport();return;}
+            if(command==Command::Export) {beginFrameExport();return;}
+            if(command==Command::Paste || command==Command::Duplicate || command==Command::Before || command==Command::After) {
+                if(!space || (command==Command::Paste && !clipboard_))return;
+                structuralEdit([&](std::vector<unsigned>&) {
+                    mct::origami::ui::WavetableFrame frame;
+                    if(command==Command::Paste)frame=*clipboard_;
+                    else if(command==Command::Duplicate)frame=document_.frames[primary];
+                    frame.id=Document::nextFrameId();
+                    const auto index=primary+(command==Command::Before?0:1);
+                    document_.frames.insert(document_.frames.begin()+static_cast<std::ptrdiff_t>(index),std::move(frame));
+                    document_.selectedFrame=index;
+                    return true;
+                });
+                return;
+            }
+            if(command==Command::Delete) {
+                if(selected.size()>=count)return;
+                structuralEdit([&](std::vector<unsigned>&) {
+                    for(auto it=selected.rbegin();it!=selected.rend();++it)
+                        document_.frames.erase(document_.frames.begin()+static_cast<std::ptrdiff_t>(*it));
+                    document_.selectedFrame=std::min<std::size_t>(selected.front(),document_.frames.size()-1);
+                    return true;
+                });return;
+            }
+            if(command==Command::Left || command==Command::Right) {
+                if(selected.back()-selected.front()+1!=selected.size())return;
+                const auto first=selected.front(),last=selected.back();
+                if((command==Command::Left && first==0) || (command==Command::Right && last+1>=count))return;
+                structuralEdit([&](std::vector<unsigned>& after) {
+                    auto& frames=document_.frames;
+                    if(command==Command::Left)
+                        std::rotate(frames.begin()+first-1,frames.begin()+first,frames.begin()+last+1);
+                    else std::rotate(frames.begin()+first,frames.begin()+last+1,frames.begin()+last+2);
+                    const int delta=command==Command::Left?-1:1;
+                    document_.selectedFrame=static_cast<std::size_t>(static_cast<int>(primary)+delta);
+                    for(auto index:selected)after.push_back(static_cast<unsigned>(static_cast<int>(index)+delta));
+                    return true;
+                });return;
+            }
+            if(command==Command::Morph) {
+                const auto method=frameTools_.method();
+                const auto curve=frameTools_.curve();
+                if(frameTools_.mode()==mct::origami::ui::FrameTools::MorphMode::ToTarget) {
+                    const auto target=static_cast<std::size_t>(frameTools_.count());
+                    if(target<=count || target>mct::origami::ui::kMaxWavetableFrames)return;
+                    structuralEdit([&](std::vector<unsigned>&) {
+                        return mct::origami::ui::densify(document_,target,method,curve);
+                    });
+                } else {
+                    if(selected.size()!=2 || selected[1]!=selected[0]+1)return;
+                    structuralEdit([&](std::vector<unsigned>&) {
+                        return mct::origami::ui::morphBetween(document_,selected[0],selected[1],
+                            static_cast<std::size_t>(frameTools_.count()),method,curve);
+                    });
+                }
+                return;
+            }
+            if(command==Command::Phase || command==Command::Zero) {
+                structuralEdit([&](std::vector<unsigned>& after) {
+                    after=selected;
+                    for(auto index:selected) {
+                        auto& frame=document_.frames[index];
+                        if(command==Command::Zero)mct::origami::ui::alignZero(frame);
+                        else if(index>0) mct::origami::ui::circularShift(frame,
+                            mct::origami::ui::correlationShift(document_.frames[index-1],frame));
+                    }
+                    return true;
+                });return;
+            }
+            int operation=0;
+            if(command==Command::Normalize)operation=1;
+            else if(command==Command::Reverse)operation=2;
+            else if(command==Command::Invert)operation=3;
+            else if(command==Command::Smooth)operation=4;
+            if(operation==0)return;
+            auto targets=selected;
+            if(frameTools_.scope()==1)targets={static_cast<unsigned>(primary)};
+            if(frameTools_.scope()==3) {targets.clear();for(unsigned i=0;i<count;++i)targets.push_back(i);}
+            std::size_t first=0,last=mct::origami::ui::kWavetableFrameSize-1;
+            if(frameTools_.portion()==2) {
+                const auto& waveformSelection=waveformCanvas_.selection();
+                if(!waveformSelection.active || waveformSelection.frameId!=document_.frames[primary].id)return;
+                first=waveformSelection.start;last=waveformSelection.end;
+            }
+            structuralEdit([&](std::vector<unsigned>& after) {
+                after=selected;
+                for(auto index:targets)mct::origami::ui::processFrame(document_.frames[index],operation,first,last);
+                return true;
+            });
+        }
+        void beginFrameImport() {
+            frameFileChooser_=std::make_unique<juce::FileChooser>("Import Wavetable",juce::File{},"*.wav;*.aif;*.aiff");
+            auto safe=juce::Component::SafePointer<WavetableEditorSurface>(this);
+            frameFileChooser_->launchAsync(juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,
+                [safe](const juce::FileChooser& chooser) {
+                    if(safe==nullptr)return;
+                    const auto file=chooser.getResult();
+                    if(file.existsAsFile())safe->finishFrameImport(file);
+                    safe->frameFileChooser_.reset();
+                });
+        }
+        void finishFrameImport(const juce::File& file) {
+            juce::AudioFormatManager formats;formats.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+            if(!reader) {frameTools_.setStatus("Import failed: unreadable audio file");return;}
+            const auto total=reader->lengthInSamples;
+            if(total<static_cast<juce::int64>(mct::origami::ui::kWavetableFrameSize) ||
+               total%static_cast<juce::int64>(mct::origami::ui::kWavetableFrameSize)!=0 ||
+               total>static_cast<juce::int64>(mct::origami::ui::kWavetableFrameSize*mct::origami::ui::kMaxWavetableFrames)) {
+                frameTools_.setStatus("Import requires 1–256 contiguous 2048-sample frames");return;
+            }
+            juce::AudioBuffer<float> source(juce::jmax(1,static_cast<int>(reader->numChannels)),static_cast<int>(total));
+            if(!reader->read(&source,0,static_cast<int>(total),0,true,true)) {
+                frameTools_.setStatus("Import failed: audio could not be read");return;
+            }
+            std::vector<mct::origami::ui::WavetableFrame> frames;
+            frames.resize(static_cast<std::size_t>(total)/mct::origami::ui::kWavetableFrameSize);
+            float peak=0.0f;
+            for(std::size_t frameIndex=0;frameIndex<frames.size();++frameIndex) {
+                auto& frame=frames[frameIndex];frame.id=mct::origami::ui::WavetableDocument::nextFrameId();
+                for(std::size_t i=0;i<frame.samples.size();++i) {
+                    double sum=0.0;
+                    const auto sampleIndex=static_cast<int>(frameIndex*frame.samples.size()+i);
+                    for(int channel=0;channel<source.getNumChannels();++channel)
+                        sum+=source.getSample(channel,sampleIndex);
+                    const auto value=static_cast<float>(sum/source.getNumChannels());
+                    if(!std::isfinite(value)) {frameTools_.setStatus("Import failed: non-finite audio");return;}
+                    frame.samples[i]=value;peak=std::max(peak,std::abs(value));
+                }
+            }
+            if(peak<=1.0e-8f) {frameTools_.setStatus("Import failed: empty signal");return;}
+            if(peak>1.0f)for(auto& frame:frames)for(auto& value:frame.samples)value/=peak;
+            structuralEdit([&](std::vector<unsigned>&) {
+                document_.frames=std::move(frames);document_.selectedFrame=0;
+                document_.name=file.getFileNameWithoutExtension().toUpperCase();
+                return true;
+            });
+            frameTools_.setStatus("Imported "+file.getFileName());
+        }
+        void beginFrameExport() {
+            frameFileChooser_=std::make_unique<juce::FileChooser>("Export Wavetable",
+                juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                    .getChildFile(document_.name+".wav"),"*.wav");
+            auto safe=juce::Component::SafePointer<WavetableEditorSurface>(this);
+            frameFileChooser_->launchAsync(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|
+                                           juce::FileBrowserComponent::warnAboutOverwriting,
+                [safe](const juce::FileChooser& chooser) {
+                    if(safe==nullptr)return;
+                    const auto file=chooser.getResult();
+                    if(file!=juce::File{})safe->finishFrameExport(file.withFileExtension(".wav"));
+                    safe->frameFileChooser_.reset();
+                });
+        }
+        void finishFrameExport(const juce::File& file) {
+            const auto sampleCount=static_cast<int>(document_.frames.size()*mct::origami::ui::kWavetableFrameSize);
+            juce::AudioBuffer<float> buffer(1,sampleCount);
+            for(std::size_t frameIndex=0;frameIndex<document_.frames.size();++frameIndex)
+                for(std::size_t i=0;i<mct::origami::ui::kWavetableFrameSize;++i)
+                    buffer.setSample(0,static_cast<int>(frameIndex*mct::origami::ui::kWavetableFrameSize+i),
+                                     document_.frames[frameIndex].samples[i]);
+            std::unique_ptr<juce::OutputStream> stream=file.createOutputStream();
+            if(!stream) {frameTools_.setStatus("Export failed: cannot write file");return;}
+            juce::WavAudioFormat format;
+            const auto options=juce::AudioFormatWriterOptions{}.withSampleRate(44100.0).withNumChannels(1).withBitsPerSample(16);
+            auto writer=format.createWriterFor(stream,options);
+            if(!writer) {frameTools_.setStatus("Export failed: cannot create WAV writer");return;}
+            if(!writer->writeFromAudioSampleBuffer(buffer,0,sampleCount))
+                frameTools_.setStatus("Export failed: WAV write error");
+            else frameTools_.setStatus("Exported "+file.getFileName());
+        }
         void transformSelection(int op,float gain,float offset) {
             if(!document_.valid() || !waveformCanvas_.hasSelection()) return;
             const auto selection=waveformCanvas_.selection();
@@ -1983,10 +2219,41 @@ private:
             if(before==after) return;
             if(historyIndex_<history_.size())
                 history_.erase(history_.begin()+static_cast<std::ptrdiff_t>(historyIndex_),history_.end());
-            history_.push_back({id,before,after});
+            history_.push_back({id,before,after,{}});
             if(history_.size()>128) history_.erase(history_.begin());
             historyIndex_=history_.size();
             refreshHistoryButtons();
+        }
+        void commitStructure(std::vector<mct::origami::ui::WavetableFrame> before,
+                             std::size_t selectedBefore,std::vector<unsigned> selectionBefore,
+                             juce::String nameBefore) {
+            if(historyIndex_<history_.size())
+                history_.erase(history_.begin()+static_cast<std::ptrdiff_t>(historyIndex_),history_.end());
+            HistoryEntry entry;
+            entry.structure=std::make_shared<StructuralHistory>();
+            entry.structure->before=std::move(before);
+            entry.structure->after=document_.frames;
+            entry.structure->selectedBefore=selectedBefore;
+            entry.structure->selectedAfter=document_.selectedFrame;
+            entry.structure->selectionBefore=std::move(selectionBefore);
+            entry.structure->selectionAfter=frameStrip_.selectedIndices();
+            entry.structure->nameBefore=std::move(nameBefore);
+            entry.structure->nameAfter=document_.name;
+            history_.push_back(std::move(entry));
+            while(history_.size()>1 && (history_.size()>128 || historyBytes()>96*1024*1024)) {
+                history_.erase(history_.begin());
+            }
+            historyIndex_=history_.size();
+            refreshHistoryButtons();
+        }
+        std::size_t historyBytes() const {
+            std::size_t bytes=0;
+            for(const auto& item:history_) {
+                bytes+=sizeof(item);
+                if(item.structure) bytes+=(item.structure->before.size()+item.structure->after.size())
+                    *sizeof(mct::origami::ui::WavetableFrame);
+            }
+            return bytes;
         }
         void undo() {
             if(historyIndex_==0) return;
@@ -1999,11 +2266,31 @@ private:
             ++historyIndex_;
             refreshHistoryButtons();
         }
+        struct StructuralHistory {
+            std::vector<mct::origami::ui::WavetableFrame> before,after;
+            std::size_t selectedBefore=0,selectedAfter=0;
+            std::vector<unsigned> selectionBefore,selectionAfter;
+            juce::String nameBefore,nameAfter;
+        };
         struct HistoryEntry {
             std::uint64_t frameId=0;
             std::array<float,mct::origami::ui::kWavetableFrameSize> before{},after{};
+            std::shared_ptr<StructuralHistory> structure;
         };
         void applyHistory(const HistoryEntry& entry,bool useAfter) {
+            if(entry.structure) {
+                const auto& snapshot=*entry.structure;
+                document_.frames=useAfter?snapshot.after:snapshot.before;
+                document_.selectedFrame=useAfter?snapshot.selectedAfter:snapshot.selectedBefore;
+                document_.name=useAfter?snapshot.nameAfter:snapshot.nameBefore;
+                frameStrip_.rebuild();
+                frameStrip_.selectRange(useAfter?snapshot.selectionAfter:snapshot.selectionBefore,
+                                        static_cast<unsigned>(document_.selectedFrame));
+                refreshSelectedFrame();
+                updateFrameTools();
+                refreshHistoryButtons();
+                return;
+            }
             for(std::size_t i=0;i<document_.frames.size();++i) {
                 if(document_.frames[i].id!=entry.frameId) continue;
                 document_.frames[i].samples=useAfter ? entry.after : entry.before;
@@ -2018,7 +2305,8 @@ private:
         mct::origami::ui::WavetableDocument document_;
         GridSettings gridSettings_;
         EditorHeader header_;
-        EditorRegion tools_,waveform_,spectrum_,timeline_,table_;
+        EditorRegion tools_,waveform_,spectrum_,timeline_;
+        mct::origami::ui::FrameTools frameTools_;
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
         SpectrumCanvas spectrumCanvas_;
@@ -2037,6 +2325,8 @@ private:
         ToolsScroller toolsScroller_;
         CurveInspector curveInspector_;
         std::vector<HistoryEntry> history_;
+        std::optional<mct::origami::ui::WavetableFrame> clipboard_;
+        std::unique_ptr<juce::FileChooser> frameFileChooser_;
         std::size_t historyIndex_=0;
         std::uint64_t generationSeed_=0;
     };
