@@ -69,7 +69,8 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     if(observe) visualization_.modules=modules;
     bool filtersQuiet=true;
     // One bend ratio per voice/sample, not one exp2 per active oscillator module.
-    const double pitchBendScale=dsp::fastExp2Audio(static_cast<double>(pitchBendSemitones)/12.0);
+    const double globalPitchSemitones=static_cast<double>(effective->mainTuning+effective->transpose);
+    const double pitchBendScale=dsp::fastExp2Audio((static_cast<double>(pitchBendSemitones)+globalPitchSemitones)/12.0);
 
     if(topologyGeneration_!=topology.generation) {
         for(std::size_t m=0;m<modules.size();++m) if(moduleIds_[m]!=topology.ids[m]) {
