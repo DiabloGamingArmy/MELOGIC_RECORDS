@@ -592,6 +592,8 @@ OrigamiAudioProcessor::getAudioContinuityDiagnostics() const noexcept {
     result.lastCallbackMs=runtimeLastCallbackMs_.load(std::memory_order_relaxed);
     result.worstCallbackMs=runtimeWorstCallbackMs_.load(std::memory_order_relaxed);
     result.callbacksOverBudget=runtimeCallbacksOverBudget_.load(std::memory_order_relaxed);
+    result.voiceProfile=engine_.hotPathProfile();
+    result.spectralProfile=mct::origami::dsp::spectralCompilerStats();
     return result;
 }
 void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
@@ -613,6 +615,7 @@ void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
     runtimeLastCallbackMs_.store(0.0,std::memory_order_relaxed);
     runtimeWorstCallbackMs_.store(0.0,std::memory_order_relaxed);
     runtimeCallbacksOverBudget_.store(0,std::memory_order_relaxed);
+    engine_.clearHotPathProfile();
 }
 
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
