@@ -74,6 +74,12 @@ public:
             const auto group="OSC "+juce::String(ordinal);
             for(const auto& spec:oscillatorDestinations)
                 add(group,{spec.destination,m.id},spec.label);
+            for(std::size_t i=0;i<m.processCount;++i) if(m.processes[i].id)
+                add(group,{ModDestination::ProcessAmount,m.id,m.processes[i].id},
+                    "PROCESS "+juce::String(i+1)+" AMOUNT");
+            for(std::size_t i=0;i<m.routeCount;++i) if(m.routes[i].id)
+                add(group,{ModDestination::RouteAmount,m.id,m.routes[i].id},
+                    "ROUTE "+juce::String(i+1)+" AMOUNT");
         }
         addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
         enabled_.setClickingTogglesState(true);enabled_.setName("Route enabled");
@@ -125,8 +131,16 @@ ModulationMatrix::~ModulationMatrix(){viewport_.setViewedComponent(nullptr,false
 void ModulationMatrix::syncFromModel() {
     if(!bindings_.snapshot) return;const auto state=bindings_.snapshot();
     std::vector<unsigned> modules,ids;for(const auto& m:state.oscillators) if(m.id) modules.push_back(m.id);
+    std::vector<ModAddress> dynamicDestinations;
+    for(const auto& module:state.oscillators) if(module.id) {
+        for(std::size_t i=0;i<module.processCount;++i) if(module.processes[i].id)
+            dynamicDestinations.push_back({ModDestination::ProcessAmount,module.id,module.processes[i].id});
+        for(std::size_t i=0;i<module.routeCount;++i) if(module.routes[i].id)
+            dynamicDestinations.push_back({ModDestination::RouteAmount,module.id,module.routes[i].id});
+    }
     for(const auto& r:state.modulation.routes) if(r.id) ids.push_back(r.id);
     bool rebuild=modules!=moduleIds_ || ids.size()!=rows_.size() ||
+                 dynamicDestinations!=dynamicDestinations_ ||
                  envMask_!=state.modulation.envActiveMask ||
                  lfoMask_!=state.modulation.lfoActiveMask ||
                  generatorMask_!=state.modulation.generatorActiveMask ||
@@ -134,6 +148,7 @@ void ModulationMatrix::syncFromModel() {
     for(std::size_t i=0;!rebuild && i<ids.size();++i) rebuild=rows_[i]->id()!=ids[i];
     if(rebuild) {
         moduleIds_=modules;
+        dynamicDestinations_=std::move(dynamicDestinations);
         envMask_=state.modulation.envActiveMask;
         lfoMask_=state.modulation.lfoActiveMask;
         generatorMask_=state.modulation.generatorActiveMask;

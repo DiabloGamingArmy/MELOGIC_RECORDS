@@ -262,6 +262,42 @@ void spectralPreparationBoundaryAudit() {
     check(after.fallbackReads>=before.fallbackReads+1,"spectral miss used realtime-safe fallback");
 }
 
+void randomSpectralAmountResponse() {
+    using namespace dsp;
+    std::array<float,2048> source{},dry{},previous{},current{},repeat{},reseeded{};
+    for(std::size_t i=0;i<source.size();++i) {
+        const double phase=2.0*3.14159265358979323846*static_cast<double>(i)/2048.0;
+        for(int h=1;h<=64;++h)
+            source[i]+=static_cast<float>(0.16*std::sin(phase*h)/h);
+    }
+    for(const auto type:{OscProcessType::RandAmp,OscProcessType::RandSparse}) {
+        OscProcessPlan plan{};plan.count=1;plan.stages[0]={type,0.0f,0x1234abcdu};
+        renderProcessedFrame2048(source.data(),dry.data(),plan);
+        double priorDistance=0.0;
+        for(int step=1;step<=10;++step) {
+            plan.stages[0].amount=static_cast<float>(step)/10.0f;
+            renderProcessedFrame2048(source.data(),current.data(),plan);
+            renderProcessedFrame2048(source.data(),repeat.data(),plan);
+            double adjacent=0.0,distance=0.0;
+            for(std::size_t i=0;i<current.size();++i) {
+                const double delta=current[i]-(step==1?dry[i]:previous[i]);
+                adjacent+=delta*delta;
+                const double fromDry=current[i]-dry[i];
+                distance+=fromDry*fromDry;
+                check(current[i]==repeat[i],"random spectral output is deterministic for seed and amount");
+            }
+            check(adjacent>1.0e-7,"random spectral amount has no broad inert interval");
+            check(distance>priorDistance,"random spectral intensity increases with amount");
+            priorDistance=distance;previous=current;
+        }
+        plan.stages[0].amount=0.5f;plan.stages[0].seed=0x76543210u;
+        renderProcessedFrame2048(source.data(),reseeded.data(),plan);
+        plan.stages[0].seed=0x1234abcdu;
+        renderProcessedFrame2048(source.data(),current.data(),plan);
+        check(current!=reseeded,"random spectral seed changes the realization");
+    }
+}
+
 void spectralCachePlayback() {
     using namespace mct::origami::dsp;
     check(prepareSpectralCompiler(),"spectral worker prepared before rendering");
@@ -697,6 +733,7 @@ int main() {
         std::cerr<<"audio-rate fast math\n";audioRateFastMathAudit();
         std::cerr<<"oscillator generation\n";oscillatorGenerationCoherenceAudit();
         std::cerr<<"spectral preparation\n";spectralPreparationBoundaryAudit();
+        std::cerr<<"random spectral amount\n";randomSpectralAmountResponse();
         std::cerr<<"spectral playback\n";spectralCachePlayback();
         std::cerr<<"spectral concurrent eviction\n";spectralCacheConcurrentEviction();
         std::cerr<<"realtime thread policy\n";realtimeThreadPolicyAudit();

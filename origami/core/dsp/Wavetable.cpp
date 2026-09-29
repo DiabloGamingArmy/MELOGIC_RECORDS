@@ -114,8 +114,7 @@ float quantizedSpectralAmount(OscProcessType type,float amount) noexcept {
     // anchor positions. The audible waveform still interpolates continuously
     // in time through oscillator phase; only the expensive spectral transform
     // state is bounded.
-    constexpr float spectralSteps=32.0f;
-    return std::round(a*spectralSteps)/spectralSteps;
+    return std::round(a*spectralAmountSteps)/spectralAmountSteps;
 }
 float readCycle(const float* input,double phase) noexcept {
     phase-=std::floor(phase);
@@ -612,34 +611,15 @@ void renderProcessedFrame2048(const float* input,float* output,
         return;
     }
     fft2048(bins,false);
-    auto randomVariantTarget=[](OscProcessType type,std::size_t harmonic,
-                                std::uint32_t baseSeed,float amount) noexcept {
-        const float position=std::clamp(amount,0.0f,1.0f)*static_cast<float>(randAmpVariantCount()-1);
-        const int lower=static_cast<int>(std::floor(position));
-        const int upper=std::min(lower+1,randAmpVariantCount()-1);
-        const double blend=static_cast<double>(position-static_cast<float>(lower));
-        const auto seedFor=[baseSeed](int variant) noexcept {
-            return baseSeed^(0x9e3779b9u*static_cast<std::uint32_t>(variant+1));
-        };
-        const double a=fullSpectralGain(type,harmonic,seedFor(lower));
-        const double b=fullSpectralGain(type,harmonic,seedFor(upper));
-        return a+(b-a)*blend;
-    };
     bins[0]=Complex{};
-    bool randomAmplitudePass=false;
     for(std::size_t h=1;h<spectralSize/2;++h) {
         double gain=1.0;
         for(std::size_t p=0;p<count;++p) {
             const auto& stage=plan.stages[p];
             if(!oscProcessIsSpectral(stage.type)) continue;
             const double amount=quantizedSpectralAmount(stage.type,stage.amount);
-            const bool randomVariant=stage.type==OscProcessType::RandAmp ||
-                                     stage.type==OscProcessType::RandSparse;
-            const double target=randomVariant
-                ? randomVariantTarget(stage.type,h,stage.seed,static_cast<float>(amount))
-                : fullSpectralGain(stage.type,h,stage.seed);
-            gain*=randomVariant ? target : 1.0+amount*(target-1.0);
-            randomAmplitudePass|=randomVariant;
+            const double target=fullSpectralGain(stage.type,h,stage.seed);
+            gain*=1.0+amount*(target-1.0);
         }
         bins[h]*=gain;bins[spectralSize-h]*=gain;
     }
@@ -647,9 +627,7 @@ void renderProcessedFrame2048(const float* input,float* output,
     fft2048(bins,true);
     double peak=1.0e-12;
     for(const auto& v:bins) peak=std::max(peak,std::abs(v.real()));
-    const double normalise=randomAmplitudePass
-        ? (peak>1.0e-12?0.985/peak:1.0)
-        : (peak>0.985?0.985/peak:1.0);
+    const double normalise=peak>0.985?0.985/peak:1.0;
     for(std::size_t i=0;i<spectralSize;++i)
         output[i]=static_cast<float>(std::clamp(bins[i].real()*normalise,-0.985,0.985));
 }
@@ -674,49 +652,16 @@ void renderProcessedFrame2048(const float* input,float* output,
     const double a1=oscProcessIsSpectral(process1)?quantizedSpectralAmount(process1,amount1):0.0;
     const double a2=oscProcessIsSpectral(process2)?quantizedSpectralAmount(process2,amount2):0.0;
 
-    // Rand Amp and Rand Sparse both expose 12 full-strength seeded anchor
-    // spectra. The knob morphs continuously between adjacent masks.
-    auto randomVariantTarget=[](OscProcessType type,
-                                std::size_t harmonic,
-                                std::uint32_t baseSeed,
-                                float amount) noexcept {
-        const float position=std::clamp(amount,0.0f,1.0f)*
-                             static_cast<float>(randAmpVariantCount()-1);
-        const int lower=static_cast<int>(std::floor(position));
-        const int upper=std::min(lower+1,randAmpVariantCount()-1);
-        const double blend=static_cast<double>(position-static_cast<float>(lower));
-
-        const auto seedFor=[baseSeed](int variant) noexcept {
-            return baseSeed ^
-                   (0x9e3779b9u*static_cast<std::uint32_t>(variant+1));
-        };
-
-        const double a=fullSpectralGain(type,harmonic,seedFor(lower));
-        const double b=fullSpectralGain(type,harmonic,seedFor(upper));
-        return a+(b-a)*blend;
-    };
-
-    const auto isRandomVariant=[](OscProcessType type) noexcept {
-        return type==OscProcessType::RandAmp ||
-               type==OscProcessType::RandSparse;
-    };
-
     bins[0]=Complex{};
     for(std::size_t h=1;h<spectralSize/2;++h) {
         double gain=1.0;
         if(oscProcessIsSpectral(process1)) {
-            const bool randomVariant=isRandomVariant(process1);
-            const double target=randomVariant
-                ? randomVariantTarget(process1,h,seed1,static_cast<float>(a1))
-                : fullSpectralGain(process1,h,seed1);
-            gain*=randomVariant ? target : 1.0+a1*(target-1.0);
+            const double target=fullSpectralGain(process1,h,seed1);
+            gain*=1.0+a1*(target-1.0);
         }
         if(oscProcessIsSpectral(process2)) {
-            const bool randomVariant=isRandomVariant(process2);
-            const double target=randomVariant
-                ? randomVariantTarget(process2,h,seed2,static_cast<float>(a2))
-                : fullSpectralGain(process2,h,seed2);
-            gain*=randomVariant ? target : 1.0+a2*(target-1.0);
+            const double target=fullSpectralGain(process2,h,seed2);
+            gain*=1.0+a2*(target-1.0);
         }
         // gain is a real scalar applied to the existing complex FFT value:
         // magnitude changes, phase angle is preserved exactly.
@@ -729,17 +674,9 @@ void renderProcessedFrame2048(const float* input,float* output,
     double peak=1.0e-12;
     for(const auto& v:bins) peak=std::max(peak,std::abs(v.real()));
 
-    const bool randomAmplitudePass=
-        process1==OscProcessType::RandAmp || process1==OscProcessType::RandSparse ||
-        process2==OscProcessType::RandAmp || process2==OscProcessType::RandSparse;
-
-    // Random spectral deletion often removes substantial energy. For Rand Amp /
-    // Rand Sparse, always apply post-IFFT make-up normalization so the strongest
-    // remaining partial reaches the canonical preview/audio peak again. Other
-    // spectral processes retain the prior safety-only attenuation behavior.
-    const double normalise=randomAmplitudePass
-        ? (peak>1.0e-12 ? 0.985/peak : 1.0)
-        : (peak>0.985 ? 0.985/peak : 1.0);
+    // Limit peaks for safety, but do not undo random gain reduction: amount
+    // controls intensity, while the seed selects the affected harmonics.
+    const double normalise=peak>0.985 ? 0.985/peak : 1.0;
 
     for(std::size_t i=0;i<spectralSize;++i)
         output[i]=static_cast<float>(

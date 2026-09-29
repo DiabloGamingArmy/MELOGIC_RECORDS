@@ -145,12 +145,7 @@ constexpr bool oscProcessIsSpectral(OscProcessType type) noexcept {
 constexpr bool oscProcessUsesSeed(OscProcessType type) noexcept {
     return type==OscProcessType::RandAmp || type==OscProcessType::RandSparse;
 }
-constexpr int randAmpVariantCount() noexcept { return 12; }
-constexpr int randAmpVariantIndex(float amount) noexcept {
-    const float clamped=amount<0.0f?0.0f:(amount>1.0f?1.0f:amount);
-    return static_cast<int>(clamped*static_cast<float>(randAmpVariantCount()-1)+0.5f);
-}
-
+inline constexpr float spectralAmountSteps=32.0f;
 inline constexpr std::size_t maxOscProcessStages=8;
 struct OscProcessStage {
     OscProcessType type=OscProcessType::Off;

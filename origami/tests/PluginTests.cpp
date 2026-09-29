@@ -1152,7 +1152,86 @@ void frameToolsAudit() {
               "generated frames never inherit stale spectral authoring metadata");
     }
 }
+void matrixDynamicRouteAudit() {
+    OrigamiAudioProcessor processor;
+    auto module=processor.getUiOscillatorState(2);
+    module.processCount=1;module.nextProcessId=2;
+    module.processes[0]={1,dsp::OscProcessType::RandAmp,0.5f,0x12345678u,true};
+    check(processor.setUiOscillatorState(2,module),"matrix target process installed");
+    const auto routeId=processor.addUiRoute();
+    check(routeId!=0,"matrix route created");
+    ModRoute route{};
+    for(const auto& candidate:processor.getUiInstrumentState().modulation.routes)
+        if(candidate.id==routeId) route=candidate;
+    route.source=ModSource::Lfo1;
+    route.destination={ModDestination::ProcessAmount,2,1};
+    route.amount=0.35f;route.enabled=true;route.bipolar=true;
+    check(processor.setUiRoute(route),"drag-style dynamic target route accepted");
+
+    ui::ModulationBindings bindings{};
+    bindings.snapshot=[&]{return processor.getUiInstrumentState();};
+    bindings.route=[&](const ModRoute& edited){return processor.setUiRoute(edited);};
+    ui::ModulationMatrix matrix(bindings);
+    matrix.setBounds(0,0,1300,300);matrix.syncFromModel();
+    ui::NativeComboBox *source=nullptr,*destination=nullptr;
+    juce::TextButton *enabled=nullptr,*bipolar=nullptr;
+    juce::Slider* amount=nullptr;
+    walk(matrix,[&](juce::Component& component) {
+        if(component.getName()=="Route source") source=dynamic_cast<ui::NativeComboBox*>(&component);
+        if(component.getName()=="Route destination") destination=dynamic_cast<ui::NativeComboBox*>(&component);
+        if(component.getName()=="Route enabled") enabled=dynamic_cast<juce::TextButton*>(&component);
+        if(component.getName()=="Bipolar modulation") bipolar=dynamic_cast<juce::TextButton*>(&component);
+        if(component.getName()=="Route amount") amount=dynamic_cast<juce::Slider*>(&component);
+    });
+    check(source && destination && enabled && bipolar && amount,"matrix row controls exist");
+    check(source->getSelectedId()==static_cast<int>(ModSource::Lfo1),"matrix shows dragged source");
+    check(destination->getSelectedId()>0,"matrix shows dynamic process destination");
+    check(destination->getText().contains("PROCESS"),"matrix labels dynamic process destination");
+
+    enabled->setToggleState(false,juce::sendNotificationSync);
+    auto stored=processor.getUiInstrumentState().modulation.routes[0];
+    check(stored.id==routeId && !stored.enabled && stored.bipolar,"matrix ON updates same route");
+    bipolar->setToggleState(false,juce::sendNotificationSync);
+    stored=processor.getUiInstrumentState().modulation.routes[0];
+    check(stored.id==routeId && !stored.bipolar && !stored.enabled,"matrix BIPOLAR persists");
+    source->setSelectedId(static_cast<int>(ModSource::Macro1),juce::sendNotificationSync);
+    stored=processor.getUiInstrumentState().modulation.routes[0];
+    check(stored.id==routeId && stored.source==ModSource::Macro1,"matrix SOURCE persists");
+    int levelId=0,levelOrdinal=0;
+    for(int i=0;i<destination->getNumItems();++i)
+        if(destination->getItemText(i)=="LEVEL" && ++levelOrdinal==2) {
+            levelId=destination->getItemId(i);break;
+        }
+    check(levelId>0,"matrix has editable oscillator destination");
+    destination->setSelectedId(levelId,juce::sendNotificationSync);
+    stored=processor.getUiInstrumentState().modulation.routes[0];
+    check(stored.id==routeId && stored.destination==ModAddress{ModDestination::Level,2},
+          "matrix DESTINATION persists with stable oscillator ID");
+    amount->setValue(62.0,juce::sendNotificationSync);
+    stored=processor.getUiInstrumentState().modulation.routes[0];
+    check(stored.id==routeId && std::abs(stored.amount-0.62f)<1.0e-5f,
+          "matrix AMOUNT persists");
+    matrix.syncFromModel();
+    check(source->getSelectedId()==static_cast<int>(ModSource::Macro1) &&
+          destination->getSelectedId()==levelId && !enabled->getToggleState() &&
+          !bipolar->getToggleState(),"matrix resync preserves discrete edits");
+    stored.enabled=true;
+    check(processor.setUiRoute(stored),"matrix edited route can be enabled");
+    auto state=processor.getUiInstrumentState();
+    CompiledModulation compiled;
+    compiled.prepare(96000.0);
+    compiled.compile(state.modulation,state.oscillators,true);
+    std::array<float,CompiledModulation::globalSourceCount> sources{};
+    ModulationFrame frame{};frame.modules=state.oscillators;
+    const float baseLevel=frame.modules[1].level;
+    sources[4]=1.0f;
+    compiled.globalFrame(frame,sources,96000.0);
+    check(frame.modules[1].level>baseLevel,
+          "matrix-edited source and destination reach compiled modulation");
+}
+
 void run() {
+    matrixDynamicRouteAudit();
     audioContinuityP0Audit();
     audioPurityP0Audit();
     multiOscillatorTopologyP0Audit();

@@ -1681,10 +1681,11 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
                 const float modulated=juce::jlimit(minimum,1.0f,
                     process.amount+
                     modulationUiAllRoutesValue(ModDestination::ProcessAmount,display_.id,process.id)*span);
-                // Quantise the VISUAL amount only. The audio path remains
-                // continuous; this bounds repaint-driven FFT work while the
-                // existing preview morph removes visible stepping.
-                const float visualAmount=std::round(modulated*64.0f)/64.0f;
+                // Match the spectral worker's bounded amount key so the
+                // preview and audible oscillator select the same prepared data.
+                const float steps=dsp::oscProcessIsSpectral(process.type)
+                    ? dsp::spectralAmountSteps : 64.0f;
+                const float visualAmount=std::round(modulated*steps)/steps;
                 visualPlan.stages[visualPlan.count++]={process.type,visualAmount,process.seed};
             }
         }
