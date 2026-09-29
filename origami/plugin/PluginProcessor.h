@@ -111,6 +111,10 @@ public:
         float outputPeak=0.0f;
         float maxAdjacentDelta=0.0f;
         std::uint64_t nonFiniteOutputSamples=0;
+        double callbackBudgetMs=0.0;
+        double lastCallbackMs=0.0;
+        double worstCallbackMs=0.0;
+        std::uint64_t callbacksOverBudget=0;
     };
     AudioContinuityDiagnostics getAudioContinuityDiagnostics() const noexcept;
     void resetAudioContinuityDiagnostics() noexcept;
@@ -154,6 +158,8 @@ private:
     std::atomic<int> runtimeLastCallbackSamples_{0},runtimeLastOutputChannels_{0};
     std::atomic<float> runtimeOutputPeak_{0.0f},runtimeMaxAdjacentDelta_{0.0f};
     std::atomic<std::uint64_t> runtimeNonFiniteOutputSamples_{0};
+    std::atomic<double> runtimeCallbackBudgetMs_{0.0},runtimeLastCallbackMs_{0.0},runtimeWorstCallbackMs_{0.0};
+    std::atomic<std::uint64_t> runtimeCallbacksOverBudget_{0};
 
     // Persistent realtime MIDI workspaces; storage is committed in prepareToPlay().
     juce::MidiBuffer inputMidiScratch_;
