@@ -15,9 +15,17 @@ struct WavetableFrame {
     std::array<float,kWavetableFrameSize> samples{};
     // Optional control-domain spectral authoring state. This is UI/editor metadata:
     // playable audio remains the 2048 authoritative samples above.
-    bool hasSpectralAuthoring=false;
-    std::array<float,kWavetableFrameSize/2+1> spectralCoefficients{};
-    std::array<float,kWavetableFrameSize/2+1> spectralPhases{};
+    // Each spectral workflow owns its own control-domain state. These are editor
+    // representations only; samples[] remains the rendered wavetable frame.
+    bool hasIndependentSpectrum=false;
+    std::array<float,kWavetableFrameSize/2+1> independentMagnitudes{};
+    std::array<float,kWavetableFrameSize/2+1> independentPhases{};
+    bool hasAdditiveSpectrum=false;
+    std::array<float,kWavetableFrameSize/2+1> additiveContributions{};
+    bool hasSubtractiveSpectrum=false;
+    std::array<float,kWavetableFrameSize/2+1> subtractiveSourceMagnitudes{};
+    std::array<float,kWavetableFrameSize/2+1> subtractiveSourcePhases{};
+    std::array<float,kWavetableFrameSize/2+1> subtractiveGains{};
 };
 
 class WavetableDocument {
