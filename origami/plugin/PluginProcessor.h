@@ -91,6 +91,20 @@ public:
     std::uint32_t getUiVisualizationMask() const noexcept;
     void setUiVisualizationMask(std::uint32_t) noexcept;
     mct::origami::RuntimeVisualizationSnapshot getUiRuntimeVisualizationSnapshot() noexcept;
+
+    // P0 audio-continuity diagnostics. These counters are observational only:
+    // they never participate in rendering decisions and remain allocation-free.
+    struct AudioContinuityDiagnostics {
+        std::uint64_t callbacks=0;
+        std::uint64_t beginHostBlockFailures=0;
+        std::uint64_t processSpanFailures=0;
+        std::uint64_t requestedSpanSamples=0;
+        std::uint64_t renderedSpanSamples=0;
+        std::uint64_t zeroOutputCallbacks=0;
+        std::uint64_t uiMidiEventsDrained=0;
+    };
+    AudioContinuityDiagnostics getAudioContinuityDiagnostics() const noexcept;
+    void resetAudioContinuityDiagnostics() noexcept;
 private:
     mutable juce::CriticalSection stateLock_; // non-realtime model writers/snapshots only
     void renderRange(juce::AudioBuffer<float>&, int start, int count) noexcept;
@@ -117,6 +131,14 @@ private:
     std::atomic<std::uint32_t> uiMidiWrite_{0},uiMidiRead_{0};
     std::atomic<std::uint64_t> uiMidiDropped_{0};
     std::atomic<bool> uiMidiOverflowRecovery_{false};
+
+    std::atomic<std::uint64_t> continuityCallbacks_{0};
+    std::atomic<std::uint64_t> continuityBeginFailures_{0};
+    std::atomic<std::uint64_t> continuitySpanFailures_{0};
+    std::atomic<std::uint64_t> continuityRequestedSamples_{0};
+    std::atomic<std::uint64_t> continuityRenderedSamples_{0};
+    std::atomic<std::uint64_t> continuityZeroCallbacks_{0};
+    std::atomic<std::uint64_t> continuityUiMidiEvents_{0};
 
     // Persistent realtime MIDI workspaces; storage is committed in prepareToPlay().
     juce::MidiBuffer inputMidiScratch_;
