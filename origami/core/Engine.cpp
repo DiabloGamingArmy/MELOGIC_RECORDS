@@ -201,6 +201,9 @@ std::size_t OrigamiEngine::selectVoiceStealCandidate() const noexcept {
 void OrigamiEngine::setVoiceAdmissionCeiling(std::size_t ceiling) noexcept {
     voiceAdmissionCeiling_=std::clamp<std::size_t>(ceiling,1u,voiceCount);
 }
+void OrigamiEngine::setGlobalSwingBase(float swing) noexcept {
+    globalSwingBase_=std::isfinite(swing)?std::clamp(swing,0.0f,0.75f):0.0f;
+}
 bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uint32_t noteId) noexcept {
     if(!prepared_ || note<0 || note>127 || channel>15 || !std::isfinite(velocity)) return false;
     if(velocity<=0) {noteOff(note,channel,noteId);return true;}
@@ -472,11 +475,12 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
         frame.mainTuning=0.0f;frame.transpose=0.0f;
         frame.portaTime=performance_.glideSeconds;
-        frame.envelopeScaling=1.0f;frame.lfoScaling=1.0f;
+        frame.envelopeScaling=1.0f;frame.lfoScaling=1.0f;frame.swing=globalSwingBase_;
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
         currentPortaTime_=std::clamp(frame.portaTime,0.0f,5.0f);
         currentEnvelopeScaling_=std::clamp(frame.envelopeScaling,0.0f,2.0f);
         currentLfoScaling_=std::clamp(frame.lfoScaling,0.0f,2.0f);
+        currentSwing_=std::clamp(frame.swing,0.0f,0.75f);
         for(std::size_t a=0;a<oscillatorPlan_.activeCount;++a) {
             const auto m=oscillatorPlan_.active[a];
             oscillatorPlan_.processPlan(m,frame.modules[m],sharedProcesses[m]);
