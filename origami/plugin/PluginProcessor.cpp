@@ -678,6 +678,15 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
     uiInstrumentState_.modulation=mod;
     return true;
 }
+bool OrigamiAudioProcessor::installUiOscillatorWavetable(
+    mct::origami::OscillatorModuleId id,mct::origami::dsp::Wavetable table) {
+    if(id==0 || !table.valid()) return false;
+    // Wavetable vectors are replaced only while JUCE's callback lock excludes
+    // processBlock. No allocation or table mutation occurs on the audio thread.
+    const juce::ScopedLock callbackLock(getCallbackLock());
+    return engine_.installWavetableForOscillator(id,std::move(table));
+}
+
 bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleId id,const mct::origami::OscillatorModuleState& state) noexcept {
     const juce::ScopedLock lock(stateLock_);
 
