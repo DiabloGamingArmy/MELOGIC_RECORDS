@@ -58,9 +58,16 @@ bool OrigamiAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts) c
 }
 void OrigamiAudioProcessor::renderRange(juce::AudioBuffer<float>& buffer, int start, int count) noexcept {
     if (count <= 0) return;
+    continuityRequestedSamples_.fetch_add(static_cast<std::uint64_t>(count),std::memory_order_relaxed);
     std::array<float*, 2> channels { buffer.getWritePointer(0, start), buffer.getWritePointer(1, start) };
-    if (!prepared_ || !engine_.processSpan(channels.data(), 2u, static_cast<std::size_t>(count)))
-        buffer.clear(start, count);
+    const bool rendered=prepared_
+        && engine_.processSpan(channels.data(),2u,static_cast<std::size_t>(count));
+    if(!rendered) {
+        continuitySpanFailures_.fetch_add(1,std::memory_order_relaxed);
+        buffer.clear(start,count);
+    } else {
+        continuityRenderedSamples_.fetch_add(static_cast<std::uint64_t>(count),std::memory_order_relaxed);
+    }
     // Patch 04/19: DSP span only. UI telemetry is published at a bounded
     // control rate from the host-block boundary below.
 }
@@ -100,6 +107,7 @@ bool OrigamiAudioProcessor::enqueueUiKeyboardNote(int note,bool noteOn,float vel
 void OrigamiAudioProcessor::drainUiKeyboardMidi(juce::MidiBuffer& target) noexcept {
     auto read=uiMidiRead_.load(std::memory_order_relaxed);
     const auto write=uiMidiWrite_.load(std::memory_order_acquire);
+    const auto drained=write-read;
     while(read<write) {
         const auto event=uiMidiQueue_[read%uiMidiCapacity_];
         if(event.noteOn) {
@@ -113,6 +121,7 @@ void OrigamiAudioProcessor::drainUiKeyboardMidi(juce::MidiBuffer& target) noexce
         ++read;
     }
     uiMidiRead_.store(read,std::memory_order_release);
+    continuityUiMidiEvents_.fetch_add(drained,std::memory_order_relaxed);
 
     if(uiMidiOverflowRecovery_.exchange(false,std::memory_order_acq_rel))
         target.addEvent(juce::MidiMessage::allNotesOff(1),0);
@@ -370,6 +379,7 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
 }
 
 void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
+    continuityCallbacks_.fetch_add(1,std::memory_order_relaxed);
     const auto callbackStartTicks=juce::Time::getHighResolutionTicks();
     juce::ScopedNoDenormals noDenormals;
     jassert(buffer.getNumChannels() >= 2);
@@ -476,6 +486,7 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     // mct-origami-audio-reengineer-p06.3-local-source
     // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
     if(!prepared_ || !engine_.beginHostBlock(2u)) {
+        continuityBeginFailures_.fetch_add(1,std::memory_order_relaxed);
         buffer.clear();
         serviceVisualTelemetry(total);
         finalizeRenderBudget(callbackStartTicks,total);
@@ -499,9 +510,38 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     else renderScheduled(inputMidi);
     engine_.endHostBlock();
 
+    bool callbackHasSignal=false;
+    for(int ch=0;ch<juce::jmin(2,buffer.getNumChannels()) && !callbackHasSignal;++ch)
+        for(int i=0;i<total;++i)
+            if(std::abs(buffer.getSample(ch,i))>1.0e-8f) { callbackHasSignal=true; break; }
+    if(total>0 && !callbackHasSignal)
+        continuityZeroCallbacks_.fetch_add(1,std::memory_order_relaxed);
+
     serviceVisualTelemetry(total);
     finalizeRenderBudget(callbackStartTicks,total);
 }
+OrigamiAudioProcessor::AudioContinuityDiagnostics
+OrigamiAudioProcessor::getAudioContinuityDiagnostics() const noexcept {
+    AudioContinuityDiagnostics result;
+    result.callbacks=continuityCallbacks_.load(std::memory_order_relaxed);
+    result.beginHostBlockFailures=continuityBeginFailures_.load(std::memory_order_relaxed);
+    result.processSpanFailures=continuitySpanFailures_.load(std::memory_order_relaxed);
+    result.requestedSpanSamples=continuityRequestedSamples_.load(std::memory_order_relaxed);
+    result.renderedSpanSamples=continuityRenderedSamples_.load(std::memory_order_relaxed);
+    result.zeroOutputCallbacks=continuityZeroCallbacks_.load(std::memory_order_relaxed);
+    result.uiMidiEventsDrained=continuityUiMidiEvents_.load(std::memory_order_relaxed);
+    return result;
+}
+void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
+    continuityCallbacks_.store(0,std::memory_order_relaxed);
+    continuityBeginFailures_.store(0,std::memory_order_relaxed);
+    continuitySpanFailures_.store(0,std::memory_order_relaxed);
+    continuityRequestedSamples_.store(0,std::memory_order_relaxed);
+    continuityRenderedSamples_.store(0,std::memory_order_relaxed);
+    continuityZeroCallbacks_.store(0,std::memory_order_relaxed);
+    continuityUiMidiEvents_.store(0,std::memory_order_relaxed);
+}
+
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
     // Deep Audit P03: autosave serializes the canonical non-RT model. It never
     // suspends the processor and never interrogates mutable renderer internals.
