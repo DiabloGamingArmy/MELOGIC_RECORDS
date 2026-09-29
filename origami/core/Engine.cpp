@@ -469,6 +469,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         compiledModulation_.advance(modulationSmoothing_);
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
         frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
+        frame.mainTuning=0.0f;frame.transpose=0.0f;
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
         for(std::size_t a=0;a<oscillatorPlan_.activeCount;++a) {
             const auto m=oscillatorPlan_.active[a];
