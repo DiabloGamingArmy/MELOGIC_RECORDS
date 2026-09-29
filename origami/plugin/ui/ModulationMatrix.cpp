@@ -70,10 +70,10 @@ public:
             {ModDestination::Level,"LEVEL"}
         };
 
-        unsigned ordinal=0;
+        unsigned oscillatorOrdinal=0;
         for(const auto& m:state.oscillators) if(m.id) {
-            ++ordinal;
-            const auto group="OSC "+juce::String(ordinal);
+            ++oscillatorOrdinal;
+            const auto group="OSC "+juce::String(oscillatorOrdinal);
             for(const auto& spec:oscillatorDestinations)
                 add(group,{spec.destination,m.id},spec.label);
             if(m.processCount || m.routeCount) destination_.addNativeSeparator(group);
