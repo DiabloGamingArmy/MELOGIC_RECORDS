@@ -701,16 +701,12 @@ private:
                 if(document_.valid()) {
                     auto& frame=document_.frames[document_.selectedFrame];
                     if(mode==EditMode::Additive) {
-                        // Additive begins as contribution controls over a square-wave harmonic profile.
-                        additiveContributions_.fill(1.0f);
-                        phases_.fill(0.0f);
-                        phases_[0]=0.0f;
-                        for(std::size_t bin=1;bin<kBins;++bin)
-                            phases_[bin]=-juce::MathConstants<float>::halfPi;
+                        ensureAdditiveStateInitialized(frame);
+                        additiveContributions_=frame.additiveContributions;
+                        setAdditivePhases();
                         rebuildAdditiveMagnitudes();
                         editMagnitudes_=magnitudes_;
                         reconstructPreview();
-                        storeAuthoringState(frame);
                     } else {
                         ensureSpectralStateInitialized(frame);
                         if(mode==EditMode::Independent) {
@@ -740,7 +736,9 @@ private:
                     magnitudes_=frame.independentMagnitudes;
                     phases_=frame.independentPhases;
                 } else if(editMode_==EditMode::Additive) {
-                    if(frame.hasAdditiveSpectrum) additiveContributions_=frame.additiveContributions;
+                    ensureAdditiveStateInitialized(frame);
+                    additiveContributions_=frame.additiveContributions;
+                    setAdditivePhases();
                     rebuildAdditiveMagnitudes();
                 } else {
                     analyseDocumentFrame();
@@ -768,6 +766,9 @@ private:
                     magnitudes_=frame.independentMagnitudes;
                     phases_=frame.independentPhases;
                 } else if(editMode_==EditMode::Additive) {
+                    const auto& frame=document_.frames[document_.selectedFrame];
+                    additiveContributions_=frame.additiveContributions;
+                    setAdditivePhases();
                     rebuildAdditiveMagnitudes();
                 } else {
                     analyseDocumentFrame();
@@ -816,9 +817,10 @@ private:
                 const int count=visibleBinCount(); const float slot=static_cast<float>(bounds.getWidth())/static_cast<float>(count);
                 for(int n=0;n<count;++n) {
                     const int bin=firstBin_+n; if(bin>=static_cast<int>(kBins)) break;
-                    const float normalized=displayAmplitudeForBin(bin,magnitudes_[static_cast<std::size_t>(bin)]);
-                    const float db=juce::Decibels::gainToDecibels(normalized,-72.0f);
-                    const float level=juce::jlimit(0.0f,1.0f,(db+72.0f)/72.0f);
+                    const float level=editMode_==EditMode::Additive
+                        ? juce::jlimit(0.0f,1.0f,additiveContributions_[static_cast<std::size_t>(bin)])
+                        : juce::jlimit(0.0f,1.0f,(juce::Decibels::gainToDecibels(
+                            displayAmplitudeForBin(bin,magnitudes_[static_cast<std::size_t>(bin)]),-72.0f)+72.0f)/72.0f);
                     const float height=level*static_cast<float>(bounds.getHeight());
                     const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)*slot;
                     const float width=juce::jmax(1.0f,slot-1.0f);
@@ -836,8 +838,13 @@ private:
                 juce::String status="HARMONICS · "+juce::String(zoom_)+"x";
                 if(hoveredBin_>0 && hoveredBin_<static_cast<int>(kBins)) {
                     const float frequency=referenceFundamentalHz_*static_cast<float>(hoveredBin_);
-                    const float db=juce::Decibels::gainToDecibels(displayAmplitudeForBin(hoveredBin_,magnitudes_[static_cast<std::size_t>(hoveredBin_)]),-72.0f);
-                    status+="     H "+juce::String(hoveredBin_)+"  "+noteNameForFrequency(frequency)+"  "+juce::String(frequency,1)+" Hz  "+juce::String(db,1)+" dB";
+                    if(editMode_==EditMode::Additive) {
+                        const float pct=100.0f*additiveContributions_[static_cast<std::size_t>(hoveredBin_)];
+                        status+="     H "+juce::String(hoveredBin_)+"  "+noteNameForFrequency(frequency)+"  "+juce::String(frequency,1)+" Hz  "+juce::String(pct,1)+"%";
+                    } else {
+                        const float db=juce::Decibels::gainToDecibels(displayAmplitudeForBin(hoveredBin_,magnitudes_[static_cast<std::size_t>(hoveredBin_)]),-72.0f);
+                        status+="     H "+juce::String(hoveredBin_)+"  "+noteNameForFrequency(frequency)+"  "+juce::String(frequency,1)+" Hz  "+juce::String(db,1)+" dB";
+                    }
                 }
                 g.setColour(juce::Colours::white.withAlpha(0.52f)); g.drawText(status,bounds.getX(),bounds.getY()+2,bounds.getWidth()-4,12,juce::Justification::topRight,false);
             }
@@ -886,7 +893,9 @@ private:
                     : fftMagnitudeForDisplayAmplitude(bin,displayAmplitude);
                 if(lastEditedBin_>0 && lastEditedBin_!=bin) {
                     const int lo=juce::jmin(lastEditedBin_,bin),hi=juce::jmax(lastEditedBin_,bin);
-                    const float start=editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
+                    const float start=editMode_==EditMode::Additive
+                        ? additiveContributions_[static_cast<std::size_t>(lastEditedBin_)]
+                        : editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
                     for(int b=lo;b<=hi;++b) {
                         const float t=static_cast<float>(b-lastEditedBin_)/static_cast<float>(bin-lastEditedBin_);
                         const float value=juce::jmax(0.0f,start+t*(target-start));
@@ -915,6 +924,17 @@ private:
                     frame.hasSubtractiveSpectrum=true;
                 }
             }
+            void ensureAdditiveStateInitialized(mct::origami::ui::WavetableFrame& frame) {
+                if(frame.hasAdditiveSpectrum) return;
+                frame.additiveContributions.fill(1.0f);
+                frame.additiveContributions[0]=0.0f;
+                frame.hasAdditiveSpectrum=true;
+            }
+            void setAdditivePhases() noexcept {
+                phases_.fill(0.0f);
+                for(std::size_t bin=1;bin<kBins;++bin)
+                    phases_[bin]=-juce::MathConstants<float>::halfPi;
+            }
             void loadAuthoringOrAnalyse() {
                 if(!document_.valid()) return;
                 auto& frame=document_.frames[document_.selectedFrame];
@@ -923,7 +943,9 @@ private:
                     magnitudes_=frame.independentMagnitudes;
                     phases_=frame.independentPhases;
                 } else if(editMode_==EditMode::Additive) {
-                    if(frame.hasAdditiveSpectrum) additiveContributions_=frame.additiveContributions;
+                    ensureAdditiveStateInitialized(frame);
+                    additiveContributions_=frame.additiveContributions;
+                    setAdditivePhases();
                     rebuildAdditiveMagnitudes();
                 } else analyseDocumentFrame();
             }
