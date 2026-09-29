@@ -102,6 +102,15 @@ public:
         std::uint64_t renderedSpanSamples=0;
         std::uint64_t zeroOutputCallbacks=0;
         std::uint64_t uiMidiEventsDrained=0;
+        double preparedSampleRate=0.0;
+        int preparedBlockSize=0;
+        int minCallbackSamples=0;
+        int maxCallbackSamples=0;
+        int lastCallbackSamples=0;
+        int lastOutputChannels=0;
+        float outputPeak=0.0f;
+        float maxAdjacentDelta=0.0f;
+        std::uint64_t nonFiniteOutputSamples=0;
     };
     AudioContinuityDiagnostics getAudioContinuityDiagnostics() const noexcept;
     void resetAudioContinuityDiagnostics() noexcept;
@@ -139,6 +148,12 @@ private:
     std::atomic<std::uint64_t> continuityRenderedSamples_{0};
     std::atomic<std::uint64_t> continuityZeroCallbacks_{0};
     std::atomic<std::uint64_t> continuityUiMidiEvents_{0};
+    std::atomic<double> runtimePreparedSampleRate_{0.0};
+    std::atomic<int> runtimePreparedBlockSize_{0};
+    std::atomic<int> runtimeMinCallbackSamples_{0},runtimeMaxCallbackSamples_{0};
+    std::atomic<int> runtimeLastCallbackSamples_{0},runtimeLastOutputChannels_{0};
+    std::atomic<float> runtimeOutputPeak_{0.0f},runtimeMaxAdjacentDelta_{0.0f};
+    std::atomic<std::uint64_t> runtimeNonFiniteOutputSamples_{0};
 
     // Persistent realtime MIDI workspaces; storage is committed in prepareToPlay().
     juce::MidiBuffer inputMidiScratch_;
