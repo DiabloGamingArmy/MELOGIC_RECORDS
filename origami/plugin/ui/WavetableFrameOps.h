@@ -28,6 +28,8 @@ inline void invalidateTimeSpectrum(WavetableFrame& frame) noexcept {
     // Additive authoring is independent of a time-domain transformation.
 }
 inline void circularShift(WavetableFrame& frame,std::size_t shift) {
+    shift%=kWavetableFrameSize;
+    if(shift==0)return;
     const auto old=frame.samples;
     for(std::size_t i=0;i<kWavetableFrameSize;++i)
         frame.samples[i]=old[(i+shift)%kWavetableFrameSize];
@@ -46,25 +48,45 @@ inline std::size_t correlationShift(const WavetableFrame& a,const WavetableFrame
         if(left[shift].real()>best){best=left[shift].real();offset=shift;}
     return offset;
 }
+inline bool alignPhaseSelection(WavetableDocument& document,const std::vector<unsigned>& selected) {
+    if(!document.valid() || selected.empty() || selected.front()>=document.frames.size())return false;
+    const auto referenceIndex=selected.front()>0?selected.front()-1:selected.front();
+    const auto reference=document.frames[referenceIndex];
+    bool changed=false;
+    for(const auto index:selected) {
+        if(index>=document.frames.size() || index==referenceIndex)continue;
+        const auto shift=correlationShift(reference,document.frames[index]);
+        if(shift==0)continue;
+        circularShift(document.frames[index],shift);
+        changed=true;
+    }
+    return changed;
+}
 inline void alignZero(WavetableFrame& frame) {
+    float peak=0.0f;
+    for(const auto sample:frame.samples)peak=std::max(peak,std::abs(sample));
+    if(peak<=1.0e-8f)return;
+    const auto epsilon=peak*1.0e-6f;
     std::size_t best=0,distance=kWavetableFrameSize;
     for(std::size_t i=0;i<kWavetableFrameSize;++i) {
         const auto previous=frame.samples[(i+kWavetableFrameSize-1)%kWavetableFrameSize];
-        if(previous<=0.0f && frame.samples[i]>=0.0f) {
+        if(previous< -epsilon && frame.samples[i]>= -epsilon) {
             const auto d=std::min(i,kWavetableFrameSize-i);
             if(d<distance){distance=d;best=i;}
         }
     }
-    if(distance<kWavetableFrameSize) circularShift(frame,best);
+    if(distance<kWavetableFrameSize && best!=0)circularShift(frame,best);
 }
 inline void processFrame(WavetableFrame& frame,int operation,
                          std::size_t first=0,std::size_t last=kWavetableFrameSize-1) {
     auto& samples=frame.samples;
     first=std::min(first,samples.size()-1);last=std::min(last,samples.size()-1);
-    if(first>last)return;
+    if(first>last || operation<1 || operation>4)return;
+    const auto before=samples;
     if(operation==1) { // normalize
         float peak=0;for(std::size_t i=first;i<=last;++i)peak=std::max(peak,std::abs(samples[i]));
-        if(peak>1.0e-8f)for(std::size_t i=first;i<=last;++i)samples[i]/=peak;
+        if(peak<=1.0e-8f)return;
+        for(std::size_t i=first;i<=last;++i)samples[i]/=peak;
     } else if(operation==2) std::reverse(samples.begin()+static_cast<std::ptrdiff_t>(first),
                                           samples.begin()+static_cast<std::ptrdiff_t>(last+1));
     else if(operation==3)for(std::size_t i=first;i<=last;++i)samples[i]=-samples[i];
@@ -78,7 +100,7 @@ inline void processFrame(WavetableFrame& frame,int operation,
             samples[i]=0.25f*old[previous]+0.5f*old[i]+0.25f*old[next];
         }
     }
-    invalidateTimeSpectrum(frame);
+    if(samples!=before)invalidateTimeSpectrum(frame);
 }
 inline void fft(std::array<std::complex<double>,kWavetableFrameSize>& data,bool inverse) noexcept {
     constexpr auto count=kWavetableFrameSize;
@@ -110,79 +132,162 @@ public:
         if(method_==MorphMethod::Spectral || method_==MorphMethod::Harmonic ||
            method_==MorphMethod::HarmonicShift || method_==MorphMethod::Hybrid) {
             for(std::size_t i=0;i<kWavetableFrameSize;++i) {
-                spectrumA_[i]=a.samples[i];spectrumB_[i]=b.samples[i];
+                spectrumA_[i]=a.samples[i];
+                spectrumB_[i]=method_==MorphMethod::Hybrid
+                    ? b.samples[(i+shift_)%kWavetableFrameSize]:b.samples[i];
             }
             fft(spectrumA_,false);fft(spectrumB_,false);
+            constexpr auto last=kWavetableFrameSize/2;
+            for(std::size_t h=1;h<last;++h)
+                spectralPeak_=std::max({spectralPeak_,std::abs(spectrumA_[h]),std::abs(spectrumB_[h])});
+            spectralEpsilon_=std::max(1.0e-9,spectralPeak_*1.0e-6);
+            if(method_==MorphMethod::HarmonicShift) {
+                const auto activeThreshold=std::max(1.0e-8,spectralPeak_*1.0e-4);
+                // Monotone rank correspondence cannot send many source partials
+                // independently to one local peak. Unmatched partials fade in/out.
+                for(std::size_t h=1;h<last;++h) {
+                    if(std::abs(spectrumA_[h])>activeThreshold)activeA_[activeCountA_++]=h;
+                    if(std::abs(spectrumB_[h])>activeThreshold)activeB_[activeCountB_++]=h;
+                }
+            }
         }
     }
     WavetableFrame generate(float t) const {
         WavetableFrame out;out.id=WavetableDocument::nextFrameId();
         t=std::clamp(t,0.0f,1.0f);
-        auto aligned=[&](std::size_t i) {
-            return a_.samples[i]*(1.0f-t)+b_.samples[(i+shift_)%kWavetableFrameSize]*t;
-        };
+        // Preserve exact authoring endpoints, including their metadata-free samples.
+        if(t==0.0f){out.samples=a_.samples;return out;}
+        if(t==1.0f){out.samples=b_.samples;return out;}
         if(method_==MorphMethod::Crossfade || method_==MorphMethod::PhaseAligned) {
             for(std::size_t i=0;i<kWavetableFrameSize;++i)
                 out.samples[i]=method_==MorphMethod::Crossfade
-                    ? a_.samples[i]*(1.0f-t)+b_.samples[i]*t : aligned(i);
+                    ? a_.samples[i]*(1.0f-t)+b_.samples[i]*t : static_cast<float>(alignedSample(i,t));
             return out;
         }
-        auto transformed=spectrumA_;
+        std::array<std::complex<double>,kWavetableFrameSize> transformed{};
         constexpr std::size_t last=kWavetableFrameSize/2;
-        for(std::size_t h=0;h<=last;++h) {
-            const auto x=spectrumA_[h],y=spectrumB_[h];
-            const double magnitude=std::abs(x)*(1.0-t)+std::abs(y)*t;
-            const double phaseA=std::arg(x),phaseB=std::arg(y);
-            const double difference=std::atan2(std::sin(phaseB-phaseA),std::cos(phaseB-phaseA));
-            const double phase=(method_==MorphMethod::Spectral || method_==MorphMethod::Hybrid)
-                ? phaseA+static_cast<double>(t)*difference
-                : (std::abs(x)>1.0e-9 ? phaseA : phaseB);
-            transformed[h]=std::polar(magnitude,phase);
-            if(h>0 && h<last) transformed[kWavetableFrameSize-h]=std::conj(transformed[h]);
-        }
         if(method_==MorphMethod::HarmonicShift) {
-            // Move each A harmonic toward the strongest nearby B harmonic.
-            // Fractional destinations split energy only between adjacent bins.
-            std::array<std::complex<double>,kWavetableFrameSize> shifted{};
-            shifted[0]=transformed[0];shifted[last]=transformed[last];
-            for(std::size_t h=1;h<last;++h) {
-                std::size_t target=h;double strength=std::abs(spectrumB_[h]);
-                for(std::size_t candidate=h>2?h-2:1;candidate<=std::min(last-1,h+2);++candidate) {
-                    const double energy=std::abs(spectrumB_[candidate]);
-                    if(energy>strength){strength=energy;target=candidate;}
-                }
-                const double at=static_cast<double>(h)+(static_cast<double>(target)-h)*t;
-                const auto lo=static_cast<std::size_t>(std::floor(at));
-                const auto hi=std::min(last-1,lo+1);
-                const double fraction=at-static_cast<double>(lo);
-                shifted[lo]+=transformed[h]*(1.0-fraction);
-                shifted[hi]+=transformed[h]*fraction;
+            const auto matched=std::min(activeCountA_,activeCountB_);
+            for(std::size_t j=0;j<matched;++j) {
+                const auto source=activeA_[j],destination=activeB_[j];
+                const auto amplitude=std::abs(spectrumA_[source])*(1.0-t)+
+                                     std::abs(spectrumB_[destination])*t;
+                const auto phase=std::arg(spectrumA_[source]);
+                const auto position=static_cast<double>(source)*(1.0-t)+
+                                    static_cast<double>(destination)*t;
+                deposit(transformed,position,std::polar(amplitude,phase));
             }
-            for(std::size_t h=1;h<last;++h) shifted[kWavetableFrameSize-h]=std::conj(shifted[h]);
-            transformed=shifted;
+            for(std::size_t j=matched;j<activeCountA_;++j) {
+                const auto h=activeA_[j];
+                transformed[h]+=spectrumA_[h]*(1.0-t);
+            }
+            for(std::size_t j=matched;j<activeCountB_;++j) {
+                const auto h=activeB_[j];
+                transformed[h]+=spectrumB_[h]*static_cast<double>(t);
+            }
+            // Harmonic transport deliberately excludes DC and Nyquist.
+        } else {
+            transformed[0]={spectrumA_[0].real()*(1.0-t)+spectrumB_[0].real()*t,0.0};
+            transformed[last]={spectrumA_[last].real()*(1.0-t)+spectrumB_[last].real()*t,0.0};
+            if(method_==MorphMethod::Harmonic)transformed[0]=transformed[last]={0.0,0.0};
+            for(std::size_t h=1;h<last;++h) {
+                const auto x=spectrumA_[h],y=spectrumB_[h];
+                const auto magA=std::abs(x),magB=std::abs(y);
+                const auto magnitude=magA*(1.0-t)+magB*t;
+                if(magnitude<=spectralEpsilon_)continue;
+                double phase=0.0;
+                if(magA<=spectralEpsilon_)phase=std::arg(y);
+                else if(magB<=spectralEpsilon_)phase=std::arg(x);
+                else if(method_==MorphMethod::Harmonic) {
+                    // Harmonic synthesis keeps each established partial coherent
+                    // with A; unlike Spectral it does not sweep wrapped phase.
+                    phase=std::arg(x);
+                } else {
+                    const auto phaseA=std::arg(x),phaseB=std::arg(y);
+                    const auto delta=std::atan2(std::sin(phaseB-phaseA),std::cos(phaseB-phaseA));
+                    phase=phaseA+static_cast<double>(t)*delta;
+                }
+                transformed[h]=std::polar(magnitude,phase);
+            }
         }
-        transformed[0]={transformed[0].real(),0};transformed[last]={transformed[last].real(),0};
+        for(std::size_t h=1;h<last;++h)
+            transformed[kWavetableFrameSize-h]=std::conj(transformed[h]);
         fft(transformed,true);
+        const auto hybridWeight=method_==MorphMethod::Hybrid?hybridSpectralWeight(t):0.0;
+        const auto hybridOffset=-signedShift()*t;
         for(std::size_t i=0;i<kWavetableFrameSize;++i) {
             const double value=method_==MorphMethod::Hybrid
-                ? 0.5*static_cast<double>(aligned(i))+0.5*transformed[i].real()
+                ? (1.0-hybridWeight)*alignedSample(i,t)+
+                  hybridWeight*sampleCircularSignal(transformed,static_cast<double>(i)+hybridOffset)
                 : transformed[i].real();
             out.samples[i]=static_cast<float>(std::clamp(value,-1.0,1.0));
         }
         return out;
     }
 private:
+    static double wrapPosition(double position) noexcept {
+        constexpr auto size=static_cast<double>(kWavetableFrameSize);
+        if(position<0.0)position+=size;
+        else if(position>=size)position-=size;
+        return position;
+    }
+    static double sampleCircular(const WavetableFrame& frame,double position) noexcept {
+        position=wrapPosition(position);
+        const auto first=static_cast<std::size_t>(position);
+        const auto next=(first+1)%kWavetableFrameSize;
+        const auto fraction=position-static_cast<double>(first);
+        return frame.samples[first]*(1.0-fraction)+frame.samples[next]*fraction;
+    }
+    static double sampleCircularSignal(const std::array<std::complex<double>,kWavetableFrameSize>& signal,
+                                       double position) noexcept {
+        position=wrapPosition(position);
+        const auto first=static_cast<std::size_t>(position);
+        const auto fraction=position-static_cast<double>(first);
+        return signal[first].real()*(1.0-fraction)+
+               signal[(first+1)%kWavetableFrameSize].real()*fraction;
+    }
+    double signedShift() const noexcept {
+        return shift_<=kWavetableFrameSize/2
+            ? static_cast<double>(shift_)
+            : static_cast<double>(shift_)-static_cast<double>(kWavetableFrameSize);
+    }
+    double alignedSample(std::size_t i,float t) const noexcept {
+        const auto offset=signedShift();
+        const auto a=sampleCircular(a_,static_cast<double>(i)-offset*t);
+        const auto b=sampleCircular(b_,static_cast<double>(i)+offset*(1.0-t));
+        return a*(1.0-t)+b*t;
+    }
+    static double hybridSpectralWeight(float t) noexcept {
+        // Spectral evolution is strongest where the two shapes are most mixed;
+        // sin² gives zero value and zero slope at both exact anchor boundaries.
+        const auto s=std::sin(juce::MathConstants<double>::pi*t);
+        return 0.35*s*s;
+    }
+    static void deposit(std::array<std::complex<double>,kWavetableFrameSize>& bins,
+                        double position,std::complex<double> value) noexcept {
+        constexpr auto last=kWavetableFrameSize/2;
+        const auto low=std::clamp<std::size_t>(static_cast<std::size_t>(std::floor(position)),1,last-1);
+        const auto high=std::min(last-1,low+1);
+        const auto fraction=std::clamp(position-static_cast<double>(low),0.0,1.0);
+        bins[low]+=value*(1.0-fraction);
+        if(high!=low)bins[high]+=value*fraction;
+    }
     const WavetableFrame& a_;const WavetableFrame& b_;
     MorphMethod method_;std::size_t shift_=0;
     std::array<std::complex<double>,kWavetableFrameSize> spectrumA_{},spectrumB_{};
+    std::array<std::size_t,kWavetableFrameSize/2-1> activeA_{},activeB_{};
+    std::size_t activeCountA_=0,activeCountB_=0;
+    double spectralPeak_=0.0,spectralEpsilon_=1.0e-9;
 };
 inline bool densify(WavetableDocument& document,std::size_t target,MorphMethod method,MorphCurve curve) {
     const auto source=document.frames.size();
-    if(source<2 || target<source || target>kMaxWavetableFrames) return false;
+    if(!document.valid() || source<2 || target<source || target>kMaxWavetableFrames) return false;
     if(target==source) return true;
     const auto anchors=document.frames; // immutable originals for the entire operation
     std::vector<WavetableFrame> output;output.reserve(target);
     std::vector<std::size_t> positions(source);
+    // Rounded normalized positions preserve exact originals. Since target>=source,
+    // consecutive numerators differ by at least the divisor, so indices cannot collide.
     for(std::size_t i=0;i<source;++i)
         positions[i]=(i*(target-1)+(source-1)/2)/(source-1);
     for(std::size_t pair=0;pair+1<source;++pair) {
@@ -204,7 +309,7 @@ inline bool densify(WavetableDocument& document,std::size_t target,MorphMethod m
 }
 inline bool morphBetween(WavetableDocument& document,std::size_t first,std::size_t last,
                          std::size_t count,MorphMethod method,MorphCurve curve) {
-    if(first>=last || last>=document.frames.size() || count<1 ||
+    if(!document.valid() || first>=last || last-first!=1 || last>=document.frames.size() || count<1 ||
        document.frames.size()+count>kMaxWavetableFrames) return false;
     const auto sourceA=document.frames[first],sourceB=document.frames[last];
     FrameMorpher morpher(sourceA,sourceB,method);

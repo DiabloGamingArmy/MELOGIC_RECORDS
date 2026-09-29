@@ -594,11 +594,135 @@ void pluginRealtimeAllocationGate() {
 void frameToolsAudit() {
     using namespace mct::origami::ui;
     const auto original=WavetableDocument::basicShapes();
+    auto makePartial=[](int harmonic,float phase=0.0f) {
+        WavetableFrame frame;frame.id=WavetableDocument::nextFrameId();
+        for(std::size_t i=0;i<frame.samples.size();++i)
+            frame.samples[i]=0.8f*std::cos(juce::MathConstants<float>::twoPi*harmonic*
+                                           static_cast<float>(i)/frame.samples.size()+phase);
+        return frame;
+    };
+    auto rms=[](const WavetableFrame& frame) {
+        double sum=0.0;
+        for(const auto value:frame.samples)sum+=static_cast<double>(value)*value;
+        return std::sqrt(sum/frame.samples.size());
+    };
+    auto difference=[](const WavetableFrame& a,const WavetableFrame& b) {
+        double sum=0.0;
+        for(std::size_t i=0;i<a.samples.size();++i)
+            sum+=std::abs(a.samples[i]-b.samples[i]);
+        return sum/a.samples.size();
+    };
+    for(const auto curve:{MorphCurve::Linear,MorphCurve::EaseIn,MorphCurve::EaseOut,MorphCurve::SCurve}) {
+        check(morphCurve(0.0f,curve)==0.0f && morphCurve(1.0f,curve)==1.0f,
+              "morph curves preserve exact endpoints");
+        float previous=0.0f;
+        for(int step=1;step<=100;++step) {
+            const auto value=morphCurve(step/100.0f,curve);
+            check(value>=previous && value<=1.0f,"morph curve is monotone");
+            previous=value;
+        }
+    }
+    {
+        FrameMorpher raw(original.frames[0],original.frames[1],MorphMethod::Crossfade);
+        check(raw.generate(0.0f).samples==original.frames[0].samples,
+              "raw crossfade has exact A endpoint");
+        check(raw.generate(1.0f).samples==original.frames[1].samples,
+              "raw crossfade has exact B endpoint");
+        const auto middle=raw.generate(0.25f);
+        for(std::size_t i=0;i<middle.samples.size();++i)
+            check(std::abs(middle.samples[i]-(0.75f*original.frames[0].samples[i]+
+                      0.25f*original.frames[1].samples[i]))<1.0e-6f,
+                  "raw crossfade is direct sample interpolation");
+    }
     auto shifted=original.frames[0];
     for(std::size_t i=0;i<shifted.samples.size();++i)
         shifted.samples[i]=original.frames[0].samples[(i+37)%shifted.samples.size()];
     check(correlationShift(original.frames[0],shifted)==kWavetableFrameSize-37,
           "FFT correlation finds circular phase offset");
+    for(const auto& source:{original.frames[0],original.frames[1],original.frames[2]}) {
+        auto rotated=source;
+        for(std::size_t i=0;i<rotated.samples.size();++i)
+            rotated.samples[i]=source.samples[(i+257)%rotated.samples.size()];
+        check(correlationShift(source,rotated)==kWavetableFrameSize-257,
+              "correlation aligns sine, saw-like and square-like periods");
+    }
+    {
+        WavetableDocument chain;chain.frames.push_back(original.frames[0]);
+        std::vector<unsigned> selected;
+        for(unsigned frame=1;frame<=24;++frame) {
+            auto rotated=original.frames[0];rotated.id=WavetableDocument::nextFrameId();
+            for(std::size_t i=0;i<rotated.samples.size();++i)
+                rotated.samples[i]=original.frames[0].samples[(i+frame*37)%rotated.samples.size()];
+            chain.frames.push_back(rotated);selected.push_back(frame);
+        }
+        check(alignPhaseSelection(chain,selected),"fixed-reference phase alignment performs work");
+        for(const auto index:selected)
+            check(difference(chain.frames[0],chain.frames[index])<1.0e-5,
+                  "long phase-alignment chain has no cumulative drift");
+    }
+    {
+        auto opposite=original.frames[0];
+        for(std::size_t i=0;i<opposite.samples.size();++i)
+            opposite.samples[i]=original.frames[0].samples[(i+kWavetableFrameSize/2)%kWavetableFrameSize];
+        FrameMorpher raw(original.frames[0],opposite,MorphMethod::Crossfade);
+        FrameMorpher aligned(original.frames[0],opposite,MorphMethod::PhaseAligned);
+        check(rms(aligned.generate(0.5f))>rms(raw.generate(0.5f))+0.35,
+              "phase alignment prevents shifted-wave cancellation");
+        check(aligned.generate(0.0f).samples==original.frames[0].samples &&
+              aligned.generate(1.0f).samples==opposite.samples,
+              "phase alignment preserves exact endpoints");
+    }
+    {
+        WavetableFrame silence;silence.id=WavetableDocument::nextFrameId();
+        const auto partial=makePartial(7,0.7f);
+        FrameMorpher spectral(silence,partial,MorphMethod::Spectral);
+        const auto middle=spectral.generate(0.5f);
+        for(std::size_t i=0;i<middle.samples.size();++i)
+            check(std::isfinite(middle.samples[i]) &&
+                  std::abs(middle.samples[i]-0.5f*partial.samples[i])<2.0e-4f,
+                  "spectral morph uses meaningful phase from non-silent bin");
+        const auto phaseB=makePartial(7,1.5f);
+        FrameMorpher spectralPhase(partial,phaseB,MorphMethod::Spectral);
+        FrameMorpher harmonic(partial,phaseB,MorphMethod::Harmonic);
+        check(difference(spectralPhase.generate(0.5f),harmonic.generate(0.5f))>0.08,
+              "spectral and harmonic methods follow distinct phase policies");
+        check(rms(spectralPhase.generate(0.5f))>0.45,
+              "spectral phase interpolation retains useful energy");
+    }
+    {
+        const auto h3=makePartial(3),h5=makePartial(5);
+        FrameMorpher transport(h3,h5,MorphMethod::HarmonicShift);
+        auto spectrumAt=[&](float t) {
+            std::array<std::complex<double>,kWavetableFrameSize> spectrum{};
+            const auto frame=transport.generate(t);
+            for(std::size_t i=0;i<frame.samples.size();++i)spectrum[i]=frame.samples[i];
+            fft(spectrum,false);return spectrum;
+        };
+        const auto middle=spectrumAt(0.5f);
+        check(std::abs(middle[4])>10.0*std::abs(middle[3]) &&
+              std::abs(middle[4])>10.0*std::abs(middle[5]),
+              "harmonic transport moves H3 to H4 halfway toward H5");
+        const auto quarter=spectrumAt(0.125f);
+        const auto ratio=std::abs(quarter[3])/std::abs(quarter[4]);
+        check(ratio>2.7 && ratio<3.3,
+              "fractional H3.25 distributes approximately 75/25 to adjacent bins");
+    }
+    {
+        auto a=makePartial(3),b=makePartial(3);
+        for(std::size_t i=0;i<a.samples.size();++i) {
+            const auto angle=juce::MathConstants<float>::twoPi*5*static_cast<float>(i)/a.samples.size();
+            a.samples[i]=0.5f*a.samples[i]+0.3f*std::cos(angle);
+            b.samples[i]=0.5f*b.samples[i]+0.3f*std::cos(angle+1.5f);
+        }
+        FrameMorpher hybrid(a,b,MorphMethod::Hybrid);
+        FrameMorpher phase(a,b,MorphMethod::PhaseAligned);
+        const auto middle=hybrid.generate(0.5f);
+        check(difference(middle,phase.generate(0.5f))>0.0003,
+              "hybrid includes spectral evolution beyond phase-aligned shape");
+        for(const auto value:middle.samples)
+            check(std::isfinite(value) && std::abs(value)<=1.0001f,
+                  "hybrid output is finite and bounded");
+    }
     for(const auto target:{16u,32u,64u,128u,255u,256u}) {
         auto document=original;
         check(densify(document,target,MorphMethod::Crossfade,MorphCurve::Linear),"target densification succeeds");
@@ -620,6 +744,35 @@ void frameToolsAudit() {
         }
         check(ids.size()==target,"generated frame identities are unique");
     }
+    for(const auto sourceCount:{4u,7u,19u,100u,128u,255u}) {
+        auto document=original;
+        while(document.frames.size()<sourceCount) {
+            auto frame=document.frames.back();frame.id=WavetableDocument::nextFrameId();
+            document.frames.push_back(frame);
+        }
+        document.selectedFrame=sourceCount/2;
+        const auto anchorIds=[&] {
+            std::vector<std::uint64_t> result;
+            for(const auto& frame:document.frames)result.push_back(frame.id);
+            return result;
+        }();
+        check(densify(document,256,MorphMethod::Crossfade,MorphCurve::Linear),
+              "arbitrary source count can densify to 256");
+        check(document.frames.size()==256,"arbitrary densification has exact target count");
+        const auto selectedId=anchorIds[sourceCount/2];
+        check(document.frames[document.selectedFrame].id==selectedId,
+              "densification preserves selected anchor identity");
+        std::size_t previous=0;
+        for(std::size_t i=0;i<sourceCount;++i) {
+            const auto expected=(i*255+(sourceCount-1)/2)/(sourceCount-1);
+            check(expected>=previous && document.frames[expected].id==anchorIds[i],
+                  "rounded normalized anchor positions remain collision-free");
+            previous=expected+1;
+        }
+        if(sourceCount==4)for(std::size_t i=0;i<4;++i)
+            check(document.frames[i*85].id==anchorIds[i],
+                  "4 to 256 anchors occupy exact indices 0/85/170/255");
+    }
     for(const auto method:{MorphMethod::Crossfade,MorphMethod::PhaseAligned,MorphMethod::Spectral,
                            MorphMethod::Harmonic,MorphMethod::HarmonicShift,MorphMethod::Hybrid}) {
         auto document=original;
@@ -639,6 +792,61 @@ void frameToolsAudit() {
     check(!document.frames[0].hasIndependentSpectrum && !document.frames[0].hasSubtractiveSpectrum,
           "time-domain frame operation invalidates dependent spectral state");
     check(document.frames[0].hasAdditiveSpectrum,"time-domain frame operation preserves additive authoring");
+    {
+        WavetableFrame silent;silent.id=WavetableDocument::nextFrameId();
+        silent.hasIndependentSpectrum=true;
+        processFrame(silent,1);
+        check(silent.hasIndependentSpectrum,"silent normalization does not invalidate unchanged metadata");
+        for(const auto value:silent.samples)check(value==0.0f,"silent normalization stays finite and zero");
+        auto partial=makePartial(2);
+        const auto untouched=partial.samples;
+        processFrame(partial,1,100,199);
+        for(std::size_t i=0;i<partial.samples.size();++i)
+            if(i<100 || i>199)check(partial.samples[i]==untouched[i],
+                "partial normalization leaves outside samples exact");
+        auto reversed=partial;const auto beforeReverse=reversed.samples;
+        processFrame(reversed,2,100,199);
+        for(std::size_t i=100;i<=199;++i)
+            check(reversed.samples[i]==beforeReverse[299-i],"partial reverse mirrors requested interval");
+        auto inverted=partial;processFrame(inverted,3);
+        for(std::size_t i=0;i<inverted.samples.size();++i)
+            check(inverted.samples[i]==-partial.samples[i],"invert is exact polarity reversal");
+        WavetableFrame edge;edge.id=WavetableDocument::nextFrameId();edge.samples[0]=1.0f;
+        processFrame(edge,4);
+        check(std::abs(edge.samples.back()-0.25f)<1.0e-7f &&
+              std::abs(edge.samples[0]-0.5f)<1.0e-7f &&
+              std::abs(edge.samples[1]-0.25f)<1.0e-7f,
+              "full smoothing wraps across periodic seam");
+        WavetableFrame local;local.id=WavetableDocument::nextFrameId();
+        local.samples[99]=1.0f;local.samples[200]=1.0f;
+        processFrame(local,4,100,199);
+        check(local.samples[100]==0.0f && local.samples[199]==0.0f &&
+              local.samples[99]==1.0f && local.samples[200]==1.0f,
+              "partial smoothing isolates both selection boundaries");
+    }
+    {
+        auto wave=original.frames[0];
+        for(std::size_t i=0;i<wave.samples.size();++i)
+            wave.samples[i]=original.frames[0].samples[(i+37)%wave.samples.size()];
+        alignZero(wave);
+        check(wave.samples[0]>=-1.0e-5f && wave.samples.back()<0.0f,
+              "zero alignment finds nearest positive-going crossing");
+        const auto once=wave.samples;alignZero(wave);
+        check(wave.samples==once,"already zero-aligned frame does not move again");
+        WavetableFrame dc;dc.samples.fill(0.2f);dc.hasIndependentSpectrum=true;
+        alignZero(dc);
+        check(dc.samples.front()==0.2f && dc.hasIndependentSpectrum,
+              "DC-only frame has no synthetic zero crossing or metadata change");
+    }
+    {
+        auto a=original.frames[0],b=original.frames[1];
+        a.hasIndependentSpectrum=b.hasSubtractiveSpectrum=b.hasAdditiveSpectrum=true;
+        FrameMorpher morpher(a,b,MorphMethod::Spectral);
+        const auto generated=morpher.generate(0.5f);
+        check(!generated.hasIndependentSpectrum && !generated.hasSubtractiveSpectrum &&
+              !generated.hasAdditiveSpectrum,
+              "generated frames never inherit stale spectral authoring metadata");
+    }
 }
 void run() {
     frameToolsAudit();
@@ -675,7 +883,9 @@ void run() {
     check(frameTools->getHeight()>70,"Frame Tools have room for compact controls");
     {
         const auto screenshot=editor->createComponentSnapshot(editor->getLocalBounds(),true,1.0f);
-        juce::FileOutputStream output(juce::File("/tmp/origami-frame-tools.png"));
+        const juce::File file("/tmp/origami-frame-tools.png");
+        file.deleteFile();
+        juce::FileOutputStream output(file);
         juce::PNGImageFormat{}.writeImageToStream(screenshot,output);
     }
     juce::Viewport* frameViewport=nullptr;

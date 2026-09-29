@@ -2018,13 +2018,16 @@ private:
             if(command==Command::Phase || command==Command::Zero) {
                 structuralEdit([&](std::vector<unsigned>& after) {
                     after=selected;
+                    if(command==Command::Phase)
+                        return mct::origami::ui::alignPhaseSelection(document_,selected);
+                    bool changed=false;
                     for(auto index:selected) {
                         auto& frame=document_.frames[index];
-                        if(command==Command::Zero)mct::origami::ui::alignZero(frame);
-                        else if(index>0) mct::origami::ui::circularShift(frame,
-                            mct::origami::ui::correlationShift(document_.frames[index-1],frame));
+                        const auto before=frame.samples;
+                        mct::origami::ui::alignZero(frame);
+                        changed|=frame.samples!=before;
                     }
-                    return true;
+                    return changed;
                 });return;
             }
             int operation=0;
@@ -2044,8 +2047,13 @@ private:
             }
             structuralEdit([&](std::vector<unsigned>& after) {
                 after=selected;
-                for(auto index:targets)mct::origami::ui::processFrame(document_.frames[index],operation,first,last);
-                return true;
+                bool changed=false;
+                for(auto index:targets) {
+                    const auto before=document_.frames[index].samples;
+                    mct::origami::ui::processFrame(document_.frames[index],operation,first,last);
+                    changed|=document_.frames[index].samples!=before;
+                }
+                return changed;
             });
         }
         void beginFrameImport() {
