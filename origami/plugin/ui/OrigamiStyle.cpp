@@ -49,6 +49,7 @@ OrigamiLookAndFeel::OrigamiLookAndFeel() {
 void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& button,const juce::Colour&,bool over,bool down) {
     const auto bounds=button.getLocalBounds().toFloat().reduced(.5f);
     const bool active=button.getToggleState();
+    const auto b=button.getLocalBounds().toFloat().reduced(.5f);
 
     if(button.getName()=="MATRIX ROUTE ENABLE") {
         auto pill=b.withSizeKeepingCentre(34.0f,18.0f);
