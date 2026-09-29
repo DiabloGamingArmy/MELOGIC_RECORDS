@@ -40,6 +40,10 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
 }
 void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     sampleRate_=sampleRate>1.0?sampleRate:44100.0;
+    runtimePreparedSampleRate_.store(sampleRate_,std::memory_order_relaxed);
+    runtimePreparedBlockSize_.store(samplesPerBlock,std::memory_order_relaxed);
+    runtimeMinCallbackSamples_.store(0,std::memory_order_relaxed);
+    runtimeMaxCallbackSamples_.store(0,std::memory_order_relaxed);
     envUiSamplesUntilPublish_=0;
     highResolutionTicksPerSecond_=static_cast<double>(juce::Time::getHighResolutionTicksPerSecond());
     if(!(highResolutionTicksPerSecond_>0.0)) highResolutionTicksPerSecond_=1.0;
@@ -392,6 +396,14 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     juce::ScopedNoDenormals noDenormals;
     jassert(buffer.getNumChannels() >= 2);
     const int total = buffer.getNumSamples();
+    runtimeLastCallbackSamples_.store(total,std::memory_order_relaxed);
+    runtimeLastOutputChannels_.store(buffer.getNumChannels(),std::memory_order_relaxed);
+    int observedMin=runtimeMinCallbackSamples_.load(std::memory_order_relaxed);
+    while((observedMin==0 || total<observedMin) &&
+          !runtimeMinCallbackSamples_.compare_exchange_weak(observedMin,total,std::memory_order_relaxed)) {}
+    int observedMax=runtimeMaxCallbackSamples_.load(std::memory_order_relaxed);
+    while(total>observedMax &&
+          !runtimeMaxCallbackSamples_.compare_exchange_weak(observedMax,total,std::memory_order_relaxed)) {}
 
     // Deep Audit P03: complete host/session restores cross into the
     // renderer only at a host-block boundary. setStateInformation() never
@@ -519,9 +531,24 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     engine_.endHostBlock();
 
     bool callbackHasSignal=false;
-    for(int ch=0;ch<juce::jmin(2,buffer.getNumChannels()) && !callbackHasSignal;++ch)
-        for(int i=0;i<total;++i)
-            if(std::abs(buffer.getSample(ch,i))>1.0e-8f) { callbackHasSignal=true; break; }
+    float callbackPeak=0.0f,callbackMaxDelta=0.0f;
+    std::uint64_t callbackNonFinite=0;
+    for(int ch=0;ch<juce::jmin(2,buffer.getNumChannels());++ch) {
+        float previous=0.0f; bool havePrevious=false;
+        for(int i=0;i<total;++i) {
+            const float sample=buffer.getSample(ch,i);
+            if(!std::isfinite(sample)) { ++callbackNonFinite; continue; }
+            callbackPeak=std::max(callbackPeak,std::abs(sample));
+            callbackHasSignal|=std::abs(sample)>1.0e-8f;
+            if(havePrevious) callbackMaxDelta=std::max(callbackMaxDelta,std::abs(sample-previous));
+            previous=sample;havePrevious=true;
+        }
+    }
+    runtimeOutputPeak_.store(callbackPeak,std::memory_order_relaxed);
+    float priorDelta=runtimeMaxAdjacentDelta_.load(std::memory_order_relaxed);
+    while(callbackMaxDelta>priorDelta &&
+          !runtimeMaxAdjacentDelta_.compare_exchange_weak(priorDelta,callbackMaxDelta,std::memory_order_relaxed)) {}
+    runtimeNonFiniteOutputSamples_.fetch_add(callbackNonFinite,std::memory_order_relaxed);
     if(total>0 && !callbackHasSignal)
         continuityZeroCallbacks_.fetch_add(1,std::memory_order_relaxed);
 
@@ -538,6 +565,15 @@ OrigamiAudioProcessor::getAudioContinuityDiagnostics() const noexcept {
     result.renderedSpanSamples=continuityRenderedSamples_.load(std::memory_order_relaxed);
     result.zeroOutputCallbacks=continuityZeroCallbacks_.load(std::memory_order_relaxed);
     result.uiMidiEventsDrained=continuityUiMidiEvents_.load(std::memory_order_relaxed);
+    result.preparedSampleRate=runtimePreparedSampleRate_.load(std::memory_order_relaxed);
+    result.preparedBlockSize=runtimePreparedBlockSize_.load(std::memory_order_relaxed);
+    result.minCallbackSamples=runtimeMinCallbackSamples_.load(std::memory_order_relaxed);
+    result.maxCallbackSamples=runtimeMaxCallbackSamples_.load(std::memory_order_relaxed);
+    result.lastCallbackSamples=runtimeLastCallbackSamples_.load(std::memory_order_relaxed);
+    result.lastOutputChannels=runtimeLastOutputChannels_.load(std::memory_order_relaxed);
+    result.outputPeak=runtimeOutputPeak_.load(std::memory_order_relaxed);
+    result.maxAdjacentDelta=runtimeMaxAdjacentDelta_.load(std::memory_order_relaxed);
+    result.nonFiniteOutputSamples=runtimeNonFiniteOutputSamples_.load(std::memory_order_relaxed);
     return result;
 }
 void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
@@ -548,6 +584,13 @@ void OrigamiAudioProcessor::resetAudioContinuityDiagnostics() noexcept {
     continuityRenderedSamples_.store(0,std::memory_order_relaxed);
     continuityZeroCallbacks_.store(0,std::memory_order_relaxed);
     continuityUiMidiEvents_.store(0,std::memory_order_relaxed);
+    runtimeMinCallbackSamples_.store(0,std::memory_order_relaxed);
+    runtimeMaxCallbackSamples_.store(0,std::memory_order_relaxed);
+    runtimeLastCallbackSamples_.store(0,std::memory_order_relaxed);
+    runtimeLastOutputChannels_.store(0,std::memory_order_relaxed);
+    runtimeOutputPeak_.store(0.0f,std::memory_order_relaxed);
+    runtimeMaxAdjacentDelta_.store(0.0f,std::memory_order_relaxed);
+    runtimeNonFiniteOutputSamples_.store(0,std::memory_order_relaxed);
 }
 
 void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
