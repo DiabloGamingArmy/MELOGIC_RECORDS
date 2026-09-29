@@ -69,6 +69,9 @@ public:
     std::size_t activeVoiceCount() const noexcept;
     RenderLoad renderLoad() const noexcept;
     void setVoiceAdmissionCeiling(std::size_t ceiling) noexcept;
+    // Global timing bridge: ARP owns note scheduling, modulation owns the derived swing value.
+    void setGlobalSwingBase(float swing) noexcept;
+    float modulatedSwing() const noexcept { return currentSwing_; }
     std::size_t voiceAdmissionCeiling() const noexcept { return voiceAdmissionCeiling_; }
     // mct-origami-multi-osc-foundation-v20
     OscillatorModuleId addOscillatorModule() noexcept;
@@ -112,6 +115,7 @@ private:
     float currentPortaTime_=0.0f;
     float currentEnvelopeScaling_=1.0f;
     float currentLfoScaling_=1.0f;
+    float globalSwingBase_=0.0f,currentSwing_=0.0f;
     unsigned hostChannels_ = 0;
     bool hostBlockActive_ = false;
     std::array<Voice, voiceCount> voices_;
