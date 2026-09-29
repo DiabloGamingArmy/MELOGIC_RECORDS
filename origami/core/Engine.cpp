@@ -675,7 +675,8 @@ RenderLoad OrigamiEngine::renderLoad() const noexcept {
         ++load.activeModules;
         const auto unison=std::clamp(module.unison,1u,16u);
         load.totalUnison+=unison;
-        lanesPerVoice+=unison+1u;
+        // The blend-center oscillator executes only when unison > 1.
+        lanesPerVoice+=unison+(unison>1u ? 1u : 0u);
     }
     load.oscillatorEvaluationsPerSample=load.activeVoices*lanesPerVoice;
     return load;
