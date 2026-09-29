@@ -711,10 +711,16 @@ private:
                         editMagnitudes_=magnitudes_;
                         reconstructPreview();
                         storeAuthoringState(frame);
-                    } else if(frame.hasSpectralAuthoring) {
-                        magnitudes_=frame.spectralCoefficients;
-                        phases_=frame.spectralPhases;
-                    } else analyseDocumentFrame();
+                    } else {
+                        ensureSpectralStateInitialized(frame);
+                        if(mode==EditMode::Independent) {
+                            magnitudes_=frame.independentMagnitudes;
+                            phases_=frame.independentPhases;
+                        } else {
+                            magnitudes_=frame.subtractiveSourceMagnitudes;
+                            phases_=frame.subtractiveSourcePhases;
+                        }
+                    }
                 }
                 repaint();
             }
@@ -727,12 +733,17 @@ private:
             }
             void refresh() {
                 if(editing_) return;
-                if(editMode_==EditMode::Subtractive) analyseDocumentFrame();
-                else {
-                    auto& frame=document_.frames[document_.selectedFrame];
-                    storeAuthoringState(frame);
-                    magnitudes_=frame.spectralCoefficients;
-                    phases_=frame.spectralPhases;
+                if(!document_.valid()) { repaint(); return; }
+                auto& frame=document_.frames[document_.selectedFrame];
+                ensureSpectralStateInitialized(frame);
+                if(editMode_==EditMode::Independent) {
+                    magnitudes_=frame.independentMagnitudes;
+                    phases_=frame.independentPhases;
+                } else if(editMode_==EditMode::Additive) {
+                    if(frame.hasAdditiveSpectrum) additiveContributions_=frame.additiveContributions;
+                    rebuildAdditiveMagnitudes();
+                } else {
+                    analyseDocumentFrame();
                 }
                 repaint();
             }
@@ -873,21 +884,42 @@ private:
                 if(editMode_==EditMode::Additive) rebuildAdditiveMagnitudes();
                 lastEditedBin_=bin; reconstructPreview(); hoveredBin_=bin; repaint();
             }
+            void ensureSpectralStateInitialized(mct::origami::ui::WavetableFrame& frame) {
+                if(frame.hasIndependentSpectrum && frame.hasSubtractiveSpectrum) return;
+                analyseDocumentFrame();
+                if(!frame.hasIndependentSpectrum) {
+                    frame.independentMagnitudes=magnitudes_;
+                    frame.independentPhases=phases_;
+                    frame.hasIndependentSpectrum=true;
+                }
+                if(!frame.hasSubtractiveSpectrum) {
+                    frame.subtractiveSourceMagnitudes=magnitudes_;
+                    frame.subtractiveSourcePhases=phases_;
+                    frame.subtractiveGains.fill(1.0f);
+                    frame.hasSubtractiveSpectrum=true;
+                }
+            }
             void loadAuthoringOrAnalyse() {
                 if(!document_.valid()) return;
-                const auto& frame=document_.frames[document_.selectedFrame];
-                if(editMode_!=EditMode::Subtractive && frame.hasSpectralAuthoring) {
-                    magnitudes_=frame.spectralCoefficients;
-                    phases_=frame.spectralPhases;
-                    return;
-                }
-                analyseDocumentFrame();
+                auto& frame=document_.frames[document_.selectedFrame];
+                ensureSpectralStateInitialized(frame);
+                if(editMode_==EditMode::Independent) {
+                    magnitudes_=frame.independentMagnitudes;
+                    phases_=frame.independentPhases;
+                } else if(editMode_==EditMode::Additive) {
+                    if(frame.hasAdditiveSpectrum) additiveContributions_=frame.additiveContributions;
+                    rebuildAdditiveMagnitudes();
+                } else analyseDocumentFrame();
             }
             void storeAuthoringState(mct::origami::ui::WavetableFrame& frame) {
-                if(editMode_==EditMode::Subtractive) { frame.hasSpectralAuthoring=false; return; }
-                frame.hasSpectralAuthoring=true;
-                frame.spectralCoefficients=magnitudes_;
-                frame.spectralPhases=phases_;
+                if(editMode_==EditMode::Independent) {
+                    frame.hasIndependentSpectrum=true;
+                    frame.independentMagnitudes=magnitudes_;
+                    frame.independentPhases=phases_;
+                } else if(editMode_==EditMode::Additive) {
+                    frame.hasAdditiveSpectrum=true;
+                    frame.additiveContributions=additiveContributions_;
+                }
             }
             void rebuildAdditiveMagnitudes() {
                 editMagnitudes_.fill(0.0f);
@@ -931,10 +963,8 @@ private:
                 // INDEPENDENT keeps the user's harmonic coefficients authoritative:
                 // output peak fitting must never push untouched bars down.
                 magnitudes_=editMagnitudes_;
-                if(editMode_!=EditMode::Subtractive) {
-                    auto& authored=document_.frames[document_.selectedFrame];
-                    storeAuthoringState(authored);
-                }
+                if(editMode_!=EditMode::Subtractive)
+                    storeAuthoringState(document_.frames[document_.selectedFrame]);
                 if(onSamplesChanged) onSamplesChanged();
             }
             void performFft(bool inverse) noexcept {
@@ -1469,7 +1499,6 @@ private:
             spectrumMode_.setTooltip("Spectral editing mode");
             spectrum_.setHeaderAccessory(spectrumMode_,118);
             spectrumMode_.onClick=[this] {
-                const bool independent=spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent;
                 const std::vector<mct::origami::ui::NativeChoiceItem> items={
                     {1,"INDEPENDENT",true,"",spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent},
                     {2,"SUBTRACTIVE",true,"",spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Subtractive},
