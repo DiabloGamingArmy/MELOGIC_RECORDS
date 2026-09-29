@@ -149,6 +149,9 @@ private:
     bool prepared_ = false;
     RuntimeVisualizationSnapshot runtimeVisualization_{};
     std::array<OscillatorModuleState,16> runtimeVisualizationModules_{};
+    // UI observation is intentionally control-rate. Audio DSP remains sample-rate.
+    // At 96 kHz this caps visualization bookkeeping near 1 kHz instead of 96 kHz.
+    std::size_t runtimeVisualizationCountdown_=0;
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Origami requires lock-free float parameter targets");
 }
