@@ -132,35 +132,79 @@ private:
                     auto wave=getLocalBounds().reduced(11,10);
                     wave.removeFromBottom(18);
                     if(samples_!=nullptr && !wave.isEmpty()) {
-                        juce::Path trace,body;
                         const float mid=static_cast<float>(wave.getCentreY());
                         const float amp=static_cast<float>(wave.getHeight())*.42f;
-                        const int points=juce::jmax(2,wave.getWidth());
-                        for(int i=0;i<points;++i) {
-                            const float t=static_cast<float>(i)/static_cast<float>(points-1);
-                            const auto sampleIndex=juce::jmin(
-                                samples_->size()-1,
-                                static_cast<std::size_t>(t*static_cast<float>(samples_->size()-1)));
-                            const float x=static_cast<float>(wave.getX())+t*static_cast<float>(wave.getWidth());
-                            const float y=mid-(*samples_)[sampleIndex]*amp;
-                            if(i==0) {
-                                trace.startNewSubPath(x,y);
-                                body.startNewSubPath(x,mid);
-                            } else {
-                                trace.lineTo(x,y);
-                            }
-                            body.lineTo(x,y);
-                        }
-                        body.lineTo(static_cast<float>(wave.getRight()),mid);
-                        body.closeSubPath();
+                        const int columns=juce::jmax(2,wave.getWidth());
+                        const int sampleCount=static_cast<int>(samples_->size());
+                        const float samplesPerColumn=static_cast<float>(sampleCount)/static_cast<float>(columns);
 
-                        // Match the main editor's visual language: the preview body
-                        // follows Origami's user-customisable global signal colour.
-                        g.setColour(mct::origami::ui::signalSurfaceColour(0.48f,0.34f));
-                        g.fillPath(body);
-                        g.setColour(juce::Colours::white.withAlpha(0.94f));
-                        g.strokePath(trace,juce::PathStrokeType(2.0f,juce::PathStrokeType::curved,
-                                                               juce::PathStrokeType::rounded));
+                        // Estimate local waveform density from zero crossings.  Sparse
+                        // shapes retain the smooth trace; dense shapes use a min/max
+                        // column envelope so sub-pixel peaks cannot disappear.
+                        int zeroCrossings=0;
+                        float previous=(*samples_)[0];
+                        for(int i=1;i<sampleCount;++i) {
+                            const float current=(*samples_)[static_cast<std::size_t>(i)];
+                            if((previous<0.0f && current>=0.0f) || (previous>0.0f && current<=0.0f))
+                                ++zeroCrossings;
+                            previous=current;
+                        }
+                        const float cycles=0.5f*static_cast<float>(zeroCrossings);
+                        const bool dense=cycles>static_cast<float>(columns)*0.18f;
+
+                        juce::Path trace,body;
+                        if(!dense) {
+                            // Interpolated sampling avoids the nearest-sample stepping
+                            // that made even simple thumbnails less faithful.
+                            for(int x=0;x<columns;++x) {
+                                const float position=static_cast<float>(x)*static_cast<float>(sampleCount-1)
+                                                     /static_cast<float>(columns-1);
+                                const int i0=juce::jlimit(0,sampleCount-1,static_cast<int>(position));
+                                const int i1=juce::jmin(sampleCount-1,i0+1);
+                                const float frac=position-static_cast<float>(i0);
+                                const float sample=juce::jmap(frac,(*samples_)[static_cast<std::size_t>(i0)],
+                                                                   (*samples_)[static_cast<std::size_t>(i1)]);
+                                const float px=static_cast<float>(wave.getX()+x);
+                                const float py=mid-sample*amp;
+                                if(x==0) { trace.startNewSubPath(px,py); body.startNewSubPath(px,mid); }
+                                else trace.lineTo(px,py);
+                                body.lineTo(px,py);
+                            }
+                            body.lineTo(static_cast<float>(wave.getRight()),mid);
+                            body.closeSubPath();
+                            g.setColour(mct::origami::ui::signalSurfaceColour(0.48f,0.34f));
+                            g.fillPath(body);
+                            g.setColour(juce::Colours::white.withAlpha(0.94f));
+                            const float stroke=cycles>static_cast<float>(columns)*0.08f?1.35f:2.0f;
+                            g.strokePath(trace,juce::PathStrokeType(stroke,juce::PathStrokeType::curved,
+                                                                  juce::PathStrokeType::rounded));
+                        } else {
+                            // One bounded scan of the 2048 source samples, partitioned
+                            // by screen column.  Min/max retains every visible excursion
+                            // without constructing a 2048-segment antialiased path.
+                            juce::Path envelope;
+                            for(int x=0;x<columns;++x) {
+                                const int begin=juce::jlimit(0,sampleCount-1,
+                                    static_cast<int>(std::floor(static_cast<float>(x)*samplesPerColumn)));
+                                const int end=juce::jlimit(begin+1,sampleCount,
+                                    static_cast<int>(std::ceil(static_cast<float>(x+1)*samplesPerColumn)));
+                                float minimum=(*samples_)[static_cast<std::size_t>(begin)];
+                                float maximum=minimum;
+                                for(int i=begin+1;i<end;++i) {
+                                    const float v=(*samples_)[static_cast<std::size_t>(i)];
+                                    minimum=juce::jmin(minimum,v); maximum=juce::jmax(maximum,v);
+                                }
+                                const float px=static_cast<float>(wave.getX()+x)+0.5f;
+                                const float top=mid-maximum*amp;
+                                const float bottom=mid-minimum*amp;
+                                envelope.startNewSubPath(px,top);
+                                envelope.lineTo(px,bottom);
+                            }
+                            g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.28f));
+                            g.strokePath(envelope,juce::PathStrokeType(1.0f));
+                            g.setColour(juce::Colours::white.withAlpha(0.90f));
+                            g.strokePath(envelope,juce::PathStrokeType(0.72f));
+                        }
                     }
                     g.setFont(juce::Font(juce::FontOptions("Arial",9.5f,juce::Font::bold)));
                     g.setColour(juce::Colours::white.withAlpha(0.78f));
