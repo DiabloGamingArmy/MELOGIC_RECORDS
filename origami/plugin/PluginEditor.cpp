@@ -510,8 +510,19 @@ void OrigamiAudioProcessorEditor::openWavetableEditor(unsigned oscillatorId) {
 
 void OrigamiAudioProcessorEditor::closeWavetableEditor() {
     if(!wavetableEditorSelected_) return;
+
+    // The oscillator that opened the editor remains the commit target for the
+    // entire editor session. X and Esc both arrive through this single close
+    // path, so neither can silently discard the authored table.
+    const auto targetOscillator=wavetableEditorOscillatorId_;
+    if(targetOscillator!=0) {
+        auto table=wavetableEditor_.compiledWavetable();
+        processor_.installUiOscillatorWavetable(targetOscillator,std::move(table));
+    }
+
     wavetableEditorSelected_=false;
     wavetableEditorOscillatorId_=0;
+    oscillators_.syncFromModel();
     resized();
 }
 
