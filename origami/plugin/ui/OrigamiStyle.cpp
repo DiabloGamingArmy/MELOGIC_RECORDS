@@ -50,6 +50,45 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
     const auto bounds=button.getLocalBounds().toFloat().reduced(.5f);
     const bool active=button.getToggleState();
 
+    if(button.getName()=="MATRIX ROUTE ENABLE") {
+        auto pill=b.withSizeKeepingCentre(34.0f,18.0f);
+        auto fill=active?Palette::accent():Palette::raised();
+        if(over) fill=fill.brighter(.08f);
+        if(down) fill=fill.brighter(.12f);
+        g.setColour(fill);g.fillRoundedRectangle(pill,9.0f);
+        g.setColour(active?Palette::accent().brighter(.12f):Palette::borderSoft());
+        g.drawRoundedRectangle(pill,9.0f,1.0f);
+        const float thumb=12.0f;
+        const float cx=active?pill.getRight()-9.0f:pill.getX()+9.0f;
+        g.setColour(Palette::text());
+        g.fillEllipse(juce::Rectangle<float>(thumb,thumb).withCentre({cx,pill.getCentreY()}));
+        return;
+    }
+
+    if(button.getName()=="MATRIX ROUTE POLARITY") {
+        auto fill=active?Palette::raised():Palette::inset();
+        if(over) fill=fill.brighter(.07f);
+        if(down) fill=fill.brighter(.11f);
+        g.setColour(fill);g.fillRoundedRectangle(b,2.5f);
+        g.setColour(active?Palette::borderStrong():Palette::borderSoft());
+        g.drawRoundedRectangle(b,2.5f,1.0f);
+        if(active) {
+            g.setColour(Palette::accent());
+            g.fillRoundedRectangle(b.getX()+9.0f,b.getBottom()-2.3f,b.getWidth()-18.0f,1.5f,.75f);
+        }
+        return;
+    }
+
+    if(button.getName()=="MATRIX ROUTE DUPLICATE" || button.getName()=="MATRIX ROUTE DELETE") {
+        auto fill=Palette::inset();
+        if(over) fill=fill.brighter(.09f);
+        if(down) fill=fill.brighter(.14f);
+        g.setColour(fill);g.fillRoundedRectangle(b,2.5f);
+        g.setColour(over?Palette::borderStrong():Palette::borderSoft());
+        g.drawRoundedRectangle(b,2.5f,1.0f);
+        return;
+    }
+
     if(button.getName().startsWith("MOD SOURCE TAB") ||
        button.getName()=="FILTER SOURCE TAB") {
         if(over || down) {
@@ -89,6 +128,27 @@ void OrigamiLookAndFeel::drawButtonText(juce::Graphics& g,juce::TextButton& butt
         text(g,button.getButtonText(),button.getLocalBounds().reduced(5,2),10.6f,
              button.isEnabled()?Palette::text():Palette::muted(),
              juce::Justification::centred);
+        return;
+    }
+
+    if(button.getName()=="MATRIX ROUTE ENABLE") return;
+
+    if(button.getName()=="MATRIX ROUTE DUPLICATE") {
+        const auto colour=button.isEnabled()?Palette::text():Palette::muted();
+        auto icon=button.getLocalBounds().toFloat().withSizeKeepingCentre(14.0f,14.0f);
+        g.setColour(colour.withAlpha(.92f));
+        g.drawRoundedRectangle(icon.translated(-2.0f,2.0f).reduced(1.5f),1.5f,1.0f);
+        g.drawRoundedRectangle(icon.translated(2.0f,-2.0f).reduced(1.5f),1.5f,1.0f);
+        return;
+    }
+
+    if(button.getName()=="MATRIX ROUTE DELETE") {
+        const auto colour=button.isEnabled()?Palette::text():Palette::muted();
+        auto icon=button.getLocalBounds().toFloat().withSizeKeepingCentre(13.0f,14.0f);
+        g.setColour(colour.withAlpha(.90f));
+        g.drawRoundedRectangle(icon.withTrimmedTop(3.0f).reduced(2.0f,1.0f),1.2f,1.0f);
+        g.drawLine(icon.getX()+2.0f,icon.getY()+3.0f,icon.getRight()-2.0f,icon.getY()+3.0f,1.0f);
+        g.drawLine(icon.getCentreX()-2.0f,icon.getY()+1.0f,icon.getCentreX()+2.0f,icon.getY()+1.0f,1.0f);
         return;
     }
 
@@ -186,6 +246,25 @@ void OrigamiLookAndFeel::drawRotarySlider(juce::Graphics& g,int x,int y,int widt
 void OrigamiLookAndFeel::drawLinearSlider(juce::Graphics& g,int x,int y,int width,int height,
     float sliderPos,float minSliderPos,float maxSliderPos,const juce::Slider::SliderStyle style,juce::Slider& slider) {
     auto b=juce::Rectangle<float>(float(x),float(y),float(width),float(height)).reduced(.5f);
+    if(slider.getName()=="MATRIX ROUTE AMOUNT") {
+        g.setColour(Palette::inset());g.fillRoundedRectangle(b,2.5f);
+        g.setColour(Palette::borderSoft());g.drawRoundedRectangle(b,2.5f,1.0f);
+        const float left=float(x)+8.0f;
+        const float right=float(x+width)-8.0f;
+        const float centre=(left+right)*.5f;
+        const float p=juce::jlimit(left,right,sliderPos);
+        const float cy=float(y)+float(height)*.5f;
+        g.setColour(Palette::raised().brighter(.08f));
+        g.fillRoundedRectangle(left,cy-1.5f,right-left,3.0f,1.5f);
+        g.setColour(Palette::accent().withAlpha(.92f));
+        const float activeX=juce::jmin(centre,p),activeW=std::abs(p-centre);
+        if(activeW>.5f) g.fillRoundedRectangle(activeX,cy-1.75f,activeW,3.5f,1.75f);
+        g.setColour(Palette::secondary().withAlpha(.70f));
+        g.drawVerticalLine(juce::roundToInt(centre),cy-6.0f,cy+6.0f);
+        g.setColour(Palette::text());
+        g.fillRoundedRectangle(p-1.0f,cy-9.0f,2.0f,18.0f,1.0f);
+        return;
+    }
     g.setColour(Palette::inset());g.fillRoundedRectangle(b,2.5f);
     g.setColour(Palette::borderSoft());g.drawRoundedRectangle(b,2.5f,1.0f);
     if(slider.getName().startsWith("OSC TUNING")) return;
