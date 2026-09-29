@@ -728,8 +728,10 @@ private:
                 repaint();
             }
             EditMode editMode() const noexcept { return editMode_; }
-            void selectPreviousHarmonic() noexcept { hoveredBin_=juce::jmax(1,(hoveredBin_>0?hoveredBin_:firstBin_)-1); ensureSelectedBinVisible(); repaint(); }
-            void selectNextHarmonic() noexcept { hoveredBin_=juce::jmin(static_cast<int>(kBins)-1,(hoveredBin_>0?hoveredBin_:firstBin_)+1); ensureSelectedBinVisible(); repaint(); }
+            void selectPreviousHarmonic() noexcept { selectedBin_=juce::jmax(1,(selectedBin_>0?selectedBin_:firstBin_)-1); ensureSelectedBinVisible(); repaint(); }
+            void selectNextHarmonic() noexcept { selectedBin_=juce::jmin(static_cast<int>(kBins)-1,(selectedBin_>0?selectedBin_:firstBin_)+1); ensureSelectedBinVisible(); repaint(); }
+            void increaseSelectedMagnitude() { nudgeSelectedMagnitude(1); }
+            void decreaseSelectedMagnitude() { nudgeSelectedMagnitude(-1); }
             void panLeft() noexcept { firstBin_-=juce::jmax(1,visibleBinCount()/8); clampFirstBin(); repaint(); }
             void panRight() noexcept { firstBin_+=juce::jmax(1,visibleBinCount()/8); clampFirstBin(); repaint(); }
             void zoomIn() noexcept { setZoom(zoom_+1); }
@@ -763,6 +765,7 @@ private:
             void mouseExit(const juce::MouseEvent&) override { hoveredBin_=-1; repaint(); }
             void mouseDown(const juce::MouseEvent& e) override {
                 if(!document_.valid()) return;
+                selectedBin_=binForX(e.position.x);
                 editing_=true; editFrameId_=document_.frames[document_.selectedFrame].id;
                 editBefore_=document_.frames[document_.selectedFrame].samples;
                 loadAuthoringOrAnalyse(); editMagnitudes_=magnitudes_;
@@ -853,7 +856,7 @@ private:
                     }
                     g.setColour(mct::origami::ui::signalSourceColour().withAlpha(0.78f));
                     g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-height,width,height));
-                    if(bin==hoveredBin_) { g.setColour(juce::Colours::white.withAlpha(0.9f)); g.drawRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getY()),width,static_cast<float>(bounds.getHeight())),1.0f); }
+                    if(bin==(hoveredBin_>0?hoveredBin_:selectedBin_)) { g.setColour(juce::Colours::white.withAlpha(0.9f)); g.drawRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getY()),width,static_cast<float>(bounds.getHeight())),1.0f); }
                 }
                 g.setColour(juce::Colours::white.withAlpha(0.38f)); g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
                 for(int n=0;n<=4;++n) {
@@ -900,9 +903,39 @@ private:
             }
             void clampFirstBin() noexcept { firstBin_=juce::jlimit(1,juce::jmax(1,static_cast<int>(kBins)-visibleBinCount()),firstBin_); }
             void ensureSelectedBinVisible() noexcept {
-                if(hoveredBin_<firstBin_) firstBin_=hoveredBin_;
-                else if(hoveredBin_>=firstBin_+visibleBinCount()) firstBin_=hoveredBin_-visibleBinCount()+1;
+                if(selectedBin_<firstBin_) firstBin_=selectedBin_;
+                else if(selectedBin_>=firstBin_+visibleBinCount()) firstBin_=selectedBin_-visibleBinCount()+1;
                 clampFirstBin();
+            }
+            void nudgeSelectedMagnitude(int direction) {
+                if(!document_.valid()) return;
+                if(selectedBin_<1) selectedBin_=firstBin_;
+                const auto index=static_cast<std::size_t>(selectedBin_);
+                auto& frame=document_.frames[document_.selectedFrame];
+                ensureSpectralStateInitialized(frame);
+                const auto before=frame.samples;
+                loadAuthoringOrAnalyse(); editMagnitudes_=magnitudes_;
+                if(editMode_==EditMode::Additive) {
+                    ensureAdditiveStateInitialized(frame); additiveContributions_=frame.additiveContributions;
+                    additiveContributions_[index]=juce::jlimit(0.0f,1.0f,additiveContributions_[index]+0.02f*static_cast<float>(direction));
+                    setAdditivePhases(); rebuildAdditiveMagnitudes();
+                } else if(editMode_==EditMode::Subtractive) {
+                    const float source=frame.subtractiveSourceMagnitudes[index];
+                    const float current=displayAmplitudeForBin(selectedBin_,source*frame.subtractiveGains[index]);
+                    const float db=juce::Decibels::gainToDecibels(current,-72.0f);
+                    const float desired=fftMagnitudeForDisplayAmplitude(selectedBin_,juce::Decibels::decibelsToGain(juce::jlimit(-72.0f,0.0f,db+static_cast<float>(direction))));
+                    frame.subtractiveGains[index]=source>1.0e-9f?juce::jlimit(0.0f,1.0f,desired/source):0.0f;
+                    phases_=frame.subtractiveSourcePhases; rebuildSubtractiveMagnitudes(frame);
+                } else {
+                    const float current=displayAmplitudeForBin(selectedBin_,frame.independentMagnitudes[index]);
+                    const float db=juce::Decibels::gainToDecibels(current,-72.0f);
+                    frame.independentMagnitudes[index]=fftMagnitudeForDisplayAmplitude(selectedBin_,juce::Decibels::decibelsToGain(juce::jlimit(-72.0f,0.0f,db+static_cast<float>(direction))));
+                    frame.independentPhases[index]=independentDefaultPhase_; magnitudes_=frame.independentMagnitudes; setIndependentPhases();
+                }
+                editMagnitudes_=magnitudes_; reconstructPreview();
+                const auto after=frame.samples;
+                if(after!=before && onEditCommitted) onEditCommitted(frame.id,before,after);
+                repaint();
             }
             void setZoom(int value) noexcept {
                 const int old=zoom_;
@@ -1125,7 +1158,7 @@ private:
             std::array<float,kFftSize> editBefore_{};
             std::uint64_t editFrameId_=0;
             static constexpr float referenceFundamentalHz_=130.81278265f; // C3 display reference
-            int zoom_=1,firstBin_=1,hoveredBin_=-1,lastEditedBin_=-1; bool editing_=false;
+            int zoom_=1,firstBin_=1,hoveredBin_=-1,selectedBin_=1,lastEditedBin_=-1; bool editing_=false;
             EditMode editMode_=EditMode::Independent;
         };
 
@@ -1186,45 +1219,49 @@ private:
 
         class SpectrumIconButton final : public juce::Button {
         public:
-            enum class Icon { previousHarmonic,nextHarmonic,panLeft,panRight,zoomOut,zoomIn };
-            explicit SpectrumIconButton(Icon icon):juce::Button({}),icon_(icon) {
-                setMouseCursor(juce::MouseCursor::PointingHandCursor);
-            }
-            void paintButton(juce::Graphics& g,bool over,bool down) override {
+            enum class Icon { left,right,up,down,zoomOut,zoomIn };
+            explicit SpectrumIconButton(Icon icon):juce::Button({}),icon_(icon) { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+            void paintButton(juce::Graphics& g,bool over,bool downState) override {
                 const auto b=getLocalBounds().toFloat().reduced(0.5f);
-                g.setColour(down ? juce::Colour(0xff242424) : (over ? juce::Colour(0xff1b1b1b) : juce::Colour(0xff0b0b0b)));
-                g.fillRect(b);
-                g.setColour(juce::Colour(0xff343434));
-                g.drawRect(b,1.0f);
-
+                g.setColour(downState?juce::Colour(0xff242424):(over?juce::Colour(0xff1b1b1b):juce::Colour(0xff0b0b0b)));
+                g.fillRect(b); g.setColour(juce::Colour(0xff343434)); g.drawRect(b,1.0f);
+                g.setColour(juce::Colours::white.withAlpha(isEnabled()?0.82f:0.28f));
                 const float cx=b.getCentreX(),cy=b.getCentreY();
-                const float alpha=isEnabled()?0.82f:0.28f;
-                g.setColour(juce::Colours::white.withAlpha(alpha));
-                juce::Path p;
-                auto chevron=[&](bool right,float centreX) {
-                    const float d=3.0f;
-                    p.startNewSubPath(centreX+(right?-d:d),cy-d);
-                    p.lineTo(centreX+(right?d:-d),cy);
-                    p.lineTo(centreX+(right?-d:d),cy+d);
-                };
-                if(icon_==Icon::previousHarmonic || icon_==Icon::nextHarmonic) {
-                    chevron(icon_==Icon::nextHarmonic,cx);
-                    g.strokePath(p,juce::PathStrokeType(1.5f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
-                } else if(icon_==Icon::panLeft || icon_==Icon::panRight) {
-                    const bool right=icon_==Icon::panRight;
-                    const float x0=cx+(right?-4.0f:4.0f),x1=cx+(right?4.0f:-4.0f);
-                    g.drawLine(x0,cy,x1,cy,1.5f);
-                    p.startNewSubPath(x1+(right?-3.0f:3.0f),cy-3.0f);
-                    p.lineTo(x1,cy);
-                    p.lineTo(x1+(right?-3.0f:3.0f),cy+3.0f);
-                    g.strokePath(p,juce::PathStrokeType(1.5f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
-                } else {
+                if(icon_==Icon::zoomOut || icon_==Icon::zoomIn) {
                     g.drawLine(cx-4.0f,cy,cx+4.0f,cy,1.5f);
                     if(icon_==Icon::zoomIn) g.drawLine(cx,cy-4.0f,cx,cy+4.0f,1.5f);
+                    return;
                 }
+                float dx=0.0f,dy=0.0f;
+                if(icon_==Icon::left) dx=-1.0f; else if(icon_==Icon::right) dx=1.0f;
+                else if(icon_==Icon::up) dy=-1.0f; else dy=1.0f;
+                const float x0=cx-dx*4.0f,y0=cy-dy*4.0f,x1=cx+dx*4.0f,y1=cy+dy*4.0f;
+                g.drawLine(x0,y0,x1,y1,1.5f);
+                juce::Path head;
+                if(dx!=0.0f) { head.startNewSubPath(x1-dx*3.0f,y1-3.0f); head.lineTo(x1,y1); head.lineTo(x1-dx*3.0f,y1+3.0f); }
+                else { head.startNewSubPath(x1-3.0f,y1-dy*3.0f); head.lineTo(x1,y1); head.lineTo(x1+3.0f,y1-dy*3.0f); }
+                g.strokePath(head,juce::PathStrokeType(1.5f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
             }
-        private:
-            Icon icon_;
+        private: Icon icon_;
+        };
+        class SpectrumSeparator final : public juce::Component {
+            void paint(juce::Graphics& g) override { g.setColour(juce::Colours::white.withAlpha(0.20f)); g.drawVerticalLine(getWidth()/2,3.0f,static_cast<float>(getHeight())-3.0f); }
+        };
+        class DisclosureButton final : public juce::TextButton {
+        public:
+            void setOpen(bool open) { if(open_!=open) { open_=open; repaint(); } }
+            void paintButton(juce::Graphics& g,bool over,bool down) override {
+                const auto b=getLocalBounds().toFloat().reduced(0.5f);
+                g.setColour(down?juce::Colour(0xff252525):(over?juce::Colour(0xff202020):juce::Colour(0xff1c1c1c))); g.fillRect(b);
+                g.setColour(juce::Colour(0xff383838)); g.drawRect(b,1.0f);
+                g.setColour(juce::Colours::white.withAlpha(0.72f)); g.setFont(juce::Font(juce::FontOptions("Arial",9.5f,juce::Font::bold)));
+                g.drawText(getButtonText(),getLocalBounds().reduced(8,0).withTrimmedRight(18),juce::Justification::centred,false);
+                const float cx=static_cast<float>(getWidth())-10.0f,cy=static_cast<float>(getHeight())*0.5f; juce::Path p;
+                if(open_) { p.startNewSubPath(cx-3.5f,cy-2.0f); p.lineTo(cx+3.5f,cy-2.0f); p.lineTo(cx,cy+2.5f); }
+                else { p.startNewSubPath(cx-2.0f,cy-3.5f); p.lineTo(cx+2.5f,cy); p.lineTo(cx-2.0f,cy+3.5f); }
+                p.closeSubPath(); g.fillPath(p);
+            }
+        private: bool open_=false;
         };
 
         class ToolsPanel final : public juce::Component {
@@ -1324,14 +1361,14 @@ private:
             }
             void resized() override {
                 auto area=getLocalBounds().reduced(5);
-                layoutSectionHeader(area,drawHeader_,"DRAW");
+                drawHeader_.setOpen(drawOpen_); layoutSectionHeader(area,drawHeader_,"DRAW");
                 setGroupVisible({&pencil_,&line_,&curve_,&select_},drawOpen_);
                 if(drawOpen_) {
                     auto row=area.removeFromTop(26); pencil_.setBounds(row.removeFromLeft(row.getWidth()/2)); line_.setBounds(row);
                     area.removeFromTop(3); row=area.removeFromTop(26); curve_.setBounds(row.removeFromLeft(row.getWidth()/2)); select_.setBounds(row); area.removeFromTop(7);
                 }
 
-                layoutSectionHeader(area,gridHeader_,"SNAP & GRID");
+                gridHeader_.setOpen(gridOpen_); layoutSectionHeader(area,gridHeader_,"SNAP & GRID");
                 setGroupVisible({&gridResolution_,&xSnap_,&yGrid_,&ySnap_,&zeroSnap_},gridOpen_);
                 if(gridOpen_) {
                     layoutRow(area,xGridText_,gridResolution_); layoutRow(area,xSnapText_,xSnap_);
@@ -1339,7 +1376,7 @@ private:
                     layoutRow(area,zeroText_,zeroSnap_); area.removeFromTop(5);
                 }
 
-                layoutSectionHeader(area,generateHeader_,"GENERATE");
+                generateHeader_.setOpen(generateOpen_); layoutSectionHeader(area,generateHeader_,"GENERATE");
                 setGroupVisible({&generatorType_,&cycles_,&phase_,&pulseWidth_,&apply_},generateOpen_);
                 if(generateOpen_) {
                     layoutRow(area,typeText_,generatorType_); layoutRow(area,cyclesText_,cycles_);
@@ -1347,7 +1384,7 @@ private:
                     apply_.setBounds(area.removeFromTop(26)); area.removeFromTop(7);
                 }
 
-                layoutSectionHeader(area,transformHeader_,"TRANSFORM");
+                transformHeader_.setOpen(transformOpen_); layoutSectionHeader(area,transformHeader_,"TRANSFORM");
                 setGroupVisible({&gain_,&offset_,&transformApply_,&invert_,&reverse_,&zero_,&normalize_,&smooth_,&fadeIn_,&fadeOut_,&removeDc_},transformOpen_);
                 if(transformOpen_) {
                     layoutRow(area,gainText_,gain_); layoutRow(area,offsetText_,offset_);
@@ -1379,30 +1416,6 @@ private:
                 if(transformOpen_) g.drawText("OFFSET",offsetText_,juce::Justification::centredLeft,false);
                 if(transformOpen_) g.drawText("PROCESS",processLabel_,juce::Justification::centredLeft,false);
 
-                // Disclosure marks are geometry, not font glyphs, so they stay
-                // aligned and render identically on every host/platform.
-                auto drawDisclosure=[&](const juce::TextButton& button,bool open) {
-                    const auto b=button.getBounds().toFloat();
-                    const float cx=b.getRight()-10.0f,cy=b.getCentreY();
-                    juce::Path triangle;
-                    if(open) {
-                        triangle.startNewSubPath(cx-3.5f,cy-2.0f);
-                        triangle.lineTo(cx+3.5f,cy-2.0f);
-                        triangle.lineTo(cx,cy+2.5f);
-                    } else {
-                        triangle.startNewSubPath(cx-2.0f,cy-3.5f);
-                        triangle.lineTo(cx+2.5f,cy);
-                        triangle.lineTo(cx-2.0f,cy+3.5f);
-                    }
-                    triangle.closeSubPath();
-                    g.setColour(juce::Colours::white.withAlpha(0.68f));
-                    g.fillPath(triangle);
-                };
-                drawDisclosure(drawHeader_,drawOpen_);
-                drawDisclosure(gridHeader_,gridOpen_);
-                drawDisclosure(generateHeader_,generateOpen_);
-                drawDisclosure(transformHeader_,transformOpen_);
-
                 if(drawOpen_) {
                     auto drawToolBorder=[&](juce::TextButton& b,WaveformTool tool) {
                         g.setColour(canvas_.tool()==tool ? mct::origami::ui::signalSourceColour().withAlpha(0.82f)
@@ -1427,7 +1440,7 @@ private:
                 resized(); repaint();
                 if(onContentHeightChanged) onContentHeightChanged();
             }
-            static void styleSectionButton(juce::TextButton& b) {
+            static void styleSectionButton(DisclosureButton& b) {
                 b.setColour(juce::TextButton::buttonColourId,juce::Colour(0xff1c1c1c));
                 b.setColour(juce::TextButton::buttonOnColourId,juce::Colour(0xff1c1c1c));
                 b.setColour(juce::TextButton::textColourOffId,juce::Colours::white.withAlpha(0.68f));
@@ -1436,7 +1449,7 @@ private:
             static void setGroupVisible(std::initializer_list<juce::Component*> items,bool visible) {
                 for(auto* c:items) c->setVisible(visible);
             }
-            static void layoutSectionHeader(juce::Rectangle<int>& area,juce::TextButton& b,const juce::String& title) {
+            static void layoutSectionHeader(juce::Rectangle<int>& area,DisclosureButton& b,const juce::String& title) {
                 b.setButtonText(title);
                 b.setBounds(area.removeFromTop(24)); area.removeFromTop(5);
             }
@@ -1506,7 +1519,7 @@ private:
             GridSettings& grid_; WaveformCanvas& canvas_;
             juce::Rectangle<int> xGridText_,xSnapText_,yGridText_,ySnapText_,zeroText_;
             juce::Rectangle<int> typeText_,cyclesText_,phaseText_,widthText_,gainText_,offsetText_,processLabel_;
-            juce::TextButton drawHeader_,gridHeader_,generateHeader_,transformHeader_;
+            DisclosureButton drawHeader_,gridHeader_,generateHeader_,transformHeader_;
             juce::TextButton pencil_{"PENCIL"},line_{"LINE"},curve_{"CURVE"},select_{"SELECT"},apply_{"APPLY"};
             juce::TextButton transformApply_{"APPLY"},invert_{"INVERT"},reverse_{"REVERSE"},zero_{"ZERO"},normalize_{"NORMALIZE"},smooth_{"SMOOTH"},fadeIn_{"FADE IN"},fadeOut_{"FADE OUT"},removeDc_{"REMOVE DC"};
             NativeChoiceBox gridResolution_,xSnap_,yGrid_,ySnap_,zeroSnap_,generatorType_;
@@ -1696,15 +1709,19 @@ private:
             spectrum_.setContentComponent(spectrumCanvas_);
             spectrumMode_.setButtonText("INDEPENDENT");
             spectrumMode_.setTooltip("Spectral editing mode");
-            spectrum_.setHeaderAccessory(spectrumControls_,304);
-            for(auto* b:std::array<juce::Button*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
+            spectrum_.setHeaderAccessory(spectrumControls_,360);
+            for(auto* b:std::array<juce::Button*,8>{{&spectrumPrev_,&spectrumNext_,&spectrumMagnitudeUp_,&spectrumMagnitudeDown_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
                 spectrumControls_.addAndMakeVisible(*b);
+            spectrumControls_.addAndMakeVisible(spectrumSeparator_);
             spectrumControls_.addAndMakeVisible(spectrumMode_);
             spectrumPrev_.setTooltip("Select previous harmonic"); spectrumNext_.setTooltip("Select next harmonic");
+            spectrumMagnitudeUp_.setTooltip("Increase selected harmonic magnitude"); spectrumMagnitudeDown_.setTooltip("Decrease selected harmonic magnitude");
             spectrumPanLeft_.setTooltip("Pan spectrum left"); spectrumPanRight_.setTooltip("Pan spectrum right");
             spectrumZoomOut_.setTooltip("Zoom out"); spectrumZoomIn_.setTooltip("Zoom in");
             spectrumPrev_.onClick=[this]{ spectrumCanvas_.selectPreviousHarmonic(); };
             spectrumNext_.onClick=[this]{ spectrumCanvas_.selectNextHarmonic(); };
+            spectrumMagnitudeUp_.onClick=[this]{ spectrumCanvas_.increaseSelectedMagnitude(); };
+            spectrumMagnitudeDown_.onClick=[this]{ spectrumCanvas_.decreaseSelectedMagnitude(); };
             spectrumPanLeft_.onClick=[this]{ spectrumCanvas_.panLeft(); };
             spectrumPanRight_.onClick=[this]{ spectrumCanvas_.panRight(); };
             spectrumZoomOut_.onClick=[this]{ spectrumCanvas_.zoomOut(); };
@@ -1780,9 +1797,12 @@ private:
             // belongs to this editor's resized() pass rather than a callback.
             auto spectrumHeader=spectrumControls_.getLocalBounds();
             spectrumMode_.setBounds(spectrumHeader.removeFromRight(120));
-            spectrumHeader.removeFromRight(3);
-            const int spectrumControlWidth=juce::jmax(22,spectrumHeader.getWidth()/6);
-            for(auto* button:std::array<juce::Button*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
+            spectrumHeader.removeFromRight(4);
+            const int spectrumControlWidth=24;
+            for(auto* button:std::array<juce::Button*,4>{{&spectrumPrev_,&spectrumNext_,&spectrumMagnitudeUp_,&spectrumMagnitudeDown_}})
+                button->setBounds(spectrumHeader.removeFromLeft(spectrumControlWidth).reduced(1,0));
+            spectrumSeparator_.setBounds(spectrumHeader.removeFromLeft(9));
+            for(auto* button:std::array<juce::Button*,4>{{&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
                 button->setBounds(spectrumHeader.removeFromLeft(spectrumControlWidth).reduced(1,0));
         }
         void paint(juce::Graphics& g) override {
@@ -1943,10 +1963,13 @@ private:
         SpectrumCanvas spectrumCanvas_;
         juce::Component spectrumControls_;
         juce::TextButton spectrumMode_;
-        SpectrumIconButton spectrumPrev_{SpectrumIconButton::Icon::previousHarmonic};
-        SpectrumIconButton spectrumNext_{SpectrumIconButton::Icon::nextHarmonic};
-        SpectrumIconButton spectrumPanLeft_{SpectrumIconButton::Icon::panLeft};
-        SpectrumIconButton spectrumPanRight_{SpectrumIconButton::Icon::panRight};
+        SpectrumIconButton spectrumPrev_{SpectrumIconButton::Icon::left};
+        SpectrumIconButton spectrumNext_{SpectrumIconButton::Icon::right};
+        SpectrumIconButton spectrumMagnitudeUp_{SpectrumIconButton::Icon::up};
+        SpectrumIconButton spectrumMagnitudeDown_{SpectrumIconButton::Icon::down};
+        SpectrumSeparator spectrumSeparator_;
+        SpectrumIconButton spectrumPanLeft_{SpectrumIconButton::Icon::left};
+        SpectrumIconButton spectrumPanRight_{SpectrumIconButton::Icon::right};
         SpectrumIconButton spectrumZoomOut_{SpectrumIconButton::Icon::zoomOut};
         SpectrumIconButton spectrumZoomIn_{SpectrumIconButton::Icon::zoomIn};
         ToolsPanel toolsPanel_;
