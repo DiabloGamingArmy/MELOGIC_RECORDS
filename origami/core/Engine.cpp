@@ -681,19 +681,5 @@ RenderLoad OrigamiEngine::renderLoad() const noexcept {
     load.oscillatorEvaluationsPerSample=load.activeVoices*lanesPerVoice;
     return load;
 }
-VoiceHotPathProfile OrigamiEngine::hotPathProfile() const noexcept {
-    VoiceHotPathProfile total{};
-    for(const auto& voice:voices_) {
-        const auto& p=voice.hotPathProfile();
-        total.samples+=p.samples;total.moduleIterations+=p.moduleIterations;total.oscillatorCalls+=p.oscillatorCalls;
-        total.envelopeNs+=p.envelopeNs;total.modulationNs+=p.modulationNs;total.prepareNs+=p.prepareNs;
-        total.preRouteNs+=p.preRouteNs;total.oscillatorNs+=p.oscillatorNs;total.postRouteNs+=p.postRouteNs;
-        total.filterNs+=p.filterNs;total.accumulateNs+=p.accumulateNs;
-    }
-    return total;
-}
-void OrigamiEngine::clearHotPathProfile() noexcept {
-    for(auto& voice:voices_) voice.clearHotPathProfile();
-}
 
 }
