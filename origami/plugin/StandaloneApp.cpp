@@ -97,6 +97,23 @@ public:
                   << " oscEval=" << q.load.oscillatorEvaluationsPerSample
                   << " voiceCeil=" << q.voiceAdmissionCeiling
                   << " deadlineMiss=" << q.deadlineMisses
+                  << " profSamples=" << d.voiceProfile.samples
+                  << " profModules=" << d.voiceProfile.moduleIterations
+                  << " profOscCalls=" << d.voiceProfile.oscillatorCalls
+                  << " stageMs(env/mod/prep/pre/osc/post/filter/out)="
+                  << d.voiceProfile.envelopeNs/1000000.0 << "/"
+                  << d.voiceProfile.modulationNs/1000000.0 << "/"
+                  << d.voiceProfile.prepareNs/1000000.0 << "/"
+                  << d.voiceProfile.preRouteNs/1000000.0 << "/"
+                  << d.voiceProfile.oscillatorNs/1000000.0 << "/"
+                  << d.voiceProfile.postRouteNs/1000000.0 << "/"
+                  << d.voiceProfile.filterNs/1000000.0 << "/"
+                  << d.voiceProfile.accumulateNs/1000000.0
+                  << " spectral(req/prepared/fallback/drop)="
+                  << d.spectralProfile.requests << "/"
+                  << d.spectralProfile.prepared << "/"
+                  << d.spectralProfile.fallbackReads << "/"
+                  << d.spectralProfile.droppedRequests
                   << std::endl;
     }
 
