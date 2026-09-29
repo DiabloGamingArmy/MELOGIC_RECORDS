@@ -11,9 +11,20 @@ VST3_BUILD="$BUILD/OrigamiPlugin_artefacts/Release/VST3/MCT Origami.vst3"
 
 cd "$ROOT"
 
-cmake -S origami -B "$BUILD"   -DCMAKE_BUILD_TYPE=Release   -DORIGAMI_BUILD_TESTS=OFF   -DORIGAMI_BUILD_VST3=ON   -DJUCE_DIR="$JUCE"
+cmake -S origami -B "$BUILD"   -DCMAKE_BUILD_TYPE=Release   -DORIGAMI_BUILD_TESTS=ON   -DORIGAMI_BUILD_VST3=ON   -DJUCE_DIR="$JUCE"
 
 cmake --build "$BUILD" --parallel
+
+# P0 audio continuity gate: the normal dev rebuild must execute the processor
+# regression suite, not merely compile it. This specifically covers held-sine
+# continuity through repeated host callbacks and the UI-keyboard MIDI path.
+PLUGIN_TEST="$BUILD/origami_plugin_tests"
+if [[ ! -x "$PLUGIN_TEST" ]]; then
+  echo "ERROR: Origami plugin regression executable was not built: $PLUGIN_TEST" >&2
+  exit 1
+fi
+echo "===== RUNNING MCT ORIGAMI PLUGIN REGRESSION GATE ====="
+"$PLUGIN_TEST"
 
 test -d "$APP_BUILD"
 test -d "$AU_BUILD"
