@@ -215,7 +215,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
         const auto* selected=selectedMonoHeld();if(!selected) return false;
         const auto current=voices_[0].info();
         if(!current.active) voices_[0].start(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));
-        else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),performance_.glideSeconds,!performance_.legato || !hadHeld || current.releasing);
+        else if(!sameAddress(current.address,selected->address)) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),currentPortaTime_,!performance_.legato || !hadHeld || current.releasing);
         else if(current.releasing || !performance_.legato)
             // Same pitch during a release tail is a NEW articulation even when
             // mono-legato is enabled. The old code treated "same address" as
@@ -223,7 +223,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
             voices_[0].retarget(selected->address,selected->velocity,selected->order,
                                 envelopeSettings(),modulationEnvelopeSettings(0),
                                 modulationEnvelopeSettings(1),
-                                performance_.glideSeconds,true);
+                                currentPortaTime_,true);
         return true;
     }
     std::size_t chosen=voiceCount;
@@ -273,7 +273,7 @@ bool OrigamiEngine::noteOff(int note,std::uint8_t channel,std::uint32_t noteId) 
         const auto removedAddress=removed->address;removed->held=false;if(heldCount_) --heldCount_;
         const auto current=voices_[0].info();
         if(current.active && sameAddress(current.address,removedAddress)) {
-            if(const auto* selected=selectedMonoHeld()) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),performance_.glideSeconds,!performance_.legato);
+            if(const auto* selected=selectedMonoHeld()) voices_[0].retarget(selected->address,selected->velocity,selected->order,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1),currentPortaTime_,!performance_.legato);
             else voices_[0].release(envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));
         }
         return true;
@@ -311,7 +311,8 @@ bool OrigamiEngine::setPerformanceState(const PerformanceState& state) noexcept 
     InstrumentState probe=instrumentState();probe.performance=state;
     if(!validInstrumentState(probe)) return false;
     const bool modeChanged=performance_.voiceMode!=state.voiceMode;
-    performance_=state;pitchBendRange_.store(state.pitchBendRangeSemitones,std::memory_order_relaxed);
+    performance_=state;currentPortaTime_=state.glideSeconds;
+    pitchBendRange_.store(state.pitchBendRangeSemitones,std::memory_order_relaxed);
     pitchBendDownRange_.store(state.pitchBendDownSemitones,std::memory_order_relaxed);
     if(modeChanged) {
         clearHeldNotes();
@@ -417,7 +418,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         for(std::size_t i=0;i<4;++i) {
             if(!compiledModulation_.usesGlobalSource(i)) continue;
             const auto& l=lfoSettings(audioModulation_,i);
-            sources[i]=l.mode==LfoMode::Free ? globalLfos_[i].next(l,sampleRate_) : 0.0f;
+            sources[i]=l.mode==LfoMode::Free ? globalLfos_[i].next(l,sampleRate_)*currentLfoScaling_ : 0.0f;
         }
         for(std::size_t i=0;i<smoothedMacros_.size();++i) {
             if(!compiledModulation_.usesGlobalSource(4+i)) {
@@ -470,7 +471,12 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         frame.modules=modules;frame.cutoff=value(ParameterId::Cutoff);
         frame.resonance=value(ParameterId::Resonance);frame.master=value(ParameterId::MasterGain);
         frame.mainTuning=0.0f;frame.transpose=0.0f;
+        frame.portaTime=performance_.glideSeconds;
+        frame.envelopeScaling=1.0f;frame.lfoScaling=1.0f;
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
+        currentPortaTime_=std::clamp(frame.portaTime,0.0f,5.0f);
+        currentEnvelopeScaling_=std::clamp(frame.envelopeScaling,0.0f,2.0f);
+        currentLfoScaling_=std::clamp(frame.lfoScaling,0.0f,2.0f);
         for(std::size_t a=0;a<oscillatorPlan_.activeCount;++a) {
             const auto m=oscillatorPlan_.active[a];
             oscillatorPlan_.processPlan(m,frame.modules[m],sharedProcesses[m]);
