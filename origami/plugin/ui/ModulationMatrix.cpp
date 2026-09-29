@@ -50,6 +50,7 @@ public:
         add("Global",{ModDestination::MainTuning,0},"MAIN TUNING");
         add("Global",{ModDestination::MasterGain,0},"AMP");
         add("Global",{ModDestination::Transpose,0},"TRANSPOSE");
+        add("Global",{ModDestination::Swing,0},"SWING");
         add("Global",{ModDestination::PortaTime,0},"PORTA TIME");
         add("Global",{ModDestination::EnvelopeScaling,0},"ENVELOPE SCALING");
         add("Global",{ModDestination::LfoScaling,0},"LFO SCALING");
