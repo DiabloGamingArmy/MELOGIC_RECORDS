@@ -712,6 +712,8 @@ private:
                         if(mode==EditMode::Independent) {
                             magnitudes_=frame.independentMagnitudes;
                             setIndependentPhases();
+                            editMagnitudes_=magnitudes_;
+                            reconstructPreview();
                         } else {
                             phases_=frame.subtractiveSourcePhases;
                             rebuildSubtractiveMagnitudes(frame);
@@ -998,7 +1000,9 @@ private:
                 if(editMode_==EditMode::Independent) {
                     frame.hasIndependentSpectrum=true;
                     frame.independentMagnitudes=magnitudes_;
-                    frame.independentPhases=phases_;
+                    frame.independentPhases.fill(0.0f);
+                    for(std::size_t bin=1;bin<kBins;++bin)
+                        frame.independentPhases[bin]=independentDefaultPhase_;
                 } else if(editMode_==EditMode::Additive) {
                     frame.hasAdditiveSpectrum=true;
                     frame.additiveContributions=additiveContributions_;
@@ -1051,6 +1055,8 @@ private:
                 // INDEPENDENT keeps the user's harmonic coefficients authoritative:
                 // output peak fitting must never push untouched bars down.
                 magnitudes_=editMagnitudes_;
+                if(editMode_==EditMode::Independent)
+                    setIndependentPhases();
                 if(editMode_!=EditMode::Subtractive)
                     storeAuthoringState(document_.frames[document_.selectedFrame]);
                 if(onSamplesChanged) onSamplesChanged();
