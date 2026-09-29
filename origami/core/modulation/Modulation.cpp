@@ -55,6 +55,9 @@ Range limits(ModDestination d) {
         case ModDestination::Cutoff:return {20,20000};
         case ModDestination::MainTuning:return {-1,1};
         case ModDestination::Transpose:return {-24,24};
+        case ModDestination::PortaTime:return {0,5};
+        case ModDestination::EnvelopeScaling:
+        case ModDestination::LfoScaling:return {0,2};
         case ModDestination::Octave:return {-4,4};
         case ModDestination::Semitone:return {-12,12};
         case ModDestination::Fine:return {-100,100};
@@ -115,7 +118,9 @@ LfoSettings& lfoSettings(ModulationState& s,std::size_t i) noexcept {
 
 bool isGlobalDestination(ModDestination d) noexcept {
     return d==ModDestination::Cutoff || d==ModDestination::Resonance || d==ModDestination::MasterGain ||
-           d==ModDestination::MainTuning || d==ModDestination::Transpose;
+           d==ModDestination::MainTuning || d==ModDestination::Transpose ||
+           d==ModDestination::PortaTime || d==ModDestination::EnvelopeScaling ||
+           d==ModDestination::LfoScaling;
 }
 bool validModulation(const ModulationState& s,const std::array<OscillatorModuleState,16>& modules) noexcept {
     if((s.envActiveMask&~0x7u)!=0 || (s.envActiveMask&0x1u)==0) return false;
@@ -525,7 +530,9 @@ float CompiledModulation::read(const ModulationFrame& f,const Group& g) noexcept
     switch(g.address.parameter) {
         case ModDestination::Cutoff:return f.cutoff;case ModDestination::Resonance:return f.resonance;
         case ModDestination::MasterGain:return f.master;case ModDestination::MainTuning:return f.mainTuning;
-        case ModDestination::Transpose:return f.transpose;case ModDestination::WtPosition:return m.wtPosition;
+        case ModDestination::Transpose:return f.transpose;case ModDestination::PortaTime:return f.portaTime;
+        case ModDestination::EnvelopeScaling:return f.envelopeScaling;case ModDestination::LfoScaling:return f.lfoScaling;
+        case ModDestination::WtPosition:return m.wtPosition;
         case ModDestination::Octave:return m.octave;case ModDestination::Semitone:return m.semitone;
         case ModDestination::Fine:return m.fineCents;case ModDestination::Detune:return m.detuneCents;
         case ModDestination::Pan:return m.pan;case ModDestination::Level:return m.level;
@@ -551,7 +558,9 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
     switch(g.address.parameter) {
         case ModDestination::Cutoff:f.cutoff=v;break;case ModDestination::Resonance:f.resonance=v;break;
         case ModDestination::MasterGain:f.master=v;break;case ModDestination::MainTuning:f.mainTuning=v;break;
-        case ModDestination::Transpose:f.transpose=v;break;case ModDestination::WtPosition:m.wtPosition=v;break;
+        case ModDestination::Transpose:f.transpose=v;break;case ModDestination::PortaTime:f.portaTime=v;break;
+        case ModDestination::EnvelopeScaling:f.envelopeScaling=v;break;case ModDestination::LfoScaling:f.lfoScaling=v;break;
+        case ModDestination::WtPosition:m.wtPosition=v;break;
         case ModDestination::Octave:m.octave=v;break;case ModDestination::Semitone:m.semitone=v;break;
         case ModDestination::Fine:m.fineCents=v;break;case ModDestination::Detune:m.detuneCents=v;break;
         case ModDestination::Pan:m.pan=v;break;case ModDestination::Level:m.level=v;break;
