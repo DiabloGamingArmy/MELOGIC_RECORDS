@@ -623,9 +623,11 @@ void voiceObservationDoesNotChangeAudio() {
     topology.processPlan(0,frame.modules[0],sharedProcesses[0]);
     observed.start({},0.8f,1,envelope,state.env2,state.env3);
     unobserved.start({},0.8f,1,envelope,state.env2,state.env3);
+    std::array<const dsp::Wavetable*,OscillatorModuleBank::capacity> tables{};
+    tables.fill(&bank());
     for(unsigned i=0;i<512;++i) {
-        const auto a=observed.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,true);
-        const auto b=unobserved.nextModules(bank(),frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,false);
+        const auto a=observed.nextModules(tables,frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,true);
+        const auto b=unobserved.nextModules(tables,frame,envelope.sustain,compiled,state,0,0,0,0,topology,sharedProcesses,false);
         check(a.left==b.left && a.right==b.right && a.mono==b.mono,
               "visualization observation does not affect modulated unison audio");
     }
