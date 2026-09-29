@@ -26,6 +26,17 @@ fi
 echo "===== RUNNING MCT ORIGAMI PLUGIN REGRESSION GATE ====="
 "$PLUGIN_TEST"
 
+# Core-engine regression gate. Patch 2 rebuilt the per-voice oscillator runtime
+# cache, so the dev deploy must also execute the engine-level modulation,
+# topology, visualization-transparency, fast-math and realtime-policy tests.
+CORE_TEST="$BUILD/origami_tests"
+if [[ ! -x "$CORE_TEST" ]]; then
+  echo "ERROR: Origami core regression executable was not built: $CORE_TEST" >&2
+  exit 1
+fi
+echo "===== RUNNING MCT ORIGAMI CORE REGRESSION GATE ====="
+"$CORE_TEST"
+
 test -d "$APP_BUILD"
 test -d "$AU_BUILD"
 test -d "$VST3_BUILD"
