@@ -38,7 +38,7 @@ void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,cons
 void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     if(active_){releasing_=true;envelope_.noteOff(settings);env2_.noteOff(env2);env3_.noteOff(env3);}
 }
-Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFrame& global,
+Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& tables,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
     float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,const OscillatorRenderPlan& topology,const OscillatorProcessPlans& sharedProcesses,bool observe) noexcept {
     Samples outputs{};
@@ -82,6 +82,9 @@ Voice::Samples Voice::nextModules(const dsp::Wavetable& table,const ModulationFr
         const auto m=topology.active[active];
         const auto& module=modules[m];
         const auto& modulePlan=topology.modules[m];
+        const auto* tablePtr=tables[m];
+        if(tablePtr==nullptr || !tablePtr->valid()) continue;
+        const auto& table=*tablePtr;
         auto& prepared=preparedModules_[m];
         prepared.update(module);
         // Pitch bend remains audio-rate; the ratio uses bounded fast exp2.
