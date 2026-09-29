@@ -57,6 +57,7 @@ public:
     mct::origami::OscillatorModuleId addUiOscillator() noexcept;
     bool removeUiOscillator(mct::origami::OscillatorModuleId) noexcept;
     bool setUiOscillatorState(mct::origami::OscillatorModuleId,const mct::origami::OscillatorModuleState&) noexcept;
+    bool installUiOscillatorWavetable(mct::origami::OscillatorModuleId,mct::origami::dsp::Wavetable);
     mct::origami::OscillatorModuleState getUiOscillatorState(mct::origami::OscillatorModuleId) const noexcept;
     bool setUiOscillatorEnabled(mct::origami::OscillatorModuleId,bool) noexcept;
     bool getUiOscillatorEnabled(mct::origami::OscillatorModuleId) const noexcept;
