@@ -203,7 +203,37 @@ void ModulationMatrix::resized() {
     for(auto& row:rows_) {row->setBounds(0,y,width,48);y+=56;}content_.setSize(width,juce::jmax(y,viewport_.getHeight()));
 }
 void ModulationMatrix::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
-    text(g,"POLARITY  →  SOURCE  →  DESTINATION  →  AMOUNT     |     Base values stay unchanged",body.removeFromTop(28),11,Palette::secondary());
+    // Header geometry deliberately mirrors Row::resized(): every label starts at
+    // the same x-axis origin as the control below it.
+    auto header=body.removeFromTop(28);
+    const auto colour=Palette::secondary();
+    constexpr int rowInset=10;
+    constexpr int enabledWidth=50;
+    constexpr int enabledGap=10;
+    constexpr int polarityWidth=92;
+    constexpr int polarityGap=12;
+    constexpr int sourceWidth=160;
+    constexpr int sourceGap=16;
+    constexpr int destinationWidth=250;
+    constexpr int destinationGap=16;
+    constexpr int removeWidth=40;
+    constexpr int removeGap=12;
+
+    int x=header.getX()+rowInset;
+    text(g,"ON",{x,header.getY(),enabledWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
+    x+=enabledWidth+enabledGap;
+    text(g,"POLARITY",{x,header.getY(),polarityWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
+    x+=polarityWidth+polarityGap;
+    text(g,"SOURCE",{x,header.getY(),sourceWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
+    x+=sourceWidth+sourceGap;
+    text(g,"DESTINATION",{x,header.getY(),destinationWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
+    x+=destinationWidth+destinationGap;
+
+    const int actionX=header.getRight()-rowInset-removeWidth;
+    const int amountRight=actionX-removeGap;
+    text(g,"AMOUNT",{x,header.getY(),juce::jmax(0,amountRight-x),header.getHeight()},11,colour,juce::Justification::centredLeft);
+    text(g,"ACTIONS",{actionX,header.getY(),removeWidth,header.getHeight()},11,colour,juce::Justification::centredLeft);
+
     if(rows_.empty()) text(g,"No modulation routes. Add a route to connect any envelope, LFO, macro, performance source, random or function source.",body.reduced(12),12,Palette::muted(),juce::Justification::centred);
 }
 }
