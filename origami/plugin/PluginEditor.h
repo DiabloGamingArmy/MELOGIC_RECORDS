@@ -254,7 +254,11 @@ private:
             std::function<void()> onAddRequested;
             explicit FrameStrip(mct::origami::ui::WavetableDocument& document):document_(document) {
                 viewport_.setViewedComponent(&content_,false);
-                viewport_.setScrollBarsShown(false,false,false,false);
+                // The frame strip is intentionally horizontal-only. JUCE reserves
+                // scrollbar space instead of overlaying the frame cards, so dense
+                // tables remain fully visible when horizontal scrolling is needed.
+                viewport_.setScrollBarsShown(false,true,false,false);
+                viewport_.setScrollBarThickness(frameScrollBarThickness);
                 viewport_.setWantsKeyboardFocus(true);
                 addAndMakeVisible(viewport_);
                 add_.onClicked=[this] { if(onAddRequested) onAddRequested(); };
@@ -278,18 +282,30 @@ private:
                 resized();
             }
             void resized() override {
-                viewport_.setBounds(getLocalBounds());
                 constexpr int cardWidth=90;
                 constexpr int gap=5;
                 constexpr int verticalInset=3;
-                const int cardHeight=juce::jmax(1,getHeight()-verticalInset*2);
+                const int requiredWidth=static_cast<int>(cards_.size()+1)*cardWidth
+                    + static_cast<int>(cards_.size())*gap;
+                const bool needsHorizontalScroll=requiredWidth>getWidth();
+
+                // Reserve a bottom lane only while the horizontal scrollbar exists.
+                // This prevents JUCE's scrollbar from covering frame cards while
+                // preserving the full strip height for small tables.
+                auto viewportBounds=getLocalBounds();
+                if(needsHorizontalScroll)
+                    viewportBounds.removeFromBottom(frameScrollBarGap);
+                viewport_.setBounds(viewportBounds);
+
+                const int cardHeight=juce::jmax(1,viewportBounds.getHeight()-verticalInset*2);
                 int x=0;
                 for(auto& card:cards_) {
                     card->setBounds(x,verticalInset,cardWidth,cardHeight);
                     x+=cardWidth+gap;
                 }
                 add_.setBounds(x,verticalInset,cardWidth,cardHeight);
-                content_.setSize(juce::jmax(getWidth(),x+cardWidth),getHeight());
+                content_.setSize(juce::jmax(viewportBounds.getWidth(),x+cardWidth),
+                                 viewportBounds.getHeight());
             }
             bool keyPressed(const juce::KeyPress& key) override {
                 if(key==juce::KeyPress::leftKey && document_.selectedFrame>0) {
@@ -344,6 +360,8 @@ private:
                 target=juce::jlimit(0,juce::jmax(0,content_.getWidth()-viewport_.getWidth()),target);
                 viewport_.setViewPosition(target,0);
             }
+            static constexpr int frameScrollBarThickness=9;
+            static constexpr int frameScrollBarGap=frameScrollBarThickness+2;
             mct::origami::ui::WavetableDocument& document_;
             juce::Viewport viewport_;
             juce::Component content_;
