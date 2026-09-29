@@ -713,8 +713,10 @@ private:
                             magnitudes_=frame.independentMagnitudes;
                             phases_=frame.independentPhases;
                         } else {
-                            magnitudes_=frame.subtractiveSourceMagnitudes;
                             phases_=frame.subtractiveSourcePhases;
+                            rebuildSubtractiveMagnitudes(frame);
+                            editMagnitudes_=magnitudes_;
+                            reconstructPreview();
                         }
                     }
                 }
@@ -741,7 +743,8 @@ private:
                     setAdditivePhases();
                     rebuildAdditiveMagnitudes();
                 } else {
-                    analyseDocumentFrame();
+                    phases_=frame.subtractiveSourcePhases;
+                    rebuildSubtractiveMagnitudes(frame);
                 }
                 repaint();
             }
@@ -771,7 +774,9 @@ private:
                     setAdditivePhases();
                     rebuildAdditiveMagnitudes();
                 } else {
-                    analyseDocumentFrame();
+                    auto& frame=document_.frames[document_.selectedFrame];
+                    phases_=frame.subtractiveSourcePhases;
+                    rebuildSubtractiveMagnitudes(frame);
                 }
                 repaint();
             }
@@ -819,8 +824,10 @@ private:
                     const int bin=firstBin_+n; if(bin>=static_cast<int>(kBins)) break;
                     const float level=editMode_==EditMode::Additive
                         ? juce::jlimit(0.0f,1.0f,additiveContributions_[static_cast<std::size_t>(bin)])
-                        : juce::jlimit(0.0f,1.0f,(juce::Decibels::gainToDecibels(
-                            displayAmplitudeForBin(bin,magnitudes_[static_cast<std::size_t>(bin)]),-72.0f)+72.0f)/72.0f);
+                        : editMode_==EditMode::Subtractive && document_.valid()
+                            ? juce::jlimit(0.0f,1.0f,document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(bin)])
+                            : juce::jlimit(0.0f,1.0f,(juce::Decibels::gainToDecibels(
+                                displayAmplitudeForBin(bin,magnitudes_[static_cast<std::size_t>(bin)]),-72.0f)+72.0f)/72.0f);
                     const float height=level*static_cast<float>(bounds.getHeight());
                     const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)*slot;
                     const float width=juce::jmax(1.0f,slot-1.0f);
@@ -840,6 +847,9 @@ private:
                     const float frequency=referenceFundamentalHz_*static_cast<float>(hoveredBin_);
                     if(editMode_==EditMode::Additive) {
                         const float pct=100.0f*additiveContributions_[static_cast<std::size_t>(hoveredBin_)];
+                        status+="     H "+juce::String(hoveredBin_)+"  "+noteNameForFrequency(frequency)+"  "+juce::String(frequency,1)+" Hz  "+juce::String(pct,1)+"%";
+                    } else if(editMode_==EditMode::Subtractive && document_.valid()) {
+                        const float pct=100.0f*document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(hoveredBin_)];
                         status+="     H "+juce::String(hoveredBin_)+"  "+noteNameForFrequency(frequency)+"  "+juce::String(frequency,1)+" Hz  "+juce::String(pct,1)+"%";
                     } else {
                         const float db=juce::Decibels::gainToDecibels(displayAmplitudeForBin(hoveredBin_,magnitudes_[static_cast<std::size_t>(hoveredBin_)]),-72.0f);
@@ -888,25 +898,30 @@ private:
                 const float displayAmplitude=level<=0.002f
                     ? 0.0f
                     : juce::Decibels::decibelsToGain(-72.0f+72.0f*level);
-                const float target=editMode_==EditMode::Additive
+                const float target=(editMode_==EditMode::Additive || editMode_==EditMode::Subtractive)
                     ? level
                     : fftMagnitudeForDisplayAmplitude(bin,displayAmplitude);
                 if(lastEditedBin_>0 && lastEditedBin_!=bin) {
                     const int lo=juce::jmin(lastEditedBin_,bin),hi=juce::jmax(lastEditedBin_,bin);
                     const float start=editMode_==EditMode::Additive
                         ? additiveContributions_[static_cast<std::size_t>(lastEditedBin_)]
-                        : editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
+                        : editMode_==EditMode::Subtractive
+                            ? document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(lastEditedBin_)]
+                            : editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
                     for(int b=lo;b<=hi;++b) {
                         const float t=static_cast<float>(b-lastEditedBin_)/static_cast<float>(bin-lastEditedBin_);
                         const float value=juce::jmax(0.0f,start+t*(target-start));
                         if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(b)]=juce::jlimit(0.0f,1.0f,value);
+                        else if(editMode_==EditMode::Subtractive) document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(b)]=juce::jlimit(0.0f,1.0f,value);
                         else editMagnitudes_[static_cast<std::size_t>(b)]=value;
                     }
                 } else {
                     if(editMode_==EditMode::Additive) additiveContributions_[static_cast<std::size_t>(bin)]=juce::jlimit(0.0f,1.0f,target);
+                    else if(editMode_==EditMode::Subtractive) document_.frames[document_.selectedFrame].subtractiveGains[static_cast<std::size_t>(bin)]=juce::jlimit(0.0f,1.0f,target);
                     else editMagnitudes_[static_cast<std::size_t>(bin)]=target;
                 }
                 if(editMode_==EditMode::Additive) rebuildAdditiveMagnitudes();
+                else if(editMode_==EditMode::Subtractive) rebuildSubtractiveMagnitudes(document_.frames[document_.selectedFrame]);
                 lastEditedBin_=bin; reconstructPreview(); hoveredBin_=bin; repaint();
             }
             void ensureSpectralStateInitialized(mct::origami::ui::WavetableFrame& frame) {
@@ -947,7 +962,10 @@ private:
                     additiveContributions_=frame.additiveContributions;
                     setAdditivePhases();
                     rebuildAdditiveMagnitudes();
-                } else analyseDocumentFrame();
+                } else {
+                    phases_=frame.subtractiveSourcePhases;
+                    rebuildSubtractiveMagnitudes(frame);
+                }
             }
             void storeAuthoringState(mct::origami::ui::WavetableFrame& frame) {
                 if(editMode_==EditMode::Independent) {
@@ -958,6 +976,13 @@ private:
                     frame.hasAdditiveSpectrum=true;
                     frame.additiveContributions=additiveContributions_;
                 }
+            }
+            void rebuildSubtractiveMagnitudes(const mct::origami::ui::WavetableFrame& frame) {
+                editMagnitudes_.fill(0.0f);
+                for(std::size_t bin=0;bin<kBins;++bin)
+                    editMagnitudes_[bin]=frame.subtractiveSourceMagnitudes[bin]
+                        * juce::jlimit(0.0f,1.0f,frame.subtractiveGains[bin]);
+                magnitudes_=editMagnitudes_;
             }
             void rebuildAdditiveMagnitudes() {
                 editMagnitudes_.fill(0.0f);
@@ -994,8 +1019,6 @@ private:
                 float peak=0.0f;
                 for(std::size_t i=0;i<kFftSize;++i) peak=juce::jmax(peak,std::abs(real_[i]/static_cast<float>(kFftSize)));
                 const float scale=peak>1.0f?1.0f/peak:1.0f;
-                if(scale<1.0f && editMode_==EditMode::Subtractive)
-                    for(auto& magnitude:editMagnitudes_) magnitude*=scale;
                 auto& frame=document_.frames[document_.selectedFrame];
                 for(std::size_t i=0;i<kFftSize;++i) frame.samples[i]=(real_[i]/static_cast<float>(kFftSize))*scale;
                 // INDEPENDENT keeps the user's harmonic coefficients authoritative:
