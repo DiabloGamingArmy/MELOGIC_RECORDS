@@ -32,6 +32,7 @@ enum class ModSource : std::uint32_t {
 };
 enum class ModDestination : std::uint32_t {
     Cutoff=1, Resonance=2, MasterGain=3, MainTuning=4, Transpose=5,
+    PortaTime=6, EnvelopeScaling=7, LfoScaling=8,
     WtPosition=101, Octave=102, Semitone=103, Fine=104, Detune=105, Pan=106, Level=107,
     Process1Amount=108, Process2Amount=109, Route1Amount=110, Route2Amount=111,
     // Stable-ID dynamic destinations. 108..111 remain readable legacy values.
@@ -246,6 +247,7 @@ private:
 struct ModulationFrame {
     std::array<OscillatorModuleState,16> modules{};
     float cutoff=8000,resonance=.1f,master=.2f,mainTuning=0.0f,transpose=0.0f;
+    float portaTime=0.0f,envelopeScaling=1.0f,lfoScaling=1.0f;
     dsp::LowPassCoefficients filter{};
     bool filterEnabled=true;
     std::array<float,ModulationState::capacity> normalized{};
