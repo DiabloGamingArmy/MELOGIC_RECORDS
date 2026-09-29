@@ -34,6 +34,9 @@ public:
     // Non-realtime, exclusive access. prepare may allocate or throw bad_alloc.
     bool prepare(double sampleRate, std::size_t maximumBlockSize, unsigned outputChannels);
     bool installWavetable(dsp::Wavetable table); // validate/move with processing stopped
+    // Install an editor-authored table for one oscillator module. Caller must
+    // serialize this non-realtime mutation against processBlock.
+    bool installWavetableForOscillator(OscillatorModuleId id,dsp::Wavetable table);
     bool applyPatchState(const ParameterValues& values) noexcept; // exclusive, resets voices
     InstrumentState instrumentState() const noexcept; // serialize writers externally
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
@@ -116,6 +119,13 @@ private:
     std::array<Voice::Samples, voiceCount> stealResidual_{};
     std::array<std::size_t, voiceCount> tailRemaining_{};
     dsp::Wavetable wavetable_;
+    struct OscillatorWavetableSlot {
+        OscillatorModuleId id=0;
+        dsp::Wavetable table;
+    };
+    std::array<OscillatorWavetableSlot,OscillatorModuleBank::capacity> oscillatorWavetables_{};
+    std::array<const dsp::Wavetable*,OscillatorModuleBank::capacity> hostWavetables_{};
+    void rebuildHostWavetables() noexcept;
     double sampleRate_ = 48000;
     unsigned outputChannels_ = 2;
     std::size_t stealFadeSamples_ = 144;
