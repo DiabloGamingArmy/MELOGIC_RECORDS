@@ -970,8 +970,15 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             if(!p)continue;
             chainSelectors_[i].setButtonText(juce::String(dsp::oscProcessName(p->type)));
             chainKinds_[i].setText("O S C   E F F E C T",juce::dontSendNotification);
-            chainAmounts_[i].setRange(dsp::oscProcessAmountMinimum(p->type),1.0,0.001);
-            chainAmounts_[i].setValue(p->amount,juce::dontSendNotification);
+            const float processMinimum=dsp::oscProcessAmountMinimum(p->type);
+            chainAmounts_[i].setRange(processMinimum,1.0,0.001);
+            if(!chainAmounts_[i].isMouseButtonDown()) {
+                const float span=1.0f-processMinimum;
+                const float livePosition=juce::jlimit(processMinimum,1.0f,
+                    p->amount+modulationUiEffectiveNormalizedOffset(
+                        ModDestination::ProcessAmount,display_.id,p->id)*span);
+                chainAmounts_[i].setValue(livePosition,juce::dontSendNotification);
+            }
             chainPowers_[i].setToggleState(p->enabled,juce::dontSendNotification);
             chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::ProcessAmount));
             chainAmounts_[i].getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
@@ -989,7 +996,12 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             chainSelectors_[i].setButtonText("OSC "+juce::String(ordinal?ordinal:r->sourceId)+" · "+juce::String(oscRouteAbbreviation(r->type)));
             chainKinds_[i].setText("O S C   R O U T E",juce::dontSendNotification);
             chainAmounts_[i].setRange(-1.0,1.0,0.001);
-            chainAmounts_[i].setValue(r->amount,juce::dontSendNotification);
+            if(!chainAmounts_[i].isMouseButtonDown()) {
+                const float livePosition=juce::jlimit(-1.0f,1.0f,
+                    r->amount+modulationUiEffectiveNormalizedOffset(
+                        ModDestination::RouteAmount,display_.id,r->id)*2.0f);
+                chainAmounts_[i].setValue(livePosition,juce::dontSendNotification);
+            }
             chainPowers_[i].setToggleState(r->enabled,juce::dontSendNotification);
             chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::RouteAmount));
             chainAmounts_[i].getProperties().set("mct.mod.oscillator",static_cast<int>(display_.id));
