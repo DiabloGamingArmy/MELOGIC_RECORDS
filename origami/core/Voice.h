@@ -97,11 +97,20 @@ private:
         bool valid=false;
         void invalidate() noexcept { valid=false;id=0; }
         void update(const OscillatorModuleState& m) noexcept {
-            const float o=std::isfinite(m.octave)?m.octave:0.0f;
-            const float s=std::isfinite(m.semitone)?m.semitone:0.0f;
-            const float f=std::isfinite(m.fineCents)?m.fineCents:0.0f;
-            const float d=std::isfinite(m.detuneCents)?std::clamp(m.detuneCents,0.0f,100.0f):0.0f;
-            const float p=std::isfinite(m.pan)?std::clamp(m.pan,-1.0f,1.0f):0.0f;
+            // Smoothed/modulated values can asymptotically approach zero and
+            // enter the subnormal range.  Passing those values through libm
+            // exp2/sin/cos from the per-sample render path is catastrophically
+            // slow on the live 96 kHz path.  Canonicalize inaudibly tiny
+            // controls to exact zero so the dirty cache also becomes stable.
+            const auto canonical=[](float value) noexcept {
+                if(!std::isfinite(value) || std::abs(value)<1.0e-12f) return 0.0f;
+                return value;
+            };
+            const float o=canonical(m.octave);
+            const float s=canonical(m.semitone);
+            const float f=canonical(m.fineCents);
+            const float d=std::clamp(canonical(m.detuneCents),0.0f,100.0f);
+            const float p=std::clamp(canonical(m.pan),-1.0f,1.0f);
             const float l=std::isfinite(m.level)?std::clamp(m.level,0.0f,1.0f):0.0f;
             const float b=std::isfinite(m.blend)?std::clamp(m.blend,0.0f,1.0f):0.0f;
             const unsigned u=std::clamp(m.unison,1u,maxUnisonVoices);
@@ -115,12 +124,12 @@ private:
             const bool pitchChanged=!valid||id!=m.id||changed(octave,o)||changed(semitone,s)||changed(fineCents,f);
             const bool detuneChanged=!valid||id!=m.id||unison!=u||changed(detuneCents,d);
             const bool panChanged=!valid||id!=m.id||changed(pan,p);
-            if(pitchChanged) pitchScale=std::exp2((double(o)*12.0+double(s)+double(f)/100.0)/12.0);
+            if(pitchChanged) pitchScale=dsp::fastExp2Audio((double(o)*12.0+double(s)+double(f)/100.0)/12.0);
             if(detuneChanged) {
                 detuneRatios.fill(1.0);
                 if(u>1u) for(unsigned i=0;i<u;++i) {
                     const double unit=(2.0*double(i)/double(u-1u))-1.0;
-                    detuneRatios[i]=std::exp2((unit*double(d))/1200.0);
+                    detuneRatios[i]=dsp::fastExp2Audio((unit*double(d))/1200.0);
                 }
             }
             if(panChanged) {
