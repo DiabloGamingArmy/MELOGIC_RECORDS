@@ -50,6 +50,9 @@ private:
                 headerAccessory_=&component; headerAccessoryWidth_=width;
                 addAndMakeVisible(component); resized(); repaint();
             }
+            void setHeaderAccessoryWidth(int width) {
+                headerAccessoryWidth_=width; resized(); repaint();
+            }
             void setContentComponent(juce::Component& component) {
                 if(content_==&component) { component.setVisible(true); resized(); return; }
                 if(content_!=nullptr) content_->setVisible(false);
@@ -725,6 +728,12 @@ private:
                 repaint();
             }
             EditMode editMode() const noexcept { return editMode_; }
+            void selectPreviousHarmonic() noexcept { hoveredBin_=juce::jmax(1,(hoveredBin_>0?hoveredBin_:firstBin_)-1); ensureSelectedBinVisible(); repaint(); }
+            void selectNextHarmonic() noexcept { hoveredBin_=juce::jmin(static_cast<int>(kBins)-1,(hoveredBin_>0?hoveredBin_:firstBin_)+1); ensureSelectedBinVisible(); repaint(); }
+            void panLeft() noexcept { firstBin_-=juce::jmax(1,visibleBinCount()/8); clampFirstBin(); repaint(); }
+            void panRight() noexcept { firstBin_+=juce::jmax(1,visibleBinCount()/8); clampFirstBin(); repaint(); }
+            void zoomIn() noexcept { setZoom(zoom_+1); }
+            void zoomOut() noexcept { setZoom(zoom_-1); }
             std::function<void()> onSamplesChanged;
             std::function<void(std::uint64_t,const std::array<float,mct::origami::ui::kWavetableFrameSize>&,
                                const std::array<float,mct::origami::ui::kWavetableFrameSize>&)> onEditCommitted;
@@ -791,8 +800,7 @@ private:
                     clampFirstBin(); repaint(); return;
                 }
                 if(wheel.deltaY==0.0f) return;
-                const int old=zoom_; zoom_=juce::jlimit(1,8,zoom_+(wheel.deltaY>0.0f?1:-1));
-                if(zoom_!=old) { clampFirstBin(); repaint(); }
+                setZoom(zoom_+(wheel.deltaY>0.0f?1:-1));
             }
             void paint(juce::Graphics& g) override {
                 g.fillAll(juce::Colour(0xff080808));
@@ -891,6 +899,20 @@ private:
                 return juce::String(names[pc])+juce::String(midi/12-1);
             }
             void clampFirstBin() noexcept { firstBin_=juce::jlimit(1,juce::jmax(1,static_cast<int>(kBins)-visibleBinCount()),firstBin_); }
+            void ensureSelectedBinVisible() noexcept {
+                if(hoveredBin_<firstBin_) firstBin_=hoveredBin_;
+                else if(hoveredBin_>=firstBin_+visibleBinCount()) firstBin_=hoveredBin_-visibleBinCount()+1;
+                clampFirstBin();
+            }
+            void setZoom(int value) noexcept {
+                const int old=zoom_;
+                zoom_=juce::jlimit(1,8,value);
+                if(zoom_==old) return;
+                const int anchor=hoveredBin_>0?hoveredBin_:firstBin_+visibleBinCount()/2;
+                firstBin_=anchor-visibleBinCount()/2;
+                clampFirstBin();
+                repaint();
+            }
             int binForX(float x) const noexcept {
                 const auto p=plotBounds(); if(!p.contains(juce::roundToInt(x),p.getCentreY())) return -1;
                 const float norm=juce::jlimit(0.0f,0.999999f,(x-static_cast<float>(p.getX()))/static_cast<float>(juce::jmax(1,p.getWidth())));
@@ -1606,7 +1628,30 @@ private:
             spectrum_.setContentComponent(spectrumCanvas_);
             spectrumMode_.setButtonText("INDEPENDENT");
             spectrumMode_.setTooltip("Spectral editing mode");
-            spectrum_.setHeaderAccessory(spectrumMode_,118);
+            spectrum_.setHeaderAccessory(spectrumControls_,286);
+            for(auto* b:std::array<juce::TextButton*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
+                spectrumControls_.addAndMakeVisible(*b);
+            spectrumControls_.addAndMakeVisible(spectrumMode_);
+            spectrumPrev_.setButtonText("<"); spectrumNext_.setButtonText(">");
+            spectrumPanLeft_.setButtonText("←"); spectrumPanRight_.setButtonText("→");
+            spectrumZoomOut_.setButtonText("-"); spectrumZoomIn_.setButtonText("+");
+            spectrumPrev_.setTooltip("Select previous harmonic"); spectrumNext_.setTooltip("Select next harmonic");
+            spectrumPanLeft_.setTooltip("Pan spectrum left"); spectrumPanRight_.setTooltip("Pan spectrum right");
+            spectrumZoomOut_.setTooltip("Zoom out"); spectrumZoomIn_.setTooltip("Zoom in");
+            spectrumPrev_.onClick=[this]{ spectrumCanvas_.selectPreviousHarmonic(); };
+            spectrumNext_.onClick=[this]{ spectrumCanvas_.selectNextHarmonic(); };
+            spectrumPanLeft_.onClick=[this]{ spectrumCanvas_.panLeft(); };
+            spectrumPanRight_.onClick=[this]{ spectrumCanvas_.panRight(); };
+            spectrumZoomOut_.onClick=[this]{ spectrumCanvas_.zoomOut(); };
+            spectrumZoomIn_.onClick=[this]{ spectrumCanvas_.zoomIn(); };
+            spectrumControls_.onResized=[this] {
+                auto a=spectrumControls_.getLocalBounds();
+                spectrumMode_.setBounds(a.removeFromRight(116));
+                a.removeFromRight(3);
+                const int w=juce::jmax(18,a.getWidth()/6);
+                for(auto* b:std::array<juce::TextButton*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
+                    b->setBounds(a.removeFromLeft(w).reduced(1,0));
+            };
             spectrumMode_.onClick=[this] {
                 const std::vector<mct::origami::ui::NativeChoiceItem> items={
                     {1,"INDEPENDENT",true,"",spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent},
@@ -1830,7 +1875,8 @@ private:
         FrameStrip frameStrip_;
         WaveformCanvas waveformCanvas_;
         SpectrumCanvas spectrumCanvas_;
-        juce::TextButton spectrumMode_;
+        juce::Component spectrumControls_;
+        juce::TextButton spectrumMode_,spectrumPrev_,spectrumNext_,spectrumPanLeft_,spectrumPanRight_,spectrumZoomOut_,spectrumZoomIn_;
         ToolsPanel toolsPanel_;
         ToolsScroller toolsScroller_;
         CurveInspector curveInspector_;
