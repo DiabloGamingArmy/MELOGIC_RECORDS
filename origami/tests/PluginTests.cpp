@@ -197,6 +197,75 @@ void audioContinuityP0Audit() {
     }
 }
 
+void audioPurityP0Audit() {
+    // Continuity can still pass a continuously distorted waveform. Render an
+    // isolated sine through the full processor path and fit its fundamental.
+    constexpr double sampleRate=48000.0;
+    constexpr int blockSize=256, warmupBlocks=12, captureBlocks=32, note=69;
+    OrigamiAudioProcessor p;
+    p.prepareToPlay(sampleRate,blockSize);
+    disableExtraOscillators(p);
+    check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 purity sine WT position accepted");
+    check(p.setUiParameter(ParameterId::Sustain,1.0f),"P0 purity sustain accepted");
+    check(p.setUiParameter(ParameterId::Attack,0.001f),"P0 purity attack accepted");
+    check(p.setUiParameter(ParameterId::OscUnison,1.0f),"P0 purity single unison accepted");
+    check(p.setUiParameter(ParameterId::OscDetune,0.0f),"P0 purity detune disabled");
+    check(p.setUiParameter(ParameterId::OscPan,0.0f),"P0 purity pan centered");
+    check(p.setUiParameter(ParameterId::Cutoff,20000.0f),"P0 purity cutoff opened");
+    check(p.setUiParameter(ParameterId::Resonance,0.0f),"P0 purity resonance disabled");
+    auto state=p.getUiInstrumentState();
+    state.modulation.filterEnabled=false;
+    check(p.setUiModulationState(state.modulation),"P0 purity filter disabled");
+    p.resetAudioContinuityDiagnostics();
+
+    juce::AudioBuffer<float> audio(2,blockSize);
+    juce::MidiBuffer midi;
+    midi.addEvent(juce::MidiMessage::noteOn(1,note,1.0f),0);
+    for(int n=0;n<warmupBlocks;++n) { audio.clear();p.processBlock(audio,midi);midi.clear(); }
+
+    std::array<float,blockSize*captureBlocks> captured{};
+    std::size_t write=0;
+    for(int n=0;n<captureBlocks;++n) {
+        audio.clear();p.processBlock(audio,midi);
+        for(int i=0;i<blockSize;++i) captured[write++]=audio.getSample(0,i);
+    }
+
+    const double omega=2.0*juce::MathConstants<double>::pi*440.0/sampleRate;
+    double sum=0.0,sinSin=0.0,cosCos=0.0,sinCos=0.0,xSin=0.0,xCos=0.0;
+    double dcSin=0.0,dcCos=0.0;
+    for(std::size_t n=0;n<captured.size();++n) {
+        const double x=captured[n], sn=std::sin(omega*static_cast<double>(n)),
+                     cs=std::cos(omega*static_cast<double>(n));
+        sum+=x;sinSin+=sn*sn;cosCos+=cs*cs;sinCos+=sn*cs;
+        xSin+=x*sn;xCos+=x*cs;dcSin+=sn;dcCos+=cs;
+    }
+    const double dc=sum/static_cast<double>(captured.size());
+    xSin-=dc*dcSin;xCos-=dc*dcCos;
+    const double determinant=sinSin*cosCos-sinCos*sinCos;
+    check(std::abs(determinant)>1.0e-9,"P0 purity sine fit is well conditioned");
+    const double a=(xSin*cosCos-xCos*sinCos)/determinant;
+    const double b=(xCos*sinSin-xSin*sinCos)/determinant;
+    double signalEnergy=0.0,residualEnergy=0.0,peakDelta=0.0;
+    for(std::size_t n=0;n<captured.size();++n) {
+        const double fitted=dc+a*std::sin(omega*static_cast<double>(n))
+                               +b*std::cos(omega*static_cast<double>(n));
+        const double residual=static_cast<double>(captured[n])-fitted;
+        signalEnergy+=(fitted-dc)*(fitted-dc);residualEnergy+=residual*residual;
+        if(n) peakDelta=std::max(peakDelta,std::abs(
+            static_cast<double>(captured[n])-static_cast<double>(captured[n-1])));
+    }
+    check(signalEnergy>1.0e-6,"P0 purity sine has measurable fundamental energy");
+    const double distortionRatio=std::sqrt(residualEnergy/std::max(signalEnergy,1.0e-20));
+    check(distortionRatio<0.02,"P0 processor sine residual distortion stays below 2 percent");
+    check(std::abs(dc)<0.01,"P0 processor sine has negligible DC offset");
+    check(peakDelta<0.20,"P0 processor sine has no bitcrush-like sample discontinuities");
+    const auto d=p.getAudioContinuityDiagnostics();
+    check(d.beginHostBlockFailures==0 && d.processSpanFailures==0,
+          "P0 purity render has no rejected host spans");
+    check(d.requestedSpanSamples==d.renderedSpanSamples,
+          "P0 purity render executes every requested sample");
+}
+
 void uiKeyboardRealtimeBoundaryAudit() {
     const auto root=juce::File(__FILE__).getParentDirectory().getParentDirectory();
     const auto processor=root.getChildFile("plugin/PluginProcessor.cpp").loadFileAsString();
@@ -952,6 +1021,7 @@ void frameToolsAudit() {
 }
 void run() {
     audioContinuityP0Audit();
+    audioPurityP0Audit();
     frameToolsAudit();
     uiKeyboardRealtimeBoundaryAudit();
     renderBudgetPolicyAudit();
