@@ -35,7 +35,7 @@ public:
 private:
     class WavetableEditorSurface final : public juce::Component {
         static constexpr int editorHeaderHeight=30;
-        static constexpr int regionHeaderHeight=20;
+        static constexpr int regionHeaderHeight=28;
         static constexpr int timelineHeight=125;
         static constexpr int tableHeight=66;
         static constexpr int contentGutter=4;
@@ -1184,6 +1184,49 @@ private:
             bool menuOpen_=false;
         };
 
+        class SpectrumIconButton final : public juce::Button {
+        public:
+            enum class Icon { previousHarmonic,nextHarmonic,panLeft,panRight,zoomOut,zoomIn };
+            explicit SpectrumIconButton(Icon icon):juce::Button({}),icon_(icon) {
+                setMouseCursor(juce::MouseCursor::PointingHandCursor);
+            }
+            void paintButton(juce::Graphics& g,bool over,bool down) override {
+                const auto b=getLocalBounds().toFloat().reduced(0.5f);
+                g.setColour(down ? juce::Colour(0xff242424) : (over ? juce::Colour(0xff1b1b1b) : juce::Colour(0xff0b0b0b)));
+                g.fillRect(b);
+                g.setColour(juce::Colour(0xff343434));
+                g.drawRect(b,1.0f);
+
+                const float cx=b.getCentreX(),cy=b.getCentreY();
+                const float alpha=isEnabled()?0.82f:0.28f;
+                g.setColour(juce::Colours::white.withAlpha(alpha));
+                juce::Path p;
+                auto chevron=[&](bool right,float centreX) {
+                    const float d=3.0f;
+                    p.startNewSubPath(centreX+(right?-d:d),cy-d);
+                    p.lineTo(centreX+(right?d:-d),cy);
+                    p.lineTo(centreX+(right?-d:d),cy+d);
+                };
+                if(icon_==Icon::previousHarmonic || icon_==Icon::nextHarmonic) {
+                    chevron(icon_==Icon::nextHarmonic,cx);
+                    g.strokePath(p,juce::PathStrokeType(1.5f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
+                } else if(icon_==Icon::panLeft || icon_==Icon::panRight) {
+                    const bool right=icon_==Icon::panRight;
+                    const float x0=cx+(right?-4.0f:4.0f),x1=cx+(right?4.0f:-4.0f);
+                    g.drawLine(x0,cy,x1,cy,1.5f);
+                    p.startNewSubPath(x1+(right?-3.0f:3.0f),cy-3.0f);
+                    p.lineTo(x1,cy);
+                    p.lineTo(x1+(right?-3.0f:3.0f),cy+3.0f);
+                    g.strokePath(p,juce::PathStrokeType(1.5f,juce::PathStrokeType::curved,juce::PathStrokeType::rounded));
+                } else {
+                    g.drawLine(cx-4.0f,cy,cx+4.0f,cy,1.5f);
+                    if(icon_==Icon::zoomIn) g.drawLine(cx,cy-4.0f,cx,cy+4.0f,1.5f);
+                }
+            }
+        private:
+            Icon icon_;
+        };
+
         class ToolsPanel final : public juce::Component {
         public:
             std::function<void(int,float,float,float)> onGenerate;
@@ -1335,6 +1378,31 @@ private:
                 if(transformOpen_) g.drawText("GAIN",gainText_,juce::Justification::centredLeft,false);
                 if(transformOpen_) g.drawText("OFFSET",offsetText_,juce::Justification::centredLeft,false);
                 if(transformOpen_) g.drawText("PROCESS",processLabel_,juce::Justification::centredLeft,false);
+
+                // Disclosure marks are geometry, not font glyphs, so they stay
+                // aligned and render identically on every host/platform.
+                auto drawDisclosure=[&](const juce::TextButton& button,bool open) {
+                    const auto b=button.getBounds().toFloat();
+                    const float cx=b.getRight()-10.0f,cy=b.getCentreY();
+                    juce::Path triangle;
+                    if(open) {
+                        triangle.startNewSubPath(cx-3.5f,cy-2.0f);
+                        triangle.lineTo(cx+3.5f,cy-2.0f);
+                        triangle.lineTo(cx,cy+2.5f);
+                    } else {
+                        triangle.startNewSubPath(cx-2.0f,cy-3.5f);
+                        triangle.lineTo(cx+2.5f,cy);
+                        triangle.lineTo(cx-2.0f,cy+3.5f);
+                    }
+                    triangle.closeSubPath();
+                    g.setColour(juce::Colours::white.withAlpha(0.68f));
+                    g.fillPath(triangle);
+                };
+                drawDisclosure(drawHeader_,drawOpen_);
+                drawDisclosure(gridHeader_,gridOpen_);
+                drawDisclosure(generateHeader_,generateOpen_);
+                drawDisclosure(transformHeader_,transformOpen_);
+
                 if(drawOpen_) {
                     auto drawToolBorder=[&](juce::TextButton& b,WaveformTool tool) {
                         g.setColour(canvas_.tool()==tool ? mct::origami::ui::signalSourceColour().withAlpha(0.82f)
@@ -1369,7 +1437,7 @@ private:
                 for(auto* c:items) c->setVisible(visible);
             }
             static void layoutSectionHeader(juce::Rectangle<int>& area,juce::TextButton& b,const juce::String& title) {
-                b.setButtonText(title+"    V");
+                b.setButtonText(title);
                 b.setBounds(area.removeFromTop(24)); area.removeFromTop(5);
             }
             void updateToolButtons() {
@@ -1628,13 +1696,10 @@ private:
             spectrum_.setContentComponent(spectrumCanvas_);
             spectrumMode_.setButtonText("INDEPENDENT");
             spectrumMode_.setTooltip("Spectral editing mode");
-            spectrum_.setHeaderAccessory(spectrumControls_,286);
-            for(auto* b:std::array<juce::TextButton*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
+            spectrum_.setHeaderAccessory(spectrumControls_,304);
+            for(auto* b:std::array<juce::Button*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
                 spectrumControls_.addAndMakeVisible(*b);
             spectrumControls_.addAndMakeVisible(spectrumMode_);
-            spectrumPrev_.setButtonText("<"); spectrumNext_.setButtonText(">");
-            spectrumPanLeft_.setButtonText("←"); spectrumPanRight_.setButtonText("→");
-            spectrumZoomOut_.setButtonText("-"); spectrumZoomIn_.setButtonText("+");
             spectrumPrev_.setTooltip("Select previous harmonic"); spectrumNext_.setTooltip("Select next harmonic");
             spectrumPanLeft_.setTooltip("Pan spectrum left"); spectrumPanRight_.setTooltip("Pan spectrum right");
             spectrumZoomOut_.setTooltip("Zoom out"); spectrumZoomIn_.setTooltip("Zoom in");
@@ -1714,10 +1779,10 @@ private:
             // spectrumControls_ is a plain JUCE Component, so its child layout
             // belongs to this editor's resized() pass rather than a callback.
             auto spectrumHeader=spectrumControls_.getLocalBounds();
-            spectrumMode_.setBounds(spectrumHeader.removeFromRight(116));
+            spectrumMode_.setBounds(spectrumHeader.removeFromRight(120));
             spectrumHeader.removeFromRight(3);
-            const int spectrumControlWidth=juce::jmax(18,spectrumHeader.getWidth()/6);
-            for(auto* button:std::array<juce::TextButton*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
+            const int spectrumControlWidth=juce::jmax(22,spectrumHeader.getWidth()/6);
+            for(auto* button:std::array<juce::Button*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
                 button->setBounds(spectrumHeader.removeFromLeft(spectrumControlWidth).reduced(1,0));
         }
         void paint(juce::Graphics& g) override {
@@ -1877,7 +1942,13 @@ private:
         WaveformCanvas waveformCanvas_;
         SpectrumCanvas spectrumCanvas_;
         juce::Component spectrumControls_;
-        juce::TextButton spectrumMode_,spectrumPrev_,spectrumNext_,spectrumPanLeft_,spectrumPanRight_,spectrumZoomOut_,spectrumZoomIn_;
+        juce::TextButton spectrumMode_;
+        SpectrumIconButton spectrumPrev_{SpectrumIconButton::Icon::previousHarmonic};
+        SpectrumIconButton spectrumNext_{SpectrumIconButton::Icon::nextHarmonic};
+        SpectrumIconButton spectrumPanLeft_{SpectrumIconButton::Icon::panLeft};
+        SpectrumIconButton spectrumPanRight_{SpectrumIconButton::Icon::panRight};
+        SpectrumIconButton spectrumZoomOut_{SpectrumIconButton::Icon::zoomOut};
+        SpectrumIconButton spectrumZoomIn_{SpectrumIconButton::Icon::zoomIn};
         ToolsPanel toolsPanel_;
         ToolsScroller toolsScroller_;
         CurveInspector curveInspector_;
