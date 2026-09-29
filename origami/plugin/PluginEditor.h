@@ -1644,14 +1644,6 @@ private:
             spectrumPanRight_.onClick=[this]{ spectrumCanvas_.panRight(); };
             spectrumZoomOut_.onClick=[this]{ spectrumCanvas_.zoomOut(); };
             spectrumZoomIn_.onClick=[this]{ spectrumCanvas_.zoomIn(); };
-            spectrumControls_.onResized=[this] {
-                auto a=spectrumControls_.getLocalBounds();
-                spectrumMode_.setBounds(a.removeFromRight(116));
-                a.removeFromRight(3);
-                const int w=juce::jmax(18,a.getWidth()/6);
-                for(auto* b:std::array<juce::TextButton*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
-                    b->setBounds(a.removeFromLeft(w).reduced(1,0));
-            };
             spectrumMode_.onClick=[this] {
                 const std::vector<mct::origami::ui::NativeChoiceItem> items={
                     {1,"INDEPENDENT",true,"",spectrumCanvas_.editMode()==SpectrumCanvas::EditMode::Independent},
@@ -1718,6 +1710,15 @@ private:
             tools_.setBounds(area.removeFromLeft(toolsWidth));
             spectrum_.setBounds(area.removeFromRight(spectrumWidth));
             waveform_.setBounds(area);
+
+            // spectrumControls_ is a plain JUCE Component, so its child layout
+            // belongs to this editor's resized() pass rather than a callback.
+            auto spectrumHeader=spectrumControls_.getLocalBounds();
+            spectrumMode_.setBounds(spectrumHeader.removeFromRight(116));
+            spectrumHeader.removeFromRight(3);
+            const int spectrumControlWidth=juce::jmax(18,spectrumHeader.getWidth()/6);
+            for(auto* button:std::array<juce::TextButton*,6>{{&spectrumPrev_,&spectrumNext_,&spectrumPanLeft_,&spectrumPanRight_,&spectrumZoomOut_,&spectrumZoomIn_}})
+                button->setBounds(spectrumHeader.removeFromLeft(spectrumControlWidth).reduced(1,0));
         }
         void paint(juce::Graphics& g) override {
             g.fillAll(mct::origami::ui::Palette::background());
