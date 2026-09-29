@@ -761,7 +761,18 @@ private:
                 if(!editing_ || !document_.valid()) return;
                 editing_=false; const auto after=document_.frames[document_.selectedFrame].samples;
                 if(after!=editBefore_ && onEditCommitted) onEditCommitted(editFrameId_,editBefore_,after);
-                analyseDocumentFrame(); repaint();
+                // Do not FFT the peak-fitted output back into an authored spectrum here.
+                // The selected mode's control-domain coefficients are the source of truth.
+                if(editMode_==EditMode::Independent) {
+                    const auto& frame=document_.frames[document_.selectedFrame];
+                    magnitudes_=frame.independentMagnitudes;
+                    phases_=frame.independentPhases;
+                } else if(editMode_==EditMode::Additive) {
+                    rebuildAdditiveMagnitudes();
+                } else {
+                    analyseDocumentFrame();
+                }
+                repaint();
             }
             void mouseWheelMove(const juce::MouseEvent& e,const juce::MouseWheelDetails& wheel) override {
                 const bool pan=e.mods.isShiftDown() || std::abs(wheel.deltaX)>std::abs(wheel.deltaY);
@@ -865,9 +876,14 @@ private:
                 const int bin=binForX(pos.x); if(bin<1) return;
                 const auto p=plotBounds();
                 const float level=juce::jlimit(0.0f,1.0f,(static_cast<float>(p.getBottom())-pos.y)/static_cast<float>(juce::jmax(1,p.getHeight())));
+                // The floor is a real zero, not merely -72 dB. This makes a wiped
+                // harmonic genuinely absent from reconstruction.
+                const float displayAmplitude=level<=0.002f
+                    ? 0.0f
+                    : juce::Decibels::decibelsToGain(-72.0f+72.0f*level);
                 const float target=editMode_==EditMode::Additive
                     ? level
-                    : fftMagnitudeForDisplayAmplitude(bin,juce::Decibels::decibelsToGain(-72.0f+72.0f*level));
+                    : fftMagnitudeForDisplayAmplitude(bin,displayAmplitude);
                 if(lastEditedBin_>0 && lastEditedBin_!=bin) {
                     const int lo=juce::jmin(lastEditedBin_,bin),hi=juce::jmax(lastEditedBin_,bin);
                     const float start=editMagnitudes_[static_cast<std::size_t>(lastEditedBin_)];
