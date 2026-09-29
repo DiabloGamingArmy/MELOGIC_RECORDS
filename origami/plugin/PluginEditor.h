@@ -711,7 +711,7 @@ private:
                         ensureSpectralStateInitialized(frame);
                         if(mode==EditMode::Independent) {
                             magnitudes_=frame.independentMagnitudes;
-                            phases_=frame.independentPhases;
+                            setIndependentPhases();
                         } else {
                             phases_=frame.subtractiveSourcePhases;
                             rebuildSubtractiveMagnitudes(frame);
@@ -736,7 +736,7 @@ private:
                 ensureSpectralStateInitialized(frame);
                 if(editMode_==EditMode::Independent) {
                     magnitudes_=frame.independentMagnitudes;
-                    phases_=frame.independentPhases;
+                    setIndependentPhases();
                 } else if(editMode_==EditMode::Additive) {
                     ensureAdditiveStateInitialized(frame);
                     additiveContributions_=frame.additiveContributions;
@@ -767,7 +767,7 @@ private:
                 if(editMode_==EditMode::Independent) {
                     const auto& frame=document_.frames[document_.selectedFrame];
                     magnitudes_=frame.independentMagnitudes;
-                    phases_=frame.independentPhases;
+                    setIndependentPhases();
                 } else if(editMode_==EditMode::Additive) {
                     const auto& frame=document_.frames[document_.selectedFrame];
                     additiveContributions_=frame.additiveContributions;
@@ -868,7 +868,6 @@ private:
         private:
             static constexpr std::size_t kFftSize=mct::origami::ui::kWavetableFrameSize;
             static constexpr std::size_t kBins=kFftSize/2+1;
-            static constexpr float independentPhaseFloor_=1.0e-4f;
             static constexpr float independentDefaultPhase_=-juce::MathConstants<float>::halfPi;
             int visibleBinCount() const noexcept { return juce::jmax(16,128/zoom_); }
             juce::Rectangle<int> plotBounds() const noexcept {
@@ -925,13 +924,9 @@ private:
                         else {
                             auto& frame=document_.frames[document_.selectedFrame];
                             const auto index=static_cast<std::size_t>(b);
-                            const float previous=editMagnitudes_[index];
                             editMagnitudes_[index]=value;
-                            // FFT phase is undefined for an effectively absent partial. Never
-                            // amplify numerical residue into a random-phase authored harmonic.
-                            if(previous<=independentPhaseFloor_ && value>independentPhaseFloor_)
-                                phases_[index]=independentDefaultPhase_;
-                            frame.independentPhases[index]=phases_[index];
+                            phases_[index]=independentDefaultPhase_;
+                            frame.independentPhases[index]=independentDefaultPhase_;
                         }
                     }
                 } else {
@@ -940,11 +935,9 @@ private:
                     else {
                         auto& frame=document_.frames[document_.selectedFrame];
                         const auto index=static_cast<std::size_t>(bin);
-                        const float previous=editMagnitudes_[index];
                         editMagnitudes_[index]=target;
-                        if(previous<=independentPhaseFloor_ && target>independentPhaseFloor_)
-                            phases_[index]=independentDefaultPhase_;
-                        frame.independentPhases[index]=phases_[index];
+                        phases_[index]=independentDefaultPhase_;
+                        frame.independentPhases[index]=independentDefaultPhase_;
                     }
                 }
                 if(editMode_==EditMode::Additive) rebuildAdditiveMagnitudes();
@@ -956,7 +949,9 @@ private:
                 analyseDocumentFrame();
                 if(!frame.hasIndependentSpectrum) {
                     frame.independentMagnitudes=magnitudes_;
-                    frame.independentPhases=phases_;
+                    frame.independentPhases.fill(0.0f);
+                    for(std::size_t bin=1;bin<kBins;++bin)
+                        frame.independentPhases[bin]=independentDefaultPhase_;
                     frame.hasIndependentSpectrum=true;
                 }
                 if(!frame.hasSubtractiveSpectrum) {
@@ -972,6 +967,11 @@ private:
                 frame.additiveContributions[0]=0.0f;
                 frame.hasAdditiveSpectrum=true;
             }
+            void setIndependentPhases() noexcept {
+                phases_.fill(0.0f);
+                for(std::size_t bin=1;bin<kBins;++bin)
+                    phases_[bin]=independentDefaultPhase_;
+            }
             void setAdditivePhases() noexcept {
                 phases_.fill(0.0f);
                 for(std::size_t bin=1;bin<kBins;++bin)
@@ -983,7 +983,7 @@ private:
                 ensureSpectralStateInitialized(frame);
                 if(editMode_==EditMode::Independent) {
                     magnitudes_=frame.independentMagnitudes;
-                    phases_=frame.independentPhases;
+                    setIndependentPhases();
                 } else if(editMode_==EditMode::Additive) {
                     ensureAdditiveStateInitialized(frame);
                     additiveContributions_=frame.additiveContributions;
