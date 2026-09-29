@@ -381,6 +381,14 @@ void OrigamiAudioProcessor::advanceArpeggiator(juce::MidiBuffer& out,int startSa
 void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi) {
     continuityCallbacks_.fetch_add(1,std::memory_order_relaxed);
     const auto callbackStartTicks=juce::Time::getHighResolutionTicks();
+
+    // Wavetable editor commits cross into DSP only at a callback boundary.
+    // Moving the consumed generation here transfers vector ownership without
+    // a JUCE callback lock and never mutates a table while voices render it.
+    PendingOscillatorWavetable pendingWavetable;
+    if(wavetableMailbox_.consume(pendingWavetable) && pendingWavetable.id!=0)
+        engine_.installWavetableForOscillator(
+            pendingWavetable.id,std::move(pendingWavetable.table));
     juce::ScopedNoDenormals noDenormals;
     jassert(buffer.getNumChannels() >= 2);
     const int total = buffer.getNumSamples();
@@ -721,10 +729,13 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
 bool OrigamiAudioProcessor::installUiOscillatorWavetable(
     mct::origami::OscillatorModuleId id,mct::origami::dsp::Wavetable table) {
     if(id==0 || !table.valid()) return false;
-    // Wavetable vectors are replaced only while JUCE's callback lock excludes
-    // processBlock. No allocation or table mutation occurs on the audio thread.
-    const juce::ScopedLock callbackLock(getCallbackLock());
-    return engine_.installWavetableForOscillator(id,std::move(table));
+    // Publish a complete table generation without ever blocking processBlock.
+    // The audio thread consumes it at the next host-block boundary.
+    PendingOscillatorWavetable pending;
+    pending.id=id;
+    pending.table=std::move(table);
+    wavetableMailbox_.publish(pending);
+    return true;
 }
 
 bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleId id,const mct::origami::OscillatorModuleState& state) noexcept {
