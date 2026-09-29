@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
+#include "PluginProcessor.h"
 
 // mct-origami-native-window-chrome-v2
 // StandaloneFilterWindow lives in the plugin-client Standalone header;
@@ -46,10 +47,38 @@ public:
             false);
         window_->setResizable(true, true);
         window_->setVisible(true);
+
+        // P0 diagnostic only: report the exact processor boundary that the
+        // JUCE standalone/device bridge is driving. No DSP or device settings
+        // are changed here.
+        diagnosticTimer_.startTimer(2000);
+    }
+
+    void timerCallback()
+    {
+        if(window_==nullptr) return;
+        auto* processor=dynamic_cast<OrigamiAudioProcessor*>(window_->getAudioProcessor());
+        if(processor==nullptr) return;
+        const auto d=processor->getAudioContinuityDiagnostics();
+        std::cout << "[Origami P0 runtime] sr=" << d.preparedSampleRate
+                  << " preparedBlock=" << d.preparedBlockSize
+                  << " callback=" << d.lastCallbackSamples
+                  << " range=" << d.minCallbackSamples << ".." << d.maxCallbackSamples
+                  << " channels=" << d.lastOutputChannels
+                  << " callbacks=" << d.callbacks
+                  << " spanFail=" << d.processSpanFailures
+                  << " beginFail=" << d.beginHostBlockFailures
+                  << " zero=" << d.zeroOutputCallbacks
+                  << " peak=" << d.outputPeak
+                  << " maxDelta=" << d.maxAdjacentDelta
+                  << " nonFinite=" << d.nonFiniteOutputSamples
+                  << " deadlineMiss=" << processor->getUiRenderBudgetSnapshot().deadlineMisses
+                  << std::endl;
     }
 
     void shutdown() override
     {
+        diagnosticTimer_.stopTimer();
         window_.reset();
         properties_.saveIfNeeded();
     }
@@ -60,6 +89,13 @@ public:
     }
 
 private:
+    class DiagnosticTimer final : public juce::Timer {
+    public:
+        explicit DiagnosticTimer(OrigamiStandaloneApplication& owner):owner_(owner) {}
+        void timerCallback() override { owner_.timerCallback(); }
+    private:
+        OrigamiStandaloneApplication& owner_;
+    } diagnosticTimer_{*this};
     juce::ApplicationProperties properties_;
     std::unique_ptr<juce::StandaloneFilterWindow> window_;
 };
