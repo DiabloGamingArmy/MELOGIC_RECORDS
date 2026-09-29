@@ -18,7 +18,7 @@
 namespace mct::origami {
 
 void Voice::prepare(double sampleRate) noexcept { sampleRate_=sampleRate;envelope_.prepare(sampleRate);env2_.prepare(sampleRate);env3_.prepare(sampleRate);reset(); }
-void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& prepared:preparedModules_)prepared.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
+void Voice::reset() noexcept { topologyGeneration_=0; for(auto& lfo:noteLfos_)lfo.reset();for(auto& module:moduleOscillators_)for(auto& oscillator:module)oscillator.reset();for(auto& oscillator:moduleBlendCenters_)oscillator.reset();for(auto& runtime:oscillatorRuntime_)runtime.invalidate();previousOscillatorSamples_.fill(0.0f);envelope_.reset();env2_.reset();env3_.reset();for(auto& filter:moduleFilters_)filter.reset();active_=releasing_=false;velocity_=0;order_=0;visualization_={}; }
 void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
     reset();address_=address;velocity_=velocity;order_=order;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
@@ -75,7 +75,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         for(std::size_t m=0;m<modules.size();++m) if(moduleIds_[m]!=topology.ids[m]) {
             for(auto& oscillator:moduleOscillators_[m]) oscillator.reset();
             moduleBlendCenters_[m].reset();moduleFilters_[m].reset();
-            moduleIds_[m]=topology.ids[m];preparedModules_[m].invalidate();
+            moduleIds_[m]=topology.ids[m];oscillatorRuntime_[m].invalidate();
         }
         topologyGeneration_=topology.generation;
     }
@@ -86,11 +86,38 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         const auto* tablePtr=tables[m];
         if(tablePtr==nullptr || !tablePtr->valid()) continue;
         const auto& table=*tablePtr;
-        auto& prepared=preparedModules_[m];
-        prepared.update(module);
-        // Pitch bend remains audio-rate; the ratio uses bounded fast exp2.
-        const double frequencyScale=prepared.pitchScale*pitchBendScale;
-        const unsigned count=prepared.unison;
+        auto& runtime=oscillatorRuntime_[m];
+        const unsigned count=std::clamp(module.unison,1u,maxUnisonVoices);
+        runtime.prepareDetune(module.id,count,module.detuneCents);
+
+        // Pitch is intentionally audio-rate: octave/semitone/fine can be
+        // modulation destinations. Keep this calculation explicit rather than
+        // hiding it behind a general-purpose state cache.
+        const auto finiteOrZero=[](float value) noexcept {
+            return std::isfinite(value) ? value : 0.0f;
+        };
+        const double pitchSemitones=
+            static_cast<double>(finiteOrZero(module.octave))*12.0+
+            static_cast<double>(finiteOrZero(module.semitone))+
+            static_cast<double>(finiteOrZero(module.fineCents))/100.0;
+        const double frequencyScale=
+            dsp::fastExp2Audio(pitchSemitones/12.0)*pitchBendScale;
+
+        // Level/blend are already DSP-domain values. Do not copy them through
+        // a prepared-state object every sample.
+        const float level=std::isfinite(module.level)
+            ? std::clamp(module.level,0.0f,1.0f) : 0.0f;
+        const float blend=std::isfinite(module.blend)
+            ? std::clamp(module.blend,0.0f,1.0f) : 0.0f;
+
+        // Equal-power pan remains audio-rate for modulation. fastSinCycle
+        // avoids general-purpose libm trig in the realtime loop.
+        const float pan=std::isfinite(module.pan)
+            ? std::clamp(module.pan,-1.0f,1.0f) : 0.0f;
+        const double panCycle=(static_cast<double>(pan)+1.0)*0.125;
+        const float panLeft=static_cast<float>(dsp::fastSinCycle(0.25-panCycle));
+        const float panRight=static_cast<float>(dsp::fastSinCycle(panCycle));
+
         const float position=module.wtPosition;
 
         double routedFrequencyScale=1.0;
@@ -163,7 +190,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
             float unisonStack=0.0f;
             for(unsigned u=0;u<count;++u) {
                 unisonStack+=moduleOscillators_[m][u].next(
-                    table,baseFrequency*prepared.detuneRatios[u],sampleRate_,position,
+                    table,baseFrequency*runtime.detuneRatios[u],sampleRate_,position,
                     processPlan,routedPhaseOffset,routedPhaseSkew);
             }
             unisonStack/=static_cast<float>(count);
@@ -171,7 +198,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
             const float centre=moduleBlendCenters_[m].next(
                 table,baseFrequency,sampleRate_,position,
                 processPlan,routedPhaseOffset,routedPhaseSkew);
-            oscillatorMix=centre+(unisonStack-centre)*prepared.blend;
+            oscillatorMix=centre+(unisonStack-centre)*blend;
         }
         if(observe) {
             visualization_.moduleSamples[m]=oscillatorMix;
@@ -262,10 +289,10 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         } else {
             moduleFilters_[m].reset();
         }
-        sampleValue*=prepared.level;
+        sampleValue*=level;
         if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
-        outputs.left+=sampleValue*prepared.panLeft;
-        outputs.right+=sampleValue*prepared.panRight;
+        outputs.left+=sampleValue*panLeft;
+        outputs.right+=sampleValue*panRight;
         outputs.mono+=sampleValue;
     }
 
