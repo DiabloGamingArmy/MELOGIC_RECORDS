@@ -89,7 +89,7 @@ private:
                 }
 
                 g.setColour(juce::Colours::white.withAlpha(0.62f));
-                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",10.0f,juce::Font::bold)));
                 g.drawText(title_,header.reduced(7,0),juce::Justification::centredLeft,false);
             }
         private:
@@ -159,7 +159,7 @@ private:
                         g.strokePath(trace,juce::PathStrokeType(2.0f,juce::PathStrokeType::curved,
                                                                juce::PathStrokeType::rounded));
                     }
-                    g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions("Arial",9.5f,juce::Font::bold)));
                     g.setColour(juce::Colours::white.withAlpha(0.78f));
                     g.drawText(juce::String(displayIndex_+1),getLocalBounds().removeFromBottom(18),
                                juce::Justification::centred,false);
@@ -490,7 +490,7 @@ private:
                         g.drawVerticalLine(juce::roundToInt(x),static_cast<float>(plot.getY()),static_cast<float>(plot.getBottom()));
                     }
                 }
-                g.setFont(juce::Font(juce::FontOptions("Arial",7.0f,juce::Font::plain)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
                 g.setColour(juce::Colours::white.withAlpha(0.34f));
                 const char* ampLabels[]{"+1.0","+0.5","0.0","-0.5","-1.0"};
                 for(int i=0;i<5;++i) {
@@ -808,7 +808,7 @@ private:
                 auto bounds=top;
                 auto labelArea=bounds.removeFromBottom(18);
                 auto scaleArea=bounds.removeFromLeft(31);
-                g.setFont(juce::Font(juce::FontOptions("Arial",6.8f,juce::Font::plain)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
                 for(int i=0;i<=6;++i) {
                     const float y=static_cast<float>(bounds.getY())+static_cast<float>(i)/6.0f*static_cast<float>(bounds.getHeight());
                     g.setColour(juce::Colour(0xff1c1c1c));
@@ -847,7 +847,7 @@ private:
                     g.fillRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getBottom())-height,width,height));
                     if(bin==hoveredBin_) { g.setColour(juce::Colours::white.withAlpha(0.9f)); g.drawRect(juce::Rectangle<float>(x,static_cast<float>(bounds.getY()),width,static_cast<float>(bounds.getHeight())),1.0f); }
                 }
-                g.setColour(juce::Colours::white.withAlpha(0.38f)); g.setFont(juce::Font(juce::FontOptions("Arial",7.0f,juce::Font::plain)));
+                g.setColour(juce::Colours::white.withAlpha(0.38f)); g.setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::plain)));
                 for(int n=0;n<=4;++n) {
                     const int bin=firstBin_+(count-1)*n/4;
                     const float x=static_cast<float>(bounds.getX())+static_cast<float>(n)/4.0f*static_cast<float>(bounds.getWidth());
@@ -1298,8 +1298,8 @@ private:
             }
             void paint(juce::Graphics& g) override {
                 g.setColour(juce::Colours::white.withAlpha(0.38f));
-                g.setFont(juce::Font(juce::FontOptions("Arial",8.0f,juce::Font::bold)));
-                g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::plain)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",9.5f,juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::plain)));
                 g.setColour(juce::Colours::white.withAlpha(0.55f));
                 if(gridOpen_) g.drawText("X GRID",xGridText_,juce::Justification::centredLeft,false);
                 if(gridOpen_) g.drawText("X SNAP",xSnapText_,juce::Justification::centredLeft,false);
@@ -1434,7 +1434,7 @@ private:
                 addHint_.setText("CLICK WAVEFORM TO ADD POINT",juce::dontSendNotification);
                 for(auto* l:std::array<juce::Label*,4>{{&title_,&mode_,&selection_,&addHint_}}) {
                     l->setColour(juce::Label::textColourId,juce::Colours::white.withAlpha(l==&title_?0.82f:0.55f));
-                    l->setFont(juce::Font(juce::FontOptions("Arial",l==&title_?10.0f:8.0f,l==&title_?juce::Font::bold:juce::Font::plain)));
+                    l->setFont(juce::Font(juce::FontOptions("Arial",l==&title_?11.0f:9.5f,l==&title_?juce::Font::bold:juce::Font::plain)));
                     l->setJustificationType(juce::Justification::centredLeft);
                 }
                 setupNumber(x_); setupNumber(y_); setupNumber(hardness_);
@@ -1471,7 +1471,7 @@ private:
                 auto bottom=getLocalBounds().reduced(7).removeFromBottom(58); apply_.setBounds(bottom.removeFromTop(26)); bottom.removeFromTop(4); cancel_.setBounds(bottom.removeFromTop(26));
             }
             void paint(juce::Graphics& g) override {
-                g.fillAll(juce::Colour(0xff080808)); g.setColour(juce::Colours::white.withAlpha(0.42f)); g.setFont(juce::Font(juce::FontOptions("Arial",7.5f,juce::Font::bold)));
+                g.fillAll(juce::Colour(0xff080808)); g.setColour(juce::Colours::white.withAlpha(0.42f)); g.setFont(juce::Font(juce::FontOptions("Arial",9.0f,juce::Font::bold)));
                 const bool point=canvas_.selectedCurvePointIndex()>=0;
                 g.drawText(point?"X SAMPLE":"CONTROL X %",xLabel_,juce::Justification::centredLeft,false);
                 g.drawText(point?"Y VALUE":"CONTROL Y",yLabel_,juce::Justification::centredLeft,false);
@@ -1521,7 +1521,7 @@ private:
                 document_.setText("BASIC SHAPES",juce::dontSendNotification);
                 frame_.setText("FRAME 001 / 004",juce::dontSendNotification);
                 for(auto* label:std::array<juce::Label*,2>{{&document_,&frame_}}) {
-                    label->setFont(juce::Font(juce::FontOptions("Arial",8.5f,juce::Font::bold)));
+                    label->setFont(juce::Font(juce::FontOptions("Arial",10.0f,juce::Font::bold)));
                     label->setColour(juce::Label::textColourId,juce::Colours::white.withAlpha(0.68f));
                     label->setJustificationType(juce::Justification::centred);
                     label->setInterceptsMouseClicks(false,false);
