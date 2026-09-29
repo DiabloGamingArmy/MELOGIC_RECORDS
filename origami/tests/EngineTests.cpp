@@ -637,6 +637,29 @@ void voiceObservationDoesNotChangeAudio() {
           "unobserved voice skips snapshot copies");
 }
 
+void engineVisualizationCadenceDoesNotChangeAudio() {
+    OrigamiEngine observed,reference;
+    check(observed.prepare(96000,512,2) && reference.prepare(96000,512,2),
+          "visualization cadence engines prepare at live rate");
+    for(auto* engine:{&observed,&reference}) {
+        check(engine->setParameter(ParameterId::Waveform,0.0f),"visualization cadence sine accepted");
+        check(engine->setParameter(ParameterId::Sustain,1.0f),"visualization cadence sustain accepted");
+        check(engine->noteOn(69,1.0f),"visualization cadence note accepted");
+    }
+    std::array<float,512> observedL{},observedR{},referenceL{},referenceR{};
+    float* observedOut[]{observedL.data(),observedR.data()};
+    float* referenceOut[]{referenceL.data(),referenceR.data()};
+    for(int block=0;block<8;++block) {
+        check(observed.process(observedOut,2,512) && reference.process(referenceOut,2,512),
+              "visualization cadence renders live-size blocks");
+        for(std::size_t i=0;i<512;++i)
+            check(observedL[i]==referenceL[i] && observedR[i]==referenceR[i],
+                  "visualization cadence is audio-transparent");
+    }
+    check(observed.runtimeVisualizationSnapshot().active,
+          "decimated visualization still observes active voice");
+}
+
 void performanceSourceCurveAudit() {
     PerformanceSourceCurve linear{};
     check(std::abs(performanceSourceCurveValue(linear,0.0f)-0.0f)<1.0e-6f,
@@ -661,6 +684,7 @@ void performanceSourceCurveAudit() {
 int main() {
     dynamicTopologyRecompilation();
     voiceObservationDoesNotChangeAudio();
+    engineVisualizationCadenceDoesNotChangeAudio();
     performanceSourceCurveAudit();
     qosVoiceAdmissionAudit();
     audioRateFastMathAudit();
