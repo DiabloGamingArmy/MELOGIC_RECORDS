@@ -115,7 +115,6 @@ public:
         double lastCallbackMs=0.0;
         double worstCallbackMs=0.0;
         std::uint64_t callbacksOverBudget=0;
-        mct::origami::VoiceHotPathProfile voiceProfile{};
         mct::origami::dsp::SpectralCompilerStats spectralProfile{};
     };
     AudioContinuityDiagnostics getAudioContinuityDiagnostics() const noexcept;
