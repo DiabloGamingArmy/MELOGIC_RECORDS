@@ -1277,9 +1277,9 @@ void matrixDynamicRouteAudit() {
     walk(matrix,[&](juce::Component& component) {
         if(component.getName()=="Route source") source=dynamic_cast<ui::NativeComboBox*>(&component);
         if(component.getName()=="Route destination") destination=dynamic_cast<ui::NativeComboBox*>(&component);
-        if(component.getName()=="Route enabled") enabled=dynamic_cast<juce::TextButton*>(&component);
-        if(component.getName()=="Bipolar modulation") bipolar=dynamic_cast<juce::TextButton*>(&component);
-        if(component.getName()=="Route amount") amount=dynamic_cast<juce::Slider*>(&component);
+        if(component.getName()=="MATRIX ROUTE ENABLE") enabled=dynamic_cast<juce::TextButton*>(&component);
+        if(component.getName()=="MATRIX ROUTE POLARITY") bipolar=dynamic_cast<juce::TextButton*>(&component);
+        if(component.getName()=="MATRIX ROUTE AMOUNT") amount=dynamic_cast<juce::Slider*>(&component);
     });
     check(source && destination && enabled && bipolar && amount,"matrix row controls exist");
     check(source->getSelectedId()==static_cast<int>(ModSource::Lfo1),"matrix shows dragged source");
@@ -1303,8 +1303,8 @@ void matrixDynamicRouteAudit() {
     check(std::abs(compiledProcessAmount()-unmodulatedAmount)<1.0e-6f,
           "matrix OFF disables compiled process modulation");
     matrix.syncFromModel();
-    check(!enabled->getToggleState() && enabled->getButtonText()=="OFF",
-          "matrix OFF button survives resync");
+    check(!enabled->getToggleState(),
+          "matrix OFF toggle survives resync");
     static_cast<juce::Component*>(bipolar)->mouseDown(event(*bipolar));
     static_cast<juce::Component*>(bipolar)->mouseUp(event(*bipolar));
     stored=processor.getUiInstrumentState().modulation.routes[0];
