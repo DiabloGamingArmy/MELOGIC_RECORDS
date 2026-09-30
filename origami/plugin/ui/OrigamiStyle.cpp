@@ -53,11 +53,11 @@ void OrigamiLookAndFeel::drawButtonBackground(juce::Graphics& g,juce::Button& bu
 
     if(button.getName()=="MATRIX ROUTE ENABLE") {
         auto pill=b.withSizeKeepingCentre(34.0f,18.0f);
-        auto fill=active?Palette::accent():Palette::raised();
+        auto fill=active?signalSourceColour():Palette::raised();
         if(over) fill=fill.brighter(.08f);
         if(down) fill=fill.brighter(.12f);
         g.setColour(fill);g.fillRoundedRectangle(pill,9.0f);
-        g.setColour(active?Palette::accent().brighter(.12f):Palette::borderSoft());
+        g.setColour(active?signalSourceColour().brighter(.12f):Palette::borderSoft());
         g.drawRoundedRectangle(pill,9.0f,1.0f);
         const float thumb=12.0f;
         const float cx=active?pill.getRight()-9.0f:pill.getX()+9.0f;
