@@ -116,6 +116,26 @@ float quantizedSpectralAmount(OscProcessType type,float amount) noexcept {
     // state is bounded.
     return std::round(a*spectralAmountSteps)/spectralAmountSteps;
 }
+bool randomSpectralVariant(OscProcessType type) noexcept {
+    return type==OscProcessType::RandAmp || type==OscProcessType::RandSparse;
+}
+std::uint32_t randomVariantSeed(std::uint32_t seed,float position) noexcept {
+    const auto frame=static_cast<std::uint32_t>(
+        std::clamp(std::lround(static_cast<double>(position)*spectralAmountSteps),
+                   0l,static_cast<long>(spectralAmountSteps)));
+    // The stored seed chooses the random family; the knob chooses a stable
+    // frame inside that family. This deliberately does not change magnitude.
+    return spectralHash(seed ^ 0xa511e9b3u,frame+1u);
+}
+double spectralStageGain(OscProcessType type,std::size_t harmonic,
+                         float amount,std::uint32_t seed) noexcept {
+    const float position=quantizedSpectralAmount(type,amount);
+    if(randomSpectralVariant(type))
+        return fullSpectralGain(type,harmonic,randomVariantSeed(seed,position));
+
+    const double target=fullSpectralGain(type,harmonic,seed);
+    return 1.0+static_cast<double>(position)*(target-1.0);
+}
 float readCycle(const float* input,double phase) noexcept {
     phase-=std::floor(phase);
     const double pos=phase*static_cast<double>(spectralSize);
@@ -617,9 +637,7 @@ void renderProcessedFrame2048(const float* input,float* output,
         for(std::size_t p=0;p<count;++p) {
             const auto& stage=plan.stages[p];
             if(!oscProcessIsSpectral(stage.type)) continue;
-            const double amount=quantizedSpectralAmount(stage.type,stage.amount);
-            const double target=fullSpectralGain(stage.type,h,stage.seed);
-            gain*=1.0+amount*(target-1.0);
+            gain*=spectralStageGain(stage.type,h,stage.amount,stage.seed);
         }
         bins[h]*=gain;bins[spectralSize-h]*=gain;
     }
@@ -655,14 +673,10 @@ void renderProcessedFrame2048(const float* input,float* output,
     bins[0]=Complex{};
     for(std::size_t h=1;h<spectralSize/2;++h) {
         double gain=1.0;
-        if(oscProcessIsSpectral(process1)) {
-            const double target=fullSpectralGain(process1,h,seed1);
-            gain*=1.0+a1*(target-1.0);
-        }
-        if(oscProcessIsSpectral(process2)) {
-            const double target=fullSpectralGain(process2,h,seed2);
-            gain*=1.0+a2*(target-1.0);
-        }
+        if(oscProcessIsSpectral(process1))
+            gain*=spectralStageGain(process1,h,static_cast<float>(a1),seed1);
+        if(oscProcessIsSpectral(process2))
+            gain*=spectralStageGain(process2,h,static_cast<float>(a2),seed2);
         // gain is a real scalar applied to the existing complex FFT value:
         // magnitude changes, phase angle is preserved exactly.
         bins[h]*=gain;
@@ -674,8 +688,9 @@ void renderProcessedFrame2048(const float* input,float* output,
     double peak=1.0e-12;
     for(const auto& v:bins) peak=std::max(peak,std::abs(v.real()));
 
-    // Limit peaks for safety, but do not undo random gain reduction: amount
-    // controls intensity, while the seed selects the affected harmonics.
+    // Limit peaks for safety. Rand Amp / Rand Sparse are always applied at
+    // full magnitude; their amount parameter selects a deterministic variant
+    // frame within the stored seed family.
     const double normalise=peak>0.985 ? 0.985/peak : 1.0;
 
     for(std::size_t i=0;i<spectralSize;++i)
