@@ -29,6 +29,7 @@ struct Scenario {
     unsigned spectralStages=0;
     Chain chain=Chain::Phase;
     bool bypassAllButFirst=false;
+    bool modulated=false;
 };
 
 double runSynth(const Scenario& s) {
@@ -75,6 +76,17 @@ double runSynth(const Scenario& s) {
         }
         if(!engine.setOscillatorModuleState(ids[m],state))
             return -1.0;
+    }
+
+    if(s.modulated) {
+        using namespace mct::origami;
+        ModulationState modulation;
+        modulation.nextRouteId=s.modules*2+1;
+        for(unsigned m=0;m<s.modules;++m) {
+            modulation.routes[m*2]={m*2+1,true,ModSource::Lfo1,{ModDestination::Pan,ids[m]},0.7f,true};
+            modulation.routes[m*2+1]={m*2+2,true,ModSource::Env1,{ModDestination::Fine,ids[m]},0.25f,false};
+        }
+        if(!engine.setModulationState(modulation)) return -1.0;
     }
 
     engine.reset();
@@ -131,7 +143,7 @@ double runSpectral(unsigned iterations) {
 }
 
 int main() {
-    const std::array<Scenario,19> scenarios{{
+    const std::array<Scenario,22> scenarios{{
         {"1v_1osc_1u_clean",1,1,1,1000,0,Chain::Clean},
         {"1v_1osc_1u_rand1",1,1,1,1000,1,Chain::Random},
         {"1v_1osc_1u_rand2",1,1,1,1000,2,Chain::Random},
@@ -150,7 +162,10 @@ int main() {
         {"16v_4osc_8u_rand4",16,4,8,250,4,Chain::Random},
         {"16v_4osc_8u_rand8",16,4,8,250,8,Chain::Random},
         {"16v_4osc_8u_mixed8_routes",16,4,8,250,8,Chain::Mixed},
-        {"16v_4osc_16u_phase",16,4,16,250,0,Chain::Phase}
+        {"16v_4osc_16u_phase",16,4,16,250,0,Chain::Phase},
+        {"16v_16osc_1u_clean",16,16,1,250,0,Chain::Clean},
+        {"16v_4osc_1u_modulated",16,4,1,250,0,Chain::Clean,false,true},
+        {"16v_4osc_8u_modulated",16,4,8,250,0,Chain::Clean,false,true}
     }};
 
     std::cout << "MCT Origami realtime DSP scaling profile\n";

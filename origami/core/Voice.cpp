@@ -96,18 +96,10 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         const unsigned count=std::clamp(module.unison,1u,maxUnisonVoices);
         runtime.prepareDetune(module.id,count,module.detuneCents);
 
-        // Pitch is intentionally audio-rate: octave/semitone/fine can be
-        // modulation destinations. Keep this calculation explicit rather than
-        // hiding it behind a general-purpose state cache.
-        const auto finiteOrZero=[](float value) noexcept {
-            return std::isfinite(value) ? value : 0.0f;
-        };
-        const double pitchSemitones=
-            static_cast<double>(finiteOrZero(module.octave))*12.0+
-            static_cast<double>(finiteOrZero(module.semitone))+
-            static_cast<double>(finiteOrZero(module.fineCents))/100.0;
+        // Check the effective audio-rate controls every sample; reuse derived
+        // math only when its exact input is unchanged.
         const double frequencyScale=
-            dsp::fastExp2Audio(pitchSemitones/12.0)*pitchBendScale;
+            runtime.controls.pitchRatio(module.octave,module.semitone,module.fineCents)*pitchBendScale;
 
         // Level/blend are already DSP-domain values. Do not copy them through
         // a prepared-state object every sample.
@@ -116,13 +108,8 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         const float blend=std::isfinite(module.blend)
             ? std::clamp(module.blend,0.0f,1.0f) : 0.0f;
 
-        // Equal-power pan remains audio-rate for modulation. fastSinCycle
-        // avoids general-purpose libm trig in the realtime loop.
-        const float pan=std::isfinite(module.pan)
-            ? std::clamp(module.pan,-1.0f,1.0f) : 0.0f;
-        const double panCycle=(static_cast<double>(pan)+1.0)*0.125;
-        const float panLeft=static_cast<float>(dsp::fastSinCycle(0.25-panCycle));
-        const float panRight=static_cast<float>(dsp::fastSinCycle(panCycle));
+        float panLeft,panRight;
+        runtime.controls.pan(module.pan,panLeft,panRight);
 
         const float position=module.wtPosition;
 

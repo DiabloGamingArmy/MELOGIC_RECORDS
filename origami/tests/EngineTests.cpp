@@ -637,6 +637,33 @@ void dynamicTopologyRecompilation() {
           "removed sources are absent from active routing");
 }
 
+void oscillatorControlCacheEquivalence() {
+    dsp::OscillatorControlCache cache;
+    const float nan=std::numeric_limits<float>::quiet_NaN();
+    const float inf=std::numeric_limits<float>::infinity();
+    const std::array<float,11> values{{-100.0f,-1.0f,-0.0f,0.0f,0.125f,0.999f,1.0f,100.0f,nan,inf,-inf}};
+    // Repeated values exercise hits; ramps, boundary values and invalid input
+    // exercise immediate refresh and the established sanitization behavior.
+    for(unsigned sample=0;sample<8192;++sample) {
+        if(sample%101==0) cache.invalidate();
+        const float octave=values[(sample/17)%values.size()];
+        const float semitone=values[(sample/31)%values.size()];
+        const float fine=sample%2 ? static_cast<float>(sample%201)-100.0f : values[(sample/7)%values.size()];
+        const auto finite=[](float v){return std::isfinite(v)?v:0.0f;};
+        const double pitch=static_cast<double>(finite(octave))*12.0+
+            static_cast<double>(finite(semitone))+static_cast<double>(finite(fine))/100.0;
+        check(cache.pitchRatio(octave,semitone,fine)==dsp::fastExp2Audio(pitch/12.0),
+              "cached pitch is exactly equivalent to uncached audio-rate math");
+        const float input=sample%2 ? static_cast<float>(sample%2001)/1000.0f-1.0f : values[(sample/13)%values.size()];
+        const float pan=std::isfinite(input)?std::clamp(input,-1.0f,1.0f):0.0f;
+        const double cycle=(static_cast<double>(pan)+1.0)*0.125;
+        float left,right;cache.pan(input,left,right);
+        check(left==static_cast<float>(dsp::fastSinCycle(0.25-cycle)) &&
+              right==static_cast<float>(dsp::fastSinCycle(cycle)),
+              "cached pan is exactly equivalent to uncached audio-rate math");
+    }
+}
+
 void voiceObservationDoesNotChangeAudio() {
     auto observed=std::make_unique<Voice>();
     auto unobserved=std::make_unique<Voice>();
@@ -724,6 +751,7 @@ int main() {
     // Production engine ownership already follows this pattern.
     try {
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();
+        std::cerr<<"oscillator control cache\n";oscillatorControlCacheEquivalence();
         std::cerr<<"voice observation\n";voiceObservationDoesNotChangeAudio();
         std::cerr<<"visualization cadence\n";engineVisualizationCadenceDoesNotChangeAudio();
         std::cerr<<"performance source curves\n";performanceSourceCurveAudit();

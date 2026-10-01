@@ -11,6 +11,7 @@
 #pragma once
 #include "dsp/Wavetable.h"
 #include "dsp/FastMath.h"
+#include "dsp/OscillatorControlCache.h"
 #include "dsp/Envelope.h"
 #include "dsp/Filter.h"
 #include "OscillatorRenderPlan.h"
@@ -74,17 +75,18 @@ private:
     using ModuleOscillators = std::array<dsp::WavetableOscillator, maxUnisonVoices>;
     // Realtime oscillator cache: only genuinely derived state is retained.
     // Continuous level/blend values are consumed directly from the modulation
-    // frame; pitch and pan are refreshed explicitly without a monolithic
-    // per-sample state-copy/update object.
+    // frame; exact-input pitch/pan caches retain only derived math results.
     struct OscillatorRuntimeState {
         OscillatorModuleId id=0;
         float detuneCents=0.0f;
         unsigned unison=0;
         std::array<double,maxUnisonVoices> detuneRatios{};
+        dsp::OscillatorControlCache controls;
 
         void invalidate() noexcept {
             id=0;detuneCents=0.0f;unison=0;
             detuneRatios.fill(1.0);
+            controls.invalidate();
         }
 
         void prepareDetune(OscillatorModuleId moduleId,unsigned count,float cents) noexcept {
