@@ -119,20 +119,31 @@ float quantizedSpectralAmount(OscProcessType type,float amount) noexcept {
 bool randomSpectralVariant(OscProcessType type) noexcept {
     return type==OscProcessType::RandAmp || type==OscProcessType::RandSparse;
 }
-std::uint32_t randomVariantSeed(std::uint32_t seed,float position) noexcept {
-    const auto frame=static_cast<std::uint32_t>(
-        std::clamp(std::lround(static_cast<double>(position)*spectralAmountSteps),
-                   0l,static_cast<long>(spectralAmountSteps)));
-    // The stored seed chooses the random family; the knob chooses a stable
-    // frame inside that family. This deliberately does not change magnitude.
+std::uint32_t randomVariantSeed(std::uint32_t seed,std::uint32_t frame) noexcept {
+    // The stored seed chooses the random family; frame chooses a stable member
+    // of that family. Adjacent members are crossfaded below rather than stepped.
     return spectralHash(seed ^ 0xa511e9b3u,frame+1u);
 }
 double spectralStageGain(OscProcessType type,std::size_t harmonic,
                          float amount,std::uint32_t seed) noexcept {
-    const float position=quantizedSpectralAmount(type,amount);
-    if(randomSpectralVariant(type))
-        return fullSpectralGain(type,harmonic,randomVariantSeed(seed,position));
+    const float clamped=std::clamp(amount,0.0f,1.0f);
+    if(randomSpectralVariant(type)) {
+        // Rand Amp / Rand Sparse are always 100% wet. Their knob/modulation
+        // coordinate moves continuously through deterministic random frames.
+        // Interpolate the spectral gains themselves so manual turns and
+        // modulators cannot produce frame-step discontinuities.
+        const double framePosition=static_cast<double>(clamped)*spectralAmountSteps;
+        const auto frame0=static_cast<std::uint32_t>(std::floor(framePosition));
+        const auto frame1=std::min<std::uint32_t>(
+            frame0+1u,static_cast<std::uint32_t>(spectralAmountSteps));
+        const double fraction=framePosition-static_cast<double>(frame0);
+        const double gain0=fullSpectralGain(type,harmonic,randomVariantSeed(seed,frame0));
+        if(frame1==frame0) return gain0;
+        const double gain1=fullSpectralGain(type,harmonic,randomVariantSeed(seed,frame1));
+        return gain0+fraction*(gain1-gain0);
+    }
 
+    const float position=quantizedSpectralAmount(type,clamped);
     const double target=fullSpectralGain(type,harmonic,seed);
     return 1.0+static_cast<double>(position)*(target-1.0);
 }
