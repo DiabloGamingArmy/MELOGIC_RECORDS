@@ -273,22 +273,20 @@ void randomSpectralAmountResponse() {
     for(const auto type:{OscProcessType::RandAmp,OscProcessType::RandSparse}) {
         OscProcessPlan plan{};plan.count=1;plan.stages[0]={type,0.0f,0x1234abcdu};
         renderProcessedFrame2048(source.data(),dry.data(),plan);
-        double priorDistance=0.0;
+        renderProcessedFrame2048(source.data(),repeat.data(),plan);
+        check(dry==repeat,"random spectral output is deterministic for seed and frame");
         for(int step=1;step<=10;++step) {
             plan.stages[0].amount=static_cast<float>(step)/10.0f;
             renderProcessedFrame2048(source.data(),current.data(),plan);
             renderProcessedFrame2048(source.data(),repeat.data(),plan);
-            double adjacent=0.0,distance=0.0;
+            double adjacent=0.0;
             for(std::size_t i=0;i<current.size();++i) {
                 const double delta=current[i]-(step==1?dry[i]:previous[i]);
                 adjacent+=delta*delta;
-                const double fromDry=current[i]-dry[i];
-                distance+=fromDry*fromDry;
-                check(current[i]==repeat[i],"random spectral output is deterministic for seed and amount");
+                check(current[i]==repeat[i],"random spectral output is deterministic for seed and frame");
             }
-            check(adjacent>1.0e-7,"random spectral amount has no broad inert interval");
-            check(distance>priorDistance,"random spectral intensity increases with amount");
-            priorDistance=distance;previous=current;
+            check(adjacent>1.0e-7,"random spectral frame control has no broad inert interval");
+            previous=current;
         }
         plan.stages[0].amount=0.5f;plan.stages[0].seed=0x76543210u;
         renderProcessedFrame2048(source.data(),reseeded.data(),plan);
