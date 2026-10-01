@@ -1436,7 +1436,22 @@ void OscillatorCard::resized() {
         auto knob=juce::Rectangle<int>(34,34).withCentre(amountArea.getCentre()).translated(-2,2);
         chainAmounts_[i].setBounds(knob);
         auto subtype=juce::Rectangle<int>(selector.getX(),selector.getBottom(),selector.getWidth(),15);
-        if(chainActions_[i].isVisible()) {
+        // Geometry must come from authoritative chain state, not from the
+        // component's previous visibility. On cold restore, resized() can run
+        // before syncDynamicCollections() has made a seeded-process action
+        // visible; using isVisible() here permanently left the dice with empty
+        // bounds until a later remove/re-add forced another layout pass.
+        bool hasAction=false;
+        const auto& item=chainItems_[i];
+        if(item.kind==ChainItemKind::Process && moduleGetter_) {
+            const auto state=moduleGetter_(display_.id);
+            for(std::size_t n=0;n<state.processCount;++n)
+                if(state.processes[n].id==item.id) {
+                    hasAction=dsp::oscProcessUsesSeed(state.processes[n].type);
+                    break;
+                }
+        }
+        if(hasAction) {
             constexpr int actionSize=15;
             auto actionArea=subtype.removeFromLeft(actionSize);
             chainActions_[i].setBounds(actionArea.reduced(1));
