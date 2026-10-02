@@ -1,3 +1,4 @@
+// mct-origami-fx-page-foundation-p01
 // mct-origami-deep-audit-p02-lockfree-ui-midi
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
@@ -70,9 +71,10 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{return owner.getUiArpeggiatorRuntimeSnapshot();},
           [&owner]{owner.clearUiArpeggiatorLatch();}),
       global_([&owner]{return owner.getUiVisualizationMask();},
-              [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}) {
+              [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}),
+      fxPage_(owner.getUiFxDocument(),modulationBindings(owner)) {
     setLookAndFeel(&theme_);
-    const std::array<juce::Component*,12> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_}};
+    const std::array<juce::Component*,13> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_}};
     for(auto* component:components) addAndMakeVisible(component);
     addChildComponent(wavetableEditor_);
     wavetableEditor_.onClose=[this]{closeWavetableEditor();};
@@ -83,10 +85,12 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
     // Resize behaves as whole-interface zoom: the editor is constrained to one
     // canonical 16:10 canvas and every child is scaled from that same design space.
     header_.onModeSelected=[this](int mode){
+        fxSelected_=mode==2;
         matrixSelected_=mode==3;
         globalSelected_=mode==4;
         arpSelected_=false;
         if(globalSelected_) global_.syncFromModel();
+        if(fxSelected_) fxPage_.syncFromModel();
         resized();
     };
     performance_.onArpSettingsRequested=[this]{
@@ -94,6 +98,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
         if(arpSelected_) {
             matrixSelected_=false;
             globalSelected_=false;
+            fxSelected_=false;
             header_.selectSynth();
             arpeggiator_.syncFromModel();
         }
@@ -273,6 +278,7 @@ void OrigamiAudioProcessorEditor::timerCallback() {
     performance_.syncArpFromModel();
     if(arpSelected_) arpeggiator_.syncFromModel();
     if(globalSelected_) global_.syncFromModel();
+    if(fxSelected_) fxPage_.syncFromModel();
 }
 
 juce::Slider* OrigamiAudioProcessorEditor::sliderFromMouseEvent(const juce::MouseEvent& event) noexcept {
@@ -542,6 +548,7 @@ void OrigamiAudioProcessorEditor::resized() {
     matrix_.setBounds(mainArea);
     arpeggiator_.setBounds(mainArea);
     global_.setBounds(mainArea);
+    fxPage_.setBounds(mainArea);
     // Wavetable editing is an application-level takeover: preserve the global
     // Origami header and performance keyboard, replace everything between them.
     wavetableEditor_.setBounds(mainArea);
@@ -549,7 +556,8 @@ void OrigamiAudioProcessorEditor::resized() {
     matrix_.setVisible(!wavetableEditorSelected_ && matrixSelected_ && !arpSelected_);
     arpeggiator_.setVisible(!wavetableEditorSelected_ && arpSelected_);
     global_.setVisible(!wavetableEditorSelected_ && globalSelected_ && !arpSelected_);
-    const bool synthVisible=!wavetableEditorSelected_ && !matrixSelected_ && !arpSelected_ && !globalSelected_;
+    fxPage_.setVisible(!wavetableEditorSelected_ && fxSelected_ && !arpSelected_);
+    const bool synthVisible=!wavetableEditorSelected_ && !matrixSelected_ && !arpSelected_ && !globalSelected_ && !fxSelected_;
     for(auto* component:std::array<juce::Component*,4>{{&oscillators_,&modulation_,&filter_,&macros_}})
         component->setVisible(synthVisible);
 
@@ -565,8 +573,8 @@ void OrigamiAudioProcessorEditor::resized() {
     const float scale=juce::jmin(sx,sy);
 
     const auto transform=juce::AffineTransform::scale(scale);
-    const std::array<juce::Component*,10> visibleComponents{{
-        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&wavetableEditor_
+    const std::array<juce::Component*,11> visibleComponents{{
+        &header_,&oscillators_,&modulation_,&filter_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_,&wavetableEditor_
     }};
 
     for(auto* component:visibleComponents)

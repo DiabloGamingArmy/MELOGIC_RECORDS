@@ -34,7 +34,8 @@ if(ORIGAMI_ENABLE_AUX_RT_THREADS)
     "deadline fallback, and platform realtime scheduling integration "
     "(Audio Workgroups on Apple / appropriate pro-audio scheduling on Windows).")
 endif()
-add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp)
+add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp
+  core/fx/FxGraph.cpp core/fx/FxDevelopmentGraph.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(origami_core PUBLIC Threads::Threads)
@@ -119,6 +120,11 @@ if(ORIGAMI_BUILD_TESTS)
   add_executable(origami_modulation_tests tests/ModulationTests.cpp)
   target_link_libraries(origami_modulation_tests PRIVATE origami_patch)
   add_test(NAME origami_modulation_core COMMAND origami_modulation_tests)
+
+  # mct-origami-fx-page-foundation-p01
+  add_executable(origami_fx_tests tests/FxGraphTests.cpp)
+  target_link_libraries(origami_fx_tests PRIVATE origami_core)
+  add_test(NAME origami_fx_graph COMMAND origami_fx_tests)
 endif()
 # mct-origami-vst3-host-proof-v1
 option(ORIGAMI_BUILD_VST3 "Build the MCT Origami JUCE VST3 host proof" OFF)
@@ -189,7 +195,8 @@ if(ORIGAMI_BUILD_VST3)
     plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp plugin/ui/GlobalPanel.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
     plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp
-    plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp)
+    plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp
+    plugin/ui/FxPage.cpp)
   if(APPLE)
     target_sources(OrigamiPlugin PRIVATE plugin/ui/NativeOscProcessMenu_mac.mm plugin/ui/NativeChoiceMenu_mac.mm)
   else()

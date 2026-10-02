@@ -13,6 +13,7 @@
 #include "ui/ArpeggiatorPanel.h"
 #include "ui/OrigamiLayout.h"
 #include "ui/GlobalPanel.h"
+#include "ui/FxPage.h"
 #include "ui/WavetableDocument.h"
 #include "ui/WavetableFrameOps.h"
 #include "ui/FrameTools.h"
@@ -2393,6 +2394,7 @@ private:
     bool matrixSelected_=false;
     bool arpSelected_=false;
     bool globalSelected_=false;
+    bool fxSelected_=false;
     bool wavetableEditorSelected_=false;
     unsigned wavetableEditorOscillatorId_=0;
     WavetableEditorSurface wavetableEditor_;
@@ -2409,6 +2411,7 @@ private:
     mct::origami::ui::PerformanceKeyboard performance_;
     mct::origami::ui::ArpeggiatorPanel arpeggiator_;
     mct::origami::ui::GlobalPanel global_;
+    mct::origami::ui::FxPage fxPage_;
     // Tooltips intentionally disabled. Origami now relies on direct labels,
     // native context menus and explicit controls instead of stale hover copy.
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OrigamiAudioProcessorEditor)

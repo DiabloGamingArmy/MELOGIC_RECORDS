@@ -21,6 +21,7 @@
 #include <JuceHeader.h>
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
+#include "core/fx/FxGraph.h"
 #include "ui/VisualizationSettings.h"
 
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
@@ -92,6 +93,10 @@ public:
     std::uint32_t getUiVisualizationMask() const noexcept;
     void setUiVisualizationMask(std::uint32_t) noexcept;
     mct::origami::RuntimeVisualizationSnapshot getUiRuntimeVisualizationSnapshot() noexcept;
+    // mct-origami-fx-page-foundation-p01
+    // Canonical editable FX graph. MESSAGE THREAD ONLY: processBlock never
+    // reads it. A future FX renderer will receive compiled, immutable plans.
+    mct::origami::fx::FxGraphDocument& getUiFxDocument() noexcept { return fxDocument_; }
 
     // P0 audio-continuity diagnostics. These counters are observational only:
     // they never participate in rendering decisions and remain allocation-free.
@@ -226,6 +231,7 @@ private:
     std::atomic<std::uint32_t> visualizationMask_{mct::origami::ui::defaultVisualizationMask};
     mct::origami::LatestStateMailbox<mct::origami::RuntimeVisualizationSnapshot> visualizationMailbox_;
     mct::origami::RuntimeVisualizationSnapshot uiVisualizationSnapshot_{};
+    mct::origami::fx::FxGraphDocument fxDocument_;
 
     // UI telemetry is intentionally control-rate, not render-span-rate.
     // Countdown is audio-thread-owned; publication remains lock-free atomics.

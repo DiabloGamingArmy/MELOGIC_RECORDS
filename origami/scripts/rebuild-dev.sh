@@ -37,6 +37,15 @@ fi
 echo "===== RUNNING MCT ORIGAMI CORE REGRESSION GATE ====="
 "$CORE_TEST"
 
+# FX foundation gate: canonical FX graph model, validation, codec and history.
+FX_TEST="$BUILD/origami_fx_tests"
+if [[ ! -x "$FX_TEST" ]]; then
+  echo "ERROR: Origami FX graph regression executable was not built: $FX_TEST" >&2
+  exit 1
+fi
+echo "===== RUNNING MCT ORIGAMI FX GRAPH REGRESSION GATE ====="
+"$FX_TEST"
+
 test -d "$APP_BUILD"
 test -d "$AU_BUILD"
 test -d "$VST3_BUILD"

@@ -19,6 +19,7 @@
 #include "plugin/PluginEditor.h"
 #include "plugin/ui/WavetableFrameOps.h"
 #include "plugin/ui/ModulationUiTelemetry.h"
+#include "plugin/ui/FxPage.h"
 #include "core/preset/StateCodec.h"
 #include <iostream>
 #include <stdexcept>
@@ -1624,7 +1625,109 @@ void matrixDynamicRouteAudit() {
     check(!routeSurvived,"deleting a targeted process removes its Matrix route");
 }
 
+// mct-origami-fx-page-foundation-p01
+void fxPageAudit() {
+    using namespace mct::origami::fx;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    juce::TextButton *fxButton=nullptr,*matrixButton=nullptr,*synthButton=nullptr;
+    ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& c) {
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) {
+            if(b->getButtonText()=="FX") fxButton=b;
+            if(b->getButtonText()=="MATRIX") matrixButton=b;
+            if(b->getButtonText()=="SYNTH") synthButton=b;
+        }
+        if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;
+    });
+    check(fxButton && matrixButton && synthButton && page,"FX navigation and page exist");
+    check(fxButton->isEnabled(),"FX header button is enabled");
+    check(!page->isVisible(),"FX page hidden while SYNTH is selected");
+    const auto synthState=encodeInstrumentState(p.getUiInstrumentState());
+    fxButton->onClick();
+    check(page->isVisible() && !rack(*editor).isVisible(),"FX header button opens the FX page");
+
+    const auto& graph=page->graph();
+    check(graph.validate(),"seeded FX graph is valid");
+    check(page->canvas().nodeComponentCount()==graph.nodes().size(),"canvas has one component per model node");
+    check(page->canvas().connectionPathCount()==graph.connections().size(),"canvas draws one path per model connection");
+    check(!compileFxRenderPlan(graph).processesAudio,"FX page does not claim audio processing");
+    FxNodeId delay=0,split=0;
+    for(const auto& n:graph.nodes()) {
+        if(n.effect==FxEffectType::Delay) delay=n.id;
+        if(n.kind==FxNodeKind::Split) split=n.id;
+    }
+    check(delay!=0 && split!=0,"development graph contains delay and split");
+    check(page->inspectorHeadline()=="NO NODE SELECTED","inspector starts empty");
+    page->selectNode(delay);
+    check(page->selectedNode()==delay && page->inspectorHeadline()=="DELAY","selecting a node drives the inspector");
+    page->selectNode(split);
+    check(page->inspectorHeadline()=="SPLIT","routing node selection shows routing info");
+    page->selectNode(delay);
+
+    auto* delayComponent=page->canvas().nodeComponent(delay);
+    check(delayComponent!=nullptr,"node component addressable by stable id");
+    page->commitMove(delay,{640,60});
+    check(page->canvas().nodeComponent(delay)==delayComponent,"model edit reuses existing node component");
+    check(delayComponent->getPosition()==juce::Point<int>(640,60),"component follows committed position");
+    check(page->graph().findNode(delay)->position.x==640.0f,"drag commits canvas-space position to model");
+
+    matrixButton->onClick();
+    check(!page->isVisible(),"MATRIX hides FX page");
+    fxButton->onClick();
+    check(page->isVisible() && page->canvas().nodeComponent(delay)==delayComponent
+          && delayComponent->getPosition()==juce::Point<int>(640,60) && page->selectedNode()==delay,
+          "FX -> MATRIX -> FX preserves graph, components and selection");
+    synthButton->onClick();
+    check(!page->isVisible() && rack(*editor).isVisible(),"SYNTH returns from FX");
+    check(encodeInstrumentState(p.getUiInstrumentState())==synthState,"FX page round trip leaves synth state untouched");
+    fxButton->onClick();
+
+    juce::Slider* quick=nullptr;
+    walk(*delayComponent,[&](auto& c){if(auto* s=dynamic_cast<juce::Slider*>(&c)) if(s->getName()=="FX "+juce::String(delay)+" P1") quick=s;});
+    check(quick!=nullptr,"effect node exposes model-backed quick controls");
+    quick->setValue(0.9,juce::sendNotificationSync);
+    check(std::abs(*page->graph().findNode(delay)->parameter(1)-0.9f)<1.0e-4f,"quick control writes model parameter");
+    page->selectParameterTab(2);
+    check(page->parameterTabName()=="ADVANCED","parameter tabs switch");
+    page->selectParameterTab(0);
+
+    const auto connectionsBefore=page->graph().connections().size();
+    check(page->deleteNode(delay),"delete selected node");
+    check(page->selectedNode()==invalidFxNodeId && page->inspectorHeadline()=="NO NODE SELECTED",
+          "deleting the selected node clears selection safely");
+    check(page->canvas().nodeComponent(delay)==nullptr,"deleted node component removed");
+    check(page->graph().connections().size()==connectionsBefore-2 && page->graph().validate(),"deleting node removes its wires");
+    page->undo();
+    check(page->graph().findNode(delay)!=nullptr && page->canvas().nodeComponentCount()==page->graph().nodes().size(),"undo restores deleted node");
+    check(!page->deleteNode(page->graph().outputNode()),"MASTER OUT cannot be deleted");
+
+    const auto drive=page->addEffect(FxEffectType::Drive);
+    const auto* intoOutput=page->graph().connectionAt({page->graph().outputNode(),0},true);
+    check(drive!=0 && page->selectedNode()==drive && intoOutput && intoOutput->from.node==drive,
+          "SERIAL add effect splices before MASTER OUT and selects it");
+    check(!page->connectPorts({drive,0},{page->graph().sourceNode(),0}),"wire into source rejected");
+    const auto snapshot=page->graph();
+    check(!page->connectPorts({page->graph().outputNode(),0},{drive,0}) && page->graph()==snapshot,
+          "invalid wire leaves graph unchanged");
+
+    juce::Slider* macro=nullptr;
+    walk(*page,[&](auto& c){if(auto* s=dynamic_cast<juce::Slider*>(&c)) if(s->getName()=="FX Macro 1") macro=s;});
+    check(macro!=nullptr,"FX macro section present");
+    macro->setValue(0.7,juce::sendNotificationSync);
+    check(std::abs(p.getUiInstrumentState().modulation.macros[0]-0.7f)<1.0e-4f,"FX macros drive the canonical synth macros");
+
+    const auto movedTo=page->graph().findNode(delay)->position;
+    editor.reset();
+    editor.reset(p.createEditor());
+    ui::FxPage* reopened=nullptr;
+    walk(*editor,[&](auto& c){if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) reopened=candidate;});
+    check(reopened && reopened->graph().findNode(delay) && reopened->graph().findNode(delay)->position.x==movedTo.x,
+          "processor-owned graph survives editor close/reopen");
+}
+
 void run() {
+    fxPageAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

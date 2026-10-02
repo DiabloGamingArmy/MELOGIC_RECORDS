@@ -102,6 +102,21 @@ classes in this release. Hosts will adapt this library, never become its DSP
 source of truth: future WASM/C ABI, Soura native, and VST3/JUCE adapters remain
 separate targets. Origami does not join Soura's Signalsmith asset-extraction build.
 
+## FX graph foundation
+
+`core/fx/FxGraph.h` holds the canonical, non-realtime FX graph: stable node,
+port and connection IDs, canvas-space positions, normalized parameter values
+keyed by stable parameter IDs, and an explicit source catalog that separates
+AUDIO sources (only the post-voice synth sum is active) from CONTROL sources
+(envelopes, LFOs, MIDI), which are never routable as audio. Split and Merge are
+routing nodes, not effects; each port carries one wire, and connect() rejects
+cycles. Edits go through `FxGraphDocument` (snapshot undo/redo, revision
+counter) on the message thread; the processor owns it and `processBlock`
+never reads it. `compileFxRenderPlan` produces the immutable, topologically
+ordered plan a future realtime FX renderer will receive through a mailbox.
+The development effect catalog (Drive, Delay, Reverb) has no DSP and says so.
+The binary graph codec is not yet part of host state.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:
