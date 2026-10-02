@@ -522,6 +522,8 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     // mct-origami-audio-reengineer-p06.3-local-source
     // One stable engine snapshot per DAW callback; exact MIDI offsets still split rendering.
+    const auto visualPolicy=renderBudget_.snapshot();
+    engine_.setVisualizationPolicy(visualPolicy.suppressVisualTelemetry,visualPolicy.reduceControlRate);
     if(!prepared_ || !engine_.beginHostBlock(2u)) {
         continuityBeginFailures_.fetch_add(1,std::memory_order_relaxed);
         buffer.clear();
@@ -664,6 +666,7 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
 
     const juce::ScopedLock lock(stateLock_);
     uiInstrumentState_=state;
+    uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     uiPerformanceState_=state.performance;
     restoreMailbox_.publish(uiInstrumentState_);
     // Keep the independent performance mailbox generation coherent with the
@@ -751,6 +754,7 @@ bool OrigamiAudioProcessor::setUiParameter(mct::origami::ParameterId id,float va
     uiInstrumentState_.parameters=engine_.parameterState();
     mct::origami::applyLegacyOscillatorParameters(
         uiInstrumentState_.oscillators[0],uiInstrumentState_.parameters);
+    uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     return true;
 }
 float OrigamiAudioProcessor::getUiParameter(mct::origami::ParameterId id) const noexcept {
@@ -767,6 +771,7 @@ mct::origami::OscillatorModuleId OrigamiAudioProcessor::addUiOscillator() noexce
         break;
     }
     uiInstrumentState_.nextId=std::max(uiInstrumentState_.nextId,id+1u);
+    uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     return id;
 }
 bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId id) noexcept {
@@ -793,6 +798,7 @@ bool OrigamiAudioProcessor::removeUiOscillator(mct::origami::OscillatorModuleId 
     // view: a deleted child must stop receiving modulation immediately.
     if(!engine_.setModulationState(mod)) return false;
     uiInstrumentState_.modulation=mod;
+    uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     return true;
 }
 bool OrigamiAudioProcessor::installUiOscillatorWavetable(
@@ -804,6 +810,9 @@ bool OrigamiAudioProcessor::installUiOscillatorWavetable(
     pending.id=id;
     pending.table=std::move(table);
     wavetableMailbox_.publish(pending);
+    // The oscillator viewport must re-read the committed table; rejected
+    // tables above return before advancing the oscillator revision.
+    uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
     return true;
 }
 
@@ -852,6 +861,7 @@ bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleI
         if(module.id!=id) continue;
         module=canonical;
         uiInstrumentState_.modulation=prunedMod;
+        uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
         return true;
     }
 
@@ -870,7 +880,11 @@ bool OrigamiAudioProcessor::setUiOscillatorEnabled(mct::origami::OscillatorModul
     const juce::ScopedLock lock(stateLock_);
     if(!engine_.setOscillatorModuleEnabled(id,enabled)) return false;
     for(auto& module:uiInstrumentState_.oscillators)
-        if(module.id==id) { module.enabled=enabled; return true; }
+        if(module.id==id) {
+            module.enabled=enabled;
+            uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
+            return true;
+        }
     return false;
 }
 bool OrigamiAudioProcessor::getUiOscillatorEnabled(mct::origami::OscillatorModuleId id) const noexcept {

@@ -726,6 +726,15 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
 float WavetableOscillator::next(const Wavetable& table,double frequency,double sampleRate,float position,
                                 const OscProcessPlan& plan,double phaseOffsetCycles,
                                 double phaseSkew) noexcept {
+    return nextImpl<false>(table,frequency,sampleRate,position,plan,phaseOffsetCycles,phaseSkew);
+}
+float WavetableOscillator::nextSimple(const Wavetable& table,double frequency,double sampleRate,float position) noexcept {
+    static constexpr OscProcessPlan empty{};
+    return nextImpl<true>(table,frequency,sampleRate,position,empty,0.0,0.0);
+}
+template<bool Simple>
+float WavetableOscillator::nextImpl(const Wavetable& table,double frequency,double sampleRate,float position,
+                                  const OscProcessPlan& plan,double phaseOffsetCycles,double phaseSkew) noexcept {
     if(table.frames.empty()||sampleRate<=0||!std::isfinite(frequency)||!std::isfinite(position))return 0;
     if(pitchTable_!=&table || pitchGeneration_!=table.generation ||
        pitchFrequency_!=frequency || pitchSampleRate_!=sampleRate) {
@@ -741,17 +750,21 @@ float WavetableOscillator::next(const Wavetable& table,double frequency,double s
     const double increment=increment_;
     const float framePosition=std::clamp(position,0.f,1.f)*static_cast<float>(table.frames.size()-1);
     const auto first=static_cast<std::size_t>(framePosition),second=std::min(first+1,table.frames.size()-1);
-    double readPhase=phase_+(std::isfinite(phaseOffsetCycles)?phaseOffsetCycles:0.0);readPhase-=std::floor(readPhase);
-    if(std::isfinite(phaseSkew)&&std::abs(phaseSkew)>1.0e-12){
-        const double midpoint=std::clamp(0.5+phaseSkew,0.06,0.94);
-        readPhase=readPhase<midpoint?0.5*(readPhase/midpoint):0.5+0.5*((readPhase-midpoint)/(1.0-midpoint));}
-    const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
-    bool spectral=table.tableLength==spectralSize;
-    if(spectral){bool found=false;for(std::size_t i=0;i<count;++i)found|=oscProcessIsSpectral(plan.stages[i].type);spectral=found;}
-    // Spectral tables already include phase processes. Evaluate those only
-    // on a cache miss; the normal prepared read needs just interpolation.
-    if(!spectral) for(std::size_t i=0;i<count;++i)
-        readPhase=processOscillatorPhase(readPhase,plan.stages[i].type,plan.stages[i].amount);
+    double readPhase=phase_;
+    bool spectral=false;
+    if constexpr(!Simple) {
+        readPhase=phase_+(std::isfinite(phaseOffsetCycles)?phaseOffsetCycles:0.0);readPhase-=std::floor(readPhase);
+        if(std::isfinite(phaseSkew)&&std::abs(phaseSkew)>1.0e-12){
+            const double midpoint=std::clamp(0.5+phaseSkew,0.06,0.94);
+            readPhase=readPhase<midpoint?0.5*(readPhase/midpoint):0.5+0.5*((readPhase-midpoint)/(1.0-midpoint));}
+        const auto count=std::min<std::size_t>(plan.count,maxOscProcessStages);
+        spectral=table.tableLength==spectralSize;
+        if(spectral){bool found=false;for(std::size_t i=0;i<count;++i)found|=oscProcessIsSpectral(plan.stages[i].type);spectral=found;}
+        // Spectral tables already include phase processes. Evaluate those only
+        // on a cache miss; the normal prepared read needs just interpolation.
+        if(!spectral) for(std::size_t i=0;i<count;++i)
+            readPhase=processOscillatorPhase(readPhase,plan.stages[i].type,plan.stages[i].amount);
+    }
     const double tablePosition=readPhase*static_cast<double>(table.tableLength);
     const auto index=static_cast<std::size_t>(tablePosition)%table.tableLength,nextIndex=(index+1)%table.tableLength;
     const float fraction=static_cast<float>(tablePosition-static_cast<double>(static_cast<std::size_t>(tablePosition)));

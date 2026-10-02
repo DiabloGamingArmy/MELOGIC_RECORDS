@@ -664,6 +664,101 @@ void oscillatorControlCacheEquivalence() {
     }
 }
 
+void simplePlaybackAndVisualizationPolicy() {
+    for(double rate:{44100.0,48000.0,96000.0}) {
+        dsp::WavetableOscillator simple,reference;
+        simple.reset(0.37);reference.reset(0.37);
+        for(unsigned i=0;i<8192;++i) {
+            const double frequency=20.0+static_cast<double>(i%2000);
+            const float position=static_cast<float>(i%1024)/1023.0f;
+            check(simple.nextSimple(bank(),frequency,rate,position)==
+                  reference.next(bank(),frequency,rate,position),
+                  "simple playback is exactly equal to general playback under changing pitch and position");
+        }
+    }
+    std::array<OscillatorModuleState,16> modules{};
+    modules[0].id=1;modules[0].enabled=true;
+    OscillatorRenderPlan topology;topology.compile(modules);
+    check(topology.modules[0].simple,"plain oscillator compiles to simple path");
+    modules[0].process1=dsp::OscProcessType::BendPlus;topology.compile(modules);
+    check(!topology.modules[0].simple,"process topology excludes simple path");
+    modules[0].process1=dsp::OscProcessType::Off;
+    modules[1].id=2;modules[0].route1SourceId=2;modules[0].route1Type=OscRouteType::FrequencyMod;
+    topology.compile(modules);check(!topology.modules[0].simple,"FM topology excludes simple path");
+    // QoS: suppression skips engine-side observation entirely, reduction only
+    // decimates it, and recovery immediately produces a fresh observation.
+    // Audio must be bit-identical to an unthrottled engine throughout.
+    auto reference=std::make_unique<OrigamiEngine>();auto controlled=std::make_unique<OrigamiEngine>();
+    prepare(*reference);prepare(*controlled);
+    reference->noteOn(60,0.8f);controlled->noteOn(60,0.8f);
+    check(render(*reference,1024)==render(*controlled,1024),"nominal policy audio matches");
+    check(controlled->runtimeVisualizationSnapshot().active,"nominal policy observes the sounding voice");
+    const auto frozenPhases=controlled->runtimeVisualizationSnapshot().oscillatorPhases;
+    const auto frozenSources=controlled->runtimeVisualizationSnapshot().sourcePhases;
+    controlled->setVisualizationPolicy(true,false);
+    check(render(*reference,2048)==render(*controlled,2048),"suppressed visualization leaves audio bit-identical");
+    check(controlled->runtimeVisualizationSnapshot().oscillatorPhases==frozenPhases &&
+          controlled->runtimeVisualizationSnapshot().sourcePhases==frozenSources,
+          "suppression performs no engine observation work");
+    controlled->setVisualizationPolicy(false,true);
+    check(render(*reference,1024)==render(*controlled,1024),"reduced observation rate leaves audio bit-identical");
+    check(controlled->runtimeVisualizationSnapshot().oscillatorPhases!=frozenPhases,
+          "observation resumes after suppression is lifted");
+    controlled->setVisualizationPolicy(false,false);
+    check(render(*reference,1)==render(*controlled,1),"recovery sample matches");
+    const auto recovered=controlled->runtimeVisualizationSnapshot().oscillatorPhases;
+    check(render(*reference,1024)==render(*controlled,1024),"recovered policy audio matches");
+    check(controlled->runtimeVisualizationSnapshot().active &&
+          controlled->runtimeVisualizationSnapshot().oscillatorPhases!=recovered,
+          "nominal observation keeps refreshing after recovery");
+}
+
+void cleanSineSimplePathP0() {
+    // P0 gate: 1 oscillator, sine, no process/route/modulation, open filter.
+    // The compiled plan must take the simple path and the output must be a
+    // clean, stable, finite sine at the expected fundamental.
+    auto engine=std::make_unique<OrigamiEngine>();prepare(*engine);
+    set(*engine,ParameterId::Waveform,0.0f);set(*engine,ParameterId::OscUnison,1.0f);
+    set(*engine,ParameterId::OscDetune,0.0f);set(*engine,ParameterId::OscPan,0.0f);
+    set(*engine,ParameterId::Cutoff,20000.0f);set(*engine,ParameterId::Resonance,0.0f);
+    set(*engine,ParameterId::Attack,0.001f);set(*engine,ParameterId::Sustain,1.0f);
+    std::array<OscillatorModuleState,16> modules{};
+    for(unsigned id=1;id<=16;++id){auto s=engine->oscillatorModuleState(id);if(s.id)modules[id-1]=s;}
+    for(std::size_t m=1;m<modules.size();++m) if(modules[m].id) check(engine->setOscillatorModuleEnabled(modules[m].id,false),"isolate OSC1");
+    OscillatorRenderPlan plan;modules[0].enabled=true;
+    for(std::size_t m=1;m<modules.size();++m) modules[m].enabled=false;
+    plan.compile(modules);
+    check(plan.activeCount==1 && plan.modules[0].simple,"P0 sine compiles to the simple path");
+    check(engine->noteOn(69,0.9f),"P0 sine note");
+    render(*engine,4800);
+    const auto out=render(*engine,48000);
+    double sum=0;for(float x:out){check(std::isfinite(x),"P0 sine finite");sum+=x;}
+    const double dc=sum/static_cast<double>(out.size());
+    // Least-squares fit at 440 Hz: residual energy is everything that is not the fundamental.
+    double ss=0,cc=0,sc=0,ys=0,yc=0;
+    for(std::size_t n=0;n<out.size();++n){
+        const double w=2.0*3.14159265358979323846*440.0*static_cast<double>(n)/48000.0;
+        const double sn=std::sin(w),cs=std::cos(w),y=out[n]-dc;
+        ss+=sn*sn;cc+=cs*cs;sc+=sn*cs;ys+=y*sn;yc+=y*cs;
+    }
+    const double det=ss*cc-sc*sc;check(std::abs(det)>1e-9,"P0 sine fit conditioned");
+    const double a=(ys*cc-yc*sc)/det,b=(yc*ss-ys*sc)/det;
+    double signal=0,residual=0,maxDelta=0,firstHalf=0,secondHalf=0;
+    for(std::size_t n=0;n<out.size();++n){
+        const double w=2.0*3.14159265358979323846*440.0*static_cast<double>(n)/48000.0;
+        const double fit=a*std::sin(w)+b*std::cos(w);
+        signal+=fit*fit;residual+=(out[n]-dc-fit)*(out[n]-dc-fit);
+        (n<out.size()/2?firstHalf:secondHalf)+=static_cast<double>(out[n])*out[n];
+        if(n) maxDelta=std::max(maxDelta,std::abs(static_cast<double>(out[n])-out[n-1]));
+    }
+    check(signal>1e-6,"P0 sine has fundamental energy at 440 Hz");
+    check(std::sqrt(residual/signal)<0.01,"P0 sine residual (all non-fundamental content) below 1 percent");
+    check(std::abs(dc)<1e-3,"P0 sine has negligible DC");
+    const double peak=std::sqrt(2.0*signal/static_cast<double>(out.size()));
+    check(maxDelta<2.0*3.14159265358979323846*440.0/48000.0*peak*1.05,"P0 sine has no discontinuities");
+    check(std::abs(firstHalf/secondHalf-1.0)<0.01,"P0 sine amplitude is stable");
+}
+
 void performanceVisualizationSources() {
     auto engine=std::make_unique<OrigamiEngine>();prepare(*engine);
     engine->modWheel(0,64);engine->aftertouch(0,96);engine->pitchWheel(0,12288);
@@ -767,6 +862,8 @@ int main() {
     try {
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();
         std::cerr<<"oscillator control cache\n";oscillatorControlCacheEquivalence();
+        std::cerr<<"simple playback + visualization policy\n";simplePlaybackAndVisualizationPolicy();
+        std::cerr<<"clean sine simple path P0\n";cleanSineSimplePathP0();
         std::cerr<<"performance visualization sources\n";performanceVisualizationSources();
         std::cerr<<"voice observation\n";voiceObservationDoesNotChangeAudio();
         std::cerr<<"visualization cadence\n";engineVisualizationCadenceDoesNotChangeAudio();

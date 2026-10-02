@@ -1971,8 +1971,9 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
 OscillatorRack::OscillatorRack(ParameterSetter setter,ParameterGetter getter,
                                    ModuleAdder moduleAdder,ModuleRemover moduleRemover,
                                    ModuleStateSetter moduleStateSetter,ModuleStateGetter moduleStateGetter,ModuleEnabledSetter moduleEnabledSetter,ModuleEnabledGetter moduleEnabledGetter,
-                                   std::function<InstrumentState()> snapshotGetter)
-    : Panel("OSCILLATORS"),snapshotGetter_(std::move(snapshotGetter)),parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)),
+                                   std::function<InstrumentState()> snapshotGetter,
+                                   std::function<std::uint64_t()> revisionGetter)
+    : Panel("OSCILLATORS"),revisionGetter_(std::move(revisionGetter)),snapshotGetter_(std::move(snapshotGetter)),parameterSetter_(std::move(setter)),parameterGetter_(std::move(getter)),
       moduleAdder_(std::move(moduleAdder)),moduleRemover_(std::move(moduleRemover)),
       moduleStateSetter_(std::move(moduleStateSetter)),moduleStateGetter_(std::move(moduleStateGetter)),
       moduleEnabledSetter_(std::move(moduleEnabledSetter)),moduleEnabledGetter_(std::move(moduleEnabledGetter)) {
@@ -2001,8 +2002,27 @@ void OscillatorRack::addOscillator() {
     timerCallback();
     viewport_.setViewPosition(juce::jmax(0,content_.getWidth()-viewport_.getMaximumVisibleWidth()),0);
 }
+void OscillatorRack::advanceVisualFrame() {
+    const auto visible=viewport_.getViewArea();
+    const auto* focused=juce::Component::getCurrentlyFocusedComponent();
+    const bool editing=juce::ModifierKeys::getCurrentModifiers().isAnyMouseButtonDown() ||
+        (dynamic_cast<const juce::TextEditor*>(focused)!=nullptr && content_.isParentOf(focused));
+    const bool finishedInteraction=interactionPending_ && !editing;
+    interactionPending_=editing;
+    // A revision received during a drag/text edit may have deliberately skipped
+    // that control. Refresh once after the interaction even without a new edit.
+    if(finishedInteraction || !revisionGetter_ || revisionGetter_()!=synchronizedRevision_ || visible!=synchronizedViewport_)
+        syncFromModel();
+    // Repaint only exposed card pixels. No model snapshots, menu updates or
+    // control synchronization are needed merely to animate live telemetry.
+    for(auto& card:cards_) {
+        const auto exposed=card->getBounds().getIntersection(visible);
+        if(!exposed.isEmpty()) card->repaint(exposed.translated(-card->getX(),-card->getY()));
+    }
+}
 void OscillatorRack::syncFromModel() {
     if(!snapshotGetter_) return;
+    const auto revision=revisionGetter_ ? revisionGetter_() : 0;
     const auto state=snapshotGetter_();
     std::vector<unsigned> ids;
     for(const auto& m:state.oscillators) if(m.id) ids.push_back(m.id);
@@ -2036,6 +2056,8 @@ void OscillatorRack::syncFromModel() {
     }
     add_.setEnabled(ids.size()<OscillatorModuleBank::capacity);
     addTile_.setEnabled(add_.isEnabled());
+    synchronizedRevision_=revision;
+    synchronizedViewport_=viewport_.getViewArea();
 }
 void OscillatorRack::createCard(unsigned moduleId) {
     juce::Component::SafePointer<OscillatorRack> safe(this);

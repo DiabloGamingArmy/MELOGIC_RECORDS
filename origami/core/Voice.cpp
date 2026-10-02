@@ -168,29 +168,27 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         if(!std::isfinite(baseFrequency) || baseFrequency<=0.0) baseFrequency=20.0;
         baseFrequency=std::clamp(baseFrequency,1.0,std::max(20.0,sampleRate_*0.49));
         const dsp::OscProcessPlan* processes=&sharedProcesses[m];
-        if(compiled.hasVoiceProcessRoutes(m)) {
+        if(!modulePlan.simple && compiled.hasVoiceProcessRoutes(m)) {
             topology.processPlan(m,module,processScratch_);
             processes=&processScratch_;
         }
         const auto& processPlan=*processes;
 
+        const auto renderOscillator=[&](dsp::WavetableOscillator& oscillator,double frequency) noexcept {
+            return modulePlan.simple ? oscillator.nextSimple(table,frequency,sampleRate_,position)
+                : oscillator.next(table,frequency,sampleRate_,position,processPlan,routedPhaseOffset,routedPhaseSkew);
+        };
         float oscillatorMix=0.0f;
         if(count==1) {
-            oscillatorMix=moduleOscillators_[m][0].next(
-                table,baseFrequency,sampleRate_,position,
-                processPlan,routedPhaseOffset,routedPhaseSkew);
+            oscillatorMix=renderOscillator(moduleOscillators_[m][0],baseFrequency);
         } else {
             float unisonStack=0.0f;
             for(unsigned u=0;u<count;++u) {
-                unisonStack+=moduleOscillators_[m][u].next(
-                    table,baseFrequency*runtime.detuneRatios[u],sampleRate_,position,
-                    processPlan,routedPhaseOffset,routedPhaseSkew);
+                unisonStack+=renderOscillator(moduleOscillators_[m][u],baseFrequency*runtime.detuneRatios[u]);
             }
             unisonStack/=static_cast<float>(count);
 
-            const float centre=moduleBlendCenters_[m].next(
-                table,baseFrequency,sampleRate_,position,
-                processPlan,routedPhaseOffset,routedPhaseSkew);
+            const float centre=renderOscillator(moduleBlendCenters_[m],baseFrequency);
             oscillatorMix=centre+(unisonStack-centre)*blend;
         }
         if(observe) {

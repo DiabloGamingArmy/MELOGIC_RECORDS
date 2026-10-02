@@ -208,8 +208,12 @@ public:
     float next(const Wavetable& table,double frequency,double sampleRate,float position,
                const OscProcessPlan& plan,double phaseOffsetCycles=0.0,
                double phaseSkew=0.0) noexcept;
+    // Compiled topology guarantees no processes or cross-oscillator routing.
+    float nextSimple(const Wavetable&,double frequency,double sampleRate,float position) noexcept;
     double phase() const noexcept { return phase_; }
 private:
+    template<bool Simple> float nextImpl(const Wavetable&,double,double,float,
+        const OscProcessPlan&,double,double) noexcept;
     double phase_ = 0;
     // Pitch metadata is independent of phase and chain amounts. Exact keys
     // keep FM, glide and sample-rate changes audio-rate without rescanning

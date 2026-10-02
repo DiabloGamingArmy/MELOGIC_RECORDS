@@ -397,6 +397,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     const float bendDownRange=hostBendDownRange_;
     ModulationFrame frame;
     OscillatorProcessPlans sharedProcesses;
+    const auto visualizationPeriod=std::max<std::size_t>(1,
+        static_cast<std::size_t>(std::lround(sampleRate_/1000.0))) * (reduceVisualizationRate_ ? 4u : 1u);
 
     for(std::size_t sample=0;sample<sampleCount;++sample) {
         for(auto& s:smooth_) if(s.remaining) {
@@ -445,9 +447,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
 
         // Keep UI observation off the 96 kHz hot path. Generators above still
         // advance at full audio rate; only copying/inspection is decimated.
-        const auto visualizationPeriod=std::max<std::size_t>(
-            1,static_cast<std::size_t>(std::lround(sampleRate_/1000.0)));
-        const bool observeVisualization=runtimeVisualizationCountdown_==0;
+        const bool observeVisualization=!suppressVisualization_ && runtimeVisualizationCountdown_==0;
         if(observeVisualization) {
             runtimeVisualizationCountdown_=visualizationPeriod-1;
             for(std::size_t i=0;i<4;++i) {
@@ -467,7 +467,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 (static_cast<double>(globalSequencer_.currentStep())+globalSequencer_.phase()) /
                 static_cast<double>(std::max<std::uint32_t>(1,audioModulation_.sequencer.activeSteps)));
             runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
-        } else {
+        } else if(runtimeVisualizationCountdown_>0) {
             --runtimeVisualizationCountdown_;
         }
         compiledModulation_.advance(modulationSmoothing_);

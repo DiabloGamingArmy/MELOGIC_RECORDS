@@ -313,21 +313,27 @@ public:
                    ModuleAdder moduleAdder={},ModuleRemover moduleRemover={},
                    ModuleStateSetter moduleStateSetter={},ModuleStateGetter moduleStateGetter={},
                    ModuleEnabledSetter moduleEnabledSetter={},ModuleEnabledGetter moduleEnabledGetter={},
-                   std::function<InstrumentState()> snapshotGetter={});
+                   std::function<InstrumentState()> snapshotGetter={},
+                   std::function<std::uint64_t()> revisionGetter={});
     ~OscillatorRack() override;
     void resized() override;
     void syncFromModel();
     void addOscillator();
     void removeOscillator(unsigned id);
+    void advanceVisualFrame(); // 60 Hz animation, revision-gated model synchronization
     int count() const { return static_cast<int>(cards_.size()); }
     const juce::Viewport& viewport() const { return viewport_; }
     std::function<void(unsigned)> onWavetableEditorRequested;
 private:
     void paintContent(juce::Graphics&,juce::Rectangle<int>) override;
     void timerCallback() override {
-        if(isShowing()) syncFromModel();
+        if(isShowing()) advanceVisualFrame();
     }
     void createCard(unsigned moduleId);
+    std::function<std::uint64_t()> revisionGetter_;
+    std::uint64_t synchronizedRevision_=0;
+    juce::Rectangle<int> synchronizedViewport_;
+    bool interactionPending_=false;
     std::function<InstrumentState()> snapshotGetter_;
     void renumberOscillators();
     void layoutCards();

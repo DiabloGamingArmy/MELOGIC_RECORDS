@@ -68,6 +68,7 @@ public:
     bool setUiRoute(const mct::origami::ModRoute&) noexcept;
     bool removeUiRoute(unsigned) noexcept;
     mct::origami::InstrumentState getUiInstrumentState() const noexcept;
+    std::uint64_t getUiOscillatorRevision() const noexcept { return uiOscillatorRevision_.load(std::memory_order_acquire); }
 
     // Deep Audit P02: UI notes enter the audio domain through a fixed SPSC
     // queue. MidiKeyboardState is no longer an audio-thread bridge.
@@ -182,6 +183,7 @@ private:
     // getStateInformation() serializes this snapshot without interrogating or
     // suspending live DSP. Full restores cross to audio only at a block boundary.
     mct::origami::InstrumentState uiInstrumentState_{};
+    std::atomic<std::uint64_t> uiOscillatorRevision_{1};
     mct::origami::LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_;
 
     // Patch 14/19: non-blocking UI -> audio state transfer.

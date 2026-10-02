@@ -16,6 +16,7 @@ struct OscillatorRenderPlan {
         std::array<Route,maxOscRoutes> preRoutes{},postRoutes{};
         std::uint8_t processCount=0,preCount=0,postCount=0;
         bool dynamicProcesses=false,dynamicRoutes=false;
+        bool simple=true; // no phase/spectral process or cross-oscillator route
         dsp::OscProcessPlan processTemplate{};
     };
     std::array<Module,16> modules{};
@@ -77,6 +78,7 @@ struct OscillatorRenderPlan {
                 addRoute(source.route1SourceId,source.route1Type,0);
                 addRoute(source.route2SourceId,source.route2Type,1);
             }
+            plan.simple=plan.processCount==0 && plan.preCount==0 && plan.postCount==0;
         }
         ++generation;
     }

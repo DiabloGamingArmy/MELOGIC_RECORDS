@@ -84,6 +84,10 @@ public:
     OscillatorModuleState oscillatorModuleState(OscillatorModuleId id) const noexcept;
     bool setOscillatorModuleEnabled(OscillatorModuleId id,bool enabled) noexcept;
     bool oscillatorModuleEnabled(OscillatorModuleId id) const noexcept;
+    // Audio-thread policy: observation only; synthesis always remains audio-rate.
+    void setVisualizationPolicy(bool suppress,bool reduceControlRate) noexcept {
+        suppressVisualization_=suppress;reduceVisualizationRate_=reduceControlRate;
+    }
     const RuntimeVisualizationSnapshot& runtimeVisualizationSnapshot() const noexcept { return runtimeVisualization_; }
 private:
     struct Smoothed { float value=0, target=0; double step=0; std::size_t remaining=0; };
@@ -161,6 +165,7 @@ private:
     // UI observation is intentionally control-rate. Audio DSP remains sample-rate.
     // At 96 kHz this caps visualization bookkeeping near 1 kHz instead of 96 kHz.
     std::size_t runtimeVisualizationCountdown_=0;
+    bool suppressVisualization_=false,reduceVisualizationRate_=false;
 };
 static_assert(std::atomic<float>::is_always_lock_free, "Origami requires lock-free float parameter targets");
 }

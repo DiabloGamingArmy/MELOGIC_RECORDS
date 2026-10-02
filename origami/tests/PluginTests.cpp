@@ -1251,6 +1251,154 @@ void matrixStableChainDestinationAudit() {
           "deleted process cannot silently retarget a Matrix route");
 }
 
+// mct-origami-performance-hotpath-visual-scheduler
+// The 60 Hz rack keeps animating, but model snapshots/control sync happen only
+// for a new canonical revision, a newly exposed viewport, or a finished edit.
+struct CountingRack {
+    OrigamiAudioProcessor& processor;
+    unsigned snapshots=0,parameters=0,modules=0,offscreenModuleReads=0;
+    unsigned watchedId=0;
+    ui::OscillatorRack view;
+    explicit CountingRack(OrigamiAudioProcessor& p)
+        : processor(p),
+          view([this](auto id,float value){return processor.setUiParameter(id,value);},
+               [this](auto id){++parameters;return processor.getUiParameter(id);},
+               [this]{return processor.addUiOscillator();},
+               [this](auto id){return processor.removeUiOscillator(id);},
+               [this](auto id,const auto& state){return processor.setUiOscillatorState(id,state);},
+               [this](auto id){++modules;if(id==watchedId)++offscreenModuleReads;return processor.getUiOscillatorState(id);},
+               [this](auto id,bool enabled){return processor.setUiOscillatorEnabled(id,enabled);},
+               [this](auto id){return processor.getUiOscillatorEnabled(id);},
+               [this]{++snapshots;return processor.getUiInstrumentState();},
+               [this]{return processor.getUiOscillatorRevision();}) {
+        view.setBounds(0,0,700,800);view.advanceVisualFrame();
+    }
+    void resetCounters(){snapshots=parameters=modules=offscreenModuleReads=0;}
+    ui::OscillatorCard* card(unsigned id) {
+        ui::OscillatorCard* found=nullptr;
+        walk(view,[&](auto& c){if(auto* k=dynamic_cast<ui::OscillatorCard*>(&c))if(k->id()==id)found=k;});
+        return found;
+    }
+    juce::Slider* slider(unsigned id,const juce::String& name) {
+        juce::Slider* found=nullptr;
+        if(auto* k=card(id)) walk(*k,[&](auto& c){if(auto* s=dynamic_cast<juce::Slider*>(&c))if(s->getName()==name)found=s;});
+        return found;
+    }
+};
+
+void oscillatorVisualSchedulerAudit() {
+    OrigamiAudioProcessor processor;
+    CountingRack rack(processor);
+    rack.resetCounters();
+    for(unsigned frame=0;frame<60;++frame) rack.view.advanceVisualFrame();
+    check(rack.snapshots==0 && rack.parameters==0 && rack.modules==0,
+          "60 stable visual frames do no model snapshots or control synchronization");
+    check(processor.setUiParameter(ParameterId::OscPan,0.3f),"scheduler pan edit accepted");
+    rack.view.advanceVisualFrame();
+    check(rack.snapshots==1 && rack.parameters>0,"one revision produces exactly one model snapshot");
+    rack.resetCounters();
+    for(unsigned frame=0;frame<60;++frame) rack.view.advanceVisualFrame();
+    check(rack.snapshots==0 && rack.parameters==0 && rack.modules==0,
+          "consumed revision is not resynchronized on later animation frames");
+    auto* pan=rack.slider(1,"OSC PAN");
+    check(pan!=nullptr && std::abs(pan->getValue()-0.3)<0.001,"revision sync reaches the visible control");
+
+    const auto revision=processor.getUiOscillatorRevision();
+    check(processor.setUiOscillatorEnabled(4,false),"power edit accepted");
+    check(processor.getUiOscillatorRevision()!=revision,"power changes publish oscillator revision");
+    check(processor.removeUiOscillator(4),"oscillator deletion accepted");
+    rack.view.advanceVisualFrame();
+    check(rack.view.count()==3,"topology revision updates cards");
+}
+
+void oscillatorOffscreenSchedulingAudit() {
+    OrigamiAudioProcessor processor;
+    CountingRack rack(processor);
+    auto* card=rack.card(4);
+    check(card!=nullptr,"fourth oscillator card exists");
+    check(!card->getBounds().intersects(rack.view.viewport().getViewArea()),
+          "fourth oscillator card starts outside the visible rack");
+    rack.watchedId=4;rack.resetCounters();
+    auto state=processor.getUiOscillatorState(4);state.pan=-0.7f;
+    check(processor.setUiOscillatorState(4,state),"offscreen canonical edit accepted");
+    rack.view.advanceVisualFrame();
+    check(rack.snapshots==1,"offscreen edit still consumes the canonical revision");
+    check(rack.offscreenModuleReads==0,"offscreen card performs no control synchronization");
+    for(unsigned frame=0;frame<60;++frame) rack.view.advanceVisualFrame();
+    check(rack.offscreenModuleReads==0 && rack.snapshots==1,"offscreen card stays idle while unchanged");
+    auto* pan=rack.slider(4,"OSC PAN");
+    check(pan!=nullptr && std::abs(pan->getValue()+0.7)>0.001,"offscreen card was not eagerly updated");
+    const_cast<juce::Viewport&>(rack.view.viewport()).setViewPosition(100000,0);
+    rack.view.advanceVisualFrame();
+    check(rack.offscreenModuleReads>0,"card synchronizes as soon as it is exposed");
+    check(std::abs(pan->getValue()+0.7)<0.001,"newly visible card reflects the latest canonical state");
+}
+
+void oscillatorInteractionDeferralAudit() {
+    OrigamiAudioProcessor processor;
+    CountingRack rack(processor);
+    auto* semitone=rack.slider(1,"OSC TUNING SEM");
+    check(semitone!=nullptr,"OSC1 semitone control exists");
+    juce::Label* box=nullptr;
+    for(auto* child:semitone->getChildren()) if(auto* l=dynamic_cast<juce::Label*>(child)) box=l;
+    check(box!=nullptr,"semitone text box exists");
+    const auto before=semitone->getValue();
+    juce::ModifierKeys::currentModifiers=juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier);
+    box->showEditor();
+    check(box->isBeingEdited(),"text edit begins");
+    check(processor.setUiParameter(ParameterId::OscSemitone,5.0f),"external semitone edit accepted");
+    rack.view.advanceVisualFrame();
+    check(semitone->getValue()==before,"control under edit is not overwritten mid-interaction");
+    rack.view.advanceVisualFrame();
+    check(semitone->getValue()==before,"deferred value stays deferred while interaction continues");
+    box->hideEditor(true);
+    juce::ModifierKeys::currentModifiers=juce::ModifierKeys();
+    rack.resetCounters();
+    rack.view.advanceVisualFrame();
+    check(rack.snapshots==1,"finished interaction triggers one refresh without a new revision");
+    check(std::abs(semitone->getValue()-5.0)<0.001,"finished interaction consumes the latest canonical value");
+    rack.resetCounters();
+    rack.view.advanceVisualFrame();
+    check(rack.snapshots==0,"post-interaction refresh happens once");
+}
+
+void oscillatorRevisionSemanticsAudit() {
+    OrigamiAudioProcessor processor;
+    const auto revision=[&]{return processor.getUiOscillatorRevision();};
+    auto r=revision();
+    check(!processor.removeUiOscillator(99) && revision()==r,"failed oscillator delete leaves revision");
+    check(!processor.setUiOscillatorEnabled(99,true) && revision()==r,"failed power edit leaves revision");
+    check(!processor.setUiOscillatorState(99,processor.getUiOscillatorState(2)) && revision()==r,
+          "failed state edit leaves revision");
+    check(!processor.setUiParameter(ParameterId::OscPan,std::numeric_limits<float>::quiet_NaN()) && revision()==r,
+          "rejected parameter leaves revision");
+    check(!processor.installUiOscillatorWavetable(0,mct::origami::dsp::Wavetable::builtIns()) && revision()==r,
+          "rejected wavetable leaves revision");
+
+    auto state=processor.getUiOscillatorState(2);
+    state.processes[0]={state.nextProcessId++,mct::origami::dsp::OscProcessType::Fold,0.5f,7u,true};
+    state.processCount=1;
+    state.routes[0]={state.nextRouteId++,3,OscRouteType::FrequencyMod,0.4f,true};
+    state.routeCount=1;
+    check(processor.setUiOscillatorState(2,state) && revision()!=r,"process/route add publishes revision");
+    check(processor.getUiOscillatorState(2).processCount==1 && processor.getUiOscillatorState(2).routeCount==1,
+          "process and route are stored canonically");
+    r=revision();
+    state=processor.getUiOscillatorState(2);state.processes[0]={};state.processCount=0;
+    check(processor.setUiOscillatorState(2,state) && revision()!=r,"process deletion succeeds and publishes revision");
+    check(processor.getUiOscillatorState(2).processCount==0,"process deletion is canonical");
+    r=revision();
+    state=processor.getUiOscillatorState(2);state.routes[0]={};state.routeCount=0;
+    check(processor.setUiOscillatorState(2,state) && revision()!=r,"route deletion succeeds and publishes revision");
+    check(processor.getUiOscillatorState(2).routeCount==0,"route deletion is canonical");
+    r=revision();
+    check(processor.installUiOscillatorWavetable(2,mct::origami::dsp::Wavetable::builtIns()) && revision()!=r,
+          "committed wavetable publishes revision");
+    r=revision();
+    check(processor.removeUiOscillator(3) && revision()!=r,"oscillator deletion succeeds and publishes revision");
+    check(processor.getUiOscillatorState(3).id==0,"deleted oscillator is gone canonically");
+}
+
 void modulationKnobBaseAudit() {
     OrigamiAudioProcessor processor;
     auto module=processor.getUiOscillatorState(2);
@@ -1476,6 +1624,10 @@ void matrixDynamicRouteAudit() {
 }
 
 void run() {
+    oscillatorVisualSchedulerAudit();
+    oscillatorOffscreenSchedulingAudit();
+    oscillatorInteractionDeferralAudit();
+    oscillatorRevisionSemanticsAudit();
     modulationKnobBaseAudit();
     matrixStableChainDestinationAudit();
     matrixDynamicRouteAudit();
