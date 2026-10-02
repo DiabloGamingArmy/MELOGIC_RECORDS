@@ -160,18 +160,18 @@ void audioContinuityP0Audit() {
                   "P0 held sine remains sample-continuous across host callbacks");
     };
 
-    OrigamiAudioProcessor host;
+    auto hostOwner=std::make_unique<OrigamiAudioProcessor>(); auto& host=*hostOwner;
     configure(host);
     runHeld(host,false);
 
-    OrigamiAudioProcessor ui;
+    auto uiOwner=std::make_unique<OrigamiAudioProcessor>(); auto& ui=*uiOwner;
     configure(ui);
     runHeld(ui,true);
 
     // Repeat at host sizes surrounding the captured 256-sample cadence. This
     // distinguishes a true fixed-block failure from a generic oscillator defect.
     for(const int blockSize:{64,128,512,1024}) {
-        OrigamiAudioProcessor p;
+        auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
         p.prepareToPlay(48000.0,blockSize);
         disableExtraOscillators(p);
         check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 varied-block sine accepted");
@@ -203,7 +203,7 @@ void audioPurityP0Audit() {
     // isolated sine through the full processor path and fit its fundamental.
     constexpr double sampleRate=48000.0;
     constexpr int blockSize=256, warmupBlocks=12, captureBlocks=32, note=69;
-    OrigamiAudioProcessor p;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
     p.prepareToPlay(sampleRate,blockSize);
     disableExtraOscillators(p);
     check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 purity sine WT position accepted");
@@ -277,7 +277,7 @@ void multiOscillatorTopologyP0Audit() {
     using Capture=std::array<float,blockSize*captureBlocks>;
 
     auto capture=[&](int activeCount) {
-        OrigamiAudioProcessor p;
+        auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
         p.prepareToPlay(sampleRate,blockSize);
         check(p.setUiParameter(ParameterId::Waveform,0.0f),"P0 topology sine WT accepted");
         check(p.setUiParameter(ParameterId::Sustain,1.0f),"P0 topology sustain accepted");
@@ -576,7 +576,7 @@ void stateIoBoundaryAudit() {
     check(header.contains("LatestStateMailbox<mct::origami::InstrumentState> restoreMailbox_"),
           "processor owns complete-state restore mailbox");
 
-    OrigamiAudioProcessor p;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
     p.prepareToPlay(48000.0,128);
     disableExtraOscillators(p);
 
@@ -851,7 +851,7 @@ void pluginRealtimeAllocationGate() {
                       "plugin realtime stress output remains finite");
 
     // Patch 11/19: adversarial whole-wrapper realtime pass.
-    OrigamiAudioProcessor stress;
+    auto stressOwner=std::make_unique<OrigamiAudioProcessor>(); auto& stress=*stressOwner;
     stress.prepareToPlay(48000.0,128);
     juce::AudioBuffer<float> stressAudio(2,1024);
     std::array<juce::MidiBuffer,8> stressMidi;
@@ -1287,7 +1287,7 @@ struct CountingRack {
 };
 
 void oscillatorVisualSchedulerAudit() {
-    OrigamiAudioProcessor processor;
+    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
     CountingRack rack(processor);
     rack.resetCounters();
     for(unsigned frame=0;frame<60;++frame) rack.view.advanceVisualFrame();
@@ -1312,7 +1312,7 @@ void oscillatorVisualSchedulerAudit() {
 }
 
 void oscillatorOffscreenSchedulingAudit() {
-    OrigamiAudioProcessor processor;
+    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
     CountingRack rack(processor);
     auto* card=rack.card(4);
     check(card!=nullptr,"fourth oscillator card exists");
@@ -1335,7 +1335,7 @@ void oscillatorOffscreenSchedulingAudit() {
 }
 
 void oscillatorInteractionDeferralAudit() {
-    OrigamiAudioProcessor processor;
+    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
     CountingRack rack(processor);
     auto* semitone=rack.slider(1,"OSC TUNING SEM");
     check(semitone!=nullptr,"OSC1 semitone control exists");
@@ -1363,7 +1363,7 @@ void oscillatorInteractionDeferralAudit() {
 }
 
 void oscillatorRevisionSemanticsAudit() {
-    OrigamiAudioProcessor processor;
+    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
     const auto revision=[&]{return processor.getUiOscillatorRevision();};
     auto r=revision();
     check(!processor.removeUiOscillator(99) && revision()==r,"failed oscillator delete leaves revision");
@@ -1400,7 +1400,7 @@ void oscillatorRevisionSemanticsAudit() {
 }
 
 void modulationKnobBaseAudit() {
-    OrigamiAudioProcessor processor;
+    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
     auto module=processor.getUiOscillatorState(2);
     module.processCount=1;module.nextProcessId=2;
     module.processes[0]={1,dsp::OscProcessType::BendBoth,0.25f,7,true};
@@ -1409,7 +1409,8 @@ void modulationKnobBaseAudit() {
     check(processor.setUiOscillatorState(2,module),"modulated knob fixture installs");
     auto editor=std::unique_ptr<juce::AudioProcessorEditor>(processor.createEditor());
     auto& telemetry=ui::modulationUiTelemetry();
-    const auto saved=telemetry;
+    // Heap copy: telemetry is large and this frame already hosts editor state.
+    const auto saved=std::make_unique<std::remove_reference_t<decltype(telemetry)>>(telemetry);
     const auto sync=[&] {
         rack(*editor).syncFromModel();
         walk(*editor,[](auto& c){if(auto* filter=dynamic_cast<ui::FilterPanel*>(&c)) filter->syncFromModel();});
@@ -1503,11 +1504,11 @@ void modulationKnobBaseAudit() {
         telemetry.state.routes={};
         check(paintOverlay(*component).first==0,"removing modulation removes painted range and live dot");
     }
-    telemetry=saved;
+    telemetry=*saved;
 }
 
 void matrixDynamicRouteAudit() {
-    OrigamiAudioProcessor processor;
+    auto processorOwner=std::make_unique<OrigamiAudioProcessor>(); auto& processor=*processorOwner;
     auto module=processor.getUiOscillatorState(2);
     module.processCount=1;module.nextProcessId=2;
     module.processes[0]={1,dsp::OscProcessType::RandAmp,0.5f,0x12345678u,true};
@@ -1649,7 +1650,7 @@ void run() {
     telemetryBoundaryAudit();
     playabilityAudit();
 
-    OrigamiAudioProcessor p;check(p.getUiInstrumentState().oscillators[3].id==4,"processor owns initial four modules");
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;check(p.getUiInstrumentState().oscillators[3].id==4,"processor owns initial four modules");
     check(p.getUiVisualizationMask()==ui::visualizationBit(ui::VisualizationEffect::Chaos),
           "visualization defaults enable only Chaos");
     const auto customVisualMask=ui::visualizationBit(ui::VisualizationEffect::Env) |
@@ -1841,7 +1842,7 @@ void run() {
     p.removeUiOscillator(2);p.setUiOscillatorEnabled(1,false);p.setUiOscillatorEnabled(3,false);
     auto m=p.getUiOscillatorState(4);m.wtPosition=.375f;m.pan=-.75f;m.level=.25f;p.setUiOscillatorState(4,m);
     juce::MemoryBlock bytes;p.getStateInformation(bytes);
-    OrigamiAudioProcessor restored;restored.setStateInformation(bytes.getData(),static_cast<int>(bytes.getSize()));
+    auto restoredOwner=std::make_unique<OrigamiAudioProcessor>(); auto& restored=*restoredOwner;restored.setStateInformation(bytes.getData(),static_cast<int>(bytes.getSize()));
     check(restored.getUiVisualizationMask()==customVisualMask,"plugin state restores visualization preferences");
     juce::MemoryBlock again;restored.getStateInformation(again);check(bytes==again,"processor state round trip");
     auto restoredEditor=std::unique_ptr<juce::AudioProcessorEditor>(restored.createEditor());
