@@ -972,12 +972,10 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             chainKinds_[i].setText("O S C   E F F E C T",juce::dontSendNotification);
             const float processMinimum=dsp::oscProcessAmountMinimum(p->type);
             chainAmounts_[i].setRange(processMinimum,1.0,0.001);
+            // All rotary controls display stored base values. Live modulation
+            // belongs exclusively to paintOverChildren's range/dot overlay.
             if(!chainAmounts_[i].isMouseButtonDown()) {
-                const float span=1.0f-processMinimum;
-                const float livePosition=juce::jlimit(processMinimum,1.0f,
-                    p->amount+modulationUiEffectiveNormalizedOffset(
-                        ModDestination::ProcessAmount,display_.id,p->id)*span);
-                chainAmounts_[i].setValue(livePosition,juce::dontSendNotification);
+                chainAmounts_[i].setValue(p->amount,juce::dontSendNotification);
             }
             chainPowers_[i].setToggleState(p->enabled,juce::dontSendNotification);
             chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::ProcessAmount));
@@ -997,10 +995,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
             chainKinds_[i].setText("O S C   R O U T E",juce::dontSendNotification);
             chainAmounts_[i].setRange(-1.0,1.0,0.001);
             if(!chainAmounts_[i].isMouseButtonDown()) {
-                const float livePosition=juce::jlimit(-1.0f,1.0f,
-                    r->amount+modulationUiEffectiveNormalizedOffset(
-                        ModDestination::RouteAmount,display_.id,r->id)*2.0f);
-                chainAmounts_[i].setValue(livePosition,juce::dontSendNotification);
+                chainAmounts_[i].setValue(r->amount,juce::dontSendNotification);
             }
             chainPowers_[i].setToggleState(r->enabled,juce::dontSendNotification);
             chainAmounts_[i].getProperties().set("mct.mod.destination",static_cast<int>(ModDestination::RouteAmount));
@@ -1858,13 +1853,12 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         if(max<=min) return;
         const float base=static_cast<float>((slider.getValue()-min)/(max-min));
         const bool bipolar=selectedHasRoute
-            ?modulationUiSelectedRouteIsBipolar(destination,display_.id)
+            ?modulationUiSelectedRouteIsBipolar(destination,display_.id,itemId)
             :modulationUiPersistentRoutesAreBipolar(destination,display_.id,itemId);
         const float extent=std::abs(depth);
         const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
         const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
-        const float current=juce::jlimit(0.0f,1.0f,
-            base+depth*modulationUiRouteDisplaySourceValue(telemetry.selectedSource,bipolar));
+        const float current=modulationUiEffectiveSliderPosition(slider,destination,display_.id,itemId);
 
         // Sliders in OSC CHAIN rows are descendants of chainContent_, not
         // direct OscillatorCard children. Convert their bounds into this
@@ -1893,16 +1887,6 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
             }
             g.setColour(rangeColour.withAlpha(.96f));
             g.strokePath(range,juce::PathStrokeType(rangeThickness));
-
-            if(selectedHasRoute && telemetry.synthActive) {
-                const float a=angle(current);
-                const auto c=circle.getCentre();
-                const auto p=juce::Point<float>(
-                    c.x+std::sin(a)*circle.getWidth()*.51f,
-                    c.y-std::cos(a)*circle.getHeight()*.51f);
-                g.setColour(Palette::text());
-                g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
-            }
         } else {
             juce::Path automated;
             automated.addCentredArc(circle.getCentreX(),circle.getCentreY(),
@@ -1910,6 +1894,15 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
                                     start,end,true);
             g.setColour(signalSourceColour().darker(.72f).withAlpha(.88f));
             g.strokePath(automated,juce::PathStrokeType(1.7f));
+        }
+        if(anyRoute && telemetry.synthActive) {
+            const float a=angle(current);
+            const auto c=circle.getCentre();
+            const auto p=juce::Point<float>(
+                c.x+std::sin(a)*circle.getWidth()*.51f,
+                c.y-std::cos(a)*circle.getHeight()*.51f);
+            g.setColour(signalSourceColour());
+            g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
         }
     };
 
@@ -1924,8 +1917,7 @@ void OscillatorCard::paintOverChildren(juce::Graphics& g) {
         const float extent=std::abs(depth);
         const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
         const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
-        const float current=juce::jlimit(0.0f,1.0f,
-            base+depth*modulationUiRouteDisplaySourceValue(telemetry.selectedSource,bipolar));
+        const float current=modulationUiEffectiveSliderPosition(slider,destination,display_.id);
 
         auto b=slider.getBounds().toFloat().reduced(3.0f);
         const float y=b.getBottom()+1.0f;

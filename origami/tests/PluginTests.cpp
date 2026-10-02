@@ -18,6 +18,7 @@
 #include "plugin/PluginProcessor.h"
 #include "plugin/PluginEditor.h"
 #include "plugin/ui/WavetableFrameOps.h"
+#include "plugin/ui/ModulationUiTelemetry.h"
 #include "core/preset/StateCodec.h"
 #include <iostream>
 #include <stdexcept>
@@ -1250,6 +1251,113 @@ void matrixStableChainDestinationAudit() {
           "deleted process cannot silently retarget a Matrix route");
 }
 
+void modulationKnobBaseAudit() {
+    OrigamiAudioProcessor processor;
+    auto module=processor.getUiOscillatorState(2);
+    module.processCount=1;module.nextProcessId=2;
+    module.processes[0]={1,dsp::OscProcessType::BendBoth,0.25f,7,true};
+    module.routeCount=1;module.nextRouteId=2;
+    module.routes[0]={1,1,OscRouteType::PhaseMod,0.2f,true};
+    check(processor.setUiOscillatorState(2,module),"modulated knob fixture installs");
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(processor.createEditor());
+    auto& telemetry=ui::modulationUiTelemetry();
+    const auto saved=telemetry;
+    const auto sync=[&] {
+        rack(*editor).syncFromModel();
+        walk(*editor,[](auto& c){if(auto* filter=dynamic_cast<ui::FilterPanel*>(&c)) filter->syncFromModel();});
+    };
+    sync();
+    std::vector<juce::Slider*> knobs;
+    walk(*editor,[&](auto& c){if(auto* slider=dynamic_cast<juce::Slider*>(&c))
+        if(slider->isRotary() && slider->getProperties().contains("mct.mod.destination")) knobs.push_back(slider);});
+    check(!knobs.empty(),"discover actual modulatable rotary controls");
+    bool process=false,routing=false,filter=false,pan=false;
+    const std::array<ModSource,22> sources{{ModSource::Env1,ModSource::Env2,ModSource::Env3,
+        ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
+        ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4,
+        ModSource::ModWheel,ModSource::Velocity,ModSource::Keytrack,ModSource::Aftertouch,
+        ModSource::PitchBend,ModSource::NoteGate,ModSource::Random,ModSource::Function,
+        ModSource::Chaos,ModSource::Drift,ModSource::Sequencer}};
+    for(auto* knob:knobs) {
+        const auto& props=knob->getProperties();
+        const auto destination=static_cast<ModDestination>(static_cast<int>(props["mct.mod.destination"]));
+        const auto osc=static_cast<OscillatorModuleId>(static_cast<int>(props["mct.mod.oscillator"]));
+        const auto item=static_cast<std::uint32_t>(static_cast<int>(props["mct.mod.itemId"]));
+        process|=destination==ModDestination::ProcessAmount;
+        routing|=destination==ModDestination::RouteAmount;
+        filter|=destination==ModDestination::Cutoff;
+        pan|=destination==ModDestination::Pan;
+        const double base=knob->getValue();
+        const float depth=base>(knob->getMinimum()+knob->getMaximum())*0.5 ? -0.15f : 0.15f;
+        for(auto source:sources) {
+            telemetry={};telemetry.synthActive=true;telemetry.performanceInputActive=true;
+            telemetry.state.routes[0]={1,true,source,{destination,osc,item},depth,true};
+            const auto setSource=[&](float value) {
+                telemetry.sourceValues.fill(value);telemetry.state.macros.fill(value);
+                telemetry.runtime.performanceSources.fill(value);
+                telemetry.velocityValue=telemetry.keytrackValue=value;
+                sync();
+            };
+            setSource(0.1f);
+            check(knob->getValue()==base,"assigning modulation preserves base knob position");
+            const float first=ui::modulationUiEffectiveSliderPosition(*knob,destination,osc,item);
+            setSource(0.8f);
+            check(knob->getValue()==base,"every modulation source preserves base knob position");
+            check(first!=ui::modulationUiEffectiveSliderPosition(*knob,destination,osc,item),
+                  "live indicator follows source independently of base knob");
+            check(ui::modulationUiHasAnyRoute(destination,osc,item) &&
+                  ui::modulationUiPersistentRouteAmount(destination,osc,item)!=0,
+                  "assigned modulation retains range overlay");
+            telemetry.state.routes[1]={2,true,ModSource::Macro4,{destination,osc,item},depth*0.25f,false};
+            sync();check(knob->getValue()==base,"multiple sources preserve knob position");
+            telemetry.state.routes={};sync();
+            check(knob->getValue()==base && !ui::modulationUiHasAnyRoute(destination,osc,item),
+                  "removing modulation preserves base and removes overlay");
+        }
+        if(osc==2 && (destination==ModDestination::ProcessAmount || destination==ModDestination::RouteAmount || destination==ModDestination::Pan)) {
+            telemetry.state.routes[0]={1,true,ModSource::Macro1,{destination,osc,item},0.1f,false};
+            knob->setValue(0.4,juce::sendNotificationSync);sync();
+            check(std::abs(knob->getValue()-0.4)<0.001,"manual edit changes modulated base knob normally");
+            const auto stored=processor.getUiOscillatorState(2);
+            const float value=destination==ModDestination::ProcessAmount ? stored.processes[0].amount
+                : destination==ModDestination::RouteAmount ? stored.routes[0].amount : stored.pan;
+            check(std::abs(value-0.4f)<0.001f,"manual edit commits base amount without modulation offset");
+        }
+    }
+    check(process && routing && filter && pan,"audit covers process, routing, filter and oscillator knobs");
+    ui::OscillatorCard* card=nullptr;
+    ui::FilterPanel* filterPanel=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* candidate=dynamic_cast<ui::OscillatorCard*>(&c)) if(candidate->id()==2) card=candidate;
+        if(auto* candidate=dynamic_cast<ui::FilterPanel*>(&c)) filterPanel=candidate;
+    });
+    check(card && filterPanel,"overlay paint targets exist");
+    const auto paintOverlay=[](juce::Component& component) {
+        juce::Image image(juce::Image::ARGB,component.getWidth(),component.getHeight(),true);
+        juce::Graphics graphics(image);component.paintOverChildren(graphics);
+        std::uint64_t hash=1469598103934665603ull;unsigned visible=0;
+        for(int y=0;y<image.getHeight();++y) for(int x=0;x<image.getWidth();++x) {
+            const auto pixel=image.getPixelAt(x,y);
+            visible+=pixel.getAlpha()!=0;hash=(hash^pixel.getARGB())*1099511628211ull;
+        }
+        return std::make_pair(visible,hash);
+    };
+    for(juce::Component* component:{static_cast<juce::Component*>(card),static_cast<juce::Component*>(filterPanel)}) {
+        telemetry={};telemetry.selectedSource=ModSource::Chaos; // unrelated selection
+        const ModAddress address=component==card ? ModAddress{ModDestination::Pan,2,0}
+                                                 : ModAddress{ModDestination::Resonance,0,0};
+        telemetry.state.routes[0]={1,true,ModSource::Lfo1,address,0.25f,true};
+        check(paintOverlay(*component).first>0,"modulation range remains painted while source is stationary");
+        telemetry.synthActive=true;telemetry.sourceValues[3]=0.1f;
+        const auto first=paintOverlay(*component);
+        telemetry.sourceValues[3]=0.8f;
+        check(first.second!=paintOverlay(*component).second,"painted live dot moves independently of selected source");
+        telemetry.state.routes={};
+        check(paintOverlay(*component).first==0,"removing modulation removes painted range and live dot");
+    }
+    telemetry=saved;
+}
+
 void matrixDynamicRouteAudit() {
     OrigamiAudioProcessor processor;
     auto module=processor.getUiOscillatorState(2);
@@ -1368,6 +1476,7 @@ void matrixDynamicRouteAudit() {
 }
 
 void run() {
+    modulationKnobBaseAudit();
     matrixStableChainDestinationAudit();
     matrixDynamicRouteAudit();
     audioContinuityP0Audit();

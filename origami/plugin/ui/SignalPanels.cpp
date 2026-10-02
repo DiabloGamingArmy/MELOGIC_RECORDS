@@ -264,19 +264,22 @@ void FilterPanel::paintOverChildren(juce::Graphics& g) {
     const auto& telemetry=modulationUiTelemetry();
 
     const auto drawRing=[&](juce::Slider& slider,ModDestination destination) {
-        const float depth=modulationUiSelectedRouteAmount(destination,0);
+        const float selectedDepth=modulationUiSelectedRouteAmount(destination,0);
+        const float depth=std::abs(selectedDepth)>=1.0e-4f ? selectedDepth
+            : modulationUiPersistentRouteAmount(destination);
         const bool anyRoute=modulationUiHasAnyRoute(destination,0);
         if(std::abs(depth)<1.0e-4f && !anyRoute) return;
 
         const double min=slider.getMinimum(),max=slider.getMaximum();
         if(max<=min) return;
         const float base=static_cast<float>((slider.getValue()-min)/(max-min));
-        const bool bipolar=modulationUiSelectedRouteIsBipolar(destination,0);
+        const bool bipolar=std::abs(selectedDepth)>=1.0e-4f
+            ? modulationUiSelectedRouteIsBipolar(destination,0)
+            : modulationUiPersistentRoutesAreBipolar(destination);
         const float extent=std::abs(depth);
         const float lo=juce::jlimit(0.0f,1.0f,bipolar?base-extent:juce::jmin(base,base+depth));
         const float hi=juce::jlimit(0.0f,1.0f,bipolar?base+extent:juce::jmax(base,base+depth));
-        const float current=juce::jlimit(0.0f,1.0f,
-            base+depth*modulationUiRouteDisplaySourceValue(telemetry.selectedSource,bipolar));
+        const float current=modulationUiEffectiveSliderPosition(slider,destination);
 
         auto circle=slider.getBounds().toFloat().reduced(1.0f).expanded(2.0f);
         const float d=juce::jmin(circle.getWidth(),circle.getHeight());
@@ -292,16 +295,6 @@ void FilterPanel::paintOverChildren(juce::Graphics& g) {
                                 angle(lo),angle(hi),true);
             g.setColour(signalSourceColour().withAlpha(.96f));
             g.strokePath(range,juce::PathStrokeType(2.2f));
-
-            if(telemetry.synthActive) {
-                const float a=angle(current);
-                const auto c=circle.getCentre();
-                const auto p=juce::Point<float>(
-                    c.x+std::sin(a)*circle.getWidth()*.51f,
-                    c.y-std::cos(a)*circle.getHeight()*.51f);
-                g.setColour(Palette::text());
-                g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
-            }
         } else {
             juce::Path automated;
             automated.addCentredArc(circle.getCentreX(),circle.getCentreY(),
@@ -309,6 +302,15 @@ void FilterPanel::paintOverChildren(juce::Graphics& g) {
                                     start,end,true);
             g.setColour(signalSourceColour().darker(.72f).withAlpha(.88f));
             g.strokePath(automated,juce::PathStrokeType(1.7f));
+        }
+        if(anyRoute && telemetry.synthActive) {
+            const float a=angle(current);
+            const auto c=circle.getCentre();
+            const auto p=juce::Point<float>(
+                c.x+std::sin(a)*circle.getWidth()*.51f,
+                c.y-std::cos(a)*circle.getHeight()*.51f);
+            g.setColour(signalSourceColour());
+            g.fillEllipse(juce::Rectangle<float>(5.0f,5.0f).withCentre(p));
         }
     };
 

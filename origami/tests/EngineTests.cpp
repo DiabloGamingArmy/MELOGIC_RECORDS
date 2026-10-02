@@ -664,6 +664,21 @@ void oscillatorControlCacheEquivalence() {
     }
 }
 
+void performanceVisualizationSources() {
+    auto engine=std::make_unique<OrigamiEngine>();prepare(*engine);
+    engine->modWheel(0,64);engine->aftertouch(0,96);engine->pitchWheel(0,12288);
+    check(engine->noteOn(60,0.8f),"performance visualization note starts");
+    render(*engine,256);
+    const auto sources=engine->runtimeVisualizationSnapshot().performanceSources;
+    check(std::abs(sources[0]-64.0f/127.0f)<1.0e-6f &&
+          std::abs(sources[1]-96.0f/127.0f)<1.0e-6f &&
+          std::abs(sources[2]-0.5f)<1.0e-3f && sources[3]==1.0f,
+          "visualization publishes observed wheel, pressure, bend and gate");
+    engine->noteOff(60);render(*engine,256);
+    check(engine->runtimeVisualizationSnapshot().performanceSources[3]==0.0f,
+          "visualization gate follows note release");
+}
+
 void voiceObservationDoesNotChangeAudio() {
     auto observed=std::make_unique<Voice>();
     auto unobserved=std::make_unique<Voice>();
@@ -752,6 +767,7 @@ int main() {
     try {
         std::cerr<<"dynamic topology\n";dynamicTopologyRecompilation();
         std::cerr<<"oscillator control cache\n";oscillatorControlCacheEquivalence();
+        std::cerr<<"performance visualization sources\n";performanceVisualizationSources();
         std::cerr<<"voice observation\n";voiceObservationDoesNotChangeAudio();
         std::cerr<<"visualization cadence\n";engineVisualizationCadenceDoesNotChangeAudio();
         std::cerr<<"performance source curves\n";performanceSourceCurveAudit();

@@ -20,6 +20,8 @@ struct RuntimeVisualizationSnapshot {
     static constexpr std::size_t waveformBins=256;
     std::array<float,12> sourceValues{};
     std::array<float,12> sourcePhases{};
+    // Observed voice's MIDI/control sources, copied at visualization cadence.
+    std::array<float,4> performanceSources{}; // wheel, pressure, bend, gate
     float chaosY=0.5f;
     std::array<OscillatorModuleId,16> moduleIds{};
     std::array<float,16> oscillatorPhases{};

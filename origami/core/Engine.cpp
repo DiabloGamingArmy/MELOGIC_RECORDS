@@ -510,6 +510,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                                                 modWheel_[channel],aftertouch_[channel],oscillatorPlan_,sharedProcesses,observe);
             if(observe) {
                 const auto& visual=voices_[v].visualizationSnapshot();
+                runtimeVisualization_.performanceSources={{visual.sources[8],visual.sources[10],
+                                                            visual.sources[11],visual.sources[12]}};
                 for(std::size_t i=0;i<3;++i) {
                     runtimeVisualization_.sourceValues[i]=visual.sources[i];
                     const auto& envelope=observedInfo.envelopes[i];

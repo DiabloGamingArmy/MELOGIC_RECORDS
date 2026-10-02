@@ -70,6 +70,10 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
         case ModSource::Macro4:return telemetry.state.macros[3];
         case ModSource::Velocity:return telemetry.performanceInputActive ? telemetry.velocityValue : 0.0f;
         case ModSource::Keytrack:return telemetry.performanceInputActive ? telemetry.keytrackValue : 0.0f;
+        case ModSource::ModWheel:return telemetry.runtime.performanceSources[0];
+        case ModSource::Aftertouch:return telemetry.runtime.performanceSources[1];
+        case ModSource::PitchBend:return telemetry.runtime.performanceSources[2];
+        case ModSource::NoteGate:return telemetry.runtime.performanceSources[3];
 
         case ModSource::Env1:
         case ModSource::Env2:
@@ -78,10 +82,6 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
         case ModSource::Lfo2:
         case ModSource::Lfo3:
         case ModSource::Lfo4:
-        case ModSource::ModWheel:
-        case ModSource::Aftertouch:
-        case ModSource::PitchBend:
-        case ModSource::NoteGate:
         case ModSource::Random:
         case ModSource::Function:
         case ModSource::Chaos:
@@ -124,13 +124,15 @@ inline bool modulationUiSourceIsBipolar(ModSource source) noexcept {
 }
 
 inline bool modulationUiSelectedRouteIsBipolar(ModDestination destination,
-                                                OscillatorModuleId oscillator=0) noexcept {
+                                                OscillatorModuleId oscillator=0,
+                                                std::uint32_t itemId=0) noexcept {
     const auto& telemetry=modulationUiTelemetry();
     bool found=false;
     bool bipolar=false;
     for(const auto& route:telemetry.state.routes) {
         if(route.id==0 || !route.enabled || route.source!=telemetry.selectedSource) continue;
         if(route.destination.parameter!=destination || route.destination.oscillator!=oscillator) continue;
+        if(itemId!=0 && route.destination.itemId!=itemId) continue;
         if(!found) {
             bipolar=route.bipolar;
             found=true;
@@ -223,6 +225,24 @@ inline float modulationUiEffectiveNormalizedOffset(ModDestination destination,
         total+=route.amount*source;
     }
     return juce::jlimit(-4.0f,4.0f,total);
+}
+
+// Painting reads the base slider; effective values never flow back to setValue.
+inline float modulationUiEffectiveSliderPosition(juce::Slider& slider,
+                                                  ModDestination destination,
+                                                  OscillatorModuleId oscillator=0,
+                                                  std::uint32_t itemId=0) noexcept {
+    const double minimum=slider.getMinimum(),maximum=slider.getMaximum();
+    if(maximum<=minimum) return 0.0f;
+    const double value=slider.getValue();
+    const bool logarithmic=destination==ModDestination::Cutoff && minimum>0.0;
+    const double base=logarithmic ? std::log(value/minimum)/std::log(maximum/minimum)
+                                 : (value-minimum)/(maximum-minimum);
+    const double effective=juce::jlimit(0.0,1.0,base+
+        modulationUiEffectiveNormalizedOffset(destination,oscillator,itemId));
+    const double physical=logarithmic ? minimum*std::pow(maximum/minimum,effective)
+                                     : minimum+effective*(maximum-minimum);
+    return static_cast<float>(slider.valueToProportionOfLength(physical));
 }
 
 inline float modulationUiAllRoutesValue(ModDestination destination,
