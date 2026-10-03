@@ -1037,6 +1037,252 @@ void environmentTests() {
 }
 }
 
+// mct-origami-nodes-n02: golden fingerprints of the compiled plans and the
+// rendered audio of representative graphs, captured on the pre-N02 (N01) code.
+// The typed-graph metadata must not change either. (Bit-exact float hashes:
+// valid for this toolchain/flags; a deliberate DSP change re-baselines them.)
+std::uint64_t fnv(std::uint64_t h,std::uint32_t v) {
+    for(int i=0;i<4;++i) { h^=(v>>(i*8))&0xffu; h*=1099511628211ull; }
+    return h;
+}
+std::uint64_t planFingerprint(const PreparedFxPlan& plan) {
+    std::uint64_t h=1469598103934665603ull;
+    h=fnv(h,std::uint32_t(plan.stepCount)); h=fnv(h,plan.hasOutput); h=fnv(h,plan.outputBuffer); h=fnv(h,plan.identity);
+    for(std::size_t s=0;s<plan.stepCount;++s) {
+        const auto& st=plan.steps[s];
+        h=fnv(h,std::uint32_t(st.kind)); h=fnv(h,st.inputCount); h=fnv(h,st.output); h=fnv(h,st.bus);
+        for(std::uint8_t i=0;i<st.inputCount;++i) h=fnv(h,st.inputs[i]);
+        std::uint32_t g; std::memcpy(&g,&st.inputGain,4); h=fnv(h,g);
+        h=fnv(h,st.instance!=nullptr ? std::uint32_t(st.instance->node) : 0u);
+    }
+    return h;
+}
+float testSignal(int i) {
+    static std::uint32_t seed=0;
+    if(i==0) seed=0x1234567u;
+    seed=seed*1664525u+1013904223u;
+    const float noise=float(int(seed>>9)-(1<<22))/float(1<<22);
+    return 0.4f*std::sin(pi2*110.0f*float(i)/float(sr))+0.25f*std::sin(pi2*1870.0f*float(i)/float(sr))+0.1f*noise;
+}
+std::uint64_t audioFingerprint(const Stereo& audio) {
+    std::uint64_t h=1469598103934665603ull;
+    for(std::size_t i=0;i<audio.l.size();++i) {
+        std::uint32_t a,b; std::memcpy(&a,&audio.l[i],4); std::memcpy(&b,&audio.r[i],4);
+        h=fnv(fnv(h,a),b);
+    }
+    return h;
+}
+std::vector<std::pair<const char*,FxGraph>> goldenGraphs() {
+    std::vector<std::pair<const char*,FxGraph>> out;
+    out.push_back({"serial",makeSerialChainTemplate()});
+    out.push_back({"parallel",makeParallelTemplate()});
+    out.push_back({"development",makeDevelopmentFxGraph()});
+    FxGraph library=makeDefaultFxGraph();
+    for(const auto& d:fxEffectCatalog()) if(d.processesAudio) library.insertEffectBeforeOutput(d.type);
+    out.push_back({"library",library});
+    FxGraph branches=makeDefaultFxGraph();
+    const auto wire=branches.connections().front().id;
+    const auto comp=branches.parallelOnConnection(wire,FxEffectType::Compressor);
+    branches.parallelAroundNode(comp,FxEffectType::Equalizer);
+    out.push_back({"branches",branches});
+    return out;
+}
+void goldenFingerprintTests() {
+    const bool print=std::getenv("ORIGAMI_PRINT_GOLDEN")!=nullptr;
+    struct Expected { const char* name; std::uint64_t plan,audio; };
+    static const Expected expected[]{
+        {"serial",0xcfaf957bac2d45f4ull,0xece608152cf406dfull},
+        {"parallel",0xf8f02b5f63351024ull,0x7218697422c67fe3ull},
+        {"development",0xcdecc542baaca4d7ull,0xa36c7f2582b7a76bull},
+        {"library",0xe6c7f08938c37bf1ull,0x2ec083b41d2ba932ull},
+        {"branches",0xc6070f4215b466c8ull,0x3404a89abd48ea43ull}};
+    for(const auto& [name,graph]:goldenGraphs()) {
+        check(graph.validate(),"golden graph is valid");
+        FxGraphCompiler compiler;
+        compiler.prepare(sr);
+        const auto plan=compiler.compile(graph);
+        check(plan!=nullptr,"golden graph compiles");
+        if(plan==nullptr) continue;
+        FxRenderer fx;
+        fx.prepare(sr);
+        fx.sync(graph);
+        const auto audio=render(fx,testSignal,16384);
+        const auto ph=planFingerprint(*plan),ah=audioFingerprint(audio);
+        if(print) std::cout<<"GOLDEN "<<name<<" plan=0x"<<std::hex<<ph<<" audio=0x"<<ah<<std::dec<<"\n";
+        for(const auto& e:expected) if(std::string(e.name)==name && e.plan!=0)
+            check(e.plan==ph && e.audio==ah,"compiled plan and rendered audio match the pre-N02 golden");
+    }
+    // Multi-bus environment with non-neutral Global FX.
+    FxEnvironment env;
+    env.prepare(sr);
+    auto main=makeSerialChainTemplate();
+    auto bus7=makeDefaultFxGraph(7);
+    bus7.insertEffectBeforeOutput(FxEffectType::Compressor);
+    bus7.insertEffectBeforeOutput(FxEffectType::Phaser);
+    FxGlobalSettings globals; globals.dryWet=0.8f; globals.width=1.3f; globals.outputGainDb=-2.0f;
+    env.sync({{fxMainBusId,&main},{7,&bus7}},globals);
+    std::vector<float> l(16384),r(16384),a(16384),b(16384);
+    for(int i=0;i<16384;++i) { l[std::size_t(i)]=r[std::size_t(i)]=testSignal(i); }
+    for(int i=0;i<16384;++i) { a[std::size_t(i)]=b[std::size_t(i)]=0.5f*testSignal((i*7)%16384); }
+    std::array<float*,2*(maxRenderBuses-1)> aux{}; aux[0]=a.data(); aux[1]=b.data();
+    for(int offset=0;offset<16384;offset+=512) {
+        std::array<float*,2*(maxRenderBuses-1)> view{}; view[0]=a.data()+offset; view[1]=b.data()+offset;
+        env.process(l.data()+offset,r.data()+offset,view.data(),2,512);
+    }
+    Stereo mixed{l,r};
+    const auto eh=audioFingerprint(mixed);
+    static constexpr std::uint64_t expectedEnvironment=0x741f1baf7208d220ull;
+    if(print) std::cout<<"GOLDEN environment audio=0x"<<std::hex<<eh<<std::dec<<"\n";
+    if(expectedEnvironment!=0) check(eh==expectedEnvironment,"multi-bus environment + Global FX match the pre-N02 golden");
+}
+
+// mct-origami-nodes-n02: typed port model, connection rules, cycle and
+// duplicate policy, execution domain.
+void typedGraphTests() {
+    using nodes::PortDirection; using nodes::NodeSignalType; using nodes::NodeExecutionDomain;
+    // Every constructible node kind exposes coherent, model-owned ports.
+    FxGraph g=makeDefaultFxGraph();
+    for(const auto& d:fxEffectCatalog()) g.addEffect(d.type,{0,0});
+    for(std::uint8_t b=FxGraph::minBranches;b<=FxGraph::maxBranches;++b) { g.addSplit({0,0},b); g.addMerge({0,0},b); }
+    bool coherent=true,audio=true,global=true,named=true;
+    for(const auto& n:g.nodes()) {
+        const auto ports=fxNodePorts(n);
+        coherent&=ports.size()==std::size_t(n.ports.inputs)+n.ports.outputs;
+        std::uint8_t in=0,out=0;
+        for(const auto& p:ports) {
+            coherent&=p.index==(p.direction==PortDirection::Input ? in++ : out++);
+            audio&=p.type==NodeSignalType::Audio;
+            named&=p.name!=nullptr && p.name[0]!='\0';
+        }
+        coherent&=!fxPort(n,PortDirection::Input,n.ports.inputs) && !fxPort(n,PortDirection::Output,n.ports.outputs);
+        global&=fxExecutionDomain(n)==NodeExecutionDomain::Global;
+    }
+    check(coherent,"every node's descriptors match its topology (sequential indices, out of range = none)");
+    check(audio,"every shipping port is AUDIO");
+    check(named,"every port has a semantic name");
+    check(global,"every shipping node executes GLOBAL (bus graph), never per voice");
+    {
+        FxGraph t=makeDefaultFxGraph();
+        const auto comp=t.addEffect(FxEffectType::Compressor,{0,0});
+        const auto split=t.addSplit({0,0},3);
+        const auto merge=t.addMerge({0,0},2);
+        const auto* c=t.findNode(comp); const auto* s=t.findNode(split); const auto* m=t.findNode(merge);
+        check(std::string(fxPort(*c,PortDirection::Input,0)->name)=="Audio In" && std::string(fxPort(*c,PortDirection::Output,0)->name)=="Audio Out"
+              && !fxPort(*c,PortDirection::Input,1),"COMPRESSOR: Audio In -> Audio Out (no invented sidechain)");
+        check(std::string(fxPort(*s,PortDirection::Output,0)->name)=="A" && std::string(fxPort(*s,PortDirection::Output,2)->name)=="C",
+              "SPLIT outputs A, B, C");
+        check(std::string(fxPort(*m,PortDirection::Input,1)->name)=="B" && std::string(fxPort(*m,PortDirection::Output,0)->name)=="Audio Out",
+              "MERGE inputs A, B -> Audio Out");
+        check(t.findNode(t.sourceNode())->ports.inputs==0 && std::string(fxPort(*t.findNode(t.outputNode()),PortDirection::Input,0)->name)=="Audio In",
+              "terminals: source has only Audio Out, output only Audio In");
+    }
+    // Connection rules (structured reasons), either endpoint order.
+    FxGraph k=makeDefaultFxGraph();
+    const auto src=k.sourceNode(),out=k.outputNode();
+    k.disconnect(k.connections().front().id);
+    const auto a=k.addEffect(FxEffectType::Gain,{0,0}),b=k.addEffect(FxEffectType::Filter,{0,0});
+    const FxPortEndpoint aOut{a,PortDirection::Output,0},aIn{a,PortDirection::Input,0},bIn{b,PortDirection::Input,0},bOut{b,PortDirection::Output,0};
+    const auto ok=k.checkConnection(aOut,bIn),reversed=k.checkConnection(bIn,aOut);
+    check(ok.valid() && reversed.valid() && reversed.from==FxPortRef{a,0} && reversed.to==FxPortRef{b,0},"AUDIO out -> AUDIO in is valid from either end");
+    check(k.checkConnection(aIn,bIn).result==FxEditResult::SameDirection && k.checkConnection(aOut,bOut).result==FxEditResult::SameDirection,
+          "input->input and output->output are rejected");
+    check(k.checkConnection({a,PortDirection::Output,3},bIn).result==FxEditResult::InvalidPort,"invalid port index is rejected");
+    check(k.checkConnection({999,PortDirection::Output,0},bIn).result==FxEditResult::UnknownNode,"missing node is rejected");
+    check(k.checkConnection(aOut,aIn).result==FxEditResult::SelfConnection,"self connection is rejected");
+    check(k.canConnect({a,0},{b,0})==k.checkConnection(aOut,bIn).result,"canConnect is the same rule set");
+    // Synthetic typed ports (no shipping node has them): no implicit conversion.
+    const nodes::PortDescriptor audioOut{PortDirection::Output,NodeSignalType::Audio,0,"Audio Out"};
+    const nodes::PortDescriptor controlIn{PortDirection::Input,NodeSignalType::Control,0,"Amount"};
+    const nodes::PortDescriptor controlOut{PortDirection::Output,NodeSignalType::Control,0,"Value"};
+    const nodes::PortDescriptor eventIn{PortDirection::Input,NodeSignalType::Event,0,"Notes"};
+    const nodes::PortDescriptor audioIn{PortDirection::Input,NodeSignalType::Audio,0,"Audio In"};
+    check(nodes::checkPortPair(audioOut,controlIn)==nodes::PortPairError::TypeMismatch,"AUDIO -> CONTROL is a type mismatch");
+    check(nodes::checkPortPair(controlOut,eventIn)==nodes::PortPairError::TypeMismatch,"CONTROL -> EVENT is a type mismatch");
+    check(nodes::checkPortPair(audioOut,audioIn)==nodes::PortPairError::None && nodes::checkPortPair(audioIn,audioOut)==nodes::PortPairError::None,
+          "AUDIO -> AUDIO pairs in either order");
+    check(nodes::checkPortPair(audioIn,controlIn)==nodes::PortPairError::SameDirection,"two inputs never pair");
+    // Duplicate edges, fan-out, merge, cycles.
+    check(k.connect({src,0},{a,0})==FxEditResult::Ok && k.connect({a,0},{b,0})==FxEditResult::Ok,"chain");
+    check(k.checkConnection(aOut,bIn).result==FxEditResult::DuplicateConnection,"exact duplicate edge (same output, same input) is rejected");
+    {   // Free ports on both ends, so the cycle itself is the reason.
+        FxGraph loop=makeDefaultFxGraph();
+        const auto x=loop.addEffect(FxEffectType::Gain,{0,0}),y=loop.addEffect(FxEffectType::Drive,{0,0});
+        check(loop.connect({x,0},{y,0})==FxEditResult::Ok,"x -> y");
+        const FxPortEndpoint yOut{y,PortDirection::Output,0},xIn{x,PortDirection::Input,0};
+        check(loop.checkConnection(yOut,xIn).result==FxEditResult::WouldCreateCycle
+              && loop.checkConnection(xIn,yOut).result==FxEditResult::WouldCreateCycle
+              && loop.connect({y,0},{x,0})==FxEditResult::WouldCreateCycle && loop.validate(),
+              "a zero-delay cycle is rejected, deterministically, and the graph is unchanged");
+    }
+    const auto split=k.addSplit({0,0},2),merge=k.addMerge({0,0},2),c=k.addEffect(FxEffectType::Delay,{0,0});
+    check(k.disconnectPort(b,false,0)==0,"b output free");
+    check(k.connect({b,0},{split,0})==FxEditResult::Ok && k.connect({split,0},{c,0})==FxEditResult::Ok
+          && k.connect({split,1},{merge,1})==FxEditResult::Ok && k.connect({c,0},{merge,0})==FxEditResult::Ok
+          && k.connect({merge,0},{out,0})==FxEditResult::Ok,"fan-out through SPLIT and summing through MERGE stay legal");
+    check(k.validate(),"typed graph validates");
+    FxGraphCompiler compiler; compiler.prepare(sr);
+    check(compiler.compile(k)!=nullptr,"typed graph compiles");
+}
+
+// Bounded, deterministic randomized graph editing: the model never breaks its
+// invariants, every rejection is deterministic, every valid graph compiles to
+// a memory-safe plan, and the codec round-trips.
+void graphFuzzTests() {
+    std::uint32_t seed=0x5eed2u;
+    const auto next=[&](std::uint32_t range){ seed=seed*1664525u+1013904223u; return range==0 ? 0u : (seed>>8)%range; };
+    std::vector<FxEffectType> types;
+    for(const auto& d:fxEffectCatalog()) if(d.processesAudio) types.push_back(d.type);
+    FxGraphCompiler compiler; compiler.prepare(sr);
+    bool invariants=true,deterministic=true,plansSafe=true,roundTrip=true,consistent=true;
+    std::size_t accepted=0,rejected=0;
+    for(int round=0;round<6;++round) {
+        FxGraph g=makeDefaultFxGraph();
+        for(int op=0;op<120;++op) {
+            const auto ids=[&]{std::vector<FxNodeId> v; for(const auto& n:g.nodes()) v.push_back(n.id); return v;}();
+            const auto pick=[&]{ return next(10)==0 ? FxNodeId(900+next(50)) : ids[next(std::uint32_t(ids.size()))]; };
+            switch(next(8)) {
+            case 0: g.addEffect(types[next(std::uint32_t(types.size()))],{float(next(800)),float(next(600))}); break;
+            case 1: g.addSplit({0,0},std::uint8_t(2+next(7))); break;
+            case 2: g.addMerge({0,0},std::uint8_t(2+next(7))); break;
+            case 3: if(!g.connections().empty()) g.disconnect(g.connections()[next(std::uint32_t(g.connections().size()))].id); break;
+            default: {
+                // Mostly plausible requests (output -> input, small ports), plus
+                // wrong directions, absurd ports and missing nodes.
+                const auto port=[&]{ return std::uint8_t(next(5)==0 ? next(12) : next(2)); };
+                const bool flip=next(5)==0;
+                const FxPortEndpoint x{pick(),flip ? nodes::PortDirection::Input : nodes::PortDirection::Output,port()};
+                const FxPortEndpoint y{pick(),next(6)==0 ? nodes::PortDirection::Output : nodes::PortDirection::Input,port()};
+                const auto first=g.checkConnection(x,y),second=g.checkConnection(x,y);
+                deterministic&=first.result==second.result;
+                if(first.valid()) {
+                    consistent&=g.canConnect(first.from,first.to)==FxEditResult::Ok;
+                    consistent&=g.connect(first.from,first.to)==FxEditResult::Ok;
+                    ++accepted;
+                } else ++rejected;
+            }
+            }
+            invariants&=g.validate();
+        }
+        const auto plan=compiler.compile(g);
+        plansSafe&=plan!=nullptr;
+        if(plan!=nullptr)
+            for(std::size_t s=0;s<plan->stepCount;++s) {
+                const auto& step=plan->steps[s];
+                plansSafe&=step.output==s && step.inputCount<=FxGraph::maxBranches;
+                for(std::uint8_t i=0;i<step.inputCount;++i) plansSafe&=step.inputs[i]<s; // topological, in range
+            }
+        FxGraph decoded;
+        const auto bytes=encodeFxGraph(g);
+        roundTrip&=decodeFxGraph(bytes.data(),bytes.size(),decoded) && decoded==g;
+    }
+    check(accepted>20 && rejected>100,"fuzz exercised both valid and invalid connections");
+    check(invariants,"random editing never leaves an invalid graph");
+    check(deterministic,"connection verdicts are deterministic");
+    check(consistent,"checkConnection, canConnect and connect agree");
+    check(plansSafe,"every random graph compiles to a topologically ordered, in-range plan");
+    check(roundTrip,"every random graph round-trips through the codec");
+}
+
 int main() {
     identityTests();
     sourceDomainTests();
@@ -1073,6 +1319,9 @@ int main() {
     multiBusEngineTests();
     workspaceTests();
     environmentTests();
+    goldenFingerprintTests();
+    typedGraphTests();
+    graphFuzzTests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;

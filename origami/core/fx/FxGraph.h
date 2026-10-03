@@ -3,6 +3,7 @@
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #pragma once
+#include "core/nodes/NodeTypes.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -49,7 +50,8 @@ enum class FxNodeKind : std::uint8_t {
 // AUDIO sources carry sample streams. CONTROL sources (envelopes, LFOs, MIDI)
 // are modulation signals and must never be routed as audio; they will reach
 // FX parameters through Origami's single modulation system instead.
-enum class FxSignalDomain : std::uint8_t { Audio=1, Control=2 };
+// mct-origami-nodes-n02: the graph-wide signal type (same values).
+using FxSignalDomain=nodes::NodeSignalType;
 
 // Value 1 was P01's "synth sum"; it is now the named-bus source kind, whose
 // concrete bus is FxNode::bus. Other values are concept-level source kinds.
@@ -219,11 +221,38 @@ struct FxModuleSpec {
 enum class FxEditResult : std::uint8_t {
     Ok, UnknownNode, InvalidPort, SelfConnection, DuplicateConnection,
     InputOccupied, OutputOccupied, WouldCreateCycle, ControlSourceNotRoutable,
-    ProtectedNode, InvalidValue, CapacityExceeded, Unsupported, UnknownConnection
+    ProtectedNode, InvalidValue, CapacityExceeded, Unsupported, UnknownConnection,
+    // mct-origami-nodes-n02 (appended; values are not serialized)
+    SameDirection,           // input -> input or output -> output
+    TypeMismatch,            // port signal types differ (no implicit conversion)
+    ExecutionDomainMismatch  // nodes run in different execution domains
 };
 const char* toString(FxEditResult) noexcept;
 
 FxPortTopology fxPortTopology(FxNodeKind,std::uint8_t branches=2) noexcept;
+
+// ---- Typed port model (mct-origami-nodes-n02) -------------------------------
+// The node definition (kind, effect, branch count) is the single source of
+// truth for its ports: count, direction, signal type and socket name. Nothing
+// here is serialized; every shipping port is AUDIO and every shipping node is
+// GLOBAL (bus-graph processing, never per voice).
+std::uint8_t fxPortCount(const FxNode&,nodes::PortDirection) noexcept;
+std::optional<nodes::PortDescriptor> fxPort(const FxNode&,nodes::PortDirection,std::uint8_t index) noexcept;
+std::vector<nodes::PortDescriptor> fxNodePorts(const FxNode&); // inputs, then outputs
+nodes::NodeExecutionDomain fxExecutionDomain(const FxNode&) noexcept;
+
+// A direction-qualified port reference, for questions asked from either end
+// of a drag ("can these two ports connect, and if not why?").
+struct FxPortEndpoint {
+    FxNodeId node=invalidFxNodeId;
+    nodes::PortDirection direction=nodes::PortDirection::Output;
+    std::uint8_t port=0;
+};
+struct FxConnectionCheck {
+    FxEditResult result=FxEditResult::UnknownNode;
+    FxPortRef from,to; // normalized output -> input (valid when result is Ok)
+    bool valid() const noexcept { return result==FxEditResult::Ok; }
+};
 
 class FxGraph {
 public:
@@ -251,7 +280,14 @@ public:
     void clearProcessing();
 
     FxEditResult connect(FxPortRef from,FxPortRef to,FxConnectionId* created=nullptr);
+    // from = an OUTPUT port, to = an INPUT port.
     FxEditResult canConnect(FxPortRef from,FxPortRef to) const noexcept;
+    // The one connection rule set (connect, canConnect, validate and the UI
+    // all go through it). Endpoints may be given in either order. Checks, in
+    // order: nodes exist, directions differ, ports exist, not a self-loop,
+    // routable source, signal types match, execution domains match, exact
+    // duplicate, one wire per port, capacity, no cycle.
+    FxConnectionCheck checkConnection(FxPortEndpoint a,FxPortEndpoint b) const noexcept;
     bool disconnect(FxConnectionId) noexcept;
     std::size_t disconnectPort(FxNodeId,bool input,std::uint8_t port) noexcept;
 
@@ -324,9 +360,13 @@ private:
 };
 
 // Feedback policy: the editable graph is a DAG; connect() rejects any edge
-// that closes a cycle. Intentional feedback will later be modelled as an
-// explicit feedback node with a guaranteed minimum delay, compiled into the
-// plan as a delayed edge, never as a raw cycle.
+// that closes a cycle and validate() (hence decode and compile) rejects any
+// graph containing one, so a cycle can never reach a render plan. Intentional
+// feedback will later be modelled as an explicit feedback node with a
+// guaranteed minimum delay, compiled into the plan as a delayed edge, never as
+// a raw cycle.
+// Duplicate-edge policy: an edge's identity is its (output port, input port)
+// pair; an exact duplicate is rejected. Distinct ports are distinct edges.
 
 // Versioned, bounded binary codec (v3: + FX order / bypass mode; v2 still decodes).
 std::vector<std::uint8_t> encodeFxGraph(const FxGraph&);

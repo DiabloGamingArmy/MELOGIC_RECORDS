@@ -27,6 +27,11 @@ void FxGraphCompiler::prepare(double sampleRate) {
 }
 
 std::unique_ptr<PreparedFxPlan> FxGraphCompiler::compile(const FxGraph& graph) {
+    // mct-origami-nodes-n02: FxGraph::validate() is the gate, in stages:
+    // structure (ids, kinds, terminals) -> ports (descriptors exist) -> types
+    // (equal signal types) -> execution domain (equal domains) -> duplicates /
+    // one wire per port -> topology (Kahn: no cycles). Only a graph passing
+    // every stage becomes a plan; the audio thread never type-checks.
     if(!graph.validate()) return nullptr;
     const auto& nodes=graph.nodes();
     const auto& connections=graph.connections();
