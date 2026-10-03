@@ -60,7 +60,7 @@ void OrigamiAudioProcessor::pruneFxModulationRoutes() {
     const auto alive=[&graph](const ModRoute& r) {
         if(!isFxDestination(r.destination.parameter)) return true;
         const auto* node=graph.findNode(r.destination.oscillator);
-        return node!=nullptr && node->parameter(static_cast<fx::FxParameterId>(r.destination.itemId)).has_value();
+        return node!=nullptr && node->parameter(fxAddressParameter(r.destination)).has_value();
     };
     const juce::ScopedLock lock(stateLock_);
     auto mod=uiInstrumentState_.modulation;

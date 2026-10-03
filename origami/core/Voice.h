@@ -71,7 +71,13 @@ public:
     // mct-origami-fx-modulation-graph-ux-p03: latest per-voice sources, kept
     // only while FX destinations use voice sources (newest-voice policy).
     const std::array<float,CompiledModulation::voiceSourceCount>& lastSources() const noexcept { return lastSources_; }
+    // mct-origami-unified-routing-core-fx-p04: user-bus outputs of the last
+    // sample (L/R per user bus slot 1..7). Valid only while the plan's
+    // auxActive is set; zeroed every sample in that case.
+    using AuxSamples=std::array<float,2*(maxRenderBuses-1)>;
+    const AuxSamples& aux() const noexcept { return aux_; }
 private:
+    AuxSamples aux_{};
     std::array<float,CompiledModulation::voiceSourceCount> lastSources_{};
     // mct-origami-unison-detune-v19.2
     static constexpr unsigned maxOscillatorModules = 16;

@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-graph-dsp-bus-routing-p02
 #pragma once
 #include "OscillatorModule.h"
@@ -17,6 +18,9 @@
 // The engine currently renders BUS 1; other buses are model-only.
 namespace mct::origami {
 
+// The engine renders at most this many buses (MAIN + 7 user buses).
+inline constexpr std::size_t maxRenderBuses=8;
+
 struct Bus {
     static constexpr std::size_t maxNameBytes=23;
     BusId id=0;
@@ -30,9 +34,11 @@ struct BusState {
     std::array<Bus,capacity> buses{};
     std::uint8_t count=1;
     BusId nextId=2;
+    // MAIN (stable id 1) is the permanent default bus. User buses are named
+    // "BUS n" with the lowest free n; names are display only, never identity.
     BusState() noexcept {
         buses[0].id=mainBusId;
-        setBusName(buses[0],"BUS 1");
+        setBusName(buses[0],"MAIN");
     }
     static void setBusName(Bus& bus,const char* text) noexcept {
         bus.name.fill('\0');
@@ -45,8 +51,10 @@ struct BusState {
 };
 
 bool validBusState(const BusState&) noexcept;
-// Returns the new bus ID, or 0 when full.
+// Returns the new bus ID, or 0 when the render capacity is reached.
 BusId addBus(BusState&);
+// Removing a user bus only edits the list; use removeBus(InstrumentState&)
+// so oscillator sends are pruned at the same time.
 
 enum class BusRouteResult : std::uint8_t { Ok, UnknownBus, Duplicate, Capacity, LastRoute, InvalidIndex, InvalidLevel };
 // Oscillator route editing. All operations validate against the bus list and

@@ -173,7 +173,7 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
         if(isFxDestination(r.destination.parameter)) {
             // FX graph existence is enforced by the host boundary, which prunes
             // routes whose node/parameter no longer exists.
-            if(r.destination.oscillator==0 || r.destination.itemId==0 || r.destination.itemId>0xffffu) return false;
+            if(r.destination.oscillator==0 || fxAddressParameter(r.destination)==0) return false;
         } else if(isGlobalDestination(r.destination.parameter)) {
             if(r.destination.oscillator!=0) return false;
         } else {
@@ -668,8 +668,9 @@ void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,
     out.count=fxCount_;
     for(std::size_t k=0;k<fxCount_;++k) {
         const auto& g=groups_[fxGroups_[k]];
+        out.bus[k]=fxAddressBus(g.address);
         out.node[k]=g.address.oscillator;
-        out.parameter[k]=static_cast<std::uint16_t>(g.address.itemId);
+        out.parameter[k]=fxAddressParameter(g.address);
         float n=0.0f;
         for(std::size_t j=0;j<g.globalSlotCount;++j) {
             const auto s=static_cast<std::size_t>(g.globalSlots[j]);

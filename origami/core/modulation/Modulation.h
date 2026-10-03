@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-v40.3.1-sequence-expression
 // mct-origami-v40.2.0-sequence-transport
@@ -39,7 +40,8 @@ enum class ModDestination : std::uint32_t {
     // Stable-ID dynamic destinations. 108..111 remain readable legacy values.
     ProcessAmount=112, RouteAmount=113,
     // FX graph parameter. ModAddress.oscillator carries the FxNodeId and
-    // ModAddress.itemId the stable FxParameterId (never a display label).
+    // ModAddress.itemId packs (BusId << 16) | FxParameterId. Bus 0 (P03
+    // routes) means MAIN. Never a display label.
     FxParameter=201
 };
 enum class LfoShape : std::uint32_t { Sine=1, Triangle=2, Saw=3, Square=4 };
@@ -109,8 +111,20 @@ struct ModAddress {
     }
 };
 inline bool isFxDestination(ModDestination d) noexcept { return d==ModDestination::FxParameter; }
+// mct-origami-unified-routing-core-fx-p04: FX node IDs are unique per bus
+// graph, so the bus is part of the destination identity.
+inline ModAddress fxParameterAddress(std::uint32_t bus,std::uint32_t node,std::uint32_t parameter) noexcept {
+    return {ModDestination::FxParameter,node,(bus<<16)|(parameter&0xffffu)};
+}
 inline ModAddress fxParameterAddress(std::uint32_t node,std::uint32_t parameter) noexcept {
-    return {ModDestination::FxParameter,node,parameter};
+    return fxParameterAddress(mainBusId,node,parameter);
+}
+inline std::uint32_t fxAddressBus(const ModAddress& a) noexcept {
+    const auto bus=a.itemId>>16;
+    return bus==0 ? mainBusId : bus;
+}
+inline std::uint16_t fxAddressParameter(const ModAddress& a) noexcept {
+    return static_cast<std::uint16_t>(a.itemId&0xffffu);
 }
 struct ModRoute {
     std::uint32_t id=0;
@@ -157,6 +171,7 @@ inline constexpr std::size_t maxFxModulationSlots=ModulationState::capacity;
 struct FxModulationOutput {
     std::uint64_t generation=0; // changes whenever the slot -> address map changes
     std::size_t count=0;
+    std::array<std::uint32_t,maxFxModulationSlots> bus{};
     std::array<std::uint32_t,maxFxModulationSlots> node{};
     std::array<std::uint16_t,maxFxModulationSlots> parameter{};
     std::array<float,maxFxModulationSlots> offset{};

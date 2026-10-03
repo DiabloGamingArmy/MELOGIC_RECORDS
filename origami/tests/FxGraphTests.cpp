@@ -492,7 +492,7 @@ void busTests() {
     InstrumentState s;
     s.oscillators[0].id=1;s.oscillators[0].enabled=true;
     applyLegacyOscillatorParameters(s.oscillators[0],s.parameters);
-    check(s.buses.count==1 && s.buses.find(mainBusId) && s.buses.find(mainBusId)->label()=="BUS 1","BUS 1 exists by default");
+    check(s.buses.count==1 && s.buses.find(mainBusId) && s.buses.find(mainBusId)->label()=="MAIN","MAIN exists by default");
     auto& m=s.oscillators[0];
     check(m.busRouteCount==1 && m.busRoutes[0].bus==mainBusId && m.busRoutes[0].level==1.0f,"oscillator routes to BUS 1 at unity by default");
     check(validInstrumentState(s),"default bus state valid");

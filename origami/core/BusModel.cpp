@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-graph-dsp-bus-routing-p02
 #include "core/BusModel.h"
 #include <cmath>
@@ -17,11 +18,20 @@ bool validBusState(const BusState& s) noexcept {
 }
 
 BusId addBus(BusState& s) {
-    if(s.count>=BusState::capacity) return 0;
+    if(s.count>=maxRenderBuses || s.count>=BusState::capacity) return 0;
+    // Lowest free user number: predictable, and existing buses are never
+    // renamed (BusIds stay stable; numbering is cosmetic).
+    int number=1;
+    for(bool taken=true;taken;) {
+        taken=false;
+        const auto candidate="BUS "+std::to_string(number);
+        for(std::size_t i=0;i<s.count;++i) taken|=candidate==s.buses[i].name.data();
+        if(taken) ++number;
+    }
     auto& bus=s.buses[s.count++];
     bus={};
     bus.id=s.nextId++;
-    const auto name="BUS "+std::to_string(bus.id);
+    const auto name="BUS "+std::to_string(number);
     BusState::setBusName(bus,name.c_str());
     return bus.id;
 }

@@ -1834,7 +1834,8 @@ void fxWorkspaceP03Audit() {
     check(feedbackKnob!=nullptr,"delay feedback knob");
     const auto& props=feedbackKnob->getProperties();
     check(int(props["mct.mod.destination"])==int(mct::origami::ModDestination::FxParameter)
-          && unsigned(int(props["mct.mod.oscillator"]))==delay && int(props["mct.mod.itemId"])==2,
+          && unsigned(int(props["mct.mod.oscillator"]))==delay
+          && std::uint32_t(int(props["mct.mod.itemId"]))==mct::origami::fxParameterAddress(delay,2).itemId,
           "FX knob advertises a stable canonical destination (node + parameter id)");
 
     // Cross-page drag: Synth -> hover FX tab -> FX opens -> same drag drops on a knob.
@@ -1970,7 +1971,7 @@ void fxWorkspaceP03Audit() {
         splitRow|=r.label=="SPLIT" && r.dragDescription=="MCT_FX_MODULE:1001";
         sendPending|=r.label=="SEND" && !r.enabled;
     }
-    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Sources)) bus1|=r.label=="BUS 1" && r.active;
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Sources)) bus1|=r.label=="MAIN" && r.active;
     for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Filters)) filterTruth|=r.label=="FILTER 1" && r.detail.contains("before BUS 1");
     check(splitRow && sendPending && bus1 && filterTruth,"SOURCES / FILTERS / ROUTES rows are truthful");
 

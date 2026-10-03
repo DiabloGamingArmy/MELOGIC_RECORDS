@@ -29,7 +29,8 @@ void tagModulationDestination(juce::Slider& s,FxNodeId node,const FxParameterDes
     auto& props=s.getProperties();
     props.set("mct.mod.destination",static_cast<int>(ModDestination::FxParameter));
     props.set("mct.mod.oscillator",static_cast<int>(node));
-    props.set("mct.mod.itemId",static_cast<int>(p.id));
+    // Bus-qualified parameter id (FX node IDs are unique per bus graph).
+    props.set("mct.mod.itemId",static_cast<int>(fxParameterAddress(mainBusId,node,p.id).itemId));
     props.set("mct.origami.knobDefault",double(p.defaultValue));
 }
 
@@ -1391,7 +1392,7 @@ public:
             for(const auto& r:routes)
                 if(r.id && isFxDestination(r.destination.parameter) && r.destination.oscillator==node_->id) targeting.push_back(r);
         std::vector<std::uint64_t> signature;
-        for(const auto& r:targeting) signature.push_back((std::uint64_t(r.id)<<32)|(std::uint64_t(r.source)<<8)|r.destination.itemId);
+        for(const auto& r:targeting) signature.push_back((std::uint64_t(r.id)<<32)|(std::uint64_t(r.source)<<16)|fxAddressParameter(r.destination));
         if(shownId_!=id || shownTab_!=tab_ || (node_ && node_->effect!=shownEffect_) || (tab_==1 && signature!=modulationSignature_)) {
             shownId_=id;
             shownTab_=tab_;
@@ -1468,7 +1469,7 @@ private:
                 for(const auto& m:modulation) {
                     auto row=area.removeFromTop(rowHeight);
                     juce::String param="PARAM";
-                    if(const auto* p=parameterDescriptor(*node,FxParameterId(m.route.destination.itemId))) param=p->label;
+                    if(const auto* p=parameterDescriptor(*node,fxAddressParameter(m.route.destination))) param=p->label;
                     text(g,juce::String(node->name)+" / "+param,row.removeFromLeft(130),9.5f,Palette::secondary());
                     row.removeFromRight(36); // remove button
                     text(g,(m.route.amount>=0.0f?"+":"")+juce::String(m.route.amount,2),row.removeFromRight(52),9.5f,

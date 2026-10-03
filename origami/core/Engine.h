@@ -77,6 +77,11 @@ public:
     bool process(float* const* output, unsigned channels, std::size_t sampleCount) noexcept;
     bool beginHostBlock(unsigned channels) noexcept;
     bool processSpan(float* const* output, unsigned channels, std::size_t sampleCount) noexcept;
+    // mct-origami-unified-routing-core-fx-p04: also renders user buses.
+    // aux holds 2*(maxRenderBuses-1) planar pointers (L,R per user slot);
+    // null pointers are skipped. MAIN is still written to output.
+    bool processSpan(float* const* output, unsigned channels, std::size_t sampleCount,float* const* aux) noexcept;
+    std::size_t renderBusCount() const noexcept { return hostBusSlots_.count; }
     void endHostBlock() noexcept;
     VoiceInfo voiceInfo(std::size_t index) const noexcept;
     std::size_t activeVoiceCount() const noexcept;
@@ -141,6 +146,11 @@ private:
     // Preserve click-free continuity with a tiny residual sample tail instead.
     std::array<Voice::Samples, voiceCount> lastVoiceSamples_{};
     std::array<Voice::Samples, voiceCount> stealResidual_{};
+    std::array<Voice::AuxSamples, voiceCount> lastAux_{};
+    std::array<Voice::AuxSamples, voiceCount> stealAuxResidual_{};
+    static BusSlotMap slotMapFor(const BusState&) noexcept;
+    LatestStateMailbox<BusSlotMap> busSlotMailbox_;
+    BusSlotMap hostBusSlots_{};
     std::array<std::size_t, voiceCount> tailRemaining_{};
     dsp::Wavetable wavetable_;
     struct OscillatorWavetableSlot {
