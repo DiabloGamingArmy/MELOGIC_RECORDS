@@ -60,6 +60,12 @@ inline int modulationUiSourceIndex(ModSource source) noexcept {
 inline float modulationUiSourceValue(ModSource source) noexcept {
     auto& telemetry=modulationUiTelemetry();
     if(!telemetry.synthActive) return 0.0f;
+    // N04: an operator output, as published in the engine's slot snapshot.
+    if(isOperatorSource(source)) {
+        const auto slot=controlOperatorSlot(telemetry.state,operatorIdOf(source));
+        return slot<ModulationState::maxControlOperators
+            ? telemetry.runtime.routeSources[CompiledModulation::sourceSlotCount+slot] : 0.0f;
+    }
 
     const int index=modulationUiSourceIndex(source);
     if(index>=0) return telemetry.sourceValues[static_cast<std::size_t>(index)];
@@ -95,6 +101,7 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
 }
 
 inline bool modulationUiSourceIsBipolar(ModSource source) noexcept {
+    if(isOperatorSource(source)) return sourceRange(source,modulationUiTelemetry().state)==ControlRange::Bipolar;
     switch(source) {
         case ModSource::Lfo1:
         case ModSource::Lfo2:

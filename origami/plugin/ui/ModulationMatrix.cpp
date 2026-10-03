@@ -157,6 +157,25 @@ public:
         route_=route;modulation_=modulation;
         source_.setSelectedId(static_cast<int>(route.source),juce::dontSendNotification);
         if(route.source==ModSource::None) source_.setText("SELECT SOURCE",juce::dontSendNotification);
+        // N04: a PROCESSED route (its source is a NODES operator) is one row,
+        // never flattened. Its chain is edited in NODES; amount, polarity,
+        // destination and deletion stay here.
+        const bool processed=isOperatorSource(route.source);
+        source_.setEnabled(!processed);
+        source_.setTooltip(processed ? "Processed in NODES: edit its processing chain on the NODES page" : juce::String());
+        if(processed) {
+            juce::String label="NODES";
+            if(const auto* op=findControlOperator(modulation,operatorIdOf(route.source)))
+                if(const auto* info=controlOpInfo(op->type)) label+=": "+juce::String(info->label);
+            std::array<ModSource,16> roots{};
+            const auto count=routeRootSources(modulation,route,roots);
+            juce::StringArray names;
+            for(std::size_t i=0;i<count;++i)
+                for(int item=0;item<source_.getNumItems();++item)
+                    if(source_.getItemId(item)==static_cast<int>(roots[i])) names.add(source_.getItemText(item));
+            if(!names.isEmpty()) label+="  ("+names.joinIntoString(" + ")+")";
+            source_.setText(label,juce::dontSendNotification);
+        }
         int selected=0;
         for(std::size_t i=0;i<addresses_.size();++i) {
             const int itemId=static_cast<int>(i+1);

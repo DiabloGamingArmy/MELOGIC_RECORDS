@@ -38,7 +38,11 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(27);w.word(static_cast<std::uint32_t>(parameterCount));
+    // N04: v28 only when CONTROL operators exist; states without them are
+    // written exactly as v27 (byte-identical to pre-N04 saves).
+    bool operators=false;
+    for(const auto& op:s.modulation.operators) operators|=op.id!=0;
+    Writer w;w.word(magic);w.word(operators ? 28u : 27u);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -185,6 +189,22 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
         w.word(m.busRouteCount);
         for(std::size_t i=0;i<m.busRouteCount;++i) {w.word(m.busRoutes[i].bus);w.real(m.busRoutes[i].level);}
     }
+    // V28: CONTROL operators by storage slot (holes kept so slots stay stable).
+    if(operators) {
+        w.word(s.modulation.nextOperatorId);
+        w.word(static_cast<std::uint32_t>(s.modulation.operators.size()));
+        for(const auto& op:s.modulation.operators) {
+            w.word(op.id);
+            if(!op.id) continue;
+            w.word(static_cast<std::uint32_t>(op.type));
+            for(float v:op.params) w.real(v);
+            for(const auto& in:op.inputs) {
+                w.word(static_cast<std::uint32_t>(in.kind));
+                w.word(static_cast<std::uint32_t>(in.source));
+                w.word(in.op);
+            }
+        }
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
@@ -192,7 +212,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>27) return false;
+    if(version<1 || version>28) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -408,6 +428,28 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     // never changed, so routes and FX graphs migrate untouched.
     if(version<27 && s.buses.buses[0].id==mainBusId && std::string(s.buses.buses[0].name.data())=="BUS 1")
         BusState::setBusName(s.buses.buses[0],"MAIN");
+    if(version>=28) {
+        auto& m=s.modulation;
+        m.nextOperatorId=r.word();
+        const auto slots=r.word();
+        if(slots!=m.operators.size()) return false;
+        for(auto& op:m.operators) {
+            op={};
+            op.id=r.word();
+            if(!op.id || !r.ok) continue;
+            const auto type=r.word();
+            if(type>0xffu) return false;
+            op.type=static_cast<ControlOpType>(type);
+            for(auto& v:op.params) v=r.real();
+            for(auto& in:op.inputs) {
+                const auto kind=r.word();
+                if(kind>2u) return false;
+                in.kind=static_cast<ControlInput::Kind>(kind);
+                in.source=static_cast<ModSource>(r.word());
+                in.op=r.word();
+            }
+        }
+    }
     // mct-origami-nodes-n01: (source, destination) pairs are unique. States
     // written before that rule may repeat a pair; merge them deterministically
     // (summed amount, as the compiler always did) instead of rejecting the load.

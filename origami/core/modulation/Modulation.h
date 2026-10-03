@@ -130,6 +130,63 @@ inline std::uint32_t fxAddressBus(const ModAddress& a) noexcept {
 inline std::uint16_t fxAddressParameter(const ModAddress& a) noexcept {
     return static_cast<std::uint16_t>(a.itemId&0xffffu);
 }
+// ---- CONTROL operators (mct-origami-nodes-n04-control-processing) ----------
+// Optional processing between modulation sources and a route's destination.
+// A PROCESSED route is still one canonical ModRoute whose source is an
+// operator output (operatorSource(id)); direct routes are untouched.
+enum class ControlOpType : std::uint8_t {
+    None=0,
+    Add=1, Subtract=2, Multiply=3, Min=4, Max=5,                 // MATH (inputs A, B)
+    ScaleOffset=10, Remap=11, Curve=12, Abs=13, Invert=14, Clamp=15, // SHAPING (input IN)
+    Constant=20, Smooth=21, Quantize=22                          // UTILITY
+};
+enum class ControlRange : std::uint8_t { Unipolar=1, Bipolar=2 }; // nominal 0..1 / -1..1
+enum class ControlCurveMode : std::uint8_t { Linear=0, Exponential=1, Logarithmic=2, SCurve=3 };
+struct ControlInput {
+    enum class Kind : std::uint8_t { None=0, Source=1, Operator=2 };
+    Kind kind=Kind::None;
+    ModSource source=ModSource::None; // Kind::Source (never an operator source)
+    std::uint32_t op=0;               // Kind::Operator: operator id
+    bool operator==(const ControlInput& o) const noexcept { return kind==o.kind && source==o.source && op==o.op; }
+};
+inline constexpr std::size_t controlOpParameterCount=6;
+struct ControlOperator {
+    std::uint32_t id=0; // 0 = free storage slot (slots never move while in use)
+    ControlOpType type=ControlOpType::None;
+    std::array<float,controlOpParameterCount> params{};
+    std::array<ControlInput,2> inputs{}; // one connection per input, by construction
+};
+// Stable source identity of an operator's output.
+inline constexpr std::uint32_t controlOperatorSourceBase=0x10000u;
+inline ModSource operatorSource(std::uint32_t id) noexcept { return static_cast<ModSource>(controlOperatorSourceBase+id); }
+inline bool isOperatorSource(ModSource s) noexcept { return static_cast<std::uint32_t>(s)>controlOperatorSourceBase; }
+inline std::uint32_t operatorIdOf(ModSource s) noexcept { return isOperatorSource(s) ? static_cast<std::uint32_t>(s)-controlOperatorSourceBase : 0u; }
+
+// Static description of each operator type (inputs, parameters, defaults,
+// bounds). The one schema shared by validation, DSP, UI and the codec.
+struct ControlOpParameterInfo { const char* label; float minimum,maximum,defaultValue; bool integer; };
+struct ControlOpInfo {
+    ControlOpType type;
+    const char* label;
+    const char* category; // "Math" / "Shaping" / "Utility"
+    std::uint8_t inputs;  // 0, 1 (IN) or 2 (A, B)
+    std::uint8_t parameterCount;
+    std::array<ControlOpParameterInfo,controlOpParameterCount> parameters;
+};
+const ControlOpInfo* controlOpInfo(ControlOpType) noexcept;
+const std::array<ControlOpType,15>& controlOpCatalog() noexcept;
+ControlOperator makeControlOperator(ControlOpType,std::uint32_t id) noexcept;
+// Pure evaluation of one operator (shared by the realtime evaluator and tests).
+// `state` is the operator's persistent state (SMOOTH); `smoothing` its
+// prepared rise/fall coefficients. Unconnected inputs: ADD/SUB 0, MULTIPLY 1,
+// MIN/MAX pass the other input.
+struct ControlOpRuntime { float value=0.0f; bool initialized=false; std::uint32_t id=0; };
+float evaluateControlOp(const ControlOperator&,float a,bool aConnected,ControlRange aRange,
+                        float b,bool bConnected,ControlRange bRange,
+                        ControlOpRuntime& state,float riseCoefficient,float fallCoefficient) noexcept;
+ControlRange controlOpOutputRange(const ControlOperator&,ControlRange a,bool aConnected,ControlRange b,bool bConnected) noexcept;
+float controlSmoothingCoefficient(float seconds,double sampleRate) noexcept;
+
 // New routes start ON / UNIPOLAR / no source / no destination / 0%.
 struct ModRoute {
     std::uint32_t id=0;
@@ -143,6 +200,7 @@ struct ModRoute {
 };
 struct ModulationState {
     static constexpr std::size_t capacity=32;
+    static constexpr std::size_t maxControlOperators=32;
     LfoSettings lfo1{},lfo2{},lfo3{},lfo4{};
     std::array<float,3> env1Curves{};
     dsp::EnvelopeSettings env2{},env3{};
@@ -156,6 +214,9 @@ struct ModulationState {
     std::array<float,4> macros{};
     std::array<ModRoute,capacity> routes{};
     std::uint32_t nextRouteId=1;
+    // N04 CONTROL operators (holes allowed: a slot keeps its index while used).
+    std::array<ControlOperator,maxControlOperators> operators{};
+    std::uint32_t nextOperatorId=1;
 
     // V32 runtime collection state. Existing DSP storage remains bounded at
     // 3 ENV / 4 LFO / 1 Filter while collection semantics come online.
@@ -198,11 +259,30 @@ bool routeDuplicates(const ModulationState&,const ModRoute& candidate) noexcept;
 // Returns the number of routes removed.
 std::size_t mergeDuplicateRoutes(ModulationState&) noexcept;
 
+// ---- Operator graph helpers (N04) --------------------------------------------
+const ControlOperator* findControlOperator(const ModulationState&,std::uint32_t id) noexcept;
+std::size_t controlOperatorSlot(const ModulationState&,std::uint32_t id) noexcept; // maxControlOperators if absent
+// True when `id` (transitively) feeds operator `target`; used for cycle checks.
+bool controlOperatorReaches(const ModulationState&,std::uint32_t from,std::uint32_t target) noexcept;
+// Canonical sources at the roots of a route's processing chain (a direct
+// route's root is its own source). Bounded: at most 2^depth, capped.
+std::size_t routeRootSources(const ModulationState&,const ModRoute&,std::array<ModSource,16>& out) noexcept;
+// Raw range of a canonical source (signed generators are bipolar) or of an
+// operator output (propagated through the operator chain).
+ControlRange sourceRange(ModSource,const ModulationState&) noexcept;
+// Destinations consumed once globally (not per voice).
+bool destinationIsGlobal(ModDestination) noexcept;
+// Index of a source (or operator output) in ModulationSourceSlots.
+std::size_t modulationSourceSlot(ModSource,const ModulationState&) noexcept;
+// True when a source / operator output is evaluated per voice.
+bool sourceIsVoice(ModSource,const ModulationState&) noexcept;
+
 // ---- Route monitor (mct-origami-nodes-n01) --------------------------------
 // Raw values of the modulation evaluator's source slots, as published by the
 // engine's visualization snapshot: [0, globalSourceCount) global sources, then
-// the newest voice's per-voice sources.
-inline constexpr std::size_t modulationSourceSlotCount=26;
+// the newest voice's per-voice sources, then (N04) every operator output by
+// storage slot (global value, or the newest voice's for per-voice operators).
+inline constexpr std::size_t modulationSourceSlotCount=26+ModulationState::maxControlOperators;
 using ModulationSourceSlots=std::array<float,modulationSourceSlotCount>;
 // Normalized control contribution of ONE route: source -> polarity -> amount,
 // before destination mapping/clamping. Uses the evaluator's own source-slot
@@ -315,6 +395,10 @@ private:
 
 struct ModulationFrame {
     std::array<OscillatorModuleState,16> modules{};
+    // N04: operator outputs by storage slot (global operators evaluated in the
+    // global frame; per-voice operators overwrite theirs inside each voice).
+    std::array<float,ModulationState::maxControlOperators> operatorOutputs{};
+    std::array<float,13> globalSources{}; // copied for per-voice operators (only when operators exist)
     float cutoff=8000,resonance=.1f,master=.2f,mainTuning=0.0f,transpose=0.0f;
     float portaTime=0.0f,envelopeScaling=1.0f,lfoScaling=1.0f,swing=0.0f;
     dsp::LowPassCoefficients filter{};
@@ -329,7 +413,19 @@ public:
     static constexpr std::size_t globalSourceCount=13;
     static constexpr std::size_t voiceSourceCount=13;
     static constexpr std::size_t sourceSlotCount=globalSourceCount+voiceSourceCount;
+    static constexpr std::size_t operatorSlotCount=ModulationState::maxControlOperators;
+    static constexpr std::size_t totalSlotCount=sourceSlotCount+operatorSlotCount;
+    using OperatorState=std::array<ControlOpRuntime,operatorSlotCount>;
     void prepare(double sampleRate) noexcept;
+    // N04 operators. Global operators run once per sample before globalFrame;
+    // per-voice operators run per voice before voiceFrame, with that voice's
+    // own state. Both are no-ops (never called) when no operator is compiled.
+    bool hasOperators() const noexcept { return opCount_!=0; }
+    bool hasGlobalOperators() const noexcept { return globalOpCount_!=0; }
+    bool hasVoiceOperators() const noexcept { return voiceOpCount_!=0; }
+    void evaluateGlobalOperators(ModulationFrame&,const std::array<float,globalSourceCount>&) noexcept;
+    void evaluateVoiceOperators(ModulationFrame&,const std::array<float,voiceSourceCount>&,OperatorState&) const noexcept;
+    void resetOperatorState() noexcept { globalOpState_={}; }
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
     void advance(float smoothing) noexcept;
     void globalFrame(ModulationFrame&,const std::array<float,globalSourceCount>&,double sampleRate) const noexcept;
@@ -339,7 +435,8 @@ public:
     bool hasFxVoiceRoutes() const noexcept {return fxVoice_;}
     std::uint64_t generation() const noexcept {return generation_;}
     void fxFrame(FxModulationOutput&,const std::array<float,globalSourceCount>&,
-                 const std::array<float,voiceSourceCount>* newestVoice) const noexcept;
+                 const std::array<float,voiceSourceCount>* newestVoice,
+                 const std::array<float,operatorSlotCount>* globalOperators=nullptr) const noexcept;
     bool hasVoiceProcessRoutes(std::size_t module) const noexcept {return voiceProcessModules_[module];}
     bool usesGlobalSource(std::size_t index) const noexcept {
         return index<globalSourceCount && globalSourceUsed_[index];
@@ -354,12 +451,33 @@ private:
         // process-dependent (unipolar 0..1 or bipolar -1..1), so they cannot
         // safely use the generic ModDestination range table.
         float minimum=0.0f,maximum=1.0f;
-        std::array<float,sourceSlotCount> weight{},target{};
-        std::array<bool,sourceSlotCount> bipolar{};
+        std::array<float,totalSlotCount> weight{},target{};
+        std::array<bool,totalSlotCount> bipolar{};
         std::array<std::uint8_t,globalSourceCount> globalSlots{};
         std::array<std::uint8_t,voiceSourceCount> voiceSlots{};
         std::uint8_t globalSlotCount=0,voiceSlotCount=0;
+        // N04: operator storage slots feeding this group.
+        std::array<std::uint8_t,operatorSlotCount> globalOpSlots{},voiceOpSlots{};
+        std::uint8_t globalOpSlotCount=0,voiceOpSlotCount=0;
     };
+    // One compiled operator, in topological order; inputs resolved to slots.
+    struct CompiledOp {
+        ControlOperator op{};
+        std::uint8_t slot=0;                 // storage slot = output slot
+        std::array<std::int16_t,2> input{{-1,-1}}; // <26: source slot, >=26: 26+operator slot, -1: none
+        std::array<ControlRange,2> range{{ControlRange::Unipolar,ControlRange::Unipolar}};
+        bool voice=false;
+        float rise=1.0f,fall=1.0f;           // SMOOTH coefficients (prepared at compile)
+    };
+    float runOperator(const CompiledOp&,const std::array<float,voiceSourceCount>*,const ModulationFrame&,ControlOpRuntime&) const noexcept;
+    float operatorRouteValue(std::size_t operatorSlot,float raw,bool bipolar) const noexcept;
+    static float operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>*,const ModulationFrame&) noexcept;
+    std::array<CompiledOp,operatorSlotCount> ops_{};
+    std::size_t opCount_=0,globalOpCount_=0,voiceOpCount_=0;
+    std::array<ControlRange,operatorSlotCount> opRange_{};
+    std::array<bool,operatorSlotCount> opVoice_{};
+    OperatorState globalOpState_{};
+    double sampleRate_=48000.0;
     static float read(const ModulationFrame&,const Group&) noexcept;
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;
     std::array<Group,ModulationState::capacity> groups_{};

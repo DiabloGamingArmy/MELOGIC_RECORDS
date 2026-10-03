@@ -48,6 +48,7 @@ struct VoiceVisualizationSnapshot {
     std::array<float,13> sources{};
     std::array<float,4> lfoPhases{};
     std::array<float,16> moduleSamples{};
+    std::array<float,CompiledModulation::operatorSlotCount> operators{}; // N04 operator outputs (this voice)
     std::array<float,16> modulePhases{};
     std::array<OscillatorModuleState,16> modules{};
 };
@@ -79,6 +80,7 @@ public:
 private:
     AuxSamples aux_{};
     std::array<float,CompiledModulation::voiceSourceCount> lastSources_{};
+    CompiledModulation::OperatorState operatorState_{}; // N04: this voice's operator state (SMOOTH)
     // mct-origami-unison-detune-v19.2
     static constexpr unsigned maxOscillatorModules = 16;
     static constexpr unsigned maxUnisonVoices = 16;

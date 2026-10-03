@@ -41,6 +41,8 @@ struct FxModuleMenu {
     static constexpr int externalId=1999,busBase=2000;
     // mct-origami-nodes-n03-control: CONTROL entries (never FxModuleSpecs).
     static constexpr int parameterPickerId=(1<<20)-1,controlSourceBase=1<<20;
+    // N04: CONTROL processing operators (controlOperatorBase + ControlOpType).
+    static constexpr int controlOperatorBase=controlSourceBase+0x8000;
     static std::optional<fx::FxModuleSpec> decode(int id);
 };
 
@@ -79,31 +81,60 @@ private:
     juce::Point<int> dragOrigin_;
 };
 
-// mct-origami-nodes-n03-control
-// A CONTROL node on the canvas: a view of a canonical modulation source or
-// destination. It owns no modulation state; its links are canonical ModRoutes.
+// mct-origami-nodes-n03-control / n04-control-processing
+// CONTROL-layer view data (never modulation state): what the canvas shows.
+struct ControlNodeView {
+    nodes::ControlNodeKey key;
+    float x=0.0f,y=0.0f;
+    juce::String title,detail;
+    nodes::NodeExecutionDomain domain=nodes::NodeExecutionDomain::Global;
+    bool selected=false,linked=false,removable=false;
+    // Operators: inputs (IN or A/B) and the one inline control.
+    std::uint8_t inputs=0;
+    std::array<juce::String,2> inputNames{};
+    int primaryParameter=-1;
+    juce::String primaryLabel;
+    float primaryValue=0.0f,primaryMinimum=0.0f,primaryMaximum=1.0f;
+    bool primaryInteger=false;
+};
+struct ControlLinkView {
+    std::uint32_t route=0;               // route link (direct or processed)
+    nodes::ControlNodeKey from,to;
+    std::uint32_t targetOperator=0;      // operator-input edge (route == 0)
+    std::uint8_t targetInput=0;
+    bool supported=true,enabled=true,selected=false;
+};
+
+// A CONTROL node on the canvas: a canonical SOURCE, a PARAMETER (both views
+// of existing objects) or a processing OPERATOR. Inputs sit on the left,
+// outputs on the right; every CONTROL socket is a diamond.
 class ControlNodeComponent final : public juce::Component {
 public:
     ControlNodeComponent(FxPage&,nodes::ControlNodeKey);
-    const nodes::ControlNodeKey& key() const noexcept { return key_; }
-    void update(const juce::String& title,const juce::String& detail,nodes::NodeExecutionDomain,bool selected,bool linked,bool removable);
-    juce::Point<float> portCentre() const noexcept;
-    bool portHit(juce::Point<float>) const noexcept;
-    bool removable() const noexcept { return removable_; }
-    static constexpr int width=220,height=64;
+    const nodes::ControlNodeKey& key() const noexcept { return view_.key; }
+    void update(const ControlNodeView&);
+    juce::Point<float> portCentre(nodes::PortDirection,std::uint8_t index=0) const noexcept;
+    std::optional<std::pair<nodes::PortDirection,std::uint8_t>> portAt(juce::Point<float>) const noexcept;
+    // The authoring endpoint of one of this node's ports.
+    std::optional<nodes::ControlEndpoint> endpoint(nodes::PortDirection,std::uint8_t index) const noexcept;
+    bool removable() const noexcept { return view_.removable; }
+    static int heightFor(const ControlNodeView&) noexcept;
+    static constexpr int width=220;
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
 private:
     void showMenu();
+    std::uint8_t inputCount() const noexcept;
+    bool hasOutput() const noexcept { return view_.key.kind!=nodes::ControlNodeKind::Parameter; }
     FxPage& page_;
-    nodes::ControlNodeKey key_;
-    juce::String title_,detail_;
-    nodes::NodeExecutionDomain domain_=nodes::NodeExecutionDomain::Global;
-    bool selected_=false,linked_=false,removable_=false;
+    ControlNodeView view_;
     juce::TextButton remove_{"X"};
+    juce::Slider primary_;
+    bool primaryInitialised_=false;
     enum class Drag { None,Move,Wire };
     Drag drag_=Drag::None;
     juce::Point<int> dragOrigin_;
@@ -134,29 +165,21 @@ public:
     void clearNodes(); // bus switch: node IDs are per-graph, never reuse components
     std::optional<fx::FxPortRef> wireSource() const noexcept { return wireActive_ ? std::optional<fx::FxPortRef>(wireFrom_) : std::nullopt; }
 
-    // ---- CONTROL layer (N03): views of canonical modulation relationships.
-    struct ControlLinkView {
-        std::uint32_t route=0;
-        nodes::ControlNodeKey from,to;
-        bool supported=true,enabled=true,selected=false;
-    };
-    struct ControlNodeView {
-        nodes::ControlNodeKey key;
-        float x=0.0f,y=0.0f;
-        juce::String title,detail;
-        nodes::NodeExecutionDomain domain=nodes::NodeExecutionDomain::Global;
-        bool selected=false,linked=false,removable=false;
-    };
+    // ---- CONTROL layer (N03/N04): views of canonical modulation relationships.
+    using ControlNodeView=ui::ControlNodeView;
+    using ControlLinkView=ui::ControlLinkView;
+    struct ControlHit { std::uint32_t route=0,op=0; std::uint8_t input=0; };
     void rebuildControl(const std::vector<ControlNodeView>&,const std::vector<ControlLinkView>&);
     ControlNodeComponent* controlNode(const nodes::ControlNodeKey&) const noexcept;
     std::size_t controlNodeCount() const noexcept { return controlNodes_.size(); }
     std::size_t controlLinkCount() const noexcept { return controlWires_.size(); }
-    std::optional<std::uint32_t> controlLinkAt(juce::Point<float>) const noexcept;
+    std::optional<ControlHit> controlLinkAt(juce::Point<float>) const noexcept;
     void controlNodeMoved(const nodes::ControlNodeKey&);
-    void beginControlWire(ModSource);
+    // Drags start from any CONTROL OUTPUT (source or operator).
+    void beginControlWire(const nodes::ControlEndpoint& from,juce::Point<float> start);
     void dragControlWire(juce::Point<int>);
     void endControlWire(juce::Point<int>);
-    std::optional<ModSource> controlWireSource() const noexcept { return controlWireActive_ ? std::optional<ModSource>(controlWireFrom_) : std::nullopt; }
+    std::optional<nodes::ControlEndpoint> controlWireSource() const noexcept { return controlWireActive_ ? std::optional<nodes::ControlEndpoint>(controlWireFrom_) : std::nullopt; }
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -183,9 +206,10 @@ private:
     void updateExtent();
     std::vector<std::unique_ptr<ControlNodeComponent>> controlNodes_;
     std::vector<ControlWire> controlWires_;
+    void showControlLinkMenu(const ControlHit&);
     bool controlWireActive_=false;
-    ModSource controlWireFrom_=ModSource::None;
-    juce::Point<float> controlWireEnd_{};
+    nodes::ControlEndpoint controlWireFrom_{};
+    juce::Point<float> controlWireStart_{},controlWireEnd_{};
     int minWidth_=0,minHeight_=0;
     juce::Point<float> portInCanvas(fx::FxNodeId,bool input,std::uint8_t port) const noexcept;
     void computeWire(Wire&) const;
@@ -420,9 +444,10 @@ public:
     // edited and removed through the same modulation bindings as SYNTH
     // drag-and-drop and the Matrix, and derived back from ModulationState.
     struct ControlSelection {
-        enum class Kind { None,Node,Link } kind=Kind::None;
+        enum class Kind { None,Node,Link,Edge } kind=Kind::None;
         nodes::ControlNodeKey key;
         std::uint32_t route=0;
+        std::uint32_t op=0; std::uint8_t input=0; // Edge: an operator input
     };
     const nodes::ControlGraph& controlGraph() const noexcept { return controlGraph_; }
     bool controlNodeShown(const nodes::ControlNodeKey&) const noexcept;
@@ -439,6 +464,23 @@ public:
     bool updateControlLink(const ModRoute&); // amount / polarity / enabled
     bool removeControlNode(const nodes::ControlNodeKey&); // only an unlinked node
     void moveControlNode(const nodes::ControlNodeKey&,fx::FxPoint,bool commit);
+    // ---- N04 processing operators (state lives in ModulationState::operators).
+    std::optional<std::uint32_t> addControlOperator(ControlOpType,std::optional<fx::FxPoint> at={});
+    // Any OUTPUT (source / operator) -> any INPUT (operator input / PARAMETER).
+    nodes::ControlLinkCheck connectControlEdge(const nodes::ControlEndpoint& from,const nodes::ControlEndpoint& to);
+    bool canConnectControlEdge(const nodes::ControlEndpoint& from,const nodes::ControlEndpoint& to) const;
+    bool disconnectControlInput(std::uint32_t op,std::uint8_t input);
+    std::optional<std::uint32_t> insertControlOperatorOnRoute(std::uint32_t route,ControlOpType);
+    std::optional<std::uint32_t> insertControlOperatorOnInput(std::uint32_t op,std::uint8_t input,ControlOpType);
+    bool deleteControlOperator(std::uint32_t op);
+    std::optional<std::uint32_t> duplicateControlOperator(std::uint32_t op);
+    void beginOperatorGesture();
+    bool setOperatorParameter(std::uint32_t op,std::size_t index,float value);
+    void endOperatorGesture();
+    void selectControlEdge(std::uint32_t op,std::uint8_t input);
+    // CONTROL undo / redo (NODES authoring transactions).
+    bool canUndoControl() const noexcept { return !controlUndo_.empty(); }
+    bool canRedoControl() const noexcept { return !controlRedo_.empty(); }
     void selectControlNode(const nodes::ControlNodeKey&);
     void selectControlLink(std::uint32_t route);
     const ControlSelection& controlSelection() const noexcept { return controlSelection_; }
@@ -467,6 +509,21 @@ private:
     void refreshControl();
     nodes::ControlLayout& controlLayout() noexcept { return host_.controlLayout!=nullptr ? *host_.controlLayout : localControlLayout_; }
     void sampleControlMonitor();
+    struct ControlSnapshot {
+        std::array<ModRoute,ModulationState::capacity> routes{};
+        std::uint32_t nextRouteId=1;
+        std::array<ControlOperator,ModulationState::maxControlOperators> operators{};
+        std::uint32_t nextOperatorId=1;
+        nodes::ControlLayout layout;
+        std::uint64_t sequence=0;
+    };
+    ControlSnapshot captureControl() const;
+    bool applyControl(const ControlSnapshot&);
+    void pushControlUndo();
+    bool commitControl(const ModulationState&); // records undo, then commits atomically
+    bool undoControl();
+    bool redoControl();
+    void placeOperatorBetween(std::uint32_t id,const nodes::ControlNodeKey& from,const nodes::ControlNodeKey& to);
     void storeView();
     void timerCallback() override { updateMeters(); sampleControlMonitor(); }
     fx::FxPoint viewCentre() const;
@@ -504,6 +561,10 @@ private:
     std::vector<bool> controlNodeShown_,controlLinkShown_;
     ControlSelection controlSelection_;
     ModulationState controlModulation_{}; // as of the last refreshControl()
+    std::vector<ControlSnapshot> controlUndo_,controlRedo_;
+    std::uint64_t editSequence_=0;
+    std::vector<std::uint64_t> graphSequences_,graphRedoSequences_; // graph edits, in the shared order
+    bool operatorGesture_=false,lastUndoWasControl_=false,undoingGraph_=false;
     std::unique_ptr<ConfirmPanel> confirmPanel_;
     FxModalOverlay overlay_;
     bool gestureActive_=false;

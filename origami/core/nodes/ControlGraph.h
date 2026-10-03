@@ -42,18 +42,22 @@ bool controlSourceExposed(ModSource) noexcept;
 bool controlSourceActive(ModSource,const ModulationState&) noexcept;
 
 // ---- Nodes / ports ---------------------------------------------------------
-enum class ControlNodeKind : std::uint8_t { Source=1, Parameter=2 };
+enum class ControlNodeKind : std::uint8_t { Source=1, Parameter=2, Operator=3 };
 struct ControlNodeKey {
     ControlNodeKind kind=ControlNodeKind::Source;
     ModSource source=ModSource::None;                 // Source nodes
     ModAddress destination{ModDestination::None,0,0}; // Parameter nodes
+    std::uint32_t op=0;                               // Operator nodes (N04)
     bool operator==(const ControlNodeKey& o) const noexcept {
-        return kind==o.kind && (kind==ControlNodeKind::Source ? source==o.source : destination==o.destination);
+        if(kind!=o.kind) return false;
+        return kind==ControlNodeKind::Source ? source==o.source
+             : kind==ControlNodeKind::Parameter ? destination==o.destination : op==o.op;
     }
     bool operator!=(const ControlNodeKey& o) const noexcept { return !(*this==o); }
 };
-inline ControlNodeKey sourceKey(ModSource s) noexcept { return {ControlNodeKind::Source,s,{ModDestination::None,0,0}}; }
-inline ControlNodeKey parameterKey(const ModAddress& a) noexcept { return {ControlNodeKind::Parameter,ModSource::None,a}; }
+inline ControlNodeKey sourceKey(ModSource s) noexcept { return {ControlNodeKind::Source,s,{ModDestination::None,0,0},0}; }
+inline ControlNodeKey parameterKey(const ModAddress& a) noexcept { return {ControlNodeKind::Parameter,ModSource::None,a,0}; }
+inline ControlNodeKey operatorKey(std::uint32_t id) noexcept { return {ControlNodeKind::Operator,ModSource::None,{ModDestination::None,0,0},id}; }
 // Source nodes: one CONTROL output. Parameter nodes: one CONTROL input.
 PortDescriptor controlPort(ControlNodeKind) noexcept;
 
@@ -67,7 +71,12 @@ enum class ControlLinkResult : std::uint8_t {
     MissingDestination,  // ModDestination::None
     DestinationUnavailable, // not a valid destination in this instrument
     DomainCrossing,      // VOICE source -> GLOBAL destination
-    CapacityExceeded     // ModulationState is full
+    CapacityExceeded,    // ModulationState is full
+    // N04 operator edges
+    MissingOperator,     // an endpoint operator does not exist
+    InvalidPort,         // no such operator input / wrong direction
+    InputOccupied,       // operator inputs take exactly one connection
+    WouldCreateCycle     // control graphs are acyclic
 };
 const char* toString(ControlLinkResult) noexcept;
 struct ControlLinkCheck {
@@ -76,6 +85,48 @@ struct ControlLinkCheck {
     bool creatable() const noexcept { return result==ControlLinkResult::Ok; }
 };
 ControlLinkCheck checkControlLink(const InstrumentState&,ModSource,const ModAddress&) noexcept;
+
+// ---- N04: CONTROL processing edges (the one rule set for NODES authoring) --
+// From: a canonical source output or an operator output. To: an operator input
+// or a PARAMETER. Validates direction, CONTROL typing, cardinality, cycles and
+// execution domains: an edge that would turn any existing chain feeding a
+// GLOBAL destination into a per-voice result is rejected, as is a per-voice
+// result into a GLOBAL parameter.
+struct ControlEndpoint {
+    enum class Kind : std::uint8_t { Source, OperatorOutput, OperatorInput, Parameter };
+    Kind kind=Kind::Source;
+    ModSource source=ModSource::None;
+    std::uint32_t op=0;
+    std::uint8_t input=0;
+    ModAddress destination{ModDestination::None,0,0};
+    static ControlEndpoint fromSource(ModSource s) { ControlEndpoint e; e.kind=Kind::Source; e.source=s; return e; }
+    static ControlEndpoint fromOperator(std::uint32_t id) { ControlEndpoint e; e.kind=Kind::OperatorOutput; e.op=id; return e; }
+    static ControlEndpoint toInput(std::uint32_t id,std::uint8_t input) { ControlEndpoint e; e.kind=Kind::OperatorInput; e.op=id; e.input=input; return e; }
+    static ControlEndpoint toParameter(const ModAddress& a) { ControlEndpoint e; e.kind=Kind::Parameter; e.destination=a; return e; }
+    bool isOutput() const noexcept { return kind==Kind::Source || kind==Kind::OperatorOutput; }
+    ModSource outputSource() const noexcept { return kind==Kind::Source ? source : operatorSource(op); }
+};
+ControlLinkCheck checkControlEdge(const InstrumentState&,const ControlEndpoint& from,const ControlEndpoint& to) noexcept;
+
+// Atomic edits returning the complete next ModulationState (the caller
+// commits it in one transaction). Each returns false and leaves `out`
+// untouched when the edit is invalid.
+bool addControlOperator(const ModulationState&,ControlOpType,ModulationState& out,std::uint32_t& id) noexcept;
+// Operator inputs only (PARAMETER edges are canonical routes: see the page).
+bool connectControlInput(const InstrumentState&,const ControlEndpoint& from,std::uint32_t op,std::uint8_t input,ModulationState& out) noexcept;
+bool disconnectControlInput(const ModulationState&,std::uint32_t op,std::uint8_t input,ModulationState& out) noexcept;
+// A -> B becomes A -> NEW -> B. `route` selects a route link (direct or
+// processed); otherwise the operator-input edge (op, input). The existing
+// route keeps its id, amount, polarity and enabled state; its source becomes
+// the new operator (so the direct route is replaced, never left underneath).
+bool insertControlOperatorOnRoute(const InstrumentState&,std::uint32_t route,ControlOpType,ModulationState& out,std::uint32_t& id) noexcept;
+bool insertControlOperatorOnInput(const InstrumentState&,std::uint32_t op,std::uint8_t input,ControlOpType,ModulationState& out,std::uint32_t& id) noexcept;
+// Deletes an operator. A unary operator with a connected input is bridged:
+// consumers and terminal routes reconnect to its input (a chain of one
+// collapses back to a direct route); a route that would duplicate an existing
+// pair is removed instead. Otherwise consumers are disconnected and terminal
+// routes removed.
+bool deleteControlOperator(const ModulationState&,std::uint32_t op,ModulationState& out) noexcept;
 
 // ---- View metadata (the only persisted CONTROL-layer data) ----------------
 struct ControlLayoutEntry {
@@ -110,9 +161,13 @@ struct ControlGraphNode {
     bool placed=false;
 };
 struct ControlGraphLink {
-    std::uint32_t routeId=0;     // the canonical relationship (all properties live there)
-    std::size_t source=0,parameter=0; // indices into nodes
+    std::uint32_t routeId=0;     // route links: the canonical relationship (all properties live there)
+    std::size_t source=0,parameter=0; // indices into nodes (from, to)
     bool supported=true;         // false: a crossing created elsewhere (SYNTH/Matrix)
+    // N04 operator-input edges (routeId == 0): the target operator input.
+    std::uint32_t targetOperator=0;
+    std::uint8_t targetInput=0;
+    bool isRoute() const noexcept { return routeId!=0; }
 };
 struct ControlGraph {
     std::vector<ControlGraphNode> nodes;

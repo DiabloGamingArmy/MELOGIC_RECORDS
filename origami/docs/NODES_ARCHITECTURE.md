@@ -1,9 +1,9 @@
 # NODES architecture
 
-Status: **N03**. Read this before adding anything graph-, routing- or
+Status: **N04**. Read this before adding anything graph-, routing- or
 modulation-shaped to Origami. Sections are marked **LOCKED** (decided; change
 only by revising this document) or **OPEN** (undecided; do not silently pick an
-answer in code). §11 (N01), §12 (N02) and §13 (N03) list exactly what exists today;
+answer in code). §11 (N01), §12 (N02), §13 (N03) and §14 (N04) list exactly what exists today;
 everything else here is direction, not implementation.
 
 ---
@@ -663,3 +663,190 @@ a UI-rate or 60 Hz path. That decision is OPEN.
   PARAMETER nodes, not sockets on the effect.
 - VOICE → GLOBAL semantics.
 - Showing incomplete Matrix routes (missing an end) in NODES.
+
+## 14. N04: CONTROL processing operators (what exists now)
+
+N04 adds optional processing between sources and parameters. The one rule
+from N03 still holds: **NODES does not own another modulation system.**
+Section 13.6's "no math nodes" and "no Function/Chaos/… sources" limitations
+are lifted by this section.
+
+### 14.1 Direct routes vs processed routes
+
+```
+DIRECT     LFO 1 ───────────────────────────▶ CUTOFF      ModRoute{source=LFO1}
+PROCESSED  LFO 1 ──▶ [SCALE] ──▶ [SMOOTH] ───▶ CUTOFF      ModRoute{source=operatorSource(SMOOTH)}
+                      operators: ModulationState::operators (SCALE.IN ← LFO1, SMOOTH.IN ← SCALE)
+```
+
+- **A direct route is unchanged.** It stays one `ModRoute`, and no direct route
+  is ever converted implicitly.
+- **A processed route is still one `ModRoute`:** same id, Matrix number,
+  amount, polarity and enabled flag. Its source is an operator output,
+  `operatorSource(id)` (`0x10000 + id`).
+- **Operators are instrument patch state.** They live in
+  `ModulationState::operators`: 32 fixed slots, each `{id, type, 6 params,
+  inputs A/B}`. An input refers to a canonical source or another operator.
+  Each input holds at most one connection by construction, so cardinality
+  cannot be violated. A slot keeps its index while in use (holes are
+  allowed), so per-operator state and route weights stay attached across
+  edits.
+- **No double modulation.**
+  - Inserting a node on a direct route's cable rewrites that route's source.
+    The direct route is replaced in place and never remains underneath.
+  - Deleting the last processor collapses the chain back to the same direct
+    route.
+  - A route whose collapse would duplicate an existing pair is removed
+    instead of duplicated.
+
+### 14.2 Node library
+
+| Category | Nodes | Inputs |
+|---|---|---|
+| Math | ADD, SUBTRACT (A − B), MULTIPLY, MIN, MAX | A, B |
+| Shaping | SCALE / OFFSET, REMAP (in/out ranges + clamp), CURVE (linear/exp/log/S + amount), ABS, INVERT, CLAMP | IN |
+| Utility | CONSTANT, SMOOTH (rise/fall seconds), QUANTIZE (steps) | none / IN |
+
+Unconnected inputs are deterministic:
+
+- ADD and SUBTRACT treat an unconnected input as 0.
+- MULTIPLY treats it as 1.
+- MIN and MAX pass the other input through.
+
+**SAMPLE & HOLD is deferred.** A trigger needs EVENT semantics, which do not
+exist yet, and it is not faked.
+
+### 14.3 Ranges
+
+Every value has a declared range: UNIPOLAR (nominal 0…1) or BIPOLAR (−1…1).
+
+**Input ranges:**
+
+- Signed generators (LFOs, Random, Function, Chaos, Drift, Sequencer) are
+  BIPOLAR.
+- Envelopes, macros and performance inputs are UNIPOLAR.
+
+**Output ranges:**
+
+- Math nodes are BIPOLAR if any connected input is.
+- ABS is always UNIPOLAR.
+- REMAP, CLAMP and CONSTANT are BIPOLAR if their bounds or value go below 0.
+- The remaining unary nodes keep their input's range.
+
+**Range-aware nodes:**
+
+- INVERT: unipolar `1 − x`, bipolar `−x`.
+- QUANTIZE: levels span the nominal range, so bipolar keeps −1 and +1.
+- CURVE: shapes [0,1] for unipolar input; for bipolar input it shapes `|x|`
+  odd-symmetrically.
+
+**At the destination:** a processed route applies the same polarity transform
+a signed generator gets when its operator output is BIPOLAR (`raw/2 + 1/2`
+when unipolar, `raw/2` when bipolar). Inserting SCALE ×1 into LFO → CUTOFF
+is therefore bit-identical (tested).
+
+### 14.4 Execution domains (validated before compilation)
+
+- **Propagation:** an operator is VOICE if any input is VOICE, otherwise
+  GLOBAL. GLOBAL + VOICE gives VOICE. A GLOBAL input to a VOICE operator is
+  a broadcast.
+- **Authoring (`checkControlEdge`)** rejects:
+  - a VOICE result into a GLOBAL parameter;
+  - any edge that would turn an existing chain feeding a GLOBAL parameter
+    per-voice.
+- **Compilation:** if such a chain arises anyway (for example an LFO switched
+  to a per-note mode), the route is left **inert**. It is never reduced over
+  voices, and NODES draws it dashed.
+
+### 14.5 Compiler and runtime
+
+```
+ModulationState (routes + operators)
+   ── CompiledModulation::compile (audio thread at block start, fixed arrays, no allocation)
+        operators → topological order (Kahn over 32 slots), inputs → slot indices,
+        ranges/domains propagated, SMOOTH coefficients from the sample rate
+   ── per sample, global:  evaluateGlobalOperators(frame, sources)  → frame.operatorOutputs
+                           globalFrame adds operator-slot route contributions
+   ── per sample, voice:   evaluateVoiceOperators(local, voiceSources, voice.operatorState)
+                           voiceFrame adds per-voice operator-slot contributions
+   ── per span, FX:        fxFrame reads the latest global operator outputs
+```
+
+- **Slots:** the evaluator has 26 source slots plus 32 operator slots.
+  Operator outputs are routed exactly like sources: weights, 5 ms route
+  smoothing, groups.
+- **Resolution:** sample-accurate destinations stay sample-accurate through
+  any chain. FX parameters are evaluated per span, as before.
+- **State:** global operator state lives in `CompiledModulation`. Per-voice
+  state (SMOOTH) lives in each `Voice` and resets on each new note, so voices
+  never share state. State is keyed by operator id, so a new operator in a
+  reused slot starts fresh.
+- **Hot loop:** `for op in compiledOps: execute(op)`. There are no graph
+  searches, strings, UI objects, locks or allocations. A test with the
+  allocation guard confirms this.
+- **Cost when unused:** with no operators, `hasOperators()` is false and no
+  operator code runs. The N02 golden plan and audio fingerprints are
+  unchanged.
+
+### 14.6 Interoperability
+
+- **Matrix:** a processed route is **one** normal row. Its source reads
+  `NODES: SCALE / OFFSET (LFO 1)` and is locked with a tooltip pointing to
+  NODES, because the chain is edited there. Amount, polarity, destination,
+  monitor and deletion still work. The monitor plots the processed
+  contribution.
+- **SYNTH:** source rows show rings for routes rooted at that source,
+  including processed ones (the ring edits the route amount). Knob arcs
+  already sum routes by destination, and live arc motion reads the operator
+  output.
+
+### 14.7 Authoring and undo
+
+- **Creating nodes:** NODES Add Module (and right-click at the cursor) offers
+  CONTROL / SOURCES, CONTROL / MATH, SHAPING, UTILITY, and Parameter….
+- **Drag:** from any OUTPUT (source or operator) to any compatible INPUT
+  (operator input or PARAMETER). Compatible inputs highlight while
+  dragging.
+- **Right-click a CONTROL cable:** INSERT NODE splices an operator in
+  atomically and places it midway along the cable; Delete / Disconnect is
+  also offered.
+- **Deleting an operator:** a unary operator with a connected input is
+  bridged to its neighbours. Otherwise its consumers are disconnected and its
+  routes removed.
+- **Duplicate** copies an operator's settings, never its connections.
+  SOURCE and PARAMETER nodes are views: they are never duplicated or deleted,
+  only removed from the canvas when unlinked.
+- **Undo history:** every NODES control edit is a transaction on the page's
+  control history. That covers add, delete, move, connect, disconnect,
+  insert, parameter edits (one step per drag), direct → processed and
+  processed → direct. UNDO/REDO interleave control and audio-graph edits in
+  the order they were made. A snapshot restores only routes, operators and
+  layout; source settings are untouched.
+
+### 14.8 Monitoring
+
+- Operator outputs are published with the source slots, in the same
+  observation tick and lock-free mailbox. Global values come from the engine
+  frame, per-voice values from the newest voice.
+- The operator inspector shows live input and output values plus an output
+  monitor. QoS suppression only stops observation, never evaluation.
+
+### 14.9 Save format
+
+- **Instrument codec v28** appends the operator slots (with holes) and
+  `nextOperatorId`. It is written **only when an operator exists**; otherwise
+  the state is written as v27, byte-identical to N03.
+- **Layout `MCVL` v2** adds operator entries. It is written only when one
+  exists; otherwise the layout stays v1.
+- N03 and older saves load unchanged as direct-route graphs. Saves containing
+  operators require N04 or later.
+
+### 14.10 Deferred
+
+- SAMPLE & HOLD (needs EVENT triggers).
+- Voice-reduction operators (VOICE → GLOBAL).
+- Control feedback.
+- Bidirectional cable drags (from an input).
+- A general control-rate scheduler, which is unnecessary while operators run
+  inside the canonical per-sample evaluator.
+- Operator copy/paste across instruments.

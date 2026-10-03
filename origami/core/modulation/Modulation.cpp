@@ -16,6 +16,11 @@
 #include <cmath>
 namespace mct::origami {
 namespace {
+// Signed generator slots (LFOs, random, function, chaos, drift, sequencer):
+// raw -1..1, so routes apply a polarity transform.
+inline bool signedGeneratorSlot(std::size_t slot) noexcept {
+    return slot<=3u || (slot>=8u && slot<=12u) || (slot>=16u && slot<=19u);
+}
 bool range(float x,float a,float b) {return std::isfinite(x) && x>=a && x<=b;}
 bool validEnvelope(const dsp::EnvelopeSettings& e) {
     return range(e.attack,.001f,10.f) && range(e.decay,.001f,10.f) &&
@@ -77,6 +82,9 @@ Range limits(ModDestination d) {
     }
 }
 std::size_t slotFor(ModSource source,const ModulationState& state) {
+    if(isOperatorSource(source))
+        return CompiledModulation::sourceSlotCount+std::min(controlOperatorSlot(state,operatorIdOf(source)),
+                                                            ModulationState::maxControlOperators-1);
     switch(source) {
         case ModSource::Lfo1:return state.lfo1.mode==LfoMode::Free?0u:16u;
         case ModSource::Lfo2:return state.lfo2.mode==LfoMode::Free?1u:17u;
@@ -166,12 +174,39 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     for(auto ratchet:s.sequencer.ratchets) if(ratchet<1u || ratchet>4u) return false;
     if(!range(s.sequencer.humanize,0.f,.35f)) return false;
     for(float v:s.macros) if(!range(v,0,1)) return false;
+    // N04 operators: unique ids below nextOperatorId, known types, bounded
+    // parameters, inputs that reference canonical sources or existing
+    // operators, and no cycles (the control graph is a DAG).
+    if(s.nextOperatorId==0) return false;
+    for(std::size_t i=0;i<s.operators.size();++i) {
+        const auto& op=s.operators[i];
+        if(!op.id) continue;
+        const auto* info=controlOpInfo(op.type);
+        if(info==nullptr || op.id>=s.nextOperatorId) return false;
+        for(std::size_t j=0;j<i;++j) if(s.operators[j].id==op.id) return false;
+        for(std::size_t p=0;p<controlOpParameterCount;++p) {
+            if(!std::isfinite(op.params[p])) return false;
+            if(p<info->parameterCount && !range(op.params[p],info->parameters[p].minimum,info->parameters[p].maximum)) return false;
+            if(p>=info->parameterCount && op.params[p]!=0.0f) return false;
+        }
+        for(std::size_t k=0;k<op.inputs.size();++k) {
+            const auto& in=op.inputs[k];
+            if(k>=info->inputs && in.kind!=ControlInput::Kind::None) return false;
+            if(in.kind==ControlInput::Kind::None) { if(in.source!=ModSource::None || in.op!=0) return false; }
+            else if(in.kind==ControlInput::Kind::Source) { if(!known(in.source) || in.op!=0) return false; }
+            else if(in.kind==ControlInput::Kind::Operator) {
+                if(in.source!=ModSource::None || in.op==op.id || findControlOperator(s,in.op)==nullptr) return false;
+                if(controlOperatorReaches(s,op.id,in.op)) return false; // would close a cycle
+            } else return false;
+        }
+    }
     std::uint32_t previous=0;bool empty=false;
     if(s.nextRouteId==0) return false;
     for(const auto& r:s.routes) {
         if(!r.id) {empty=true;continue;}
         if(empty || r.id<=previous || r.id>=s.nextRouteId || !range(r.amount,-1,1)) return false;
-        if(r.source!=ModSource::None && !known(r.source)) return false;
+        if(isOperatorSource(r.source)) { if(findControlOperator(s,operatorIdOf(r.source))==nullptr) return false; }
+        else if(r.source!=ModSource::None && !known(r.source)) return false;
         previous=r.id;
         // Complete routes are unique per (source, destination).
         if(routeComplete(r) && routeDuplicates(s,r)) return false;
@@ -458,8 +493,67 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     voiceProcessModules_.fill(false);
     smoothingActive_=false;
     filterEnabled_=state.filterEnabled;
+    // N04: operators in topological order, inputs resolved to slots, ranges
+    // and execution domains propagated. Fixed arrays; no allocation.
+    opCount_=globalOpCount_=voiceOpCount_=0;
+    opRange_.fill(ControlRange::Unipolar);
+    opVoice_.fill(false);
+    {
+        std::array<bool,operatorSlotCount> placed{};
+        bool progress=true;
+        while(progress) {
+            progress=false;
+            for(std::size_t slot=0;slot<state.operators.size();++slot) {
+                const auto& op=state.operators[slot];
+                if(!op.id || placed[slot] || controlOpInfo(op.type)==nullptr) continue;
+                bool ready=true;
+                for(const auto& in:op.inputs)
+                    if(in.kind==ControlInput::Kind::Operator) {
+                        const auto from=controlOperatorSlot(state,in.op);
+                        if(from>=operatorSlotCount || !placed[from]) ready=false;
+                    }
+                if(!ready) continue;
+                auto& c=ops_[opCount_++];
+                c=CompiledOp{};
+                c.op=op;
+                c.slot=static_cast<std::uint8_t>(slot);
+                std::array<bool,2> connected{};
+                for(std::size_t k=0;k<2;++k) {
+                    const auto& in=op.inputs[k];
+                    if(in.kind==ControlInput::Kind::Source) {
+                        const auto s=slotFor(in.source,state);
+                        c.input[k]=static_cast<std::int16_t>(s);
+                        c.range[k]=signedGeneratorSlot(s) ? ControlRange::Bipolar : ControlRange::Unipolar;
+                        if(s<globalSourceCount) globalSourceUsed_[s]=true; else c.voice=true;
+                        connected[k]=true;
+                    } else if(in.kind==ControlInput::Kind::Operator) {
+                        const auto from=controlOperatorSlot(state,in.op);
+                        c.input[k]=static_cast<std::int16_t>(sourceSlotCount+from);
+                        c.range[k]=opRange_[from];
+                        c.voice=c.voice || opVoice_[from];
+                        connected[k]=true;
+                    }
+                }
+                if(op.type==ControlOpType::Smooth) {
+                    c.rise=controlSmoothingCoefficient(op.params[0],sampleRate_);
+                    c.fall=controlSmoothingCoefficient(op.params[1],sampleRate_);
+                }
+                opRange_[slot]=controlOpOutputRange(op,c.range[0],connected[0],c.range[1],connected[1]);
+                opVoice_[slot]=c.voice;
+                (c.voice ? voiceOpCount_ : globalOpCount_)++;
+                placed[slot]=true;
+                progress=true;
+            }
+        }
+    }
     for(const auto& route:state.routes) {
         if(!route.id || !route.enabled || route.amount==0 || !routeComplete(route)) continue;
+        if(isOperatorSource(route.source)) {
+            const auto from=controlOperatorSlot(state,operatorIdOf(route.source));
+            // A per-voice result never drives a global destination (no
+            // voice-reduction policy exists); such a route stays inert.
+            if(from>=operatorSlotCount || (opVoice_[from] && destinationIsGlobal(route.destination.parameter))) continue;
+        }
         std::size_t slot=0;
         if(!isGlobalDestination(route.destination.parameter) && !isFxDestination(route.destination.parameter)) {
             while(slot<modules.size() && modules[slot].id!=route.destination.oscillator) ++slot;
@@ -502,7 +596,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             g.weight={};
             for(std::size_t j=0;j<oldCount;++j)
                 if(old[j].address==g.address) {g.weight=old[j].weight;break;}
-            for(std::size_t s=0;s<sourceSlotCount;++s)
+            for(std::size_t s=0;s<totalSlotCount;++s)
                 if(std::abs(g.target[s]-g.weight[s])>1.0e-6f) smoothingActive_=true;
         }
         g.globalSlotCount=0;g.voiceSlotCount=0;
@@ -510,7 +604,13 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             if(g.target[s]!=0.0f || g.weight[s]!=0.0f) g.globalSlots[g.globalSlotCount++]=static_cast<std::uint8_t>(s);
         for(std::size_t s=0;s<voiceSourceCount;++s)
             if(g.target[globalSourceCount+s]!=0.0f || g.weight[globalSourceCount+s]!=0.0f) g.voiceSlots[g.voiceSlotCount++]=static_cast<std::uint8_t>(s);
-        const bool voice=g.voiceSlotCount!=0;
+        g.globalOpSlotCount=0;g.voiceOpSlotCount=0;
+        for(std::size_t s=0;s<operatorSlotCount;++s)
+            if(g.target[sourceSlotCount+s]!=0.0f || g.weight[sourceSlotCount+s]!=0.0f) {
+                if(opVoice_[s]) g.voiceOpSlots[g.voiceOpSlotCount++]=static_cast<std::uint8_t>(s);
+                else g.globalOpSlots[g.globalOpSlotCount++]=static_cast<std::uint8_t>(s);
+            }
+        const bool voice=g.voiceSlotCount!=0 || g.voiceOpSlotCount!=0;
         if(isFxDestination(g.address.parameter)) {
             // Evaluated once per block by fxFrame(); never written into voices.
             fxGroups_[fxCount_++]=i;
@@ -530,7 +630,7 @@ void CompiledModulation::advance(float alpha) noexcept {
     if(!smoothingActive_) return;
     bool stillMoving=false;
     for(std::size_t i=0;i<count_;++i) {
-        for(std::size_t s=0;s<sourceSlotCount;++s) {
+        for(std::size_t s=0;s<totalSlotCount;++s) {
             auto& value=groups_[i].weight[s];
             const float target=groups_[i].target[s];
             const float delta=target-value;
@@ -603,6 +703,7 @@ void CompiledModulation::write(ModulationFrame& f,const Group& g,float n) noexce
     }
 }
 void CompiledModulation::prepare(double sampleRate) noexcept {
+    sampleRate_=sampleRate>0.0 ? sampleRate : 48000.0;
     filterTable_.prepare(sampleRate);
     cachedFilterRate_=0.0;
     cachedFilterCutoff_=-1.0f;
@@ -623,9 +724,6 @@ const dsp::LowPassCoefficients& CompiledModulation::globalFilter(
 }
 
 namespace {
-inline bool signedGeneratorSlot(std::size_t slot) noexcept {
-    return slot<=3u || (slot>=8u && slot<=12u) || (slot>=16u && slot<=19u);
-}
 inline float routeSourceValue(std::size_t slot,float raw,bool bipolar) noexcept {
     if(!std::isfinite(raw)) return 0.0f;
     if(!signedGeneratorSlot(slot)) return raw;
@@ -637,7 +735,239 @@ inline float routeSourceValue(std::size_t slot,float raw,bool bipolar) noexcept 
     return std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
 }
 }
-static_assert(modulationSourceSlotCount==CompiledModulation::sourceSlotCount,"monitor slots mirror the evaluator");
+static_assert(modulationSourceSlotCount==CompiledModulation::totalSlotCount,"monitor slots mirror the evaluator");
+
+// ---------------------------------------------------------------- N04 operators
+
+namespace {
+using P=ControlOpParameterInfo;
+const std::array<ControlOpInfo,15>& opTable() noexcept {
+    static const std::array<ControlOpInfo,15> table{{
+        {ControlOpType::Add,"ADD","Math",2,0,{}},
+        {ControlOpType::Subtract,"SUBTRACT","Math",2,0,{}},
+        {ControlOpType::Multiply,"MULTIPLY","Math",2,0,{}},
+        {ControlOpType::Min,"MIN","Math",2,0,{}},
+        {ControlOpType::Max,"MAX","Math",2,0,{}},
+        {ControlOpType::ScaleOffset,"SCALE / OFFSET","Shaping",1,2,{{P{"SCALE",-4.0f,4.0f,1.0f,false},P{"OFFSET",-2.0f,2.0f,0.0f,false}}}},
+        {ControlOpType::Remap,"REMAP","Shaping",1,5,{{P{"IN MIN",-1.0f,1.0f,0.0f,false},P{"IN MAX",-1.0f,1.0f,1.0f,false},
+                                                     P{"OUT MIN",-1.0f,1.0f,0.0f,false},P{"OUT MAX",-1.0f,1.0f,1.0f,false},
+                                                     P{"CLAMP",0.0f,1.0f,1.0f,true}}}},
+        {ControlOpType::Curve,"CURVE","Shaping",1,2,{{P{"MODE",0.0f,3.0f,1.0f,true},P{"AMOUNT",0.0f,1.0f,0.5f,false}}}},
+        {ControlOpType::Abs,"ABS","Shaping",1,0,{}},
+        {ControlOpType::Invert,"INVERT","Shaping",1,0,{}},
+        {ControlOpType::Clamp,"CLAMP","Shaping",1,2,{{P{"MIN",-1.0f,1.0f,0.0f,false},P{"MAX",-1.0f,1.0f,1.0f,false}}}},
+        {ControlOpType::Constant,"CONSTANT","Utility",0,1,{{P{"VALUE",-1.0f,1.0f,0.5f,false}}}},
+        {ControlOpType::Smooth,"SMOOTH","Utility",1,2,{{P{"RISE",0.001f,10.0f,0.05f,false},P{"FALL",0.001f,10.0f,0.05f,false}}}},
+        {ControlOpType::Quantize,"QUANTIZE","Utility",1,1,{{P{"STEPS",2.0f,64.0f,8.0f,true}}}}
+    }};
+    return table;
+}
+float finiteOr0(float v) noexcept { return std::isfinite(v) ? v : 0.0f; }
+float curveShape(ControlCurveMode mode,float x,float amount) noexcept {
+    // x in [0,1]; amount 0..1 sets the strength.
+    const float k=1.0f+4.0f*std::clamp(amount,0.0f,1.0f);
+    switch(mode) {
+    case ControlCurveMode::Linear: return x;
+    case ControlCurveMode::Exponential: return std::pow(x,k);
+    case ControlCurveMode::Logarithmic: return 1.0f-std::pow(1.0f-x,k);
+    case ControlCurveMode::SCurve: {
+        const float s=x*x*(3.0f-2.0f*x);
+        return x+(s-x)*std::clamp(amount,0.0f,1.0f);
+    }
+    }
+    return x;
+}
+}
+
+const ControlOpInfo* controlOpInfo(ControlOpType type) noexcept {
+    for(const auto& info:opTable()) if(info.type==type) return &info;
+    return nullptr;
+}
+
+const std::array<ControlOpType,15>& controlOpCatalog() noexcept {
+    static const std::array<ControlOpType,15> catalog{{
+        ControlOpType::Add,ControlOpType::Subtract,ControlOpType::Multiply,ControlOpType::Min,ControlOpType::Max,
+        ControlOpType::ScaleOffset,ControlOpType::Remap,ControlOpType::Curve,ControlOpType::Abs,ControlOpType::Invert,ControlOpType::Clamp,
+        ControlOpType::Constant,ControlOpType::Smooth,ControlOpType::Quantize,ControlOpType::None}};
+    return catalog;
+}
+
+ControlOperator makeControlOperator(ControlOpType type,std::uint32_t id) noexcept {
+    ControlOperator op;
+    op.id=id;
+    op.type=type;
+    if(const auto* info=controlOpInfo(type))
+        for(std::size_t i=0;i<info->parameterCount;++i) op.params[i]=info->parameters[i].defaultValue;
+    return op;
+}
+
+float controlSmoothingCoefficient(float seconds,double sampleRate) noexcept {
+    if(!(seconds>0.0f) || !(sampleRate>0.0)) return 1.0f;
+    return static_cast<float>(1.0-std::exp(-1.0/(static_cast<double>(seconds)*sampleRate)));
+}
+
+ControlRange controlOpOutputRange(const ControlOperator& op,ControlRange a,bool aConnected,ControlRange b,bool bConnected) noexcept {
+    const auto bipolar=[](bool connected,ControlRange r){ return connected && r==ControlRange::Bipolar; };
+    switch(op.type) {
+    case ControlOpType::Add: case ControlOpType::Subtract: case ControlOpType::Multiply:
+    case ControlOpType::Min: case ControlOpType::Max:
+        return bipolar(aConnected,a) || bipolar(bConnected,b) ? ControlRange::Bipolar : ControlRange::Unipolar;
+    case ControlOpType::Abs: return ControlRange::Unipolar;
+    case ControlOpType::Remap: return op.params[2]<0.0f || op.params[3]<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
+    case ControlOpType::Clamp: return std::min(op.params[0],op.params[1])<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
+    case ControlOpType::Constant: return op.params[0]<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
+    default: return aConnected ? a : ControlRange::Unipolar; // range-preserving unary operators
+    }
+}
+
+float evaluateControlOp(const ControlOperator& op,float a,bool aConnected,ControlRange aRange,
+                        float b,bool bConnected,ControlRange,
+                        ControlOpRuntime& state,float rise,float fall) noexcept {
+    a=finiteOr0(a); b=finiteOr0(b);
+    const auto& p=op.params;
+    float out=0.0f;
+    switch(op.type) {
+    case ControlOpType::None: out=0.0f; break;
+    case ControlOpType::Add: out=(aConnected ? a : 0.0f)+(bConnected ? b : 0.0f); break;
+    case ControlOpType::Subtract: out=(aConnected ? a : 0.0f)-(bConnected ? b : 0.0f); break;
+    case ControlOpType::Multiply: out=(aConnected ? a : 1.0f)*(bConnected ? b : 1.0f); break;
+    case ControlOpType::Min: out=aConnected && bConnected ? std::min(a,b) : aConnected ? a : bConnected ? b : 0.0f; break;
+    case ControlOpType::Max: out=aConnected && bConnected ? std::max(a,b) : aConnected ? a : bConnected ? b : 0.0f; break;
+    case ControlOpType::ScaleOffset: out=a*p[0]+p[1]; break;
+    case ControlOpType::Remap: {
+        const float span=p[1]-p[0];
+        float t=span!=0.0f ? (a-p[0])/span : 0.0f; // inverted input ranges invert naturally
+        if(p[4]>=0.5f) t=std::clamp(t,0.0f,1.0f);
+        out=p[2]+t*(p[3]-p[2]);
+        break;
+    }
+    case ControlOpType::Curve: {
+        const auto mode=static_cast<ControlCurveMode>(std::clamp(static_cast<int>(std::lround(p[0])),0,3));
+        // Shapes the nominal range: unipolar on [0,1]; bipolar odd-symmetrically on |x|.
+        if(aRange==ControlRange::Bipolar) {
+            const float magnitude=std::min(std::abs(a),1.0f);
+            out=std::copysign(curveShape(mode,magnitude,p[1]),a);
+        } else out=curveShape(mode,std::clamp(a,0.0f,1.0f),p[1]);
+        break;
+    }
+    case ControlOpType::Abs: out=std::abs(a); break;
+    case ControlOpType::Invert: out=aRange==ControlRange::Bipolar ? -a : 1.0f-a; break;
+    case ControlOpType::Clamp: out=std::clamp(a,std::min(p[0],p[1]),std::max(p[0],p[1])); break;
+    case ControlOpType::Constant: out=p[0]; break;
+    case ControlOpType::Smooth:
+        if(!state.initialized) { state.value=a; state.initialized=true; }
+        else state.value+=(a>state.value ? rise : fall)*(a-state.value);
+        out=state.value;
+        break;
+    case ControlOpType::Quantize: {
+        const float steps=std::max(1.0f,std::round(p[0])-1.0f);
+        if(aRange==ControlRange::Bipolar) out=2.0f*(std::round((a+1.0f)*0.5f*steps)/steps)-1.0f;
+        else out=std::round(a*steps)/steps;
+        break;
+    }
+    }
+    return finiteOr0(out);
+}
+
+const ControlOperator* findControlOperator(const ModulationState& state,std::uint32_t id) noexcept {
+    if(id==0) return nullptr;
+    for(const auto& op:state.operators) if(op.id==id) return &op;
+    return nullptr;
+}
+
+std::size_t controlOperatorSlot(const ModulationState& state,std::uint32_t id) noexcept {
+    if(id!=0) for(std::size_t i=0;i<state.operators.size();++i) if(state.operators[i].id==id) return i;
+    return ModulationState::maxControlOperators;
+}
+
+bool controlOperatorReaches(const ModulationState& state,std::uint32_t from,std::uint32_t target) noexcept {
+    // Iterative DFS over operator inputs, bounded by the operator capacity.
+    std::array<std::uint32_t,ModulationState::maxControlOperators*2> stack{};
+    std::array<bool,ModulationState::maxControlOperators> seen{};
+    std::size_t top=0;
+    stack[top++]=target;
+    while(top>0) {
+        const auto id=stack[--top];
+        if(id==from) return true;
+        const auto slot=controlOperatorSlot(state,id);
+        if(slot>=state.operators.size() || seen[slot]) continue;
+        seen[slot]=true;
+        for(const auto& in:state.operators[slot].inputs)
+            if(in.kind==ControlInput::Kind::Operator && top<stack.size()) stack[top++]=in.op;
+    }
+    return false;
+}
+
+std::size_t routeRootSources(const ModulationState& state,const ModRoute& route,std::array<ModSource,16>& out) noexcept {
+    std::size_t count=0;
+    const auto push=[&](ModSource s){
+        for(std::size_t i=0;i<count;++i) if(out[i]==s) return;
+        if(count<out.size()) out[count++]=s;
+    };
+    if(!isOperatorSource(route.source)) { if(route.source!=ModSource::None) push(route.source); return count; }
+    std::array<std::uint32_t,ModulationState::maxControlOperators*2> stack{};
+    std::array<bool,ModulationState::maxControlOperators> seen{};
+    std::size_t top=0;
+    stack[top++]=operatorIdOf(route.source);
+    while(top>0) {
+        const auto slot=controlOperatorSlot(state,stack[--top]);
+        if(slot>=state.operators.size() || seen[slot]) continue;
+        seen[slot]=true;
+        for(const auto& in:state.operators[slot].inputs) {
+            if(in.kind==ControlInput::Kind::Source) push(in.source);
+            else if(in.kind==ControlInput::Kind::Operator && top<stack.size()) stack[top++]=in.op;
+        }
+    }
+    return count;
+}
+
+std::size_t modulationSourceSlot(ModSource source,const ModulationState& state) noexcept { return slotFor(source,state); }
+
+bool destinationIsGlobal(ModDestination d) noexcept {
+    return d==ModDestination::PortaTime || d==ModDestination::LfoScaling || d==ModDestination::Swing || d==ModDestination::FxParameter;
+}
+
+namespace {
+template<typename Fn> bool walkOperator(const ModulationState& state,std::uint32_t id,int depth,Fn&& visitSource) {
+    // Depth-first over the operator chain (acyclic, at most capacity deep).
+    if(depth>int(ModulationState::maxControlOperators)) return false;
+    const auto* op=findControlOperator(state,id);
+    if(op==nullptr) return false;
+    bool any=false;
+    for(const auto& in:op->inputs) {
+        if(in.kind==ControlInput::Kind::Source) any|=visitSource(in.source);
+        else if(in.kind==ControlInput::Kind::Operator) any|=walkOperator(state,in.op,depth+1,visitSource);
+    }
+    return any;
+}
+ControlRange operatorRange(const ModulationState& state,std::uint32_t id,int depth) noexcept {
+    const auto* op=findControlOperator(state,id);
+    if(op==nullptr || depth>int(ModulationState::maxControlOperators)) return ControlRange::Unipolar;
+    std::array<ControlRange,2> range{{ControlRange::Unipolar,ControlRange::Unipolar}};
+    std::array<bool,2> connected{};
+    for(std::size_t i=0;i<2;++i) {
+        const auto& in=op->inputs[i];
+        connected[i]=in.kind!=ControlInput::Kind::None;
+        if(in.kind==ControlInput::Kind::Source) range[i]=sourceRange(in.source,state);
+        else if(in.kind==ControlInput::Kind::Operator) range[i]=operatorRange(state,in.op,depth+1);
+    }
+    return controlOpOutputRange(*op,range[0],connected[0],range[1],connected[1]);
+}
+}
+
+ControlRange sourceRange(ModSource source,const ModulationState& state) noexcept {
+    if(isOperatorSource(source)) return operatorRange(state,operatorIdOf(source),0);
+    if(source==ModSource::None) return ControlRange::Unipolar;
+    return signedGeneratorSlot(slotFor(source,state)) ? ControlRange::Bipolar : ControlRange::Unipolar;
+}
+
+bool sourceIsVoice(ModSource source,const ModulationState& state) noexcept {
+    if(isOperatorSource(source))
+        return walkOperator(state,operatorIdOf(source),0,[&state](ModSource s){ return sourceIsVoice(s,state); });
+    if(source==ModSource::None) return false;
+    return slotFor(source,state)>=CompiledModulation::globalSourceCount;
+}
+
 
 bool routeDuplicates(const ModulationState& state,const ModRoute& candidate) noexcept {
     if(!routeComplete(candidate)) return false;
@@ -674,9 +1004,54 @@ std::size_t mergeDuplicateRoutes(ModulationState& state) noexcept {
 float routeContribution(const ModRoute& route,const ModulationState& state,const ModulationSourceSlots& slots) noexcept {
     if(!route.id || !route.enabled || !routeComplete(route) || route.amount==0.0f) return 0.0f;
     const auto slot=slotFor(route.source,state);
-    const float contribution=route.amount*routeSourceValue(slot,slots[slot],route.bipolar);
+    float source=0.0f;
+    if(isOperatorSource(route.source)) {
+        // A bipolar operator output takes the same polarity transform as a
+        // signed generator, so SCALE x1 between an LFO and its parameter is inert.
+        const float raw=std::isfinite(slots[slot]) ? slots[slot] : 0.0f;
+        source=sourceRange(route.source,state)==ControlRange::Bipolar
+            ? (route.bipolar ? raw*0.5f : std::clamp(raw*0.5f+0.5f,0.0f,1.0f)) : raw;
+    } else source=routeSourceValue(slot,slots[slot],route.bipolar);
+    const float contribution=route.amount*source;
     return std::isfinite(contribution) ? std::clamp(contribution,-1.0f,1.0f) : 0.0f;
 }
+float CompiledModulation::operatorRouteValue(std::size_t slot,float raw,bool bipolar) const noexcept {
+    if(!std::isfinite(raw)) return 0.0f;
+    if(opRange_[slot]!=ControlRange::Bipolar) return raw;
+    return bipolar ? raw*0.5f : std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
+}
+
+float CompiledModulation::operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>* voice,const ModulationFrame& f) noexcept {
+    if(input<0) return 0.0f;
+    const auto i=static_cast<std::size_t>(input);
+    if(i<globalSourceCount) return f.globalSources[i];
+    if(i<sourceSlotCount) return voice!=nullptr ? (*voice)[i-globalSourceCount] : 0.0f;
+    return f.operatorOutputs[i-sourceSlotCount];
+}
+
+float CompiledModulation::runOperator(const CompiledOp& c,const std::array<float,voiceSourceCount>* voice,
+                                      const ModulationFrame& f,ControlOpRuntime& state) const noexcept {
+    if(state.id!=c.op.id) state={0.0f,false,c.op.id}; // a new operator in this slot starts fresh
+    return evaluateControlOp(c.op,operatorInput(c.input[0],voice,f),c.input[0]>=0,c.range[0],
+                             operatorInput(c.input[1],voice,f),c.input[1]>=0,c.range[1],state,c.rise,c.fall);
+}
+
+void CompiledModulation::evaluateGlobalOperators(ModulationFrame& f,const std::array<float,globalSourceCount>& sources) noexcept {
+    f.globalSources=sources;
+    for(std::size_t i=0;i<opCount_;++i) {
+        const auto& c=ops_[i];
+        if(!c.voice) f.operatorOutputs[c.slot]=runOperator(c,nullptr,f,globalOpState_[c.slot]);
+    }
+}
+
+void CompiledModulation::evaluateVoiceOperators(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,
+                                                OperatorState& state) const noexcept {
+    for(std::size_t i=0;i<opCount_;++i) {
+        const auto& c=ops_[i];
+        if(c.voice) f.operatorOutputs[c.slot]=runOperator(c,&sources,f,state[c.slot]);
+    }
+}
+
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {
     f.filterEnabled=filterEnabled_;
     for(std::size_t i=0;i<count_;++i) {
@@ -690,6 +1065,11 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
             const auto s=static_cast<std::size_t>(g.globalSlots[k]);
             const float src=routeSourceValue(s,sources[s],g.bipolar[s]);
             n+=(std::isfinite(g.weight[s])?g.weight[s]:0.0f)*src;
+        }
+        for(std::size_t k=0;k<g.globalOpSlotCount;++k) {
+            const auto s=static_cast<std::size_t>(g.globalOpSlots[k]);
+            const float w=g.weight[sourceSlotCount+s];
+            n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[s],g.bipolar[sourceSlotCount+s]);
         }
         if(!std::isfinite(n)) n=0.0f;
         f.normalized[i]=std::clamp(n,-4.0f,4.0f);write(f,g,n);
@@ -707,12 +1087,18 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
             const float src=routeSourceValue(slot,sources[s],g.bipolar[slot]);
             n+=(std::isfinite(w)?w:0.0f)*src;
         }
+        for(std::size_t k=0;k<g.voiceOpSlotCount;++k) {
+            const auto s=static_cast<std::size_t>(g.voiceOpSlots[k]);
+            const float w=g.weight[sourceSlotCount+s];
+            n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[s],g.bipolar[sourceSlotCount+s]);
+        }
         if(!std::isfinite(n)) n=0.0f;write(f,g,n);
     }
     if(voiceFilter_) f.filter=filterTable_.make(f.cutoff,f.resonance);
 }
 void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,globalSourceCount>& global,
-                                 const std::array<float,voiceSourceCount>* voice) const noexcept {
+                                 const std::array<float,voiceSourceCount>* voice,
+                                 const std::array<float,operatorSlotCount>* operators) const noexcept {
     out.generation=generation_;
     out.count=fxCount_;
     for(std::size_t k=0;k<fxCount_;++k) {
@@ -732,6 +1118,12 @@ void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,
                 n+=(std::isfinite(g.weight[slot])?g.weight[slot]:0.0f)*routeSourceValue(slot,(*voice)[s],g.bipolar[slot]);
             }
         }
+        if(operators!=nullptr)
+            for(std::size_t j=0;j<g.globalOpSlotCount;++j) {
+                const auto s=static_cast<std::size_t>(g.globalOpSlots[j]);
+                const float w=g.weight[sourceSlotCount+s];
+                n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,(*operators)[s],g.bipolar[sourceSlotCount+s]);
+            }
         out.offset[k]=std::isfinite(n) ? std::clamp(n,-2.0f,2.0f) : 0.0f;
     }
 }
