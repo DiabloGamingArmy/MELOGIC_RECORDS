@@ -9,7 +9,8 @@ namespace {
 bool lfoSource(ModSource s) noexcept { return s>=ModSource::Lfo1 && s<=ModSource::Lfo4; }
 std::size_t lfoIndex(ModSource s) noexcept { return static_cast<std::size_t>(s)-static_cast<std::size_t>(ModSource::Lfo1); }
 
-constexpr float sourceColumnX=40.0f,operatorColumnX=540.0f,parameterColumnX=1040.0f,firstRowY=600.0f,rowPitch=84.0f,operatorPitch=120.0f;
+constexpr float sourceColumnX=40.0f,operatorColumnX=400.0f,operatorColumnPitch=280.0f,parameterColumnX=1040.0f,
+                firstRowY=600.0f,rowPitch=84.0f,operatorPitch=130.0f;
 
 void u8(std::vector<std::uint8_t>& b,std::uint8_t v) { b.push_back(v); }
 void u32(std::vector<std::uint8_t>& b,std::uint32_t v) { for(int s=24;s>=0;s-=8) b.push_back(std::uint8_t(v>>s)); }
@@ -97,6 +98,7 @@ const char* toString(ControlLinkResult r) noexcept {
     case ControlLinkResult::InvalidPort: return "not a compatible port";
     case ControlLinkResult::InputOccupied: return "this input already has a connection";
     case ControlLinkResult::WouldCreateCycle: return "control feedback loops are not allowed";
+    case ControlLinkResult::TypeMismatch: return "signal types differ (use a THRESHOLD / EDGE / PULSE converter)";
     }
     return "unknown";
 }
@@ -107,7 +109,11 @@ ControlLinkCheck checkControlLink(const InstrumentState& state,ModSource source,
     const auto& m=state.modulation;
     if(source==ModSource::None) return fail(ControlLinkResult::MissingSource);
     if(isOperatorSource(source)) {
-        if(findControlOperator(m,operatorIdOf(source))==nullptr) return fail(ControlLinkResult::MissingOperator);
+        const auto* op=findControlOperator(m,operatorIdOf(source));
+        if(op==nullptr) return fail(ControlLinkResult::MissingOperator);
+        // Only a CONTROL output drives a parameter (no implicit GATE/EVENT coercion).
+        const auto* info=controlOpInfo(op->type);
+        if(info==nullptr || info->output!=ControlSignal::Control) return fail(ControlLinkResult::TypeMismatch);
     } else {
         if(!controlSourceExposed(source)) return fail(ControlLinkResult::SourceNotExposed);
         if(!controlSourceActive(source,m)) return fail(ControlLinkResult::SourceInactive);
@@ -238,9 +244,29 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
     // Unpositioned nodes stack below the ones already laid out, in a compact
     // column per kind (sources | operators | parameters). The UI pins these
     // positions as soon as the nodes are shown, so nothing moves later.
-    int sourceRow=0,operatorRow=0,parameterRow=0;
+    int sourceRow=0,parameterRow=0;
     for(const auto& e:layout.entries())
-        if(e.positioned) (e.key.kind==ControlNodeKind::Source ? sourceRow : e.key.kind==ControlNodeKind::Operator ? operatorRow : parameterRow)++;
+        if(e.positioned) { if(e.key.kind==ControlNodeKind::Source) ++sourceRow; else if(e.key.kind==ControlNodeKind::Parameter) ++parameterRow; }
+    // Operators default to one column per chain depth (longest path from the
+    // sources), so chains read left to right instead of snaking down.
+    std::array<int,ModulationState::maxControlOperators> depth{};
+    depth.fill(-1);
+    for(int pass=0;pass<int(ModulationState::maxControlOperators);++pass)
+        for(std::size_t i=0;i<m.operators.size();++i) {
+            const auto& op=m.operators[i];
+            if(!op.id) continue;
+            int d=0;
+            for(const auto& in:op.inputs)
+                if(in.kind==ControlInput::Kind::Operator) {
+                    const auto from=controlOperatorSlot(m,in.op);
+                    if(from<depth.size()) d=std::max(d,depth[from]+1);
+                }
+            depth[i]=d;
+        }
+    int maxDepth=-1;
+    for(const auto d:depth) maxDepth=std::max(maxDepth,d);
+    std::array<int,ModulationState::maxControlOperators> rowAtDepth{};
+    const float parameterX=maxDepth<0 ? parameterColumnX : std::max(parameterColumnX,operatorColumnX+operatorColumnPitch*float(maxDepth+1));
     const auto nodeFor=[&](const ControlNodeKey& key)->std::size_t {
         if(const auto existing=graph.find(key)) return *existing;
         ControlGraphNode node;
@@ -252,8 +278,13 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
         if(e!=nullptr) node.placed=e->placed;
         if(e!=nullptr && e->positioned) { node.x=e->x; node.y=e->y; }
         else if(key.kind==ControlNodeKind::Source) { node.x=sourceColumnX; node.y=firstRowY+rowPitch*float(sourceRow++); }
-        else if(key.kind==ControlNodeKind::Operator) { node.x=operatorColumnX; node.y=firstRowY+operatorPitch*float(operatorRow++); }
-        else { node.x=parameterColumnX; node.y=firstRowY+rowPitch*float(parameterRow++); }
+        else if(key.kind==ControlNodeKind::Operator) {
+            const auto slot=controlOperatorSlot(m,key.op);
+            const int d=slot<depth.size() ? std::max(0,depth[slot]) : 0;
+            node.x=operatorColumnX+operatorColumnPitch*float(d);
+            node.y=firstRowY+operatorPitch*float(rowAtDepth[std::size_t(d)]++);
+        }
+        else { node.x=parameterX; node.y=firstRowY+rowPitch*float(parameterRow++); }
         graph.nodes.push_back(node);
         return graph.nodes.size()-1;
     };
@@ -295,6 +326,26 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
 
 // ---------------------------------------------------------------- N04 edges / edits
 
+ControlSignal controlOutputSignal(const ModulationState& m,const ControlEndpoint& e) noexcept {
+    if(e.kind==ControlEndpoint::Kind::Source) return ControlSignal::Control;
+    if(e.kind!=ControlEndpoint::Kind::OperatorOutput) return ControlSignal::None;
+    const auto* op=findControlOperator(m,e.op);
+    const auto* info=op ? controlOpInfo(op->type) : nullptr;
+    return info ? info->output : ControlSignal::None;
+}
+
+ControlSignal controlInputSignal(const ModulationState& m,const ControlEndpoint& e) noexcept {
+    if(e.kind==ControlEndpoint::Kind::Parameter) return ControlSignal::Control;
+    if(e.kind!=ControlEndpoint::Kind::OperatorInput) return ControlSignal::None;
+    const auto* op=findControlOperator(m,e.op);
+    const auto* info=op ? controlOpInfo(op->type) : nullptr;
+    return info && e.input<info->inputs ? info->inputSignals[e.input] : ControlSignal::None;
+}
+
+NodeSignalType nodeSignal(ControlSignal s) noexcept {
+    return s==ControlSignal::Gate ? NodeSignalType::Gate : s==ControlSignal::Event ? NodeSignalType::Event : NodeSignalType::Control;
+}
+
 ControlLinkCheck checkControlEdge(const InstrumentState& state,const ControlEndpoint& from,const ControlEndpoint& to) noexcept {
     ControlLinkCheck check;
     const auto fail=[&check](ControlLinkResult r){ check.result=r; return check; };
@@ -310,6 +361,10 @@ ControlLinkCheck checkControlEdge(const InstrumentState& state,const ControlEndp
     if(target==nullptr) return fail(ControlLinkResult::MissingOperator);
     const auto* info=controlOpInfo(target->type);
     if(info==nullptr || to.input>=info->inputs) return fail(ControlLinkResult::InvalidPort);
+    // Strict typing: CONTROL->CONTROL, GATE->GATE, EVENT->EVENT.
+    const auto fromSignal=controlOutputSignal(m,from);
+    if(fromSignal==ControlSignal::None) return fail(ControlLinkResult::InvalidPort);
+    if(fromSignal!=info->inputSignals[to.input]) return fail(ControlLinkResult::TypeMismatch);
     if(target->inputs[to.input].kind!=ControlInput::Kind::None) return fail(ControlLinkResult::InputOccupied);
     if(from.kind==ControlEndpoint::Kind::OperatorOutput && (from.op==to.op || controlOperatorReaches(m,to.op,from.op)))
         return fail(ControlLinkResult::WouldCreateCycle);
@@ -414,7 +469,10 @@ bool deleteControlOperator(const ModulationState& m,std::uint32_t id,ModulationS
     const auto& op=m.operators[slot];
     const auto* info=controlOpInfo(op.type);
     auto next=m;
-    const bool bridge=info!=nullptr && info->inputs==1 && op.inputs[0].kind!=ControlInput::Kind::None;
+    // Bridging needs a pass-through of the same signal type (THRESHOLD, EDGE
+    // and PULSE convert types, so their neighbours are disconnected instead).
+    const bool bridge=info!=nullptr && info->inputs==1 && op.inputs[0].kind!=ControlInput::Kind::None
+                   && info->inputSignals[0]==info->output;
     const auto upstream=op.inputs[0];
     for(auto& other:next.operators) {
         if(!other.id || other.id==id) continue;

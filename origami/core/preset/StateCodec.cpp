@@ -40,9 +40,14 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
     // N04: v28 only when CONTROL operators exist; states without them are
     // written exactly as v27 (byte-identical to pre-N04 saves).
-    bool operators=false;
-    for(const auto& op:s.modulation.operators) operators|=op.id!=0;
-    Writer w;w.word(magic);w.word(operators ? 28u : 27u);w.word(static_cast<std::uint32_t>(parameterCount));
+    bool operators=false,eventNodes=false;
+    for(const auto& op:s.modulation.operators) {
+        operators|=op.id!=0;
+        // N05: event/logic nodes or a third input need v29.
+        eventNodes|=op.id!=0 && (static_cast<int>(op.type)>=static_cast<int>(ControlOpType::Clock)
+                                  || op.inputs[2].kind!=ControlInput::Kind::None);
+    }
+    Writer w;w.word(magic);w.word(eventNodes ? 29u : operators ? 28u : 27u);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -198,7 +203,8 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             if(!op.id) continue;
             w.word(static_cast<std::uint32_t>(op.type));
             for(float v:op.params) w.real(v);
-            for(const auto& in:op.inputs) {
+            for(std::size_t k=0;k<(eventNodes ? 3u : 2u);++k) { // v28: inputs A, B; v29: + third input
+                const auto& in=op.inputs[k];
                 w.word(static_cast<std::uint32_t>(in.kind));
                 w.word(static_cast<std::uint32_t>(in.source));
                 w.word(in.op);
@@ -212,7 +218,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>28) return false;
+    if(version<1 || version>29) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -441,7 +447,8 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             if(type>0xffu) return false;
             op.type=static_cast<ControlOpType>(type);
             for(auto& v:op.params) v=r.real();
-            for(auto& in:op.inputs) {
+            for(std::size_t k=0;k<(version>=29 ? 3u : 2u);++k) {
+                auto& in=op.inputs[k];
                 const auto kind=r.word();
                 if(kind>2u) return false;
                 in.kind=static_cast<ControlInput::Kind>(kind);

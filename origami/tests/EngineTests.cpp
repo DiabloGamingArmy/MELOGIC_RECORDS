@@ -52,7 +52,7 @@ void registryAndPatches() {
         for(std::size_t j=i+1;j<parameterCount;++j) check(p.id!=parameterRegistry()[j].id && p.key!=parameterRegistry()[j].key,"unique stable IDs");
         for(float normalized:{0.f,.25f,.5f,1.f}) {float v=fromNormalized(p.id,normalized);check(v>=p.minimum && v<=p.maximum,"normalized limits"); if(p.scale!=ParameterScale::Choice) check(std::abs(toNormalized(p.id,v)-normalized)<1e-5,"parameter conversion round trip");}
     }
-    OrigamiEngine engine;check(!engine.setParameter("missing",1),"invalid string ID");check(!engine.setParameter(static_cast<ParameterId>(500),1),"invalid numeric ID");
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;check(!engine.setParameter("missing",1),"invalid string ID");check(!engine.setParameter(static_cast<ParameterId>(500),1),"invalid numeric ID");
     check(!engine.setParameter(ParameterId::Cutoff,std::numeric_limits<float>::quiet_NaN()),"reject NaN");
     check(!engine.setParameter(ParameterId::MasterGain,std::numeric_limits<float>::infinity()),"reject infinity");
     set(engine,ParameterId::MasterGain,50);check(engine.parameterState()[9]==1,"gain clamped");
@@ -87,7 +87,7 @@ void envelopeTiming() {
 }
 void pitchAndBlocks() {
     for(double rate:{44100.,48000.}) for(int note:{60,69}) {
-        OrigamiEngine engine;prepare(engine,rate);set(engine,ParameterId::Waveform,0);set(engine,ParameterId::Sustain,1);engine.reset();
+        auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;prepare(engine,rate);set(engine,ParameterId::Waveform,0);set(engine,ParameterId::Sustain,1);engine.reset();
         check(engine.noteOn(note,.8f),"note accepted");const auto output=render(engine,static_cast<std::size_t>(rate));
         check(energy(output)>.01,"audible output");
         std::vector<std::size_t> crossings;
@@ -96,14 +96,14 @@ void pitchAndBlocks() {
         check(std::abs(frequency-dsp::midiFrequency(note))<.1,"rendered MIDI frequency");
         engine.noteOff(note);render(engine,static_cast<std::size_t>(rate));check(engine.activeVoiceCount()==0,"release eventually inactive");check(energy(render(engine,128))==0,"release silence");
     }
-    OrigamiEngine engine;prepare(engine);engine.noteOn(60,1);const auto reference=render(engine,4000,4000);
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;prepare(engine);engine.noteOn(60,1);const auto reference=render(engine,4000,4000);
     for(std::size_t block:{1u,7u,127u,128u,257u,511u,1024u}) {engine.reset();engine.noteOn(60,1);check(render(engine,4000,block)==reference,"block partition invariance");}
     engine.reset();check(engine.activeVoiceCount()==0 && energy(render(engine,321))==0,"reset clears all state");
     check(!engine.noteOn(128,1) && !engine.noteOn(-1,1) && !engine.noteOn(60,NAN),"invalid notes rejected");
     check(engine.noteOn(0,1) && engine.noteOn(127,1),"full MIDI range");
 }
 void voicesAndRealtime() {
-    OrigamiEngine engine;prepare(engine);
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;prepare(engine);
     for(int i=0;i<16;++i) engine.noteOn(48+i,.5f);
     check(engine.activeVoiceCount()==16,"16 voices");engine.noteOn(90,.8f);check(engine.voiceInfo(0).address.note==90,"oldest voice stolen");
     engine.noteOff(55);engine.noteOn(91,.8f);check(engine.voiceInfo(7).address.note==91,"releasing voice stolen first");
@@ -133,7 +133,7 @@ void voicesAndRealtime() {
     set(engine,ParameterId::MasterGain,0);engine.reset();engine.noteOn(60,1);engine.process(buffers,2,1024);check(std::all_of(std::begin(left),std::end(left),[](float v){return v==0;}),"master zero");
 }
 void performanceModes() {
-    OrigamiEngine engine;prepare(engine);
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;prepare(engine);
     PerformanceState p;p.voiceMode=VoiceMode::Mono;p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=.05f;
     check(engine.setPerformanceState(p),"mono state accepted");
     engine.noteOn(60,1);
@@ -152,7 +152,7 @@ void performanceModes() {
 
     engine.reset();p.notePriority=NotePriority::High;check(engine.setPerformanceState(p),"high priority accepted");engine.noteOn(72,1);engine.noteOn(60,1);check(engine.voiceInfo(0).address.note==72,"high priority");
     engine.reset();p.notePriority=NotePriority::Low;check(engine.setPerformanceState(p),"low priority accepted");engine.noteOn(60,1);engine.noteOn(72,1);check(engine.voiceInfo(0).address.note==60,"low priority");
-    OrigamiEngine a,b;prepare(a);prepare(b);p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=0;check(a.setPerformanceState(p),"zero glide");p.glideSeconds=.2f;check(b.setPerformanceState(p),"glide accepted");
+    auto aOwner=std::make_unique<OrigamiEngine>();auto& a=*aOwner;auto bOwner=std::make_unique<OrigamiEngine>();auto& b=*bOwner;prepare(a);prepare(b);p.notePriority=NotePriority::Last;p.legato=true;p.glideSeconds=0;check(a.setPerformanceState(p),"zero glide");p.glideSeconds=.2f;check(b.setPerformanceState(p),"glide accepted");
     a.noteOn(60,1);b.noteOn(60,1);render(a,512);render(b,512);a.noteOn(72,1);b.noteOn(72,1);check(render(a,512)!=render(b,512),"glide changes transition");
     PerformanceState poly=p;poly.voiceMode=VoiceMode::Poly;poly.glideSeconds=0;
     check(engine.setPerformanceState(poly),"poly state accepted after mono");
@@ -160,7 +160,7 @@ void performanceModes() {
     PerformanceState bad=p;bad.glideSeconds=6;check(!engine.setPerformanceState(bad),"invalid glide rejected");
 }
 void signalBehavior() {
-    OrigamiEngine engine;
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;
     float empty[8]; std::fill_n(empty,8,1.f); float* emptyPointer=empty;
     check(!engine.process(&emptyPointer,1,8) && std::all_of(std::begin(empty),std::end(empty),[](float v){return v==0;}),"unprepared output silent");
     check(!engine.prepare(NAN,256,2) && !engine.prepare(48000,0,2) && !engine.prepare(48000,256,3),"invalid preparation rejected");
@@ -520,7 +520,7 @@ void audioRateFastMathAudit() {
           "oscillator phase processes contain no std::pow");
 }
 void qosVoiceAdmissionAudit() {
-    OrigamiEngine engine;
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;
     check(engine.prepare(48000.0,128,2),"QoS admission engine prepares");
 
     engine.setVoiceAdmissionCeiling(4);

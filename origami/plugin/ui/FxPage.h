@@ -91,11 +91,15 @@ struct ControlNodeView {
     bool selected=false,linked=false,removable=false;
     // Operators: inputs (IN or A/B) and the one inline control.
     std::uint8_t inputs=0;
-    std::array<juce::String,2> inputNames{};
+    std::array<juce::String,3> inputNames{};
     int primaryParameter=-1;
     juce::String primaryLabel;
     float primaryValue=0.0f,primaryMinimum=0.0f,primaryMaximum=1.0f;
     bool primaryInteger=false;
+    // N05: the signal of each port (CONTROL diamond, EVENT square, GATE bar).
+    std::array<ControlSignal,3> inputSignals{{ControlSignal::Control,ControlSignal::Control,ControlSignal::Control}};
+    ControlSignal outputSignal=ControlSignal::Control;
+    ControlOpType opType=ControlOpType::None;
 };
 struct ControlLinkView {
     std::uint32_t route=0;               // route link (direct or processed)
@@ -103,6 +107,7 @@ struct ControlLinkView {
     std::uint32_t targetOperator=0;      // operator-input edge (route == 0)
     std::uint8_t targetInput=0;
     bool supported=true,enabled=true,selected=false;
+    ControlSignal signal=ControlSignal::Control; // drawn style (solid / short / long dashes)
 };
 
 // A CONTROL node on the canvas: a canonical SOURCE, a PARAMETER (both views
@@ -118,6 +123,8 @@ public:
     // The authoring endpoint of one of this node's ports.
     std::optional<nodes::ControlEndpoint> endpoint(nodes::PortDirection,std::uint8_t index) const noexcept;
     bool removable() const noexcept { return view_.removable; }
+    // N05 monitoring: event activity (decays on the UI timer) and gate state.
+    void setActivity(float activity,bool gateOpen);
     static int heightFor(const ControlNodeView&) noexcept;
     static constexpr int width=220;
     void paint(juce::Graphics&) override;
@@ -129,9 +136,11 @@ public:
 private:
     void showMenu();
     std::uint8_t inputCount() const noexcept;
-    bool hasOutput() const noexcept { return view_.key.kind!=nodes::ControlNodeKind::Parameter; }
+    bool hasOutput() const noexcept { return view_.key.kind!=nodes::ControlNodeKind::Parameter && view_.outputSignal!=ControlSignal::None; }
     FxPage& page_;
     ControlNodeView view_;
+    float activity_=0.0f;
+    bool gateOpen_=false;
     juce::TextButton remove_{"X"};
     juce::Slider primary_;
     bool primaryInitialised_=false;
@@ -479,6 +488,7 @@ public:
     void endOperatorGesture();
     void selectControlEdge(std::uint32_t op,std::uint8_t input);
     // CONTROL undo / redo (NODES authoring transactions).
+    const ModulationState& controlState() const noexcept { return controlModulation_; }
     bool canUndoControl() const noexcept { return !controlUndo_.empty(); }
     bool canRedoControl() const noexcept { return !controlRedo_.empty(); }
     void selectControlNode(const nodes::ControlNodeKey&);
@@ -561,6 +571,8 @@ private:
     std::vector<bool> controlNodeShown_,controlLinkShown_;
     ControlSelection controlSelection_;
     ModulationState controlModulation_{}; // as of the last refreshControl()
+    std::array<std::uint32_t,ModulationState::maxControlOperators> lastEventCounts_{};
+    std::array<float,ModulationState::maxControlOperators> eventActivity_{};
     std::vector<ControlSnapshot> controlUndo_,controlRedo_;
     std::uint64_t editSequence_=0;
     std::vector<std::uint64_t> graphSequences_,graphRedoSequences_; // graph edits, in the shared order

@@ -1,9 +1,9 @@
 # NODES architecture
 
-Status: **N04**. Read this before adding anything graph-, routing- or
+Status: **N05**. Read this before adding anything graph-, routing- or
 modulation-shaped to Origami. Sections are marked **LOCKED** (decided; change
 only by revising this document) or **OPEN** (undecided; do not silently pick an
-answer in code). §11 (N01), §12 (N02), §13 (N03) and §14 (N04) list exactly what exists today;
+answer in code). §11 (N01) through §15 (N05) list exactly what exists today;
 everything else here is direction, not implementation.
 
 ---
@@ -850,3 +850,193 @@ ModulationState (routes + operators)
 - A general control-rate scheduler, which is unnecessary while operators run
   inside the canonical per-sample evaluator.
 - Operator copy/paste across instruments.
+
+## 15. N05: EVENT / GATE / CLOCK, logic and stateful control (what exists now)
+
+### 15.1 Signal families
+
+| Family | Meaning | Socket | Cable |
+|---|---|---|---|
+| AUDIO | sample streams (bus graphs) | circle | thick red |
+| CONTROL | continuous modulation value | diamond | thin solid white |
+| EVENT | an instantaneous occurrence at one sample | small square | thin short dashes |
+| GATE | a held state, exactly 0 or 1, with transitions | bar | thin long dashes |
+
+- `NodeSignalType` gains `Gate`, and `ControlSignal` (Control / Gate / Event /
+  None) types every operator port. EVENT and GATE share the square-socket
+  family but never connect to each other.
+- **Typing is strict, in both the model (`validModulation`) and authoring
+  (`checkControlEdge`).** CONTROL→CONTROL, GATE→GATE and EVENT→EVENT only.
+  Canonical sources are CONTROL, and only a CONTROL output can drive a
+  parameter (a route).
+- **Conversion happens only through explicit nodes:**
+  - CONTROL→GATE: THRESHOLD, COMPARE
+  - GATE→EVENT: EDGE
+  - EVENT→GATE: PULSE, TOGGLE
+  - EVENT/GATE→CONTROL: SAMPLE & HOLD, TRACK & HOLD, RANDOM, COUNTER, SWITCH
+  - No float is ever treated as a trigger by a threshold check.
+
+### 15.2 Representation and sample accuracy
+
+- Events are typed values inside the existing per-sample operator plan:
+  - an EVENT output is non-zero **only at the sample where it occurs**;
+  - a GATE output is exactly 0 or 1.
+- The engine already evaluates modulation every sample, and the host adapter
+  renders up to each MIDI event's exact sample offset before applying it. So
+  an event keeps its sample offset with no queue and no allocation:
+  - a NOTE ON at sample 47 of a block fires at that voice's sample 47;
+  - a CLOCK tick fires at the exact sample its grid cell starts.
+- **Capacity:** one event per port per sample. Coincident events on the same
+  port at the same sample merge into one occurrence. This is the
+  deterministic overflow rule, and nothing ever queues, allocates or drops
+  out of order. Events per block are bounded by block size × operators (32).
+  Each operator has at most 3 inputs and one output; any fan-out is resolved
+  at compile time.
+
+### 15.3 Event sources
+
+| Node | Domain | Semantics |
+|---|---|---|
+| CLOCK | GLOBAL | **TEMPO**: a tick each time the beat-position grid cell (DIVISION 1/1…1/32, T, D) changes, offset by PHASE. **FREE**: RATE Hz. |
+| TRANSPORT | GLOBAL | START or STOP; fires at the first sample of the block where the host reports the change |
+| NOTE ON | VOICE | each note start on the voice (fresh, stolen or legato) |
+| NOTE OFF | VOICE | the voice's release |
+| GATE | VOICE | open while the note is held |
+| RETRIGGER | VOICE | a new note on a voice that is still sounding (mono/legato), never a fresh voice |
+
+Performance values (velocity, note, keytrack, mod wheel, pitch bend,
+aftertouch) remain CONTROL sources (N04), never events.
+
+**Clock architecture:**
+
+- The processor samples the host playhead once per callback (BPM, PPQ, playing)
+  and passes it to `OrigamiEngine::setHostTransport`. When there is no host
+  BPM, the tempo falls back to Origami's internal tempo.
+- The engine keeps a beat position that advances by `bpm/60/sampleRate` per
+  sample. While the host is playing with a valid PPQ, it resyncs to the host
+  every block (no drift; block-size independent, tested). Otherwise it free
+  runs.
+- No UI or MessageManager timing is involved.
+
+### 15.4 Logic and stateful nodes
+
+| Node | Ports | Behaviour |
+|---|---|---|
+| THRESHOLD | CONTROL → GATE | opens above THRESHOLD + HYSTERESIS/2, closes below THRESHOLD − HYSTERESIS/2 |
+| EDGE | GATE → EVENT | RISING, FALLING or BOTH (the initial previous state is closed) |
+| PULSE | EVENT → GATE | opens for LENGTH seconds starting at the event's sample; a new event restarts it |
+| COMPARE | CONTROL A, B → GATE | `>` `<` `>=` `<=`, plus `==` / `!=` within TOLERANCE |
+| AND / OR / XOR / NOT | GATE → GATE | an unconnected gate is closed |
+| SWITCH | CONTROL A, B, GATE SELECT → CONTROL | closed → A, open → B. GLIDE 0 is a deliberate instant switch; GLIDE > 0 crossfades |
+| SAMPLE & HOLD | CONTROL VALUE, EVENT TRIG → CONTROL | captures VALUE at the trigger's sample |
+| TRACK & HOLD | CONTROL VALUE, GATE → CONTROL | follows VALUE while open, holds while closed |
+| RANDOM | EVENT → CONTROL | a new value per trigger in MIN…MAX, from xorshift seeded by SEED and the operator id |
+| TOGGLE | EVENT → GATE | flips on each event |
+| COUNTER | EVENT → CONTROL | position / (STEPS − 1), WRAP or CLAMP |
+| ENV TRIGGER | EVENT → (target) | restarts ENV 2 or ENV 3 in the voice |
+
+Further details:
+
+- **SAMPLE & HOLD** captures VALUE *at the trigger's own sample*; the first
+  evaluated sample also captures.
+- **RANDOM:** a value exists from the first sample. The same preset always
+  recalls the same sequence. No system RNG is used.
+- **ENV TRIGGER** retriggers ENV 2 or ENV 3 inside the voice; the effect
+  starts at the next sample. ENV 1 (the amp envelope) is not exposed, and
+  normal MIDI envelope triggering is unchanged.
+
+### 15.5 Same-sample ordering
+
+```
+sample N:  sources (global LFO/macro/... and each voice's ENV/notes)
+        -> global operators, topological order
+        -> per-voice operators, topological order (read global outputs: broadcast)
+        -> destination frames (global, then per voice)
+        -> targets (ENV TRIGGER: effective at N+1)
+```
+
+Every downstream node sees an event at the sample it occurs:
+
+- CLOCK@N → S&H captures LFO(N) (tested).
+- MACRO crosses @N → THRESHOLD opens @N → EDGE fires @N → RANDOM draws @N
+  (tested).
+
+### 15.6 Execution domains
+
+These are the N04 rules, unchanged:
+
+- An operator is per-voice if it is a voice-only node (NOTE ON, NOTE OFF,
+  GATE, RETRIGGER, ENV TRIGGER) or anything upstream is per-voice.
+- GLOBAL events broadcast into per-voice chains, for example CLOCK → a
+  per-voice S&H.
+- A per-voice result never reaches a GLOBAL parameter: rejected when
+  authoring, inert if it arises.
+- Voices are never averaged and no voice is ever picked.
+
+### 15.7 Reset semantics
+
+| Condition | Effect |
+|---|---|
+| prepare / engine reset / preset load (restore → reset) | all global operator state cleared |
+| voice start (fresh or **stolen**) and retriggering retargets | that voice's operator state cleared |
+| legato retarget without envelope retrigger | voice state kept |
+| an operator id newly occupying a slot | starts fresh |
+
+What "cleared" means for each node:
+
+- SMOOTH: starts at its next input.
+- S&H and T&H: capture at the next sample.
+- TOGGLE: closed.
+- COUNTER: 0.
+- PULSE: closed.
+- RANDOM: reseeded from SEED.
+- THRESHOLD and EDGE: re-evaluated from closed.
+- CLOCK: re-anchors to the grid.
+
+Transport start does not reset state; a TRANSPORT START → (reset) chain is
+the explicit way to do that. Runtime state (held values, toggle states,
+counters, pending events) is **never serialized**. Voice stealing is tested:
+a reused voice starts with a fresh TOGGLE.
+
+### 15.8 Monitoring
+
+- EVENT operators keep monotonic counters: global in `CompiledModulation`,
+  per voice in each `Voice`.
+- At the existing observation tick, the engine publishes the counters
+  (summed for display only) together with the operator outputs, through the
+  existing lock-free mailbox.
+- The UI timer flashes a node when its counter changes; the flash decays on
+  the timer. GATE outputs fill their socket while open.
+- The inspector shows CONTROL values, OPEN/CLOSED, and event counts.
+- Execution never depends on monitoring, and QoS suppression only stops
+  publishing.
+
+### 15.9 Interoperability, state, realtime
+
+- **Matrix:** a parameter driven through an event graph is still one
+  processed row (`NODES: SAMPLE & HOLD (LFO 1)`). Event graphs are never
+  flattened into fake rows. **SYNTH:** rings and arcs work as in N04.
+- **Save format:** instrument codec **v29** stores the third operator input.
+  It is written only when an N05 node or a third input exists. Otherwise N04
+  states stay v28 and operator-free states stay v27. v28 and v27 load
+  unchanged.
+- **Realtime:** fixed arrays only, with no allocation, locks, strings or UI
+  access (allocation guard tested with clocks, counters, note events and
+  T&H). Patches without N05 nodes run no N05 code beyond advancing one double
+  per sample. The N02 golden fingerprints and all engine tests are unchanged.
+
+Engine tests now allocate their ~2 MB engines on the heap. The added
+per-voice state pushed the test runner's inlined stack frame past 8 MB; the
+production engine always lived on the heap inside the processor.
+
+### 15.10 Deferred
+
+- **Sequencer ADVANCE/RESET:** the existing sequencer is a free-running global
+  generator evaluated before the operators. Driving it from events needs a
+  redesign of its clocking, so it moves to N06 rather than becoming a second
+  sequencer.
+- **COUNTER's ON WRAP event output:** it would need multi-output nodes.
+- **Musically synced PULSE length:** milliseconds only for now.
+- **Event cable activity animation:** node flashes only.
+- **TOGGLE RESET input.**
+- **Audio → control analysis:** a later phase.

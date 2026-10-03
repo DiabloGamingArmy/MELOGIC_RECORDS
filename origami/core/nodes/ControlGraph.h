@@ -76,8 +76,13 @@ enum class ControlLinkResult : std::uint8_t {
     MissingOperator,     // an endpoint operator does not exist
     InvalidPort,         // no such operator input / wrong direction
     InputOccupied,       // operator inputs take exactly one connection
-    WouldCreateCycle     // control graphs are acyclic
+    WouldCreateCycle,    // control graphs are acyclic
+    TypeMismatch         // N05: CONTROL / GATE / EVENT never connect to each other
 };
+// N05: the signal an output endpoint carries, and the signal an input expects.
+ControlSignal controlOutputSignal(const ModulationState&,const struct ControlEndpoint&) noexcept;
+ControlSignal controlInputSignal(const ModulationState&,const struct ControlEndpoint&) noexcept;
+NodeSignalType nodeSignal(ControlSignal) noexcept;
 const char* toString(ControlLinkResult) noexcept;
 struct ControlLinkCheck {
     ControlLinkResult result=ControlLinkResult::MissingSource;

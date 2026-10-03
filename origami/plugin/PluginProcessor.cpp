@@ -553,13 +553,21 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
 
     // Patch 13/19: sample host-owned playhead context exactly once per callback.
     float hostBpm=120.0f;
+    mct::origami::OrigamiEngine::HostTransport transport;
+    transport.bpm=juce::jlimit(20.0,400.0,arpState_.internalTempo); // Origami's internal tempo
     if(auto* playHead=getPlayHead()) {
         if(const auto position=playHead->getPosition()) {
-            if(const auto bpm=position->getBpm(); bpm && std::isfinite(*bpm))
+            if(const auto bpm=position->getBpm(); bpm && std::isfinite(*bpm)) {
                 hostBpm=static_cast<float>(juce::jlimit(20.0,400.0,*bpm));
+                transport.bpm=hostBpm;
+            }
+            // N05: host position and transport, when the host reports them.
+            if(const auto ppq=position->getPpqPosition()) { transport.ppq=*ppq; transport.ppqValid=std::isfinite(*ppq); }
+            transport.playing=position->getIsPlaying();
         }
     }
     cachedHostBpm_.store(hostBpm,std::memory_order_release);
+    engine_.setHostTransport(transport);
 
     // Patch 03/19: reuse capacity-prepared MIDI workspaces. Do not grow/mutate
     // the host wrapper's MIDI buffer with Origami-generated events.

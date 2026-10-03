@@ -1,5 +1,6 @@
 // mct-origami-v31.0.0-matrix-routing-expansion
 // mct-origami-modulation-completion-v24.0.1
+#include <memory>
 #include "core/Engine.h"
 #include "core/modulation/Modulation.h"
 #include "core/preset/StateCodec.h"
@@ -170,7 +171,7 @@ void expandedSources() {
 }
 
 void stateV3RoundTrip() {
-    OrigamiEngine engine;
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;
     const auto osc2=engine.addOscillatorModule();
     check(osc2==2,"second oscillator stable id");
 
@@ -202,7 +203,7 @@ void stateV3RoundTrip() {
     check(decoded.modulation.routes[0].destination.oscillator==osc2,"stable oscillator destination persisted");
     check(decoded.modulation.routes[1].destination.parameter==ModDestination::Cutoff,"global destination persisted");
 
-    OrigamiEngine restored;
+    auto restoredOwner=std::make_unique<OrigamiEngine>();auto& restored=*restoredOwner;
     check(restored.restoreInstrumentState(decoded),"engine restores v3 modulation state");
     check(encodeInstrumentState(restored.instrumentState())==encoded,"v3 modulation state exact round trip");
 
@@ -214,7 +215,7 @@ void stateV3RoundTrip() {
 }
 
 void renderSeparation() {
-    OrigamiEngine dry,mod;
+    auto dryOwner=std::make_unique<OrigamiEngine>();auto& dry=*dryOwner;auto modOwner=std::make_unique<OrigamiEngine>();auto& mod=*modOwner;
     check(dry.prepare(48000,256,2) && mod.prepare(48000,256,2),"engines prepared");
 
     auto ms=mod.instrumentState().modulation;

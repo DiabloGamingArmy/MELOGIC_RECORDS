@@ -12,11 +12,15 @@
 // Graph OWNERSHIP (e.g. "this graph belongs to bus 7") is a third, separate
 // concept carried by the owner (FxWorkspace), never an execution domain.
 //
-// Control and Event are vocabulary only: no shipping node has such a port yet.
+// The FX (audio) graph is AUDIO-only; CONTROL (N03/N04) and EVENT / GATE (N05)
+// ports belong to the NODES control layer (core/nodes/ControlGraph.h).
 namespace mct::origami::nodes {
 
 // Values are stable (FxSignalDomain shares them; never renumber).
-enum class NodeSignalType : std::uint8_t { Audio=1, Control=2, Event=3 };
+// N05: GATE (a held 0/1 state with transitions) is distinct from EVENT (an
+// instantaneous occurrence at one sample). They share the EVENT/GATE family
+// (square sockets) but never connect to each other without a converter.
+enum class NodeSignalType : std::uint8_t { Audio=1, Control=2, Event=3, Gate=4 };
 
 enum class NodeExecutionDomain : std::uint8_t {
     Global=1, // one instance, always running (bus/master processing, future generators)
@@ -46,7 +50,7 @@ constexpr PortPairError checkPortPair(const PortDescriptor& a,const PortDescript
 }
 
 constexpr const char* toString(NodeSignalType t) noexcept {
-    return t==NodeSignalType::Audio ? "AUDIO" : t==NodeSignalType::Control ? "CONTROL" : "EVENT";
+    return t==NodeSignalType::Audio ? "AUDIO" : t==NodeSignalType::Control ? "CONTROL" : t==NodeSignalType::Event ? "EVENT" : "GATE";
 }
 constexpr const char* toString(NodeExecutionDomain d) noexcept {
     return d==NodeExecutionDomain::Global ? "GLOBAL" : d==NodeExecutionDomain::Voice ? "VOICE" : "EVENT";

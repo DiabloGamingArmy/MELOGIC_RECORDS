@@ -193,9 +193,15 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             const auto& in=op.inputs[k];
             if(k>=info->inputs && in.kind!=ControlInput::Kind::None) return false;
             if(in.kind==ControlInput::Kind::None) { if(in.source!=ModSource::None || in.op!=0) return false; }
-            else if(in.kind==ControlInput::Kind::Source) { if(!known(in.source) || in.op!=0) return false; }
-            else if(in.kind==ControlInput::Kind::Operator) {
-                if(in.source!=ModSource::None || in.op==op.id || findControlOperator(s,in.op)==nullptr) return false;
+            else if(in.kind==ControlInput::Kind::Source) {
+                // Canonical sources are CONTROL: never into a GATE / EVENT input.
+                if(!known(in.source) || in.op!=0 || info->inputSignals[k]!=ControlSignal::Control) return false;
+            } else if(in.kind==ControlInput::Kind::Operator) {
+                const auto* upstream=findControlOperator(s,in.op);
+                if(in.source!=ModSource::None || in.op==op.id || upstream==nullptr) return false;
+                const auto* upstreamInfo=controlOpInfo(upstream->type);
+                // Strict typing: CONTROL->CONTROL, GATE->GATE, EVENT->EVENT only.
+                if(upstreamInfo==nullptr || upstreamInfo->output!=info->inputSignals[k]) return false;
                 if(controlOperatorReaches(s,op.id,in.op)) return false; // would close a cycle
             } else return false;
         }
@@ -205,7 +211,12 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
     for(const auto& r:s.routes) {
         if(!r.id) {empty=true;continue;}
         if(empty || r.id<=previous || r.id>=s.nextRouteId || !range(r.amount,-1,1)) return false;
-        if(isOperatorSource(r.source)) { if(findControlOperator(s,operatorIdOf(r.source))==nullptr) return false; }
+        if(isOperatorSource(r.source)) {
+            // Only a CONTROL output can drive a parameter (GATE / EVENT need a converter).
+            const auto* op=findControlOperator(s,operatorIdOf(r.source));
+            const auto* info=op ? controlOpInfo(op->type) : nullptr;
+            if(info==nullptr || info->output!=ControlSignal::Control) return false;
+        }
         else if(r.source!=ModSource::None && !known(r.source)) return false;
         previous=r.id;
         // Complete routes are unique per (source, destination).
@@ -496,6 +507,8 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     // N04: operators in topological order, inputs resolved to slots, ranges
     // and execution domains propagated. Fixed arrays; no allocation.
     opCount_=globalOpCount_=voiceOpCount_=0;
+    envelopeTriggerCount_=0;
+    eventOps_=false;
     opRange_.fill(ControlRange::Unipolar);
     opVoice_.fill(false);
     {
@@ -517,8 +530,9 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                 c=CompiledOp{};
                 c.op=op;
                 c.slot=static_cast<std::uint8_t>(slot);
-                std::array<bool,2> connected{};
-                for(std::size_t k=0;k<2;++k) {
+                const auto* info=controlOpInfo(op.type);
+                std::array<bool,3> connected{};
+                for(std::size_t k=0;k<op.inputs.size();++k) {
                     const auto& in=op.inputs[k];
                     if(in.kind==ControlInput::Kind::Source) {
                         const auto s=slotFor(in.source,state);
@@ -534,9 +548,14 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                         connected[k]=true;
                     }
                 }
-                if(op.type==ControlOpType::Smooth) {
-                    c.rise=controlSmoothingCoefficient(op.params[0],sampleRate_);
-                    c.fall=controlSmoothingCoefficient(op.params[1],sampleRate_);
+                c.prepared=prepareControlOp(op,sampleRate_);
+                // Note sources and envelope targets live inside each voice.
+                if(info->voiceOnly) c.voice=true;
+                c.event=info->output==ControlSignal::Event;
+                if(info->family) eventOps_=true;
+                if(op.type==ControlOpType::EnvelopeTrigger && envelopeTriggerCount_<operatorSlotCount) {
+                    envelopeTriggerSlots_[envelopeTriggerCount_]=static_cast<std::uint8_t>(slot);
+                    envelopeTriggerTargets_[envelopeTriggerCount_++]=static_cast<std::uint8_t>(std::lround(op.params[0]));
                 }
                 opRange_[slot]=controlOpOutputRange(op,c.range[0],connected[0],c.range[1],connected[1]);
                 opVoice_[slot]=c.voice;
@@ -553,6 +572,8 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             // A per-voice result never drives a global destination (no
             // voice-reduction policy exists); such a route stays inert.
             if(from>=operatorSlotCount || (opVoice_[from] && destinationIsGlobal(route.destination.parameter))) continue;
+            const auto* info=controlOpInfo(state.operators[from].type);
+            if(info==nullptr || info->output!=ControlSignal::Control) continue; // only CONTROL drives parameters
         }
         std::size_t slot=0;
         if(!isGlobalDestination(route.destination.parameter) && !isFxDestination(route.destination.parameter)) {
@@ -741,8 +762,9 @@ static_assert(modulationSourceSlotCount==CompiledModulation::totalSlotCount,"mon
 
 namespace {
 using P=ControlOpParameterInfo;
-const std::array<ControlOpInfo,15>& opTable() noexcept {
-    static const std::array<ControlOpInfo,15> table{{
+const std::array<ControlOpInfo,36>& opTable() noexcept {
+    using S=ControlSignal;
+    static const std::array<ControlOpInfo,36> table{{
         {ControlOpType::Add,"ADD","Math",2,0,{}},
         {ControlOpType::Subtract,"SUBTRACT","Math",2,0,{}},
         {ControlOpType::Multiply,"MULTIPLY","Math",2,0,{}},
@@ -758,7 +780,40 @@ const std::array<ControlOpInfo,15>& opTable() noexcept {
         {ControlOpType::Clamp,"CLAMP","Shaping",1,2,{{P{"MIN",-1.0f,1.0f,0.0f,false},P{"MAX",-1.0f,1.0f,1.0f,false}}}},
         {ControlOpType::Constant,"CONSTANT","Utility",0,1,{{P{"VALUE",-1.0f,1.0f,0.5f,false}}}},
         {ControlOpType::Smooth,"SMOOTH","Utility",1,2,{{P{"RISE",0.001f,10.0f,0.05f,false},P{"FALL",0.001f,10.0f,0.05f,false}}}},
-        {ControlOpType::Quantize,"QUANTIZE","Utility",1,1,{{P{"STEPS",2.0f,64.0f,8.0f,true}}}}
+        {ControlOpType::Quantize,"QUANTIZE","Utility",1,1,{{P{"STEPS",2.0f,64.0f,8.0f,true}}}},
+        // ---- N05 EVENT / LOGIC family ------------------------------------
+        {ControlOpType::Clock,"CLOCK","Sources",0,4,{{P{"SYNC",0.0f,1.0f,1.0f,true},P{"RATE",0.05f,50.0f,2.0f,false},
+                                                      P{"DIVISION",0.0f,11.0f,3.0f,true},P{"PHASE",0.0f,1.0f,0.0f,false}}},
+         {{S::Control,S::Control,S::Control}},S::Event,{{nullptr,nullptr,nullptr}},false,true},
+        {ControlOpType::NoteOn,"NOTE ON","Sources",0,0,{},{{S::Control,S::Control,S::Control}},S::Event,{{nullptr,nullptr,nullptr}},true,true},
+        {ControlOpType::NoteOff,"NOTE OFF","Sources",0,0,{},{{S::Control,S::Control,S::Control}},S::Event,{{nullptr,nullptr,nullptr}},true,true},
+        {ControlOpType::NoteGate,"GATE","Sources",0,0,{},{{S::Control,S::Control,S::Control}},S::Gate,{{nullptr,nullptr,nullptr}},true,true},
+        {ControlOpType::Retrigger,"RETRIGGER","Sources",0,0,{},{{S::Control,S::Control,S::Control}},S::Event,{{nullptr,nullptr,nullptr}},true,true},
+        {ControlOpType::Transport,"TRANSPORT","Sources",0,1,{{P{"MODE",0.0f,1.0f,0.0f,true}}},
+         {{S::Control,S::Control,S::Control}},S::Event,{{nullptr,nullptr,nullptr}},false,true},
+        {ControlOpType::Threshold,"THRESHOLD","Conversion",1,2,{{P{"THRESHOLD",-1.0f,1.0f,0.5f,false},P{"HYSTERESIS",0.0f,1.0f,0.05f,false}}},
+         {{S::Control,S::Control,S::Control}},S::Gate,{{"IN",nullptr,nullptr}},false,true},
+        {ControlOpType::Edge,"EDGE","Conversion",1,1,{{P{"MODE",0.0f,2.0f,0.0f,true}}},
+         {{S::Gate,S::Control,S::Control}},S::Event,{{"GATE",nullptr,nullptr}},false,true},
+        {ControlOpType::Pulse,"PULSE","Conversion",1,1,{{P{"LENGTH",0.001f,10.0f,0.05f,false}}},
+         {{S::Event,S::Control,S::Control}},S::Gate,{{"TRIG",nullptr,nullptr}},false,true},
+        {ControlOpType::Compare,"COMPARE","Logic",2,2,{{P{"MODE",0.0f,5.0f,0.0f,true},P{"TOLERANCE",0.0f,0.5f,0.001f,false}}},
+         {{S::Control,S::Control,S::Control}},S::Gate,{{"A","B",nullptr}},false,true},
+        {ControlOpType::And,"AND","Logic",2,0,{},{{S::Gate,S::Gate,S::Control}},S::Gate,{{"A","B",nullptr}},false,true},
+        {ControlOpType::Or,"OR","Logic",2,0,{},{{S::Gate,S::Gate,S::Control}},S::Gate,{{"A","B",nullptr}},false,true},
+        {ControlOpType::Xor,"XOR","Logic",2,0,{},{{S::Gate,S::Gate,S::Control}},S::Gate,{{"A","B",nullptr}},false,true},
+        {ControlOpType::Not,"NOT","Logic",1,0,{},{{S::Gate,S::Control,S::Control}},S::Gate,{{"GATE",nullptr,nullptr}},false,true},
+        {ControlOpType::Switch,"SWITCH","Logic",3,1,{{P{"GLIDE",0.0f,1.0f,0.0f,false}}},
+         {{S::Control,S::Control,S::Gate}},S::Control,{{"A","B","SELECT"}},false,true},
+        {ControlOpType::SampleHold,"SAMPLE & HOLD","Stateful",2,0,{},{{S::Control,S::Event,S::Control}},S::Control,{{"VALUE","TRIG",nullptr}},false,true},
+        {ControlOpType::TrackHold,"TRACK & HOLD","Stateful",2,0,{},{{S::Control,S::Gate,S::Control}},S::Control,{{"VALUE","GATE",nullptr}},false,true},
+        {ControlOpType::RandomTrigger,"RANDOM","Stateful",1,3,{{P{"MIN",-1.0f,1.0f,0.0f,false},P{"MAX",-1.0f,1.0f,1.0f,false},P{"SEED",0.0f,65535.0f,1.0f,true}}},
+         {{S::Event,S::Control,S::Control}},S::Control,{{"TRIG",nullptr,nullptr}},false,true},
+        {ControlOpType::Toggle,"TOGGLE","Stateful",1,0,{},{{S::Event,S::Control,S::Control}},S::Gate,{{"TRIG",nullptr,nullptr}},false,true},
+        {ControlOpType::Counter,"COUNTER","Stateful",1,2,{{P{"STEPS",2.0f,64.0f,8.0f,true},P{"MODE",0.0f,1.0f,0.0f,true}}},
+         {{S::Event,S::Control,S::Control}},S::Control,{{"TRIG",nullptr,nullptr}},false,true},
+        {ControlOpType::EnvelopeTrigger,"ENV TRIGGER","Targets",1,1,{{P{"ENVELOPE",2.0f,3.0f,2.0f,true}}},
+         {{S::Event,S::Control,S::Control}},S::None,{{"TRIG",nullptr,nullptr}},true,true}
     }};
     return table;
 }
@@ -782,6 +837,54 @@ float curveShape(ControlCurveMode mode,float x,float amount) noexcept {
 const ControlOpInfo* controlOpInfo(ControlOpType type) noexcept {
     for(const auto& info:opTable()) if(info.type==type) return &info;
     return nullptr;
+}
+
+const std::array<ControlOpType,21>& controlEventOpCatalog() noexcept {
+    static const std::array<ControlOpType,21> catalog{{
+        ControlOpType::Clock,ControlOpType::NoteOn,ControlOpType::NoteOff,ControlOpType::NoteGate,ControlOpType::Retrigger,ControlOpType::Transport,
+        ControlOpType::Threshold,ControlOpType::Edge,ControlOpType::Pulse,
+        ControlOpType::Compare,ControlOpType::And,ControlOpType::Or,ControlOpType::Xor,ControlOpType::Not,ControlOpType::Switch,
+        ControlOpType::SampleHold,ControlOpType::TrackHold,ControlOpType::RandomTrigger,ControlOpType::Toggle,ControlOpType::Counter,
+        ControlOpType::EnvelopeTrigger}};
+    return catalog;
+}
+
+const char* controlInputName(const ControlOpInfo& info,std::size_t input) noexcept {
+    if(input<info.inputNames.size() && info.inputNames[input]!=nullptr) return info.inputNames[input];
+    return info.inputs==1 ? "IN" : input==0 ? "A" : input==1 ? "B" : "C";
+}
+
+double clockDivisionBeats(int index) noexcept {
+    static constexpr double beats[clockDivisionCount]{4.0,2.0,1.0,0.5,0.25,0.125,2.0/3.0,1.0/3.0,1.0/6.0,1.5,0.75,0.375};
+    return beats[std::clamp(index,0,int(clockDivisionCount)-1)];
+}
+
+const char* clockDivisionLabel(int index) noexcept {
+    static constexpr const char* labels[clockDivisionCount]{"1/1","1/2","1/4","1/8","1/16","1/32","1/4T","1/8T","1/16T","1/4D","1/8D","1/16D"};
+    return labels[std::clamp(index,0,int(clockDivisionCount)-1)];
+}
+
+ControlOpPrepared prepareControlOp(const ControlOperator& op,double sampleRate) noexcept {
+    ControlOpPrepared prepared;
+    const double rate=sampleRate>0.0 ? sampleRate : 48000.0;
+    switch(op.type) {
+    case ControlOpType::Smooth:
+        prepared.rise=controlSmoothingCoefficient(op.params[0],rate);
+        prepared.fall=controlSmoothingCoefficient(op.params[1],rate);
+        break;
+    case ControlOpType::Pulse:
+        prepared.pulseSamples=std::max<std::int32_t>(1,static_cast<std::int32_t>(std::lround(double(op.params[0])*rate)));
+        break;
+    case ControlOpType::Clock:
+        prepared.clockStep=double(op.params[1])/rate;
+        prepared.divisionBeats=clockDivisionBeats(static_cast<int>(std::lround(op.params[2])));
+        break;
+    case ControlOpType::Switch:
+        prepared.switchStep=op.params[0]>0.0f ? 1.0/(double(op.params[0])*rate) : 1.0;
+        break;
+    default: break;
+    }
+    return prepared;
 }
 
 const std::array<ControlOpType,15>& controlOpCatalog() noexcept {
@@ -816,15 +919,40 @@ ControlRange controlOpOutputRange(const ControlOperator& op,ControlRange a,bool 
     case ControlOpType::Remap: return op.params[2]<0.0f || op.params[3]<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
     case ControlOpType::Clamp: return std::min(op.params[0],op.params[1])<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
     case ControlOpType::Constant: return op.params[0]<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
-    default: return aConnected ? a : ControlRange::Unipolar; // range-preserving unary operators
+    case ControlOpType::Switch: return bipolar(aConnected,a) || bipolar(bConnected,b) ? ControlRange::Bipolar : ControlRange::Unipolar;
+    case ControlOpType::RandomTrigger: return std::min(op.params[0],op.params[1])<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
+    case ControlOpType::Counter: return ControlRange::Unipolar;
+    default:
+        if(const auto* info=controlOpInfo(op.type); info!=nullptr && info->output!=ControlSignal::Control) return ControlRange::Unipolar;
+        return aConnected ? a : ControlRange::Unipolar; // range-preserving unary operators (incl. S&H / T&H VALUE)
     }
 }
 
-float evaluateControlOp(const ControlOperator& op,float a,bool aConnected,ControlRange aRange,
-                        float b,bool bConnected,ControlRange,
-                        ControlOpRuntime& state,float rise,float fall) noexcept {
-    a=finiteOr0(a); b=finiteOr0(b);
+namespace {
+std::uint32_t xorshift(std::uint32_t& x) noexcept {
+    if(x==0) x=0x9e3779b9u;
+    x^=x<<13; x^=x>>17; x^=x<<5;
+    return x;
+}
+std::uint32_t seedFor(float seed,std::uint32_t id) noexcept {
+    // Deterministic per operator: the same preset recalls the same sequence.
+    std::uint32_t h=static_cast<std::uint32_t>(std::lround(seed))*2654435761u ^ (id*0x85ebca6bu);
+    h^=h>>16; h*=0x7feb352du; h^=h>>15;
+    return h==0 ? 0x1234567u : h;
+}
+float unitRandom(std::uint32_t& x) noexcept { return float(xorshift(x)>>8)/float(1u<<24); }
+}
+
+float evaluateControlOp(const ControlOperator& op,const ControlOpInputs& in,ControlOpRuntime& state,
+                        const ControlOpPrepared& prepared,const ControlEventContext& ctx) noexcept {
+    float a=finiteOr0(in.value[0]),b=finiteOr0(in.value[1]),c=finiteOr0(in.value[2]);
+    const bool aConnected=in.connected[0],bConnected=in.connected[1];
+    const auto aRange=in.range[0];
     const auto& p=op.params;
+    // Typed reads: an EVENT input fires when non-zero at this sample; a GATE
+    // input is open when 1. (Typing guarantees these values are exact.)
+    const auto event=[&](std::size_t i){ return in.connected[i] && in.value[i]!=0.0f; };
+    const auto gate=[&](std::size_t i){ return in.connected[i] && in.value[i]>=0.5f; };
     float out=0.0f;
     switch(op.type) {
     case ControlOpType::None: out=0.0f; break;
@@ -856,7 +984,7 @@ float evaluateControlOp(const ControlOperator& op,float a,bool aConnected,Contro
     case ControlOpType::Constant: out=p[0]; break;
     case ControlOpType::Smooth:
         if(!state.initialized) { state.value=a; state.initialized=true; }
-        else state.value+=(a>state.value ? rise : fall)*(a-state.value);
+        else state.value+=(a>state.value ? prepared.rise : prepared.fall)*(a-state.value);
         out=state.value;
         break;
     case ControlOpType::Quantize: {
@@ -865,8 +993,134 @@ float evaluateControlOp(const ControlOperator& op,float a,bool aConnected,Contro
         else out=std::round(a*steps)/steps;
         break;
     }
+    // ---- N05 sources -----------------------------------------------------
+    case ControlOpType::Clock:
+        if(p[0]>=0.5f) {
+            // Tempo: a tick whenever the division grid cell changes (host
+            // position resyncs each block; loops and jumps tick once).
+            const double position=ctx.beats/prepared.divisionBeats+double(p[3]);
+            const auto cell=static_cast<std::int64_t>(std::floor(position));
+            if(!state.initialized) {
+                state.initialized=true;
+                state.index=cell;
+                const double perSample=ctx.beatsPerSample/prepared.divisionBeats;
+                out=position-double(cell)<perSample ? 1.0f : 0.0f; // starting exactly on the grid
+            } else if(cell!=state.index) { state.index=cell; out=1.0f; }
+        } else {
+            // Free: RATE Hz from PHASE, independent of tempo.
+            if(!state.initialized) { state.initialized=true; state.phase=double(p[3]); out=state.phase==0.0 ? 1.0f : 0.0f; }
+            else {
+                state.phase+=prepared.clockStep;
+                if(state.phase>=1.0) { state.phase-=std::floor(state.phase); out=1.0f; }
+            }
+        }
+        break;
+    case ControlOpType::NoteOn: out=ctx.noteOn ? 1.0f : 0.0f; break;
+    case ControlOpType::NoteOff: out=ctx.noteOff ? 1.0f : 0.0f; break;
+    case ControlOpType::NoteGate: out=ctx.gate ? 1.0f : 0.0f; break;
+    case ControlOpType::Retrigger: out=ctx.retrigger ? 1.0f : 0.0f; break;
+    case ControlOpType::Transport: out=(p[0]>=0.5f ? ctx.transportStop : ctx.transportStart) ? 1.0f : 0.0f; break;
+    // ---- conversion --------------------------------------------------------
+    case ControlOpType::Threshold: {
+        // CONTROL -> GATE with hysteresis (no chatter around the threshold).
+        const float half=0.5f*p[1];
+        if(!state.initialized) { state.initialized=true; state.gate=a>p[0]; }
+        else if(!state.gate && a>p[0]+half) state.gate=true;
+        else if(state.gate && a<p[0]-half) state.gate=false;
+        out=state.gate ? 1.0f : 0.0f;
+        break;
     }
+    case ControlOpType::Edge: {
+        // GATE transition -> EVENT. The initial previous state is closed.
+        const bool now=gate(0);
+        const int mode=static_cast<int>(std::lround(p[0]));
+        const bool rising=now && !state.previous,falling=!now && state.previous;
+        out=(mode==0 && rising) || (mode==1 && falling) || (mode==2 && (rising || falling)) ? 1.0f : 0.0f;
+        state.previous=now;
+        break;
+    }
+    case ControlOpType::Pulse:
+        // EVENT -> GATE open for LENGTH, starting at the event's sample.
+        if(event(0)) state.counter=prepared.pulseSamples;
+        out=state.counter>0 ? 1.0f : 0.0f;
+        if(state.counter>0) --state.counter;
+        break;
+    // ---- logic -----------------------------------------------------------
+    case ControlOpType::Compare: {
+        const float x=aConnected ? a : 0.0f,y=bConnected ? b : 0.0f;
+        bool result=false;
+        switch(static_cast<int>(std::lround(p[0]))) {
+        case 0: result=x>y; break;
+        case 1: result=x<y; break;
+        case 2: result=x>=y; break;
+        case 3: result=x<=y; break;
+        case 4: result=std::abs(x-y)<=p[1]; break; // == within TOLERANCE
+        default: result=std::abs(x-y)>p[1]; break; // != beyond TOLERANCE
+        }
+        out=result ? 1.0f : 0.0f;
+        break;
+    }
+    case ControlOpType::And: out=gate(0) && gate(1) ? 1.0f : 0.0f; break;
+    case ControlOpType::Or: out=gate(0) || gate(1) ? 1.0f : 0.0f; break;
+    case ControlOpType::Xor: out=gate(0)!=gate(1) ? 1.0f : 0.0f; break;
+    case ControlOpType::Not: out=gate(0) ? 0.0f : 1.0f; break;
+    case ControlOpType::Switch: {
+        // SELECT closed -> A, open -> B. GLIDE 0 switches instantly (a
+        // deliberate discontinuity); GLIDE > 0 crossfades over that time.
+        const double target=gate(2) ? 1.0 : 0.0;
+        if(!state.initialized) { state.initialized=true; state.phase=target; }
+        else if(state.phase<target) state.phase=std::min(target,state.phase+prepared.switchStep);
+        else if(state.phase>target) state.phase=std::max(target,state.phase-prepared.switchStep);
+        const float mix=static_cast<float>(state.phase);
+        out=(aConnected ? a : 0.0f)*(1.0f-mix)+(bConnected ? b : 0.0f)*mix;
+        break;
+    }
+    // ---- stateful --------------------------------------------------------
+    case ControlOpType::SampleHold:
+        // The first sample captures VALUE; afterwards only a TRIG does, and it
+        // captures VALUE as evaluated at the trigger's own sample.
+        if(!state.initialized || event(1)) { state.value=a; state.initialized=true; }
+        out=state.value;
+        break;
+    case ControlOpType::TrackHold:
+        if(!state.initialized || gate(1)) { state.value=a; state.initialized=true; }
+        out=state.value;
+        break;
+    case ControlOpType::RandomTrigger:
+        if(!state.initialized) {
+            state.initialized=true;
+            state.rng=seedFor(p[2],op.id);
+            state.value=p[0]+(p[1]-p[0])*unitRandom(state.rng); // a value exists from the first sample
+        } else if(event(0)) state.value=p[0]+(p[1]-p[0])*unitRandom(state.rng);
+        out=state.value;
+        break;
+    case ControlOpType::Toggle:
+        if(event(0)) state.gate=!state.gate;
+        out=state.gate ? 1.0f : 0.0f;
+        break;
+    case ControlOpType::Counter: {
+        const int steps=std::max(2,static_cast<int>(std::lround(p[0])));
+        if(event(0)) {
+            if(p[1]>=0.5f) state.counter=std::min(state.counter+1,steps-1); // CLAMP
+            else state.counter=(state.counter+1)%steps;                    // WRAP
+        }
+        out=float(state.counter)/float(steps-1);
+        break;
+    }
+    case ControlOpType::EnvelopeTrigger: out=event(0) ? 1.0f : 0.0f; break;
+    }
+    (void)c;
     return finiteOr0(out);
+}
+
+float evaluateControlOp(const ControlOperator& op,float a,bool aConnected,ControlRange aRange,
+                        float b,bool bConnected,ControlRange bRange,
+                        ControlOpRuntime& state,float rise,float fall) noexcept {
+    ControlOpInputs in;
+    in.value={a,b,0.0f}; in.connected={aConnected,bConnected,false}; in.range={aRange,bRange,ControlRange::Unipolar};
+    ControlOpPrepared prepared;
+    prepared.rise=rise; prepared.fall=fall;
+    return evaluateControlOp(op,in,state,prepared,ControlEventContext{});
 }
 
 const ControlOperator* findControlOperator(const ModulationState& state,std::uint32_t id) noexcept {
@@ -882,7 +1136,7 @@ std::size_t controlOperatorSlot(const ModulationState& state,std::uint32_t id) n
 
 bool controlOperatorReaches(const ModulationState& state,std::uint32_t from,std::uint32_t target) noexcept {
     // Iterative DFS over operator inputs, bounded by the operator capacity.
-    std::array<std::uint32_t,ModulationState::maxControlOperators*2> stack{};
+    std::array<std::uint32_t,ModulationState::maxControlOperators*3> stack{};
     std::array<bool,ModulationState::maxControlOperators> seen{};
     std::size_t top=0;
     stack[top++]=target;
@@ -905,7 +1159,7 @@ std::size_t routeRootSources(const ModulationState& state,const ModRoute& route,
         if(count<out.size()) out[count++]=s;
     };
     if(!isOperatorSource(route.source)) { if(route.source!=ModSource::None) push(route.source); return count; }
-    std::array<std::uint32_t,ModulationState::maxControlOperators*2> stack{};
+    std::array<std::uint32_t,ModulationState::maxControlOperators*3> stack{};
     std::array<bool,ModulationState::maxControlOperators> seen{};
     std::size_t top=0;
     stack[top++]=operatorIdOf(route.source);
@@ -962,8 +1216,26 @@ ControlRange sourceRange(ModSource source,const ModulationState& state) noexcept
 }
 
 bool sourceIsVoice(ModSource source,const ModulationState& state) noexcept {
-    if(isOperatorSource(source))
-        return walkOperator(state,operatorIdOf(source),0,[&state](ModSource s){ return sourceIsVoice(s,state); });
+    if(isOperatorSource(source)) {
+        // An operator is per-voice when it is a voice-only node (note events)
+        // or anything upstream is per-voice.
+        std::array<std::uint32_t,ModulationState::maxControlOperators*3> stack{};
+        std::array<bool,ModulationState::maxControlOperators> seen{};
+        std::size_t top=0;
+        stack[top++]=operatorIdOf(source);
+        while(top>0) {
+            const auto slot=controlOperatorSlot(state,stack[--top]);
+            if(slot>=state.operators.size() || seen[slot]) continue;
+            seen[slot]=true;
+            const auto& op=state.operators[slot];
+            if(const auto* info=controlOpInfo(op.type); info!=nullptr && info->voiceOnly) return true;
+            for(const auto& in:op.inputs) {
+                if(in.kind==ControlInput::Kind::Source && slotFor(in.source,state)>=CompiledModulation::globalSourceCount) return true;
+                if(in.kind==ControlInput::Kind::Operator && top<stack.size()) stack[top++]=in.op;
+            }
+        }
+        return false;
+    }
     if(source==ModSource::None) return false;
     return slotFor(source,state)>=CompiledModulation::globalSourceCount;
 }
@@ -1031,25 +1303,46 @@ float CompiledModulation::operatorInput(std::int16_t input,const std::array<floa
 
 float CompiledModulation::runOperator(const CompiledOp& c,const std::array<float,voiceSourceCount>* voice,
                                       const ModulationFrame& f,ControlOpRuntime& state) const noexcept {
-    if(state.id!=c.op.id) state={0.0f,false,c.op.id}; // a new operator in this slot starts fresh
-    return evaluateControlOp(c.op,operatorInput(c.input[0],voice,f),c.input[0]>=0,c.range[0],
-                             operatorInput(c.input[1],voice,f),c.input[1]>=0,c.range[1],state,c.rise,c.fall);
+    if(state.id!=c.op.id) { state=ControlOpRuntime{}; state.id=c.op.id; } // a new operator in this slot starts fresh
+    ControlOpInputs in;
+    for(std::size_t k=0;k<3;++k) {
+        in.value[k]=operatorInput(c.input[k],voice,f);
+        in.connected[k]=c.input[k]>=0;
+        in.range[k]=c.range[k];
+    }
+    return evaluateControlOp(c.op,in,state,c.prepared,f.events);
 }
 
+// Same-sample ordering (N05): sources -> global operators (topological) ->
+// per-voice operators (topological) -> destinations -> targets. An event at
+// sample N is seen by every downstream node at sample N.
 void CompiledModulation::evaluateGlobalOperators(ModulationFrame& f,const std::array<float,globalSourceCount>& sources) noexcept {
     f.globalSources=sources;
     for(std::size_t i=0;i<opCount_;++i) {
         const auto& c=ops_[i];
-        if(!c.voice) f.operatorOutputs[c.slot]=runOperator(c,nullptr,f,globalOpState_[c.slot]);
+        if(c.voice) continue;
+        const float v=runOperator(c,nullptr,f,globalOpState_[c.slot]);
+        f.operatorOutputs[c.slot]=v;
+        if(c.event && v!=0.0f) ++globalEventCounts_[c.slot]; // monitoring only
     }
 }
 
 void CompiledModulation::evaluateVoiceOperators(ModulationFrame& f,const std::array<float,voiceSourceCount>& sources,
-                                                OperatorState& state) const noexcept {
+                                                OperatorState& state,std::array<std::uint32_t,operatorSlotCount>* counts) const noexcept {
     for(std::size_t i=0;i<opCount_;++i) {
         const auto& c=ops_[i];
-        if(c.voice) f.operatorOutputs[c.slot]=runOperator(c,&sources,f,state[c.slot]);
+        if(!c.voice) continue;
+        const float v=runOperator(c,&sources,f,state[c.slot]);
+        f.operatorOutputs[c.slot]=v;
+        if(counts!=nullptr && c.event && v!=0.0f) ++(*counts)[c.slot];
     }
+}
+
+std::uint8_t CompiledModulation::envelopeTriggers(const ModulationFrame& f) const noexcept {
+    std::uint8_t mask=0;
+    for(std::size_t i=0;i<envelopeTriggerCount_;++i)
+        if(f.operatorOutputs[envelopeTriggerSlots_[i]]!=0.0f) mask|=std::uint8_t(envelopeTriggerTargets_[i]==3 ? 4u : 2u);
+    return mask;
 }
 
 void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,globalSourceCount>& sources,double rate) const noexcept {

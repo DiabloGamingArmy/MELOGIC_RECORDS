@@ -262,6 +262,25 @@ ABS, INVERT, CLAMP, CONSTANT, SMOOTH and QUANTIZE.
 
 See `docs/NODES_ARCHITECTURE.md` §14.
 
+## EVENT / GATE control (N05)
+
+NODES operators now carry typed ports: CONTROL, GATE (0/1 state) and EVENT
+(non-zero only at its sample).
+
+- **Representation:** events live inside the same per-sample plan, so a MIDI
+  note or a CLOCK tick fires at its exact sample with no queue. Coincident
+  events on one port merge into one.
+- **Nodes:** CLOCK (synced to a beat position the engine derives from the host
+  transport once per block), NOTE ON / NOTE OFF / GATE / RETRIGGER (per
+  voice), TRANSPORT, THRESHOLD, EDGE, PULSE, COMPARE, AND / OR / XOR / NOT,
+  SWITCH, SAMPLE & HOLD, TRACK & HOLD, RANDOM, TOGGLE, COUNTER and ENV
+  TRIGGER.
+- **Typing:** strict, with conversions only through nodes.
+- **Domain rules:** as in N04.
+- **Save format:** instrument codec v29, written only when used.
+
+See `docs/NODES_ARCHITECTURE.md` §15.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:
