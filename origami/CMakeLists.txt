@@ -35,7 +35,8 @@ if(ORIGAMI_ENABLE_AUX_RT_THREADS)
     "(Audio Workgroups on Apple / appropriate pro-audio scheduling on Windows).")
 endif()
 add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp
-  core/fx/FxGraph.cpp core/fx/FxDevelopmentGraph.cpp)
+  core/fx/FxGraph.cpp core/fx/FxDevelopmentGraph.cpp core/BusModel.cpp
+  core/fx/FxEffects.cpp core/fx/FxRenderer.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(origami_core PUBLIC Threads::Threads)
@@ -123,7 +124,10 @@ if(ORIGAMI_BUILD_TESTS)
 
   # mct-origami-fx-page-foundation-p01
   add_executable(origami_fx_tests tests/FxGraphTests.cpp)
-  target_link_libraries(origami_fx_tests PRIVATE origami_core)
+  target_link_libraries(origami_fx_tests PRIVATE origami_patch)
+  if(ORIGAMI_SANITIZE)
+    target_compile_definitions(origami_fx_tests PRIVATE ORIGAMI_SANITIZED=1)
+  endif()
   add_test(NAME origami_fx_graph COMMAND origami_fx_tests)
 endif()
 # mct-origami-vst3-host-proof-v1

@@ -107,6 +107,7 @@ InstrumentState OrigamiEngine::instrumentState() const noexcept {
     state.nextId=oscillatorModules_.nextId();
     state.modulation=modulation_;
     state.performance=performance_;
+    state.buses=buses_;
     state.performance.pitchBendRangeSemitones=pitchBendRange();
     state.performance.pitchBendDownSemitones=pitchBendDownRange();
     applyLegacyOscillatorParameters(state.oscillators[0],state.parameters);
@@ -116,11 +117,18 @@ bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcep
     if(!validInstrumentState(state)) return false;
     modulation_=state.modulation;publishModEnvelopeTargets(modulation_);modulationMailbox_.publish(modulation_);
     performance_=state.performance;
+    buses_=state.buses;
     pitchBendRange_.store(state.performance.pitchBendRangeSemitones,std::memory_order_relaxed);
     pitchBendDownRange_.store(state.performance.pitchBendDownSemitones,std::memory_order_relaxed);
     oscillatorModules_.restore(state.oscillators,state.nextId);
     for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
     reset();return true;
+}
+bool OrigamiEngine::setBusState(const BusState& state) noexcept {
+    InstrumentState probe=instrumentState();probe.buses=state;
+    if(!validInstrumentState(probe)) return false;
+    buses_=state;
+    return true;
 }
 bool OrigamiEngine::setModulationState(const ModulationState& state) noexcept {
     if(!validModulation(state,oscillatorModules_.snapshot())) return false;

@@ -4,6 +4,7 @@
 #include "ParameterRegistry.h"
 #include "OscillatorModule.h"
 #include "modulation/Modulation.h"
+#include "BusModel.h"
 namespace mct::origami {
 // Fixed-size model snapshot. Codec and host locking live outside the realtime core.
 enum class VoiceMode : std::uint32_t { Poly=0, Mono=1 };
@@ -22,7 +23,13 @@ struct InstrumentState {
     OscillatorModuleId nextId=2;
     ModulationState modulation{};
     PerformanceState performance{};
+    // mct-origami-fx-graph-dsp-bus-routing-p02: canonical named buses.
+    BusState buses{};
 };
+// Removes a bus and every oscillator send to it in one step, so no oscillator
+// is left with a dangling destination. BUS 1 is protected. An oscillator whose
+// only route pointed at the removed bus falls back to BUS 1 at unity.
+bool removeBus(InstrumentState&,BusId) noexcept;
 void applyLegacyOscillatorParameters(OscillatorModuleState&,const ParameterValues&) noexcept;
 bool validInstrumentState(const InstrumentState&) noexcept;
 }

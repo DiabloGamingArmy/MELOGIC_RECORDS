@@ -280,7 +280,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         } else {
             moduleFilters_[m].reset();
         }
-        sampleValue*=level;
+        sampleValue*=level*modulePlan.mainBusSend;
         if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
         outputs.left+=sampleValue*panLeft;
         outputs.right+=sampleValue*panRight;

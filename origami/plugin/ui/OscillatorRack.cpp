@@ -1,3 +1,4 @@
+// mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
 // mct-origami-v31.2.0-mod-visuals-wavetable-spectral
@@ -286,48 +287,38 @@ OscillatorCard::OscillatorCard(OscillatorDisplay display,std::function<void(unsi
     phaseFree_.onClick=[this]{phaseStartMode_=PhaseStartMode::Free;refreshPhaseWorkspace();};
     refreshPhaseWorkspace();
 
-    for(auto* button:{&routeDirect_,&routeFilter1_,&routeFilter2_,&routeMulti_,&routePostChain_}) {
-        addChildComponent(*button);
-        button->setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    for(std::size_t i=0;i<maxOscBusRoutes;++i) {
+        auto& selector=busSelectors_[i];
+        addChildComponent(selector);
+        selector.setName("Bus route "+juce::String(int(i)+1));
+        selector.setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        selector.onClick=[this,i]{openBusMenu(i);};
+        auto& level=busLevels_[i];
+        addChildComponent(level);
+        level.setName("Bus route level "+juce::String(int(i)+1));
+        level.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        level.setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+        level.setRotaryParameters(juce::MathConstants<float>::pi*1.20f,juce::MathConstants<float>::pi*2.80f,true);
+        level.setRange(0.0,1.0,0.001);
+        level.setMouseDragSensitivity(180);
+        level.setDoubleClickReturnValue(true,1.0);
+        level.onValueChange=[this,i] {
+            if(syncingBus_ || !moduleGetter_ || !moduleSetter_) return;
+            auto state=moduleGetter_(display_.id);
+            if(i>=state.busRouteCount) return;
+            state.busRoutes[i].level=float(busLevels_[i].getValue());
+            moduleSetter_(display_.id,state);
+            repaint();
+        };
+        auto& remove=busRemoves_[i];
+        addChildComponent(remove);
+        remove.setButtonText("-");
+        remove.setName("Remove bus route "+juce::String(int(i)+1));
+        remove.onClick=[this,i]{removeBusRoute(i);};
     }
-    routeDirect_.setTooltip("Route oscillator directly to the instrument output");
-    routeFilter1_.setTooltip("Route oscillator through Filter 1");
-    routeFilter2_.setTooltip("Route oscillator through Filter 2");
-    routeMulti_.setTooltip("Use multiple oscillator output destinations");
-    routePostChain_.setClickingTogglesState(true);
-    routePostChain_.setToggleState(true,juce::dontSendNotification);
-    routePostChain_.setTooltip("Route the post-OSC-CHAIN signal");
-
-    for(auto* slider:{&routeDirectLevel_,&routeFilter1Level_,&routeFilter2Level_}) {
-        addChildComponent(*slider);
-        slider->setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        slider->setTextBoxStyle(juce::Slider::TextBoxBelow,false,44,14);
-        slider->setRotaryParameters(juce::MathConstants<float>::pi*1.20f,
-                                    juce::MathConstants<float>::pi*2.80f,true);
-        slider->setRange(0.0,1.0,0.001);
-        slider->setMouseDragSensitivity(180);
-        slider->setDoubleClickReturnValue(true,1.0);
-    }
-    routeDirectLevel_.setValue(1.0,juce::dontSendNotification);
-    routeFilter1Level_.setValue(1.0,juce::dontSendNotification);
-    routeFilter2Level_.setValue(1.0,juce::dontSendNotification);
-
-    struct RouteLevelLabel { juce::Label* label; const char* text; };
-    for(auto item:std::array<RouteLevelLabel,3>{
-        RouteLevelLabel{&routeDirectLevelLabel_,"DIRECT LEVEL"},
-        RouteLevelLabel{&routeFilter1LevelLabel_,"FILTER 1 LEVEL"},
-        RouteLevelLabel{&routeFilter2LevelLabel_,"FILTER 2 LEVEL"}}) {
-        addChildComponent(*item.label);
-        item.label->setText(item.text,juce::dontSendNotification);
-        item.label->setJustificationType(juce::Justification::centred);
-        item.label->setColour(juce::Label::textColourId,Palette::muted());
-        item.label->setFont(juce::FontOptions(7.2f));
-        item.label->setInterceptsMouseClicks(false,false);
-    }
-    routeDirect_.onClick=[this]{outputRouteMode_=OutputRouteMode::Direct;refreshRoutingWorkspace();};
-    routeFilter1_.onClick=[this]{outputRouteMode_=OutputRouteMode::Filter1;refreshRoutingWorkspace();};
-    routeFilter2_.onClick=[this]{outputRouteMode_=OutputRouteMode::Filter2;refreshRoutingWorkspace();};
-    routeMulti_.onClick=[this]{outputRouteMode_=OutputRouteMode::Multi;refreshRoutingWorkspace();};
+    addChildComponent(busAdd_);
+    busAdd_.setName("Add bus route");
+    busAdd_.onClick=[this]{addBusRoute();};
     refreshRoutingWorkspace();
 
     engineBacked_ = static_cast<bool>(parameterSetter_) && static_cast<bool>(parameterGetter_);
@@ -1009,6 +1000,7 @@ void OscillatorCard::syncDynamicCollections(const OscillatorModuleState& state) 
 
 void OscillatorCard::syncFromModel() {
     if(!parameterGetter_) return;
+    if(workspacePage_==WorkspacePage::Routing) refreshRoutingWorkspace();
     auto sync=[&](RackSlider& slider,ParameterId id,double scale=1.0) {
         if(!slider.isMouseButtonDown() && !slider.isEditingText())
             slider.setValue(double(parameterGetter_(id))*scale,juce::dontSendNotification);
@@ -1113,23 +1105,76 @@ void OscillatorCard::refreshPhaseWorkspace() {
 }
 
 void OscillatorCard::refreshRoutingWorkspace() {
-    routeDirect_.setToggleState(outputRouteMode_==OutputRouteMode::Direct,juce::dontSendNotification);
-    routeFilter1_.setToggleState(outputRouteMode_==OutputRouteMode::Filter1,juce::dontSendNotification);
-    routeFilter2_.setToggleState(outputRouteMode_==OutputRouteMode::Filter2,juce::dontSendNotification);
-    routeMulti_.setToggleState(outputRouteMode_==OutputRouteMode::Multi,juce::dontSendNotification);
-
-    const bool direct=outputRouteMode_==OutputRouteMode::Direct;
-    const bool filter1=outputRouteMode_==OutputRouteMode::Filter1;
-    const bool filter2=outputRouteMode_==OutputRouteMode::Filter2;
-    const bool multi=outputRouteMode_==OutputRouteMode::Multi;
-    routeDirectLevel_.setEnabled(direct||multi);
-    routeFilter1Level_.setEnabled(filter1||multi);
-    routeFilter2Level_.setEnabled(filter2||multi);
-
-    outputSelector_.setButtonText(direct ? "DIRECT OUT"
-                                  : filter1 ? "FILTER 1"
-                                  : filter2 ? "FILTER 2" : "MULTI");
+    if(!moduleGetter_) return;
+    const auto state=moduleGetter_(display_.id);
+    const auto buses=snapshotGetter_ ? snapshotGetter_().buses : BusState{};
+    const auto name=[&buses](BusId id) {
+        const auto* bus=buses.find(id);
+        return bus ? juce::String(bus->label()) : juce::String("BUS ")+juce::String(id);
+    };
+    const juce::ScopedValueSetter<bool> guard(syncingBus_,true);
+    busRowCount_=std::min<std::size_t>(state.busRouteCount,maxOscBusRoutes);
+    for(std::size_t i=0;i<busRowCount_;++i) {
+        busSelectors_[i].setButtonText(name(state.busRoutes[i].bus));
+        if(!busLevels_[i].isMouseButtonDown())
+            busLevels_[i].setValue(state.busRoutes[i].level,juce::dontSendNotification);
+        // The only route cannot be removed: an oscillator always has a bus.
+        busRemoves_[i].setEnabled(busRowCount_>1);
+    }
+    bool unrouted=false;
+    for(std::size_t b=0;b<buses.count;++b)
+        unrouted|=oscBusSend(state,buses.buses[b].id)==0.0f
+            && std::none_of(state.busRoutes.begin(),state.busRoutes.begin()+std::ptrdiff_t(busRowCount_),
+                            [&](const OscBusRoute& r){return r.bus==buses.buses[b].id;});
+    busAdd_.setEnabled(unrouted && busRowCount_<maxOscBusRoutes);
+    juce::String header=busRowCount_>0 ? name(state.busRoutes[0].bus) : juce::String("NO BUS");
+    if(busRowCount_>1) header+=" +"+juce::String(int(busRowCount_)-1);
+    outputSelector_.setButtonText(header);
     repaint();
+}
+
+void OscillatorCard::openBusMenu(std::size_t row) {
+    if(!moduleGetter_ || !snapshotGetter_) return;
+    const auto state=moduleGetter_(display_.id);
+    if(row>=state.busRouteCount) return;
+    const auto buses=snapshotGetter_().buses;
+    std::vector<NativeChoiceItem> items;
+    for(std::size_t b=0;b<buses.count;++b) {
+        const auto id=buses.buses[b].id;
+        bool usedElsewhere=false;
+        for(std::size_t i=0;i<state.busRouteCount;++i) usedElsewhere|=i!=row && state.busRoutes[i].bus==id;
+        items.push_back({int(id),juce::String(buses.buses[b].label()),!usedElsewhere,"BUSES",state.busRoutes[row].bus==id});
+    }
+    auto safe=juce::Component::SafePointer<OscillatorCard>(this);
+    showNativeChoiceMenu(busSelectors_[row],"Output Bus",items,int(state.busRoutes[row].bus),[safe,row](int choice) {
+        if(safe==nullptr || choice<=0) return;
+        auto s=safe->moduleGetter_(safe->display_.id);
+        if(row>=s.busRouteCount) return;
+        if(setOscBusRoute(s,safe->snapshotGetter_().buses,row,BusId(choice),s.busRoutes[row].level)==BusRouteResult::Ok)
+            safe->moduleSetter_(safe->display_.id,s);
+        safe->refreshRoutingWorkspace();
+    });
+}
+
+void OscillatorCard::addBusRoute() {
+    if(!moduleGetter_ || !moduleSetter_ || !snapshotGetter_) return;
+    auto state=moduleGetter_(display_.id);
+    const auto buses=snapshotGetter_().buses;
+    for(std::size_t b=0;b<buses.count;++b)
+        if(addOscBusRoute(state,buses,buses.buses[b].id,1.0f)==BusRouteResult::Ok) {
+            moduleSetter_(display_.id,state);
+            break;
+        }
+    refreshRoutingWorkspace();
+    resized();
+}
+
+void OscillatorCard::removeBusRoute(std::size_t row) {
+    if(!moduleGetter_ || !moduleSetter_) return;
+    auto state=moduleGetter_(display_.id);
+    if(removeOscBusRoute(state,row)==BusRouteResult::Ok) moduleSetter_(display_.id,state);
+    refreshRoutingWorkspace();
+    resized();
 }
 
 void OscillatorCard::beginWavetableImport() {
@@ -1288,11 +1333,13 @@ void OscillatorCard::resized() {
             &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
             &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_})
             component->setVisible(phasePage);
-        for(auto* component:std::initializer_list<juce::Component*>{
-            &routeDirect_,&routeFilter1_,&routeFilter2_,&routeMulti_,
-            &routeDirectLevel_,&routeFilter1Level_,&routeFilter2Level_,
-            &routeDirectLevelLabel_,&routeFilter1LevelLabel_,&routeFilter2LevelLabel_,&routePostChain_})
-            component->setVisible(routingPage);
+        for(std::size_t i=0;i<maxOscBusRoutes;++i) {
+            const bool visible=routingPage && i<busRowCount_;
+            busSelectors_[i].setVisible(visible);
+            busLevels_[i].setVisible(visible);
+            busRemoves_[i].setVisible(visible);
+        }
+        busAdd_.setVisible(routingPage);
 
         if(phasePage) {
             auto page=workspaceBounds_.reduced(12,10);
@@ -1325,40 +1372,22 @@ void OscillatorCard::resized() {
             phasePerUnison_.setBounds(toggles);
             refreshPhaseWorkspace();
         } else if(routingPage) {
+            refreshRoutingWorkspace();
             auto page=workspaceBounds_.reduced(12,10);
-            page.removeFromTop(42); // title + DESTINATION section label
-
-            auto destinations=page.removeFromTop(30);
-            constexpr int destinationGap=4;
-            const int destinationW=(destinations.getWidth()-destinationGap*3)/4;
-            routeDirect_.setBounds(destinations.removeFromLeft(destinationW));
-            destinations.removeFromLeft(destinationGap);
-            routeFilter1_.setBounds(destinations.removeFromLeft(destinationW));
-            destinations.removeFromLeft(destinationGap);
-            routeFilter2_.setBounds(destinations.removeFromLeft(destinationW));
-            destinations.removeFromLeft(destinationGap);
-            routeMulti_.setBounds(destinations);
-
-            page.removeFromTop(25); // SEND LEVELS section label
-            auto levels=page.removeFromTop(98);
-            constexpr int levelGap=6;
-            const int levelW=(levels.getWidth()-levelGap*2)/3;
-            auto directArea=levels.removeFromLeft(levelW);
-            levels.removeFromLeft(levelGap);
-            auto filter1Area=levels.removeFromLeft(levelW);
-            levels.removeFromLeft(levelGap);
-            auto filter2Area=levels;
-
-            auto layoutLevel=[](juce::Rectangle<int> area,juce::Label& label,RackSlider& slider) {
-                label.setBounds(area.removeFromTop(16));
-                slider.setBounds(area.reduced(7,0));
-            };
-            layoutLevel(directArea,routeDirectLevelLabel_,routeDirectLevel_);
-            layoutLevel(filter1Area,routeFilter1LevelLabel_,routeFilter1Level_);
-            layoutLevel(filter2Area,routeFilter2LevelLabel_,routeFilter2Level_);
-
-            page.removeFromTop(20); // SIGNAL POINT section label
-            routePostChain_.setBounds(page.removeFromTop(28).withSizeKeepingCentre(150,28));
+            page.removeFromTop(46); // title + OUTPUT BUSES section label
+            for(std::size_t i=0;i<maxOscBusRoutes;++i) {
+                if(i>=busRowCount_) { busRowBounds_[i]={}; continue; }
+                auto row=page.removeFromTop(48).reduced(0,3);
+                busRowBounds_[i]=row;
+                row.reduce(8,0);
+                busRemoves_[i].setBounds(row.removeFromRight(28).withSizeKeepingCentre(28,26));
+                row.removeFromRight(8);
+                busLevels_[i].setBounds(row.removeFromRight(40).withSizeKeepingCentre(40,40));
+                row.removeFromRight(58); // painted level value
+                busSelectors_[i].setBounds(row.withSizeKeepingCentre(row.getWidth(),28));
+            }
+            page.removeFromTop(8);
+            busAdd_.setBounds(page.removeFromTop(30).withSizeKeepingCentre(160,30));
             refreshRoutingWorkspace();
         }
         return;
@@ -1366,12 +1395,18 @@ void OscillatorCard::resized() {
 
     for(auto* component:std::initializer_list<juce::Component*>{
         &phaseRandom_,&phaseFixed_,&phaseFree_,&phaseAngle_,&phaseRandomRange_,
-        &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_,
-        &routeDirect_,&routeFilter1_,&routeFilter2_,&routeMulti_,
-        &routeDirectLevel_,&routeFilter1Level_,&routeFilter2Level_,
-        &routeDirectLevelLabel_,&routeFilter1LevelLabel_,&routeFilter2LevelLabel_,&routePostChain_}) {
+        &phaseAngleLabel_,&phaseRandomRangeLabel_,&phaseRetrigger_,&phasePerUnison_,&busAdd_}) {
         component->setVisible(false);
         component->setBounds({});
+    }
+    for(std::size_t i=0;i<maxOscBusRoutes;++i) {
+        for(juce::Component* component:{static_cast<juce::Component*>(&busSelectors_[i]),
+                                        static_cast<juce::Component*>(&busLevels_[i]),
+                                        static_cast<juce::Component*>(&busRemoves_[i])}) {
+            component->setVisible(false);
+            component->setBounds({});
+        }
+        busRowBounds_[i]={};
     }
 
     waveformPrevious_.setVisible(true); waveformNext_.setVisible(true); wavetableBrowser_.setVisible(true);
@@ -1566,11 +1601,22 @@ void OscillatorCard::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
             section.removeFromTop(106);
             text(g,"BEHAVIOR",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
         } else {
-            text(g,"DESTINATION",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
-            section.removeFromTop(34);
-            text(g,"SEND LEVELS",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
-            section.removeFromTop(110);
-            text(g,"SIGNAL POINT",section.removeFromTop(13),7.0f,Palette::muted(),juce::Justification::centredLeft);
+            text(g,"OUTPUT BUSES  /  POST OSC CHAIN + FILTER",section.removeFromTop(15),7.6f,Palette::muted(),juce::Justification::centredLeft);
+            for(std::size_t i=0;i<busRowCount_;++i) {
+                const auto row=busRowBounds_[i];
+                if(row.isEmpty()) continue;
+                g.setColour(Palette::panel().darker(0.18f));
+                g.fillRect(row);
+                g.setColour(Palette::borderSoft());
+                g.drawRect(row,1);
+                text(g,juce::String(busLevels_[i].getValue(),3),busLevels_[i].getBounds().translated(-58,0).withWidth(54),
+                     8.5f,Palette::secondary(),juce::Justification::centredRight);
+            }
+            auto note=section.withTop(busAdd_.getBottom()+8).withHeight(30);
+            g.setColour(Palette::muted().withAlpha(.75f));
+            g.setFont(juce::FontOptions(7.6f));
+            g.drawFittedText("BUS 1 feeds the FX page and MASTER OUT. Additional buses are created in the Mixer.",
+                             note,juce::Justification::centredLeft,2,1.0f);
         }
         return;
     }

@@ -70,11 +70,32 @@ bool validInstrumentState(const InstrumentState& s) noexcept {
                !validRoute(route.sourceId,route.type)) return false;
             for(std::size_t j=0;j<i;++j) if(m.routes[j].id==route.id) return false;
         }
+        if(!validOscBusRoutes(m,s.buses)) return false;
     }
+    if(!validBusState(s.buses)) return false;
     auto first=s.oscillators[0];applyLegacyOscillatorParameters(first,s.parameters);
     const auto& m=s.oscillators[0];
     return first.waveform==m.waveform && first.wtPosition==m.wtPosition &&
         first.octave==m.octave && first.semitone==m.semitone && first.fineCents==m.fineCents &&
         first.unison==m.unison && first.detuneCents==m.detuneCents && first.pan==m.pan && first.level==m.level;
+}
+bool removeBus(InstrumentState& s,BusId id) noexcept {
+    if(id==mainBusId) return false;
+    auto& b=s.buses;
+    std::size_t index=b.count;
+    for(std::size_t i=0;i<b.count;++i) if(b.buses[i].id==id) index=i;
+    if(index==b.count) return false;
+    for(std::size_t i=index;i+1<b.count;++i) b.buses[i]=b.buses[i+1];
+    b.buses[--b.count]={};
+    for(auto& m:s.oscillators) {
+        if(!m.id) continue;
+        std::size_t kept=0;
+        for(std::size_t i=0;i<m.busRouteCount;++i)
+            if(m.busRoutes[i].bus!=id) m.busRoutes[kept++]=m.busRoutes[i];
+        for(std::size_t i=kept;i<maxOscBusRoutes;++i) m.busRoutes[i]={};
+        m.busRouteCount=static_cast<std::uint8_t>(kept);
+        if(kept==0) { m.busRoutes[0]={mainBusId,1.0f}; m.busRouteCount=1; }
+    }
+    return true;
 }
 }

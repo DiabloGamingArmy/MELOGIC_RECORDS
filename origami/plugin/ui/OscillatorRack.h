@@ -125,16 +125,6 @@ private:
     juce::TextButton phasePerUnison_{"PER-UNISON"};
     void refreshPhaseWorkspace();
 
-    // Oscillator-local output routing workspace. This is deliberately separate
-    // from OSC CHAIN cross-oscillator routes: it describes where this oscillator
-    // feeds the instrument after its own processing chain.
-    enum class OutputRouteMode : std::uint8_t { Direct, Filter1, Filter2, Multi };
-    OutputRouteMode outputRouteMode_=OutputRouteMode::Direct;
-    juce::TextButton routeDirect_{"DIRECT"},routeFilter1_{"FILTER 1"},routeFilter2_{"FILTER 2"},routeMulti_{"MULTI"};
-    RackSlider routeDirectLevel_,routeFilter1Level_,routeFilter2Level_;
-    juce::Label routeDirectLevelLabel_,routeFilter1LevelLabel_,routeFilter2LevelLabel_;
-    juce::TextButton routePostChain_{"POST CHAIN"};
-    void refreshRoutingWorkspace();
 
     std::function<bool(unsigned,bool)> enabledSetter_;
     std::function<bool(unsigned)> enabledGetter_;
@@ -207,6 +197,22 @@ private:
     void addProcess();
     void addRoute();
     void syncDynamicCollections(const OscillatorModuleState&);
+
+    // mct-origami-fx-graph-dsp-bus-routing-p02
+    // Output routing: where this oscillator feeds the instrument after its
+    // OSC CHAIN and voice filter. A dynamic list of canonical BUS sends
+    // (stable BusId + level), presented in the OSC CHAIN row language.
+    std::array<juce::TextButton,maxOscBusRoutes> busSelectors_;
+    std::array<RackSlider,maxOscBusRoutes> busLevels_;
+    std::array<juce::TextButton,maxOscBusRoutes> busRemoves_;
+    std::array<juce::Rectangle<int>,maxOscBusRoutes> busRowBounds_{};
+    juce::TextButton busAdd_{"+ ADD ROUTE"};
+    std::size_t busRowCount_=0;
+    bool syncingBus_=false;
+    void refreshRoutingWorkspace();
+    void openBusMenu(std::size_t row);
+    void addBusRoute();
+    void removeBusRoute(std::size_t row);
 
     // mct-origami-tuning-labels-v18.3
     juce::Label octaveTitle_,semitoneTitle_,fineTitle_;

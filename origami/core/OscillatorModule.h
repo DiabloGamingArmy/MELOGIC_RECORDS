@@ -115,6 +115,17 @@ struct OscProcessSlot {
     bool enabled = true;
 };
 
+// mct-origami-fx-graph-dsp-bus-routing-p02
+// Output routing targets named buses by stable BusId (never an array index).
+// BUS 1 is the required default instrument output bus.
+using BusId = std::uint32_t;
+inline constexpr BusId mainBusId = 1;
+inline constexpr std::size_t maxOscBusRoutes = 8;
+struct OscBusRoute {
+    BusId bus = 0;
+    float level = 1.0f;
+};
+
 struct OscRouteSlot {
     OscRouteSlotId id = 0;
     OscillatorModuleId sourceId = 0;
@@ -164,7 +175,18 @@ struct OscillatorModuleState {
     std::array<OscRouteSlot,maxOscRoutes> routes{};
     std::uint8_t routeCount = 0;
     OscRouteSlotId nextRouteId = 1;
+
+    // Post-filter output sends. Every oscillator starts at BUS 1, unity.
+    std::array<OscBusRoute,maxOscBusRoutes> busRoutes{{OscBusRoute{mainBusId,1.0f}}};
+    std::uint8_t busRouteCount = 1;
 };
+
+// Send level of one oscillator into one bus (0 when it has no route there).
+inline float oscBusSend(const OscillatorModuleState& s,BusId bus) noexcept {
+    for(std::size_t i=0;i<std::min<std::size_t>(s.busRouteCount,maxOscBusRoutes);++i)
+        if(s.busRoutes[i].bus==bus) return s.busRoutes[i].level;
+    return 0.0f;
+}
 
 // mct-origami-deep-audit-p05-coherent-osc-generations
 class OscillatorModuleBank {
@@ -345,6 +367,20 @@ private:
             if(r.type==OscRouteType::Off) r.sourceId=0;
             s.nextRouteId=std::max(s.nextRouteId,r.id+1);
         }
+        // Bus sends: bounded, finite, no null or duplicate destinations. Bus
+        // existence is an instrument-level rule enforced by the host boundary.
+        std::size_t kept=0;
+        for(std::size_t i=0;i<std::min<std::size_t>(s.busRouteCount,maxOscBusRoutes);++i) {
+            auto route=s.busRoutes[i];
+            if(route.bus==0) continue;
+            bool duplicate=false;
+            for(std::size_t j=0;j<kept;++j) duplicate|=s.busRoutes[j].bus==route.bus;
+            if(duplicate) continue;
+            route.level=std::isfinite(route.level) ? std::clamp(route.level,0.0f,1.0f) : 0.0f;
+            s.busRoutes[kept++]=route;
+        }
+        for(std::size_t i=kept;i<maxOscBusRoutes;++i) s.busRoutes[i]={};
+        s.busRouteCount=static_cast<std::uint8_t>(kept);
     }
 
     void publish() noexcept {

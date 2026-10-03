@@ -17,6 +17,9 @@ struct OscillatorRenderPlan {
         std::uint8_t processCount=0,preCount=0,postCount=0;
         bool dynamicProcesses=false,dynamicRoutes=false;
         bool simple=true; // no phase/spectral process or cross-oscillator route
+        // Post-filter send into BUS 1, the bus the engine renders today.
+        // Additional buses are model-only until multi-bus rendering exists.
+        float mainBusSend=1.0f;
         dsp::OscProcessPlan processTemplate{};
     };
     std::array<Module,16> modules{};
@@ -42,6 +45,7 @@ struct OscillatorRenderPlan {
             const auto& source=state[m];auto& plan=modules[m];plan={};
             if(!source.id || !source.enabled) continue;
             active[activeCount++]=static_cast<std::uint8_t>(m);
+            plan.mainBusSend=oscBusSend(source,mainBusId);
             plan.dynamicProcesses=source.processCount!=0;
             if(plan.dynamicProcesses) {
                 for(std::size_t p=0;p<std::min<std::size_t>(source.processCount,maxOscProcesses);++p)

@@ -42,6 +42,8 @@ public:
     bool applyPatchState(const ParameterValues& values) noexcept; // exclusive, resets voices
     InstrumentState instrumentState() const noexcept; // serialize writers externally
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
+    // mct-origami-fx-graph-dsp-bus-routing-p02: canonical bus list (Mixer-owned later).
+    bool setBusState(const BusState&) noexcept;
     bool setModulationState(const ModulationState&) noexcept; // serialized non-realtime writer
     ParameterValues parameterState() const noexcept;
     // Atomic targets are the sole cross-thread API. Multi-parameter patch commits
@@ -154,6 +156,7 @@ private:
     std::atomic<float> pitchBendRange_{2.0f};
     std::atomic<float> pitchBendDownRange_{2.0f};
     PerformanceState performance_{};
+    BusState buses_{}; // non-realtime model; the renderer only reads BUS 1 sends
     std::array<HeldNote,128> heldNotes_{};
     std::size_t heldCount_=0;
     // Deep Audit P07: this limits only future polyphonic admissions. Existing

@@ -1,3 +1,4 @@
+// mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-v40.3.1-sequence-expression-state-v22
 // mct-origami-v40.2.0-sequence-transport-state-v21
 // mct-origami-v32.1.1-extended-mod-sources-hotfix
@@ -35,7 +36,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(25);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(26);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -169,14 +170,27 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     }
     // V25: asymmetric pitch bend. Original V4 field remains the UP range.
     w.real(s.performance.pitchBendDownSemitones);
+    // V26: named buses and per-oscillator bus sends.
+    w.word(s.buses.count);w.word(s.buses.nextId);
+    for(std::size_t i=0;i<s.buses.count;++i) {
+        const auto& bus=s.buses.buses[i];
+        w.word(bus.id);w.word(bus.active?1u:0u);
+        const auto length=std::strlen(bus.name.data());
+        w.word(static_cast<std::uint32_t>(length));
+        for(std::size_t c=0;c<length;++c) w.word(static_cast<std::uint8_t>(bus.name[c]));
+    }
+    for(const auto& m:s.oscillators) if(m.id) {
+        w.word(m.busRouteCount);
+        for(std::size_t i=0;i<m.busRouteCount;++i) {w.word(m.busRoutes[i].bus);w.real(m.busRoutes[i].level);}
+    }
     return w.bytes;
 }
 bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& output) noexcept {
-    if(!data || size<12 || size>16384) return false;
+    if(!data || size<12 || size>65536) return false;
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>25) return false;
+    if(version<1 || version>26) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -362,6 +376,34 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     }
     if(version>=25) s.performance.pitchBendDownSemitones=r.real();
     else s.performance.pitchBendDownSemitones=s.performance.pitchBendRangeSemitones;
+    if(version>=26) {
+        const auto busCount=r.word();
+        if(busCount<1 || busCount>BusState::capacity) return false;
+        s.buses=BusState{};
+        s.buses.count=static_cast<std::uint8_t>(busCount);
+        s.buses.nextId=r.word();
+        for(std::size_t i=0;i<busCount && r.ok;++i) {
+            auto& bus=s.buses.buses[i];
+            bus={};
+            bus.id=r.word();
+            const auto active=r.word();if(active>1u) return false;
+            bus.active=active==1u;
+            const auto length=r.word();if(length>Bus::maxNameBytes) return false;
+            for(std::size_t c=0;c<length;++c) {
+                const auto ch=r.word();if(ch==0 || ch>0xffu) return false;
+                bus.name[c]=static_cast<char>(ch);
+            }
+        }
+        for(auto& m:s.oscillators) if(m.id) {
+            const auto routes=r.word();
+            if(routes<1 || routes>maxOscBusRoutes) return false;
+            m.busRouteCount=static_cast<std::uint8_t>(routes);
+            for(std::size_t i=0;i<routes;++i) {m.busRoutes[i].bus=r.word();m.busRoutes[i].level=r.real();}
+            for(std::size_t i=routes;i<maxOscBusRoutes;++i) m.busRoutes[i]={};
+        }
+    }
+    // Older states: the default BusState plus every oscillator's default
+    // BUS 1 @ unity reproduce the pre-bus signal path exactly.
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;
     output=s;return true;
 }

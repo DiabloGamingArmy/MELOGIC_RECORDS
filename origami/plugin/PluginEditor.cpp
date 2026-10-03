@@ -72,7 +72,7 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{owner.clearUiArpeggiatorLatch();}),
       global_([&owner]{return owner.getUiVisualizationMask();},
               [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}),
-      fxPage_(owner.getUiFxDocument(),modulationBindings(owner)) {
+      fxPage_(owner.getUiFxDocument(),modulationBindings(owner),[&owner]{return owner.consumeUiFxPeaks();}) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,13> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_}};
     for(auto* component:components) addAndMakeVisible(component);

@@ -1,37 +1,16 @@
+// mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "core/fx/FxGraph.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace mct::origami::fx {
 namespace {
 constexpr std::size_t maxNameBytes=64;
 constexpr float minGainDb=-24.0f,maxGainDb=24.0f,maxWidth=2.0f;
-constexpr float serialSpacing=230.0f;
-
-// DEVELOPMENT parameter metadata. IDs are stable per effect type; values are
-// normalized. These exist to validate the inspector architecture only.
-constexpr FxParameterDescriptor driveParameters[]{
-    {1,"drive","DRIVE",0.35f,FxParameterPage::Main,true},
-    {2,"tone","TONE",0.50f,FxParameterPage::Main,true},
-    {3,"mix","MIX",1.00f,FxParameterPage::Main,true},
-    {4,"bias","BIAS",0.50f,FxParameterPage::Advanced,false},
-};
-constexpr FxParameterDescriptor delayParameters[]{
-    {1,"time","TIME",0.40f,FxParameterPage::Main,true},
-    {2,"feedback","FB",0.35f,FxParameterPage::Main,true},
-    {3,"mix","MIX",0.30f,FxParameterPage::Main,true},
-    {4,"damp","DAMP",0.50f,FxParameterPage::Main,false},
-    {5,"spread","SPREAD",0.50f,FxParameterPage::Main,false},
-};
-constexpr FxParameterDescriptor reverbParameters[]{
-    {1,"size","SIZE",0.60f,FxParameterPage::Main,true},
-    {2,"decay","DECAY",0.50f,FxParameterPage::Main,true},
-    {3,"mix","MIX",0.25f,FxParameterPage::Main,true},
-    {4,"damp","DAMP",0.50f,FxParameterPage::Main,false},
-    {5,"predelay","PRE",0.00f,FxParameterPage::Advanced,false},
-};
+constexpr float serialSpacing=240.0f;
 
 bool finite(float v) noexcept { return std::isfinite(v); }
 bool finite(FxPoint p) noexcept { return finite(p.x) && finite(p.y); }
@@ -59,20 +38,18 @@ FxNode defaultEffectNode(const FxEffectDescriptor& d) {
         node.parameters.push_back({d.parameters[i].id,d.parameters[i].defaultValue});
     return node;
 }
+
+FxPoint clampPoint(FxPoint p) noexcept { return {std::max(0.0f,p.x),std::max(0.0f,p.y)}; }
 }
 
-const std::array<FxSourceDescriptor,8>& fxSourceCatalog() noexcept {
-    // Only the post-voice synth sum is a real audio source today (see
-    // ARCHITECTURE.md: "FX can follow the voice sum"). Others are concept-level.
-    static const std::array<FxSourceDescriptor,8> catalog{{
-        {FxSourceType::SynthSum,"synth","SYNTH OUT",FxSignalDomain::Audio,true},
-        {FxSourceType::OscillatorBus,"osc","OSC BUS",FxSignalDomain::Audio,false},
-        {FxSourceType::FilterBus,"filter","FILTER BUS",FxSignalDomain::Audio,false},
-        {FxSourceType::NoiseBus,"noise","NOISE BUS",FxSignalDomain::Audio,false},
-        {FxSourceType::EnvelopeBus,"env","ENV BUS",FxSignalDomain::Control,false},
-        {FxSourceType::LfoBus,"lfo","LFO BUS",FxSignalDomain::Control,false},
-        {FxSourceType::MidiBus,"midi","MIDI BUS",FxSignalDomain::Control,false},
+const std::array<FxSourceDescriptor,5>& fxSourceCatalog() noexcept {
+    // Source KINDS. Concrete audio buses come from the instrument's BusState.
+    static const std::array<FxSourceDescriptor,5> catalog{{
+        {FxSourceType::Bus,"bus","BUS",FxSignalDomain::Audio,true},
         {FxSourceType::ExternalInput,"external","EXTERNAL IN",FxSignalDomain::Audio,false},
+        {FxSourceType::EnvelopeBus,"env","ENV",FxSignalDomain::Control,false},
+        {FxSourceType::LfoBus,"lfo","LFO",FxSignalDomain::Control,false},
+        {FxSourceType::MidiBus,"midi","MIDI",FxSignalDomain::Control,false},
     }};
     return catalog;
 }
@@ -82,18 +59,31 @@ const FxSourceDescriptor* findFxSource(FxSourceType type) noexcept {
     return nullptr;
 }
 
-const std::vector<FxEffectDescriptor>& fxEffectCatalog() noexcept {
-    static const std::vector<FxEffectDescriptor> catalog{
-        {FxEffectType::Drive,"drive","DRIVE",false,driveParameters,std::size(driveParameters)},
-        {FxEffectType::Delay,"delay","DELAY",false,delayParameters,std::size(delayParameters)},
-        {FxEffectType::Reverb,"reverb","REVERB",false,reverbParameters,std::size(reverbParameters)},
-    };
-    return catalog;
+float fxParameterValue(const FxParameterDescriptor& d,float normalized) noexcept {
+    const float t=std::clamp(finite(normalized) ? normalized : d.defaultValue,0.0f,1.0f);
+    switch(d.curve) {
+    case FxParameterCurve::Exponential:
+        return d.minimum*std::pow(d.maximum/d.minimum,t);
+    case FxParameterCurve::Choice: {
+        const int states=std::max(2,d.choices);
+        return std::round(t*float(states-1));
+    }
+    case FxParameterCurve::Linear: break;
+    }
+    return d.minimum+(d.maximum-d.minimum)*t;
 }
 
-const FxEffectDescriptor* findFxEffect(FxEffectType type) noexcept {
-    for(const auto& d:fxEffectCatalog()) if(d.type==type) return &d;
-    return nullptr;
+std::string fxParameterText(const FxParameterDescriptor& d,float normalized) {
+    const float v=fxParameterValue(d,normalized);
+    char text[32];
+    const std::string unit=d.unit;
+    if(d.curve==FxParameterCurve::Choice) return v>=0.5f ? "ON" : "OFF";
+    if(unit=="%") std::snprintf(text,sizeof(text),"%d%%",int(std::lround(v*100.0f)));
+    else if(unit=="Hz" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f kHz",v/1000.0f);
+    else if(unit=="ms" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f s",v/1000.0f);
+    else if(std::abs(v)<10.0f) std::snprintf(text,sizeof(text),"%.2f %s",v,d.unit);
+    else std::snprintf(text,sizeof(text),"%.0f %s",v,d.unit);
+    return text;
 }
 
 const char* toString(FxEditResult r) noexcept {
@@ -111,6 +101,7 @@ const char* toString(FxEditResult r) noexcept {
     case FxEditResult::InvalidValue: return "invalid value";
     case FxEditResult::CapacityExceeded: return "capacity exceeded";
     case FxEditResult::Unsupported: return "unsupported";
+    case FxEditResult::UnknownConnection: return "unknown connection";
     }
     return "unknown";
 }
@@ -140,28 +131,36 @@ FxNode* FxGraph::mutableNode(FxNodeId id) noexcept {
     return nullptr;
 }
 
+FxConnection* FxGraph::mutableConnection(FxConnectionId id) noexcept {
+    for(auto& c:connections_) if(c.id==id) return &c;
+    return nullptr;
+}
+
 const FxNode* FxGraph::findNode(FxNodeId id) const noexcept {
     for(const auto& n:nodes_) if(n.id==id) return &n;
     return nullptr;
 }
 
+const FxConnection* FxGraph::findConnection(FxConnectionId id) const noexcept {
+    for(const auto& c:connections_) if(c.id==id) return &c;
+    return nullptr;
+}
+
 FxNodeId FxGraph::appendNode(FxNode node) {
     if(nodes_.size()>=maxNodes || !finite(node.position)) return invalidFxNodeId;
+    node.position=clampPoint(node.position);
     node.id=nextNodeId_++;
     nodes_.push_back(std::move(node));
     return nodes_.back().id;
 }
 
-FxNodeId FxGraph::addSource(FxSourceType type,FxPoint at) {
-    const auto* d=findFxSource(type);
-    // Only currently-real AUDIO sources become graph nodes. Control sources and
-    // concept-level buses stay in the catalog, never in active routing.
-    if(d==nullptr || d->domain!=FxSignalDomain::Audio || !d->available) return invalidFxNodeId;
-    for(const auto& n:nodes_) if(n.kind==FxNodeKind::Source && n.source==type) return invalidFxNodeId;
+FxNodeId FxGraph::addBusSource(FxBusId bus,FxPoint at) {
+    if(bus==0 || sourceForBus(bus)!=invalidFxNodeId) return invalidFxNodeId;
     FxNode node;
     node.kind=FxNodeKind::Source;
-    node.source=type;
-    node.name=d->label;
+    node.source=FxSourceType::Bus;
+    node.bus=bus;
+    node.name="BUS "+std::to_string(bus);
     node.position=at;
     node.ports=fxPortTopology(FxNodeKind::Source);
     return appendNode(std::move(node));
@@ -216,11 +215,27 @@ FxEditResult FxGraph::removeNode(FxNodeId id) {
     return FxEditResult::Ok;
 }
 
+FxEditResult FxGraph::removeNodeBridging(FxNodeId id) {
+    const auto* node=findNode(id);
+    if(node==nullptr) return FxEditResult::UnknownNode;
+    std::optional<FxPortRef> upstream,downstream;
+    if(node->kind==FxNodeKind::Effect) {
+        if(const auto* in=connectionAt({id,0},true)) upstream=in->from;
+        if(const auto* out=connectionAt({id,0},false)) downstream=out->to;
+    }
+    const auto result=removeNode(id);
+    if(result==FxEditResult::Ok && upstream && downstream) connect(*upstream,*downstream);
+    return result;
+}
+
 void FxGraph::clearProcessing() {
     std::vector<FxNodeId> doomed;
     for(const auto& n:nodes_)
         if(n.kind!=FxNodeKind::Source && n.kind!=FxNodeKind::Output) doomed.push_back(n.id);
     for(auto id:doomed) removeNode(id);
+    const auto src=sourceNode(),out=outputNode();
+    if(src!=invalidFxNodeId && out!=invalidFxNodeId && connectionAt({out,0},true)==nullptr)
+        connect({src,0},{out,0});
 }
 
 const FxConnection* FxGraph::connectionAt(FxPortRef port,bool input) const noexcept {
@@ -268,7 +283,7 @@ FxEditResult FxGraph::canConnect(FxPortRef from,FxPortRef to) const noexcept {
 FxEditResult FxGraph::connect(FxPortRef from,FxPortRef to,FxConnectionId* created) {
     const auto result=canConnect(from,to);
     if(result!=FxEditResult::Ok) return result;
-    connections_.push_back({nextConnectionId_++,from,to});
+    connections_.push_back({nextConnectionId_++,from,to,{}});
     if(created!=nullptr) *created=connections_.back().id;
     return FxEditResult::Ok;
 }
@@ -288,11 +303,53 @@ std::size_t FxGraph::disconnectPort(FxNodeId node,bool input,std::uint8_t port) 
     return before-connections_.size();
 }
 
+FxNodeId FxGraph::insertEffectOnConnection(FxConnectionId id,FxEffectType type,FxPoint at) {
+    const auto* original=findConnection(id);
+    if(original==nullptr || findFxEffect(type)==nullptr) return invalidFxNodeId;
+    const auto snapshot=*this;
+    const auto from=original->from,to=original->to;
+    disconnect(id);
+    const auto created=addEffect(type,at);
+    if(created==invalidFxNodeId || connect(from,{created,0})!=FxEditResult::Ok
+       || connect({created,0},to)!=FxEditResult::Ok) {
+        *this=snapshot;
+        return invalidFxNodeId;
+    }
+    return created;
+}
+
+FxEditResult FxGraph::addLayoutPoint(FxConnectionId id,std::size_t index,FxPoint at) {
+    auto* c=mutableConnection(id);
+    if(c==nullptr) return FxEditResult::UnknownConnection;
+    if(!finite(at)) return FxEditResult::InvalidValue;
+    if(c->layout.size()>=maxLayoutPoints) return FxEditResult::CapacityExceeded;
+    index=std::min(index,c->layout.size());
+    c->layout.insert(c->layout.begin()+static_cast<std::ptrdiff_t>(index),clampPoint(at));
+    return FxEditResult::Ok;
+}
+
+FxEditResult FxGraph::moveLayoutPoint(FxConnectionId id,std::size_t index,FxPoint at) {
+    auto* c=mutableConnection(id);
+    if(c==nullptr) return FxEditResult::UnknownConnection;
+    if(index>=c->layout.size()) return FxEditResult::InvalidPort;
+    if(!finite(at)) return FxEditResult::InvalidValue;
+    c->layout[index]=clampPoint(at);
+    return FxEditResult::Ok;
+}
+
+FxEditResult FxGraph::removeLayoutPoint(FxConnectionId id,std::size_t index) {
+    auto* c=mutableConnection(id);
+    if(c==nullptr) return FxEditResult::UnknownConnection;
+    if(index>=c->layout.size()) return FxEditResult::InvalidPort;
+    c->layout.erase(c->layout.begin()+static_cast<std::ptrdiff_t>(index));
+    return FxEditResult::Ok;
+}
+
 FxEditResult FxGraph::moveNode(FxNodeId id,FxPoint at) noexcept {
     auto* node=mutableNode(id);
     if(node==nullptr) return FxEditResult::UnknownNode;
     if(!finite(at)) return FxEditResult::InvalidValue;
-    node->position={std::max(0.0f,at.x),std::max(0.0f,at.y)};
+    node->position=clampPoint(at);
     return FxEditResult::Ok;
 }
 
@@ -321,6 +378,11 @@ FxNodeId FxGraph::sourceNode() const noexcept {
     return invalidFxNodeId;
 }
 
+FxNodeId FxGraph::sourceForBus(FxBusId bus) const noexcept {
+    for(const auto& n:nodes_) if(n.kind==FxNodeKind::Source && n.bus==bus) return n.id;
+    return invalidFxNodeId;
+}
+
 FxNodeId FxGraph::outputNode() const noexcept {
     for(const auto& n:nodes_) if(n.kind==FxNodeKind::Output) return n.id;
     return invalidFxNodeId;
@@ -339,7 +401,7 @@ FxNodeId FxGraph::insertEffectBeforeOutput(FxEffectType type) {
     FxPoint at=outputNodePtr->position;
     if(upstream) {
         const auto* up=findNode(upstream->node);
-        at={up->position.x+serialSpacing,outputNodePtr->position.y-6.0f};
+        at={up->position.x+serialSpacing,outputNodePtr->position.y-10.0f};
     }
     const auto created=addEffect(type,at);
     if(created==invalidFxNodeId) return invalidFxNodeId;
@@ -369,7 +431,7 @@ bool FxGraph::applyTemplate(FxRoutingMode mode) {
     const auto baseline=findNode(src)->position;
     for(std::size_t i=0;i<chain.size();++i) {
         auto* node=mutableNode(chain[i]);
-        if(i>0) node->position={baseline.x+serialSpacing*static_cast<float>(i)-60.0f,baseline.y-40.0f};
+        if(i>0) node->position=clampPoint({baseline.x+serialSpacing*static_cast<float>(i)-40.0f,baseline.y-50.0f});
         if(i+1<chain.size()) connect({chain[i],0},{chain[i+1],0});
     }
     mode_=mode;
@@ -427,12 +489,13 @@ bool FxGraph::validate(std::string* error) const {
         }
         if(n.kind==FxNodeKind::Source) {
             ++sources;
-            const auto* d=findFxSource(n.source);
-            if(d==nullptr || d->domain!=FxSignalDomain::Audio || !d->available) return fail("source is not an active audio source");
-        }
+            if(n.source!=FxSourceType::Bus || n.bus==0) return fail("source is not an audio bus");
+            for(std::size_t j=0;j<i;++j)
+                if(nodes_[j].kind==FxNodeKind::Source && nodes_[j].bus==n.bus) return fail("duplicate bus source");
+        } else if(n.bus!=0) return fail("non-source node carries a bus");
         if(n.kind==FxNodeKind::Output) ++outputs;
     }
-    if(sources!=1) return fail("graph requires exactly one source");
+    if(sources<1) return fail("graph requires a source");
     if(outputs!=1) return fail("graph requires exactly one output");
     for(std::size_t i=0;i<connections_.size();++i) {
         const auto& c=connections_[i];
@@ -442,6 +505,8 @@ bool FxGraph::validate(std::string* error) const {
         if(a==nullptr || b==nullptr) return fail("dangling connection");
         if(c.from.port>=a->ports.outputs || c.to.port>=b->ports.inputs) return fail("connection uses nonexistent port");
         if(c.from.node==c.to.node) return fail("self connection");
+        if(c.layout.size()>maxLayoutPoints) return fail("too many layout points");
+        for(const auto& p:c.layout) if(!finite(p)) return fail("non-finite layout point");
         for(std::size_t j=0;j<i;++j) {
             const auto& o=connections_[j];
             if(o.id==c.id) return fail("duplicate connection id");
@@ -474,7 +539,7 @@ bool FxGraph::operator==(const FxGraph& o) const noexcept {
     for(std::size_t i=0;i<nodes_.size();++i) {
         const auto& a=nodes_[i];
         const auto& b=o.nodes_[i];
-        if(a.id!=b.id || a.kind!=b.kind || a.effect!=b.effect || a.source!=b.source || a.name!=b.name
+        if(a.id!=b.id || a.kind!=b.kind || a.effect!=b.effect || a.source!=b.source || a.bus!=b.bus || a.name!=b.name
            || a.enabled!=b.enabled || a.position.x!=b.position.x || a.position.y!=b.position.y
            || a.ports.inputs!=b.ports.inputs || a.ports.outputs!=b.ports.outputs
            || a.parameters.size()!=b.parameters.size()) return false;
@@ -484,62 +549,26 @@ bool FxGraph::operator==(const FxGraph& o) const noexcept {
     for(std::size_t i=0;i<connections_.size();++i) {
         const auto& a=connections_[i];
         const auto& b=o.connections_[i];
-        if(a.id!=b.id || a.from!=b.from || a.to!=b.to) return false;
+        if(a.id!=b.id || a.from!=b.from || a.to!=b.to || a.layout.size()!=b.layout.size()) return false;
+        for(std::size_t p=0;p<a.layout.size();++p)
+            if(a.layout[p].x!=b.layout[p].x || a.layout[p].y!=b.layout[p].y) return false;
     }
     return true;
 }
 
-// ---------------------------------------------------------------- compile
-
-FxRenderPlan compileFxRenderPlan(const FxGraph& graph) {
-    FxRenderPlan plan;
-    if(!graph.validate()) return plan;
-    const auto& nodes=graph.nodes();
-    const auto& connections=graph.connections();
-    const auto indexOf=[&nodes](FxNodeId id){for(std::size_t i=0;i<nodes.size();++i) if(nodes[i].id==id) return i; return nodes.size();};
-    const auto flood=[&](FxNodeId start,bool forward) {
-        std::vector<bool> marked(nodes.size(),false);
-        std::vector<FxNodeId> stack{start};
-        while(!stack.empty()) {
-            const auto id=stack.back();
-            stack.pop_back();
-            const auto i=indexOf(id);
-            if(i>=nodes.size() || marked[i]) continue;
-            marked[i]=true;
-            for(const auto& c:connections) {
-                if(forward && c.from.node==id) stack.push_back(c.to.node);
-                if(!forward && c.to.node==id) stack.push_back(c.from.node);
-            }
-        }
-        return marked;
-    };
-    const auto fromSource=flood(graph.sourceNode(),true);
-    const auto toOutput=flood(graph.outputNode(),false);
-    std::vector<int> indegree(nodes.size(),0);
-    for(const auto& c:connections) ++indegree[indexOf(c.to.node)];
-    std::vector<std::size_t> ready;
-    for(std::size_t i=0;i<nodes.size();++i) if(indegree[i]==0) ready.push_back(i);
-    while(!ready.empty()) {
-        std::sort(ready.begin(),ready.end(),std::greater<>{}); // deterministic: lowest index first
-        const auto i=ready.back();
-        ready.pop_back();
-        if(fromSource[i] && toOutput[i]) {
-            plan.order.push_back(nodes[i].id);
-            if(nodes[i].kind==FxNodeKind::Effect && nodes[i].enabled)
-                if(const auto* d=findFxEffect(nodes[i].effect)) plan.processesAudio|=d->processesAudio;
-        }
-        for(const auto& c:connections)
-            if(c.from.node==nodes[i].id && --indegree[indexOf(c.to.node)]==0) ready.push_back(indexOf(c.to.node));
-    }
-    plan.valid=true;
-    return plan;
+FxGraph makeDefaultFxGraph() {
+    FxGraph g;
+    const auto source=g.addBusSource(fxMainBusId,{40.0f,170.0f});
+    const auto output=g.addOutput({760.0f,140.0f});
+    g.connect({source,0},{output,0});
+    return g;
 }
 
 // ---------------------------------------------------------------- codec
 
 namespace {
 constexpr std::uint8_t magic[4]{'M','F','X','G'};
-constexpr std::uint16_t codecVersion=1;
+constexpr std::uint16_t codecVersion=2;
 
 struct Writer {
     std::vector<std::uint8_t> bytes;
@@ -577,6 +606,7 @@ std::vector<std::uint8_t> encodeFxGraph(const FxGraph& graph) {
         w.u8(static_cast<std::uint8_t>(n.kind));
         w.u16(static_cast<std::uint16_t>(n.effect));
         w.u8(static_cast<std::uint8_t>(n.source));
+        w.u32(n.bus);
         w.u8(n.enabled ? 1 : 0);
         w.f32(n.position.x); w.f32(n.position.y);
         w.u8(n.ports.inputs); w.u8(n.ports.outputs);
@@ -591,6 +621,8 @@ std::vector<std::uint8_t> encodeFxGraph(const FxGraph& graph) {
         w.u32(c.id);
         w.u32(c.from.node); w.u8(c.from.port);
         w.u32(c.to.node); w.u8(c.to.port);
+        w.u8(static_cast<std::uint8_t>(c.layout.size()));
+        for(const auto& p:c.layout) { w.f32(p.x); w.f32(p.y); }
     }
     return std::move(w.bytes);
 }
@@ -617,6 +649,7 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
             n.kind=static_cast<FxNodeKind>(r.u8());
             n.effect=static_cast<FxEffectType>(r.u16());
             n.source=static_cast<FxSourceType>(r.u8());
+            n.bus=r.u32();
             const auto enabled=r.u8();
             if(enabled>1) return false;
             n.enabled=enabled==1;
@@ -626,6 +659,7 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
             if(nameBytes>maxNameBytes) return false;
             for(std::uint8_t c=0;c<nameBytes;++c) n.name.push_back(static_cast<char>(r.u8()));
             const auto parameterCount=r.u8();
+            if(parameterCount>maxFxParameters) return false;
             for(std::uint8_t p=0;p<parameterCount && r.ok;++p) {
                 FxParameterValue v;
                 v.id=r.u16();
@@ -641,7 +675,10 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
             c.id=r.u32();
             c.from.node=r.u32(); c.from.port=r.u8();
             c.to.node=r.u32(); c.to.port=r.u8();
-            graph.connections_.push_back(c);
+            const auto points=r.u8();
+            if(points>FxGraph::maxLayoutPoints) return false;
+            for(std::uint8_t p=0;p<points && r.ok;++p) { FxPoint pt; pt.x=r.f32(); pt.y=r.f32(); c.layout.push_back(pt); }
+            graph.connections_.push_back(std::move(c));
         }
         if(!r.ok || r.offset!=size || !graph.validate()) return false;
         output=std::move(graph);
@@ -661,6 +698,7 @@ void FxGraphDocument::commit(FxGraph next) {
     redo_.clear();
     graph_=std::move(next);
     ++revision_;
+    notify();
 }
 
 void FxGraphDocument::beginGesture() {
@@ -684,6 +722,7 @@ bool FxGraphDocument::undo() {
     graph_=std::move(undo_.back());
     undo_.pop_back();
     ++revision_;
+    notify();
     return true;
 }
 
@@ -694,6 +733,7 @@ bool FxGraphDocument::redo() {
     graph_=std::move(redo_.back());
     redo_.pop_back();
     ++revision_;
+    notify();
     return true;
 }
 
@@ -703,6 +743,7 @@ void FxGraphDocument::replace(FxGraph next) {
     gestureStart_.reset();
     graph_=std::move(next);
     ++revision_;
+    notify();
 }
 
 }

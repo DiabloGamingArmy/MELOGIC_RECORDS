@@ -22,7 +22,12 @@ void showNativeChoiceMenu(juce::Component& anchor,const juce::String&,const std:
         menu.addSubMenu(group,submenu);
     }
     auto safe=juce::Component::SafePointer<juce::Component>(&anchor);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor),
+    // Open at the cursor when it is over the anchor (canvas right-click); otherwise under the anchor.
+    const auto mouse=juce::Desktop::getMousePosition();
+    auto options=anchor.getScreenBounds().contains(mouse)
+        ? juce::PopupMenu::Options().withTargetScreenArea({mouse.x,mouse.y,1,1})
+        : juce::PopupMenu::Options().withTargetComponent(&anchor);
+    menu.showMenuAsync(options,
         [safe,callback=std::move(callback)](int id) mutable {if(safe!=nullptr&&id>0&&callback)callback(id);});
 }
 }

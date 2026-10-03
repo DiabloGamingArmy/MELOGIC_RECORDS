@@ -1646,12 +1646,15 @@ void fxPageAudit() {
     const auto synthState=encodeInstrumentState(p.getUiInstrumentState());
     fxButton->onClick();
     check(page->isVisible() && !rack(*editor).isVisible(),"FX header button opens the FX page");
+    check(page->graph()==makeDefaultFxGraph(),"a fresh instrument has the neutral BUS 1 -> MASTER OUT graph");
+    // The development demo is an explicit opt-in, never the default.
+    page->document().replace(makeDevelopmentFxGraph());
+    page->syncFromModel();
 
     const auto& graph=page->graph();
-    check(graph.validate(),"seeded FX graph is valid");
+    check(graph.validate(),"development FX graph is valid");
     check(page->canvas().nodeComponentCount()==graph.nodes().size(),"canvas has one component per model node");
     check(page->canvas().connectionPathCount()==graph.connections().size(),"canvas draws one path per model connection");
-    check(!compileFxRenderPlan(graph).processesAudio,"FX page does not claim audio processing");
     FxNodeId delay=0,split=0;
     for(const auto& n:graph.nodes()) {
         if(n.effect==FxEffectType::Delay) delay=n.id;
@@ -1697,7 +1700,8 @@ void fxPageAudit() {
     check(page->selectedNode()==invalidFxNodeId && page->inspectorHeadline()=="NO NODE SELECTED",
           "deleting the selected node clears selection safely");
     check(page->canvas().nodeComponent(delay)==nullptr,"deleted node component removed");
-    check(page->graph().connections().size()==connectionsBefore-2 && page->graph().validate(),"deleting node removes its wires");
+    check(page->graph().connections().size()==connectionsBefore-1 && page->graph().validate(),
+          "deleting a chained node removes its wires and bridges the chain");
     page->undo();
     check(page->graph().findNode(delay)!=nullptr && page->canvas().nodeComponentCount()==page->graph().nodes().size(),"undo restores deleted node");
     check(!page->deleteNode(page->graph().outputNode()),"MASTER OUT cannot be deleted");
@@ -1726,8 +1730,181 @@ void fxPageAudit() {
           "processor-owned graph survives editor close/reopen");
 }
 
+// mct-origami-fx-graph-dsp-bus-routing-p02
+void fxGraphUxAudit() {
+    using namespace mct::origami::fx;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    auto editor=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& c){if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;});
+    check(page!=nullptr,"FX page present");
+    auto& canvas=page->canvas();
+    const auto src=page->graph().sourceNode(),out=page->graph().outputNode();
+    const auto wire=page->graph().connectionAt({out,0},true)->id;
+
+    // Connection hit corridor: the auto Bezier passes through the midpoint.
+    const auto* a=canvas.nodeComponent(src);
+    const auto* b=canvas.nodeComponent(out);
+    const auto mid=((a->portCentre(false,0)+a->getPosition().toFloat())+(b->portCentre(true,0)+b->getPosition().toFloat()))*0.5f;
+    check(canvas.connectionAt(mid)==wire,"connection hit on the curve");
+    check(canvas.connectionAt(mid+juce::Point<float>(0.0f,ui::FxCanvas::wireHitRadius-2.0f))==wire,"generous invisible hit corridor");
+    check(!canvas.connectionAt(mid+juce::Point<float>(0.0f,40.0f)).has_value(),"empty canvas is not a connection");
+    check(canvas.toGraph(mid).x==mid.x && canvas.toGraph(mid).y==mid.y,"canvas -> graph coordinates");
+
+    // Routing points: stored on the connection, draggable, one undo step, removable.
+    const auto pointAt=mid+juce::Point<float>(0.0f,70.0f);
+    check(page->addLayoutPoint(wire,canvas.toGraph(pointAt)),"double-click adds a routing point");
+    check(page->graph().findConnection(wire)->layout.size()==1,"routing point stored in graph layout");
+    check(canvas.layoutPointAt(pointAt).has_value(),"routing point is hit-testable");
+    check(canvas.connectionAt(pointAt)==wire,"cable bends through the routing point");
+    page->moveLayoutPoint(wire,0,{pointAt.x+20.0f,pointAt.y+30.0f},true);
+    page->moveLayoutPoint(wire,0,{pointAt.x+40.0f,pointAt.y+60.0f},true);
+    page->moveLayoutPoint(wire,0,{pointAt.x+40.0f,pointAt.y+60.0f},false);
+    check(page->graph().findConnection(wire)->layout[0].y==pointAt.y+60.0f,"routing point moves");
+    page->undo();
+    check(page->graph().findConnection(wire)->layout[0].y==pointAt.y,"point drag is one undo step");
+    check(page->removeLayoutPoint(wire,0) && page->graph().findConnection(wire)->layout.empty(),"routing point removed");
+
+    // Right-click on a connection inserts atomically; on empty space adds at the click.
+    const auto inserted=page->insertEffectOnConnection(wire,FxEffectType::Delay,canvas.toGraph(mid));
+    check(inserted!=0 && page->graph().validate() && page->graph().connectionAt({src,0},false)->to.node==inserted
+          && page->graph().connectionAt({out,0},true)->from.node==inserted,"insert on connection: A -> X -> B");
+    const auto* insertedNode=page->graph().findNode(inserted);
+    check(std::abs(insertedNode->position.x+106.0f-mid.x)<1.0f && std::abs(insertedNode->position.y+88.0f-mid.y)<1.0f,
+          "inserted module is centred on the click");
+    const auto before=page->graph();
+    check(page->insertEffectOnConnection(9999,FxEffectType::Drive,{0,0})==0 && page->graph()==before,"failed insert preserves graph");
+    const auto free=page->addEffectAt(FxEffectType::Reverb,{900.0f,300.0f});
+    check(free!=0 && page->graph().findNode(free)->position.x==900.0f-106.0f,"right-click empty canvas adds at the click");
+
+    // Z-order: the active node comes to the front; DSP order is unaffected.
+    const auto graphBefore=page->graph();
+    page->selectNode(inserted);
+    check(canvas.nodeZOrder().back()==inserted,"selected node moves to the front");
+    page->selectNode(free);
+    check(canvas.nodeZOrder().back()==free,"newly selected node moves to the front");
+    page->selectNode(inserted);
+    check(canvas.nodeZOrder().back()==inserted && page->graph()==graphBefore,"z-order is UI-only and never edits the graph");
+    check(page->inspectorHeadline()=="DELAY","selection updates the inspector");
+
+    // Real DSP: no NO DSP labels, inspector shows physical values, PING PONG exists.
+    for(const auto& d:fxEffectCatalog()) check(d.processesAudio,"every menu effect processes audio");
+    juce::Button* pingPong=nullptr;
+    walk(*page,[&](auto& c){if(auto* button=dynamic_cast<juce::Button*>(&c)) if(button->getName()=="FX parameter pingpong") pingPong=button;});
+    check(pingPong!=nullptr,"delay inspector exposes PING PONG");
+    pingPong->setToggleState(true,juce::dontSendNotification);
+    pingPong->onClick();
+    check(page->graph().findNode(inserted)->parameter(6).value_or(0.0f)==1.0f,"inspector edits the one canonical parameter");
+
+    // Source rail mirrors the canonical bus list.
+    check(page->graph().sourceForBus(mct::origami::mainBusId)==src,"BUS 1 is the graph source");
+    check(page->deleteNode(inserted) && page->selectedNode()==invalidFxNodeId,"deleting selected clears selection");
+    check(page->graph().connectionAt({out,0},true)->from.node==src,"deleting the only effect restores BUS 1 -> MASTER OUT");
+}
+
+float blockRms(const juce::AudioBuffer<float>& audio) {
+    double sum=0.0;
+    for(int i=0;i<audio.getNumSamples();++i) sum+=double(audio.getSample(0,i))*audio.getSample(0,i);
+    return float(std::sqrt(sum/double(audio.getNumSamples())));
+}
+
+void fxAudioPathAudit() {
+    using namespace mct::origami::fx;
+    constexpr int blockSize=256;
+    const auto renderBlocks=[](OrigamiAudioProcessor& p,int blocks,juce::MidiBuffer midi) {
+        juce::AudioBuffer<float> audio(2,blockSize),all(2,blockSize*blocks);
+        for(int n=0;n<blocks;++n) {
+            audio.clear();p.processBlock(audio,midi);midi.clear();
+            for(int ch=0;ch<2;++ch) all.copyFrom(ch,n*blockSize,audio,ch,0,blockSize);
+        }
+        return all;
+    };
+    const auto noteOn=[]{juce::MidiBuffer m;m.addEvent(juce::MidiMessage::noteOn(1,57,1.0f),0);return m;};
+    const auto noteOff=[]{juce::MidiBuffer m;m.addEvent(juce::MidiMessage::noteOff(1,57),0);return m;};
+    const auto finite=[](const juce::AudioBuffer<float>& b){for(int ch=0;ch<b.getNumChannels();++ch) for(int i=0;i<b.getNumSamples();++i) if(!std::isfinite(b.getSample(ch,i))) return false;return true;};
+
+    // OSC -> filter -> BUS 1 -> FX GRAPH -> MASTER OUT, through processBlock.
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,blockSize);
+    auto& document=p.getUiFxDocument();
+    renderBlocks(p,4,noteOn());
+    const float clean=blockRms(renderBlocks(p,16,{}));
+    check(clean>0.001f,"BUS 1 -> MASTER OUT carries the synth");
+
+    FxNodeId drive=0,delay=0;
+    check(document.edit([&](FxGraph& g){
+        drive=g.insertEffectBeforeOutput(FxEffectType::Drive);
+        g.setParameter(drive,1,1.0f); // 36 dB into the saturator
+        return drive!=0;
+    }),"BUS 1 -> DRIVE -> MASTER OUT");
+    const auto driven=renderBlocks(p,24,{});
+    check(finite(driven) && blockRms(driven)>clean*1.3f,"drive audibly saturates the synth through the processor");
+
+    document.edit([&](FxGraph& g){return g.setEnabled(drive,false)==FxEditResult::Ok;});
+    renderBlocks(p,8,{});
+    const float bypassed=blockRms(renderBlocks(p,16,{}));
+    check(bypassed<blockRms(driven)*0.9f && std::abs(bypassed-clean)<clean*0.25f,"bypassing drive returns to the clean level");
+
+    check(document.edit([&](FxGraph& g){
+        delay=g.insertEffectBeforeOutput(FxEffectType::Delay);
+        g.setParameter(delay,3,0.6f);
+        g.setParameter(delay,2,0.8f);
+        return delay!=0;
+    }),"BUS 1 -> DRIVE -> DELAY -> MASTER OUT");
+
+    // Delay tail: after the note's release, a fresh neutral processor is silent
+    // while the delayed instance keeps echoing.
+    renderBlocks(p,1,noteOff());
+    renderBlocks(p,int(48000*1.5)/blockSize,{});
+    const float tail=blockRms(renderBlocks(p,24,{}));
+    auto neutralOwner=std::make_unique<OrigamiAudioProcessor>(); auto& neutral=*neutralOwner;
+    neutral.prepareToPlay(48000.0,blockSize);
+    renderBlocks(neutral,20,noteOn());
+    renderBlocks(neutral,1,noteOff());
+    renderBlocks(neutral,int(48000*1.5)/blockSize,{});
+    const float neutralTail=blockRms(renderBlocks(neutral,24,{}));
+    check(tail>1.0e-4f && tail>neutralTail*10.0f,"delay produces echoes after the dry note has released");
+
+    document.edit([&](FxGraph& g){return g.setEnabled(delay,false)==FxEditResult::Ok;});
+    renderBlocks(p,8,{});
+    check(blockRms(renderBlocks(p,24,{}))<tail*0.1f,"bypassing delay removes the echo");
+
+    // Deleting nodes recompiles safely while audio runs; the chain stays live.
+    const auto compiles=p.getFxCompileCount();
+    check(document.edit([&](FxGraph& g){return g.removeNodeBridging(delay)==FxEditResult::Ok;}),"delete delay");
+    check(p.getFxCompileCount()==compiles+1,"deletion recompiles the plan");
+    renderBlocks(p,1,noteOn());
+    const auto afterDelete=renderBlocks(p,16,{});
+    check(finite(afterDelete) && blockRms(afterDelete)>0.001f,"graph keeps sounding after deletion");
+
+    // Meters: bounded peak telemetry.
+    const auto peaks=p.consumeUiFxPeaks();
+    check(peaks.first>0.0f && peaks.first<=1.5f && p.consumeUiFxPeaks().first==0.0f,"master meter telemetry");
+
+    // State: FX graph round-trips; old states without it load neutral.
+    juce::MemoryBlock saved;
+    p.getStateInformation(saved);
+    auto restoredOwner=std::make_unique<OrigamiAudioProcessor>(); auto& restored=*restoredOwner;
+    restored.setStateInformation(saved.getData(),int(saved.getSize()));
+    check(restored.getUiFxDocument().graph()==document.graph(),"FX graph (nodes, params, bypass, layout, globals) persists");
+    const auto legacy=encodeInstrumentState(p.getUiInstrumentState());
+    restored.setStateInformation(legacy.data(),int(legacy.size()));
+    check(restored.getUiFxDocument().graph()==makeDefaultFxGraph(),"old state without FX graph restores the neutral graph");
+
+    // Bus routes: BUS 1 default, unity; invalid destinations rejected at the boundary.
+    auto module=p.getUiOscillatorState(1);
+    check(module.busRouteCount==1 && module.busRoutes[0].bus==mct::origami::mainBusId && module.busRoutes[0].level==1.0f,
+          "oscillators route to BUS 1 at unity by default");
+    auto invalid=module;invalid.busRoutes[0].bus=77;
+    check(!p.setUiOscillatorState(1,invalid),"routes to unknown buses are rejected");
+    module.busRoutes[0].level=0.5f;
+    check(p.setUiOscillatorState(1,module) && p.getUiOscillatorState(1).busRoutes[0].level==0.5f,"send level edits persist");
+}
+
 void run() {
     fxPageAudit();
+    fxGraphUxAudit();
+    fxAudioPathAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

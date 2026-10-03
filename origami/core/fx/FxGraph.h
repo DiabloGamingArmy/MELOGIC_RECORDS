@@ -1,8 +1,11 @@
+// mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #pragma once
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -11,25 +14,28 @@
 //
 // Ownership and threading:
 //   EDITABLE FxGraph (message thread, value type, no UI pointers)
-//       | compileFxRenderPlan() after each mutation
+//       | FxGraphCompiler (core/fx/FxRenderer.h) after each mutation
 //       v
-//   IMMUTABLE FxRenderPlan (future: published to audio via LatestStateMailbox)
+//   PreparedFxPlan (immutable topology + prepared effect instances)
+//       | lock-free pointer publication at a host-block boundary
 //       v
-//   REALTIME FX RENDERER (not implemented in Patch 1)
+//   FxRenderer (realtime)
 //
-// The audio thread must never traverse an FxGraph. Nothing in this header is
+// The audio thread never traverses an FxGraph. Nothing in this header is
 // JUCE-aware; UI components refer to nodes only by stable FxNodeId.
 namespace mct::origami::fx {
 
 // Persistent identities. Never renumber or reuse enum values: they are written
-// by the FX graph codec and will be referenced by presets and modulation.
+// by the FX graph codec and are referenced by presets and (later) modulation.
 using FxNodeId=std::uint32_t;
 using FxConnectionId=std::uint32_t;
 using FxParameterId=std::uint16_t;
+using FxBusId=std::uint32_t; // same identity space as mct::origami::BusId
 inline constexpr FxNodeId invalidFxNodeId=0;
+inline constexpr FxBusId fxMainBusId=1;
 
 enum class FxNodeKind : std::uint8_t {
-    Source=1,  // where a signal enters the FX environment
+    Source=1,  // a named bus (or future external input) entering the FX graph
     Effect=2,  // one processor with parameters
     Split=3,   // one input, N branch outputs (routing only, not an effect)
     Merge=4,   // N branch inputs, one output (routing only, not an effect)
@@ -43,18 +49,11 @@ enum class FxNodeKind : std::uint8_t {
 // FX parameters through Origami's single modulation system instead.
 enum class FxSignalDomain : std::uint8_t { Audio=1, Control=2 };
 
+// Value 1 was P01's "synth sum"; it is now the named-bus source kind, whose
+// concrete bus is FxNode::bus. Other values are concept-level source kinds.
 enum class FxSourceType : std::uint8_t {
-    SynthSum=1, OscillatorBus=2, FilterBus=3, NoiseBus=4,
-    EnvelopeBus=5, LfoBus=6, MidiBus=7, ExternalInput=8
+    Bus=1, ExternalInput=8, EnvelopeBus=5, LfoBus=6, MidiBus=7
 };
-
-enum class FxEffectType : std::uint16_t { None=0, Drive=1, Delay=2, Reverb=3 };
-
-// Routing workflows. All of them edit the SAME canonical graph; they are not
-// independent routing engines.
-enum class FxRoutingMode : std::uint8_t { Serial=1, Parallel=2, Split=3, Send=4, Custom=5 };
-
-enum class FxParameterPage : std::uint8_t { Main=1, Advanced=2 };
 
 struct FxSourceDescriptor {
     FxSourceType type;
@@ -63,30 +62,67 @@ struct FxSourceDescriptor {
     FxSignalDomain domain;
     bool available; // produces audio in the current engine
 };
-const std::array<FxSourceDescriptor,8>& fxSourceCatalog() noexcept;
+const std::array<FxSourceDescriptor,5>& fxSourceCatalog() noexcept;
 const FxSourceDescriptor* findFxSource(FxSourceType) noexcept;
 
-// Parameter values are stored normalized [0,1] by stable parameter ID. The
-// physical mapping (ms, dB, ...) belongs to the future DSP implementation, so
-// the model does not pre-commit to units it cannot yet honour.
+enum class FxEffectType : std::uint16_t {
+    None=0, Drive=1, Delay=2, Reverb=3, Chorus=4, Comb=5, Diffuse=6, Limiter=7
+};
+
+// Routing workflows. All of them edit the SAME canonical graph; they are not
+// independent routing engines.
+enum class FxRoutingMode : std::uint8_t { Serial=1, Parallel=2, Split=3, Send=4, Custom=5 };
+
+enum class FxParameterPage : std::uint8_t { Main=1, Advanced=2 };
+enum class FxParameterCurve : std::uint8_t { Linear=1, Exponential=2, Choice=3 };
+enum class FxCategory : std::uint8_t { Drive=1, Time=2, Space=3, Modulation=4, Filter=5, Dynamics=6 };
+enum class FxVisual : std::uint8_t { Transfer=1, Taps=2, Decay=3, Lfo=4, Comb=5, Diffusion=6, Dynamics=7 };
+
+// Canonical values are normalized [0,1] and keyed by stable parameter ID.
+// minimum/maximum/curve/unit define the ONE physical mapping shared by DSP,
+// inspector text and (later) host automation. Labels are display-only.
 struct FxParameterDescriptor {
     FxParameterId id;
     const char* key;
     const char* label;
-    float defaultValue;
+    float defaultValue; // normalized
     FxParameterPage page;
-    bool quick; // shown on the compact graph node
+    bool quick;         // shown on the compact graph node
+    float minimum,maximum;
+    FxParameterCurve curve;
+    const char* unit;
+    int choices=0;      // Choice curve: number of discrete states
+};
+float fxParameterValue(const FxParameterDescriptor&,float normalized) noexcept;
+std::string fxParameterText(const FxParameterDescriptor&,float normalized);
+
+inline constexpr std::size_t maxFxParameters=8;
+
+// Realtime DSP contract. prepare() allocates and runs off the audio thread;
+// reset() and process() are allocation-free and lock-free. params are the
+// canonical normalized values in descriptor order (resolved at compile time).
+class FxProcessor {
+public:
+    virtual ~FxProcessor()=default;
+    virtual void prepare(double sampleRate)=0;
+    virtual void reset() noexcept=0;
+    virtual void process(float* left,float* right,int samples,const float* params) noexcept=0;
 };
 
 struct FxEffectDescriptor {
     FxEffectType type;
     const char* key;
     const char* label;
-    bool processesAudio; // false for every Patch 1 development entry
+    FxCategory category;
+    FxVisual visual;
+    bool processesAudio;
     const FxParameterDescriptor* parameters;
     std::size_t parameterCount;
+    std::unique_ptr<FxProcessor>(*create)();
+    int latencySamples;
 };
-// DEVELOPMENT catalog: graph/UI objects only. None of these process audio yet.
+// The effect registry (core/fx/FxEffects.cpp). Every entry with
+// processesAudio==true has a verified DSP implementation.
 const std::vector<FxEffectDescriptor>& fxEffectCatalog() noexcept;
 const FxEffectDescriptor* findFxEffect(FxEffectType) noexcept;
 
@@ -102,7 +138,8 @@ struct FxNode {
     FxNodeId id=invalidFxNodeId;
     FxNodeKind kind=FxNodeKind::Effect;
     FxEffectType effect=FxEffectType::None;
-    FxSourceType source=FxSourceType::SynthSum;
+    FxSourceType source=FxSourceType::Bus;
+    FxBusId bus=0; // Source nodes only
     std::string name;
     bool enabled=true;
     FxPoint position{};
@@ -124,10 +161,13 @@ struct FxConnection {
     FxConnectionId id=0;
     FxPortRef from; // output port
     FxPortRef to;   // input port
+    // Visual routing points in canvas units. Layout only: they never change
+    // graph semantics or DSP. Multiple points are supported by the model.
+    std::vector<FxPoint> layout;
 };
 
-// Environment-wide controls. Stored in physical units so their meaning is
-// fixed now; Patch 1 does NOT apply them to audio.
+// Environment-wide controls applied around the complete graph:
+// input gain -> graph -> dry/wet -> stereo width -> output gain.
 struct FxGlobalSettings {
     float inputGainDb=0.0f;
     float dryWet=1.0f;
@@ -138,7 +178,7 @@ struct FxGlobalSettings {
 enum class FxEditResult : std::uint8_t {
     Ok, UnknownNode, InvalidPort, SelfConnection, DuplicateConnection,
     InputOccupied, OutputOccupied, WouldCreateCycle, ControlSourceNotRoutable,
-    ProtectedNode, InvalidValue, CapacityExceeded, Unsupported
+    ProtectedNode, InvalidValue, CapacityExceeded, Unsupported, UnknownConnection
 };
 const char* toString(FxEditResult) noexcept;
 
@@ -148,25 +188,38 @@ class FxGraph {
 public:
     static constexpr std::size_t maxNodes=128;
     static constexpr std::size_t maxConnections=256;
+    static constexpr std::size_t maxLayoutPoints=8;
     static constexpr std::uint8_t minBranches=2,maxBranches=8;
 
     // Construction. Each returns invalidFxNodeId when the request is invalid.
-    FxNodeId addSource(FxSourceType,FxPoint);
+    FxNodeId addBusSource(FxBusId,FxPoint);
     FxNodeId addEffect(FxEffectType,FxPoint);
     FxNodeId addSplit(FxPoint,std::uint8_t outputs=2);
     FxNodeId addMerge(FxPoint,std::uint8_t inputs=2);
     FxNodeId addOutput(FxPoint);
 
     // Removes the node and every connection touching it. Source and Output
-    // terminals are protected: the graph always runs synth -> MASTER OUT.
+    // terminals are protected: the graph always runs a bus -> MASTER OUT.
     FxEditResult removeNode(FxNodeId);
-    // Removes every Effect/Split/Merge node, keeping the Source and Output.
+    // Removes an effect; if it sat in a single chain (A -> X -> B), A is
+    // reconnected to B so deleting an effect never silently mutes the chain.
+    FxEditResult removeNodeBridging(FxNodeId);
+    // Removes every Effect/Split/Merge node and reconnects the first source
+    // to MASTER OUT (the neutral graph).
     void clearProcessing();
 
     FxEditResult connect(FxPortRef from,FxPortRef to,FxConnectionId* created=nullptr);
     FxEditResult canConnect(FxPortRef from,FxPortRef to) const noexcept;
     bool disconnect(FxConnectionId) noexcept;
     std::size_t disconnectPort(FxNodeId,bool input,std::uint8_t port) noexcept;
+
+    // A -> B becomes A -> NEW -> B. Atomic: on any failure the graph is
+    // returned unchanged (A -> B preserved) and invalidFxNodeId is returned.
+    FxNodeId insertEffectOnConnection(FxConnectionId,FxEffectType,FxPoint);
+
+    FxEditResult addLayoutPoint(FxConnectionId,std::size_t index,FxPoint);
+    FxEditResult moveLayoutPoint(FxConnectionId,std::size_t index,FxPoint);
+    FxEditResult removeLayoutPoint(FxConnectionId,std::size_t index);
 
     FxEditResult moveNode(FxNodeId,FxPoint) noexcept;
     FxEditResult setEnabled(FxNodeId,bool) noexcept;
@@ -176,7 +229,7 @@ public:
     // it into the existing output connection. Positions shift to make room.
     FxNodeId insertEffectBeforeOutput(FxEffectType);
     // Rebuilds routing as Source -> effects (left-to-right order) -> Output,
-    // removing Split/Merge nodes. Only SERIAL is implemented in Patch 1.
+    // removing Split/Merge nodes. Only SERIAL is implemented so far.
     bool applyTemplate(FxRoutingMode);
 
     void setRoutingMode(FxRoutingMode) noexcept;
@@ -187,11 +240,13 @@ public:
     const std::vector<FxNode>& nodes() const noexcept { return nodes_; }
     const std::vector<FxConnection>& connections() const noexcept { return connections_; }
     const FxNode* findNode(FxNodeId) const noexcept;
+    const FxConnection* findConnection(FxConnectionId) const noexcept;
     const FxConnection* connectionAt(FxPortRef port,bool input) const noexcept;
-    FxNodeId sourceNode() const noexcept;
+    FxNodeId sourceNode() const noexcept; // first source
+    FxNodeId sourceForBus(FxBusId) const noexcept;
     FxNodeId outputNode() const noexcept;
 
-    // Full structural validation; used after decoding and by tests.
+    // Full structural validation; used by the compiler, after decoding, tests.
     bool validate(std::string* error=nullptr) const;
 
     bool operator==(const FxGraph&) const noexcept;
@@ -201,6 +256,7 @@ private:
     friend bool decodeFxGraph(const void*,std::size_t,FxGraph&) noexcept;
     friend std::vector<std::uint8_t> encodeFxGraph(const FxGraph&);
     FxNode* mutableNode(FxNodeId) noexcept;
+    FxConnection* mutableConnection(FxConnectionId) noexcept;
     FxNodeId appendNode(FxNode);
     bool reaches(FxNodeId from,FxNodeId target) const noexcept;
 
@@ -212,40 +268,32 @@ private:
     FxGlobalSettings globals_{};
 };
 
-// Immutable plan compiled from a validated graph. Nodes are in a topological
-// order covering only nodes on a Source -> Output path. A future renderer will
-// receive one of these through a lock-free mailbox; it never sees FxGraph.
-//
 // Feedback policy: the editable graph is a DAG; connect() rejects any edge
 // that closes a cycle. Intentional feedback will later be modelled as an
 // explicit feedback node with a guaranteed minimum delay, compiled into the
 // plan as a delayed edge, never as a raw cycle.
-struct FxRenderPlan {
-    bool valid=false;
-    bool processesAudio=false; // true only once a step has real DSP
-    std::vector<FxNodeId> order;
-};
-FxRenderPlan compileFxRenderPlan(const FxGraph&);
 
-// Versioned, bounded binary codec. Not yet part of the host preset chunk:
-// production preset integration is a later, backward-compatible patch.
+// Versioned, bounded binary codec (version 2: bus sources, layout points).
 std::vector<std::uint8_t> encodeFxGraph(const FxGraph&);
 bool decodeFxGraph(const void*,std::size_t,FxGraph&) noexcept;
 
-// DEVELOPMENT seed graph for inspecting the routing UI:
-// SYNTH -> DRIVE -> SPLIT -> {DELAY, REVERB} -> MERGE -> MASTER OUT.
-// Isolated so it can be replaced by the real default (empty serial) state.
+// Production default: BUS 1 -> MASTER OUT. Audibly neutral.
+FxGraph makeDefaultFxGraph();
+// DEVELOPMENT demo (explicit opt-in via TEMPLATES, never a default):
+// BUS 1 -> DRIVE -> SPLIT -> {DELAY, REVERB} -> MERGE -> MASTER OUT.
 FxGraph makeDevelopmentFxGraph();
 
 // Message-thread document: canonical graph + snapshot undo/redo + revision.
-// UI widgets observe revision() and rebuild only what changed.
+// UI widgets observe revision(); the processor observes onChanged to compile.
 class FxGraphDocument {
 public:
     static constexpr std::size_t historyLimit=64;
-    explicit FxGraphDocument(FxGraph initial=makeDevelopmentFxGraph());
+    explicit FxGraphDocument(FxGraph initial=makeDefaultFxGraph());
 
     const FxGraph& graph() const noexcept { return graph_; }
     std::uint64_t revision() const noexcept { return revision_; }
+    // Invoked after every committed change (edit, gesture step, undo, redo, replace).
+    std::function<void()> onChanged;
 
     // Applies fn to a working copy; commits and records undo only on success
     // and only if the graph actually changed.
@@ -263,6 +311,7 @@ public:
         if(!fn(working) || working==graph_) return false;
         graph_=std::move(working);
         ++revision_;
+        notify();
         return true;
     }
     void endGesture();
@@ -275,6 +324,7 @@ public:
 
 private:
     void commit(FxGraph);
+    void notify() { if(onChanged) onChanged(); }
     FxGraph graph_;
     std::vector<FxGraph> undo_,redo_;
     std::optional<FxGraph> gestureStart_;

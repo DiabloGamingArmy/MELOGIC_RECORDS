@@ -1,3 +1,4 @@
+// mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-deep-audit-p03-fix2-canonical-state-repair
 // mct-origami-deep-audit-p03-canonical-state
@@ -37,6 +38,14 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
     uiInstrumentState_=engine_.instrumentState();
     uiPerformanceState_=uiInstrumentState_.performance;
     uiArpState_=arpState_;
+    // Every committed FX graph change recompiles (topology) or republishes
+    // parameters. The audio thread only ever sees prepared plans.
+    fxDocument_.onChanged=[this]{syncFxRenderer();};
+    syncFxRenderer();
+}
+void OrigamiAudioProcessor::syncFxRenderer() {
+    const juce::ScopedLock lock(fxCompileLock_);
+    fxRenderer_.sync(fxDocument_.graph());
 }
 void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock) {
     sampleRate_=sampleRate>1.0?sampleRate:44100.0;
@@ -49,6 +58,12 @@ void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     if(!(highResolutionTicksPerSecond_>0.0)) highResolutionTicksPerSecond_=1.0;
     renderBudget_.reset();
     prepared_ = engine_.prepare(sampleRate_, static_cast<std::size_t>(juce::jmax(1, samplesPerBlock)), 2u);
+    {
+        // Audio is stopped here: effect memory is (re)allocated for this rate.
+        const juce::ScopedLock lock(fxCompileLock_);
+        fxRenderer_.prepare(sampleRate_);
+        fxRenderer_.sync(fxDocument_.graph());
+    }
     // Patch 03/19: commit scheduler storage before realtime rendering begins.
     inputMidiScratch_.clear();
     scheduledMidiScratch_.clear();
@@ -549,6 +564,11 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     else renderScheduled(inputMidi);
     engine_.endHostBlock();
 
+    // BUS 1 -> prepared FX plan -> MASTER OUT. Allocation/lock free; the
+    // neutral graph is a bit-exact pass-through.
+    if(buffer.getNumChannels()>=2)
+        fxRenderer_.process(buffer.getWritePointer(0),buffer.getWritePointer(1),total);
+
     bool callbackHasSignal=false;
     float callbackPeak=0.0f,callbackMaxDelta=0.0f;
     std::uint64_t callbackNonFinite=0;
@@ -635,6 +655,12 @@ void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
         for(int shift=24;shift>=0;shift-=8)
             bytes.push_back(static_cast<std::uint8_t>(value>>shift));
     };
+    // FX graph trailer: [graph bytes][length][FXG2]. States without it (all
+    // pre-P02 presets) restore the neutral BUS 1 -> MASTER OUT graph.
+    const auto fx=mct::origami::fx::encodeFxGraph(fxDocument_.graph());
+    bytes.insert(bytes.end(),fx.begin(),fx.end());
+    appendWord(static_cast<std::uint32_t>(fx.size()));
+    appendWord(fxStateMagic);
     appendWord(visualMagic);
     appendWord(visualizationMask_.load(std::memory_order_acquire));
     dest.replaceAll(bytes.data(),bytes.size());
@@ -658,11 +684,29 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
         }
     }
 
+    auto fxGraph=mct::origami::fx::makeDefaultFxGraph();
+    if(instrumentSize>=8) {
+        const auto* bytes=static_cast<const std::uint8_t*>(data);
+        const auto readWord=[bytes](int offset) {
+            std::uint32_t value=0;
+            for(int i=0;i<4;++i) value=(value<<8)|bytes[offset+i];
+            return value;
+        };
+        if(readWord(instrumentSize-4)==fxStateMagic) {
+            const auto length=static_cast<int>(readWord(instrumentSize-8));
+            if(length<0 || length>instrumentSize-8) return;
+            const int start=instrumentSize-8-length;
+            if(!mct::origami::fx::decodeFxGraph(bytes+start,static_cast<std::size_t>(length),fxGraph)) return;
+            instrumentSize=start;
+        }
+    }
+
     // Decode + validate completely before publication. The renderer receives one
     // complete fixed-size generation at the next callback boundary.
     mct::origami::InstrumentState state;
     if(!mct::origami::decodeInstrumentState(
             data,static_cast<std::size_t>(instrumentSize),state)) return;
+    fxDocument_.replace(std::move(fxGraph));
 
     const juce::ScopedLock lock(stateLock_);
     uiInstrumentState_=state;
@@ -818,6 +862,8 @@ bool OrigamiAudioProcessor::installUiOscillatorWavetable(
 
 bool OrigamiAudioProcessor::setUiOscillatorState(mct::origami::OscillatorModuleId id,const mct::origami::OscillatorModuleState& state) noexcept {
     const juce::ScopedLock lock(stateLock_);
+    // Output sends must target existing buses with no duplicates.
+    if(!mct::origami::validOscBusRoutes(state,uiInstrumentState_.buses)) return false;
 
     // A child can itself be a modulation destination. Prune routes against the
     // requested child set BEFORE asking the engine to remove that child;

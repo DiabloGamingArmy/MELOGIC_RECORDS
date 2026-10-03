@@ -22,6 +22,7 @@
 #include "core/Engine.h"
 #include "core/ArpeggiatorState.h"
 #include "core/fx/FxGraph.h"
+#include "core/fx/FxRenderer.h"
 #include "ui/VisualizationSettings.h"
 
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
@@ -97,6 +98,10 @@ public:
     // Canonical editable FX graph. MESSAGE THREAD ONLY: processBlock never
     // reads it. A future FX renderer will receive compiled, immutable plans.
     mct::origami::fx::FxGraphDocument& getUiFxDocument() noexcept { return fxDocument_; }
+    // mct-origami-fx-graph-dsp-bus-routing-p02
+    // Peak output since the previous call (UI meter telemetry, lock-free).
+    std::pair<float,float> consumeUiFxPeaks() noexcept { return fxRenderer_.consumePeaks(); }
+    std::uint64_t getFxCompileCount() const noexcept { return fxRenderer_.compileCount(); }
 
     // P0 audio-continuity diagnostics. These counters are observational only:
     // they never participate in rendering decisions and remain allocation-free.
@@ -232,6 +237,11 @@ private:
     mct::origami::LatestStateMailbox<mct::origami::RuntimeVisualizationSnapshot> visualizationMailbox_;
     mct::origami::RuntimeVisualizationSnapshot uiVisualizationSnapshot_{};
     mct::origami::fx::FxGraphDocument fxDocument_;
+    // Compiles fxDocument_ into prepared plans; process() runs after the engine.
+    mct::origami::fx::FxRenderer fxRenderer_;
+    juce::CriticalSection fxCompileLock_; // non-realtime compile/prepare only
+    void syncFxRenderer();
+    static constexpr std::uint32_t fxStateMagic=0x46584732u; // 'FXG2'
 
     // UI telemetry is intentionally control-rate, not render-span-rate.
     // Countdown is audio-thread-owned; publication remains lock-free atomics.

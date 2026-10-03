@@ -102,20 +102,38 @@ classes in this release. Hosts will adapt this library, never become its DSP
 source of truth: future WASM/C ABI, Soura native, and VST3/JUCE adapters remain
 separate targets. Origami does not join Soura's Signalsmith asset-extraction build.
 
-## FX graph foundation
+## Buses and FX graph
 
-`core/fx/FxGraph.h` holds the canonical, non-realtime FX graph: stable node,
-port and connection IDs, canvas-space positions, normalized parameter values
-keyed by stable parameter IDs, and an explicit source catalog that separates
-AUDIO sources (only the post-voice synth sum is active) from CONTROL sources
-(envelopes, LFOs, MIDI), which are never routable as audio. Split and Merge are
-routing nodes, not effects; each port carries one wire, and connect() rejects
-cycles. Edits go through `FxGraphDocument` (snapshot undo/redo, revision
-counter) on the message thread; the processor owns it and `processBlock`
-never reads it. `compileFxRenderPlan` produces the immutable, topologically
-ordered plan a future realtime FX renderer will receive through a mailbox.
-The development effect catalog (Drive, Delay, Reverb) has no DSP and says so.
-The binary graph codec is not yet part of host state.
+Oscillators send post-OSC-CHAIN, post-filter audio to named buses by stable
+`BusId` (`core/BusModel.h`). BUS 1 always exists and cannot be removed; every
+oscillator starts with one send, BUS 1 at unity, and can never be left with a
+dangling or empty destination. The engine renders BUS 1 (the send scales the
+oscillator into the voice sum); further buses are model-only until the Mixer
+and multi-bus rendering exist. State codec v26 stores buses and sends; older
+states migrate to BUS 1 at unity, which is bit-identical to the pre-bus path.
+
+`core/fx/FxGraph.h` is the canonical, non-realtime FX graph: stable node, port
+and connection IDs, bus sources, canvas-space positions, visual-only cable
+layout points, and normalized parameters keyed by stable parameter IDs whose
+one physical mapping lives in the effect descriptor. AUDIO sources (buses)
+and CONTROL sources (ENV/LFO/MIDI) are distinct; control is never audio. Each
+port carries one wire; Split copies, Merge averages its live branches (1/N,
+so parallel paths stay at unity); `connect()` rejects cycles.
+
+    FxGraphDocument --onChanged--> FxGraphCompiler --> PreparedFxPlan
+        --lock-free pointer swap at block start--> FxRenderer (processBlock)
+
+The compiler resolves execution order (only nodes on a source -> MASTER OUT
+path), port-to-buffer routing, merge gains and effect instances; instances
+are reused across recompiles so tails survive edits. Parameters and PWR are
+atomics, not recompiles. Replaced plans retire to the message thread; the
+audio thread never allocates, locks or frees. Effects (Drive, Delay, Reverb,
+Chorus, Comb, Diffuse, Limiter in `core/fx/FxEffects.cpp`) allocate only in
+`prepare()`, smooth continuous controls, and bypass with a 10 ms crossfade.
+GLOBAL FX applies input gain -> graph -> dry/wet -> width -> output gain. The
+neutral graph (BUS 1 -> MASTER OUT, neutral globals) is a bit-exact
+pass-through. Host state appends the FX graph as a trailer; states without it
+restore the neutral graph, so old patches never gain effects.
 
 ## Build and verify
 
