@@ -709,9 +709,40 @@ std::uint8_t ControlNodeComponent::inputCount() const noexcept {
     return 0;
 }
 
+std::uint8_t ControlNodeComponent::outputCount() const noexcept {
+    if(!hasOutput()) return 0;
+    return view_.key.kind==nodes::ControlNodeKind::Operator ? std::max<std::uint8_t>(1,view_.outputs) : 1;
+}
+
+namespace {
+// Socket rows: inputs on the left, outputs on the right (one row each when a
+// node has several outputs; a single output stays centred on the inputs).
+int controlRows(const ControlNodeView& v) noexcept { return std::max({1,int(v.inputs),v.outputs>1 ? int(v.outputs) : 1}); }
+constexpr float controlFirstRow=45.0f,controlRowPitch=22.0f;
+constexpr int controlPreviewHeight=30;
+}
+
 int ControlNodeComponent::heightFor(const ControlNodeView& v) noexcept {
     if(v.key.kind!=nodes::ControlNodeKind::Operator) return 64;
-    return 34+std::max(1,int(v.inputs))*22+(v.primaryParameter>=0 ? 26 : 0)+8;
+    return 34+controlRows(v)*22+(v.preview!=ControlNodeView::Preview::None ? controlPreviewHeight : 0)+(v.primaryParameter>=0 ? 26 : 0)+8;
+}
+
+void ControlNodeComponent::setSequencerStep(int step) {
+    if(step==sequencerStep_) return;
+    sequencerStep_=step;
+    repaint(previewBounds().getSmallestIntegerContainer().expanded(2));
+}
+
+juce::Rectangle<float> ControlNodeComponent::previewBounds() const noexcept {
+    if(view_.preview==ControlNodeView::Preview::None) return {};
+    const float top=34.0f+float(controlRows(view_))*22.0f+2.0f;
+    return {22.0f,top,float(getWidth())-44.0f,float(controlPreviewHeight)-6.0f};
+}
+
+std::optional<int> ControlNodeComponent::previewCellAt(juce::Point<float> p) const noexcept {
+    const auto area=previewBounds();
+    if(view_.cellCount<=0 || !area.contains(p)) return std::nullopt;
+    return juce::jlimit(0,view_.cellCount-1,int((p.x-area.getX())/area.getWidth()*float(view_.cellCount)));
 }
 
 void ControlNodeComponent::setActivity(float activity,bool gateOpen) {
@@ -740,25 +771,28 @@ juce::Point<float> ControlNodeComponent::portCentre(nodes::PortDirection directi
     const bool input=direction==nodes::PortDirection::Input;
     const float x=input ? 9.0f : float(getWidth())-9.0f;
     if(view_.key.kind!=nodes::ControlNodeKind::Operator) return {x,float(getHeight())*0.5f};
-    const float firstRow=45.0f;
-    if(input) return {x,firstRow+22.0f*float(index)};
-    return {x,firstRow+11.0f*float(std::max(1,int(view_.inputs))-1)}; // output centred on the inputs
+    if(input || view_.outputs>1) return {x,controlFirstRow+controlRowPitch*float(index)};
+    return {x,controlFirstRow+11.0f*float(std::max(1,int(view_.inputs))-1)}; // a single output centred on the inputs
 }
 
 std::optional<std::pair<nodes::PortDirection,std::uint8_t>> ControlNodeComponent::portAt(juce::Point<float> p) const noexcept {
-    const float radius=std::max(13.0f,12.0f/std::max(0.1f,page_.graphZoom()));
-    if(hasOutput() && p.getDistanceFrom(portCentre(nodes::PortDirection::Output))<=radius)
-        return std::make_pair(nodes::PortDirection::Output,std::uint8_t(0));
+    // At least 9 px on screen at any zoom; where targets overlap (zoomed out),
+    // the nearest socket wins, so adjacent outputs are never ambiguous.
+    const float radius=std::max(11.0f,9.0f/std::max(0.1f,page_.graphZoom()));
+    std::optional<std::pair<nodes::PortDirection,std::uint8_t>> best;
+    float bestDistance=radius;
+    for(std::uint8_t i=0;i<outputCount();++i)
+        if(const float d=p.getDistanceFrom(portCentre(nodes::PortDirection::Output,i)); d<=bestDistance) { bestDistance=d; best=std::make_pair(nodes::PortDirection::Output,i); }
     for(std::uint8_t i=0;i<inputCount();++i)
-        if(p.getDistanceFrom(portCentre(nodes::PortDirection::Input,i))<=radius) return std::make_pair(nodes::PortDirection::Input,i);
-    return std::nullopt;
+        if(const float d=p.getDistanceFrom(portCentre(nodes::PortDirection::Input,i)); d<=bestDistance) { bestDistance=d; best=std::make_pair(nodes::PortDirection::Input,i); }
+    return best;
 }
 
 std::optional<nodes::ControlEndpoint> ControlNodeComponent::endpoint(nodes::PortDirection direction,std::uint8_t index) const noexcept {
     const auto& key=view_.key;
     if(direction==nodes::PortDirection::Output) {
         if(key.kind==nodes::ControlNodeKind::Source) return nodes::ControlEndpoint::fromSource(key.source);
-        if(key.kind==nodes::ControlNodeKind::Operator) return nodes::ControlEndpoint::fromOperator(key.op);
+        if(key.kind==nodes::ControlNodeKind::Operator && index<outputCount()) return nodes::ControlEndpoint::fromOperator(key.op,index);
         return std::nullopt;
     }
     if(key.kind==nodes::ControlNodeKind::Parameter) return nodes::ControlEndpoint::toParameter(key.destination);
@@ -802,9 +836,32 @@ void ControlNodeComponent::paint(juce::Graphics& g) {
             const auto c=portCentre(nodes::PortDirection::Input,i);
             g.drawText(view_.inputNames[i],juce::Rectangle<float>(c.x+10.0f,c.y-7.0f,40.0f,14.0f),juce::Justification::centredLeft);
         }
-        if(hasOutput()) {
-            const auto out=portCentre(nodes::PortDirection::Output);
-            g.drawText("OUT",juce::Rectangle<float>(out.x-48.0f,out.y-7.0f,38.0f,14.0f),juce::Justification::centredRight);
+        for(std::uint8_t p=0;p<outputCount();++p) {
+            const auto out=portCentre(nodes::PortDirection::Output,p);
+            const auto name=view_.outputNames[p].isNotEmpty() ? view_.outputNames[p] : juce::String("OUT");
+            g.drawText(name,juce::Rectangle<float>(out.x-78.0f,out.y-7.0f,68.0f,14.0f),juce::Justification::centredRight);
+        }
+        // N06 previews: the canonical sequence with its current step, or the
+        // PATTERN / EUCLIDEAN cells (PATTERN cells toggle on click).
+        if(view_.preview!=ControlNodeView::Preview::None && view_.cellCount>0) {
+            const auto area=previewBounds();
+            const float w=area.getWidth()/float(view_.cellCount);
+            g.setColour(Palette::inset()); g.fillRect(area);
+            for(int i=0;i<view_.cellCount;++i) {
+                auto cell=juce::Rectangle<float>(area.getX()+w*float(i),area.getY(),w,area.getHeight()).reduced(1.0f,1.0f);
+                const bool current=view_.preview==ControlNodeView::Preview::Sequencer && i==sequencerStep_;
+                if(view_.preview==ControlNodeView::Preview::Sequencer) {
+                    const float v=juce::jlimit(-1.0f,1.0f,view_.cells[std::size_t(i)]);
+                    const float mid=cell.getCentreY(),h=cell.getHeight()*0.5f*std::abs(v);
+                    g.setColour(current ? signalSourceColour() : Palette::text().withAlpha(0.55f));
+                    g.fillRect(cell.withY(v>=0.0f ? mid-h : mid).withHeight(std::max(1.0f,h)));
+                    if(current) { g.setColour(signalSourceColour().withAlpha(0.8f)); g.drawRect(cell,1.0f); }
+                } else {
+                    const bool on=view_.cells[std::size_t(i)]>=0.5f;
+                    g.setColour(on ? Palette::text().withAlpha(0.8f) : Palette::borderSoft());
+                    if(on) g.fillRect(cell.reduced(1.0f)); else g.drawRect(cell.reduced(1.0f),1.0f);
+                }
+            }
         }
     } else {
         g.drawFittedText(view_.detail,getLocalBounds().withTrimmedLeft(left).withTrimmedRight(hasOutput() ? 26 : 12).withTrimmedTop(28),
@@ -812,18 +869,21 @@ void ControlNodeComponent::paint(juce::Graphics& g) {
     }
     // While a CONTROL cable is dragged, inputs it could reach light up.
     const auto wire=page_.canvas().controlWireSource();
+    const auto backwards=page_.canvas().controlWireTarget(); // N06: dragged from an input: outputs light up
     const auto paintPort=[&](nodes::PortDirection direction,std::uint8_t index) {
         bool compatible=false;
         if(wire && direction==nodes::PortDirection::Input)
             if(const auto to=endpoint(direction,index)) compatible=page_.canConnectControlEdge(*wire,*to);
-        const auto signal=direction==nodes::PortDirection::Input ? view_.inputSignals[index] : view_.outputSignal;
+        if(backwards && direction==nodes::PortDirection::Output)
+            if(const auto from=endpoint(direction,index)) compatible=page_.canConnectControlEdge(*from,*backwards);
+        const auto signal=direction==nodes::PortDirection::Input ? view_.inputSignals[index] : view_.outputSignals[index];
         // A GATE output fills while open; others fill when linked.
         const bool filled=direction==nodes::PortDirection::Output && signal==ControlSignal::Gate ? gateOpen_ : view_.linked;
         paintSocket(g,signal,portCentre(direction,index),compatible ? 6.5f : 5.5f,filled,
                     compatible ? signalSourceColour() : Palette::borderStrong(),compatible ? 1.6f : 1.2f);
     };
     for(std::uint8_t i=0;i<inputCount();++i) paintPort(nodes::PortDirection::Input,i);
-    if(hasOutput()) paintPort(nodes::PortDirection::Output,0);
+    for(std::uint8_t p=0;p<outputCount();++p) paintPort(nodes::PortDirection::Output,p);
 }
 
 void ControlNodeComponent::paintOverChildren(juce::Graphics& g) {
@@ -837,6 +897,8 @@ void ControlNodeComponent::paintOverChildren(juce::Graphics& g) {
     juce::String shown=view_.primaryInteger ? juce::String(juce::roundToInt(value)) : juce::String(value,3);
     if(view_.opType==ControlOpType::Smooth || view_.opType==ControlOpType::Pulse) shown+=" s";
     if(view_.opType==ControlOpType::Clock) shown=view_.primaryParameter==2 ? juce::String(clockDivisionLabel(juce::roundToInt(value))) : juce::String(value,2)+" Hz";
+    if(view_.opType==ControlOpType::Sequencer) shown=value>=0.5f ? "EXTERNAL" : "INTERNAL";
+    if(view_.opType==ControlOpType::Counter && view_.primaryParameter==1) shown=value>=1.5f ? "PING-PONG" : value>=0.5f ? "CLAMP" : "WRAP";
     g.drawText(shown,row,juce::Justification::centredRight);
 }
 
@@ -846,17 +908,21 @@ void ControlNodeComponent::showMenu() {
     juce::Component::SafePointer<ControlNodeComponent> self(this);
     std::vector<NativeChoiceItem> items;
     if(key.kind==nodes::ControlNodeKind::Source) items.push_back({1,"Connect to Parameter...",true,"CONTROL"});
+    // N06: parameters are driven from the node's (unambiguous) CONTROL output.
+    int controlPort=0;
     if(key.kind==nodes::ControlNodeKind::Operator) {
-        items.push_back({1,"Connect to Parameter...",true,"CONTROL"});
+        const auto* info=view_.opType!=ControlOpType::None ? controlOpInfo(view_.opType) : nullptr;
+        controlPort=info!=nullptr ? nodes::controlAutoOutputPort(*info,ControlSignal::Control) : -1;
+        if(controlPort>=0) items.push_back({1,"Connect to Parameter...",true,"CONTROL"});
         items.push_back({3,"Duplicate",true,"OPERATOR"});
         items.push_back({4,"Delete",true,"OPERATOR"});
     } else {
         items.push_back({2,"Remove from Canvas",view_.removable,"CONTROL",false,view_.removable ? juce::String() : juce::String("Delete its connections first")});
     }
-    showNativeChoiceMenu(*this,view_.title,items,0,[page,key,self](int choice) {
+    showNativeChoiceMenu(*this,view_.title,items,0,[page,key,self,controlPort](int choice) {
         if(page==nullptr) return;
         if(choice==1 && self!=nullptr)
-            page->showParameterPicker(*self,key.kind==nodes::ControlNodeKind::Operator ? operatorSource(key.op) : key.source,std::nullopt);
+            page->showParameterPicker(*self,key.kind==nodes::ControlNodeKind::Operator ? operatorSource(key.op,std::uint8_t(std::max(0,controlPort))) : key.source,std::nullopt);
         if(choice==2) page->removeControlNode(key);
         if(choice==3) page->duplicateControlOperator(key.op);
         if(choice==4) page->deleteControlOperator(key.op);
@@ -867,12 +933,24 @@ void ControlNodeComponent::mouseDown(const juce::MouseEvent& e) {
     page_.grabKeyboardFocus();
     if(e.mods.isMiddleButtonDown()) { page_.canvas().mouseDown(e.getEventRelativeTo(&page_.canvas())); return; }
     if(e.mods.isPopupMenu()) { showMenu(); return; }
+    // N06: a PATTERN cell toggles its step (one undo step).
+    if(view_.preview==ControlNodeView::Preview::Pattern)
+        if(const auto cell=previewCellAt(e.position)) { page_.togglePatternStep(view_.key.op,*cell); drag_=Drag::None; return; }
     page_.selectControlNode(view_.key);
     toFront(false);
     if(const auto port=portAt(e.position); port && port->first==nodes::PortDirection::Output) {
         if(const auto from=endpoint(port->first,port->second)) {
             drag_=Drag::Wire;
             page_.canvas().beginControlWire(*from,portCentre(port->first,port->second)+getPosition().toFloat());
+            return;
+        }
+    }
+    // N06: dragging backwards from an unconnected operator input.
+    if(const auto port=portAt(e.position); port && port->first==nodes::PortDirection::Input
+       && view_.key.kind==nodes::ControlNodeKind::Operator && port->second<3 && !view_.inputConnected[port->second]) {
+        if(const auto to=endpoint(port->first,port->second)) {
+            drag_=Drag::Wire;
+            page_.canvas().beginControlWireFromInput(*to,portCentre(port->first,port->second)+getPosition().toFloat());
             return;
         }
     }
@@ -942,7 +1020,7 @@ void FxCanvas::computeControlWire(ControlWire& wire) const {
     const auto* to=controlNode(wire.link.to);
     if(from==nullptr || to==nullptr) { wire.path.clear(); wire.area={}; return; }
     const auto input=wire.link.route!=0 ? std::uint8_t(0) : wire.link.targetInput;
-    wire.path=curve(from->portCentre(nodes::PortDirection::Output)+from->getPosition().toFloat(),
+    wire.path=curve(from->portCentre(nodes::PortDirection::Output,wire.link.sourcePort)+from->getPosition().toFloat(),
                     to->portCentre(nodes::PortDirection::Input,input)+to->getPosition().toFloat());
     wire.area=wire.path.getBounds().getSmallestIntegerContainer().expanded(int(wireHitRadius())+6);
 }
@@ -969,8 +1047,17 @@ void FxCanvas::controlNodeMoved(const nodes::ControlNodeKey& key) {
     }
 }
 
+void FxCanvas::beginControlWireFromInput(const nodes::ControlEndpoint& to,juce::Point<float> start) {
+    controlWireActive_=true;
+    controlWireReverse_=true;
+    controlWireTo_=to;
+    controlWireStart_=controlWireEnd_=start;
+    for(auto& n:controlNodes_) n->repaint(); // highlight outputs that could feed it
+}
+
 void FxCanvas::beginControlWire(const nodes::ControlEndpoint& from,juce::Point<float> start) {
     controlWireActive_=true;
+    controlWireReverse_=false;
     controlWireFrom_=from;
     controlWireStart_=controlWireEnd_=start;
     for(auto& n:controlNodes_) n->repaint(); // highlight inputs it could reach
@@ -984,17 +1071,30 @@ void FxCanvas::dragControlWire(juce::Point<int> p) {
 void FxCanvas::endControlWire(juce::Point<int> p) {
     if(!controlWireActive_) return;
     const auto from=controlWireFrom_;
+    const auto target=controlWireTo_;
+    const bool reverse=controlWireReverse_;
     controlWireActive_=false;
+    controlWireReverse_=false;
     for(auto& n:controlNodes_) n->repaint();
     repaint();
-    // CONTROL cables land only on CONTROL inputs (operator inputs, PARAMETERs).
-    // AUDIO ports never accept them: the signal types differ.
+    // CONTROL cables land only on CONTROL-layer ports of the matching
+    // direction. AUDIO ports never accept them: the signal types differ.
+    const auto wanted=reverse ? nodes::PortDirection::Output : nodes::PortDirection::Input;
+    bool overNode=false;
     for(const auto& node:controlNodes_) {
         if(!node->getBounds().expanded(20).contains(p)) continue;
+        overNode=overNode || node->getBounds().contains(p);
         const auto port=node->portAt((p-node->getPosition()).toFloat());
-        if(!port || port->first!=nodes::PortDirection::Input) continue;
-        if(const auto to=node->endpoint(port->first,port->second)) { page_.connectControlEdge(from,*to); return; }
+        if(!port || port->first!=wanted) continue;
+        if(const auto end=node->endpoint(port->first,port->second)) {
+            if(reverse) page_.connectControlEdge(*end,target); else page_.connectControlEdge(from,*end);
+            return;
+        }
     }
+    // N06: dropped on empty canvas: offer the nodes that can complete the cable.
+    const bool overAudio=std::any_of(nodes_.begin(),nodes_.end(),[p](const auto& n){ return n.second->getBounds().contains(p); });
+    if(!overNode && !overAudio && p.getDistanceFrom(controlWireStart_.toInt())>12)
+        page_.showControlCreateMenu(*this,reverse ? target : from,toGraph(p.toFloat()));
 }
 
 FxNodeComponent* FxCanvas::nodeComponent(FxNodeId id) const noexcept {
@@ -1160,6 +1260,7 @@ void FxCanvas::dragWire(juce::Point<int> p) {
 void FxCanvas::clearNodes() {
     wireActive_=false;
     controlWireActive_=false;
+    controlWireReverse_=false;
     hoverPoint_.reset();
     dragPoint_.reset();
     wires_.clear();
@@ -1244,7 +1345,8 @@ void FxCanvas::paint(juce::Graphics& g) {
         }
     }
     if(controlWireActive_) {
-        auto pending=curve(controlWireStart_,controlWireEnd_);
+        // A cable picked up from an input is drawn output-to-input as well.
+        auto pending=controlWireReverse_ ? curve(controlWireEnd_,controlWireStart_) : curve(controlWireStart_,controlWireEnd_);
         juce::Path dashed;
         const float dashes[]{3.0f,3.0f};
         juce::PathStrokeType(1.1f).createDashedStroke(dashed,pending,dashes,2);
@@ -1266,22 +1368,11 @@ void FxCanvas::showControlLinkMenu(const ControlHit& hit) {
     std::vector<NativeChoiceItem> items;
     // Only nodes whose first input takes this cable's signal and whose output
     // matches what the cable fed (a route always carries CONTROL).
-    ControlSignal carried=ControlSignal::Control,expected=ControlSignal::Control;
-    if(hit.route==0) {
-        const auto& m=page_.controlState();
-        if(const auto* target=findControlOperator(m,hit.op))
-            if(const auto* info=controlOpInfo(target->type)) {
-                expected=info->inputSignals[hit.input];
-                carried=expected;
-            }
-    }
-    const auto offer=[&](ControlOpType type) {
-        const auto* info=controlOpInfo(type);
-        if(info==nullptr || info->inputs==0 || info->inputSignals[0]!=carried || info->output!=expected) return;
-        items.push_back({int(type),juce::String(info->label),true,juce::String("INSERT NODE / ")+info->category});
-    };
-    for(const auto type:controlOpCatalog()) offer(type);
-    for(const auto type:controlEventOpCatalog()) offer(type);
+    // (N06: typed by the cable's actual output port; multi-output nodes feed
+    // the consumer from their unambiguous matching port.)
+    for(const auto type:page_.controlInsertTypes(hit.route,hit.op,hit.input))
+        if(const auto* info=controlOpInfo(type))
+            items.push_back({int(type),juce::String(info->label),true,juce::String("INSERT NODE / ")+juce::String(info->category).toUpperCase()});
     constexpr int removeId=1000;
     items.push_back({removeId,hit.route!=0 ? "Delete Modulation" : "Disconnect",true,"CONNECTION"});
     juce::Component::SafePointer<FxPage> page(&page_);
@@ -2448,6 +2539,25 @@ private:
 // domain. Parameter: destination + domain (+ base value of a NODES parameter).
 // Link: ENABLED / POLARITY / AMOUNT of the canonical route (the same values
 // the Matrix row and the SYNTH ring edit) and its live contribution monitor.
+namespace {
+// N06 sequence step: a bipolar bar from the centre line (value -1..1), drag
+// vertically to edit. Same Slider semantics (gestures, value) as every control.
+class SequenceStepSlider final : public juce::Slider {
+public:
+    SequenceStepSlider() { setSliderStyle(juce::Slider::LinearBarVertical); setTextBoxStyle(juce::Slider::NoTextBox,false,0,0); }
+    void paint(juce::Graphics& g) override {
+        const auto b=getLocalBounds().toFloat();
+        g.setColour(Palette::inset()); g.fillRect(b);
+        g.setColour(Palette::borderSoft()); g.drawRect(b,1.0f);
+        const float mid=b.getCentreY(),v=float(juce::jlimit(-1.0,1.0,getValue()));
+        const float h=(b.getHeight()*0.5f-2.0f)*std::abs(v);
+        g.setColour(Palette::text().withAlpha(isMouseOverOrDragging() ? 0.95f : 0.75f));
+        g.fillRect(juce::Rectangle<float>(b.getX()+3.0f,v>=0.0f ? mid-h : mid,b.getWidth()-6.0f,std::max(1.0f,h)));
+        g.setColour(Palette::muted().withAlpha(0.5f)); g.drawHorizontalLine(int(mid),b.getX()+2.0f,b.getRight()-2.0f);
+    }
+};
+}
+
 class FxPage::ControlInspector final : public juce::Component {
 public:
     explicit ControlInspector(FxPage& page):page_(page) {
@@ -2500,7 +2610,15 @@ public:
         route_={};
         if(link) for(const auto& r:state.modulation.routes) if(r.id==selection.route) route_=r;
         if(link && route_.id) {
-            title_=page_.controlNodeTitle(nodes::sourceKey(route_.source))+juce::String("  >  ")+page_.controlNodeDetail(nodes::parameterKey(route_.destination));
+            juce::String fromTitle=page_.controlNodeTitle(nodes::sourceKey(route_.source));
+            if(isOperatorSource(route_.source)) {
+                // A processed route: the node (and, for multi-output nodes, the output) that drives it.
+                fromTitle=page_.controlNodeTitle(nodes::operatorKey(operatorIdOf(route_.source)));
+                if(const auto* op=findControlOperator(state.modulation,operatorIdOf(route_.source)))
+                    if(const auto* info=controlOpInfo(op->type); info!=nullptr && info->outputCount>1)
+                        fromTitle+=" "+juce::String(controlOutputName(*info,operatorPortOf(route_.source)));
+            }
+            title_=fromTitle+juce::String("  >  ")+page_.controlNodeDetail(nodes::parameterKey(route_.destination));
             kind_="MODULATION ROUTE";
             const auto from=nodes::sourceDomain(route_.source,state.modulation),to=nodes::destinationDomain(route_.destination);
             lines_.add(juce::String(nodes::toString(from))+" source  >  "+nodes::toString(to)+" parameter"
@@ -2552,7 +2670,7 @@ public:
             // engine's bounded slot snapshot (no audio-thread access).
             const auto slot=controlOperatorSlot(modulation,op_);
             if(slot>=ModulationState::maxControlOperators) return;
-            const float out=slots[CompiledModulation::sourceSlotCount+slot];
+            const float out=slots[CompiledModulation::sourceSlotCount+operatorOutputIndex(slot,0)];
             juce::String values;
             const auto& op=modulation.operators[slot];
             const auto* info=controlOpInfo(op.type);
@@ -2565,12 +2683,16 @@ public:
             for(std::size_t k=0;k<inputs_.size();++k) {
                 const auto& in=op.inputs[k];
                 if(in.kind==ControlInput::Kind::None) { values+=inputs_[k]+" -    "; continue; }
-                const auto source=in.kind==ControlInput::Kind::Source ? in.source : operatorSource(in.op);
+                const auto source=in.kind==ControlInput::Kind::Source ? in.source : operatorSource(in.op,in.port);
                 const float v=slots[modulationSourceSlot(source,modulation)];
                 values+=inputs_[k]+" "+show(info ? info->inputSignals[k] : ControlSignal::Control,v,
                                             in.kind==ControlInput::Kind::Operator ? controlOperatorSlot(modulation,in.op) : events.size())+"    ";
             }
-            if(info!=nullptr && info->output!=ControlSignal::None) values+="OUT "+show(info->output,out,slot);
+            if(info!=nullptr && info->outputCount>1) {
+                for(std::size_t p=0;p<info->outputCount;++p)
+                    values+=juce::String(controlOutputName(*info,p))+" "
+                           +show(controlOutputSignalOf(*info,p),slots[CompiledModulation::sourceSlotCount+operatorOutputIndex(slot,p)],slot)+"    ";
+            } else if(info!=nullptr && info->output!=ControlSignal::None) values+="OUT "+show(info->output,out,slot);
             if(values!=liveValues_) { liveValues_=values; repaint(); }
             monitor_.push(juce::jlimit(-1.0f,1.0f,out),true);
             return;
@@ -2579,6 +2701,8 @@ public:
         monitor_.push(routeContribution(route_,modulation,slots),route_.enabled && routeComplete(route_));
     }
     juce::Slider* operatorParameter(std::size_t index) noexcept { return index<params_.size() ? params_[index].get() : nullptr; }
+    // N06: SEQUENCER inspector controls (0-7 steps, 8 STEPS, 9 RATE, 10 DIRECTION, 11 LOOP).
+    juce::Slider* sequenceControl(std::size_t index) noexcept { return index<sequence_.size() ? sequence_[index].get() : nullptr; }
     juce::TextButton& enabledButton() noexcept { return enabled_; }
     juce::TextButton& polarityButton() noexcept { return polarity_; }
     juce::Slider& amountSlider() noexcept { return amount_; }
@@ -2595,6 +2719,17 @@ public:
             for(std::size_t i=0;i<params_.size();++i) {
                 auto cell=juce::Rectangle<int>(grid.getX()+int(i%2)*column,grid.getY()+int(i/2)*30,column-12,26);
                 params_[i]->setBounds(cell.withTrimmedLeft(84));
+            }
+            if(!sequence_.empty()) {
+                // Step bars on the left, sequence settings (2 x 2) on the right.
+                auto editor=area.removeFromTop(54);
+                auto bars=editor.removeFromLeft(juce::jmin(editor.getWidth()/2,8*34));
+                const int w=bars.getWidth()/8;
+                for(std::size_t i=0;i<8;++i) sequence_[i]->setBounds(bars.getX()+int(i)*w+2,bars.getY()+12,w-4,bars.getHeight()-12);
+                editor.removeFromLeft(16);
+                const int half=editor.getWidth()/2;
+                for(std::size_t i=0;i<4;++i)
+                    sequence_[8+i]->setBounds(juce::Rectangle<int>(editor.getX()+int(i%2)*half,editor.getY()+4+int(i/2)*26,half-8,22).withTrimmedLeft(66));
             }
             return;
         }
@@ -2618,6 +2753,11 @@ public:
             text(g,liveValues_,area.removeFromTop(18),9.0f,Palette::text());
             for(std::size_t i=0;i<params_.size();++i)
                 text(g,paramLabels_[i],params_[i]->getBounds().withX(params_[i]->getX()-84).withWidth(80),8.5f,Palette::muted());
+            if(!sequence_.empty()) {
+                text(g,"SEQUENCE",sequence_[0]->getBounds().withY(sequence_[0]->getY()-12).withHeight(11).withWidth(120),8.0f,Palette::muted());
+                for(std::size_t i=8;i<sequence_.size();++i)
+                    text(g,sequenceLabels_[int(i)],sequence_[i]->getBounds().withX(sequence_[i]->getX()-66).withWidth(62),8.5f,Palette::muted());
+            }
         }
     }
 private:
@@ -2633,6 +2773,54 @@ private:
         for(auto& p:params_) removeChildComponent(p.get());
         params_.clear(); paramLabels_.clear();
         op_=0; opType_=ControlOpType::None; liveValues_.clear();
+        clearSequenceEditor();
+    }
+    // ---- N06 sequence editor: 8 step values + STEPS / RATE / DIRECTION / LOOP.
+    void clearSequenceEditor() {
+        for(auto& s:sequence_) removeChildComponent(s.get());
+        sequence_.clear(); sequenceLabels_.clear();
+    }
+    void buildSequenceEditor(const SequencerSettings& settings) {
+        if(sequence_.empty()) {
+            const auto add=[this](juce::String label,double lo,double hi,double step,bool vertical,std::function<void(SequencerSettings&,double)> apply) {
+                std::unique_ptr<juce::Slider> slider;
+                if(vertical) slider=std::make_unique<SequenceStepSlider>(); else slider=std::make_unique<juce::Slider>();
+                slider->setName("SEQUENCER "+label);
+                slider->setSliderStyle(vertical ? juce::Slider::LinearBarVertical : juce::Slider::LinearHorizontal);
+                slider->setTextBoxStyle(vertical ? juce::Slider::NoTextBox : juce::Slider::TextBoxRight,false,vertical ? 0 : 72,18);
+                slider->setRange(lo,hi,step);
+                auto* raw=slider.get();
+                slider->onDragStart=[this]{ page_.beginOperatorGesture(); };
+                slider->onDragEnd=[this]{ page_.endOperatorGesture(); };
+                slider->onValueChange=[this,raw,apply]{
+                    if(syncing_) return;
+                    auto next=page_.sequencerSettings();
+                    apply(next,raw->getValue());
+                    page_.setSequencerSettings(next);
+                };
+                addAndMakeVisible(*slider);
+                sequence_.push_back(std::move(slider));
+                sequenceLabels_.add(label);
+            };
+            for(std::size_t i=0;i<8;++i)
+                add("STEP "+juce::String(int(i)+1),-1.0,1.0,0.0,true,[i](SequencerSettings& s,double v){ s.steps[i]=float(v); });
+            add("STEPS",1.0,8.0,1.0,false,[](SequencerSettings& s,double v){ s.activeSteps=std::uint32_t(juce::roundToInt(v)); });
+            add("RATE",0.01,40.0,0.0,false,[](SequencerSettings& s,double v){ s.rateHz=float(v); });
+            add("DIRECTION",1.0,3.0,1.0,false,[](SequencerSettings& s,double v){ s.direction=static_cast<SequenceDirection>(juce::roundToInt(v)); });
+            add("LOOP",0.0,1.0,1.0,false,[](SequencerSettings& s,double v){ s.loop=v>=0.5; });
+            sequence_[8]->setNumDecimalPlacesToDisplay(0);
+            sequence_[9]->setSkewFactorFromMidPoint(4.0);
+            sequence_[9]->setTextValueSuffix(" Hz");
+            sequence_[9]->setNumDecimalPlacesToDisplay(2);
+            sequence_[10]->textFromValueFunction=[](double v){ const char* n[]{"FORWARD","REVERSE","PING-PONG"}; return juce::String(n[juce::jlimit(0,2,juce::roundToInt(v)-1)]); };
+            sequence_[11]->textFromValueFunction=[](double v){ return v>=0.5 ? juce::String("LOOP") : juce::String("ONE-SHOT"); };
+        }
+        syncing_=true;
+        for(std::size_t i=0;i<8;++i) if(!sequence_[i]->isMouseButtonDown()) sequence_[i]->setValue(settings.steps[i],juce::dontSendNotification);
+        const double values[]{double(settings.activeSteps),double(settings.rateHz),double(static_cast<int>(settings.direction)),settings.loop ? 1.0 : 0.0};
+        for(std::size_t i=0;i<4;++i) if(!sequence_[8+i]->isMouseButtonDown()) { sequence_[8+i]->setValue(values[i],juce::dontSendNotification); sequence_[8+i]->updateText(); }
+        for(std::size_t i=0;i<8;++i) sequence_[i]->setAlpha(i<settings.activeSteps ? 1.0f : 0.4f);
+        syncing_=false;
     }
     void showOperator(std::uint32_t id,const InstrumentState& state) {
         const auto* op=findControlOperator(state.modulation,id);
@@ -2651,8 +2839,11 @@ private:
         juce::StringArray ports;
         const auto signalName=[](ControlSignal s){ return s==ControlSignal::Gate ? "GATE" : s==ControlSignal::Event ? "EVENT" : s==ControlSignal::None ? "none (acts on the voice)" : "CONTROL"; };
         for(std::uint8_t k=0;k<info->inputs;++k) ports.add(juce::String(controlInputName(*info,k))+" ("+signalName(info->inputSignals[k])+")");
+        juce::StringArray outs;
+        for(std::size_t p=0;p<info->outputCount;++p) outs.add(juce::String(controlOutputName(*info,p))+" ("+signalName(controlOutputSignalOf(*info,p))+")");
         lines_.add((info->inputs==0 ? juce::String("No inputs") : "Inputs: "+ports.joinIntoString(", "))
-                   +"   /   Output: "+signalName(info->output)+".  One connection per input.");
+                   +"   /   "+(info->outputCount>1 ? "Outputs: "+outs.joinIntoString(", ") : "Output: "+juce::String(signalName(info->output)))
+                   +".  One connection per input.");
         for(std::uint8_t k=0;k<info->inputs;++k) inputs_.add(controlInputName(*info,k));
         if(op_!=id || opType_!=op->type) {
             clearParameters();
@@ -2678,7 +2869,16 @@ private:
                     slider->textFromValueFunction=[](double v){ return juce::String(clockDivisionLabel(juce::roundToInt(v))); };
                 if(op->type==ControlOpType::Compare && i==0) choice({">","<",">=","<=","==","!="});
                 if(op->type==ControlOpType::Edge && i==0) choice({"RISING","FALLING","BOTH"});
-                if(op->type==ControlOpType::Counter && i==1) choice({"WRAP","CLAMP"});
+                if(op->type==ControlOpType::Counter && i==1) choice({"WRAP","CLAMP","PING-PONG"});
+                if(op->type==ControlOpType::Sequencer && i==0) choice({"INTERNAL","EXTERNAL"});
+                if(op->type==ControlOpType::EventDelay && i==0) choice({"MS","SYNC"});
+                if(op->type==ControlOpType::EventDelay && i==2)
+                    slider->textFromValueFunction=[](double v){ return juce::String(clockDivisionLabel(juce::roundToInt(v))); };
+                if(op->type==ControlOpType::RandomWalk && i==4) choice({"CLAMP","REFLECT"});
+                if(op->type==ControlOpType::Pattern && (i==1 || i==2)) // the 16 steps as a mask (x = on)
+                    slider->textFromValueFunction=[](double v){ juce::String t; const int bits=juce::roundToInt(v);
+                        for(int b=0;b<16;++b) t<<(((bits>>b)&1)!=0 ? "x" : "."); return t; };
+                if(op->type==ControlOpType::EventDelay && i==1) slider->setTextValueSuffix(" ms");
                 if(op->type==ControlOpType::Transport && i==0) choice({"START","STOP"});
                 if(op->type==ControlOpType::EnvelopeTrigger && i==0)
                     slider->textFromValueFunction=[](double v){ return "ENV "+juce::String(juce::roundToInt(v)); };
@@ -2698,6 +2898,13 @@ private:
         for(std::size_t i=0;i<params_.size();++i)
             if(!params_[i]->isMouseButtonDown()) params_[i]->setValue(op->params[i],juce::dontSendNotification);
         syncing_=false;
+        // N06: the SEQUENCER node edits the canonical sequence (SequencerSettings).
+        if(op->type==ControlOpType::Sequencer) {
+            lines_.add(juce::String("The instrument's one sequencer (steps shared with SYNTH).  ")
+                       +(op->params[0]>=0.5f ? "EXTERNAL: each ADVANCE plays the next step; RESET (first) returns to the start."
+                                             : "INTERNAL: runs at RATE; ADVANCE ignored; RESET restarts."));
+            buildSequenceEditor(state.modulation.sequencer);
+        } else clearSequenceEditor();
         monitor_.setVisible(true);
         resized();
         repaint();
@@ -2707,8 +2914,8 @@ private:
     ModulationState modulation_{};
     std::uint32_t op_=0;
     ControlOpType opType_=ControlOpType::None;
-    std::vector<std::unique_ptr<juce::Slider>> params_;
-    juce::StringArray paramLabels_,inputs_;
+    std::vector<std::unique_ptr<juce::Slider>> params_,sequence_;
+    juce::StringArray paramLabels_,inputs_,sequenceLabels_;
     juce::String liveValues_;
     bool syncing_=false;
     juce::TextButton disconnect_{"DISCONNECT"};
@@ -3461,6 +3668,14 @@ std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
         for(const auto type:controlEventOpCatalog())
             if(const auto* info=controlOpInfo(type))
                 items.push_back({FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),true,juce::String("EVENT / LOGIC / ")+juce::String(info->category).toUpperCase()});
+        // N06 sequencing / generative nodes. There is one canonical sequencer.
+        for(const auto type:controlSequencingOpCatalog())
+            if(const auto* info=controlOpInfo(type)) {
+                const bool creatable=nodes::controlOperatorCreatable(state.modulation,type);
+                items.push_back({FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),creatable,
+                                 juce::String("SEQUENCING / ")+juce::String(info->category).toUpperCase(),false,
+                                 creatable ? juce::String() : juce::String("The instrument has one sequencer: it is already on the canvas")});
+            }
         items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
     }
     return items;
@@ -3490,6 +3705,7 @@ void FxPage::showModuleMenu(juce::Component& anchor,bool allowSources,std::funct
 juce::Slider& FxPage::controlAmountSlider() noexcept { return controlInspector_->amountSlider(); }
 juce::Button& FxPage::controlEnabledButton() noexcept { return controlInspector_->enabledButton(); }
 juce::Button& FxPage::controlPolarityButton() noexcept { return controlInspector_->polarityButton(); }
+juce::Slider* FxPage::controlSequenceControl(std::size_t index) noexcept { return controlInspector_->sequenceControl(index); }
 
 bool FxPage::controlNodeShown(const nodes::ControlNodeKey& key) const noexcept {
     const auto index=controlGraph_.find(key);
@@ -3584,6 +3800,11 @@ void FxPage::refreshControl() {
         case ControlOpType::Threshold: case ControlOpType::Pulse: case ControlOpType::Counter: return 0;
         case ControlOpType::Curve: return 1;
         case ControlOpType::Clock: return op.params[0]>=0.5f ? 2 : 1; // DIVISION when synced, else RATE
+        // N06
+        case ControlOpType::Sequencer: case ControlOpType::Probability: case ControlOpType::ChanceSplit:
+        case ControlOpType::Pattern: case ControlOpType::RandomWalk: return 0;
+        case ControlOpType::Euclidean: return 1;
+        case ControlOpType::EventDelay: return op.params[0]>=0.5f ? 2 : 1;
         default: return -1;
         }
     };
@@ -3610,6 +3831,28 @@ void FxPage::refreshControl() {
                     for(std::size_t k=0;k<3;++k) { v.inputNames[k]=controlInputName(*info,k); v.inputSignals[k]=info->inputSignals[k]; }
                     v.outputSignal=info->output;
                     v.opType=op->type;
+                    v.outputs=info->outputCount;
+                    for(std::size_t p=0;p<maxControlOutputs;++p) {
+                        v.outputSignals[p]=controlOutputSignalOf(*info,p);
+                        v.outputNames[p]=info->outputCount>1 || info->outputNames[p]!=nullptr ? juce::String(controlOutputName(*info,p)) : juce::String();
+                    }
+                    for(std::size_t k=0;k<3;++k) v.inputConnected[k]=op->inputs[k].kind!=ControlInput::Kind::None;
+                    // N06 previews (the canonical sequence; pattern / euclidean cells).
+                    if(op->type==ControlOpType::Sequencer) {
+                        v.preview=ControlNodeView::Preview::Sequencer;
+                        v.cellCount=int(std::clamp<std::uint32_t>(state.modulation.sequencer.activeSteps,1,8));
+                        for(int c=0;c<v.cellCount;++c) v.cells[std::size_t(c)]=state.modulation.sequencer.steps[std::size_t(c)];
+                    } else if(op->type==ControlOpType::Pattern) {
+                        v.preview=ControlNodeView::Preview::Pattern;
+                        v.cellCount=juce::jlimit(1,32,juce::roundToInt(op->params[0]));
+                        const auto bits=std::uint32_t(juce::roundToInt(op->params[1]))|(std::uint32_t(juce::roundToInt(op->params[2]))<<16);
+                        for(int c=0;c<v.cellCount;++c) v.cells[std::size_t(c)]=((bits>>c)&1u)!=0 ? 1.0f : 0.0f;
+                    } else if(op->type==ControlOpType::Euclidean) {
+                        v.preview=ControlNodeView::Preview::Euclidean;
+                        v.cellCount=juce::jlimit(1,32,juce::roundToInt(op->params[0]));
+                        for(int c=0;c<v.cellCount;++c)
+                            v.cells[std::size_t(c)]=euclideanHit(v.cellCount,juce::roundToInt(op->params[1]),juce::roundToInt(op->params[2]),c) ? 1.0f : 0.0f;
+                    }
                     const int primary=primaryFor(*op);
                     if(primary>=0 && primary<int(info->parameterCount)) {
                         const auto& p=info->parameters[std::size_t(primary)];
@@ -3635,8 +3878,8 @@ void FxPage::refreshControl() {
         ControlSignal signal=ControlSignal::Control;
         if(graph.nodes[l.source].key.kind==nodes::ControlNodeKind::Operator)
             if(const auto* op=findControlOperator(state.modulation,graph.nodes[l.source].key.op))
-                if(const auto* info=controlOpInfo(op->type)) signal=info->output;
-        links.push_back({l.routeId,graph.nodes[l.source].key,graph.nodes[l.parameter].key,l.targetOperator,l.targetInput,l.supported,enabled,selected,signal});
+                if(const auto* info=controlOpInfo(op->type)) signal=controlOutputSignalOf(*info,l.sourcePort);
+        links.push_back({l.routeId,graph.nodes[l.source].key,graph.nodes[l.parameter].key,l.targetOperator,l.targetInput,l.supported,enabled,selected,signal,l.sourcePort});
     }
     canvas_.rebuildControl(views,links);
     const bool control=controlSelection_.kind!=ControlSelection::Kind::None;
@@ -3729,12 +3972,14 @@ void FxPage::moveControlNode(const nodes::ControlNodeKey& key,FxPoint at,bool co
 
 // ---------------------------------------------------------------- N04 operators
 
-FxPage::ControlSnapshot FxPage::captureControl() const {
+FxPage::ControlSnapshot FxPage::captureControl(bool withSequencer) const {
     ControlSnapshot snapshot;
     if(bindings_.snapshot) {
         const auto m=bindings_.snapshot().modulation;
         snapshot.routes=m.routes; snapshot.nextRouteId=m.nextRouteId;
         snapshot.operators=m.operators; snapshot.nextOperatorId=m.nextOperatorId;
+        snapshot.hasSequencer=withSequencer;
+        snapshot.sequencer=m.sequencer;
     }
     snapshot.layout=host_.controlLayout!=nullptr ? *host_.controlLayout : localControlLayout_;
     return snapshot;
@@ -3746,6 +3991,7 @@ bool FxPage::applyControl(const ControlSnapshot& snapshot) {
     auto m=bindings_.snapshot().modulation;
     m.routes=snapshot.routes; m.nextRouteId=std::max(m.nextRouteId,snapshot.nextRouteId);
     m.operators=snapshot.operators; m.nextOperatorId=std::max(m.nextOperatorId,snapshot.nextOperatorId);
+    if(snapshot.hasSequencer) m.sequencer=snapshot.sequencer; // sequence edits only
     if(!bindings_.modulation(m)) return false;
     controlLayout()=snapshot.layout;
     refreshControl();
@@ -3753,8 +3999,8 @@ bool FxPage::applyControl(const ControlSnapshot& snapshot) {
     return true;
 }
 
-void FxPage::pushControlUndo() {
-    auto snapshot=captureControl();
+void FxPage::pushControlUndo(bool withSequencer) {
+    auto snapshot=captureControl(withSequencer);
     snapshot.sequence=++editSequence_;
     controlUndo_.push_back(std::move(snapshot));
     if(controlUndo_.size()>64) controlUndo_.erase(controlUndo_.begin());
@@ -3774,7 +4020,7 @@ bool FxPage::undoControl() {
     if(controlUndo_.empty()) return false;
     auto target=controlUndo_.back();
     controlUndo_.pop_back();
-    auto current=captureControl();
+    auto current=captureControl(target.hasSequencer);
     current.sequence=target.sequence;
     controlRedo_.push_back(std::move(current));
     return applyControl(target);
@@ -3784,7 +4030,7 @@ bool FxPage::redoControl() {
     if(controlRedo_.empty()) return false;
     auto target=controlRedo_.back();
     controlRedo_.pop_back();
-    auto current=captureControl();
+    auto current=captureControl(target.hasSequencer);
     current.sequence=target.sequence;
     controlUndo_.push_back(std::move(current));
     return applyControl(target);
@@ -3900,6 +4146,152 @@ std::optional<std::uint32_t> FxPage::duplicateControlOperator(std::uint32_t op) 
     return id;
 }
 
+// ---------------------------------------------------------------- N06 typed menus / drag-to-create
+
+namespace {
+template<typename Fn> void forEachControlNodeType(Fn&& fn) {
+    for(const auto type:controlOpCatalog()) if(controlOpInfo(type)!=nullptr) fn(type);
+    for(const auto type:controlEventOpCatalog()) fn(type);
+    for(const auto type:controlSequencingOpCatalog()) fn(type);
+}
+juce::String controlMenuGroup(const ControlOpInfo& info,const juce::String& prefix) {
+    return prefix+juce::String(info.category).toUpperCase();
+}
+}
+
+std::vector<ControlOpType> FxPage::controlInsertTypes(std::uint32_t route,std::uint32_t op,std::uint8_t input) const {
+    std::vector<ControlOpType> types;
+    if(!bindings_.snapshot) return types;
+    const auto& m=controlModulation_;
+    // What the cable carries (its source port's signal) and what its consumer expects.
+    ControlSignal carried=ControlSignal::Control,expected=ControlSignal::Control;
+    if(route==0) {
+        const auto* target=findControlOperator(m,op);
+        const auto* info=target ? controlOpInfo(target->type) : nullptr;
+        if(info==nullptr || input>=info->inputs) return types;
+        expected=info->inputSignals[input];
+        const auto& in=target->inputs[input];
+        carried=in.kind==ControlInput::Kind::Operator
+            ? nodes::controlOutputSignal(m,nodes::ControlEndpoint::fromOperator(in.op,in.port)) : ControlSignal::Control;
+    }
+    forEachControlNodeType([&](ControlOpType type) {
+        const auto* info=controlOpInfo(type);
+        if(info==nullptr || info->inputs==0 || info->inputSignals[0]!=carried) return;
+        if(nodes::controlAutoOutputPort(*info,expected)<0 || !nodes::controlOperatorCreatable(m,type)) return;
+        if(std::find(types.begin(),types.end(),type)==types.end()) types.push_back(type);
+    });
+    return types;
+}
+
+std::vector<NativeChoiceItem> FxPage::controlCreateItems(const nodes::ControlEndpoint& dangling) const {
+    std::vector<NativeChoiceItem> items;
+    if(!bindings_.snapshot) return items;
+    const auto& m=controlModulation_;
+    const bool fromOutput=dangling.isOutput();
+    const auto signal=fromOutput ? nodes::controlOutputSignal(m,dangling) : nodes::controlInputSignal(m,dangling);
+    if(signal==ControlSignal::None) return items;
+    forEachControlNodeType([&](ControlOpType type) {
+        const auto* info=controlOpInfo(type);
+        if(info==nullptr) return;
+        bool fits=false;
+        if(fromOutput) { for(std::uint8_t k=0;k<info->inputs;++k) fits|=info->inputSignals[k]==signal; }
+        else fits=nodes::controlAutoOutputPort(*info,signal)>=0;
+        if(!fits) return;
+        const bool creatable=nodes::controlOperatorCreatable(m,type);
+        items.push_back({FxModuleMenu::controlOperatorBase+int(type),juce::String(info->label),creatable,
+                         controlMenuGroup(*info,juce::String(nodes::toString(nodes::nodeSignal(signal)))+" / "),false,
+                         creatable ? juce::String() : juce::String("The instrument has one sequencer")});
+    });
+    // CONTROL only: a PARAMETER terminates the cable; a canonical source feeds it.
+    if(signal==ControlSignal::Control && fromOutput) items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
+    if(signal==ControlSignal::Control && !fromOutput)
+        for(const auto s:{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,ModSource::Env1,ModSource::Env2,ModSource::Env3,
+                          ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4,ModSource::Random,ModSource::Sequencer})
+            if(nodes::controlSourceExposed(s) && nodes::controlSourceActive(s,m))
+                items.push_back({FxModuleMenu::controlSourceBase+int(s),sourceName(s),true,"CONTROL / SOURCES"});
+    return items;
+}
+
+void FxPage::showControlCreateMenu(juce::Component& anchor,const nodes::ControlEndpoint& dangling,FxPoint at) {
+    const auto items=controlCreateItems(dangling);
+    if(items.empty()) return;
+    juce::Component::SafePointer<FxPage> safe(this);
+    juce::Component::SafePointer<juce::Component> anchorRef(&anchor);
+    showNativeChoiceMenu(anchor,dangling.isOutput() ? "CONNECT TO" : "FEED FROM",items,0,[safe,dangling,at,anchorRef](int choice) {
+        if(safe==nullptr) return;
+        if(choice==FxModuleMenu::parameterPickerId) {
+            safe->showParameterPicker(anchorRef!=nullptr ? *anchorRef : *safe,dangling.outputSource(),at);
+            return;
+        }
+        if(choice>=FxModuleMenu::controlOperatorBase) {
+            safe->createConnectedControlOperator(static_cast<ControlOpType>(choice-FxModuleMenu::controlOperatorBase),dangling,at);
+            return;
+        }
+        if(choice>=FxModuleMenu::controlSourceBase) {
+            const auto source=static_cast<ModSource>(choice-FxModuleMenu::controlSourceBase);
+            safe->addControlSource(source,at);
+            safe->connectControlEdge(nodes::ControlEndpoint::fromSource(source),dangling);
+        }
+    });
+}
+
+std::optional<std::uint32_t> FxPage::createConnectedControlOperator(ControlOpType type,const nodes::ControlEndpoint& dangling,std::optional<FxPoint> at) {
+    if(!bindings_.snapshot || !bindings_.modulation) return std::nullopt;
+    auto state=bindings_.snapshot();
+    const auto* info=controlOpInfo(type);
+    if(info==nullptr) return std::nullopt;
+    ModulationState next; std::uint32_t id=0;
+    if(!nodes::addControlOperator(state.modulation,type,next,id)) return std::nullopt;
+    auto probe=state; probe.modulation=next;
+    ModulationState connected;
+    if(dangling.isOutput()) {
+        // Into the first input that takes the cable's signal.
+        const auto signal=nodes::controlOutputSignal(state.modulation,dangling);
+        std::optional<std::uint8_t> input;
+        for(std::uint8_t k=0;k<info->inputs && !input;++k) if(info->inputSignals[k]==signal) input=k;
+        if(!input || !nodes::connectControlInput(probe,dangling,id,*input,connected)) return std::nullopt;
+    } else {
+        // From the one output port that matches the input (never a guess).
+        const int port=nodes::controlAutoOutputPort(*info,nodes::controlInputSignal(state.modulation,dangling));
+        if(port<0 || dangling.kind!=nodes::ControlEndpoint::Kind::OperatorInput) return std::nullopt;
+        if(!nodes::connectControlInput(probe,nodes::ControlEndpoint::fromOperator(id,std::uint8_t(port)),dangling.op,dangling.input,connected)) return std::nullopt;
+    }
+    if(!commitControl(connected)) return std::nullopt; // node + connection: one undo step
+    if(at) controlLayout().setPosition(nodes::operatorKey(id),at->x,at->y);
+    selectControlNode(nodes::operatorKey(id));
+    return id;
+}
+
+bool FxPage::togglePatternStep(std::uint32_t op,int step) {
+    if(!bindings_.snapshot || step<0 || step>=32) return false;
+    const auto& m=controlModulation_;
+    const auto* node=findControlOperator(m,op);
+    if(node==nullptr || node->type!=ControlOpType::Pattern) return false;
+    // Steps 1-16 and 17-32 are two integer bit-mask parameters.
+    const std::size_t index=step<16 ? 1 : 2;
+    const auto bits=std::uint32_t(juce::roundToInt(node->params[index]))^(1u<<std::uint32_t(step%16));
+    return setOperatorParameter(op,index,float(bits));
+}
+
+SequencerSettings FxPage::sequencerSettings() const {
+    return bindings_.snapshot ? bindings_.snapshot().modulation.sequencer : SequencerSettings{};
+}
+
+bool FxPage::setSequencerSettings(const SequencerSettings& settings) {
+    if(!bindings_.snapshot || !bindings_.modulation) return false;
+    auto m=bindings_.snapshot().modulation;
+    const auto& a=m.sequencer;
+    if(a.rateHz==settings.rateHz && a.steps==settings.steps && a.activeSteps==settings.activeSteps && a.direction==settings.direction
+       && a.loop==settings.loop && a.probability==settings.probability && a.ratchets==settings.ratchets && a.humanize==settings.humanize) return true;
+    m.sequencer=settings;
+    // The canonical SequencerSettings: the SYNTH sequencer editor shows the same steps.
+    if(!operatorGesture_) pushControlUndo(true);
+    else if(!controlUndo_.empty() && !controlUndo_.back().hasSequencer) { controlUndo_.back().hasSequencer=true; controlUndo_.back().sequencer=bindings_.snapshot().modulation.sequencer; }
+    if(!bindings_.modulation(m)) { if(!operatorGesture_) controlUndo_.pop_back(); return false; }
+    refreshControl();
+    return true;
+}
+
 void FxPage::beginOperatorGesture() {
     if(operatorGesture_) return;
     pushControlUndo(); // the whole drag is one undo step
@@ -3989,20 +4381,28 @@ void FxPage::sampleControlMonitor() {
     if(!bindings_.visualization) return;
     // N05 activity: compare bounded monotonic EVENT counters, decay on this
     // timer; GATE outputs show their published state. Display only.
+    // N06: a node shows activity when ANY output is an EVENT / GATE (COUNTER WRAP,
+    // SEQUENCER STEP EVENT...); the SEQUENCER preview follows the engine's step.
+    const auto eventful=[](const ControlOpInfo& info) {
+        for(std::size_t p=0;p<info.outputCount;++p) if(controlOutputSignalOf(info,p)!=ControlSignal::Control) return true;
+        return false;
+    };
     bool familyVisible=false;
     for(const auto& op:controlModulation_.operators)
-        if(op.id) if(const auto* info=controlOpInfo(op.type); info!=nullptr && info->output!=ControlSignal::Control) familyVisible=true;
+        if(op.id) if(const auto* info=controlOpInfo(op.type); info!=nullptr && eventful(*info)) familyVisible=true;
     if(!familyVisible && controlSelection_.kind!=ControlSelection::Kind::Link && !operatorNode) return;
     const auto visual=bindings_.visualization();
     for(std::size_t slot=0;slot<controlModulation_.operators.size();++slot) {
         const auto& op=controlModulation_.operators[slot];
         if(!op.id) continue;
         const auto* info=controlOpInfo(op.type);
-        if(info==nullptr || info->output==ControlSignal::Control) continue;
+        if(info==nullptr || !eventful(*info)) continue;
+        if(op.type==ControlOpType::Sequencer)
+            if(auto* node=canvas_.controlNode(nodes::operatorKey(op.id))) node->setSequencerStep(int(visual.sequencerStep));
         if(visual.operatorEvents[slot]!=lastEventCounts_[slot]) { eventActivity_[slot]=1.0f; lastEventCounts_[slot]=visual.operatorEvents[slot]; }
         else eventActivity_[slot]*=0.7f;
         if(auto* node=canvas_.controlNode(nodes::operatorKey(op.id)))
-            node->setActivity(eventActivity_[slot],visual.routeSources[CompiledModulation::sourceSlotCount+slot]>=0.5f);
+            node->setActivity(eventActivity_[slot],visual.routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(slot,0)]>=0.5f);
     }
     if(controlSelection_.kind!=ControlSelection::Kind::Link && !operatorNode) return;
     controlInspector_->sample(controlModulation_,visual.routeSources,visual.operatorEvents);

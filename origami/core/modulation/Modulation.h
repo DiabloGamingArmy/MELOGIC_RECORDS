@@ -144,7 +144,11 @@ enum class ControlOpType : std::uint8_t {
     Threshold=50, Edge=51, Pulse=52,                             // conversion
     Compare=60, And=61, Or=62, Xor=63, Not=64, Switch=65,        // logic
     SampleHold=70, TrackHold=71, RandomTrigger=72, Toggle=73, Counter=74, // stateful
-    EnvelopeTrigger=80                                           // target: retrigger ENV 2 / ENV 3
+    EnvelopeTrigger=80,                                          // target: retrigger ENV 2 / ENV 3
+    // N06 sequencing / generative (multi-output capable).
+    ClockDivider=90, EventDelay=91, Probability=92, ChanceSplit=93, EventMerge=94,
+    Euclidean=95, Pattern=96, RandomWalk=97,
+    Sequencer=100                                                // the canonical Origami sequencer (singleton view)
 };
 // What a port carries. CONTROL: continuous value. GATE: exactly 0 or 1, with
 // transitions. EVENT: non-zero only at the sample where it occurs (at most one
@@ -157,8 +161,11 @@ struct ControlInput {
     Kind kind=Kind::None;
     ModSource source=ModSource::None; // Kind::Source (never an operator source)
     std::uint32_t op=0;               // Kind::Operator: operator id
-    bool operator==(const ControlInput& o) const noexcept { return kind==o.kind && source==o.source && op==o.op; }
+    std::uint8_t port=0;              // Kind::Operator: the upstream OUTPUT port (N06; N05 = 0)
+    bool operator==(const ControlInput& o) const noexcept { return kind==o.kind && source==o.source && op==o.op && port==o.port; }
 };
+// N06: a node exposes up to this many typed outputs.
+inline constexpr std::size_t maxControlOutputs=4;
 inline constexpr std::size_t controlOpParameterCount=6;
 struct ControlOperator {
     std::uint32_t id=0; // 0 = free storage slot (slots never move while in use)
@@ -167,10 +174,20 @@ struct ControlOperator {
     std::array<ControlInput,3> inputs{}; // one connection per input, by construction (3rd: N05)
 };
 // Stable source identity of an operator's output.
+// N06: the output PORT lives in bits 20..21, so port 0 is exactly the N04/N05
+// encoding (existing routes migrate unchanged). Operator ids stay < 2^20.
 inline constexpr std::uint32_t controlOperatorSourceBase=0x10000u;
-inline ModSource operatorSource(std::uint32_t id) noexcept { return static_cast<ModSource>(controlOperatorSourceBase+id); }
+inline constexpr std::uint32_t controlOperatorIdMask=0xfffffu;
+inline ModSource operatorSource(std::uint32_t id,std::uint8_t port=0) noexcept {
+    return static_cast<ModSource>(controlOperatorSourceBase+(id&controlOperatorIdMask)+(std::uint32_t(port&3u)<<20));
+}
 inline bool isOperatorSource(ModSource s) noexcept { return static_cast<std::uint32_t>(s)>controlOperatorSourceBase; }
-inline std::uint32_t operatorIdOf(ModSource s) noexcept { return isOperatorSource(s) ? static_cast<std::uint32_t>(s)-controlOperatorSourceBase : 0u; }
+inline std::uint32_t operatorIdOf(ModSource s) noexcept {
+    return isOperatorSource(s) ? (static_cast<std::uint32_t>(s)-controlOperatorSourceBase)&controlOperatorIdMask : 0u;
+}
+inline std::uint8_t operatorPortOf(ModSource s) noexcept {
+    return isOperatorSource(s) ? std::uint8_t(((static_cast<std::uint32_t>(s)-controlOperatorSourceBase)>>20)&3u) : 0u;
+}
 
 // Static description of each operator type (inputs, parameters, defaults,
 // bounds). The one schema shared by validation, DSP, UI and the codec.
@@ -188,10 +205,20 @@ struct ControlOpInfo {
     std::array<const char*,3> inputNames{{nullptr,nullptr,nullptr}}; // null: "IN" / "A" / "B"
     bool voiceOnly=false; // evaluated inside each voice (note events, envelope targets)
     bool family=false;    // true: EVENT / LOGIC catalog family
+    // N06 multi-output: port 0 is `output`; ports 1.. are listed here.
+    std::uint8_t outputCount=1;
+    std::array<ControlSignal,maxControlOutputs-1> extraOutputs{};
+    std::array<const char*,maxControlOutputs> outputNames{{nullptr,nullptr,nullptr,nullptr}}; // null: "OUT"
+    bool globalOnly=false; // N06: never per-voice (the canonical sequencer)
 };
+ControlSignal controlOutputSignalOf(const ControlOpInfo&,std::size_t port) noexcept;
+const char* controlOutputName(const ControlOpInfo&,std::size_t port) noexcept;
 const ControlOpInfo* controlOpInfo(ControlOpType) noexcept;
 const std::array<ControlOpType,15>& controlOpCatalog() noexcept; // N04 CONTROL operators (+ None)
 const std::array<ControlOpType,21>& controlEventOpCatalog() noexcept; // N05 EVENT / LOGIC nodes
+const std::array<ControlOpType,9>& controlSequencingOpCatalog() noexcept; // N06 SEQUENCING / GENERATIVE nodes
+class SequencerGenerator;
+struct SequencerSettings;
 const char* controlInputName(const ControlOpInfo&,std::size_t input) noexcept;
 // N05 timing / note context of one sample (global part set by the engine,
 // voice part set by each voice).
@@ -201,6 +228,9 @@ struct ControlEventContext {
     double sampleRate=48000.0;
     bool transportStart=false,transportStop=false;
     bool noteOn=false,noteOff=false,retrigger=false,gate=false; // this voice
+    // N06: the canonical sequencer runtime and settings (global evaluation only).
+    SequencerGenerator* sequencer=nullptr;
+    const SequencerSettings* sequencerSettings=nullptr;
 };
 // Values prepared at compile time (never computed per sample).
 struct ControlOpPrepared {
@@ -209,6 +239,7 @@ struct ControlOpPrepared {
     double clockStep=0.0;          // CLOCK free-running phase per sample
     double divisionBeats=1.0;      // CLOCK tempo division in quarter notes
     double switchStep=1.0;         // SWITCH crossfade per sample
+    std::int32_t delaySamples=1;   // EVENT DELAY (milliseconds mode)
 };
 ControlOpPrepared prepareControlOp(const ControlOperator&,double sampleRate) noexcept;
 // CLOCK divisions (quarter notes): 1/1 1/2 1/4 1/8 1/16 1/32 1/4T 1/8T 1/16T 1/4D 1/8D 1/16D.
@@ -230,6 +261,11 @@ struct ControlOpRuntime {
     std::int32_t counter=0;    // COUNTER position / PULSE remaining samples
     bool gate=false;           // THRESHOLD / TOGGLE state
     bool previous=false;       // EDGE previous gate
+    bool forward=true;         // N06 COUNTER ping-pong direction
+    // N06 EVENT DELAY: bounded future events (samples remaining), oldest first.
+    static constexpr std::size_t delayCapacity=8;
+    std::array<std::int32_t,delayCapacity> pending{};
+    std::uint8_t pendingCount=0;
 };
 struct ControlOpInputs {
     std::array<float,3> value{};
@@ -238,10 +274,18 @@ struct ControlOpInputs {
 };
 float evaluateControlOp(const ControlOperator&,const ControlOpInputs&,ControlOpRuntime&,
                         const ControlOpPrepared&,const ControlEventContext&) noexcept;
+// N06: every output port (outputs[0] is also the return value above).
+void evaluateControlOpOutputs(const ControlOperator&,const ControlOpInputs&,ControlOpRuntime&,
+                              const ControlOpPrepared&,const ControlEventContext&,
+                              std::array<float,maxControlOutputs>& outputs) noexcept;
+// N06 EUCLIDEAN: true when step `index` of an E(pulses, steps) rhythm, rotated, is a hit.
+bool euclideanHit(int steps,int pulses,int rotation,int index) noexcept;
 float evaluateControlOp(const ControlOperator&,float a,bool aConnected,ControlRange aRange,
                         float b,bool bConnected,ControlRange bRange,
                         ControlOpRuntime& state,float riseCoefficient,float fallCoefficient) noexcept;
 ControlRange controlOpOutputRange(const ControlOperator&,ControlRange a,bool aConnected,ControlRange b,bool bConnected) noexcept;
+// N06: the range of one output port (port 0 == controlOpOutputRange).
+ControlRange controlOpOutputRangeAt(const ControlOperator&,std::size_t port,ControlRange a,bool aConnected,ControlRange b,bool bConnected) noexcept;
 float controlSmoothingCoefficient(float seconds,double sampleRate) noexcept;
 
 // New routes start ON / UNIPOLAR / no source / no destination / 0%.
@@ -339,7 +383,9 @@ bool sourceIsVoice(ModSource,const ModulationState&) noexcept;
 // engine's visualization snapshot: [0, globalSourceCount) global sources, then
 // the newest voice's per-voice sources, then (N04) every operator output by
 // storage slot (global value, or the newest voice's for per-voice operators).
-inline constexpr std::size_t modulationSourceSlotCount=26+ModulationState::maxControlOperators;
+inline constexpr std::size_t operatorOutputSlotCount=ModulationState::maxControlOperators*maxControlOutputs;
+inline constexpr std::size_t modulationSourceSlotCount=26+operatorOutputSlotCount;
+inline constexpr std::size_t operatorOutputIndex(std::size_t slot,std::size_t port) noexcept { return slot*maxControlOutputs+port; }
 using ModulationSourceSlots=std::array<float,modulationSourceSlotCount>;
 // Normalized control contribution of ONE route: source -> polarity -> amount,
 // before destination mapping/clamping. Uses the evaluator's own source-slot
@@ -415,13 +461,28 @@ private:
     float target_=0,value_=0;
 };
 
+// The ONE Origami sequencer runtime. It owns the clock phase, the step index
+// and the held output; SequencerSettings (instrument state) owns the steps.
 class SequencerGenerator {
 public:
-    void reset() noexcept {phase_=0;step_=0;forward_=true;finished_=false;held_=0.0f;substep_=0;rng_=0x8f7011eeu;stepScale_=1.0;}
+    void reset() noexcept {phase_=0;step_=0;forward_=true;finished_=false;held_=0.0f;substep_=0;rng_=0x8f7011eeu;stepScale_=1.0;begun_=false;}
+    // INTERNAL clock (the legacy path): advances its own phase at rateHz.
     float next(const SequencerSettings&,double sampleRate) noexcept;
+    // N06 EXTERNAL clock: the phase never advances; NODES events drive steps.
+    float hold(const SequencerSettings&) noexcept;    // current step's value (begins it if needed)
+    void advance(const SequencerSettings&) noexcept;  // one step, honouring direction / loop
+    void restart(const SequencerSettings&) noexcept;  // back to the start step (begins at the next hold/next)
+    float held() const noexcept { return held_; }
+    std::uint32_t stepEvents() const noexcept { return stepEvents_; } // monotonic: one per step (or ratchet repeat) begun
     std::size_t currentStep() const noexcept { return step_; } // UI monitor inspection only
     double phase() const noexcept { return phase_; }
 private:
+    void beginStep(const SequencerSettings&) noexcept;
+    void stepForward(const SequencerSettings&,std::size_t count) noexcept;
+    float random01() noexcept;
+    std::size_t normalize(const SequencerSettings&) noexcept;
+    bool begun_=false;
+    std::uint32_t stepEvents_=0;
     double phase_=0;
     std::size_t step_=0;
     bool forward_=true;
@@ -455,7 +516,8 @@ struct ModulationFrame {
     ControlEventContext events{}; // N05: timing (global) + note state (per voice)
     // N04: operator outputs by storage slot (global operators evaluated in the
     // global frame; per-voice operators overwrite theirs inside each voice).
-    std::array<float,ModulationState::maxControlOperators> operatorOutputs{};
+    // N06: one value per (operator slot, output port): index slot*4 + port.
+    std::array<float,ModulationState::maxControlOperators*maxControlOutputs> operatorOutputs{};
     std::array<float,13> globalSources{}; // copied for per-voice operators (only when operators exist)
     float cutoff=8000,resonance=.1f,master=.2f,mainTuning=0.0f,transpose=0.0f;
     float portaTime=0.0f,envelopeScaling=1.0f,lfoScaling=1.0f,swing=0.0f;
@@ -488,6 +550,9 @@ public:
     std::uint8_t envelopeTriggers(const ModulationFrame&) const noexcept;
     bool hasEnvelopeTriggers() const noexcept { return envelopeTriggerCount_!=0; }
     bool needsEventContext() const noexcept { return eventOps_; }
+    // N06: a SEQUENCER node drives the canonical sequencer from the plan (the
+    // engine then skips its legacy source-pass advance: never double clocked).
+    bool hasSequencerNode() const noexcept { return sequencerNode_; }
     const std::array<std::uint32_t,operatorSlotCount>& globalEventCounts() const noexcept { return globalEventCounts_; }
     void resetOperatorState() noexcept { globalOpState_={}; }
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
@@ -500,7 +565,7 @@ public:
     std::uint64_t generation() const noexcept {return generation_;}
     void fxFrame(FxModulationOutput&,const std::array<float,globalSourceCount>&,
                  const std::array<float,voiceSourceCount>* newestVoice,
-                 const std::array<float,operatorSlotCount>* globalOperators=nullptr) const noexcept;
+                 const std::array<float,operatorOutputSlotCount>* globalOperators=nullptr) const noexcept;
     bool hasVoiceProcessRoutes(std::size_t module) const noexcept {return voiceProcessModules_[module];}
     bool usesGlobalSource(std::size_t index) const noexcept {
         return index<globalSourceCount && globalSourceUsed_[index];
@@ -528,19 +593,33 @@ private:
     struct CompiledOp {
         ControlOperator op{};
         std::uint8_t slot=0;                 // storage slot = output slot
-        std::array<std::int16_t,3> input{{-1,-1,-1}}; // <26: source slot, >=26: 26+operator slot, -1: none
+        std::array<std::int16_t,3> input{{-1,-1,-1}}; // <26: source slot, >=26: 26+operator output index, -1: none
         std::array<ControlRange,3> range{{ControlRange::Unipolar,ControlRange::Unipolar,ControlRange::Unipolar}};
         bool voice=false;
-        bool event=false;                    // output is an EVENT (counted for monitoring)
+        bool event=false;                    // an output is an EVENT (counted for monitoring)
+        std::uint8_t outputCount=1;
+        std::uint8_t eventPorts=0;           // N06: bit p set when output port p is an EVENT
         ControlOpPrepared prepared{};
     };
-    float runOperator(const CompiledOp&,const std::array<float,voiceSourceCount>*,const ModulationFrame&,ControlOpRuntime&) const noexcept;
+    void runOperator(const CompiledOp&,const std::array<float,voiceSourceCount>*,ModulationFrame&,ControlOpRuntime&) const noexcept;
+    static bool eventFired(const CompiledOp& c,const std::array<float,operatorOutputSlotCount>& outputs,std::size_t base) noexcept {
+        if(c.eventPorts==0) return false;
+        for(std::size_t p=0;p<c.outputCount;++p) if(((c.eventPorts>>p)&1u)!=0 && outputs[base+p]!=0.0f) return true;
+        return false;
+    }
     float operatorRouteValue(std::size_t operatorSlot,float raw,bool bipolar) const noexcept;
     static float operatorInput(std::int16_t input,const std::array<float,voiceSourceCount>*,const ModulationFrame&) noexcept;
     std::array<CompiledOp,operatorSlotCount> ops_{};
     std::size_t opCount_=0,globalOpCount_=0,voiceOpCount_=0;
-    std::array<ControlRange,operatorSlotCount> opRange_{};
+    std::array<ControlRange,operatorOutputSlotCount> outputRange_{}; // per (slot, port)
     std::array<bool,operatorSlotCount> opVoice_{};
+    // Routed operator outputs: the (<= 32) distinct outputs that drive routes
+    // get compact group slots [0, routedCount_), mapped to output indices.
+    std::array<std::uint8_t,operatorSlotCount> routedOutput_{};
+    std::array<ControlRange,operatorSlotCount> routedRange_{};
+    std::array<bool,operatorSlotCount> routedVoice_{};
+    std::size_t routedCount_=0;
+    bool sequencerNode_=false;
     OperatorState globalOpState_{};
     double sampleRate_=48000.0;
     std::array<std::uint32_t,operatorSlotCount> globalEventCounts_{};

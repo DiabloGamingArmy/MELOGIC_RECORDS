@@ -28,6 +28,8 @@ constexpr std::uint16_t layoutVersion=1,layoutVersionOperators=2;
 }
 
 NodeExecutionDomain sourceDomain(ModSource s,const ModulationState& m) noexcept {
+    // A processed source (an operator output) runs where its chain runs.
+    if(isOperatorSource(s)) return sourceIsVoice(s,m) ? NodeExecutionDomain::Voice : NodeExecutionDomain::Global;
     if(lfoSource(s)) return lfoSettings(m,lfoIndex(s)).mode==LfoMode::Free ? NodeExecutionDomain::Global : NodeExecutionDomain::Voice;
     switch(s) {
     case ModSource::Macro1: case ModSource::Macro2: case ModSource::Macro3: case ModSource::Macro4:
@@ -113,7 +115,8 @@ ControlLinkCheck checkControlLink(const InstrumentState& state,ModSource source,
         if(op==nullptr) return fail(ControlLinkResult::MissingOperator);
         // Only a CONTROL output drives a parameter (no implicit GATE/EVENT coercion).
         const auto* info=controlOpInfo(op->type);
-        if(info==nullptr || info->output!=ControlSignal::Control) return fail(ControlLinkResult::TypeMismatch);
+        if(info==nullptr || operatorPortOf(source)>=info->outputCount) return fail(ControlLinkResult::InvalidPort);
+        if(controlOutputSignalOf(*info,operatorPortOf(source))!=ControlSignal::Control) return fail(ControlLinkResult::TypeMismatch);
     } else {
         if(!controlSourceExposed(source)) return fail(ControlLinkResult::SourceNotExposed);
         if(!controlSourceActive(source,m)) return fail(ControlLinkResult::SourceInactive);
@@ -265,7 +268,18 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
         }
     int maxDepth=-1;
     for(const auto d:depth) maxDepth=std::max(maxDepth,d);
-    std::array<int,ModulationState::maxControlOperators> rowAtDepth{};
+    // Default stacking advances by each node's drawn height (N06: multi-output
+    // rows and previews make nodes taller), so default positions never overlap.
+    std::array<float,ModulationState::maxControlOperators> nextYAtDepth{};
+    nextYAtDepth.fill(firstRowY);
+    const auto operatorExtent=[&m](std::uint32_t id) {
+        const auto* op=findControlOperator(m,id);
+        const auto* info=op ? controlOpInfo(op->type) : nullptr;
+        if(info==nullptr) return operatorPitch;
+        const int rows=std::max({1,int(info->inputs),info->outputCount>1 ? int(info->outputCount) : 1});
+        const bool preview=op->type==ControlOpType::Sequencer || op->type==ControlOpType::Pattern || op->type==ControlOpType::Euclidean;
+        return std::max(operatorPitch,34.0f+22.0f*float(rows)+(preview ? 30.0f : 0.0f)+26.0f+8.0f+24.0f);
+    };
     const float parameterX=maxDepth<0 ? parameterColumnX : std::max(parameterColumnX,operatorColumnX+operatorColumnPitch*float(maxDepth+1));
     const auto nodeFor=[&](const ControlNodeKey& key)->std::size_t {
         if(const auto existing=graph.find(key)) return *existing;
@@ -282,7 +296,8 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
             const auto slot=controlOperatorSlot(m,key.op);
             const int d=slot<depth.size() ? std::max(0,depth[slot]) : 0;
             node.x=operatorColumnX+operatorColumnPitch*float(d);
-            node.y=firstRowY+operatorPitch*float(rowAtDepth[std::size_t(d)]++);
+            node.y=nextYAtDepth[std::size_t(d)];
+            nextYAtDepth[std::size_t(d)]+=operatorExtent(key.op);
         }
         else { node.x=parameterX; node.y=firstRowY+rowPitch*float(parameterRow++); }
         graph.nodes.push_back(node);
@@ -304,6 +319,7 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
             link.parameter=nodeFor(operatorKey(op.id));
             link.targetOperator=op.id;
             link.targetInput=k;
+            link.sourcePort=in.kind==ControlInput::Kind::Operator ? in.port : 0;
             graph.links.push_back(link);
         }
     }
@@ -314,6 +330,7 @@ ControlGraph deriveControlGraph(const ModulationState& m,const ControlLayout& la
         if(processed ? findControlOperator(m,operatorIdOf(r.source))==nullptr : !controlSourceExposed(r.source)) continue;
         ControlGraphLink link;
         link.routeId=r.id;
+        link.sourcePort=operatorPortOf(r.source);
         link.source=nodeFor(processed ? operatorKey(operatorIdOf(r.source)) : sourceKey(r.source));
         link.parameter=nodeFor(parameterKey(r.destination));
         const auto from=processed ? (sourceIsVoice(r.source,m) ? NodeExecutionDomain::Voice : NodeExecutionDomain::Global)
@@ -331,7 +348,7 @@ ControlSignal controlOutputSignal(const ModulationState& m,const ControlEndpoint
     if(e.kind!=ControlEndpoint::Kind::OperatorOutput) return ControlSignal::None;
     const auto* op=findControlOperator(m,e.op);
     const auto* info=op ? controlOpInfo(op->type) : nullptr;
-    return info ? info->output : ControlSignal::None;
+    return info ? controlOutputSignalOf(*info,e.port) : ControlSignal::None;
 }
 
 ControlSignal controlInputSignal(const ModulationState& m,const ControlEndpoint& e) noexcept {
@@ -374,10 +391,14 @@ ControlLinkCheck checkControlEdge(const InstrumentState& state,const ControlEndp
     auto probe=m;
     auto& input=probe.operators[controlOperatorSlot(probe,to.op)].inputs[to.input];
     input=from.kind==ControlEndpoint::Kind::Source ? ControlInput{ControlInput::Kind::Source,from.source,0}
-                                                   : ControlInput{ControlInput::Kind::Operator,ModSource::None,from.op};
+                                                   : ControlInput{ControlInput::Kind::Operator,ModSource::None,from.op,from.port};
     for(const auto& r:m.routes)
         if(r.id && isOperatorSource(r.source) && destinationIsGlobal(r.destination.parameter)
            && sourceIsVoice(r.source,probe) && !sourceIsVoice(r.source,m))
+            return fail(ControlLinkResult::DomainCrossing);
+    // N06: the canonical sequencer is global; a per-voice input never drives it.
+    for(const auto& op:probe.operators)
+        if(const auto* i=op.id ? controlOpInfo(op.type) : nullptr; i!=nullptr && i->globalOnly && sourceIsVoice(operatorSource(op.id),probe))
             return fail(ControlLinkResult::DomainCrossing);
     return fail(ControlLinkResult::Ok);
 }
@@ -390,25 +411,35 @@ void compactRoutes(ModulationState& m) noexcept {
 }
 ControlInput inputFrom(const ControlEndpoint& from) noexcept {
     return from.kind==ControlEndpoint::Kind::Source ? ControlInput{ControlInput::Kind::Source,from.source,0}
-                                                    : ControlInput{ControlInput::Kind::Operator,ModSource::None,from.op};
+                                                    : ControlInput{ControlInput::Kind::Operator,ModSource::None,from.op,from.port};
 }
 ControlInput inputFromSource(ModSource s) noexcept {
-    return isOperatorSource(s) ? ControlInput{ControlInput::Kind::Operator,ModSource::None,operatorIdOf(s)}
+    return isOperatorSource(s) ? ControlInput{ControlInput::Kind::Operator,ModSource::None,operatorIdOf(s),operatorPortOf(s)}
                                : ControlInput{ControlInput::Kind::Source,s,0};
 }
 ModSource sourceOf(const ControlInput& in) noexcept {
-    return in.kind==ControlInput::Kind::Source ? in.source : in.kind==ControlInput::Kind::Operator ? operatorSource(in.op) : ModSource::None;
+    return in.kind==ControlInput::Kind::Source ? in.source : in.kind==ControlInput::Kind::Operator ? operatorSource(in.op,in.port) : ModSource::None;
 }
 }
 
+bool controlOperatorCreatable(const ModulationState& m,ControlOpType type) noexcept {
+    if(controlOpInfo(type)==nullptr) return false;
+    if(type!=ControlOpType::Sequencer) return true;
+    for(const auto& op:m.operators) if(op.id && op.type==ControlOpType::Sequencer) return false;
+    return true;
+}
+
 bool addControlOperator(const ModulationState& m,ControlOpType type,ModulationState& out,std::uint32_t& id) noexcept {
-    if(controlOpInfo(type)==nullptr || m.nextOperatorId==0 || m.nextOperatorId>=0xfffffu) return false;
+    if(!controlOperatorCreatable(m,type) || m.nextOperatorId==0 || m.nextOperatorId>=0xfffffu) return false;
     std::size_t slot=0;
     while(slot<m.operators.size() && m.operators[slot].id!=0) ++slot;
     if(slot==m.operators.size()) return false;
     auto next=m;
     id=next.nextOperatorId++;
     next.operators[slot]=makeControlOperator(type,id);
+    // N06: the SEQUENCER node IS the instrument's sequencer: placing it makes the
+    // sequencer active (its steps are never touched).
+    if(type==ControlOpType::Sequencer) next.generatorActiveMask|=0x10u;
     out=next;
     return true;
 }
@@ -416,7 +447,11 @@ bool addControlOperator(const ModulationState& m,ControlOpType type,ModulationSt
 bool connectControlInput(const InstrumentState& state,const ControlEndpoint& from,std::uint32_t op,std::uint8_t input,ModulationState& out) noexcept {
     if(!checkControlEdge(state,from,ControlEndpoint::toInput(op,input)).creatable()) return false;
     auto next=state.modulation;
-    next.operators[controlOperatorSlot(next,op)].inputs[input]=inputFrom(from);
+    auto& target=next.operators[controlOperatorSlot(next,op)];
+    target.inputs[input]=inputFrom(from);
+    // N06: connecting a clock to SEQUENCER ADVANCE hands clock ownership to it
+    // (EXTERNAL) in the same edit: never two clocks, never a silent no-op cable.
+    if(target.type==ControlOpType::Sequencer && input==0) target.params[0]=1.0f;
     out=next;
     return true;
 }
@@ -431,6 +466,14 @@ bool disconnectControlInput(const ModulationState& m,std::uint32_t op,std::uint8
     return true;
 }
 
+int controlAutoOutputPort(const ControlOpInfo& info,ControlSignal wanted) noexcept {
+    if(info.output==wanted) return 0;
+    int found=-1;
+    for(std::size_t p=1;p<info.outputCount;++p)
+        if(controlOutputSignalOf(info,p)==wanted) { if(found>=0) return -1; found=int(p); }
+    return found;
+}
+
 bool insertControlOperatorOnRoute(const InstrumentState& state,std::uint32_t route,ControlOpType type,ModulationState& out,std::uint32_t& id) noexcept {
     const auto* info=controlOpInfo(type);
     if(info==nullptr || info->inputs==0) return false;
@@ -441,7 +484,9 @@ bool insertControlOperatorOnRoute(const InstrumentState& state,std::uint32_t rou
     ModulationState next;
     if(!addControlOperator(m,type,next,id)) return false;
     next.operators[controlOperatorSlot(next,id)].inputs[0]=inputFromSource(existing->source);
-    for(auto& r:next.routes) if(r.id==route) r.source=operatorSource(id); // replaced, never left underneath
+    const int port=controlAutoOutputPort(*info,ControlSignal::Control);
+    if(port<0) return false;
+    for(auto& r:next.routes) if(r.id==route) r.source=operatorSource(id,std::uint8_t(port)); // replaced, never left underneath
     if(!validModulation(next,state.oscillators)) return false;
     out=next;
     return true;
@@ -457,7 +502,10 @@ bool insertControlOperatorOnInput(const InstrumentState& state,std::uint32_t op,
     ModulationState next;
     if(!addControlOperator(m,type,next,id)) return false;
     next.operators[controlOperatorSlot(next,id)].inputs[0]=upstream;
-    next.operators[slot].inputs[input]={ControlInput::Kind::Operator,ModSource::None,id};
+    const auto* targetInfo=controlOpInfo(m.operators[slot].type);
+    const int port=targetInfo ? controlAutoOutputPort(*info,targetInfo->inputSignals[input]) : -1;
+    if(port<0) return false;
+    next.operators[slot].inputs[input]={ControlInput::Kind::Operator,ModSource::None,id,std::uint8_t(port)};
     if(!validModulation(next,state.oscillators)) return false;
     out=next;
     return true;
@@ -471,18 +519,18 @@ bool deleteControlOperator(const ModulationState& m,std::uint32_t id,ModulationS
     auto next=m;
     // Bridging needs a pass-through of the same signal type (THRESHOLD, EDGE
     // and PULSE convert types, so their neighbours are disconnected instead).
-    const bool bridge=info!=nullptr && info->inputs==1 && op.inputs[0].kind!=ControlInput::Kind::None
+    // Only the primary output (port 0) of a single-output pass-through bridges.
+    const bool bridge=info!=nullptr && info->inputs==1 && info->outputCount==1 && op.inputs[0].kind!=ControlInput::Kind::None
                    && info->inputSignals[0]==info->output;
     const auto upstream=op.inputs[0];
     for(auto& other:next.operators) {
         if(!other.id || other.id==id) continue;
         for(auto& in:other.inputs)
-            if(in.kind==ControlInput::Kind::Operator && in.op==id) in=bridge ? upstream : ControlInput{};
+            if(in.kind==ControlInput::Kind::Operator && in.op==id) in=bridge && in.port==0 ? upstream : ControlInput{};
     }
-    const auto self=operatorSource(id);
     for(auto& r:next.routes) {
-        if(!r.id || r.source!=self) continue;
-        if(!bridge) { r.id=0; continue; }
+        if(!r.id || !isOperatorSource(r.source) || operatorIdOf(r.source)!=id) continue; // every output port
+        if(!bridge || operatorPortOf(r.source)!=0) { r.id=0; continue; }
         const auto replacement=sourceOf(upstream);
         bool duplicate=false;
         for(const auto& o:next.routes) duplicate|=o.id && o.id!=r.id && o.source==replacement && o.destination==r.destination;

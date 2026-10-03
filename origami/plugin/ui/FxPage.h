@@ -100,6 +100,17 @@ struct ControlNodeView {
     std::array<ControlSignal,3> inputSignals{{ControlSignal::Control,ControlSignal::Control,ControlSignal::Control}};
     ControlSignal outputSignal=ControlSignal::Control;
     ControlOpType opType=ControlOpType::None;
+    std::array<bool,3> inputConnected{};
+    // N06: typed outputs at stable port indices (port 0 == outputSignal).
+    std::uint8_t outputs=1;
+    std::array<ControlSignal,maxControlOutputs> outputSignals{{ControlSignal::Control,ControlSignal::None,ControlSignal::None,ControlSignal::None}};
+    std::array<juce::String,maxControlOutputs> outputNames{};
+    // N06 previews: SEQUENCER steps (values -1..1, current step from the
+    // engine snapshot), PATTERN / EUCLIDEAN cells (0 / 1; PATTERN cells click).
+    enum class Preview : std::uint8_t { None,Sequencer,Pattern,Euclidean };
+    Preview preview=Preview::None;
+    std::array<float,32> cells{};
+    int cellCount=0;
 };
 struct ControlLinkView {
     std::uint32_t route=0;               // route link (direct or processed)
@@ -108,6 +119,7 @@ struct ControlLinkView {
     std::uint8_t targetInput=0;
     bool supported=true,enabled=true,selected=false;
     ControlSignal signal=ControlSignal::Control; // drawn style (solid / short / long dashes)
+    std::uint8_t sourcePort=0;           // N06: the output port it leaves from
 };
 
 // A CONTROL node on the canvas: a canonical SOURCE, a PARAMETER (both views
@@ -125,6 +137,13 @@ public:
     bool removable() const noexcept { return view_.removable; }
     // N05 monitoring: event activity (decays on the UI timer) and gate state.
     void setActivity(float activity,bool gateOpen);
+    // N06: the canonical sequencer's current step (SEQUENCER preview).
+    void setSequencerStep(int step);
+    int sequencerStep() const noexcept { return sequencerStep_; }
+    std::uint8_t outputCount() const noexcept;
+    juce::Rectangle<float> previewBounds() const noexcept;
+    std::optional<int> previewCellAt(juce::Point<float>) const noexcept;
+    const ControlNodeView& view() const noexcept { return view_; }
     static int heightFor(const ControlNodeView&) noexcept;
     static constexpr int width=220;
     void paint(juce::Graphics&) override;
@@ -141,6 +160,7 @@ private:
     ControlNodeView view_;
     float activity_=0.0f;
     bool gateOpen_=false;
+    int sequencerStep_=-1;
     juce::TextButton remove_{"X"};
     juce::Slider primary_;
     bool primaryInitialised_=false;
@@ -186,9 +206,12 @@ public:
     void controlNodeMoved(const nodes::ControlNodeKey&);
     // Drags start from any CONTROL OUTPUT (source or operator).
     void beginControlWire(const nodes::ControlEndpoint& from,juce::Point<float> start);
+    // N06: a cable picked up from an unconnected INPUT (drawn backwards).
+    void beginControlWireFromInput(const nodes::ControlEndpoint& to,juce::Point<float> start);
+    std::optional<nodes::ControlEndpoint> controlWireTarget() const noexcept { return controlWireActive_ && controlWireReverse_ ? std::optional<nodes::ControlEndpoint>(controlWireTo_) : std::nullopt; }
     void dragControlWire(juce::Point<int>);
     void endControlWire(juce::Point<int>);
-    std::optional<nodes::ControlEndpoint> controlWireSource() const noexcept { return controlWireActive_ ? std::optional<nodes::ControlEndpoint>(controlWireFrom_) : std::nullopt; }
+    std::optional<nodes::ControlEndpoint> controlWireSource() const noexcept { return controlWireActive_ && !controlWireReverse_ ? std::optional<nodes::ControlEndpoint>(controlWireFrom_) : std::nullopt; }
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -218,6 +241,8 @@ private:
     void showControlLinkMenu(const ControlHit&);
     bool controlWireActive_=false;
     nodes::ControlEndpoint controlWireFrom_{};
+    nodes::ControlEndpoint controlWireTo_{};
+    bool controlWireReverse_=false;
     juce::Point<float> controlWireStart_{},controlWireEnd_{};
     int minWidth_=0,minHeight_=0;
     juce::Point<float> portInCanvas(fx::FxNodeId,bool input,std::uint8_t port) const noexcept;
@@ -483,6 +508,25 @@ public:
     std::optional<std::uint32_t> insertControlOperatorOnInput(std::uint32_t op,std::uint8_t input,ControlOpType);
     bool deleteControlOperator(std::uint32_t op);
     std::optional<std::uint32_t> duplicateControlOperator(std::uint32_t op);
+    // ---- N06: typed menus / drag-to-create / sequencing editors ---------------
+    // Node types that can be spliced into a CONTROL cable (route, or the edge
+    // into op/input): first input takes the carried signal and an output port
+    // matching the consumer can be chosen unambiguously.
+    std::vector<ControlOpType> controlInsertTypes(std::uint32_t route,std::uint32_t op,std::uint8_t input) const;
+    // A cable dropped on empty space: the node types that can terminate it
+    // (from an OUTPUT) or feed it (from an INPUT), and whether PARAMETER /
+    // SOURCES apply. Disabled items carry the reason.
+    std::vector<NativeChoiceItem> controlCreateItems(const nodes::ControlEndpoint& dangling) const;
+    void showControlCreateMenu(juce::Component& anchor,const nodes::ControlEndpoint& dangling,fx::FxPoint at);
+    // Creates the node at `at` and connects it to the dangling endpoint in ONE
+    // undo step. From an OUTPUT: into the first compatible input. From an INPUT:
+    // from the unambiguous compatible output port.
+    std::optional<std::uint32_t> createConnectedControlOperator(ControlOpType,const nodes::ControlEndpoint& dangling,std::optional<fx::FxPoint> at);
+    bool togglePatternStep(std::uint32_t op,int step);
+    // The canonical sequence (SequencerSettings), edited from the SEQUENCER
+    // node's inspector: one undo step per edit or per slider drag.
+    bool setSequencerSettings(const SequencerSettings&);
+    SequencerSettings sequencerSettings() const;
     void beginOperatorGesture();
     bool setOperatorParameter(std::uint32_t op,std::size_t index,float value);
     void endOperatorGesture();
@@ -506,6 +550,7 @@ public:
     juce::Slider& controlAmountSlider() noexcept;
     juce::Button& controlEnabledButton() noexcept;
     juce::Button& controlPolarityButton() noexcept;
+    juce::Slider* controlSequenceControl(std::size_t index) noexcept; // N06 SEQUENCER inspector
 
 private:
     class SelectedPanel;
@@ -526,10 +571,14 @@ private:
         std::uint32_t nextOperatorId=1;
         nodes::ControlLayout layout;
         std::uint64_t sequence=0;
+        // N06: present only for sequence edits, so undoing a NODES edit never
+        // rewinds a sequence edited elsewhere (SYNTH > SEQUENCER).
+        bool hasSequencer=false;
+        SequencerSettings sequencer{};
     };
-    ControlSnapshot captureControl() const;
+    ControlSnapshot captureControl(bool withSequencer=false) const;
     bool applyControl(const ControlSnapshot&);
-    void pushControlUndo();
+    void pushControlUndo(bool withSequencer=false);
     bool commitControl(const ModulationState&); // records undo, then commits atomically
     bool undoControl();
     bool redoControl();

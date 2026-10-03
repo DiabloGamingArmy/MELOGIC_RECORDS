@@ -40,14 +40,21 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
     // N04: v28 only when CONTROL operators exist; states without them are
     // written exactly as v27 (byte-identical to pre-N04 saves).
-    bool operators=false,eventNodes=false;
+    bool operators=false,eventNodes=false,sequencing=false;
     for(const auto& op:s.modulation.operators) {
-        operators|=op.id!=0;
+        if(!op.id) continue;
+        operators=true;
         // N05: event/logic nodes or a third input need v29.
-        eventNodes|=op.id!=0 && (static_cast<int>(op.type)>=static_cast<int>(ControlOpType::Clock)
-                                  || op.inputs[2].kind!=ControlInput::Kind::None);
+        eventNodes|=static_cast<int>(op.type)>=static_cast<int>(ControlOpType::Clock) || op.inputs[2].kind!=ControlInput::Kind::None;
+        // N06: sequencing nodes, output ports, RESET inputs and PING-PONG need v30.
+        sequencing|=static_cast<int>(op.type)>=static_cast<int>(ControlOpType::ClockDivider);
+        for(const auto& in:op.inputs) sequencing|=in.port!=0;
+        const bool resetInput=op.type==ControlOpType::Counter || op.type==ControlOpType::Toggle || op.type==ControlOpType::RandomTrigger;
+        sequencing|=resetInput && op.inputs[1].kind!=ControlInput::Kind::None;
+        sequencing|=op.type==ControlOpType::Counter && op.params[1]>1.5f;
     }
-    Writer w;w.word(magic);w.word(eventNodes ? 29u : operators ? 28u : 27u);w.word(static_cast<std::uint32_t>(parameterCount));
+    for(const auto& r:s.modulation.routes) sequencing|=r.id!=0 && operatorPortOf(r.source)!=0;
+    Writer w;w.word(magic);w.word(sequencing ? 30u : eventNodes ? 29u : operators ? 28u : 27u);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -203,11 +210,12 @@ std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
             if(!op.id) continue;
             w.word(static_cast<std::uint32_t>(op.type));
             for(float v:op.params) w.real(v);
-            for(std::size_t k=0;k<(eventNodes ? 3u : 2u);++k) { // v28: inputs A, B; v29: + third input
+            for(std::size_t k=0;k<(eventNodes || sequencing ? 3u : 2u);++k) { // v28: inputs A, B; v29: + third input
                 const auto& in=op.inputs[k];
                 w.word(static_cast<std::uint32_t>(in.kind));
                 w.word(static_cast<std::uint32_t>(in.source));
                 w.word(in.op);
+                if(sequencing) w.word(in.port); // v30: the upstream output port
             }
         }
     }
@@ -218,7 +226,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>29) return false;
+    if(version<1 || version>30) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -454,6 +462,11 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
                 in.kind=static_cast<ControlInput::Kind>(kind);
                 in.source=static_cast<ModSource>(r.word());
                 in.op=r.word();
+                if(version>=30) {
+                    const auto port=r.word();
+                    if(port>=maxControlOutputs) return false;
+                    in.port=static_cast<std::uint8_t>(port);
+                }
             }
         }
     }

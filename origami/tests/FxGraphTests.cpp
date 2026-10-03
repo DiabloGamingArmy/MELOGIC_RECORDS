@@ -1679,7 +1679,7 @@ void eventLogicTests() {
             std::array<float,CompiledModulation::globalSourceCount> sources{};
             sources[0]=std::sin(float(n)*0.001f);
             h.sample(sources);
-            const float out=h.frame.operatorOutputs[1];
+            const float out=h.frame.operatorOutputs[4];
             if(h.frame.operatorOutputs[0]!=0.0f) captured&=out==sources[0]; // the value AT the tick sample
             if(out!=last) { ++changes; last=out; }
         }
@@ -1694,13 +1694,13 @@ void eventLogicTests() {
         m.nextOperatorId=4;
         GlobalHarness h(m);
         std::array<float,CompiledModulation::globalSourceCount> sources{};
-        h.sample(sources); const float before=h.frame.operatorOutputs[2];
+        h.sample(sources); const float before=h.frame.operatorOutputs[8];
         for(int n=0;n<10;++n) h.sample(sources);
         sources[4]=0.9f; h.sample(sources);
-        check(h.frame.operatorOutputs[0]==1.0f && h.frame.operatorOutputs[1]==1.0f && h.frame.operatorOutputs[2]!=before,
+        check(h.frame.operatorOutputs[0]==1.0f && h.frame.operatorOutputs[4]==1.0f && h.frame.operatorOutputs[8]!=before,
               "the macro crossing propagates through THRESHOLD, EDGE and RANDOM within the same sample");
         h.sample(sources);
-        check(h.frame.operatorOutputs[1]==0.0f,"the EVENT lasts exactly one sample");
+        check(h.frame.operatorOutputs[4]==0.0f,"the EVENT lasts exactly one sample");
     }
     // ---- validation / typing ----------------------------------------------
     std::array<OscillatorModuleState,16> modules{}; modules[0].id=1;
@@ -1735,7 +1735,7 @@ void eventLogicTests() {
         auto engine=std::make_unique<OrigamiEngine>(); engine->prepare(sr,512,2);
         check(engine->setModulationState(m),"engine accepts the chain");
         std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
-        const auto toggleOfNewest=[&]{ return engine->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+1]; };
+        const auto toggleOfNewest=[&]{ return engine->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(1,0)]; };
         engine->noteOn(60,1.0f); engine->process(out,2,512);
         engine->noteOn(64,1.0f); engine->process(out,2,512);
         // A shared toggle would have flipped back to OFF on the second note.
@@ -1746,7 +1746,7 @@ void eventLogicTests() {
         bool fresh=true;
         for(int note=0;note<5;++note) {
             stealing->noteOn(60+note,1.0f); stealing->process(out,2,512);
-            fresh&=stealing->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+1]==1.0f;
+            fresh&=stealing->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(1,0)]==1.0f;
         }
         check(fresh,"a stolen voice never inherits stale TOGGLE state (ON after every note, never alternating)");
     }
@@ -1839,6 +1839,504 @@ void eventLogicTests() {
     }
 }
 
+namespace n06 {
+using T=ControlOpType;
+ControlInput src(ModSource s) { return {ControlInput::Kind::Source,s,0}; }
+ControlInput opIn(std::uint32_t id,std::uint8_t port=0) { return {ControlInput::Kind::Operator,ModSource::None,id,port}; }
+// Multi-output stepper: every port of one node, one sample at a time.
+struct MultiStepper {
+    ControlOperator op; ControlOpRuntime state; ControlOpPrepared prepared; ControlEventContext ctx;
+    std::array<float,maxControlOutputs> out{};
+    explicit MultiStepper(ControlOpType type,std::array<float,6> params={},bool useParams=false) {
+        op=makeControlOperator(type,1); if(useParams) op.params=params; prepared=prepareControlOp(op,48000.0);
+    }
+    const std::array<float,maxControlOutputs>& step(float a=0.0f,float b=0.0f,float c=0.0f) {
+        ControlOpInputs in; in.value={a,b,c}; in.connected={true,true,true};
+        evaluateControlOpOutputs(op,in,state,prepared,ctx,out);
+        return out;
+    }
+};
+// The engine's global evaluation, with the canonical sequencer attached.
+struct SeqHarness {
+    CompiledModulation compiled; ModulationFrame frame; std::array<OscillatorModuleState,16> modules{};
+    SequencerGenerator sequencer; SequencerSettings settings;
+    double bpm=120.0,beats=0.0;
+    explicit SeqHarness(const ModulationState& m) { modules[0].id=1; compiled.prepare(48000.0); compiled.compile(m,modules,true); sequencer.reset(); }
+    void sample(std::array<float,CompiledModulation::globalSourceCount> sources={}) {
+        frame.events.beats=beats; frame.events.beatsPerSample=bpm/60.0/48000.0; frame.events.sampleRate=48000.0;
+        frame.events.sequencer=&sequencer; frame.events.sequencerSettings=&settings;
+        compiled.evaluateGlobalOperators(frame,sources);
+        beats+=frame.events.beatsPerSample;
+    }
+    float out(std::size_t slot,std::size_t port=0) const { return frame.operatorOutputs[operatorOutputIndex(slot,port)]; }
+};
+bool evenlySpaced(int steps,int pulses,int rotation) {
+    std::vector<int> hits;
+    for(int i=0;i<steps;++i) if(euclideanHit(steps,pulses,rotation,i)) hits.push_back(i);
+    if(int(hits.size())!=pulses) return false;
+    if(pulses<2) return true;
+    int lo=steps,hi=0;
+    for(std::size_t i=0;i<hits.size();++i) {
+        const int gap=(i+1<hits.size() ? hits[i+1] : hits[0]+steps)-hits[i];
+        lo=std::min(lo,gap); hi=std::max(hi,gap);
+    }
+    return hi-lo<=1; // maximal evenness (Bjorklund): gaps differ by at most one
+}
+}
+
+void sequencingTests() {
+    using namespace n06;
+    std::array<OscillatorModuleState,16> modules{}; modules[0].id=1;
+    // ---- multi-output metadata ---------------------------------------------
+    {
+        const auto* counter=controlOpInfo(T::Counter);
+        const auto* split=controlOpInfo(T::ChanceSplit);
+        const auto* seq=controlOpInfo(T::Sequencer);
+        check(counter && counter->outputCount==2 && controlOutputSignalOf(*counter,0)==ControlSignal::Control
+              && controlOutputSignalOf(*counter,1)==ControlSignal::Event && std::string(controlOutputName(*counter,1))=="WRAP",
+              "COUNTER: VALUE (CONTROL) + WRAP (EVENT) with stable port indices and names");
+        check(split && split->outputCount==2 && seq && seq->outputCount==3 && seq->globalOnly
+              && controlOutputSignalOf(*seq,1)==ControlSignal::Control && controlOutputSignalOf(*seq,2)==ControlSignal::Event,
+              "CHANCE SPLIT A/B and SEQUENCER VALUE / STEP / STEP EVENT ports");
+        check(operatorSource(7,0)==operatorSource(7) && operatorIdOf(operatorSource(7,2))==7 && operatorPortOf(operatorSource(7,2))==2,
+              "port 0 keeps the pre-N06 source encoding; the port round-trips");
+        bool catalog=true; for(auto t:controlSequencingOpCatalog()) catalog&=controlOpInfo(t)!=nullptr;
+        check(catalog,"every sequencing / generative catalog entry is defined");
+    }
+    // ---- COUNTER: VALUE + WRAP, modes, RESET before ADVANCE ------------------
+    {
+        MultiStepper wrap(T::Counter,{{4.0f,0.0f}},true);
+        const float expected[]{1.0f/3.0f,2.0f/3.0f,1.0f,0.0f,1.0f/3.0f};
+        bool ok=true,wrapOnlyAtZero=true;
+        for(int i=0;i<5;++i) { const auto& o=wrap.step(1.0f); ok&=std::abs(o[0]-expected[i])<1e-6f; wrapOnlyAtZero&=(o[1]!=0.0f)==(i==3); }
+        check(ok,"COUNTER VALUE = position / (LENGTH - 1)");
+        check(wrapOnlyAtZero,"COUNTER WRAP fires at the exact sample VALUE returns to 0");
+        MultiStepper clamp(T::Counter,{{3.0f,1.0f}},true);
+        int clampWraps=0; for(int i=0;i<6;++i) clampWraps+=clamp.step(1.0f)[1]!=0.0f;
+        check(clampWraps==1 && clamp.out[0]==1.0f,"CLAMP: WRAP fires once on reaching the end; VALUE stays at 1");
+        MultiStepper pong(T::Counter,{{3.0f,2.0f}},true);
+        std::vector<float> seq; int pongWraps=0;
+        for(int i=0;i<6;++i) { const auto& o=pong.step(1.0f); seq.push_back(o[0]); pongWraps+=o[1]!=0.0f; }
+        check(seq==std::vector<float>{0.5f,1.0f,0.5f,0.0f,0.5f,1.0f} && pongWraps==3,"PING-PONG 0 1 2 1 0 1 2 with WRAP on reaching each end");
+        MultiStepper reset(T::Counter,{{8.0f,0.0f}},true);
+        reset.step(1.0f); reset.step(1.0f); reset.step(1.0f);
+        const float both=reset.step(1.0f,1.0f)[0];
+        check(std::abs(both-1.0f/7.0f)<1e-6f,"RESET and ADVANCE on one sample: RESET first, then ADVANCE (position 1)");
+        check(reset.step(0.0f,1.0f)[0]==0.0f,"RESET alone returns to position 0");
+        MultiStepper toggle(T::Toggle);
+        toggle.step(1.0f);
+        check(toggle.step(1.0f,1.0f)[0]==1.0f && toggle.step(0.0f,1.0f)[0]==0.0f,"TOGGLE: RESET (off) before TRIG (on) on the same sample");
+        MultiStepper random(T::RandomTrigger);
+        const float first=random.step()[0]; random.step(1.0f); random.step(1.0f);
+        check(random.step(0.0f,1.0f)[0]==first,"RANDOM RESET restarts the seeded sequence");
+    }
+    // ---- CLOCK DIVIDER / EVENT DELAY / MERGE ---------------------------------
+    {
+        MultiStepper div(T::ClockDivider);
+        std::array<int,4> counts{}; std::array<bool,4> downbeat{};
+        for(int i=0;i<32;++i) { const auto& o=div.step(1.0f); for(std::size_t k=0;k<4;++k) { counts[k]+=o[k]!=0.0f; if(i==0) downbeat[k]=o[k]!=0.0f; } }
+        check(counts==std::array<int,4>{16,8,4,2} && downbeat==std::array<bool,4>{true,true,true,true},
+              "CLOCK DIVIDER /2 /4 /8 /16 from one input, all on the downbeat");
+        div.step(1.0f); div.step(1.0f);
+        const auto& afterReset=div.step(1.0f,1.0f);
+        check(afterReset[3]!=0.0f,"CLOCK DIVIDER RESET realigns every output to the next event");
+        int silent=0; for(int i=0;i<10;++i) silent+=div.step(0.0f)[0]!=0.0f;
+        check(silent==0,"no input event, no output event");
+    }
+    {
+        MultiStepper delay(T::EventDelay); delay.prepared.delaySamples=3;
+        std::vector<int> fired;
+        for(int i=0;i<12;++i) if(delay.step(i==0 || i==1 ? 1.0f : 0.0f)[0]!=0.0f) fired.push_back(i);
+        check(fired==std::vector<int>{3,4},"EVENT DELAY: an event at N fires at N + delay (each event kept)");
+        MultiStepper full(T::EventDelay); full.prepared.delaySamples=100;
+        int out=0; for(int i=0;i<300;++i) out+=full.step(i<12 ? 1.0f : 0.0f)[0]!=0.0f;
+        check(out==int(ControlOpRuntime::delayCapacity),"EVENT DELAY overflow: bounded at 8 pending; newer events are dropped");
+        MultiStepper sync(T::EventDelay,{{1.0f,100.0f,3.0f}},true); // 1/8 at 120 BPM = 12000 samples
+        sync.prepared=prepareControlOp(sync.op,48000.0); sync.ctx.beatsPerSample=120.0/60.0/48000.0;
+        int at=-1; for(int i=0;i<13000;++i) if(sync.step(i==0 ? 1.0f : 0.0f)[0]!=0.0f) at=i;
+        check(std::abs(at-12000)<=1,"EVENT DELAY SYNC: a tempo division (1/8 at 120 BPM = 12000 samples)");
+        MultiStepper merge(T::EventMerge);
+        check(merge.step(1,0,0)[0]==1.0f && merge.step(0,0,1)[0]==1.0f && merge.step(1,1,1)[0]==1.0f && merge.step(0,0,0)[0]==0.0f,
+              "EVENT MERGE: any input event; coincident events merge into one");
+    }
+    // ---- PROBABILITY / CHANCE SPLIT ------------------------------------------
+    {
+        MultiStepper never(T::Probability,{{0.0f,1.0f}},true),always(T::Probability,{{1.0f,1.0f}},true);
+        MultiStepper half(T::Probability,{{0.5f,1.0f}},true),twin(T::Probability,{{0.5f,1.0f}},true);
+        int n=0,a=0,h=0; bool same=true;
+        for(int i=0;i<2000;++i) { n+=never.step(1.0f)[0]!=0.0f; a+=always.step(1.0f)[0]!=0.0f; const bool x=half.step(1.0f)[0]!=0.0f; h+=x; same&=x==(twin.step(1.0f)[0]!=0.0f); }
+        check(n==0 && a==2000 && h>850 && h<1150 && same,"PROBABILITY: 0 never, 1 always, 0.5 about half, deterministic per seed");
+        MultiStepper split(T::ChanceSplit,{{0.3f,9.0f}},true);
+        int A=0,B=0,both=0,idle=0;
+        for(int i=0;i<4000;++i) {
+            const bool ev=(i%2)==0;
+            const auto& o=split.step(ev ? 1.0f : 0.0f);
+            const bool x=o[0]!=0.0f,y=o[1]!=0.0f;
+            if(ev) { A+=x; B+=y; both+=x==y; } else idle+=x||y;
+        }
+        check(A+B==2000 && both==0 && idle==0,"CHANCE SPLIT: exactly one of A / B per event, nothing between events");
+        check(A>450 && A<750,"CHANCE SPLIT honours A CHANCE");
+    }
+    // ---- EUCLIDEAN / PATTERN / RANDOM WALK -----------------------------------
+    {
+        bool even=true;
+        for(int steps=1;steps<=32;++steps) for(int pulses=0;pulses<=steps;++pulses) even&=evenlySpaced(steps,pulses,0);
+        check(even,"EUCLIDEAN: every steps 1..32 / pulses 0..steps pattern has PULSES maximally even hits");
+        std::string e38,e58;
+        for(int i=0;i<8;++i) { e38+=euclideanHit(8,3,0,i)?'x':'.'; e58+=euclideanHit(8,5,0,i)?'x':'.'; }
+        check(e38=="x..x..x." && e58=="x.x.xx.x","EUCLIDEAN(3,8) = x..x..x. and (5,8) = x.x.xx.x (Bjorklund necklaces)");
+        std::string e416; for(int i=0;i<16;++i) e416+=euclideanHit(16,4,0,i)?'x':'.';
+        check(e416=="x...x...x...x...","EUCLIDEAN(4,16) = four on the floor");
+        bool rotates=true; for(int i=0;i<8;++i) rotates&=euclideanHit(8,3,1,i)==euclideanHit(8,3,0,(i+1)%8);
+        check(rotates,"EUCLIDEAN ROTATION shifts the pattern");
+        MultiStepper euclid(T::Euclidean,{{8.0f,3.0f,0.0f}},true);
+        std::string run; for(int i=0;i<16;++i) run+=euclid.step(1.0f)[0]!=0.0f?'x':'.';
+        check(run=="x..x..x.x..x..x.","EUCLIDEAN node walks its pattern one step per CLOCK event");
+        MultiStepper pattern(T::Pattern,{{5.0f,float(0b10011),0.0f}},true);
+        std::string p; for(int i=0;i<10;++i) p+=pattern.step(1.0f)[0]!=0.0f?'x':'.';
+        check(p=="xx..xxx..x","PATTERN: bounded binary mask over LENGTH steps");
+        MultiStepper walk(T::RandomWalk,{{0.3f,-0.5f,0.5f,3.0f,1.0f}},true),twin(T::RandomWalk,{{0.3f,-0.5f,0.5f,3.0f,1.0f}},true);
+        bool bounded=true,same=true,moves=false; float last=walk.step()[0]; twin.step();
+        for(int i=0;i<500;++i) { const float v=walk.step(1.0f)[0]; bounded&=v>=-0.5f && v<=0.5f; same&=v==twin.step(1.0f)[0]; moves|=v!=last; last=v; }
+        check(bounded && same && moves,"RANDOM WALK: bounded (reflect), deterministic per seed, steps only on TRIG");
+        check(walk.step(0.0f,1.0f)[0]==0.0f,"RANDOM WALK RESET returns to the centre of MIN..MAX");
+    }
+    // ---- validation: ports, typing, singleton sequencer ----------------------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Counter,1);
+        m.operators[1]=makeControlOperator(T::Toggle,2); m.operators[1].inputs[0]=opIn(1,1); // WRAP (EVENT) -> TRIG
+        m.nextOperatorId=3;
+        check(validModulation(m,modules),"an EVENT output port feeds an EVENT input");
+        m.operators[1].inputs[0]=opIn(1,0);
+        check(!validModulation(m,modules),"the CONTROL port of the same node cannot feed an EVENT input");
+        m.operators[1].inputs[0]=opIn(1,3);
+        check(!validModulation(m,modules),"a port beyond the node's outputs is rejected");
+        m.operators[1].inputs[0]=opIn(1,1);
+        m.routes[0]={1,true,operatorSource(1,0),{ModDestination::Cutoff,0,0},0.5f,false}; m.nextRouteId=2;
+        check(validModulation(m,modules),"COUNTER VALUE drives a parameter");
+        m.routes[0].source=operatorSource(1,1);
+        check(!validModulation(m,modules),"COUNTER WRAP (EVENT) cannot drive a parameter");
+        m.routes[0]={};
+        m.operators[2]=makeControlOperator(T::Sequencer,3); m.operators[3]=makeControlOperator(T::Sequencer,4); m.nextOperatorId=5;
+        check(!validModulation(m,modules),"there is exactly one SEQUENCER");
+        ModulationState one; std::uint32_t id=0;
+        check(nodes::addControlOperator(one,T::Sequencer,one,id) && !nodes::controlOperatorCreatable(one,T::Sequencer),
+              "a second SEQUENCER cannot be created");
+    }
+    // ---- success graph A: COUNTER VALUE + WRAP from one CLOCK -----------------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[0]=0.0f; m.operators[0].params[1]=50.0f; // 960 samples
+        m.operators[1]=makeControlOperator(T::Counter,2); m.operators[1].params[0]=4.0f; m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::Toggle,3); m.operators[2].inputs[0]=opIn(2,1);
+        m.operators[3]=makeControlOperator(T::ScaleOffset,4); m.operators[3].inputs[0]=opIn(2,0);   // VALUE -> SCALE
+        m.operators[4]=makeControlOperator(T::RandomTrigger,5); m.operators[4].inputs[0]=opIn(2,1); // WRAP -> RANDOM
+        m.nextOperatorId=6;
+        m.routes[0]={1,true,operatorSource(4),{ModDestination::Cutoff,0,0},0.5f,false};
+        m.routes[1]={2,true,operatorSource(5),{ModDestination::Resonance,0,0},0.4f,false}; m.nextRouteId=3;
+        check(validModulation(m,modules),"graph A is valid (VALUE -> SCALE -> CUTOFF, WRAP -> RANDOM -> parameter, WRAP fan-out)");
+        SeqHarness h(m);
+        bool sameSample=true,scaled=true; int wraps=0,toggles=0,randoms=0; float lastToggle=0.0f,lastRandom=0.0f;
+        for(int n=0;n<9600;++n) {
+            h.sample();
+            const bool wrap=h.out(1,1)!=0.0f;
+            wraps+=wrap;
+            if(wrap) sameSample&=h.out(1,0)==0.0f;
+            scaled&=h.out(3)==h.out(1,0); // SCALE x1 follows VALUE on the same sample
+            if(h.out(2)!=lastToggle) { ++toggles; sameSample&=wrap; lastToggle=h.out(2); }
+            if(n>0 && h.out(4)!=lastRandom) { ++randoms; sameSample&=wrap; }
+            lastRandom=h.out(4);
+        }
+        check(wraps==2 && toggles==2 && randoms==2 && sameSample && scaled,
+              "graph A: WRAP fires at the sample VALUE wraps; every WRAP consumer reacts on that sample (fan-out)");
+    }
+    // ---- success graph B: CLOCK -> EUCLIDEAN(5/8) -> PROBABILITY -> S&H <- LFO --
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[0]=0.0f; m.operators[0].params[1]=50.0f;
+        m.operators[1]=makeControlOperator(T::Euclidean,2); m.operators[1].params[0]=8.0f; m.operators[1].params[1]=5.0f; m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::Probability,3); m.operators[2].params[0]=1.0f; m.operators[2].inputs[0]=opIn(2);
+        m.operators[3]=makeControlOperator(T::SampleHold,4); m.operators[3].inputs[0]=src(ModSource::Lfo1); m.operators[3].inputs[1]=opIn(3);
+        m.nextOperatorId=5;
+        m.routes[0]={1,true,operatorSource(4),{ModDestination::Cutoff,0,0},0.5f,true}; m.nextRouteId=2;
+        check(validModulation(m,modules),"graph B is valid");
+        SeqHarness h(m);
+        int captures=0; bool exact=true; std::array<float,13> sources{};
+        for(int n=0;n<960*8;++n) {
+            sources[0]=std::sin(float(n)*0.01f);
+            h.sample(sources);
+            if(h.out(2)!=0.0f) { ++captures; exact&=h.out(3)==sources[0]; }
+        }
+        check(captures==5 && exact,"graph B: 5 of 8 clock steps sample the LFO at the event's own sample");
+    }
+    // ---- success graph C: CHANCE SPLIT -> ENV TRIGGER / RANDOM ----------------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[0]=0.0f; m.operators[0].params[1]=50.0f;
+        m.operators[1]=makeControlOperator(T::ChanceSplit,2); m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::EnvelopeTrigger,3); m.operators[2].inputs[0]=opIn(2,0);
+        m.operators[3]=makeControlOperator(T::RandomTrigger,4); m.operators[3].inputs[0]=opIn(2,1);
+        m.nextOperatorId=5;
+        m.routes[0]={1,true,operatorSource(4),{ModDestination::Cutoff,0,0},0.5f,false}; m.nextRouteId=2;
+        check(validModulation(m,modules),"graph C is valid (A -> ENV TRIGGER, B -> RANDOM -> parameter)");
+        SeqHarness h(m);
+        int b=0,changes=0; bool onlyOnB=true; float last=0.0f;
+        for(int n=0;n<48000;++n) {
+            h.sample();
+            const bool onB=h.out(1,1)!=0.0f; b+=onB;
+            if(n>0 && h.out(3)!=last) { ++changes; onlyOnB&=onB; }
+            last=h.out(3);
+        }
+        check(b>0 && changes>0 && onlyOnB,"graph C: RANDOM changes only on CHANCE SPLIT B events");
+    }
+    // ---- the canonical SEQUENCER node -----------------------------------------
+    {
+        // Graph E: external CLOCK -> SEQUENCER ADVANCE; the internal clock never runs.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[0]=0.0f; m.operators[0].params[1]=2.0f; // 2 Hz
+        m.operators[1]=makeControlOperator(T::Sequencer,2); m.operators[1].params[0]=1.0f; m.operators[1].inputs[0]=opIn(1);
+        m.nextOperatorId=3;
+        m.routes[0]={1,true,operatorSource(2),{ModDestination::Cutoff,0,0},0.5f,true}; m.nextRouteId=2;
+        check(validModulation(m,modules),"graph E is valid");
+        SeqHarness h(m); h.settings.rateHz=13.0f; // would step 13x per second if the internal clock ran
+        int events=0; bool coincident=true; std::vector<std::size_t> steps;
+        for(int n=0;n<48000;++n) {
+            h.sample();
+            const bool tick=h.out(0)!=0.0f,step=h.out(1,2)!=0.0f;
+            coincident&=tick==step;
+            if(step) { ++events; steps.push_back(h.sequencer.currentStep()); }
+        }
+        check(events==2 && coincident,"graph E: one STEP EVENT per external CLOCK, none from the internal clock");
+        check(steps==std::vector<std::size_t>{0,1},"the first ADVANCE plays the start step, the next one step 2");
+        check(h.out(1,0)==h.settings.steps[1] && std::abs(h.out(1,1)-1.0f/7.0f)<1e-6f,"VALUE is the step value; STEP = step / (count - 1)");
+        check(h.frame.globalSources[12]==h.out(1,0),"the canonical SEQ source follows the node's VALUE");
+    }
+    {
+        // Transport jumps: a seek / loop that lands in a new grid cell ticks ONCE.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[2]=3.0f; // 1/8
+        m.operators[1]=makeControlOperator(T::Sequencer,2); m.operators[1].inputs[0]=opIn(1); m.operators[1].params[0]=1.0f;
+        m.nextOperatorId=3;
+        SeqHarness h(m);
+        int events=0,atJump=0;
+        for(int n=0;n<30000;++n) {
+            if(n==20000) h.beats=0.0;     // loop back to bar start
+            if(n==25000) h.beats=7.25;    // seek forward mid-cell
+            h.sample();
+            const bool e=h.out(1,2)!=0.0f;
+            events+=e; if(n==20000 || n==25000) atJump+=e;
+        }
+        // 0..19999: ticks at 0, 12000 (2); loop: 1 at 20000; seek: 1 at 25000; then none before 30000.
+        check(events==4 && atJump==2,"seek / loop: exactly one tick per jump into a new cell; no double trigger");
+    }
+    {
+        // Connecting a clock to ADVANCE hands clock ownership to it.
+        InstrumentState state; state.oscillators[0].id=1;
+        std::uint32_t clockId=0,seqId=0;
+        check(nodes::addControlOperator(state.modulation,T::Clock,state.modulation,clockId)
+              && nodes::addControlOperator(state.modulation,T::Sequencer,state.modulation,seqId),"CLOCK + SEQUENCER");
+        check(findControlOperator(state.modulation,seqId)->params[0]==0.0f,"a new SEQUENCER runs its own (INTERNAL) clock");
+        ModulationState connected;
+        check(nodes::connectControlInput(state,nodes::ControlEndpoint::fromOperator(clockId),seqId,0,connected)
+              && findControlOperator(connected,seqId)->params[0]==1.0f,"connecting ADVANCE selects EXTERNAL in the same edit");
+    }
+    {
+        // RESET before ADVANCE; EXTERNAL holds between events.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Sequencer,1); m.operators[0].params[0]=1.0f;
+        m.operators[1]=makeControlOperator(T::Constant,2);
+        m.nextOperatorId=3;
+        SeqHarness h(m);
+        auto& seq=h.sequencer; const auto& st=h.settings;
+        seq.advance(st); seq.advance(st); seq.advance(st);
+        check(seq.currentStep()==2,"external advances step the one sequencer");
+        seq.restart(st); seq.advance(st);
+        check(seq.currentStep()==0 && seq.held()==st.steps[0],"RESET then ADVANCE (same sample) plays the start step");
+    }
+    {
+        // INTERNAL mode: the node runs the sequencer's own clock, step-for-step with the legacy generator.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Sequencer,1);
+        m.nextOperatorId=2;
+        SeqHarness h(m); h.settings.rateHz=8.0f; h.settings.ratchets[2]=2;
+        SequencerGenerator legacy; legacy.reset();
+        bool sameSteps=true; int events=0,changes=0; std::size_t lastStep=0;
+        for(int n=0;n<48000;++n) {
+            h.sample(); legacy.next(h.settings,48000.0);
+            sameSteps&=h.sequencer.currentStep()==legacy.currentStep();
+            events+=h.out(0,2)!=0.0f;
+            if(h.sequencer.currentStep()!=lastStep) { ++changes; lastStep=h.sequencer.currentStep(); }
+        }
+        check(sameSteps,"INTERNAL clock: identical step timing to the legacy sequencer (one clock, never doubled)");
+        check(events==changes+1+1,"STEP EVENT on every step (incl. sample 0) and each ratchet repeat");
+    }
+    {
+        // Graph D: SEQUENCER VALUE -> CURVE, STEP EVENT -> PROBABILITY.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Sequencer,1);
+        m.operators[1]=makeControlOperator(T::Curve,2); m.operators[1].inputs[0]=opIn(1,0);
+        m.operators[2]=makeControlOperator(T::Probability,3); m.operators[2].params[0]=1.0f; m.operators[2].inputs[0]=opIn(1,2);
+        m.operators[3]=makeControlOperator(T::ScaleOffset,4); m.operators[3].inputs[0]=src(ModSource::Sequencer); // reads SEQ after the node
+        m.operators[4]=makeControlOperator(T::Toggle,5); m.operators[4].inputs[0]=opIn(3);                    // another event consumer
+        m.nextOperatorId=6;
+        m.routes[0]={1,true,operatorSource(2),{ModDestination::WtPosition,1,0},0.5f,true};
+        m.routes[1]={2,true,operatorSource(1,1),{ModDestination::Resonance,0,0},0.3f,false}; m.nextRouteId=3;
+        check(validModulation(m,modules),"graph D is valid (VALUE -> CURVE, STEP EVENT -> PROBABILITY, STEP -> parameter)");
+        SeqHarness h(m);
+        bool passes=true,seqSource=true; int events=0;
+        for(int n=0;n<24000;++n) {
+            h.sample();
+            passes&=(h.out(0,2)!=0.0f)==(h.out(2)!=0.0f);
+            seqSource&=h.out(3)==h.out(0,0);
+            events+=h.out(2)!=0.0f;
+        }
+        check(passes && events>=2,"graph D: every STEP EVENT reaches PROBABILITY on its own sample");
+        check((h.out(4)!=0.0f)==(events%2==1),"graph D: PROBABILITY's events drive a further event consumer (TOGGLE flips per event)");
+        check(seqSource,"a SEQ source read by another node sees the node's VALUE on the same sample");
+    }
+    // ---- multi-output routing through the compiled plan -----------------------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Sequencer,1);
+        m.nextOperatorId=2;
+        m.routes[0]={1,true,operatorSource(1,0),{ModDestination::Cutoff,0,0},0.5f,true};
+        m.routes[1]={2,true,operatorSource(1,1),{ModDestination::Resonance,0,0},0.5f,false}; m.nextRouteId=3;
+        SeqHarness h(m);
+        for(int n=0;n<20000;++n) h.sample();
+        h.frame.cutoff=1000.0f; h.frame.resonance=0.1f;
+        h.compiled.globalFrame(h.frame,{},48000.0);
+        check(h.out(0,1)>0.0f && h.frame.resonance>0.1f,"two outputs of one node drive two parameters (STEP raises RESONANCE)");
+        ModulationSourceSlots slots{};
+        slots[modulationSourceSlot(operatorSource(1,1),m)]=h.out(0,1);
+        check(modulationSourceSlot(operatorSource(1,1),m)==CompiledModulation::sourceSlotCount+operatorOutputIndex(0,1)
+              && routeContribution(m.routes[1],m,slots)>0.0f,"monitor slots index (operator slot, port)");
+    }
+    // ---- block sizes / determinism / allocation -------------------------------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[2]=4.0f; // 1/16 tempo
+        m.operators[1]=makeControlOperator(T::Euclidean,2); m.operators[1].params[1]=5.0f; m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::EventDelay,3); m.operators[2].params[0]=1.0f; m.operators[2].params[2]=5.0f; m.operators[2].inputs[0]=opIn(2);
+        m.operators[3]=makeControlOperator(T::Sequencer,4); m.operators[3].params[0]=1.0f; m.operators[3].inputs[0]=opIn(3);
+        m.operators[4]=makeControlOperator(T::RandomWalk,5); m.operators[4].inputs[0]=opIn(4,2);
+        m.operators[5]=makeControlOperator(T::ChanceSplit,6); m.operators[5].inputs[0]=opIn(1);
+        m.operators[6]=makeControlOperator(T::Counter,7); m.operators[6].params[1]=2.0f; m.operators[6].inputs[0]=opIn(6,0); m.operators[6].inputs[1]=opIn(6,1);
+        m.nextOperatorId=8;
+        m.routes[0]={1,true,operatorSource(4),{ModDestination::Cutoff,0,0},0.6f,true};
+        m.routes[1]={2,true,operatorSource(5),{ModDestination::Level,1,0},0.3f,false};
+        m.routes[2]={3,true,operatorSource(7),{ModDestination::Resonance,0,0},0.3f,false}; m.nextRouteId=4;
+        m.generatorActiveMask|=0x10u;
+        check(validModulation(m,modules),"the sequencing stress graph is valid");
+        const auto render=[&](int block,bool host,double bpmChangeAt=-1.0,bool loop=false) {
+            auto e=std::make_unique<OrigamiEngine>(); e->prepare(sr,1024,2); e->setModulationState(m);
+            for(OscillatorModuleId id=2;id<=4;++id) e->setOscillatorModuleEnabled(id,false);
+            e->noteOn(60,1.0f);
+            std::vector<float> l(48000),r(48000);
+            for(int done=0;done<48000;done+=block) {
+                const int n=std::min(block,48000-done);
+                if(host) {
+                    // The host reports its position directly (never accumulated in the test).
+                    const bool changed=bpmChangeAt>=0 && done>=bpmChangeAt;
+                    OrigamiEngine::HostTransport t; t.bpm=changed ? 91.0 : 127.0; t.playing=true; t.ppqValid=true;
+                    t.ppq=changed ? bpmChangeAt*127.0/60.0/sr+(double(done)-bpmChangeAt)*91.0/60.0/sr : double(done)*127.0/60.0/sr;
+                    if(loop) { t.bpm=127.0; t.ppq=double(done%24576)*127.0/60.0/sr; } // a host loop jumps back to 0
+                    e->setHostTransport(t);
+                }
+                float* out[2]{l.data()+done,r.data()+done}; e->process(out,2,std::size_t(n));
+            }
+            return l;
+        };
+        const auto reference=render(32,false);
+        bool identical=true; for(int block:{64,128,512,1024}) identical&=render(block,false)==reference;
+        check(identical,"sequencing graph: bit-identical audio for blocks 32 / 64 / 128 / 512 / 1024");
+        check(render(256,false)==render(256,false),"offline renders are deterministic");
+        const auto hostA=render(64,true,24576),hostB=render(1024,true,24576); // a change on a common block boundary
+        float worst=0.0f; for(std::size_t i=0;i<hostA.size();++i) worst=std::max(worst,std::abs(hostA[i]-hostB[i]));
+        check(worst<1e-4f,"host tempo change mid-render: block-size independent");
+        float diff=0.0f; const auto fixedTempo=render(64,true); for(std::size_t i=24576;i<hostA.size();++i) diff=std::max(diff,std::abs(hostA[i]-fixedTempo[i]));
+        check(diff>1e-4f,"the tempo change is honoured (the sequence follows the host)");
+        const auto loopA=render(64,true,-1.0,true),loopB=render(1024,true,-1.0,true);
+        float loopWorst=0.0f; for(std::size_t i=0;i<loopA.size();++i) loopWorst=std::max(loopWorst,std::abs(loopA[i]-loopB[i]));
+        check(loopWorst<1e-4f,"host loop / seek (position jumps back): block-size independent, no stuck state");
+#ifndef ORIGAMI_SANITIZED
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(sr,512,2); e->setModulationState(m);
+        e->noteOn(60,1.0f); e->noteOn(64,1.0f);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        e->process(out,2,512);
+        allocations=0;guardAllocations=true;
+        for(int i=0;i<32;++i) { if(i==8) e->noteOn(67,1.0f); e->process(out,2,512); }
+        guardAllocations=false;
+        check(allocations.load()==0,"sequencing / generative nodes and the sequencer node evaluate without allocating");
+#endif
+    }
+    // ---- polyphonic generative state -------------------------------------------
+    {
+        // NOTE ON -> PROBABILITY(1) -> COUNTER, per voice: each voice counts its own notes.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::NoteOn,1);
+        m.operators[1]=makeControlOperator(T::Probability,2); m.operators[1].params[0]=1.0f; m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::Counter,3); m.operators[2].inputs[0]=opIn(2);
+        m.operators[3]=makeControlOperator(T::RandomWalk,4); m.operators[3].inputs[0]=opIn(1);
+        m.nextOperatorId=5;
+        m.routes[0]={1,true,operatorSource(3),{ModDestination::Level,1,0},0.3f,false}; m.nextRouteId=2;
+        check(validModulation(m,modules) && sourceIsVoice(operatorSource(3),m) && sourceIsVoice(operatorSource(4),m),
+              "NOTE ON -> PROBABILITY -> COUNTER is per voice");
+        auto engine=std::make_unique<OrigamiEngine>(); engine->prepare(sr,512,2); engine->setModulationState(m);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        bool isolated=true;
+        for(int note=0;note<4;++note) {
+            engine->noteOn(60+note,1.0f); engine->process(out,2,512);
+            const float value=engine->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(2,0)];
+            isolated&=std::abs(value-1.0f/7.0f)<1e-6f; // a shared counter would read 2/7, 3/7...
+        }
+        check(isolated && engine->activeVoiceCount()==4,"per-voice COUNTER / PROBABILITY / RANDOM WALK state never leaks between voices");
+    }
+    // ---- legacy sequencer: unchanged without a node ---------------------------
+    {
+        ModulationState m;
+        m.generatorActiveMask|=0x10u;
+        m.sequencer.rateHz=6.0f; m.sequencer.ratchets[3]=3; m.sequencer.probability[5]=0.5f; m.sequencer.humanize=0.2f;
+        m.routes[0]={1,true,ModSource::Sequencer,{ModDestination::Cutoff,0,0},0.6f,true}; m.nextRouteId=2;
+        // The legacy path must match a straight SequencerGenerator::next() run.
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(sr,512,2); e->setModulationState(m);
+        SequencerGenerator reference; reference.reset();
+        std::vector<float> l(1),r(1); float* out[2]{l.data(),r.data()};
+        bool same=true;
+        for(int n=0;n<24000;++n) {
+            reference.next(m.sequencer,sr);
+            e->process(out,2,1);
+            if(n%97==0) same&=e->runtimeVisualizationSnapshot().sequencerStep==reference.currentStep();
+        }
+        check(same,"without a SEQUENCER node the legacy source pass drives the sequencer exactly as before");
+    }
+    // ---- codec v30 ------------------------------------------------------------
+    {
+        auto base=std::make_unique<OrigamiEngine>(); base->prepare(sr,512,2);
+        auto state=base->instrumentState();
+        state.modulation.operators[0]=makeControlOperator(T::Clock,1);
+        state.modulation.operators[1]=makeControlOperator(T::Counter,2); state.modulation.operators[1].inputs[0]=opIn(1);
+        state.modulation.nextOperatorId=3;
+        check(encodeInstrumentState(state)[7]==29,"N05-only graphs still write v29");
+        state.modulation.operators[2]=makeControlOperator(T::Toggle,3); state.modulation.operators[2].inputs[0]=opIn(2,1);
+        state.modulation.operators[3]=makeControlOperator(T::Sequencer,4); state.modulation.operators[3].inputs[0]=opIn(1);
+        state.modulation.nextOperatorId=5;
+        state.modulation.routes[0]={1,true,operatorSource(4,1),{ModDestination::Cutoff,0,0},0.5f,false}; state.modulation.nextRouteId=2;
+        const auto bytes=encodeInstrumentState(state);
+        InstrumentState decoded;
+        check(bytes[7]==30 && decodeInstrumentState(bytes.data(),bytes.size(),decoded),"sequencing nodes / ports write v30 and decode");
+        bool sameOps=true;
+        for(std::size_t i=0;i<4;++i) sameOps&=decoded.modulation.operators[i].type==state.modulation.operators[i].type
+                                             && decoded.modulation.operators[i].inputs==state.modulation.operators[i].inputs;
+        check(sameOps && decoded.modulation.routes[0].source==operatorSource(4,1),
+              "output ports round-trip in inputs and routes");
+        auto pingPong=base->instrumentState();
+        pingPong.modulation.operators[0]=makeControlOperator(T::Counter,1); pingPong.modulation.operators[0].params[1]=2.0f;
+        pingPong.modulation.nextOperatorId=2;
+        check(encodeInstrumentState(pingPong)[7]==30,"PING-PONG (an N06 mode) writes v30 so older builds reject it cleanly");
+    }
+}
+
 int main() {
     identityTests();
     sourceDomainTests();
@@ -1881,6 +2379,7 @@ int main() {
     controlGraphTests();
     controlOperatorTests();
     eventLogicTests();
+    sequencingTests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;
