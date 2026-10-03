@@ -242,6 +242,26 @@ nodes.
 
 No DSP or modulation evaluation changed. See `docs/NODES_ARCHITECTURE.md` §13.
 
+## CONTROL processing operators (N04)
+
+`ModulationState::operators` (32 fixed slots) holds the NODES control
+processors: ADD, SUBTRACT, MULTIPLY, MIN, MAX, SCALE/OFFSET, REMAP, CURVE,
+ABS, INVERT, CLAMP, CONSTANT, SMOOTH and QUANTIZE.
+
+- **Processed routes:** a processed route is still one `ModRoute`, whose
+  source is an operator output. Direct routes are untouched.
+- **Evaluation:** `CompiledModulation` compiles operators into a topologically
+  ordered fixed plan. Global operators run every sample in the global frame;
+  per-voice operators run every sample in each voice, with per-voice state.
+  Nothing allocates, locks or uses strings, and nothing runs when no operator
+  exists.
+- **Domain rule:** VOICE results never drive GLOBAL parameters (rejected when
+  authoring; inert if they arise).
+- **Save format:** instrument codec v28 is written only when operators exist;
+  otherwise v27.
+
+See `docs/NODES_ARCHITECTURE.md` §14.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:

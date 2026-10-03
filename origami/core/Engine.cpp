@@ -87,6 +87,7 @@ void OrigamiEngine::reset() noexcept {
     globalRandom_.reset();globalFunction_.reset();globalChaos_.reset();globalDrift_.reset();globalSequencer_.reset();
     const auto resetModules=oscillatorModules_.snapshot();
     compiledModulation_.compile(audioModulation_,resetModules,true);
+    compiledModulation_.resetOperatorState();
     oscillatorPlan_.compile(resetModules);
     for(std::size_t i=0;i<resetModules.size();++i) compiledModuleIds_[i]=resetModules[i].id;
     for (auto& voice : voices_) voice.reset();
@@ -479,6 +480,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         if(compiledModulation_.usesGlobalSource(12) && (audioModulation_.generatorActiveMask&0x10u))
             sources[12]=globalSequencer_.next(audioModulation_.sequencer,sampleRate_);
 
+        // N04 global CONTROL operators: once per sample, before the global
+        // frame reads their outputs (compiled plan; never when unused).
+        if(compiledModulation_.hasOperators()) compiledModulation_.evaluateGlobalOperators(frame,sources);
         // Keep UI observation off the 96 kHz hot path. Generators above still
         // advance at full audio rate; only copying/inspection is decimated.
         const bool observeVisualization=!suppressVisualization_ && runtimeVisualizationCountdown_==0;
@@ -503,6 +507,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
             for(std::size_t i=0;i<CompiledModulation::globalSourceCount;++i)
                 runtimeVisualization_.routeSources[i]=sources[i];
+            for(std::size_t i=0;i<CompiledModulation::operatorSlotCount;++i)
+                runtimeVisualization_.routeSources[CompiledModulation::sourceSlotCount+i]=frame.operatorOutputs[i];
         } else if(runtimeVisualizationCountdown_>0) {
             --runtimeVisualizationCountdown_;
         }
@@ -515,7 +521,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         frame.applyMaster=!hostMasterAfterFx_;
         compiledModulation_.globalFrame(frame,sources,sampleRate_);
         if(hostMasterAfterFx_) blockMaster_=frame.master;
-        if(compiledModulation_.hasFxRoutes()) lastGlobalSources_=sources;
+        if(compiledModulation_.hasFxRoutes()) { lastGlobalSources_=sources; lastGlobalOperators_=frame.operatorOutputs; }
         currentPortaTime_=std::clamp(frame.portaTime,0.0f,5.0f);
         currentEnvelopeScaling_=std::clamp(frame.envelopeScaling,0.0f,2.0f);
         currentLfoScaling_=std::clamp(frame.lfoScaling,0.0f,2.0f);
@@ -555,6 +561,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 const auto& visual=voices_[v].visualizationSnapshot();
                 for(std::size_t i=0;i<CompiledModulation::voiceSourceCount;++i)
                     runtimeVisualization_.routeSources[CompiledModulation::globalSourceCount+i]=visual.sources[i];
+                if(compiledModulation_.hasVoiceOperators())
+                    for(std::size_t i=0;i<CompiledModulation::operatorSlotCount;++i)
+                        runtimeVisualization_.routeSources[CompiledModulation::sourceSlotCount+i]=visual.operators[i];
                 runtimeVisualization_.performanceSources={{visual.sources[8],visual.sources[10],
                                                             visual.sources[11],visual.sources[12]}};
                 for(std::size_t i=0;i<3;++i) {
@@ -643,7 +652,8 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         for(const auto& voice:voices_)
             if(voice.active() && (newest==nullptr || voice.order()>newest->order())) newest=&voice;
         compiledModulation_.fxFrame(fxModulation_,lastGlobalSources_,
-                                    newest!=nullptr && compiledModulation_.hasFxVoiceRoutes() ? &newest->lastSources() : nullptr);
+                                    newest!=nullptr && compiledModulation_.hasFxVoiceRoutes() ? &newest->lastSources() : nullptr,
+                                    compiledModulation_.hasGlobalOperators() ? &lastGlobalOperators_ : nullptr);
     } else {
         fxModulation_.count=0;
         fxModulation_.generation=compiledModulation_.generation();

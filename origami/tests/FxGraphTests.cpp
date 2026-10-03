@@ -1315,7 +1315,8 @@ void controlGraphTests() {
     check(checkControlLink(state,ModSource::None,cutoff).result==ControlLinkResult::MissingSource
           && checkControlLink(state,ModSource::Lfo1,{ModDestination::None,0,0}).result==ControlLinkResult::MissingDestination,
           "incomplete ends are rejected");
-    check(checkControlLink(state,ModSource::Chaos,cutoff).result==ControlLinkResult::SourceNotExposed,"only the N03 sources are nodes");
+    // N04 exposes every canonical source; a non-source value is still refused.
+    check(checkControlLink(state,static_cast<ModSource>(999),cutoff).result==ControlLinkResult::SourceNotExposed,"only canonical sources are nodes");
     check(checkControlLink(state,ModSource::Lfo1,{ModDestination::Level,99,0}).result==ControlLinkResult::DestinationUnavailable,
           "a destination that does not exist is rejected (canonical validator)");
     {   auto removed=state; removed.modulation.lfoActiveMask&=~0x2u;
@@ -1336,15 +1337,16 @@ void controlGraphTests() {
     check(checkPortPair(out,eventIn)==PortPairError::TypeMismatch,"CONTROL and EVENT ports never connect");
     // Derived graph: every complete route of an exposed source is a link.
     m.routes[1]={2,true,ModSource::Env1,fxParam,0.5f,false};   // crossing created elsewhere
-    m.routes[2]={3,true,ModSource::Chaos,cutoff,0.3f,false};   // source not a node yet
+    m.routes[2]={3,true,ModSource::Chaos,cutoff,0.3f,false};   // N04: Chaos is a source node too
     m.routes[3]={4,true,ModSource::Lfo2,{ModDestination::None,0,0},0.0f,false}; // incomplete
     m.nextRouteId=5;
     ControlLayout layout;
     layout.setPlaced(sourceKey(ModSource::Macro3),true);
     const auto graph=deriveControlGraph(m,layout);
-    check(graph.links.size()==2 && graph.links[0].routeId==1 && graph.links[1].routeId==2,"links are exactly the eligible routes, by route id");
+    check(graph.links.size()==3 && graph.links[0].routeId==1 && graph.links[1].routeId==2 && graph.links[2].routeId==3,
+          "links are exactly the complete routes, by route id");
     check(graph.links[0].supported && !graph.links[1].supported,"a crossing made outside NODES is shown as unsupported");
-    check(graph.find(sourceKey(ModSource::Macro3)).has_value() && !graph.find(sourceKey(ModSource::Chaos)),"placed nodes appear; unexposed sources do not");
+    check(graph.find(sourceKey(ModSource::Macro3)).has_value() && graph.find(sourceKey(ModSource::Chaos)).has_value(),"placed nodes and linked sources appear");
     // Layout: positions only, stable, versioned.
     layout.setPosition(parameterKey(cutoff),900.0f,620.0f);
     const auto again=deriveControlGraph(m,layout);
@@ -1356,6 +1358,201 @@ void controlGraphTests() {
     check(bytes.size()==6+4+(1+4+8+1)+(1+12+8+1),"layout stores identities + positions + flags only (no route data)");
     auto corrupt=bytes; corrupt[0]='X';
     check(!decoded.decode(corrupt.data(),corrupt.size()) && decoded==layout,"a corrupt layout is rejected without side effects");
+}
+
+// mct-origami-nodes-n04-control-processing: CONTROL operators.
+namespace n04 {
+ControlOperator op(ControlOpType type,std::uint32_t id=1) { return makeControlOperator(type,id); }
+float run(ControlOpType type,float a,float b=0.0f,std::array<float,6> params={},bool useParams=false,
+          ControlRange range=ControlRange::Unipolar,bool aConnected=true,bool bConnected=true) {
+    auto o=op(type);
+    if(useParams) o.params=params;
+    ControlOpRuntime state;
+    return evaluateControlOp(o,a,aConnected,range,b,bConnected,range,state,1.0f,1.0f);
+}
+std::vector<float> renderEngine(const ModulationState& mod,int samples,std::initializer_list<std::pair<int,int>> notes,bool* ok=nullptr) {
+    auto engine=std::make_unique<OrigamiEngine>();
+    engine->prepare(sr,512,2);
+    for(OscillatorModuleId id=2;id<=4;++id) engine->setOscillatorModuleEnabled(id,false);
+    const bool accepted=engine->setModulationState(mod);
+    if(ok) *ok=accepted;
+    std::vector<float> l(static_cast<std::size_t>(samples)),r(static_cast<std::size_t>(samples));
+    int done=0;
+    auto pending=std::vector<std::pair<int,int>>(notes);
+    while(done<samples) {
+        int n=std::min(256,samples-done);
+        for(auto it=pending.begin();it!=pending.end();)
+            if(it->first<=done) { engine->noteOn(it->second,0.9f); it=pending.erase(it); } else ++it;
+        float* out[2]{l.data()+done,r.data()+done};
+        engine->process(out,2,std::size_t(n));
+        done+=n;
+    }
+    return l;
+}
+}
+
+void controlOperatorTests() {
+    using namespace n04;
+    using T=ControlOpType;
+    // Exact math.
+    check(run(T::Add,0.25f,0.5f)==0.75f && run(T::Add,0.25f,0.0f,{},false,ControlRange::Unipolar,true,false)==0.25f,"ADD (unconnected B = 0)");
+    check(run(T::Subtract,0.25f,0.5f)==-0.25f,"SUBTRACT = A - B");
+    check(run(T::Multiply,0.5f,-0.5f)==-0.25f && run(T::Multiply,0.5f,0.0f,{},false,ControlRange::Unipolar,true,false)==0.5f,"MULTIPLY (unconnected B = 1)");
+    check(run(T::Min,0.2f,0.7f)==0.2f && run(T::Max,0.2f,0.7f)==0.7f
+          && run(T::Min,0.0f,0.7f,{},false,ControlRange::Unipolar,false,true)==0.7f,"MIN / MAX (a lone input passes through)");
+    check(run(T::Abs,-0.6f)==0.6f,"ABS");
+    check(run(T::Invert,0.3f)==0.7f && run(T::Invert,0.3f,0,{},false,ControlRange::Bipolar)==-0.3f,"INVERT: 1-x unipolar, -x bipolar");
+    check(run(T::Clamp,1.4f,0,{{0.2f,0.8f}},true)==0.8f && run(T::Clamp,-1.0f,0,{{0.8f,0.2f}},true)==0.2f,"CLAMP (bounds in either order)");
+    check(run(T::ScaleOffset,0.5f,0,{{2.0f,-0.25f}},true)==0.75f,"SCALE / OFFSET = in*scale + offset");
+    check(std::abs(run(T::Remap,0.5f,0,{{0.0f,1.0f,0.25f,0.75f,1.0f}},true)-0.5f)<1e-6f
+          && std::abs(run(T::Remap,1.0f,0,{{0.0f,1.0f,0.25f,0.75f,1.0f}},true)-0.75f)<1e-6f,"REMAP 0..1 -> 0.25..0.75");
+    check(std::abs(run(T::Remap,0.25f,0,{{1.0f,0.0f,0.0f,1.0f,1.0f}},true)-0.75f)<1e-6f,"REMAP with an inverted input range inverts");
+    check(run(T::Remap,2.0f,0,{{0.0f,1.0f,0.0f,1.0f,1.0f}},true)==1.0f && run(T::Remap,2.0f,0,{{0.0f,1.0f,0.0f,1.0f,0.0f}},true)==2.0f
+          && run(T::Remap,0.4f,0,{{0.5f,0.5f,0.0f,1.0f,1.0f}},true)==0.0f,"REMAP clamp on/off; a zero-width input range is deterministic");
+    check(std::abs(run(T::Quantize,0.6f,0,{{5.0f}},true)-0.5f)<1e-6f && std::abs(run(T::Quantize,0.9f,0,{{5.0f}},true)-1.0f)<1e-6f,"QUANTIZE unipolar 5 levels");
+    check(std::abs(run(T::Quantize,-0.4f,0,{{5.0f}},true,ControlRange::Bipolar)+0.5f)<1e-6f
+          && run(T::Quantize,1.0f,0,{{5.0f}},true,ControlRange::Bipolar)==1.0f && run(T::Quantize,-1.0f,0,{{5.0f}},true,ControlRange::Bipolar)==-1.0f,
+          "QUANTIZE bipolar keeps -1 and +1");
+    check(run(T::Constant,0,0,{{0.25f}},true)==0.25f,"CONSTANT");
+    const float lin=run(T::Curve,0.5f,0,{{0.0f,0.5f}},true),ex=run(T::Curve,0.5f,0,{{1.0f,0.5f}},true),lg=run(T::Curve,0.5f,0,{{2.0f,0.5f}},true);
+    check(lin==0.5f && ex<0.5f && lg>0.5f && std::abs(run(T::Curve,0.5f,0,{{3.0f,1.0f}},true)-0.5f)<1e-6f,"CURVE linear / exp / log / S (S fixes the midpoint)");
+    check(std::abs(run(T::Curve,-0.5f,0,{{1.0f,0.5f}},true,ControlRange::Bipolar)+ex)<1e-6f,"CURVE shapes bipolar values odd-symmetrically");
+    // SMOOTH: convergence, rise/fall, reset, sample-rate independence.
+    {
+        auto smooth=op(T::Smooth); smooth.params[0]=0.01f; smooth.params[1]=0.1f;
+        const auto settle=[&](double rate,float seconds) {
+            ControlOpRuntime state;
+            const float rise=controlSmoothingCoefficient(smooth.params[0],rate),fall=controlSmoothingCoefficient(smooth.params[1],rate);
+            evaluateControlOp(smooth,0.0f,true,ControlRange::Unipolar,0,false,ControlRange::Unipolar,state,rise,fall);
+            float y=0.0f,previous=0.0f; bool monotonic=true;
+            for(int i=0;i<int(seconds*rate);++i) {
+                y=evaluateControlOp(smooth,1.0f,true,ControlRange::Unipolar,0,false,ControlRange::Unipolar,state,rise,fall);
+                monotonic&=y>=previous; previous=y;
+            }
+            return std::make_pair(y,monotonic);
+        };
+        const auto at48=settle(48000.0,0.01f),at96=settle(96000.0,0.01f);
+        check(std::abs(at48.first-0.632f)<0.01f && std::abs(at96.first-0.632f)<0.01f && at48.second,"SMOOTH: one time constant = 63% at any sample rate, monotonic");
+        check(settle(48000.0,0.2f).first>0.999f,"SMOOTH converges");
+        ControlOpRuntime state;
+        evaluateControlOp(smooth,0.7f,true,ControlRange::Unipolar,0,false,ControlRange::Unipolar,state,0.5f,0.5f);
+        check(state.initialized && state.value==0.7f,"SMOOTH starts at its first input (no ramp from zero after a reset)");
+    }
+    // Validation: DAG, references, bounds.
+    ModulationState m;
+    const ModAddress cutoff{ModDestination::Cutoff,0,0};
+    m.operators[0]=op(T::ScaleOffset,1); m.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Lfo1,0};
+    m.operators[2]=op(T::Smooth,2); m.operators[2].inputs[0]={ControlInput::Kind::Operator,ModSource::None,1};
+    m.nextOperatorId=3;
+    std::array<OscillatorModuleState,16> modules{}; modules[0].id=1;
+    check(validModulation(m,modules),"a source -> SCALE -> SMOOTH chain (with a storage hole) is valid");
+    {   auto cyc=m; cyc.operators[0].inputs[0]={ControlInput::Kind::Operator,ModSource::None,2};
+        check(!validModulation(cyc,modules),"a control cycle is rejected"); }
+    {   auto bad=m; bad.operators[2].inputs[0].op=9; check(!validModulation(bad,modules),"an input to a missing operator is rejected"); }
+    {   auto bad=m; bad.operators[2].inputs[1]={ControlInput::Kind::Source,ModSource::Lfo2,0}; check(!validModulation(bad,modules),"a unary operator has no B input"); }
+    {   auto bad=m; bad.operators[0].params[0]=9.0f; check(!validModulation(bad,modules),"out-of-range parameters are rejected"); }
+    {   auto bad=m; bad.routes[0]={1,true,operatorSource(7),cutoff,0.5f,false}; bad.nextRouteId=2;
+        check(!validModulation(bad,modules),"a route from a missing operator is rejected"); }
+    // Domains and ranges.
+    check(!sourceIsVoice(operatorSource(2),m) && sourceRange(operatorSource(2),m)==ControlRange::Bipolar,"LFO chain: GLOBAL, bipolar");
+    {   auto v=m; v.operators[1]=op(T::Add,3); v.operators[1].inputs[0]={ControlInput::Kind::Source,ModSource::Macro1,0};
+        v.operators[1].inputs[1]={ControlInput::Kind::Source,ModSource::Env1,0}; v.nextOperatorId=4;
+        check(sourceIsVoice(operatorSource(3),v) && sourceRange(operatorSource(3),v)==ControlRange::Unipolar,"GLOBAL + VOICE -> VOICE (unipolar)"); }
+    std::array<ModSource,16> roots{};
+    m.routes[0]={1,true,operatorSource(2),cutoff,0.5f,false}; m.nextRouteId=2;
+    check(routeRootSources(m,m.routes[0],roots)==1 && roots[0]==ModSource::Lfo1,"a processed route's root source is LFO 1");
+
+    // Engine: inserting SCALE x1 between LFO and CUTOFF is bit-identical to the direct route.
+    ModulationState direct;
+    direct.routes[0]={1,true,ModSource::Lfo1,cutoff,0.6f,false}; direct.nextRouteId=2;
+    direct.lfo1.rateHz=7.0f;
+    ModulationState processed=direct;
+    processed.operators[0]=op(T::ScaleOffset,1); processed.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Lfo1,0};
+    processed.nextOperatorId=2;
+    processed.routes[0].source=operatorSource(1);
+    bool okA=false,okB=false;
+    const auto a=renderEngine(direct,8192,{{0,60}},&okA),b=renderEngine(processed,8192,{{0,60}},&okB);
+    check(okA && okB && a==b,"LFO -> SCALE(x1) -> CUTOFF renders bit-identically to LFO -> CUTOFF");
+    {   // A bipolar chain scaled to zero on a BIPOLAR route contributes nothing
+        // (on a unipolar route it sits at the centre, exactly like a stopped LFO).
+        auto scaled=processed; scaled.operators[0].params[0]=0.0f; scaled.routes[0].bipolar=true;
+        auto silent=direct; silent.routes[0].amount=0.0f;
+        // (Tolerance: an active route still round-trips its destination through
+        // normalize/denormalize, which an amount-0 route never compiles.)
+        const auto x=renderEngine(scaled,8192,{{0,60}}),y=renderEngine(silent,8192,{{0,60}});
+        float worst=0.0f; for(std::size_t i=0;i<x.size();++i) worst=std::max(worst,std::abs(x[i]-y[i]));
+        check(worst<1e-4f,"SCALE x0 on a bipolar route removes the modulation"); }
+    // Polyphony: ENV 1 -> SCALE -> per-voice LEVEL with overlapping notes equals the direct per-voice route.
+    ModulationState envDirect;
+    envDirect.routes[0]={1,true,ModSource::Env1,{ModDestination::Level,1,0},-0.7f,false}; envDirect.nextRouteId=2;
+    ModulationState envProcessed=envDirect;
+    envProcessed.operators[0]=op(T::ScaleOffset,1); envProcessed.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Env1,0};
+    envProcessed.nextOperatorId=2; envProcessed.routes[0].source=operatorSource(1);
+    check(renderEngine(envDirect,12000,{{0,60},{3000,67},{6000,72}})==renderEngine(envProcessed,12000,{{0,60},{3000,67},{6000,72}}),
+          "ENV -> SCALE -> per-voice LEVEL: each voice gets its own envelope (matches the direct per-voice route)");
+    {   // Per-voice SMOOTH state is independent.
+        CompiledModulation compiled; compiled.prepare(sr);
+        ModulationState sm;
+        sm.operators[0]=op(T::Smooth,1); sm.operators[0].params[0]=sm.operators[0].params[1]=0.05f;
+        sm.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Env1,0}; sm.nextOperatorId=2;
+        sm.routes[0]={1,true,operatorSource(1),{ModDestination::Level,1,0},0.5f,false}; sm.nextRouteId=2;
+        compiled.compile(sm,modules,true);
+        check(compiled.hasVoiceOperators() && !compiled.hasGlobalOperators(),"ENV -> SMOOTH compiles as a per-voice operator");
+        ModulationFrame f1,f2; CompiledModulation::OperatorState s1{},s2{};
+        std::array<float,CompiledModulation::voiceSourceCount> v1{},v2{};
+        v1[0]=1.0f; v2[0]=0.0f;
+        for(int i=0;i<64;++i) { compiled.evaluateVoiceOperators(f1,v1,s1); compiled.evaluateVoiceOperators(f2,v2,s2); }
+        v2[0]=1.0f; compiled.evaluateVoiceOperators(f2,v2,s2);
+        check(f1.operatorOutputs[0]==1.0f && f2.operatorOutputs[0]>0.0f && f2.operatorOutputs[0]<0.01f,"one voice's SMOOTH never moves another voice's");
+    }
+    // Domain: a per-voice result never drives a global destination.
+    {
+        ModulationState fx;
+        fx.operators[0]=op(T::ScaleOffset,1); fx.operators[0].inputs[0]={ControlInput::Kind::Source,ModSource::Env1,0};
+        fx.operators[1]=op(T::ScaleOffset,2); fx.operators[1].inputs[0]={ControlInput::Kind::Source,ModSource::Lfo1,0};
+        fx.nextOperatorId=3;
+        fx.routes[0]={1,true,operatorSource(1),fxParameterAddress(mainBusId,4,2),0.5f,false};
+        fx.routes[1]={2,true,operatorSource(2),fxParameterAddress(mainBusId,5,2),0.5f,false};
+        fx.nextRouteId=3;
+        auto engine=std::make_unique<OrigamiEngine>(); engine->prepare(sr,512,2);
+        check(engine->setModulationState(fx),"state with a per-voice chain to an FX parameter is storable");
+        engine->noteOn(60,1.0f);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        engine->process(out,2,512);
+        const auto& output=engine->fxModulationOutput();
+        check(output.count==1 && output.node[0]==5,"only the GLOBAL chain reaches the FX parameter; the per-voice one stays inert");
+    }
+    // Realtime: rendering with operators never allocates.
+#ifndef ORIGAMI_SANITIZED
+    {
+        auto engine=std::make_unique<OrigamiEngine>(); engine->prepare(sr,512,2);
+        auto chain=envProcessed; chain.operators[1]=op(T::Smooth,2); chain.operators[1].inputs[0]={ControlInput::Kind::Operator,ModSource::None,1};
+        chain.nextOperatorId=3; chain.routes[0].source=operatorSource(2);
+        engine->setModulationState(chain);
+        engine->noteOn(60,1.0f); engine->noteOn(64,1.0f);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        engine->process(out,2,512); // adopts the compiled plan
+        allocations=0;guardAllocations=true;
+        for(int i=0;i<16;++i) engine->process(out,2,512);
+        guardAllocations=false;
+        check(allocations.load()==0,"control operators evaluate without allocating");
+    }
+#endif
+    // Codec: v27 bytes when unused, v28 round-trip when used.
+    {
+        auto base=std::make_unique<OrigamiEngine>(); base->prepare(sr,512,2);
+        const auto plain=base->instrumentState();
+        const auto v27=encodeInstrumentState(plain);
+        check(v27[7]==27,"a state without operators is still written as v27");
+        auto withOps=plain;
+        withOps.modulation=processed;
+        const auto v28=encodeInstrumentState(withOps);
+        InstrumentState decoded;
+        check(v28[7]==28 && decodeInstrumentState(v28.data(),v28.size(),decoded),"a state with operators is written as v28 and decodes");
+        check(decoded.modulation.operators[0].id==1 && decoded.modulation.operators[0].type==T::ScaleOffset
+              && decoded.modulation.operators[0].inputs[0]==processed.operators[0].inputs[0]
+              && decoded.modulation.routes[0].source==operatorSource(1) && decoded.modulation.nextOperatorId==2,"operators and processed routes round-trip");
+    }
 }
 
 int main() {
@@ -1398,6 +1595,7 @@ int main() {
     typedGraphTests();
     graphFuzzTests();
     controlGraphTests();
+    controlOperatorTests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;

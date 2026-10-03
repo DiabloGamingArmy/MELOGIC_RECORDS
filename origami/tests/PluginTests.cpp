@@ -2788,12 +2788,169 @@ void nodesN03Audit() {
     }
     check(fxDisabled && cutoffEnabled,"the PARAMETER picker disables what the chosen source cannot drive, with the reason");
     check(page->connectControl(ModSource::Lfo1,{ModDestination::Level,99,0}).result==nodes::ControlLinkResult::DestinationUnavailable
-          && page->connectControl(ModSource::Chaos,cutoff).result==nodes::ControlLinkResult::SourceNotExposed
+          && page->connectControl(static_cast<ModSource>(999),cutoff).result==nodes::ControlLinkResult::SourceNotExposed
           && page->connectControl(ModSource::None,cutoff).result==nodes::ControlLinkResult::MissingSource && routeCount()==before,
           "NODES cannot create malformed routes");
     check(page->connectControl(ModSource::Lfo1,fxDestination).creatable(),"GLOBAL LFO -> GLOBAL NODES parameter is allowed");
     check(!page->removeControlNode(nodes::sourceKey(ModSource::Lfo1)) && page->removeControlNode(nodes::sourceKey(ModSource::Macro1))==false,
           "a linked node cannot be removed (delete its relationships first)");
+}
+
+// mct-origami-nodes-n04-control-processing
+// CONTROL operators between sources and parameters, through the canonical
+// modulation state. Direct routes stay direct; processed routes stay one route.
+void nodesN04Audit() {
+    using namespace mct::origami;
+    using T=ControlOpType;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::FxPage* page=nullptr; ui::ModulationPanel* synth=nullptr; ui::ModulationMatrix* matrix=nullptr; juce::TextButton* nodesButton=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* f=dynamic_cast<ui::FxPage*>(&c)) page=f;
+        if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) synth=m;
+        if(auto* x=dynamic_cast<ui::ModulationMatrix*>(&c)) if(x->layout()==ui::ModulationMatrix::Layout::Page) matrix=x;
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="NODES" && !nodesButton) nodesButton=b;});
+    check(page && synth && matrix && nodesButton,"NODES, SYNTH and MATRIX");
+    nodesButton->onClick();
+    const auto settle=[&]{ editor->flushModulationRefresh(); editor->refreshModulationViews(); };
+    const auto mod=[&]{ return p.getUiInstrumentState().modulation; };
+    const auto route=[&](std::uint32_t id){ for(const auto& r:mod().routes) if(r.id==id) return r; return ModRoute{}; };
+    const auto routeCount=[&]{ int n=0; for(const auto& r:mod().routes) n+=r.id!=0; return n; };
+    const auto opCount=[&]{ int n=0; for(const auto& o:mod().operators) n+=o.id!=0; return n; };
+    const ModAddress cutoff{ModDestination::Cutoff,0,0};
+    using E=nodes::ControlEndpoint;
+
+    // 1. Direct route (SYNTH-style), then SCALE inserted onto its cable.
+    const auto direct=p.addUiRoute();
+    { auto r=route(direct); r.source=ModSource::Lfo1; r.destination=cutoff; r.amount=0.42f; check(p.setUiRoute(r),"LFO 1 -> CUTOFF (direct)"); }
+    settle();
+    check(page->controlLinkShown(direct) && routeCount()==1 && opCount()==0,"the direct route is one canonical route, shown in NODES");
+    const auto scale=page->insertControlOperatorOnRoute(direct,T::ScaleOffset);
+    settle();
+    check(scale.has_value() && routeCount()==1 && opCount()==1 && route(direct).source==operatorSource(*scale)
+          && route(direct).amount==0.42f,"inserting SCALE replaces the direct route in place (same id and amount, no duplicate)");
+    std::uint32_t lfoDirect=0; for(const auto& r:mod().routes) if(r.id && r.source==ModSource::Lfo1) lfoDirect=r.id;
+    check(lfoDirect==0,"no direct LFO 1 route remains underneath (no double modulation)");
+    check(page->controlLinkShown(direct) && page->controlNodeShown(nodes::operatorKey(*scale)),"NODES shows LFO 1 -> SCALE -> CUTOFF");
+    check(synth->sourceRow(ModSource::Lfo1)->routes().size()==1,"SYNTH still shows the LFO 1 relationship (destination modulated)");
+    juce::Component* row=nullptr;
+    for(std::size_t i=0;i<matrix->routeCount();++i) if(matrix->routeRow(i)->getName()=="Modulation route "+juce::String(direct)) row=matrix->routeRow(i);
+    ui::NativeComboBox* sourceBox=nullptr;
+    if(row) walk(*row,[&](auto& c){ if(auto* b=dynamic_cast<ui::NativeComboBox*>(&c)) if(b->getName()=="Route source") sourceBox=b; });
+    check(matrix->routeCount()==1 && sourceBox && !sourceBox->isEnabled() && sourceBox->getText().startsWith("NODES: SCALE")
+          && sourceBox->getText().contains("LFO 1"),"Matrix shows ONE processed row (NODES: SCALE (LFO 1)), source locked");
+    // Inline parameter and undo.
+    check(page->setOperatorParameter(*scale,0,0.5f) && findControlOperator(mod(),*scale)->params[0]==0.5f,"SCALE parameter edits the canonical operator");
+    page->undo();
+    check(findControlOperator(mod(),*scale)->params[0]==1.0f,"undo restores the parameter");
+    page->redo();
+    check(findControlOperator(mod(),*scale)->params[0]==0.5f,"redo re-applies it");
+    // 2. Removing the only processor collapses back to the direct route.
+    check(page->deleteControlOperator(*scale),"delete SCALE");
+    settle();
+    check(opCount()==0 && routeCount()==1 && route(direct).source==ModSource::Lfo1 && route(direct).amount==0.42f,
+          "the chain collapses to the same direct route (LFO 1 -> CUTOFF)");
+    page->undo();
+    check(opCount()==1 && isOperatorSource(route(direct).source),"undo restores the processed route");
+    page->undo(); // the SCALE parameter edit
+    check(opCount()==1 && findControlOperator(mod(),*scale)->params[0]==1.0f,"undo walks back through the parameter edit");
+    page->undo(); // the insertion
+    check(opCount()==0 && route(direct).source==ModSource::Lfo1 && route(direct).amount==0.42f,"undo again restores the original direct route");
+
+    // 3. LFO 1 x MACRO 1 -> MULTIPLY -> REVERB MIX (GLOBAL chain to a GLOBAL parameter).
+    const auto reverb=page->addEffect(fx::FxEffectType::Reverb);
+    const auto* reverbInfo=fx::findFxEffect(fx::FxEffectType::Reverb);
+    fx::FxParameterId mixId=0;
+    for(std::size_t i=0;i<reverbInfo->parameterCount;++i) if(std::string(reverbInfo->parameters[i].key)=="mix") mixId=reverbInfo->parameters[i].id;
+    const auto reverbMix=fxParameterAddress(mainBusId,reverb,mixId);
+    const auto multiply=page->addControlOperator(T::Multiply);
+    check(multiply.has_value(),"MULTIPLY added");
+    check(page->connectControlEdge(E::fromSource(ModSource::Lfo1),E::toInput(*multiply,0)).creatable()
+          && page->connectControlEdge(E::fromSource(ModSource::Macro1),E::toInput(*multiply,1)).creatable(),"LFO 1 -> A, MACRO 1 -> B");
+    const auto toMix=page->connectControlEdge(E::fromOperator(*multiply),E::toParameter(reverbMix));
+    check(toMix.creatable() && route(toMix.existingRoute).source==operatorSource(*multiply),"MULTIPLY -> REVERB MIX is one canonical route");
+    check(page->connectControlEdge(E::fromSource(ModSource::Lfo2),E::toInput(*multiply,0)).result==nodes::ControlLinkResult::InputOccupied,
+          "an operator input takes exactly one connection");
+    {   auto r=route(toMix.existingRoute); r.amount=0.8f; check(p.setUiRoute(r),"route amount"); }
+    {
+        check(p.setUiMacro(0,0.5f),"MACRO 1 = 0.5");
+        juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi; midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        float peak=0.0f;
+        for(int b=0;b<32;++b) {
+            audio.clear(); p.processBlock(audio,midi); midi.clear();
+            peak=std::max(peak,std::abs(p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+controlOperatorSlot(mod(),*multiply)]));
+        }
+        check(peak>0.0f && peak<=0.5f+1e-4f,"MULTIPLY output (LFO x 0.5) is evaluated and published for monitoring");
+    }
+    // Domain: a per-voice input may not turn this GLOBAL chain per-voice.
+    const auto add=page->addControlOperator(T::Add);
+    check(page->connectControlEdge(E::fromOperator(*add),E::toInput(*multiply,0)).result==nodes::ControlLinkResult::InputOccupied,"still occupied");
+    check(page->disconnectControlInput(*multiply,0),"disconnect A");
+    check(page->connectControlEdge(E::fromSource(ModSource::Env1),E::toInput(*multiply,0)).result==nodes::ControlLinkResult::DomainCrossing,
+          "ENV (per-voice) into a chain feeding a GLOBAL parameter is rejected");
+    check(page->connectControlEdge(E::fromSource(ModSource::Lfo1),E::toInput(*multiply,0)).creatable(),"LFO 1 reconnected");
+    // Cycles.
+    check(page->connectControlEdge(E::fromOperator(*multiply),E::toInput(*add,0)).creatable(),"MULTIPLY -> ADD.A");
+    check(page->connectControlEdge(E::fromOperator(*add),E::toInput(*multiply,1)).result!=nodes::ControlLinkResult::Ok,"occupied B refuses");
+    check(page->disconnectControlInput(*multiply,1),"free B");
+    check(page->connectControlEdge(E::fromOperator(*add),E::toInput(*multiply,1)).result==nodes::ControlLinkResult::WouldCreateCycle,
+          "a control cycle is rejected");
+    check(page->connectControlEdge(E::fromOperator(*add),E::fromSource(ModSource::Lfo1)).result==nodes::ControlLinkResult::InvalidPort,
+          "an output never connects to an output");
+
+    // 4. ENV 1 -> CURVE -> SMOOTH -> OSC LEVEL (per-voice chain to a per-voice parameter).
+    const auto curve=page->addControlOperator(T::Curve);
+    const auto smooth=page->addControlOperator(T::Smooth);
+    check(page->connectControlEdge(E::fromSource(ModSource::Env1),E::toInput(*curve,0)).creatable()
+          && page->connectControlEdge(E::fromOperator(*curve),E::toInput(*smooth,0)).creatable(),"ENV 1 -> CURVE -> SMOOTH");
+    const ModAddress level{ModDestination::Level,1,0};
+    const auto toLevel=page->connectControlEdge(E::fromOperator(*smooth),E::toParameter(level));
+    check(toLevel.creatable() && sourceIsVoice(operatorSource(*smooth),mod()),"a per-voice chain drives a per-voice parameter");
+    check(page->connectControlEdge(E::fromOperator(*smooth),E::toParameter(reverbMix)).result==nodes::ControlLinkResult::DomainCrossing,
+          "a per-voice result never drives a GLOBAL parameter");
+    {
+        juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0); midi.addEvent(juce::MidiMessage::noteOn(1,64,1.0f),100);
+        bool finite=true;
+        for(int b=0;b<16;++b) { audio.clear(); p.processBlock(audio,midi); midi.clear();
+            for(int i=0;i<256;++i) finite&=std::isfinite(audio.getSample(0,i)); }
+        check(finite,"polyphonic per-voice processing renders cleanly");
+    }
+    settle();
+    check(synth->sourceRow(ModSource::Env1)->routes().size()==1 && matrix->routeCount()==3 && routeCount()==3,"SYNTH and Matrix observe the processed routes (one row each, no duplicates)");
+
+    // 5. Save / load: operators + processed routes + positions.
+    {
+        juce::MemoryBlock saved; p.getStateInformation(saved);
+        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256);
+        copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        const auto restored=copy->getUiInstrumentState().modulation;
+        const auto live=mod();
+        bool same=true;
+        for(std::size_t i=0;i<restored.operators.size();++i) {
+            const auto& x=restored.operators[i]; const auto& y=live.operators[i];
+            same&=x.id==y.id && x.type==y.type && x.params==y.params && x.inputs==y.inputs;
+        }
+        check(same && restored.nextOperatorId==live.nextOperatorId,"operators survive save/load slot-for-slot");
+        int processed=0; for(const auto& r:restored.routes) processed+=r.id && isOperatorSource(r.source);
+        check(processed==2,"processed routes survive save/load");
+        check(copy->getUiControlLayout()==p.getUiControlLayout(),"operator positions survive save/load");
+    }
+    // 6. Graph authoring undo: delete an operator, undo restores chain + routes.
+    const auto before=mod();
+    check(page->deleteControlOperator(*smooth),"delete SMOOTH (bridges CURVE -> LEVEL)");
+    {   bool bridged=false; for(const auto& r:mod().routes) bridged|=r.id==toLevel.existingRoute && r.source==operatorSource(*curve);
+        check(bridged,"deleting a middle processor reconnects its neighbours"); }
+    page->undo();
+    check(findControlOperator(mod(),*smooth)!=nullptr && route(toLevel.existingRoute).source==operatorSource(*smooth),"undo restores the deleted operator and its route");
+    const auto duplicate=page->duplicateControlOperator(*curve);
+    check(duplicate.has_value() && findControlOperator(mod(),*duplicate)->type==T::Curve
+          && findControlOperator(mod(),*duplicate)->inputs[0].kind==ControlInput::Kind::None,"duplicate copies settings, never connections");
+    (void)before;
 }
 
 void run() {
@@ -2807,6 +2964,7 @@ void run() {
     nodesN01Audit();
     deterministicRenderAudit();
     nodesN03Audit();
+    nodesN04Audit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

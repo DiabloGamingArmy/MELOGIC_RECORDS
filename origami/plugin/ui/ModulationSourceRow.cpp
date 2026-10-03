@@ -5,9 +5,17 @@ namespace mct::origami::ui {
 
 std::vector<ModulationSourceRoute> modulationSourceRoutes(const ModulationState& state,ModSource source) {
     std::vector<ModulationSourceRoute> out;
-    for(const auto& route:state.routes)
-        if(route.id!=0 && route.enabled && route.source==source)
-            out.push_back({route.id,route.amount});
+    for(const auto& route:state.routes) {
+        if(route.id==0 || !route.enabled) continue;
+        bool feeds=route.source==source;
+        // N04: a route processed in NODES still belongs to its root sources.
+        if(!feeds && isOperatorSource(route.source)) {
+            std::array<ModSource,16> roots{};
+            const auto count=routeRootSources(state,route,roots);
+            for(std::size_t i=0;i<count;++i) feeds|=roots[i]==source;
+        }
+        if(feeds) out.push_back({route.id,route.amount});
+    }
     return out;
 }
 

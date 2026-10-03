@@ -181,6 +181,7 @@ private:
     PerformanceState performance_{};
     BusState buses_{}; // non-realtime model; the renderer only reads BUS 1 sends
     std::array<float,CompiledModulation::globalSourceCount> lastGlobalSources_{};
+    std::array<float,CompiledModulation::operatorSlotCount> lastGlobalOperators_{};
     FxModulationOutput fxModulation_{};
     std::atomic<bool> masterAfterFx_{false};
     bool hostMasterAfterFx_=false;
