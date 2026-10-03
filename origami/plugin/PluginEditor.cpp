@@ -102,7 +102,8 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
               mct::origami::ui::FxPageHost{[&owner]{return owner.consumeUiFxPeaks();},
                                             [&owner]{return owner.addUiBus();},
                                             [&owner](mct::origami::BusId id){return owner.removeUiBus(id);},
-                                            &owner.getUiFxViewState()}),
+                                            &owner.getUiFxViewState(),
+                                            &owner.getUiControlLayout()}),
       globalFx_(std::make_unique<mct::origami::ui::FxGlobalFxEditor>(owner.getUiFxWorkspace())) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,13> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_}};

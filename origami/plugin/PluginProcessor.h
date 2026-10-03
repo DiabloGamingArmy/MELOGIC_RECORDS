@@ -25,6 +25,7 @@
 #include "core/fx/FxRenderer.h"
 #include "core/fx/FxEnvironment.h"
 #include "core/fx/FxWorkspace.h"
+#include "core/nodes/ControlGraph.h"
 #include "ui/VisualizationSettings.h"
 
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
@@ -113,6 +114,10 @@ public:
     std::pair<float,float> consumeUiFxPeaks() noexcept { return fxEnvironment_.consumePeaks(); }
     std::uint64_t getFxCompileCount() const noexcept { return fxEnvironment_.compileCount(); }
     mct::origami::fx::FxViewState& getUiFxViewState() noexcept { return fxViewState_; }
+    // mct-origami-nodes-n03-control: NODES CONTROL-layer view metadata
+    // (positions / placed nodes only; relationships live in ModulationState).
+    // Message thread only.
+    mct::origami::nodes::ControlLayout& getUiControlLayout() noexcept { return controlLayout_; }
 
     // P0 audio-continuity diagnostics. These counters are observational only:
     // they never participate in rendering decisions and remain allocation-free.
@@ -259,6 +264,8 @@ private:
     void syncFxRenderer();
     void pruneFxModulationRoutes();
     mct::origami::fx::FxViewState fxViewState_{};
+    mct::origami::nodes::ControlLayout controlLayout_{};
+    static constexpr std::uint32_t controlLayoutMagic=0x4E434C31u; // 'NCL1' (N03: CONTROL view metadata)
     static constexpr std::uint32_t fxStateMagic=0x46584732u; // 'FXG2' (P02/P03: MAIN graph only)
     static constexpr std::uint32_t fxWorkspaceMagic=0x46585731u; // 'FXW1' (P04: all bus graphs + Global FX)
 

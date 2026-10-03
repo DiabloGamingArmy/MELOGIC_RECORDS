@@ -2646,6 +2646,156 @@ void deterministicRenderAudit() {
     }
 }
 
+// mct-origami-nodes-n03-control
+// SYNTH drag, MATRIX and NODES are three views of ONE modulation relationship.
+void nodesN03Audit() {
+    using namespace mct::origami;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::FxPage* page=nullptr; ui::ModulationPanel* synth=nullptr; ui::ModulationMatrix* matrix=nullptr;
+    juce::TextButton* nodesButton=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* f=dynamic_cast<ui::FxPage*>(&c)) page=f;
+        if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) synth=m;
+        if(auto* x=dynamic_cast<ui::ModulationMatrix*>(&c)) if(x->layout()==ui::ModulationMatrix::Layout::Page) matrix=x;
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="NODES" && !nodesButton) nodesButton=b;});
+    check(page && synth && matrix && nodesButton,"NODES page, SYNTH modulation panel and MATRIX page");
+    nodesButton->onClick();
+    const ModAddress cutoff{ModDestination::Cutoff,0,0};
+    const auto routes=[&]{ return p.getUiInstrumentState().modulation.routes; };
+    const auto route=[&](std::uint32_t id){ for(const auto& r:routes()) if(r.id==id) return r; return ModRoute{}; };
+    const auto count=[&](ModSource s,const ModAddress& a){ int n=0; for(const auto& r:routes()) n+=r.id && r.source==s && r.destination==a; return n; };
+    const auto routeCount=[&]{ int n=0; for(const auto& r:routes()) n+=r.id!=0; return n; };
+    const auto settle=[&]{ editor->flushModulationRefresh(); editor->refreshModulationViews(); };
+    const auto matrixRow=[&](std::uint32_t id)->juce::Component* {
+        for(std::size_t i=0;i<matrix->routeCount();++i) if(matrix->routeRow(i)->getName()=="Modulation route "+juce::String(id)) return matrix->routeRow(i);
+        return nullptr; };
+    const auto inRow=[&](juce::Component* row,const juce::String& name)->juce::Component* {
+        juce::Component* found=nullptr; if(row) walk(*row,[&](auto& c){ if(c.getName()==name) found=&c; }); return found; };
+
+    // 1. NODES creates exactly one canonical route, with the N01 defaults.
+    check(page->addControlSource(ModSource::Lfo1) && page->addParameterNode(cutoff),"LFO 1 source node and FILTER CUTOFF parameter node");
+    const auto created=page->connectControl(ModSource::Lfo1,cutoff);
+    const auto id=created.existingRoute;
+    check(created.creatable() && id!=0 && count(ModSource::Lfo1,cutoff)==1 && routeCount()==1,"NODES connection creates exactly one ModRoute");
+    check(route(id).enabled && !route(id).bipolar && route(id).amount==0.0f,"new NODES relationship: ON / UNIPOLAR / 0%");
+    check(page->controlLinkShown(id) && page->canvas().controlLinkCount()==1,"the canvas draws it as one CONTROL link");
+    settle();
+    check(matrixRow(id)!=nullptr && synth->sourceRow(ModSource::Lfo1)->routes().size()==1,"MATRIX row and SYNTH ring observe the NODES relationship");
+    // 4. No duplicate from NODES.
+    const auto again=page->connectControl(ModSource::Lfo1,cutoff);
+    check(again.result==nodes::ControlLinkResult::Exists && again.existingRoute==id && routeCount()==1,"connecting again recognises the existing route");
+
+    // 5-9. One amount / polarity / enabled, edited from either side.
+    page->selectControlLink(id);
+    // Synchronous click of a toggling button (JUCE's triggerClick is async).
+    const auto click=[](juce::Button& b){ b.setToggleState(!b.getToggleState(),juce::dontSendNotification); if(b.onClick) b.onClick(); };
+    page->controlAmountSlider().setValue(42.0,juce::sendNotificationSync);
+    settle();
+    auto* amountSlider=dynamic_cast<juce::Slider*>(inRow(matrixRow(id),"MATRIX ROUTE AMOUNT"));
+    check(std::abs(route(id).amount-0.42f)<1e-4f && amountSlider && std::abs(amountSlider->getValue()-42.0)<0.01
+          && std::abs(synth->sourceRow(ModSource::Lfo1)->routes()[0].amount-0.42f)<1e-4f,"amount edited in NODES = Matrix 42% = SYNTH ring");
+    amountSlider->setValue(-25.0,juce::sendNotificationSync);
+    settle();
+    check(std::abs(route(id).amount+0.25f)<1e-4f && std::abs(page->controlAmountSlider().getValue()+25.0)<0.01,"amount edited in the Matrix shows in NODES");
+    click(page->controlPolarityButton());
+    settle();
+    auto* polarity=dynamic_cast<juce::Button*>(inRow(matrixRow(id),"MATRIX ROUTE POLARITY"));
+    check(route(id).bipolar && polarity && polarity->getToggleState(),"polarity edited in NODES shows in the Matrix");
+    click(*polarity);
+    settle();
+    check(!route(id).bipolar && !page->controlPolarityButton().getToggleState(),"polarity edited in the Matrix shows in NODES");
+    click(page->controlEnabledButton());
+    settle();
+    auto* power=dynamic_cast<juce::Button*>(inRow(matrixRow(id),"MATRIX ROUTE ENABLE"));
+    check(!route(id).enabled && power && !power->getToggleState(),"enabled state is one flag (NODES -> Matrix)");
+    click(*power);
+    settle();
+    check(route(id).enabled && page->controlEnabledButton().getToggleState(),"enabled state is one flag (Matrix -> NODES)");
+
+    // 13. The route monitor works for a NODES-created relationship.
+    {
+        juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        std::size_t row=0; for(std::size_t i=0;i<matrix->routeCount();++i) if(matrix->routeRow(i)==matrixRow(id)) row=i;
+        for(int b=0;b<16;++b) { audio.clear(); p.processBlock(audio,midi); midi.clear(); matrix->sampleMonitors(); }
+        check(matrix->monitor(row)->active() && matrix->monitor(row)->latest()!=0.0f,"Matrix monitor follows the NODES-created route");
+    }
+
+    // 14-16. State: relationships live in the instrument; NODES adds positions only.
+    {
+        juce::MemoryBlock saved; p.getStateInformation(saved);
+        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256);
+        copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        int found=0; for(const auto& r:copy->getUiInstrumentState().modulation.routes) found+=r.id==id && r.source==ModSource::Lfo1 && r.destination==cutoff;
+        check(found==1,"save/load preserves the relationship (as a ModRoute)");
+        check(copy->getUiControlLayout()==p.getUiControlLayout() && copy->getUiControlLayout().find(nodes::sourceKey(ModSource::Lfo1))!=nullptr,
+              "save/load preserves the NODES positions");
+        const auto layoutBytes=p.getUiControlLayout().encode();
+        auto mod=p.getUiInstrumentState().modulation;
+        for(auto& r:mod.routes) if(r.id==id) r.amount=0.9f;
+        check(p.setUiModulationState(mod) && p.getUiControlLayout().encode()==layoutBytes,"route edits never touch NODES view data (no duplicate state)");
+        // Pre-N03 state (no NCL1 trailer) loads with the default layout.
+        auto legacy=std::make_unique<OrigamiAudioProcessor>(); legacy->prepareToPlay(48000.0,256);
+        juce::MemoryBlock plain; legacy->getStateInformation(plain);
+        auto restored=std::make_unique<OrigamiAudioProcessor>(); restored->prepareToPlay(48000.0,256);
+        restored->setStateInformation(plain.getData(),int(plain.getSize()));
+        juce::MemoryBlock back; restored->getStateInformation(back);
+        check(restored->getUiControlLayout().entries().empty() && back==plain,"states without CONTROL view data load and save unchanged");
+    }
+
+    // 2-3. Relationships made elsewhere appear in NODES.
+    const auto matrixId=p.addUiRoute();
+    { auto r=route(matrixId); r.source=ModSource::Macro1; r.destination={ModDestination::WtPosition,1,0}; r.amount=0.3f; check(p.setUiRoute(r),"Matrix-style route"); }
+    settle();
+    check(page->controlLinkShown(matrixId) && page->controlNodeShown(nodes::sourceKey(ModSource::Macro1)),"a Matrix-created route appears in NODES");
+    std::vector<juce::Slider*> knobs;
+    walk(*editor,[&](auto& c){ auto* slider=dynamic_cast<juce::Slider*>(&c);
+        if(slider && slider->isRotary() && slider->getProperties().contains("mct.mod.destination")
+           && int(slider->getProperties()["mct.mod.destination"])==int(ModDestination::Level)) knobs.push_back(slider); });
+    check(!knobs.empty() && editor->assignModulator(ModSource::Env1,*knobs.front()),"SYNTH assignment ENV 1 -> LEVEL");
+    settle();
+    std::uint32_t synthId=0;
+    for(const auto& r:routes()) if(r.id && r.source==ModSource::Env1) synthId=r.id;
+    check(synthId!=0 && page->controlLinkShown(synthId),"a SYNTH-created route appears in NODES");
+
+    // 10-12. Deleting in any view removes it everywhere.
+    check(page->deleteControlLink(id),"delete from NODES");
+    settle();
+    check(count(ModSource::Lfo1,cutoff)==0 && matrixRow(id)==nullptr && synth->sourceRow(ModSource::Lfo1)->routes().empty()
+          && !page->controlLinkShown(id),"NODES deletion removes the Matrix row and the SYNTH assignment");
+    if(auto* remove=dynamic_cast<juce::Button*>(inRow(matrixRow(matrixId),"MATRIX ROUTE DELETE"))) remove->onClick();
+    settle();
+    check(route(matrixId).id==0 && !page->controlLinkShown(matrixId),"Matrix deletion removes the NODES link");
+    synth->sourceRow(ModSource::Env1)->onRouteRemove(synthId);
+    settle();
+    check(route(synthId).id==0 && !page->controlLinkShown(synthId),"SYNTH removal removes the NODES link");
+
+    // 21/24. Execution-domain safety and malformed requests.
+    const auto fxDestination=fxParameterAddress(mainBusId,page->addEffect(fx::FxEffectType::Gain),1);
+    const auto before=routeCount();
+    check(page->connectControl(ModSource::Env1,fxDestination).result==nodes::ControlLinkResult::DomainCrossing && routeCount()==before,
+          "VOICE source -> GLOBAL NODES parameter is rejected (no newest-voice semantics)");
+    bool fxDisabled=false,cutoffEnabled=false;
+    for(const auto& item:page->parameterPickerItems(ModSource::Env1)) {
+        const auto address=page->parameterPickerAddress(item.id);
+        if(address && *address==fxDestination) fxDisabled=!item.enabled && item.tooltip.isNotEmpty();
+        if(address && *address==cutoff) cutoffEnabled=item.enabled;
+    }
+    check(fxDisabled && cutoffEnabled,"the PARAMETER picker disables what the chosen source cannot drive, with the reason");
+    check(page->connectControl(ModSource::Lfo1,{ModDestination::Level,99,0}).result==nodes::ControlLinkResult::DestinationUnavailable
+          && page->connectControl(ModSource::Chaos,cutoff).result==nodes::ControlLinkResult::SourceNotExposed
+          && page->connectControl(ModSource::None,cutoff).result==nodes::ControlLinkResult::MissingSource && routeCount()==before,
+          "NODES cannot create malformed routes");
+    check(page->connectControl(ModSource::Lfo1,fxDestination).creatable(),"GLOBAL LFO -> GLOBAL NODES parameter is allowed");
+    check(!page->removeControlNode(nodes::sourceKey(ModSource::Lfo1)) && page->removeControlNode(nodes::sourceKey(ModSource::Macro1))==false,
+          "a linked node cannot be removed (delete its relationships first)");
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -2656,6 +2806,7 @@ void run() {
     modulationRowConsistencyAudit();
     nodesN01Audit();
     deterministicRenderAudit();
+    nodesN03Audit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

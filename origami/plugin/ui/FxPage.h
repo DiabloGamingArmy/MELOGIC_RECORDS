@@ -7,6 +7,8 @@
 #include "ModulationBindings.h"
 #include "ModulationSourceRow.h"
 #include "ModulationMatrix.h"
+#include "ModulationDestinations.h"
+#include "core/nodes/ControlGraph.h"
 #include "NativeChoiceMenu.h"
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxWorkspace.h"
@@ -37,6 +39,8 @@ class FxPage;
 struct FxModuleMenu {
     static constexpr int splitId=1001,mergeId=1002,sendId=1003,returnId=1004;
     static constexpr int externalId=1999,busBase=2000;
+    // mct-origami-nodes-n03-control: CONTROL entries (never FxModuleSpecs).
+    static constexpr int parameterPickerId=(1<<20)-1,controlSourceBase=1<<20;
     static std::optional<fx::FxModuleSpec> decode(int id);
 };
 
@@ -75,6 +79,36 @@ private:
     juce::Point<int> dragOrigin_;
 };
 
+// mct-origami-nodes-n03-control
+// A CONTROL node on the canvas: a view of a canonical modulation source or
+// destination. It owns no modulation state; its links are canonical ModRoutes.
+class ControlNodeComponent final : public juce::Component {
+public:
+    ControlNodeComponent(FxPage&,nodes::ControlNodeKey);
+    const nodes::ControlNodeKey& key() const noexcept { return key_; }
+    void update(const juce::String& title,const juce::String& detail,nodes::NodeExecutionDomain,bool selected,bool linked,bool removable);
+    juce::Point<float> portCentre() const noexcept;
+    bool portHit(juce::Point<float>) const noexcept;
+    bool removable() const noexcept { return removable_; }
+    static constexpr int width=220,height=64;
+    void paint(juce::Graphics&) override;
+    void resized() override;
+    void mouseDown(const juce::MouseEvent&) override;
+    void mouseDrag(const juce::MouseEvent&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+private:
+    void showMenu();
+    FxPage& page_;
+    nodes::ControlNodeKey key_;
+    juce::String title_,detail_;
+    nodes::NodeExecutionDomain domain_=nodes::NodeExecutionDomain::Global;
+    bool selected_=false,linked_=false,removable_=false;
+    juce::TextButton remove_{"X"};
+    enum class Drag { None,Move,Wire };
+    Drag drag_=Drag::None;
+    juce::Point<int> dragOrigin_;
+};
+
 class FxCanvas final : public juce::Component, public juce::DragAndDropTarget {
 public:
     static constexpr float pointHitRadius=9.0f;
@@ -100,6 +134,30 @@ public:
     void clearNodes(); // bus switch: node IDs are per-graph, never reuse components
     std::optional<fx::FxPortRef> wireSource() const noexcept { return wireActive_ ? std::optional<fx::FxPortRef>(wireFrom_) : std::nullopt; }
 
+    // ---- CONTROL layer (N03): views of canonical modulation relationships.
+    struct ControlLinkView {
+        std::uint32_t route=0;
+        nodes::ControlNodeKey from,to;
+        bool supported=true,enabled=true,selected=false;
+    };
+    struct ControlNodeView {
+        nodes::ControlNodeKey key;
+        float x=0.0f,y=0.0f;
+        juce::String title,detail;
+        nodes::NodeExecutionDomain domain=nodes::NodeExecutionDomain::Global;
+        bool selected=false,linked=false,removable=false;
+    };
+    void rebuildControl(const std::vector<ControlNodeView>&,const std::vector<ControlLinkView>&);
+    ControlNodeComponent* controlNode(const nodes::ControlNodeKey&) const noexcept;
+    std::size_t controlNodeCount() const noexcept { return controlNodes_.size(); }
+    std::size_t controlLinkCount() const noexcept { return controlWires_.size(); }
+    std::optional<std::uint32_t> controlLinkAt(juce::Point<float>) const noexcept;
+    void controlNodeMoved(const nodes::ControlNodeKey&);
+    void beginControlWire(ModSource);
+    void dragControlWire(juce::Point<int>);
+    void endControlWire(juce::Point<int>);
+    std::optional<ModSource> controlWireSource() const noexcept { return controlWireActive_ ? std::optional<ModSource>(controlWireFrom_) : std::nullopt; }
+
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
@@ -116,6 +174,19 @@ private:
         juce::Path path;
         juce::Rectangle<int> area;
     };
+    struct ControlWire {
+        ControlLinkView link;
+        juce::Path path;
+        juce::Rectangle<int> area;
+    };
+    void computeControlWire(ControlWire&) const;
+    void updateExtent();
+    std::vector<std::unique_ptr<ControlNodeComponent>> controlNodes_;
+    std::vector<ControlWire> controlWires_;
+    bool controlWireActive_=false;
+    ModSource controlWireFrom_=ModSource::None;
+    juce::Point<float> controlWireEnd_{};
+    int minWidth_=0,minHeight_=0;
     juce::Point<float> portInCanvas(fx::FxNodeId,bool input,std::uint8_t port) const noexcept;
     void computeWire(Wire&) const;
     void showConnectionMenu(fx::FxConnectionId,juce::Point<float>);
@@ -256,6 +327,7 @@ struct FxPageHost {
     std::function<BusId()> addBus;
     std::function<bool(BusId)> removeBus;
     fx::FxViewState* view=nullptr;
+    nodes::ControlLayout* controlLayout=nullptr; // N03 CONTROL view metadata (processor-owned)
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
@@ -317,7 +389,10 @@ public:
     void endParameterGesture();
     void applyTemplate(int templateId);
     // One module catalog / native menu for every entry point.
-    void showModuleMenu(juce::Component& anchor,bool allowSources,std::function<void(fx::FxModuleSpec)> chosen);
+    // CONTROL items (sources, PARAMETER) are offered when allowSources and are
+    // created at `at` (else at the view centre).
+    void showModuleMenu(juce::Component& anchor,bool allowSources,std::function<void(fx::FxModuleSpec)> chosen,
+                        std::optional<fx::FxPoint> at={});
     void showAddEffectMenu(juce::Component& anchor) { showModuleMenu(anchor,true,[this](fx::FxModuleSpec s){addModule(s);}); }
     std::vector<NativeChoiceItem> moduleMenuItems(bool allowSources) const;
     std::vector<int> moduleMenuIds(bool allowSources) const;
@@ -340,6 +415,46 @@ public:
     void zoomReset();
     void zoomToFit();
 
+    // ---- NODES CONTROL layer (mct-origami-nodes-n03-control) ----------------
+    // SOURCE -> PARAMETER links ARE canonical ModRoutes: they are created,
+    // edited and removed through the same modulation bindings as SYNTH
+    // drag-and-drop and the Matrix, and derived back from ModulationState.
+    struct ControlSelection {
+        enum class Kind { None,Node,Link } kind=Kind::None;
+        nodes::ControlNodeKey key;
+        std::uint32_t route=0;
+    };
+    const nodes::ControlGraph& controlGraph() const noexcept { return controlGraph_; }
+    bool controlNodeShown(const nodes::ControlNodeKey&) const noexcept;
+    // Would connecting create (or find) a valid relationship?
+    bool connectableControl(ModSource,const ModAddress&) const;
+    bool controlLinkShown(std::uint32_t route) const noexcept;
+    bool addControlSource(ModSource,std::optional<fx::FxPoint> at={});
+    bool addParameterNode(const ModAddress&,std::optional<fx::FxPoint> at={});
+    // Creates the canonical route (N01 defaults: ON / UNIPOLAR / 0%) or, when
+    // the relationship already exists, recognizes and selects it. The route id
+    // is returned in existingRoute in both cases.
+    nodes::ControlLinkCheck connectControl(ModSource,const ModAddress&);
+    bool deleteControlLink(std::uint32_t route);
+    bool updateControlLink(const ModRoute&); // amount / polarity / enabled
+    bool removeControlNode(const nodes::ControlNodeKey&); // only an unlinked node
+    void moveControlNode(const nodes::ControlNodeKey&,fx::FxPoint,bool commit);
+    void selectControlNode(const nodes::ControlNodeKey&);
+    void selectControlLink(std::uint32_t route);
+    const ControlSelection& controlSelection() const noexcept { return controlSelection_; }
+    juce::String controlNodeTitle(const nodes::ControlNodeKey&) const;
+    juce::String controlNodeDetail(const nodes::ControlNodeKey&) const;
+    // PARAMETER picker: the shared destination catalog. With a source, items
+    // that source cannot drive are disabled with the reason.
+    std::vector<NativeChoiceItem> parameterPickerItems(std::optional<ModSource>) const;
+    std::optional<ModAddress> parameterPickerAddress(int itemId) const;
+    void showParameterPicker(juce::Component& anchor,std::optional<ModSource>,std::optional<fx::FxPoint> at);
+    class ControlInspector;
+    // Selected CONTROL link's shared route controls (inspection / tests).
+    juce::Slider& controlAmountSlider() noexcept;
+    juce::Button& controlEnabledButton() noexcept;
+    juce::Button& controlPolarityButton() noexcept;
+
 private:
     class SelectedPanel;
     class ParametersPanel;
@@ -349,8 +464,11 @@ private:
     void refresh(bool force=false);
     void refreshToolbar();
     void refreshSidebar();
+    void refreshControl();
+    nodes::ControlLayout& controlLayout() noexcept { return host_.controlLayout!=nullptr ? *host_.controlLayout : localControlLayout_; }
+    void sampleControlMonitor();
     void storeView();
-    void timerCallback() override { updateMeters(); }
+    void timerCallback() override { updateMeters(); sampleControlMonitor(); }
     fx::FxPoint viewCentre() const;
 
     fx::FxWorkspace& workspace_;
@@ -379,6 +497,13 @@ private:
     std::unique_ptr<ModuleParametersPanel> modulePanel_;
     std::unique_ptr<FxMacrosPanel> macrosPanel_;
     std::unique_ptr<ModulationMatrix> matrix_; // NODES > MATRIX
+    std::unique_ptr<ControlInspector> controlInspector_;
+    nodes::ControlLayout localControlLayout_; // only when no processor host
+    nodes::ControlGraph controlGraph_;
+    std::vector<ModulationDestinationEntry> destinationCatalog_;
+    std::vector<bool> controlNodeShown_,controlLinkShown_;
+    ControlSelection controlSelection_;
+    ModulationState controlModulation_{}; // as of the last refreshControl()
     std::unique_ptr<ConfirmPanel> confirmPanel_;
     FxModalOverlay overlay_;
     bool gestureActive_=false;

@@ -7,6 +7,7 @@
 // mct-origami-modulation-completion-v24.0.1
 // mct-origami-pitch-mod-real-v23.3
 #include "ModulationMatrix.h"
+#include "ModulationDestinations.h"
 namespace mct::origami::ui {
 
 // ---------------------------------------------------------------- monitor
@@ -98,57 +99,12 @@ public:
         if(state.modulation.generatorActiveMask&0x04u) sourceItem("Generators","CHAOS",ModSource::Chaos);
         if(state.modulation.generatorActiveMask&0x08u) sourceItem("Generators","DRIFT",ModSource::Drift);
         if(state.modulation.generatorActiveMask&0x10u) sourceItem("Generators","SEQUENCER",ModSource::Sequencer);
-        auto add=[&](const juce::String& group,ModAddress address,const juce::String& label) {
-            addresses_.push_back(address);
-            destination_.addNativeItem(group,label,static_cast<int>(addresses_.size()));
-        };
-
-        add("Global",{ModDestination::MainTuning,0},"MAIN TUNING");
-        add("Global",{ModDestination::MasterGain,0},"AMP");
-        add("Global",{ModDestination::Transpose,0},"TRANSPOSE");
-        add("Global",{ModDestination::Swing,0},"SWING");
-        add("Global",{ModDestination::PortaTime,0},"PORTA TIME");
-        add("Global",{ModDestination::EnvelopeScaling,0},"ENVELOPE SCALING");
-        add("Global",{ModDestination::LfoScaling,0},"LFO SCALING");
-        if(state.modulation.filterEnabled) {
-            add("Filter",{ModDestination::Cutoff,0},"CUTOFF");
-            add("Filter",{ModDestination::Resonance,0},"RESONANCE");
+        // The shared destination catalog (also the NODES PARAMETER picker).
+        for(const auto& entry:modulationDestinationCatalog(state,bindings_)) {
+            if(entry.separatorBefore) destination_.addNativeSeparator(entry.group);
+            addresses_.push_back(entry.address);
+            destination_.addNativeItem(entry.group,entry.label,static_cast<int>(addresses_.size()));
         }
-
-        struct OscDestinationSpec { ModDestination destination; const char* label; };
-        static constexpr OscDestinationSpec oscillatorDestinations[] {
-            {ModDestination::WtPosition,"WT POS"},
-            {ModDestination::Octave,"OCT"},
-            {ModDestination::Semitone,"SEM"},
-            {ModDestination::Fine,"FIN"},
-            {ModDestination::Detune,"DETUNE"},
-            {ModDestination::Pan,"PAN"},
-            {ModDestination::Level,"LEVEL"}
-        };
-
-        unsigned oscillatorOrdinal=0;
-        for(const auto& m:state.oscillators) if(m.id) {
-            ++oscillatorOrdinal;
-            const auto group="OSC "+juce::String(oscillatorOrdinal);
-            for(const auto& spec:oscillatorDestinations)
-                add(group,{spec.destination,m.id},spec.label);
-            if(m.processCount || m.routeCount) destination_.addNativeSeparator(group);
-            for(std::size_t i=0;i<m.processCount;++i) if(m.processes[i].id) {
-                const auto& process=m.processes[i];
-                unsigned duplicates=0;
-                for(std::size_t j=0;j<m.processCount;++j)
-                    duplicates+=m.processes[j].id && m.processes[j].type==process.type;
-                juce::String label="[OC] "+juce::String(dsp::oscProcessName(process.type));
-                if(duplicates>1) label+=" #"+juce::String(process.id);
-                add(group,{ModDestination::ProcessAmount,m.id,process.id},label);
-            }
-            for(std::size_t i=0;i<m.routeCount;++i) if(m.routes[i].id)
-                add(group,{ModDestination::RouteAmount,m.id,m.routes[i].id},
-                    "[OC] "+juce::String(oscRouteName(m.routes[i].type))+
-                    " #"+juce::String(m.routes[i].id));
-        }
-        if(bindings_.fxDestinations)
-            for(const auto& fx:bindings_.fxDestinations()) add(juce::String(fx.group),fx.address,juce::String(fx.label));
         addAndMakeVisible(enabled_);addAndMakeVisible(bipolar_);addAndMakeVisible(monitor_);addAndMakeVisible(remove_);addAndMakeVisible(amount_);
         enabled_.setClickingTogglesState(true);enabled_.setName("MATRIX ROUTE ENABLE");
         bipolar_.setClickingTogglesState(true);bipolar_.setName("MATRIX ROUTE POLARITY");
