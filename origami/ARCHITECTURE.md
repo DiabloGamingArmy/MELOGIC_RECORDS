@@ -221,6 +221,27 @@ execution domain.
 
 Control/Event are vocabulary only. See `docs/NODES_ARCHITECTURE.md` §12.
 
+## CONTROL layer: SOURCE → PARAMETER (N03)
+
+NODES draws modulation relationships as CONTROL links (diamond sockets, thin
+white cables) between source nodes (LFO, ENV, MACRO, RANDOM) and PARAMETER
+nodes.
+
+- **A link is a canonical `ModRoute`.** It is created, edited and deleted
+  through the same bindings as SYNTH drag-and-drop and the Matrix, and
+  re-derived from `ModulationState` on every refresh
+  (`core/nodes/ControlGraph`). Amount, polarity and enabled are route
+  properties edited in the link inspector.
+- **Domain rule:** VOICE sources cannot drive GLOBAL parameters (rejected and
+  disabled in the picker). GLOBAL → VOICE is a broadcast.
+- **Ownership:** relationships are instrument state, not bus-graph state.
+- **Persistence:** only view metadata (node positions) persists, in a
+  versioned `NCL1` trailer that is written only when used.
+- **Matrix destinations:** the Matrix and the PARAMETER picker share
+  `modulationDestinationCatalog`.
+
+No DSP or modulation evaluation changed. See `docs/NODES_ARCHITECTURE.md` §13.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:

@@ -4,6 +4,7 @@
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxRenderer.h"
 #include "core/fx/FxEnvironment.h"
+#include "core/nodes/ControlGraph.h"
 #include "core/fx/FxWorkspace.h"
 #include "core/fx/FxFilter.h"
 #include "core/Engine.h"
@@ -1283,6 +1284,80 @@ void graphFuzzTests() {
     check(roundTrip,"every random graph round-trips through the codec");
 }
 
+// mct-origami-nodes-n03-control: the CONTROL layer is a view of ModRoutes.
+void controlGraphTests() {
+    using namespace mct::origami;
+    using namespace mct::origami::nodes;
+    InstrumentState state;
+    auto& m=state.modulation;
+    const ModAddress cutoff{ModDestination::Cutoff,0,0},porta{ModDestination::PortaTime,0,0};
+    const auto fxParam=fxParameterAddress(mainBusId,4,2);
+    // Execution domains.
+    check(sourceDomain(ModSource::Lfo1,m)==NodeExecutionDomain::Global && sourceDomain(ModSource::Macro2,m)==NodeExecutionDomain::Global
+          && sourceDomain(ModSource::Random,m)==NodeExecutionDomain::Global,"free LFO, macros, random are GLOBAL sources");
+    check(sourceDomain(ModSource::Env1,m)==NodeExecutionDomain::Voice && sourceDomain(ModSource::Velocity,m)==NodeExecutionDomain::Voice,
+          "envelopes and performance inputs are VOICE sources");
+    {   auto loop=m; loop.lfo1.mode=LfoMode::Loop;
+        check(sourceDomain(ModSource::Lfo1,loop)==NodeExecutionDomain::Voice,"an LFO in a per-note mode is a VOICE source"); }
+    check(destinationDomain(cutoff)==NodeExecutionDomain::Voice && destinationDomain({ModDestination::Level,1,0})==NodeExecutionDomain::Voice,
+          "filter and oscillator parameters are consumed per voice");
+    check(destinationDomain(porta)==NodeExecutionDomain::Global && destinationDomain(fxParam)==NodeExecutionDomain::Global,
+          "glide and NODES parameters are consumed globally");
+    check(domainCrossingSupported(NodeExecutionDomain::Global,NodeExecutionDomain::Voice)
+          && domainCrossingSupported(NodeExecutionDomain::Voice,NodeExecutionDomain::Voice)
+          && !domainCrossingSupported(NodeExecutionDomain::Voice,NodeExecutionDomain::Global),
+          "GLOBAL->VOICE broadcast and VOICE->VOICE allowed; VOICE->GLOBAL rejected");
+    // Link validation.
+    check(checkControlLink(state,ModSource::Lfo1,cutoff).creatable(),"LFO 1 -> CUTOFF can be created");
+    check(checkControlLink(state,ModSource::Env1,porta).result==ControlLinkResult::DomainCrossing
+          && checkControlLink(state,ModSource::Env1,fxParam).result==ControlLinkResult::DomainCrossing,
+          "a per-voice source cannot drive a global parameter");
+    check(checkControlLink(state,ModSource::None,cutoff).result==ControlLinkResult::MissingSource
+          && checkControlLink(state,ModSource::Lfo1,{ModDestination::None,0,0}).result==ControlLinkResult::MissingDestination,
+          "incomplete ends are rejected");
+    check(checkControlLink(state,ModSource::Chaos,cutoff).result==ControlLinkResult::SourceNotExposed,"only the N03 sources are nodes");
+    check(checkControlLink(state,ModSource::Lfo1,{ModDestination::Level,99,0}).result==ControlLinkResult::DestinationUnavailable,
+          "a destination that does not exist is rejected (canonical validator)");
+    {   auto removed=state; removed.modulation.lfoActiveMask&=~0x2u;
+        check(checkControlLink(removed,ModSource::Lfo2,cutoff).result==ControlLinkResult::SourceInactive,"an inactive source is rejected"); }
+    m.routes[0]={1,true,ModSource::Lfo1,cutoff,0.42f,false};
+    m.nextRouteId=2;
+    const auto existing=checkControlLink(state,ModSource::Lfo1,cutoff);
+    check(existing.result==ControlLinkResult::Exists && existing.existingRoute==1,"an existing relationship is recognised, never duplicated");
+    // Typed ports.
+    const auto out=controlPort(ControlNodeKind::Source),in=controlPort(ControlNodeKind::Parameter);
+    check(out.type==NodeSignalType::Control && out.direction==PortDirection::Output && in.type==NodeSignalType::Control
+          && in.direction==PortDirection::Input && checkPortPair(out,in)==PortPairError::None,"SOURCE Control Out -> PARAMETER Control In");
+    const PortDescriptor audioIn{PortDirection::Input,NodeSignalType::Audio,0,"Audio In"};
+    const PortDescriptor audioOut{PortDirection::Output,NodeSignalType::Audio,0,"Audio Out"};
+    const PortDescriptor eventIn{PortDirection::Input,NodeSignalType::Event,0,"Notes"};
+    check(checkPortPair(out,audioIn)==PortPairError::TypeMismatch && checkPortPair(audioOut,in)==PortPairError::TypeMismatch,
+          "CONTROL and AUDIO ports never connect");
+    check(checkPortPair(out,eventIn)==PortPairError::TypeMismatch,"CONTROL and EVENT ports never connect");
+    // Derived graph: every complete route of an exposed source is a link.
+    m.routes[1]={2,true,ModSource::Env1,fxParam,0.5f,false};   // crossing created elsewhere
+    m.routes[2]={3,true,ModSource::Chaos,cutoff,0.3f,false};   // source not a node yet
+    m.routes[3]={4,true,ModSource::Lfo2,{ModDestination::None,0,0},0.0f,false}; // incomplete
+    m.nextRouteId=5;
+    ControlLayout layout;
+    layout.setPlaced(sourceKey(ModSource::Macro3),true);
+    const auto graph=deriveControlGraph(m,layout);
+    check(graph.links.size()==2 && graph.links[0].routeId==1 && graph.links[1].routeId==2,"links are exactly the eligible routes, by route id");
+    check(graph.links[0].supported && !graph.links[1].supported,"a crossing made outside NODES is shown as unsupported");
+    check(graph.find(sourceKey(ModSource::Macro3)).has_value() && !graph.find(sourceKey(ModSource::Chaos)),"placed nodes appear; unexposed sources do not");
+    // Layout: positions only, stable, versioned.
+    layout.setPosition(parameterKey(cutoff),900.0f,620.0f);
+    const auto again=deriveControlGraph(m,layout);
+    const auto index=again.find(parameterKey(cutoff));
+    check(index && again.nodes[*index].x==900.0f && again.nodes[*index].y==620.0f,"layout positions are honoured");
+    const auto bytes=layout.encode();
+    ControlLayout decoded;
+    check(decoded.decode(bytes.data(),bytes.size()) && decoded==layout,"layout round-trips");
+    check(bytes.size()==6+4+(1+4+8+1)+(1+12+8+1),"layout stores identities + positions + flags only (no route data)");
+    auto corrupt=bytes; corrupt[0]='X';
+    check(!decoded.decode(corrupt.data(),corrupt.size()) && decoded==layout,"a corrupt layout is rejected without side effects");
+}
+
 int main() {
     identityTests();
     sourceDomainTests();
@@ -1322,6 +1397,7 @@ int main() {
     goldenFingerprintTests();
     typedGraphTests();
     graphFuzzTests();
+    controlGraphTests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;

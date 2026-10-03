@@ -740,6 +740,14 @@ void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
         for(int shift=24;shift>=0;shift-=8)
             bytes.push_back(static_cast<std::uint8_t>(value>>shift));
     };
+    // N03 CONTROL view trailer: [layout bytes][length][NCL1]. Positions only;
+    // the relationships themselves are the instrument's ModRoutes above.
+    if(!controlLayout_.entries().empty()) {
+        const auto layout=controlLayout_.encode();
+        bytes.insert(bytes.end(),layout.begin(),layout.end());
+        appendWord(static_cast<std::uint32_t>(layout.size()));
+        appendWord(controlLayoutMagic);
+    }
     // FX trailer: [workspace bytes][length][FXW1] (all bus graphs + Global FX).
     // P02/P03 states carry [graph][length][FXG2]; older states none (neutral).
     const auto fx=fxWorkspace_.encode();
@@ -793,6 +801,24 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
             instrumentSize=start;
         }
     }
+    std::optional<mct::origami::nodes::ControlLayout> controlLayout;
+    if(instrumentSize>=8) {
+        const auto* bytes=static_cast<const std::uint8_t*>(data);
+        const auto readWord=[bytes](int offset) {
+            std::uint32_t value=0;
+            for(int i=0;i<4;++i) value=(value<<8)|bytes[offset+i];
+            return value;
+        };
+        if(readWord(instrumentSize-4)==controlLayoutMagic) {
+            const auto length=static_cast<int>(readWord(instrumentSize-8));
+            if(length<0 || length>instrumentSize-8) return;
+            const int start=instrumentSize-8-length;
+            mct::origami::nodes::ControlLayout decoded;
+            if(!decoded.decode(bytes+start,static_cast<std::size_t>(length))) return;
+            controlLayout=std::move(decoded);
+            instrumentSize=start;
+        }
+    }
 
     // Decode + validate completely before publication. The renderer receives one
     // complete fixed-size generation at the next callback boundary.
@@ -824,6 +850,8 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     for(std::size_t i=0;i<state.buses.count;++i) fxWorkspace_.document(state.buses.buses[i].id);
     for(const auto bus:fxWorkspace_.buses()) if(state.buses.find(bus)==nullptr) fxWorkspace_.removeBus(bus);
     fxWorkspace_.onChanged=std::move(notify);
+    // States without the trailer (pre-N03) use the deterministic default layout.
+    if(controlLayout) controlLayout_=std::move(*controlLayout); else controlLayout_.clear();
     syncFxRenderer();
 }
 

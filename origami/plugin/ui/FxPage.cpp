@@ -347,7 +347,7 @@ std::optional<FxModuleSpec> FxModuleMenu::decode(int id) {
     }
     if(id==splitId) return FxModuleSpec{FxModuleKind::Split,FxEffectType::None,0};
     if(id==mergeId) return FxModuleSpec{FxModuleKind::Merge,FxEffectType::None,0};
-    if(id>busBase) return FxModuleSpec{FxModuleKind::BusSource,FxEffectType::None,static_cast<FxBusId>(id-busBase)};
+    if(id>busBase && id<parameterPickerId) return FxModuleSpec{FxModuleKind::BusSource,FxEffectType::None,static_cast<FxBusId>(id-busBase)};
     return std::nullopt; // send/return/external: not implemented, never decodable
 }
 
@@ -651,7 +651,212 @@ void FxNodeComponent::showMenu() {
 
 // ================================================================ canvas
 
+// ================================================================ CONTROL node
+
+namespace {
+// CONTROL sockets are diamonds (AUDIO sockets are circles): same palette.
+void paintDiamond(juce::Graphics& g,juce::Point<float> c,float r,bool filled,juce::Colour outline,float stroke) {
+    juce::Path d;
+    d.startNewSubPath(c.x,c.y-r); d.lineTo(c.x+r,c.y); d.lineTo(c.x,c.y+r); d.lineTo(c.x-r,c.y); d.closeSubPath();
+    g.setColour(filled ? Palette::text() : Palette::inset());
+    g.fillPath(d);
+    g.setColour(outline);
+    g.strokePath(d,juce::PathStrokeType(stroke));
+}
+}
+
+ControlNodeComponent::ControlNodeComponent(FxPage& page,nodes::ControlNodeKey key):page_(page),key_(key) {
+    setSize(width,height);
+    remove_.setTooltip("Remove from canvas");
+    remove_.onClick=[this]{ page_.removeControlNode(key_); };
+    addChildComponent(remove_);
+}
+
+void ControlNodeComponent::update(const juce::String& title,const juce::String& detail,nodes::NodeExecutionDomain domain,
+                                  bool selected,bool linked,bool removable) {
+    title_=title; detail_=detail; domain_=domain; selected_=selected; linked_=linked; removable_=removable;
+    remove_.setVisible(removable);
+    setName("CONTROL "+title+" "+detail);
+    repaint();
+}
+
+juce::Point<float> ControlNodeComponent::portCentre() const noexcept {
+    const float y=float(getHeight())*0.5f;
+    return key_.kind==nodes::ControlNodeKind::Source ? juce::Point<float>(float(getWidth())-9.0f,y) : juce::Point<float>(9.0f,y);
+}
+
+bool ControlNodeComponent::portHit(juce::Point<float> p) const noexcept {
+    return p.getDistanceFrom(portCentre())<=std::max(14.0f,12.0f/std::max(0.1f,page_.graphZoom()));
+}
+
+void ControlNodeComponent::resized() {
+    remove_.setBounds(getWidth()-(key_.kind==nodes::ControlNodeKind::Source ? 50 : 30),6,22,20);
+}
+
+void ControlNodeComponent::paint(juce::Graphics& g) {
+    auto b=getLocalBounds().toFloat().reduced(1.0f);
+    g.setColour(Palette::raised());
+    g.fillRoundedRectangle(b,4.0f);
+    g.setColour(selected_ ? signalSourceColour() : Palette::borderSoft());
+    g.drawRoundedRectangle(b,4.0f,selected_ ? 1.6f : 1.0f);
+    const bool source=key_.kind==nodes::ControlNodeKind::Source;
+    auto content=getLocalBounds().reduced(source ? 12 : 22,6).withTrimmedRight(source ? 14 : 0);
+    auto top=content.removeFromTop(20);
+    text(g,title_,top.withTrimmedRight(removable_ ? 26 : 0),10.5f,Palette::text());
+    text(g,nodes::toString(domain_),top.withTrimmedRight(removable_ ? 30 : 0),7.5f,Palette::muted(),juce::Justification::centredRight);
+    g.setColour(Palette::muted());
+    g.setFont(juce::FontOptions(8.5f));
+    g.drawFittedText(detail_,content.withTrimmedTop(2),juce::Justification::topLeft,2,0.9f);
+    // While a CONTROL cable is dragged, parameters it could drive light up.
+    bool compatible=false;
+    if(const auto wire=page_.canvas().controlWireSource(); wire && !source)
+        compatible=page_.connectableControl(*wire,key_.destination);
+    paintDiamond(g,portCentre(),compatible ? 6.5f : 5.5f,linked_,compatible ? signalSourceColour() : Palette::borderStrong(),compatible ? 1.6f : 1.2f);
+}
+
+void ControlNodeComponent::showMenu() {
+    juce::Component::SafePointer<FxPage> page(&page_);
+    const auto key=key_;
+    std::vector<NativeChoiceItem> items;
+    if(key.kind==nodes::ControlNodeKind::Source) items.push_back({1,"Connect to Parameter...",true,"CONTROL"});
+    items.push_back({2,"Remove from Canvas",removable_,"CONTROL",false,removable_ ? juce::String() : juce::String("Delete its connections first")});
+    showNativeChoiceMenu(*this,title_,items,0,[page,key,this](int choice) {
+        if(page==nullptr) return;
+        if(choice==1) page->showParameterPicker(*this,key.source,std::nullopt);
+        if(choice==2) page->removeControlNode(key);
+    });
+}
+
+void ControlNodeComponent::mouseDown(const juce::MouseEvent& e) {
+    page_.grabKeyboardFocus();
+    if(e.mods.isMiddleButtonDown()) { page_.canvas().mouseDown(e.getEventRelativeTo(&page_.canvas())); return; }
+    if(e.mods.isPopupMenu()) { showMenu(); return; }
+    page_.selectControlNode(key_);
+    toFront(false);
+    if(key_.kind==nodes::ControlNodeKind::Source && portHit(e.position)) {
+        drag_=Drag::Wire;
+        page_.canvas().beginControlWire(key_.source);
+        return;
+    }
+    drag_=Drag::Move;
+    dragOrigin_=getPosition();
+}
+
+void ControlNodeComponent::mouseDrag(const juce::MouseEvent& e) {
+    if(e.mods.isMiddleButtonDown()) { page_.canvas().mouseDrag(e.getEventRelativeTo(&page_.canvas())); return; }
+    if(drag_==Drag::Wire) { page_.canvas().dragControlWire(e.getEventRelativeTo(&page_.canvas()).getPosition()); return; }
+    if(drag_!=Drag::Move) return;
+    const auto p=dragOrigin_+e.getOffsetFromDragStart();
+    setTopLeftPosition(p);
+    page_.canvas().controlNodeMoved(key_);
+}
+
+void ControlNodeComponent::mouseUp(const juce::MouseEvent& e) {
+    if(e.mods.isMiddleButtonDown()) { page_.canvas().mouseUp(e.getEventRelativeTo(&page_.canvas())); return; }
+    if(drag_==Drag::Wire) page_.canvas().endControlWire(e.getEventRelativeTo(&page_.canvas()).getPosition());
+    else if(drag_==Drag::Move && getPosition()!=dragOrigin_)
+        page_.moveControlNode(key_,{float(getX()),float(getY())},true);
+    drag_=Drag::None;
+}
+
+// ================================================================ canvas
+
 FxCanvas::FxCanvas(FxPage& page):page_(page) {}
+
+void FxCanvas::updateExtent() {
+    juce::Rectangle<int> content;
+    for(const auto& [id,node]:nodes_) content=content.getUnion(node->getBounds());
+    for(const auto& node:controlNodes_) content=content.getUnion(node->getBounds());
+    // Graph space extends well beyond the content so large graphs can grow.
+    setSize(juce::jmax(minWidth_,content.getRight()+900),juce::jmax(minHeight_,content.getBottom()+600));
+}
+
+ControlNodeComponent* FxCanvas::controlNode(const nodes::ControlNodeKey& key) const noexcept {
+    for(const auto& node:controlNodes_) if(node->key()==key) return node.get();
+    return nullptr;
+}
+
+void FxCanvas::rebuildControl(const std::vector<ControlNodeView>& views,const std::vector<ControlLinkView>& links) {
+    // Reconcile by canonical identity: components survive refreshes.
+    controlNodes_.erase(std::remove_if(controlNodes_.begin(),controlNodes_.end(),[&views](const auto& node) {
+        return std::none_of(views.begin(),views.end(),[&node](const ControlNodeView& v){ return v.key==node->key(); });
+    }),controlNodes_.end());
+    for(const auto& v:views) {
+        auto* node=controlNode(v.key);
+        if(node==nullptr) {
+            controlNodes_.push_back(std::make_unique<ControlNodeComponent>(page_,v.key));
+            node=controlNodes_.back().get();
+            addAndMakeVisible(*node);
+        }
+        if(!node->isMouseButtonDown()) node->setTopLeftPosition(juce::roundToInt(v.x),juce::roundToInt(v.y));
+        node->update(v.title,v.detail,v.domain,v.selected,v.linked,v.removable);
+    }
+    controlWires_.clear();
+    for(const auto& link:links) {
+        controlWires_.push_back({link,{},{}});
+        computeControlWire(controlWires_.back());
+    }
+    updateExtent();
+    repaint();
+}
+
+void FxCanvas::computeControlWire(ControlWire& wire) const {
+    const auto* from=controlNode(wire.link.from);
+    const auto* to=controlNode(wire.link.to);
+    if(from==nullptr || to==nullptr) { wire.path.clear(); wire.area={}; return; }
+    wire.path=curve(from->portCentre()+from->getPosition().toFloat(),to->portCentre()+to->getPosition().toFloat());
+    wire.area=wire.path.getBounds().getSmallestIntegerContainer().expanded(int(wireHitRadius())+6);
+}
+
+std::optional<std::uint32_t> FxCanvas::controlLinkAt(juce::Point<float> p) const noexcept {
+    std::optional<std::uint32_t> best;
+    float bestDistance=wireHitRadius();
+    for(const auto& wire:controlWires_) {
+        if(wire.path.isEmpty() || !wire.area.contains(p.toInt())) continue;
+        juce::Point<float> nearest;
+        wire.path.getNearestPoint(p,nearest);
+        const float distance=p.getDistanceFrom(nearest);
+        if(distance<=bestDistance) { bestDistance=distance; best=wire.link.route; }
+    }
+    return best;
+}
+
+void FxCanvas::controlNodeMoved(const nodes::ControlNodeKey& key) {
+    for(auto& wire:controlWires_) {
+        if(wire.link.from!=key && wire.link.to!=key) continue;
+        repaint(wire.area);
+        computeControlWire(wire);
+        repaint(wire.area);
+    }
+}
+
+void FxCanvas::beginControlWire(ModSource source) {
+    const auto* node=controlNode(nodes::sourceKey(source));
+    if(node==nullptr) return;
+    controlWireActive_=true;
+    controlWireFrom_=source;
+    controlWireEnd_=node->portCentre()+node->getPosition().toFloat();
+    for(auto& n:controlNodes_) n->repaint(); // highlight parameters it could drive
+}
+
+void FxCanvas::dragControlWire(juce::Point<int> p) {
+    controlWireEnd_=p.toFloat();
+    repaint();
+}
+
+void FxCanvas::endControlWire(juce::Point<int> p) {
+    if(!controlWireActive_) return;
+    const auto source=controlWireFrom_;
+    controlWireActive_=false;
+    for(auto& n:controlNodes_) n->repaint();
+    repaint();
+    // CONTROL cables only land on PARAMETER (CONTROL IN) ports. AUDIO ports
+    // never accept them: the signal types differ (no implicit conversion).
+    for(const auto& node:controlNodes_) {
+        if(node->key().kind!=nodes::ControlNodeKind::Parameter || !node->getBounds().expanded(20).contains(p)) continue;
+        if(node->portHit((p-node->getPosition()).toFloat())) { page_.connectControl(source,node->key().destination); return; }
+    }
+}
 
 FxNodeComponent* FxCanvas::nodeComponent(FxNodeId id) const noexcept {
     const auto it=nodes_.find(id);
@@ -673,6 +878,7 @@ juce::Rectangle<int> FxCanvas::contentBounds() const {
     juce::Rectangle<int> content;
     for(const auto& [id,node]:nodes_) content=content.isEmpty() ? node->getBounds() : content.getUnion(node->getBounds());
     for(const auto& wire:wires_) for(const auto& h:wire.handles) content=content.getUnion(juce::Rectangle<int>(int(h.x),int(h.y),1,1));
+    for(const auto& node:controlNodes_) content=content.isEmpty() ? node->getBounds() : content.getUnion(node->getBounds());
     return content;
 }
 
@@ -695,8 +901,8 @@ void FxCanvas::rebuild(const FxGraph& graph,FxNodeId selected,int minWidth,int m
         component->update(node,node.id==selected);
         content=content.getUnion(component->getBounds());
     }
-    // Graph space extends well beyond the content so large graphs can grow.
-    setSize(juce::jmax(minWidth,content.getRight()+900),juce::jmax(minHeight,content.getBottom()+600));
+    minWidth_=minWidth; minHeight_=minHeight;
+    updateExtent();
     wires_.clear();
     wires_.reserve(graph.connections().size());
     for(const auto& c:graph.connections()) {
@@ -814,6 +1020,7 @@ void FxCanvas::dragWire(juce::Point<int> p) {
 
 void FxCanvas::clearNodes() {
     wireActive_=false;
+    controlWireActive_=false;
     hoverPoint_.reset();
     dragPoint_.reset();
     wires_.clear();
@@ -868,6 +1075,35 @@ void FxCanvas::paint(juce::Graphics& g) {
             g.fillEllipse(dot);
             g.setColour(active ? signalSourceColour() : Palette::accent().withAlpha(.85f));
             g.drawEllipse(dot,1.3f);
+        }
+    }
+    // CONTROL relationships: thin white cables (AUDIO cables are thick red),
+    // dashed when inactive or when the crossing is not modelled by NODES.
+    for(const auto& wire:controlWires_) {
+        if(wire.path.isEmpty() || !wire.area.intersects(clip)) continue;
+        const bool muted=!wire.link.enabled || !wire.link.supported;
+        if(wire.link.selected) {
+            g.setColour(signalSourceColour());
+            g.strokePath(wire.path,juce::PathStrokeType(2.2f));
+        } else if(muted) {
+            juce::Path dashed;
+            const float dashes[]{4.0f,4.0f};
+            juce::PathStrokeType(1.1f).createDashedStroke(dashed,wire.path,dashes,2);
+            g.setColour(Palette::text().withAlpha(.35f));
+            g.fillPath(dashed);
+        } else {
+            g.setColour(Palette::text().withAlpha(.72f));
+            g.strokePath(wire.path,juce::PathStrokeType(1.2f));
+        }
+    }
+    if(controlWireActive_) {
+        if(const auto* from=controlNode(nodes::sourceKey(controlWireFrom_))) {
+            auto pending=curve(from->portCentre()+from->getPosition().toFloat(),controlWireEnd_);
+            juce::Path dashed;
+            const float dashes[]{3.0f,3.0f};
+            juce::PathStrokeType(1.1f).createDashedStroke(dashed,pending,dashes,2);
+            g.setColour(Palette::text().withAlpha(.8f));
+            g.fillPath(dashed);
         }
     }
     if(wireActive_) {
@@ -926,12 +1162,23 @@ void FxCanvas::mouseDown(const juce::MouseEvent& e) {
         dragPoint_=point;
         return;
     }
+    if(const auto link=controlLinkAt(position)) {
+        page_.selectControlLink(*link);
+        if(e.mods.isPopupMenu()) {
+            juce::Component::SafePointer<FxPage> page(&page_);
+            const auto route=*link;
+            showNativeChoiceMenu(*this,"MODULATION",{{1,"Delete Modulation",true,"MODULATION"}},0,[page,route](int choice) {
+                if(page!=nullptr && choice==1) page->deleteControlLink(route);
+            });
+        }
+        return;
+    }
     if(e.mods.isPopupMenu()) {
         if(const auto wire=connectionAt(position)) { showConnectionMenu(*wire,position); return; }
         // Right-click empty space: the SAME module catalog, created at the click.
         const auto at=toGraph(position);
         juce::Component::SafePointer<FxPage> page(&page_);
-        page_.showModuleMenu(*this,true,[page,at](FxModuleSpec spec){if(page!=nullptr) page->addModuleAt(spec,at);});
+        page_.showModuleMenu(*this,true,[page,at](FxModuleSpec spec){if(page!=nullptr) page->addModuleAt(spec,at);},at);
         return;
     }
     page_.selectNode(invalidFxNodeId);
@@ -965,7 +1212,7 @@ void FxCanvas::mouseMove(const juce::MouseEvent& e) {
     const auto hover=layoutPointAt(e.position);
     if(hover!=hoverPoint_) { hoverPoint_=hover; repaint(); }
     setMouseCursor(hover ? juce::MouseCursor::DraggingHandCursor
-                   : connectionAt(e.position) ? juce::MouseCursor::PointingHandCursor
+                   : connectionAt(e.position) || controlLinkAt(e.position) ? juce::MouseCursor::PointingHandCursor
                                               : juce::MouseCursor::NormalCursor);
 }
 
@@ -2021,17 +2268,148 @@ private:
     std::unique_ptr<FxEqEditor> eq_;
 };
 
+// mct-origami-nodes-n03-control
+// MODULE PARAMETERS for the CONTROL layer. Source: identity + execution
+// domain. Parameter: destination + domain (+ base value of a NODES parameter).
+// Link: ENABLED / POLARITY / AMOUNT of the canonical route (the same values
+// the Matrix row and the SYNTH ring edit) and its live contribution monitor.
+class FxPage::ControlInspector final : public juce::Component {
+public:
+    explicit ControlInspector(FxPage& page):page_(page) {
+        enabled_.setName("CONTROL LINK ENABLED");
+        enabled_.setClickingTogglesState(true);
+        polarity_.setName("CONTROL LINK POLARITY");
+        polarity_.setClickingTogglesState(true);
+        amount_.setName("CONTROL LINK AMOUNT");
+        amount_.setSliderStyle(juce::Slider::LinearHorizontal);
+        amount_.setTextBoxStyle(juce::Slider::TextBoxRight,false,70,20);
+        amount_.setRange(-100.0,100.0,0.1);
+        amount_.setTextValueSuffix(" %");
+        remove_.setName("CONTROL LINK DELETE");
+        for(auto* c:std::initializer_list<juce::Component*>{&enabled_,&polarity_,&amount_,&remove_,&monitor_}) addChildComponent(c);
+        enabled_.onClick=[this]{ edit([this](ModRoute& r){ r.enabled=enabled_.getToggleState(); }); };
+        polarity_.onClick=[this]{ edit([this](ModRoute& r){ r.bipolar=polarity_.getToggleState(); }); };
+        amount_.onValueChange=[this]{ edit([this](ModRoute& r){ r.amount=float(amount_.getValue()/100.0); }); };
+        remove_.onClick=[this]{ if(route_.id) page_.deleteControlLink(route_.id); };
+    }
+    void show(const ControlSelection& selection,const InstrumentState& state) {
+        selection_=selection;
+        lines_.clear();
+        const bool link=selection.kind==ControlSelection::Kind::Link;
+        route_={};
+        if(link) for(const auto& r:state.modulation.routes) if(r.id==selection.route) route_=r;
+        if(link && route_.id) {
+            title_=page_.controlNodeTitle(nodes::sourceKey(route_.source))+juce::String("  >  ")+page_.controlNodeDetail(nodes::parameterKey(route_.destination));
+            kind_="MODULATION ROUTE";
+            const auto from=nodes::sourceDomain(route_.source,state.modulation),to=nodes::destinationDomain(route_.destination);
+            lines_.add(juce::String(nodes::toString(from))+" source  >  "+nodes::toString(to)+" parameter"
+                       +(from==nodes::NodeExecutionDomain::Global && to==nodes::NodeExecutionDomain::Voice ? "  (same value for every voice)" : ""));
+            if(!nodes::domainCrossingSupported(from,to))
+                lines_.add("Created outside NODES: a per-voice source driving a global parameter is not modelled by NODES.");
+            lines_.add("Shared with the Matrix row and the SYNTH ring: edits apply everywhere.");
+            enabled_.setToggleState(route_.enabled,juce::dontSendNotification);
+            enabled_.setButtonText(route_.enabled ? "ON" : "OFF");
+            polarity_.setToggleState(route_.bipolar,juce::dontSendNotification);
+            polarity_.setButtonText(route_.bipolar ? "BIPOLAR" : "UNIPOLAR");
+            if(!amount_.isMouseButtonDown()) amount_.setValue(route_.amount*100.0,juce::dontSendNotification);
+        } else if(selection.kind==ControlSelection::Kind::Node) {
+            const auto& key=selection.key;
+            title_=page_.controlNodeTitle(key);
+            int links=0;
+            for(const auto& r:state.modulation.routes)
+                if(r.id && routeComplete(r) && (key.kind==nodes::ControlNodeKind::Source ? r.source==key.source : r.destination==key.destination)) ++links;
+            if(key.kind==nodes::ControlNodeKind::Source) {
+                kind_="CONTROL SOURCE";
+                const auto domain=nodes::sourceDomain(key.source,state.modulation);
+                lines_.add(juce::String(nodes::toString(domain))+(domain==nodes::NodeExecutionDomain::Global ? "  -  one value for the whole instrument" : "  -  one value per voice"));
+                lines_.add("A view of the instrument's own source: edit its shape on SYNTH > MODULATORS.");
+                lines_.add("Drives "+juce::String(links)+" parameter"+(links==1 ? "" : "s")+".  Drag its diamond onto a PARAMETER to connect.");
+            } else {
+                kind_="PARAMETER";
+                title_=page_.controlNodeDetail(key);
+                const auto domain=nodes::destinationDomain(key.destination);
+                lines_.add(juce::String(nodes::toString(domain))+(domain==nodes::NodeExecutionDomain::Global ? "  -  consumed once per block" : "  -  consumed per voice"));
+                if(isFxDestination(key.destination.parameter)) {
+                    if(const auto* doc=page_.workspace().find(fxAddressBus(key.destination)))
+                        if(const auto* node=doc->graph().findNode(key.destination.oscillator))
+                            if(const auto* d=findFxEffect(node->effect))
+                                if(const auto* p=findFxParameter(*d,fxAddressParameter(key.destination)))
+                                    lines_.add("Base value: "+juce::String(fxParameterText(*p,node->parameter(p->id).value_or(p->defaultValue))));
+                } else lines_.add("Base value: set on its own control; modulation is added to it.");
+                lines_.add("Driven by "+juce::String(links)+" source"+(links==1 ? "" : "s")+".");
+            }
+        }
+        for(auto* c:std::initializer_list<juce::Component*>{&enabled_,&polarity_,&amount_,&remove_,&monitor_}) c->setVisible(link && route_.id);
+        if(!link || !route_.id) monitor_.clear();
+        resized();
+        repaint();
+    }
+    void sample(const ModulationState& modulation,const ModulationSourceSlots& slots) {
+        if(!route_.id) return;
+        monitor_.push(routeContribution(route_,modulation,slots),route_.enabled && routeComplete(route_));
+    }
+    juce::TextButton& enabledButton() noexcept { return enabled_; }
+    juce::TextButton& polarityButton() noexcept { return polarity_; }
+    juce::Slider& amountSlider() noexcept { return amount_; }
+    juce::String title() const { return title_; }
+    void resized() override {
+        auto area=getLocalBounds().reduced(12,8);
+        area.removeFromTop(48+16*lines_.size());
+        auto row=area.removeFromTop(26);
+        enabled_.setBounds(row.removeFromLeft(56)); row.removeFromLeft(8);
+        polarity_.setBounds(row.removeFromLeft(100)); row.removeFromLeft(8);
+        remove_.setBounds(row.removeFromRight(70)); row.removeFromRight(8);
+        amount_.setBounds(row);
+        area.removeFromTop(8);
+        monitor_.setBounds(area.removeFromTop(30).withWidth(juce::jmin(360,area.getWidth())));
+    }
+    void paint(juce::Graphics& g) override {
+        auto area=getLocalBounds().reduced(12,8);
+        text(g,kind_,area.removeFromTop(16),8.5f,Palette::muted());
+        text(g,title_,area.removeFromTop(24),12.0f,Palette::text());
+        area.removeFromTop(8);
+        for(const auto& line:lines_) text(g,line,area.removeFromTop(16),9.0f,Palette::secondary());
+    }
+private:
+    template<typename Fn> void edit(Fn&& fn) {
+        if(!route_.id) return;
+        auto updated=route_;
+        fn(updated);
+        if(page_.updateControlLink(updated)) route_=updated;
+        enabled_.setButtonText(route_.enabled ? "ON" : "OFF");
+        polarity_.setButtonText(route_.bipolar ? "BIPOLAR" : "UNIPOLAR");
+    }
+    FxPage& page_;
+    ControlSelection selection_;
+    ModRoute route_{};
+    juce::String kind_,title_;
+    juce::StringArray lines_;
+    juce::TextButton enabled_{"ON"},polarity_{"UNIPOLAR"},remove_{"DELETE"};
+    juce::Slider amount_;
+    ModulationRouteMonitor monitor_;
+};
+
 // MODULE PARAMETERS: identity / preview / quick controls of the selected
-// module on the left, its full tabbed parameter list on the right.
+// module on the left, its full tabbed parameter list on the right. A CONTROL
+// selection shows the CONTROL inspector instead.
 class FxPage::ModuleParametersPanel final : public Panel {
 public:
-    ModuleParametersPanel(SelectedPanel& selected,ParametersPanel& parameters)
-        :Panel("MODULE PARAMETERS"),selected_(selected),parameters_(parameters) {
+    ModuleParametersPanel(SelectedPanel& selected,ParametersPanel& parameters,ControlInspector& control)
+        :Panel("MODULE PARAMETERS"),selected_(selected),parameters_(parameters),control_(control) {
         addAndMakeVisible(selected_);
         addAndMakeVisible(parameters_);
+        addChildComponent(control_);
+    }
+    void setControlMode(bool control) {
+        if(control==control_.isVisible()) return;
+        control_.setVisible(control);
+        selected_.setVisible(!control);
+        parameters_.setVisible(!control);
+        repaint();
     }
     void resized() override {
         auto area=contentBounds();
+        control_.setBounds(area);
         selected_.setBounds(area.removeFromLeft(juce::jlimit(240,380,area.getWidth()*2/5)));
         area.removeFromLeft(dividerGap);
         parameters_.setBounds(area);
@@ -2039,12 +2417,14 @@ public:
 private:
     static constexpr int dividerGap=9;
     void paintContent(juce::Graphics& g,juce::Rectangle<int>) override {
+        if(control_.isVisible()) return;
         const int x=selected_.getRight()+dividerGap/2;
         g.setColour(Palette::borderSoft());
         g.drawVerticalLine(x,float(selected_.getY()+8),float(selected_.getBottom()-8));
     }
     SelectedPanel& selected_;
     ParametersPanel& parameters_;
+    ControlInspector& control_;
 };
 
 class FxPage::FxMacrosPanel final : public Panel {
@@ -2172,7 +2552,8 @@ FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings h
     parametersPanel_=std::make_unique<ParametersPanel>(*this,bindings_);
     macrosPanel_=std::make_unique<FxMacrosPanel>(bindings_);
     confirmPanel_=std::make_unique<ConfirmPanel>(*this);
-    modulePanel_=std::make_unique<ModuleParametersPanel>(*selectedPanel_,*parametersPanel_);
+    controlInspector_=std::make_unique<ControlInspector>(*this);
+    modulePanel_=std::make_unique<ModuleParametersPanel>(*selectedPanel_,*parametersPanel_,*controlInspector_);
     addAndMakeVisible(*modulePanel_);
     addAndMakeVisible(*macrosPanel_);
     // NODES > MATRIX: the canonical Matrix view in its compact layout.
@@ -2252,6 +2633,9 @@ bool FxPage::keyPressed(const juce::KeyPress& key) {
         canvas_.cancelWire();
         return true;
     }
+    if((key==juce::KeyPress::deleteKey || key==juce::KeyPress::backspaceKey) && !command
+       && controlSelection_.kind==ControlSelection::Kind::Link)
+        return deleteControlLink(controlSelection_.route);
     if((key==juce::KeyPress::deleteKey || key==juce::KeyPress::backspaceKey) && !command && selected_!=invalidFxNodeId)
         return deleteNode(selected_);
     const auto c=juce::CharacterFunctions::toLowerCase(key.getTextCharacter()!=0 ? key.getTextCharacter() : juce::juce_wchar(key.getKeyCode()));
@@ -2356,6 +2740,7 @@ void FxPage::refreshSidebar() {
                      busNames_.size()<maxRenderBuses && bool(host_.addBus),false,false,[safe]{if(safe!=nullptr) safe->addBus();}});
     sidebar_.setRows(FxSidebar::Tab::Buses,std::move(buses));
     if(matrix_!=nullptr) matrix_->syncFromModel();
+    refreshControl();
 }
 
 void FxPage::selectBus(BusId bus) {
@@ -2465,6 +2850,11 @@ void FxPage::refreshToolbar() {
 
 void FxPage::selectNode(FxNodeId id) {
     if(graph().findNode(id)==nullptr) id=invalidFxNodeId;
+    if(id!=invalidFxNodeId && controlSelection_.kind!=ControlSelection::Kind::None) {
+        controlSelection_={};
+        modulePanel_->setControlMode(false);
+        refreshControl();
+    }
     // The active node always comes to the front (UI-only; DSP order is the graph's).
     if(id!=invalidFxNodeId) canvas_.bringToFront(id);
     if(id==selected_) return;
@@ -2696,6 +3086,13 @@ std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
             items.push_back({FxModuleMenu::busBase+int(bus_),busName(bus_)+" IN",true,"SOURCES"});
         (void)state;
         items.push_back({FxModuleMenu::externalId,"External Input (pending)",false,"SOURCES"});
+        // CONTROL: views of the instrument's own sources, and PARAMETER.
+        for(const auto s:{ModSource::Lfo1,ModSource::Lfo2,ModSource::Lfo3,ModSource::Lfo4,
+                          ModSource::Env1,ModSource::Env2,ModSource::Env3,
+                          ModSource::Macro1,ModSource::Macro2,ModSource::Macro3,ModSource::Macro4,ModSource::Random})
+            if(nodes::controlSourceActive(s,state.modulation))
+                items.push_back({FxModuleMenu::controlSourceBase+int(s),sourceName(s),!controlNodeShown(nodes::sourceKey(s)),"CONTROL / SOURCES"});
+        items.push_back({FxModuleMenu::parameterPickerId,"Parameter...",true,"CONTROL"});
     }
     return items;
 }
@@ -2706,12 +3103,243 @@ std::vector<int> FxPage::moduleMenuIds(bool allowSources) const {
     return ids;
 }
 
-void FxPage::showModuleMenu(juce::Component& anchor,bool allowSources,std::function<void(FxModuleSpec)> chosen) {
+void FxPage::showModuleMenu(juce::Component& anchor,bool allowSources,std::function<void(FxModuleSpec)> chosen,
+                            std::optional<FxPoint> at) {
     juce::Component::SafePointer<FxPage> safe(this);
-    showNativeChoiceMenu(anchor,"ADD MODULE",moduleMenuItems(allowSources),0,[safe,chosen](int choice) {
+    juce::Component::SafePointer<juce::Component> anchorRef(&anchor);
+    showNativeChoiceMenu(anchor,"ADD MODULE",moduleMenuItems(allowSources),0,[safe,chosen,at,anchorRef](int choice) {
         if(safe==nullptr) return;
+        if(choice>=FxModuleMenu::controlSourceBase) { safe->addControlSource(static_cast<ModSource>(choice-FxModuleMenu::controlSourceBase),at); return; }
+        if(choice==FxModuleMenu::parameterPickerId) { safe->showParameterPicker(anchorRef!=nullptr ? *anchorRef : *safe,std::nullopt,at); return; }
         if(const auto spec=FxModuleMenu::decode(choice); spec && chosen) chosen(*spec);
     });
+}
+
+// ================================================================ CONTROL layer
+
+juce::Slider& FxPage::controlAmountSlider() noexcept { return controlInspector_->amountSlider(); }
+juce::Button& FxPage::controlEnabledButton() noexcept { return controlInspector_->enabledButton(); }
+juce::Button& FxPage::controlPolarityButton() noexcept { return controlInspector_->polarityButton(); }
+
+bool FxPage::controlNodeShown(const nodes::ControlNodeKey& key) const noexcept {
+    const auto index=controlGraph_.find(key);
+    return index && *index<controlNodeShown_.size() && controlNodeShown_[*index];
+}
+
+bool FxPage::controlLinkShown(std::uint32_t route) const noexcept {
+    for(std::size_t i=0;i<controlGraph_.links.size();++i)
+        if(controlGraph_.links[i].routeId==route) return i<controlLinkShown_.size() && controlLinkShown_[i];
+    return false;
+}
+
+juce::String FxPage::controlNodeTitle(const nodes::ControlNodeKey& key) const {
+    return key.kind==nodes::ControlNodeKind::Source ? sourceName(key.source) : juce::String("PARAMETER");
+}
+
+juce::String FxPage::controlNodeDetail(const nodes::ControlNodeKey& key) const {
+    if(key.kind==nodes::ControlNodeKind::Source) return "CONTROL OUT";
+    const auto label=modulationDestinationLabel(destinationCatalog_,key.destination);
+    return label.isNotEmpty() ? label : juce::String("UNAVAILABLE DESTINATION");
+}
+
+bool FxPage::connectableControl(ModSource source,const ModAddress& address) const {
+    if(!bindings_.snapshot) return false;
+    const auto check=nodes::checkControlLink(bindings_.snapshot(),source,address);
+    return check.creatable() || check.result==nodes::ControlLinkResult::Exists;
+}
+
+void FxPage::refreshControl() {
+    InstrumentState state;
+    if(bindings_.snapshot) state=bindings_.snapshot();
+    controlModulation_=state.modulation;
+    destinationCatalog_=modulationDestinationCatalog(state,bindings_);
+    auto& layout=controlLayout();
+    controlGraph_=nodes::deriveControlGraph(state.modulation,layout);
+    // Pin default positions of shown nodes so nothing jumps when other
+    // relationships appear or disappear (view metadata only).
+    if(isShowing())
+        for(const auto& node:controlGraph_.nodes)
+            if(const auto* e=layout.find(node.key); e==nullptr || !e->positioned) layout.setPosition(node.key,node.x,node.y);
+    // Visibility: NODES parameters belong to one bus graph and are shown only
+    // over that bus; everything else is instrument-wide.
+    const auto& graph=controlGraph_;
+    controlNodeShown_.assign(graph.nodes.size(),false);
+    controlLinkShown_.assign(graph.links.size(),false);
+    const auto onThisBus=[this](const nodes::ControlGraphNode& n) {
+        return n.key.kind!=nodes::ControlNodeKind::Parameter || !isFxDestination(n.key.destination.parameter)
+            || fxAddressBus(n.key.destination)==bus_;
+    };
+    for(std::size_t i=0;i<graph.links.size();++i)
+        if(onThisBus(graph.nodes[graph.links[i].parameter])) {
+            controlLinkShown_[i]=true;
+            controlNodeShown_[graph.links[i].source]=true;
+            controlNodeShown_[graph.links[i].parameter]=true;
+        }
+    for(std::size_t i=0;i<graph.nodes.size();++i)
+        if(graph.nodes[i].placed && onThisBus(graph.nodes[i])) controlNodeShown_[i]=true;
+    // A selection whose relationship vanished (deleted in any view) clears.
+    if(controlSelection_.kind==ControlSelection::Kind::Link && !controlLinkShown(controlSelection_.route)) controlSelection_={};
+    if(controlSelection_.kind==ControlSelection::Kind::Node && !controlNodeShown(controlSelection_.key)) controlSelection_={};
+
+    std::vector<FxCanvas::ControlNodeView> views;
+    for(std::size_t i=0;i<graph.nodes.size();++i) {
+        if(!controlNodeShown_[i]) continue;
+        const auto& n=graph.nodes[i];
+        bool linked=false;
+        for(const auto& r:state.modulation.routes)
+            if(r.id && routeComplete(r) && (n.key.kind==nodes::ControlNodeKind::Source ? r.source==n.key.source : r.destination==n.key.destination)) linked=true;
+        const auto* entry=layout.find(n.key);
+        const bool positioned=entry!=nullptr && entry->positioned;
+        views.push_back({n.key,positioned ? entry->x : n.x,positioned ? entry->y : n.y,controlNodeTitle(n.key),controlNodeDetail(n.key),n.domain,
+                         controlSelection_.kind==ControlSelection::Kind::Node && controlSelection_.key==n.key,linked,!linked});
+    }
+    std::vector<FxCanvas::ControlLinkView> links;
+    for(std::size_t i=0;i<graph.links.size();++i) {
+        if(!controlLinkShown_[i]) continue;
+        const auto& l=graph.links[i];
+        bool enabled=true;
+        for(const auto& r:state.modulation.routes) if(r.id==l.routeId) enabled=r.enabled && r.amount!=0.0f;
+        links.push_back({l.routeId,graph.nodes[l.source].key,graph.nodes[l.parameter].key,l.supported,enabled,
+                         controlSelection_.kind==ControlSelection::Kind::Link && controlSelection_.route==l.routeId});
+    }
+    canvas_.rebuildControl(views,links);
+    const bool control=controlSelection_.kind!=ControlSelection::Kind::None;
+    modulePanel_->setControlMode(control);
+    if(control) controlInspector_->show(controlSelection_,state);
+}
+
+bool FxPage::addControlSource(ModSource source,std::optional<FxPoint> at) {
+    if(!bindings_.snapshot || !nodes::controlSourceExposed(source)
+       || !nodes::controlSourceActive(source,bindings_.snapshot().modulation)) return false;
+    auto& layout=controlLayout();
+    const auto key=nodes::sourceKey(source);
+    layout.setPlaced(key,true);
+    if(at) layout.setPosition(key,at->x,at->y); // else: the CONTROL column below the audio graph
+    refreshControl();
+    selectControlNode(key);
+    return true;
+}
+
+bool FxPage::addParameterNode(const ModAddress& address,std::optional<FxPoint> at) {
+    if(address.parameter==ModDestination::None) return false;
+    auto& layout=controlLayout();
+    const auto key=nodes::parameterKey(address);
+    layout.setPlaced(key,true);
+    if(at) layout.setPosition(key,at->x,at->y);
+    refreshControl();
+    selectControlNode(key);
+    return true;
+}
+
+nodes::ControlLinkCheck FxPage::connectControl(ModSource source,const ModAddress& address) {
+    nodes::ControlLinkCheck check;
+    if(!bindings_.snapshot || !bindings_.addRoute || !bindings_.route || !bindings_.removeRoute) return check;
+    check=nodes::checkControlLink(bindings_.snapshot(),source,address);
+    if(check.result==nodes::ControlLinkResult::Exists) { refreshControl(); selectControlLink(check.existingRoute); return check; }
+    if(!check.creatable()) return check;
+    // The canonical route, through the same bindings as SYNTH and the Matrix:
+    // a blank route (ON / UNIPOLAR / none / none / 0%) whose ends are then set.
+    const auto id=bindings_.addRoute();
+    ModRoute route{};
+    for(const auto& r:bindings_.snapshot().modulation.routes) if(r.id==id) route=r;
+    route.source=source;
+    route.destination=address;
+    if(id==0 || route.id!=id || !bindings_.route(route)) {
+        if(id!=0) bindings_.removeRoute(id);
+        check.result=nodes::ControlLinkResult::DestinationUnavailable;
+        return check;
+    }
+    check.existingRoute=id;
+    refreshControl();
+    selectControlLink(id);
+    return check;
+}
+
+bool FxPage::deleteControlLink(std::uint32_t route) {
+    if(route==0 || !bindings_.removeRoute) return false;
+    const bool removed=bindings_.removeRoute(route);
+    if(removed && controlSelection_.kind==ControlSelection::Kind::Link && controlSelection_.route==route) controlSelection_={};
+    refreshControl();
+    return removed;
+}
+
+bool FxPage::updateControlLink(const ModRoute& route) {
+    if(!bindings_.route || route.id==0 || !bindings_.route(route)) return false;
+    refreshControl();
+    return true;
+}
+
+bool FxPage::removeControlNode(const nodes::ControlNodeKey& key) {
+    if(bindings_.snapshot)
+        for(const auto& r:bindings_.snapshot().modulation.routes)
+            if(r.id && routeComplete(r) && (key.kind==nodes::ControlNodeKind::Source ? r.source==key.source : r.destination==key.destination))
+                return false; // linked: delete its relationships first
+    const bool removed=controlLayout().remove(key);
+    if(controlSelection_.kind==ControlSelection::Kind::Node && controlSelection_.key==key) controlSelection_={};
+    refreshControl();
+    return removed;
+}
+
+void FxPage::moveControlNode(const nodes::ControlNodeKey& key,FxPoint at,bool commit) {
+    controlLayout().setPosition(key,at.x,at.y);
+    if(commit) refreshControl();
+}
+
+void FxPage::selectControlNode(const nodes::ControlNodeKey& key) {
+    if(selected_!=invalidFxNodeId) { selected_=invalidFxNodeId; refresh(true); }
+    controlSelection_={ControlSelection::Kind::Node,key,0};
+    refreshControl();
+}
+
+void FxPage::selectControlLink(std::uint32_t route) {
+    if(selected_!=invalidFxNodeId) { selected_=invalidFxNodeId; refresh(true); }
+    controlSelection_={ControlSelection::Kind::Link,{},route};
+    refreshControl();
+}
+
+std::vector<NativeChoiceItem> FxPage::parameterPickerItems(std::optional<ModSource> source) const {
+    InstrumentState state;
+    if(bindings_.snapshot) state=bindings_.snapshot();
+    const auto catalog=modulationDestinationCatalog(state,bindings_);
+    std::vector<NativeChoiceItem> items;
+    for(std::size_t i=0;i<catalog.size();++i) {
+        const auto& e=catalog[i];
+        // Synth parameters first, then this instrument's NODES parameters.
+        const auto group=e.group.startsWith("NODES") ? e.group : "SYNTH / "+e.group.toUpperCase();
+        bool enabled=true;
+        juce::String reason;
+        if(source) {
+            const auto check=nodes::checkControlLink(state,*source,e.address);
+            enabled=check.creatable() || check.result==nodes::ControlLinkResult::Exists;
+            if(!enabled) reason=juce::String(nodes::toString(check.result));
+        }
+        items.push_back({int(i)+1,enabled || reason.isEmpty() ? e.label : e.label+"  -  "+reason,enabled,group,false,reason});
+    }
+    return items;
+}
+
+std::optional<ModAddress> FxPage::parameterPickerAddress(int itemId) const {
+    InstrumentState state;
+    if(bindings_.snapshot) state=bindings_.snapshot();
+    const auto catalog=modulationDestinationCatalog(state,bindings_);
+    if(itemId<1 || itemId>int(catalog.size())) return std::nullopt;
+    return catalog[std::size_t(itemId-1)].address;
+}
+
+void FxPage::showParameterPicker(juce::Component& anchor,std::optional<ModSource> source,std::optional<FxPoint> at) {
+    juce::Component::SafePointer<FxPage> safe(this);
+    showNativeChoiceMenu(anchor,"PARAMETER",parameterPickerItems(source),0,[safe,source,at](int choice) {
+        if(safe==nullptr) return;
+        const auto address=safe->parameterPickerAddress(choice);
+        if(!address) return;
+        safe->addParameterNode(*address,at);
+        if(source) safe->connectControl(*source,*address);
+    });
+}
+
+void FxPage::sampleControlMonitor() {
+    if(controlSelection_.kind!=ControlSelection::Kind::Link || !bindings_.visualization) return;
+    controlInspector_->sample(controlModulation_,bindings_.visualization().routeSources);
 }
 
 void FxPage::applyTemplate(int id) {
