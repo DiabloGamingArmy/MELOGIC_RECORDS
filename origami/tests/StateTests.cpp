@@ -4,6 +4,7 @@
 // mct-origami-v27.0.0-cross-osc-routing-foundation
 // mct-origami-v26.0.0-osc-process-foundation
 // mct-origami-glide-mono-legato-v23.4.3
+#include <memory>
 #include "core/Engine.h"
 #include "core/preset/StateCodec.h"
 #include "core/preset/Patch.h"
@@ -18,7 +19,7 @@ void word(std::vector<std::uint8_t>& b,std::size_t offset,std::uint32_t n) {
     for(int i=0;i<4;++i) b[offset+static_cast<std::size_t>(i)]=static_cast<std::uint8_t>(n>>(24-i*8));
 }
 void states() {
-    OrigamiEngine a;
+    auto aOwner=std::make_unique<OrigamiEngine>();auto& a=*aOwner;
     a.setParameter(ParameterId::Waveform,.73f);
     const auto removed=a.addOscillatorModule();
     const auto third=a.addOscillatorModule();
@@ -69,7 +70,7 @@ void states() {
     check(saved.oscillators[1].id==third && saved.oscillators[2].id==fourth,"creation order independent of slots");
     const auto bytes=encodeInstrumentState(saved);
     InstrumentState decoded;check(decodeInstrumentState(bytes.data(),bytes.size(),decoded),"decode v2");
-    OrigamiEngine b;check(b.restoreInstrumentState(decoded),"restore full engine state");
+    auto bOwner=std::make_unique<OrigamiEngine>();auto& b=*bOwner;check(b.restoreInstrumentState(decoded),"restore full engine state");
     check(decoded.modulation.envActiveMask==0x3u &&
           decoded.modulation.lfoActiveMask==0x5u &&
           !decoded.modulation.filterEnabled,

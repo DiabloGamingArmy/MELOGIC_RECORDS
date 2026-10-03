@@ -1,6 +1,7 @@
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
+#include <memory>
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxRenderer.h"
 #include "core/fx/FxEnvironment.h"
@@ -544,7 +545,7 @@ void busTests() {
 void busAudioTests() {
     // The BUS 1 send is real DSP, applied post-filter at the oscillator level.
     const auto renderNote=[](float send) {
-        OrigamiEngine engine;
+        auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;
         engine.prepare(sr,512,2);
         auto module=engine.oscillatorModuleState(1);
         module.busRoutes[0].level=send;
@@ -600,7 +601,7 @@ void fxModulationModelTests() {
 }
 
 void fxEngineModulationTests() {
-    OrigamiEngine engine;
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;
     engine.prepare(sr,512,2);
     auto state=engine.instrumentState();
     state.modulation.macros[0]=1.0f;
@@ -616,7 +617,7 @@ void fxEngineModulationTests() {
 
     // FX ORDER: PRE MASTER removes master gain from the voices (the FX host re-applies it).
     const auto peakFor=[](bool preMaster) {
-        OrigamiEngine e;
+        auto eOwner=std::make_unique<OrigamiEngine>();auto& e=*eOwner;
         e.prepare(sr,512,2);
         e.setMasterAfterFx(preMaster);
         e.noteOn(60,1.0f);
@@ -958,7 +959,7 @@ void busModelP04Tests() {
 }
 
 void multiBusEngineTests() {
-    OrigamiEngine engine;
+    auto engineOwner=std::make_unique<OrigamiEngine>();auto& engine=*engineOwner;
     engine.prepare(sr,512,2);
     auto state=engine.instrumentState();
     const auto bus=addBus(state.buses);
@@ -1555,6 +1556,289 @@ void controlOperatorTests() {
     }
 }
 
+// mct-origami-nodes-n05-events-logic: EVENT / GATE family.
+namespace n05 {
+using T=ControlOpType;
+ControlInput src(ModSource s) { return {ControlInput::Kind::Source,s,0}; }
+ControlInput opIn(std::uint32_t id) { return {ControlInput::Kind::Operator,ModSource::None,id}; }
+// Steps one operator with explicit inputs (deterministic sequences).
+struct Stepper {
+    ControlOperator op; ControlOpRuntime state; ControlOpPrepared prepared; ControlEventContext ctx;
+    explicit Stepper(ControlOpType type,std::array<float,6> params={},bool useParams=false) {
+        op=makeControlOperator(type,1); if(useParams) op.params=params; prepared=prepareControlOp(op,48000.0);
+    }
+    float step(float a=0.0f,float b=0.0f,float c=0.0f,std::array<bool,3> connected={true,true,true},ControlRange range=ControlRange::Unipolar) {
+        ControlOpInputs in; in.value={a,b,c}; in.connected=connected; in.range={range,range,range};
+        return evaluateControlOp(op,in,state,prepared,ctx);
+    }
+};
+// Mirrors the engine's global evaluation: one sample at a time.
+struct GlobalHarness {
+    CompiledModulation compiled; ModulationFrame frame; std::array<OscillatorModuleState,16> modules{};
+    double bpm=120.0,beats=0.0;
+    explicit GlobalHarness(const ModulationState& m) { modules[0].id=1; compiled.prepare(48000.0); compiled.compile(m,modules,true); }
+    void sample(const std::array<float,CompiledModulation::globalSourceCount>& sources) {
+        frame.events.beats=beats; frame.events.beatsPerSample=bpm/60.0/48000.0; frame.events.sampleRate=48000.0;
+        compiled.evaluateGlobalOperators(frame,sources);
+        beats+=frame.events.beatsPerSample;
+    }
+};
+}
+
+void eventLogicTests() {
+    using namespace n05;
+    // ---- node semantics --------------------------------------------------
+    {   Stepper t(T::Threshold,{{0.5f,0.2f}},true);
+        const float in[]{0.0f,0.55f,0.61f,0.5f,0.41f,0.39f,0.55f};
+        const float expected[]{0,0,1,1,1,0,0};
+        bool ok=true; for(int i=0;i<7;++i) ok&=t.step(in[i])==expected[i];
+        check(ok,"THRESHOLD: opens above thr+h/2, closes below thr-h/2 (no chatter)"); }
+    {   Stepper rising(T::Edge,{{0}},true),falling(T::Edge,{{1}},true),both(T::Edge,{{2}},true);
+        const float gate[]{0,1,1,0,1,0};
+        int r=0,f=0,b=0; std::array<int,6> at{};
+        for(int i=0;i<6;++i) { r+=rising.step(gate[i])!=0.0f; f+=falling.step(gate[i])!=0.0f; const bool e=both.step(gate[i])!=0.0f; b+=e; at[std::size_t(i)]=e; }
+        check(r==2 && f==2 && b==4 && at[1] && at[3] && at[4] && at[5],"EDGE rising / falling / both at the transition samples"); }
+    {   Stepper pulse(T::Pulse,{{0.0001f}},true); // 4.8 samples -> 5
+        pulse.prepared.pulseSamples=3;
+        const float trig[]{0,1,0,0,0,0,1,1,0,0};
+        const float expected[]{0,1,1,1,0,0,1,1,1,1};
+        bool ok=true; for(int i=0;i<10;++i) ok&=pulse.step(trig[i])==expected[i];
+        check(ok,"PULSE opens at the event sample for LENGTH; a new event restarts it"); }
+    {   bool ok=true;
+        const auto cmp=[&](int mode,float a,float b){ Stepper c(T::Compare,{{float(mode),0.01f}},true); return c.step(a,b)!=0.0f; };
+        ok&=cmp(0,0.6f,0.5f) && !cmp(0,0.5f,0.5f) && cmp(1,0.4f,0.5f) && cmp(2,0.5f,0.5f) && cmp(3,0.5f,0.5f);
+        ok&=cmp(4,0.5f,0.505f) && !cmp(4,0.5f,0.52f) && cmp(5,0.5f,0.52f) && !cmp(5,0.5f,0.505f);
+        check(ok,"COMPARE > < >= <= and == / != within TOLERANCE"); }
+    {   Stepper a(T::And),o(T::Or),x(T::Xor),n(T::Not);
+        bool ok=true;
+        const float pairs[4][2]{{0,0},{0,1},{1,0},{1,1}};
+        const float andE[]{0,0,0,1},orE[]{0,1,1,1},xorE[]{0,1,1,0};
+        for(int i=0;i<4;++i) ok&=a.step(pairs[i][0],pairs[i][1])==andE[i] && o.step(pairs[i][0],pairs[i][1])==orE[i] && x.step(pairs[i][0],pairs[i][1])==xorE[i];
+        ok&=n.step(0.0f)==1.0f && n.step(1.0f)==0.0f;
+        check(ok,"AND / OR / XOR / NOT truth tables on gates"); }
+    {   Stepper sw(T::Switch);
+        check(sw.step(0.2f,0.8f,0.0f)==0.2f && sw.step(0.2f,0.8f,1.0f)==0.8f,"SWITCH: SELECT closed -> A, open -> B (instant)");
+        Stepper glide(T::Switch,{{0.001f}},true); // 48 samples
+        glide.step(0.0f,1.0f,0.0f); const float mid=[&]{ float v=0; for(int i=0;i<24;++i) v=glide.step(0.0f,1.0f,1.0f); return v; }();
+        check(mid>0.4f && mid<0.6f,"SWITCH GLIDE crossfades instead of jumping"); }
+    {   Stepper sh(T::SampleHold);
+        const float value[]{0.1f,0.2f,0.3f,0.4f,0.5f,0.6f},trig[]{0,0,1,0,0,1};
+        const float expected[]{0.1f,0.1f,0.3f,0.3f,0.3f,0.6f};
+        bool ok=true; for(int i=0;i<6;++i) ok&=sh.step(value[i],trig[i])==expected[i];
+        check(ok,"SAMPLE & HOLD captures VALUE at the trigger's own sample and holds it"); }
+    {   Stepper th(T::TrackHold);
+        const float value[]{0.1f,0.2f,0.3f,0.4f},gate[]{1,1,0,0};
+        check(th.step(value[0],gate[0])==0.1f && th.step(value[1],gate[1])==0.2f && th.step(value[2],gate[2])==0.2f && th.step(value[3],gate[3])==0.2f,
+              "TRACK & HOLD follows while open, holds the last value when closed"); }
+    {   Stepper a(T::RandomTrigger),b(T::RandomTrigger),c(T::RandomTrigger,{{-1.0f,1.0f,7.0f}},true);
+        bool same=true,inRange=true,changes=false; float last=a.step(0); b.step(0);
+        for(int i=0;i<32;++i) { const float x=a.step(1.0f),y=b.step(1.0f); same&=x==y; inRange&=x>=0.0f && x<=1.0f; changes|=x!=last; last=x; }
+        const float held=a.step(0.0f);
+        check(same && inRange && changes && held==last,"RANDOM: deterministic per seed, in range, new value only per trigger");
+        bool bipolar=false; for(int i=0;i<32;++i) bipolar|=c.step(1.0f)<0.0f;
+        check(bipolar,"RANDOM honours a bipolar MIN..MAX"); }
+    {   Stepper t(T::Toggle);
+        check(t.step(0)==0.0f && t.step(1)==1.0f && t.step(0)==1.0f && t.step(1)==0.0f,"TOGGLE flips on each event"); }
+    {   Stepper wrap(T::Counter,{{4.0f,0.0f}},true),clamp(T::Counter,{{4.0f,1.0f}},true);
+        float w=0,c=0; for(int i=0;i<5;++i) { w=wrap.step(1.0f); c=clamp.step(1.0f); }
+        check(std::abs(w-1.0f/3.0f)<1e-6f && c==1.0f,"COUNTER wraps (5 events in 4 steps -> step 1) or clamps at the last step");
+        Stepper merged(T::Counter,{{8.0f,0.0f}},true);
+        check(std::abs(merged.step(3.0f)-1.0f/7.0f)<1e-6f,"coincident events on one port at one sample merge into one (deterministic)"); }
+
+    // ---- CLOCK: sample-exact grid, tempo, phase, free rate ----------------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); // TEMPO 1/8 by default
+        m.nextOperatorId=2;
+        GlobalHarness h(m);
+        std::vector<int> ticks;
+        for(int n=0;n<48000;++n) { h.sample({}); if(h.frame.operatorOutputs[0]!=0.0f) ticks.push_back(n); }
+        // 120 BPM, 1/8 = 0.5 beat = 12000 samples; the first tick is at sample 0.
+        bool exact=ticks.size()==4;
+        for(std::size_t i=0;exact && i<ticks.size();++i) exact&=std::abs(ticks[i]-int(i)*12000)<=1;
+        check(exact,"CLOCK 1/8 at 120 BPM ticks every 12000 samples from sample 0");
+        GlobalHarness fast(m); fast.bpm=240.0; int count=0;
+        for(int n=0;n<48000;++n) { fast.sample({}); count+=fast.frame.operatorOutputs[0]!=0.0f; }
+        check(count==8,"doubling the tempo doubles the tick rate");
+        ModulationState freeClock=m; freeClock.operators[0].params[0]=0.0f; freeClock.operators[0].params[1]=10.0f;
+        GlobalHarness f(freeClock); int freeTicks=0;
+        for(int n=0;n<48000;++n) { f.sample({}); freeTicks+=f.frame.operatorOutputs[0]!=0.0f; }
+        check(freeTicks==10 || freeTicks==11,"free-running CLOCK at 10 Hz ticks 10 times a second");
+    }
+    // ---- same-sample ordering: CLOCK -> S&H captures LFO at that sample ---
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1);
+        m.operators[1]=makeControlOperator(T::SampleHold,2);
+        m.operators[1].inputs[0]=src(ModSource::Lfo1);
+        m.operators[1].inputs[1]=opIn(1);
+        m.nextOperatorId=3;
+        GlobalHarness h(m);
+        bool captured=true; int changes=0; float last=-9.0f;
+        for(int n=0;n<36000;++n) {
+            std::array<float,CompiledModulation::globalSourceCount> sources{};
+            sources[0]=std::sin(float(n)*0.001f);
+            h.sample(sources);
+            const float out=h.frame.operatorOutputs[1];
+            if(h.frame.operatorOutputs[0]!=0.0f) captured&=out==sources[0]; // the value AT the tick sample
+            if(out!=last) { ++changes; last=out; }
+        }
+        check(captured && changes==3,"S&H triggered by CLOCK captures the LFO value at the tick's own sample (3 captures)");
+    }
+    // ---- MACRO -> THRESHOLD -> EDGE -> RANDOM: one chain, one sample --------
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Threshold,1); m.operators[0].inputs[0]=src(ModSource::Macro1);
+        m.operators[1]=makeControlOperator(T::Edge,2); m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::RandomTrigger,3); m.operators[2].inputs[0]=opIn(2);
+        m.nextOperatorId=4;
+        GlobalHarness h(m);
+        std::array<float,CompiledModulation::globalSourceCount> sources{};
+        h.sample(sources); const float before=h.frame.operatorOutputs[2];
+        for(int n=0;n<10;++n) h.sample(sources);
+        sources[4]=0.9f; h.sample(sources);
+        check(h.frame.operatorOutputs[0]==1.0f && h.frame.operatorOutputs[1]==1.0f && h.frame.operatorOutputs[2]!=before,
+              "the macro crossing propagates through THRESHOLD, EDGE and RANDOM within the same sample");
+        h.sample(sources);
+        check(h.frame.operatorOutputs[1]==0.0f,"the EVENT lasts exactly one sample");
+    }
+    // ---- validation / typing ----------------------------------------------
+    std::array<OscillatorModuleState,16> modules{}; modules[0].id=1;
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Toggle,1);
+        m.operators[0].inputs[0]=src(ModSource::Lfo1);
+        m.nextOperatorId=2;
+        check(!validModulation(m,modules),"a CONTROL source into an EVENT input is rejected (no float-as-trigger)");
+        m.operators[0].inputs[0]={};
+        m.operators[1]=makeControlOperator(T::ScaleOffset,2); m.operators[1].inputs[0]=opIn(1); m.nextOperatorId=3;
+        check(!validModulation(m,modules),"a GATE output into a CONTROL input is rejected");
+        m.operators[1]=makeControlOperator(T::Edge,2); m.operators[1].inputs[0]=opIn(1);
+        check(validModulation(m,modules),"GATE -> GATE input (TOGGLE -> EDGE) is valid");
+        m.operators[2]=makeControlOperator(T::Smooth,3); m.operators[2].inputs[0]=opIn(2); m.nextOperatorId=4;
+        check(!validModulation(m,modules),"an EVENT output into a CONTROL input is rejected");
+        m.operators[2]={};
+        m.routes[0]={1,true,operatorSource(1),{ModDestination::Cutoff,0,0},0.5f,false}; m.nextRouteId=2;
+        check(!validModulation(m,modules),"a GATE output cannot drive a parameter directly");
+    }
+    // ---- engine: note events, polyphony, stealing, envelope triggers ------
+    {
+        // NOTE ON -> TOGGLE (per voice) -> SWITCH SELECT; LFO -> A, ENV -> B; SWITCH -> LEVEL.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::NoteOn,1);
+        m.operators[1]=makeControlOperator(T::Toggle,2); m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::Switch,3);
+        m.operators[2].inputs[0]=src(ModSource::Lfo1); m.operators[2].inputs[1]=src(ModSource::Env1); m.operators[2].inputs[2]=opIn(2);
+        m.nextOperatorId=4;
+        m.routes[0]={1,true,operatorSource(3),{ModDestination::Level,1,0},0.3f,false}; m.nextRouteId=2;
+        check(validModulation(m,modules) && sourceIsVoice(operatorSource(3),m),"NOTE ON -> TOGGLE -> SWITCH is a per-voice chain");
+        auto engine=std::make_unique<OrigamiEngine>(); engine->prepare(sr,512,2);
+        check(engine->setModulationState(m),"engine accepts the chain");
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        const auto toggleOfNewest=[&]{ return engine->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+1]; };
+        engine->noteOn(60,1.0f); engine->process(out,2,512);
+        engine->noteOn(64,1.0f); engine->process(out,2,512);
+        // A shared toggle would have flipped back to OFF on the second note.
+        check(toggleOfNewest()==1.0f && engine->activeVoiceCount()==2,"each voice's NOTE ON flips its own TOGGLE (no cross-voice state)");
+        // Voice stealing: one voice; every new note reuses it and must start fresh.
+        auto stealing=std::make_unique<OrigamiEngine>(); stealing->prepare(sr,512,2);
+        stealing->setModulationState(m); stealing->setVoiceAdmissionCeiling(1);
+        bool fresh=true;
+        for(int note=0;note<5;++note) {
+            stealing->noteOn(60+note,1.0f); stealing->process(out,2,512);
+            fresh&=stealing->runtimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+1]==1.0f;
+        }
+        check(fresh,"a stolen voice never inherits stale TOGGLE state (ON after every note, never alternating)");
+    }
+    {
+        // CLOCK -> ENV TRIGGER (ENV 2): the modulation envelope restarts on each tick.
+        ModulationState m;
+        m.env2.attack=1.0f; m.env2.decay=1.0f; m.env2.sustain=1.0f; m.env2.release=1.0f;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[0]=0.0f; m.operators[0].params[1]=20.0f;
+        m.operators[1]=makeControlOperator(T::EnvelopeTrigger,2); m.operators[1].inputs[0]=opIn(1);
+        m.nextOperatorId=3;
+        auto triggered=std::make_unique<OrigamiEngine>(); triggered->prepare(sr,512,2);
+        auto plain=std::make_unique<OrigamiEngine>(); plain->prepare(sr,512,2);
+        auto noTrigger=m; noTrigger.operators={}; noTrigger.nextOperatorId=1;
+        check(triggered->setModulationState(m) && plain->setModulationState(noTrigger),"envelope trigger states");
+        triggered->noteOn(60,1.0f); plain->noteOn(60,1.0f);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        for(int b=0;b<40;++b) { triggered->process(out,2,512); plain->process(out,2,512); } // ~0.43 s
+        float t=0,p=0;
+        for(std::size_t v=0;v<OrigamiEngine::voiceCount;++v) {
+            if(triggered->voiceInfo(v).active) t=triggered->voiceInfo(v).envelopes[1].progress;
+            if(plain->voiceInfo(v).active) p=plain->voiceInfo(v).envelopes[1].progress;
+        }
+        check(p>0.3f && t<0.1f,"CLOCK -> ENV TRIGGER restarts ENV 2 on every tick (MIDI triggering unaffected)");
+    }
+    {
+        // Block-size independence + host sync: identical audio for 64- and 500-sample blocks.
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[2]=4.0f; // 1/16
+        m.operators[1]=makeControlOperator(T::SampleHold,2); m.operators[1].inputs[0]=src(ModSource::Lfo1); m.operators[1].inputs[1]=opIn(1);
+        m.nextOperatorId=3;
+        m.routes[0]={1,true,operatorSource(2),{ModDestination::Cutoff,0,0},0.7f,true}; m.nextRouteId=2;
+        m.lfo1.rateHz=3.0f;
+        const auto renderBlocks=[&](int block,bool host) {
+            auto e=std::make_unique<OrigamiEngine>(); e->prepare(sr,512,2); e->setModulationState(m);
+            for(OscillatorModuleId id=2;id<=4;++id) e->setOscillatorModuleEnabled(id,false);
+            e->noteOn(60,1.0f);
+            std::vector<float> l(24000),r(24000);
+            for(int done=0;done<24000;done+=block) {
+                const int n=std::min(block,24000-done);
+                if(host) { OrigamiEngine::HostTransport t; t.bpm=128.0; t.playing=true; t.ppqValid=true; t.ppq=double(done)*128.0/60.0/sr; e->setHostTransport(t); }
+                float* out[2]{l.data()+done,r.data()+done}; e->process(out,2,std::size_t(n));
+            }
+            return l;
+        };
+        check(renderBlocks(64,false)==renderBlocks(500,false),"CLOCK-driven modulation is block-size independent (internal tempo)");
+        const auto a=renderBlocks(64,true),b=renderBlocks(500,true);
+        float worst=0.0f; for(std::size_t i=0;i<a.size();++i) worst=std::max(worst,std::abs(a[i]-b[i]));
+        check(worst<1e-4f,"host-synced CLOCK resyncs each block: block-size independent");
+    }
+    // ---- realtime: event chains never allocate ----------------------------
+#ifndef ORIGAMI_SANITIZED
+    {
+        ModulationState m;
+        m.operators[0]=makeControlOperator(T::Clock,1); m.operators[0].params[0]=0.0f; m.operators[0].params[1]=40.0f;
+        m.operators[1]=makeControlOperator(T::Counter,2); m.operators[1].inputs[0]=opIn(1);
+        m.operators[2]=makeControlOperator(T::NoteOn,3);
+        m.operators[3]=makeControlOperator(T::Pulse,4); m.operators[3].inputs[0]=opIn(3);
+        m.operators[4]=makeControlOperator(T::TrackHold,5); m.operators[4].inputs[0]=src(ModSource::Env1); m.operators[4].inputs[1]=opIn(4);
+        m.nextOperatorId=6;
+        m.routes[0]={1,true,operatorSource(2),{ModDestination::Cutoff,0,0},0.4f,false};
+        m.routes[1]={2,true,operatorSource(5),{ModDestination::Level,1,0},0.4f,false}; m.nextRouteId=3;
+        auto e=std::make_unique<OrigamiEngine>(); e->prepare(sr,512,2); e->setModulationState(m);
+        e->noteOn(60,1.0f); e->noteOn(64,1.0f);
+        std::vector<float> l(512),r(512); float* out[2]{l.data(),r.data()};
+        e->process(out,2,512);
+        allocations=0;guardAllocations=true;
+        for(int i=0;i<16;++i) { if(i==8) e->noteOn(67,1.0f); e->process(out,2,512); }
+        guardAllocations=false;
+        check(allocations.load()==0,"event / gate / stateful nodes evaluate without allocating");
+    }
+#endif
+    // ---- codec: v27 / v28 / v29 --------------------------------------------
+    {
+        auto base=std::make_unique<OrigamiEngine>(); base->prepare(sr,512,2);
+        auto state=base->instrumentState();
+        state.modulation.operators[0]=makeControlOperator(T::ScaleOffset,1);
+        state.modulation.operators[0].inputs[0]=src(ModSource::Lfo1);
+        state.modulation.nextOperatorId=2;
+        check(encodeInstrumentState(state)[7]==28,"N04-only operators still write v28");
+        state.modulation.operators[1]=makeControlOperator(T::Switch,2);
+        state.modulation.operators[1].inputs[2]=opIn(3);
+        state.modulation.operators[2]=makeControlOperator(T::Threshold,3);
+        state.modulation.operators[2].inputs[0]=src(ModSource::Macro1);
+        state.modulation.nextOperatorId=4;
+        const auto bytes=encodeInstrumentState(state);
+        InstrumentState decoded;
+        check(bytes[7]==29 && decodeInstrumentState(bytes.data(),bytes.size(),decoded),"event / logic nodes write v29 and decode");
+        check(decoded.modulation.operators[1].inputs[2]==state.modulation.operators[1].inputs[2]
+              && decoded.modulation.operators[2].type==T::Threshold,"three-input nodes round-trip");
+    }
+}
+
 int main() {
     identityTests();
     sourceDomainTests();
@@ -1596,6 +1880,7 @@ int main() {
     graphFuzzTests();
     controlGraphTests();
     controlOperatorTests();
+    eventLogicTests();
     if(failures!=0) {
         std::cerr<<failures<<" of "<<checks<<" FX checks failed\n";
         return 1;

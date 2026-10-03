@@ -138,8 +138,18 @@ enum class ControlOpType : std::uint8_t {
     None=0,
     Add=1, Subtract=2, Multiply=3, Min=4, Max=5,                 // MATH (inputs A, B)
     ScaleOffset=10, Remap=11, Curve=12, Abs=13, Invert=14, Clamp=15, // SHAPING (input IN)
-    Constant=20, Smooth=21, Quantize=22                          // UTILITY
+    Constant=20, Smooth=21, Quantize=22,                         // UTILITY
+    // N05 EVENT / GATE family.
+    Clock=40, NoteOn=41, NoteOff=42, NoteGate=43, Retrigger=44, Transport=45, // event/gate sources
+    Threshold=50, Edge=51, Pulse=52,                             // conversion
+    Compare=60, And=61, Or=62, Xor=63, Not=64, Switch=65,        // logic
+    SampleHold=70, TrackHold=71, RandomTrigger=72, Toggle=73, Counter=74, // stateful
+    EnvelopeTrigger=80                                           // target: retrigger ENV 2 / ENV 3
 };
+// What a port carries. CONTROL: continuous value. GATE: exactly 0 or 1, with
+// transitions. EVENT: non-zero only at the sample where it occurs (at most one
+// per port per sample; coincident events merge). None: no output (a target).
+enum class ControlSignal : std::uint8_t { None=0, Control=1, Gate=2, Event=3 };
 enum class ControlRange : std::uint8_t { Unipolar=1, Bipolar=2 }; // nominal 0..1 / -1..1
 enum class ControlCurveMode : std::uint8_t { Linear=0, Exponential=1, Logarithmic=2, SCurve=3 };
 struct ControlInput {
@@ -154,7 +164,7 @@ struct ControlOperator {
     std::uint32_t id=0; // 0 = free storage slot (slots never move while in use)
     ControlOpType type=ControlOpType::None;
     std::array<float,controlOpParameterCount> params{};
-    std::array<ControlInput,2> inputs{}; // one connection per input, by construction
+    std::array<ControlInput,3> inputs{}; // one connection per input, by construction (3rd: N05)
 };
 // Stable source identity of an operator's output.
 inline constexpr std::uint32_t controlOperatorSourceBase=0x10000u;
@@ -168,19 +178,66 @@ struct ControlOpParameterInfo { const char* label; float minimum,maximum,default
 struct ControlOpInfo {
     ControlOpType type;
     const char* label;
-    const char* category; // "Math" / "Shaping" / "Utility"
-    std::uint8_t inputs;  // 0, 1 (IN) or 2 (A, B)
+    const char* category; // "Math" / "Shaping" / "Utility" / N05: "Sources" / "Conversion" / "Logic" / "Stateful" / "Targets"
+    std::uint8_t inputs;  // 0..3
     std::uint8_t parameterCount;
     std::array<ControlOpParameterInfo,controlOpParameterCount> parameters;
+    // Typed ports (N05). Defaults describe the N04 CONTROL operators.
+    std::array<ControlSignal,3> inputSignals{{ControlSignal::Control,ControlSignal::Control,ControlSignal::Control}};
+    ControlSignal output=ControlSignal::Control;
+    std::array<const char*,3> inputNames{{nullptr,nullptr,nullptr}}; // null: "IN" / "A" / "B"
+    bool voiceOnly=false; // evaluated inside each voice (note events, envelope targets)
+    bool family=false;    // true: EVENT / LOGIC catalog family
 };
 const ControlOpInfo* controlOpInfo(ControlOpType) noexcept;
-const std::array<ControlOpType,15>& controlOpCatalog() noexcept;
+const std::array<ControlOpType,15>& controlOpCatalog() noexcept; // N04 CONTROL operators (+ None)
+const std::array<ControlOpType,21>& controlEventOpCatalog() noexcept; // N05 EVENT / LOGIC nodes
+const char* controlInputName(const ControlOpInfo&,std::size_t input) noexcept;
+// N05 timing / note context of one sample (global part set by the engine,
+// voice part set by each voice).
+struct ControlEventContext {
+    double beats=0.0;          // quarter-note position at this sample
+    double beatsPerSample=0.0; // tempo / 60 / sample rate
+    double sampleRate=48000.0;
+    bool transportStart=false,transportStop=false;
+    bool noteOn=false,noteOff=false,retrigger=false,gate=false; // this voice
+};
+// Values prepared at compile time (never computed per sample).
+struct ControlOpPrepared {
+    float rise=1.0f,fall=1.0f;     // SMOOTH
+    std::int32_t pulseSamples=1;   // PULSE
+    double clockStep=0.0;          // CLOCK free-running phase per sample
+    double divisionBeats=1.0;      // CLOCK tempo division in quarter notes
+    double switchStep=1.0;         // SWITCH crossfade per sample
+};
+ControlOpPrepared prepareControlOp(const ControlOperator&,double sampleRate) noexcept;
+// CLOCK divisions (quarter notes): 1/1 1/2 1/4 1/8 1/16 1/32 1/4T 1/8T 1/16T 1/4D 1/8D 1/16D.
+inline constexpr std::size_t clockDivisionCount=12;
+double clockDivisionBeats(int index) noexcept;
+const char* clockDivisionLabel(int index) noexcept;
 ControlOperator makeControlOperator(ControlOpType,std::uint32_t id) noexcept;
 // Pure evaluation of one operator (shared by the realtime evaluator and tests).
 // `state` is the operator's persistent state (SMOOTH); `smoothing` its
 // prepared rise/fall coefficients. Unconnected inputs: ADD/SUB 0, MULTIPLY 1,
 // MIN/MAX pass the other input.
-struct ControlOpRuntime { float value=0.0f; bool initialized=false; std::uint32_t id=0; };
+// Per-instance runtime state (global: one; per-voice: one per voice). Reset
+// rules are documented in NODES_ARCHITECTURE.md section 15.
+struct ControlOpRuntime {
+    float value=0.0f; bool initialized=false; std::uint32_t id=0;
+    double phase=0.0;          // CLOCK free phase / SWITCH mix
+    std::int64_t index=0;      // CLOCK tempo cell
+    std::uint32_t rng=0;       // RANDOM
+    std::int32_t counter=0;    // COUNTER position / PULSE remaining samples
+    bool gate=false;           // THRESHOLD / TOGGLE state
+    bool previous=false;       // EDGE previous gate
+};
+struct ControlOpInputs {
+    std::array<float,3> value{};
+    std::array<bool,3> connected{};
+    std::array<ControlRange,3> range{{ControlRange::Unipolar,ControlRange::Unipolar,ControlRange::Unipolar}};
+};
+float evaluateControlOp(const ControlOperator&,const ControlOpInputs&,ControlOpRuntime&,
+                        const ControlOpPrepared&,const ControlEventContext&) noexcept;
 float evaluateControlOp(const ControlOperator&,float a,bool aConnected,ControlRange aRange,
                         float b,bool bConnected,ControlRange bRange,
                         ControlOpRuntime& state,float riseCoefficient,float fallCoefficient) noexcept;
@@ -395,6 +452,7 @@ private:
 
 struct ModulationFrame {
     std::array<OscillatorModuleState,16> modules{};
+    ControlEventContext events{}; // N05: timing (global) + note state (per voice)
     // N04: operator outputs by storage slot (global operators evaluated in the
     // global frame; per-voice operators overwrite theirs inside each voice).
     std::array<float,ModulationState::maxControlOperators> operatorOutputs{};
@@ -424,7 +482,13 @@ public:
     bool hasGlobalOperators() const noexcept { return globalOpCount_!=0; }
     bool hasVoiceOperators() const noexcept { return voiceOpCount_!=0; }
     void evaluateGlobalOperators(ModulationFrame&,const std::array<float,globalSourceCount>&) noexcept;
-    void evaluateVoiceOperators(ModulationFrame&,const std::array<float,voiceSourceCount>&,OperatorState&) const noexcept;
+    void evaluateVoiceOperators(ModulationFrame&,const std::array<float,voiceSourceCount>&,OperatorState&,
+                                std::array<std::uint32_t,operatorSlotCount>* eventCounts=nullptr) const noexcept;
+    // N05: ENV 2 / ENV 3 retrigger requests produced this sample (bit 1 / 2).
+    std::uint8_t envelopeTriggers(const ModulationFrame&) const noexcept;
+    bool hasEnvelopeTriggers() const noexcept { return envelopeTriggerCount_!=0; }
+    bool needsEventContext() const noexcept { return eventOps_; }
+    const std::array<std::uint32_t,operatorSlotCount>& globalEventCounts() const noexcept { return globalEventCounts_; }
     void resetOperatorState() noexcept { globalOpState_={}; }
     void compile(const ModulationState&,const std::array<OscillatorModuleState,16>&,bool immediate=false) noexcept;
     void advance(float smoothing) noexcept;
@@ -464,10 +528,11 @@ private:
     struct CompiledOp {
         ControlOperator op{};
         std::uint8_t slot=0;                 // storage slot = output slot
-        std::array<std::int16_t,2> input{{-1,-1}}; // <26: source slot, >=26: 26+operator slot, -1: none
-        std::array<ControlRange,2> range{{ControlRange::Unipolar,ControlRange::Unipolar}};
+        std::array<std::int16_t,3> input{{-1,-1,-1}}; // <26: source slot, >=26: 26+operator slot, -1: none
+        std::array<ControlRange,3> range{{ControlRange::Unipolar,ControlRange::Unipolar,ControlRange::Unipolar}};
         bool voice=false;
-        float rise=1.0f,fall=1.0f;           // SMOOTH coefficients (prepared at compile)
+        bool event=false;                    // output is an EVENT (counted for monitoring)
+        ControlOpPrepared prepared{};
     };
     float runOperator(const CompiledOp&,const std::array<float,voiceSourceCount>*,const ModulationFrame&,ControlOpRuntime&) const noexcept;
     float operatorRouteValue(std::size_t operatorSlot,float raw,bool bipolar) const noexcept;
@@ -478,6 +543,10 @@ private:
     std::array<bool,operatorSlotCount> opVoice_{};
     OperatorState globalOpState_{};
     double sampleRate_=48000.0;
+    std::array<std::uint32_t,operatorSlotCount> globalEventCounts_{};
+    std::array<std::uint8_t,operatorSlotCount> envelopeTriggerSlots_{},envelopeTriggerTargets_{};
+    std::size_t envelopeTriggerCount_=0;
+    bool eventOps_=false;
     static float read(const ModulationFrame&,const Group&) noexcept;
     static void write(ModulationFrame&,const Group&,float normalized) noexcept;
     std::array<Group,ModulationState::capacity> groups_{};

@@ -72,6 +72,7 @@ public:
     // mct-origami-fx-modulation-graph-ux-p03: latest per-voice sources, kept
     // only while FX destinations use voice sources (newest-voice policy).
     const std::array<float,CompiledModulation::voiceSourceCount>& lastSources() const noexcept { return lastSources_; }
+    const std::array<std::uint32_t,CompiledModulation::operatorSlotCount>& operatorEventCounts() const noexcept { return operatorEventCounts_; }
     // mct-origami-unified-routing-core-fx-p04: user-bus outputs of the last
     // sample (L/R per user bus slot 1..7). Valid only while the plan's
     // auxActive is set; zeroed every sample in that case.
@@ -81,6 +82,10 @@ private:
     AuxSamples aux_{};
     std::array<float,CompiledModulation::voiceSourceCount> lastSources_{};
     CompiledModulation::OperatorState operatorState_{}; // N04: this voice's operator state (SMOOTH)
+    // N05: note events raised by start / retarget / release, consumed at this
+    // voice's next sample (the exact MIDI sample: hosts split at event offsets).
+    bool pendingNoteOn_=false,pendingNoteOff_=false,pendingRetrigger_=false;
+    std::array<std::uint32_t,CompiledModulation::operatorSlotCount> operatorEventCounts_{}; // monitoring only
     // mct-origami-unison-detune-v19.2
     static constexpr unsigned maxOscillatorModules = 16;
     static constexpr unsigned maxUnisonVoices = 16;

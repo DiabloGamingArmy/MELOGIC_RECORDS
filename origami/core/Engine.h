@@ -26,6 +26,8 @@ struct RuntimeVisualizationSnapshot {
     // evaluator reads them (global slots, then the newest voice's slots; voice
     // slots are 0 while no voice sounds). Feeds the Matrix route monitors.
     ModulationSourceSlots routeSources{};
+    // N05: monotonic per-operator EVENT counters (activity display only).
+    std::array<std::uint32_t,ModulationState::maxControlOperators> operatorEvents{};
     float chaosY=0.5f;
     std::array<OscillatorModuleId,16> moduleIds{};
     std::array<float,16> oscillatorPhases{};
@@ -48,6 +50,13 @@ public:
     bool restoreInstrumentState(const InstrumentState&) noexcept; // exclusive, transactional
     // mct-origami-fx-graph-dsp-bus-routing-p02: canonical bus list (Mixer-owned later).
     bool setBusState(const BusState&) noexcept;
+    // mct-origami-nodes-n05-events-logic: host tempo/transport, sampled once
+    // per callback by the host adapter (render thread, before beginHostBlock).
+    // The engine advances a sample-exact beat position from it; CLOCK and
+    // TRANSPORT nodes read that position. No UI timing is ever involved.
+    struct HostTransport { double bpm=120.0; double ppq=0.0; bool ppqValid=false; bool playing=false; };
+    void setHostTransport(const HostTransport&) noexcept;
+    double transportBeats() const noexcept { return beats_; }
     // mct-origami-fx-modulation-graph-ux-p03
     // FX destinations of the canonical modulation system, evaluated per span
     // (audio thread; read by the FX renderer on the same thread).
@@ -182,6 +191,8 @@ private:
     BusState buses_{}; // non-realtime model; the renderer only reads BUS 1 sends
     std::array<float,CompiledModulation::globalSourceCount> lastGlobalSources_{};
     std::array<float,CompiledModulation::operatorSlotCount> lastGlobalOperators_{};
+    double beats_=0.0,transportBpm_=120.0;
+    bool transportPlaying_=false,pendingTransportStart_=false,pendingTransportStop_=false;
     FxModulationOutput fxModulation_{};
     std::atomic<bool> masterAfterFx_{false};
     bool hostMasterAfterFx_=false;

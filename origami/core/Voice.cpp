@@ -24,8 +24,12 @@ void Voice::start(NoteAddress address,float velocity,std::uint64_t order,const d
     reset();address_=address;velocity_=velocity;order_=order;
     frequency_=targetFrequency_=dsp::midiFrequency(address.note);glideRatio_=1.0;glideRemaining_=0;
     active_=true;envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);
+    // A fresh (or stolen) voice: NOTE ON, never RETRIGGER; state was reset.
+    pendingNoteOn_=true;pendingNoteOff_=false;pendingRetrigger_=false;
 }
 void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3,float glideSeconds,bool retriggerEnvelope) noexcept {
+    // RETRIGGER: a new note on a voice that is still sounding (mono/legato).
+    pendingRetrigger_=active_;pendingNoteOn_=true;pendingNoteOff_=false;
     address_=address;velocity_=velocity;order_=order;active_=true;releasing_=false;
     targetFrequency_=dsp::midiFrequency(address.note);
     const auto samples=glideSeconds>0.0f ? static_cast<std::size_t>(std::round(glideSeconds*sampleRate_)) : 0u;
@@ -38,7 +42,7 @@ void Voice::retarget(NoteAddress address,float velocity,std::uint64_t order,cons
     if(retriggerEnvelope) {envelope_.noteOn(settings);env2_.noteOn(env2);env3_.noteOn(env3);for(auto& lfo:noteLfos_)lfo.reset();operatorState_={};}
 }
 void Voice::release(const dsp::EnvelopeSettings& settings,const dsp::EnvelopeSettings& env2,const dsp::EnvelopeSettings& env3) noexcept {
-    if(active_){releasing_=true;envelope_.noteOff(settings);env2_.noteOff(env2);env3_.noteOff(env3);}
+    if(active_){releasing_=true;envelope_.noteOff(settings);env2_.noteOff(env2);env3_.noteOff(env3);pendingNoteOff_=true;}
 }
 Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& tables,const ModulationFrame& global,
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
@@ -69,12 +73,24 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     if(compiled.hasFxVoiceRoutes()) lastSources_=voiceSources;
     auto& local=localFrame_;const ModulationFrame* effective=&global;
     const bool voiceOperators=compiled.hasVoiceOperators();
+    const bool noteOn=pendingNoteOn_,noteOff=pendingNoteOff_,retrigger=pendingRetrigger_;
+    pendingNoteOn_=pendingNoteOff_=pendingRetrigger_=false;
     if(compiled.hasVoiceRoutes() || voiceOperators) {
         local=global;
         // N04 per-voice CONTROL operators: this voice's sources, this voice's state.
-        if(voiceOperators) compiled.evaluateVoiceOperators(local,voiceSources,operatorState_);
+        if(voiceOperators) {
+            local.events.noteOn=noteOn;local.events.noteOff=noteOff;
+            local.events.retrigger=retrigger;local.events.gate=!releasing_;
+            compiled.evaluateVoiceOperators(local,voiceSources,operatorState_,&operatorEventCounts_);
+        }
         if(compiled.hasVoiceRoutes()) compiled.voiceFrame(local,voiceSources,sampleRate_);
         effective=&local;
+    }
+    // N05 targets act after this sample's evaluation (effective next sample).
+    if(compiled.hasEnvelopeTriggers()) {
+        const auto mask=compiled.envelopeTriggers(*effective);
+        if(mask&2u) env2_.noteOn(modulation.env2);
+        if(mask&4u) env3_.noteOn(modulation.env3);
     }
     if(observe && voiceOperators) visualization_.operators=effective->operatorOutputs;
     const auto& modules=effective->modules;

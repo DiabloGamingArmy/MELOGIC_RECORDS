@@ -480,6 +480,17 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         if(compiledModulation_.usesGlobalSource(12) && (audioModulation_.generatorActiveMask&0x10u))
             sources[12]=globalSequencer_.next(audioModulation_.sequencer,sampleRate_);
 
+        // N05 timing context of this sample (beat position, transport events).
+        const double beatsPerSample=transportBpm_/60.0/sampleRate_;
+        if(compiledModulation_.hasOperators()) {
+            frame.events.beats=beats_;
+            frame.events.beatsPerSample=beatsPerSample;
+            frame.events.sampleRate=sampleRate_;
+            frame.events.transportStart=pendingTransportStart_;
+            frame.events.transportStop=pendingTransportStop_;
+        }
+        pendingTransportStart_=pendingTransportStop_=false;
+        beats_+=beatsPerSample;
         // N04 global CONTROL operators: once per sample, before the global
         // frame reads their outputs (compiled plan; never when unused).
         if(compiledModulation_.hasOperators()) compiledModulation_.evaluateGlobalOperators(frame,sources);
@@ -509,6 +520,14 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 runtimeVisualization_.routeSources[i]=sources[i];
             for(std::size_t i=0;i<CompiledModulation::operatorSlotCount;++i)
                 runtimeVisualization_.routeSources[CompiledModulation::sourceSlotCount+i]=frame.operatorOutputs[i];
+            if(compiledModulation_.needsEventContext()) {
+                // Monotonic event counters (UI activity only; summed over voices
+                // purely for display, never fed back into DSP).
+                auto counts=compiledModulation_.globalEventCounts();
+                for(const auto& voice:voices_)
+                    for(std::size_t i=0;i<counts.size();++i) counts[i]+=voice.operatorEventCounts()[i];
+                runtimeVisualization_.operatorEvents=counts;
+            }
         } else if(runtimeVisualizationCountdown_>0) {
             --runtimeVisualizationCountdown_;
         }
@@ -660,6 +679,18 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
     }
     return true;
 }
+void OrigamiEngine::setHostTransport(const HostTransport& transport) noexcept {
+    // Transport changes are reported at a block boundary: their event lands on
+    // the block's first sample (the host provides nothing finer).
+    if(transport.playing && !transportPlaying_) pendingTransportStart_=true;
+    if(!transport.playing && transportPlaying_) pendingTransportStop_=true;
+    transportPlaying_=transport.playing;
+    transportBpm_=std::isfinite(transport.bpm) ? std::clamp(transport.bpm,20.0,400.0) : 120.0;
+    // Host-synced: resync to the host position every block (no drift). Free:
+    // keep advancing at the tempo from where we are.
+    if(transport.playing && transport.ppqValid && std::isfinite(transport.ppq)) beats_=transport.ppq;
+}
+
 OscillatorModuleId OrigamiEngine::addOscillatorModule() noexcept {
     OscillatorModuleState s;
     s.enabled=true;
