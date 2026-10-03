@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
@@ -66,8 +67,11 @@ struct FxSourceDescriptor {
 const std::array<FxSourceDescriptor,5>& fxSourceCatalog() noexcept;
 const FxSourceDescriptor* findFxSource(FxSourceType) noexcept;
 
+// Comb (5) is a legacy id: P04 folded it into FILTER (TYPE = COMB). Old
+// graphs are migrated on decode; Comb is no longer in the catalog.
 enum class FxEffectType : std::uint16_t {
-    None=0, Drive=1, Delay=2, Reverb=3, Chorus=4, Comb=5, Diffuse=6, Limiter=7
+    None=0, Drive=1, Delay=2, Reverb=3, Chorus=4, Comb=5, Diffuse=6, Limiter=7,
+    Filter=8, Compressor=9, Equalizer=10, Flanger=11, Phaser=12, Spatial=13, Gain=14, StereoUtility=15
 };
 
 // Routing workflows. All of them edit the SAME canonical graph; they are not
@@ -76,8 +80,12 @@ enum class FxRoutingMode : std::uint8_t { Serial=1, Parallel=2, Split=3, Send=4,
 
 enum class FxParameterPage : std::uint8_t { Main=1, Advanced=2 };
 enum class FxParameterCurve : std::uint8_t { Linear=1, Exponential=2, Choice=3 };
-enum class FxCategory : std::uint8_t { Drive=1, Time=2, Space=3, Modulation=4, Filter=5, Dynamics=6 };
-enum class FxVisual : std::uint8_t { Transfer=1, Taps=2, Decay=3, Lfo=4, Comb=5, Diffusion=6, Dynamics=7 };
+enum class FxCategory : std::uint8_t { Distortion=1, Time=2, Spatial=3, Modulation=4, FilterEq=5, Dynamics=6, Utility=7 };
+const char* fxCategoryName(FxCategory) noexcept;
+enum class FxVisual : std::uint8_t {
+    Transfer=1, Taps=2, Decay=3, Lfo=4, Comb=5, Diffusion=6, Dynamics=7,
+    FilterResponse=8, EqResponse=9, Compressor=10, Phaser=11, Spatial=12, Utility=13
+};
 
 // Canonical values are normalized [0,1] and keyed by stable parameter ID.
 // minimum/maximum/curve/unit define the ONE physical mapping shared by DSP,
@@ -93,11 +101,18 @@ struct FxParameterDescriptor {
     FxParameterCurve curve;
     const char* unit;
     int choices=0;      // Choice curve: number of discrete states
+    const char* const* choiceLabels=nullptr;
+    // Variant/mode system: visible (and DSP-relevant) only when the choice
+    // parameter `modeParameter` is at an index whose bit is set in modeMask.
+    FxParameterId modeParameter=0;
+    std::uint32_t modeMask=0xffffffffu;
 };
 float fxParameterValue(const FxParameterDescriptor&,float normalized) noexcept;
 std::string fxParameterText(const FxParameterDescriptor&,float normalized);
+int fxChoiceIndex(const FxParameterDescriptor&,float normalized) noexcept;
+float fxChoiceNormalized(const FxParameterDescriptor&,int index) noexcept;
 
-inline constexpr std::size_t maxFxParameters=8;
+inline constexpr std::size_t maxFxParameters=48;
 
 // Realtime DSP contract. prepare() allocates and runs off the audio thread;
 // reset() and process() are allocation-free and lock-free. params are the
@@ -126,6 +141,7 @@ struct FxEffectDescriptor {
 // processesAudio==true has a verified DSP implementation.
 const std::vector<FxEffectDescriptor>& fxEffectCatalog() noexcept;
 const FxEffectDescriptor* findFxEffect(FxEffectType) noexcept;
+const FxParameterDescriptor* findFxParameter(const FxEffectDescriptor&,FxParameterId) noexcept;
 
 // Canvas units are device-independent graph coordinates (one unit equals one
 // design pixel at 100% editor zoom). They are not tied to a window size.
@@ -148,6 +164,8 @@ struct FxNode {
     std::vector<FxParameterValue> parameters;
 
     std::optional<float> parameter(FxParameterId) const noexcept;
+    // True when the parameter applies to this node's current mode/type.
+    bool parameterVisible(const FxParameterDescriptor&) const noexcept;
     bool isRouting() const noexcept { return kind==FxNodeKind::Split || kind==FxNodeKind::Merge; }
 };
 
@@ -314,8 +332,8 @@ private:
 std::vector<std::uint8_t> encodeFxGraph(const FxGraph&);
 bool decodeFxGraph(const void*,std::size_t,FxGraph&) noexcept;
 
-// Production default: BUS 1 -> MASTER OUT. Audibly neutral.
-FxGraph makeDefaultFxGraph();
+// Production default for a bus: <BUS> IN -> <BUS> OUT. Audibly neutral.
+FxGraph makeDefaultFxGraph(FxBusId bus=fxMainBusId);
 // TEMPLATES (complete graph presets; each is a valid, audible graph):
 FxGraph makeSerialChainTemplate();      // BUS 1 -> DRIVE -> DELAY -> REVERB -> MASTER OUT
 FxGraph makeParallelTemplate();         // BUS 1 -> SPLIT -> {dry, REVERB 100% wet} -> MERGE -> MASTER OUT

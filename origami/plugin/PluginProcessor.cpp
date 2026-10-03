@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-deep-audit-p07-enforced-qos
@@ -30,6 +31,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include "core/preset/StateCodec.h"
 OrigamiAudioProcessor::OrigamiAudioProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
@@ -41,26 +43,71 @@ OrigamiAudioProcessor::OrigamiAudioProcessor()
     uiArpState_=arpState_;
     // Every committed FX graph change recompiles (topology) or republishes
     // parameters. The audio thread only ever sees prepared plans.
-    fxDocument_.onChanged=[this]{syncFxRenderer();};
+    fxWorkspace_.onChanged=[this]{syncFxRenderer();};
     syncFxRenderer();
 }
 void OrigamiAudioProcessor::syncFxRenderer() {
+    // Render slots follow the canonical bus order (== the engine's slot map).
+    mct::origami::BusState buses;
+    {
+        const juce::ScopedLock lock(stateLock_);
+        buses=uiInstrumentState_.buses;
+    }
+    std::vector<mct::origami::fx::FxEnvironment::BusGraph> slots;
+    for(std::size_t i=0;i<buses.count && i<mct::origami::maxRenderBuses;++i) {
+        const auto id=buses.buses[i].id;
+        const auto* doc=fxWorkspace_.find(id);
+        slots.push_back({id,doc!=nullptr ? &doc->graph() : nullptr});
+    }
     {
         const juce::ScopedLock lock(fxCompileLock_);
-        fxRenderer_.sync(fxDocument_.graph());
+        fxEnvironment_.sync(slots,fxWorkspace_.globals());
     }
-    engine_.setMasterAfterFx(fxDocument_.graph().globals().order==mct::origami::fx::FxOrder::PreMaster);
+    engine_.setMasterAfterFx(fxWorkspace_.globals().order==mct::origami::fx::FxOrder::PreMaster);
     pruneFxModulationRoutes();
+}
+mct::origami::BusId OrigamiAudioProcessor::addUiBus() noexcept {
+    mct::origami::BusId id=0;
+    {
+        const juce::ScopedLock lock(stateLock_);
+        auto buses=uiInstrumentState_.buses;
+        id=mct::origami::addBus(buses);
+        if(id==0 || !engine_.setBusState(buses)) return 0;
+        uiInstrumentState_.buses=buses;
+        uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
+    }
+    fxWorkspace_.document(id); // creates "<BUS> IN -> <BUS> OUT" and resyncs
+    syncFxRenderer();
+    return id;
+}
+bool OrigamiAudioProcessor::removeUiBus(mct::origami::BusId id) noexcept {
+    if(id==mct::origami::mainBusId) return false;
+    {
+        const juce::ScopedLock lock(stateLock_);
+        auto next=uiInstrumentState_;
+        if(!mct::origami::removeBus(next,id)) return false;
+        // Retarget oscillator sends first (the bus still exists), then drop it.
+        for(const auto& module:next.oscillators)
+            if(module.id && !engine_.setOscillatorModuleState(module.id,module)) return false;
+        if(!engine_.setBusState(next.buses)) return false;
+        for(auto& module:uiInstrumentState_.oscillators)
+            if(module.id) module=engine_.oscillatorModuleState(module.id);
+        uiInstrumentState_.buses=next.buses;
+        uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
+    }
+    fxWorkspace_.removeBus(id);
+    syncFxRenderer();
+    return true;
 }
 void OrigamiAudioProcessor::pruneFxModulationRoutes() {
     // FX parameters are destinations of the ONE modulation system. When a node
     // (or the whole graph) disappears its routes go too: no dangling targets.
     using namespace mct::origami;
-    const auto& graph=fxDocument_.graph();
-    const auto alive=[&graph](const ModRoute& r) {
+    const auto alive=[this](const ModRoute& r) {
         if(!isFxDestination(r.destination.parameter)) return true;
-        const auto* node=graph.findNode(r.destination.oscillator);
-        return node!=nullptr && node->parameter(static_cast<fx::FxParameterId>(r.destination.itemId)).has_value();
+        const auto* doc=fxWorkspace_.find(fxAddressBus(r.destination));
+        const auto* node=doc!=nullptr ? doc->graph().findNode(r.destination.oscillator) : nullptr;
+        return node!=nullptr && node->parameter(fxAddressParameter(r.destination)).has_value();
     };
     const juce::ScopedLock lock(stateLock_);
     auto mod=uiInstrumentState_.modulation;
@@ -88,9 +135,13 @@ void OrigamiAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock
     {
         // Audio is stopped here: effect memory is (re)allocated for this rate.
         const juce::ScopedLock lock(fxCompileLock_);
-        fxRenderer_.prepare(sampleRate_);
-        fxRenderer_.sync(fxDocument_.graph());
+        fxEnvironment_.prepare(sampleRate_);
+        // User-bus buffers: generous fixed capacity, allocated here only.
+        auxCapacity_=juce::jmax(8192,samplesPerBlock*2);
+        auxStorage_.assign(std::size_t(auxCapacity_)*auxPointers_.size(),0.0f);
+        for(std::size_t i=0;i<auxPointers_.size();++i) auxPointers_[i]=auxStorage_.data()+i*std::size_t(auxCapacity_);
     }
+    syncFxRenderer();
     // Patch 03/19: commit scheduler storage before realtime rendering begins.
     inputMidiScratch_.clear();
     scheduledMidiScratch_.clear();
@@ -106,8 +157,10 @@ void OrigamiAudioProcessor::renderRange(juce::AudioBuffer<float>& buffer, int st
     if (count <= 0) return;
     continuityRequestedSamples_.fetch_add(static_cast<std::uint64_t>(count),std::memory_order_relaxed);
     std::array<float*, 2> channels { buffer.getWritePointer(0, start), buffer.getWritePointer(1, start) };
+    std::array<float*,2*(mct::origami::maxRenderBuses-1)> aux{};
+    if(auxThisBlock_) for(std::size_t i=0;i<aux.size();++i) aux[i]=auxPointers_[i]+start;
     const bool rendered=prepared_
-        && engine_.processSpan(channels.data(),2u,static_cast<std::size_t>(count));
+        && engine_.processSpan(channels.data(),2u,static_cast<std::size_t>(count),auxThisBlock_ ? aux.data() : nullptr);
     if(!rendered) {
         continuitySpanFailures_.fetch_add(1,std::memory_order_relaxed);
         buffer.clear(start,count);
@@ -574,6 +627,9 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
         return;
     }
 
+    // User buses render into prepared buffers; an oversized host block (beyond
+    // the prepared capacity) renders MAIN only rather than ever allocating.
+    auxThisBlock_=auxCapacity_>=total && !auxStorage_.empty();
     const auto renderScheduled=[&](const juce::MidiBuffer& events) noexcept {
         int cursor=0;
         for(const auto metadata:events) {
@@ -591,11 +647,12 @@ void OrigamiAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce:
     else renderScheduled(inputMidi);
     engine_.endHostBlock();
 
-    // BUS 1 -> prepared FX plan -> MASTER OUT. Allocation/lock free; the
-    // neutral graph is a bit-exact pass-through.
+    // Every bus -> its prepared FX graph -> master sum -> GLOBAL FX.
+    // Allocation/lock free; MAIN-only neutral state is a bit-exact pass-through.
     if(buffer.getNumChannels()>=2)
-        fxRenderer_.process(buffer.getWritePointer(0),buffer.getWritePointer(1),total,
-                            &engine_.fxModulationOutput(),engine_.masterAfterFxActive(),engine_.blockMasterGain());
+        fxEnvironment_.process(buffer.getWritePointer(0),buffer.getWritePointer(1),
+                               auxThisBlock_ ? auxPointers_.data() : nullptr,engine_.renderBusCount(),total,
+                               &engine_.fxModulationOutput(),engine_.masterAfterFxActive(),engine_.blockMasterGain());
 
     bool callbackHasSignal=false;
     float callbackPeak=0.0f,callbackMaxDelta=0.0f;
@@ -683,12 +740,12 @@ void OrigamiAudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
         for(int shift=24;shift>=0;shift-=8)
             bytes.push_back(static_cast<std::uint8_t>(value>>shift));
     };
-    // FX graph trailer: [graph bytes][length][FXG2]. States without it (all
-    // pre-P02 presets) restore the neutral BUS 1 -> MASTER OUT graph.
-    const auto fx=mct::origami::fx::encodeFxGraph(fxDocument_.graph());
+    // FX trailer: [workspace bytes][length][FXW1] (all bus graphs + Global FX).
+    // P02/P03 states carry [graph][length][FXG2]; older states none (neutral).
+    const auto fx=fxWorkspace_.encode();
     bytes.insert(bytes.end(),fx.begin(),fx.end());
     appendWord(static_cast<std::uint32_t>(fx.size()));
-    appendWord(fxStateMagic);
+    appendWord(fxWorkspaceMagic);
     appendWord(visualMagic);
     appendWord(visualizationMask_.load(std::memory_order_acquire));
     dest.replaceAll(bytes.data(),bytes.size());
@@ -712,7 +769,8 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
         }
     }
 
-    auto fxGraph=mct::origami::fx::makeDefaultFxGraph();
+    std::vector<std::uint8_t> workspaceBytes;
+    std::optional<mct::origami::fx::FxGraph> legacyGraph;
     if(instrumentSize>=8) {
         const auto* bytes=static_cast<const std::uint8_t*>(data);
         const auto readWord=[bytes](int offset) {
@@ -720,11 +778,18 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
             for(int i=0;i<4;++i) value=(value<<8)|bytes[offset+i];
             return value;
         };
-        if(readWord(instrumentSize-4)==fxStateMagic) {
+        const auto tag=readWord(instrumentSize-4);
+        if(tag==fxStateMagic || tag==fxWorkspaceMagic) {
             const auto length=static_cast<int>(readWord(instrumentSize-8));
             if(length<0 || length>instrumentSize-8) return;
             const int start=instrumentSize-8-length;
-            if(!mct::origami::fx::decodeFxGraph(bytes+start,static_cast<std::size_t>(length),fxGraph)) return;
+            if(tag==fxWorkspaceMagic) {
+                workspaceBytes.assign(bytes+start,bytes+start+length);
+            } else {
+                mct::origami::fx::FxGraph graph;
+                if(!mct::origami::fx::decodeFxGraph(bytes+start,static_cast<std::size_t>(length),graph)) return;
+                legacyGraph=std::move(graph);
+            }
             instrumentSize=start;
         }
     }
@@ -734,8 +799,12 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     mct::origami::InstrumentState state;
     if(!mct::origami::decodeInstrumentState(
             data,static_cast<std::size_t>(instrumentSize),state)) return;
-    fxDocument_.replace(std::move(fxGraph));
+    if(!workspaceBytes.empty()) {
+        mct::origami::fx::FxWorkspace probe; // validate before touching anything
+        if(!probe.decode(workspaceBytes.data(),workspaceBytes.size())) return;
+    }
 
+    {
     const juce::ScopedLock lock(stateLock_);
     uiInstrumentState_=state;
     uiOscillatorRevision_.fetch_add(1,std::memory_order_release);
@@ -744,6 +813,18 @@ void OrigamiAudioProcessor::setStateInformation(const void* data, int size) {
     // Keep the independent performance mailbox generation coherent with the
     // complete restore. Any subsequent UI performance edit overwrites this.
     performanceMailbox_.publish(uiPerformanceState_);
+    }
+    // FX: the saved bus graphs, else the P02/P03 MAIN graph (its globals become
+    // Global FX), else neutral. Then exactly one graph per canonical bus.
+    auto notify=std::move(fxWorkspace_.onChanged);
+    fxWorkspace_.onChanged=nullptr;
+    if(!workspaceBytes.empty()) fxWorkspace_.decode(workspaceBytes.data(),workspaceBytes.size());
+    else if(legacyGraph) fxWorkspace_.adoptLegacyMainGraph(std::move(*legacyGraph));
+    else fxWorkspace_.reset();
+    for(std::size_t i=0;i<state.buses.count;++i) fxWorkspace_.document(state.buses.buses[i].id);
+    for(const auto bus:fxWorkspace_.buses()) if(state.buses.find(bus)==nullptr) fxWorkspace_.removeBus(bus);
+    fxWorkspace_.onChanged=std::move(notify);
+    syncFxRenderer();
 }
 
 std::uint32_t OrigamiAudioProcessor::getUiVisualizationMask() const noexcept {

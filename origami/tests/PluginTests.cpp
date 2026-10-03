@@ -1834,7 +1834,8 @@ void fxWorkspaceP03Audit() {
     check(feedbackKnob!=nullptr,"delay feedback knob");
     const auto& props=feedbackKnob->getProperties();
     check(int(props["mct.mod.destination"])==int(mct::origami::ModDestination::FxParameter)
-          && unsigned(int(props["mct.mod.oscillator"]))==delay && int(props["mct.mod.itemId"])==2,
+          && unsigned(int(props["mct.mod.oscillator"]))==delay
+          && std::uint32_t(int(props["mct.mod.itemId"]))==mct::origami::fxParameterAddress(delay,2).itemId,
           "FX knob advertises a stable canonical destination (node + parameter id)");
 
     // Cross-page drag: Synth -> hover FX tab -> FX opens -> same drag drops on a knob.
@@ -1965,14 +1966,15 @@ void fxWorkspaceP03Audit() {
     bool envDrag=false;
     for(const auto& r:modulators) envDrag|=r.label=="ENV 1" && r.dragDescription=="MCT_MOD_SOURCE:1";
     check(envDrag,"MODULATORS drag the same source description as SYNTH");
-    bool splitRow=false,sendPending=false,bus1=false,filterTruth=false;
-    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Routes)) {
-        splitRow|=r.label=="SPLIT" && r.dragDescription=="MCT_FX_MODULE:1001";
-        sendPending|=r.label=="SEND" && !r.enabled;
+    bool mainBus=false,addBus=false,mainInput=false,filterTruth=false;
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Buses)) {
+        mainBus|=r.label=="MAIN" && r.active && !r.onSecondaryClick; // selected, not deletable
+        addBus|=r.label=="+ ADD BUS" && bool(r.onClick);
     }
-    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Sources)) bus1|=r.label=="BUS 1" && r.active;
-    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Filters)) filterTruth|=r.label=="FILTER 1" && r.detail.contains("before BUS 1");
-    check(splitRow && sendPending && bus1 && filterTruth,"SOURCES / FILTERS / ROUTES rows are truthful");
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Sources)) mainInput|=r.label=="MAIN IN" && r.active;
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Filters))
+        filterTruth|=r.label=="FILTER 1" && r.detail.contains("before buses") && r.dragDescription=="MCT_SYNTH_FILTER:1";
+    check(mainBus && addBus && mainInput && filterTruth,"SOURCES / FILTERS / BUSES rows are truthful");
 
     // Clear: Origami-native confirmation, one undoable transaction.
     const auto beforeClear=page->graph();
@@ -1991,7 +1993,8 @@ void fxWorkspaceP03Audit() {
     walk(*editor,[&](auto& c){if(auto* combo=dynamic_cast<juce::ComboBox*>(&c)) if(combo->getName()=="FX Global order") order=combo;});
     check(order && order->isEnabled() && order->getNumItems()==2,"FX ORDER is a real choice");
     order->setSelectedId(int(FxOrder::PreMaster),juce::sendNotificationSync);
-    check(p.getUiFxDocument().graph().globals().order==FxOrder::PreMaster,"FX ORDER edits the canonical globals");
+    check(p.getUiFxWorkspace().globals().order==FxOrder::PreMaster,"FX ORDER edits the canonical Global FX settings");
+    check(p.getUiFxDocument().graph().globals().order==FxOrder::PostMaster,"Global FX is not stored in (or applied as) MAIN bus FX");
 }
 
 void fxModulationAudioAudit() {
@@ -2031,7 +2034,7 @@ void fxModulationAudioAudit() {
         auto owner=std::make_unique<OrigamiAudioProcessor>(); auto& q=*owner;
         q.prepareToPlay(48000.0,blockSize);
         disableExtraOscillators(q);
-        q.getUiFxDocument().edit([&](FxGraph& g){FxGlobalSettings s=g.globals();s.order=order;g.setGlobals(s);return true;});
+        FxGlobalSettings s=q.getUiFxWorkspace().globals();s.order=order;q.getUiFxWorkspace().setGlobals(s);
         juce::AudioBuffer<float> audio(2,blockSize);
         juce::MidiBuffer midi;
         midi.addEvent(juce::MidiMessage::noteOn(1,57,1.0f),0);
@@ -2042,6 +2045,124 @@ void fxModulationAudioAudit() {
     };
     const double post=orderRms(FxOrder::PostMaster),pre=orderRms(FxOrder::PreMaster);
     check(post>0.001 && std::abs(pre/post-1.0)<0.02,"PRE MASTER with a linear graph preserves level (master moved after FX)");
+}
+
+// mct-origami-unified-routing-core-fx-p04
+void busWorkspaceP04Audit() {
+    using namespace mct::origami::fx;
+    constexpr int blockSize=256;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,blockSize);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    ui::FxPage* page=nullptr;
+    walk(*editor,[&](auto& c){if(auto* candidate=dynamic_cast<ui::FxPage*>(&c)) page=candidate;});
+    check(page!=nullptr,"FX page");
+    check(p.getUiInstrumentState().buses.count==1 && p.getUiInstrumentState().buses.buses[0].label()=="MAIN","MAIN exists by default");
+    check(!p.removeUiBus(mct::origami::mainBusId),"MAIN cannot be deleted");
+
+    // MAIN graph content, then add BUS 1 from the FX workspace.
+    page->document().edit([](FxGraph& g){return g.insertEffectBeforeOutput(FxEffectType::Delay)!=0;});
+    page->syncFromModel();
+    const auto mainGraph=page->graph();
+    const auto bus=page->addBus();
+    check(bus!=0 && page->selectedBus()==bus && p.getUiInstrumentState().buses.find(bus)->label()=="BUS 1","+ ADD BUS creates and selects BUS 1");
+    check(page->graph().sourceForBus(bus)!=invalidFxNodeId && page->graph().nodes().size()==2,"BUS 1 shows its own neutral graph");
+    bool busRow=false;
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Buses)) busRow|=r.label=="BUS 1" && r.active && bool(r.onSecondaryClick);
+    check(busRow,"BUSES tab lists BUS 1 (selected, deletable)");
+    const auto gainNode=[&]{FxNodeId id=0; page->document().edit([&](FxGraph& g){id=g.insertEffectBeforeOutput(FxEffectType::Gain);return id!=0;}); return id;}();
+    page->syncFromModel();
+    juce::Slider* gainKnob=nullptr;
+    walk(*page->canvas().nodeComponent(gainNode),[&](auto& c){if(auto* sl=dynamic_cast<juce::Slider*>(&c)) if(sl->getName()=="FX "+juce::String(gainNode)+" P1") gainKnob=sl;});
+    check(gainKnob && std::uint32_t(int(gainKnob->getProperties()["mct.mod.itemId"]))==mct::origami::fxParameterAddress(bus,gainNode,1).itemId,
+          "FX knobs on BUS 1 advertise bus-qualified destinations");
+    page->selectBus(mct::origami::mainBusId);
+    check(page->graph()==mainGraph,"switching back: MAIN graph unchanged");
+    page->selectBus(bus);
+    check(page->graph().findNode(gainNode)!=nullptr,"BUS 1 graph persists across switches");
+
+    // Clear only the selected bus.
+    page->requestClear();
+    page->confirmClear();
+    check(page->graph().nodes().size()==2 && p.getUiFxWorkspace().find(mct::origami::mainBusId)->graph()==mainGraph,
+          "CLEAR clears only the selected bus graph");
+    page->undo();
+    check(page->graph().findNode(gainNode)!=nullptr,"undo restores the cleared bus graph");
+
+    // Hidden bus still processes audio: send OSC 1 only to BUS 1, view MAIN.
+    auto module=p.getUiOscillatorState(1);
+    module.busRoutes[0].level=0.0f;
+    check(mct::origami::addOscBusRoute(module,p.getUiInstrumentState().buses,bus,1.0f)==mct::origami::BusRouteResult::Ok
+          && p.setUiOscillatorState(1,module),"OSC 1 -> MAIN 0.0, BUS 1 1.0");
+    page->selectBus(mct::origami::mainBusId);
+    const auto rms=[&]{
+        juce::AudioBuffer<float> audio(2,blockSize);
+        juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,57,1.0f),0);
+        for(int n=0;n<30;++n) { audio.clear();p.processBlock(audio,midi);midi.clear(); }
+        double sum=0.0;
+        for(int n=0;n<16;++n) { audio.clear();p.processBlock(audio,midi);for(int i=0;i<blockSize;++i) sum+=double(audio.getSample(0,i))*audio.getSample(0,i); }
+        return std::sqrt(sum/double(16*blockSize));
+    };
+    const double viaBus=rms();
+    check(viaBus>0.001,"a user bus renders and reaches the output while its graph is not shown");
+    p.getUiFxWorkspace().find(bus)->edit([&](FxGraph& g){return g.setParameter(gainNode,1,0.0f)==FxEditResult::Ok;}); // -48 dB
+    const double quiet=rms();
+    check(quiet<viaBus*0.05,"the hidden bus's FX graph processes its audio");
+
+    // Persistence: buses + their graphs survive save/load.
+    juce::MemoryBlock saved;
+    p.getStateInformation(saved);
+    auto restoredOwner=std::make_unique<OrigamiAudioProcessor>(); auto& restored=*restoredOwner;
+    restored.setStateInformation(saved.getData(),int(saved.getSize()));
+    check(restored.getUiInstrumentState().buses.find(bus) && restored.getUiInstrumentState().buses.find(bus)->label()=="BUS 1"
+          && restored.getUiFxWorkspace().find(bus) && restored.getUiFxWorkspace().find(bus)->graph()==p.getUiFxWorkspace().find(bus)->graph(),
+          "additional buses and their graphs persist through save/load");
+
+    // Delete BUS 1: OSC 1's only audible route goes; it falls back to MAIN at unity.
+    page->selectBus(bus);
+    module=p.getUiOscillatorState(1);
+    mct::origami::removeOscBusRoute(module,0); // keep BUS 1 as the only route
+    p.setUiOscillatorState(1,module);
+    page->requestDeleteBus(bus);
+    check(page->clearConfirmationVisible(),"DELETE BUS asks for confirmation");
+    check(page->deleteBus(bus),"delete BUS 1");
+    const auto after=p.getUiOscillatorState(1);
+    check(page->selectedBus()==mct::origami::mainBusId && !p.getUiFxWorkspace().find(bus)
+          && after.busRouteCount==1 && after.busRoutes[0].bus==mct::origami::mainBusId && after.busRoutes[0].level==1.0f,
+          "deleting a bus removes its graph and returns orphaned oscillators to MAIN");
+
+    // Legacy P02/P03 state: single MAIN graph trailer ('FXG2') with Global FX inside.
+    auto legacyGraph=makeSerialChainTemplate();
+    FxGlobalSettings legacyGlobals;legacyGlobals.outputGainDb=-6.0f;legacyGraph.setGlobals(legacyGlobals);
+    auto bytes=encodeInstrumentState(p.getUiInstrumentState());
+    const auto fx=encodeFxGraph(legacyGraph);
+    bytes.insert(bytes.end(),fx.begin(),fx.end());
+    for(const auto word:{std::uint32_t(fx.size()),std::uint32_t(0x46584732u)}) for(int sh=24;sh>=0;sh-=8) bytes.push_back(std::uint8_t(word>>sh));
+    auto legacyOwner=std::make_unique<OrigamiAudioProcessor>(); auto& legacy=*legacyOwner;
+    legacy.setStateInformation(bytes.data(),int(bytes.size()));
+    auto expected=legacyGraph;expected.setGlobals(FxGlobalSettings{});
+    check(legacy.getUiFxDocument().graph()==expected && legacy.getUiFxWorkspace().globals().outputGainDb==-6.0f,
+          "P02/P03 state: its graph becomes MAIN, its globals become Global FX");
+
+    // FX MODULATORS ring edits the SAME canonical route.
+    FxNodeId delay=0;
+    for(const auto& n:page->graph().nodes()) if(n.effect==FxEffectType::Delay) delay=n.id;
+    page->syncFromModel();
+    juce::Slider* fb=nullptr;
+    walk(*page->canvas().nodeComponent(delay),[&](auto& c){if(auto* sl=dynamic_cast<juce::Slider*>(&c)) if(sl->getName()=="FX "+juce::String(delay)+" P2") fb=sl;});
+    check(fb && editor->assignModulator(mct::origami::ModSource::Env1,*fb),"ENV 1 -> MAIN / DELAY / FB");
+    page->syncFromModel();
+    const ui::FxSidebar::Row* envRow=nullptr;
+    for(const auto& r:page->sidebar().rows(ui::FxSidebar::Tab::Modulators)) if(r.label=="ENV 1") envRow=&r;
+    check(envRow && envRow->magnitudes.size()==1 && envRow->active && envRow->dragDescription=="MCT_MOD_SOURCE:1",
+          "FX modulator row: same drag source as SYNTH, ring for its route");
+    envRow->onMagnitude(envRow->magnitudes[0].routeId,0.25f);
+    float amount=0.0f;
+    for(const auto& r:p.getUiInstrumentState().modulation.routes) if(r.id && r.source==mct::origami::ModSource::Env1) amount=r.amount;
+    check(std::abs(amount-0.25f)<1e-6f,"dragging the ring edits the canonical modulation route");
 }
 
 float blockRms(const juce::AudioBuffer<float>& audio) {
@@ -2143,12 +2264,113 @@ void fxAudioPathAudit() {
     check(p.setUiOscillatorState(1,module) && p.getUiOscillatorState(1).busRoutes[0].level==0.5f,"send level edits persist");
 }
 
+
+
+// mct-origami-modulation-row-consistency
+// A source card's height follows its route count the moment the model changes
+// (no selection or other UI event), and SYNTH / FX MODULATORS show the same
+// shared card fed from the same canonical routes.
+void modulationRowConsistencyAudit() {
+    using mct::origami::ModSource;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    ui::ModulationPanel* synth=nullptr;
+    ui::FxPage* fx=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* m=dynamic_cast<ui::ModulationPanel*>(&c)) synth=m;
+        if(auto* f=dynamic_cast<ui::FxPage*>(&c)) fx=f;});
+    check(synth && fx,"SYNTH modulation panel and FX page");
+    editor->setVisible(true); // hit-testing needs a visible editor, as in a host window
+    fx->sidebar().setTab(ui::FxSidebar::Tab::Modulators);
+    editor->refreshModulationViews();
+
+    const auto* env1=synth->sourceRow(ModSource::Env1);
+    const auto* env2=synth->sourceRow(ModSource::Env2);
+    const auto* fxEnv1=fx->sidebar().modulatorRow(ModSource::Env1);
+    check(env1 && env2 && fxEnv1,"ENV cards exist on SYNTH and FX");
+    check(env1->getName().startsWith("MOD SOURCE TAB") && fxEnv1->getName().startsWith("MOD SOURCE TAB"),
+          "FX MODULATORS hosts the SYNTH card (same component class and look)");
+    const auto envRoutes=[&]{return ui::modulationSourceRoutes(p.getUiInstrumentState().modulation,ModSource::Env1);};
+    const auto sameIds=[](const std::vector<ui::ModulationSourceRoute>& a,const std::vector<ui::ModulationSourceRoute>& b) {
+        if(a.size()!=b.size()) return false;
+        for(std::size_t i=0;i<a.size();++i) if(a[i].id!=b[i].id || a[i].amount!=b[i].amount) return false;
+        return true;
+    };
+    check(envRoutes().empty() && env1->routes().empty() && fxEnv1->routes().empty(),"no ENV 1 assignments yet");
+    const int collapsed=env1->getHeight();
+    const int env2Y=env2->getY();
+    check(collapsed==ui::ModulationSourceRow::baseHeight-2 && fxEnv1->getHeight()==collapsed,"collapsed card height (SYNTH == FX)");
+
+    // Knobs a real drop can land on (top-most component under their centre).
+    std::vector<juce::Slider*> knobs;
+    walk(*editor,[&](auto& c){
+        auto* slider=dynamic_cast<juce::Slider*>(&c);
+        if(slider==nullptr || !slider->isRotary() || !slider->getProperties().contains("mct.mod.destination")) return;
+        if(int(slider->getProperties()["mct.mod.destination"])==int(mct::origami::ModDestination::FxParameter)) return;
+        auto* hit=editor->getComponentAt(editor->getLocalArea(slider,slider->getLocalBounds()).getCentre());
+        while(hit!=nullptr && hit!=slider) hit=hit->getParentComponent();
+        if(hit==slider) knobs.push_back(slider);});
+    check(knobs.size()>=3,"three droppable SYNTH knobs");
+    if(knobs.size()<3) return;
+
+    // 1) Drag-and-drop: the card grows inside the same event.
+    const auto drop=[&](juce::Slider& knob) {
+        juce::DragAndDropTarget::SourceDetails details("MCT_MOD_SOURCE:"+juce::String(int(ModSource::Env1)),
+            const_cast<ui::ModulationSourceRow*>(env1),editor->getLocalArea(&knob,knob.getLocalBounds()).getCentre());
+        editor->itemDropped(details);
+    };
+    drop(*knobs[0]);
+    check(envRoutes().size()==1,"drop creates the assignment");
+    check(env1->getHeight()==ui::ModulationSourceRow::routedHeight-2 && env1->routes().size()==1,
+          "SYNTH card expands immediately after the drop (no click)");
+    check(env2->getY()==env2Y+(ui::ModulationSourceRow::routedHeight-ui::ModulationSourceRow::baseHeight),
+          "cards below move down immediately (rail re-laid out, not just repainted)");
+    check(fxEnv1->getHeight()==env1->getHeight() && sameIds(fxEnv1->routes(),envRoutes()),"FX card expands from the same route");
+
+    // 2) Ring double-click removal on SYNTH: collapses in the same call.
+    env1->onRouteRemove(env1->routes()[0].id);
+    check(envRoutes().empty() && env1->routes().empty() && env1->getHeight()==collapsed && env2->getY()==env2Y,
+          "SYNTH card collapses immediately after removing its assignment");
+    check(editor->modulationRefreshPending(),"removal notifies every modulation view");
+    editor->flushModulationRefresh();
+    check(fxEnv1->routes().empty() && fxEnv1->getHeight()==collapsed,"FX card follows the removal");
+
+    // 3) Several assignments made outside the rail (knob menu / FX graph path).
+    for(std::size_t i=0;i<3;++i) check(editor->assignModulator(ModSource::Env1,*knobs[i]),"assign ENV 1");
+    check(editor->modulationRefreshPending(),"assignments post one refresh");
+    editor->flushModulationRefresh(); // the next message-loop turn; no UI event involved
+    check(env1->routes().size()==3 && env1->getHeight()==ui::ModulationSourceRow::routedHeight-2,"three rings, expanded card");
+    check(sameIds(env1->routes(),envRoutes()) && sameIds(fxEnv1->routes(),envRoutes()),
+          "SYNTH and FX rows derive their rings from the same canonical routes");
+    check(fxEnv1->ringBounds(2).getWidth()>0.0f && fxEnv1->getHeight()==env1->getHeight(),"FX card shows the same rings and height");
+
+    // 4) Remove all (from FX): the FX card collapses at once, SYNTH on the posted refresh.
+    for(const auto& r:envRoutes()) fxEnv1->onRouteRemove(r.id);
+    check(envRoutes().empty() && fxEnv1->routes().empty() && fxEnv1->getHeight()==collapsed,"FX card collapses immediately on remove-all");
+    editor->flushModulationRefresh();
+    check(env1->routes().empty() && env1->getHeight()==collapsed && env2->getY()==env2Y,"SYNTH card collapses after remove-all");
+
+    // 5) A model change from outside the UI (host/preset) still re-lays out on the next sync.
+    const auto id=p.addUiRoute();
+    auto route=mct::origami::ModRoute{};
+    for(const auto& r:p.getUiInstrumentState().modulation.routes) if(r.id==id) route=r;
+    route.source=ModSource::Env1;route.destination={mct::origami::ModDestination::Cutoff,0,0};route.amount=0.4f;
+    check(p.setUiRoute(route),"external route edit");
+    synth->syncFromModel();
+    check(env1->routes().size()==1 && env1->getHeight()==ui::ModulationSourceRow::routedHeight-2,"external change expands the card on sync");
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
     fxAudioPathAudit();
     fxWorkspaceP03Audit();
     fxModulationAudioAudit();
+    busWorkspaceP04Audit();
+    modulationRowConsistencyAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

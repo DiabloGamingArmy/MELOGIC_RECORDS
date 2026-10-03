@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-page-foundation-p01
 // mct-origami-deep-audit-p02-lockfree-ui-midi
@@ -24,14 +25,17 @@
 #include <cstring>
 using namespace mct::origami::ui;
 namespace {
-ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
+// `routesChanged` fires after every successful route/modulation mutation, from
+// whichever view made it, so every view of the one ModulationState can follow.
+ModulationBindings modulationBindings(OrigamiAudioProcessor& owner,std::function<void()> routesChanged) {
+    const auto notify=[routesChanged](bool ok){ if(ok && routesChanged) routesChanged(); return ok; };
     return {[&owner]{return owner.getUiInstrumentState();},
         [&owner](unsigned i,float v){return owner.setUiMacro(i,v);},
         [&owner](const mct::origami::LfoSettings& s){return owner.setUiLfo(s);},
-        [&owner]{return owner.addUiRoute();},
-        [&owner](const mct::origami::ModRoute& r){return owner.setUiRoute(r);},
-        [&owner](unsigned id){return owner.removeUiRoute(id);},
-        [&owner](const mct::origami::ModulationState& s){return owner.setUiModulationState(s);},
+        [&owner,routesChanged]{const auto id=owner.addUiRoute(); if(id!=0 && routesChanged) routesChanged(); return id;},
+        [&owner,notify](const mct::origami::ModRoute& r){return notify(owner.setUiRoute(r));},
+        [&owner,notify](unsigned id){return notify(owner.removeUiRoute(id));},
+        [&owner,notify](const mct::origami::ModulationState& s){return notify(owner.setUiModulationState(s));},
         [&owner]{return owner.getUiEnvelopeTraceSnapshot();},
         [&owner]{return owner.getUiPerformanceInputSnapshot();},
         [&owner]{return owner.getUiHostBpm();},
@@ -40,14 +44,20 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
         // FX parameters as destinations of the one modulation system.
         [&owner] {
             std::vector<mct::origami::ui::FxModulationDestination> out;
-            for(const auto& node:owner.getUiFxDocument().graph().nodes()) {
-                if(node.kind!=mct::origami::fx::FxNodeKind::Effect) continue;
-                const auto* d=mct::origami::fx::findFxEffect(node.effect);
-                if(d==nullptr) continue;
-                for(std::size_t i=0;i<d->parameterCount;++i) {
-                    if(d->parameters[i].curve==mct::origami::fx::FxParameterCurve::Choice) continue;
-                    out.push_back({mct::origami::fxParameterAddress(node.id,d->parameters[i].id),
-                                   "FX / "+node.name+" "+std::to_string(node.id),d->parameters[i].label});
+            const auto state=owner.getUiInstrumentState();
+            for(const auto bus:owner.getUiFxWorkspace().buses()) {
+                const auto* doc=owner.getUiFxWorkspace().find(bus);
+                const auto* info=state.buses.find(bus);
+                const std::string busLabel=info!=nullptr ? info->label() : "BUS";
+                for(const auto& node:doc->graph().nodes()) {
+                    if(node.kind!=mct::origami::fx::FxNodeKind::Effect) continue;
+                    const auto* d=mct::origami::fx::findFxEffect(node.effect);
+                    if(d==nullptr) continue;
+                    for(std::size_t i=0;i<d->parameterCount;++i) {
+                        if(d->parameters[i].curve==mct::origami::fx::FxParameterCurve::Choice) continue;
+                        out.push_back({mct::origami::fxParameterAddress(bus,node.id,d->parameters[i].id),
+                                       "FX / "+busLabel+" / "+node.name+" "+std::to_string(node.id),d->parameters[i].label});
+                    }
                 }
             }
             return out;
@@ -55,7 +65,7 @@ ModulationBindings modulationBindings(OrigamiAudioProcessor& owner) {
 }
 }
 OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& owner)
-    : AudioProcessorEditor(&owner), dragBindings_(modulationBindings(owner)), processor_(owner),
+    : AudioProcessorEditor(&owner), dragBindings_(modulationBindings(owner,[this]{modulationRoutesChanged();})), processor_(owner),
       oscillators_(
           [&owner](mct::origami::ParameterId id,float value) { return owner.setUiParameter(id,value); },
           [&owner](mct::origami::ParameterId id) { return owner.getUiParameter(id); },
@@ -69,9 +79,9 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner] { return owner.getUiOscillatorRevision(); }),
       filter_([&owner](auto id,float v){return owner.setUiParameter(id,v);},
               [&owner](auto id){return owner.getUiParameter(id);},
-              modulationBindings(owner)),
-      modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner)),
-      macros_(modulationBindings(owner)),matrix_(modulationBindings(owner)),
+              modulationBindings(owner,[this]{modulationRoutesChanged();})),
+      modulation_([&owner](auto id,float v){return owner.setUiParameter(id,v);},[&owner](auto id){return owner.getUiParameter(id);},modulationBindings(owner,[this]{modulationRoutesChanged();})),
+      macros_(modulationBindings(owner,[this]{modulationRoutesChanged();})),matrix_(modulationBindings(owner,[this]{modulationRoutesChanged();})),
       performance_([&owner](int note,bool on,float velocity){return owner.enqueueUiKeyboardNote(note,on,velocity);},
           [&owner](float v){owner.setUiPitchWheel(v);},
           [&owner](float v){owner.setUiModWheel(v);},
@@ -88,8 +98,12 @@ OrigamiAudioProcessorEditor::OrigamiAudioProcessorEditor(OrigamiAudioProcessor& 
           [&owner]{owner.clearUiArpeggiatorLatch();}),
       global_([&owner]{return owner.getUiVisualizationMask();},
               [&owner](std::uint32_t mask){owner.setUiVisualizationMask(mask);}),
-      fxPage_(owner.getUiFxDocument(),modulationBindings(owner),[&owner]{return owner.consumeUiFxPeaks();},&owner.getUiFxViewState()),
-      globalFx_(std::make_unique<mct::origami::ui::FxGlobalFxEditor>(owner.getUiFxDocument())) {
+      fxPage_(owner.getUiFxWorkspace(),modulationBindings(owner,[this]{modulationRoutesChanged();}),
+              mct::origami::ui::FxPageHost{[&owner]{return owner.consumeUiFxPeaks();},
+                                            [&owner]{return owner.addUiBus();},
+                                            [&owner](mct::origami::BusId id){return owner.removeUiBus(id);},
+                                            &owner.getUiFxViewState()}),
+      globalFx_(std::make_unique<mct::origami::ui::FxGlobalFxEditor>(owner.getUiFxWorkspace())) {
     setLookAndFeel(&theme_);
     const std::array<juce::Component*,13> components{{&header_,&oscillators_,&mixer_,&filter_,&fxPre_,&fxPost_,&modulation_,&macros_,&performance_,&matrix_,&arpeggiator_,&global_,&fxPage_}};
     for(auto* component:components) addAndMakeVisible(component);
@@ -168,7 +182,10 @@ juce::Slider* OrigamiAudioProcessorEditor::modulationDropTargetAt(
 
 bool OrigamiAudioProcessorEditor::isInterestedInDragSource(const SourceDetails& details) {
     mct::origami::ModSource source{};
-    return decodeDraggedModSource(details.description,source);
+    // FILTER 1 drags are accepted only so a deliberate tab hover can carry
+    // them from SYNTH to the FX graph; dropping them here does nothing.
+    return decodeDraggedModSource(details.description,source)
+        || details.description.toString().startsWith("MCT_SYNTH_FILTER:");
 }
 
 void OrigamiAudioProcessorEditor::itemDragEnter(const SourceDetails& details) {
@@ -179,9 +196,10 @@ void OrigamiAudioProcessorEditor::itemDragEnter(const SourceDetails& details) {
 
 void OrigamiAudioProcessorEditor::itemDragMove(const SourceDetails& details) {
     mct::origami::ModSource source{};
-    if(!decodeDraggedModSource(details.description,source)) return;
-    if(!modulationDrag_.active) beginModulationDrag(source);
+    const bool modulator=decodeDraggedModSource(details.description,source);
+    if(!modulationDrag_.active) beginModulationDrag(modulator ? source : mct::origami::ModSource::Env1);
     updateModulationDragHover(details.localPosition.toInt(),juce::Time::getMillisecondCounterHiRes());
+    if(!modulator) return;
     modulation_.revealSourceAtParentPoint(details.localPosition.toInt());
     // Keep the JUCE drag alive while source tabs also act as navigation targets.
     modulation_.revealSourceAtParentPoint(details.localPosition);
@@ -253,10 +271,44 @@ void OrigamiAudioProcessorEditor::itemDropped(const SourceDetails& details) {
         createDraggedRoute(source,*target);
     dragPreviewTarget_=nullptr;
     endModulationDrag();
+    refreshModulationViews();
+    repaint();
+}
+
+void OrigamiAudioProcessorEditor::modulationRoutesChanged() {
+    triggerAsyncUpdate();
+}
+
+namespace {
+// What the modulation views render from: which sources exist and their routes.
+bool sameModulationView(const mct::origami::ModulationState& a,const mct::origami::ModulationState& b) noexcept {
+    if(a.envActiveMask!=b.envActiveMask || a.lfoActiveMask!=b.lfoActiveMask
+       || a.generatorActiveMask!=b.generatorActiveMask || a.performanceSourceActiveMask!=b.performanceSourceActiveMask)
+        return false;
+    for(std::size_t i=0;i<a.routes.size();++i) {
+        const auto& x=a.routes[i];
+        const auto& y=b.routes[i];
+        if(x.id!=y.id || x.enabled!=y.enabled || x.source!=y.source || !(x.destination==y.destination)
+           || x.amount!=y.amount || x.bipolar!=y.bipolar)
+            return false;
+    }
+    return true;
+}
+}
+
+void OrigamiAudioProcessorEditor::handleAsyncUpdate() {
+    // Envelope/LFO edits also go through the bindings; only a change to what
+    // the modulation views show is worth a refresh.
+    if(sameModulationView(processor_.getUiInstrumentState().modulation,lastModulationView_)) return;
+    refreshModulationViews();
+}
+
+void OrigamiAudioProcessorEditor::refreshModulationViews() {
+    cancelPendingUpdate();
+    lastModulationView_=processor_.getUiInstrumentState().modulation;
     modulation_.syncFromModel();
     matrix_.syncFromModel();
     fxPage_.syncFromModel();
-    repaint();
 }
 
 void OrigamiAudioProcessorEditor::paintOverChildren(juce::Graphics& g) {
@@ -504,9 +556,7 @@ void OrigamiAudioProcessorEditor::openKnobProperties(juce::Slider& slider) {
                 const auto index=static_cast<std::size_t>(id-100);
                 if(index<matches.size()) dragBindings_.removeRoute(matches[index].id);
             }
-            modulation_.syncFromModel();
-            matrix_.syncFromModel();
-            fxPage_.syncFromModel();
+            refreshModulationViews();
             repaint();
         });
 }

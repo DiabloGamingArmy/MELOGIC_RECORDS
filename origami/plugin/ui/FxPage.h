@@ -1,11 +1,14 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #pragma once
 #include "OrigamiStyle.h"
 #include "ModulationBindings.h"
+#include "ModulationSourceRow.h"
 #include "NativeChoiceMenu.h"
 #include "core/fx/FxGraph.h"
+#include "core/fx/FxWorkspace.h"
 #include <array>
 #include <functional>
 #include <map>
@@ -93,6 +96,7 @@ public:
     void dragWire(juce::Point<int>);
     void endWire(juce::Point<int>);
     void cancelWire();
+    void clearNodes(); // bus switch: node IDs are per-graph, never reuse components
     std::optional<fx::FxPortRef> wireSource() const noexcept { return wireActive_ ? std::optional<fx::FxPortRef>(wireFrom_) : std::nullopt; }
 
     void paint(juce::Graphics&) override;
@@ -157,16 +161,24 @@ private:
     bool updating_=false;
 };
 
-// Resource browser: SOURCES / MODULATORS / FILTERS / ROUTES. Every row is a
-// reference to a canonical Origami object, never a duplicate of it.
+// Resource browser: SOURCES / MODULATORS / FILTERS / BUSES. Every row is a
+// reference to a canonical Origami object, never a duplicate of it. MODULATORS
+// rows are the SYNTH page's own ModulationSourceRow cards; the other tabs are
+// painted with the shared source-entity vocabulary (SourceEntity.h).
 class FxSidebar final : public juce::Component {
 public:
-    enum class Tab { Sources=0,Modulators=1,Filters=2,Routes=3 };
+    enum class Tab { Sources=0,Modulators=1,Filters=2,Buses=3 };
+    struct Magnitude { std::uint32_t routeId=0; float amount=0.0f; };
     struct Row {
         juce::String label,badge,detail;
         juce::String dragDescription; // empty: not draggable
         bool enabled=true,active=false,header=false;
         std::function<void()> onClick;
+        std::function<void()> onSecondaryClick; // right-click
+        std::vector<Magnitude> magnitudes;       // canonical route amounts (rings)
+        std::function<void(std::uint32_t,float)> onMagnitude; // drag a ring
+        std::optional<ModSource> modulationSource; // hosted as a ModulationSourceRow
+        std::function<void(std::uint32_t)> onRemoveRoute; // double-click a ring
     };
     FxSidebar();
     ~FxSidebar() override;
@@ -174,14 +186,22 @@ public:
     Tab tab() const noexcept { return tab_; }
     void setRows(Tab,std::vector<Row>);
     const std::vector<Row>& rows(Tab t) const noexcept { return rows_[static_cast<std::size_t>(t)]; }
+    // The hosted modulator card for a source (MODULATORS tab), or null.
+    const ModulationSourceRow* modulatorRow(ModSource) const noexcept;
     std::function<void(Tab)> onTabChanged;
+    std::function<juce::String(std::uint32_t)> routeLabel; // ring hover label
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     static constexpr int rowHeight=36;
     static constexpr int width=236;
 private:
     class List;
+    bool syncModulatorRows();
+    void layoutList();
     Tab tab_=Tab::Sources;
+    std::vector<std::unique_ptr<ModulationSourceRow>> modulatorRows_;
+    std::optional<ModSource> selectedModulator_;
     std::array<juce::TextButton,4> tabs_;
     std::array<std::vector<Row>,4> rows_;
     std::array<juce::String,4> signatures_;
@@ -210,24 +230,33 @@ private:
 // ORDER and BYPASS MODE. Edits the canonical document directly.
 class FxGlobalFxEditor final : public juce::Component {
 public:
-    explicit FxGlobalFxEditor(fx::FxGraphDocument&);
+    explicit FxGlobalFxEditor(fx::FxWorkspace&);
     void sync();
     std::function<void()> onClose;
     void paint(juce::Graphics&) override;
     void resized() override;
 private:
     void commit();
-    fx::FxGraphDocument& document_;
+    fx::FxWorkspace& workspace_;
     std::array<juce::Slider,4> knobs_;
     juce::ComboBox order_,bypass_;
     juce::TextButton close_{"X"};
-    bool syncing_=false,gesture_=false;
+    bool syncing_=false;
+};
+
+// Processor-side services the FX workspace needs (bus editing, meters, view).
+struct FxPageHost {
+    std::function<std::pair<float,float>()> peaks;
+    std::function<BusId()> addBus;
+    std::function<bool(BusId)> removeBus;
+    fx::FxViewState* view=nullptr;
 };
 
 class FxPage final : public juce::Component, private juce::Timer {
 public:
     using PeakSource=std::function<std::pair<float,float>()>;
-    FxPage(fx::FxGraphDocument&,ModulationBindings,PeakSource peaks={},fx::FxViewState* view=nullptr);
+    using HostBindings=FxPageHost;
+    FxPage(fx::FxWorkspace&,ModulationBindings,FxPageHost host=FxPageHost{});
     ~FxPage() override;
     void resized() override;
     void paint(juce::Graphics&) override;
@@ -237,8 +266,18 @@ public:
     std::function<void()> onOpenSynthFilter;
 
     // Interaction API (node components, canvas, toolbar, sidebar, inspector, tests).
-    fx::FxGraphDocument& document() noexcept { return document_; }
-    const fx::FxGraph& graph() const noexcept { return document_.graph(); }
+    fx::FxGraphDocument& document() noexcept { return *document_; }
+    const fx::FxGraph& graph() const noexcept { return document_->graph(); }
+    fx::FxWorkspace& workspace() noexcept { return workspace_; }
+    // Bus selection: the graph workspace shows the selected bus's graph.
+    // Every bus keeps processing regardless of which one is shown.
+    BusId selectedBus() const noexcept { return bus_; }
+    void selectBus(BusId);
+    BusId addBus();
+    void requestDeleteBus(BusId);
+    bool deleteBus(BusId);
+    juce::String busName(BusId) const;
+    fx::FxNodeId addSynthFilterCopy(fx::FxPoint centre);
     fx::FxNodeId selectedNode() const noexcept { return selected_; }
     void selectNode(fx::FxNodeId);
     bool deleteNode(fx::FxNodeId);
@@ -258,8 +297,8 @@ public:
     bool moveLayoutPoint(fx::FxConnectionId,std::size_t,fx::FxPoint,bool live);
     bool removeLayoutPoint(fx::FxConnectionId,std::size_t);
     void setRoutingMode(fx::FxRoutingMode);
-    void requestClear();   // shows the Origami-native confirmation
-    void confirmClear();   // one undoable transaction back to BUS 1 -> MASTER OUT
+    void requestClear();   // shows the Origami-native confirmation (names the bus)
+    void confirmClear();   // clears ONLY the selected bus graph; one undo step
     bool clearConfirmationVisible() const noexcept { return overlay_.isShowing(); }
     void undo();
     void redo();
@@ -304,10 +343,17 @@ private:
     void timerCallback() override { updateMeters(); }
     fx::FxPoint viewCentre() const;
 
-    fx::FxGraphDocument& document_;
+    fx::FxWorkspace& workspace_;
+    BusId bus_=mainBusId;
+    fx::FxGraphDocument* document_=nullptr;
     ModulationBindings bindings_;
     PeakSource peaks_;
+    HostBindings host_;
     fx::FxViewState* viewState_=nullptr;
+    std::vector<std::pair<BusId,juce::String>> busNames_;
+    std::map<BusId,std::pair<float,juce::Point<float>>> busViews_;
+    std::function<void()> pendingConfirm_;
+    juce::String confirmTitle_,confirmBody_,confirmAction_;
     fx::FxNodeId selected_=fx::invalidFxNodeId;
     std::uint64_t lastRevision_=0;
     float meterLeft_=0.0f,meterRight_=0.0f;

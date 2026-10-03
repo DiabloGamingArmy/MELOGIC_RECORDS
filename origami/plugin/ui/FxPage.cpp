@@ -1,7 +1,10 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
 #include "FxPage.h"
+#include "SourceEntity.h"
+#include "core/fx/FxFilter.h"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -25,11 +28,12 @@ void configureKnob(juce::Slider& s) {
 // FX parameters advertise their canonical modulation destination exactly like
 // every other Origami knob, so the editor's drag/drop, right-click menu and
 // range overlays work without an FX-specific path.
-void tagModulationDestination(juce::Slider& s,FxNodeId node,const FxParameterDescriptor& p) {
+void tagModulationDestination(juce::Slider& s,BusId bus,FxNodeId node,const FxParameterDescriptor& p) {
     auto& props=s.getProperties();
     props.set("mct.mod.destination",static_cast<int>(ModDestination::FxParameter));
     props.set("mct.mod.oscillator",static_cast<int>(node));
-    props.set("mct.mod.itemId",static_cast<int>(p.id));
+    // Bus-qualified parameter id (FX node IDs are unique per bus graph).
+    props.set("mct.mod.itemId",static_cast<int>(fxParameterAddress(bus,node,p.id).itemId));
     props.set("mct.origami.knobDefault",double(p.defaultValue));
 }
 
@@ -42,6 +46,7 @@ std::vector<const FxParameterDescriptor*> parametersFor(const FxNode& node,bool 
             const auto& p=d->parameters[i];
             if(quickOnly && !p.quick) continue;
             if(page && p.page!=*page) continue;
+            if(!node.parameterVisible(p)) continue; // variant/mode system
             result.push_back(&p);
         }
     return result;
@@ -95,6 +100,26 @@ std::vector<SourceEntry> availableSources(const ModulationState& m) {
     for(auto s:{ModSource::Velocity,ModSource::ModWheel,ModSource::Keytrack,ModSource::Aftertouch,ModSource::PitchBend,ModSource::NoteGate})
         out.push_back({s,"PERFORMANCE"});
     return out;
+}
+
+float physicalById(const FxNode& n,FxParameterId id) {
+    const auto* d=findFxEffect(n.effect);
+    const auto* p=d ? findFxParameter(*d,id) : nullptr;
+    return p ? fxParameterValue(*p,n.parameter(id).value_or(p->defaultValue)) : 0.0f;
+}
+
+// EQ: combined analytic response of the enabled bands (same SVF design as DSP).
+float eqResponseDb(const FxNode& n,float hz) {
+    static constexpr SvfShape shapes[6]{SvfShape::HighPass,SvfShape::LowShelf,SvfShape::Bell,SvfShape::Notch,SvfShape::HighShelf,SvfShape::LowPass};
+    double magnitude=1.0;
+    for(int b=0;b<8;++b) {
+        const auto base=FxParameterId(100+b*10);
+        if(physicalById(n,base+1)<0.5f) continue;
+        const auto c=svfDesign(shapes[juce::jlimit(0,5,int(physicalById(n,base+2)))],physicalById(n,base+3),
+                               physicalById(n,base+5),physicalById(n,base+4),48000.0);
+        magnitude*=svfMagnitude(c,hz,48000.0);
+    }
+    return float(20.0*std::log10(std::max(magnitude,1.0e-6)));
 }
 
 // UI-generated pictures of what each effect does, driven by its canonical
@@ -187,6 +212,93 @@ void paintEffectPreview(juce::Graphics& g,juce::Rectangle<float> r,const FxNode&
             const float x=in.getX()+t*in.getWidth()*(0.3f+0.7f*size);
             const float h=in.getHeight()*0.48f*std::exp(-2.5f*t)*(0.35f+0.65f*float((seed>>8)&255u)/255.0f);
             g.fillRect(juce::Rectangle<float>(x,in.getCentreY()-h,1.5f,h*2.0f));
+        }
+        return;
+    }
+    case FxVisual::FilterResponse: {
+        const int type=int(physicalById(n,5));
+        if(type==8) { // COMB
+            const float f0=physicalById(n,1),fb=physicalById(n,2),scale=std::sqrt(1.0f-std::abs(fb));
+            plot(160,[&](float t){
+                const float w=juce::MathConstants<float>::twoPi*20.0f*std::pow(1000.0f,t)/f0;
+                const float mag=scale/std::sqrt(std::max(1.0e-4f,1.0f-2.0f*fb*std::cos(w)+fb*fb));
+                return 0.5f+0.5f*juce::jlimit(-1.0f,1.0f,std::log10(mag)*0.6f);
+            });
+            break;
+        }
+        const auto c=svfDesign(static_cast<SvfShape>(juce::jlimit(0,7,type)),physicalById(n,1),physicalById(n,6),physicalById(n,7),48000.0);
+        plot(160,[&](float t){
+            const float db=float(20.0*std::log10(std::max(svfMagnitude(c,20.0*std::pow(1000.0,t),48000.0),1.0e-6)));
+            return 0.5f+juce::jlimit(-30.0f,30.0f,db)/60.0f;
+        });
+        break;
+    }
+    case FxVisual::EqResponse: {
+        plot(160,[&](float t){return 0.5f+juce::jlimit(-24.0f,24.0f,eqResponseDb(n,20.0f*std::pow(1000.0f,t)))/48.0f;});
+        break;
+    }
+    case FxVisual::Compressor: {
+        const bool multi=physicalById(n,1)>=0.5f;
+        const float knee=physicalById(n,6);
+        const auto curve=[&](float threshold,float ratio,float alpha) {
+            juce::Path p;
+            for(int i=0;i<=64;++i) {
+                const float t=float(i)/64.0f,level=-60.0f+t*60.0f,over=level-threshold;
+                const float slope=1.0f/std::max(1.0f,ratio)-1.0f;
+                const float gr=(knee>0.0f && 2.0f*std::abs(over)<=knee) ? slope*(over+knee*0.5f)*(over+knee*0.5f)/(2.0f*knee) : (over>0.0f ? slope*over : 0.0f);
+                const float out=level+gr;
+                const juce::Point<float> q{in.getX()+t*in.getWidth(),in.getBottom()-(out+60.0f)/60.0f*in.getHeight()};
+                if(i==0) p.startNewSubPath(q); else p.lineTo(q);
+            }
+            g.setColour(ink.withMultipliedAlpha(alpha));
+            g.strokePath(p,juce::PathStrokeType(1.3f));
+        };
+        if(multi) { curve(physicalById(n,12),physicalById(n,13),0.6f); curve(physicalById(n,17),physicalById(n,18),0.8f); curve(physicalById(n,22),physicalById(n,23),1.0f); }
+        else curve(physicalById(n,2),physicalById(n,3),1.0f);
+        return;
+    }
+    case FxVisual::Phaser: {
+        const int stages=2*(int(physicalById(n,5))+1);
+        const float centre=physicalById(n,4);
+        plot(160,[&](float t){
+            const float hz=20.0f*std::pow(1000.0f,t);
+            // Dry + all-pass chain: notches where the chain's phase hits odd multiples of pi.
+            const float phase=float(stages)*2.0f*std::atan(hz/centre);
+            const float mag=std::abs(std::cos(0.5f*phase));
+            return 0.1f+0.85f*mag;
+        });
+        break;
+    }
+    case FxVisual::Spatial: {
+        const int voices=int(physicalById(n,4))+2;
+        const float width=physicalById(n,2),amount=physicalById(n,1);
+        static constexpr float pans[4]{-0.9f,0.9f,-0.45f,0.45f};
+        g.setColour(Palette::borderSoft());
+        g.drawVerticalLine(juce::roundToInt(in.getCentreX()),in.getY(),in.getBottom());
+        g.setColour(ink);
+        g.fillEllipse(juce::Rectangle<float>(7.0f,7.0f).withCentre(in.getCentre()));
+        for(int v=0;v<voices;++v) {
+            const float x=in.getCentreX()+pans[v]*width*in.getWidth()*0.45f;
+            const float y=in.getY()+in.getHeight()*(0.25f+0.5f*float(v)/float(std::max(1,voices-1)));
+            const float r=3.0f+4.0f*amount;
+            g.setColour(ink.withMultipliedAlpha(0.5f+0.5f*amount));
+            g.fillEllipse(juce::Rectangle<float>(r,r).withCentre({x,y}));
+        }
+        return;
+    }
+    case FxVisual::Utility: {
+        if(n.effect==FxEffectType::Gain) {
+            const float db=physicalById(n,1);
+            const float t=(db+48.0f)/72.0f;
+            g.setColour(ink);
+            g.fillRect(juce::Rectangle<float>(in.getX(),in.getCentreY()-4.0f,in.getWidth()*juce::jlimit(0.0f,1.0f,t),8.0f));
+            if(physicalById(n,2)>=0.5f) text(g,"INV",in.toNearestInt(),8.0f,Palette::muted(),juce::Justification::topRight);
+        } else {
+            const float width=physicalById(n,3)>=0.5f ? 0.0f : physicalById(n,1);
+            const float balance=physicalById(n,2);
+            g.setColour(ink);
+            g.drawEllipse(juce::Rectangle<float>(std::max(4.0f,in.getWidth()*0.4f*width),in.getHeight()*0.8f)
+                              .withCentre({in.getCentreX()+balance*in.getWidth()*0.3f,in.getCentreY()}),1.3f);
         }
         return;
     }
@@ -299,7 +411,7 @@ void FxNodeComponent::update(const FxNode& node,bool selected) {
             configureKnob(*slider);
             slider->setRange(0.0,1.0,0.001);
             slider->setName("FX "+juce::String(id_)+" P"+juce::String(pid));
-            tagModulationDestination(*slider,id_,*p);
+            tagModulationDestination(*slider,page_.selectedBus(),id_,*p);
             auto* raw=slider.get();
             slider->onDragStart=[this]{page_.selectNode(id_);page_.beginParameterGesture();};
             slider->onDragEnd=[this]{page_.endParameterGesture();};
@@ -406,9 +518,9 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         break;
     }
     case FxNodeKind::Source: {
-        text(g,node_.name,local.withHeight(32).reduced(12,0),11.5f,Palette::text());
+        text(g,page_.busName(node_.bus)+" IN",local.withHeight(32).reduced(12,0),11.5f,Palette::text());
         if(!detailed) break;
-        text(g,"SYNTH VOICE SUM",local.withTrimmedTop(32).withHeight(16).reduced(12,0),8.5f,Palette::muted());
+        text(g,node_.bus==mainBusId ? "SYNTH VOICE SUM" : "OSCILLATOR SENDS",local.withTrimmedTop(32).withHeight(16).reduced(12,0),8.5f,Palette::muted());
         auto wave=juce::Rectangle<float>(12.0f,54.0f,float(getWidth())-40.0f,18.0f);
         juce::Path p;
         for(int i=0;i<=40;++i) {
@@ -421,7 +533,8 @@ void FxNodeComponent::paint(juce::Graphics& g) {
         break;
     }
     case FxNodeKind::Output: {
-        text(g,node_.name,local.withHeight(32).reduced(14,0),11.5f,Palette::text());
+        // MAIN OUT feeds the master; user buses end at their own bus output.
+        text(g,page_.busName(page_.selectedBus())+" OUT",local.withHeight(32).reduced(14,0),11.5f,Palette::text());
         auto meterArea=local.withTrimmedTop(40).withTrimmedBottom(44+30);
         auto meters=meterArea.withSizeKeepingCentre(64,meterArea.getHeight());
         for(int channel=0;channel<2;++channel) {
@@ -699,6 +812,15 @@ void FxCanvas::dragWire(juce::Point<int> p) {
     repaint(curve(start,wireEnd_).getBounds().getSmallestIntegerContainer().expanded(6));
 }
 
+void FxCanvas::clearNodes() {
+    wireActive_=false;
+    hoverPoint_.reset();
+    dragPoint_.reset();
+    wires_.clear();
+    nodes_.clear();
+    repaint();
+}
+
 void FxCanvas::cancelWire() {
     if(!wireActive_) return;
     wireActive_=false;
@@ -857,10 +979,15 @@ void FxCanvas::mouseDoubleClick(const juce::MouseEvent& e) {
 }
 
 bool FxCanvas::isInterestedInDragSource(const SourceDetails& details) {
-    return details.description.toString().startsWith(moduleDragPrefix);
+    const auto d=details.description.toString();
+    return d.startsWith(moduleDragPrefix) || d.startsWith("MCT_SYNTH_FILTER:");
 }
 
 void FxCanvas::itemDropped(const SourceDetails& details) {
+    if(details.description.toString().startsWith("MCT_SYNTH_FILTER:")) {
+        page_.addSynthFilterCopy(toGraph(details.localPosition.toFloat()));
+        return;
+    }
     const int id=details.description.toString().fromFirstOccurrenceOf(moduleDragPrefix,false,false).getIntValue();
     if(const auto spec=FxModuleMenu::decode(id)) page_.addModuleAt(*spec,toGraph(details.localPosition.toFloat()));
 }
@@ -974,37 +1101,16 @@ public:
         const auto& rows=owner_.rows(owner_.tab());
         for(std::size_t i=0;i<rows.size();++i) {
             const auto& row=rows[i];
+            if(row.modulationSource) continue; // a hosted ModulationSourceRow paints itself
             auto r=rowBounds(i);
-            if(row.header) {
-                text(g,row.label,r.withTrimmedTop(12),8.5f,Palette::muted());
-                continue;
-            }
-            const bool hover=int(i)==hover_ && row.enabled && (row.onClick || row.dragDescription.isNotEmpty());
-            g.setColour(!row.enabled ? Palette::inset() : hover ? Palette::raised().brighter(.08f) : Palette::raised());
-            g.fillRect(r);
-            g.setColour(row.active ? signalShade(.75f,.9f) : row.enabled ? Palette::border() : Palette::borderSoft());
-            g.drawRect(r);
-            auto inner=r.reduced(10,0);
-            if(row.dragDescription.isNotEmpty() && row.enabled) {
-                auto grip=inner.removeFromLeft(10).toFloat();
-                g.setColour(Palette::muted().withAlpha(.6f));
-                for(int k=0;k<3;++k) for(int c=0;c<2;++c)
-                    g.fillEllipse(grip.getX()+float(c)*4.0f,grip.getCentreY()-5.0f+float(k)*4.5f,2.0f,2.0f);
-                inner.removeFromLeft(4);
-            }
-            if(row.active) {
-                g.setColour(signalSourceColour());
-                g.fillEllipse(juce::Rectangle<float>(6.0f,6.0f).withCentre({float(r.getRight()-12),float(r.getCentreY())}));
-            }
-            const auto colour=row.enabled ? Palette::text() : Palette::muted().withAlpha(.65f);
-            if(row.detail.isNotEmpty()) {
-                text(g,row.label,inner.withHeight(r.getHeight()/2+2).withY(r.getY()+3),10.5f,colour);
-                text(g,row.detail,inner.withTrimmedTop(r.getHeight()/2+1),8.0f,Palette::muted());
-            } else {
-                text(g,row.label,inner,10.5f,colour);
-            }
-            if(row.badge.isNotEmpty())
-                text(g,row.badge,inner.withTrimmedRight(row.active ? 14 : 0),8.0f,Palette::muted(),juce::Justification::centredRight);
+            if(row.header) { text(g,row.label,r.withTrimmedTop(12),8.5f,Palette::muted()); continue; }
+            SourceEntityStyle style;
+            style.label=row.label; style.badge=row.badge; style.detail=row.detail;
+            style.draggable=row.dragDescription.isNotEmpty();
+            style.enabled=row.enabled; style.active=row.active;
+            style.hovered=int(i)==hover_ && row.enabled && (row.onClick || style.draggable);
+            for(const auto& m:row.magnitudes) style.magnitudes.push_back(m.amount);
+            paintSourceEntityRow(g,r,style);
         }
     }
     void mouseMove(const juce::MouseEvent& e) override {
@@ -1012,48 +1118,77 @@ public:
         if(index!=hover_) { hover_=index; repaint(); }
     }
     void mouseExit(const juce::MouseEvent&) override { hover_=-1; repaint(); }
-    void mouseDown(const juce::MouseEvent& e) override { pressed_=indexAt(e.getPosition()); dragged_=false; }
-    void mouseDrag(const juce::MouseEvent& e) override {
-        if(pressed_<0 || dragged_ || e.getDistanceFromDragStart()<6) return;
+    void mouseDown(const juce::MouseEvent& e) override {
+        pressed_=indexAt(e.getPosition());
+        dragged_=false;
+        ringRoute_=0;
+        if(pressed_<0) return;
         const auto& row=owner_.rows(owner_.tab())[std::size_t(pressed_)];
-        if(row.dragDescription.isEmpty() || !row.enabled) return;
+        if(e.mods.isPopupMenu()) {
+            if(row.onSecondaryClick) row.onSecondaryClick();
+            pressed_=-1;
+            return;
+        }
+        // Magnitude rings edit the SAME canonical route as Synth / Matrix.
+        const std::size_t rings=std::min<std::size_t>(row.magnitudes.size(),3);
+        for(std::size_t m=0;m<rings;++m)
+            if(sourceEntityRing(rowBounds(std::size_t(pressed_)),m,row.active).expanded(4.0f).contains(e.position)) {
+                ringRoute_=row.magnitudes[m].routeId;
+                ringStartAmount_=row.magnitudes[m].amount;
+                ringStartY_=e.position.y;
+            }
+    }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if(pressed_<0) return;
+        const auto& row=owner_.rows(owner_.tab())[std::size_t(pressed_)];
+        if(ringRoute_!=0) {
+            if(row.onMagnitude) row.onMagnitude(ringRoute_,juce::jlimit(-1.0f,1.0f,ringStartAmount_+(ringStartY_-e.position.y)/60.0f));
+            return;
+        }
+        if(dragged_ || e.getDistanceFromDragStart()<6 || row.dragDescription.isEmpty() || !row.enabled) return;
         if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) {
             dragged_=true;
-            juce::Image image(juce::Image::ARGB,180,30,true);
+            juce::Image image(juce::Image::ARGB,190,32,true);
             {
                 juce::Graphics g(image);
-                g.setColour(Palette::raised());
-                g.fillRect(0,0,180,30);
-                g.setColour(signalShade(.8f,.9f));
-                g.drawRect(0,0,180,30);
-                text(g,row.label,{10,0,160,30},10.5f,Palette::text());
+                SourceEntityStyle style;
+                style.label=row.label; style.draggable=true; style.selected=true;
+                paintSourceEntityRow(g,{0,0,190,32},style);
             }
             container->startDragging(row.dragDescription,this,juce::ScaledImage(image));
         }
     }
     void mouseUp(const juce::MouseEvent& e) override {
         const int index=indexAt(e.getPosition());
-        if(!dragged_ && index>=0 && index==pressed_) {
+        if(!dragged_ && ringRoute_==0 && index>=0 && index==pressed_) {
             const auto& row=owner_.rows(owner_.tab())[std::size_t(index)];
             if(row.enabled && row.onClick) row.onClick();
         }
         pressed_=-1;
+        ringRoute_=0;
     }
-    int contentHeight() const { return int(owner_.rows(owner_.tab()).size())*rowHeight+8; }
+    int contentHeight() const { return bounds_.empty() ? 8 : bounds_.back().getBottom()+8; }
+    // Row geometry for the current tab (FxSidebar::layoutList).
+    std::vector<juce::Rectangle<int>> bounds_;
 private:
-    juce::Rectangle<int> rowBounds(std::size_t i) const { return {0,int(i)*rowHeight,getWidth(),rowHeight-4}; }
+    juce::Rectangle<int> rowBounds(std::size_t i) const {
+        return i<bounds_.size() ? bounds_[i] : juce::Rectangle<int>{0,int(i)*rowHeight,getWidth(),rowHeight-4};
+    }
     int indexAt(juce::Point<int> p) const {
         const auto& rows=owner_.rows(owner_.tab());
-        for(std::size_t i=0;i<rows.size();++i) if(!rows[i].header && rowBounds(i).contains(p)) return int(i);
+        for(std::size_t i=0;i<rows.size();++i)
+            if(!rows[i].header && !rows[i].modulationSource && rowBounds(i).contains(p)) return int(i);
         return -1;
     }
     FxSidebar& owner_;
     int hover_=-1,pressed_=-1;
     bool dragged_=false;
+    std::uint32_t ringRoute_=0;
+    float ringStartAmount_=0.0f,ringStartY_=0.0f;
 };
 
 FxSidebar::FxSidebar():list_(std::make_unique<List>(*this)) {
-    const char* names[]{"SOURCES","MODULATORS","FILTERS","ROUTES"};
+    const char* names[]{"SOURCES","MODULATORS","FILTERS","BUSES"};
     for(int i=0;i<4;++i) {
         auto& tab=tabs_[std::size_t(i)];
         tab.setButtonText(names[i]);
@@ -1070,7 +1205,10 @@ FxSidebar::FxSidebar():list_(std::make_unique<List>(*this)) {
     addAndMakeVisible(viewport_);
 }
 
-FxSidebar::~FxSidebar() { viewport_.setViewedComponent(nullptr,false); }
+FxSidebar::~FxSidebar() {
+    modulatorRows_.clear();
+    viewport_.setViewedComponent(nullptr,false);
+}
 
 void FxSidebar::setTab(Tab tab) {
     tab_=tab;
@@ -1082,10 +1220,99 @@ void FxSidebar::setTab(Tab tab) {
 void FxSidebar::setRows(Tab tab,std::vector<Row> rows) {
     juce::String signature;
     for(const auto& r:rows) signature<<r.label<<"|"<<r.badge<<"|"<<int(r.active)<<int(r.enabled)<<";";
-    const bool changed=signature!=signatures_[static_cast<std::size_t>(tab)];
+    bool changed=signature!=signatures_[static_cast<std::size_t>(tab)];
     signatures_[static_cast<std::size_t>(tab)]=signature;
     rows_[static_cast<std::size_t>(tab)]=std::move(rows); // fresh callbacks either way
-    if(changed && tab==tab_) { resized(); list_->repaint(); }
+    // Modulator cards change height with their route count: that is a layout
+    // change of the list, independent of which tab is showing.
+    if(tab==Tab::Modulators) changed|=syncModulatorRows();
+    if(changed) { layoutList(); list_->repaint(); }
+}
+
+const ModulationSourceRow* FxSidebar::modulatorRow(ModSource source) const noexcept {
+    for(const auto& row:modulatorRows_) if(row->source()==source) return row.get();
+    return nullptr;
+}
+
+bool FxSidebar::syncModulatorRows() {
+    const auto& rows=rows_[static_cast<std::size_t>(Tab::Modulators)];
+    bool changed=false;
+    std::vector<std::unique_ptr<ModulationSourceRow>> next;
+    for(const auto& row:rows) {
+        if(!row.modulationSource) continue;
+        const auto source=*row.modulationSource;
+        std::unique_ptr<ModulationSourceRow> card;
+        for(auto& existing:modulatorRows_)
+            if(existing!=nullptr && existing->source()==source) card=std::move(existing);
+        if(card==nullptr) {
+            changed=true;
+            card=std::make_unique<ModulationSourceRow>(source,row.label,"MOD SOURCE TAB FX "+row.label);
+            card->setClickingTogglesState(false);
+            card->setToggleState(selectedModulator_==source,juce::dontSendNotification);
+            // Callbacks resolve the CURRENT row: rows are rebuilt on every refresh.
+            const auto current=[this,source]()->const Row* {
+                for(const auto& r:rows_[static_cast<std::size_t>(Tab::Modulators)])
+                    if(r.modulationSource==source) return &r;
+                return nullptr;
+            };
+            card->onRouteAmount=[current](std::uint32_t id,float amount){
+                if(const auto* r=current(); r!=nullptr && r->onMagnitude) r->onMagnitude(id,amount);
+            };
+            card->onRouteRemove=[current](std::uint32_t id){
+                if(const auto* r=current(); r!=nullptr && r->onRemoveRoute) r->onRemoveRoute(id);
+            };
+            card->onHoverChanged=[this]{repaint();};
+            card->onClick=[this,source,current]{
+                selectedModulator_=source;
+                for(auto& c:modulatorRows_) c->setToggleState(c->source()==source,juce::dontSendNotification);
+                if(const auto* r=current(); r!=nullptr && r->onClick) r->onClick();
+            };
+            list_->addChildComponent(*card);
+        }
+        std::vector<ModulationSourceRoute> routes;
+        for(const auto& m:row.magnitudes) routes.push_back({m.routeId,m.amount});
+        changed|=card->setRoutes(std::move(routes));
+        next.push_back(std::move(card));
+    }
+    for(auto& stale:modulatorRows_) if(stale!=nullptr) { list_->removeChildComponent(stale.get()); changed=true; }
+    modulatorRows_=std::move(next);
+    return changed;
+}
+
+void FxSidebar::layoutList() {
+    const auto& rows=rows_[static_cast<std::size_t>(tab_)];
+    const int width=juce::jmax(1,viewport_.getWidth()-10);
+    auto& bounds=list_->bounds_;
+    bounds.clear();
+    int y=0;
+    for(const auto& row:rows) {
+        if(row.modulationSource) {
+            // The SYNTH card's own height rule; same 2 px gap as the SYNTH rail.
+            const int h=ModulationSourceRow::heightFor(row.magnitudes.size());
+            bounds.push_back({0,y,width,h-2});
+            y+=h;
+        } else {
+            bounds.push_back({0,y,width,rowHeight-4});
+            y+=rowHeight;
+        }
+    }
+    const bool showCards=tab_==Tab::Modulators;
+    for(auto& card:modulatorRows_) {
+        card->setVisible(showCards);
+        for(std::size_t i=0;showCards && i<rows.size();++i)
+            if(rows[i].modulationSource==card->source()) card->setBounds(bounds[i]);
+    }
+    list_->setSize(width,std::max(viewport_.getHeight(),list_->contentHeight()));
+}
+
+void FxSidebar::paintOverChildren(juce::Graphics& g) {
+    if(tab_!=Tab::Modulators || !routeLabel) return;
+    for(const auto& card:modulatorRows_) {
+        if(card->hoveredRoute()==0 || !card->isShowing()) continue;
+        paintModulationRouteTooltip(g,routeLabel(card->hoveredRoute()),getLocalPoint(card.get(),card->hoverPoint()),
+                                    getLocalBounds().toFloat().reduced(4.0f));
+        break;
+    }
 }
 
 void FxSidebar::resized() {
@@ -1100,7 +1327,7 @@ void FxSidebar::resized() {
     tabs_[3].setBounds(bottom.reduced(1,0));
     area.removeFromTop(6);
     viewport_.setBounds(area);
-    list_->setSize(area.getWidth()-10,std::max(area.getHeight(),list_->contentHeight()));
+    layoutList();
 }
 
 void FxSidebar::paint(juce::Graphics& g) {
@@ -1148,7 +1375,7 @@ bool FxModalOverlay::keyPressed(const juce::KeyPress& key) {
     return false;
 }
 
-FxGlobalFxEditor::FxGlobalFxEditor(FxGraphDocument& document):document_(document) {
+FxGlobalFxEditor::FxGlobalFxEditor(FxWorkspace& workspace):workspace_(workspace) {
     const char* names[]{"INPUT","DRY/WET","WIDTH","OUTPUT"};
     const double lo[]{-24.0,0.0,0.0,-24.0},hi[]{24.0,1.0,2.0,24.0},defaults[]{0.0,1.0,1.0,0.0};
     for(std::size_t i=0;i<knobs_.size();++i) {
@@ -1157,8 +1384,6 @@ FxGlobalFxEditor::FxGlobalFxEditor(FxGraphDocument& document):document_(document
         k.setRange(lo[i],hi[i],0.001);
         k.setName(juce::String("FX Global ")+names[i]);
         k.getProperties().set("mct.origami.knobDefault",defaults[i]);
-        k.onDragStart=[this]{document_.beginGesture();gesture_=true;};
-        k.onDragEnd=[this]{gesture_=false;document_.endGesture();};
         k.onValueChange=[this]{commit();};
         addAndMakeVisible(k);
     }
@@ -1178,7 +1403,7 @@ FxGlobalFxEditor::FxGlobalFxEditor(FxGraphDocument& document):document_(document
 
 void FxGlobalFxEditor::sync() {
     const juce::ScopedValueSetter<bool> guard(syncing_,true);
-    const auto& s=document_.graph().globals();
+    const auto& s=workspace_.globals();
     const float values[]{s.inputGainDb,s.dryWet,s.width,s.outputGainDb};
     for(std::size_t i=0;i<knobs_.size();++i)
         if(!knobs_[i].isMouseButtonDown()) knobs_[i].setValue(values[i],juce::dontSendNotification);
@@ -1196,8 +1421,8 @@ void FxGlobalFxEditor::commit() {
     s.outputGainDb=float(knobs_[3].getValue());
     s.order=static_cast<FxOrder>(order_.getSelectedId());
     s.bypass=static_cast<FxBypassMode>(bypass_.getSelectedId());
-    const auto apply=[&](FxGraph& g){g.setGlobals(s);return true;};
-    if(gesture_) document_.gestureEdit(apply); else document_.edit(apply);
+    // GLOBAL FX acts on the summed master of every bus, not on one bus graph.
+    workspace_.setGlobals(s);
     repaint();
 }
 
@@ -1215,7 +1440,7 @@ void FxGlobalFxEditor::resized() {
 }
 
 void FxGlobalFxEditor::paint(juce::Graphics& g) {
-    const auto& s=document_.graph().globals();
+    const auto& s=workspace_.globals();
     g.fillAll(Palette::panel());
     g.setColour(Palette::border());
     g.drawRect(getLocalBounds());
@@ -1258,10 +1483,15 @@ public:
     void show(const FxGraph& graph,FxNodeId id) {
         const auto* node=graph.findNode(id);
         if(node!=nullptr) node_=*node; else node_.reset();
+        // Quick (primary) controls first, then other main controls, max 5.
         std::vector<const FxParameterDescriptor*> params;
-        if(node_)
-            for(const auto* p:parametersFor(*node_,false,FxParameterPage::Main))
+        if(node_) {
+            for(const auto* p:parametersFor(*node_,true,std::nullopt))
                 if(p->curve!=FxParameterCurve::Choice && params.size()<5) params.push_back(p);
+            for(const auto* p:parametersFor(*node_,false,FxParameterPage::Main))
+                if(p->curve!=FxParameterCurve::Choice && params.size()<5 && std::find(params.begin(),params.end(),p)==params.end())
+                    params.push_back(p);
+        }
         std::vector<FxParameterId> ids;
         for(const auto* p:params) ids.push_back(p->id);
         if(ids!=ids_ || shownId_!=id) {
@@ -1274,7 +1504,7 @@ public:
                 configureKnob(*knob);
                 knob->setRange(0.0,1.0,0.001);
                 knob->setName("FX inspector P"+juce::String(pid));
-                tagModulationDestination(*knob,id,*p);
+                tagModulationDestination(*knob,page_.selectedBus(),id,*p);
                 auto* raw=knob.get();
                 knob->onDragStart=[this]{page_.beginParameterGesture();};
                 knob->onDragEnd=[this]{page_.endParameterGesture();};
@@ -1354,6 +1584,154 @@ private:
     std::vector<const FxParameterDescriptor*> params_;
 };
 
+// EQUALIZER band editor: analytic response, draggable band points (frequency
+// x gain), band selection, add/remove (enable/disable stable band slots).
+class FxEqEditor final : public juce::Component {
+public:
+    explicit FxEqEditor(FxPage& page):page_(page) {
+        for(int b=0;b<8;++b) {
+            auto& button=bands_[std::size_t(b)];
+            button.setButtonText(juce::String(b+1));
+            button.setName("FX EQ band "+juce::String(b+1));
+            button.onClick=[this,b]{select(b);};
+            addAndMakeVisible(button);
+        }
+        on_.setName("FX EQ on"); on_.setClickingTogglesState(true);
+        on_.onClick=[this]{set(1,on_.getToggleState() ? 1.0f : 0.0f);};
+        type_.setName("FX EQ type");
+        type_.onClick=[this] {
+            std::vector<NativeChoiceItem> items;
+            const char* names[]{"LOW CUT","LOW SHELF","BELL","NOTCH","HIGH SHELF","HIGH CUT"};
+            for(int i=0;i<6;++i) items.push_back({i+1,names[i],true,"BAND TYPE"});
+            juce::Component::SafePointer<FxEqEditor> safe(this);
+            showNativeChoiceMenu(type_,"BAND TYPE",items,0,[safe](int c){if(safe!=nullptr && c>0) safe->set(2,float(c-1)/5.0f);});
+        };
+        add_.setName("FX EQ add band");
+        add_.onClick=[this] {
+            for(int b=0;b<8;++b) if(value(b,1)<0.5f) { selected_=b; set(1,1.0f); return; }
+        };
+        remove_.setName("FX EQ remove band");
+        remove_.onClick=[this]{set(1,0.0f);};
+        for(auto* s:{&freq_,&gain_,&q_}) {
+            s->setSliderStyle(juce::Slider::LinearHorizontal);
+            s->setTextBoxStyle(juce::Slider::NoTextBox,false,0,0);
+            s->setRange(0.0,1.0,0.001);
+            s->setScrollWheelEnabled(false);
+            s->onDragStart=[this]{page_.beginParameterGesture();};
+            s->onDragEnd=[this]{page_.endParameterGesture();};
+            addAndMakeVisible(*s);
+        }
+        freq_.setName("FX EQ freq"); gain_.setName("FX EQ gain"); q_.setName("FX EQ q");
+        freq_.onValueChange=[this]{set(3,float(freq_.getValue()));};
+        gain_.onValueChange=[this]{set(4,float(gain_.getValue()));};
+        q_.onValueChange=[this]{set(5,float(q_.getValue()));};
+        for(auto* b:{&on_,&type_,&add_,&remove_}) addAndMakeVisible(*b);
+    }
+    int selectedBand() const noexcept { return selected_; }
+    void select(int band) { selected_=juce::jlimit(0,7,band); sync(); }
+    void setNode(const FxNode& node) { node_=node; sync(); }
+    void paint(juce::Graphics& g) override {
+        const auto area=curveArea();
+        well(g,area.toNearestInt());
+        auto in=area.reduced(8.0f,6.0f);
+        g.setColour(Palette::borderSoft());
+        for(const float db:{-12.0f,0.0f,12.0f}) g.drawHorizontalLine(juce::roundToInt(yFor(db,in)),in.getX(),in.getRight());
+        for(const float hz:{100.0f,1000.0f,10000.0f}) g.drawVerticalLine(juce::roundToInt(xFor(hz,in)),in.getY(),in.getBottom());
+        juce::Path path;
+        for(int i=0;i<=200;++i) {
+            const float hz=20.0f*std::pow(1000.0f,float(i)/200.0f);
+            const juce::Point<float> p{xFor(hz,in),yFor(eqResponseDb(node_,hz),in)};
+            if(i==0) path.startNewSubPath(p); else path.lineTo(p);
+        }
+        g.setColour(Palette::accent().withAlpha(.9f));
+        g.strokePath(path,juce::PathStrokeType(1.5f));
+        for(int b=0;b<8;++b) {
+            if(value(b,1)<0.5f) continue;
+            const auto c=point(b,in);
+            const float r=b==selected_ ? 6.0f : 4.5f;
+            g.setColour(Palette::inset());
+            g.fillEllipse(juce::Rectangle<float>(r*2,r*2).withCentre(c));
+            g.setColour(b==selected_ ? signalSourceColour() : Palette::accent());
+            g.drawEllipse(juce::Rectangle<float>(r*2,r*2).withCentre(c),1.4f);
+            text(g,juce::String(b+1),juce::Rectangle<float>(16,12).withCentre(c.translated(0,-12)).toNearestInt(),8.0f,Palette::muted(),juce::Justification::centred);
+        }
+        auto row=controlsArea();
+        text(g,"FREQ "+juce::String(fxParameterText(*descriptor(selected_,3),value(selected_,3))),freq_.getBounds().translated(0,-13).withHeight(12),8.0f,Palette::muted());
+        text(g,"GAIN "+juce::String(fxParameterText(*descriptor(selected_,4),value(selected_,4))),gain_.getBounds().translated(0,-13).withHeight(12),8.0f,Palette::muted());
+        text(g,"Q "+juce::String(fxParameterText(*descriptor(selected_,5),value(selected_,5))),q_.getBounds().translated(0,-13).withHeight(12),8.0f,Palette::muted());
+        (void)row;
+    }
+    void resized() override {
+        auto area=getLocalBounds();
+        area.removeFromTop(int(curveArea().getHeight())+6);
+        auto buttons=area.removeFromTop(24);
+        for(auto& b:bands_) b.setBounds(buttons.removeFromLeft(30).reduced(1,0));
+        buttons.removeFromLeft(8);
+        remove_.setBounds(buttons.removeFromRight(76).reduced(1,0));
+        add_.setBounds(buttons.removeFromRight(100).reduced(1,0));
+        area.removeFromTop(16);
+        auto row=area.removeFromTop(24);
+        on_.setBounds(row.removeFromLeft(48).reduced(1,0));
+        type_.setBounds(row.removeFromLeft(110).reduced(2,0));
+        row.removeFromLeft(8);
+        const int w=row.getWidth()/3;
+        freq_.setBounds(row.removeFromLeft(w).reduced(4,4));
+        gain_.setBounds(row.removeFromLeft(w).reduced(4,4));
+        q_.setBounds(row.reduced(4,4));
+    }
+    void mouseDown(const juce::MouseEvent& e) override {
+        dragging_=-1;
+        const auto in=curveArea().reduced(8.0f,6.0f);
+        for(int b=0;b<8;++b)
+            if(value(b,1)>=0.5f && e.position.getDistanceFrom(point(b,in))<12.0f) { dragging_=b; selected_=b; sync(); page_.beginParameterGesture(); return; }
+    }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if(dragging_<0) return;
+        const auto in=curveArea().reduced(8.0f,6.0f);
+        const float t=juce::jlimit(0.0f,1.0f,(e.position.x-in.getX())/in.getWidth());
+        const float db=juce::jlimit(-24.0f,24.0f,(in.getCentreY()-e.position.y)/(in.getHeight()*0.5f)*24.0f);
+        page_.setParameter(page_.selectedNode(),id(dragging_,3),t);
+        page_.setParameter(page_.selectedNode(),id(dragging_,4),(db+24.0f)/48.0f);
+    }
+    void mouseUp(const juce::MouseEvent&) override { if(dragging_>=0) page_.endParameterGesture(); dragging_=-1; }
+private:
+    static FxParameterId id(int band,int field) { return FxParameterId(100+band*10+field); }
+    const FxParameterDescriptor* descriptor(int band,int field) const { return findFxParameter(*findFxEffect(FxEffectType::Equalizer),id(band,field)); }
+    float value(int band,int field) const { return node_.parameter(id(band,field)).value_or(descriptor(band,field)->defaultValue); }
+    void set(int field,float v) { if(!syncing_) page_.setParameter(page_.selectedNode(),id(selected_,field),v); }
+    juce::Rectangle<float> curveArea() const { return getLocalBounds().toFloat().withHeight(78.0f); }
+    juce::Rectangle<int> controlsArea() const { return getLocalBounds().withTrimmedTop(110); }
+    static float xFor(float hz,juce::Rectangle<float> in) { return in.getX()+std::log(hz/20.0f)/std::log(1000.0f)*in.getWidth(); }
+    static float yFor(float db,juce::Rectangle<float> in) { return in.getCentreY()-juce::jlimit(-24.0f,24.0f,db)/24.0f*in.getHeight()*0.5f; }
+    juce::Point<float> point(int b,juce::Rectangle<float> in) const {
+        return {xFor(fxParameterValue(*descriptor(b,3),value(b,3)),in),yFor(fxParameterValue(*descriptor(b,4),value(b,4)),in)};
+    }
+    void sync() {
+        const juce::ScopedValueSetter<bool> guard(syncing_,true);
+        for(int b=0;b<8;++b) {
+            bands_[std::size_t(b)].setToggleState(b==selected_,juce::dontSendNotification);
+            bands_[std::size_t(b)].setAlpha(value(b,1)>=0.5f ? 1.0f : 0.45f);
+        }
+        on_.setToggleState(value(selected_,1)>=0.5f,juce::dontSendNotification);
+        on_.setButtonText(value(selected_,1)>=0.5f ? "ON" : "OFF");
+        type_.setButtonText(juce::String(fxParameterText(*descriptor(selected_,2),value(selected_,2))));
+        if(!freq_.isMouseButtonDown()) freq_.setValue(value(selected_,3),juce::dontSendNotification);
+        if(!gain_.isMouseButtonDown()) gain_.setValue(value(selected_,4),juce::dontSendNotification);
+        if(!q_.isMouseButtonDown()) q_.setValue(value(selected_,5),juce::dontSendNotification);
+        bool anyOff=false;
+        for(int b=0;b<8;++b) anyOff|=value(b,1)<0.5f;
+        add_.setEnabled(anyOff);
+        repaint();
+    }
+    FxPage& page_;
+    FxNode node_;
+    int selected_=2,dragging_=-1;
+    bool syncing_=false;
+    std::array<juce::TextButton,8> bands_;
+    juce::TextButton on_{"ON"},type_{"BELL"},add_{"+ ADD BAND"},remove_{"REMOVE"};
+    juce::Slider freq_,gain_,q_;
+};
+
 class FxPage::ParametersPanel final : public Panel {
 public:
     static constexpr int rowHeight=32;
@@ -1389,10 +1767,15 @@ public:
         std::vector<ModRoute> targeting;
         if(node_ && node_->kind==FxNodeKind::Effect)
             for(const auto& r:routes)
-                if(r.id && isFxDestination(r.destination.parameter) && r.destination.oscillator==node_->id) targeting.push_back(r);
+                if(r.id && isFxDestination(r.destination.parameter) && r.destination.oscillator==node_->id
+                   && fxAddressBus(r.destination)==page_.selectedBus()) targeting.push_back(r);
         std::vector<std::uint64_t> signature;
-        for(const auto& r:targeting) signature.push_back((std::uint64_t(r.id)<<32)|(std::uint64_t(r.source)<<8)|r.destination.itemId);
-        if(shownId_!=id || shownTab_!=tab_ || (node_ && node_->effect!=shownEffect_) || (tab_==1 && signature!=modulationSignature_)) {
+        for(const auto& r:targeting) signature.push_back((std::uint64_t(r.id)<<32)|(std::uint64_t(r.source)<<16)|fxAddressParameter(r.destination));
+        std::vector<FxParameterId> visible;
+        if(node_) for(const auto* p:parametersFor(*node_,false,tab_==2 ? FxParameterPage::Advanced : FxParameterPage::Main)) visible.push_back(p->id);
+        if(shownId_!=id || shownTab_!=tab_ || (node_ && node_->effect!=shownEffect_) || (tab_==1 && signature!=modulationSignature_)
+           || visible!=visibleIds_) {
+            visibleIds_=visible;
             shownId_=id;
             shownTab_=tab_;
             shownEffect_=node_ ? node_->effect : FxEffectType::None;
@@ -1402,11 +1785,13 @@ public:
         for(auto& e:rows_.entries) {
             const float v=node_->parameter(e.descriptor->id).value_or(e.descriptor->defaultValue);
             if(e.slider && !e.slider->isMouseButtonDown()) e.slider->setValue(v,juce::dontSendNotification);
-            if(e.toggle) { e.toggle->setToggleState(v>=0.5f,juce::dontSendNotification); e.toggle->setButtonText(v>=0.5f ? "ON" : "OFF"); }
+            if(e.toggle && e.descriptor->choices>2) e.toggle->setButtonText(juce::String(fxParameterText(*e.descriptor,v)));
+            else if(e.toggle) { e.toggle->setToggleState(v>=0.5f,juce::dontSendNotification); e.toggle->setButtonText(juce::String(fxParameterText(*e.descriptor,v))); }
         }
         for(auto& m:rows_.modulation)
             for(const auto& r:targeting)
                 if(r.id==m.route.id) { m.route=r; if(!m.amount->isMouseButtonDown()) m.amount->setValue(r.amount,juce::dontSendNotification); }
+        if(eq_!=nullptr && node_) eq_->setNode(*node_);
         rows_.node=node_;
         rows_.tab=tab_;
         resized();
@@ -1420,11 +1805,12 @@ public:
         viewport_.setBounds(area);
         const int width=area.getWidth()-10;
         const int lines=tab_==1 ? int(rows_.modulation.size())+2 : int(rows_.entries.size());
-        rows_.setSize(width,juce::jmax(area.getHeight(),lines*rowHeight+4));
+        rows_.setSize(width,juce::jmax(area.getHeight(),eq_!=nullptr ? 156 : lines*rowHeight+4));
+        if(eq_!=nullptr) eq_->setBounds(0,0,width,156);
         for(std::size_t i=0;i<rows_.entries.size();++i) {
             auto row=juce::Rectangle<int>(0,int(i)*rowHeight,width,rowHeight).withTrimmedLeft(120).withTrimmedRight(96).reduced(0,6);
             if(rows_.entries[i].slider) rows_.entries[i].slider->setBounds(row);
-            if(rows_.entries[i].toggle) rows_.entries[i].toggle->setBounds(row.withWidth(80));
+            if(rows_.entries[i].toggle) rows_.entries[i].toggle->setBounds(row.withWidth(rows_.entries[i].descriptor->choices>2 ? 140 : 80));
         }
         for(std::size_t i=0;i<rows_.modulation.size();++i) {
             auto row=juce::Rectangle<int>(0,rowHeight+int(i)*rowHeight,width,rowHeight).reduced(0,4);
@@ -1468,7 +1854,7 @@ private:
                 for(const auto& m:modulation) {
                     auto row=area.removeFromTop(rowHeight);
                     juce::String param="PARAM";
-                    if(const auto* p=parameterDescriptor(*node,FxParameterId(m.route.destination.itemId))) param=p->label;
+                    if(const auto* p=parameterDescriptor(*node,fxAddressParameter(m.route.destination))) param=p->label;
                     text(g,juce::String(node->name)+" / "+param,row.removeFromLeft(130),9.5f,Palette::secondary());
                     row.removeFromRight(36); // remove button
                     text(g,(m.route.amount>=0.0f?"+":"")+juce::String(m.route.amount,2),row.removeFromRight(52),9.5f,
@@ -1476,6 +1862,7 @@ private:
                 }
                 return;
             }
+            if(node->effect==FxEffectType::Equalizer && tab==0) return; // band editor paints itself
             if(entries.empty()) { text(g,"No advanced parameters for this effect.",area.removeFromTop(26),9.5f,Palette::muted()); return; }
             for(const auto& e:entries) {
                 auto line=area.removeFromTop(rowHeight);
@@ -1487,8 +1874,16 @@ private:
     void rebuild(const std::vector<ModRoute>& targeting) {
         rows_.entries.clear();
         rows_.modulation.clear();
+        eq_.reset();
         if(!node_ || node_->kind!=FxNodeKind::Effect) return;
         const auto nodeId=node_->id;
+        if(node_->effect==FxEffectType::Equalizer && tab_==0) {
+            // Band editor instead of 40 generic rows; same canonical parameters.
+            eq_=std::make_unique<FxEqEditor>(page_);
+            rows_.addAndMakeVisible(*eq_);
+            eq_->setNode(*node_);
+            return;
+        }
         if(tab_==1) {
             for(const auto& route:targeting) {
                 ModRow row{route,std::make_unique<juce::Slider>(),std::make_unique<juce::TextButton>(sourceName(route.source)),
@@ -1519,7 +1914,23 @@ private:
             Entry entry;
             entry.descriptor=p;
             const auto pid=p->id;
-            if(p->curve==FxParameterCurve::Choice) {
+            if(p->curve==FxParameterCurve::Choice && p->choices>2) {
+                // Variant selector (FILTER TYPE, PHASER STAGES, ...): native menu.
+                entry.toggle=std::make_unique<juce::TextButton>(p->label);
+                entry.toggle->setName("FX parameter "+juce::String(p->key));
+                auto* raw=entry.toggle.get();
+                const auto* descriptor=p;
+                raw->onClick=[this,raw,pid,nodeId,descriptor] {
+                    std::vector<NativeChoiceItem> items;
+                    for(int c=0;c<descriptor->choices;++c)
+                        items.push_back({c+1,descriptor->choiceLabels ? juce::String(descriptor->choiceLabels[c]) : juce::String(c),true,descriptor->label});
+                    juce::Component::SafePointer<ParametersPanel> safe(this);
+                    showNativeChoiceMenu(*raw,descriptor->label,items,0,[safe,pid,nodeId,descriptor](int choice) {
+                        if(safe!=nullptr && choice>0) safe->page_.setParameter(nodeId,pid,fxChoiceNormalized(*descriptor,choice-1));
+                    });
+                };
+                rows_.addAndMakeVisible(*raw);
+            } else if(p->curve==FxParameterCurve::Choice) {
                 entry.toggle=std::make_unique<juce::TextButton>("OFF");
                 entry.toggle->setClickingTogglesState(true);
                 entry.toggle->setName("FX parameter "+juce::String(p->key));
@@ -1534,7 +1945,7 @@ private:
                 raw->setRange(0.0,1.0,0.001);
                 raw->setScrollWheelEnabled(false);
                 raw->setName("FX parameter "+juce::String(p->key));
-                tagModulationDestination(*raw,nodeId,*p);
+                tagModulationDestination(*raw,page_.selectedBus(),nodeId,*p);
                 raw->onDragStart=[this]{page_.beginParameterGesture();};
                 raw->onDragEnd=[this]{page_.endParameterGesture();};
                 raw->onValueChange=[this,raw,pid,nodeId]{page_.setParameter(nodeId,pid,float(raw->getValue()));};
@@ -1578,6 +1989,8 @@ private:
     FxNodeId shownId_=0xffffffffu;
     FxEffectType shownEffect_=FxEffectType::None;
     std::vector<std::uint64_t> modulationSignature_;
+    std::vector<FxParameterId> visibleIds_;
+    std::unique_ptr<FxEqEditor> eq_;
 };
 
 class FxPage::FxMacrosPanel final : public Panel {
@@ -1618,44 +2031,52 @@ private:
     std::array<juce::Slider,4> sliders_;
 };
 
+// Origami-native destructive confirmation (never an OS alert).
 class FxPage::ConfirmPanel final : public juce::Component {
 public:
     explicit ConfirmPanel(FxPage& page):page_(page) {
         cancel_.setName("FX confirm cancel");
-        clear_.setName("FX confirm clear");
-        clear_.setColour(juce::TextButton::textColourOffId,signalShade(1.0f,1.0f));
-        clear_.setColour(juce::TextButton::textColourOnId,signalShade(1.0f,1.0f));
-        cancel_.onClick=[this]{page_.overlay_.dismiss();};
-        clear_.onClick=[this]{page_.confirmClear();};
+        confirm_.setName("FX confirm action");
+        confirm_.setColour(juce::TextButton::textColourOffId,signalShade(1.0f,1.0f));
+        confirm_.setColour(juce::TextButton::textColourOnId,signalShade(1.0f,1.0f));
+        cancel_.onClick=[this]{page_.pendingConfirm_=nullptr;page_.overlay_.dismiss();};
+        confirm_.onClick=[this] {
+            auto action=std::move(page_.pendingConfirm_);
+            page_.pendingConfirm_=nullptr;
+            page_.overlay_.dismiss();
+            if(action) action();
+        };
         addAndMakeVisible(cancel_);
-        addAndMakeVisible(clear_);
+        addAndMakeVisible(confirm_);
     }
-    juce::TextButton& clearButton() noexcept { return clear_; }
+    void sync() { confirm_.setButtonText(page_.confirmAction_); repaint(); }
     void paint(juce::Graphics& g) override {
         g.fillAll(Palette::panel());
         g.setColour(signalShade(.6f,.8f));
         g.drawRect(getLocalBounds());
         auto area=getLocalBounds().reduced(22,18);
-        text(g,"CLEAR FX GRAPH?",area.removeFromTop(28),13.0f,Palette::text());
+        text(g,page_.confirmTitle_,area.removeFromTop(28),13.0f,Palette::text());
         area.removeFromTop(6);
-        text(g,"This will remove all effect and routing modules.",area.removeFromTop(20),10.0f,Palette::secondary());
-        text(g,"BUS 1 > MASTER OUT will remain as the neutral route. UNDO restores the graph.",area.removeFromTop(20),9.0f,Palette::muted());
+        g.setColour(Palette::secondary());
+        g.setFont(juce::FontOptions(10.0f));
+        g.drawFittedText(page_.confirmBody_,area.removeFromTop(48),juce::Justification::topLeft,3,1.0f);
     }
     void resized() override {
         auto row=getLocalBounds().reduced(22,18).removeFromBottom(32);
-        clear_.setBounds(row.removeFromRight(110));
+        confirm_.setBounds(row.removeFromRight(110));
         row.removeFromRight(10);
         cancel_.setBounds(row.removeFromRight(110));
     }
 private:
     FxPage& page_;
-    juce::TextButton cancel_{"CANCEL"},clear_{"CLEAR"};
+    juce::TextButton cancel_{"CANCEL"},confirm_{"CLEAR"};
 };
 
 // ================================================================ page
 
-FxPage::FxPage(FxGraphDocument& document,ModulationBindings bindings,PeakSource peaks,FxViewState* view)
-    : document_(document),bindings_(std::move(bindings)),peaks_(std::move(peaks)),viewState_(view),canvas_(*this),view_(canvas_) {
+FxPage::FxPage(FxWorkspace& workspace,ModulationBindings bindings,HostBindings host)
+    : workspace_(workspace),document_(&workspace.document(mainBusId)),bindings_(std::move(bindings)),
+      peaks_(host.peaks),host_(host),viewState_(host.view),canvas_(*this),view_(canvas_) {
     setWantsKeyboardFocus(true);
     const char* modeNames[]{"SERIAL","PARALLEL","SPLIT","SEND","CUSTOM"};
     for(int i=0;i<5;++i) {
@@ -1683,6 +2104,11 @@ FxPage::FxPage(FxGraphDocument& document,ModulationBindings bindings,PeakSource 
     for(auto* b:{&undo_,&redo_,&clear_,&templates_,&add_,&zoomOut_,&zoomReset_,&zoomIn_,&zoomFit_}) addAndMakeVisible(b);
     addAndMakeVisible(sidebar_);
     sidebar_.onTabChanged=[this](FxSidebar::Tab){storeView();};
+    sidebar_.routeLabel=[this](std::uint32_t id) {
+        InstrumentState state;
+        if(bindings_.snapshot) state=bindings_.snapshot();
+        return modulationRouteTargetLabel(state,id);
+    };
     addAndMakeVisible(view_);
     view_.onViewChanged=[this] {
         zoomReset_.setButtonText(juce::String(juce::roundToInt(view_.zoom()*100.0f))+"%");
@@ -1793,65 +2219,147 @@ void FxPage::syncFromModel() {
     refreshSidebar();
 }
 
+juce::String FxPage::busName(BusId bus) const {
+    for(const auto& [id,name]:busNames_) if(id==bus) return name;
+    return bus==mainBusId ? juce::String("MAIN") : "BUS "+juce::String(bus);
+}
+
 void FxPage::refreshSidebar() {
     InstrumentState state;
     if(bindings_.snapshot) state=bindings_.snapshot();
+    busNames_.clear();
+    for(std::size_t i=0;i<state.buses.count;++i) busNames_.push_back({state.buses.buses[i].id,juce::String(state.buses.buses[i].label())});
     macrosPanel_->sync(state);
-    // Routes can change from other pages (Matrix, Synth drags): keep MODULATION live.
     if(parametersPanel_->tab()==1) parametersPanel_->show(graph(),selected_,state.modulation.routes);
 
     using Row=FxSidebar::Row;
     juce::Component::SafePointer<FxPage> safe(this);
-    // SOURCES: canonical audio buses (never ENV/LFO/MIDI).
-    std::vector<Row> sources{{"AUDIO BUSES",{},{},{},true,false,true,{}}};
-    for(std::size_t i=0;i<state.buses.count;++i) {
-        const auto& bus=state.buses.buses[i];
-        const bool inGraph=graph().sourceForBus(bus.id)!=invalidFxNodeId;
-        const auto id=bus.id;
-        Row row{juce::String(bus.label()),inGraph ? "IN GRAPH" : "ADD",i==0 ? "Synth voice sum" : "",
-                inGraph ? juce::String() : juce::String(moduleDragPrefix)+juce::String(FxModuleMenu::busBase+int(id)),true,inGraph,false,
-                [safe,id] {
-                    if(safe==nullptr) return;
-                    if(const auto existing=safe->graph().sourceForBus(id)) safe->selectNode(existing);
-                    else safe->addModule({FxModuleKind::BusSource,FxEffectType::None,id});
-                }};
-        sources.push_back(row);
-    }
-    sources.push_back({"EXTERNAL IN","PENDING","Not available yet",{},false,false,false,{}});
-    sidebar_.setRows(FxSidebar::Tab::Sources,std::move(sources));
+    // SOURCES: this bus graph's audio input (never ENV/LFO/MIDI).
+    sidebar_.setRows(FxSidebar::Tab::Sources,{
+        {"AUDIO INPUT",{},{},{},true,false,true,{}},
+        {busName(bus_)+" IN","THIS BUS",bus_==mainBusId ? "Synth voice sum" : "Oscillator sends to "+busName(bus_),{},true,true,false,
+         [safe]{if(safe!=nullptr) safe->selectNode(safe->graph().sourceForBus(safe->selectedBus()));}},
+        {"EXTERNAL IN","PENDING","Not available yet",{},false,false,false,{}}});
 
-    // MODULATORS: references to the canonical sources. Dragging one is
-    // identical to dragging it from the SYNTH page.
+    // MODULATORS: the SYNTH page's own source cards (ModulationSourceRow), fed
+    // from the same canonical routes: every route of the source, wherever it
+    // lands, exactly as the SYNTH rail shows it.
     std::vector<Row> modulators;
     const char* lastGroup="";
     for(const auto& s:availableSources(state.modulation)) {
         if(std::strcmp(lastGroup,s.group)!=0) { modulators.push_back({s.group,{},{},{},true,false,true,{}}); lastGroup=s.group; }
-        int count=0;
-        for(const auto& r:state.modulation.routes) count+=r.id && r.source==s.source && isFxDestination(r.destination.parameter);
-        modulators.push_back({sourceName(s.source),count ? juce::String(count)+" FX" : juce::String(),{},
-                              juce::String(sourceDragPrefix)+juce::String(int(s.source)),true,count>0,false,{}});
+        Row row{sourceName(s.source),{},{},juce::String(sourceDragPrefix)+juce::String(int(s.source)),true,false,false,{}};
+        for(const auto& r:modulationSourceRoutes(state.modulation,s.source)) row.magnitudes.push_back({r.id,r.amount});
+        row.active=!row.magnitudes.empty();
+        row.modulationSource=s.source;
+        row.onMagnitude=[safe](std::uint32_t id,float amount) {
+            if(safe==nullptr || !safe->bindings_.snapshot || !safe->bindings_.route) return;
+            for(auto r:safe->bindings_.snapshot().modulation.routes)
+                if(r.id==id) { r.amount=amount; safe->bindings_.route(r); }
+            safe->refreshSidebar();
+        };
+        row.onRemoveRoute=[safe](std::uint32_t id) {
+            if(safe==nullptr || !safe->bindings_.removeRoute) return;
+            safe->bindings_.removeRoute(id);
+            safe->refreshSidebar();
+        };
+        modulators.push_back(std::move(row));
     }
     sidebar_.setRows(FxSidebar::Tab::Modulators,std::move(modulators));
 
-    // FILTERS: the synth's per-voice filter sits BEFORE the voice sum, so it is
-    // not a post-mix graph processor. It is shown truthfully and can be opened.
+    // FILTERS: the canonical synth FILTER 1 (per voice, before the buses).
     const bool filterOn=state.modulation.filterEnabled;
     sidebar_.setRows(FxSidebar::Tab::Filters,{
         {"SYNTH FILTERS",{},{},{},true,false,true,{}},
-        {"FILTER 1",filterOn ? "ON" : "OFF","Per-voice low-pass, before BUS 1",{},true,filterOn,false,
-         [safe]{if(safe!=nullptr && safe->onOpenSynthFilter) safe->onOpenSynthFilter();}},
-        {"IN THE GRAPH",{},{},{},true,false,true,{}},
-        {"POST-MIX FILTERING","NOTE","Use COMB; FX filter modules later",{},false,false,false,{}}});
+        {"FILTER 1",filterOn ? "ON" : "OFF","Per-voice, before buses / drag: post-mix copy",
+         filterOn ? juce::String("MCT_SYNTH_FILTER:1") : juce::String(),true,filterOn,false,
+         [safe]{if(safe!=nullptr && safe->onOpenSynthFilter) safe->onOpenSynthFilter();}}});
 
-    // ROUTES: topology tools. SEND/RETURN stay pending until their DSP exists.
-    sidebar_.setRows(FxSidebar::Tab::Routes,{
-        {"ROUTING MODULES",{},{},{},true,false,true,{}},
-        {"SPLIT","1 IN / 2 OUT","Drag onto the graph",juce::String(moduleDragPrefix)+juce::String(FxModuleMenu::splitId),true,false,false,
-         [safe]{if(safe!=nullptr) safe->addModuleAt({FxModuleKind::Split,FxEffectType::None,0},safe->viewCentre());}},
-        {"MERGE","2 IN / 1 OUT","Drag onto the graph",juce::String(moduleDragPrefix)+juce::String(FxModuleMenu::mergeId),true,false,false,
-         [safe]{if(safe!=nullptr) safe->addModuleAt({FxModuleKind::Merge,FxEffectType::None,0},safe->viewCentre());}},
-        {"SEND","PENDING","Needs send/return DSP",{},false,false,false,{}},
-        {"RETURN","PENDING","Needs send/return DSP",{},false,false,false,{}}});
+    // BUSES: one canonical bus model; selecting a bus shows its graph.
+    std::vector<Row> buses{{"AUDIO BUSES",{},{},{},true,false,true,{}}};
+    for(const auto& [id,name]:busNames_) {
+        int effects=0;
+        if(const auto* doc=workspace_.find(id)) for(const auto& n:doc->graph().nodes()) effects+=n.kind==FxNodeKind::Effect;
+        const auto busId=id;
+        Row row{name,effects ? juce::String(effects)+" FX" : juce::String(),busId==mainBusId ? "Permanent output bus" : "",
+                {},true,busId==bus_,false,[safe,busId]{if(safe!=nullptr) safe->selectBus(busId);}};
+        if(busId!=mainBusId)
+            row.onSecondaryClick=[safe,busId] {
+                if(safe==nullptr) return;
+                showNativeChoiceMenu(safe->sidebar_,"BUS",{{1,"Delete Bus",true,"BUS"}},0,[safe,busId](int choice) {
+                    if(safe!=nullptr && choice==1) safe->requestDeleteBus(busId);
+                });
+            };
+        buses.push_back(std::move(row));
+    }
+    buses.push_back({"+ ADD BUS",{},busNames_.size()>=maxRenderBuses ? "Maximum of 8 buses" : "",{},
+                     busNames_.size()<maxRenderBuses && bool(host_.addBus),false,false,[safe]{if(safe!=nullptr) safe->addBus();}});
+    sidebar_.setRows(FxSidebar::Tab::Buses,std::move(buses));
+}
+
+void FxPage::selectBus(BusId bus) {
+    if(bus==bus_ && document_==workspace_.find(bus)) return;
+    busViews_[bus_]={view_.zoom(),view_.pan()};
+    bus_=bus;
+    document_=&workspace_.document(bus);
+    canvas_.clearNodes(); // node IDs are per bus graph: never reuse components across buses
+    selected_=invalidFxNodeId;
+    lastRevision_=0;
+    refresh(true);
+    if(const auto it=busViews_.find(bus);it!=busViews_.end()) view_.setView(it->second.first,it->second.second);
+    else view_.setView(1.0f,{0.0f,0.0f});
+    refreshSidebar();
+}
+
+BusId FxPage::addBus() {
+    if(!host_.addBus) return 0;
+    const auto id=host_.addBus();
+    if(id!=0) { refreshSidebar(); selectBus(id); }
+    return id;
+}
+
+bool FxPage::deleteBus(BusId bus) {
+    if(bus==mainBusId || !host_.removeBus) return false;
+    if(bus_==bus) selectBus(mainBusId); // stop viewing the graph before it goes
+    const bool ok=host_.removeBus(bus);
+    refreshSidebar();
+    return ok;
+}
+
+void FxPage::requestDeleteBus(BusId bus) {
+    if(bus==mainBusId) return;
+    confirmTitle_="DELETE "+busName(bus)+"?";
+    confirmBody_="This will remove its routing and processing graph. Oscillators that only sent to "
+                 +busName(bus)+" return to MAIN at unity.";
+    confirmAction_="DELETE";
+    pendingConfirm_=[this,bus]{deleteBus(bus);};
+    confirmPanel_->sync();
+    overlay_.show(*confirmPanel_,{0,0,560,190});
+}
+
+FxNodeId FxPage::addSynthFilterCopy(FxPoint centre) {
+    // A post-mix FILTER module matching FILTER 1 (low-pass, cutoff, resonance).
+    // The synth filter itself stays the single per-voice processor.
+    InstrumentState state;
+    if(bindings_.snapshot) state=bindings_.snapshot();
+    const float cutoff=state.parameters[static_cast<std::size_t>(ParameterId::Cutoff)];
+    const float resonance=state.parameters[static_cast<std::size_t>(ParameterId::Resonance)];
+    const auto created=addModuleAt({FxModuleKind::Effect,FxEffectType::Filter,0},centre);
+    if(created==invalidFxNodeId) return created;
+    const auto* d=findFxEffect(FxEffectType::Filter);
+    const auto normalized=[](const FxParameterDescriptor& p,float value) {
+        return p.curve==FxParameterCurve::Exponential ? std::log(value/p.minimum)/std::log(p.maximum/p.minimum)
+                                                      : (value-p.minimum)/(p.maximum-p.minimum);
+    };
+    document_->edit([&](FxGraph& g) {
+        g.setParameter(created,1,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,1),juce::jlimit(20.0f,20000.0f,cutoff))));
+        // Synth resonance [0,1] maps to Q [0.5,4] (ARCHITECTURE.md).
+        g.setParameter(created,6,juce::jlimit(0.0f,1.0f,normalized(*findFxParameter(*d,6),0.5f+3.5f*resonance)));
+        g.setParameter(created,5,0.0f); // LOW PASS
+        return true;
+    });
+    refresh(true);
+    return created;
 }
 
 void FxPage::updateMeters() {
@@ -1865,9 +2373,17 @@ void FxPage::updateMeters() {
 }
 
 void FxPage::refresh(bool force) {
-    if(!force && lastRevision_==document_.revision()) return;
-    lastRevision_=document_.revision();
-    const auto& graph=document_.graph();
+    if(workspace_.find(bus_)!=document_) {
+        // The bus was removed elsewhere (e.g. state restore): fall back to MAIN.
+        bus_=mainBusId;
+        document_=&workspace_.document(mainBusId);
+        canvas_.clearNodes();
+        selected_=invalidFxNodeId;
+        force=true;
+    }
+    if(!force && lastRevision_==document_->revision()) return;
+    lastRevision_=document_->revision();
+    const auto& graph=document_->graph();
     if(graph.findNode(selected_)==nullptr) selected_=invalidFxNodeId;
     const auto area=view_.viewport();
     canvas_.rebuild(graph,selected_,int(float(area.getWidth())/view_.zoom())+1,int(float(area.getHeight())/view_.zoom())+1);
@@ -1880,10 +2396,10 @@ void FxPage::refresh(bool force) {
 }
 
 void FxPage::refreshToolbar() {
-    const auto mode=static_cast<int>(document_.graph().routingMode())-1;
+    const auto mode=static_cast<int>(document_->graph().routingMode())-1;
     for(int i=0;i<5;++i) modes_[std::size_t(i)].setToggleState(i==mode,juce::dontSendNotification);
-    undo_.setEnabled(document_.canUndo());
-    redo_.setEnabled(document_.canRedo());
+    undo_.setEnabled(document_->canUndo());
+    redo_.setEnabled(document_->canRedo());
 }
 
 void FxPage::selectNode(FxNodeId id) {
@@ -1896,7 +2412,7 @@ void FxPage::selectNode(FxNodeId id) {
 }
 
 bool FxPage::deleteNode(FxNodeId id) {
-    const bool removed=document_.edit([id](FxGraph& g){return g.removeNodeBridging(id)==FxEditResult::Ok;});
+    const bool removed=document_->edit([id](FxGraph& g){return g.removeNodeBridging(id)==FxEditResult::Ok;});
     if(removed && selected_==id) selected_=invalidFxNodeId;
     refresh(true);
     return removed;
@@ -1904,8 +2420,9 @@ bool FxPage::deleteNode(FxNodeId id) {
 
 FxNodeId FxPage::addModule(const FxModuleSpec& spec) {
     if(spec.kind==FxModuleKind::BusSource) {
+        if(spec.bus!=bus_) return invalidFxNodeId; // each graph's input is its own bus
         FxNodeId created=invalidFxNodeId;
-        document_.edit([&](FxGraph& g){
+        document_->edit([&](FxGraph& g){
             created=g.addBusSource(spec.bus,{40.0f,40.0f+120.0f*float(g.nodes().size()%5)});
             return created!=invalidFxNodeId;
         });
@@ -1921,20 +2438,20 @@ FxNodeId FxPage::addModule(const FxModuleSpec& spec) {
     const auto* outputWire=graph().connectionAt({output,0},true);
     FxNodeId created=invalidFxNodeId;
     if(mode==FxRoutingMode::Serial) {
-        document_.edit([&](FxGraph& g){created=g.insertEffectBeforeOutput(spec.effect);return created!=invalidFxNodeId;});
+        document_->edit([&](FxGraph& g){created=g.insertEffectBeforeOutput(spec.effect);return created!=invalidFxNodeId;});
     } else if(mode==FxRoutingMode::Parallel) {
         const auto* selected=graph().findNode(selected_);
         const bool chained=selected && selected->kind==FxNodeKind::Effect
             && graph().connectionAt({selected_,0},true) && graph().connectionAt({selected_,0},false);
         const auto wire=outputWire ? outputWire->id : 0u;
-        document_.edit([&](FxGraph& g){
+        document_->edit([&](FxGraph& g){
             created=chained ? g.parallelAroundNode(selected_,spec.effect) : wire ? g.parallelOnConnection(wire,spec.effect) : invalidFxNodeId;
             return created!=invalidFxNodeId;
         });
     } else if(mode==FxRoutingMode::Split) {
         const auto* fromSelected=graph().connectionAt({selected_,0},false);
         const auto wire=fromSelected ? fromSelected->id : outputWire ? outputWire->id : 0u;
-        document_.edit([&](FxGraph& g){created=wire ? g.branchFromConnection(wire,spec.effect) : invalidFxNodeId;return created!=invalidFxNodeId;});
+        document_->edit([&](FxGraph& g){created=wire ? g.branchFromConnection(wire,spec.effect) : invalidFxNodeId;return created!=invalidFxNodeId;});
     }
     if(created==invalidFxNodeId) return addModuleAt(spec,viewCentre()); // CUSTOM, or nothing unambiguous to attach to
     selected_=created;
@@ -1945,7 +2462,7 @@ FxNodeId FxPage::addModule(const FxModuleSpec& spec) {
 
 FxNodeId FxPage::addModuleAt(const FxModuleSpec& spec,FxPoint centre) {
     FxNodeId created=invalidFxNodeId;
-    document_.edit([&](FxGraph& g){
+    document_->edit([&](FxGraph& g){
         FxNode probe;
         probe.kind=spec.kind==FxModuleKind::Split ? FxNodeKind::Split : spec.kind==FxModuleKind::Merge ? FxNodeKind::Merge
                  : spec.kind==FxModuleKind::BusSource ? FxNodeKind::Source : FxNodeKind::Effect;
@@ -1967,7 +2484,7 @@ FxNodeId FxPage::insertModuleOnConnection(FxConnectionId connection,const FxModu
     probe.kind=spec.kind==FxModuleKind::Split ? FxNodeKind::Split : spec.kind==FxModuleKind::Merge ? FxNodeKind::Merge : FxNodeKind::Effect;
     probe.ports=fxPortTopology(probe.kind);
     const auto size=FxNodeComponent::sizeFor(probe);
-    document_.edit([&](FxGraph& g){
+    document_->edit([&](FxGraph& g){
         created=g.insertModuleOnConnection(connection,spec,{centre.x-float(size.getWidth())*0.5f,centre.y-float(size.getHeight())*0.5f});
         return created!=invalidFxNodeId;
     });
@@ -1989,13 +2506,13 @@ FxNodeId FxPage::insertBeforeOutput(const FxModuleSpec& spec) {
 }
 
 bool FxPage::removeConnection(FxConnectionId id) {
-    const bool ok=document_.edit([id](FxGraph& g){return g.disconnect(id);});
+    const bool ok=document_->edit([id](FxGraph& g){return g.disconnect(id);});
     refresh(true);
     return ok;
 }
 
 bool FxPage::resetConnectionRouting(FxConnectionId id) {
-    const bool ok=document_.edit([id](FxGraph& g){
+    const bool ok=document_->edit([id](FxGraph& g){
         const auto* c=g.findConnection(id);
         if(c==nullptr || c->layout.empty()) return false;
         while(!g.findConnection(id)->layout.empty()) g.removeLayoutPoint(id,0);
@@ -2007,7 +2524,7 @@ bool FxPage::resetConnectionRouting(FxConnectionId id) {
 
 bool FxPage::addLayoutPoint(FxConnectionId connection,FxPoint at) {
     const auto index=canvas_.layoutInsertIndex(connection,{at.x,at.y});
-    const bool ok=document_.edit([&](FxGraph& g){return g.addLayoutPoint(connection,index,at)==FxEditResult::Ok;});
+    const bool ok=document_->edit([&](FxGraph& g){return g.addLayoutPoint(connection,index,at)==FxEditResult::Ok;});
     refresh(true);
     return ok;
 }
@@ -2015,7 +2532,7 @@ bool FxPage::addLayoutPoint(FxConnectionId connection,FxPoint at) {
 bool FxPage::moveLayoutPoint(FxConnectionId connection,std::size_t index,FxPoint at,bool live) {
     if(live) {
         if(!gestureActive_) beginParameterGesture();
-        const bool ok=document_.gestureEdit([&](FxGraph& g){return g.moveLayoutPoint(connection,index,at)==FxEditResult::Ok;});
+        const bool ok=document_->gestureEdit([&](FxGraph& g){return g.moveLayoutPoint(connection,index,at)==FxEditResult::Ok;});
         refresh(false);
         return ok;
     }
@@ -2024,40 +2541,46 @@ bool FxPage::moveLayoutPoint(FxConnectionId connection,std::size_t index,FxPoint
 }
 
 bool FxPage::removeLayoutPoint(FxConnectionId connection,std::size_t index) {
-    const bool ok=document_.edit([&](FxGraph& g){return g.removeLayoutPoint(connection,index)==FxEditResult::Ok;});
+    const bool ok=document_->edit([&](FxGraph& g){return g.removeLayoutPoint(connection,index)==FxEditResult::Ok;});
     refresh(true);
     return ok;
 }
 
 void FxPage::setRoutingMode(FxRoutingMode mode) {
     if(mode==FxRoutingMode::Send) { refreshToolbar(); return; } // pending, never faked
-    document_.edit([mode](FxGraph& g){g.setRoutingMode(mode);return true;});
+    document_->edit([mode](FxGraph& g){g.setRoutingMode(mode);return true;});
     refresh(true);
 }
 
 void FxPage::requestClear() {
-    overlay_.show(*confirmPanel_,{0,0,520,180});
+    confirmTitle_="CLEAR "+busName(bus_)+" FX?";
+    confirmBody_="This will remove all processing and routing modules from "+busName(bus_)+". "
+                 +busName(bus_)+" IN > "+busName(bus_)+" OUT remains; other buses are untouched. UNDO restores it.";
+    confirmAction_="CLEAR";
+    pendingConfirm_=[this]{confirmClear();};
+    confirmPanel_->sync();
+    overlay_.show(*confirmPanel_,{0,0,560,190});
 }
 
 void FxPage::confirmClear() {
     overlay_.dismiss();
     // One canonical transaction (one undo step). Connections and their routing
     // points go with the modules; the processor prunes FX modulation routes.
-    document_.edit([](FxGraph& g){g.clearProcessing();return true;});
+    document_->edit([](FxGraph& g){g.clearProcessing();return true;});
     selected_=invalidFxNodeId;
     refresh(true);
 }
 
-void FxPage::undo() { document_.undo(); refresh(true); }
-void FxPage::redo() { document_.redo(); refresh(true); }
+void FxPage::undo() { document_->undo(); refresh(true); }
+void FxPage::redo() { document_->redo(); refresh(true); }
 
 void FxPage::commitMove(FxNodeId id,juce::Point<int> topLeft) {
-    document_.edit([&](FxGraph& g){return g.moveNode(id,{float(topLeft.x),float(topLeft.y)})==FxEditResult::Ok;});
+    document_->edit([&](FxGraph& g){return g.moveNode(id,{float(topLeft.x),float(topLeft.y)})==FxEditResult::Ok;});
     refresh(true);
 }
 
 bool FxPage::connectPorts(FxPortRef from,FxPortRef to) {
-    const bool ok=document_.edit([&](FxGraph& g) {
+    const bool ok=document_->edit([&](FxGraph& g) {
         g.disconnectPort(to.node,true,to.port);
         g.disconnectPort(from.node,false,from.port);
         return g.connect(from,to)==FxEditResult::Ok;
@@ -2067,36 +2590,39 @@ bool FxPage::connectPorts(FxPortRef from,FxPortRef to) {
 }
 
 void FxPage::disconnectPort(FxNodeId id,bool input,std::uint8_t port) {
-    document_.edit([&](FxGraph& g){return g.disconnectPort(id,input,port)>0;});
+    document_->edit([&](FxGraph& g){return g.disconnectPort(id,input,port)>0;});
     refresh(true);
 }
 
 void FxPage::setNodeEnabled(FxNodeId id,bool enabled) {
-    document_.edit([&](FxGraph& g){return g.setEnabled(id,enabled)==FxEditResult::Ok;});
+    document_->edit([&](FxGraph& g){return g.setEnabled(id,enabled)==FxEditResult::Ok;});
     refresh(true);
 }
 
 void FxPage::beginParameterGesture() {
-    document_.beginGesture();
+    document_->beginGesture();
     gestureActive_=true;
 }
 
 void FxPage::setParameter(FxNodeId id,FxParameterId parameter,float value) {
     const auto apply=[&](FxGraph& g){return g.setParameter(id,parameter,value)==FxEditResult::Ok;};
-    if(gestureActive_) document_.gestureEdit(apply); else document_.edit(apply);
+    if(gestureActive_) document_->gestureEdit(apply); else document_->edit(apply);
     refresh(false);
 }
 
 void FxPage::endParameterGesture() {
     gestureActive_=false;
-    document_.endGesture();
+    document_->endGesture();
     refreshToolbar();
 }
 
 std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
     std::vector<NativeChoiceItem> items;
-    for(const auto& d:fxEffectCatalog())
-        if(d.processesAudio) items.push_back({int(d.type),juce::String(d.label),true,"EFFECTS"});
+    for(const auto category:{FxCategory::Dynamics,FxCategory::FilterEq,FxCategory::Distortion,FxCategory::Modulation,
+                             FxCategory::Spatial,FxCategory::Time,FxCategory::Utility})
+        for(const auto& d:fxEffectCatalog())
+            if(d.processesAudio && d.category==category)
+                items.push_back({int(d.type),juce::String(d.label),true,juce::String("EFFECTS / ")+fxCategoryName(category)});
     items.push_back({FxModuleMenu::splitId,"Split",true,"ROUTING"});
     items.push_back({FxModuleMenu::mergeId,"Merge",true,"ROUTING"});
     items.push_back({FxModuleMenu::sendId,"Send (pending)",false,"ROUTING"});
@@ -2104,11 +2630,10 @@ std::vector<NativeChoiceItem> FxPage::moduleMenuItems(bool allowSources) const {
     if(allowSources) {
         InstrumentState state;
         if(bindings_.snapshot) state=bindings_.snapshot();
-        for(std::size_t i=0;i<state.buses.count;++i) {
-            const auto& bus=state.buses.buses[i];
-            if(graph().sourceForBus(bus.id)==invalidFxNodeId)
-                items.push_back({FxModuleMenu::busBase+int(bus.id),juce::String(bus.label()),true,"SOURCES"});
-        }
+        // A bus graph's audio input is its own bus.
+        if(graph().sourceForBus(bus_)==invalidFxNodeId)
+            items.push_back({FxModuleMenu::busBase+int(bus_),busName(bus_)+" IN",true,"SOURCES"});
+        (void)state;
         items.push_back({FxModuleMenu::externalId,"External Input (pending)",false,"SOURCES"});
     }
     return items;
@@ -2130,11 +2655,11 @@ void FxPage::showModuleMenu(juce::Component& anchor,bool allowSources,std::funct
 
 void FxPage::applyTemplate(int id) {
     switch(id) {
-    case 1: document_.edit([](FxGraph& g){g=makeDefaultFxGraph();return true;}); break;
-    case 2: document_.edit([](FxGraph& g){g=makeSerialChainTemplate();return true;}); break;
-    case 3: document_.edit([](FxGraph& g){g=makeParallelTemplate();return true;}); break;
-    case 4: document_.edit([](FxGraph& g){return g.applyTemplate(FxRoutingMode::Serial);}); break;
-    case 10: document_.edit([](FxGraph& g){g=makeDevelopmentFxGraph();return true;}); break;
+    case 1: document_->edit([](FxGraph& g){g=makeDefaultFxGraph();return true;}); break;
+    case 2: document_->edit([](FxGraph& g){g=makeSerialChainTemplate();return true;}); break;
+    case 3: document_->edit([](FxGraph& g){g=makeParallelTemplate();return true;}); break;
+    case 4: document_->edit([](FxGraph& g){return g.applyTemplate(FxRoutingMode::Serial);}); break;
+    case 10: document_->edit([](FxGraph& g){g=makeDevelopmentFxGraph();return true;}); break;
     default: return;
     }
     selected_=invalidFxNodeId;

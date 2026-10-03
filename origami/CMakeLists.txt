@@ -36,7 +36,8 @@ if(ORIGAMI_ENABLE_AUX_RT_THREADS)
 endif()
 add_library(origami_core STATIC core/Engine.cpp core/InstrumentState.cpp core/modulation/Modulation.cpp core/ParameterRegistry.cpp core/Voice.cpp core/dsp/Wavetable.cpp core/dsp/WavetableBank.cpp core/dsp/Envelope.cpp
   core/fx/FxGraph.cpp core/fx/FxDevelopmentGraph.cpp core/BusModel.cpp
-  core/fx/FxEffects.cpp core/fx/FxRenderer.cpp)
+  core/fx/FxEffects.cpp core/fx/FxRenderer.cpp
+  core/fx/FxEnvironment.cpp core/fx/FxWorkspace.cpp)
 add_library(mct::origami ALIAS origami_core)
 target_include_directories(origami_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(origami_core PUBLIC Threads::Threads)
@@ -198,7 +199,7 @@ if(ORIGAMI_BUILD_VST3)
   target_sources(OrigamiPlugin PRIVATE
     plugin/ui/OrigamiStyle.cpp plugin/ui/OrigamiHeader.cpp plugin/ui/GlobalPanel.cpp
     plugin/ui/OscillatorRack.cpp plugin/ui/SignalPanels.cpp
-    plugin/ui/ModulationPanel.cpp plugin/ui/ModulationMatrix.cpp
+    plugin/ui/ModulationPanel.cpp plugin/ui/ModulationSourceRow.cpp plugin/ui/ModulationMatrix.cpp
     plugin/ui/PerformanceKeyboard.cpp plugin/ui/ArpeggiatorPanel.cpp
     plugin/ui/FxPage.cpp)
   if(APPLE)

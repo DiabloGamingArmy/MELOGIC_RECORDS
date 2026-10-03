@@ -23,6 +23,8 @@
 #include "core/ArpeggiatorState.h"
 #include "core/fx/FxGraph.h"
 #include "core/fx/FxRenderer.h"
+#include "core/fx/FxEnvironment.h"
+#include "core/fx/FxWorkspace.h"
 #include "ui/VisualizationSettings.h"
 
 // mct-origami-audio-reengineer-p04-ui-telemetry-decimation
@@ -97,11 +99,19 @@ public:
     // mct-origami-fx-page-foundation-p01
     // Canonical editable FX graph. MESSAGE THREAD ONLY: processBlock never
     // reads it. A future FX renderer will receive compiled, immutable plans.
-    mct::origami::fx::FxGraphDocument& getUiFxDocument() noexcept { return fxDocument_; }
+    // MAIN bus graph (kept for existing callers); every bus has its own graph.
+    mct::origami::fx::FxGraphDocument& getUiFxDocument() noexcept { return fxWorkspace_.document(mct::origami::mainBusId); }
+    // mct-origami-unified-routing-core-fx-p04: per-bus graphs + Global FX.
+    mct::origami::fx::FxWorkspace& getUiFxWorkspace() noexcept { return fxWorkspace_; }
+    // Canonical bus editing (the future Mixer uses the same calls). MAIN is
+    // permanent; removing a bus prunes oscillator sends (falling back to MAIN
+    // at unity) and FX modulation routes, and drops the bus's graph.
+    mct::origami::BusId addUiBus() noexcept;
+    bool removeUiBus(mct::origami::BusId) noexcept;
     // mct-origami-fx-graph-dsp-bus-routing-p02
     // Peak output since the previous call (UI meter telemetry, lock-free).
-    std::pair<float,float> consumeUiFxPeaks() noexcept { return fxRenderer_.consumePeaks(); }
-    std::uint64_t getFxCompileCount() const noexcept { return fxRenderer_.compileCount(); }
+    std::pair<float,float> consumeUiFxPeaks() noexcept { return fxEnvironment_.consumePeaks(); }
+    std::uint64_t getFxCompileCount() const noexcept { return fxEnvironment_.compileCount(); }
     mct::origami::fx::FxViewState& getUiFxViewState() noexcept { return fxViewState_; }
 
     // P0 audio-continuity diagnostics. These counters are observational only:
@@ -237,14 +247,20 @@ private:
     std::atomic<std::uint32_t> visualizationMask_{mct::origami::ui::defaultVisualizationMask};
     mct::origami::LatestStateMailbox<mct::origami::RuntimeVisualizationSnapshot> visualizationMailbox_;
     mct::origami::RuntimeVisualizationSnapshot uiVisualizationSnapshot_{};
-    mct::origami::fx::FxGraphDocument fxDocument_;
-    // Compiles fxDocument_ into prepared plans; process() runs after the engine.
-    mct::origami::fx::FxRenderer fxRenderer_;
+    mct::origami::fx::FxWorkspace fxWorkspace_;
+    // One prepared renderer per bus + Global FX; process() runs after the engine.
+    mct::origami::fx::FxEnvironment fxEnvironment_;
+    // User-bus render buffers (L,R per user slot), allocated in prepareToPlay.
+    std::vector<float> auxStorage_;
+    std::array<float*,2*(mct::origami::maxRenderBuses-1)> auxPointers_{};
+    int auxCapacity_=0;
+    bool auxThisBlock_=false;
     juce::CriticalSection fxCompileLock_; // non-realtime compile/prepare only
     void syncFxRenderer();
     void pruneFxModulationRoutes();
     mct::origami::fx::FxViewState fxViewState_{};
-    static constexpr std::uint32_t fxStateMagic=0x46584732u; // 'FXG2'
+    static constexpr std::uint32_t fxStateMagic=0x46584732u; // 'FXG2' (P02/P03: MAIN graph only)
+    static constexpr std::uint32_t fxWorkspaceMagic=0x46585731u; // 'FXW1' (P04: all bus graphs + Global FX)
 
     // UI telemetry is intentionally control-rate, not render-span-rate.
     // Countdown is audio-thread-owned; publication remains lock-free atomics.

@@ -1,8 +1,18 @@
+// mct-origami-unified-routing-core-fx-p04
 #pragma once
 #include "OscillatorModule.h"
+#include "BusModel.h"
 
 namespace mct::origami {
 using OscillatorProcessPlans=std::array<dsp::OscProcessPlan,16>;
+// Render slot -> stable BusId. Slot 0 is always MAIN. Published to the audio
+// thread as a fixed-size value; never resolved by display name.
+struct BusSlotMap {
+    std::array<BusId,maxRenderBuses> ids{{mainBusId}};
+    std::size_t count=1;
+    bool operator==(const BusSlotMap& o) const noexcept { return count==o.count && ids==o.ids; }
+    bool operator!=(const BusSlotMap& o) const noexcept { return !(*this==o); }
+};
 // Compiled at a host-block boundary and shared by all voices. Only amounts
 // change at audio rate; IDs, enabled flags, types and ordering are topology.
 struct OscillatorRenderPlan {
@@ -17,9 +27,10 @@ struct OscillatorRenderPlan {
         std::uint8_t processCount=0,preCount=0,postCount=0;
         bool dynamicProcesses=false,dynamicRoutes=false;
         bool simple=true; // no phase/spectral process or cross-oscillator route
-        // Post-filter send into BUS 1, the bus the engine renders today.
-        // Additional buses are model-only until multi-bus rendering exists.
+        // Post-filter sends per render slot (slot 0 = MAIN).
         float mainBusSend=1.0f;
+        std::array<float,maxRenderBuses> busSend{};
+        bool auxSends=false;
         dsp::OscProcessPlan processTemplate{};
     };
     std::array<Module,16> modules{};
@@ -27,6 +38,8 @@ struct OscillatorRenderPlan {
     std::array<std::uint8_t,16> active{};
     std::size_t activeCount=0;
     std::uint64_t generation=0;
+    std::size_t busCount=1;
+    bool auxActive=false; // any oscillator sends to a user bus
 
     void processPlan(std::size_t m,const OscillatorModuleState& source,dsp::OscProcessPlan& out) const noexcept {
         const auto& plan=modules[m];
@@ -38,14 +51,19 @@ struct OscillatorRenderPlan {
         }
     }
 
-    void compile(const std::array<OscillatorModuleState,16>& state) noexcept {
+    void compile(const std::array<OscillatorModuleState,16>& state,const BusSlotMap& slots=BusSlotMap{}) noexcept {
         activeCount=0;
+        busCount=std::clamp<std::size_t>(slots.count,1,maxRenderBuses);
+        auxActive=false;
         for(std::size_t m=0;m<state.size();++m) ids[m]=state[m].id;
         for(std::size_t m=0;m<state.size();++m) {
             const auto& source=state[m];auto& plan=modules[m];plan={};
             if(!source.id || !source.enabled) continue;
             active[activeCount++]=static_cast<std::uint8_t>(m);
-            plan.mainBusSend=oscBusSend(source,mainBusId);
+            for(std::size_t b=0;b<busCount;++b) plan.busSend[b]=oscBusSend(source,slots.ids[b]);
+            plan.mainBusSend=plan.busSend[0];
+            for(std::size_t b=1;b<busCount;++b) plan.auxSends=plan.auxSends || plan.busSend[b]!=0.0f;
+            auxActive=auxActive || plan.auxSends;
             plan.dynamicProcesses=source.processCount!=0;
             if(plan.dynamicProcesses) {
                 for(std::size_t p=0;p<std::min<std::size_t>(source.processCount,maxOscProcesses);++p)

@@ -102,6 +102,26 @@ classes in this release. Hosts will adapt this library, never become its DSP
 source of truth: future WASM/C ABI, Soura native, and VST3/JUCE adapters remain
 separate targets. Origami does not join Soura's Signalsmith asset-extraction build.
 
+## MAIN, user buses and per-bus FX (P04)
+
+The permanent default bus is MAIN (stable BusId 1; codec v27 renames old
+"BUS 1" saves without touching IDs). User buses are named "BUS n" with the
+lowest free n; names are display only. The engine renders up to 8 buses
+(`BusSlotMap`: slot 0 = MAIN) into the processor's prepared user-bus
+buffers. `FxWorkspace` owns one persistent graph per bus plus the Global FX
+settings; `FxEnvironment` runs one prepared `FxRenderer` per bus (hidden or
+not), sums the bus outputs and applies Global FX once on the master. Deleting
+a bus drops its graph, prunes its oscillator sends (orphans fall back to MAIN
+at unity) and prunes FX modulation routes. FX modulation destinations are
+bus-qualified (`itemId = BusId << 16 | parameter`). Host state stores the
+workspace in an `FXW1` trailer; `FXG2` (P02/P03) loads as the MAIN graph.
+
+Effect library: Drive, Compressor (single / 3-band LR4 multiband), Limiter,
+Filter (TPT SVF: LP/HP/BP/notch/peak/all-pass/shelves + comb), Equalizer (8
+stable SVF bands), Chorus, Flanger, Phaser, Spatial (mid/side ensemble +
+decorrelation, mono-safe), Delay, Reverb, Diffuse, Gain, Stereo Utility.
+`core/fx/FxFilter.h` is shared by the DSP and the UI response curves.
+
 ## Buses and FX graph
 
 Oscillators send post-OSC-CHAIN, post-filter audio to named buses by stable

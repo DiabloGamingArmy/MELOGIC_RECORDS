@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 #include "core/fx/FxRenderer.h"
@@ -123,7 +124,7 @@ std::unique_ptr<PreparedFxPlan> FxGraphCompiler::compile(const FxGraph& graph) {
         }
     }
     plan->stepCount=order.size();
-    plan->identity=plan->stepCount==2 && plan->steps[0].kind==FxStepKind::Source && plan->steps[0].bus==fxMainBusId
+    plan->identity=plan->stepCount==2 && plan->steps[0].kind==FxStepKind::Source
         && plan->steps[1].kind==FxStepKind::Output && plan->steps[1].inputCount==1;
     cache_=std::move(nextCache);
     return plan;
@@ -183,29 +184,42 @@ void FxRenderer::prepare(double sampleRate) {
     smoothing_=float(std::exp(-1.0/(0.02*sampleRate)));
     bypassStep_=float(1.0/(0.01*sampleRate));
     compiler_.prepare(sampleRate);
-    auto plan=compiler_.compile(lastGraph_.nodes().empty() ? makeDefaultFxGraph() : lastGraph_);
+    auto plan=compiler_.compile(lastGraph_.nodes().empty() ? makeDefaultFxGraph(bus_.load(std::memory_order_relaxed)) : lastGraph_);
+    if(plan) identity_.store(plan->identity,std::memory_order_relaxed);
     lastKey_=topologyKey(lastGraph_);
     active_=plan.release();
     ++compileCount_;
 }
 
-bool FxRenderer::sync(const FxGraph& graph) {
+void FxRenderer::setBypassMode(FxBypassMode mode) noexcept {
+    bypassMode_.store(static_cast<int>(mode),std::memory_order_relaxed);
+}
+
+void FxRenderer::bind(FxBusId bus) {
+    if(bus==bus_.load(std::memory_order_relaxed)) return;
+    bus_.store(bus,std::memory_order_relaxed);
+    compiler_.prepare(compiler_.sampleRate()); // fresh instances for the new bus graph
+    lastKey_.clear();
+}
+
+bool FxRenderer::sync(const FxGraph& graph,bool applyGraphGlobals) {
     auto key=topologyKey(graph);
     if(key!=lastKey_) {
         auto plan=compiler_.compile(graph);
         if(!plan) return false;
+        identity_.store(plan->identity,std::memory_order_relaxed);
         lastKey_=std::move(key);
         ++compileCount_;
         publish(std::move(plan));
     }
     lastGraph_=graph;
     compiler_.pushParameters(graph);
-    const auto& g=graph.globals();
+    const auto g=applyGraphGlobals ? graph.globals() : FxGlobalSettings{};
     inputGain_.store(dbToGain(g.inputGainDb),std::memory_order_relaxed);
     dryWet_.store(g.dryWet,std::memory_order_relaxed);
     width_.store(g.width,std::memory_order_relaxed);
     outputGain_.store(dbToGain(g.outputGainDb),std::memory_order_relaxed);
-    bypassMode_.store(static_cast<int>(g.bypass),std::memory_order_relaxed);
+    if(applyGraphGlobals) bypassMode_.store(static_cast<int>(g.bypass),std::memory_order_relaxed);
     return true;
 }
 
@@ -257,6 +271,8 @@ void FxRenderer::applyModulation(const FxModulationOutput* mod) noexcept {
                 if(auto* fx=active_->steps[s].instance) fx->modulation.fill(0.0f);
         if(mod!=nullptr && active_!=nullptr) {
             for(std::size_t k=0;k<mod->count;++k) {
+                const auto bus=mod->bus[k]==0 ? fxMainBusId : mod->bus[k];
+                if(bus!=bus_.load(std::memory_order_relaxed)) continue; // another bus graph's parameter
                 for(std::size_t s=0;s<active_->stepCount && modulationTarget_[k]==nullptr;++s) {
                     auto* fx=active_->steps[s].instance;
                     if(fx==nullptr || fx->node!=mod->node[k]) continue;
@@ -337,10 +353,8 @@ void FxRenderer::renderChunk(float* left,float* right,int n) noexcept {
             };
             switch(step.kind) {
             case FxStepKind::Source:
-                // The engine renders BUS 1. Other buses are silent until
-                // multi-bus rendering exists.
-                if(step.bus==fxMainBusId) { std::memcpy(outL,dryL,bytes); std::memcpy(outR,dryR,bytes); }
-                else { std::memset(outL,0,bytes); std::memset(outR,0,bytes); }
+                // Each renderer serves one bus; its graph's source is that bus.
+                std::memcpy(outL,dryL,bytes); std::memcpy(outR,dryR,bytes);
                 break;
             case FxStepKind::Split:
             case FxStepKind::Output:

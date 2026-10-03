@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-deep-audit-p07-enforced-qos
 // mct-origami-deep-audit-p01-no-rt-spectral-build
@@ -91,6 +92,8 @@ void OrigamiEngine::reset() noexcept {
     for (auto& voice : voices_) voice.reset();
     lastVoiceSamples_.fill({});
     stealResidual_.fill({});
+    for(auto& a:lastAux_) a.fill(0.0f);
+    for(auto& a:stealAuxResidual_) a.fill(0.0f);
     tailRemaining_.fill(0); order_ = 0; clearHeldNotes();
     pitchBendNormalized_.fill(0.0f);modWheel_.fill(0.0f);aftertouch_.fill(0.0f);
     for (std::size_t i = 0; i < parameterCount; ++i) { const float v = targets_[i].load(std::memory_order_relaxed); smooth_[i] = {v,v,0,0}; }
@@ -119,16 +122,24 @@ bool OrigamiEngine::restoreInstrumentState(const InstrumentState& state) noexcep
     modulation_=state.modulation;publishModEnvelopeTargets(modulation_);modulationMailbox_.publish(modulation_);
     performance_=state.performance;
     buses_=state.buses;
+    busSlotMailbox_.publish(slotMapFor(state.buses));
     pitchBendRange_.store(state.performance.pitchBendRangeSemitones,std::memory_order_relaxed);
     pitchBendDownRange_.store(state.performance.pitchBendDownSemitones,std::memory_order_relaxed);
     oscillatorModules_.restore(state.oscillators,state.nextId);
     for(std::size_t i=0;i<parameterCount;++i) targets_[i].store(state.parameters[i],std::memory_order_relaxed);
     reset();return true;
 }
+BusSlotMap OrigamiEngine::slotMapFor(const BusState& state) noexcept {
+    BusSlotMap map;
+    map.count=std::clamp<std::size_t>(state.count,1,maxRenderBuses);
+    for(std::size_t i=0;i<map.count;++i) map.ids[i]=state.buses[i].id;
+    return map;
+}
 bool OrigamiEngine::setBusState(const BusState& state) noexcept {
     InstrumentState probe=instrumentState();probe.buses=state;
     if(!validInstrumentState(probe)) return false;
     buses_=state;
+    busSlotMailbox_.publish(slotMapFor(state));
     return true;
 }
 bool OrigamiEngine::setModulationState(const ModulationState& state) noexcept {
@@ -245,7 +256,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
            info.address.note==note && info.address.channel==channel &&
            (!noteId || !info.address.noteId || info.address.noteId==noteId)) {
             chosen=i;
-            stealResidual_[chosen]=lastVoiceSamples_[chosen];
+            stealResidual_[chosen]=lastVoiceSamples_[chosen];stealAuxResidual_[chosen]=lastAux_[chosen];
             tailRemaining_[chosen]=stealFadeSamples_;
             break;
         }
@@ -259,7 +270,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
     if(chosen==voiceCount && activeVoiceCount()>=voiceAdmissionCeiling_) {
         chosen=selectVoiceStealCandidate();
         if(chosen<voiceCount) {
-            stealResidual_[chosen]=lastVoiceSamples_[chosen];
+            stealResidual_[chosen]=lastVoiceSamples_[chosen];stealAuxResidual_[chosen]=lastAux_[chosen];
             tailRemaining_[chosen]=stealFadeSamples_;
         }
     }
@@ -271,7 +282,7 @@ bool OrigamiEngine::noteOn(int note,float velocity,std::uint8_t channel,std::uin
     if(chosen==voiceCount) {
         chosen=selectVoiceStealCandidate();
         if(chosen==voiceCount) return false;
-        stealResidual_[chosen]=lastVoiceSamples_[chosen];
+        stealResidual_[chosen]=lastVoiceSamples_[chosen];stealAuxResidual_[chosen]=lastAux_[chosen];
         tailRemaining_[chosen]=stealFadeSamples_;
     }
     voices_[chosen].start({note,channel,noteId},std::clamp(velocity,0.f,1.f),++order_,envelopeSettings(),modulationEnvelopeSettings(0),modulationEnvelopeSettings(1));return true;
@@ -360,8 +371,11 @@ bool OrigamiEngine::beginHostBlock(unsigned channels) noexcept {
             compiledModuleIds_[i]=hostModules_[i].id;
         }
     }
-    if(oscillatorGenerationChanged || moduleTopologyChanged) {
-        oscillatorPlan_.compile(hostModules_);
+    BusSlotMap slots;
+    const bool slotsChanged=busSlotMailbox_.consume(slots) && slots!=hostBusSlots_;
+    if(slotsChanged) hostBusSlots_=slots;
+    if(oscillatorGenerationChanged || moduleTopologyChanged || slotsChanged) {
+        oscillatorPlan_.compile(hostModules_,hostBusSlots_);
         rebuildHostWavetables();
     }
     if(modulationChanged || moduleTopologyChanged || oscillatorGenerationChanged)
@@ -396,7 +410,17 @@ bool OrigamiEngine::process(float* const* output,unsigned channels,std::size_t s
 }
 
 bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size_t sampleCount) noexcept {
+    return processSpan(output,channels,sampleCount,nullptr);
+}
+bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size_t sampleCount,float* const* aux) noexcept {
     if(!sampleCount) return true;
+    // User-bus outputs: aux[2*(slot-1)+channel]. Cleared even when idle so a
+    // removed send never leaves stale audio in a bus.
+    const bool auxActive=aux!=nullptr && oscillatorPlan_.auxActive;
+    if(aux!=nullptr)
+        for(std::size_t b=1;b<maxRenderBuses;++b)
+            for(std::size_t c=0;c<2;++c)
+                if(aux[2*(b-1)+c]) std::fill_n(aux[2*(b-1)+c],sampleCount,0.f);
     if(!hostBlockActive_ || channels!=hostChannels_) return false;
     if(!output || channels<1 || channels>2) return false;
     for(unsigned c=0;c<channels;++c) if(!output[c]) return false;
@@ -501,6 +525,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
         const float sustain=value(ParameterId::Sustain);
 
         double left=0.0,right=0.0,mono=0.0;
+        std::array<double,2*(maxRenderBuses-1)> auxSum{};
 
         std::uint64_t newestOrder=0;
         if(observeVisualization) {
@@ -577,6 +602,13 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 if(--tailRemaining_[v]==0) stealResidual_[v]={};
             }
 
+            if(auxActive) {
+                const auto& fresh2=voices_[v].aux();
+                const auto& old2=stealAuxResidual_[v];
+                for(std::size_t k=0;k<fresh2.size();++k)
+                    auxSum[k]+=double(fresh2[k])*(1.0-oldWeight)+double(old2[k])*oldWeight;
+                lastAux_[v]=fresh2;
+            }
             left+=fresh.left*(1.0f-oldWeight)+residual.left*oldWeight;
             right+=fresh.right*(1.0f-oldWeight)+residual.right*oldWeight;
             mono+=fresh.mono*(1.0f-oldWeight)+residual.mono*oldWeight;
@@ -593,6 +625,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             output[0][sample]=finite(left*master);
             output[1][sample]=finite(right*master);
         }
+        if(auxActive)
+            for(std::size_t k=0;k<auxSum.size();++k)
+                if(aux[k]) aux[k][sample]=finite(auxSum[k]*master);
     }
     // FX parameter modulation: one evaluation per span, newest-voice policy
     // for per-voice sources. Fixed-size, allocation-free.

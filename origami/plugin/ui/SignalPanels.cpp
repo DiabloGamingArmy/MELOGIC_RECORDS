@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-v32.2.1-scroll-drag-matrix-hotfix
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
 // mct-origami-v31.2.1-mod-ring-retrigger-refine
@@ -9,6 +10,7 @@
 // mct-origami-v26.4.1-flat-signal-fills
 // mct-origami-v26.4.0-global-signal-colour-system
 #include "SignalPanels.h"
+#include "SourceEntity.h"
 #include "ModulationUiTelemetry.h"
 namespace mct::origami::ui {
 void MixerPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
@@ -85,6 +87,10 @@ FilterPanel::FilterPanel(ParameterSetter setter,ParameterGetter getter,Modulatio
     filterContent_.addAndMakeVisible(filter1_);
     for(auto* button:{&filterAdd_,&filterRemove_}) addAndMakeVisible(*button);
     filter1_.setName("FILTER SOURCE TAB");
+    filter1_.addMouseListener(this,false);
+    // FILTER 1 uses the shared source-entity grip (click-through overlay);
+    // dragging it onto the FX graph creates a post-mix FILTER module.
+    filterContent_.addAndMakeVisible(filterGrip_);
     filter1_.setClickingTogglesState(true);
     filter1_.setToggleState(true,juce::dontSendNotification);
     filter1_.setTooltip("Current engine Filter 1");
@@ -171,6 +177,9 @@ void FilterPanel::resized() {
     constexpr int sourceListTopGap=3;
     filter1_.setBounds(filterEnabled_ ? juce::Rectangle<int>(0,sourceListTopGap,contentWidth,filterRowHeight-2)
                                       : juce::Rectangle<int>{});
+    filterGrip_.setBounds(filter1_.getBounds().withWidth(int(sourceEntityGripWidth)+10));
+    filterGrip_.setVisible(filterEnabled_);
+    filterGrip_.toFront(false);
     filterContent_.setSize(contentWidth,juce::jmax(filterRowHeight+sourceListTopGap,filterViewport_.getHeight()));
 
     auto controls=body.removeFromBottom(juce::jmin(57,body.getHeight()/3+10));
@@ -260,8 +269,23 @@ void FilterPanel::paintContent(juce::Graphics& g,juce::Rectangle<int> body) {
     remaining.removeFromLeft((controls.getWidth()/6)*2);
     dials(g,remaining,{"DRIVE","KEYTRACK","ENV AMT","MIX"});
 }
+void FilterPanel::Grip::paint(juce::Graphics& g) {
+    paintDragGrip(g,getLocalBounds().toFloat().withTrimmedLeft(4.0f));
+}
+
+void FilterPanel::mouseDown(const juce::MouseEvent&) { filterDragStarted_=false; }
+
+void FilterPanel::mouseDrag(const juce::MouseEvent& e) {
+    if(e.eventComponent!=&filter1_ || filterDragStarted_ || e.getDistanceFromDragStart()<7) return;
+    if(auto* container=juce::DragAndDropContainer::findParentDragContainerFor(this)) {
+        filterDragStarted_=true;
+        container->startDragging("MCT_SYNTH_FILTER:1",&filter1_);
+    }
+}
+
 void FilterPanel::paintOverChildren(juce::Graphics& g) {
     const auto& telemetry=modulationUiTelemetry();
+
 
     const auto drawRing=[&](juce::Slider& slider,ModDestination destination) {
         const float selectedDepth=modulationUiSelectedRouteAmount(destination,0);

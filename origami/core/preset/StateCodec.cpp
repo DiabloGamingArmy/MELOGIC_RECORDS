@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-v40.3.1-sequence-expression-state-v22
 // mct-origami-v40.2.0-sequence-transport-state-v21
@@ -15,6 +16,7 @@
 // mct-origami-v34.1.0-mod-scroll-clip-mseg-audio
 #include "StateCodec.h"
 #include <cstring>
+#include <string>
 #include <stdexcept>
 #include <algorithm>
 namespace mct::origami {
@@ -36,7 +38,7 @@ struct Reader {
 }
 std::vector<std::uint8_t> encodeInstrumentState(const InstrumentState& s) {
     if(!validInstrumentState(s)) throw std::invalid_argument("Invalid Origami instrument state");
-    Writer w;w.word(magic);w.word(26);w.word(static_cast<std::uint32_t>(parameterCount));
+    Writer w;w.word(magic);w.word(27);w.word(static_cast<std::uint32_t>(parameterCount));
     for(float v:s.parameters) w.real(v);
     w.word(s.nextId);
     std::uint32_t count=0;for(const auto& m:s.oscillators) if(m.id) ++count;
@@ -190,7 +192,7 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
     Reader r{static_cast<const std::uint8_t*>(data),size};
     if(r.word()!=magic) return false;
     const auto version=r.word(),count=r.word();
-    if(version<1 || version>26) return false;
+    if(version<1 || version>27) return false;
     if(version==1 ? (count!=10 && count!=13 && count!=parameterCount) : count!=parameterCount) return false;
     InstrumentState s;
     for(std::size_t i=0;i<count;++i) s.parameters[i]=r.real();
@@ -402,6 +404,10 @@ bool decodeInstrumentState(const void* data,std::size_t size,InstrumentState& ou
             for(std::size_t i=routes;i<maxOscBusRoutes;++i) m.busRoutes[i]={};
         }
     }
+    // V27: the permanent default bus is presented as MAIN. Its stable id (1)
+    // never changed, so routes and FX graphs migrate untouched.
+    if(version<27 && s.buses.buses[0].id==mainBusId && std::string(s.buses.buses[0].name.data())=="BUS 1")
+        BusState::setBusName(s.buses.buses[0],"MAIN");
     // Older states: the default BusState plus every oscillator's default
     // BUS 1 @ unity reproduce the pre-bus signal path exactly.
     if(!r.ok || r.pos!=size || !validInstrumentState(s)) return false;

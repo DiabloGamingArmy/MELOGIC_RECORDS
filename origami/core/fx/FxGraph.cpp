@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-fx-modulation-graph-ux-p03
 // mct-origami-fx-graph-dsp-bus-routing-p02
 // mct-origami-fx-page-foundation-p01
@@ -74,11 +75,51 @@ float fxParameterValue(const FxParameterDescriptor& d,float normalized) noexcept
     return d.minimum+(d.maximum-d.minimum)*t;
 }
 
+int fxChoiceIndex(const FxParameterDescriptor& d,float normalized) noexcept {
+    return static_cast<int>(fxParameterValue(d,normalized));
+}
+
+float fxChoiceNormalized(const FxParameterDescriptor& d,int index) noexcept {
+    const int states=std::max(2,d.choices);
+    return std::clamp(float(index)/float(states-1),0.0f,1.0f);
+}
+
+const char* fxCategoryName(FxCategory c) noexcept {
+    switch(c) {
+    case FxCategory::Distortion: return "DISTORTION";
+    case FxCategory::Time: return "TIME";
+    case FxCategory::Spatial: return "SPATIAL";
+    case FxCategory::Modulation: return "MODULATION";
+    case FxCategory::FilterEq: return "FILTER / EQ";
+    case FxCategory::Dynamics: return "DYNAMICS";
+    case FxCategory::Utility: return "UTILITY";
+    }
+    return "EFFECTS";
+}
+
+const FxParameterDescriptor* findFxParameter(const FxEffectDescriptor& d,FxParameterId id) noexcept {
+    for(std::size_t i=0;i<d.parameterCount;++i) if(d.parameters[i].id==id) return &d.parameters[i];
+    return nullptr;
+}
+
+bool FxNode::parameterVisible(const FxParameterDescriptor& p) const noexcept {
+    if(p.modeParameter==0) return true;
+    const auto* d=findFxEffect(effect);
+    const auto* mode=d ? findFxParameter(*d,p.modeParameter) : nullptr;
+    if(mode==nullptr) return true;
+    const int index=fxChoiceIndex(*mode,parameter(p.modeParameter).value_or(mode->defaultValue));
+    return index>=0 && index<32 && (p.modeMask&(1u<<index))!=0;
+}
+
 std::string fxParameterText(const FxParameterDescriptor& d,float normalized) {
     const float v=fxParameterValue(d,normalized);
     char text[32];
     const std::string unit=d.unit;
-    if(d.curve==FxParameterCurve::Choice) return v>=0.5f ? "ON" : "OFF";
+    if(d.curve==FxParameterCurve::Choice) {
+        const int index=static_cast<int>(v);
+        if(d.choiceLabels!=nullptr && index>=0 && index<d.choices) return d.choiceLabels[index];
+        return v>=0.5f ? "ON" : "OFF";
+    }
     if(unit=="%") std::snprintf(text,sizeof(text),"%d%%",int(std::lround(v*100.0f)));
     else if(unit=="Hz" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f kHz",v/1000.0f);
     else if(unit=="ms" && v>=1000.0f) std::snprintf(text,sizeof(text),"%.2f s",v/1000.0f);
@@ -161,7 +202,7 @@ FxNodeId FxGraph::addBusSource(FxBusId bus,FxPoint at) {
     node.kind=FxNodeKind::Source;
     node.source=FxSourceType::Bus;
     node.bus=bus;
-    node.name="BUS "+std::to_string(bus);
+    node.name="IN"; // displayed as "<BUS NAME> IN" from the canonical bus model
     node.position=at;
     node.ports=fxPortTopology(FxNodeKind::Source);
     return appendNode(std::move(node));
@@ -199,7 +240,7 @@ FxNodeId FxGraph::addOutput(FxPoint at) {
     if(outputNode()!=invalidFxNodeId) return invalidFxNodeId;
     FxNode node;
     node.kind=FxNodeKind::Output;
-    node.name="MASTER OUT";
+    node.name="OUT"; // displayed as "<BUS NAME> OUT" (MAIN OUT feeds the master)
     node.position=at;
     node.ports=fxPortTopology(FxNodeKind::Output);
     return appendNode(std::move(node));
@@ -646,9 +687,9 @@ bool FxGraph::operator==(const FxGraph& o) const noexcept {
     return true;
 }
 
-FxGraph makeDefaultFxGraph() {
+FxGraph makeDefaultFxGraph(FxBusId bus) {
     FxGraph g;
-    const auto source=g.addBusSource(fxMainBusId,{40.0f,170.0f});
+    const auto source=g.addBusSource(bus,{40.0f,170.0f});
     const auto output=g.addOutput({760.0f,140.0f});
     g.connect({source,0},{output,0});
     return g;
@@ -776,7 +817,27 @@ bool decodeFxGraph(const void* data,std::size_t size,FxGraph& output) noexcept {
             for(std::uint8_t p=0;p<points && r.ok;++p) { FxPoint pt; pt.x=r.f32(); pt.y=r.f32(); c.layout.push_back(pt); }
             graph.connections_.push_back(std::move(c));
         }
-        if(!r.ok || r.offset!=size || !graph.validate()) return false;
+        if(!r.ok || r.offset!=size) return false;
+        // P04: COMB became FILTER (TYPE = COMB). Parameter ids 1-4 (freq,
+        // feedback, mix, damp) are kept so modulation routes still resolve;
+        // frequency is re-normalized from 20-2000 Hz to 20-20000 Hz.
+        if(const auto* filter=findFxEffect(FxEffectType::Filter)) {
+            for(auto& n:graph.nodes_) {
+                if(n.kind!=FxNodeKind::Effect || n.effect!=FxEffectType::Comb) continue;
+                n.effect=FxEffectType::Filter;
+                if(n.name=="COMB") n.name=filter->label;
+                std::vector<FxParameterValue> migrated;
+                for(std::size_t i=0;i<filter->parameterCount;++i) {
+                    const auto& p=filter->parameters[i];
+                    float value=n.parameter(p.id).value_or(p.defaultValue);
+                    if(p.id==1 && n.parameter(1)) value=std::clamp(*n.parameter(1)*float(std::log(100.0)/std::log(1000.0)),0.0f,1.0f);
+                    if(p.key==std::string("type")) value=fxChoiceNormalized(p,8);
+                    migrated.push_back({p.id,value});
+                }
+                n.parameters=std::move(migrated);
+            }
+        }
+        if(!graph.validate()) return false;
         output=std::move(graph);
         return true;
     } catch(...) {

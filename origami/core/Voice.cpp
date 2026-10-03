@@ -1,3 +1,4 @@
+// mct-origami-unified-routing-core-fx-p04
 // mct-origami-audio-reengineer-p08-compiled-route-indices
 // mct-origami-audio-reengineer-p07-prepared-oscillator-modules
 // mct-origami-v32.0.0-dynamic-mod-filter-collections
@@ -43,6 +44,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     float sustain,const CompiledModulation& compiled,const ModulationState& modulation,
     float pitchBendSemitones,float pitchBendNormalized,float modWheel,float aftertouch,const OscillatorRenderPlan& topology,const OscillatorProcessPlans& sharedProcesses,bool observe) noexcept {
     Samples outputs{};
+    if(topology.auxActive) aux_.fill(0.0f);
     if(!active_) return outputs;
     if(glideRemaining_) {
         frequency_*=glideRatio_;
@@ -281,8 +283,19 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
         } else {
             moduleFilters_[m].reset();
         }
-        sampleValue*=level*modulePlan.mainBusSend;
+        const float leveled=sampleValue*level;
+        sampleValue=leveled*modulePlan.mainBusSend;
         if(!std::isfinite(sampleValue)) {moduleFilters_[m].reset();sampleValue=0.0f;}
+        // Same post-filter signal, scaled per user bus. Each destination
+        // receives exactly its own send; MAIN is unaffected by user sends.
+        if(modulePlan.auxSends && std::isfinite(leveled)) {
+            for(std::size_t b=1;b<topology.busCount;++b) {
+                const float send=modulePlan.busSend[b];
+                if(send==0.0f) continue;
+                aux_[2*(b-1)]+=leveled*send*panLeft;
+                aux_[2*(b-1)+1]+=leveled*send*panRight;
+            }
+        }
         outputs.left+=sampleValue*panLeft;
         outputs.right+=sampleValue*panRight;
         outputs.mono+=sampleValue;
@@ -292,6 +305,7 @@ Voice::Samples Voice::nextModules(const std::array<const dsp::Wavetable*,16>& ta
     // FX ORDER = PRE MASTER: master gain is applied after the FX graph instead.
     if(effective->applyMaster) {
         outputs.left*=effective->master;outputs.right*=effective->master;outputs.mono*=effective->master;
+        if(topology.auxActive) for(auto& a:aux_) a*=effective->master;
     }
     return outputs;
 }
