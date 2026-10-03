@@ -1588,8 +1588,13 @@ private:
         well(g,display);
         auto lines=display.reduced(10,6);
         const auto line=[&](const juce::String& s,juce::Colour c){text(g,s,lines.removeFromTop(16),9.0f,c);};
-        line(juce::String(node_->ports.inputs)+" INPUT"+(node_->ports.inputs==1?"":"S")+"  /  "
-             +juce::String(node_->ports.outputs)+" OUTPUT"+(node_->ports.outputs==1?"":"S"),Palette::secondary());
+        // Socket names come from the model's port descriptors.
+        const auto names=[&](nodes::PortDirection direction) {
+            juce::StringArray list;
+            for(const auto& port:fxNodePorts(*node_)) if(port.direction==direction) list.add(juce::String(port.name).toUpperCase());
+            return list.isEmpty() ? juce::String("-") : list.joinIntoString("  ");
+        };
+        line("IN  "+names(nodes::PortDirection::Input)+"   /   OUT  "+names(nodes::PortDirection::Output),Palette::secondary());
         switch(node_->kind) {
         case FxNodeKind::Split: line("Copies one signal into parallel branches.",Palette::muted()); break;
         case FxNodeKind::Merge: line("Averages its live branches (1/N): parallel paths stay at unity.",Palette::muted()); break;

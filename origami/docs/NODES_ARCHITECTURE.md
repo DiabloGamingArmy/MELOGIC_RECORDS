@@ -1,10 +1,10 @@
 # NODES architecture
 
-Status: **N01**. Read this before adding anything graph-, routing- or
+Status: **N02**. Read this before adding anything graph-, routing- or
 modulation-shaped to Origami. Sections are marked **LOCKED** (decided; change
 only by revising this document) or **OPEN** (undecided; do not silently pick an
-answer in code). §11 lists exactly what exists today; everything else here is
-direction, not implementation.
+answer in code). §11 (N01) and §12 (N02) list exactly what exists today;
+everything else here is direction, not implementation.
 
 ---
 
@@ -55,8 +55,11 @@ Rules:
 - A connection between two different domains is legal only through an explicit
   adapter node (§6). There are no implicit conversions.
 
-Today only AUDIO exists as graph ports. CONTROL lives in `ModulationState`.
-EVENT and DATA do not exist.
+Since N02 these names exist in code (`nodes::NodeSignalType`, §12), and
+every port declares one. Every *shipping* port is still AUDIO. CONTROL lives
+in `ModulationState`. There are no CONTROL or EVENT ports or nodes yet, and no
+DATA type. Analysis results are expected to become CONTROL unless a reason
+for a fourth domain appears.
 
 ## 4. Execution domains — LOCKED
 
@@ -112,9 +115,10 @@ REALTIME EXECUTION             (audio thread)
 
 Today's FX path already follows this shape: `FxGraphDocument` →
 `FxGraphCompiler` → `PreparedFxPlan` → `FxRenderer`, with an atomic swap and a
-retire ring. The type-checking and execution-domain stages are trivial today,
-because everything is AUDIO and GLOBAL. They become real stages when other
-domains arrive.
+retire ring. Since N02, `FxGraph::validate()` includes explicit port, type
+and execution-domain stages (§12). They always pass for shipping graphs,
+because everything is AUDIO and GLOBAL, but they are enforced. They become
+discriminating when other domains arrive.
 
 ## 6. Cross-domain adapters — LOCKED (principle), not implemented
 
@@ -326,3 +330,198 @@ sidebar, inspector, Matrix contract) is already NODES-shaped.
 - FX destination hover labels still show raw node/parameter numbers
   ("NODES / NODE 4 / P2"). Resolving names needs workspace access in the
   shared label function.
+
+## 12. N02: typed graph foundation (what exists now)
+
+### 12.1 N01 render discrepancy (resolved, not a bug)
+
+N01 noted that a processor with "UI history" rendered differently from a
+fresh processor loaded with its saved state. The cause was route edits, not
+the UI:
+
+- Each `setUiRoute` made while running reaches the engine through the
+  modulation mailbox. It is compiled with `immediate=false`, so its weight
+  glides in under the 5 ms modulation smoothing.
+- `setStateInformation` restores through `OrigamiEngine::reset()`, which
+  compiles with `immediate=true`: settled at once.
+
+Both instances save byte-identical state. Their audio differs only during the
+glide (the first block) and is bit-identical afterwards. Measured:
+
+| Comparison | Result |
+|---|---|
+| editor open vs. closed | identical |
+| UI telemetry and Matrix monitor reads vs. none | identical |
+| save → load → save | byte-identical |
+| FX graph edits vs. restored state | identical |
+| the same live edit on both instances | identical |
+| live-edited source after reloading its own state | identical |
+
+The N01 comparison was therefore invalid: it compared a processor with a glide
+in progress against a settled one. `deterministicRenderAudit`
+(`tests/PluginTests.cpp`) now pins all of this down. UI observation never
+alters audio, and the glide is confined to the first block.
+
+### 12.2 Types
+
+`core/nodes/NodeTypes.h` is JUCE-free and header-only:
+
+- **`NodeSignalType { Audio=1, Control=2, Event=3 }`** answers *what travels
+  through a port*. `FxSignalDomain` is now an alias of it, with the same
+  values. DATA/ANALYSIS is deliberately absent.
+- **`NodeExecutionDomain { Global=1, Voice=2, Event=3 }`** answers *how and
+  where a node runs*. It is distinct from signal type.
+- **Ownership is a third concept.** "This graph belongs to bus 7" is carried
+  by `FxWorkspace` (one graph per bus) and by `FxNode::bus` on source nodes.
+  Bus is *not* an execution domain.
+- **`PortDirection { Input=1, Output=2 }`**.
+- **`PortDescriptor`**: `{ direction, type, index, name }`. `index` is the
+  stable local index within its direction, and `name` is a static socket
+  label.
+- **`checkPortPair(a, b)`** returns `None`, `SameDirection` or `TypeMismatch`.
+  It accepts either order and never converts types implicitly.
+
+### 12.3 Port model (model-owned, derived, not serialized)
+
+`fxPortCount`, `fxPort(node, direction, index)` and `fxNodePorts(node)` derive
+a node's ports from its kind and branch count. The UI does not have a second
+port schema: sockets, drag compatibility and the inspector's port line all
+read the model.
+
+| Node | Inputs | Outputs |
+|---|---|---|
+| Source (bus) | – | Audio Out |
+| Effect (every catalog effect) | Audio In | Audio Out |
+| Split (2–8) | Audio In | A, B, C… |
+| Merge (2–8) | A, B, C… | Audio Out |
+| Output | Audio In | – |
+| Send / Return (reserved, not constructible) | Audio In / Return In | Through, Send / Audio Out |
+
+All ports are AUDIO. No sidechain or control ports were invented. A
+compressor has one Audio In until a real sidechain exists.
+`fxExecutionDomain(node)` returns GLOBAL for every node: an FX graph
+processes its bus's summed audio once, never per voice.
+
+### 12.4 Connection validation
+
+There is one rule set: `FxGraph::checkConnection(FxPortEndpoint a,
+FxPortEndpoint b)`. Endpoints are direction-qualified and may be given in
+either order. The function returns `FxConnectionCheck { result, from, to }`,
+with `from`/`to` normalized to output → input. `canConnect`, `connect` and
+the UI use it. The checks run in this order:
+
+1. Both nodes exist, else `UnknownNode`.
+2. The directions differ, else `SameDirection`.
+3. Both port descriptors exist, else `InvalidPort`.
+4. The nodes are different, else `SelfConnection`.
+5. A source carries audio, else `ControlSourceNotRoutable`.
+6. The signal types are equal, else `TypeMismatch`.
+7. The execution domains are equal, else `ExecutionDomainMismatch`.
+8. The edge is not an exact duplicate, else `DuplicateConnection`.
+9. The input is free (`InputOccupied`) and the output is free
+   (`OutputOccupied`).
+10. Connection capacity remains, else `CapacityExceeded`.
+11. The edge closes no cycle, else `WouldCreateCycle`.
+
+`validate()` applies the same port, type, domain and duplicate rules to every
+stored connection. Decoding and compiling therefore reject malformed topology
+even when it did not come from `connect()`.
+
+### 12.5 Compilation pipeline (current)
+
+```
+FxGraph (document) → validate(): structure → ports → types → execution domain
+  → duplicates / one wire per port → topology (Kahn, no cycles)
+  → FxGraphCompiler: reachability (source → output) → deterministic order
+  → PreparedFxPlan → atomic publish → FxRenderer
+```
+
+The audio thread never sees descriptors, enums or strings.
+
+### 12.6 Cycle and duplicate policy
+
+- **Cycles.** Zero-delay cycles are rejected by `connect`/`checkConnection`
+  (`WouldCreateCycle`, deterministic) and by `validate` (Kahn). Decode and
+  compile therefore reject them too, and nothing cyclic reaches a plan.
+  Future audio feedback needs an explicit feedback node with a defined
+  minimum delay, compiled as a delayed edge. *A → B → A* without that node
+  stays illegal. Feedback itself is OPEN (§10).
+- **Duplicates.** An edge's identity is its (output port, input port) pair,
+  and an exact duplicate is rejected. One wire per port also applies, so
+  fan-out goes through Split and summing through Merge. *A → B* plus *A → C*
+  through a Split, or *A → Merge.A* plus *B → Merge.B*, are distinct edges and
+  legal.
+
+### 12.7 Serialization
+
+**No format changed.** Port types, names and execution domains are derived
+from the stable node kind and effect type, so nothing new is stored. Graph
+codec v3 (and v2), `MFXW` v1 (`FXW1` trailer), legacy `FXG2` and instrument
+codec v27 are untouched. Tests confirm P04 and legacy loading.
+
+### 12.8 Realtime boundary
+
+N02 adds no audio-thread work. Type metadata exists at edit and compile time
+only. Golden fingerprints, captured on the N01 code before any N02 change,
+prove that the compiled plans and rendered audio of five representative
+graphs and a multi-bus environment with Global FX are bit-identical
+(`goldenFingerprintTests`, `tests/FxGraphTests.cpp`).
+
+### 12.9 PreparedFxPlan today, and what a general RenderPlan will need
+
+What `PreparedFxPlan` contains today:
+
+| Content | Today |
+|---|---|
+| Topological execution order | yes: `steps[0..stepCount)`, deterministic Kahn order, only nodes on a source → output path |
+| Buffer assignments | yes: step *s* writes stereo chunk buffer *s*; inputs are earlier buffer indices; pool = `maxNodes + 3` chunks, allocated at prepare |
+| Resolved processors | yes: `FxNodeInstance*` (prepared `FxProcessor`, instance survives recompiles with the same id and type) |
+| Connection fan-out | implicit: consumers read the same producer buffer; Split copies its input once |
+| Merge information | yes: input list plus `inputGain = 1/N` |
+| Scratch buffers | renderer-owned dry/wet chunk buffers |
+| Parameter references | instance atomics (`targets`, `enabled`), audio-thread `latched`, modulation offsets via a slot → (instance, index) map the renderer resolves only when the modulation generation changes |
+
+What a generalized RenderPlan will need (not implemented):
+
+- **Per-domain storage.**
+  - AUDIO: chunk buffers, as today.
+  - CONTROL: value slots at a defined control rate, with smoothing ownership.
+  - EVENT: bounded, preallocated, time-stamped event queues per edge.
+- **Execution partitions.**
+  - A GLOBAL plan, run once per block, as today.
+  - A VOICE plan template, instanced per voice with per-voice state.
+  - An EVENT stage that runs before both and feeds them.
+- **Explicit crossings:**
+  - VOICE → GLOBAL reductions (sum, as the voice sum is today, or newest);
+  - GLOBAL → VOICE broadcasts;
+  - adapter steps for audio ↔ control ↔ event.
+- **Parameter bindings.** CONTROL edges into parameters must resolve to the
+  same canonical `ModRoute`/`ModAddress` bindings as today's
+  `FxModulationOutput`, never a second modulation path (§7).
+- **Delayed edges** for future feedback nodes, with preallocated delay lines.
+- **Step kinds per domain**, with all of the above resolved at compile time.
+
+### 12.10 Current limitations: what remains audio-only
+
+- Every port is AUDIO and every node is GLOBAL.
+- Modulation of FX parameters still flows only through `ModulationState` →
+  `CompiledModulation::fxFrame` → `FxModulationOutput`. It is not graph
+  edges.
+- The plan has no control or event storage, no voice partition and no
+  delayed edges.
+- The UI shows audio sockets only and offers no typed sockets or
+  control/event options.
+- `Send`/`Return` are still reserved and not constructible.
+
+### 12.11 WHAT N02 DOES NOT MEAN
+
+- **The Control and Event enum values are not features.** Having
+  `NodeSignalType::Control/Event` and `NodeExecutionDomain::Voice/Event` does
+  **not** mean Origami has a Control graph, an Event graph, voice nodes or
+  event nodes. They are vocabulary and validation foundation only. Tests
+  exercise them only through synthetic descriptors.
+- No generators, arpeggiators, chord/note-stack, sequencers, math/control
+  nodes, parameter nodes, adapters, spectral nodes, feedback or modulation
+  cables were added.
+- No DSP, audio routing, modulation, Matrix or state behaviour changed.
+- The `Fx*` class names were kept on purpose (§11).

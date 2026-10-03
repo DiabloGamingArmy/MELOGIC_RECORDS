@@ -144,6 +144,9 @@ const char* toString(FxEditResult r) noexcept {
     case FxEditResult::CapacityExceeded: return "capacity exceeded";
     case FxEditResult::Unsupported: return "unsupported";
     case FxEditResult::UnknownConnection: return "unknown connection";
+    case FxEditResult::SameDirection: return "ports have the same direction";
+    case FxEditResult::TypeMismatch: return "port signal types differ";
+    case FxEditResult::ExecutionDomainMismatch: return "nodes run in different execution domains";
     }
     return "unknown";
 }
@@ -159,6 +162,49 @@ FxPortTopology fxPortTopology(FxNodeKind kind,std::uint8_t branches) noexcept {
     case FxNodeKind::Output: return {1,0};
     }
     return {};
+}
+
+// ---------------------------------------------------------------- typed ports
+
+namespace {
+constexpr const char* branchNames[FxGraph::maxBranches]{"A","B","C","D","E","F","G","H"};
+nodes::NodeSignalType sourcePortType(const FxNode& node) noexcept {
+    const auto* d=findFxSource(node.source);
+    return d!=nullptr ? d->domain : nodes::NodeSignalType::Audio;
+}
+}
+
+std::uint8_t fxPortCount(const FxNode& node,nodes::PortDirection direction) noexcept {
+    return direction==nodes::PortDirection::Input ? node.ports.inputs : node.ports.outputs;
+}
+
+std::optional<nodes::PortDescriptor> fxPort(const FxNode& node,nodes::PortDirection direction,std::uint8_t index) noexcept {
+    using nodes::PortDirection;
+    using nodes::NodeSignalType;
+    if(index>=fxPortCount(node,direction)) return std::nullopt;
+    const bool input=direction==PortDirection::Input;
+    nodes::PortDescriptor port{direction,NodeSignalType::Audio,index,input ? "Audio In" : "Audio Out"};
+    switch(node.kind) {
+    case FxNodeKind::Source: port.type=sourcePortType(node); break;
+    case FxNodeKind::Split: if(!input) port.name=branchNames[index]; break;
+    case FxNodeKind::Merge: if(input) port.name=branchNames[index]; break;
+    case FxNodeKind::Send: if(!input) port.name=index==0 ? "Through" : "Send"; break;
+    case FxNodeKind::Return: if(input) port.name="Return In"; break;
+    case FxNodeKind::Effect: case FxNodeKind::Output: break;
+    }
+    return port;
+}
+
+std::vector<nodes::PortDescriptor> fxNodePorts(const FxNode& node) {
+    std::vector<nodes::PortDescriptor> ports;
+    for(auto direction:{nodes::PortDirection::Input,nodes::PortDirection::Output})
+        for(std::uint8_t i=0;i<fxPortCount(node,direction);++i) ports.push_back(*fxPort(node,direction,i));
+    return ports;
+}
+
+nodes::NodeExecutionDomain fxExecutionDomain(const FxNode&) noexcept {
+    // Every FX graph node processes its bus's summed audio once: GLOBAL.
+    return nodes::NodeExecutionDomain::Global;
 }
 
 std::optional<float> FxNode::parameter(FxParameterId id) const noexcept {
@@ -313,23 +359,36 @@ bool FxGraph::reaches(FxNodeId from,FxNodeId target) const noexcept {
 }
 
 FxEditResult FxGraph::canConnect(FxPortRef from,FxPortRef to) const noexcept {
-    const auto* source=findNode(from.node);
-    const auto* destination=findNode(to.node);
-    if(source==nullptr || destination==nullptr) return FxEditResult::UnknownNode;
-    if(from.port>=source->ports.outputs || to.port>=destination->ports.inputs) return FxEditResult::InvalidPort;
-    if(from.node==to.node) return FxEditResult::SelfConnection;
-    if(source->kind==FxNodeKind::Source) {
-        const auto* d=findFxSource(source->source);
-        if(d==nullptr || d->domain!=FxSignalDomain::Audio) return FxEditResult::ControlSourceNotRoutable;
-    }
-    for(const auto& c:connections_) if(c.from==from && c.to==to) return FxEditResult::DuplicateConnection;
+    return checkConnection({from.node,nodes::PortDirection::Output,from.port},
+                           {to.node,nodes::PortDirection::Input,to.port}).result;
+}
+
+FxConnectionCheck FxGraph::checkConnection(FxPortEndpoint a,FxPortEndpoint b) const noexcept {
+    FxConnectionCheck check;
+    const auto fail=[&check](FxEditResult r){check.result=r; return check;};
+    const auto* nodeA=findNode(a.node);
+    const auto* nodeB=findNode(b.node);
+    if(nodeA==nullptr || nodeB==nullptr) return fail(FxEditResult::UnknownNode);
+    if(a.direction==b.direction) return fail(FxEditResult::SameDirection);
+    if(a.direction==nodes::PortDirection::Input) { std::swap(a,b); std::swap(nodeA,nodeB); }
+    const auto out=fxPort(*nodeA,a.direction,a.port);
+    const auto in=fxPort(*nodeB,b.direction,b.port);
+    if(!out || !in) return fail(FxEditResult::InvalidPort);
+    const FxPortRef from{a.node,a.port},to{b.node,b.port};
+    check.from=from; check.to=to;
+    if(from.node==to.node) return fail(FxEditResult::SelfConnection);
+    if(nodeA->kind==FxNodeKind::Source && out->type!=nodes::NodeSignalType::Audio)
+        return fail(FxEditResult::ControlSourceNotRoutable);
+    if(nodes::checkPortPair(*out,*in)==nodes::PortPairError::TypeMismatch) return fail(FxEditResult::TypeMismatch);
+    if(fxExecutionDomain(*nodeA)!=fxExecutionDomain(*nodeB)) return fail(FxEditResult::ExecutionDomainMismatch);
+    for(const auto& c:connections_) if(c.from==from && c.to==to) return fail(FxEditResult::DuplicateConnection);
     // One wire per port. Fan-out and summing are explicit Split/Merge nodes,
     // which keeps the visual language honest about where signals divide.
-    if(connectionAt(to,true)!=nullptr) return FxEditResult::InputOccupied;
-    if(connectionAt(from,false)!=nullptr) return FxEditResult::OutputOccupied;
-    if(connections_.size()>=maxConnections) return FxEditResult::CapacityExceeded;
-    if(reaches(to.node,from.node)) return FxEditResult::WouldCreateCycle;
-    return FxEditResult::Ok;
+    if(connectionAt(to,true)!=nullptr) return fail(FxEditResult::InputOccupied);
+    if(connectionAt(from,false)!=nullptr) return fail(FxEditResult::OutputOccupied);
+    if(connections_.size()>=maxConnections) return fail(FxEditResult::CapacityExceeded);
+    if(reaches(to.node,from.node)) return fail(FxEditResult::WouldCreateCycle);
+    return fail(FxEditResult::Ok);
 }
 
 FxEditResult FxGraph::connect(FxPortRef from,FxPortRef to,FxConnectionId* created) {
@@ -631,13 +690,19 @@ bool FxGraph::validate(std::string* error) const {
         const auto* a=findNode(c.from.node);
         const auto* b=findNode(c.to.node);
         if(a==nullptr || b==nullptr) return fail("dangling connection");
-        if(c.from.port>=a->ports.outputs || c.to.port>=b->ports.inputs) return fail("connection uses nonexistent port");
+        // Port and type validation against the model-owned descriptors.
+        const auto out=fxPort(*a,nodes::PortDirection::Output,c.from.port);
+        const auto in=fxPort(*b,nodes::PortDirection::Input,c.to.port);
+        if(!out || !in) return fail("connection uses nonexistent port");
+        if(nodes::checkPortPair(*out,*in)!=nodes::PortPairError::None) return fail("connection joins incompatible port types");
+        if(fxExecutionDomain(*a)!=fxExecutionDomain(*b)) return fail("connection crosses execution domains");
         if(c.from.node==c.to.node) return fail("self connection");
         if(c.layout.size()>maxLayoutPoints) return fail("too many layout points");
         for(const auto& p:c.layout) if(!finite(p)) return fail("non-finite layout point");
         for(std::size_t j=0;j<i;++j) {
             const auto& o=connections_[j];
             if(o.id==c.id) return fail("duplicate connection id");
+            if(o.from==c.from && o.to==c.to) return fail("duplicate connection");
             if(o.to==c.to) return fail("input port has multiple connections");
             if(o.from==c.from) return fail("output port has multiple connections");
         }

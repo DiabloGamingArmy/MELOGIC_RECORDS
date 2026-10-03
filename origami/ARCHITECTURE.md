@@ -201,6 +201,26 @@ existing observation cadence, through the existing lock-free visualization
 mailbox. A 30 Hz UI timer samples only while the Matrix is showing, into a
 fixed 96-entry ring.
 
+## Typed graph foundation (N02)
+
+`core/nodes/NodeTypes.h` defines `NodeSignalType` (AUDIO / CONTROL / EVENT),
+`NodeExecutionDomain` (GLOBAL / VOICE / EVENT), `PortDirection` and
+`PortDescriptor`. Bus ownership stays with `FxWorkspace`; it is not an
+execution domain.
+
+- **Ports:** `fxPort` / `fxNodePorts` derive every node's ports from its kind.
+  All shipping ports are AUDIO and all shipping nodes are GLOBAL.
+- **Connections:** `FxGraph::checkConnection` is the single connection rule
+  set (direction, port, type, execution domain, duplicate, occupancy, cycle),
+  returning a structured `FxEditResult` reason. `validate()` applies the same
+  rules, so decode and compile reject malformed graphs.
+- **Cycles and duplicates:** zero-delay cycles and exact duplicate edges are
+  rejected.
+- **Compatibility:** no serialization changed. Golden fingerprints prove plans
+  and audio are bit-identical to N01.
+
+Control/Event are vocabulary only. See `docs/NODES_ARCHITECTURE.md` §12.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:

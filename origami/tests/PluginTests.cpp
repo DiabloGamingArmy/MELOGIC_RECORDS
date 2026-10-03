@@ -2578,6 +2578,74 @@ void nodesN01Audit() {
     }
 }
 
+// mct-origami-nodes-n02
+// Deterministic render: equivalent engine state + identical input = identical
+// audio, and UI (editor, telemetry, Matrix monitors) never alters it. Also
+// pins down the N01 observation: a route edited LIVE glides in over the
+// engine's 5 ms modulation smoothing, while the same route restored from state
+// is compiled settled. Saved state is equal; only the first block differs.
+void deterministicRenderAudit() {
+    using namespace mct::origami;
+    const auto make=[]{ auto q=std::make_unique<OrigamiAudioProcessor>(); q->prepareToPlay(48000.0,256); disableExtraOscillators(*q); return q; };
+    const auto render=[](OrigamiAudioProcessor& q,int blocks,const std::function<void()>& perBlock={}) {
+        std::vector<float> out;
+        juce::AudioBuffer<float> audio(2,256); juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        for(int b=0;b<blocks;++b) {
+            audio.clear(); q.processBlock(audio,midi); midi.clear();
+            if(perBlock) perBlock();
+            for(int ch=0;ch<2;++ch) for(int i=0;i<256;++i) out.push_back(audio.getSample(ch,i));
+        }
+        return out;
+    };
+    const auto liveRoute=[](OrigamiAudioProcessor& q) {
+        const auto id=q.addUiRoute(); ModRoute r{}; r.id=id; r.source=ModSource::Lfo1;
+        r.destination={ModDestination::Cutoff,0,0}; r.amount=0.5f; return q.setUiRoute(r);
+    };
+    const auto clone=[&](OrigamiAudioProcessor& q) {
+        juce::MemoryBlock st; q.getStateInformation(st);
+        auto t=std::make_unique<OrigamiAudioProcessor>(); t->prepareToPlay(48000.0,256);
+        t->setStateInformation(st.getData(),int(st.getSize()));
+        juce::MemoryBlock back; t->getStateInformation(back);
+        check(back==st,"save -> load -> save is byte-identical");
+        return t;
+    };
+    {   // Same state, same input, one instance fully observed by an open editor.
+        auto a=make(),b=make();
+        check(liveRoute(*a) && liveRoute(*b),"identical live edits");
+        a->getUiFxDocument().edit([](fx::FxGraph& g){return g.insertEffectBeforeOutput(fx::FxEffectType::Filter)!=0;});
+        b->getUiFxDocument().edit([](fx::FxGraph& g){return g.insertEffectBeforeOutput(fx::FxEffectType::Filter)!=0;});
+        auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(a->createEditor());
+        auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+        std::vector<ui::ModulationMatrix*> matrices;
+        walk(*editor,[&](auto& c){if(auto* m=dynamic_cast<ui::ModulationMatrix*>(&c)) matrices.push_back(m);});
+        const auto observed=render(*a,48,[&]{
+            editor->refreshModulationViews();
+            for(auto* m:matrices) m->sampleMonitors();
+            (void)a->getUiRuntimeVisualizationSnapshot(); (void)a->getUiEnvelopeTraceSnapshot();
+        });
+        const auto plain=render(*b,48);
+        check(!matrices.empty() && observed==plain,"UI observation (editor, telemetry, Matrix monitors) leaves audio bit-identical");
+    }
+    {   // N01 observation: live edit vs the same state restored.
+        auto live=make();
+        check(liveRoute(*live),"live route edit");
+        auto restored=clone(*live);
+        const auto x=render(*live,32),y=render(*restored,32);
+        double firstBlock=0,afterGlide=0;
+        for(std::size_t i=0;i<x.size();++i) {
+            const double d=std::abs(double(x[i])-y[i]);
+            (i<2*256 ? firstBlock : afterGlide)=std::max(i<2*256 ? firstBlock : afterGlide,d);
+        }
+        check(firstBlock>0.0 && afterGlide==0.0,"a live route edit glides in (first block only); afterwards audio is identical");
+        auto settled=make();
+        check(liveRoute(*settled),"live route edit");
+        { juce::MemoryBlock st; settled->getStateInformation(st); settled->setStateInformation(st.getData(),int(st.getSize())); }
+        auto twin=clone(*settled);
+        check(render(*settled,32)==render(*twin,32),"restoring state compiles settled: restored instances render identically");
+    }
+}
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -2587,6 +2655,7 @@ void run() {
     busWorkspaceP04Audit();
     modulationRowConsistencyAudit();
     nodesN01Audit();
+    deterministicRenderAudit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();
