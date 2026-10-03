@@ -2882,7 +2882,7 @@ void nodesN04Audit() {
         float peak=0.0f;
         for(int b=0;b<32;++b) {
             audio.clear(); p.processBlock(audio,midi); midi.clear();
-            peak=std::max(peak,std::abs(p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+controlOperatorSlot(mod(),*multiply)]));
+            peak=std::max(peak,std::abs(p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(controlOperatorSlot(mod(),*multiply),0)]));
         }
         check(peak>0.0f && peak<=0.5f+1e-4f,"MULTIPLY output (LFO x 0.5) is evaluated and published for monitoring");
     }
@@ -3031,10 +3031,10 @@ void nodesN05Audit() {
     {
         const auto randomSlot=controlOperatorSlot(mod(),*random);
         render(4);
-        const float before=p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+randomSlot];
+        const float before=p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(randomSlot,0)];
         check(p.setUiMacro(0,0.9f),"MACRO 1 crosses the threshold");
         render(8);
-        const float after=p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+randomSlot];
+        const float after=p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(randomSlot,0)];
         check(after!=before,"the crossing fires EDGE and draws a new RANDOM value");
     }
 
@@ -3078,6 +3078,210 @@ void nodesN05Audit() {
     }
 }
 
+// mct-origami-nodes-n06-sequencing-generative
+void nodesN06Audit() {
+    using namespace mct::origami;
+    using T=ControlOpType;
+    using E=nodes::ControlEndpoint;
+    auto pOwner=std::make_unique<OrigamiAudioProcessor>(); auto& p=*pOwner;
+    p.prepareToPlay(48000.0,256);
+    disableExtraOscillators(p);
+    auto editorOwner=std::unique_ptr<juce::AudioProcessorEditor>(p.createEditor());
+    auto* editor=dynamic_cast<OrigamiAudioProcessorEditor*>(editorOwner.get());
+    editor->setVisible(true);
+    ui::FxPage* page=nullptr; ui::ModulationMatrix* matrix=nullptr; juce::TextButton* nodesButton=nullptr;
+    walk(*editor,[&](auto& c){
+        if(auto* f=dynamic_cast<ui::FxPage*>(&c)) page=f;
+        if(auto* x=dynamic_cast<ui::ModulationMatrix*>(&c)) if(x->layout()==ui::ModulationMatrix::Layout::Page) matrix=x;
+        if(auto* b=dynamic_cast<juce::TextButton*>(&c)) if(b->getButtonText()=="NODES" && !nodesButton) nodesButton=b;});
+    check(page && matrix && nodesButton,"N06: NODES and MATRIX");
+    nodesButton->onClick();
+    const auto mod=[&]{ return p.getUiInstrumentState().modulation; };
+    const auto opCount=[&]{ int n=0; for(const auto& o:mod().operators) n+=o.id!=0; return n; };
+    const auto render=[&](int blocks){ juce::AudioBuffer<float> a(2,256); juce::MidiBuffer midi; midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0);
+        for(int b=0;b<blocks;++b) { a.clear(); p.processBlock(a,midi); midi.clear(); } };
+
+    // ---- multi-output ports on the canvas ------------------------------------
+    const auto clock=page->addControlOperator(T::Clock);
+    const auto counter=page->addControlOperator(T::Counter);
+    const auto toggle=page->addControlOperator(T::Toggle);
+    check(clock && counter && toggle,"CLOCK / COUNTER / TOGGLE added");
+    check(page->connectControlEdge(E::fromOperator(*clock),E::toInput(*counter,0)).creatable(),"CLOCK -> COUNTER ADVANCE");
+    check(page->connectControlEdge(E::fromOperator(*counter,1),E::toInput(*toggle,0)).creatable(),"COUNTER WRAP (port 1) -> TOGGLE");
+    check(page->connectControlEdge(E::fromOperator(*counter,0),E::toInput(*toggle,1)).result==nodes::ControlLinkResult::TypeMismatch,
+          "COUNTER VALUE (CONTROL) cannot reach the EVENT RESET input");
+    const auto valueLink=page->connectControlEdge(E::fromOperator(*counter,0),E::toParameter({ModDestination::Cutoff,0,0}));
+    check(valueLink.creatable(),"COUNTER VALUE -> CUTOFF (fan-out: one node, two consumers)");
+    check(page->connectControlEdge(E::fromOperator(*counter,1),E::toParameter({ModDestination::Resonance,0,0})).result==nodes::ControlLinkResult::TypeMismatch,
+          "COUNTER WRAP (EVENT) cannot drive a parameter");
+    auto* counterNode=page->canvas().controlNode(nodes::operatorKey(*counter));
+    check(counterNode && counterNode->outputCount()==2,"the COUNTER node shows two outputs");
+    if(counterNode) {
+        const auto value=counterNode->portCentre(nodes::PortDirection::Output,0),wrap=counterNode->portCentre(nodes::PortDirection::Output,1);
+        const auto hitValue=counterNode->portAt(value),hitWrap=counterNode->portAt(wrap);
+        check(hitValue && hitWrap && hitValue->second==0 && hitWrap->second==1 && wrap.y-value.y>=20.0f,
+              "each output has its own hit target (rows 22 px apart, never overlapping)");
+        const auto endpoint=counterNode->endpoint(nodes::PortDirection::Output,1);
+        check(endpoint && endpoint->port==1 && endpoint->outputSource()==operatorSource(*counter,1),"an output port maps to its canonical source encoding");
+    }
+    {
+        // The cable from WRAP is drawn from the WRAP socket.
+        bool fromWrap=false;
+        for(const auto& l:page->controlGraph().links) fromWrap|=l.targetOperator==*toggle && l.sourcePort==1;
+        check(fromWrap,"the derived graph keeps the source output port of each cable");
+    }
+    // ---- typed INSERT and drag-to-empty-space menus --------------------------
+    {
+        const auto types=page->controlInsertTypes(0,*toggle,0); // the WRAP -> TOGGLE cable (EVENT)
+        bool allEvent=!types.empty(),hasProbability=false,hasSmooth=false;
+        for(auto t:types) {
+            const auto* info=controlOpInfo(t);
+            allEvent&=info->inputSignals[0]==ControlSignal::Event && nodes::controlAutoOutputPort(*info,ControlSignal::Event)>=0;
+            hasProbability|=t==T::Probability; hasSmooth|=t==T::Smooth;
+        }
+        check(allEvent && hasProbability && !hasSmooth,"INSERT on an EVENT cable offers only EVENT-in / EVENT-out nodes (PROBABILITY, never SMOOTH)");
+        const auto onRoute=page->controlInsertTypes(valueLink.existingRoute,0,0);
+        bool control=!onRoute.empty(); for(auto t:onRoute) control&=controlOpInfo(t)->inputSignals[0]==ControlSignal::Control;
+        check(control,"INSERT on a modulation route offers only CONTROL processors");
+        const auto items=page->controlCreateItems(E::fromOperator(*counter,1));
+        bool events=!items.empty(),parameter=false;
+        for(const auto& item:items) {
+            if(item.id==ui::FxModuleMenu::parameterPickerId) parameter=true;
+            else if(item.id>=ui::FxModuleMenu::controlOperatorBase) {
+                const auto* info=controlOpInfo(static_cast<T>(item.id-ui::FxModuleMenu::controlOperatorBase));
+                bool takes=false; for(std::uint8_t k=0;k<info->inputs;++k) takes|=info->inputSignals[k]==ControlSignal::Event;
+                events&=takes;
+            }
+        }
+        check(events && !parameter,"a WRAP cable dropped on empty space offers only nodes with an EVENT input (no PARAMETER)");
+        const auto before=opCount();
+        const auto created=page->createConnectedControlOperator(T::Probability,E::fromOperator(*clock),fx::FxPoint{600.0f,400.0f});
+        check(created && opCount()==before+1,"drag-to-create adds the node");
+        const auto* made=created ? findControlOperator(mod(),*created) : nullptr;
+        check(made && made->inputs[0].kind==ControlInput::Kind::Operator && made->inputs[0].op==*clock,"...and connects the cable to its first compatible input");
+        page->undo();
+        check(opCount()==before,"create + connect is ONE undo step");
+        // Backwards: from an unconnected EVENT input, CHANCE SPLIT feeds it from A (its first matching port).
+        const auto backward=page->createConnectedControlOperator(T::ChanceSplit,E::toInput(*toggle,1),fx::FxPoint{300.0f,500.0f});
+        const auto* t=findControlOperator(mod(),*toggle);
+        check(backward && t && t->inputs[1].op==*backward && t->inputs[1].port==0,"a cable dragged back from an input is fed by the new node's matching output");
+        page->undo();
+    }
+    // ---- the SEQUENCER node: the canonical sequencer -------------------------
+    auto settings=mod().sequencer;
+    {
+        auto m=mod(); m.generatorActiveMask|=0x10u; check(p.setUiModulationState(m),"sequencer collection active");
+    }
+    const auto seq=page->addControlOperator(T::Sequencer);
+    check(seq.has_value(),"SEQUENCER node added");
+    check(!page->addControlOperator(T::Sequencer).has_value(),"a second SEQUENCER is refused (one sequencer)");
+    bool disabled=false;
+    for(const auto& item:page->moduleMenuItems(true))
+        if(item.id==ui::FxModuleMenu::controlOperatorBase+int(T::Sequencer)) disabled=!item.enabled;
+    check(disabled,"the ADD menu disables SEQUENCER while one exists, with the reason");
+    page->selectControlNode(nodes::operatorKey(*seq));
+    auto* step3=page->controlSequenceControl(2);
+    check(step3!=nullptr,"the SEQUENCER inspector shows the canonical step editor");
+    if(step3) {
+        step3->setValue(-0.75,juce::sendNotificationSync);
+        check(std::abs(mod().sequencer.steps[2]+0.75f)<1e-4f,"editing a step writes the canonical SequencerSettings (the SYNTH sequencer shows it)");
+        page->undo();
+        check(mod().sequencer.steps[2]==settings.steps[2],"a sequence edit is one undo step");
+        page->redo();
+        check(std::abs(mod().sequencer.steps[2]+0.75f)<1e-4f,"and redoes");
+        // A slider drag coalesces into one step.
+        page->beginOperatorGesture();
+        for(double v:{0.1,0.2,0.3}) step3->setValue(v,juce::sendNotificationSync);
+        page->endOperatorGesture();
+        page->undo();
+        check(std::abs(mod().sequencer.steps[2]+0.75f)<1e-4f,"a dragged step edit undoes as one step");
+    }
+    auto* count=page->controlSequenceControl(8);
+    if(count) { count->setValue(4.0,juce::sendNotificationSync); check(mod().sequencer.activeSteps==4,"STEPS edits activeSteps"); }
+    auto* seqNode=page->canvas().controlNode(nodes::operatorKey(*seq));
+    check(seqNode && seqNode->view().preview==ui::ControlNodeView::Preview::Sequencer && seqNode->view().cellCount==4,
+          "the SEQUENCER node previews the canonical steps");
+    check(seqNode && seqNode->outputCount()==3,"VALUE / STEP / STEP EVENT outputs");
+    const auto seqValue=page->connectControlEdge(E::fromOperator(*seq,0),E::toParameter({ModDestination::Level,1,0}));
+    check(seqValue.creatable(),"SEQUENCER VALUE -> OSC LEVEL");
+    render(40);
+    check(p.getUiRuntimeVisualizationSnapshot().sequencerStep<4,"the engine publishes the current step for the preview");
+    editor->refreshModulationViews();
+    juce::Component* row=nullptr;
+    for(std::size_t i=0;i<matrix->routeCount();++i) if(matrix->routeRow(i)->getName()=="Modulation route "+juce::String(seqValue.existingRoute)) row=matrix->routeRow(i);
+    ui::NativeComboBox* source=nullptr;
+    if(row) walk(*row,[&](auto& c){ if(auto* b=dynamic_cast<ui::NativeComboBox*>(&c)) if(b->getName()=="Route source") source=b; });
+    check(source && source->getText().startsWith("NODES: SEQUENCER VALUE"),"the Matrix names the output port of a multi-output node");
+    // Deleting the node, or clearing the graph, never destroys the sequence.
+    const auto before=mod().sequencer.steps;
+    page->confirmClear();
+    check(mod().sequencer.steps==before,"CLEAR keeps the sequence");
+    check(page->deleteControlOperator(*seq) && mod().sequencer.steps==before && mod().sequencer.activeSteps==4,
+          "deleting the SEQUENCER node keeps the sequence (it is instrument state)");
+    page->undo();
+    // ---- PATTERN: clickable steps -------------------------------------------
+    const auto pattern=page->addControlOperator(T::Pattern);
+    check(pattern.has_value(),"PATTERN added");
+    if(pattern) {
+        const float mask=findControlOperator(mod(),*pattern)->params[1];
+        check(page->togglePatternStep(*pattern,1),"toggle step 2");
+        check(std::lround(findControlOperator(mod(),*pattern)->params[1])==(std::lround(mask)^2),"a PATTERN click flips exactly that bit");
+        page->undo();
+        check(findControlOperator(mod(),*pattern)->params[1]==mask,"a PATTERN step toggle is one undo step");
+            if(auto* node=page->canvas().controlNode(nodes::operatorKey(*pattern))) {
+            const auto cells=node->previewBounds();
+            check(!cells.isEmpty() && node->previewCellAt(cells.getCentre()).has_value(),"PATTERN cells are hit-testable on the node");
+        }
+    }
+    // ---- success graphs on the real instrument (spec A and step-event processing)
+    {
+        const auto reverb=page->addEffect(fx::FxEffectType::Reverb);
+        const auto* info=fx::findFxEffect(fx::FxEffectType::Reverb);
+        fx::FxParameterId mix=0; for(std::size_t i=0;i<info->parameterCount;++i) if(std::string(info->parameters[i].key)=="mix") mix=info->parameters[i].id;
+        // A: CLOCK -> COUNTER; VALUE -> SCALE -> CUTOFF; WRAP -> RANDOM -> REVERB MIX.
+        const auto c2=page->addControlOperator(T::Clock),n2=page->addControlOperator(T::Counter);
+        const auto scale=page->addControlOperator(T::ScaleOffset),rnd=page->addControlOperator(T::RandomTrigger);
+        check(c2 && n2 && scale && rnd,"graph A nodes");
+        check(page->connectControlEdge(E::fromOperator(*c2),E::toInput(*n2,0)).creatable()
+              && page->connectControlEdge(E::fromOperator(*n2,0),E::toInput(*scale,0)).creatable()
+              && page->connectControlEdge(E::fromOperator(*n2,1),E::toInput(*rnd,0)).creatable(),"graph A wiring (VALUE and WRAP of one COUNTER)");
+        check(page->connectControlEdge(E::fromOperator(*scale),E::toParameter({ModDestination::Resonance,0,0})).creatable()
+              && page->connectControlEdge(E::fromOperator(*rnd),E::toParameter(fxParameterAddress(mainBusId,reverb,mix))).creatable(),
+              "graph A terminals: SCALE -> RESONANCE, RANDOM -> REVERB MIX");
+        {   auto m=mod(); auto& c=m.operators[controlOperatorSlot(m,*c2)]; c.params[0]=0.0f; c.params[1]=50.0f;
+            auto& n=m.operators[controlOperatorSlot(m,*n2)]; n.params[0]=2.0f; // wraps every second tick
+            check(p.setUiModulationState(m),"CLOCK 50 Hz, COUNTER LENGTH 2"); }
+        const auto slot=controlOperatorSlot(mod(),*rnd);
+        render(2);
+        const float before=p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(slot,0)];
+        render(40);
+        const float after=p.getUiRuntimeVisualizationSnapshot().routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(slot,0)];
+        check(after!=before,"graph A runs in the engine: WRAP draws new RANDOM values for REVERB MIX");
+    }
+    // ---- save / load (v30) and legacy behaviour -------------------------------
+    {
+        juce::MemoryBlock saved; p.getStateInformation(saved);
+        auto copy=std::make_unique<OrigamiAudioProcessor>(); copy->prepareToPlay(48000.0,256);
+        copy->setStateInformation(saved.getData(),int(saved.getSize()));
+        const auto restored=copy->getUiInstrumentState().modulation; const auto live=mod();
+        bool same=true;
+        for(std::size_t i=0;i<live.operators.size();++i)
+            same&=restored.operators[i].id==live.operators[i].id && restored.operators[i].type==live.operators[i].type
+                && restored.operators[i].params==live.operators[i].params && restored.operators[i].inputs==live.operators[i].inputs;
+        for(std::size_t i=0;i<live.routes.size();++i) same&=restored.routes[i].source==live.routes[i].source;
+        check(same && restored.sequencer.steps==live.sequencer.steps,"multi-output graphs and the sequence survive save/load");
+        check(encodeInstrumentState(p.getUiInstrumentState())[7]==30,"the state is versioned v30 because N06 nodes / ports are used");
+    }
+    {
+        juce::AudioBuffer<float> a(2,256); juce::MidiBuffer midi;
+        midi.addEvent(juce::MidiMessage::noteOn(1,60,1.0f),0); midi.addEvent(juce::MidiMessage::noteOn(1,64,1.0f),91);
+        bool finite=true;
+        for(int b=0;b<16;++b) { a.clear(); p.processBlock(a,midi); midi.clear(); for(int i=0;i<256;++i) finite&=std::isfinite(a.getSample(0,i)); }
+        check(finite,"the sequencing graph renders cleanly");
+    }
+}
+
+
 void run() {
     fxPageAudit();
     fxGraphUxAudit();
@@ -3091,6 +3295,7 @@ void run() {
     nodesN03Audit();
     nodesN04Audit();
     nodesN05Audit();
+    nodesN06Audit();
     oscillatorVisualSchedulerAudit();
     oscillatorOffscreenSchedulingAudit();
     oscillatorInteractionDeferralAudit();

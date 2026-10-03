@@ -281,6 +281,31 @@ NODES operators now carry typed ports: CONTROL, GATE (0/1 state) and EVENT
 
 See `docs/NODES_ARCHITECTURE.md` §15.
 
+## Sequencing, generative modulation and multi-output nodes (N06)
+
+- **One sequencer.** The NODES SEQUENCER node is a view of the engine's
+  existing `SequencerGenerator` and the canonical `SequencerSettings`.
+  - When the node exists, the plan drives the sequencer (its own clock in
+    INTERNAL, ADVANCE events in EXTERNAL), and the legacy source pass skips
+    it. It is never double clocked.
+  - Without the node, the legacy path is unchanged.
+- **Multi-output nodes:** up to 4 typed outputs per operator. A connection
+  includes its source port (`ControlInput::port`; route sources carry the port
+  in bits 20–21, and port 0 is the old encoding). Runtime outputs are
+  `slot*4+port`; routes use compact routed slots.
+- **Nodes:**
+  - COUNTER (upgraded: ADVANCE / RESET → VALUE / WRAP, WRAP / CLAMP /
+    PING-PONG);
+  - CLOCK DIVIDER, EVENT DELAY (bounded 8-event scheduler), PROBABILITY,
+    CHANCE SPLIT, EVENT MERGE, EUCLIDEAN, PATTERN, RANDOM WALK and SEQUENCER;
+  - RESET inputs on TOGGLE and RANDOM.
+- **RESET is applied before ADVANCE on the same sample.** Seeded generators
+  advance once per event and are block-size independent.
+- **Save format:** instrument codec v30 (input port words), written only when
+  used.
+
+See `docs/NODES_ARCHITECTURE.md` §16.
+
 ## Build and verify
 
 From the repository root, with CMake 3.20+ and a C++17 compiler:

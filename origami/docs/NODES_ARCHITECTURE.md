@@ -1040,3 +1040,267 @@ production engine always lived on the heap inside the processor.
 - **Event cable activity animation:** node flashes only.
 - **TOGGLE RESET input.**
 - **Audio → control analysis:** a later phase.
+
+## 16. N06: sequencing, generative modulation and multi-output nodes (what exists now)
+
+### 16.1 The existing sequencer (audit)
+
+Before N06 Origami had exactly one sequencer:
+
+- **`SequencerSettings`** (instrument state, codec fields since v20): 8 step
+  values (−1…1), `activeSteps`, direction (FORWARD / REVERSE / PING-PONG),
+  loop, per-step probability, per-step ratchets (1–4), humanize, `rateHz`.
+- **`SequencerGenerator`** (the engine's `globalSequencer_`): the clock phase
+  at `rateHz` (scaled by ratchets and humanize), the step index and the held
+  output. It ran in the engine's global source pass, before the operators,
+  only while a route used the SEQ source (slot 12) and the sequencer
+  collection was active.
+- Reset happened only on engine reset. There is no per-step gate state in the
+  engine: the SYNTH editor's step power only mutes values in the UI.
+
+### 16.2 The canonical SEQUENCER node
+
+The SEQUENCER node is a **view of that one sequencer**, never a second engine.
+
+- At most one SEQUENCER exists (validation, `controlOperatorCreatable`, and the
+  ADD menu disables it with the reason). It is GLOBAL only: a per-voice input
+  is rejected.
+- The engine passes its `SequencerGenerator` and the canonical
+  `SequencerSettings` to the plan (`ControlEventContext`). When a plan
+  contains the node, **the legacy source pass never calls `next()`**. One
+  clock owner per sample, so it is never double clocked.
+- The node's VALUE is written to the canonical SEQ source for the same
+  sample. SEQ routes, the SYNTH rings and other nodes reading SEQ see exactly
+  the node's value (a SEQ source read waits for the node in topological order).
+- Placing the node marks the sequencer collection active. Its steps are never
+  rewritten.
+- **Without the node, the legacy path is unchanged.** `next()` keeps its exact
+  operation order and is tested step-for-step against a plain generator run,
+  and the golden fingerprints are unchanged.
+
+| Port | Signal | Meaning |
+|---|---|---|
+| ADVANCE (in 0) | EVENT | EXTERNAL mode: one whole step per event |
+| RESET (in 1) | EVENT | back to the start step (applied first, see 16.5) |
+| VALUE (out 0) | CONTROL, bipolar | the value of the step begun at this sample (probability applied) |
+| STEP (out 1) | CONTROL, unipolar | step / (activeSteps − 1) |
+| STEP EVENT (out 2) | EVENT | a step (or a ratchet repeat) began at this sample |
+
+There is no GATE output: the engine has no per-step gate state, so none is
+invented.
+
+### 16.3 Clock ownership (INTERNAL vs EXTERNAL)
+
+- **CLOCK = INTERNAL** (a new node's default): the sequencer's own clock at
+  RATE, with ratchets and humanize exactly as before. ADVANCE is ignored.
+- **CLOCK = EXTERNAL:** the phase never advances; each ADVANCE event plays one
+  step, honouring direction, loop and per-step probability. Ratchets and
+  humanize shape only the internal clock.
+- Connecting a cable to ADVANCE selects EXTERNAL in the same edit (one undo
+  step), so a clock cable is never silently ignored. The mode remains an
+  explicit parameter afterwards.
+- With an internal clock, VALUE changes at the sample the new step begins,
+  together with STEP EVENT. The legacy SEQ source (no node) still outputs
+  the previous step on that boundary sample, as before.
+
+### 16.4 Multi-output nodes and port identity
+
+- `ControlOpInfo` declares `outputCount` (≤ 4), the signal of each extra
+  port and the port names. Port 0 is the primary output (`info.output`).
+- **A connection's identity includes the source output port:**
+  - an operator input stores `ControlInput{kind, source, op, port}`;
+  - a route stores the port inside its `ModSource`
+    (`operatorSource(id, port)` puts the port in bits 20–21);
+  - port 0 is bit-identical to the pre-N06 encoding, so every N03–N05
+    connection is a port-0 connection without migration code.
+- Typing is checked per port everywhere (validation, authoring, compile):
+  COUNTER WRAP (EVENT) can feed TOGGLE but never a parameter.
+- **Fan-out:** any output feeds any number of consumers. Nothing consumes an
+  event; every consumer sees it at the same sample.
+- **Runtime:** `ModulationFrame::operatorOutputs` holds 32 × 4 values,
+  indexed `slot*4 + port`. Each evaluation writes every port of its node
+  (EVENT ports are 0 between events). Monitor slots follow the same index
+  (`modulationSourceSlotCount = 26 + 128`).
+- Routes from operators use compact **routed slots**: only the (≤ 32)
+  outputs that actually drive parameters get group slots. Groups stay
+  26 + 32 wide, and smoothing weights are carried across recompiles by
+  output index.
+
+### 16.5 Same-sample order and RESET
+
+**Within one node at sample N, RESET is applied first, then ADVANCE / TRIG:**
+
+| Node | RESET + ADVANCE on the same sample |
+|---|---|
+| COUNTER | position 0, then advance: position 1 |
+| SEQUENCER | restart (armed), then advance: plays the start step |
+| CLOCK DIVIDER / EUCLIDEAN / PATTERN | index 0, then this event is step 0 (all divider outputs fire) |
+| TOGGLE | off, then flip: on |
+| RANDOM / RANDOM WALK | reseed (centre for RANDOM WALK), then one step |
+
+**SEQUENCER reset convention:** after RESET (or an engine reset) an EXTERNAL
+sequencer is *armed*:
+
+- it shows the start step's value;
+- it does not fire STEP EVENT or roll probability;
+- the first ADVANCE then plays the start step itself, so a downbeat clock
+  plays step 1.
+
+An INTERNAL sequencer begins the start step at the reset sample.
+
+**COUNTER's position 0 is itself the reset state** (the counter-chip
+convention), so its first ADVANCE moves it to 1.
+
+**Multi-output consistency:** every port of a node is computed in one
+evaluation. When COUNTER wraps at N, VALUE = 0 and WRAP = 1 are both visible
+at N, and every consumer of either port reacts at N (tested).
+
+### 16.6 Node library (N06)
+
+| Node | Ports | Behaviour |
+|---|---|---|
+| COUNTER (upgraded) | ADVANCE, RESET → VALUE, WRAP | VALUE = position / (LENGTH − 1). **WRAP mode:** WRAP fires on returning to 0. **CLAMP mode:** fires once on reaching the end. **PING-PONG mode:** fires on reaching either end |
+| CLOCK DIVIDER | CLOCK, RESET → /2, /4, /8, /16 | the 1st, 3rd, 5th… event for /2 (etc.); the first event fires every output |
+| EVENT DELAY | IN → OUT | TIME in ms, or SYNC to a tempo division (resolved per event at the current tempo) |
+| PROBABILITY | IN → OUT | each event passes with CHANCE |
+| CHANCE SPLIT | IN → A, B | exactly one of A / B per event (A with A CHANCE) |
+| EVENT MERGE | A, B, C → OUT | any input event. Coincident events merge into one |
+| EUCLIDEAN | CLOCK, RESET → OUT | STEPS 1–32, PULSES 0–STEPS, ROTATION. Hit when `(i·pulses) mod steps < pulses`: the maximally even (Bjorklund) necklace, e.g. E(3,8) `x..x..x.`, E(4,16) four-on-the-floor |
+| PATTERN | CLOCK, RESET → OUT | a binary mask of LENGTH ≤ 32 steps (two 16-bit integer parameters). Steps toggle on the node |
+| RANDOM WALK | TRIG, RESET → OUT | ± STEP per trigger within MIN…MAX, CLAMP or REFLECT. Starts at the centre |
+| SEQUENCER | see 16.2 | the canonical sequencer |
+
+**EVENT DELAY scheduler:**
+
+- It is bounded: 8 pending countdowns per node (fixed array). An event at N
+  with delay D fires at N + D, across block boundaries.
+- **Overflow:** when 8 events are pending, the *newest* is dropped, so earlier
+  events keep exact timing.
+- Pending events are runtime state: never serialized, and cleared by every
+  reset.
+
+**Reset inputs:** RESET was added to TOGGLE, RANDOM and COUNTER (and exists on
+every new stateful node).
+
+**Deliberately not added:**
+
+- **CLOCK MULTIPLIER:** a sample-exact ×N needs the *next* tick's time, which
+  an EVENT input can only predict from past intervals. That fails on tempo
+  changes and seeks. For tempo-synced ×N, use a second CLOCK at the finer
+  division.
+- **NOTE QUANTIZER:** a CONTROL value has no defined pitch unit. Pitch routes
+  scale per destination (SEMITONE ±12, FINE ±100 ct), so a scale quantizer
+  would invent an incompatible convention. Use QUANTIZE (generic steps).
+- **Slewed random:** RANDOM → SMOOTH composes it.
+- **DRIFT / CHAOS / FUNCTION:** already canonical CONTROL sources, edited on
+  SYNTH > MODULATORS and reusable in NODES as sources. No second
+  implementation exists.
+
+### 16.7 Generative determinism
+
+- Every random node uses its own xorshift32. The seed is
+  `hash(SEED parameter, operator id)`, set at the node's first evaluation and
+  at RESET.
+- The generator advances **once per input event**, never per sample. The
+  n-th event of a given preset always draws the same value, whatever the
+  block size (tested 32 / 64 / 128 / 512 / 1024: bit-identical).
+- No wall clock or system RNG is used. Per-voice copies start from the same
+  seed: deterministic, and isolated per voice (tested).
+
+### 16.8 Transport
+
+- Tempo-synced CLOCKs read the engine beat position, which resyncs to the
+  host PPQ at every block start.
+- **Precision:** tempo is block-level (the host reports one BPM per block).
+  Within a block, the position advances linearly at that tempo.
+- **Seek and loop:** a jump that lands in a new grid cell produces exactly one
+  tick at the first sample of the block. A jump within the same cell ticks
+  nothing. There are no double triggers (tested).
+- An EXTERNAL sequencer simply follows its clock. TRANSPORT START → RESET is
+  the explicit way to restart it with the song.
+- EVENT DELAY SYNC converts its division at the tempo current when the event
+  arrives.
+
+### 16.9 Authoring UI
+
+- **Multi-output sockets** sit one per row on the right (22 px pitch), each
+  labelled (VALUE / WRAP, A / B, /2…/16). Each hit target is at least 9
+  screen px at any zoom; where targets overlap when zoomed out, the nearest
+  socket wins.
+- **INSERT NODE** on a cable offers only nodes whose first input takes the
+  cable's signal *and* that have an unambiguous output for the consumer.
+  Node choice uses `controlAutoOutputPort`: the primary output if it matches,
+  else the *only* matching port; otherwise the node is not offered.
+- **Drag to empty space:**
+  - Dropping a cable from an output on empty canvas opens a menu filtered to
+    nodes with a compatible input (plus PARAMETER… for CONTROL). The chosen
+    node is created at the drop point and connected in **one undo step**.
+  - Dragging back from an unconnected input works the same way, offering
+    nodes with an unambiguous compatible output (and canonical sources for
+    CONTROL inputs).
+- **SEQUENCER node:** shows the clock mode, a step preview (activeSteps bars)
+  and the current step. The step comes from the engine's published
+  visualization snapshot at the existing observation rate.
+- **SEQUENCER inspector:** edits the canonical `SequencerSettings` (8 steps,
+  STEPS, RATE, DIRECTION, LOOP) next to the node's CLOCK mode. SYNTH >
+  SEQUENCER edits the same state; there is no copy.
+- **PATTERN** cells toggle on click, one undo step each.
+- **Undo:**
+  - Slider drags coalesce into one step, including sequence edits.
+  - A sequence edit snapshot carries `SequencerSettings`; other NODES undo
+    steps never rewind a sequence edited elsewhere.
+- **CLEAR** clears the bus graph only. Deleting the SEQUENCER node removes the
+  node and its connections; **the sequence is never reset**.
+- **Matrix:** a route from a multi-output node names its port
+  (`NODES: SEQUENCER VALUE`). Event topology is never shown as rows.
+
+### 16.10 State, memory, realtime
+
+**Save format:** instrument codec **v30**:
+
+- Each operator input gains a port word.
+- It is written only when an N06 node, a non-zero port (in an input or a
+  route), a RESET connection on TOGGLE / RANDOM / COUNTER, or COUNTER
+  PING-PONG is present. Otherwise N05 graphs stay v29, N04 v28, and
+  operator-free states v27.
+- Older builds reject v30 cleanly instead of misreading it. v27–v29 load
+  unchanged.
+- The sequence keeps its existing fields.
+
+**Memory** (`sizeof`, arm64):
+
+| Object | N05 | N06 |
+|---|---|---|
+| `OrigamiEngine` | 2 092 728 | 2 126 096 (+1.6%) |
+| `Voice` | 120 184 | 121 992 |
+| `CompiledModulation` | 60 368 | 62 112 |
+| `ModulationFrame` | 8 464 | 8 864 |
+| `ModulationState` | 4 712 | 5 096 |
+| per-voice operator state | 1 536 | 2 560 |
+
+The 32-operator limit is unchanged. It keeps per-voice state at 2.5 KB and
+the plan bounded. The routed-slot design avoided widening every group to
+26 + 128 slots (+55 KB).
+
+**Realtime:**
+
+- Fixed arrays only, with no allocation, locks, strings or UI access
+  (allocation guard tested on a graph with CLOCK, EUCLIDEAN, EVENT DELAY,
+  SEQUENCER, RANDOM WALK, CHANCE SPLIT and a reset-wired COUNTER).
+- Compilation is O(operators²) at worst, on the existing audio-thread
+  compile path. Evaluation is one pass over the topological plan.
+- Panning, zooming and dragging nodes touch only view metadata, never the
+  plan.
+
+### 16.11 Deferred / limitations
+
+- **CLOCK MULTIPLIER** and **NOTE QUANTIZER** (see 16.6).
+- **Copy / paste:** single-node DUPLICATE exists; a clipboard is deferred.
+- **Cable activity animation:** nodes flash on any EVENT port (port-aware
+  counters); cables do not animate.
+- **PATTERN editing:** steps toggle on the node; a wider expanded editor for
+  32 steps is deferred (cells shrink with LENGTH on the 220 px node).
+- **Per-voice random seeds** are identical across voices: deterministic,
+  but voices draw the same sequence.
+- **SEQUENCER limits:** step count stays 8 (the existing `SequencerSettings`).
+  EXTERNAL mode ignores ratchets and humanize.

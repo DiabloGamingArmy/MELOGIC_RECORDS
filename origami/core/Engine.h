@@ -28,6 +28,7 @@ struct RuntimeVisualizationSnapshot {
     ModulationSourceSlots routeSources{};
     // N05: monotonic per-operator EVENT counters (activity display only).
     std::array<std::uint32_t,ModulationState::maxControlOperators> operatorEvents{};
+    std::uint32_t sequencerStep=0; // N06: current canonical sequencer step (display)
     float chaosY=0.5f;
     std::array<OscillatorModuleId,16> moduleIds{};
     std::array<float,16> oscillatorPhases{};
@@ -190,7 +191,7 @@ private:
     PerformanceState performance_{};
     BusState buses_{}; // non-realtime model; the renderer only reads BUS 1 sends
     std::array<float,CompiledModulation::globalSourceCount> lastGlobalSources_{};
-    std::array<float,CompiledModulation::operatorSlotCount> lastGlobalOperators_{};
+    std::array<float,operatorOutputSlotCount> lastGlobalOperators_{};
     double beats_=0.0,transportBpm_=120.0;
     bool transportPlaying_=false,pendingTransportStart_=false,pendingTransportStop_=false;
     FxModulationOutput fxModulation_{};

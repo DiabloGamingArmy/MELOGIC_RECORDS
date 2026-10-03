@@ -103,13 +103,14 @@ struct ControlEndpoint {
     ModSource source=ModSource::None;
     std::uint32_t op=0;
     std::uint8_t input=0;
+    std::uint8_t port=0;   // N06: OperatorOutput port (stable index; 0 = the primary output)
     ModAddress destination{ModDestination::None,0,0};
     static ControlEndpoint fromSource(ModSource s) { ControlEndpoint e; e.kind=Kind::Source; e.source=s; return e; }
-    static ControlEndpoint fromOperator(std::uint32_t id) { ControlEndpoint e; e.kind=Kind::OperatorOutput; e.op=id; return e; }
+    static ControlEndpoint fromOperator(std::uint32_t id,std::uint8_t port=0) { ControlEndpoint e; e.kind=Kind::OperatorOutput; e.op=id; e.port=port; return e; }
     static ControlEndpoint toInput(std::uint32_t id,std::uint8_t input) { ControlEndpoint e; e.kind=Kind::OperatorInput; e.op=id; e.input=input; return e; }
     static ControlEndpoint toParameter(const ModAddress& a) { ControlEndpoint e; e.kind=Kind::Parameter; e.destination=a; return e; }
     bool isOutput() const noexcept { return kind==Kind::Source || kind==Kind::OperatorOutput; }
-    ModSource outputSource() const noexcept { return kind==Kind::Source ? source : operatorSource(op); }
+    ModSource outputSource() const noexcept { return kind==Kind::Source ? source : operatorSource(op,port); }
 };
 ControlLinkCheck checkControlEdge(const InstrumentState&,const ControlEndpoint& from,const ControlEndpoint& to) noexcept;
 
@@ -117,6 +118,8 @@ ControlLinkCheck checkControlEdge(const InstrumentState&,const ControlEndpoint& 
 // commits it in one transaction). Each returns false and leaves `out`
 // untouched when the edit is invalid.
 bool addControlOperator(const ModulationState&,ControlOpType,ModulationState& out,std::uint32_t& id) noexcept;
+// N06: false when a second SEQUENCER node would be created (there is one sequencer).
+bool controlOperatorCreatable(const ModulationState&,ControlOpType) noexcept;
 // Operator inputs only (PARAMETER edges are canonical routes: see the page).
 bool connectControlInput(const InstrumentState&,const ControlEndpoint& from,std::uint32_t op,std::uint8_t input,ModulationState& out) noexcept;
 bool disconnectControlInput(const ModulationState&,std::uint32_t op,std::uint8_t input,ModulationState& out) noexcept;
@@ -126,6 +129,10 @@ bool disconnectControlInput(const ModulationState&,std::uint32_t op,std::uint8_t
 // the new operator (so the direct route is replaced, never left underneath).
 bool insertControlOperatorOnRoute(const InstrumentState&,std::uint32_t route,ControlOpType,ModulationState& out,std::uint32_t& id) noexcept;
 bool insertControlOperatorOnInput(const InstrumentState&,std::uint32_t op,std::uint8_t input,ControlOpType,ModulationState& out,std::uint32_t& id) noexcept;
+// N06: the output port an inserted / auto-connected node feeds downstream with:
+// the primary output when its signal matches, else the ONLY matching port;
+// -1 when none matches or the choice would be ambiguous.
+int controlAutoOutputPort(const ControlOpInfo&,ControlSignal wanted) noexcept;
 // Deletes an operator. A unary operator with a connected input is bridged:
 // consumers and terminal routes reconnect to its input (a chain of one
 // collapses back to a direct route); a route that would duplicate an existing
@@ -172,6 +179,7 @@ struct ControlGraphLink {
     // N04 operator-input edges (routeId == 0): the target operator input.
     std::uint32_t targetOperator=0;
     std::uint8_t targetInput=0;
+    std::uint8_t sourcePort=0;   // N06: output port of the source node (operators; 0 otherwise)
     bool isRoute() const noexcept { return routeId!=0; }
 };
 struct ControlGraph {

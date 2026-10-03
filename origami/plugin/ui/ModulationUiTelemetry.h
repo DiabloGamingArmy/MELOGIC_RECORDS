@@ -64,7 +64,7 @@ inline float modulationUiSourceValue(ModSource source) noexcept {
     if(isOperatorSource(source)) {
         const auto slot=controlOperatorSlot(telemetry.state,operatorIdOf(source));
         return slot<ModulationState::maxControlOperators
-            ? telemetry.runtime.routeSources[CompiledModulation::sourceSlotCount+slot] : 0.0f;
+            ? telemetry.runtime.routeSources[CompiledModulation::sourceSlotCount+operatorOutputIndex(slot,operatorPortOf(source))] : 0.0f;
     }
 
     const int index=modulationUiSourceIndex(source);

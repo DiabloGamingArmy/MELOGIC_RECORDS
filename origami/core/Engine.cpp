@@ -477,7 +477,13 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             sources[10]=globalChaos_.next(audioModulation_.chaos,sampleRate_);
         if(compiledModulation_.usesGlobalSource(11) && (audioModulation_.generatorActiveMask&0x08u))
             sources[11]=globalDrift_.next(audioModulation_.drift,sampleRate_);
-        if(compiledModulation_.usesGlobalSource(12) && (audioModulation_.generatorActiveMask&0x10u))
+        // N06: with a SEQUENCER node the plan drives the one sequencer (its
+        // own clock or NODES events); the legacy source pass never also
+        // advances it, so it is never double clocked.
+        const bool sequencerActive=(audioModulation_.generatorActiveMask&0x10u)!=0;
+        if(compiledModulation_.hasSequencerNode())
+            sources[12]=sequencerActive ? globalSequencer_.held() : 0.0f; // replaced by the node below
+        else if(compiledModulation_.usesGlobalSource(12) && sequencerActive)
             sources[12]=globalSequencer_.next(audioModulation_.sequencer,sampleRate_);
 
         // N05 timing context of this sample (beat position, transport events).
@@ -488,12 +494,17 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             frame.events.sampleRate=sampleRate_;
             frame.events.transportStart=pendingTransportStart_;
             frame.events.transportStop=pendingTransportStop_;
+            frame.events.sequencer=sequencerActive ? &globalSequencer_ : nullptr;
+            frame.events.sequencerSettings=sequencerActive ? &audioModulation_.sequencer : nullptr;
         }
         pendingTransportStart_=pendingTransportStop_=false;
         beats_+=beatsPerSample;
         // N04 global CONTROL operators: once per sample, before the global
         // frame reads their outputs (compiled plan; never when unused).
-        if(compiledModulation_.hasOperators()) compiledModulation_.evaluateGlobalOperators(frame,sources);
+        if(compiledModulation_.hasOperators()) {
+            compiledModulation_.evaluateGlobalOperators(frame,sources);
+            if(compiledModulation_.hasSequencerNode()) sources[12]=frame.globalSources[12]; // SEQ = the node's VALUE
+        }
         // Keep UI observation off the 96 kHz hot path. Generators above still
         // advance at full audio rate; only copying/inspection is decimated.
         const bool observeVisualization=!suppressVisualization_ && runtimeVisualizationCountdown_==0;
@@ -518,8 +529,9 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
             runtimeVisualization_.chaosY=std::clamp(globalChaos_.yNormalized()*0.5f+0.5f,0.0f,1.0f);
             for(std::size_t i=0;i<CompiledModulation::globalSourceCount;++i)
                 runtimeVisualization_.routeSources[i]=sources[i];
-            for(std::size_t i=0;i<CompiledModulation::operatorSlotCount;++i)
+            for(std::size_t i=0;i<operatorOutputSlotCount;++i)
                 runtimeVisualization_.routeSources[CompiledModulation::sourceSlotCount+i]=frame.operatorOutputs[i];
+            runtimeVisualization_.sequencerStep=static_cast<std::uint32_t>(globalSequencer_.currentStep());
             if(compiledModulation_.needsEventContext()) {
                 // Monotonic event counters (UI activity only; summed over voices
                 // purely for display, never fed back into DSP).
@@ -581,7 +593,7 @@ bool OrigamiEngine::processSpan(float* const* output,unsigned channels,std::size
                 for(std::size_t i=0;i<CompiledModulation::voiceSourceCount;++i)
                     runtimeVisualization_.routeSources[CompiledModulation::globalSourceCount+i]=visual.sources[i];
                 if(compiledModulation_.hasVoiceOperators())
-                    for(std::size_t i=0;i<CompiledModulation::operatorSlotCount;++i)
+                    for(std::size_t i=0;i<operatorOutputSlotCount;++i)
                         runtimeVisualization_.routeSources[CompiledModulation::sourceSlotCount+i]=visual.operators[i];
                 runtimeVisualization_.performanceSources={{visual.sources[8],visual.sources[10],
                                                             visual.sources[11],visual.sources[12]}};

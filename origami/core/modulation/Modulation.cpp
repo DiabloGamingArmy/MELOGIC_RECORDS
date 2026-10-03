@@ -83,8 +83,9 @@ Range limits(ModDestination d) {
 }
 std::size_t slotFor(ModSource source,const ModulationState& state) {
     if(isOperatorSource(source))
-        return CompiledModulation::sourceSlotCount+std::min(controlOperatorSlot(state,operatorIdOf(source)),
-                                                            ModulationState::maxControlOperators-1);
+        return CompiledModulation::sourceSlotCount+operatorOutputIndex(std::min(controlOperatorSlot(state,operatorIdOf(source)),
+                                                                                ModulationState::maxControlOperators-1),
+                                                                       std::min<std::size_t>(operatorPortOf(source),maxControlOutputs-1));
     switch(source) {
         case ModSource::Lfo1:return state.lfo1.mode==LfoMode::Free?0u:16u;
         case ModSource::Lfo2:return state.lfo2.mode==LfoMode::Free?1u:17u;
@@ -189,19 +190,25 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             if(p<info->parameterCount && !range(op.params[p],info->parameters[p].minimum,info->parameters[p].maximum)) return false;
             if(p>=info->parameterCount && op.params[p]!=0.0f) return false;
         }
+        // N06: one canonical sequencer, driven only from the global domain.
+        if(op.type==ControlOpType::Sequencer) {
+            for(std::size_t j=0;j<i;++j) if(s.operators[j].id && s.operators[j].type==ControlOpType::Sequencer) return false;
+        }
         for(std::size_t k=0;k<op.inputs.size();++k) {
             const auto& in=op.inputs[k];
             if(k>=info->inputs && in.kind!=ControlInput::Kind::None) return false;
-            if(in.kind==ControlInput::Kind::None) { if(in.source!=ModSource::None || in.op!=0) return false; }
+            if(in.kind==ControlInput::Kind::None) { if(in.source!=ModSource::None || in.op!=0 || in.port!=0) return false; }
             else if(in.kind==ControlInput::Kind::Source) {
                 // Canonical sources are CONTROL: never into a GATE / EVENT input.
-                if(!known(in.source) || in.op!=0 || info->inputSignals[k]!=ControlSignal::Control) return false;
+                if(!known(in.source) || in.op!=0 || in.port!=0 || info->inputSignals[k]!=ControlSignal::Control) return false;
             } else if(in.kind==ControlInput::Kind::Operator) {
                 const auto* upstream=findControlOperator(s,in.op);
                 if(in.source!=ModSource::None || in.op==op.id || upstream==nullptr) return false;
                 const auto* upstreamInfo=controlOpInfo(upstream->type);
-                // Strict typing: CONTROL->CONTROL, GATE->GATE, EVENT->EVENT only.
-                if(upstreamInfo==nullptr || upstreamInfo->output!=info->inputSignals[k]) return false;
+                // Strict typing: CONTROL->CONTROL, GATE->GATE, EVENT->EVENT only
+                // (per output port, N06).
+                if(upstreamInfo==nullptr || in.port>=upstreamInfo->outputCount ||
+                   controlOutputSignalOf(*upstreamInfo,in.port)!=info->inputSignals[k]) return false;
                 if(controlOperatorReaches(s,op.id,in.op)) return false; // would close a cycle
             } else return false;
         }
@@ -215,7 +222,8 @@ bool validModulation(const ModulationState& s,const std::array<OscillatorModuleS
             // Only a CONTROL output can drive a parameter (GATE / EVENT need a converter).
             const auto* op=findControlOperator(s,operatorIdOf(r.source));
             const auto* info=op ? controlOpInfo(op->type) : nullptr;
-            if(info==nullptr || info->output!=ControlSignal::Control) return false;
+            const auto port=operatorPortOf(r.source);
+            if(info==nullptr || port>=info->outputCount || controlOutputSignalOf(*info,port)!=ControlSignal::Control) return false;
         }
         else if(r.source!=ModSource::None && !known(r.source)) return false;
         previous=r.id;
@@ -475,26 +483,72 @@ float DriftGenerator::next(const DriftSettings& s,double sampleRate) noexcept {
     return std::clamp(value_,-1.0f,1.0f);
 }
 
-float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noexcept {
+float SequencerGenerator::random01() noexcept { rng_=rng_*1664525u+1013904223u; return static_cast<float>(rng_&0x00ffffffu)/16777215.0f; }
+
+void SequencerGenerator::beginStep(const SequencerSettings& s) noexcept {
+    const float chance=std::clamp(s.probability[step_],0.0f,1.0f);
+    held_=(random01()<=chance)?s.steps[step_]:0.0f;
+    const float jitter=(random01()*2.0f-1.0f)*std::clamp(s.humanize,0.0f,0.35f);
+    stepScale_=std::clamp(1.0+static_cast<double>(jitter),0.65,1.35);
+    substep_=0;
+    begun_=true;
+    ++stepEvents_;
+}
+
+void SequencerGenerator::stepForward(const SequencerSettings& s,std::size_t count) noexcept {
+    if(s.direction==SequenceDirection::Forward) { if(step_+1<count) ++step_; else if(s.loop) step_=0; else finished_=true; }
+    else if(s.direction==SequenceDirection::Reverse) { if(step_>0) --step_; else if(s.loop) step_=count-1; else finished_=true; }
+    else { if(count==1) { if(!s.loop) finished_=true; } else if(forward_) { if(step_+1<count) ++step_; else { forward_=false;step_=count-2;if(!s.loop) finished_=true; } } else { if(step_>0) --step_; else { forward_=true;step_=1;if(!s.loop) finished_=true; } } }
+}
+
+std::size_t SequencerGenerator::normalize(const SequencerSettings& s) noexcept {
     const std::size_t count=std::clamp<std::size_t>(s.activeSteps,1,s.steps.size());
     if(step_>=count) { step_=(s.direction==SequenceDirection::Reverse)?count-1:0; forward_=s.direction!=SequenceDirection::Reverse; finished_=false; phase_=0.0; substep_=0; }
-    auto random01=[this]() noexcept { rng_=rng_*1664525u+1013904223u; return static_cast<float>(rng_&0x00ffffffu)/16777215.0f; };
-    auto beginStep=[&]() noexcept { const float chance=std::clamp(s.probability[step_],0.0f,1.0f); held_=(random01()<=chance)?s.steps[step_]:0.0f; const float jitter=(random01()*2.0f-1.0f)*std::clamp(s.humanize,0.0f,0.35f); stepScale_=std::clamp(1.0+static_cast<double>(jitter),0.65,1.35); substep_=0; };
-    if(phase_==0.0 && substep_==0) beginStep();
+    return count;
+}
+
+float SequencerGenerator::next(const SequencerSettings& s,double sampleRate) noexcept {
+    // Operation order is the pre-N06 one exactly (bit-identical legacy path).
+    const std::size_t count=normalize(s);
+    if(phase_==0.0 && substep_==0) beginStep(s);
     const float out=held_;
     if(finished_ || !std::isfinite(sampleRate) || sampleRate<=0) return out;
     const auto ratchet=std::clamp<std::uint32_t>(s.ratchets[step_],1u,4u);
     phase_+=std::clamp(double(s.rateHz),.01,40.)*double(ratchet)/(sampleRate*stepScale_);
     while(phase_>=1.0) {
         phase_-=1.0; ++substep_;
-        if(substep_<ratchet) { const float chance=std::clamp(s.probability[step_],0.0f,1.0f); held_=(random01()<=chance)?s.steps[step_]:0.0f; continue; }
+        if(substep_<ratchet) { const float chance=std::clamp(s.probability[step_],0.0f,1.0f); held_=(random01()<=chance)?s.steps[step_]:0.0f; ++stepEvents_; continue; }
         substep_=0;
-        if(s.direction==SequenceDirection::Forward) { if(step_+1<count) ++step_; else if(s.loop) step_=0; else finished_=true; }
-        else if(s.direction==SequenceDirection::Reverse) { if(step_>0) --step_; else if(s.loop) step_=count-1; else finished_=true; }
-        else { if(count==1) { if(!s.loop) finished_=true; } else if(forward_) { if(step_+1<count) ++step_; else { forward_=false;step_=count-2;if(!s.loop) finished_=true; } } else { if(step_>0) --step_; else { forward_=true;step_=1;if(!s.loop) finished_=true; } } }
-        if(!finished_) beginStep();
+        stepForward(s,count);
+        if(!finished_) beginStep(s);
     }
     return out;
+}
+
+float SequencerGenerator::hold(const SequencerSettings& s) noexcept {
+    // Armed (after reset / RESET, before the first ADVANCE): the start step's
+    // value is shown, but the step has not begun (no STEP EVENT, no roll).
+    normalize(s);
+    if(!begun_) held_=s.steps[step_];
+    return held_;
+}
+
+void SequencerGenerator::advance(const SequencerSettings& s) noexcept {
+    const std::size_t count=normalize(s);
+    // The first ADVANCE after a reset plays the start step itself.
+    if(!begun_) { beginStep(s); return; }
+    if(finished_) return;
+    // External advance: one whole step per event (ratchets and humanize shape
+    // only the internal clock); per-step probability applies when a step begins.
+    stepForward(s,count);
+    if(!finished_) beginStep(s);
+}
+
+void SequencerGenerator::restart(const SequencerSettings& s) noexcept {
+    const std::size_t count=std::clamp<std::size_t>(s.activeSteps,1,s.steps.size());
+    step_=(s.direction==SequenceDirection::Reverse)?count-1:0;
+    forward_=s.direction!=SequenceDirection::Reverse;
+    finished_=false; phase_=0.0; substep_=0; begun_=false;
 }
 
 void CompiledModulation::compile(const ModulationState& state,const std::array<OscillatorModuleState,16>& modules,bool immediate) noexcept {
@@ -509,8 +563,14 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
     opCount_=globalOpCount_=voiceOpCount_=0;
     envelopeTriggerCount_=0;
     eventOps_=false;
-    opRange_.fill(ControlRange::Unipolar);
+    outputRange_.fill(ControlRange::Unipolar);
     opVoice_.fill(false);
+    const auto oldRouted=routedOutput_;const auto oldRoutedCount=routedCount_;
+    routedCount_=0;
+    sequencerNode_=false;
+    std::size_t sequencerSlot=operatorSlotCount;
+    for(std::size_t slot=0;slot<state.operators.size();++slot)
+        if(state.operators[slot].id && state.operators[slot].type==ControlOpType::Sequencer) { sequencerSlot=slot; break; }
     {
         std::array<bool,operatorSlotCount> placed{};
         bool progress=true;
@@ -520,11 +580,15 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                 const auto& op=state.operators[slot];
                 if(!op.id || placed[slot] || controlOpInfo(op.type)==nullptr) continue;
                 bool ready=true;
-                for(const auto& in:op.inputs)
+                for(const auto& in:op.inputs) {
                     if(in.kind==ControlInput::Kind::Operator) {
                         const auto from=controlOperatorSlot(state,in.op);
                         if(from>=operatorSlotCount || !placed[from]) ready=false;
                     }
+                    // N06: a SEQ source read waits for the SEQUENCER node (same-sample value).
+                    if(in.kind==ControlInput::Kind::Source && in.source==ModSource::Sequencer &&
+                       sequencerSlot<operatorSlotCount && sequencerSlot!=slot && !placed[sequencerSlot]) ready=false;
+                }
                 if(!ready) continue;
                 auto& c=ops_[opCount_++];
                 c=CompiledOp{};
@@ -542,8 +606,9 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                         connected[k]=true;
                     } else if(in.kind==ControlInput::Kind::Operator) {
                         const auto from=controlOperatorSlot(state,in.op);
-                        c.input[k]=static_cast<std::int16_t>(sourceSlotCount+from);
-                        c.range[k]=opRange_[from];
+                        const auto output=operatorOutputIndex(from,std::min<std::size_t>(in.port,maxControlOutputs-1));
+                        c.input[k]=static_cast<std::int16_t>(sourceSlotCount+output);
+                        c.range[k]=outputRange_[output];
                         c.voice=c.voice || opVoice_[from];
                         connected[k]=true;
                     }
@@ -552,12 +617,21 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
                 // Note sources and envelope targets live inside each voice.
                 if(info->voiceOnly) c.voice=true;
                 c.event=info->output==ControlSignal::Event;
+                c.outputCount=info->outputCount;
+                for(std::size_t port=0;port<info->outputCount;++port)
+                    if(controlOutputSignalOf(*info,port)==ControlSignal::Event) c.eventPorts|=std::uint8_t(1u<<port);
                 if(info->family) eventOps_=true;
+                if(op.type==ControlOpType::Sequencer) {
+                    // The canonical sequencer is global (a voice-domain input never drives it).
+                    if(c.voice) { --opCount_; placed[slot]=true; progress=true; continue; }
+                    sequencerNode_=true;
+                }
                 if(op.type==ControlOpType::EnvelopeTrigger && envelopeTriggerCount_<operatorSlotCount) {
                     envelopeTriggerSlots_[envelopeTriggerCount_]=static_cast<std::uint8_t>(slot);
                     envelopeTriggerTargets_[envelopeTriggerCount_++]=static_cast<std::uint8_t>(std::lround(op.params[0]));
                 }
-                opRange_[slot]=controlOpOutputRange(op,c.range[0],connected[0],c.range[1],connected[1]);
+                for(std::size_t port=0;port<info->outputCount;++port)
+                    outputRange_[operatorOutputIndex(slot,port)]=controlOpOutputRangeAt(op,port,c.range[0],connected[0],c.range[1],connected[1]);
                 opVoice_[slot]=c.voice;
                 (c.voice ? voiceOpCount_ : globalOpCount_)++;
                 placed[slot]=true;
@@ -565,16 +639,43 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             }
         }
     }
+    // N06: the operator outputs that drive routes get compact group slots
+    // (ascending output index), so groups stay 26 + 32 wide.
+    const auto routeOutput=[&](const ModRoute& route)->std::size_t {
+        const auto from=controlOperatorSlot(state,operatorIdOf(route.source));
+        const auto port=operatorPortOf(route.source);
+        if(from>=operatorSlotCount || !state.operators[from].id) return operatorOutputSlotCount;
+        const auto* info=controlOpInfo(state.operators[from].type);
+        // Only a CONTROL output drives parameters; a per-voice result never
+        // drives a global destination (no voice-reduction policy exists).
+        if(info==nullptr || port>=info->outputCount || controlOutputSignalOf(*info,port)!=ControlSignal::Control) return operatorOutputSlotCount;
+        if(opVoice_[from] && destinationIsGlobal(route.destination.parameter)) return operatorOutputSlotCount;
+        bool compiled=false;
+        for(std::size_t i=0;i<opCount_;++i) if(ops_[i].slot==from) { compiled=true; break; }
+        return compiled ? operatorOutputIndex(from,port) : operatorOutputSlotCount;
+    };
+    {
+        std::array<bool,operatorOutputSlotCount> used{};
+        for(const auto& route:state.routes)
+            if(route.id && route.enabled && route.amount!=0 && routeComplete(route) && isOperatorSource(route.source))
+                if(const auto o=routeOutput(route); o<operatorOutputSlotCount) used[o]=true;
+        for(std::size_t o=0;o<operatorOutputSlotCount && routedCount_<operatorSlotCount;++o)
+            if(used[o]) {
+                routedOutput_[routedCount_]=static_cast<std::uint8_t>(o);
+                routedRange_[routedCount_]=outputRange_[o];
+                routedVoice_[routedCount_]=opVoice_[o/maxControlOutputs];
+                ++routedCount_;
+            }
+    }
+    const auto groupSlotFor=[&](const ModRoute& route)->std::size_t {
+        if(!isOperatorSource(route.source)) return slotFor(route.source,state);
+        const auto o=routeOutput(route);
+        for(std::size_t r=0;r<routedCount_;++r) if(routedOutput_[r]==o) return sourceSlotCount+r;
+        return totalSlotCount;
+    };
     for(const auto& route:state.routes) {
         if(!route.id || !route.enabled || route.amount==0 || !routeComplete(route)) continue;
-        if(isOperatorSource(route.source)) {
-            const auto from=controlOperatorSlot(state,operatorIdOf(route.source));
-            // A per-voice result never drives a global destination (no
-            // voice-reduction policy exists); such a route stays inert.
-            if(from>=operatorSlotCount || (opVoice_[from] && destinationIsGlobal(route.destination.parameter))) continue;
-            const auto* info=controlOpInfo(state.operators[from].type);
-            if(info==nullptr || info->output!=ControlSignal::Control) continue; // only CONTROL drives parameters
-        }
+        if(isOperatorSource(route.source) && groupSlotFor(route)>=totalSlotCount) continue;
         std::size_t slot=0;
         if(!isGlobalDestination(route.destination.parameter) && !isFxDestination(route.destination.parameter)) {
             while(slot<modules.size() && modules[slot].id!=route.destination.oscillator) ++slot;
@@ -606,7 +707,7 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
             }
             ++count_;
         }
-        const auto sourceSlot=slotFor(route.source,state);
+        const auto sourceSlot=groupSlotFor(route);
         groups_[i].target[sourceSlot]+=route.amount;
         groups_[i].bipolar[sourceSlot]=route.bipolar;
         if(sourceSlot<globalSourceCount) globalSourceUsed_[sourceSlot]=true;
@@ -616,7 +717,15 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         if(!immediate) {
             g.weight={};
             for(std::size_t j=0;j<oldCount;++j)
-                if(old[j].address==g.address) {g.weight=old[j].weight;break;}
+                if(old[j].address==g.address) {
+                    g.weight=old[j].weight;
+                    // Routed operator slots are compact: carry weights by output index.
+                    for(std::size_t r=0;r<operatorSlotCount;++r) g.weight[sourceSlotCount+r]=0.0f;
+                    for(std::size_t r=0;r<routedCount_;++r)
+                        for(std::size_t q=0;q<oldRoutedCount;++q)
+                            if(oldRouted[q]==routedOutput_[r]) { g.weight[sourceSlotCount+r]=old[j].weight[sourceSlotCount+q]; break; }
+                    break;
+                }
             for(std::size_t s=0;s<totalSlotCount;++s)
                 if(std::abs(g.target[s]-g.weight[s])>1.0e-6f) smoothingActive_=true;
         }
@@ -626,9 +735,9 @@ void CompiledModulation::compile(const ModulationState& state,const std::array<O
         for(std::size_t s=0;s<voiceSourceCount;++s)
             if(g.target[globalSourceCount+s]!=0.0f || g.weight[globalSourceCount+s]!=0.0f) g.voiceSlots[g.voiceSlotCount++]=static_cast<std::uint8_t>(s);
         g.globalOpSlotCount=0;g.voiceOpSlotCount=0;
-        for(std::size_t s=0;s<operatorSlotCount;++s)
+        for(std::size_t s=0;s<routedCount_;++s)
             if(g.target[sourceSlotCount+s]!=0.0f || g.weight[sourceSlotCount+s]!=0.0f) {
-                if(opVoice_[s]) g.voiceOpSlots[g.voiceOpSlotCount++]=static_cast<std::uint8_t>(s);
+                if(routedVoice_[s]) g.voiceOpSlots[g.voiceOpSlotCount++]=static_cast<std::uint8_t>(s);
                 else g.globalOpSlots[g.globalOpSlotCount++]=static_cast<std::uint8_t>(s);
             }
         const bool voice=g.voiceSlotCount!=0 || g.voiceOpSlotCount!=0;
@@ -756,15 +865,15 @@ inline float routeSourceValue(std::size_t slot,float raw,bool bipolar) noexcept 
     return std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
 }
 }
-static_assert(modulationSourceSlotCount==CompiledModulation::totalSlotCount,"monitor slots mirror the evaluator");
+static_assert(modulationSourceSlotCount==CompiledModulation::sourceSlotCount+operatorOutputSlotCount,"monitor slots mirror the evaluator outputs");
 
 // ---------------------------------------------------------------- N04 operators
 
 namespace {
 using P=ControlOpParameterInfo;
-const std::array<ControlOpInfo,36>& opTable() noexcept {
+const std::array<ControlOpInfo,45>& opTable() noexcept {
     using S=ControlSignal;
-    static const std::array<ControlOpInfo,36> table{{
+    static const std::array<ControlOpInfo,45> table{{
         {ControlOpType::Add,"ADD","Math",2,0,{}},
         {ControlOpType::Subtract,"SUBTRACT","Math",2,0,{}},
         {ControlOpType::Multiply,"MULTIPLY","Math",2,0,{}},
@@ -807,13 +916,35 @@ const std::array<ControlOpInfo,36>& opTable() noexcept {
          {{S::Control,S::Control,S::Gate}},S::Control,{{"A","B","SELECT"}},false,true},
         {ControlOpType::SampleHold,"SAMPLE & HOLD","Stateful",2,0,{},{{S::Control,S::Event,S::Control}},S::Control,{{"VALUE","TRIG",nullptr}},false,true},
         {ControlOpType::TrackHold,"TRACK & HOLD","Stateful",2,0,{},{{S::Control,S::Gate,S::Control}},S::Control,{{"VALUE","GATE",nullptr}},false,true},
-        {ControlOpType::RandomTrigger,"RANDOM","Stateful",1,3,{{P{"MIN",-1.0f,1.0f,0.0f,false},P{"MAX",-1.0f,1.0f,1.0f,false},P{"SEED",0.0f,65535.0f,1.0f,true}}},
-         {{S::Event,S::Control,S::Control}},S::Control,{{"TRIG",nullptr,nullptr}},false,true},
-        {ControlOpType::Toggle,"TOGGLE","Stateful",1,0,{},{{S::Event,S::Control,S::Control}},S::Gate,{{"TRIG",nullptr,nullptr}},false,true},
-        {ControlOpType::Counter,"COUNTER","Stateful",1,2,{{P{"STEPS",2.0f,64.0f,8.0f,true},P{"MODE",0.0f,1.0f,0.0f,true}}},
-         {{S::Event,S::Control,S::Control}},S::Control,{{"TRIG",nullptr,nullptr}},false,true},
+        // N06: RANDOM, TOGGLE and COUNTER gain a RESET input (applied before
+        // the sample's TRIG / ADVANCE); COUNTER gains a WRAP event output.
+        {ControlOpType::RandomTrigger,"RANDOM","Stateful",2,3,{{P{"MIN",-1.0f,1.0f,0.0f,false},P{"MAX",-1.0f,1.0f,1.0f,false},P{"SEED",0.0f,65535.0f,1.0f,true}}},
+         {{S::Event,S::Event,S::Control}},S::Control,{{"TRIG","RESET",nullptr}},false,true},
+        {ControlOpType::Toggle,"TOGGLE","Stateful",2,0,{},{{S::Event,S::Event,S::Control}},S::Gate,{{"TRIG","RESET",nullptr}},false,true},
+        {ControlOpType::Counter,"COUNTER","Stateful",2,2,{{P{"LENGTH",2.0f,64.0f,8.0f,true},P{"MODE",0.0f,2.0f,0.0f,true}}},
+         {{S::Event,S::Event,S::Control}},S::Control,{{"ADVANCE","RESET",nullptr}},false,true,2,{{S::Event,S::None,S::None}},{{"VALUE","WRAP",nullptr,nullptr}}},
         {ControlOpType::EnvelopeTrigger,"ENV TRIGGER","Targets",1,1,{{P{"ENVELOPE",2.0f,3.0f,2.0f,true}}},
-         {{S::Event,S::Control,S::Control}},S::None,{{"TRIG",nullptr,nullptr}},true,true}
+         {{S::Event,S::Control,S::Control}},S::None,{{"TRIG",nullptr,nullptr}},true,true},
+        // ---- N06 SEQUENCING / GENERATIVE --------------------------------
+        {ControlOpType::ClockDivider,"CLOCK DIVIDER","Sequencing",2,0,{},{{S::Event,S::Event,S::Control}},S::Event,{{"CLOCK","RESET",nullptr}},false,true,
+         4,{{S::Event,S::Event,S::Event}},{{"/2","/4","/8","/16"}}},
+        {ControlOpType::EventDelay,"EVENT DELAY","Sequencing",1,3,{{P{"SYNC",0.0f,1.0f,0.0f,true},P{"TIME",1.0f,2000.0f,100.0f,false},P{"DIVISION",0.0f,11.0f,3.0f,true}}},
+         {{S::Event,S::Control,S::Control}},S::Event,{{"IN",nullptr,nullptr}},false,true},
+        {ControlOpType::Probability,"PROBABILITY","Generative",1,2,{{P{"CHANCE",0.0f,1.0f,0.5f,false},P{"SEED",0.0f,65535.0f,1.0f,true}}},
+         {{S::Event,S::Control,S::Control}},S::Event,{{"IN",nullptr,nullptr}},false,true},
+        {ControlOpType::ChanceSplit,"CHANCE SPLIT","Generative",1,2,{{P{"A CHANCE",0.0f,1.0f,0.5f,false},P{"SEED",0.0f,65535.0f,1.0f,true}}},
+         {{S::Event,S::Control,S::Control}},S::Event,{{"IN",nullptr,nullptr}},false,true,2,{{S::Event,S::None,S::None}},{{"A","B",nullptr,nullptr}}},
+        {ControlOpType::EventMerge,"EVENT MERGE","Sequencing",3,0,{},{{S::Event,S::Event,S::Event}},S::Event,{{"A","B","C"}},false,true},
+        {ControlOpType::Euclidean,"EUCLIDEAN","Sequencing",2,3,{{P{"STEPS",1.0f,32.0f,8.0f,true},P{"PULSES",0.0f,32.0f,3.0f,true},P{"ROTATION",0.0f,31.0f,0.0f,true}}},
+         {{S::Event,S::Event,S::Control}},S::Event,{{"CLOCK","RESET",nullptr}},false,true},
+        {ControlOpType::Pattern,"PATTERN","Sequencing",2,3,{{P{"LENGTH",1.0f,32.0f,8.0f,true},P{"STEPS 1-16",0.0f,65535.0f,85.0f,true},P{"STEPS 17-32",0.0f,65535.0f,0.0f,true}}},
+         {{S::Event,S::Event,S::Control}},S::Event,{{"CLOCK","RESET",nullptr}},false,true},
+        {ControlOpType::RandomWalk,"RANDOM WALK","Generative",2,5,{{P{"STEP",0.001f,1.0f,0.1f,false},P{"MIN",-1.0f,1.0f,0.0f,false},P{"MAX",-1.0f,1.0f,1.0f,false},
+                                                                   P{"SEED",0.0f,65535.0f,1.0f,true},P{"MODE",0.0f,1.0f,0.0f,true}}},
+         {{S::Event,S::Event,S::Control}},S::Control,{{"TRIG","RESET",nullptr}},false,true},
+        {ControlOpType::Sequencer,"SEQUENCER","Sequencing",2,1,{{P{"CLOCK",0.0f,1.0f,0.0f,true}}},
+         {{S::Event,S::Event,S::Control}},S::Control,{{"ADVANCE","RESET",nullptr}},false,true,3,{{S::Control,S::Event,S::None}},
+         {{"VALUE","STEP","STEP EVENT",nullptr}},true}
     }};
     return table;
 }
@@ -849,6 +980,33 @@ const std::array<ControlOpType,21>& controlEventOpCatalog() noexcept {
     return catalog;
 }
 
+const std::array<ControlOpType,9>& controlSequencingOpCatalog() noexcept {
+    static const std::array<ControlOpType,9> catalog{{
+        ControlOpType::Sequencer,ControlOpType::ClockDivider,ControlOpType::EventDelay,ControlOpType::Euclidean,ControlOpType::Pattern,
+        ControlOpType::EventMerge,ControlOpType::Probability,ControlOpType::ChanceSplit,ControlOpType::RandomWalk}};
+    return catalog;
+}
+
+ControlSignal controlOutputSignalOf(const ControlOpInfo& info,std::size_t port) noexcept {
+    if(port==0) return info.output;
+    if(port>=info.outputCount || port>info.extraOutputs.size()) return ControlSignal::None;
+    return info.extraOutputs[port-1];
+}
+
+const char* controlOutputName(const ControlOpInfo& info,std::size_t port) noexcept {
+    if(port<info.outputNames.size() && info.outputNames[port]!=nullptr) return info.outputNames[port];
+    return "OUT";
+}
+
+bool euclideanHit(int steps,int pulses,int rotation,int index) noexcept {
+    // Even distribution of `pulses` over `steps` (a rotation of the Bjorklund
+    // pattern): step i is a hit when (i * pulses) mod steps < pulses.
+    if(steps<1) return false;
+    pulses=std::clamp(pulses,0,steps);
+    const int i=((index+rotation)%steps+steps)%steps;
+    return (i*pulses)%steps<pulses;
+}
+
 const char* controlInputName(const ControlOpInfo& info,std::size_t input) noexcept {
     if(input<info.inputNames.size() && info.inputNames[input]!=nullptr) return info.inputNames[input];
     return info.inputs==1 ? "IN" : input==0 ? "A" : input==1 ? "B" : "C";
@@ -881,6 +1039,10 @@ ControlOpPrepared prepareControlOp(const ControlOperator& op,double sampleRate) 
         break;
     case ControlOpType::Switch:
         prepared.switchStep=op.params[0]>0.0f ? 1.0/(double(op.params[0])*rate) : 1.0;
+        break;
+    case ControlOpType::EventDelay:
+        prepared.delaySamples=std::max<std::int32_t>(1,static_cast<std::int32_t>(std::lround(double(op.params[1])*0.001*rate)));
+        prepared.divisionBeats=clockDivisionBeats(static_cast<int>(std::lround(op.params[2])));
         break;
     default: break;
     }
@@ -922,10 +1084,17 @@ ControlRange controlOpOutputRange(const ControlOperator& op,ControlRange a,bool 
     case ControlOpType::Switch: return bipolar(aConnected,a) || bipolar(bConnected,b) ? ControlRange::Bipolar : ControlRange::Unipolar;
     case ControlOpType::RandomTrigger: return std::min(op.params[0],op.params[1])<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
     case ControlOpType::Counter: return ControlRange::Unipolar;
+    case ControlOpType::RandomWalk: return std::min(op.params[1],op.params[2])<0.0f ? ControlRange::Bipolar : ControlRange::Unipolar;
+    case ControlOpType::Sequencer: return ControlRange::Bipolar; // SEQ step values are -1..1 (as the SEQ source)
     default:
         if(const auto* info=controlOpInfo(op.type); info!=nullptr && info->output!=ControlSignal::Control) return ControlRange::Unipolar;
         return aConnected ? a : ControlRange::Unipolar; // range-preserving unary operators (incl. S&H / T&H VALUE)
     }
+}
+
+ControlRange controlOpOutputRangeAt(const ControlOperator& op,std::size_t port,ControlRange a,bool aConnected,ControlRange b,bool bConnected) noexcept {
+    if(port==0) return controlOpOutputRange(op,a,aConnected,b,bConnected);
+    return ControlRange::Unipolar; // extra ports: EVENTs, or the 0..1 STEP position
 }
 
 namespace {
@@ -945,6 +1114,15 @@ float unitRandom(std::uint32_t& x) noexcept { return float(xorshift(x)>>8)/float
 
 float evaluateControlOp(const ControlOperator& op,const ControlOpInputs& in,ControlOpRuntime& state,
                         const ControlOpPrepared& prepared,const ControlEventContext& ctx) noexcept {
+    std::array<float,maxControlOutputs> outputs{};
+    evaluateControlOpOutputs(op,in,state,prepared,ctx,outputs);
+    return outputs[0];
+}
+
+void evaluateControlOpOutputs(const ControlOperator& op,const ControlOpInputs& in,ControlOpRuntime& state,
+                              const ControlOpPrepared& prepared,const ControlEventContext& ctx,
+                              std::array<float,maxControlOutputs>& outputs) noexcept {
+    outputs.fill(0.0f);
     float a=finiteOr0(in.value[0]),b=finiteOr0(in.value[1]),c=finiteOr0(in.value[2]);
     const bool aConnected=in.connected[0],bConnected=in.connected[1];
     const auto aRange=in.range[0];
@@ -1087,30 +1265,138 @@ float evaluateControlOp(const ControlOperator& op,const ControlOpInputs& in,Cont
         out=state.value;
         break;
     case ControlOpType::RandomTrigger:
-        if(!state.initialized) {
+        // RESET (input B) restarts the seeded sequence before TRIG is seen.
+        if(!state.initialized || event(1)) {
             state.initialized=true;
             state.rng=seedFor(p[2],op.id);
             state.value=p[0]+(p[1]-p[0])*unitRandom(state.rng); // a value exists from the first sample
-        } else if(event(0)) state.value=p[0]+(p[1]-p[0])*unitRandom(state.rng);
+        }
+        if(event(0)) state.value=p[0]+(p[1]-p[0])*unitRandom(state.rng);
         out=state.value;
         break;
     case ControlOpType::Toggle:
-        if(event(0)) state.gate=!state.gate;
+        if(event(1)) state.gate=false; // RESET first...
+        if(event(0)) state.gate=!state.gate; // ...then TRIG
         out=state.gate ? 1.0f : 0.0f;
         break;
     case ControlOpType::Counter: {
-        const int steps=std::max(2,static_cast<int>(std::lround(p[0])));
+        // VALUE = position / (LENGTH - 1): 0, 1/3, 2/3, 1 for LENGTH 4.
+        const int length=std::max(2,static_cast<int>(std::lround(p[0])));
+        const int mode=static_cast<int>(std::lround(p[1]));
+        bool wrap=false;
+        if(event(1)) { state.counter=0; state.forward=true; } // RESET first, then ADVANCE
         if(event(0)) {
-            if(p[1]>=0.5f) state.counter=std::min(state.counter+1,steps-1); // CLAMP
-            else state.counter=(state.counter+1)%steps;                    // WRAP
+            if(mode==1) {                                         // CLAMP: WRAP fires on reaching the end
+                if(state.counter<length-1) { ++state.counter; wrap=state.counter==length-1; }
+            } else if(mode==2) {                                  // PING-PONG: WRAP fires on reaching either end
+                if(state.forward) { if(state.counter+1>=length) { state.forward=false; --state.counter; } else ++state.counter; }
+                else { if(state.counter<=0) { state.forward=true; ++state.counter; } else --state.counter; }
+                wrap=state.counter==0 || state.counter==length-1;
+            } else {                                              // WRAP: WRAP fires on returning to 0
+                state.counter=(state.counter+1)%length;
+                wrap=state.counter==0;
+            }
         }
-        out=float(state.counter)/float(steps-1);
+        out=float(state.counter)/float(length-1);
+        outputs[1]=wrap ? 1.0f : 0.0f; // same sample as the VALUE change
         break;
     }
     case ControlOpType::EnvelopeTrigger: out=event(0) ? 1.0f : 0.0f; break;
+    // ---- N06 sequencing / generative --------------------------------------
+    case ControlOpType::ClockDivider: {
+        // The first CLOCK fires every output (downbeat); then /2 /4 /8 /16.
+        if(event(1)) state.counter=0;
+        if(event(0)) {
+            static constexpr int divisions[4]{2,4,8,16};
+            for(std::size_t k=0;k<4;++k) outputs[k]=state.counter%divisions[k]==0 ? 1.0f : 0.0f;
+            state.counter=(state.counter+1)%16;
+        }
+        out=outputs[0];
+        break;
+    }
+    case ControlOpType::EventDelay: {
+        // Bounded scheduler: pending events count down; an event at N with a
+        // delay of D samples fires at N + D. Capacity 8; when full, the NEWEST
+        // event is dropped (earlier events keep their exact timing).
+        bool fire=false;
+        std::uint8_t kept=0;
+        for(std::uint8_t i=0;i<state.pendingCount;++i) {
+            if(--state.pending[i]<=0) fire=true; else state.pending[kept++]=state.pending[i];
+        }
+        state.pendingCount=kept;
+        if(event(0)) {
+            std::int32_t samples=prepared.delaySamples;
+            if(p[0]>=0.5f && ctx.beatsPerSample>0.0)
+                samples=std::max<std::int32_t>(1,static_cast<std::int32_t>(std::lround(prepared.divisionBeats/ctx.beatsPerSample)));
+            if(state.pendingCount<ControlOpRuntime::delayCapacity) state.pending[state.pendingCount++]=samples;
+        }
+        out=fire ? 1.0f : 0.0f;
+        break;
+    }
+    case ControlOpType::Probability:
+        if(!state.initialized) { state.initialized=true; state.rng=seedFor(p[1],op.id); }
+        // The generator advances once per incoming event: deterministic per event index.
+        out=event(0) && unitRandom(state.rng)<p[0] ? 1.0f : 0.0f;
+        break;
+    case ControlOpType::ChanceSplit:
+        if(!state.initialized) { state.initialized=true; state.rng=seedFor(p[1],op.id); }
+        if(event(0)) { if(unitRandom(state.rng)<p[0]) outputs[0]=1.0f; else outputs[1]=1.0f; } // exactly one
+        out=outputs[0];
+        break;
+    case ControlOpType::EventMerge: out=event(0) || event(1) || event(2) ? 1.0f : 0.0f; break;
+    case ControlOpType::Euclidean: {
+        const int steps=std::clamp(static_cast<int>(std::lround(p[0])),1,32);
+        if(event(1)) state.counter=0;
+        if(event(0)) {
+            out=euclideanHit(steps,static_cast<int>(std::lround(p[1])),static_cast<int>(std::lround(p[2])),state.counter) ? 1.0f : 0.0f;
+            state.counter=(state.counter+1)%steps;
+        }
+        break;
+    }
+    case ControlOpType::Pattern: {
+        const int length=std::clamp(static_cast<int>(std::lround(p[0])),1,32);
+        const std::uint32_t bits=static_cast<std::uint32_t>(std::lround(p[1]))|(static_cast<std::uint32_t>(std::lround(p[2]))<<16);
+        if(event(1)) state.counter=0;
+        if(event(0)) {
+            out=((bits>>static_cast<std::uint32_t>(state.counter))&1u)!=0 ? 1.0f : 0.0f;
+            state.counter=(state.counter+1)%length;
+        }
+        break;
+    }
+    case ControlOpType::RandomWalk: {
+        const float lo=std::min(p[1],p[2]),hi=std::max(p[1],p[2]);
+        if(!state.initialized || event(1)) { state.initialized=true; state.rng=seedFor(p[3],op.id); state.value=0.5f*(lo+hi); }
+        if(event(0)) {
+            float v=state.value+(unitRandom(state.rng)*2.0f-1.0f)*p[0];
+            if(p[4]>=0.5f) { // REFLECT at the bounds
+                if(v>hi) v=hi-(v-hi);
+                if(v<lo) v=lo+(lo-v);
+            }
+            state.value=std::clamp(v,lo,hi);
+        }
+        out=state.value;
+        break;
+    }
+    case ControlOpType::Sequencer: {
+        // The canonical sequencer: RESET first, then ADVANCE (EXTERNAL) or the
+        // sequencer's own clock (INTERNAL). Never both clocks.
+        auto* sequencer=ctx.sequencer;
+        const auto* settings=ctx.sequencerSettings;
+        if(sequencer==nullptr || settings==nullptr) break;
+        const std::uint32_t before=sequencer->stepEvents();
+        if(event(1)) sequencer->restart(*settings);
+        if(p[0]>=0.5f) { if(event(0)) sequencer->advance(*settings); sequencer->hold(*settings); }
+        else sequencer->next(*settings,ctx.sampleRate);
+        const std::size_t count=std::clamp<std::size_t>(settings->activeSteps,1,settings->steps.size());
+        out=sequencer->held(); // the step begun at this sample (consistent with STEP EVENT)
+        outputs[1]=count>1 ? float(sequencer->currentStep())/float(count-1) : 0.0f;
+        outputs[2]=sequencer->stepEvents()!=before ? 1.0f : 0.0f; // a step began at this sample
+        break;
+    }
     }
     (void)c;
-    return finiteOr0(out);
+    outputs[0]=finiteOr0(out);
+    for(auto& o:outputs) o=finiteOr0(o);
 }
 
 float evaluateControlOp(const ControlOperator& op,float a,bool aConnected,ControlRange aRange,
@@ -1210,7 +1496,10 @@ ControlRange operatorRange(const ModulationState& state,std::uint32_t id,int dep
 }
 
 ControlRange sourceRange(ModSource source,const ModulationState& state) noexcept {
-    if(isOperatorSource(source)) return operatorRange(state,operatorIdOf(source),0);
+    if(isOperatorSource(source)) {
+        if(operatorPortOf(source)!=0) return ControlRange::Unipolar; // extra ports: EVENTs / 0..1 positions
+        return operatorRange(state,operatorIdOf(source),0);
+    }
     if(source==ModSource::None) return ControlRange::Unipolar;
     return signedGeneratorSlot(slotFor(source,state)) ? ControlRange::Bipolar : ControlRange::Unipolar;
 }
@@ -1289,7 +1578,7 @@ float routeContribution(const ModRoute& route,const ModulationState& state,const
 }
 float CompiledModulation::operatorRouteValue(std::size_t slot,float raw,bool bipolar) const noexcept {
     if(!std::isfinite(raw)) return 0.0f;
-    if(opRange_[slot]!=ControlRange::Bipolar) return raw;
+    if(routedRange_[slot]!=ControlRange::Bipolar) return raw;
     return bipolar ? raw*0.5f : std::clamp(raw*0.5f+0.5f,0.0f,1.0f);
 }
 
@@ -1301,8 +1590,8 @@ float CompiledModulation::operatorInput(std::int16_t input,const std::array<floa
     return f.operatorOutputs[i-sourceSlotCount];
 }
 
-float CompiledModulation::runOperator(const CompiledOp& c,const std::array<float,voiceSourceCount>* voice,
-                                      const ModulationFrame& f,ControlOpRuntime& state) const noexcept {
+void CompiledModulation::runOperator(const CompiledOp& c,const std::array<float,voiceSourceCount>* voice,
+                                     ModulationFrame& f,ControlOpRuntime& state) const noexcept {
     if(state.id!=c.op.id) { state=ControlOpRuntime{}; state.id=c.op.id; } // a new operator in this slot starts fresh
     ControlOpInputs in;
     for(std::size_t k=0;k<3;++k) {
@@ -1310,7 +1599,12 @@ float CompiledModulation::runOperator(const CompiledOp& c,const std::array<float
         in.connected[k]=c.input[k]>=0;
         in.range[k]=c.range[k];
     }
-    return evaluateControlOp(c.op,in,state,c.prepared,f.events);
+    std::array<float,maxControlOutputs> outputs{};
+    evaluateControlOpOutputs(c.op,in,state,c.prepared,f.events,outputs);
+    // Every port of this operator is written each sample (EVENT ports are 0
+    // between events), at index slot*4 + port.
+    const std::size_t base=operatorOutputIndex(c.slot,0);
+    for(std::size_t port=0;port<maxControlOutputs;++port) f.operatorOutputs[base+port]=port<c.outputCount ? outputs[port] : 0.0f;
 }
 
 // Same-sample ordering (N05): sources -> global operators (topological) ->
@@ -1321,9 +1615,11 @@ void CompiledModulation::evaluateGlobalOperators(ModulationFrame& f,const std::a
     for(std::size_t i=0;i<opCount_;++i) {
         const auto& c=ops_[i];
         if(c.voice) continue;
-        const float v=runOperator(c,nullptr,f,globalOpState_[c.slot]);
-        f.operatorOutputs[c.slot]=v;
-        if(c.event && v!=0.0f) ++globalEventCounts_[c.slot]; // monitoring only
+        runOperator(c,nullptr,f,globalOpState_[c.slot]);
+        const std::size_t base=operatorOutputIndex(c.slot,0);
+        // The SEQUENCER node's VALUE is the canonical SEQ source this sample.
+        if(c.op.type==ControlOpType::Sequencer) f.globalSources[12]=f.operatorOutputs[base];
+        if(eventFired(c,f.operatorOutputs,base)) ++globalEventCounts_[c.slot]; // monitoring only
     }
 }
 
@@ -1332,16 +1628,16 @@ void CompiledModulation::evaluateVoiceOperators(ModulationFrame& f,const std::ar
     for(std::size_t i=0;i<opCount_;++i) {
         const auto& c=ops_[i];
         if(!c.voice) continue;
-        const float v=runOperator(c,&sources,f,state[c.slot]);
-        f.operatorOutputs[c.slot]=v;
-        if(counts!=nullptr && c.event && v!=0.0f) ++(*counts)[c.slot];
+        runOperator(c,&sources,f,state[c.slot]);
+        const std::size_t base=operatorOutputIndex(c.slot,0);
+        if(counts!=nullptr && eventFired(c,f.operatorOutputs,base)) ++(*counts)[c.slot];
     }
 }
 
 std::uint8_t CompiledModulation::envelopeTriggers(const ModulationFrame& f) const noexcept {
     std::uint8_t mask=0;
     for(std::size_t i=0;i<envelopeTriggerCount_;++i)
-        if(f.operatorOutputs[envelopeTriggerSlots_[i]]!=0.0f) mask|=std::uint8_t(envelopeTriggerTargets_[i]==3 ? 4u : 2u);
+        if(f.operatorOutputs[operatorOutputIndex(envelopeTriggerSlots_[i],0)]!=0.0f) mask|=std::uint8_t(envelopeTriggerTargets_[i]==3 ? 4u : 2u);
     return mask;
 }
 
@@ -1362,7 +1658,7 @@ void CompiledModulation::globalFrame(ModulationFrame& f,const std::array<float,g
         for(std::size_t k=0;k<g.globalOpSlotCount;++k) {
             const auto s=static_cast<std::size_t>(g.globalOpSlots[k]);
             const float w=g.weight[sourceSlotCount+s];
-            n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[s],g.bipolar[sourceSlotCount+s]);
+            n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
         }
         if(!std::isfinite(n)) n=0.0f;
         f.normalized[i]=std::clamp(n,-4.0f,4.0f);write(f,g,n);
@@ -1383,7 +1679,7 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
         for(std::size_t k=0;k<g.voiceOpSlotCount;++k) {
             const auto s=static_cast<std::size_t>(g.voiceOpSlots[k]);
             const float w=g.weight[sourceSlotCount+s];
-            n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[s],g.bipolar[sourceSlotCount+s]);
+            n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,f.operatorOutputs[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
         }
         if(!std::isfinite(n)) n=0.0f;write(f,g,n);
     }
@@ -1391,7 +1687,7 @@ void CompiledModulation::voiceFrame(ModulationFrame& f,const std::array<float,vo
 }
 void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,globalSourceCount>& global,
                                  const std::array<float,voiceSourceCount>* voice,
-                                 const std::array<float,operatorSlotCount>* operators) const noexcept {
+                                 const std::array<float,operatorOutputSlotCount>* operators) const noexcept {
     out.generation=generation_;
     out.count=fxCount_;
     for(std::size_t k=0;k<fxCount_;++k) {
@@ -1415,7 +1711,7 @@ void CompiledModulation::fxFrame(FxModulationOutput& out,const std::array<float,
             for(std::size_t j=0;j<g.globalOpSlotCount;++j) {
                 const auto s=static_cast<std::size_t>(g.globalOpSlots[j]);
                 const float w=g.weight[sourceSlotCount+s];
-                n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,(*operators)[s],g.bipolar[sourceSlotCount+s]);
+                n+=(std::isfinite(w)?w:0.0f)*operatorRouteValue(s,(*operators)[routedOutput_[s]],g.bipolar[sourceSlotCount+s]);
             }
         out.offset[k]=std::isfinite(n) ? std::clamp(n,-2.0f,2.0f) : 0.0f;
     }

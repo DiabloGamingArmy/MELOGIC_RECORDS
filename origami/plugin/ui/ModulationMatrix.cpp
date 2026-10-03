@@ -166,7 +166,11 @@ public:
         if(processed) {
             juce::String label="NODES";
             if(const auto* op=findControlOperator(modulation,operatorIdOf(route.source)))
-                if(const auto* info=controlOpInfo(op->type)) label+=": "+juce::String(info->label);
+                if(const auto* info=controlOpInfo(op->type)) {
+                    label+=": "+juce::String(info->label);
+                    // N06: a multi-output node names the output that drives this row.
+                    if(info->outputCount>1) label+=" "+juce::String(controlOutputName(*info,operatorPortOf(route.source)));
+                }
             std::array<ModSource,16> roots{};
             const auto count=routeRootSources(modulation,route,roots);
             juce::StringArray names;
